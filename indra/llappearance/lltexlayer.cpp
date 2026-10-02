@@ -1479,9 +1479,9 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         if (!textureW || !textureH)
                         {
                             LLGLint glTemp{};
-                            glGetTexLevelParameteriv(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_WIDTH, (GLint*)&glTemp);
+                            gGL.getTexLevelParameteriv(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_WIDTH, (S32*)&glTemp);
                             textureW = glTemp;
-                            glGetTexLevelParameteriv(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_HEIGHT, (GLint*)&glTemp);
+                            gGL.getTexLevelParameteriv(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_HEIGHT, (S32*)&glTemp);
                             textureH = glTemp;
                         }
                         // </FS>ND>
@@ -1507,8 +1507,8 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         return;
                     }
 
-                    glGetTexImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGBA, GL_UNSIGNED_BYTE, temp);
-                    GLenum error = glGetError();
+                    gGL.getTexImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGBA, GL_UNSIGNED_BYTE, temp);
+                    GLenum error = gGL.getError();
                     if (error != GL_NO_ERROR)
                     {
                         LL_INFOS("Morph") << "GL Error while reading back morph texture. Error code: " << error << LL_ENDL;
@@ -1549,7 +1549,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         LL_ERRS() << "Failed to allocate temporary memory for morph texture: " << (S32)(mem_size * TEMP_BYTES_PER_PIXEL) << LL_ENDL;
                         return;
                     }
-                    glReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, temp_data);
+                    gGL.readPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, temp_data);
                     for (size_t pixel = 0; pixel < pixels; pixel++) {
                         alpha_data[pixel] = temp_data[(pixel * TEMP_BYTES_PER_PIXEL) + 3];
                     }
