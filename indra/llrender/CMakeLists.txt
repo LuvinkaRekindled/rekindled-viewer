@@ -34,6 +34,7 @@ set(llrender_SOURCE_FILES
     lluiimage.cpp
     llvertexbuffer.cpp
     llvkcontext.cpp
+    llvkmirror.cpp
     llvkprobe.cpp
     llvkrenderer.cpp
     llvkshader.cpp
@@ -72,6 +73,7 @@ set(llrender_HEADER_FILES
     llvertexbuffer.h
     llvkcontext.h
     llvkfunctions.inl
+    llvkmirror.h
     llvkprobe.h
     llvkrenderer.h
     llvkshader.h

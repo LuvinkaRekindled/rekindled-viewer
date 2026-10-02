@@ -120,6 +120,7 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
     for (const SamplerInfo& s : mInfo.mSamplers)
     {
         mSamplerIndex[s.mName] = s.mBinding;
+        mSamplerUnits.push_back(s.mBinding);
     }
 
     // numeric initializers from the GLSL ("uniform float x = 0.5;") become the starting values
@@ -173,6 +174,7 @@ void Program::destroy()
     for (auto& m : mModules) m = VK_NULL_HANDLE;
     mUniformIndex.clear();
     mSamplerIndex.clear();
+    mSamplerUnits.clear();
     mShadow.clear();
     mValid = false;
 }
@@ -184,7 +186,13 @@ bool Program::setFloats(const std::string& name, const F32* data, U32 components
     {
         return false;
     }
-    const LooseUniform& u = mInfo.mUniforms[it->second];
+    setFloatsAt(it->second, data, components, count);
+    return true;
+}
+
+void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components, U32 count)
+{
+    const LooseUniform& u = mInfo.mUniforms[uniform_index];
     const U32 max_count = std::max<U32>(1, u.mArraySize);
     count = std::min(count, max_count);
     const U32 stride = u.mArraySize > 0 ? 16 : 4 * components;
@@ -193,7 +201,6 @@ bool Program::setFloats(const std::string& name, const F32* data, U32 components
         memcpy(&mShadow[u.mOffset + i * stride], data + i * components, components * 4);
     }
     mDirty = true;
-    return true;
 }
 
 bool Program::setInts(const std::string& name, const S32* data, U32 components, U32 count)
@@ -208,7 +215,13 @@ bool Program::setMatrices(const std::string& name, const F32* data, U32 columns,
     {
         return false;
     }
-    const LooseUniform& u = mInfo.mUniforms[it->second];
+    setMatricesAt(it->second, data, columns, rows, count);
+    return true;
+}
+
+void Program::setMatricesAt(size_t uniform_index, const F32* data, U32 columns, U32 rows, U32 count)
+{
+    const LooseUniform& u = mInfo.mUniforms[uniform_index];
     const U32 max_count = std::max<U32>(1, u.mArraySize);
     count = std::min(count, max_count);
     const U32 stride = columns * 16;    // std140: every column occupies 16 bytes
@@ -220,7 +233,18 @@ bool Program::setMatrices(const std::string& name, const F32* data, U32 columns,
         }
     }
     mDirty = true;
-    return true;
+}
+
+S32 Program::findSampler(const std::string& name) const
+{
+    for (size_t i = 0; i < mInfo.mSamplers.size(); ++i)
+    {
+        if (mInfo.mSamplers[i].mName == name)
+        {
+            return (S32)i;
+        }
+    }
+    return -1;
 }
 
 S32 Program::getSamplerBinding(const std::string& name) const
@@ -826,9 +850,10 @@ void Renderer::applyState()
     // 1. textures must be in a sampling layout before a pass is (re)started
     if (mProgram)
     {
-        for (const SamplerInfo& s : mProgram->mInfo.mSamplers)
+        for (size_t k = 0; k < mProgram->mInfo.mSamplers.size(); ++k)
         {
-            Image* img = s.mBinding < MAX_TEXTURE_UNITS ? mTextures[s.mBinding] : nullptr;
+            const U32 unit = mProgram->mSamplerUnits[k];
+            Image* img = unit < MAX_TEXTURE_UNITS ? mTextures[unit] : nullptr;
             if (img)
             {
                 ensureLayout(*img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -977,14 +1002,16 @@ void Renderer::applyState()
         VkWriteDescriptorSet writes[MAX_TEXTURE_UNITS];
         U32 n = 0;
         VkSampler fallback = getSampler(SamplerDesc());
-        for (const SamplerInfo& s : mProgram->mInfo.mSamplers)
+        for (size_t k = 0; k < mProgram->mInfo.mSamplers.size(); ++k)
         {
-            if (s.mBinding >= MAX_TEXTURE_UNITS)
+            const SamplerInfo& s = mProgram->mInfo.mSamplers[k];
+            const U32 unit = mProgram->mSamplerUnits[k];
+            if (s.mBinding >= MAX_TEXTURE_UNITS || unit >= MAX_TEXTURE_UNITS)
             {
                 continue;
             }
-            Image* img = mTextures[s.mBinding] ? mTextures[s.mBinding] : &mWhite;
-            infos[n] = { mTextureSamplers[s.mBinding] ? mTextureSamplers[s.mBinding] : fallback, img->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            Image* img = mTextures[unit] ? mTextures[unit] : &mWhite;
+            infos[n] = { mTextureSamplers[unit] ? mTextureSamplers[unit] : fallback, img->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
             writes[n] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
             writes[n].dstBinding = s.mBinding;
             writes[n].descriptorCount = 1;

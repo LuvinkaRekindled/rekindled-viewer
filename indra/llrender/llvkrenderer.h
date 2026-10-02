@@ -53,6 +53,13 @@ public:
     bool setInts(const std::string& name, const S32* data, U32 components, U32 count = 1);
     // matrices given as tightly packed column-major floats (columns x rows), 'count' of them for arrays
     bool setMatrices(const std::string& name, const F32* data, U32 columns, U32 rows, U32 count = 1);
+    // the same, addressing the uniform by its index in getInfo().mUniforms
+    void setFloatsAt(size_t uniform_index, const F32* data, U32 components, U32 count);
+    void setMatricesAt(size_t uniform_index, const F32* data, U32 columns, U32 rows, U32 count);
+
+    // texture unit each sampler reads (GL numbering; defaults to the sampler's binding)
+    void setSamplerUnit(size_t sampler_index, U32 unit) { if (sampler_index < mSamplerUnits.size()) mSamplerUnits[sampler_index] = unit; }
+    S32 findSampler(const std::string& name) const;
 
     S32 getSamplerBinding(const std::string& name) const;
     bool isDirty() const { return mDirty; }
@@ -70,6 +77,7 @@ private:
     VkShaderModule mModules[3] = {};
     std::unordered_map<std::string, size_t> mUniformIndex;
     std::unordered_map<std::string, U32> mSamplerIndex;
+    std::vector<U32> mSamplerUnits;
     std::vector<U8> mShadow;
     bool mDirty = true;
     U32 mRingOffset = 0;                // where this program's block was last written in the uniform ring
