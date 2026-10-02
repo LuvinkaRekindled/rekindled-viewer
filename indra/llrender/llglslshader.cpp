@@ -27,6 +27,7 @@
 #include "linden_common.h"
 
 #include "llglslshader.h"
+#include <cctype>
 
 #include "llshadermgr.h"
 #include "llfile.h"
@@ -35,6 +36,8 @@
 #include "llrendertarget.h"
 #if defined(LL_VULKAN)
 #include "llvkshader.h"
+#include "llvkrenderer.h"
+#include "llvkmirror.h"
 #endif
 
 #include "hbxxh.h"
@@ -359,6 +362,7 @@ void LLGLSLShader::unload()
 void LLGLSLShader::unloadInternal()
 {
     sInstances.erase(this);
+    mirrorDestroy();
 
     stop_glerror();
     mAttribute.clear();
@@ -406,6 +410,213 @@ void LLGLSLShader::unloadInternal()
 
     stop_glerror();
 }
+
+#if defined(LL_VULKAN)
+void LLGLSLShader::mirrorDestroy()
+{
+    if (mVkProgram)
+    {
+        mVkProgram->destroy();
+        delete mVkProgram;
+        mVkProgram = nullptr;
+    }
+    mVkLocations.clear();
+}
+
+void LLGLSLShader::mirrorBind()
+{
+    if (mVkProgram && LLVkMirror::isReady())
+    {
+        LLVk::Renderer::instance().setProgram(mVkProgram);
+    }
+}
+
+void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<double> values)
+{
+    if (!mVkProgram)
+    {
+        return;
+    }
+    auto it = mVkLocations.find(location);
+    if (it == mVkLocations.end())
+    {
+        return;
+    }
+    if (it->second < 0)
+    {
+        // a sampler: the integer is the texture unit it now reads
+        mVkProgram->setSamplerUnit((size_t)(~it->second), (U32)(S32)*values.begin());
+        return;
+    }
+    F32 f[4] = {};
+    S32 i[4] = {};
+    U32 n = 0;
+    for (double v : values)
+    {
+        if (n < 4)
+        {
+            f[n] = (F32)v;
+            i[n] = (S32)v;
+            ++n;
+        }
+    }
+    if (kind == 0)
+    {
+        mVkProgram->setFloatsAt((size_t)it->second, f, n, 1);
+    }
+    else
+    {
+        mVkProgram->setFloatsAt((size_t)it->second, reinterpret_cast<const F32*>(i), n, 1);
+    }
+}
+
+void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data)
+{
+    if (!mVkProgram || !data)
+    {
+        return;
+    }
+    auto it = mVkLocations.find(location);
+    if (it == mVkLocations.end() || it->second < 0)
+    {
+        return;     // unknown, or a sampler array (units are fixed at link time)
+    }
+    (void)kind;     // floats and ints are copied bit for bit
+    mVkProgram->setFloatsAt((size_t)it->second, reinterpret_cast<const F32*>(data), components, count);
+}
+
+void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean transpose, U32 count, const GLfloat* data)
+{
+    if (!mVkProgram || !data)
+    {
+        return;
+    }
+    auto it = mVkLocations.find(location);
+    if (it == mVkLocations.end() || it->second < 0)
+    {
+        return;
+    }
+    if (transpose)
+    {
+        // GL transposes the matrices on upload; the Vulkan side wants them column-major
+        std::vector<F32> tmp((size_t)count * columns * rows);
+        for (U32 m = 0; m < count; ++m)
+        {
+            for (U32 c = 0; c < columns; ++c)
+            {
+                for (U32 r = 0; r < rows; ++r)
+                {
+                    tmp[(size_t)m * columns * rows + c * rows + r] = data[(size_t)m * columns * rows + r * columns + c];
+                }
+            }
+        }
+        mVkProgram->setMatricesAt((size_t)it->second, tmp.data(), columns, rows, count);
+        return;
+    }
+    mVkProgram->setMatricesAt((size_t)it->second, data, columns, rows, count);
+}
+
+// Builds the Vulkan twin of this (already linked) GL program. Called at the end of createShader().
+void LLGLSLShader::mirrorCreate()
+{
+    mirrorDestroy();
+    if (!LLVkMirror::ensureReady())
+    {
+        return;
+    }
+
+    LLShaderMgr* mgr = LLShaderMgr::instance();
+    GLuint objects[1024];
+    GLsizei count = 0;
+    glGetAttachedShaders(mProgramObject, 1024, &count, objects);
+    std::vector<LLVk::StageSource> stages;
+    for (GLsizei i = 0; i < count; ++i)
+    {
+        auto it = mgr->mRecordedShaders.find(objects[i]);
+        if (it == mgr->mRecordedShaders.end())
+        {
+            continue;
+        }
+        LLVk::StageSource s;
+        s.mName = it->second.mFile;
+        s.mSource = it->second.mSource;
+        switch (it->second.mType)
+        {
+        case GL_VERTEX_SHADER: s.mStage = LLVk::StageSource::Vertex; break;
+        case GL_FRAGMENT_SHADER: s.mStage = LLVk::StageSource::Fragment; break;
+        case GL_GEOMETRY_SHADER: s.mStage = LLVk::StageSource::Geometry; break;
+        default: continue;
+        }
+        stages.push_back(std::move(s));
+    }
+
+    LLVk::ShaderEnv env;
+    env.mAttributeNames = mgr->mReservedAttribs;
+    env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
+    const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
+    LLVk::ProgramInfo info;
+    if (!LLVk::compileProgram(mName, stages, env, info, dump ? dump : ""))
+    {
+        LL_WARNS("VkMirror") << "program " << mName << " does not compile for Vulkan: " << info.mError.substr(0, 600) << LL_ENDL;
+        return;
+    }
+
+    LLVk::Program* program = new LLVk::Program;
+    if (!program->create(mName, info))
+    {
+        delete program;
+        return;
+    }
+    mVkProgram = program;
+
+    // GL uniform location -> twin uniform / sampler
+    const LLVk::ProgramInfo& pi = mVkProgram->getInfo();
+    for (size_t u = 0; u < pi.mUniforms.size(); ++u)
+    {
+        GLint loc = glGetUniformLocation(mProgramObject, pi.mUniforms[u].mName.c_str());
+        if (loc >= 0)
+        {
+            mVkLocations[loc] = (S32)u;
+        }
+    }
+    for (size_t s = 0; s < pi.mSamplers.size(); ++s)
+    {
+        GLint loc = glGetUniformLocation(mProgramObject, pi.mSamplers[s].mName.c_str());
+        if (loc >= 0)
+        {
+            mVkLocations[loc] = ~(S32)s;
+        }
+    }
+
+    // texture units: the viewer's reserved samplers got their GL channel in mTexture, "texN" are fixed
+    for (U32 r = 0; r < mTexture.size(); ++r)
+    {
+        if (mTexture[r] >= 0)
+        {
+            const S32 sampler = mVkProgram->findSampler(mgr->mReservedUniforms[r]);
+            if (sampler >= 0)
+            {
+                mVkProgram->setSamplerUnit((size_t)sampler, (U32)mTexture[r]);
+            }
+        }
+    }
+    for (size_t s = 0; s < pi.mSamplers.size(); ++s)
+    {
+        const std::string& name = pi.mSamplers[s].mName;
+        if (name.size() > 3 && name.compare(0, 3, "tex") == 0 && std::isdigit((unsigned char)name[3]))
+        {
+            mVkProgram->setSamplerUnit(s, (U32)atoi(name.c_str() + 3));
+        }
+    }
+}
+#else
+void LLGLSLShader::mirrorDestroy() {}
+void LLGLSLShader::mirrorBind() {}
+void LLGLSLShader::mirrorCreate() {}
+void LLGLSLShader::mirrorScalar(GLint, int, std::initializer_list<double>) {}
+void LLGLSLShader::mirrorVector(GLint, int, U32, U32, const void*) {}
+void LLGLSLShader::mirrorMatrix(GLint, U32, U32, GLboolean, U32, const GLfloat*) {}
+#endif
 
 #if defined(LL_VULKAN)
 // <FS> compiles an already linked GL program a second time through the Vulkan shader path and logs the result
@@ -602,7 +813,14 @@ bool LLGLSLShader::createShader()
 #if defined(LL_VULKAN)
     if (success && LLShaderMgr::instance()->mRecordShaderSources)
     {
-        vulkan_check_program(mName, mProgramObject);
+        if (LLVkMirror::isRequested())
+        {
+            mirrorCreate();
+        }
+        else
+        {
+            vulkan_check_program(mName, mProgramObject);
+        }
     }
 #endif
 
@@ -896,6 +1114,7 @@ GLint LLGLSLShader::mapUniformTextureChannel(GLint location, GLenum type, GLint 
         if (size == 1)
         {
             glUniform1i(location, mActiveTextureChannels);
+            mirrorScalar(location, 1, {(double)(mActiveTextureChannels)});
             mActiveTextureChannels++;
         }
         else
@@ -909,6 +1128,7 @@ GLint LLGLSLShader::mapUniformTextureChannel(GLint location, GLenum type, GLint 
                 channel[i] = mActiveTextureChannels++;
             }
             glUniform1iv(location, size, channel);
+            mirrorVector(location, 1, 1, size, channel);
         }
 
         return ret;
@@ -1133,6 +1353,7 @@ void LLGLSLShader::bind()
         glUseProgram(mProgramObject);
         sCurBoundShader = mProgramObject;
         sCurBoundShaderPtr = this;
+        mirrorBind();
         placeProfileQuery();
         LLVertexBuffer::setupClientArrays(mAttributeMask);
     }
@@ -1181,6 +1402,12 @@ void LLGLSLShader::unbind(void)
     glUseProgram(0);
     sCurBoundShader = 0;
     sCurBoundShaderPtr = NULL;
+#if defined(LL_VULKAN)
+    if (LLVkMirror::isReady())
+    {
+        LLVk::Renderer::instance().setProgram(nullptr);
+    }
+#endif
 }
 
 S32 LLGLSLShader::bindTexture(const std::string& uniform, LLTexture* texture, LLTexUnit::eTextureType mode)
@@ -1376,6 +1603,7 @@ void LLGLSLShader::uniform1i(U32 index, GLint x)
             if (iter == mValue.end() || iter->second.mV[0] != x)
             {
                 glUniform1i(mUniform[index], x);
+                mirrorScalar(mUniform[index], 1, {(double)(x)});
                 mValue[mUniform[index]] = LLVector4((F32)x, 0.f, 0.f, 0.f);
             }
         }
@@ -1385,11 +1613,13 @@ void LLGLSLShader::uniform1i(U32 index, GLint x)
 void LLGLSLShader::uniform1fAt(S32 location, F32 v)
 {
     glUniform1f(location, v);
+    if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorScalar(location, 0, {(double)(v)});
 }
 
 void LLGLSLShader::uniform4fvAt(S32 location, S32 count, const F32* v)
 {
     glUniform4fv(location, count, v);
+    if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorVector(location, 0, 4, count, v);
 }
 
 void LLGLSLShader::uniform1f(U32 index, GLfloat x)
@@ -1412,6 +1642,7 @@ void LLGLSLShader::uniform1f(U32 index, GLfloat x)
             if (iter == mValue.end() || iter->second.mV[0] != x)
             {
                 glUniform1f(mUniform[index], x);
+                mirrorScalar(mUniform[index], 0, {(double)(x)});
                 mValue[mUniform[index]] = LLVector4(x, 0.f, 0.f, 0.f);
             }
         }
@@ -1426,6 +1657,7 @@ void LLGLSLShader::fastUniform1f(U32 index, GLfloat x)
     llassert(mUniform.size() <= index);
     llassert(mUniform[index] >= 0);
     glUniform1f(mUniform[index], x);
+    mirrorScalar(mUniform[index], 0, {(double)(x)});
 }
 
 void LLGLSLShader::uniform2f(U32 index, GLfloat x, GLfloat y)
@@ -1449,6 +1681,7 @@ void LLGLSLShader::uniform2f(U32 index, GLfloat x, GLfloat y)
             if (iter == mValue.end() || shouldChange(iter->second, vec))
             {
                 glUniform2f(mUniform[index], x, y);
+                mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y)});
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1476,6 +1709,7 @@ void LLGLSLShader::uniform3f(U32 index, GLfloat x, GLfloat y, GLfloat z)
             if (iter == mValue.end() || shouldChange(iter->second, vec))
             {
                 glUniform3f(mUniform[index], x, y, z);
+                mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y), (double)(z)});
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1503,6 +1737,7 @@ void LLGLSLShader::uniform4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat
             if (iter == mValue.end() || shouldChange(iter->second, vec))
             {
                 glUniform4f(mUniform[index], x, y, z, w);
+                mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y), (double)(z), (double)(w)});
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1530,6 +1765,7 @@ void LLGLSLShader::uniform1iv(U32 index, U32 count, const GLint* v)
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
                 glUniform1iv(mUniform[index], count, v);
+                mirrorVector(mUniform[index], 1, 1, count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1585,6 +1821,7 @@ void LLGLSLShader::uniform1fv(U32 index, U32 count, const GLfloat* v)
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
                 glUniform1fv(mUniform[index], count, v);
+                mirrorVector(mUniform[index], 0, 1, count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1612,6 +1849,7 @@ void LLGLSLShader::uniform2fv(U32 index, U32 count, const GLfloat* v)
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
                 glUniform2fv(mUniform[index], count, v);
+                mirrorVector(mUniform[index], 0, 2, count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1639,6 +1877,7 @@ void LLGLSLShader::uniform3fv(U32 index, U32 count, const GLfloat* v)
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
                 glUniform3fv(mUniform[index], count, v);
+                mirrorVector(mUniform[index], 0, 3, count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1667,6 +1906,7 @@ void LLGLSLShader::uniform4fv(U32 index, U32 count, const GLfloat* v)
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
                 glUniform4fv(mUniform[index], count, v);
+                mirrorVector(mUniform[index], 0, 4, count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1695,6 +1935,7 @@ void LLGLSLShader::uniform4uiv(U32 index, U32 count, const GLuint* v)
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
                 glUniform4uiv(mUniform[index], count, v);
+                mirrorVector(mUniform[index], 1, 4, count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1718,6 +1959,7 @@ void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, c
         if (mUniform[index] >= 0)
         {
             glUniformMatrix2fv(mUniform[index], count, transpose, v);
+            mirrorMatrix(mUniform[index], 2, 2, transpose, count, v);
         }
     }
 }
@@ -1739,6 +1981,7 @@ void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, c
         if (mUniform[index] >= 0)
         {
             glUniformMatrix3fv(mUniform[index], count, transpose, v);
+            mirrorMatrix(mUniform[index], 3, 3, transpose, count, v);
         }
     }
 }
@@ -1760,6 +2003,7 @@ void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose,
         if (mUniform[index] >= 0)
         {
             glUniformMatrix3x4fv(mUniform[index], count, transpose, v);
+            mirrorMatrix(mUniform[index], 3, 4, transpose, count, v);
         }
     }
 }
@@ -1781,6 +2025,7 @@ void LLGLSLShader::uniformMatrix4fv(U32 index, U32 count, GLboolean transpose, c
         if (mUniform[index] >= 0)
         {
             glUniformMatrix4fv(mUniform[index], count, transpose, v);
+            mirrorMatrix(mUniform[index], 4, 4, transpose, count, v);
         }
     }
 }
@@ -1855,6 +2100,7 @@ void LLGLSLShader::uniform1i(const LLStaticHashedString& uniform, GLint v)
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
             glUniform1i(location, v);
+            mirrorScalar(location, 1, {(double)(v)});
             mValue[location] = vec;
         }
     }
@@ -1873,6 +2119,7 @@ void LLGLSLShader::uniform1iv(const LLStaticHashedString& uniform, U32 count, co
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             glUniform1iv(location, count, v);
+            mirrorVector(location, 1, 1, count, v);
             mValue[location] = vec;
         }
     }
@@ -1891,6 +2138,7 @@ void LLGLSLShader::uniform4iv(const LLStaticHashedString& uniform, U32 count, co
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             glUniform4iv(location, count, v);
+            mirrorVector(location, 1, 4, count, v);
             mValue[location] = vec;
         }
     }
@@ -1908,6 +2156,7 @@ void LLGLSLShader::uniform2i(const LLStaticHashedString& uniform, GLint i, GLint
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
             glUniform2i(location, i, j);
+            mirrorScalar(location, 1, {(double)(i), (double)(j)});
             mValue[location] = vec;
         }
     }
@@ -1926,6 +2175,7 @@ void LLGLSLShader::uniform1f(const LLStaticHashedString& uniform, GLfloat v)
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
             glUniform1f(location, v);
+            mirrorScalar(location, 0, {(double)(v)});
             mValue[location] = vec;
         }
     }
@@ -1943,6 +2193,7 @@ void LLGLSLShader::uniform2f(const LLStaticHashedString& uniform, GLfloat x, GLf
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
             glUniform2f(location, x, y);
+            mirrorScalar(location, 0, {(double)(x), (double)(y)});
             mValue[location] = vec;
         }
     }
@@ -1961,6 +2212,7 @@ void LLGLSLShader::uniform3f(const LLStaticHashedString& uniform, GLfloat x, GLf
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
             glUniform3f(location, x, y, z);
+            mirrorScalar(location, 0, {(double)(x), (double)(y), (double)(z)});
             mValue[location] = vec;
         }
     }
@@ -1978,6 +2230,7 @@ void LLGLSLShader::uniform4f(const LLStaticHashedString& uniform, GLfloat x, GLf
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
             glUniform4f(location, x, y, z, w);
+            mirrorScalar(location, 0, {(double)(x), (double)(y), (double)(z), (double)(w)});
             mValue[location] = vec;
         }
     }
@@ -1995,6 +2248,7 @@ void LLGLSLShader::uniform1fv(const LLStaticHashedString& uniform, U32 count, co
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             glUniform1fv(location, count, v);
+            mirrorVector(location, 0, 1, count, v);
             mValue[location] = vec;
         }
     }
@@ -2012,6 +2266,7 @@ void LLGLSLShader::uniform2fv(const LLStaticHashedString& uniform, U32 count, co
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             glUniform2fv(location, count, v);
+            mirrorVector(location, 0, 2, count, v);
             mValue[location] = vec;
         }
     }
@@ -2029,6 +2284,7 @@ void LLGLSLShader::uniform3fv(const LLStaticHashedString& uniform, U32 count, co
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             glUniform3fv(location, count, v);
+            mirrorVector(location, 0, 3, count, v);
             mValue[location] = vec;
         }
     }
@@ -2047,6 +2303,7 @@ void LLGLSLShader::uniform4fv(const LLStaticHashedString& uniform, U32 count, co
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             glUniform4fv(location, count, v);
+            mirrorVector(location, 0, 4, count, v);
             mValue[location] = vec;
         }
     }
@@ -2065,6 +2322,7 @@ void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, c
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             glUniform4uiv(location, count, v);
+            mirrorVector(location, 1, 4, count, v);
             mValue[location] = vec;
         }
     }
@@ -2079,6 +2337,7 @@ void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 cou
     {
         stop_glerror();
         glUniformMatrix4fv(location, count, transpose, v);
+        mirrorMatrix(location, 4, 4, transpose, count, v);
         stop_glerror();
     }
 }

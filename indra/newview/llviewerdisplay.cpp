@@ -29,6 +29,7 @@
 #include "llviewerdisplay.h"
 #include "llgpuzonetimer.h"
 #include "llvkprobe.h"
+#include "llvkmirror.h"
 
 #include "fsyspath.h"
 #include "hexdump.h"
@@ -173,6 +174,9 @@ void display_startup()
 
     gPipeline.updateGL();
 
+    // <FS> Vulkan mirror frame (does nothing unless LL_VK_MIRROR is set)
+    LLVkMirror::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
+
     // Written as branch to appease GCC which doesn't like different
     // pointer types across ternary ops
     //
@@ -213,6 +217,7 @@ void display_startup()
 
     LLGLState::checkStates();
 
+    LLVkMirror::endFrame(); // <FS>
     if (gViewerWindow && gViewerWindow->getWindow())
     gViewerWindow->getWindow()->swapBuffers();
 
@@ -490,6 +495,12 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     // Done first, before any zone of this frame opens, so the previous frame is complete.
     LLGpuZoneTimer::onFrameEnd();
 
+    // <FS> Vulkan mirror frame (does nothing unless LL_VK_MIRROR is set)
+    if (gViewerWindow)
+    {
+        LLVkMirror::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
+    }
+
     // <FS> Vulkan bring-up probe (does nothing unless built with USE_VULKAN and FSVulkanProbe is on)
     {
         static LLCachedControl<bool> vulkan_probe(gSavedSettings, "FSVulkanProbe", false);
@@ -511,6 +522,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Resize Window");
         gGL.flush();
         gGL.clearBuffers(GL_COLOR_BUFFER_BIT);
+        LLVkMirror::endFrame(); // <FS>
         gViewerWindow->getWindow()->swapBuffers();
         LLPipeline::refreshCachedSettings();
         gPipeline.resizeScreenTexture();
@@ -1730,6 +1742,7 @@ void swap()
     LL_PROFILE_GPU_ZONE("swap");
     if (gDisplaySwapBuffers)
     {
+        LLVkMirror::endFrame(); // <FS>
         gViewerWindow->getWindow()->swapBuffers();
     }
     gDisplaySwapBuffers = true;

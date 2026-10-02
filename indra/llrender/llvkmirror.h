@@ -1,0 +1,40 @@
+/**
+ * @file llvkmirror.h
+ * @brief Vulkan "mirror" mode: OpenGL stays the renderer of record while the llrender classes replay what they do
+ *        into the Vulkan backend, which renders the same frame into its own window.
+ *
+ * Enabled by the environment variable LL_VK_MIRROR=1 in a build made with -DUSE_VULKAN=ON. Everything here is a
+ * no-op otherwise. Mirror calls made outside a mirrored frame are ignored (uploads still work), and any failure
+ * switches the mirror off without affecting the OpenGL viewer.
+ */
+
+#ifndef LL_LLVKMIRROR_H
+#define LL_LLVKMIRROR_H
+
+#include "linden_common.h"
+
+namespace LLVkMirror
+{
+    // mirror mode was requested (environment) and this build supports it
+    bool isRequested();
+
+    // true once Vulkan is initialised and the mirror has not been switched off
+    bool isReady();
+
+    // initialises Vulkan lazily on first use; returns isReady()
+    bool ensureReady();
+
+    // true between beginFrame() and endFrame() of a frame that is being recorded
+    bool inFrame();
+
+    // Call once at the start of each viewer frame with the size of the viewer's window
+    void beginFrame(S32 width, S32 height);
+
+    // Call just before the viewer swaps buffers: blits the mirrored backbuffer to the mirror window and presents
+    void endFrame();
+
+    // switch the mirror off (window closed, error); the viewer carries on with OpenGL only
+    void shutdown();
+}
+
+#endif // LL_LLVKMIRROR_H

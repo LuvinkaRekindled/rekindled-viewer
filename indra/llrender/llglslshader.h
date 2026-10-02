@@ -32,6 +32,7 @@
 #include "llstaticstringtable.h"
 #include <boost/json.hpp>
 #include <unordered_map>
+#include <initializer_list>
 
 class LLShaderFeatures
 {
@@ -63,6 +64,8 @@ public:
 };
 
 // ============= Structure for caching shader uniforms ===============
+namespace LLVk { class Program; }
+
 class LLGLSLShader;
 
 class LLShaderUniforms
@@ -324,6 +327,17 @@ public:
     static defines_map_t sGlobalDefines;
     LLUUID mShaderHash;
     bool mUsingBinaryProgram = false;
+
+    // <FS> Vulkan mirror: a Vulkan twin of this program, and the map from this program's GL uniform locations to
+    // the twin's uniforms (>= 0: index into its uniform list) or samplers (< 0: ~index into its sampler list)
+    LLVk::Program* mVkProgram = nullptr;
+    std::unordered_map<GLint, S32> mVkLocations;
+    void mirrorCreate();
+    void mirrorDestroy();
+    void mirrorBind();
+    void mirrorScalar(GLint location, int kind, std::initializer_list<double> values);   // kind 0: float, 1: int
+    void mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data);
+    void mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean transpose, U32 count, const GLfloat* data);
 
     //statistics for profiling shader performance
     bool mProfilePending = false;

@@ -26,6 +26,7 @@
 
 #include "linden_common.h"
 #include "llshadermgr.h"
+#include "llvkmirror.h"
 #include "llrender.h"
 #include "llfile.h"
 #include "lldir.h"
@@ -1025,7 +1026,7 @@ void LLShaderMgr::initShaderCache(bool enabled, const LLUUID& old_cache_version,
     LL_PROFILE_ZONE_SCOPED;
     LL_INFOS("ShaderMgr") << "Initializing shader cache" << LL_ENDL;
 
-    mRecordShaderSources = getenv("LL_VK_SHADER_CHECK") != nullptr;
+    mRecordShaderSources = getenv("LL_VK_SHADER_CHECK") != nullptr || LLVkMirror::isRequested();
     if (mRecordShaderSources)
     {
         enabled = false;    // cached binaries would skip loadShaderFile, so there would be no source to check
