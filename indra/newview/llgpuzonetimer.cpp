@@ -66,7 +66,7 @@ namespace
             return q;
         }
         GLuint q = 0;
-        glGenQueries(1, &q);
+        gGL.genQueries(1, &q);
         return q;
     }
 
@@ -94,7 +94,7 @@ namespace
             return;
         }
         Zone z{ name, acquireQuery(), 0 };
-        glQueryCounter(z.mStart, GL_TIMESTAMP);
+        gGL.queryTimestamp(z.mStart);
         sOpen.push_back((U32)sCurrent.size());
         sCurrent.push_back(z);
     }
@@ -108,7 +108,7 @@ namespace
         Zone& z = sCurrent[sOpen.back()];
         sOpen.pop_back();
         z.mEnd = acquireQuery();
-        glQueryCounter(z.mEnd, GL_TIMESTAMP);
+        gGL.queryTimestamp(z.mEnd);
     }
 
     void uninstall()
@@ -146,7 +146,7 @@ namespace
         for (const Zone& z : frame)
         {
             GLint available = 0;
-            glGetQueryObjectiv(z.mEnd, GL_QUERY_RESULT_AVAILABLE, &available);
+            gGL.getQueryObjectiv(z.mEnd, GL_QUERY_RESULT_AVAILABLE, &available);
             if (!available)
             {
                 return false;
@@ -165,8 +165,8 @@ namespace
         {
             GLuint64 t0 = 0;
             GLuint64 t1 = 0;
-            glGetQueryObjectui64v(z.mStart, GL_QUERY_RESULT, &t0);
-            glGetQueryObjectui64v(z.mEnd, GL_QUERY_RESULT, &t1);
+            gGL.getQueryObjectui64v(z.mStart, GL_QUERY_RESULT, &t0);
+            gGL.getQueryObjectui64v(z.mEnd, GL_QUERY_RESULT, &t1);
             if (t1 < t0)
             {
                 continue;

@@ -456,6 +456,46 @@ public:
 
     void setColorMask(bool writeColor, bool writeAlpha);
     void setColorMask(bool writeColorR, bool writeColorG, bool writeColorB, bool writeAlpha);
+    // <FS> Phase 2a: GL state/clear calls that used to be made directly by the viewer. They are thin
+    // pass-throughs today (no flush, so behaviour is unchanged); the Vulkan backend will implement them.
+    // Mask/face arguments are the GL enum values (GL_COLOR_BUFFER_BIT, GL_FRONT, ...).
+    void clearBuffers(U32 gl_buffer_mask);
+    void setClearColor(F32 r, F32 g, F32 b, F32 a);
+    void setViewport(S32 x, S32 y, S32 width, S32 height);
+    void setCullFace(U32 gl_face);
+    void setPolygonOffset(F32 factor, F32 units);
+    void setPolygonMode(U32 gl_face, U32 gl_mode);     // GL_FRONT_AND_BACK, GL_LINE / GL_FILL / GL_POINT
+    void setPointSize(F32 size);
+    void setStencilFunc(U32 gl_func, S32 ref, U32 mask);
+    void setStencilOp(U32 gl_sfail, U32 gl_dpfail, U32 gl_dppass);
+    void setStencilMask(U32 mask);
+    void readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data);
+    void drawBuffers(S32 count, const U32* gl_buffers);
+    void genQueries(S32 count, U32* ids);
+    void deleteQueries(S32 count, const U32* ids);
+    void beginQuery(U32 gl_target, U32 id);
+    void endQuery(U32 gl_target);
+    void queryTimestamp(U32 id);
+    void getQueryObjectiv(U32 id, U32 gl_pname, S32* result);
+    void getQueryObjectuiv(U32 id, U32 gl_pname, U32* result);
+    void getQueryObjectui64v(U32 id, U32 gl_pname, U64* result);
+    void genBuffers(S32 count, U32* ids);
+    void deleteBuffers(S32 count, const U32* ids);
+    void bindBuffer(U32 gl_target, U32 id);
+    void bufferData(U32 gl_target, S64 size, const void* data, U32 gl_usage);
+    void bindBufferBase(U32 gl_target, U32 index, U32 id);
+    void copyTexSubImage2D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height);
+    void copyTexSubImage3D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height);
+    void generateMipmap(U32 gl_target);
+    void texParameteri(U32 gl_target, U32 gl_pname, S32 param);
+    void texImage2D(U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data);
+    void bindFramebuffer(U32 gl_target, U32 id);
+    U32 checkFramebufferStatus(U32 gl_target);
+    U32 getError();
+    void activeTexture(U32 gl_texture_unit_enum);   // GL_TEXTURE0 + n
+    void bindTexture(U32 gl_target, U32 id);        // raw bind, bypasses the LLTexUnit cache (as the old direct call did)
+    void deleteTextures(S32 count, const U32* ids);
+    F32 getLineWidth() const { return mLineWidth; }
     void setSceneBlendType(eBlendType type);
 
     // applies blend func to both color and alpha

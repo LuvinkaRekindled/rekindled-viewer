@@ -118,7 +118,7 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
 
     // Check for OpenGL errors
     GLenum err;
-    while ((err = glGetError()) != GL_NO_ERROR)
+    while ((err = gGL.getError()) != GL_NO_ERROR)
     {
         LL_INFOS() << "OpenGL Error: " << err << LL_ENDL;
     }
@@ -163,7 +163,7 @@ static void renderStaticSphere(const LLVector3& joint_world_position, const LLCo
 
     // Check for OpenGL errors
     GLenum err;
-    while ((err = glGetError()) != GL_NO_ERROR)
+    while ((err = gGL.getError()) != GL_NO_ERROR)
     {
         LL_INFOS() << "OpenGL Error: " << err << LL_ENDL;
     }

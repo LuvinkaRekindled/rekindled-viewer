@@ -13532,27 +13532,27 @@ void LLVOAvatar::placeProfileQuery()
 {
     if (mGPUTimerQuery == 0)
     {
-        glGenQueries(1, &mGPUTimerQuery);
+        gGL.genQueries(1, &mGPUTimerQuery);
     }
 
-    glBeginQuery(GL_TIME_ELAPSED, mGPUTimerQuery);
+    gGL.beginQuery(GL_TIME_ELAPSED, mGPUTimerQuery);
 }
 
 void LLVOAvatar::readProfileQuery(S32 retries)
 {
     if (!mGPUProfilePending)
     {
-        glEndQuery(GL_TIME_ELAPSED);
+        gGL.endQuery(GL_TIME_ELAPSED);
         mGPUProfilePending = true;
     }
 
     GLuint64 result = 0;
-    glGetQueryObjectui64v(mGPUTimerQuery, GL_QUERY_RESULT_AVAILABLE, &result);
+    gGL.getQueryObjectui64v(mGPUTimerQuery, GL_QUERY_RESULT_AVAILABLE, &result);
 
     if (result == GL_TRUE || --retries <= 0)
     { // query available, readback result
         GLuint64 time_elapsed = 0;
-        glGetQueryObjectui64v(mGPUTimerQuery, GL_QUERY_RESULT, &time_elapsed);
+        gGL.getQueryObjectui64v(mGPUTimerQuery, GL_QUERY_RESULT, &time_elapsed);
         mGPURenderTime = time_elapsed / 1000000.f;
         mGPUProfilePending = false;
 
