@@ -871,6 +871,20 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     if (ret)
     {
         LL_DEBUGS("ShaderLoading") << "glCreateShader done" << LL_ENDL;
+        if (mRecordShaderSources)
+        {
+            RecordedShader rec;
+            rec.mType = type;
+            rec.mFile = filename;
+            for (GLuint i = 0; i < shader_code_count; ++i)
+            {
+                if (shader_code_text[i])
+                {
+                    rec.mSource += shader_code_text[i];
+                }
+            }
+            mRecordedShaders[ret] = std::move(rec);
+        }
         glShaderSource(ret, shader_code_count, (const GLchar**)shader_code_text, NULL);
 
         error = glGetError();
@@ -1011,6 +1025,12 @@ void LLShaderMgr::initShaderCache(bool enabled, const LLUUID& old_cache_version,
     LL_PROFILE_ZONE_SCOPED;
     LL_INFOS("ShaderMgr") << "Initializing shader cache" << LL_ENDL;
 
+    mRecordShaderSources = getenv("LL_VK_SHADER_CHECK") != nullptr;
+    if (mRecordShaderSources)
+    {
+        enabled = false;    // cached binaries would skip loadShaderFile, so there would be no source to check
+        LL_INFOS("ShaderMgr") << "LL_VK_SHADER_CHECK set: shader cache disabled, Vulkan compile check enabled" << LL_ENDL;
+    }
     mShaderCacheEnabled = gGLManager.mGLVersion >= 4.09 && enabled;
 
     if(!mShaderCacheEnabled || mShaderCacheVersion.notNull())

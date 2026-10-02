@@ -409,6 +409,17 @@ public:
     bool mShaderCacheEnabled = false;
     std::string mShaderCacheDir;
 
+    // <FS> Vulkan shader check (set LL_VK_SHADER_CHECK=1): remembers the final GLSL of every shader object so
+    // each program can also be compiled through the Vulkan path once it has linked. Disables the shader cache.
+    struct RecordedShader
+    {
+        GLenum mType = 0;
+        std::string mFile;
+        std::string mSource;
+    };
+    bool mRecordShaderSources = false;
+    std::map<GLuint, RecordedShader> mRecordedShaders;
+
 protected:
 
     // our parameter manager singleton instance

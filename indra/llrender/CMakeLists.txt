@@ -35,6 +35,7 @@ set(llrender_SOURCE_FILES
     llvertexbuffer.cpp
     llvkcontext.cpp
     llvkprobe.cpp
+    llvkshader.cpp
     llvkvma.cpp
     llglcommonfunc.cpp
     )
@@ -71,6 +72,7 @@ set(llrender_HEADER_FILES
     llvkcontext.h
     llvkfunctions.inl
     llvkprobe.h
+    llvkshader.h
     llglcommonfunc.h
     )
 
@@ -108,8 +110,15 @@ if (USE_VULKAN)
   if (NOT EXISTS "${VULKAN_SDK_DIR}/Include/vulkan/vulkan.h")
     message(FATAL_ERROR "USE_VULKAN needs VULKAN_SDK_DIR to point at a Vulkan SDK (Include/vulkan/vulkan.h not found)")
   endif ()
-  target_include_directories(llrender PRIVATE "${VULKAN_SDK_DIR}/Include")
+  target_include_directories(llrender SYSTEM PRIVATE "${VULKAN_SDK_DIR}/Include")
   target_compile_definitions(llrender PRIVATE LL_VULKAN=1)
+  # glslang (GLSL -> SPIR-V) is linked statically; the viewer builds with the release CRT
+  target_link_libraries(llrender
+          "${VULKAN_SDK_DIR}/Lib/glslang.lib"
+          "${VULKAN_SDK_DIR}/Lib/glslang-default-resource-limits.lib"
+          "${VULKAN_SDK_DIR}/Lib/SPIRV-Tools-opt.lib"
+          "${VULKAN_SDK_DIR}/Lib/SPIRV-Tools.lib"
+          )
 endif ()
 
 set_property(TARGET llrender PROPERTY POSITION_INDEPENDENT_CODE ON)
