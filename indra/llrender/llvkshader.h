@@ -78,6 +78,10 @@ struct ProgramInfo
 bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
                     ProgramInfo& out, const std::string& dump_dir);
 
+// Programs compiled by the check path are remembered by name so Vulkan code can use the viewer's real shaders.
+void registerCompiledProgram(const std::string& name, const ProgramInfo& info);
+const ProgramInfo* findCompiledProgram(const std::string& name);
+
 } // namespace LLVk
 
 #endif // LL_VULKAN

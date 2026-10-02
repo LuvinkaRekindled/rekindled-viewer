@@ -1049,6 +1049,26 @@ bool compileProgram(const std::string& program_name, const std::vector<StageSour
     return true;
 }
 
+namespace
+{
+std::map<std::string, ProgramInfo>& registry()
+{
+    static std::map<std::string, ProgramInfo> sRegistry;
+    return sRegistry;
+}
+}
+
+void registerCompiledProgram(const std::string& name, const ProgramInfo& info)
+{
+    registry()[name] = info;
+}
+
+const ProgramInfo* findCompiledProgram(const std::string& name)
+{
+    auto it = registry().find(name);
+    return it == registry().end() ? nullptr : &it->second;
+}
+
 } // namespace LLVk
 
 #endif // LL_VULKAN
