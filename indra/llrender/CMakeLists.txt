@@ -33,7 +33,9 @@ set(llrender_SOURCE_FILES
     lltexturemanagerbridge.cpp
     lluiimage.cpp
     llvertexbuffer.cpp
+    llvkcontext.cpp
     llvkprobe.cpp
+    llvkvma.cpp
     llglcommonfunc.cpp
     )
     
@@ -66,6 +68,8 @@ set(llrender_HEADER_FILES
     lluiimage.h
     lluiimage.inl
     llvertexbuffer.h
+    llvkcontext.h
+    llvkfunctions.inl
     llvkprobe.h
     llglcommonfunc.h
     )
