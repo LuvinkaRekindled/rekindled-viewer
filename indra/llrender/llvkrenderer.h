@@ -145,6 +145,33 @@ struct SamplerDesc
     bool operator<(const SamplerDesc& o) const;
 };
 
+// ---- textures ------------------------------------------------------------------------------------------
+enum class TexType { Tex2D, Tex2DArray, Cube, CubeArray, Tex3D };
+
+struct TextureDesc
+{
+    TexType mType = TexType::Tex2D;
+    U32 mWidth = 1;
+    U32 mHeight = 1;
+    U32 mDepth = 1;                 // array layers, cube count (CubeArray) or 3D depth; ignored for Tex2D / Cube
+    U32 mMips = 1;
+    VkFormat mFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    VkImageUsageFlags mUsage = 0;   // extra usage on top of sampled + transfer (e.g. COLOR_ATTACHMENT for render targets)
+    VkComponentMapping mSwizzle = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
+};
+
+struct FormatInfo
+{
+    U32 mBlockWidth = 1;
+    U32 mBlockHeight = 1;
+    U32 mBytesPerBlock = 4;
+    bool mCompressed = false;
+    bool mKnown = false;
+};
+
+FormatInfo formatInfo(VkFormat format);
+U32 mipLevelCount(U32 width, U32 height);
+
 // clear selection bits
 enum ClearBits : U32 { CLEAR_COLOR = 1, CLEAR_DEPTH = 2, CLEAR_STENCIL = 4 };
 
@@ -192,6 +219,15 @@ public:
     // a clear with nothing drawn after it still has to happen: begins (and leaves open) a pass for it
     void flushPendingClear();
 
+    // ---- textures ----
+    bool createTexture(const TextureDesc& desc, Image& out);
+    // Copies tightly packed texel rows (or compressed blocks) into one mip level of one layer (or 3D slice range
+    // starting at 'layer' with 'depth' slices). Recorded into the current frame, or submitted immediately when
+    // no frame is active. The image ends in SHADER_READ_ONLY_OPTIMAL.
+    bool uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, const void* data, VkDeviceSize bytes);
+    // fills mips 1..n from mip 0 with linear blits (the image must have been created with mips > 1)
+    bool generateMipmaps(Image& image);
+
     U32 getDrawCount() const { return mDrawCount; }
 
 private:
@@ -199,6 +235,8 @@ private:
     Renderer() = default;
 
     bool createLayouts();
+    void transition(VkCommandBuffer cmd, Image& image, VkImageLayout layout);
+    void withCommandBuffer(const std::function<void(VkCommandBuffer)>& record);
     void applyState();
     void beginRenderingIfNeeded();
     void endRendering();

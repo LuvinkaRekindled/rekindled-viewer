@@ -645,6 +645,18 @@ void Renderer::setScissorEnabled(bool enabled)
     mScissorEnabled = enabled;
 }
 
+void Renderer::transition(VkCommandBuffer cmd, Image& image, VkImageLayout layout)
+{
+    if (image.mLayout == layout)
+    {
+        return;
+    }
+    imageBarrier(cmd, image.mImage, image.mAspect, image.mMipLevels, image.mLayers, image.mLayout, layout,
+                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    image.mLayout = layout;
+}
+
 void Renderer::ensureLayout(Image& image, VkImageLayout layout)
 {
     if (image.mLayout == layout)
@@ -677,10 +689,7 @@ void Renderer::ensureLayout(Image& image, VkImageLayout layout)
             endRendering();
         }
     }
-    imageBarrier(mCmd, image.mImage, image.mAspect, image.mMipLevels, image.mLayers, image.mLayout, layout,
-                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
-                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
-    image.mLayout = layout;
+    transition(mCmd, image, layout);
 }
 
 void Renderer::beginRenderingIfNeeded()
@@ -1008,6 +1017,247 @@ void Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
     vkCmdBindIndexBuffer(mCmd, mIndexBuffer, mIndexOffset, mIndexType);
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
     ++mDrawCount;
+}
+
+//-----------------------------------------------------------------------------------------------------
+// Textures
+//-----------------------------------------------------------------------------------------------------
+
+FormatInfo formatInfo(VkFormat f)
+{
+    FormatInfo fi;
+    fi.mKnown = true;
+    switch (f)
+    {
+    case VK_FORMAT_R8_UNORM: case VK_FORMAT_R8_SNORM: case VK_FORMAT_R8_UINT: fi.mBytesPerBlock = 1; break;
+    case VK_FORMAT_R8G8_UNORM: case VK_FORMAT_R16_UNORM: case VK_FORMAT_R16_SFLOAT: case VK_FORMAT_D16_UNORM: fi.mBytesPerBlock = 2; break;
+    case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB: case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
+    case VK_FORMAT_R16G16_UNORM: case VK_FORMAT_R16G16_SFLOAT: case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_D32_SFLOAT:
+    case VK_FORMAT_A2B10G10R10_UNORM_PACK32: case VK_FORMAT_B10G11R11_UFLOAT_PACK32: case VK_FORMAT_R8G8B8A8_UINT:
+        fi.mBytesPerBlock = 4; break;
+    case VK_FORMAT_R16G16B16A16_UNORM: case VK_FORMAT_R16G16B16A16_SFLOAT: case VK_FORMAT_R32G32_SFLOAT: fi.mBytesPerBlock = 8; break;
+    case VK_FORMAT_R32G32B32A32_SFLOAT: fi.mBytesPerBlock = 16; break;
+    case VK_FORMAT_BC1_RGB_UNORM_BLOCK: case VK_FORMAT_BC1_RGBA_UNORM_BLOCK: case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
+    case VK_FORMAT_BC4_UNORM_BLOCK:
+        fi.mBlockWidth = fi.mBlockHeight = 4; fi.mBytesPerBlock = 8; fi.mCompressed = true; break;
+    case VK_FORMAT_BC2_UNORM_BLOCK: case VK_FORMAT_BC3_UNORM_BLOCK: case VK_FORMAT_BC3_SRGB_BLOCK: case VK_FORMAT_BC5_UNORM_BLOCK:
+    case VK_FORMAT_BC7_UNORM_BLOCK: case VK_FORMAT_BC7_SRGB_BLOCK:
+        fi.mBlockWidth = fi.mBlockHeight = 4; fi.mBytesPerBlock = 16; fi.mCompressed = true; break;
+    default:
+        fi.mKnown = false;
+        break;
+    }
+    return fi;
+}
+
+U32 mipLevelCount(U32 width, U32 height)
+{
+    U32 n = 1;
+    U32 m = std::max(width, height);
+    while (m > 1)
+    {
+        m >>= 1;
+        ++n;
+    }
+    return n;
+}
+
+void Renderer::withCommandBuffer(const std::function<void(VkCommandBuffer)>& record)
+{
+    if (mCmd != VK_NULL_HANDLE)
+    {
+        endRendering();     // copies and blits are not allowed inside a render pass; the next draw resumes it
+        record(mCmd);
+        return;
+    }
+    Context::instance().immediateSubmit(record);
+}
+
+bool Renderer::createTexture(const TextureDesc& d, Image& out)
+{
+    Context& ctx = Context::instance();
+    const FormatInfo fi = formatInfo(d.mFormat);
+    if (!fi.mKnown && d.mFormat != VK_FORMAT_UNDEFINED)
+    {
+        // formats outside the table still work for render targets; uploads need the table
+        LL_INFOS("Vulkan") << "createTexture: format " << (S32)d.mFormat << " is not in the format table" << LL_ENDL;
+    }
+
+    VkImageCreateInfo ii = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    ii.imageType = d.mType == TexType::Tex3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+    ii.format = d.mFormat;
+    ii.mipLevels = d.mMips;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | d.mUsage;
+    ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkImageViewType view_type = VK_IMAGE_VIEW_TYPE_2D;
+    U32 layers = 1;
+    U32 depth = 1;
+    switch (d.mType)
+    {
+    case TexType::Tex2D:
+        break;
+    case TexType::Tex2DArray:
+        layers = std::max<U32>(1, d.mDepth);
+        view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        break;
+    case TexType::Cube:
+        layers = 6;
+        view_type = VK_IMAGE_VIEW_TYPE_CUBE;
+        ii.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+        break;
+    case TexType::CubeArray:
+        layers = 6 * std::max<U32>(1, d.mDepth);
+        view_type = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+        ii.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+        break;
+    case TexType::Tex3D:
+        depth = std::max<U32>(1, d.mDepth);
+        view_type = VK_IMAGE_VIEW_TYPE_3D;
+        break;
+    }
+    ii.extent = { d.mWidth, d.mHeight, depth };
+    ii.arrayLayers = layers;
+
+    VmaAllocationCreateInfo ai = {};
+    ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+    out = Image();
+    if (!vk_ok(vmaCreateImage(ctx.getAllocator(), &ii, &ai, &out.mImage, &out.mAllocation, nullptr), "vmaCreateImage (texture)"))
+    {
+        out = Image();
+        return false;
+    }
+    out.mFormat = d.mFormat;
+    out.mAspect = aspectForFormat(d.mFormat);
+    out.mExtent = { d.mWidth, d.mHeight, depth };
+    out.mMipLevels = d.mMips;
+    out.mLayers = layers;
+    out.mViewType = view_type;
+    out.mLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkImageViewCreateInfo vi = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    vi.image = out.mImage;
+    vi.viewType = view_type;
+    vi.format = d.mFormat;
+    vi.components = d.mSwizzle;
+    vi.subresourceRange = { out.mAspect, 0, d.mMips, 0, layers };
+    if (!vk_ok(vkCreateImageView(ctx.getDevice(), &vi, nullptr, &out.mView), "vkCreateImageView (texture)"))
+    {
+        vmaDestroyImage(ctx.getAllocator(), out.mImage, out.mAllocation);
+        out = Image();
+        return false;
+    }
+    return true;
+}
+
+bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, const void* data, VkDeviceSize bytes)
+{
+    Context& ctx = Context::instance();
+    const FormatInfo fi = formatInfo(image.mFormat);
+    if (!fi.mKnown || mip >= image.mMipLevels)
+    {
+        return false;
+    }
+
+    // tightly packed size of the region
+    const U32 bw = (width + fi.mBlockWidth - 1) / fi.mBlockWidth;
+    const U32 bh = (height + fi.mBlockHeight - 1) / fi.mBlockHeight;
+    const VkDeviceSize expected = (VkDeviceSize)bw * bh * fi.mBytesPerBlock * std::max<U32>(depth, 1);
+    if (bytes < expected)
+    {
+        LL_WARNS("Vulkan") << "uploadTexture: " << bytes << " bytes supplied, " << expected << " needed" << LL_ENDL;
+        return false;
+    }
+
+    Buffer own;                 // used only when no frame is active
+    StagingAlloc stage;
+    if (mCmd != VK_NULL_HANDLE)
+    {
+        stage = ctx.allocStaging(expected, std::max<VkDeviceSize>(4, fi.mBytesPerBlock));
+    }
+    if (!stage.valid())
+    {
+        if (!ctx.createBuffer(expected, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, Context::Memory::Upload, own))
+        {
+            return false;
+        }
+        stage = { own.mBuffer, 0, own.mMapped };
+    }
+    memcpy(stage.mPtr, data, (size_t)expected);
+
+    const bool is_3d = image.mViewType == VK_IMAGE_VIEW_TYPE_3D;
+    withCommandBuffer([&](VkCommandBuffer cmd) {
+        transition(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkBufferImageCopy c = {};
+        c.bufferOffset = stage.mOffset;
+        c.imageSubresource = { image.mAspect, mip, is_3d ? 0 : layer, 1 };
+        c.imageOffset = { (S32)x, (S32)y, is_3d ? (S32)layer : 0 };
+        c.imageExtent = { width, height, std::max<U32>(depth, 1) };
+        vkCmdCopyBufferToImage(cmd, stage.mBuffer, image.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        transition(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    });
+
+    if (own.valid())
+    {
+        ctx.waitIdle();     // the immediate path already waited; this just makes the free unconditional
+        vmaDestroyBuffer(ctx.getAllocator(), own.mBuffer, own.mAllocation);
+    }
+    return true;
+}
+
+bool Renderer::generateMipmaps(Image& image)
+{
+    if (image.mMipLevels < 2)
+    {
+        return true;
+    }
+    withCommandBuffer([&](VkCommandBuffer cmd) {
+        // level 0 is the source of everything: bring the whole image to TRANSFER_DST first, then walk the chain
+        transition(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        const bool is_3d = image.mViewType == VK_IMAGE_VIEW_TYPE_3D;
+        S32 w = (S32)image.mExtent.width, h = (S32)image.mExtent.height, dp = (S32)image.mExtent.depth;
+        auto level_barrier = [&](U32 level, VkImageLayout from, VkImageLayout to) {
+            VkImageMemoryBarrier2 b = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+            b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+            b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+            b.oldLayout = from;
+            b.newLayout = to;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = image.mImage;
+            b.subresourceRange = { image.mAspect, level, 1, 0, image.mLayers };
+            VkDependencyInfo dep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            dep.imageMemoryBarrierCount = 1;
+            dep.pImageMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(cmd, &dep);
+        };
+        for (U32 i = 1; i < image.mMipLevels; ++i)
+        {
+            level_barrier(i - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            const S32 nw = std::max(1, w / 2), nh = std::max(1, h / 2), nd = is_3d ? std::max(1, dp / 2) : 1;
+            VkImageBlit blit = {};
+            blit.srcSubresource = { image.mAspect, i - 1, 0, image.mLayers };
+            blit.srcOffsets[1] = { w, h, is_3d ? dp : 1 };
+            blit.dstSubresource = { image.mAspect, i, 0, image.mLayers };
+            blit.dstOffsets[1] = { nw, nh, nd };
+            vkCmdBlitImage(cmd, image.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                           VK_FILTER_LINEAR);
+            w = nw; h = nh; dp = is_3d ? nd : dp;
+        }
+        // every level except the last is SRC, the last is DST: bring them all to SHADER_READ_ONLY
+        for (U32 i = 0; i + 1 < image.mMipLevels; ++i)
+        {
+            level_barrier(i, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        level_barrier(image.mMipLevels - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        image.mLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    });
+    return true;
 }
 
 } // namespace LLVk
