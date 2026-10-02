@@ -81,6 +81,7 @@ struct Image
     VkExtent3D mExtent = { 0, 0, 0 };
     U32 mMipLevels = 1;
     U32 mLayers = 1;
+    VkImageViewType mViewType = VK_IMAGE_VIEW_TYPE_2D;
     VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED;     // tracked by the renderer
     bool valid() const { return mImage != VK_NULL_HANDLE; }
 };
