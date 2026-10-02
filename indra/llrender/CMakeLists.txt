@@ -33,6 +33,7 @@ set(llrender_SOURCE_FILES
     lltexturemanagerbridge.cpp
     lluiimage.cpp
     llvertexbuffer.cpp
+    llvkprobe.cpp
     llglcommonfunc.cpp
     )
     
@@ -65,6 +66,7 @@ set(llrender_HEADER_FILES
     lluiimage.h
     lluiimage.inl
     llvertexbuffer.h
+    llvkprobe.h
     llglcommonfunc.h
     )
 
@@ -91,6 +93,20 @@ endif (BUILD_HEADLESS)
 
 add_library (llrender ${llrender_SOURCE_FILES})
 target_include_directories( llrender  INTERFACE   ${CMAKE_CURRENT_SOURCE_DIR})
+
+# <FS> Experimental Vulkan backend (see llvkprobe.h). Needs the Vulkan SDK headers; the loader is loaded at runtime.
+option(USE_VULKAN "Build the experimental Vulkan backend" OFF)
+set(VULKAN_SDK_DIR "" CACHE PATH "Vulkan SDK root (headers are in Include/)")
+if (USE_VULKAN)
+  if (NOT VULKAN_SDK_DIR AND DEFINED ENV{VULKAN_SDK})
+    set(VULKAN_SDK_DIR "$ENV{VULKAN_SDK}")
+  endif ()
+  if (NOT EXISTS "${VULKAN_SDK_DIR}/Include/vulkan/vulkan.h")
+    message(FATAL_ERROR "USE_VULKAN needs VULKAN_SDK_DIR to point at a Vulkan SDK (Include/vulkan/vulkan.h not found)")
+  endif ()
+  target_include_directories(llrender PRIVATE "${VULKAN_SDK_DIR}/Include")
+  target_compile_definitions(llrender PRIVATE LL_VULKAN=1)
+endif ()
 
 set_property(TARGET llrender PROPERTY POSITION_INDEPENDENT_CODE ON)
 

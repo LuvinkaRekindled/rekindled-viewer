@@ -28,6 +28,7 @@
 
 #include "llviewerdisplay.h"
 #include "llgpuzonetimer.h"
+#include "llvkprobe.h"
 
 #include "fsyspath.h"
 #include "hexdump.h"
@@ -488,6 +489,13 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     // <FS> per-zone GPU timing in the log (only does anything while FSGpuZoneTimers is on).
     // Done first, before any zone of this frame opens, so the previous frame is complete.
     LLGpuZoneTimer::onFrameEnd();
+
+    // <FS> Vulkan bring-up probe (does nothing unless built with USE_VULKAN and FSVulkanProbe is on)
+    {
+        static LLCachedControl<bool> vulkan_probe(gSavedSettings, "FSVulkanProbe", false);
+        LLVkProbe::setEnabled(vulkan_probe);
+        LLVkProbe::frame();
+    }
     // </FS>
 
     LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Render");
