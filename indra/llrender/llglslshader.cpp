@@ -33,6 +33,9 @@
 #include "llrender.h"
 #include "llvertexbuffer.h"
 #include "llrendertarget.h"
+#if defined(LL_VULKAN)
+#include "llvkshader.h"
+#endif
 
 #include "hbxxh.h"
 #include "llsdserialize.h"
@@ -404,6 +407,64 @@ void LLGLSLShader::unloadInternal()
     stop_glerror();
 }
 
+#if defined(LL_VULKAN)
+// <FS> compiles an already linked GL program a second time through the Vulkan shader path and logs the result
+static void vulkan_check_program(const std::string& name, GLuint program)
+{
+    LLShaderMgr* mgr = LLShaderMgr::instance();
+    GLuint objects[1024];
+    GLsizei count = 0;
+    glGetAttachedShaders(program, 1024, &count, objects);
+
+    std::vector<LLVk::StageSource> stages;
+    for (GLsizei i = 0; i < count; ++i)
+    {
+        auto it = mgr->mRecordedShaders.find(objects[i]);
+        if (it == mgr->mRecordedShaders.end())
+        {
+            continue;
+        }
+        LLVk::StageSource s;
+        s.mName = it->second.mFile;
+        s.mSource = it->second.mSource;
+        switch (it->second.mType)
+        {
+        case GL_VERTEX_SHADER: s.mStage = LLVk::StageSource::Vertex; break;
+        case GL_FRAGMENT_SHADER: s.mStage = LLVk::StageSource::Fragment; break;
+        case GL_GEOMETRY_SHADER: s.mStage = LLVk::StageSource::Geometry; break;
+        default: continue;
+        }
+        stages.push_back(std::move(s));
+    }
+
+    LLVk::ShaderEnv env;
+    env.mAttributeNames = mgr->mReservedAttribs;
+    env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
+
+    const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
+    LLVk::ProgramInfo info;
+    if (LLVk::compileProgram(name, stages, env, info, dump ? dump : ""))
+    {
+        U32 spv_bytes = 0;
+        for (const auto& v : info.mSpirv)
+        {
+            spv_bytes += (U32)(v.size() * 4);
+        }
+        LL_INFOS("VkShaderCheck") << "OK " << name << " stages=" << stages.size() << " uniforms=" << info.mUniforms.size()
+                                  << " block=" << info.mBlockSize << "B samplers=" << info.mSamplers.size() << " spirv=" << spv_bytes << "B" << LL_ENDL;
+    }
+    else
+    {
+        std::string err = info.mError;
+        if (err.size() > 1200)
+        {
+            err.resize(1200);
+        }
+        LL_WARNS("VkShaderCheck") << "FAIL " << name << ": " << err << LL_ENDL;
+    }
+}
+#endif
+
 bool LLGLSLShader::createShader()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -536,6 +597,13 @@ bool LLGLSLShader::createShader()
         llassert(mActiveTextureChannels <= 16);
         unbind();
     }
+
+#if defined(LL_VULKAN)
+    if (success && LLShaderMgr::instance()->mRecordShaderSources)
+    {
+        vulkan_check_program(mName, mProgramObject);
+    }
+#endif
 
     LL_DEBUGS("GLSLTextureChannels") << mName << " has " << mActiveTextureChannels << " active texture channels" << LL_ENDL;
 
