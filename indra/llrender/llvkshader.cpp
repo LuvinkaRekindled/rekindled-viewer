@@ -1042,6 +1042,11 @@ bool compileProgram(const std::string& program_name, const std::vector<StageSour
         out.mSamplers.push_back({ s.mName, s.mType, s.mBinding });
     }
     out.mAttributes.assign(attributes.begin(), attributes.end());
+    for (const std::string& a : out.mAttributes)
+    {
+        auto it = std::find(env.mAttributeNames.begin(), env.mAttributeNames.end(), a);
+        out.mAttributeLocations.push_back(it == env.mAttributeNames.end() ? 0 : (U32)(it - env.mAttributeNames.begin()));
+    }
     for (const auto& kv : frag_outputs)
     {
         out.mOutputs.push_back(kv.first);

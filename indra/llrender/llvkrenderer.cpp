@@ -30,6 +30,7 @@ bool vk_ok(VkResult r, const char* what)
 
 const U32 RING_BYTES = 8u * 1024 * 1024;       // per frame in flight
 const U32 DUMMY_UBO_BYTES = 64 * 1024;
+const U32 VERTEX_RING_BYTES = 8u * 1024 * 1024;
 
 VkShaderStageFlags all_graphics_stages()
 {
@@ -82,7 +83,9 @@ bool SamplerDesc::operator<(const SamplerDesc& o) const
     if (mAddressW != o.mAddressW) return mAddressW < o.mAddressW;
     if (mAnisotropy != o.mAnisotropy) return mAnisotropy < o.mAnisotropy;
     if (mCompare != o.mCompare) return mCompare < o.mCompare;
-    return mCompareOp < o.mCompareOp;
+    if (mCompareOp != o.mCompareOp) return mCompareOp < o.mCompareOp;
+    if (mMinLod != o.mMinLod) return mMinLod < o.mMinLod;
+    return mMaxLod < o.mMaxLod;
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -425,6 +428,13 @@ bool Renderer::init()
             return false;
         }
     }
+    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    {
+        if (!ctx.createBuffer(VERTEX_RING_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, Context::Memory::Upload, mVertexRing[i]))
+        {
+            return false;
+        }
+    }
     if (!ctx.createBuffer(DUMMY_UBO_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, Context::Memory::Upload, mDummyUbo))
     {
         return false;
@@ -532,6 +542,11 @@ void Renderer::shutdown()
             if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
             b = Buffer();
         }
+        for (Buffer& b : mVertexRing)
+        {
+            if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
+            b = Buffer();
+        }
         if (mDummyUbo.valid()) vmaDestroyBuffer(ctx.getAllocator(), mDummyUbo.mBuffer, mDummyUbo.mAllocation);
         mDummyUbo = Buffer();
         if (mWhite.valid())
@@ -569,8 +584,8 @@ VkSampler Renderer::getSampler(const SamplerDesc& desc)
     si.maxAnisotropy = std::min(desc.mAnisotropy, ctx.getCaps().mMaxAnisotropy);
     si.compareEnable = desc.mCompare ? VK_TRUE : VK_FALSE;
     si.compareOp = desc.mCompareOp;
-    si.minLod = 0.f;
-    si.maxLod = VK_LOD_CLAMP_NONE;
+    si.minLod = desc.mMinLod;
+    si.maxLod = desc.mMaxLod;
     si.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     VkSampler s = VK_NULL_HANDLE;
     if (!vk_ok(vkCreateSampler(ctx.getDevice(), &si, nullptr, &s), "vkCreateSampler"))
@@ -590,6 +605,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mCmd = cmd;
     mSlot = frame_slot;
     mRingUsed = 0;
+    mVertexRingUsed = 0;
     mDrawCount = 0;
     mRendering = false;
     mPendingClear = 0;
@@ -669,45 +685,52 @@ void Renderer::setScissorEnabled(bool enabled)
     mScissorEnabled = enabled;
 }
 
-void Renderer::transition(VkCommandBuffer cmd, Image& image, VkImageLayout layout)
+static Image* root_of(Image* i)
 {
+    return i->mOwner ? i->mOwner : i;
+}
+
+void Renderer::transition(VkCommandBuffer cmd, Image& view_or_image, VkImageLayout layout)
+{
+    Image& image = *root_of(&view_or_image);     // views of one layer/mip share the owner's layout (whole image)
     if (image.mLayout == layout)
     {
+        view_or_image.mLayout = layout;
         return;
     }
     imageBarrier(cmd, image.mImage, image.mAspect, image.mMipLevels, image.mLayers, image.mLayout, layout,
                  VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     image.mLayout = layout;
+    view_or_image.mLayout = layout;
 }
 
 void Renderer::ensureLayout(Image& image, VkImageLayout layout)
 {
-    if (image.mLayout == layout)
+    Image* root = root_of(&image);
+    if (root->mLayout == layout)
     {
         return;
     }
+    auto is_attached = [&]() {
+        bool attached = mDepthTarget && root_of(mDepthTarget) == root;
+        for (U32 i = 0; i < mColorCount; ++i)
+        {
+            attached = attached || root_of(mColorTargets[i]) == root;
+        }
+        return attached;
+    };
     // a pass that has this image attached must end before the image changes layout
     if (mRendering)
     {
-        bool attached = &image == mDepthTarget;
-        for (U32 i = 0; i < mColorCount; ++i)
-        {
-            attached = attached || &image == mColorTargets[i];
-        }
-        if (attached)
+        if (is_attached())
         {
             endRendering();
         }
     }
     else if (mPendingClear && !mInBegin)
     {
-        bool attached = &image == mDepthTarget;
-        for (U32 i = 0; i < mColorCount; ++i)
-        {
-            attached = attached || &image == mColorTargets[i];
-        }
-        if (attached)
+        if (is_attached())
         {
             flushPendingClear();     // the clear is recorded before the image changes layout
             endRendering();
@@ -828,6 +851,22 @@ void Renderer::setTexture(U32 unit, Image* image, VkSampler sampler)
         mTextures[unit] = image;
         mTextureSamplers[unit] = sampler;
     }
+}
+
+Renderer::ScratchAlloc Renderer::allocVertexScratch(VkDeviceSize size)
+{
+    ScratchAlloc a;
+    const U32 start = (mVertexRingUsed + 15) / 16 * 16;
+    if (start + size > VERTEX_RING_BYTES || !mVertexRing[mSlot].valid())
+    {
+        LL_WARNS_ONCE("Vulkan") << "vertex scratch ring exhausted" << LL_ENDL;
+        return a;
+    }
+    mVertexRingUsed = start + (U32)size;
+    a.mBuffer = mVertexRing[mSlot].mBuffer;
+    a.mOffset = start;
+    a.mPtr = (U8*)mVertexRing[mSlot].mMapped + start;
+    return a;
 }
 
 U32 Renderer::allocUniform(U32 size)
@@ -955,29 +994,65 @@ void Renderer::applyState()
     mStateApplied = true;
 
     // 5. vertex input
-    if (mVertexInputDirty)
+    if (mUseVertexInput)
     {
-        VkVertexInputBindingDescription2EXT binding = { VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT };
-        binding.binding = 0;
-        binding.stride = mLayout.mStride;
-        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        binding.divisor = 1;
+        // general case: any number of bindings and attributes, recorded on every draw (the buffers can change)
+        VkVertexInputBindingDescription2EXT bindings[16] = {};
         VkVertexInputAttributeDescription2EXT attrs[16] = {};
-        const U32 n = std::min<U32>((U32)mLayout.mAttributes.size(), 16);
-        for (U32 i = 0; i < n; ++i)
+        VkBuffer buffers[16] = {};
+        VkDeviceSize offsets[16] = {};
+        const U32 nb = std::min<U32>((U32)mVertexInput.mBindings.size(), 16);
+        const U32 na = std::min<U32>((U32)mVertexInput.mAttributes.size(), 16);
+        for (U32 i = 0; i < nb; ++i)
+        {
+            bindings[i].sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT;
+            bindings[i].binding = i;
+            bindings[i].stride = mVertexInput.mBindings[i].mStride;
+            bindings[i].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+            bindings[i].divisor = 1;
+            buffers[i] = mVertexInput.mBindings[i].mBuffer;
+            offsets[i] = mVertexInput.mBindings[i].mOffset;
+        }
+        for (U32 i = 0; i < na; ++i)
         {
             attrs[i].sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT;
-            attrs[i].location = mLayout.mAttributes[i].mLocation;
-            attrs[i].binding = 0;
-            attrs[i].format = mLayout.mAttributes[i].mFormat;
-            attrs[i].offset = mLayout.mAttributes[i].mOffset;
+            attrs[i].location = mVertexInput.mAttributes[i].mLocation;
+            attrs[i].binding = mVertexInput.mAttributes[i].mBinding;
+            attrs[i].format = mVertexInput.mAttributes[i].mFormat;
+            attrs[i].offset = mVertexInput.mAttributes[i].mOffset;
         }
-        vkCmdSetVertexInputEXT(mCmd, n ? 1 : 0, n ? &binding : nullptr, n, attrs);
-        mVertexInputDirty = false;
+        vkCmdSetVertexInputEXT(mCmd, nb, nb ? bindings : nullptr, na, attrs);
+        if (nb)
+        {
+            vkCmdBindVertexBuffers(mCmd, 0, nb, buffers, offsets);
+        }
     }
-    if (mVertexBuffer)
+    else
     {
-        vkCmdBindVertexBuffers(mCmd, 0, 1, &mVertexBuffer, &mVertexOffset);
+        if (mVertexInputDirty)
+        {
+            VkVertexInputBindingDescription2EXT binding = { VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT };
+            binding.binding = 0;
+            binding.stride = mLayout.mStride;
+            binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+            binding.divisor = 1;
+            VkVertexInputAttributeDescription2EXT attrs[16] = {};
+            const U32 n = std::min<U32>((U32)mLayout.mAttributes.size(), 16);
+            for (U32 i = 0; i < n; ++i)
+            {
+                attrs[i].sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT;
+                attrs[i].location = mLayout.mAttributes[i].mLocation;
+                attrs[i].binding = 0;
+                attrs[i].format = mLayout.mAttributes[i].mFormat;
+                attrs[i].offset = mLayout.mAttributes[i].mOffset;
+            }
+            vkCmdSetVertexInputEXT(mCmd, n ? 1 : 0, n ? &binding : nullptr, n, attrs);
+            mVertexInputDirty = false;
+        }
+        if (mVertexBuffer)
+        {
+            vkCmdBindVertexBuffers(mCmd, 0, 1, &mVertexBuffer, &mVertexOffset);
+        }
     }
 
     // 6. loose uniforms: copy this program's shadow into the ring when it changed (or on its first use this frame)
@@ -1284,6 +1359,44 @@ bool Renderer::generateMipmaps(Image& image)
         level_barrier(image.mMipLevels - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         image.mLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     });
+    return true;
+}
+
+bool Renderer::copyRegion(Image& src, S32 sx, S32 sy, Image& dst, U32 dst_mip, U32 dst_layer, S32 dx, S32 dy, S32 width, S32 height)
+{
+    if (mCmd == VK_NULL_HANDLE || width <= 0 || height <= 0)
+    {
+        return false;
+    }
+    Image* src_root = src.mOwner ? src.mOwner : &src;
+    Image* dst_root = dst.mOwner ? dst.mOwner : &dst;
+    const bool same_image = src_root == dst_root;
+    flushPendingClear();
+    endRendering();
+
+    if (same_image)
+    {
+        return false;       // a copy onto itself is not needed by the viewer
+    }
+    transition(mCmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    transition(mCmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    const S32 max_w = (S32)src.mExtent.width, max_h = (S32)src.mExtent.height;
+    const S32 w = std::min(width, std::min(max_w - sx, (S32)std::max<U32>(1, dst_root->mExtent.width >> dst_mip) - dx));
+    const S32 h = std::min(height, std::min(max_h - sy, (S32)std::max<U32>(1, dst_root->mExtent.height >> dst_mip) - dy));
+    if (w > 0 && h > 0 && sx >= 0 && sy >= 0 && dx >= 0 && dy >= 0)
+    {
+        VkImageBlit blit = {};
+        blit.srcSubresource = { src_root->mAspect, src.mBaseMip, src.mBaseLayer, 1 };
+        blit.srcOffsets[0] = { sx, sy, 0 };
+        blit.srcOffsets[1] = { sx + w, sy + h, 1 };
+        blit.dstSubresource = { dst_root->mAspect, dst_mip, dst_layer, 1 };
+        blit.dstOffsets[0] = { dx, dy, 0 };
+        blit.dstOffsets[1] = { dx + w, dy + h, 1 };
+        vkCmdBlitImage(mCmd, src_root->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst_root->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                       &blit, VK_FILTER_NEAREST);
+    }
+    transition(mCmd, dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     return true;
 }
 

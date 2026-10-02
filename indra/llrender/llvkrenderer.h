@@ -60,6 +60,7 @@ public:
     // texture unit each sampler reads (GL numbering; defaults to the sampler's binding)
     void setSamplerUnit(size_t sampler_index, U32 unit) { if (sampler_index < mSamplerUnits.size()) mSamplerUnits[sampler_index] = unit; }
     S32 findSampler(const std::string& name) const;
+    U32 getSamplerUnit(size_t sampler_index) const { return sampler_index < mSamplerUnits.size() ? mSamplerUnits[sampler_index] : 0; }
 
     S32 getSamplerBinding(const std::string& name) const;
     bool isDirty() const { return mDirty; }
@@ -96,6 +97,26 @@ struct VertexLayout
 {
     U32 mStride = 0;
     std::vector<VertexAttribute> mAttributes;
+};
+
+// General vertex input: several buffers (bindings), each with its own stride, feeding any attribute location
+struct VertexInput
+{
+    struct Binding
+    {
+        VkBuffer mBuffer = VK_NULL_HANDLE;
+        VkDeviceSize mOffset = 0;
+        U32 mStride = 0;
+    };
+    struct Attribute
+    {
+        U32 mLocation = 0;
+        U32 mBinding = 0;
+        VkFormat mFormat = VK_FORMAT_R32G32B32_SFLOAT;
+        U32 mOffset = 0;
+    };
+    std::vector<Binding> mBindings;
+    std::vector<Attribute> mAttributes;
 };
 
 struct RasterState
@@ -150,6 +171,8 @@ struct SamplerDesc
     F32 mAnisotropy = 1.f;
     bool mCompare = false;
     VkCompareOp mCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    F32 mMinLod = 0.f;
+    F32 mMaxLod = 1000.f;
     bool operator<(const SamplerDesc& o) const;
 };
 
@@ -211,8 +234,13 @@ public:
     void setDepthStencilState(const DepthStencilState& s) { mDepthStencil = s; }
     void setBlendState(const BlendState& s) { mBlend = s; }
     void setTopology(VkPrimitiveTopology t) { mTopology = t; }
-    void setVertexLayout(const VertexLayout& layout) { mLayout = layout; mVertexInputDirty = true; }
+    void setVertexLayout(const VertexLayout& layout) { mLayout = layout; mVertexInputDirty = true; mUseVertexInput = false; }
     void setVertexBuffer(VkBuffer buffer, VkDeviceSize offset) { mVertexBuffer = buffer; mVertexOffset = offset; }
+    void setVertexInput(const VertexInput& input) { mVertexInput = input; mVertexInputDirty = true; mUseVertexInput = true; }
+
+    // per-frame host-visible scratch memory usable as vertex or index data (reset every frame)
+    struct ScratchAlloc { VkBuffer mBuffer = VK_NULL_HANDLE; VkDeviceSize mOffset = 0; void* mPtr = nullptr; };
+    ScratchAlloc allocVertexScratch(VkDeviceSize size);
     void setIndexBuffer(VkBuffer buffer, VkDeviceSize offset, VkIndexType type) { mIndexBuffer = buffer; mIndexOffset = offset; mIndexType = type; }
     void setTexture(U32 unit, Image* image, VkSampler sampler);
 
@@ -221,6 +249,11 @@ public:
 
     VkSampler getSampler(const SamplerDesc& desc);
     Image* getWhiteTexture() { return &mWhite; }
+    Program* getProgram() const { return mProgram; }
+    bool inPass() const { return mRendering; }
+
+    // copies a rectangle between images (blit, so formats may differ); ends the current pass
+    bool copyRegion(Image& src, S32 sx, S32 sy, Image& dst, U32 dst_mip, U32 dst_layer, S32 dx, S32 dy, S32 width, S32 height);
 
     // makes sure an image is in 'layout', ending the current pass if the image is one of its attachments
     void ensureLayout(Image& image, VkImageLayout layout);
@@ -291,6 +324,10 @@ private:
     DepthStencilState mDepthStencil;
     BlendState mBlend;
     VertexLayout mLayout;
+    VertexInput mVertexInput;
+    bool mUseVertexInput = false;
+    Buffer mVertexRing[Context::FRAMES_IN_FLIGHT];
+    U32 mVertexRingUsed = 0;
     VkBuffer mVertexBuffer = VK_NULL_HANDLE;
     VkDeviceSize mVertexOffset = 0;
     VkBuffer mIndexBuffer = VK_NULL_HANDLE;

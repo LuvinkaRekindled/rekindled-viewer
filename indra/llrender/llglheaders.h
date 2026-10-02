@@ -1092,4 +1092,7 @@ extern void glGetBufferPointervARB (GLenum, GLenum, GLvoid* *);
 #endif
 
 
+// <FS> Vulkan mirror: wrap the GL functions the viewer draws with (does nothing without USE_VULKAN)
+#include "llvkgl.h"
+
 #endif // LL_LLGLHEADERS_H

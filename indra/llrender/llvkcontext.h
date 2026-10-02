@@ -82,6 +82,9 @@ struct Image
     U32 mMipLevels = 1;
     U32 mLayers = 1;
     VkImageViewType mViewType = VK_IMAGE_VIEW_TYPE_2D;
+    Image* mOwner = nullptr;            // set on single-layer / single-mip views of another image: layouts live there
+    U32 mBaseMip = 0;                   // for such views: which mip level and layer of the owner they show
+    U32 mBaseLayer = 0;
     VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED;     // tracked by the renderer
     bool valid() const { return mImage != VK_NULL_HANDLE; }
 };
