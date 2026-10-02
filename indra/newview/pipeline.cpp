@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "pipeline.h"
+#include "llgpuzonetimer.h"
 
 // library includes
 #include "llimagepng.h"
@@ -3747,6 +3748,46 @@ void renderSoundHighlights(LLDrawable *drawablep)
     }
 }
 
+// <FS> Cascade avatar cull. A sun shadow cascade's map is only sampled for pixels in its own distance
+// slice, and the shadow of an avatar that is well inside a nearer slice falls next to that avatar, not
+// out in the far slice. So when the sun is high enough for shadows to be short, a rigged avatar that lies
+// entirely (extents plus a margin) in front of a cascade's slice is not drawn into that cascade's map.
+struct ShadowCascadeCull
+{
+    bool mActive = false;
+    LLVector3 mCameraOrigin;
+    LLVector3 mCameraAt;
+    F32 mSliceStart = 0.f;  // view depth where this cascade's slice begins
+    F32 mMargin = 0.f;
+};
+static ShadowCascadeCull sShadowCascadeCull;
+
+
+// true if every part of the avatar is in front of the slice start by more than the margin
+static bool shadow_cascade_skips_avatar(const LLVOAvatar* avatar)
+{
+    const LLDrawable* drawable = avatar->mDrawable;
+    if (!drawable)
+    {
+        return false;
+    }
+    const LLVector4a* extents = drawable->getSpatialExtents();
+    LLVector4a center;
+    center.setAdd(extents[0], extents[1]);
+    center.mul(0.5f);
+    LLVector4a half;
+    half.setSub(extents[1], extents[0]);
+    half.mul(0.5f);
+
+    const F32 radius = llmax(half.getLength3().getF32(), 2.f);
+    const LLVector3 position(center.getF32ptr());
+    const F32 depth = (position - sShadowCascadeCull.mCameraOrigin) * sShadowCascadeCull.mCameraAt;
+
+    return depth + radius + sShadowCascadeCull.mMargin < sShadowCascadeCull.mSliceStart;
+}
+
+static void count_shadow_batch(const LLDrawInfo* info); // <FS> defined below
+
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -3816,10 +3857,25 @@ void LLPipeline::postSort(LLCamera &camera)
             {
                 LLDrawInfo *info = *k;
 
+                if (sShadowCascadeCull.mActive && info->mAvatar.notNull() && shadow_cascade_skips_avatar(info->mAvatar.get()))
+                {
+                    // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
+                    if (LLGpuZoneTimer::isActive())
+                    {
+                        LLGpuZoneTimer::count("shadow cascade cull: batches skipped", 1.0);
+                        LLGpuZoneTimer::count("shadow cascade cull: tris skipped", (double)(info->mCount / 3));
+                    }
+                    continue;
+                }
+
                 sCull->pushDrawInfo(j->first, info);
                 if (!sShadowRender && !sReflectionRender && !gCubeSnapshot)
                 {
                     addTrianglesDrawn(info->mCount);
+                }
+                else if (sShadowRender && LLGpuZoneTimer::isActive())
+                {
+                    count_shadow_batch(info); // <FS>
                 }
             }
         }
@@ -4217,6 +4273,8 @@ void LLPipeline::renderHighlights()
 //debug use
 U32 LLPipeline::sCurRenderPoolType = 0 ;
 
+static const char* pool_gpu_zone_name(U32 type, bool post); // <FS> GPU timer zone names, defined below
+
 void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 {
     LLAppViewer::instance()->pingMainloopTimeout("Pipeline:RenderGeomDeferred");
@@ -4306,6 +4364,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
                 for( S32 i = 0; i < poolp->getNumDeferredPasses(); i++ )
                 {
+                    LL_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, false));
                     LLVertexBuffer::unbind();
                     poolp->beginDeferredPass(i);
                     for (iter2 = iter1; iter2 != mPools.end(); iter2++)
@@ -4353,6 +4412,101 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
 }
+
+// <FS> Shadow pass bookkeeping for the FSGpuZoneTimers log: the index of the renderShadow call within the
+// frame (sun cascades first, then spot lights, then the reflection probe's cascades).
+static U32 sShadowPassIndex = 0;
+static U32 sCurrentShadowPass = 0;
+static bool sCurrentShadowPassIsCube = false;
+
+static const char* shadow_pass_zone_name(U32 i, bool cube)
+{
+    static const char* const names[2][10] = {
+        { "shadow pass 0", "shadow pass 1", "shadow pass 2", "shadow pass 3", "shadow pass 4", "shadow pass 5", "shadow pass 6", "shadow pass 7", "shadow pass 8", "shadow pass 9" },
+        { "cube shadow pass 0", "cube shadow pass 1", "cube shadow pass 2", "cube shadow pass 3", "cube shadow pass 4", "cube shadow pass 5", "cube shadow pass 6", "cube shadow pass 7", "cube shadow pass 8", "cube shadow pass 9" } };
+    return names[cube ? 1 : 0][llmin(i, 9U)];
+}
+
+static const char* shadow_pass_tris_name(U32 i, bool cube, bool rigged)
+{
+    static const char* const names[2][2][10] = {
+        { { "shadow tris pass 0: static", "shadow tris pass 1: static", "shadow tris pass 2: static", "shadow tris pass 3: static", "shadow tris pass 4: static", "shadow tris pass 5: static", "shadow tris pass 6: static", "shadow tris pass 7: static", "shadow tris pass 8: static", "shadow tris pass 9: static" },
+          { "shadow tris pass 0: rigged", "shadow tris pass 1: rigged", "shadow tris pass 2: rigged", "shadow tris pass 3: rigged", "shadow tris pass 4: rigged", "shadow tris pass 5: rigged", "shadow tris pass 6: rigged", "shadow tris pass 7: rigged", "shadow tris pass 8: rigged", "shadow tris pass 9: rigged" } },
+        { { "cube shadow tris pass 0: static", "cube shadow tris pass 1: static", "cube shadow tris pass 2: static", "cube shadow tris pass 3: static", "cube shadow tris pass 4: static", "cube shadow tris pass 5: static", "cube shadow tris pass 6: static", "cube shadow tris pass 7: static", "cube shadow tris pass 8: static", "cube shadow tris pass 9: static" },
+          { "cube shadow tris pass 0: rigged", "cube shadow tris pass 1: rigged", "cube shadow tris pass 2: rigged", "cube shadow tris pass 3: rigged", "cube shadow tris pass 4: rigged", "cube shadow tris pass 5: rigged", "cube shadow tris pass 6: rigged", "cube shadow tris pass 7: rigged", "cube shadow tris pass 8: rigged", "cube shadow tris pass 9: rigged" } } };
+    return names[cube ? 1 : 0][rigged ? 1 : 0][llmin(i, 9U)];
+}
+
+static const char* shadow_pass_batches_name(U32 i, bool cube, bool rigged)
+{
+    static const char* const names[2][2][10] = {
+        { { "shadow batches pass 0: static", "shadow batches pass 1: static", "shadow batches pass 2: static", "shadow batches pass 3: static", "shadow batches pass 4: static", "shadow batches pass 5: static", "shadow batches pass 6: static", "shadow batches pass 7: static", "shadow batches pass 8: static", "shadow batches pass 9: static" },
+          { "shadow batches pass 0: rigged", "shadow batches pass 1: rigged", "shadow batches pass 2: rigged", "shadow batches pass 3: rigged", "shadow batches pass 4: rigged", "shadow batches pass 5: rigged", "shadow batches pass 6: rigged", "shadow batches pass 7: rigged", "shadow batches pass 8: rigged", "shadow batches pass 9: rigged" } },
+        { { "cube shadow batches pass 0: static", "cube shadow batches pass 1: static", "cube shadow batches pass 2: static", "cube shadow batches pass 3: static", "cube shadow batches pass 4: static", "cube shadow batches pass 5: static", "cube shadow batches pass 6: static", "cube shadow batches pass 7: static", "cube shadow batches pass 8: static", "cube shadow batches pass 9: static" },
+          { "cube shadow batches pass 0: rigged", "cube shadow batches pass 1: rigged", "cube shadow batches pass 2: rigged", "cube shadow batches pass 3: rigged", "cube shadow batches pass 4: rigged", "cube shadow batches pass 5: rigged", "cube shadow batches pass 6: rigged", "cube shadow batches pass 7: rigged", "cube shadow batches pass 8: rigged", "cube shadow batches pass 9: rigged" } } };
+    return names[cube ? 1 : 0][rigged ? 1 : 0][llmin(i, 9U)];
+}
+
+// <FS> Triangle and batch counts of what the shadow passes draw (FSGpuZoneTimers log summary):
+// tells how much of the shadow work is in small batches, which a small-caster cull could skip.
+static void count_shadow_batch(const LLDrawInfo* info)
+{
+    const double tris = (double)(info->mCount / 3);
+    const bool rigged = info->mAvatar.notNull();
+    const char* kind = rigged ? "rigged" : "static";
+
+    LLGpuZoneTimer::count(rigged ? "shadow batches: rigged" : "shadow batches: static", 1.0);
+    LLGpuZoneTimer::count(rigged ? "shadow tris: rigged" : "shadow tris: static", tris);
+    LLGpuZoneTimer::count(shadow_pass_batches_name(sCurrentShadowPass, sCurrentShadowPassIsCube, rigged), 1.0);
+    LLGpuZoneTimer::count(shadow_pass_tris_name(sCurrentShadowPass, sCurrentShadowPassIsCube, rigged), tris);
+
+    // cumulative size buckets: how many triangles sit in batches smaller than N triangles
+    struct Bucket { double mMaxTris; const char* mRigged; const char* mStatic; };
+    static const Bucket buckets[] =
+    {
+        { 200.0,  "shadow tris in batches < 200: rigged",  "shadow tris in batches < 200: static" },
+        { 1000.0, "shadow tris in batches < 1000: rigged", "shadow tris in batches < 1000: static" },
+        { 5000.0, "shadow tris in batches < 5000: rigged", "shadow tris in batches < 5000: static" },
+    };
+    (void)kind;
+    for (const Bucket& b : buckets)
+    {
+        if (tris < b.mMaxTris)
+        {
+            LLGpuZoneTimer::count(rigged ? b.mRigged : b.mStatic, tris);
+        }
+    }
+}
+
+// <FS> names for the per-pool GPU timer zones (FSGpuZoneTimers log summary)
+static const char* pool_gpu_zone_name(U32 type, bool post)
+{
+    switch (type)
+    {
+    case LLDrawPool::POOL_WATEREXCLUSION:   return post ? "post pool: water exclusion"   : "pool: water exclusion";
+    case LLDrawPool::POOL_WL_SKY:           return post ? "post pool: sky"               : "pool: sky";
+    case LLDrawPool::POOL_SIMPLE:           return post ? "post pool: simple"            : "pool: simple";
+    case LLDrawPool::POOL_FULLBRIGHT:       return post ? "post pool: fullbright"        : "pool: fullbright";
+    case LLDrawPool::POOL_BUMP:             return post ? "post pool: bump"              : "pool: bump";
+    case LLDrawPool::POOL_MATERIALS:        return post ? "post pool: materials"         : "pool: materials";
+    case LLDrawPool::POOL_GLTF_PBR:         return post ? "post pool: gltf pbr"          : "pool: gltf pbr";
+    case LLDrawPool::POOL_TERRAIN:          return post ? "post pool: terrain"           : "pool: terrain";
+    case LLDrawPool::POOL_GRASS:            return post ? "post pool: grass"             : "pool: grass";
+    case LLDrawPool::POOL_GLTF_PBR_ALPHA_MASK: return post ? "post pool: gltf pbr alpha mask" : "pool: gltf pbr alpha mask";
+    case LLDrawPool::POOL_TREE:             return post ? "post pool: tree"              : "pool: tree";
+    case LLDrawPool::POOL_ALPHA_MASK:       return post ? "post pool: alpha mask"        : "pool: alpha mask";
+    case LLDrawPool::POOL_FULLBRIGHT_ALPHA_MASK: return post ? "post pool: fullbright alpha mask" : "pool: fullbright alpha mask";
+    case LLDrawPool::POOL_AVATAR:           return post ? "post pool: avatar"            : "pool: avatar";
+    case LLDrawPool::POOL_CONTROL_AV:       return post ? "post pool: animesh"           : "pool: animesh";
+    case LLDrawPool::POOL_GLOW:             return post ? "post pool: glow"              : "pool: glow";
+    case LLDrawPool::POOL_ALPHA_PRE_WATER:  return post ? "post pool: alpha (pre water)" : "pool: alpha (pre water)";
+    case LLDrawPool::POOL_VOIDWATER:        return post ? "post pool: void water"        : "pool: void water";
+    case LLDrawPool::POOL_WATER:            return post ? "post pool: water"             : "pool: water";
+    case LLDrawPool::POOL_ALPHA_POST_WATER: return post ? "post pool: alpha (post water)": "pool: alpha (post water)";
+    default:                                return post ? "post pool: other"             : "pool: other";
+    }
+}
+// </FS>
 
 // Render all of our geometry that's required after our deferred pass.
 // This is gonna be stuff like alpha, water, etc.
@@ -4442,6 +4596,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
             for( S32 i = 0; i < poolp->getNumPostDeferredPasses(); i++ )
             {
+                LL_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, true));
                 LLVertexBuffer::unbind();
                 poolp->beginPostDeferredPass(i);
                 for (iter2 = iter1; iter2 != mPools.end(); iter2++)
@@ -10421,6 +10576,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     LLPipeline::sShadowRender = true;
 
+    // <FS> which shadow pass of the frame is this (for the GPU timer log)
+    sCurrentShadowPass = sShadowPassIndex++;
+    sCurrentShadowPassIsCube = gCubeSnapshot;
+    LL_GPU_TIMER_ZONE(shadow_pass_zone_name(sCurrentShadowPass, sCurrentShadowPassIsCube));
+    // </FS>
+
     // disable occlusion culling during shadow render
     U32 saved_occlusion = sUseOcclusion;
     sUseOcclusion = 0;
@@ -10482,6 +10643,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     for (int j = 0; j < 2; ++j) // 0 -- static, 1 -- rigged
     {
         bool rigged = j == 1;
+        LL_GPU_TIMER_ZONE(rigged ? "shadow simple: rigged" : "shadow simple: static"); // <FS>
         gDeferredShadowProgram.bind(rigged);
 
         gGL.diffuseColor4f(1, 1, 1, 1);
@@ -10528,6 +10690,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         for (int i = 0; i < 2; ++i)
         {
             bool rigged = i == 1;
+            LL_GPU_TIMER_ZONE(rigged ? "shadow alpha: rigged" : "shadow alpha: static"); // <FS>
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow alpha masked");
@@ -10578,6 +10741,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         for (int i = 0; i < 2; ++i)
         {
             bool rigged = i == 1;
+            LL_GPU_TIMER_ZONE(rigged ? "shadow alpha: rigged" : "shadow alpha: static"); // <FS>
             gDeferredShadowGLTFAlphaMaskProgram.bind(rigged);
             LLGLSLShader::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
             LLGLSLShader::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
@@ -10858,6 +11022,11 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     LL_PROFILE_GPU_ZONE("generateSunShadow");
 
     LLDisableOcclusionCulling no_occlusion;
+
+    if (!gCubeSnapshot)
+    {
+        sShadowPassIndex = 0; // <FS> a new frame starts counting shadow passes from zero
+    }
 
     bool skip_avatar_update = false;
     if (!isAgentAvatarValid() || gAgentCamera.getCameraAnimating() || gAgentCamera.getCameraMode() != CAMERA_MODE_MOUSELOOK || !LLVOAvatar::sVisibleInFirstPerson)
@@ -11437,8 +11606,25 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             mRT->shadow[j].clear();
 
             {
+                // <FS> arm the cascade avatar cull for this pass
+                static LLCachedControl<bool> cascade_cull(gSavedSettings, "FSShadowCascadeAvatarCull", true);
+                static LLCachedControl<F32> cascade_margin(gSavedSettings, "FSShadowCascadeCullMargin", 12.f);
+                static LLCachedControl<F32> cascade_min_elevation(gSavedSettings, "FSShadowCascadeCullMinSunElevation", 25.f);
+                const F32 sun_elevation_sin = caster_dir.mV[VZ]; // z is up, caster_dir points at the sun or moon
+                if (cascade_cull && !gCubeSnapshot && j >= 1
+                    && sun_elevation_sin >= sinf(cascade_min_elevation * DEG_TO_RAD))
+                {
+                    sShadowCascadeCull.mActive = true;
+                    sShadowCascadeCull.mCameraOrigin = camera.getOrigin();
+                    sShadowCascadeCull.mCameraAt = camera.getAtAxis();
+                    sShadowCascadeCull.mSliceStart = dist[j];
+                    sShadowCascadeCull.mMargin = cascade_margin;
+                }
+
                 static LLCullResult result[4];
                 renderShadow(view[j], proj[j], shadow_cam, result[j], true);
+
+                sShadowCascadeCull.mActive = false;
             }
 
             mRT->shadow[j].flush();

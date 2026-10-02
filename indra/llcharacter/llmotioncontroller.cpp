@@ -821,6 +821,21 @@ void LLMotionController::updateLoadingMotions()
 void LLMotionController::updateMotions(bool force_update)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    if (beginUpdateMotions(force_update))
+    {
+        finishUpdateMotions();
+    }
+}
+
+//-----------------------------------------------------------------------------
+// beginUpdateMotions()
+// First half of updateMotions(): timing, motion loading and purging. Touches
+// shared state (asset requests, motion registry) so it must run on the main thread.
+// Returns true if finishUpdateMotions() has to be called to complete the update.
+//-----------------------------------------------------------------------------
+bool LLMotionController::beginUpdateMotions(bool force_update)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     // SL-763: "Distant animated objects run at super fast speed"
     // The use_quantum optimization or possibly the associated code in setTimeStamp()
     // does not work as implemented.
@@ -861,7 +876,7 @@ void LLMotionController::updateMotions(bool force_update)
 
                 updateLoadingMotions();
 
-                return;
+                return false;
             }
 
             // is calculating a new keyframe pose, make sure the last one gets applied
@@ -885,25 +900,40 @@ void LLMotionController::updateMotions(bool force_update)
     if (mPaused && !force_update)
     {
         updateIdleActiveMotions();
+        mHasRunOnce = true;
+        return false;
+    }
+
+    return true;
+}
+
+//-----------------------------------------------------------------------------
+// finishUpdateMotions()
+// Second half of updateMotions(): updates and blends the active motions. Only
+// touches this controller's own state, its character's joints and visual
+// params, and read-only world data, so independent characters may run it in
+// parallel as long as nothing else is running.
+//-----------------------------------------------------------------------------
+void LLMotionController::finishUpdateMotions()
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    const bool use_quantum = (mTimeStep != 0.f);
+
+    // update additive motions
+    updateAdditiveMotions();
+
+    resetJointSignatures();
+
+    // update all regular motions
+    updateRegularMotions();
+
+    if (use_quantum)
+    {
+        mPoseBlender.blendAndCache(true);
     }
     else
     {
-        // update additive motions
-        updateAdditiveMotions();
-
-        resetJointSignatures();
-
-        // update all regular motions
-        updateRegularMotions();
-
-        if (use_quantum)
-        {
-            mPoseBlender.blendAndCache(true);
-        }
-        else
-        {
-            mPoseBlender.blendAndApply();
-        }
+        mPoseBlender.blendAndApply();
     }
 
     mHasRunOnce = true;

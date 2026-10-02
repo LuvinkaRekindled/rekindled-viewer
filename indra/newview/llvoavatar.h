@@ -285,6 +285,14 @@ public:
     virtual void    updateDebugText();
     virtual bool    computeNeedsUpdate();
     virtual bool    updateCharacter(LLAgent &agent);
+    void            updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible);
+    void            idleUpdatePostCharacter(bool detailed_update);
+    bool            canDeferMotionUpdate() const;
+    // Runs the deferred pose blend phase. Safe to call from a worker thread
+    // while no other thread touches avatars or the world.
+    void            runDeferredMotionBlend() { finishNormalMotionUpdate(); }
+    // Runs the rest of idleUpdate() on the main thread once the blend is done.
+    void            completeDeferredMotionUpdate();
     void            updateFootstepSounds();
     void            computeUpdatePeriod();
     void            updateOrientation(LLAgent &agent, F32 speed, F32 delta_time);
@@ -386,6 +394,11 @@ public:
     static bool     sShowCollisionVolumes;  // show skeletal collision volumes
     static bool     sVisibleInFirstPerson;
     static S32      sNumLODChangesThisFrame;
+    // While non-null, eligible avatars defer the pose blend phase of their
+    // motion update into this batch instead of running it inline. The owner
+    // runs the batch (see LLViewerObjectList::update) and then calls
+    // completeDeferredMotionUpdate() on each entry.
+    static std::vector<LLPointer<LLVOAvatar> >* sMotionUpdateBatch;
     static S32      sNumVisibleChatBubbles;
     static bool     sDebugInvisible;
     static bool     sShowAttachmentPoints;
@@ -603,6 +616,12 @@ private:
 
     bool        mNeedsSkin; // avatar has been animated and verts have not been updated
     F32         mLastSkinTime; //value of gFrameTimeSeconds at last skin update
+
+    // state carried across a deferred motion update, see sMotionUpdateBatch
+    bool        mMotionUpdateDeferred = false;
+    bool        mDeferredSitGroundConstrained = false;
+    bool        mDeferredVisible = false;
+    bool        mDeferredDetailedUpdate = false;
 
     S32         mUpdatePeriod;
     S32         mNumInitFaces; //number of faces generated when creating the avatar drawable, does not inculde splitted faces due to long vertex buffer.

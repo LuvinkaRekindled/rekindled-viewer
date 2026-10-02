@@ -256,6 +256,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
 
     if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER)
     { // draw GLTF scene to depth buffer before rigged alpha
+        LL_GPU_TIMER_ZONE("alpha: gltf scene depth"); // <FS>
         LL::GLTFSceneManager::instance().render(false, false);
         LL::GLTFSceneManager::instance().render(false, true);
         LL::GLTFSceneManager::instance().render(false, false, true);
@@ -264,7 +265,12 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
 
     // If the face is more than 90% transparent, then don't update the Depth buffer for Dof
     // We don't want the nearly invisible objects to cause of DoF effects
-    renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, false, rigged);
+    {
+        // <FS> GPU timer zone per alpha pass
+        LL_GPU_TIMER_ZONE(rigged ? (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: rigged (post water)" : "alpha: rigged (pre water)")
+                                 : (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: static (post water)" : "alpha: static (pre water)"));
+        renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, false, rigged);
+    }
 
     gGL.setColorMask(true, false);
 

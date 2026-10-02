@@ -131,6 +131,17 @@ public:
     // deactivates terminated motions`
     void updateMotions(bool force_update = false);
 
+    // updateMotions() split in two so the (per-character, independent) pose
+    // blend phase can be run on a worker thread.
+    // beginUpdateMotions() does the timing, motion loading and purging, and
+    // must run on the main thread. It returns true if finishUpdateMotions()
+    // still has to be called to update and blend the active motions.
+    bool beginUpdateMotions(bool force_update = false);
+    void finishUpdateMotions();
+
+    // true if the blend phase may be deferred (no time quantization in use)
+    bool canDeferBlendPhase() const { return mTimeStep == 0.f; }
+
     // minimal update (e.g. while hidden)
     void updateMotionsMinimal();
 
