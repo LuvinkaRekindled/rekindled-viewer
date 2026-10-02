@@ -496,6 +496,9 @@ public:
     void bindTexture(U32 gl_target, U32 id);        // raw bind, bypasses the LLTexUnit cache (as the old direct call did)
     void deleteTextures(S32 count, const U32* ids);
     F32 getLineWidth() const { return mLineWidth; }
+    void setScissor(S32 x, S32 y, S32 width, S32 height);
+    void getTexLevelParameteriv(U32 gl_target, S32 level, U32 gl_pname, S32* result);
+    void getTexImage(U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels);
     void setSceneBlendType(eBlendType type);
 
     // applies blend func to both color and alpha

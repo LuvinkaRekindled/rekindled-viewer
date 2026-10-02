@@ -1584,6 +1584,21 @@ void LLRender::deleteTextures(S32 count, const U32* ids)
     glDeleteTextures(count, ids);
 }
 
+void LLRender::setScissor(S32 x, S32 y, S32 width, S32 height)
+{
+    glScissor(x, y, width, height);
+}
+
+void LLRender::getTexLevelParameteriv(U32 gl_target, S32 level, U32 gl_pname, S32* result)
+{
+    glGetTexLevelParameteriv(gl_target, level, gl_pname, (GLint*)result);
+}
+
+void LLRender::getTexImage(U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels)
+{
+    glGetTexImage(gl_target, level, gl_format, gl_type, pixels);
+}
+
 void LLRender::setSceneBlendType(eBlendType type)
 {
     switch (type)
