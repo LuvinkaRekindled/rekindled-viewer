@@ -202,6 +202,10 @@ public:
     void mapUniform(GLint index);
     void uniform1i(U32 index, GLint i);
     void uniform1f(U32 index, GLfloat v);
+
+    // <FS> set a uniform by a location the caller already looked up (the current program must be this shader)
+    static void uniform1fAt(S32 location, F32 v);
+    static void uniform4fvAt(S32 location, S32 count, const F32* v);
     void fastUniform1f(U32 index, GLfloat v);
     void uniform2f(U32 index, GLfloat x, GLfloat y);
     void uniform3f(U32 index, GLfloat x, GLfloat y, GLfloat z);

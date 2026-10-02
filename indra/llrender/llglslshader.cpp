@@ -1313,6 +1313,16 @@ void LLGLSLShader::uniform1i(U32 index, GLint x)
     }
 }
 
+void LLGLSLShader::uniform1fAt(S32 location, F32 v)
+{
+    glUniform1f(location, v);
+}
+
+void LLGLSLShader::uniform4fvAt(S32 location, S32 count, const F32* v)
+{
+    glUniform4fv(location, count, v);
+}
+
 void LLGLSLShader::uniform1f(U32 index, GLfloat x)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;

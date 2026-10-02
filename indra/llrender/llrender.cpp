@@ -1404,6 +1404,186 @@ void LLRender::setColorMask(bool writeColorR, bool writeColorG, bool writeColorB
     }
 }
 
+void LLRender::clearBuffers(U32 gl_buffer_mask)
+{
+    glClear(gl_buffer_mask);
+}
+
+void LLRender::setClearColor(F32 r, F32 g, F32 b, F32 a)
+{
+    glClearColor(r, g, b, a);
+}
+
+void LLRender::setViewport(S32 x, S32 y, S32 width, S32 height)
+{
+    glViewport(x, y, width, height);
+}
+
+void LLRender::setCullFace(U32 gl_face)
+{
+    glCullFace(gl_face);
+}
+
+void LLRender::setPolygonOffset(F32 factor, F32 units)
+{
+    glPolygonOffset(factor, units);
+}
+
+void LLRender::setPolygonMode(U32 gl_face, U32 gl_mode)
+{
+    glPolygonMode(gl_face, gl_mode);
+}
+
+void LLRender::setPointSize(F32 size)
+{
+    glPointSize(size);
+}
+
+void LLRender::setStencilFunc(U32 gl_func, S32 ref, U32 mask)
+{
+    glStencilFunc(gl_func, ref, mask);
+}
+
+void LLRender::setStencilOp(U32 gl_sfail, U32 gl_dpfail, U32 gl_dppass)
+{
+    glStencilOp(gl_sfail, gl_dpfail, gl_dppass);
+}
+
+void LLRender::setStencilMask(U32 mask)
+{
+    glStencilMask(mask);
+}
+
+void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data)
+{
+    glReadPixels(x, y, width, height, gl_format, gl_type, data);
+}
+
+void LLRender::drawBuffers(S32 count, const U32* gl_buffers)
+{
+    glDrawBuffers(count, gl_buffers);
+}
+
+void LLRender::genQueries(S32 count, U32* ids)
+{
+    glGenQueries(count, ids);
+}
+
+void LLRender::deleteQueries(S32 count, const U32* ids)
+{
+    glDeleteQueries(count, ids);
+}
+
+void LLRender::beginQuery(U32 gl_target, U32 id)
+{
+    glBeginQuery(gl_target, id);
+}
+
+void LLRender::endQuery(U32 gl_target)
+{
+    glEndQuery(gl_target);
+}
+
+void LLRender::queryTimestamp(U32 id)
+{
+    glQueryCounter(id, GL_TIMESTAMP);
+}
+
+void LLRender::getQueryObjectiv(U32 id, U32 gl_pname, S32* result)
+{
+    glGetQueryObjectiv(id, gl_pname, result);
+}
+
+void LLRender::getQueryObjectuiv(U32 id, U32 gl_pname, U32* result)
+{
+    glGetQueryObjectuiv(id, gl_pname, result);
+}
+
+void LLRender::getQueryObjectui64v(U32 id, U32 gl_pname, U64* result)
+{
+    glGetQueryObjectui64v(id, gl_pname, (GLuint64*)result);
+}
+
+void LLRender::genBuffers(S32 count, U32* ids)
+{
+    glGenBuffers(count, ids);
+}
+
+void LLRender::deleteBuffers(S32 count, const U32* ids)
+{
+    glDeleteBuffers(count, ids);
+}
+
+void LLRender::bindBuffer(U32 gl_target, U32 id)
+{
+    glBindBuffer(gl_target, id);
+}
+
+void LLRender::bufferData(U32 gl_target, S64 size, const void* data, U32 gl_usage)
+{
+    glBufferData(gl_target, (GLsizeiptr)size, data, gl_usage);
+}
+
+void LLRender::bindBufferBase(U32 gl_target, U32 index, U32 id)
+{
+    glBindBufferBase(gl_target, index, id);
+}
+
+void LLRender::copyTexSubImage2D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height)
+{
+    glCopyTexSubImage2D(gl_target, level, xoffset, yoffset, x, y, width, height);
+}
+
+void LLRender::copyTexSubImage3D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height)
+{
+    glCopyTexSubImage3D(gl_target, level, xoffset, yoffset, zoffset, x, y, width, height);
+}
+
+void LLRender::generateMipmap(U32 gl_target)
+{
+    glGenerateMipmap(gl_target);
+}
+
+void LLRender::texParameteri(U32 gl_target, U32 gl_pname, S32 param)
+{
+    glTexParameteri(gl_target, gl_pname, param);
+}
+
+void LLRender::texImage2D(U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data)
+{
+    glTexImage2D(gl_target, level, internal_format, width, height, border, gl_format, gl_type, data);
+}
+
+void LLRender::bindFramebuffer(U32 gl_target, U32 id)
+{
+    glBindFramebuffer(gl_target, id);
+}
+
+U32 LLRender::checkFramebufferStatus(U32 gl_target)
+{
+    return glCheckFramebufferStatus(gl_target);
+}
+
+U32 LLRender::getError()
+{
+    return glGetError();
+}
+
+void LLRender::activeTexture(U32 gl_texture_unit_enum)
+{
+    glActiveTexture(gl_texture_unit_enum);
+}
+
+void LLRender::bindTexture(U32 gl_target, U32 id)
+{
+    glBindTexture(gl_target, id);
+}
+
+void LLRender::deleteTextures(S32 count, const U32* ids)
+{
+    glDeleteTextures(count, ids);
+}
+
 void LLRender::setSceneBlendType(eBlendType type)
 {
     switch (type)

@@ -689,10 +689,10 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
                 if (!rigged)
                 {
-                    glBindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_GLTF_NODES, asset.mNodesUBO);
+                    gGL.bindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_GLTF_NODES, asset.mNodesUBO);
                 }
 
-                glBindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_GLTF_MATERIALS, asset.mMaterialsUBO);
+                gGL.bindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_GLTF_MATERIALS, asset.mMaterialsUBO);
 
                 for (U32 i = 0; i < TEXTURE_TYPE_COUNT; ++i)
                 {
@@ -732,7 +732,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
                     LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gltfdc - bind skin");
                     llassert(node.mSkin != INVALID_INDEX);
                     Skin& skin = asset.mSkins[node.mSkin];
-                    glBindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_GLTF_JOINTS, skin.mUBO);
+                    gGL.bindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_GLTF_JOINTS, skin.mUBO);
                 }
                 else
                 {
@@ -771,7 +771,7 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
 
     if (channel > -1)
     {
-        glActiveTexture(GL_TEXTURE0 + channel);
+        gGL.activeTexture(GL_TEXTURE0 + channel);
 
         if (info.mIndex != INVALID_INDEX)
         {
@@ -781,33 +781,33 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
             if (tex)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gl bind texture");
-                glBindTexture(GL_TEXTURE_2D, tex->getTexName());
+                gGL.bindTexture(GL_TEXTURE_2D, tex->getTexName());
 
                 if (channel != -1 && texture.mSampler != -1)
                 { // set sampler state
                     Sampler& sampler = asset.mSamplers[texture.mSampler];
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sampler.mWrapS);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sampler.mWrapT);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.mMagFilter);
+                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sampler.mWrapS);
+                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sampler.mWrapT);
+                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.mMagFilter);
 
                     // NOTE: do not set min filter.  Always respect client preference for min filter
                 }
                 else
                 {
                     // set default sampler state
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 }
             }
             else
             {
-                glBindTexture(GL_TEXTURE_2D, fallback->getTexName());
+                gGL.bindTexture(GL_TEXTURE_2D, fallback->getTexName());
             }
         }
         else
         {
-            glBindTexture(GL_TEXTURE_2D, fallback->getTexName());
+            gGL.bindTexture(GL_TEXTURE_2D, fallback->getTexName());
         }
     }
 }
@@ -1032,7 +1032,7 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
             if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_RAYCAST))
             {
                 gGL.flush();
-                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
                 // convert raycast to node local space
                 vec4 local_start = node.mAssetMatrixInv * start;
@@ -1050,7 +1050,7 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
                 }
 
                 gGL.flush();
-                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             }
 #endif
             gGL.popMatrix();
@@ -1183,7 +1183,7 @@ void GLTFSceneManager::renderDebug()
                 Primitive* primitive = &asset->mMeshes[node->mMesh].mPrimitives[primitive_hit];
 
                 gGL.flush();
-                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
                 gGL.color3f(1, 0, 1);
                 drawBoxOutline(intersection, LLVector4a(0.1f, 0.1f, 0.1f, 0.f));
 
@@ -1193,7 +1193,7 @@ void GLTFSceneManager::renderDebug()
                 drawBoxOutline(listener->mBounds[0], listener->mBounds[1]);
 
                 gGL.flush();
-                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
                 gGL.popMatrix();
             }
         }
