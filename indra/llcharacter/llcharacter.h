@@ -157,6 +157,13 @@ public:
     enum e_update_t { NORMAL_UPDATE, HIDDEN_UPDATE, FORCE_UPDATE };
     void updateMotions(e_update_t update_type);
 
+    // NORMAL_UPDATE split in two, see LLMotionController::beginUpdateMotions().
+    // beginNormalMotionUpdate() returns true if finishNormalMotionUpdate() must
+    // still be called, possibly later and from another thread.
+    bool beginNormalMotionUpdate();
+    void finishNormalMotionUpdate() { mMotionController.finishUpdateMotions(); }
+    bool canDeferNormalMotionUpdate() const { return mMotionController.canDeferBlendPhase(); }
+
     LLAnimPauseRequest requestPause();
     bool areAnimationsPaused() const { return mMotionController.isPaused(); }
     void setAnimTimeFactor(F32 factor) { mMotionController.setTimeFactor(factor); }

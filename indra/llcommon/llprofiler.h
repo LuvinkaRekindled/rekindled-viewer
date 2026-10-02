@@ -234,13 +234,48 @@ namespace LLProfiler
 #endif // LL_PROFILER
 
 #if LL_PROFILER_ENABLE_TRACY_OPENGL
-#define LL_PROFILE_GPU_ZONE(name)         TracyGpuZone(name);
-#define LL_PROFILE_GPU_ZONEC(name,color)  TracyGpuZoneC(name,color);
+// <FS> Optional GPU zone timing in the viewer's own log: every GPU zone also reports its begin and
+// end to these hooks, which the viewer installs only while FSGpuZoneTimers is enabled.
+struct LLGpuZoneHooks
+{
+    inline static void (*sBegin)(const char* name) = nullptr;
+    inline static void (*sEnd)() = nullptr;
+};
+
+class LLGpuZoneScope
+{
+public:
+    explicit LLGpuZoneScope(const char* name) : mActive(LLGpuZoneHooks::sBegin != nullptr)
+    {
+        if (mActive)
+        {
+            LLGpuZoneHooks::sBegin(name);
+        }
+    }
+    ~LLGpuZoneScope()
+    {
+        if (mActive && LLGpuZoneHooks::sEnd)
+        {
+            LLGpuZoneHooks::sEnd();
+        }
+    }
+private:
+    bool mActive;
+};
+#define LL_GPUZONE_CAT2(a, b) a##b
+#define LL_GPUZONE_CAT(a, b) LL_GPUZONE_CAT2(a, b)
+// </FS>
+
+// timer-only zone (not sent to Tracy), for finer breakdowns in the FSGpuZoneTimers log summary
+#define LL_GPU_TIMER_ZONE(name)           LLGpuZoneScope LL_GPUZONE_CAT(llgputimer_, __LINE__)(name);
+#define LL_PROFILE_GPU_ZONE(name)         TracyGpuZone(name); LLGpuZoneScope LL_GPUZONE_CAT(llgpuzone_, __LINE__)(name);
+#define LL_PROFILE_GPU_ZONEC(name,color)  TracyGpuZoneC(name,color); LLGpuZoneScope LL_GPUZONE_CAT(llgpuzone_, __LINE__)(name);
 #define LL_PROFILER_GPU_COLLECT           TracyGpuCollect;
 #define LL_PROFILER_GPU_CONTEXT           TracyGpuContext;
 #define LL_PROFILER_GPU_CONTEXT_NS(name, size)           TracyGpuContext;TracyGpuContextName(name,size);
 #define LL_PROFILER_GPU_CONTEXT_NAMED     TracyGpuContextName
 #else
+#define LL_GPU_TIMER_ZONE(name)             (void)name;
 #define LL_PROFILE_GPU_ZONE(name)           (void)name;
 #define LL_PROFILE_GPU_ZONEC(name,color)    (void)name;(void)color;
 #define LL_PROFILER_GPU_COLLECT

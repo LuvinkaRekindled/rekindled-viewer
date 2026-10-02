@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llviewerdisplay.h"
+#include "llgpuzonetimer.h"
 
 #include "fsyspath.h"
 #include "hexdump.h"
@@ -484,6 +485,11 @@ static void update_tp_display(bool minimized)
 // Paint the display!
 void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 {
+    // <FS> per-zone GPU timing in the log (only does anything while FSGpuZoneTimers is on).
+    // Done first, before any zone of this frame opens, so the previous frame is complete.
+    LLGpuZoneTimer::onFrameEnd();
+    // </FS>
+
     LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Render");
     LL_PROFILE_GPU_ZONE("Render");
 
@@ -1719,6 +1725,7 @@ void swap()
         gViewerWindow->getWindow()->swapBuffers();
     }
     gDisplaySwapBuffers = true;
+
 }
 
 void renderCoordinateAxes()

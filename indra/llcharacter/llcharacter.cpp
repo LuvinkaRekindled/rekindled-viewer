@@ -191,6 +191,20 @@ void LLCharacter::updateMotions(e_update_t update_type)
     }
 }
 
+//-----------------------------------------------------------------------------
+// beginNormalMotionUpdate()
+//-----------------------------------------------------------------------------
+bool LLCharacter::beginNormalMotionUpdate()
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    // unpause if the number of outstanding pause requests has dropped to the initial one
+    if (mMotionController.isPaused() && mPauseRequest->getNumRefs() == 1)
+    {
+        mMotionController.unpauseAllMotions();
+    }
+    return mMotionController.beginUpdateMotions(false);
+}
+
 
 //-----------------------------------------------------------------------------
 // deactivateAllMotions()

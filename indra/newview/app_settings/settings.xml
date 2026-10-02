@@ -2348,6 +2348,61 @@
       <key>Value</key>
       <integer>2</integer>
     </map>
+    <key>FSShadowCascadeAvatarCull</key>
+    <map>
+      <key>Comment</key>
+      <string>Do not draw a rigged avatar into a sun shadow cascade that lies entirely behind it (farther from the camera than the avatar plus a margin). Only active while the sun or moon is high enough for shadows to be short.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
+    <key>FSShadowCascadeCullMargin</key>
+    <map>
+      <key>Comment</key>
+      <string>Safety margin in meters for FSShadowCascadeAvatarCull: an avatar must be this much nearer than a cascade's slice start to be skipped. Larger is safer and skips less.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>12.0</real>
+    </map>
+    <key>FSShadowCascadeCullMinSunElevation</key>
+    <map>
+      <key>Comment</key>
+      <string>Minimum sun or moon elevation in degrees for FSShadowCascadeAvatarCull. Below this, shadows can be long enough to cross cascade boundaries, so the cull is off.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>25.0</real>
+    </map>
+    <key>FSGpuZoneTimers</key>
+    <map>
+      <key>Comment</key>
+      <string>Diagnostic: measure GPU time per profiled render zone and write a summary to the log every 10 seconds. Adds some overhead while on.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
+    <key>FSParallelAvatarMotion</key>
+    <map>
+      <key>Comment</key>
+      <string>Experimental: update the animations of other avatars on worker threads. Takes effect immediately.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>AvatarPhysics</key>
     <map>
       <key>Comment</key>

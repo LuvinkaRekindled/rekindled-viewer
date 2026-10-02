@@ -633,6 +633,7 @@ bool LLVOAvatar::sLimitNonImpostors = false; // True unless RenderAvatarMaxNonIm
 F32 LLVOAvatar::sRenderDistance = 256.f;
 S32 LLVOAvatar::sNumVisibleAvatars = 0;
 S32 LLVOAvatar::sNumLODChangesThisFrame = 0;
+std::vector<LLPointer<LLVOAvatar> >* LLVOAvatar::sMotionUpdateBatch = nullptr;
 
 // const LLUUID LLVOAvatar::sStepSoundOnLand("e8af4a28-aa83-4310-a7c4-c047e15ea0df"); - <FS:PP> Commented out for FIRE-3169: Option to change the default footsteps sound
 const LLUUID LLVOAvatar::sStepSounds[LL_MCODE_END] =
@@ -3271,6 +3272,20 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     mLastRootPos = mRoot->getWorldPosition();
     bool detailed_update = updateCharacter(agent);
 
+    if (mMotionUpdateDeferred)
+    {
+        // the rest of this function runs in completeDeferredMotionUpdate()
+        mDeferredDetailedUpdate = detailed_update;
+        return;
+    }
+
+    idleUpdatePostCharacter(detailed_update);
+}
+
+void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+
     static LLUICachedControl<bool> visualizers_in_calls("ShowVoiceVisualizersInCalls", false);
     bool voice_enabled = (visualizers_in_calls || LLVoiceClient::getInstance()->inProximalChannel()) &&
                          LLVoiceClient::getInstance()->getVoiceEnabled(mID);
@@ -5813,12 +5828,80 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     {
         updateMotions(LLCharacter::FORCE_UPDATE);
     }
+    else if (canDeferMotionUpdate())
+    {
+        // Serial part now; the pose blend runs later, possibly on a worker
+        // thread, and then completeDeferredMotionUpdate() finishes the frame.
+        if (beginNormalMotionUpdate())
+        {
+            mMotionUpdateDeferred = true;
+            mDeferredSitGroundConstrained = was_sit_ground_constrained;
+            mDeferredVisible = visible;
+            sMotionUpdateBatch->push_back(this);
+            return visible;
+        }
+    }
     else
     {
         // Might be better to do HIDDEN_UPDATE if cloud
         updateMotions(LLCharacter::NORMAL_UPDATE);
     }
 
+    updateCharacterPostMotion(was_sit_ground_constrained, visible);
+
+    return visible;
+}
+
+//-----------------------------------------------------------------------------
+// canDeferMotionUpdate()
+// Whether this avatar's pose blend can be run later (and in parallel with other
+// avatars') instead of inline in updateCharacter().
+//-----------------------------------------------------------------------------
+bool LLVOAvatar::canDeferMotionUpdate() const
+{
+    if (!sMotionUpdateBatch
+        || isSelf()                     // own avatar: motion stop requests go to the network
+        || isControlAvatar()
+        || isUIAvatar()
+        || mSpecialRenderMode != 0
+        || !canDeferNormalMotionUpdate())
+    {
+        return false;
+    }
+
+    // A sex change makes updateVisualParams() start/stop motions, which loads
+    // assets and must stay on the main thread.
+    LLVOAvatar* self = const_cast<LLVOAvatar*>(this);
+    const ESex avatar_sex = (self->getVisualParamWeight("male") > 0.5f) ? SEX_MALE : SEX_FEMALE;
+    return getSex() == avatar_sex;
+}
+
+//-----------------------------------------------------------------------------
+// completeDeferredMotionUpdate()
+//-----------------------------------------------------------------------------
+void LLVOAvatar::completeDeferredMotionUpdate()
+{
+    if (!mMotionUpdateDeferred)
+    {
+        return;
+    }
+    mMotionUpdateDeferred = false;
+
+    if (isDead())
+    {
+        return;
+    }
+
+    updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible);
+    idleUpdatePostCharacter(mDeferredDetailedUpdate);
+}
+
+//-----------------------------------------------------------------------------
+// updateCharacterPostMotion()
+// Everything updateCharacter() does after the motions have been updated.
+//-----------------------------------------------------------------------------
+void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible)
+{
     // Special handling for sitting on ground.
     if (!getParent() && (isSitting() || was_sit_ground_constrained))
     {
@@ -5848,8 +5931,6 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         // System avatar mesh vertices need to be reskinned.
         mNeedsSkin = true;
     }
-
-    return visible;
 }
 
 //-----------------------------------------------------------------------------
