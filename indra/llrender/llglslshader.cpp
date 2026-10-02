@@ -450,6 +450,7 @@ static void vulkan_check_program(const std::string& name, GLuint program)
         {
             spv_bytes += (U32)(v.size() * 4);
         }
+        LLVk::registerCompiledProgram(name, info);
         LL_INFOS("VkShaderCheck") << "OK " << name << " stages=" << stages.size() << " uniforms=" << info.mUniforms.size()
                                   << " block=" << info.mBlockSize << "B samplers=" << info.mSamplers.size() << " spirv=" << spv_bytes << "B" << LL_ENDL;
     }

@@ -74,14 +74,19 @@ struct Buffer
 struct Image
 {
     VkImage mImage = VK_NULL_HANDLE;
-    VmaAllocation mAllocation = nullptr;
+    VkImageView mView = VK_NULL_HANDLE;             // 2D view of the whole image (depth formats: depth aspect only)
+    VmaAllocation mAllocation = nullptr;            // null for images owned elsewhere (swapchain)
     VkFormat mFormat = VK_FORMAT_UNDEFINED;
+    VkImageAspectFlags mAspect = VK_IMAGE_ASPECT_COLOR_BIT;
     VkExtent3D mExtent = { 0, 0, 0 };
     U32 mMipLevels = 1;
     U32 mLayers = 1;
-    VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED;     // tracked by the user of the image
+    VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED;     // tracked by the renderer
     bool valid() const { return mImage != VK_NULL_HANDLE; }
 };
+
+// the aspect an image of this format is viewed and transitioned with
+VkImageAspectFlags aspectForFormat(VkFormat format);
 
 struct StagingAlloc
 {
@@ -123,6 +128,7 @@ public:
     VkCommandBuffer getCommandBuffer() const { return mFrames[mFrameSlot].mCmd; }
     VkSemaphore getAcquireSemaphore() const { return mFrames[mFrameSlot].mAcquire; }
     U64 getFrameNumber() const { return mFrameNumber; }
+    U32 getFrameSlot() const { return mFrameSlot; }
     bool inFrame() const { return mInFrame; }
 
     // Upload memory that lives until this frame's GPU work completes
@@ -141,6 +147,9 @@ public:
     void destroyImage(Image& image);        // deferred
 
     void waitIdle();
+
+    // Records into a one-off command buffer, submits it and waits. For start-up work and rare uploads only.
+    bool immediateSubmit(const std::function<void(VkCommandBuffer)>& record);
 
 private:
     Context() = default;
@@ -177,6 +186,9 @@ private:
     U32 mQueueFamily = 0;
     VmaAllocator mAllocator = nullptr;
     Capabilities mCaps;
+    VkCommandPool mImmediatePool = VK_NULL_HANDLE;
+    VkCommandBuffer mImmediateCmd = VK_NULL_HANDLE;
+    VkFence mImmediateFence = VK_NULL_HANDLE;
 
     Frame mFrames[FRAMES_IN_FLIGHT];
     U32 mFrameSlot = 0;

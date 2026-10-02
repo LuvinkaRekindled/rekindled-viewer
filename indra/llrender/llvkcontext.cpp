@@ -112,6 +112,20 @@ const char* missing_feature(const FeatureChain& c)
 // Context
 //-----------------------------------------------------------------------------------------------------
 
+VkImageAspectFlags aspectForFormat(VkFormat format)
+{
+    switch (format)
+    {
+    case VK_FORMAT_D16_UNORM:
+    case VK_FORMAT_D32_SFLOAT:
+    case VK_FORMAT_D24_UNORM_S8_UINT:
+    case VK_FORMAT_D32_SFLOAT_S8_UINT:
+        return VK_IMAGE_ASPECT_DEPTH_BIT;
+    default:
+        return VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+}
+
 Context& Context::instance()
 {
     static Context sContext;
@@ -455,6 +469,11 @@ void Context::shutdown()
         {
             destroyFrameResources(f);
         }
+        if (mImmediateFence) vkDestroyFence(mDevice, mImmediateFence, nullptr);
+        if (mImmediatePool) vkDestroyCommandPool(mDevice, mImmediatePool, nullptr);
+        mImmediateFence = VK_NULL_HANDLE;
+        mImmediatePool = VK_NULL_HANDLE;
+        mImmediateCmd = VK_NULL_HANDLE;
         if (mAllocator)
         {
             vmaDestroyAllocator(mAllocator);
@@ -685,10 +704,28 @@ bool Context::createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkForma
         return false;
     }
     out.mFormat = format;
+    out.mAspect = aspectForFormat(format);
     out.mExtent = { width, height, 1 };
     out.mMipLevels = mips;
     out.mLayers = layers;
     out.mLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    const VkImageUsageFlags view_usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+        | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+    if (usage & view_usage)
+    {
+        VkImageViewCreateInfo vi = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+        vi.image = out.mImage;
+        vi.viewType = layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+        vi.format = format;
+        vi.subresourceRange = { out.mAspect, 0, mips, 0, layers };
+        if (!vk_ok(vkCreateImageView(mDevice, &vi, nullptr, &out.mView), "vkCreateImageView (image)"))
+        {
+            vmaDestroyImage(mAllocator, out.mImage, out.mAllocation);
+            out = Image();
+            return false;
+        }
+    }
     return true;
 }
 
@@ -699,14 +736,57 @@ void Context::destroyImage(Image& image)
         return;
     }
     VkImage i = image.mImage;
+    VkImageView v = image.mView;
     VmaAllocation a = image.mAllocation;
     VmaAllocator alloc = mAllocator;
-    destroyLater([=]() { vmaDestroyImage(alloc, i, a); });
+    VkDevice dev = mDevice;
+    destroyLater([=]() {
+        if (v) vkDestroyImageView(dev, v, nullptr);
+        if (a) vmaDestroyImage(alloc, i, a);
+    });
     image = Image();
 }
 
 // Exercises the allocator and the transfer path end to end: buffer -> device buffer -> readback, and
 // buffer -> image -> readback, comparing the bytes that come back.
+bool Context::immediateSubmit(const std::function<void(VkCommandBuffer)>& record)
+{
+    if (!mImmediatePool)
+    {
+        VkCommandPoolCreateInfo pi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+        pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pi.queueFamilyIndex = mQueueFamily;
+        VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        if (!vk_ok(vkCreateCommandPool(mDevice, &pi, nullptr, &mImmediatePool), "immediate pool")
+            || !vk_ok(vkCreateFence(mDevice, &fi, nullptr, &mImmediateFence), "immediate fence"))
+        {
+            return false;
+        }
+        VkCommandBufferAllocateInfo ai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+        ai.commandPool = mImmediatePool;
+        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        ai.commandBufferCount = 1;
+        if (!vk_ok(vkAllocateCommandBuffers(mDevice, &ai, &mImmediateCmd), "immediate command buffer"))
+        {
+            return false;
+        }
+    }
+
+    vkResetCommandBuffer(mImmediateCmd, 0);
+    VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(mImmediateCmd, &bi);
+    record(mImmediateCmd);
+    vkEndCommandBuffer(mImmediateCmd);
+
+    VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &mImmediateCmd;
+    vkResetFences(mDevice, 1, &mImmediateFence);
+    return vk_ok(vkQueueSubmit(mQueue, 1, &si, mImmediateFence), "immediate submit")
+        && vk_ok(vkWaitForFences(mDevice, 1, &mImmediateFence, VK_TRUE, 10ull * 1000 * 1000 * 1000), "immediate wait");
+}
+
 bool Context::selfTest()
 {
     const U32 W = 64, H = 64;

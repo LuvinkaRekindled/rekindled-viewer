@@ -35,6 +35,7 @@ set(llrender_SOURCE_FILES
     llvertexbuffer.cpp
     llvkcontext.cpp
     llvkprobe.cpp
+    llvkrenderer.cpp
     llvkshader.cpp
     llvkvma.cpp
     llglcommonfunc.cpp
@@ -72,6 +73,7 @@ set(llrender_HEADER_FILES
     llvkcontext.h
     llvkfunctions.inl
     llvkprobe.h
+    llvkrenderer.h
     llvkshader.h
     llglcommonfunc.h
     )

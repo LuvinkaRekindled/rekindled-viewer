@@ -17,14 +17,29 @@ void LLVkProbe::shutdown() {}
 #else // LL_VULKAN
 
 #include "llvkcontext.h"
+#include "llvkrenderer.h"
+
+#include <cmath>
 
 namespace
 {
 
 const wchar_t* const WINDOW_CLASS = L"LLVkProbeWindow";
 
+// the test scene: a textured, vertex-coloured quad drawn with the viewer's own UI shader
+struct TestScene
+{
+    LLVk::Program mProgram;
+    LLVk::Image mTexture;
+    LLVk::Buffer mVertices;
+    VkSampler mSampler = VK_NULL_HANDLE;
+    bool mTried = false;
+    bool mReady = false;
+};
+
 struct Probe
 {
+    TestScene mScene;
     HWND mWindow = nullptr;
     volatile bool mClosed = false;
     volatile bool mResized = false;
@@ -71,6 +86,150 @@ bool create_window()
     return sProbe.mWindow != nullptr;
 }
 
+struct Vertex
+{
+    F32 mPosition[3];
+    F32 mUV[2];
+    U8 mColor[4];
+};
+
+bool create_scene(TestScene& scene)
+{
+    scene.mTried = true;
+    const LLVk::ProgramInfo* info = LLVk::findCompiledProgram("UI Shader");
+    if (!info)
+    {
+        LL_INFOS("VkProbe") << "no compiled UI Shader available (start the viewer with LL_VK_SHADER_CHECK=1); clear-only probe" << LL_ENDL;
+        return false;
+    }
+    LLVk::Context& ctx = LLVk::Context::instance();
+    if (!scene.mProgram.create("UI Shader", *info))
+    {
+        return false;
+    }
+    for (const LLVk::LooseUniform& u : info->mUniforms)
+    {
+        LL_INFOS("VkProbe") << "UI Shader uniform " << u.mType << " " << u.mName << " @" << u.mOffset << LL_ENDL;
+    }
+
+    // 64x64 blue/white checkerboard, row 0 first
+    const U32 N = 64;
+    {
+        LLVk::Buffer staging;
+        if (!ctx.createBuffer(N * N * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, LLVk::Context::Memory::Upload, staging)
+            || !ctx.createImage2D(N, N, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, scene.mTexture))
+        {
+            return false;
+        }
+        U8* px = (U8*)staging.mMapped;
+        for (U32 y = 0; y < N; ++y)
+        {
+            for (U32 x = 0; x < N; ++x)
+            {
+                const bool on = ((x / 8) + (y / 8)) % 2 == 0;
+                U8* p = px + (y * N + x) * 4;
+                p[0] = on ? 255 : 40; p[1] = on ? 255 : 90; p[2] = 255; p[3] = 255;
+            }
+        }
+        ctx.immediateSubmit([&](VkCommandBuffer cmd) {
+            LLVk::imageBarrier(cmd, scene.mTexture.mImage, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_UNDEFINED,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                               VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            VkBufferImageCopy c = {};
+            c.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            c.imageExtent = { N, N, 1 };
+            LLVk::vkCmdCopyBufferToImage(cmd, staging.mBuffer, scene.mTexture.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+            LLVk::imageBarrier(cmd, scene.mTexture.mImage, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                               VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        });
+        scene.mTexture.mLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        ctx.waitIdle();
+        vmaDestroyBuffer(ctx.getAllocator(), staging.mBuffer, staging.mAllocation);
+    }
+
+    // a quad as a triangle strip; position in clip space (z 0), uv 0..4 (repeated), corner colours
+    const Vertex quad[4] = {
+        { { -0.6f, -0.6f, 0.f }, { 0.f, 0.f }, { 255, 80, 80, 255 } },
+        { {  0.6f, -0.6f, 0.f }, { 4.f, 0.f }, { 80, 255, 80, 255 } },
+        { { -0.6f,  0.6f, 0.f }, { 0.f, 4.f }, { 80, 80, 255, 255 } },
+        { {  0.6f,  0.6f, 0.f }, { 4.f, 4.f }, { 255, 255, 255, 255 } },
+    };
+    if (!ctx.createBuffer(sizeof(quad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, LLVk::Context::Memory::Upload, scene.mVertices))
+    {
+        return false;
+    }
+    memcpy(scene.mVertices.mMapped, quad, sizeof(quad));
+
+    LLVk::SamplerDesc sd;
+    sd.mMag = VK_FILTER_NEAREST;
+    sd.mMin = VK_FILTER_NEAREST;
+    sd.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    scene.mSampler = LLVk::Renderer::instance().getSampler(sd);
+
+    scene.mReady = true;
+    LL_INFOS("VkProbe") << "test scene ready" << LL_ENDL;
+    return true;
+}
+
+void destroy_scene(TestScene& scene)
+{
+    LLVk::Context& ctx = LLVk::Context::instance();
+    if (ctx.getDevice() != VK_NULL_HANDLE)
+    {
+        ctx.waitIdle();
+        if (scene.mVertices.valid())
+        {
+            vmaDestroyBuffer(ctx.getAllocator(), scene.mVertices.mBuffer, scene.mVertices.mAllocation);
+        }
+        if (scene.mTexture.valid())
+        {
+            LLVk::vkDestroyImageView(ctx.getDevice(), scene.mTexture.mView, nullptr);
+            vmaDestroyImage(ctx.getAllocator(), scene.mTexture.mImage, scene.mTexture.mAllocation);
+        }
+        scene.mProgram.destroy();
+    }
+    scene = TestScene();
+}
+
+void draw_scene(TestScene& scene, LLVk::Image& target, F32 time_seconds)
+{
+    LLVk::Renderer& r = LLVk::Renderer::instance();
+
+    // rotation about z with the aspect ratio folded in. The final image is not flipped yet (that happens at
+    // presentation in the real renderer), so y is negated here to show the quad the right way up.
+    const F32 aspect = (F32)target.mExtent.width / (F32)target.mExtent.height;
+    const F32 c = cosf(time_seconds), s = sinf(time_seconds);
+    const F32 mvp[16] = {                       // column-major mat4
+        c / aspect, -s,        0.f, 0.f,
+        -s / aspect, -c,       0.f, 0.f,
+        0.f,         0.f,      1.f, 0.f,
+        0.f,         0.f,      0.f, 1.f,
+    };
+    const F32 identity[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+    scene.mProgram.setMatrices("modelview_projection_matrix", mvp, 4, 4);
+    scene.mProgram.setMatrices("texture_matrix0", identity, 4, 4);
+
+    LLVk::VertexLayout layout;
+    layout.mStride = sizeof(Vertex);
+    layout.mAttributes = {
+        { 0, VK_FORMAT_R32G32B32_SFLOAT, (U32)offsetof(Vertex, mPosition) },    // position
+        { 2, VK_FORMAT_R32G32_SFLOAT, (U32)offsetof(Vertex, mUV) },             // texcoord0
+        { 6, VK_FORMAT_R8G8B8A8_UNORM, (U32)offsetof(Vertex, mColor) },         // diffuse_color
+    };
+
+    r.setProgram(&scene.mProgram);
+    r.setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+    r.setVertexLayout(layout);
+    r.setVertexBuffer(scene.mVertices.mBuffer, 0);
+    const S32 binding = scene.mProgram.getSamplerBinding("diffuseMap");
+    if (binding >= 0)
+    {
+        r.setTexture((U32)binding, &scene.mTexture, scene.mSampler);
+    }
+    r.draw(4, 0);
+}
+
 void hsv_to_rgb(F32 h, F32& r, F32& g, F32& b)
 {
     const F32 x = h * 6.f;
@@ -103,6 +262,8 @@ void LLVkProbe::shutdown()
     {
         ctx.waitIdle();
     }
+    destroy_scene(sProbe.mScene);
+    LLVk::Renderer::instance().shutdown();
     sProbe.mSwapchain.destroy();
     ctx.shutdown();
     if (sProbe.mWindow)
@@ -133,7 +294,8 @@ void LLVkProbe::setEnabled(bool enabled)
     }
 
     LLVk::Context& ctx = LLVk::Context::instance();
-    if (!create_window() || !ctx.init(sProbe.mWindow) || !sProbe.mSwapchain.create(ctx.getSurface(), sProbe.mWindow))
+    if (!create_window() || !ctx.init(sProbe.mWindow) || !LLVk::Renderer::instance().init()
+        || !sProbe.mSwapchain.create(ctx.getSurface(), sProbe.mWindow))
     {
         LL_WARNS("VkProbe") << "Vulkan probe initialisation failed" << LL_ENDL;
         shutdown();
@@ -187,35 +349,39 @@ void LLVkProbe::frame()
         return;
     }
 
-    LLVk::imageBarrier(cmd, sc.getImage(image_index), VK_IMAGE_ASPECT_COLOR_BIT, 1, 1,
-                       VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
-                       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    if (!sProbe.mScene.mTried)
+    {
+        create_scene(sProbe.mScene);
+    }
 
-    F32 hue = (F32)(GetTickCount64() % 6000) / 6000.f;
-    VkClearValue clear = {};
-    hsv_to_rgb(hue, clear.color.float32[0], clear.color.float32[1], clear.color.float32[2]);
-    clear.color.float32[3] = 1.f;
+    // wrap the swapchain image so the renderer can track its layout; its contents are undefined after acquire
+    LLVk::Image target;
+    target.mImage = sc.getImage(image_index);
+    target.mView = sc.getView(image_index);
+    target.mFormat = sc.getFormat();
+    target.mAspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    target.mExtent = { sc.getExtent().width, sc.getExtent().height, 1 };
+    target.mLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    VkRenderingAttachmentInfo color = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-    color.imageView = sc.getView(image_index);
-    color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue = clear;
+    LLVk::Renderer& renderer = LLVk::Renderer::instance();
+    renderer.beginFrame(cmd, ctx.getFrameSlot());
+    LLVk::Image* targets[1] = { &target };
+    renderer.setRenderTarget(targets, 1, nullptr);
 
-    VkRenderingInfo ri = { VK_STRUCTURE_TYPE_RENDERING_INFO };
-    ri.renderArea = { { 0, 0 }, sc.getExtent() };
-    ri.layerCount = 1;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &color;
-    LLVk::vkCmdBeginRendering(cmd, &ri);
-    LLVk::vkCmdEndRendering(cmd);
+    const F32 time_seconds = (F32)(GetTickCount64() % 60000) / 1000.f;
+    const F32 hue = (F32)(GetTickCount64() % 6000) / 6000.f;
+    F32 clear_color[4] = { 0, 0, 0, 1 };
+    hsv_to_rgb(hue, clear_color[0], clear_color[1], clear_color[2]);
+    for (int i = 0; i < 3; ++i) clear_color[i] *= 0.35f;      // dim background so the quad stands out
+    renderer.clear(LLVk::CLEAR_COLOR, clear_color, 1.f, 0);
 
-    LLVk::imageBarrier(cmd, sc.getImage(image_index), VK_IMAGE_ASPECT_COLOR_BIT, 1, 1,
-                       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                       VK_PIPELINE_STAGE_2_NONE, 0);
+    if (sProbe.mScene.mReady)
+    {
+        draw_scene(sProbe.mScene, target, time_seconds);
+    }
+
+    renderer.ensureLayout(target, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    renderer.endFrame();
 
     ctx.endFrame(ctx.getAcquireSemaphore(), sc.getRenderDone(image_index));
     sc.present(image_index, sc.getRenderDone(image_index));
