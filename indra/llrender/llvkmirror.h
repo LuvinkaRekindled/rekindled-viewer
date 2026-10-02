@@ -13,6 +13,11 @@
 
 #include "linden_common.h"
 
+#if defined(LL_VULKAN)
+#include <mutex>
+namespace LLVk { struct Image; }
+#endif
+
 namespace LLVkMirror
 {
     // mirror mode was requested (environment) and this build supports it
@@ -35,6 +40,15 @@ namespace LLVkMirror
 
     // switch the mirror off (window closed, error); the viewer carries on with OpenGL only
     void shutdown();
+
+#if defined(LL_VULKAN)
+    // the lock every mirror entry point takes (the viewer calls GL from more than one thread)
+    std::recursive_mutex& lock();
+
+    // the image the viewer's default framebuffer maps to (valid while ready)
+    LLVk::Image* backbufferColor();
+    LLVk::Image* backbufferDepth();
+#endif
 }
 
 #endif // LL_LLVKMIRROR_H

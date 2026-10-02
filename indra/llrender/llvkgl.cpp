@@ -1,0 +1,1743 @@
+/**
+ * @file llvkgl.cpp
+ * @brief Translation of the viewer's OpenGL call stream into Vulkan (see llvkgl.h).
+ *
+ * Every hook runs after the real GL call. The hooks keep a copy of the GL state that matters (textures, framebuffer
+ * attachments, buffers, vertex arrays, draw state) and, at each draw, translate it into Vulkan state and replay the
+ * draw into the mirror frame.
+ */
+
+#include "linden_common.h"
+
+#define LL_VK_NO_INTERCEPT      // this file talks about GL types and constants only; it never calls GL
+#include "llglheaders.h"
+
+#if defined(LL_VULKAN)
+
+#include "llvkmirror.h"
+#include "llvkcontext.h"
+#include "llvkrenderer.h"
+
+#include <map>
+#include <mutex>
+#include <tuple>
+#include <memory>
+#include <unordered_map>
+#include <cstring>
+#include <cstdlib>
+
+// constants that older GL headers may not define
+#ifndef GL_TEXTURE_CUBE_MAP_ARRAY
+#define GL_TEXTURE_CUBE_MAP_ARRAY 0x9009
+#endif
+#ifndef GL_TEXTURE_2D_ARRAY
+#define GL_TEXTURE_2D_ARRAY 0x8C1A
+#endif
+#ifndef GL_PIXEL_UNPACK_BUFFER
+#define GL_PIXEL_UNPACK_BUFFER 0x88EC
+#endif
+#ifndef GL_UNIFORM_BUFFER
+#define GL_UNIFORM_BUFFER 0x8A11
+#endif
+#ifndef GL_COMPARE_REF_TO_TEXTURE
+#define GL_COMPARE_REF_TO_TEXTURE 0x884E
+#endif
+#ifndef GL_TEXTURE_MAX_ANISOTROPY
+#define GL_TEXTURE_MAX_ANISOTROPY 0x84FE
+#endif
+#ifndef GL_TEXTURE_SWIZZLE_R
+#define GL_TEXTURE_SWIZZLE_R 0x8E42
+#define GL_TEXTURE_SWIZZLE_G 0x8E43
+#define GL_TEXTURE_SWIZZLE_B 0x8E44
+#define GL_TEXTURE_SWIZZLE_A 0x8E45
+#define GL_TEXTURE_SWIZZLE_RGBA 0x8E46
+#endif
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#endif
+
+namespace LLVkGL
+{
+
+bool gActive = false;
+std::recursive_mutex gMutex;
+
+namespace
+{
+
+using namespace LLVk;
+
+//-----------------------------------------------------------------------------------------------------
+// logging helpers
+//-----------------------------------------------------------------------------------------------------
+
+void warn_once(const char* what, U32 value)
+{
+    static std::map<std::string, bool> seen;
+    const std::string key = std::string(what) + ":" + std::to_string(value);
+    if (!seen[key])
+    {
+        seen[key] = true;
+        LL_WARNS("VkGL") << "unsupported: " << what << " 0x" << std::hex << value << std::dec << LL_ENDL;
+    }
+}
+
+//-----------------------------------------------------------------------------------------------------
+// formats
+//-----------------------------------------------------------------------------------------------------
+
+struct FormatMap
+{
+    VkFormat mVk = VK_FORMAT_UNDEFINED;
+    U32 mTexelBytes = 4;                    // bytes per texel in the Vulkan image
+    bool mDepth = false;
+    bool mCompressed = false;
+    VkComponentMapping mSwizzle = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
+};
+
+const VkComponentMapping SWZ_ALPHA = { VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_R };
+const VkComponentMapping SWZ_LUM = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE };
+const VkComponentMapping SWZ_LUM_ALPHA = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G };
+
+bool map_internal_format(GLint f, FormatMap& m)
+{
+    m = FormatMap();
+    switch ((GLenum)f)
+    {
+    case GL_RGBA: case GL_RGBA8: case 4: m.mVk = VK_FORMAT_R8G8B8A8_UNORM; return true;
+    case GL_RGB: case GL_RGB8: case 3: m.mVk = VK_FORMAT_R8G8B8A8_UNORM; return true;
+    case 0x8C43: case 0x8C42: m.mVk = VK_FORMAT_R8G8B8A8_SRGB; return true;        // SRGB8_ALPHA8, SRGB_ALPHA
+    case 0x8C41: case 0x8C40: m.mVk = VK_FORMAT_R8G8B8A8_SRGB; return true;        // SRGB8, SRGB
+    case GL_ALPHA: case GL_ALPHA8: m.mVk = VK_FORMAT_R8_UNORM; m.mTexelBytes = 1; m.mSwizzle = SWZ_ALPHA; return true;
+    case GL_LUMINANCE: case GL_LUMINANCE8: case 1: m.mVk = VK_FORMAT_R8_UNORM; m.mTexelBytes = 1; m.mSwizzle = SWZ_LUM; return true;
+    case GL_LUMINANCE_ALPHA: case GL_LUMINANCE8_ALPHA8: case 2: m.mVk = VK_FORMAT_R8G8_UNORM; m.mTexelBytes = 2; m.mSwizzle = SWZ_LUM_ALPHA; return true;
+    case 0x822F: m.mVk = VK_FORMAT_R16G16_SFLOAT; m.mTexelBytes = 4; return true;  // RG16F
+    case 0x8230: m.mVk = VK_FORMAT_R32G32_SFLOAT; m.mTexelBytes = 8; return true;  // RG32F
+    case 0x822C: m.mVk = VK_FORMAT_R16G16_UNORM; m.mTexelBytes = 4; return true;   // RG16
+    case 0x8229: m.mVk = VK_FORMAT_R8_UNORM; m.mTexelBytes = 1; return true;       // R8
+    case 0x822B: m.mVk = VK_FORMAT_R8G8_UNORM; m.mTexelBytes = 2; return true;     // RG8
+    case 0x822E: m.mVk = VK_FORMAT_R32_SFLOAT; m.mTexelBytes = 4; return true;     // R32F
+    case 0x822D: m.mVk = VK_FORMAT_R16_SFLOAT; m.mTexelBytes = 2; return true;     // R16F
+    case 0x881A: case 0x881B: m.mVk = VK_FORMAT_R16G16B16A16_SFLOAT; m.mTexelBytes = 8; return true;   // RGBA16F, RGB16F
+    case 0x8814: case 0x8815: m.mVk = VK_FORMAT_R32G32B32A32_SFLOAT; m.mTexelBytes = 16; return true;  // RGBA32F, RGB32F
+    case 0x805B: m.mVk = VK_FORMAT_R16G16B16A16_UNORM; m.mTexelBytes = 8; return true;                 // RGBA16
+    case 0x8C3A: m.mVk = VK_FORMAT_B10G11R11_UFLOAT_PACK32; return true;           // R11F_G11F_B10F
+    case 0x8059: m.mVk = VK_FORMAT_A2B10G10R10_UNORM_PACK32; return true;          // RGB10_A2
+    case GL_DEPTH_COMPONENT: case GL_DEPTH_COMPONENT16: case GL_DEPTH_COMPONENT24: case GL_DEPTH_COMPONENT32:
+    case 0x8CAC: case 0x88F0:                                                       // DEPTH_COMPONENT32F, DEPTH24_STENCIL8
+        m.mVk = VK_FORMAT_D32_SFLOAT; m.mTexelBytes = 4; m.mDepth = true; return true;
+    case 0x83F0: m.mVk = VK_FORMAT_BC1_RGB_UNORM_BLOCK; m.mTexelBytes = 8; m.mCompressed = true; return true;
+    case 0x83F1: m.mVk = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; m.mTexelBytes = 8; m.mCompressed = true; return true;
+    case 0x83F2: m.mVk = VK_FORMAT_BC2_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
+    case 0x83F3: m.mVk = VK_FORMAT_BC3_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
+    case 0x8E8C: m.mVk = VK_FORMAT_BC7_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
+    // generic compressed formats: the driver chooses; the mirror stores plain RGBA8
+    case 0x84EE: case 0x84ED: m.mVk = VK_FORMAT_R8G8B8A8_UNORM; return true;
+    default:
+        warn_once("internal format", (U32)f);
+        return false;
+    }
+}
+
+U32 type_bytes(GLenum type)
+{
+    switch (type)
+    {
+    case GL_UNSIGNED_BYTE: case GL_BYTE: return 1;
+    case GL_UNSIGNED_SHORT: case GL_SHORT: case 0x140B: return 2;
+    case GL_UNSIGNED_INT: case GL_INT: case GL_FLOAT: return 4;
+    default: return 0;
+    }
+}
+
+U32 format_components(GLenum f)
+{
+    switch (f)
+    {
+    case GL_RGBA: case 0x80E1: return 4;            // RGBA, BGRA
+    case GL_RGB: case 0x80E0: return 3;             // RGB, BGR
+    case GL_LUMINANCE_ALPHA: case 0x8227: return 2; // LUMINANCE_ALPHA, RG
+    case GL_ALPHA: case GL_LUMINANCE: case 0x1903: case GL_DEPTH_COMPONENT: return 1;   // RED
+    default: return 0;
+    }
+}
+
+F32 half_to_float(U16 h)
+{
+    const U32 sign = (h >> 15) & 1, exp = (h >> 10) & 0x1F, mant = h & 0x3FF;
+    U32 f;
+    if (exp == 0)
+    {
+        if (mant == 0) f = sign << 31;
+        else
+        {
+            U32 e = 127 - 15 + 1, m = mant;
+            while (!(m & 0x400)) { m <<= 1; --e; }
+            f = (sign << 31) | (e << 23) | ((m & 0x3FF) << 13);
+        }
+    }
+    else if (exp == 31) f = (sign << 31) | 0x7F800000 | (mant << 13);
+    else f = (sign << 31) | ((exp - 15 + 127) << 23) | (mant << 13);
+    F32 out;
+    memcpy(&out, &f, 4);
+    return out;
+}
+
+U16 float_to_half(F32 v)
+{
+    U32 f;
+    memcpy(&f, &v, 4);
+    const U32 sign = (f >> 16) & 0x8000;
+    S32 exp = (S32)((f >> 23) & 0xFF) - 127 + 15;
+    U32 mant = f & 0x7FFFFF;
+    if (exp <= 0) return (U16)sign;
+    if (exp >= 31) return (U16)(sign | 0x7C00);
+    return (U16)(sign | (exp << 10) | (mant >> 13));
+}
+
+// Converts GL client pixel data into the tightly packed texels of the Vulkan format. Returns false if the
+// combination is not handled.
+bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void* src, U32 width, U32 height, U32 depth,
+                    U32 alignment, U32 row_length, std::vector<U8>& out)
+{
+    const U32 comps = format_components(format);
+    const U32 tb = type_bytes(type);
+    if (!comps || !tb)
+    {
+        warn_once("pixel format/type", (format << 16) | type);
+        return false;
+    }
+    const U32 src_row_texels = row_length ? row_length : width;
+    U32 src_row_bytes = src_row_texels * comps * tb;
+    src_row_bytes = (src_row_bytes + alignment - 1) / alignment * alignment;
+    const U32 dst_texel = fm.mTexelBytes;
+    out.assign((size_t)width * height * depth * dst_texel, 0);
+
+    const U8* base = (const U8*)src;
+    for (U32 z = 0; z < depth; ++z)
+    {
+        for (U32 y = 0; y < height; ++y)
+        {
+            const U8* row = base + ((size_t)z * height + y) * src_row_bytes;
+            U8* dst = out.data() + (((size_t)z * height + y) * width) * dst_texel;
+            for (U32 x = 0; x < width; ++x)
+            {
+                const U8* p = row + (size_t)x * comps * tb;
+                U8* d = dst + (size_t)x * dst_texel;
+                if (fm.mDepth)
+                {
+                    F32 v = 0.f;
+                    if (type == GL_FLOAT) memcpy(&v, p, 4);
+                    else if (type == GL_UNSIGNED_INT) { U32 u; memcpy(&u, p, 4); v = (F32)((double)u / 4294967295.0); }
+                    else if (type == GL_UNSIGNED_SHORT) { U16 u; memcpy(&u, p, 2); v = (F32)u / 65535.f; }
+                    memcpy(d, &v, 4);
+                    continue;
+                }
+                if (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R8G8B8A8_SRGB)
+                {
+                    if (type != GL_UNSIGNED_BYTE) { warn_once("rgba8 source type", type); return false; }
+                    switch (comps)
+                    {
+                    case 4: d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = p[3]; if (format == 0x80E1) std::swap(d[0], d[2]); break;
+                    case 3: d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = 255; if (format == 0x80E0) std::swap(d[0], d[2]); break;
+                    case 2: d[0] = p[0]; d[1] = p[0]; d[2] = p[0]; d[3] = p[1]; break;
+                    default: d[0] = d[1] = d[2] = p[0]; d[3] = 255; break;
+                    }
+                }
+                else if (fm.mVk == VK_FORMAT_R8_UNORM)
+                {
+                    d[0] = p[0];
+                }
+                else if (fm.mVk == VK_FORMAT_R8G8_UNORM)
+                {
+                    d[0] = p[0]; d[1] = comps > 1 ? p[1] : 255;
+                }
+                else if (fm.mVk == VK_FORMAT_R16G16B16A16_SFLOAT)
+                {
+                    U16 h[4] = { 0, 0, 0, 0x3C00 };
+                    for (U32 c = 0; c < comps && c < 4; ++c)
+                    {
+                        if (type == GL_FLOAT) { F32 v; memcpy(&v, p + c * 4, 4); h[c] = float_to_half(v); }
+                        else if (type == 0x140B) memcpy(&h[c], p + c * 2, 2);
+                        else if (type == GL_UNSIGNED_BYTE) h[c] = float_to_half(p[c] / 255.f);
+                        else { warn_once("rgba16f source type", type); return false; }
+                    }
+                    memcpy(d, h, 8);
+                }
+                else if (fm.mVk == VK_FORMAT_R32G32B32A32_SFLOAT)
+                {
+                    F32 v[4] = { 0, 0, 0, 1 };
+                    for (U32 c = 0; c < comps && c < 4; ++c)
+                    {
+                        if (type == GL_FLOAT) memcpy(&v[c], p + c * 4, 4);
+                        else if (type == 0x140B) { U16 h; memcpy(&h, p + c * 2, 2); v[c] = half_to_float(h); }
+                        else if (type == GL_UNSIGNED_BYTE) v[c] = p[c] / 255.f;
+                        else { warn_once("rgba32f source type", type); return false; }
+                    }
+                    memcpy(d, v, 16);
+                }
+                else if (fm.mVk == VK_FORMAT_R32_SFLOAT || fm.mVk == VK_FORMAT_R16_SFLOAT)
+                {
+                    F32 v = 0.f;
+                    if (type == GL_FLOAT) memcpy(&v, p, 4);
+                    else if (type == GL_UNSIGNED_BYTE) v = p[0] / 255.f;
+                    if (fm.mVk == VK_FORMAT_R32_SFLOAT) memcpy(d, &v, 4);
+                    else { U16 h = float_to_half(v); memcpy(d, &h, 2); }
+                }
+                else
+                {
+                    memcpy(d, p, std::min<U32>(dst_texel, comps * tb));     // packed formats: copy as is
+                }
+            }
+        }
+    }
+    return true;
+}
+
+//-----------------------------------------------------------------------------------------------------
+// state
+//-----------------------------------------------------------------------------------------------------
+
+struct SamplerParams
+{
+    GLenum mMinFilter = GL_NEAREST_MIPMAP_LINEAR;
+    GLenum mMagFilter = GL_LINEAR;
+    GLenum mWrapS = GL_REPEAT;
+    GLenum mWrapT = GL_REPEAT;
+    GLenum mWrapR = GL_REPEAT;
+    F32 mAnisotropy = 1.f;
+    bool mCompare = false;
+    GLenum mCompareFunc = GL_LEQUAL;
+    S32 mBaseLevel = 0;
+    S32 mMaxLevel = 1000;
+};
+
+struct Tex
+{
+    Image mImage;
+    GLenum mTarget = 0;                 // GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP, ...
+    U32 mWidth = 0, mHeight = 0, mDepth = 0;
+    U32 mLevels = 0;
+    GLint mInternalFormat = 0;
+    FormatMap mFormat;
+    SamplerParams mSampler;
+    GLenum mSwizzle[4] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };      // GL_TEXTURE_SWIZZLE_R..A
+    bool mSwizzleSet = false;
+    std::map<std::pair<U32, U32>, std::unique_ptr<Image>> mViews;     // (level, layer) -> render-target view
+};
+
+VkComponentSwizzle swizzle_component(GLenum s)
+{
+    switch (s)
+    {
+    case GL_RED: return VK_COMPONENT_SWIZZLE_R;
+    case GL_GREEN: return VK_COMPONENT_SWIZZLE_G;
+    case GL_BLUE: return VK_COMPONENT_SWIZZLE_B;
+    case GL_ALPHA: return VK_COMPONENT_SWIZZLE_A;
+    case GL_ZERO: return VK_COMPONENT_SWIZZLE_ZERO;
+    default: return VK_COMPONENT_SWIZZLE_ONE;
+    }
+}
+
+VkComponentMapping swizzle_mapping(const Tex& t)
+{
+    return { swizzle_component(t.mSwizzle[0]), swizzle_component(t.mSwizzle[1]), swizzle_component(t.mSwizzle[2]), swizzle_component(t.mSwizzle[3]) };
+}
+
+// the sampling view of a texture whose swizzle changed: a Vulkan swizzle is part of the view, so make a new one
+void rebuild_sampling_view(Tex& t)
+{
+    if (!t.mImage.valid() || !t.mImage.mView)
+    {
+        return;
+    }
+    Context& ctx = Context::instance();
+    VkImageViewCreateInfo vi = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    vi.image = t.mImage.mImage;
+    vi.viewType = t.mImage.mViewType;
+    vi.format = t.mImage.mFormat;
+    vi.components = swizzle_mapping(t);
+    vi.subresourceRange = { t.mImage.mAspect, 0, t.mImage.mMipLevels, 0, t.mImage.mLayers };
+    VkImageView fresh = VK_NULL_HANDLE;
+    if (vkCreateImageView(ctx.getDevice(), &vi, nullptr, &fresh) != VK_SUCCESS)
+    {
+        return;
+    }
+    VkImageView old = t.mImage.mView;
+    VkDevice dev = ctx.getDevice();
+    ctx.destroyLater([=]() { vkDestroyImageView(dev, old, nullptr); });
+    t.mImage.mView = fresh;
+}
+
+struct Buf
+{
+    Buffer mVk;
+    U64 mSize = 0;
+    U64 mLastUseFrame = ~0ull;
+};
+
+struct VaoAttrib
+{
+    bool mEnabled = false;
+    GLuint mBuffer = 0;
+    GLint mSize = 4;
+    GLenum mType = GL_FLOAT;
+    bool mNormalized = false;
+    bool mInteger = false;
+    GLsizei mStride = 0;
+    U64 mOffset = 0;
+};
+
+struct Vao
+{
+    VaoAttrib mAttrib[16];
+    GLuint mElementBuffer = 0;
+};
+
+struct FboAttachment
+{
+    GLuint mTexture = 0;
+    GLint mLevel = 0;
+    U32 mLayer = 0;
+};
+
+struct Fbo
+{
+    FboAttachment mColor[8];
+    FboAttachment mDepth;
+    GLenum mDrawBuffers[8] = { GL_COLOR_ATTACHMENT0, 0, 0, 0, 0, 0, 0, 0 };
+    U32 mDrawCount = 1;
+    GLenum mReadBuffer = GL_COLOR_ATTACHMENT0;
+};
+
+// state that belongs to one GL context (the viewer has a texture worker thread with its own, sharing objects)
+struct PerContext
+{
+    GLuint mBound[32][8] = {};                  // texture per unit and target class
+    U32 mActiveUnit = 0;
+    GLuint mDrawFbo = 0, mReadFbo = 0;
+    GLuint mArrayBuffer = 0;
+    GLuint mPixelUnpackBuffer = 0;
+    GLuint mVao = 0;
+    GLint mUnpackAlignment = 4;
+    GLint mUnpackRowLength = 0;
+};
+thread_local PerContext sCtx;
+
+struct GLState
+{
+    // objects (shared between contexts)
+    std::unordered_map<GLuint, Tex> mTextures;
+    std::unordered_map<GLuint, Fbo> mFbos;
+    std::unordered_map<GLuint, Buf> mBuffers;
+    std::unordered_map<GLuint, Vao> mVaos;
+    F32 mConstAttrib[16][4];
+
+    // draw state
+    bool mBlend = false, mDepthTest = false, mCull = false, mScissorTest = false, mStencilTest = false, mPolyOffset = false;
+    GLenum mBlendSrcRGB = GL_ONE, mBlendDstRGB = GL_ZERO, mBlendSrcA = GL_ONE, mBlendDstA = GL_ZERO;
+    GLenum mDepthFunc = GL_LESS;
+    bool mDepthMask = true;
+    bool mColorMask[4] = { true, true, true, true };
+    GLenum mCullFace = GL_BACK;
+    F32 mOffsetFactor = 0.f, mOffsetUnits = 0.f;
+    GLenum mPolygonMode = GL_FILL;
+    F32 mLineWidth = 1.f;
+    S32 mViewport[4] = { 0, 0, 0, 0 };
+    bool mViewportSet = false;
+    S32 mScissor[4] = { 0, 0, 0, 0 };
+    F32 mClearColor[4] = { 0, 0, 0, 0 };
+
+    GLState()
+    {
+        for (auto& a : mConstAttrib) { a[0] = a[1] = a[2] = 0.f; a[3] = 1.f; }
+    }
+};
+
+GLState sGL;
+U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
+bool sHasDepth = false;             // does the current render target have a depth attachment
+
+Vao& current_vao()
+{
+    return sGL.mVaos[sCtx.mVao];
+}
+
+U32 target_class(GLenum target)
+{
+    switch (target)
+    {
+    case GL_TEXTURE_2D: return 0;
+    case GL_TEXTURE_CUBE_MAP: case 0x8515: case 0x8516: case 0x8517: case 0x8518: case 0x8519: case 0x851A: return 1;
+    case GL_TEXTURE_CUBE_MAP_ARRAY: return 2;
+    case GL_TEXTURE_2D_ARRAY: return 3;
+    case GL_TEXTURE_3D: return 4;
+    case 0x9100: return 5;      // TEXTURE_2D_MULTISAMPLE
+    default: return 7;
+    }
+}
+
+Tex* bound_texture(GLenum target)
+{
+    const GLuint name = sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
+    auto it = sGL.mTextures.find(name);
+    return it == sGL.mTextures.end() ? nullptr : &it->second;
+}
+
+//-----------------------------------------------------------------------------------------------------
+// textures
+//-----------------------------------------------------------------------------------------------------
+
+void destroy_tex_images(Tex& t)
+{
+    Context& ctx = Context::instance();
+    VkDevice dev = ctx.getDevice();
+    for (auto& kv : t.mViews)
+    {
+        VkImageView v = kv.second->mView;
+        ctx.destroyLater([=]() { vkDestroyImageView(dev, v, nullptr); });
+    }
+    t.mViews.clear();
+    ctx.destroyImage(t.mImage);
+}
+
+// (re)creates the Vulkan image for a texture whose level 0 was just specified
+bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U32 depth)
+{
+    FormatMap fm;
+    if (!map_internal_format(internal_format, fm))
+    {
+        return false;
+    }
+    const U32 cls = target_class(target);
+    TexType type = TexType::Tex2D;
+    U32 d = 1;
+    switch (cls)
+    {
+    case 1: type = TexType::Cube; break;
+    case 2: type = TexType::CubeArray; d = std::max<U32>(1, depth / 6); break;
+    case 3: type = TexType::Tex2DArray; d = std::max<U32>(1, depth); break;
+    case 4: type = TexType::Tex3D; d = std::max<U32>(1, depth); break;
+    default: break;
+    }
+    const U32 gl_target_class = cls;
+    GLenum canonical = GL_TEXTURE_2D;
+    if (gl_target_class == 1) canonical = GL_TEXTURE_CUBE_MAP;
+    else if (gl_target_class == 2) canonical = GL_TEXTURE_CUBE_MAP_ARRAY;
+    else if (gl_target_class == 3) canonical = GL_TEXTURE_2D_ARRAY;
+    else if (gl_target_class == 4) canonical = GL_TEXTURE_3D;
+
+    if (t.mImage.valid() && t.mTarget == canonical && t.mWidth == w && t.mHeight == h && t.mDepth == depth
+        && t.mInternalFormat == internal_format)
+    {
+        return true;        // same specification again: keep the image and just upload into it
+    }
+    if (t.mImage.valid())
+    {
+        destroy_tex_images(t);
+    }
+
+    TextureDesc td;
+    td.mType = type;
+    td.mWidth = w;
+    td.mHeight = h;
+    td.mDepth = d;
+    td.mMips = cls == 4 ? mipLevelCount(std::max(w, h), depth) : mipLevelCount(w, h);
+    td.mFormat = fm.mVk;
+    td.mSwizzle = t.mSwizzleSet ? swizzle_mapping(t) : fm.mSwizzle;
+    if (fm.mDepth)
+    {
+        td.mUsage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    }
+    else if (!fm.mCompressed)
+    {
+        td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    }
+    if (!Renderer::instance().createTexture(td, t.mImage))
+    {
+        return false;
+    }
+    t.mTarget = canonical;
+    t.mWidth = w;
+    t.mHeight = h;
+    t.mDepth = depth;
+    t.mLevels = td.mMips;
+    t.mInternalFormat = internal_format;
+    t.mFormat = fm;
+    return true;
+}
+
+// source of client pixel data: either a pointer or an offset into the bound pixel unpack buffer
+const void* pixel_source(const void* pixels)
+{
+    if (sCtx.mPixelUnpackBuffer)
+    {
+        auto it = sGL.mBuffers.find(sCtx.mPixelUnpackBuffer);
+        if (it == sGL.mBuffers.end() || !it->second.mVk.mMapped)
+        {
+            return nullptr;
+        }
+        return (const U8*)it->second.mVk.mMapped + (size_t)(U64)pixels;
+    }
+    return pixels;
+}
+
+void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, GLenum format, GLenum type, const void* pixels)
+{
+    if (!t.mImage.valid() || level < 0 || (U32)level >= t.mLevels)
+    {
+        return;
+    }
+    const void* src = pixel_source(pixels);
+    if (!src)
+    {
+        return;     // nothing to upload (allocation only)
+    }
+    std::vector<U8> texels;
+    if (!convert_pixels(t.mFormat, format, type, src, w, h, d, (U32)sCtx.mUnpackAlignment, (U32)sCtx.mUnpackRowLength, texels))
+    {
+        return;
+    }
+    U32 layer = 0;
+    if (target >= 0x8515 && target <= 0x851A)
+    {
+        layer = target - 0x8515;            // cube face
+    }
+    else if (t.mTarget == GL_TEXTURE_2D_ARRAY || t.mTarget == GL_TEXTURE_CUBE_MAP_ARRAY || t.mTarget == GL_TEXTURE_3D)
+    {
+        layer = (U32)z;
+    }
+    const U32 slices = t.mTarget == GL_TEXTURE_3D ? d : 1;
+    if (t.mTarget == GL_TEXTURE_2D_ARRAY || t.mTarget == GL_TEXTURE_CUBE_MAP_ARRAY)
+    {
+        // several layers at once: upload one layer at a time
+        const size_t layer_bytes = (size_t)w * h * t.mFormat.mTexelBytes;
+        for (U32 l = 0; l < d; ++l)
+        {
+            Renderer::instance().uploadTexture(t.mImage, (U32)level, layer + l, (U32)x, (U32)y, w, h, 1, texels.data() + l * layer_bytes, layer_bytes);
+        }
+        return;
+    }
+    Renderer::instance().uploadTexture(t.mImage, (U32)level, layer, (U32)x, (U32)y, w, h, slices, texels.data(), texels.size());
+}
+
+// view of one level / layer of a texture, usable as a render target
+Image* texture_view(GLuint name, GLint level, U32 layer)
+{
+    auto it = sGL.mTextures.find(name);
+    if (it == sGL.mTextures.end() || !it->second.mImage.valid())
+    {
+        return nullptr;
+    }
+    Tex& t = it->second;
+    auto key = std::make_pair((U32)level, layer);
+    auto vit = t.mViews.find(key);
+    if (vit != t.mViews.end())
+    {
+        return vit->second.get();
+    }
+    Context& ctx = Context::instance();
+    auto view = std::make_unique<Image>();
+    view->mImage = t.mImage.mImage;
+    view->mFormat = t.mImage.mFormat;
+    view->mAspect = t.mImage.mAspect;
+    view->mExtent = { std::max<U32>(1, t.mImage.mExtent.width >> level), std::max<U32>(1, t.mImage.mExtent.height >> level), 1 };
+    view->mMipLevels = 1;
+    view->mLayers = 1;
+    view->mOwner = &t.mImage;
+    view->mBaseMip = (U32)level;
+    view->mBaseLayer = layer;
+    VkImageViewCreateInfo vi = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    vi.image = t.mImage.mImage;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = t.mImage.mFormat;
+    vi.subresourceRange = { t.mImage.mAspect, (U32)level, 1, layer, 1 };
+    if (vkCreateImageView(ctx.getDevice(), &vi, nullptr, &view->mView) != VK_SUCCESS)
+    {
+        return nullptr;
+    }
+    view->mLayout = t.mImage.mLayout;
+    Image* raw = view.get();
+    t.mViews[key] = std::move(view);
+    return raw;
+}
+
+//-----------------------------------------------------------------------------------------------------
+// framebuffer / render target
+//-----------------------------------------------------------------------------------------------------
+
+Image* attachment_image(const FboAttachment& a)
+{
+    return a.mTexture ? texture_view(a.mTexture, a.mLevel, a.mLayer) : nullptr;
+}
+
+// the color image reads (copies, readbacks) come from
+Image* read_image()
+{
+    if (sCtx.mReadFbo == 0)
+    {
+        return LLVkMirror::backbufferColor();
+    }
+    auto it = sGL.mFbos.find(sCtx.mReadFbo);
+    if (it == sGL.mFbos.end())
+    {
+        return nullptr;
+    }
+    const U32 index = it->second.mReadBuffer >= GL_COLOR_ATTACHMENT0 ? it->second.mReadBuffer - GL_COLOR_ATTACHMENT0 : 0;
+    return index < 8 ? attachment_image(it->second.mColor[index]) : nullptr;
+}
+
+// makes the renderer's render target match the GL draw framebuffer. Returns false if there is nothing to draw to.
+bool sync_target()
+{
+    Renderer& r = Renderer::instance();
+    if (sCtx.mDrawFbo == 0)
+    {
+        Image* color = LLVkMirror::backbufferColor();
+        Image* depth = LLVkMirror::backbufferDepth();
+        if (!color)
+        {
+            return false;
+        }
+        Image* colors[1] = { color };
+        r.setRenderTarget(colors, 1, depth);
+        sHasDepth = depth != nullptr;
+        return true;
+    }
+    auto it = sGL.mFbos.find(sCtx.mDrawFbo);
+    if (it == sGL.mFbos.end())
+    {
+        return false;
+    }
+    Fbo& fbo = it->second;
+    Image* colors[8] = {};
+    U32 count = 0;
+    for (U32 i = 0; i < fbo.mDrawCount && i < 8; ++i)
+    {
+        const GLenum buf = fbo.mDrawBuffers[i];
+        if (buf < GL_COLOR_ATTACHMENT0 || buf >= GL_COLOR_ATTACHMENT0 + 8)
+        {
+            break;
+        }
+        Image* img = attachment_image(fbo.mColor[buf - GL_COLOR_ATTACHMENT0]);
+        if (!img)
+        {
+            break;
+        }
+        colors[count++] = img;
+    }
+    Image* depth = attachment_image(fbo.mDepth);
+    if (!count && !depth)
+    {
+        return false;
+    }
+    r.setRenderTarget(colors, count, depth);
+    sHasDepth = depth != nullptr;
+    return true;
+}
+
+//-----------------------------------------------------------------------------------------------------
+// state translation
+//-----------------------------------------------------------------------------------------------------
+
+VkCompareOp compare_op(GLenum f)
+{
+    switch (f)
+    {
+    case GL_NEVER: return VK_COMPARE_OP_NEVER;
+    case GL_LESS: return VK_COMPARE_OP_LESS;
+    case GL_EQUAL: return VK_COMPARE_OP_EQUAL;
+    case GL_LEQUAL: return VK_COMPARE_OP_LESS_OR_EQUAL;
+    case GL_GREATER: return VK_COMPARE_OP_GREATER;
+    case GL_NOTEQUAL: return VK_COMPARE_OP_NOT_EQUAL;
+    case GL_GEQUAL: return VK_COMPARE_OP_GREATER_OR_EQUAL;
+    default: return VK_COMPARE_OP_ALWAYS;
+    }
+}
+
+VkBlendFactor blend_factor(GLenum f)
+{
+    switch (f)
+    {
+    case GL_ZERO: return VK_BLEND_FACTOR_ZERO;
+    case GL_ONE: return VK_BLEND_FACTOR_ONE;
+    case GL_SRC_COLOR: return VK_BLEND_FACTOR_SRC_COLOR;
+    case GL_ONE_MINUS_SRC_COLOR: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    case GL_SRC_ALPHA: return VK_BLEND_FACTOR_SRC_ALPHA;
+    case GL_ONE_MINUS_SRC_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    case GL_DST_ALPHA: return VK_BLEND_FACTOR_DST_ALPHA;
+    case GL_ONE_MINUS_DST_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    case GL_DST_COLOR: return VK_BLEND_FACTOR_DST_COLOR;
+    case GL_ONE_MINUS_DST_COLOR: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+    case GL_SRC_ALPHA_SATURATE: return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
+    default: warn_once("blend factor", f); return VK_BLEND_FACTOR_ONE;
+    }
+}
+
+VkPrimitiveTopology topology(GLenum mode)
+{
+    switch (mode)
+    {
+    case GL_POINTS: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    case GL_LINES: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    case GL_LINE_STRIP: return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+    case GL_TRIANGLES: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    case GL_TRIANGLE_STRIP: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    case GL_TRIANGLE_FAN: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+    default: warn_once("primitive mode", mode); return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    }
+}
+
+VkSamplerAddressMode wrap_mode(GLenum w)
+{
+    switch (w)
+    {
+    case GL_CLAMP_TO_EDGE: case GL_CLAMP: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    case 0x8370: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    case 0x812D: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    default: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    }
+}
+
+SamplerDesc sampler_for(const Tex& t)
+{
+    const SamplerParams& sp = t.mSampler;
+    SamplerDesc d;
+    d.mMag = sp.mMagFilter == GL_NEAREST ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+    bool mipmapped = true;
+    switch (sp.mMinFilter)
+    {
+    case GL_NEAREST: d.mMin = VK_FILTER_NEAREST; mipmapped = false; break;
+    case GL_LINEAR: d.mMin = VK_FILTER_LINEAR; mipmapped = false; break;
+    case GL_NEAREST_MIPMAP_NEAREST: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
+    case GL_LINEAR_MIPMAP_NEAREST: d.mMin = VK_FILTER_LINEAR; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
+    case GL_NEAREST_MIPMAP_LINEAR: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_LINEAR; break;
+    default: d.mMin = VK_FILTER_LINEAR; d.mMip = VK_SAMPLER_MIPMAP_MODE_LINEAR; break;
+    }
+    d.mAddressU = wrap_mode(sp.mWrapS);
+    d.mAddressV = wrap_mode(sp.mWrapT);
+    d.mAddressW = wrap_mode(sp.mWrapR);
+    d.mAnisotropy = sp.mAnisotropy;
+    d.mCompare = sp.mCompare;
+    d.mCompareOp = compare_op(sp.mCompareFunc);
+    const F32 last = (F32)std::max<S32>(0, (S32)t.mLevels - 1);
+    d.mMinLod = (F32)std::max(0, sp.mBaseLevel);
+    d.mMaxLod = mipmapped ? std::min(last, (F32)sp.mMaxLevel) : d.mMinLod + 0.25f;
+    if (d.mMaxLod < d.mMinLod) d.mMaxLod = d.mMinLod;
+    return d;
+}
+
+// translates the tracked GL state into renderer state for the next draw
+void sync_draw_state(Renderer& r, bool has_depth)
+{
+    RasterState rs;
+    if (sGL.mCull)
+    {
+        rs.mCull = sGL.mCullFace == GL_FRONT ? VK_CULL_MODE_FRONT_BIT : (sGL.mCullFace == GL_FRONT_AND_BACK ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_BACK_BIT);
+    }
+    rs.mPolygonMode = sGL.mPolygonMode == GL_LINE ? VK_POLYGON_MODE_LINE : (sGL.mPolygonMode == GL_POINT ? VK_POLYGON_MODE_POINT : VK_POLYGON_MODE_FILL);
+    rs.mLineWidth = sGL.mLineWidth;
+    rs.mDepthBias = sGL.mPolyOffset;
+    rs.mBiasConstant = sGL.mOffsetUnits;
+    rs.mBiasSlope = sGL.mOffsetFactor;
+    r.setRasterState(rs);
+
+    DepthStencilState ds;
+    ds.mDepthTest = sGL.mDepthTest && has_depth;
+    ds.mDepthWrite = sGL.mDepthMask && has_depth;
+    ds.mDepthOp = compare_op(sGL.mDepthFunc);
+    ds.mStencilTest = false;        // the mirror's depth images carry no stencil yet
+    r.setDepthStencilState(ds);
+
+    BlendState bs;
+    bs.mEnable = sGL.mBlend;
+    bs.mSrcColor = blend_factor(sGL.mBlendSrcRGB);
+    bs.mDstColor = blend_factor(sGL.mBlendDstRGB);
+    bs.mSrcAlpha = blend_factor(sGL.mBlendSrcA);
+    bs.mDstAlpha = blend_factor(sGL.mBlendDstA);
+    bs.mWriteMask = (sGL.mColorMask[0] ? VK_COLOR_COMPONENT_R_BIT : 0) | (sGL.mColorMask[1] ? VK_COLOR_COMPONENT_G_BIT : 0)
+        | (sGL.mColorMask[2] ? VK_COLOR_COMPONENT_B_BIT : 0) | (sGL.mColorMask[3] ? VK_COLOR_COMPONENT_A_BIT : 0);
+    r.setBlendState(bs);
+
+    if (sGL.mViewportSet)
+    {
+        r.setViewport(sGL.mViewport[0], sGL.mViewport[1], sGL.mViewport[2], sGL.mViewport[3]);
+    }
+    r.setScissorEnabled(sGL.mScissorTest);
+    if (sGL.mScissorTest)
+    {
+        r.setScissor(sGL.mScissor[0], sGL.mScissor[1], sGL.mScissor[2], sGL.mScissor[3]);
+    }
+}
+
+// binds the textures the program's samplers read
+void sync_textures(Renderer& r, Program& program)
+{
+    const ProgramInfo& info = program.getInfo();
+    for (size_t k = 0; k < info.mSamplers.size(); ++k)
+    {
+        const U32 unit = program.getSamplerUnit(k);
+        if (unit >= 32)
+        {
+            continue;
+        }
+        const std::string& type = info.mSamplers[k].mType;
+        U32 cls = 0;
+        if (type.find("CubeArray") != std::string::npos) cls = 2;
+        else if (type.find("Cube") != std::string::npos) cls = 1;
+        else if (type.find("2DArray") != std::string::npos) cls = 3;
+        else if (type.find("3D") != std::string::npos) cls = 4;
+        else if (type.find("MS") != std::string::npos) cls = 5;
+        auto it = sGL.mTextures.find(sCtx.mBound[unit][cls]);
+        if (it != sGL.mTextures.end() && it->second.mImage.valid())
+        {
+            r.setTexture(unit, &it->second.mImage, r.getSampler(sampler_for(it->second)));
+        }
+        else
+        {
+            r.setTexture(unit, nullptr, VK_NULL_HANDLE);
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------------------------------
+// buffers and vertex input
+//-----------------------------------------------------------------------------------------------------
+
+VkFormat vertex_format(GLint size, GLenum type, bool normalized, bool integer)
+{
+    const U32 n = (U32)std::max(1, std::min(size, 4));
+    switch (type)
+    {
+    case GL_FLOAT:
+    {
+        const VkFormat f[4] = { VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT };
+        return f[n - 1];
+    }
+    case 0x140B:
+    {
+        const VkFormat f[4] = { VK_FORMAT_R16_SFLOAT, VK_FORMAT_R16G16_SFLOAT, VK_FORMAT_R16G16B16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT };
+        return f[n - 1];
+    }
+    case GL_UNSIGNED_BYTE:
+    {
+        const VkFormat un[4] = { VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM, VK_FORMAT_R8G8B8_UNORM, VK_FORMAT_R8G8B8A8_UNORM };
+        const VkFormat ui[4] = { VK_FORMAT_R8_UINT, VK_FORMAT_R8G8_UINT, VK_FORMAT_R8G8B8_UINT, VK_FORMAT_R8G8B8A8_UINT };
+        const VkFormat us[4] = { VK_FORMAT_R8_USCALED, VK_FORMAT_R8G8_USCALED, VK_FORMAT_R8G8B8_USCALED, VK_FORMAT_R8G8B8A8_USCALED };
+        return integer ? ui[n - 1] : (normalized ? un[n - 1] : us[n - 1]);
+    }
+    case GL_BYTE:
+    {
+        const VkFormat sn[4] = { VK_FORMAT_R8_SNORM, VK_FORMAT_R8G8_SNORM, VK_FORMAT_R8G8B8_SNORM, VK_FORMAT_R8G8B8A8_SNORM };
+        const VkFormat si[4] = { VK_FORMAT_R8_SINT, VK_FORMAT_R8G8_SINT, VK_FORMAT_R8G8B8_SINT, VK_FORMAT_R8G8B8A8_SINT };
+        return integer ? si[n - 1] : sn[n - 1];
+    }
+    case GL_UNSIGNED_SHORT:
+    {
+        const VkFormat un[4] = { VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16_UNORM, VK_FORMAT_R16G16B16A16_UNORM };
+        const VkFormat ui[4] = { VK_FORMAT_R16_UINT, VK_FORMAT_R16G16_UINT, VK_FORMAT_R16G16B16_UINT, VK_FORMAT_R16G16B16A16_UINT };
+        const VkFormat us[4] = { VK_FORMAT_R16_USCALED, VK_FORMAT_R16G16_USCALED, VK_FORMAT_R16G16B16_USCALED, VK_FORMAT_R16G16B16A16_USCALED };
+        return integer ? ui[n - 1] : (normalized ? un[n - 1] : us[n - 1]);
+    }
+    case GL_SHORT:
+    {
+        const VkFormat sn[4] = { VK_FORMAT_R16_SNORM, VK_FORMAT_R16G16_SNORM, VK_FORMAT_R16G16B16_SNORM, VK_FORMAT_R16G16B16A16_SNORM };
+        const VkFormat si[4] = { VK_FORMAT_R16_SINT, VK_FORMAT_R16G16_SINT, VK_FORMAT_R16G16B16_SINT, VK_FORMAT_R16G16B16A16_SINT };
+        const VkFormat ss[4] = { VK_FORMAT_R16_SSCALED, VK_FORMAT_R16G16_SSCALED, VK_FORMAT_R16G16B16_SSCALED, VK_FORMAT_R16G16B16A16_SSCALED };
+        return integer ? si[n - 1] : (normalized ? sn[n - 1] : ss[n - 1]);
+    }
+    case GL_UNSIGNED_INT:
+    {
+        const VkFormat ui[4] = { VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT, VK_FORMAT_R32G32B32A32_UINT };
+        return ui[n - 1];
+    }
+    case GL_INT:
+    {
+        const VkFormat si[4] = { VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT, VK_FORMAT_R32G32B32_SINT, VK_FORMAT_R32G32B32A32_SINT };
+        return si[n - 1];
+    }
+    default:
+        warn_once("vertex attribute type", type);
+        return VK_FORMAT_R32G32B32A32_SFLOAT;
+    }
+}
+
+U32 attrib_type_bytes(GLenum type)
+{
+    switch (type)
+    {
+    case GL_BYTE: case GL_UNSIGNED_BYTE: return 1;
+    case GL_SHORT: case GL_UNSIGNED_SHORT: case 0x140B: return 2;
+    default: return 4;
+    }
+}
+
+// Builds the vertex input for the current VAO and the program's attributes.
+bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vector<GLuint>& used_buffers)
+{
+    Vao& vao = current_vao();
+    const ProgramInfo& info = program.getInfo();
+    // key: buffer, stride, byte offset of the binding inside the buffer
+    std::map<std::tuple<GLuint, GLsizei, U64>, U32> binding_of;
+
+    for (size_t a = 0; a < info.mAttributes.size(); ++a)
+    {
+        const U32 loc = info.mAttributeLocations[a];
+        if (loc >= 16)
+        {
+            continue;
+        }
+        VaoAttrib& at = vao.mAttrib[loc];
+        auto bit = sGL.mBuffers.find(at.mBuffer);
+        if (at.mEnabled && at.mBuffer && bit != sGL.mBuffers.end() && bit->second.mVk.valid())
+        {
+            const U32 tb = attrib_type_bytes(at.mType);
+            const GLsizei stride = at.mStride ? at.mStride : (GLsizei)(tb * (U32)at.mSize);
+            // Vulkan limits attribute offsets to a couple of KB. An offset at least as large as the stride is the
+            // start of a separate array inside the buffer: it becomes the binding's offset instead.
+            const bool separate_array = at.mOffset >= (U64)stride;
+            const U64 base = separate_array ? at.mOffset : 0;
+            const U32 attr_offset = separate_array ? 0 : (U32)at.mOffset;
+            auto key = std::make_tuple(at.mBuffer, stride, base);
+            auto bi = binding_of.find(key);
+            U32 binding;
+            if (bi == binding_of.end())
+            {
+                binding = (U32)vi.mBindings.size();
+                VertexInput::Binding b;
+                b.mBuffer = bit->second.mVk.mBuffer;
+                b.mOffset = base;
+                b.mStride = (U32)stride;
+                vi.mBindings.push_back(b);
+                binding_of[key] = binding;
+                used_buffers.push_back(at.mBuffer);
+            }
+            else
+            {
+                binding = bi->second;
+            }
+            VertexInput::Attribute va;
+            va.mLocation = loc;
+            va.mBinding = binding;
+            va.mFormat = vertex_format(at.mSize, at.mType, at.mNormalized, at.mInteger);
+            va.mOffset = attr_offset;
+            vi.mAttributes.push_back(va);
+        }
+        else
+        {
+            // attribute array disabled: the shader reads the constant set with glVertexAttrib4f
+            Renderer::ScratchAlloc sa = r.allocVertexScratch(16);
+            if (!sa.mPtr)
+            {
+                return false;
+            }
+            memcpy(sa.mPtr, sGL.mConstAttrib[loc], 16);
+            VertexInput::Binding b;
+            b.mBuffer = sa.mBuffer;
+            b.mOffset = sa.mOffset;
+            b.mStride = 0;
+            const U32 binding = (U32)vi.mBindings.size();
+            vi.mBindings.push_back(b);
+            VertexInput::Attribute va;
+            va.mLocation = loc;
+            va.mBinding = binding;
+            va.mFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+            va.mOffset = 0;
+            vi.mAttributes.push_back(va);
+        }
+    }
+    return vi.mBindings.size() <= 16;
+}
+
+// common work before a draw; returns false if the draw cannot be mirrored
+bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
+{
+    if (!LLVkMirror::inFrame())
+    {
+        return false;
+    }
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (!program || !program->isValid())
+    {
+        ++sDrawsSkipped;
+        return false;
+    }
+    if (!sync_target())
+    {
+        ++sDrawsSkipped;
+        return false;
+    }
+    sync_draw_state(r, sHasDepth);
+    sync_textures(r, *program);
+    if (!build_vertex_input(r, *program, vi, used_buffers))
+    {
+        ++sDrawsSkipped;
+        return false;
+    }
+    return true;
+}
+
+void mark_used(const std::vector<GLuint>& buffers, GLuint element)
+{
+    const U64 frame = Context::instance().getFrameNumber();
+    for (GLuint b : buffers)
+    {
+        auto it = sGL.mBuffers.find(b);
+        if (it != sGL.mBuffers.end()) it->second.mLastUseFrame = frame;
+    }
+    auto eit = sGL.mBuffers.find(element);
+    if (element && eit != sGL.mBuffers.end()) eit->second.mLastUseFrame = frame;
+}
+
+// writes into a GL buffer's host memory, renaming the Vulkan buffer first if a frame in flight may still read it
+void write_buffer(Buf& b, U64 offset, U64 size, const void* data, bool whole)
+{
+    Context& ctx = Context::instance();
+    const U64 frame = ctx.getFrameNumber();
+    const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::FRAMES_IN_FLIGHT + 1;
+    if (in_flight && b.mVk.valid())
+    {
+        Buffer fresh;
+        if (ctx.createBuffer(b.mSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                             Context::Memory::Upload, fresh))
+        {
+            if (!whole)
+            {
+                memcpy(fresh.mMapped, b.mVk.mMapped, (size_t)std::min<U64>(b.mSize, b.mVk.mSize));
+            }
+            ctx.destroyBuffer(b.mVk);
+            b.mVk = fresh;
+            b.mLastUseFrame = ~0ull;
+        }
+    }
+    if (b.mVk.valid() && data && offset + size <= b.mVk.mSize)
+    {
+        memcpy((U8*)b.mVk.mMapped + offset, data, (size_t)size);
+    }
+}
+
+} // anonymous namespace
+
+//-----------------------------------------------------------------------------------------------------
+// hooks: textures
+//-----------------------------------------------------------------------------------------------------
+
+void on_glGenTextures(GLsizei n, GLuint* textures)
+{
+    for (GLsizei i = 0; i < n; ++i)
+    {
+        sGL.mTextures[textures[i]];
+    }
+}
+
+void on_glDeleteTextures(GLsizei n, const GLuint* textures)
+{
+    for (GLsizei i = 0; i < n; ++i)
+    {
+        auto it = sGL.mTextures.find(textures[i]);
+        if (it != sGL.mTextures.end())
+        {
+            destroy_tex_images(it->second);
+            sGL.mTextures.erase(it);
+        }
+        for (auto& unit : sCtx.mBound)
+        {
+            for (auto& b : unit)
+            {
+                if (b == textures[i]) b = 0;
+            }
+        }
+        for (auto& f : sGL.mFbos)
+        {
+            for (auto& a : f.second.mColor) if (a.mTexture == textures[i]) a.mTexture = 0;
+            if (f.second.mDepth.mTexture == textures[i]) f.second.mDepth.mTexture = 0;
+        }
+    }
+}
+
+void on_glBindTexture(GLenum target, GLuint texture)
+{
+    sCtx.mBound[sCtx.mActiveUnit][target_class(target)] = texture;
+    if (texture)
+    {
+        sGL.mTextures[texture];     // GL allows binding a name that was never generated
+    }
+}
+
+void on_glActiveTexture(GLenum texture)
+{
+    if (texture >= GL_TEXTURE0 && texture < GL_TEXTURE0 + 32)
+    {
+        sCtx.mActiveUnit = texture - GL_TEXTURE0;
+    }
+}
+
+void on_glPixelStorei(GLenum pname, GLint param)
+{
+    if (pname == GL_UNPACK_ALIGNMENT) sCtx.mUnpackAlignment = param;
+    else if (pname == GL_UNPACK_ROW_LENGTH) sCtx.mUnpackRowLength = param;
+}
+
+void on_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
+{
+    Tex* t = bound_texture(target);
+    if (!t || width <= 0 || height <= 0)
+    {
+        return;
+    }
+    if (level == 0 && !ensure_image(*t, target, internalformat, (U32)width, (U32)height, target_class(target) == 1 ? 6 : 1))
+    {
+        return;
+    }
+    upload_level(*t, target, level, 0, 0, 0, (U32)width, (U32)height, 1, format, type, pixels);
+}
+
+void on_glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels)
+{
+    Tex* t = bound_texture(target);
+    if (!t || width <= 0 || height <= 0 || depth <= 0)
+    {
+        return;
+    }
+    if (level == 0 && !ensure_image(*t, target, internalformat, (U32)width, (U32)height, (U32)depth))
+    {
+        return;
+    }
+    upload_level(*t, target, level, 0, 0, 0, (U32)width, (U32)height, (U32)depth, format, type, pixels);
+}
+
+void on_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
+{
+    Tex* t = bound_texture(target);
+    if (t)
+    {
+        upload_level(*t, target, level, xoffset, yoffset, 0, (U32)width, (U32)height, 1, format, type, pixels);
+    }
+}
+
+void on_glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void* pixels)
+{
+    Tex* t = bound_texture(target);
+    if (t)
+    {
+        upload_level(*t, target, level, xoffset, yoffset, zoffset, (U32)width, (U32)height, (U32)depth, format, type, pixels);
+    }
+}
+
+void on_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
+{
+    Tex* t = bound_texture(target);
+    if (!t || width <= 0 || height <= 0)
+    {
+        return;
+    }
+    if (level == 0 && !ensure_image(*t, target, (GLint)internalformat, (U32)width, (U32)height, target_class(target) == 1 ? 6 : 1))
+    {
+        return;
+    }
+    const void* src = pixel_source(data);
+    if (!src || !t->mImage.valid() || level < 0 || (U32)level >= t->mLevels)
+    {
+        return;
+    }
+    U32 layer = 0;
+    if (target >= 0x8515 && target <= 0x851A) layer = target - 0x8515;
+    Renderer::instance().uploadTexture(t->mImage, (U32)level, layer, 0, 0, (U32)width, (U32)height, 1, src, (VkDeviceSize)imageSize);
+}
+
+void on_glTexParameteri(GLenum target, GLenum pname, GLint param)
+{
+    Tex* t = bound_texture(target);
+    if (!t)
+    {
+        return;
+    }
+    SamplerParams& sp = t->mSampler;
+    switch (pname)
+    {
+    case GL_TEXTURE_MIN_FILTER: sp.mMinFilter = (GLenum)param; break;
+    case GL_TEXTURE_MAG_FILTER: sp.mMagFilter = (GLenum)param; break;
+    case GL_TEXTURE_WRAP_S: sp.mWrapS = (GLenum)param; break;
+    case GL_TEXTURE_WRAP_T: sp.mWrapT = (GLenum)param; break;
+    case GL_TEXTURE_WRAP_R: sp.mWrapR = (GLenum)param; break;
+    case GL_TEXTURE_COMPARE_MODE: sp.mCompare = (GLenum)param == GL_COMPARE_REF_TO_TEXTURE; break;
+    case GL_TEXTURE_COMPARE_FUNC: sp.mCompareFunc = (GLenum)param; break;
+    case GL_TEXTURE_BASE_LEVEL: sp.mBaseLevel = param; break;
+    case GL_TEXTURE_MAX_LEVEL: sp.mMaxLevel = param; break;
+    case GL_TEXTURE_SWIZZLE_R: case GL_TEXTURE_SWIZZLE_G: case GL_TEXTURE_SWIZZLE_B: case GL_TEXTURE_SWIZZLE_A:
+        t->mSwizzle[pname - GL_TEXTURE_SWIZZLE_R] = (GLenum)param;
+        t->mSwizzleSet = true;
+        rebuild_sampling_view(*t);
+        break;
+    default: break;
+    }
+}
+
+void on_glTexParameterf(GLenum target, GLenum pname, GLfloat param)
+{
+    if (pname == GL_TEXTURE_MAX_ANISOTROPY || pname == GL_TEXTURE_MAX_ANISOTROPY_EXT)
+    {
+        if (Tex* t = bound_texture(target))
+        {
+            t->mSampler.mAnisotropy = param;
+        }
+        return;
+    }
+    on_glTexParameteri(target, pname, (GLint)param);
+}
+
+void on_glTexParameteriv(GLenum target, GLenum pname, const GLint* params)
+{
+    if (!params)
+    {
+        return;
+    }
+    if (pname == GL_TEXTURE_SWIZZLE_RGBA)
+    {
+        if (Tex* tex = bound_texture(target))
+        {
+            for (U32 i = 0; i < 4; ++i)
+            {
+                tex->mSwizzle[i] = (GLenum)params[i];
+            }
+            tex->mSwizzleSet = true;
+            rebuild_sampling_view(*tex);
+        }
+        return;
+    }
+    on_glTexParameteri(target, pname, params[0]);
+}
+
+void on_glGenerateMipmap(GLenum target)
+{
+    Tex* t = bound_texture(target);
+    if (t && t->mImage.valid())
+    {
+        Renderer::instance().generateMipmaps(t->mImage);
+    }
+}
+
+static void copy_to_texture(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    Tex* t = bound_texture(target);
+    Image* src = read_image();
+    if (!t || !t->mImage.valid() || !src || !LLVkMirror::inFrame())
+    {
+        return;
+    }
+    U32 layer = 0;
+    if (target >= 0x8515 && target <= 0x851A) layer = target - 0x8515;
+    else if (t->mTarget == GL_TEXTURE_2D_ARRAY || t->mTarget == GL_TEXTURE_CUBE_MAP_ARRAY) layer = (U32)zoffset;
+    Renderer::instance().copyRegion(*src, x, y, t->mImage, (U32)level, layer, xoffset, yoffset, width, height);
+    ++sCopies;
+}
+
+void on_glCopyTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    copy_to_texture(target, level, xoffset, yoffset, 0, x, y, width, height);
+}
+
+void on_glCopyTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    copy_to_texture(target, level, xoffset, yoffset, zoffset, x, y, width, height);
+}
+
+void on_glCopyTexImage2D(GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border)
+{
+    Tex* t = bound_texture(target);
+    if (!t || width <= 0 || height <= 0)
+    {
+        return;
+    }
+    if (level == 0 && !ensure_image(*t, target, (GLint)internalformat, (U32)width, (U32)height, 1))
+    {
+        return;
+    }
+    copy_to_texture(target, level, 0, 0, 0, x, y, width, height);
+}
+
+//-----------------------------------------------------------------------------------------------------
+// hooks: framebuffers
+//-----------------------------------------------------------------------------------------------------
+
+void on_glGenFramebuffers(GLsizei n, GLuint* framebuffers)
+{
+    for (GLsizei i = 0; i < n; ++i)
+    {
+        sGL.mFbos[framebuffers[i]];
+    }
+}
+
+void on_glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers)
+{
+    for (GLsizei i = 0; i < n; ++i)
+    {
+        sGL.mFbos.erase(framebuffers[i]);
+        if (sCtx.mDrawFbo == framebuffers[i]) sCtx.mDrawFbo = 0;
+        if (sCtx.mReadFbo == framebuffers[i]) sCtx.mReadFbo = 0;
+    }
+}
+
+void on_glBindFramebuffer(GLenum target, GLuint framebuffer)
+{
+    if (target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER) sCtx.mDrawFbo = framebuffer;
+    if (target == GL_FRAMEBUFFER || target == GL_READ_FRAMEBUFFER) sCtx.mReadFbo = framebuffer;
+    if (framebuffer)
+    {
+        sGL.mFbos[framebuffer];
+    }
+}
+
+void on_glFramebufferTexture2D(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level)
+{
+    const GLuint fbo_name = target == GL_READ_FRAMEBUFFER ? sCtx.mReadFbo : sCtx.mDrawFbo;
+    if (!fbo_name)
+    {
+        return;
+    }
+    Fbo& fbo = sGL.mFbos[fbo_name];
+    FboAttachment a;
+    a.mTexture = texture;
+    a.mLevel = level;
+    a.mLayer = (textarget >= 0x8515 && textarget <= 0x851A) ? textarget - 0x8515 : 0;
+    if (attachment >= GL_COLOR_ATTACHMENT0 && attachment < GL_COLOR_ATTACHMENT0 + 8)
+    {
+        fbo.mColor[attachment - GL_COLOR_ATTACHMENT0] = a;
+    }
+    else if (attachment == GL_DEPTH_ATTACHMENT || attachment == 0x821A)
+    {
+        fbo.mDepth = a;
+    }
+}
+
+void on_glDrawBuffers(GLsizei n, const GLenum* bufs)
+{
+    if (sCtx.mDrawFbo == 0)
+    {
+        return;
+    }
+    Fbo& fbo = sGL.mFbos[sCtx.mDrawFbo];
+    fbo.mDrawCount = (U32)std::min<GLsizei>(n, 8);
+    for (U32 i = 0; i < fbo.mDrawCount; ++i)
+    {
+        fbo.mDrawBuffers[i] = bufs[i];
+    }
+}
+
+void on_glDrawBuffer(GLenum buf)
+{
+    if (sCtx.mDrawFbo == 0)
+    {
+        return;
+    }
+    Fbo& fbo = sGL.mFbos[sCtx.mDrawFbo];
+    if (buf >= GL_COLOR_ATTACHMENT0 && buf < GL_COLOR_ATTACHMENT0 + 8)
+    {
+        fbo.mDrawCount = 1;
+        fbo.mDrawBuffers[0] = buf;
+    }
+    else
+    {
+        fbo.mDrawCount = 0;     // GL_NONE: depth only
+    }
+}
+
+void on_glReadBuffer(GLenum src)
+{
+    if (sCtx.mReadFbo)
+    {
+        sGL.mFbos[sCtx.mReadFbo].mReadBuffer = src;
+    }
+}
+
+//-----------------------------------------------------------------------------------------------------
+// hooks: buffers and vertex arrays
+//-----------------------------------------------------------------------------------------------------
+
+void on_glGenBuffers(GLsizei n, GLuint* buffers)
+{
+    for (GLsizei i = 0; i < n; ++i)
+    {
+        sGL.mBuffers[buffers[i]];
+    }
+}
+
+void on_glDeleteBuffers(GLsizei n, const GLuint* buffers)
+{
+    Context& ctx = Context::instance();
+    for (GLsizei i = 0; i < n; ++i)
+    {
+        auto it = sGL.mBuffers.find(buffers[i]);
+        if (it != sGL.mBuffers.end())
+        {
+            ctx.destroyBuffer(it->second.mVk);
+            sGL.mBuffers.erase(it);
+        }
+        if (sCtx.mArrayBuffer == buffers[i]) sCtx.mArrayBuffer = 0;
+        if (sCtx.mPixelUnpackBuffer == buffers[i]) sCtx.mPixelUnpackBuffer = 0;
+    }
+}
+
+void on_glBindBuffer(GLenum target, GLuint buffer)
+{
+    if (buffer)
+    {
+        sGL.mBuffers[buffer];
+    }
+    if (target == GL_ARRAY_BUFFER) sCtx.mArrayBuffer = buffer;
+    else if (target == GL_ELEMENT_ARRAY_BUFFER) current_vao().mElementBuffer = buffer;
+    else if (target == GL_PIXEL_UNPACK_BUFFER) sCtx.mPixelUnpackBuffer = buffer;
+}
+
+static GLuint buffer_for_target(GLenum target)
+{
+    if (target == GL_ARRAY_BUFFER) return sCtx.mArrayBuffer;
+    if (target == GL_ELEMENT_ARRAY_BUFFER) return current_vao().mElementBuffer;
+    if (target == GL_PIXEL_UNPACK_BUFFER) return sCtx.mPixelUnpackBuffer;
+    return 0;
+}
+
+void on_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum usage)
+{
+    const GLuint name = buffer_for_target(target);
+    auto it = sGL.mBuffers.find(name);
+    if (it == sGL.mBuffers.end() || size < 0)
+    {
+        return;
+    }
+    Buf& b = it->second;
+    Context& ctx = Context::instance();
+    if (b.mVk.valid())
+    {
+        ctx.destroyBuffer(b.mVk);
+    }
+    b.mSize = (U64)size;
+    b.mLastUseFrame = ~0ull;
+    if (size == 0 || !ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                       Context::Memory::Upload, b.mVk))
+    {
+        return;
+    }
+    if (data)
+    {
+        memcpy(b.mVk.mMapped, data, (size_t)size);
+    }
+    else
+    {
+        memset(b.mVk.mMapped, 0, (size_t)size);
+    }
+}
+
+void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data)
+{
+    const GLuint name = buffer_for_target(target);
+    auto it = sGL.mBuffers.find(name);
+    if (it != sGL.mBuffers.end() && data && size > 0 && offset >= 0)
+    {
+        write_buffer(it->second, (U64)offset, (U64)size, data, false);
+    }
+}
+
+void on_glBindBufferBase(GLenum target, GLuint index, GLuint buffer)
+{
+    (void)target; (void)index; (void)buffer;     // uniform buffers are not mirrored yet
+}
+
+void on_glGenVertexArrays(GLsizei n, GLuint* arrays)
+{
+    for (GLsizei i = 0; i < n; ++i)
+    {
+        sGL.mVaos[arrays[i]];
+    }
+}
+
+void on_glBindVertexArray(GLuint array)
+{
+    sCtx.mVao = array;
+    sGL.mVaos[array];
+}
+
+void on_glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer)
+{
+    if (index >= 16) return;
+    VaoAttrib& a = current_vao().mAttrib[index];
+    a.mBuffer = sCtx.mArrayBuffer;
+    a.mSize = size;
+    a.mType = type;
+    a.mNormalized = normalized != GL_FALSE;
+    a.mInteger = false;
+    a.mStride = stride;
+    a.mOffset = (U64)pointer;
+}
+
+void on_glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer)
+{
+    if (index >= 16) return;
+    VaoAttrib& a = current_vao().mAttrib[index];
+    a.mBuffer = sCtx.mArrayBuffer;
+    a.mSize = size;
+    a.mType = type;
+    a.mNormalized = false;
+    a.mInteger = true;
+    a.mStride = stride;
+    a.mOffset = (U64)pointer;
+}
+
+void on_glEnableVertexAttribArray(GLuint index)
+{
+    if (index < 16) current_vao().mAttrib[index].mEnabled = true;
+}
+
+void on_glDisableVertexAttribArray(GLuint index)
+{
+    if (index < 16) current_vao().mAttrib[index].mEnabled = false;
+}
+
+void on_glVertexAttrib4f(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
+{
+    if (index < 16)
+    {
+        sGL.mConstAttrib[index][0] = x; sGL.mConstAttrib[index][1] = y; sGL.mConstAttrib[index][2] = z; sGL.mConstAttrib[index][3] = w;
+    }
+}
+
+void on_glVertexAttrib4fv(GLuint index, const GLfloat* v)
+{
+    if (v)
+    {
+        on_glVertexAttrib4f(index, v[0], v[1], v[2], v[3]);
+    }
+}
+
+//-----------------------------------------------------------------------------------------------------
+// hooks: draws
+//-----------------------------------------------------------------------------------------------------
+
+void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
+{
+    VertexInput vi;
+    std::vector<GLuint> used;
+    if (count <= 0 || !prepare_draw(vi, used))
+    {
+        return;
+    }
+    Renderer& r = Renderer::instance();
+    r.setVertexInput(vi);
+    r.setTopology(topology(mode));
+    r.draw((U32)count, (U32)first);
+    mark_used(used, 0);
+    ++sDraws;
+}
+
+void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices)
+{
+    VertexInput vi;
+    std::vector<GLuint> used;
+    if (count <= 0 || !prepare_draw(vi, used))
+    {
+        return;
+    }
+    Vao& vao = current_vao();
+    auto eit = sGL.mBuffers.find(vao.mElementBuffer);
+    if (eit == sGL.mBuffers.end() || !eit->second.mVk.valid())
+    {
+        ++sDrawsSkipped;
+        return;
+    }
+    const VkIndexType itype = type == GL_UNSIGNED_INT ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+    const U32 index_bytes = type == GL_UNSIGNED_INT ? 4 : 2;
+    Renderer& r = Renderer::instance();
+    r.setVertexInput(vi);
+    r.setTopology(topology(mode));
+    r.setIndexBuffer(eit->second.mVk.mBuffer, 0, itype);
+    r.drawIndexed((U32)count, (U32)((U64)indices / index_bytes), 0);
+    mark_used(used, vao.mElementBuffer);
+    ++sDraws;
+}
+
+//-----------------------------------------------------------------------------------------------------
+// hooks: state and clears
+//-----------------------------------------------------------------------------------------------------
+
+static void set_cap(GLenum cap, bool on)
+{
+    switch (cap)
+    {
+    case GL_BLEND: sGL.mBlend = on; break;
+    case GL_DEPTH_TEST: sGL.mDepthTest = on; break;
+    case GL_CULL_FACE: sGL.mCull = on; break;
+    case GL_SCISSOR_TEST: sGL.mScissorTest = on; break;
+    case GL_STENCIL_TEST: sGL.mStencilTest = on; break;
+    case GL_POLYGON_OFFSET_FILL: sGL.mPolyOffset = on; break;
+    default: break;
+    }
+}
+
+void on_glEnable(GLenum cap) { set_cap(cap, true); }
+void on_glDisable(GLenum cap) { set_cap(cap, false); }
+
+void on_glBlendFunc(GLenum sfactor, GLenum dfactor)
+{
+    sGL.mBlendSrcRGB = sGL.mBlendSrcA = sfactor;
+    sGL.mBlendDstRGB = sGL.mBlendDstA = dfactor;
+}
+
+void on_glBlendFuncSeparate(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha)
+{
+    sGL.mBlendSrcRGB = sfactorRGB; sGL.mBlendDstRGB = dfactorRGB;
+    sGL.mBlendSrcA = sfactorAlpha; sGL.mBlendDstA = dfactorAlpha;
+}
+
+void on_glDepthFunc(GLenum func) { sGL.mDepthFunc = func; }
+void on_glDepthMask(GLboolean flag) { sGL.mDepthMask = flag != GL_FALSE; }
+
+void on_glColorMask(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha)
+{
+    sGL.mColorMask[0] = red != GL_FALSE; sGL.mColorMask[1] = green != GL_FALSE;
+    sGL.mColorMask[2] = blue != GL_FALSE; sGL.mColorMask[3] = alpha != GL_FALSE;
+}
+
+void on_glCullFace(GLenum mode) { sGL.mCullFace = mode; }
+void on_glPolygonOffset(GLfloat factor, GLfloat units) { sGL.mOffsetFactor = factor; sGL.mOffsetUnits = units; }
+void on_glPolygonMode(GLenum face, GLenum mode) { sGL.mPolygonMode = mode; }
+void on_glLineWidth(GLfloat width) { sGL.mLineWidth = width; }
+void on_glPointSize(GLfloat size) { (void)size; }
+void on_glStencilFunc(GLenum, GLint, GLuint) {}
+void on_glStencilOp(GLenum, GLenum, GLenum) {}
+void on_glStencilMask(GLuint) {}
+
+void on_glViewport(GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    sGL.mViewport[0] = x; sGL.mViewport[1] = y; sGL.mViewport[2] = width; sGL.mViewport[3] = height;
+    sGL.mViewportSet = true;
+}
+
+void on_glScissor(GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    sGL.mScissor[0] = x; sGL.mScissor[1] = y; sGL.mScissor[2] = width; sGL.mScissor[3] = height;
+}
+
+void on_glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
+{
+    sGL.mClearColor[0] = red; sGL.mClearColor[1] = green; sGL.mClearColor[2] = blue; sGL.mClearColor[3] = alpha;
+}
+
+void on_glClear(GLbitfield mask)
+{
+    if (!LLVkMirror::inFrame() || !sync_target())
+    {
+        return;
+    }
+    U32 bits = 0;
+    if ((mask & GL_COLOR_BUFFER_BIT) && (sGL.mColorMask[0] || sGL.mColorMask[1] || sGL.mColorMask[2] || sGL.mColorMask[3])) bits |= CLEAR_COLOR;
+    if ((mask & GL_DEPTH_BUFFER_BIT) && sGL.mDepthMask) bits |= CLEAR_DEPTH;
+    if (bits)
+    {
+        Renderer::instance().clear(bits, sGL.mClearColor, 1.f, 0);
+    }
+}
+
+} // namespace LLVkGL
+
+#endif // LL_VULKAN

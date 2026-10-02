@@ -68,6 +68,7 @@ struct ProgramInfo
     U32 mBlockSize = 0;
     std::vector<SamplerInfo> mSamplers;
     std::vector<std::string> mAttributes;       // vertex inputs the program declares
+    std::vector<U32> mAttributeLocations;       // their locations (index in the viewer's reserved attribute list)
     std::vector<std::string> mOutputs;          // fragment outputs
     std::vector<U32> mSpirv[3];                 // indexed by StageSource::Stage
     std::string mError;

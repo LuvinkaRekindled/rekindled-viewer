@@ -29,7 +29,9 @@
 
 #define GLH_EXT_SINGLE_FILE
 
+#define LL_VK_NO_INTERCEPT    // <FS> the GL function pointers are defined and loaded in this file
 #include "linden_common.h"
+#include "llvkmirror.h"
 
 #include "boost/tokenizer.hpp"
 
@@ -1307,6 +1309,8 @@ bool LLGLManager::initGL()
 
     initGLStates();
 
+    LLVkMirror::ensureReady(); // <FS> start the Vulkan mirror (LL_VK_MIRROR) before any texture or buffer exists
+
     return true;
 }
 
@@ -2336,6 +2340,12 @@ void LLGLManager::initExtensions()
 
 #endif
 }
+
+// <FS> from here on the GL calls in this file are mirrored to Vulkan (see llvkgl.h)
+#if defined(LL_VULKAN)
+#undef LL_VK_NO_INTERCEPT
+#include "llvkgl.h"
+#endif
 
 void rotate_quat(LLQuaternion& rotation)
 {

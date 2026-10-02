@@ -24,6 +24,8 @@ void LLVkMirror::shutdown() {}
 
 #include <cstdlib>
 
+namespace LLVkGL { extern bool gActive; extern std::recursive_mutex gMutex; }
+
 namespace
 {
 
@@ -141,9 +143,24 @@ bool LLVkMirror::isRequested()
     return sMirror.mRequested;
 }
 
+std::recursive_mutex& LLVkMirror::lock()
+{
+    return LLVkGL::gMutex;
+}
+
 bool LLVkMirror::isReady()
 {
     return sMirror.mReady;
+}
+
+LLVk::Image* LLVkMirror::backbufferColor()
+{
+    return (sMirror.mReady && sMirror.mBackbuffer.valid()) ? &sMirror.mBackbuffer : nullptr;
+}
+
+LLVk::Image* LLVkMirror::backbufferDepth()
+{
+    return (sMirror.mReady && sMirror.mDepth.valid()) ? &sMirror.mDepth : nullptr;
 }
 
 bool LLVkMirror::inFrame()
@@ -153,6 +170,7 @@ bool LLVkMirror::inFrame()
 
 bool LLVkMirror::ensureReady()
 {
+    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
     if (sMirror.mReady)
     {
         return true;
@@ -173,12 +191,15 @@ bool LLVkMirror::ensureReady()
         return false;
     }
     sMirror.mReady = true;
+    LLVkGL::gActive = true;
     LL_INFOS("VkMirror") << "Vulkan mirror ready" << LL_ENDL;
     return true;
 }
 
 void LLVkMirror::shutdown()
 {
+    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    LLVkGL::gActive = false;
     LLVk::Context& ctx = LLVk::Context::instance();
     if (ctx.isReady())
     {
@@ -204,6 +225,7 @@ void LLVkMirror::shutdown()
 
 void LLVkMirror::beginFrame(S32 width, S32 height)
 {
+    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
     if (sMirror.mInFrame)
     {
         endFrame();     // the previous frame never reached its swap (early return, snapshot): present what it drew
@@ -278,6 +300,7 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
 
 void LLVkMirror::endFrame()
 {
+    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
     if (!sMirror.mReady || !sMirror.mInFrame)
     {
         return;

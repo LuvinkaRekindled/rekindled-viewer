@@ -414,6 +414,8 @@ void LLGLSLShader::unloadInternal()
 #if defined(LL_VULKAN)
 void LLGLSLShader::mirrorDestroy()
 {
+    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    std::lock_guard<std::recursive_mutex> mirror_lock(LLVkMirror::lock());
     if (mVkProgram)
     {
         mVkProgram->destroy();
@@ -425,6 +427,8 @@ void LLGLSLShader::mirrorDestroy()
 
 void LLGLSLShader::mirrorBind()
 {
+    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    std::lock_guard<std::recursive_mutex> mirror_lock(LLVkMirror::lock());
     if (mVkProgram && LLVkMirror::isReady())
     {
         LLVk::Renderer::instance().setProgram(mVkProgram);
@@ -433,6 +437,8 @@ void LLGLSLShader::mirrorBind()
 
 void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<double> values)
 {
+    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    std::lock_guard<std::recursive_mutex> mirror_lock(LLVkMirror::lock());
     if (!mVkProgram)
     {
         return;
@@ -472,6 +478,8 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
 
 void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data)
 {
+    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    std::lock_guard<std::recursive_mutex> mirror_lock(LLVkMirror::lock());
     if (!mVkProgram || !data)
     {
         return;
@@ -487,6 +495,8 @@ void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 co
 
 void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean transpose, U32 count, const GLfloat* data)
 {
+    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    std::lock_guard<std::recursive_mutex> mirror_lock(LLVkMirror::lock());
     if (!mVkProgram || !data)
     {
         return;
@@ -519,6 +529,8 @@ void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean
 // Builds the Vulkan twin of this (already linked) GL program. Called at the end of createShader().
 void LLGLSLShader::mirrorCreate()
 {
+    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    std::lock_guard<std::recursive_mutex> mirror_lock(LLVkMirror::lock());
     mirrorDestroy();
     if (!LLVkMirror::ensureReady())
     {
