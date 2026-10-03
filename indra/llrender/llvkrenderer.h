@@ -286,6 +286,9 @@ public:
     bool readbackRegion(Image& image, U32 mip, U32 layer, S32 x, S32 y, U32 w, U32 h, std::vector<U8>& texels);
     // one whole mip level of a block-compressed image, the blocks exactly as stored (what glGetCompressedTexImage returns)
     bool readbackCompressedMip(Image& image, U32 mip, U32 layer, std::vector<U8>& blocks);
+    // texture uploads since the last call: how many, how many bytes, how many ended a render pass that was in progress
+    struct UploadStats { U32 mCount = 0; U64 mBytes = 0; U32 mPassSplits = 0; };
+    UploadStats takeUploadStats() { UploadStats s = mUploadStats; mUploadStats = UploadStats(); return s; }
     static U32 compressedMipBytes(const Image& image, U32 mip);
     // debug: records copies of the given pixel rows of a colour image (level/layer of the view) into a host buffer, tightly packed, in the current frame
     bool recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuffer buffer);
@@ -357,6 +360,7 @@ private:
     U32 mRingUsed = 0;
     U32 mRingPeak = 0;                  // largest ring use of any frame since the last getRingStats()
     U32 mRingExhausted = 0;             // draws dropped because the ring was full
+    UploadStats mUploadStats;
     bool mDrawBlocked = false;          // applyState could not prepare the draw (ring full)
     U32 mDrawCount = 0;
     bool mStateApplied = false;     // dynamic state has been set at least once in this command buffer

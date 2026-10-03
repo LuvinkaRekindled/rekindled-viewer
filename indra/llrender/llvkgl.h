@@ -176,13 +176,13 @@ namespace LLVkGL
 {
     // LL_VK_PHASES: calls and CPU time of every sink hook (the time includes waiting for the lock)
     constexpr int HOOK_COUNT = 107;
-    extern long long gHookStatTicks[HOOK_COUNT];
-    extern long long gHookStatCalls[HOOK_COUNT];
+    extern long long gHookStatTicks[2 * HOOK_COUNT];     // the second half: calls made by other threads
+    extern long long gHookStatCalls[2 * HOOK_COUNT];
     struct HookStat
     {
         int mId;
         long long mStart = 0;
-        explicit HookStat(int id) : mId(LLVkMirror::gPhaseTiming ? id : -1) { if (mId >= 0) mStart = LLVkMirror::phaseNow(); }
+        explicit HookStat(int id) : mId(LLVkMirror::gPhaseTiming ? id + (LLVkMirror::onMainThread() ? 0 : HOOK_COUNT) : -1) { if (mId >= 0) mStart = LLVkMirror::phaseNow(); }
         ~HookStat() { if (mId >= 0) { gHookStatTicks[mId] += LLVkMirror::phaseNow() - mStart; ++gHookStatCalls[mId]; } }
     };
 }

@@ -38,6 +38,7 @@ namespace LLVkMirror
 {
 long long gPhaseTicks[PH_COUNT] = {};
 bool gPhaseTiming = false;
+unsigned long gMainThreadId = 0;
 long long phaseNow()
 {
     LARGE_INTEGER now;
@@ -654,6 +655,7 @@ void LLVkMirror::shutdown()
 
 void LLVkMirror::beginFrame(S32 width, S32 height)
 {
+    gMainThreadId = __readgsdword(0x48);
     std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (glonly_mode())
     {
