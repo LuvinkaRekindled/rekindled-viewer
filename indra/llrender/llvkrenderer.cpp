@@ -1767,6 +1767,72 @@ bool Renderer::readbackImage(Image& view_or_image, U32 mip, U32 layer, std::vect
     return true;
 }
 
+bool Renderer::flushAndRestart()
+{
+    if (mCmd == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    flushPendingClear();
+    endRendering();
+    Image* colors[8] = {};
+    const U32 color_count = mColorCount;
+    for (U32 i = 0; i < color_count; ++i)
+    {
+        colors[i] = mColorTargets[i];
+    }
+    Image* depth = mDepthTarget;
+    const VkCommandBuffer cmd = mCmd;
+    const U32 slot = mSlot;
+    if (!Context::instance().flushFrameAndWait())
+    {
+        return false;
+    }
+    beginFrame(cmd, slot);      // forgets everything cached about the old recording
+    mColorCount = color_count;
+    for (U32 i = 0; i < color_count; ++i)
+    {
+        mColorTargets[i] = colors[i];
+    }
+    mDepthTarget = depth;
+    return true;
+}
+
+bool Renderer::readbackRegion(Image& view_or_image, U32 mip, U32 layer, S32 x, S32 y, U32 w, U32 h, std::vector<U8>& texels)
+{
+    Context& ctx = Context::instance();
+    Image* image = root_of(&view_or_image);
+    const FormatInfo fi = formatInfo(image->mFormat);
+    if (!fi.mKnown || fi.mCompressed || mip >= image->mMipLevels || w == 0 || h == 0 || x < 0 || y < 0)
+    {
+        return false;
+    }
+    const U32 mw = std::max<U32>(1, image->mExtent.width >> mip), mh = std::max<U32>(1, image->mExtent.height >> mip);
+    if ((U32)x + w > mw || (U32)y + h > mh)
+    {
+        return false;
+    }
+    const VkDeviceSize bytes = (VkDeviceSize)w * h * fi.mBytesPerBlock;
+    Buffer rb;
+    if (!ctx.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Readback, rb))
+    {
+        return false;
+    }
+    const VkImageLayout old_layout = image->mLayout;
+    ctx.immediateSubmit([&](VkCommandBuffer cmd) {
+        transition(cmd, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkBufferImageCopy c = {};
+        c.imageSubresource = { image->mAspect, mip, layer, 1 };
+        c.imageOffset = { x, y, 0 };
+        c.imageExtent = { w, h, 1 };
+        vkCmdCopyImageToBuffer(cmd, image->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb.mBuffer, 1, &c);
+        transition(cmd, *image, old_layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : old_layout);
+    });
+    texels.assign((U8*)rb.mMapped, (U8*)rb.mMapped + bytes);
+    vmaDestroyBuffer(ctx.getAllocator(), rb.mBuffer, rb.mAllocation);
+    return true;
+}
+
 bool Renderer::recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuffer buffer)
 {
     if (mCmd == VK_NULL_HANDLE)

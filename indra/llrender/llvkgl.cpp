@@ -28,8 +28,26 @@
 #include <unordered_map>
 #include <cstring>
 #include <cstdlib>
+#include <cmath>
+#include <algorithm>
+#include <string>
 
 // constants that older GL headers may not define
+#ifndef GL_BGR
+#define GL_BGR 0x80E0
+#endif
+#ifndef GL_PACK_ROW_LENGTH
+#define GL_PACK_ROW_LENGTH 0x0D02
+#endif
+#ifndef GL_PACK_ALIGNMENT
+#define GL_PACK_ALIGNMENT 0x0D05
+#endif
+#ifndef GL_HALF_FLOAT
+#define GL_HALF_FLOAT 0x140B
+#endif
+#ifndef GL_TEXTURE_BINDING_2D
+#define GL_TEXTURE_BINDING_2D 0x8069
+#endif
 #ifndef GL_TEXTURE_CUBE_MAP_ARRAY
 #define GL_TEXTURE_CUBE_MAP_ARRAY 0x9009
 #endif
@@ -2831,6 +2849,249 @@ void run_dump()
     LL_INFOS("VkGL") << "debug dump: wrote " << written << " images to <work>\\vk-dump" << LL_ENDL;
 }
 
+//-----------------------------------------------------------------------------------------------------
+// LL_VK_VERIFY: compare GL readbacks with the same region read back from Vulkan
+//-----------------------------------------------------------------------------------------------------
+
+namespace
+{
+
+// Vulkan texel layout -> float RGBA per pixel (missing channels 0, missing alpha 1). False if the format is not handled.
+bool decode_vk_texels(VkFormat f, const std::vector<U8>& texels, size_t pixels, std::vector<float>& out)
+{
+    U32 comps = 0;
+    enum { B8, H16, F32 } kind = B8;
+    switch (f)
+    {
+    case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB: comps = 4; kind = B8; break;
+    case VK_FORMAT_R8G8_UNORM: comps = 2; kind = B8; break;
+    case VK_FORMAT_R8_UNORM: comps = 1; kind = B8; break;
+    case VK_FORMAT_R16G16B16A16_SFLOAT: comps = 4; kind = H16; break;
+    case VK_FORMAT_R16_SFLOAT: comps = 1; kind = H16; break;
+    case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_D32_SFLOAT: comps = 1; kind = F32; break;
+    case VK_FORMAT_R32G32B32A32_SFLOAT: comps = 4; kind = F32; break;
+    default: return false;
+    }
+    const size_t comp_bytes = kind == B8 ? 1 : kind == H16 ? 2 : 4;
+    const size_t bytes_per = comps * comp_bytes;
+    if (texels.size() < pixels * bytes_per)
+    {
+        return false;
+    }
+    out.assign(pixels * 4, 0.f);
+    for (size_t i = 0; i < pixels; ++i)
+    {
+        float* o = &out[i * 4];
+        o[3] = 1.f;
+        for (U32 c = 0; c < comps; ++c)
+        {
+            const U8* src = &texels[i * bytes_per + c * comp_bytes];
+            if (kind == B8) o[c] = *src / 255.f;
+            else if (kind == H16) { U16 h; memcpy(&h, src, 2); o[c] = half_to_float(h); }
+            else { memcpy(&o[c], src, 4); }
+        }
+    }
+    return true;
+}
+
+// the channels (indices into RGBA) a GL pixel format stores, in order
+bool gl_channels(GLenum format, std::vector<int>& ch)
+{
+    switch (format)
+    {
+    case GL_RGBA: ch = { 0, 1, 2, 3 }; return true;
+    case GL_BGRA: ch = { 2, 1, 0, 3 }; return true;
+    case GL_RGB: ch = { 0, 1, 2 }; return true;
+    case GL_BGR: ch = { 2, 1, 0 }; return true;
+    case GL_RG: ch = { 0, 1 }; return true;
+    case GL_RED: case GL_DEPTH_COMPONENT: ch = { 0 }; return true;
+    default: return false;
+    }
+}
+
+U32 gl_type_bytes(GLenum type)
+{
+    switch (type)
+    {
+    case GL_UNSIGNED_BYTE: return 1;
+    case GL_HALF_FLOAT: return 2;
+    case GL_FLOAT: return 4;
+    default: return 0;
+    }
+}
+
+float read_gl_component(const U8* p, GLenum type)
+{
+    if (type == GL_UNSIGNED_BYTE) return *p / 255.f;
+    if (type == GL_HALF_FLOAT) { U16 h; memcpy(&h, p, 2); return half_to_float(h); }
+    float f; memcpy(&f, p, 4); return f;
+}
+
+struct VerifyCounters
+{
+    U32 mChecks = 0, mMismatching = 0, mSkipped = 0;
+    std::map<std::string, U32> mSkipReasons;
+};
+VerifyCounters sVerify;
+
+void verify_skip(const std::string& why)
+{
+    ++sVerify.mSkipped;
+    if (sVerify.mSkipReasons[why]++ == 0)
+    {
+        LL_INFOS("VkVerify") << "skipped (first time): " << why << LL_ENDL;
+    }
+}
+
+// Compare GL's bytes with the decoded Vulkan region. 'what' labels the log line.
+void verify_compare(const std::string& what, VkFormat vf, const std::vector<U8>& vk_texels, S32 w, S32 h, GLenum format, GLenum type, const void* gl_data)
+{
+    std::vector<int> ch;
+    const U32 tb = gl_type_bytes(type);
+    if (!gl_channels(format, ch) || !tb)
+    {
+        verify_skip("GL format/type not handled: " + std::to_string((S32)format) + "/" + std::to_string((S32)type));
+        return;
+    }
+    std::vector<float> src;
+    if (!decode_vk_texels(vf, vk_texels, (size_t)w * h, src))
+    {
+        verify_skip("Vulkan format not handled: " + std::to_string((S32)vf));
+        return;
+    }
+    GLint pack_align = 4, row_length = 0;
+    glGetIntegerv(GL_PACK_ALIGNMENT, &pack_align);
+    glGetIntegerv(GL_PACK_ROW_LENGTH, &row_length);
+    const size_t pixel_bytes = ch.size() * tb;
+    const size_t row_pixels = row_length > 0 ? (size_t)row_length : (size_t)w;
+    const size_t stride = ((row_pixels * pixel_bytes + pack_align - 1) / pack_align) * pack_align;
+    const float tol = type == GL_UNSIGNED_BYTE ? 2.5f / 255.f : (format == GL_DEPTH_COMPONENT ? 0.002f : 0.02f);
+
+    size_t compared = 0, bad = 0;
+    double sum = 0, maxd = 0;
+    S32 first_x = -1, first_y = -1;
+    float first_gl = 0, first_vk = 0;
+    for (S32 y = 0; y < h; ++y)
+    {
+        const U8* row = (const U8*)gl_data + (size_t)y * stride;
+        for (S32 x = 0; x < w; ++x)
+        {
+            for (size_t c = 0; c < ch.size(); ++c)
+            {
+                const float g = read_gl_component(row + (size_t)x * pixel_bytes + c * tb, type);
+                const float v = src[((size_t)y * w + x) * 4 + ch[c]];
+                const double d = std::fabs((double)g - (double)v);
+                ++compared;
+                sum += d;
+                maxd = std::max(maxd, d);
+                if (d > tol * std::max(1.0f, std::fabs(g)))
+                {
+                    if (!bad) { first_x = x; first_y = y; first_gl = g; first_vk = v; }
+                    ++bad;
+                }
+            }
+        }
+    }
+    ++sVerify.mChecks;
+    const bool mismatch = bad > 0;
+    if (mismatch) ++sVerify.mMismatching;
+    if (mismatch || sVerify.mChecks <= 30 || (sVerify.mChecks % 200) == 0)
+    {
+        LL_INFOS("VkVerify") << (mismatch ? "MISMATCH " : "match ") << what << ": " << w << "x" << h << " fmt " << (S32)format << " type " << (S32)type
+                             << " vk " << (S32)vf << ": " << bad << " of " << compared << " values differ, max diff " << maxd << ", mean " << (sum / std::max<size_t>(1, compared))
+                             << (mismatch ? (" first at (" + std::to_string(first_x) + "," + std::to_string(first_y) + ") GL " + std::to_string(first_gl) + " VK " + std::to_string(first_vk)) : std::string())
+                             << " [checks " << sVerify.mChecks << ", mismatching " << sVerify.mMismatching << ", skipped " << sVerify.mSkipped << "]" << LL_ENDL;
+    }
+}
+
+// the Vulkan side of a readback: make the frame's work visible, then copy the rectangle out
+bool verify_fetch(Image& view, S32 x, S32 y, S32 w, S32 h, std::vector<U8>& texels)
+{
+    Renderer& r = Renderer::instance();
+    if (LLVkMirror::inFrame() && !r.flushAndRestart())
+    {
+        return false;
+    }
+    const U32 mip = view.mOwner ? view.mBaseMip : 0, layer = view.mOwner ? view.mBaseLayer : 0;
+    return r.readbackRegion(view, mip, layer, x, y, (U32)w, (U32)h, texels);
+}
+
+} // anonymous namespace
+
+void verify_read_pixels(S32 x, S32 y, S32 w, S32 h, GLenum format, GLenum type, const void* gl_data)
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    if (!gActive || !gl_data || w <= 0 || h <= 0)
+    {
+        return;
+    }
+    Image* img = read_image();
+    if (!img || !img->valid())
+    {
+        verify_skip("no Vulkan image behind the read framebuffer");
+        return;
+    }
+    const VkFormat vf = img->mOwner ? img->mOwner->mFormat : img->mFormat;
+    std::vector<U8> texels;
+    if (!verify_fetch(*img, x, y, w, h, texels))
+    {
+        verify_skip("Vulkan readback failed (format " + std::to_string((S32)vf) + ")");
+        return;
+    }
+    std::string what = "readPixels " + std::string(sCtx.mReadFbo == 0 ? "backbuffer" : ("fbo " + std::to_string(sCtx.mReadFbo))) + " @(" + std::to_string(x) + "," + std::to_string(y) + ")";
+    verify_compare(what, vf, texels, w, h, format, type, gl_data);
+}
+
+void verify_tex_image(GLenum target, S32 level, GLenum format, GLenum type, const void* gl_data)
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    if (!gActive || !gl_data)
+    {
+        return;
+    }
+    if (target != GL_TEXTURE_2D)
+    {
+        verify_skip("texImage target " + std::to_string((S32)target) + " not handled");
+        return;
+    }
+    GLint bound = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
+    auto it = sGL.mTextures.find((GLuint)bound);
+    if (it == sGL.mTextures.end() || !it->second.mImage.valid() || level < 0 || (U32)level >= it->second.mImage.mMipLevels)
+    {
+        verify_skip("texture " + std::to_string(bound) + " unknown to the mirror or level out of range");
+        return;
+    }
+    Tex& t = it->second;
+    const S32 w = (S32)std::max<U32>(1, t.mImage.mExtent.width >> level), h = (S32)std::max<U32>(1, t.mImage.mExtent.height >> level);
+    std::vector<U8> texels;
+    if (!verify_fetch(t.mImage, 0, 0, w, h, texels))
+    {
+        verify_skip("Vulkan texture readback failed");
+        return;
+    }
+    std::string what = "getTexImage tex " + std::to_string(bound) + " level " + std::to_string(level);
+    verify_compare(what, t.mImage.mFormat, texels, w, h, format, type, gl_data);
+}
+
 } // namespace LLVkGL
 
+#include "llvkverify.h"
+
+namespace LLVkVerify
+{
+bool gEnabled = false;
+
+void readPixels(int x, int y, int w, int h, unsigned int format, unsigned int type, const void* gl_data)
+{
+    LLVkGL::verify_read_pixels(x, y, w, h, format, type, gl_data);
+}
+
+void texImage(unsigned int target, int level, unsigned int format, unsigned int type, const void* gl_data)
+{
+    LLVkGL::verify_tex_image(target, level, format, type, gl_data);
+}
+}
+
 #endif // LL_VULKAN
+

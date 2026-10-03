@@ -25,6 +25,7 @@ void LLVkMirror::shutdown() {}
 #include <psapi.h>
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
+#include "llvkverify.h"
 
 #include <cstdlib>
 
@@ -526,6 +527,11 @@ bool LLVkMirror::ensureReady()
     }
     sMirror.mReady = true;
     LLVkGL::gActive = true;
+    LLVkVerify::gEnabled = getenv("LL_VK_VERIFY") != nullptr;
+    if (LLVkVerify::gEnabled)
+    {
+        LL_INFOS("VkVerify") << "LL_VK_VERIFY: GL readbacks will be compared with the Vulkan images (do not combine with LL_VK_MIRROR_BENCH)" << LL_ENDL;
+    }
     bench_init();
     LL_INFOS("VkMirror") << "Vulkan mirror ready" << LL_ENDL;
     return true;
@@ -535,6 +541,7 @@ void LLVkMirror::shutdown()
 {
     std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
     LLVkGL::gActive = false;
+    LLVkVerify::gEnabled = false;
     LLVk::Context& ctx = LLVk::Context::instance();
     if (ctx.isReady())
     {

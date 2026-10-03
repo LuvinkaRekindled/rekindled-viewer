@@ -36,6 +36,7 @@
 #include "lltexture.h"
 #include "llshadermgr.h"
 #include "hbxxh.h"
+#include "llvkverify.h"
 #include "glm/gtc/type_ptr.hpp"
 
 #if LL_WINDOWS
@@ -1462,6 +1463,7 @@ void LLRender::setStencilMask(U32 mask)
 void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data)
 {
     glReadPixels(x, y, width, height, gl_format, gl_type, data);
+    LL_VK_VERIFY_READPIXELS(x, y, width, height, gl_format, gl_type, data);     // <FS>
 }
 
 void LLRender::drawBuffers(S32 count, const U32* gl_buffers)
@@ -1602,6 +1604,7 @@ void LLRender::getTexLevelParameteriv(U32 gl_target, S32 level, U32 gl_pname, S3
 void LLRender::getTexImage(U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels)
 {
     glGetTexImage(gl_target, level, gl_format, gl_type, pixels);
+    LL_VK_VERIFY_TEXIMAGE(gl_target, level, gl_format, gl_type, pixels);        // <FS>
 }
 
 void LLRender::setSceneBlendType(eBlendType type)
