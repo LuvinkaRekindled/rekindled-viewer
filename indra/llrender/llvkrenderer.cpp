@@ -124,6 +124,15 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
     {
         mSamplerIndex[s.mName] = s.mBinding;
         mSamplerUnits.push_back(s.mBinding);
+        {
+            U8 cls = 0;
+            if (s.mType.find("CubeArray") != std::string::npos) cls = 2;
+            else if (s.mType.find("Cube") != std::string::npos) cls = 1;
+            else if (s.mType.find("2DArray") != std::string::npos) cls = 3;
+            else if (s.mType.find("3D") != std::string::npos) cls = 4;
+            else if (s.mType.find("MS") != std::string::npos) cls = 5;
+            mSamplerClass.push_back(cls);
+        }
     }
 
     // numeric initializers from the GLSL ("uniform float x = 0.5;") become the starting values
@@ -226,6 +235,7 @@ void Program::destroy()
         });
     }
     mPipelines.clear();
+    mLastPipeline = VK_NULL_HANDLE;
     for (auto& m : mModules) m = VK_NULL_HANDLE;
     mUniformIndex.clear();
     mSamplerIndex.clear();
@@ -251,11 +261,20 @@ void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components,
     const U32 max_count = std::max<U32>(1, u.mArraySize);
     count = std::min(count, max_count);
     const U32 stride = u.mArraySize > 0 ? 16 : 4 * components;
+    bool changed = false;
     for (U32 i = 0; i < count; ++i)
     {
-        memcpy(&mShadow[u.mOffset + i * stride], data + i * components, components * 4);
+        U8* dst = &mShadow[u.mOffset + i * stride];
+        if (memcmp(dst, data + i * components, components * 4) != 0)
+        {
+            memcpy(dst, data + i * components, components * 4);
+            changed = true;
+        }
     }
-    mDirty = true;
+    if (changed)
+    {
+        mDirty = true;      // the viewer re-sends the same values before most draws: only real changes cost an upload
+    }
 }
 
 bool Program::setInts(const std::string& name, const S32* data, U32 components, U32 count)
@@ -280,14 +299,24 @@ void Program::setMatricesAt(size_t uniform_index, const F32* data, U32 columns, 
     const U32 max_count = std::max<U32>(1, u.mArraySize);
     count = std::min(count, max_count);
     const U32 stride = columns * 16;    // std140: every column occupies 16 bytes
+    bool changed = false;
     for (U32 m = 0; m < count; ++m)
     {
         for (U32 c = 0; c < columns; ++c)
         {
-            memcpy(&mShadow[u.mOffset + m * stride + c * 16], data + (m * columns + c) * rows, rows * 4);
+            U8* dst = &mShadow[u.mOffset + m * stride + c * 16];
+            const F32* src = data + (m * columns + c) * rows;
+            if (memcmp(dst, src, rows * 4) != 0)
+            {
+                memcpy(dst, src, rows * 4);
+                changed = true;
+            }
         }
     }
-    mDirty = true;
+    if (changed)
+    {
+        mDirty = true;
+    }
 }
 
 S32 Program::findSampler(const std::string& name) const
@@ -310,9 +339,16 @@ S32 Program::getSamplerBinding(const std::string& name) const
 
 VkPipeline Program::getPipeline(const PipelineKey& key)
 {
+    if (mLastPipeline && mLastKey.mTopology == key.mTopology && mLastKey.mColorCount == key.mColorCount && mLastKey.mDepth == key.mDepth
+        && memcmp(mLastKey.mColor, key.mColor, sizeof(VkFormat) * key.mColorCount) == 0)
+    {
+        return mLastPipeline;
+    }
     auto it = mPipelines.find(key);
     if (it != mPipelines.end())
     {
+        mLastKey = key;
+        mLastPipeline = it->second;
         return it->second;
     }
 
@@ -400,6 +436,8 @@ VkPipeline Program::getPipeline(const PipelineKey& key)
         return VK_NULL_HANDLE;
     }
     mPipelines[key] = pipeline;
+    mLastKey = key;
+    mLastPipeline = pipeline;
     return pipeline;
 }
 
@@ -727,6 +765,8 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mSet0Bound = false;
     mAppliedDynamicOffset = 0xFFFFFFFF;
     mAppliedSet0 = VK_NULL_HANDLE;
+    mAppliedVertexInputValid = false;
+    memset(mPushed, 0, sizeof(mPushed));
     mUboSets[frame_slot].clear();
     if (mUboPool[frame_slot])
     {
@@ -1070,12 +1110,14 @@ void Renderer::applyState()
     }
 
     // 2. textures must be in a sampling layout before a pass is (re)started
+    Image* resolved[MAX_TEXTURE_UNITS] = {};
     if (mProgram)
     {
-        for (size_t k = 0; k < mProgram->mInfo.mSamplers.size(); ++k)
+        for (size_t k = 0; k < mProgram->mInfo.mSamplers.size() && k < MAX_TEXTURE_UNITS; ++k)
         {
             Image* img = resolveTexture(k, depth_ro, depth_root);
-            if (img && img != &mWhite && !(depth_root && root_of(img) == depth_root))
+            resolved[k] = img;
+            if (img && img != &mWhite && !(depth_root && root_of(img) == depth_root) && img->mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             {
                 ensureLayout(*img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
@@ -1208,16 +1250,38 @@ void Renderer::applyState()
             attrs[i].format = mVertexInput.mAttributes[i].mFormat;
             attrs[i].offset = mVertexInput.mAttributes[i].mOffset;
         }
-        vkCmdSetVertexInputEXT(mCmd, nb, nb ? bindings : nullptr, na, attrs);
-        if (nb)
+        bool same_format = mAppliedVertexInputValid && mAppliedVertexInput.mBindings.size() == mVertexInput.mBindings.size()
+            && mAppliedVertexInput.mAttributes.size() == mVertexInput.mAttributes.size();
+        bool same_buffers = same_format;
+        for (U32 i = 0; same_format && i < nb; ++i)
+        {
+            const VertexInput::Binding& a = mAppliedVertexInput.mBindings[i];
+            const VertexInput::Binding& b = mVertexInput.mBindings[i];
+            same_format = a.mStride == b.mStride;
+            same_buffers = same_buffers && a.mBuffer == b.mBuffer && a.mOffset == b.mOffset;
+        }
+        for (U32 i = 0; same_format && i < na; ++i)
+        {
+            const VertexInput::Attribute& a = mAppliedVertexInput.mAttributes[i];
+            const VertexInput::Attribute& b = mVertexInput.mAttributes[i];
+            same_format = a.mLocation == b.mLocation && a.mBinding == b.mBinding && a.mFormat == b.mFormat && a.mOffset == b.mOffset;
+        }
+        if (!same_format)
+        {
+            vkCmdSetVertexInputEXT(mCmd, nb, nb ? bindings : nullptr, na, attrs);
+        }
+        if (nb && !(same_format && same_buffers))
         {
             vkCmdBindVertexBuffers(mCmd, 0, nb, buffers, offsets);
         }
+        mAppliedVertexInput = mVertexInput;
+        mAppliedVertexInputValid = true;
     }
     else
     {
         if (mVertexInputDirty)
         {
+            mAppliedVertexInputValid = false;       // the layout path overwrites what the general path recorded
             VkVertexInputBindingDescription2EXT binding = { VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT };
             binding.binding = 0;
             binding.stride = mLayout.mStride;
@@ -1278,10 +1342,17 @@ void Renderer::applyState()
             {
                 continue;
             }
-            Image* img = resolveTexture(k, depth_ro, depth_root);
+            Image* img = k < MAX_TEXTURE_UNITS && resolved[k] ? resolved[k] : resolveTexture(k, depth_ro, depth_root);
             const bool is_depth_target = depth_root && root_of(img) == depth_root;
-            infos[n] = { mTextureSamplers[unit] ? mTextureSamplers[unit] : fallback, img->mView,
-                         is_depth_target ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            const VkSampler sampler = mTextureSamplers[unit] ? mTextureSamplers[unit] : fallback;
+            const VkImageLayout layout = is_depth_target ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            PushedBinding& pushed = mPushed[s.mBinding];
+            if (pushed.mView == img->mView && pushed.mSampler == sampler && pushed.mLayout == layout)
+            {
+                continue;       // this binding already holds exactly that
+            }
+            pushed = { img->mView, sampler, layout };
+            infos[n] = { sampler, img->mView, layout };
             writes[n] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
             writes[n].dstBinding = s.mBinding;
             writes[n].descriptorCount = 1;
@@ -1289,7 +1360,10 @@ void Renderer::applyState()
             writes[n].pImageInfo = &infos[n];
             ++n;
         }
-        vkCmdPushDescriptorSetKHR(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 1, n, writes);
+        if (n)
+        {
+            vkCmdPushDescriptorSetKHR(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 1, n, writes);
+        }
     }
 }
 

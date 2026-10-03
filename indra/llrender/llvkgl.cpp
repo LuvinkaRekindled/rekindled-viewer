@@ -343,6 +343,8 @@ struct Tex
     GLenum mSwizzle[4] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };      // GL_TEXTURE_SWIZZLE_R..A
     bool mSwizzleSet = false;
     std::map<std::pair<U32, U32>, std::unique_ptr<Image>> mViews;     // (level, layer) -> render-target view
+    VkSampler mVkSampler = VK_NULL_HANDLE;      // cached sampler for the parameters hashed in mSamplerSig
+    U64 mSamplerSig = 0;
 };
 
 VkComponentSwizzle swizzle_component(GLenum s)
@@ -498,6 +500,8 @@ struct DrawStats
 DrawStats sStats, sStatsLast;
 std::set<GLuint> sCurTargets;           // textures attached to the current draw framebuffer
 U32 sCurTargetW = 1, sCurTargetH = 1;   // size of the first colour target of the current draw framebuffer
+// the per-draw statistics / pass graph are only gathered when asked for (they cost string work on every draw)
+const bool sStatsEnabled = getenv("LL_VK_STATS") != nullptr || getenv("LL_VK_DEBUG_SHADERS") != nullptr || getenv("LL_VK_VALIDATION") != nullptr;
 bool sDbgMatch = false;                 // the draw being prepared belongs to a program the debug filter selects
 bool sDbgNoDepth = false, sDbgNoDepthWrite = false, sDbgNoDepthTest = false, sDbgNoBlend = false, sDbgNoCull = false, sDbgNoScissor = false,
      sDbgFullMask = false, sDbgNoFeedback = false;      // debug draw state overrides from <work>\vk-debug.txt
@@ -912,6 +916,25 @@ SamplerDesc sampler_for(const Tex& t)
     return d;
 }
 
+// the Vulkan sampler for a texture, rebuilt only when one of the inputs of sampler_for() changed
+VkSampler texture_sampler(Renderer& r, Tex& t)
+{
+    const SamplerParams& sp = t.mSampler;
+    U64 h = 1469598103934665603ull;
+    auto mix = [&h](U64 v) { h = (h ^ v) * 1099511628211ull; };
+    mix(sp.mMinFilter); mix(sp.mMagFilter); mix(sp.mWrapS); mix(sp.mWrapT); mix(sp.mWrapR); mix(sp.mCompare ? 1 : 0); mix(sp.mCompareFunc);
+    mix((U64)(S64)sp.mBaseLevel); mix((U64)(S64)sp.mMaxLevel);
+    U32 aniso_bits;
+    memcpy(&aniso_bits, &sp.mAnisotropy, 4);
+    mix(aniso_bits); mix(t.mLevels); mix(t.mValidLevels);
+    if (!t.mVkSampler || h != t.mSamplerSig)
+    {
+        t.mVkSampler = r.getSampler(sampler_for(t));
+        t.mSamplerSig = h;
+    }
+    return t.mVkSampler;
+}
+
 // translates the tracked GL state into renderer state for the next draw
 void sync_draw_state(Renderer& r, bool has_depth)
 {
@@ -986,15 +1009,11 @@ void sync_textures(Renderer& r, Program& program)
         {
             continue;
         }
-        const std::string& type = info.mSamplers[k].mType;
-        U32 cls = 0;
-        if (type.find("CubeArray") != std::string::npos) cls = 2;
-        else if (type.find("Cube") != std::string::npos) cls = 1;
-        else if (type.find("2DArray") != std::string::npos) cls = 3;
-        else if (type.find("3D") != std::string::npos) cls = 4;
-        else if (type.find("MS") != std::string::npos) cls = 5;
+        const U32 cls = program.getSamplerClass(k);
         auto it = sGL.mTextures.find(sCtx.mBound[unit][cls]);
+        if (sStatsEnabled)
         {
+            const std::string& type = info.mSamplers[k].mType;
             static const char* const watch[] = { "Soften", "Windlight Sky", "Deferred Sun", "Deferred Light Shader", "Irradiance Gen", "Radiance Gen", "HUD", "Copy Depth", "Haze", "Tonemap", "Reflection Mip", "Glow" };
             bool wanted = false;
             for (const char* w : watch) if (program.getName().find(w) != std::string::npos) wanted = true;
@@ -1019,11 +1038,14 @@ void sync_textures(Renderer& r, Program& program)
         }
         if (it != sGL.mTextures.end() && it->second.mImage.valid())
         {
-            r.setTexture(unit, &it->second.mImage, r.getSampler(sampler_for(it->second)));
-            ++sFrameSampled[it->first];
-            if (sCurTargets.count(it->first))
+            r.setTexture(unit, &it->second.mImage, texture_sampler(r, it->second));
+            if (sStatsEnabled)
             {
-                ++sStats.mFeedback[program.getName() + " samples " + info.mSamplers[k].mName + " = tex " + std::to_string(it->first)];
+                ++sFrameSampled[it->first];
+                if (sCurTargets.count(it->first))
+                {
+                    ++sStats.mFeedback[program.getName() + " samples " + info.mSamplers[k].mName + " = tex " + std::to_string(it->first)];
+                }
             }
         }
         else
@@ -1128,8 +1150,10 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
 {
     Vao& vao = current_vao();
     const ProgramInfo& info = program.getInfo();
-    // key: buffer, stride, byte offset of the binding inside the buffer
-    std::map<std::tuple<GLuint, GLsizei, U64>, U32> binding_of;
+    // bindings made so far: buffer, stride, byte offset of the binding inside the buffer
+    struct BindingKey { GLuint mBuffer; GLsizei mStride; U64 mBase; U32 mBinding; };
+    BindingKey made[16];
+    U32 made_count = 0;
 
     for (size_t a = 0; a < info.mAttributes.size(); ++a)
     {
@@ -1149,10 +1173,16 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
             const bool separate_array = at.mOffset >= (U64)stride;
             const U64 base = separate_array ? at.mOffset : 0;
             const U32 attr_offset = separate_array ? 0 : (U32)at.mOffset;
-            auto key = std::make_tuple(at.mBuffer, stride, base);
-            auto bi = binding_of.find(key);
-            U32 binding;
-            if (bi == binding_of.end())
+            U32 binding = ~0u;
+            for (U32 m = 0; m < made_count; ++m)
+            {
+                if (made[m].mBuffer == at.mBuffer && made[m].mStride == stride && made[m].mBase == base)
+                {
+                    binding = made[m].mBinding;
+                    break;
+                }
+            }
+            if (binding == ~0u)
             {
                 binding = (U32)vi.mBindings.size();
                 VertexInput::Binding b;
@@ -1160,12 +1190,8 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
                 b.mOffset = base;
                 b.mStride = (U32)stride;
                 vi.mBindings.push_back(b);
-                binding_of[key] = binding;
+                if (made_count < 16) made[made_count++] = { at.mBuffer, stride, base, binding };
                 used_buffers.push_back(at.mBuffer);
-            }
-            else
-            {
-                binding = bi->second;
             }
             VertexInput::Attribute va;
             va.mLocation = loc;
@@ -1513,20 +1539,29 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
         LLVkMirror::benchPass(program->getName().c_str());
     }
     sDbgMatch = !sDbgFilter.empty() && program->getName().find(sDbgFilter) != std::string::npos;
-    if (!sync_target())
     {
-        ++sDrawsSkipped;
-        ++sStats.mNoTarget;
-        ++sStats.mSkippedPerProgram[program->getName() + " (no target)"];
-        return false;
+        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_TARGET);
+        if (!sync_target())
+        {
+            ++sDrawsSkipped;
+            ++sStats.mNoTarget;
+            ++sStats.mSkippedPerProgram[program->getName() + " (no target)"];
+            return false;
+        }
     }
-    sync_draw_state(r, sHasDepth);
-    sync_textures(r, *program);
+    {
+        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_STATE);
+        sync_draw_state(r, sHasDepth);
+    }
+    {
+        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_TEX);
+        sync_textures(r, *program);
+    }
     if (sSnapActive)
     {
         snap_track(program->getName());
     }
-    if (program->hasUniform("ll_dbg_mode"))
+    if (debugShadersEnabled() && program->hasUniform("ll_dbg_mode"))
     {
         S32 mode = 0, sampler = 0;
         if (sDbgMode && program->getName().find(sDbgFilter) != std::string::npos)
@@ -1543,7 +1578,9 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
         program->setInts("ll_dbg_sampler", &sampler, 1);
         program->setFloats("ll_dbg_size", size, 2);
     }
+    if (sStatsEnabled)
     {
+        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_STATS);
         std::string key = program->getName() + " -> ";
         if (sCtx.mDrawFbo == 0) key += "SCREEN";
         for (GLuint tname : sCurTargets) key += std::to_string(tname) + " ";
@@ -1575,7 +1612,7 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
             ++git->second;
         }
     }
-    if (sCtx.mDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
+    if (sStatsEnabled && sCtx.mDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
     {
         std::string e = program->getName();
         if (e != "UI Shader" && e.compare(0, 3, "HUD") != 0)
@@ -1595,7 +1632,11 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
         }
         sStats.mBackbufferEvents.push_back(e);
     }
-    sync_uniform_blocks(r, used_buffers);
+    {
+        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_UBO);
+        sync_uniform_blocks(r, used_buffers);
+    }
+    LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_VERTEX);
     if (!build_vertex_input(r, *program, vi, used_buffers))
     {
         ++sDrawsSkipped;
@@ -2159,19 +2200,29 @@ void on_glVertexAttrib4fv(GLuint index, const GLfloat* v)
 void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
 {
     HookTimer hook_timer;
-    VertexInput vi;
-    std::vector<GLuint> used;
+    LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<GLuint> used_cache;
+    VertexInput& vi = vi_cache;
+    std::vector<GLuint>& used = used_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used.clear();
     if (count <= 0 || !prepare_draw(vi, used))
     {
         return;
     }
     Renderer& r = Renderer::instance();
+    LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
     r.setTopology(topology(mode));
     if (r.draw((U32)count, (U32)first))
     {
-        ++sStats.mDone;
-        ++sStats.mDonePerProgram[r.getProgram()->getName()];
+        if (sStatsEnabled)
+        {
+            ++sStats.mDone;
+            ++sStats.mDonePerProgram[r.getProgram()->getName()];
+        }
     }
     else
     {
@@ -2184,8 +2235,14 @@ void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
 void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices)
 {
     HookTimer hook_timer;
-    VertexInput vi;
-    std::vector<GLuint> used;
+    LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<GLuint> used_cache;
+    VertexInput& vi = vi_cache;
+    std::vector<GLuint>& used = used_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used.clear();
     if (count <= 0 || !prepare_draw(vi, used))
     {
         return;
@@ -2202,13 +2259,17 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     const VkIndexType itype = type == GL_UNSIGNED_INT ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     const U32 index_bytes = type == GL_UNSIGNED_INT ? 4 : 2;
     Renderer& r = Renderer::instance();
+    LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
     r.setTopology(topology(mode));
     r.setIndexBuffer(eit->second.mVk.mBuffer, 0, itype);
     if (r.drawIndexed((U32)count, (U32)((U64)indices / index_bytes), 0))
     {
-        ++sStats.mDone;
-        ++sStats.mDonePerProgram[r.getProgram()->getName()];
+        if (sStatsEnabled)
+        {
+            ++sStats.mDone;
+            ++sStats.mDonePerProgram[r.getProgram()->getName()];
+        }
     }
     else
     {
