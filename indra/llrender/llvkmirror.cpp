@@ -391,6 +391,7 @@ struct MirrorState
     LLVk::Image mTarget;            // wrapper of the acquired swapchain image for this frame
     U64 mFrames = 0;
     U64 mSkipped = 0;
+    U64 mPresentFailed = 0;
 };
 
 MirrorState sMirror;
@@ -697,6 +698,13 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
         static const bool size_log = getenv("LL_VK_SIZELOG") != nullptr;
         if (size_log)
         {
+            static ULONGLONG next_stats = 0;
+            const ULONGLONG now_ms = GetTickCount64();
+            if (now_ms >= next_stats)
+            {
+                next_stats = now_ms + 5000;
+                LL_INFOS("VkSize") << "mirror frames " << sMirror.mFrames << ", skipped " << sMirror.mSkipped << ", presents refused " << sMirror.mPresentFailed << LL_ENDL;
+            }
             static S32 last_sizes[6] = {};
             const S32 now[6] = { width, height, (S32)rc.right, (S32)rc.bottom, (S32)sMirror.mSwapchain.getExtent().width, (S32)sMirror.mSwapchain.getExtent().height };
             if (memcmp(now, last_sizes, sizeof(now)) != 0)
@@ -959,10 +967,14 @@ void LLVkMirror::endFrame()
     renderer.endFrame();
     bench_vk_end(ctx.getCommandBuffer());
     ctx.endFrame(ctx.getAcquireSemaphore(), sc.getRenderDone(index));
-    if (!sc.present(index, sc.getRenderDone(index)) && sc.lastPresentOutOfDate() && !sMirror.mOwnsWindow)
+    if (!sc.present(index, sc.getRenderDone(index)))
     {
-        ctx.waitIdle();
-        represent_after_resize();
+        ++sMirror.mPresentFailed;
+        if (sc.lastPresentOutOfDate() && !sMirror.mOwnsWindow)
+        {
+            ctx.waitIdle();
+            represent_after_resize();
+        }
     }
     bench_vk_collect(false);
     bench_gl_stamp(2);

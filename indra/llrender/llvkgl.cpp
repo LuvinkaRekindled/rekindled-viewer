@@ -822,9 +822,8 @@ bool sync_target()
             static S32 last[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
             if (size_log)
             {
-                const S32 now[9] = { sGL.mViewport[0], sGL.mViewport[1], sGL.mViewport[2], sGL.mViewport[3],
-                                     sGL.mScissorTest ? sGL.mScissor[0] : -1, sGL.mScissorTest ? sGL.mScissor[1] : -1,
-                                     sGL.mScissorTest ? sGL.mScissor[2] : -1, sGL.mScissorTest ? sGL.mScissor[3] : -1, (S32)color->mExtent.width };
+                // the scissor changes constantly (every UI element); only the viewport and the target size are worth a line
+                const S32 now[9] = { sGL.mViewport[0], sGL.mViewport[1], sGL.mViewport[2], sGL.mViewport[3], 0, 0, 0, 0, (S32)color->mExtent.width };
                 if (memcmp(now, last, sizeof(now)) != 0)
                 {
                     memcpy(last, now, sizeof(now));
