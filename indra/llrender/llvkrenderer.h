@@ -267,6 +267,11 @@ public:
     // Reads one mip level / layer of an image into tightly packed texels of its own format. Only valid outside a frame
     // (it waits for the GPU); used by the mirror's debug dump.
     bool readbackImage(Image& image, U32 mip, U32 layer, std::vector<U8>& texels);
+    // Submits what the frame has recorded so far, waits, and keeps recording (render targets are kept; the next pass
+    // loads rather than clears). Use before a readback that must see this frame's results.
+    bool flushAndRestart();
+    // The rectangle (x, y, w, h) of one mip level and layer, tightly packed. Valid right after flushAndRestart().
+    bool readbackRegion(Image& image, U32 mip, U32 layer, S32 x, S32 y, U32 w, U32 h, std::vector<U8>& texels);
     // debug: records copies of the given pixel rows of a colour image (level/layer of the view) into a host buffer, tightly packed, in the current frame
     bool recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuffer buffer);
 

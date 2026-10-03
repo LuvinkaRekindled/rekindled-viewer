@@ -41,6 +41,7 @@
 #include "llrender.h"
 #include "llwindow.h"
 #include "llframetimer.h"
+#include "llvkverify.h"
 #include <unordered_set>
 
 extern LL_COMMON_API bool on_main_thread();
@@ -1919,6 +1920,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
         }
 
         glGetTexImage(GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (GLvoid*)(imageraw->getData()));
+        LL_VK_VERIFY_TEXIMAGE(GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, imageraw->getData());      // <FS>
         //stop_glerror();
     }
 

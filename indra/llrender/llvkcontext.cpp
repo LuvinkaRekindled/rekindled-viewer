@@ -641,6 +641,39 @@ void Context::endFrame(VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
     ++mFrameNumber;
 }
 
+bool Context::flushFrameAndWait()
+{
+    if (!mInFrame || !mImmediateFence)
+    {
+        if (!mImmediateFence)
+        {
+            immediateSubmit([](VkCommandBuffer) {});     // creates the immediate pool and fence
+        }
+        if (!mInFrame || !mImmediateFence)
+        {
+            return false;
+        }
+    }
+    Frame& f = mFrames[mFrameSlot];
+    vkEndCommandBuffer(f.mCmd);
+
+    VkCommandBufferSubmitInfo cbi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
+    cbi.commandBuffer = f.mCmd;
+    VkSubmitInfo2 si = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+    si.commandBufferInfoCount = 1;
+    si.pCommandBufferInfos = &cbi;
+    vkResetFences(mDevice, 1, &mImmediateFence);
+    bool ok = vk_ok(vkQueueSubmit2(mQueue, 1, &si, mImmediateFence), "flush submit")
+        && vk_ok(vkWaitForFences(mDevice, 1, &mImmediateFence, VK_TRUE, 10ull * 1000 * 1000 * 1000), "flush wait");
+
+    // the work above has finished: the pool can be reset and the same command buffer recorded again
+    vkResetCommandPool(mDevice, f.mPool, 0);
+    VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(f.mCmd, &bi);
+    return ok;
+}
+
 StagingAlloc Context::allocStaging(VkDeviceSize size, VkDeviceSize alignment)
 {
     Frame& f = mFrames[mFrameSlot];

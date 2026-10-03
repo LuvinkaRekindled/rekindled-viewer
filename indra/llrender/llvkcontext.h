@@ -167,6 +167,10 @@ public:
     // Records into a one-off command buffer, submits it and waits. For start-up work and rare uploads only.
     bool immediateSubmit(const std::function<void(VkCommandBuffer)>& record);
 
+    // Submits what the current frame has recorded so far, waits for the GPU, and carries on recording into the same
+    // frame (same slot, same command buffer, swapchain semaphores untouched). Lets a readback see the frame's results.
+    bool flushFrameAndWait();
+
 private:
     Context() = default;
 
