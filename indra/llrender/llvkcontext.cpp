@@ -1083,9 +1083,21 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
         extent.width = (U32)(rc.right - rc.left);
         extent.height = (U32)(rc.bottom - rc.top);
     }
-    destroy();
+    // keep the old swapchain until the new one exists and hand it over (oldSwapchain): the compositor then switches over without showing a stale picture
+    VkSwapchainKHR old_swapchain = mSwapchain;
+    vkDeviceWaitIdle(dev);
+    for (VkSemaphore s : mRenderDone) vkDestroySemaphore(dev, s, nullptr);
+    mRenderDone.clear();
+    for (VkImageView v : mViews) vkDestroyImageView(dev, v, nullptr);
+    mViews.clear();
+    mImages.clear();
+    mSwapchain = VK_NULL_HANDLE;
     if (extent.width == 0 || extent.height == 0)
     {
+        if (old_swapchain != VK_NULL_HANDLE)
+        {
+            vkDestroySwapchainKHR(dev, old_swapchain, nullptr);
+        }
         return true;     // minimised: no swapchain until the window has an area again
     }
 
@@ -1121,8 +1133,15 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
     sc.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     sc.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     sc.clipped = VK_TRUE;
-    if (!vk_ok(vkCreateSwapchainKHR(dev, &sc, nullptr, &mSwapchain), "vkCreateSwapchainKHR"))
+    sc.oldSwapchain = old_swapchain;
+    const bool created = vk_ok(vkCreateSwapchainKHR(dev, &sc, nullptr, &mSwapchain), "vkCreateSwapchainKHR");
+    if (old_swapchain != VK_NULL_HANDLE)
     {
+        vkDestroySwapchainKHR(dev, old_swapchain, nullptr);
+    }
+    if (!created)
+    {
+        mSwapchain = VK_NULL_HANDLE;
         return false;
     }
     mFormat = chosen.format;
