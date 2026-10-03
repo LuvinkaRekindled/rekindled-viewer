@@ -11027,6 +11027,9 @@ struct CascadeReuse
     LLVector3 mCameraOrigin;
     LLVector3 mCameraAt;
     LLVector3 mCasterDir;
+    F32 mCameraView = 0.f;      // vertical field of view (zooming changes it without moving the camera)
+    F32 mSplitNear = 0.f;       // the view-space slice this cascade was rendered for
+    F32 mSplitFar = 0.f;
 };
 CascadeReuse sCascadeReuse[4];
 }
@@ -11614,7 +11617,11 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     const F32 turn_cos = llclamp(camera.getAtAxis() * cr.mCameraAt, -1.f, 1.f);
                     const F32 sun_cos = llclamp(caster_dir * cr.mCasterDir, -1.f, 1.f);
                     const F32 max_turn_cos = cosf(far_max_turn * DEG_TO_RAD);
-                    if (!its_turn && frame_now - cr.mFrame < 2 * (U64)far_interval && moved < far_max_move && turn_cos > max_turn_cos && sun_cos > cosf(0.3f * DEG_TO_RAD))
+                    // zooming changes the field of view and with it the visible region and the split distances
+                    const bool same_view = fabsf(camera.getView() - cr.mCameraView) < 0.002f * llmax(cr.mCameraView, 0.01f)
+                        && fabsf(dist[j] - cr.mSplitNear) <= 0.03f * llmax(cr.mSplitNear, 1.f)
+                        && fabsf(dist[j + 1] - cr.mSplitFar) <= 0.03f * llmax(cr.mSplitFar, 1.f);
+                    if (!its_turn && same_view && frame_now - cr.mFrame < 2 * (U64)far_interval && moved < far_max_move && turn_cos > max_turn_cos && sun_cos > cosf(0.3f * DEG_TO_RAD))
                     {
                         reuse_shadow_map = true;
                     }
@@ -11714,6 +11721,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 cr.mCameraOrigin = camera.getOrigin();
                 cr.mCameraAt = camera.getAtAxis();
                 cr.mCasterDir = caster_dir;
+                cr.mCameraView = camera.getView();
+                cr.mSplitNear = dist[j];
+                cr.mSplitFar = dist[j + 1];
             }
         }
     }
