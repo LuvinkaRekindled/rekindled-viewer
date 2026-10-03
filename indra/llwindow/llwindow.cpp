@@ -106,6 +106,8 @@ S32 OSMessageBox(const std::string& text, const std::string& caption, U32 type)
 // LLWindow
 //
 
+bool LLWindow::sSkipSwapBuffers = false;
+
 LLWindow::LLWindow(LLWindowCallbacks* callbacks, bool fullscreen, U32 flags)
     : mCallbacks(callbacks),
       mPostQuit(true),
