@@ -28,6 +28,7 @@
 
 #include "llglslshader.h"
 #include <cctype>
+#include <set>
 
 #include "llshadermgr.h"
 #include "llfile.h"
@@ -38,6 +39,7 @@
 #include "llvkshader.h"
 #include "llvkrenderer.h"
 #include "llvkmirror.h"
+#include "llvkverify.h"
 #endif
 
 #include "hbxxh.h"
@@ -623,11 +625,17 @@ void LLGLSLShader::mirrorCreate()
             mVkProgram->setSamplerUnit(s, (U32)atoi(name.c_str() + 3));
         }
     }
+
+    if (LLVkVerify::gEnabled)
+    {
+        mirrorCheckIntrospection();
+    }
 }
 #else
 void LLGLSLShader::mirrorDestroy() {}
 void LLGLSLShader::mirrorBind() {}
 void LLGLSLShader::mirrorCreate() {}
+void LLGLSLShader::mirrorCheckIntrospection() {}
 void LLGLSLShader::mirrorScalar(GLint, int, std::initializer_list<double>) {}
 void LLGLSLShader::mirrorVector(GLint, int, U32, U32, const void*) {}
 void LLGLSLShader::mirrorMatrix(GLint, U32, U32, GLboolean, U32, const GLfloat*) {}
@@ -635,6 +643,72 @@ void LLGLSLShader::mirrorCompareAll() {}
 #endif
 
 #if defined(LL_VULKAN)
+#ifndef GL_UNIFORM_BLOCK_INDEX
+#define GL_UNIFORM_BLOCK_INDEX 0x8A3A
+#endif
+// <FS> LL_VK_VERIFY: the uniforms OpenGL reports as active in this program against the ones the Vulkan program reflects. A uniform only OpenGL
+// knows would never reach Vulkan; one only Vulkan knows is normally something GL optimised away.
+void LLGLSLShader::mirrorCheckIntrospection()
+{
+    static U32 programs = 0, with_gl_only = 0, with_vk_only = 0, logged = 0;
+    ++programs;
+    if (mVkProgram && mProgramObject)
+    {
+        const LLVk::ProgramInfo& pi = mVkProgram->getInfo();
+        std::set<std::string> vk_names, gl_names;
+        for (const LLVk::LooseUniform& u : pi.mUniforms) vk_names.insert(u.mName);
+        for (const LLVk::SamplerInfo& s : pi.mSamplers) vk_names.insert(s.mName);
+        GLint count = 0;
+        glGetProgramiv(mProgramObject, GL_ACTIVE_UNIFORMS, &count);
+        std::string gl_only, vk_only;
+        U32 n_gl_only = 0, n_vk_only = 0;
+        for (GLint i = 0; i < count; ++i)
+        {
+            GLchar name[1024] = {};
+            GLsizei length = 0;
+            GLint size = 0;
+            GLenum type = 0;
+            glGetActiveUniform(mProgramObject, (GLuint)i, 1024, &length, &size, &type, name);
+            GLuint index = (GLuint)i;
+            GLint block = -1;
+            glGetActiveUniformsiv(mProgramObject, 1, &index, GL_UNIFORM_BLOCK_INDEX, &block);
+            if (block != -1)
+            {
+                continue;       // members of named uniform blocks are not loose uniforms
+            }
+            std::string n(name, (size_t)length);
+            if (n.size() > 3 && n.compare(n.size() - 3, 3, "[0]") == 0) n.resize(n.size() - 3);
+            if (n.compare(0, 3, "gl_") == 0) continue;
+            gl_names.insert(n);
+            if (!vk_names.count(n))
+            {
+                ++n_gl_only;
+                if (gl_only.size() < 260) gl_only += n + " ";
+            }
+        }
+        for (const std::string& n : vk_names)
+        {
+            if (!gl_names.count(n))
+            {
+                ++n_vk_only;
+                if (vk_only.size() < 260) vk_only += n + " ";
+            }
+        }
+        with_gl_only += n_gl_only ? 1 : 0;
+        with_vk_only += n_vk_only ? 1 : 0;
+        if ((n_gl_only || n_vk_only) && logged++ < 60)
+        {
+            LL_INFOS("VkVerify") << "uniforms of '" << mName << "': " << n_gl_only << " active in OpenGL but not in Vulkan [" << gl_only << "], " << n_vk_only
+                                 << " in Vulkan but not active in OpenGL [" << vk_only << "]" << LL_ENDL;
+        }
+    }
+    if (programs % 40 == 0)
+    {
+        LL_INFOS("VkVerify") << "uniform introspection: " << programs << " programs checked, " << with_gl_only << " with uniforms OpenGL has and Vulkan lacks, " << with_vk_only
+                             << " with uniforms only Vulkan has" << LL_ENDL;
+    }
+}
+
 // <FS> debug: compares every loose uniform of the lighting related programs as OpenGL holds it with the Vulkan shadow copy
 void LLGLSLShader::mirrorCompareAll()
 {

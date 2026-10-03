@@ -648,9 +648,158 @@ bool Renderer::init()
         }
     }
 
+    createQueryPools();     // optional: without them queries just report nothing
+
     mReady = true;
     LL_INFOS("Vulkan") << "Vulkan renderer ready" << LL_ENDL;
     return true;
+}
+
+bool Renderer::createQueryPools()
+{
+    VkDevice dev = Context::instance().getDevice();
+    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    {
+        VkQueryPoolCreateInfo qi = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+        qi.queryType = VK_QUERY_TYPE_OCCLUSION;
+        qi.queryCount = MAX_OCC_QUERIES;
+        if (vkCreateQueryPool(dev, &qi, nullptr, &mOccPool[i]) != VK_SUCCESS)
+        {
+            mOccPool[i] = VK_NULL_HANDLE;
+            return false;
+        }
+        vkResetQueryPool(dev, mOccPool[i], 0, MAX_OCC_QUERIES);
+        qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qi.queryCount = MAX_TS_QUERIES;
+        if (vkCreateQueryPool(dev, &qi, nullptr, &mTsPool[i]) != VK_SUCCESS)
+        {
+            mTsPool[i] = VK_NULL_HANDLE;
+            return false;
+        }
+        vkResetQueryPool(dev, mTsPool[i], 0, MAX_TS_QUERIES);
+        mOccSerial[i].reserve(MAX_OCC_QUERIES);
+        mOccBegun[i].reserve(MAX_OCC_QUERIES);
+    }
+    return true;
+}
+
+void Renderer::destroyQueryPools()
+{
+    VkDevice dev = Context::instance().getDevice();
+    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    {
+        if (mOccPool[i]) vkDestroyQueryPool(dev, mOccPool[i], nullptr);
+        if (mTsPool[i]) vkDestroyQueryPool(dev, mTsPool[i], nullptr);
+        mOccPool[i] = VK_NULL_HANDLE;
+        mTsPool[i] = VK_NULL_HANDLE;
+        mOccSerial[i].clear(); mOccBegun[i].clear(); mTsSerial[i].clear(); mTsIsEnd[i].clear();
+    }
+    mOccPending = mOccActive = -1;
+}
+
+// the work recorded the last time this frame slot was used has finished: collect its query results, then reset the pools
+void Renderer::harvestQueries(U32 slot)
+{
+    VkDevice dev = Context::instance().getDevice();
+    if (mOccPool[slot] && !mOccSerial[slot].empty())
+    {
+        const U32 n = (U32)mOccSerial[slot].size();
+        std::vector<U64> data((size_t)n * 2, 0);
+        vkGetQueryPoolResults(dev, mOccPool[slot], 0, n, data.size() * sizeof(U64), data.data(), 2 * sizeof(U64),
+                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);      // NOT_READY just leaves some entries unavailable
+        for (U32 i = 0; i < n; ++i)
+        {
+            if (data[(size_t)i * 2 + 1])
+            {
+                mQueryResults.push_back({ mOccSerial[slot][i], 0, data[(size_t)i * 2] });
+            }
+            else if (!mOccBegun[slot][i])
+            {
+                mQueryResults.push_back({ mOccSerial[slot][i], 0, 0 });        // no draw happened inside it: nothing passed
+            }
+        }
+        vkResetQueryPool(dev, mOccPool[slot], 0, n);
+        mOccSerial[slot].clear();
+        mOccBegun[slot].clear();
+    }
+    if (mTsPool[slot] && !mTsSerial[slot].empty())
+    {
+        const U32 n = (U32)mTsSerial[slot].size();
+        std::vector<U64> data((size_t)n * 2, 0);
+        vkGetQueryPoolResults(dev, mTsPool[slot], 0, n, data.size() * sizeof(U64), data.data(), 2 * sizeof(U64),
+                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+        for (U32 i = 0; i < n; ++i)
+        {
+            if (data[(size_t)i * 2 + 1])
+            {
+                mQueryResults.push_back({ mTsSerial[slot][i], mTsIsEnd[slot][i] ? 2u : 1u, data[(size_t)i * 2] });
+            }
+        }
+        vkResetQueryPool(dev, mTsPool[slot], 0, n);
+        mTsSerial[slot].clear();
+        mTsIsEnd[slot].clear();
+    }
+}
+
+bool Renderer::queryBegin(U64 serial)
+{
+    if (mCmd == VK_NULL_HANDLE || !mOccPool[mSlot] || mOccSerial[mSlot].size() >= MAX_OCC_QUERIES)
+    {
+        return false;
+    }
+    if (mOccActive >= 0 && mRendering)
+    {
+        vkCmdEndQuery(mCmd, mOccPool[mSlot], (U32)mOccActive);      // GL does not nest these; do not leave one open
+    }
+    mOccActive = -1;
+    mOccPending = (S32)mOccSerial[mSlot].size();
+    mOccSerial[mSlot].push_back(serial);
+    mOccBegun[mSlot].push_back(0);
+    return true;
+}
+
+void Renderer::startPendingQuery()
+{
+    if (mOccPending >= 0 && mRendering)
+    {
+        vkCmdBeginQuery(mCmd, mOccPool[mSlot], (U32)mOccPending, 0);
+        mOccBegun[mSlot][(size_t)mOccPending] = 1;
+        mOccActive = mOccPending;
+        mOccPending = -1;
+    }
+}
+
+void Renderer::queryEnd()
+{
+    if (mOccActive >= 0 && mRendering)
+    {
+        vkCmdEndQuery(mCmd, mOccPool[mSlot], (U32)mOccActive);
+    }
+    mOccActive = -1;
+    mOccPending = -1;
+}
+
+bool Renderer::queryTimestamp(U64 serial, bool end)
+{
+    if (mCmd == VK_NULL_HANDLE || !mTsPool[mSlot] || mTsSerial[mSlot].size() >= MAX_TS_QUERIES)
+    {
+        return false;
+    }
+    const U32 index = (U32)mTsSerial[mSlot].size();
+    mTsSerial[mSlot].push_back(serial);
+    mTsIsEnd[mSlot].push_back(end ? 1 : 0);
+    vkCmdWriteTimestamp2(mCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mTsPool[mSlot], index);
+    return true;
+}
+
+void Renderer::takeQueryResults(std::vector<QueryResult>& out)
+{
+    if (mQueryResults.size() > 400000)
+    {
+        mQueryResults.erase(mQueryResults.begin(), mQueryResults.begin() + 200000);
+    }
+    out.insert(out.end(), mQueryResults.begin(), mQueryResults.end());
+    mQueryResults.clear();
 }
 
 void Renderer::shutdown()
@@ -664,6 +813,7 @@ void Renderer::shutdown()
     if (dev != VK_NULL_HANDLE)
     {
         ctx.waitIdle();
+        destroyQueryPools();
         for (auto& kv : mSamplers) vkDestroySampler(dev, kv.second, nullptr);
         mSamplers.clear();
         if (mPipelineCache) vkDestroyPipelineCache(dev, mPipelineCache, nullptr);
@@ -750,6 +900,8 @@ VkSampler Renderer::getSampler(const SamplerDesc& desc)
 
 void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
 {
+    harvestQueries(frame_slot);
+    mOccPending = mOccActive = -1;
     mCmd = cmd;
     mSlot = frame_slot;
     mRingPeak = std::max(mRingPeak, mRingUsed);
@@ -802,6 +954,11 @@ void Renderer::endRendering()
 {
     if (mRendering)
     {
+        if (mOccActive >= 0)
+        {
+            vkCmdEndQuery(mCmd, mOccPool[mSlot], (U32)mOccActive);      // a query cannot outlive its render pass instance
+            mOccActive = -1;
+        }
         vkCmdEndRendering(mCmd);
         mRendering = false;
     }
@@ -1443,6 +1600,7 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
         mDrawBlocked = false;
         return false;
     }
+    startPendingQuery();
     vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
     ++mDrawCount;
     return true;
@@ -1462,6 +1620,7 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         return false;
     }
     vkCmdBindIndexBuffer(mCmd, mIndexBuffer, mIndexOffset, mIndexType);
+    startPendingQuery();
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
     ++mDrawCount;
     return true;

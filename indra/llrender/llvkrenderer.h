@@ -294,6 +294,16 @@ public:
 
     U32 getDrawCount() const { return mDrawCount; }
 
+    // ---- GPU queries: occlusion and timestamps. Results become readable when the frame that recorded them has finished
+    // (several frames later); takeQueryResults() hands over what has arrived since the last call. ----
+    struct QueryResult { U64 mSerial; U32 mKind; U64 mValue; };     // mKind: 0 = samples passed, 1 = timestamp (start of an elapsed-time query), 2 = timestamp (end)
+    // an occlusion query that starts with the next draw (it covers the draws up to queryEnd); false if no room
+    bool queryBegin(U64 serial);
+    void queryEnd();
+    // writes a timestamp now; 'end' tells the harvest which half of an elapsed-time query it is
+    bool queryTimestamp(U64 serial, bool end);
+    void takeQueryResults(std::vector<QueryResult>& out);
+
 private:
     friend class Program;
     Renderer() = default;
@@ -386,6 +396,23 @@ private:
     S32 mAppliedScissor[4] = { -1, -1, -1, -1 };
     U32 mAppliedDynamicOffset = 0xFFFFFFFF;
     bool mSet0Bound = false;
+
+    // queries (one pool of each kind per frame in flight)
+    static constexpr U32 MAX_OCC_QUERIES = 8192;
+    static constexpr U32 MAX_TS_QUERIES = 2048;
+    VkQueryPool mOccPool[Context::FRAMES_IN_FLIGHT] = {};
+    VkQueryPool mTsPool[Context::FRAMES_IN_FLIGHT] = {};
+    std::vector<U64> mOccSerial[Context::FRAMES_IN_FLIGHT];
+    std::vector<U8> mOccBegun[Context::FRAMES_IN_FLIGHT];
+    std::vector<U64> mTsSerial[Context::FRAMES_IN_FLIGHT];
+    std::vector<U8> mTsIsEnd[Context::FRAMES_IN_FLIGHT];
+    S32 mOccPending = -1;           // allocated, starts with the next draw
+    S32 mOccActive = -1;            // begun inside the current pass
+    std::vector<QueryResult> mQueryResults;
+    bool createQueryPools();
+    void destroyQueryPools();
+    void harvestQueries(U32 slot);
+    void startPendingQuery();
 };
 
 } // namespace LLVk

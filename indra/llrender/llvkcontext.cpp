@@ -383,6 +383,22 @@ bool Context::pickDevice()
             mCaps.mTimestampPeriodNs = props.limits.timestampPeriod;
             mCaps.mTimestampValidBits = families[(U32)family].timestampValidBits;
             mCaps.mUniformAlignment = props.limits.minUniformBufferOffsetAlignment;
+            mCaps.mMaxImageDim2D = props.limits.maxImageDimension2D;
+            mCaps.mMaxImageDimCube = props.limits.maxImageDimensionCube;
+            mCaps.mMaxImageDim3D = props.limits.maxImageDimension3D;
+            mCaps.mMaxArrayLayers = props.limits.maxImageArrayLayers;
+            mCaps.mMaxColorAttachments = props.limits.maxColorAttachments;
+            mCaps.mMaxVertexAttribs = props.limits.maxVertexInputAttributes;
+            mCaps.mMaxUniformRange = props.limits.maxUniformBufferRange;
+            mCaps.mMaxSampledImagesPerStage = props.limits.maxPerStageDescriptorSampledImages;
+            mCaps.mMaxViewport[0] = props.limits.maxViewportDimensions[0];
+            mCaps.mMaxViewport[1] = props.limits.maxViewportDimensions[1];
+            {
+                const VkSampleCountFlags counts = props.limits.framebufferColorSampleCounts;
+                U32 best = 1;
+                for (U32 c : { 2u, 4u, 8u, 16u, 32u, 64u }) if (counts & c) best = c;
+                mCaps.mMaxSampleCount = best;
+            }
 
             VkPhysicalDevicePushDescriptorPropertiesKHR push = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR };
             VkPhysicalDeviceProperties2 props2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
