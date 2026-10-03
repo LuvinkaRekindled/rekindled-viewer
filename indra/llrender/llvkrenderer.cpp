@@ -480,19 +480,19 @@ bool Renderer::init()
     // uniform rings (one per frame in flight) and a stand-in for named uniform blocks nobody has bound
     for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
     {
-        if (!ctx.createBuffer(RING_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, Context::Memory::Upload, mRing[i]))
+        if (!ctx.createBuffer(RING_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, Context::Memory::UploadDevice, mRing[i]))
         {
             return false;
         }
     }
     for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
     {
-        if (!ctx.createBuffer(VERTEX_RING_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, Context::Memory::Upload, mVertexRing[i]))
+        if (!ctx.createBuffer(VERTEX_RING_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, Context::Memory::UploadDevice, mVertexRing[i]))
         {
             return false;
         }
     }
-    if (!ctx.createBuffer(DUMMY_UBO_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, Context::Memory::Upload, mDummyUbo))
+    if (!ctx.createBuffer(DUMMY_UBO_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, Context::Memory::UploadDevice, mDummyUbo))
     {
         return false;
     }
