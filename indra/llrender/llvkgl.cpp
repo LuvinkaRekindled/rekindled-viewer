@@ -24,6 +24,7 @@
 
 #include <chrono>
 #include "llvkgl_hooks.inc"      // generated: storage and names for the per-hook statistics
+#include "llvkasync.h"
 #include <map>
 #include <mutex>
 #include <set>
@@ -510,7 +511,10 @@ struct PerContext
     GLint mPackRowLength = 0;
     GLuint mPixelPackBuffer = 0;
 };
-thread_local PerContext sCtx;
+thread_local PerContext sCtxTls;
+thread_local PerContext* sCtxOverride = nullptr;      // set on the async worker: the context of the thread whose call is being replayed
+inline PerContext& current_ctx() { return sCtxOverride ? *sCtxOverride : sCtxTls; }
+#define sCtx (current_ctx())
 
 struct GLState
 {
@@ -2767,9 +2771,15 @@ double take_hook_ms()
 }
 
 // called by the mirror once per frame after it presents: arms the dump if the trigger file exists
+namespace { void drain_query_results(); }
+
 void after_frame()
 {
     std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
+    if (LLVkAsync::gEnabled)
+    {
+        drain_query_results();
+    }
     {
         // LL_VK_PHASES=1: where the main thread's time goes inside the translation layer, averaged over 600 frames
         static const bool phases = getenv("LL_VK_PHASES") != nullptr;
@@ -3318,6 +3328,7 @@ void note_getter(int kind, GLenum pname, bool handled, bool mismatch, const doub
 // ---- queries ----
 struct QueryRec
 {
+    GLuint mName = 0;                   // the GL name the query was begun under
     GLenum mTarget = 0;
     bool mOcc = false, mTime = false;
     bool mVkHave = false, mHaveStart = false, mHaveEnd = false, mGlHave = false;
@@ -3408,6 +3419,17 @@ void drain_query_results()
         {
             rec.mVkValue = (U64)(((rec.mTsEnd - rec.mTsStart) & mask) * (double)caps.mTimestampPeriodNs);
             rec.mVkHave = true;
+        }
+        if (rec.mVkHave && LLVkAsync::gEnabled)
+        {
+            // hand the result to the main thread, which polls without waiting for this thread
+            auto lat = sQueryLatest.find(rec.mName);
+            if (lat != sQueryLatest.end() && lat->second == r.mSerial)
+            {
+                U64 v = rec.mVkValue;
+                if (rec.mOcc && rec.mTarget != 0x8914) v = v ? 1 : 0;
+                LLVkAsync::queryPublish(rec.mName, v);
+            }
         }
         if (rec.mVkHave && rec.mGlHave)
         {
@@ -3564,10 +3586,12 @@ void on_glBeginQuery(GLenum target, GLuint id)
     if (!queries_on() || !LLVkMirror::inFrame() || !Renderer::instance().isReady())
     {
         if (queries_on()) ++sQT.mNotIssued;
+        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id);
         return;
     }
     Renderer& r = Renderer::instance();
     QueryRec rec;
+    rec.mName = id;
     rec.mTarget = target;
     const U64 serial = ++sQuerySerial;
     bool ok = false;
@@ -3585,6 +3609,7 @@ void on_glBeginQuery(GLenum target, GLuint id)
     {
         ++sQT.mNotIssued;
         sQueryActive.erase(target);
+        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id);
         return;
     }
     ++sQT.mIssued;
@@ -4148,11 +4173,27 @@ void verify_tex_image(GLenum target, S32 level, GLenum format, GLenum type, cons
 
 void own_gen(int kind, GLsizei n, GLuint* out)
 {
-    static GLuint next[5] = { 1, 1, 1, 1, 1 };       // textures, framebuffers, buffers, vertex arrays, queries; 0 is never a name
+    static std::atomic<GLuint> next[5] = { 1, 1, 1, 1, 1 };       // textures, framebuffers, buffers, vertex arrays, queries; 0 is never a name
     for (GLsizei i = 0; i < n; ++i)
     {
-        out[i] = next[kind]++;
+        out[i] = next[kind].fetch_add(1);
     }
+}
+
+// the async worker: one context state per producing thread (0 is the viewer's main thread)
+static PerContext* sCtxTable[256] = {};
+void register_main_context()
+{
+    sCtxTable[0] = &sCtxTls;        // the main thread's state so far carries on in the worker
+}
+void set_worker_context(int id)
+{
+    PerContext*& slot = sCtxTable[id & 255];
+    if (!slot)
+    {
+        slot = new PerContext;
+    }
+    sCtxOverride = slot;
 }
 
 namespace
@@ -4326,6 +4367,7 @@ bool own_query_value(GLuint id, GLenum pname, U64& value)
         if (it->second.mOcc && it->second.mTarget != 0x8914) value = value ? 1 : 0;      // ANY_SAMPLES_PASSED is a boolean
         sQueries.erase(it);
         sQueryLatest.erase(lat);
+        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id);
         return true;
     }
     value = it != sQueries.end() && it->second.mOcc ? 1 : 0;

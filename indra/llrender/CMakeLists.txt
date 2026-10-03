@@ -34,6 +34,7 @@ set(llrender_SOURCE_FILES
     lluiimage.cpp
     llvertexbuffer.cpp
     llvkcontext.cpp
+    llvkasync.cpp
     llvkmirror.cpp
     llvkgl.cpp
     llvkprobe.cpp
@@ -74,6 +75,7 @@ set(llrender_HEADER_FILES
     llvertexbuffer.h
     llvkcontext.h
     llvkfunctions.inl
+    llvkasync.h
     llvkmirror.h
     llvkgl.h
     llvkprobe.h

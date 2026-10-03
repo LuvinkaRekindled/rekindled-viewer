@@ -28,6 +28,7 @@ void LLVkMirror::shutdown() {}
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
 #include "llvkverify.h"
+#include "llvkasync.h"
 #include "llwindow.h"
 
 #include <cstdlib>
@@ -616,6 +617,7 @@ bool LLVkMirror::ensureReady()
 
 void LLVkMirror::shutdown()
 {
+    LLVkAsync::stop();
     std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (LLVkGL::gOwn)
     {
@@ -653,7 +655,7 @@ void LLVkMirror::shutdown()
     sMirror.mClosed = false;
 }
 
-void LLVkMirror::beginFrame(S32 width, S32 height)
+void LLVkMirror::beginFrameImpl(S32 width, S32 height)
 {
     gMainThreadId = __readgsdword(0x48);
     std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
@@ -842,7 +844,7 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
     sMirror.mInFrame = true;
 }
 
-void LLVkMirror::armSnapshotCompare()
+void LLVkMirror::armSnapshotCompareImpl()
 {
     if (LLVkVerify::gEnabled)
     {
@@ -850,7 +852,7 @@ void LLVkMirror::armSnapshotCompare()
     }
 }
 
-void LLVkMirror::holdFrame(bool hold)
+void LLVkMirror::holdFrameImpl(bool hold)
 {
     std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     sMirror.mHold = hold;
@@ -900,7 +902,7 @@ const char* LLVkMirror::phaseName(int id)
     return id >= 0 && id < PH_COUNT ? PHASE_NAMES[id] : "?";
 }
 
-void LLVkMirror::snapshotBoundary(S32 mode)
+void LLVkMirror::snapshotBoundaryImpl(S32 mode)
 {
     std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (mode <= 0 || !sMirror.mReady || !sMirror.mInFrame)
@@ -930,7 +932,7 @@ void LLVkMirror::snapshotBoundary(S32 mode)
     }
 }
 
-void LLVkMirror::presentFrame()
+void LLVkMirror::presentFrameImpl()
 {
     std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (glonly_mode())
@@ -1004,7 +1006,7 @@ bool represent_after_resize()
 
 }
 
-void LLVkMirror::endFrame()
+void LLVkMirror::endFrameImpl()
 {
     std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (glonly_mode())
@@ -1099,6 +1101,80 @@ void LLVkMirror::benchPass(const char* name)
     sBench.mPhaseKind[sBench.mPhaseUsed] = kind;
     ++sBench.mPhaseUsed;
     sBench.mCurrentKind = (int)kind;
+}
+
+// ---- the public frame calls: queued for the worker thread in async mode (LL_VK_ASYNC), inline otherwise ----
+namespace
+{
+// The worker takes over between two frames: once a frame has been closed in the usual way and the mirror is ready.
+void maybe_start_async()
+{
+    if (!LLVkAsync::gEnabled && LLVkAsync::requested() && sMirror.mReady && !sMirror.mInFrame && !sMirror.mHold && LLVkGL::gOwn && !LLVkVerify::gEnabled)
+    {
+        LLVkAsync::start();
+    }
+}
+}
+
+void LLVkMirror::beginFrame(S32 width, S32 height)
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::frameBegin(width, height);
+        return;
+    }
+    beginFrameImpl(width, height);
+}
+
+void LLVkMirror::endFrame()
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::frameEnd();
+        return;
+    }
+    endFrameImpl();
+    maybe_start_async();
+}
+
+void LLVkMirror::presentFrame()
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::framePresent();
+        return;
+    }
+    presentFrameImpl();
+}
+
+void LLVkMirror::holdFrame(bool hold)
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::frameHold(hold);
+        return;
+    }
+    holdFrameImpl(hold);
+}
+
+void LLVkMirror::snapshotBoundary(S32 mode)
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::snapshotBoundary(mode);
+        return;
+    }
+    snapshotBoundaryImpl(mode);
+}
+
+void LLVkMirror::armSnapshotCompare()
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::armSnapshot();
+        return;
+    }
+    armSnapshotCompareImpl();
 }
 
 #endif // LL_VULKAN

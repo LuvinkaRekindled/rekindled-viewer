@@ -59,6 +59,13 @@ namespace LLVkMirror
     void shutdown();
 
 #if defined(LL_VULKAN)
+    // the inline implementations of the frame calls (the worker thread runs these in async mode)
+    void beginFrameImpl(S32 width, S32 height);
+    void endFrameImpl();
+    void presentFrameImpl();
+    void holdFrameImpl(bool hold);
+    void snapshotBoundaryImpl(S32 mode);
+    void armSnapshotCompareImpl();
     // the lock every mirror entry point takes (the viewer calls GL from more than one thread)
     class Mutex;
     Mutex& lock();
