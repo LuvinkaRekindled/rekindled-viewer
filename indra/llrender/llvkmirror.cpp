@@ -27,6 +27,7 @@ void LLVkMirror::shutdown() {}
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
 #include "llvkverify.h"
+#include "llwindow.h"
 
 #include <cstdlib>
 
@@ -375,6 +376,7 @@ struct MirrorState
     bool mOffscreen = false;        // the open frame has no swapchain image (work recorded after the present)
 
     HWND mWindow = nullptr;
+    bool mOwnsWindow = true;        // false: the mirror presents into the viewer's main window (LL_VK_EMBED=main)
     HWND mParent = nullptr;         // LL_VK_EMBED: the viewer's main window, which the mirror window covers as a child
     volatile bool mClosed = false;
     volatile bool mResized = false;
@@ -444,13 +446,32 @@ bool create_window()
     {
         return false;
     }
-    // LL_VK_EMBED: cover the viewer's main window (the one the current GL context draws to) with a child window instead of opening a second window
+    // LL_VK_EMBED=main: present into the viewer's main window (the one the current GL context draws to); needs LL_VK_OWN so OpenGL stops swapping over it.
+    // LL_VK_EMBED=child: cover that window with a child window instead (the main window then stops receiving the mouse; not usable).
     HWND parent = nullptr;
-    if (getenv("LL_VK_EMBED") != nullptr)
+    const char* embed = getenv("LL_VK_EMBED");
+    if (embed != nullptr)
     {
         if (HDC dc = wglGetCurrentDC())
         {
             parent = WindowFromDC(dc);
+        }
+        if (parent && strcmp(embed, "main") == 0)
+        {
+            if (getenv("LL_VK_OWN") != nullptr)
+            {
+                sMirror.mWindow = parent;
+                sMirror.mOwnsWindow = false;
+                LLWindow::sSkipSwapBuffers = true;
+                LL_INFOS("VkMirror") << "the Vulkan mirror presents into the viewer's main window (LL_VK_EMBED=main)" << LL_ENDL;
+                return true;
+            }
+            LL_WARNS("VkMirror") << "LL_VK_EMBED=main needs LL_VK_OWN; using a separate mirror window" << LL_ENDL;
+            parent = nullptr;
+        }
+        else if (strcmp(embed, "child") != 0)
+        {
+            parent = nullptr;
         }
     }
     if (parent)
@@ -616,9 +637,14 @@ void LLVkMirror::shutdown()
     ctx.shutdown();
     if (sMirror.mWindow)
     {
-        DestroyWindow(sMirror.mWindow);
+        if (sMirror.mOwnsWindow)
+        {
+            DestroyWindow(sMirror.mWindow);
+        }
         sMirror.mWindow = nullptr;
         sMirror.mParent = nullptr;
+        sMirror.mOwnsWindow = true;
+        LLWindow::sSkipSwapBuffers = false;
     }
     sMirror.mClosed = false;
 }
@@ -663,6 +689,17 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
         return;
     }
 
+    if (!sMirror.mOwnsWindow && sMirror.mWindow)
+    {
+        // presenting into the main window: nobody tells the mirror when it is resized
+        RECT rc = {};
+        GetClientRect(sMirror.mWindow, &rc);
+        const LLVk::Swapchain& swap = sMirror.mSwapchain;
+        if (swap.isValid() ? ((U32)rc.right != swap.getExtent().width || (U32)rc.bottom != swap.getExtent().height) : (rc.right > 0 && rc.bottom > 0))
+        {
+            sMirror.mResized = true;
+        }
+    }
     if (sMirror.mParent && sMirror.mWindow)
     {
         // an embedded mirror window follows the size of the main window

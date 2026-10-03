@@ -69,6 +69,8 @@ public:
     virtual bool maximize() = 0;
     virtual void minimize() = 0;
     virtual void restore() = 0;
+    // Vulkan-only mode presents into this window itself: OpenGL must not swap its (empty) back buffer over it
+    static bool sSkipSwapBuffers;
     bool getFullscreen()    { return mFullscreen; };
     virtual bool getPosition(LLCoordScreen *position) = 0;
     virtual bool getSize(LLCoordScreen *size) = 0;
