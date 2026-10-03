@@ -375,6 +375,7 @@ struct MirrorState
     bool mOffscreen = false;        // the open frame has no swapchain image (work recorded after the present)
 
     HWND mWindow = nullptr;
+    HWND mParent = nullptr;         // LL_VK_EMBED: the viewer's main window, which the mirror window covers as a child
     volatile bool mClosed = false;
     volatile bool mResized = false;
 
@@ -397,8 +398,29 @@ LRESULT CALLBACK mirror_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
     switch (msg)
     {
     case WM_CLOSE:
-        sMirror.mClosed = true;     // shutdown() runs on the viewer's own thread at the next frame
+        if (!sMirror.mParent)
+        {
+            sMirror.mClosed = true;     // shutdown() runs on the viewer's own thread at the next frame
+        }
         return 0;
+    case WM_NCHITTEST:
+        if (sMirror.mParent)
+        {
+            return HTTRANSPARENT;       // the mouse belongs to the main window underneath
+        }
+        break;
+    case WM_MOUSEACTIVATE:
+        if (sMirror.mParent)
+        {
+            return MA_NOACTIVATE;
+        }
+        break;
+    case WM_ERASEBKGND:
+        if (sMirror.mParent)
+        {
+            return 1;
+        }
+        break;
     case WM_SIZE:
         sMirror.mResized = true;
         break;
@@ -421,6 +443,29 @@ bool create_window()
     if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
     {
         return false;
+    }
+    // LL_VK_EMBED: cover the viewer's main window (the one the current GL context draws to) with a child window instead of opening a second window
+    HWND parent = nullptr;
+    if (getenv("LL_VK_EMBED") != nullptr)
+    {
+        if (HDC dc = wglGetCurrentDC())
+        {
+            parent = WindowFromDC(dc);
+        }
+    }
+    if (parent)
+    {
+        RECT rc = {};
+        GetClientRect(parent, &rc);
+        sMirror.mParent = parent;
+        sMirror.mWindow = CreateWindowExW(0, MIRROR_WINDOW_CLASS, L"Firestorm Vulkan mirror", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                                          0, 0, std::max<LONG>(rc.right, 64), std::max<LONG>(rc.bottom, 64), parent, nullptr, inst, nullptr);
+        if (sMirror.mWindow)
+        {
+            LL_INFOS("VkMirror") << "the mirror window is a child of the viewer's main window (LL_VK_EMBED)" << LL_ENDL;
+            return true;
+        }
+        sMirror.mParent = nullptr;
     }
     sMirror.mWindow = CreateWindowExW(0, MIRROR_WINDOW_CLASS, L"Firestorm Vulkan mirror", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                                       80, 80, 1280, 720, nullptr, nullptr, inst, nullptr);
@@ -573,6 +618,7 @@ void LLVkMirror::shutdown()
     {
         DestroyWindow(sMirror.mWindow);
         sMirror.mWindow = nullptr;
+        sMirror.mParent = nullptr;
     }
     sMirror.mClosed = false;
 }
@@ -615,6 +661,18 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
     if (width <= 0 || height <= 0)
     {
         return;
+    }
+
+    if (sMirror.mParent && sMirror.mWindow)
+    {
+        // an embedded mirror window follows the size of the main window
+        RECT parent_rc = {}, mine = {};
+        GetClientRect(sMirror.mParent, &parent_rc);
+        GetClientRect(sMirror.mWindow, &mine);
+        if (parent_rc.right > 0 && parent_rc.bottom > 0 && (parent_rc.right != mine.right || parent_rc.bottom != mine.bottom))
+        {
+            SetWindowPos(sMirror.mWindow, HWND_TOP, 0, 0, parent_rc.right, parent_rc.bottom, SWP_NOACTIVATE);
+        }
     }
 
     LLVk::Context& ctx = LLVk::Context::instance();

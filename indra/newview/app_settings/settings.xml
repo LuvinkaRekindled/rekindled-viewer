@@ -2428,13 +2428,13 @@
     <key>FSShadowFarCascadeMaxCameraMove</key>
     <map>
       <key>Comment</key>
-      <string>A far cascade's previous shadow map is only reused if the camera moved less than this many meters since it was rendered.</string>
+      <string>A far cascade's previous shadow map is only reused if the camera moved less than this many meters since it was rendered. Small on purpose: while the camera (and your avatar) walk, reused shadows lag behind and flicker.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.5</real>
+      <real>0.03</real>
     </map>
     <key>FSShadowFarCascadeMaxCameraTurn</key>
     <map>
