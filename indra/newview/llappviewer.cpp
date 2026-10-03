@@ -247,6 +247,8 @@
 
 // includes for idle() idleShutdown()
 #include "llviewercontrol.h"
+#include <filesystem>
+#include <fstream>
 #include "lleventnotifier.h"
 #include "llcallbacklist.h"
 #include "lldeferredsounds.h"
@@ -1524,6 +1526,97 @@ void LLAppViewer::initMaxHeapSize()
 // externally visible timers
 LLTrace::BlockTimerStatHandle FTM_FRAME("Frame");
 
+// <FS> Development aid (inert unless the environment variable FS_DEV_SETTINGS names a text file): applies "SettingName value" lines
+// to the running viewer as unsaved values, so a measurement script can switch settings without UI clicks and nothing reaches
+// settings.xml. Lines starting with # are ignored; removing a line or the file puts the setting back to what it was.
+static void apply_dev_settings()
+{
+    static const char* const env_path = getenv("FS_DEV_SETTINGS");
+    if (!env_path)
+    {
+        return;
+    }
+    static U32 counter = 0;
+    if ((++counter % 15) != 0)
+    {
+        return;
+    }
+    static std::filesystem::file_time_type last_time;
+    static bool have_time = false;
+    static std::map<std::string, LLSD> originals;       // the value each touched setting had before the file changed it
+    std::error_code ec;
+    const std::filesystem::file_time_type now = std::filesystem::last_write_time(env_path, ec);
+    const bool exists = !ec;
+    if (exists && have_time && now == last_time)
+    {
+        return;
+    }
+    if (!exists && originals.empty())
+    {
+        return;
+    }
+    last_time = now;
+    have_time = exists;
+
+    std::map<std::string, std::string> wanted;
+    if (exists)
+    {
+        std::ifstream in(env_path);
+        std::string line;
+        while (std::getline(in, line))
+        {
+            if (line.empty() || line[0] == '#') continue;
+            const size_t sp = line.find_first_of(" \t=");
+            if (sp == std::string::npos) continue;
+            std::string name = line.substr(0, sp);
+            std::string value = line.substr(line.find_first_not_of(" \t=", sp));
+            while (!value.empty() && (value.back() == '\r' || value.back() == ' ')) value.pop_back();
+            wanted[name] = value;
+        }
+    }
+    // put back what the file no longer mentions
+    for (auto it = originals.begin(); it != originals.end();)
+    {
+        if (wanted.find(it->first) == wanted.end())
+        {
+            if (LLControlVariablePtr control = gSavedSettings.getControl(it->first))
+            {
+                control->setValue(it->second, false);
+                LL_INFOS("DevSettings") << it->first << " restored to " << it->second << LL_ENDL;
+            }
+            it = originals.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+    for (const auto& kv : wanted)
+    {
+        LLControlVariablePtr control = gSavedSettings.getControl(kv.first);
+        if (!control)
+        {
+            LL_WARNS("DevSettings") << "unknown setting " << kv.first << LL_ENDL;
+            continue;
+        }
+        if (originals.find(kv.first) == originals.end())
+        {
+            originals[kv.first] = control->getValue();
+        }
+        LLSD value;
+        switch (control->type())
+        {
+        case TYPE_BOOLEAN: value = (kv.second == "1" || kv.second == "true" || kv.second == "TRUE" || kv.second == "True"); break;
+        case TYPE_U32:
+        case TYPE_S32: value = (S32)atoi(kv.second.c_str()); break;
+        case TYPE_F32: value = (F32)atof(kv.second.c_str()); break;
+        default: value = kv.second; break;
+        }
+        control->setValue(value, false);
+        LL_INFOS("DevSettings") << kv.first << " = " << kv.second << LL_ENDL;
+    }
+}
+
 bool LLAppViewer::frame()
 {
     bool ret = false;
@@ -1797,6 +1890,7 @@ bool LLAppViewer::doFrame()
                 }
                 LLVkMirror::holdFrame(false); // <FS>
                 LLVkMirror::endFrame(); // <FS>
+                apply_dev_settings(); // <FS>
 
                 if (LLViewerStatsRecorder::instanceExists())
                 {

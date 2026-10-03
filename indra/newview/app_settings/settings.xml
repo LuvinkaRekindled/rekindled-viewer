@@ -2381,6 +2381,50 @@
       <key>Value</key>
       <real>25.0</real>
     </map>
+    <key>FSShadowFarCascadeInterval</key>
+    <map>
+      <key>Comment</key>
+      <string>Far sun shadow cascades are re-rendered only every Nth frame (staggered) while the camera and the sun are nearly still; in between, the previous shadow map is reused with the current camera. 1 renders every cascade every frame.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>2</integer>
+    </map>
+    <key>FSShadowFarCascadeFirst</key>
+    <map>
+      <key>Comment</key>
+      <string>Index (0-3) of the first sun shadow cascade that FSShadowFarCascadeInterval applies to. 2 means the two farthest cascades.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>2</integer>
+    </map>
+    <key>FSShadowFarCascadeMaxCameraMove</key>
+    <map>
+      <key>Comment</key>
+      <string>A far cascade's previous shadow map is only reused if the camera moved less than this many meters since it was rendered.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.5</real>
+    </map>
+    <key>FSShadowFarCascadeMaxCameraTurn</key>
+    <map>
+      <key>Comment</key>
+      <string>A far cascade's previous shadow map is only reused if the camera turned less than this many degrees since it was rendered.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>1.0</real>
+    </map>
     <key>FSVulkanProbe</key>
     <map>
       <key>Comment</key>
@@ -2406,13 +2450,13 @@
     <key>FSParallelAvatarMotion</key>
     <map>
       <key>Comment</key>
-      <string>Experimental: update the animations of other avatars on worker threads. Takes effect immediately.</string>
+      <string>Update the animations of other avatars on worker threads. Takes effect immediately.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>Boolean</string>
       <key>Value</key>
-      <integer>0</integer>
+      <integer>1</integer>
     </map>
     <key>AvatarPhysics</key>
     <map>

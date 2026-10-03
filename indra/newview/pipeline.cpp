@@ -4416,6 +4416,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 // <FS> Shadow pass bookkeeping for the FSGpuZoneTimers log: the index of the renderShadow call within the
 // frame (sun cascades first, then spot lights, then the reflection probe's cascades).
 static U32 sShadowPassIndex = 0;
+static U32 sShadowPassesReused = 0; // <FS> far cascade passes skipped (shadow map reused) since the last log
 static U32 sCurrentShadowPass = 0;
 static bool sCurrentShadowPassIsCube = false;
 
@@ -11011,6 +11012,25 @@ public:
     }
 };
 
+// <FS> State of the last real render of each sun shadow cascade, so far cascades can reuse their shadow map on the frames in between
+namespace
+{
+struct CascadeReuse
+{
+    bool mValid = false;
+    U64 mFrame = 0;
+    GLuint mTexture = 0;
+    glm::mat4 mView;
+    glm::mat4 mProj;
+    F32 mError = 0.f;
+    F32 mFOV = 0.f;
+    LLVector3 mCameraOrigin;
+    LLVector3 mCameraAt;
+    LLVector3 mCasterDir;
+};
+CascadeReuse sCascadeReuse[4];
+}
+
 void LLPipeline::generateSunShadow(LLCamera& camera)
 {
     if (!sRenderDeferred || RenderShadowDetail <= 0)
@@ -11026,6 +11046,13 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     if (!gCubeSnapshot)
     {
         sShadowPassIndex = 0; // <FS> a new frame starts counting shadow passes from zero
+        static U32 reuse_log_frames = 0;
+        if (++reuse_log_frames >= 300)
+        {
+            LL_INFOS("ShadowReuse") << "far sun shadow cascades: " << sShadowPassesReused << " shadow-map reuses in the last 300 frames" << LL_ENDL;
+            sShadowPassesReused = 0;
+            reuse_log_frames = 0;
+        }
     }
 
     bool skip_avatar_update = false;
@@ -11570,6 +11597,46 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 }
             }
 
+            // <FS> far cascades: reuse the previous shadow map on the frames in between (staggered) while camera and sun are nearly still
+            bool reuse_shadow_map = false;
+            if (!gCubeSnapshot && !hasRenderDebugMask(RENDER_DEBUG_SHADOW_FRUSTA))
+            {
+                static LLCachedControl<U32> far_interval(gSavedSettings, "FSShadowFarCascadeInterval", 2);
+                static LLCachedControl<U32> far_first(gSavedSettings, "FSShadowFarCascadeFirst", 2);
+                static LLCachedControl<F32> far_max_move(gSavedSettings, "FSShadowFarCascadeMaxCameraMove", 0.5f);
+                static LLCachedControl<F32> far_max_turn(gSavedSettings, "FSShadowFarCascadeMaxCameraTurn", 1.0f);
+                CascadeReuse& cr = sCascadeReuse[j];
+                if (far_interval > 1 && (U32)j >= far_first && cr.mValid && cr.mTexture == mRT->shadow[j].getDepth())
+                {
+                    const U64 frame_now = LLFrameTimer::getFrameCount();
+                    const bool its_turn = ((frame_now + (U64)j) % far_interval) == 0;
+                    const F32 moved = (camera.getOrigin() - cr.mCameraOrigin).length();
+                    const F32 turn_cos = llclamp(camera.getAtAxis() * cr.mCameraAt, -1.f, 1.f);
+                    const F32 sun_cos = llclamp(caster_dir * cr.mCasterDir, -1.f, 1.f);
+                    const F32 max_turn_cos = cosf(far_max_turn * DEG_TO_RAD);
+                    if (!its_turn && frame_now - cr.mFrame < 2 * (U64)far_interval && moved < far_max_move && turn_cos > max_turn_cos && sun_cos > cosf(0.3f * DEG_TO_RAD))
+                    {
+                        reuse_shadow_map = true;
+                    }
+                }
+                if (reuse_shadow_map)
+                {
+                    // the map was rendered with these matrices: sampling it with the current eye-to-world transform stays correct
+                    view[j] = cr.mView;
+                    proj[j] = cr.mProj;
+                    mShadowError.mV[j] = cr.mError;
+                    mShadowFOV.mV[j] = cr.mFOV;
+                    glm::mat4 reuse_trans(0.5f, 0.0f, 0.0f, 0.0f,
+                                          0.0f, 0.5f, 0.0f, 0.0f,
+                                          0.0f, 0.0f, 0.5f, 0.0f,
+                                          0.5f, 0.5f, 0.5f, 1.0f);
+                    mSunShadowMatrix[j] = reuse_trans * proj[j] * view[j] * inv_view;
+                    sShadowPassesReused++;
+                    continue;
+                }
+            }
+            // </FS>
+
             //shadow_cam.setFar(128.f);
             shadow_cam.setOriginAndLookAt(eye, up, center);
 
@@ -11632,6 +11699,21 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             if (!gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_SHADOW_FRUSTA) && !gCubeSnapshot)
             {
                 mShadowCamera[j+4] = shadow_cam;
+            }
+
+            if (!gCubeSnapshot)
+            {
+                CascadeReuse& cr = sCascadeReuse[j];     // <FS> remember what this real render used
+                cr.mValid = true;
+                cr.mFrame = LLFrameTimer::getFrameCount();
+                cr.mTexture = mRT->shadow[j].getDepth();
+                cr.mView = view[j];
+                cr.mProj = proj[j];
+                cr.mError = mShadowError.mV[j];
+                cr.mFOV = mShadowFOV.mV[j];
+                cr.mCameraOrigin = camera.getOrigin();
+                cr.mCameraAt = camera.getAtAxis();
+                cr.mCasterDir = caster_dir;
             }
         }
     }
