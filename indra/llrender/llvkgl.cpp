@@ -23,6 +23,7 @@
 #include "llvkrenderer.h"
 
 #include <chrono>
+#include "llvkgl_hooks.inc"      // generated: storage and names for the per-hook statistics
 #include <map>
 #include <mutex>
 #include <set>
@@ -2728,6 +2729,26 @@ void after_frame()
                 }
                 LL_INFOS("VkPhases") << frames << " frames, " << wall_ms / frames << " ms/frame wall, " << (sDrawsTotal - draws_at_start) / frames
                                      << " draws/frame; CPU ms/frame by phase: " << text << LL_ENDL;
+                {
+                    // the sink hooks, most expensive first (time includes waiting for the lock; the draw hooks contain the draw phases above)
+                    std::vector<std::pair<long long, int>> order;
+                    for (int i = 0; i < HOOK_COUNT; ++i)
+                    {
+                        if (gHookStatCalls[i]) order.push_back({ gHookStatTicks[i], i });
+                    }
+                    std::sort(order.rbegin(), order.rend());
+                    std::string top;
+                    for (size_t k = 0; k < order.size() && k < 20; ++k)
+                    {
+                        const int i = order[k].second;
+                        const double ms = (double)gHookStatTicks[i] * 1000.0 / (double)freq.QuadPart;
+                        char buf[160];
+                        snprintf(buf, sizeof(buf), "%s %.0f calls %.2f ms %.0f ns/call | ", kHookNames[i], (double)gHookStatCalls[i] / frames, ms / frames, ms * 1e6 / (double)gHookStatCalls[i]);
+                        top += buf;
+                    }
+                    for (int i = 0; i < HOOK_COUNT; ++i) { gHookStatTicks[i] = 0; gHookStatCalls[i] = 0; }
+                    LL_INFOS("VkPhases") << "sink hooks per frame, most CPU time first: " << top << LL_ENDL;
+                }
                 draws_at_start = sDrawsTotal;
                 frames = 0;
                 QueryPerformanceCounter(&t_start);
