@@ -18,6 +18,7 @@
 #include "linden_common.h"
 
 #include <functional>
+#include <string>
 
 namespace LLVkAsync
 {
@@ -82,6 +83,8 @@ namespace LLVkAsync
     // result values handed to the viewer (either mode), counted since the last call: zero (occluded) and non-zero (visible)
     void queryResultTally(bool nonzero);
     void queryResultStats(unsigned long long out[2]);
+    // frame pacing since the last call: spacing of the main thread's frame starts and of the worker's presents (ms: n, avg, p50, p95, p99, max), and how long each side waited for the other
+    std::string pacingReport();
 }
 
 #endif // LL_VULKAN
