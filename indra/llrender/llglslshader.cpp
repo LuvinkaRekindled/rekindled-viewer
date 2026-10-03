@@ -38,6 +38,7 @@
 #if defined(LL_VULKAN)
 #include "llvkshader.h"
 #include "llvkrenderer.h"
+#include "llvkasync.h"
 #include "llvkmirror.h"
 #include "llvkverify.h"
 #endif
@@ -417,6 +418,17 @@ void LLGLSLShader::unloadInternal()
 void LLGLSLShader::mirrorDestroy()
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    if (LLVkAsync::gEnabled)
+    {
+        // the worker destroys it after everything queued for it so far
+        if (mVkProgram)
+        {
+            LLVkAsync::programDestroy(mVkProgram);
+            mVkProgram = nullptr;
+        }
+        mVkLocations.clear();
+        return;
+    }
     std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
     if (mVkProgram)
     {
@@ -430,6 +442,14 @@ void LLGLSLShader::mirrorDestroy()
 void LLGLSLShader::mirrorBind()
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    if (LLVkAsync::gEnabled)
+    {
+        if (mVkProgram)
+        {
+            LLVkAsync::programBind(mVkProgram);
+        }
+        return;
+    }
     std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
     if (mVkProgram && LLVkMirror::isReady())
     {
@@ -440,8 +460,13 @@ void LLGLSLShader::mirrorBind()
 void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<double> values)
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
-    std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
+    std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
+    if (!async)
+    {
+        mirror_lock.lock();
+    }
     if (!mVkProgram)
     {
         return;
@@ -454,6 +479,11 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
     if (it->second < 0)
     {
         // a sampler: the integer is the texture unit it now reads
+        if (async)
+        {
+            LLVkAsync::samplerUnit(mVkProgram, (unsigned)(~it->second), (unsigned)(S32)*values.begin());
+            return;
+        }
         mVkProgram->setSamplerUnit((size_t)(~it->second), (U32)(S32)*values.begin());
         return;
     }
@@ -469,6 +499,11 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
             ++n;
         }
     }
+    if (async)
+    {
+        LLVkAsync::uniformScalar(mVkProgram, (unsigned)it->second, kind, n, f, i);
+        return;
+    }
     if (kind == 0)
     {
         mVkProgram->setFloatsAt((size_t)it->second, f, n, 1);
@@ -482,8 +517,13 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
 void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data)
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
-    std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
+    std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
+    if (!async)
+    {
+        mirror_lock.lock();
+    }
     if (!mVkProgram || !data)
     {
         return;
@@ -494,14 +534,24 @@ void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 co
         return;     // unknown, or a sampler array (units are fixed at link time)
     }
     (void)kind;     // floats and ints are copied bit for bit
+    if (async)
+    {
+        LLVkAsync::uniformVector(mVkProgram, (unsigned)it->second, components, count, data);
+        return;
+    }
     mVkProgram->setFloatsAt((size_t)it->second, reinterpret_cast<const F32*>(data), components, count);
 }
 
 void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean transpose, U32 count, const GLfloat* data)
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
-    std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
+    std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
+    if (!async)
+    {
+        mirror_lock.lock();
+    }
     if (!mVkProgram || !data)
     {
         return;
@@ -525,7 +575,17 @@ void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean
                 }
             }
         }
+        if (async)
+        {
+            LLVkAsync::uniformMatrix(mVkProgram, (unsigned)it->second, columns, rows, count, tmp.data());
+            return;
+        }
         mVkProgram->setMatricesAt((size_t)it->second, tmp.data(), columns, rows, count);
+        return;
+    }
+    if (async)
+    {
+        LLVkAsync::uniformMatrix(mVkProgram, (unsigned)it->second, columns, rows, count, data);
         return;
     }
     mVkProgram->setMatricesAt((size_t)it->second, data, columns, rows, count);
@@ -537,6 +597,12 @@ namespace LLVkGL { const LLVk::ProgramInfo* own_program_info(GLuint program); }
 void LLGLSLShader::mirrorCreate()
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    static thread_local bool on_worker_call = false;
+    if (LLVkAsync::gEnabled && !on_worker_call)
+    {
+        LLVkAsync::syncCall([this]() { on_worker_call = true; mirrorCreate(); on_worker_call = false; });
+        return;
+    }
     std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
     mirrorDestroy();
     if (!LLVkMirror::ensureReady())
