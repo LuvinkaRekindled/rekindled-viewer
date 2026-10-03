@@ -2406,13 +2406,13 @@
     <key>FSVkSnapVariant</key>
     <map>
       <key>Comment</key>
-      <string>Vulkan renderer snapshot experiment: 0 off, 1 flush before each snapshot render, 2 new off-screen frame before each, 3 like 2 and wait for the GPU, 4 render twice and keep the second</string>
+      <string>Vulkan renderer snapshot experiment: 0 off, 1 flush before each snapshot render, 2 new off-screen frame before each (default; fixes a wrong second snapshot render), 3 like 2 and wait for the GPU, 4 render twice and keep the second</string>
       <key>Persist</key>
       <integer>0</integer>
       <key>Type</key>
       <string>S32</string>
       <key>Value</key>
-      <integer>0</integer>
+      <integer>2</integer>
     </map>
     <key>FSTextureUpdateBurstDivisor</key>
     <map>
