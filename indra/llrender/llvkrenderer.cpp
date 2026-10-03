@@ -28,7 +28,7 @@ bool vk_ok(VkResult r, const char* what)
     return true;
 }
 
-const U32 RING_BYTES = 8u * 1024 * 1024;       // per frame in flight
+const U32 RING_BYTES = 128u * 1024 * 1024;     // per frame in flight (a crowd of rigged avatars uploads tens of MB of skinning matrices per frame)
 const U32 DUMMY_UBO_BYTES = 64 * 1024;
 const U32 VERTEX_RING_BYTES = 8u * 1024 * 1024;
 
@@ -752,6 +752,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
 {
     mCmd = cmd;
     mSlot = frame_slot;
+    mRingPeak = std::max(mRingPeak, mRingUsed);
     mRingUsed = 0;
     mVertexRingUsed = 0;
     mDrawCount = 0;
@@ -1032,9 +1033,10 @@ U32 Renderer::allocUniform(U32 size)
     // every dynamic descriptor must be able to see MAX_UNIFORM_RANGE bytes from its offset
     if (start + MAX_UNIFORM_RANGE > RING_BYTES)
     {
-        LL_WARNS_ONCE("Vulkan") << "uniform ring exhausted; reusing the start of the ring" << LL_ENDL;
-        mRingUsed = 0;
-        return allocUniform(size);
+        // wrapping would overwrite data the GPU has yet to read: the draw is dropped instead
+        LL_WARNS_ONCE("Vulkan") << "uniform ring exhausted; draws are dropped until the next frame" << LL_ENDL;
+        ++mRingExhausted;
+        return 0xFFFFFFFFu;
     }
     mRingUsed = start + size;
     return start;
@@ -1309,7 +1311,13 @@ void Renderer::applyState()
     // 6. loose uniforms: copy this program's shadow into the ring when it changed (or on its first use this frame)
     if (mProgram->mDirty || mProgram->mRingFrame != Context::instance().getFrameNumber())
     {
-        mProgram->mRingOffset = allocUniform((U32)mProgram->mShadow.size());
+        const U32 ring_offset = allocUniform((U32)mProgram->mShadow.size());
+        if (ring_offset == 0xFFFFFFFFu)
+        {
+            mDrawBlocked = true;
+            return;
+        }
+        mProgram->mRingOffset = ring_offset;
         memcpy((U8*)mRing[mSlot].mMapped + mProgram->mRingOffset, mProgram->mShadow.data(), mProgram->mShadow.size());
         mProgram->mRingFrame = Context::instance().getFrameNumber();
         mProgram->mDirty = false;
@@ -1430,6 +1438,11 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
     }
     gDebugProgram = mProgram->getName().c_str();
     applyState();
+    if (mDrawBlocked)
+    {
+        mDrawBlocked = false;
+        return false;
+    }
     vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
     ++mDrawCount;
     return true;
@@ -1443,6 +1456,11 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
     }
     gDebugProgram = mProgram->getName().c_str();
     applyState();
+    if (mDrawBlocked)
+    {
+        mDrawBlocked = false;
+        return false;
+    }
     vkCmdBindIndexBuffer(mCmd, mIndexBuffer, mIndexOffset, mIndexType);
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
     ++mDrawCount;

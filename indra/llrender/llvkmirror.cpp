@@ -22,12 +22,13 @@ void LLVkMirror::shutdown() {}
 #else // LL_VULKAN
 
 #include "llglheaders.h"
+#include <psapi.h>
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
 
 #include <cstdlib>
 
-namespace LLVkGL { extern bool gActive; extern std::recursive_mutex gMutex; void after_frame(); void run_dump(); void before_end_frame(); void after_offscreen(); double take_hook_ms(); }
+namespace LLVkGL { extern bool gActive; extern std::recursive_mutex gMutex; void after_frame(); void run_dump(); void before_end_frame(); void after_offscreen(); double take_hook_ms(); std::string resource_summary(); }
 
 namespace LLVkMirror
 {
@@ -161,6 +162,17 @@ void bench_log()
                         << (sBench.mVkBN ? sBench.mVkB / sBench.mVkBN : 0.0) << " ms | CPU recording into Vulkan " << sBench.mHook / std::max<U32>(1, sBench.mWallN)
                         << " ms/iter | CPU inside OpenGL calls " << sBench.mGlCpu / std::max<U32>(1, sBench.mWallN) << " ms/iter | CPU of display() up to the swap "
                         << (sBench.mDispN ? sBench.mDispCpu / sBench.mDispN : 0.0) << " ms | main thread CPU busy " << sBench.mThreadCpu / std::max<U32>(1, sBench.mWallN) << " ms/iter" << LL_ENDL;
+    {
+        U32 ring_peak = 0, ring_dropped = 0;
+        LLVk::Renderer::instance().getRingStats(ring_peak, ring_dropped);
+        PROCESS_MEMORY_COUNTERS_EX pmc = {};
+        pmc.cb = sizeof(pmc);
+        GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+        LL_INFOS("VkBench") << "BENCH memory: process working set " << pmc.WorkingSetSize / (1024 * 1024) << " MB, private " << pmc.PrivateUsage / (1024 * 1024)
+                            << " MB | uniform ring peak " << ring_peak / 1024 << " KB of " << (128 * 1024) << " KB per frame, " << ring_dropped << " draws dropped | "
+                            << LLVk::Context::instance().memoryBudgetText() << LL_ENDL;
+        LL_INFOS("VkBench") << "BENCH resources: " << LLVkGL::resource_summary() << LL_ENDL;
+    }
     if (LLVkMirror::gPhaseTiming)
     {
         LARGE_INTEGER freq;
@@ -553,6 +565,13 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
     {
         bench_init();
         bench_begin_iteration();
+        return;
+    }
+    if (LLVk::gDeviceLost && !sMirror.mFailed)
+    {
+        LL_WARNS("VkMirror") << "the Vulkan device was lost; switching the mirror off, the viewer carries on with OpenGL" << LL_ENDL;
+        shutdown();
+        sMirror.mFailed = true;
         return;
     }
     if (sMirror.mInFrame)

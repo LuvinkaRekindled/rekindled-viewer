@@ -221,6 +221,8 @@ public:
     static const U32 MAX_UNIFORM_RANGE = 16384;        // bytes visible to a draw's loose uniform block
 
     static Renderer& instance();
+    // peak uniform ring use (bytes) and number of dropped draws since the last call
+    void getRingStats(U32& peak, U32& exhausted) { peak = std::max(mRingPeak, mRingUsed); exhausted = mRingExhausted; mRingPeak = 0; mRingExhausted = 0; }
     bool init();
     void shutdown();
     bool isReady() const { return mReady; }
@@ -323,6 +325,9 @@ private:
     VkCommandBuffer mCmd = VK_NULL_HANDLE;
     U32 mSlot = 0;
     U32 mRingUsed = 0;
+    U32 mRingPeak = 0;                  // largest ring use of any frame since the last getRingStats()
+    U32 mRingExhausted = 0;             // draws dropped because the ring was full
+    bool mDrawBlocked = false;          // applyState could not prepare the draw (ring full)
     U32 mDrawCount = 0;
     bool mStateApplied = false;     // dynamic state has been set at least once in this command buffer
 

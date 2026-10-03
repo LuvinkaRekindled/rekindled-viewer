@@ -21,6 +21,7 @@ namespace LLVk
 #include "llvkfunctions.inl"
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 const char* gDebugProgram = nullptr;
+bool gDeviceLost = false;
 
 namespace
 {
@@ -29,6 +30,10 @@ bool vk_ok(VkResult r, const char* what)
 {
     if (r != VK_SUCCESS)
     {
+        if (r == VK_ERROR_DEVICE_LOST)
+        {
+            gDeviceLost = true;
+        }
         LL_WARNS("Vulkan") << what << " failed: VkResult " << (S32)r << LL_ENDL;
         return false;
     }
@@ -125,6 +130,33 @@ VkImageAspectFlags aspectForFormat(VkFormat format)
     default:
         return VK_IMAGE_ASPECT_COLOR_BIT;
     }
+}
+
+size_t Context::pendingDestroys() const
+{
+    size_t n = 0;
+    for (const Frame& f : mFrames) n += f.mDeferred.size();
+    return n;
+}
+
+std::string Context::memoryBudgetText()
+{
+    if (!mAllocator)
+    {
+        return "no allocator";
+    }
+    const VkPhysicalDeviceMemoryProperties* props = nullptr;
+    vmaGetMemoryProperties(mAllocator, &props);
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS] = {};
+    vmaGetHeapBudgets(mAllocator, budgets);
+    std::string text;
+    for (U32 i = 0; props && i < props->memoryHeapCount; ++i)
+    {
+        text += "heap " + std::to_string(i) + ((props->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? " (video) " : " (host) ")
+              + std::to_string(budgets[i].usage / (1024 * 1024)) + "/" + std::to_string(budgets[i].budget / (1024 * 1024)) + " MB, allocated by us "
+              + std::to_string(budgets[i].statistics.allocationBytes / (1024 * 1024)) + " MB in " + std::to_string(budgets[i].statistics.allocationCount) + " allocations; ";
+    }
+    return text;
 }
 
 void Context::setObjectName(VkObjectType type, U64 handle, const std::string& name)

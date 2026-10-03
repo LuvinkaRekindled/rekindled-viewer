@@ -2491,6 +2491,36 @@ bool to_rgba8(VkFormat f, U32 w, U32 h, const std::vector<U8>& in, std::vector<U
 
 } // anonymous namespace
 
+// what the translator currently holds in Vulkan, for the benchmark log
+std::string resource_summary()
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    U64 tex_bytes = 0, rt_bytes = 0, buf_bytes = 0;
+    U32 tex_count = 0, rt_count = 0, views = 0, buf_count = 0;
+    for (auto& kv : sGL.mTextures)
+    {
+        const Tex& t = kv.second;
+        views += (U32)t.mViews.size();
+        if (!t.mImage.valid()) continue;
+        const FormatInfo fi = formatInfo(t.mImage.mFormat);
+        U64 bytes = 0;
+        for (U32 m = 0; m < t.mImage.mMipLevels; ++m)
+        {
+            const U64 w = std::max<U32>(1, t.mImage.mExtent.width >> m), h = std::max<U32>(1, t.mImage.mExtent.height >> m);
+            bytes += ((w + fi.mBlockWidth - 1) / fi.mBlockWidth) * ((h + fi.mBlockHeight - 1) / fi.mBlockHeight) * fi.mBytesPerBlock * std::max<U32>(1, t.mImage.mLayers) * std::max<U32>(1, t.mImage.mExtent.depth);
+        }
+        const bool target = (t.mImage.mAspect != VK_IMAGE_ASPECT_COLOR_BIT) || !t.mViews.empty() || sFrameTargets.count(kv.first);
+        if (target) { rt_bytes += bytes; ++rt_count; } else { tex_bytes += bytes; ++tex_count; }
+    }
+    for (auto& kv : sGL.mBuffers)
+    {
+        if (kv.second.mVk.valid()) { buf_bytes += kv.second.mVk.mSize; ++buf_count; }
+    }
+    return "mirrored textures " + std::to_string(tex_count) + " (" + std::to_string(tex_bytes / (1024 * 1024)) + " MB), render targets " + std::to_string(rt_count) + " ("
+        + std::to_string(rt_bytes / (1024 * 1024)) + " MB, " + std::to_string(views) + " extra views), buffers " + std::to_string(buf_count) + " (" + std::to_string(buf_bytes / (1024 * 1024))
+        + " MB), GL texture objects " + std::to_string(sGL.mTextures.size()) + ", pending destroys " + std::to_string(Context::instance().pendingDestroys());
+}
+
 // milliseconds of hook CPU time since the last call
 double take_hook_ms()
 {
