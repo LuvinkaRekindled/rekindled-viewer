@@ -65,8 +65,23 @@ namespace LLVkGL
 bool gActive = false;
 std::recursive_mutex gMutex;
 
+// CPU time spent inside the translator's draw/clear hooks (the cost of recording the work into Vulkan), in ticks of the performance counter
+static long long gHookTicks = 0;
+
 namespace
 {
+
+struct HookTimer
+{
+    LARGE_INTEGER mStart;
+    HookTimer() { QueryPerformanceCounter(&mStart); }
+    ~HookTimer()
+    {
+        LARGE_INTEGER end;
+        QueryPerformanceCounter(&end);
+        gHookTicks += end.QuadPart - mStart.QuadPart;
+    }
+};
 
 using namespace LLVk;
 
@@ -1493,6 +1508,10 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
         ++sStats.mNoProgram;
         return false;
     }
+    if (LLVkMirror::benchPhasesActive())
+    {
+        LLVkMirror::benchPass(program->getName().c_str());
+    }
     sDbgMatch = !sDbgFilter.empty() && program->getName().find(sDbgFilter) != std::string::npos;
     if (!sync_target())
     {
@@ -1609,7 +1628,7 @@ void write_buffer(Buf& b, U64 offset, U64 size, const void* data, bool whole)
     {
         Buffer fresh;
         if (ctx.createBuffer(b.mSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                             Context::Memory::Upload, fresh))
+                             Context::Memory::UploadDevice, fresh))
         {
             if (!whole)
             {
@@ -2027,7 +2046,7 @@ void on_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum us
     b.mSize = (U64)size;
     b.mLastUseFrame = ~0ull;
     if (size == 0 || !ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                       Context::Memory::Upload, b.mVk))
+                                       Context::Memory::UploadDevice, b.mVk))
     {
         return;
     }
@@ -2139,6 +2158,7 @@ void on_glVertexAttrib4fv(GLuint index, const GLfloat* v)
 
 void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
 {
+    HookTimer hook_timer;
     VertexInput vi;
     std::vector<GLuint> used;
     if (count <= 0 || !prepare_draw(vi, used))
@@ -2163,6 +2183,7 @@ void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
 
 void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices)
 {
+    HookTimer hook_timer;
     VertexInput vi;
     std::vector<GLuint> used;
     if (count <= 0 || !prepare_draw(vi, used))
@@ -2267,6 +2288,7 @@ void on_glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
 
 void on_glClear(GLbitfield mask)
 {
+    HookTimer hook_timer;
     if (!LLVkMirror::inFrame() || !sync_target())
     {
         return;
@@ -2407,6 +2429,16 @@ bool to_rgba8(VkFormat f, U32 w, U32 h, const std::vector<U8>& in, std::vector<U
 }
 
 } // anonymous namespace
+
+// milliseconds of hook CPU time since the last call
+double take_hook_ms()
+{
+    LARGE_INTEGER freq;
+    QueryPerformanceFrequency(&freq);
+    const double ms = (double)gHookTicks * 1000.0 / (double)freq.QuadPart;
+    gHookTicks = 0;
+    return ms;
+}
 
 // called by the mirror once per frame after it presents: arms the dump if the trigger file exists
 void after_frame()

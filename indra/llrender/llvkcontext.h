@@ -148,7 +148,7 @@ public:
     // --- resources ----------------------------------------------------------------------------------
     // Upload and Readback buffers are persistently mapped (mMapped): Upload is write-combined host memory for
     // the CPU to fill, Readback is cached host memory for the CPU to read. Device buffers are device-local.
-    enum class Memory { Device, Upload, Readback };
+    enum class Memory { Device, Upload, UploadDevice, Readback };   // UploadDevice: CPU-written, GPU-read buffers (device-local host-visible memory when the GPU has it)
     bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory memory, Buffer& out);
     void destroyBuffer(Buffer& buffer);     // deferred
     bool createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkFormat format, VkImageUsageFlags usage, Image& out);

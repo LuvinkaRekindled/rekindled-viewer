@@ -669,6 +669,13 @@ bool Context::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory m
         ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
         ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
         break;
+    case Memory::UploadDevice:
+        // written by the CPU, read by the GPU every frame: video memory the CPU can map (resizable BAR) when there is room
+        ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        ai.preferredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        break;
     case Memory::Readback:
         ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
         ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
@@ -687,6 +694,18 @@ bool Context::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory m
     }
     out.mMapped = info.pMappedData;
     out.mSize = size;
+    if (memory == Memory::UploadDevice)
+    {
+        static bool logged = false;
+        if (!logged)
+        {
+            logged = true;
+            VkMemoryPropertyFlags flags = 0;
+            vmaGetAllocationMemoryProperties(mAllocator, out.mAllocation, &flags);
+            LL_INFOS("Vulkan") << "CPU-written GPU buffers live in " << ((flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ? "device-local (video) memory" : "host memory")
+                               << " (memory property flags 0x" << std::hex << flags << std::dec << ")" << LL_ENDL;
+        }
+    }
     return true;
 }
 
