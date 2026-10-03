@@ -519,6 +519,7 @@ std::set<GLuint> sDumpTargets;          // the set captured for the dump that is
 bool sDumpPending = false;
 std::map<GLuint, U32> sFrameSampledLast;
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
+U64 sDrawsTotal = 0;
 // draw outcomes of the current frame, by reason (and by program for the skipped ones)
 struct DrawStats
 {
@@ -2379,6 +2380,7 @@ void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
     }
     mark_used(used, 0);
     ++sDraws;
+    ++sDrawsTotal;
 }
 
 void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices)
@@ -2426,6 +2428,7 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     }
     mark_used(used, vao.mElementBuffer);
     ++sDraws;
+    ++sDrawsTotal;
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -2684,6 +2687,41 @@ double take_hook_ms()
 void after_frame()
 {
     std::lock_guard<std::recursive_mutex> lock(gMutex);
+    {
+        // LL_VK_PHASES=1: where the main thread's time goes inside the translation layer, averaged over 600 frames
+        static const bool phases = getenv("LL_VK_PHASES") != nullptr;
+        if (phases)
+        {
+            static U32 frames = 0;
+            static U64 draws_at_start = 0;
+            static LARGE_INTEGER t_start = {};
+            if (!LLVkMirror::gPhaseTiming)
+            {
+                LLVkMirror::gPhaseTiming = true;
+                QueryPerformanceCounter(&t_start);
+            }
+            if (++frames >= 600)
+            {
+                LARGE_INTEGER freq, now;
+                QueryPerformanceFrequency(&freq);
+                QueryPerformanceCounter(&now);
+                const double wall_ms = (double)(now.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
+                std::string text;
+                for (int p = 0; p < LLVkMirror::PH_COUNT; ++p)
+                {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%s %.2f | ", LLVkMirror::phaseName(p), (double)LLVkMirror::gPhaseTicks[p] * 1000.0 / (double)freq.QuadPart / frames);
+                    text += buf;
+                    LLVkMirror::gPhaseTicks[p] = 0;
+                }
+                LL_INFOS("VkPhases") << frames << " frames, " << wall_ms / frames << " ms/frame wall, " << (sDrawsTotal - draws_at_start) / frames
+                                     << " draws/frame; CPU ms/frame by phase: " << text << LL_ENDL;
+                draws_at_start = sDrawsTotal;
+                frames = 0;
+                QueryPerformanceCounter(&t_start);
+            }
+        }
+    }
     {
         static U32 counter = 0;
         if (debugShadersEnabled() && (++counter % 10) == 0)
