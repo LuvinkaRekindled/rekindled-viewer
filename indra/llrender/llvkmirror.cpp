@@ -32,7 +32,7 @@ void LLVkMirror::shutdown() {}
 
 #include <cstdlib>
 
-namespace LLVkGL { extern bool gActive; extern bool gOwn; extern std::recursive_mutex gMutex; void after_frame(); void run_dump(); void before_end_frame(); void after_offscreen(); double take_hook_ms(); std::string resource_summary(); }
+namespace LLVkGL { extern bool gActive; extern bool gOwn; extern LLVkMirror::Mutex gMutex; void after_frame(); void run_dump(); void before_end_frame(); void after_offscreen(); double take_hook_ms(); std::string resource_summary(); }
 
 namespace LLVkMirror
 {
@@ -548,7 +548,7 @@ bool LLVkMirror::isRequested()
     return sMirror.mRequested;
 }
 
-std::recursive_mutex& LLVkMirror::lock()
+LLVkMirror::Mutex& LLVkMirror::lock()
 {
     return LLVkGL::gMutex;
 }
@@ -575,7 +575,7 @@ bool LLVkMirror::inFrame()
 
 bool LLVkMirror::ensureReady()
 {
-    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (sMirror.mReady)
     {
         return true;
@@ -615,7 +615,7 @@ bool LLVkMirror::ensureReady()
 
 void LLVkMirror::shutdown()
 {
-    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (LLVkGL::gOwn)
     {
         LL_WARNS("VkMirror") << "the mirror shut down while it owned the resources: nothing can be drawn any more" << LL_ENDL;
@@ -654,7 +654,7 @@ void LLVkMirror::shutdown()
 
 void LLVkMirror::beginFrame(S32 width, S32 height)
 {
-    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (glonly_mode())
     {
         bench_init();
@@ -850,7 +850,7 @@ void LLVkMirror::armSnapshotCompare()
 
 void LLVkMirror::holdFrame(bool hold)
 {
-    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     sMirror.mHold = hold;
 }
 
@@ -877,6 +877,22 @@ bool begin_offscreen_frame()
 }
 }
 
+void LLVkMirror::Mutex::lockSlow(unsigned long me)
+{
+    for (U32 attempt = 0;; ++attempt)
+    {
+        unsigned long expected = 0;
+        if (mOwner.compare_exchange_weak(expected, me, std::memory_order_acquire))
+        {
+            return;
+        }
+        if (attempt < 200) YieldProcessor();
+        else if (attempt < 400) SwitchToThread();
+        else if (attempt < 1000) Sleep(0);
+        else Sleep(1);
+    }
+}
+
 const char* LLVkMirror::phaseName(int id)
 {
     return id >= 0 && id < PH_COUNT ? PHASE_NAMES[id] : "?";
@@ -884,7 +900,7 @@ const char* LLVkMirror::phaseName(int id)
 
 void LLVkMirror::snapshotBoundary(S32 mode)
 {
-    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (mode <= 0 || !sMirror.mReady || !sMirror.mInFrame)
     {
         return;
@@ -914,7 +930,7 @@ void LLVkMirror::snapshotBoundary(S32 mode)
 
 void LLVkMirror::presentFrame()
 {
-    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (glonly_mode())
     {
         bench_mark_present();
@@ -988,7 +1004,7 @@ bool represent_after_resize()
 
 void LLVkMirror::endFrame()
 {
-    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (glonly_mode())
     {
         const U32 s = sBench.mIter % 4;

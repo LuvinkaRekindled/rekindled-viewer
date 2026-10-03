@@ -91,7 +91,7 @@ namespace LLVkGL
 
 bool gActive = false;
 bool gOwn = false;      // LL_VK_OWN: the mirror owns the GL resources (see llvkgl.h)
-std::recursive_mutex gMutex;
+LLVkMirror::Mutex gMutex;
 
 // CPU time spent inside the translator's draw/clear hooks (the cost of recording the work into Vulkan), in ticks of the performance counter
 static long long gHookTicks = 0;
@@ -1563,7 +1563,7 @@ void snap_evaluate()
 // the mirror is about to close the frame: the last pass of the frame gets its snapshot
 void before_end_frame()
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     if (sSnapActive)
     {
         snap_flush_pending();
@@ -1573,7 +1573,7 @@ void before_end_frame()
 
 void after_offscreen()
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     if (sSnapActive)
     {
         snap_evaluate();
@@ -2659,7 +2659,7 @@ bool to_rgba8(VkFormat f, U32 w, U32 h, const std::vector<U8>& in, std::vector<U
 // what the translator currently holds in Vulkan, for the benchmark log
 std::string resource_summary()
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     U64 tex_bytes = 0, rt_bytes = 0, buf_bytes = 0;
     U32 tex_count = 0, rt_count = 0, views = 0, buf_count = 0;
     for (auto& kv : sGL.mTextures)
@@ -2699,7 +2699,7 @@ double take_hook_ms()
 // called by the mirror once per frame after it presents: arms the dump if the trigger file exists
 void after_frame()
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     {
         // LL_VK_PHASES=1: where the main thread's time goes inside the translation layer, averaged over 600 frames
         static const bool phases = getenv("LL_VK_PHASES") != nullptr;
@@ -2949,7 +2949,7 @@ void compare_with_gl()
 // called by the mirror at the start of the next frame, outside any frame: writes the PNGs
 void run_dump()
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     if (!sDumpPending)
     {
         return;
@@ -3522,7 +3522,7 @@ void on_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params)
 void report_syncs_and_threads();
 void report_getters_and_queries()
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     if (queries_on())
     {
         drain_query_results();
@@ -3553,7 +3553,7 @@ void report_getters_and_queries()
 // at start-up: the limits and identity the viewer reads once, OpenGL against the Vulkan device
 void verify_startup()
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     const Capabilities& caps = Context::instance().getCaps();
     const char* gl_renderer = (const char*)glGetString(GL_RENDERER);
     const char* gl_vendor = (const char*)glGetString(GL_VENDOR);
@@ -3859,7 +3859,7 @@ bool verify_fetch(Image& view, S32 x, S32 y, S32 w, S32 h, std::vector<U8>& texe
 
 void verify_read_pixels(S32 x, S32 y, S32 w, S32 h, GLenum format, GLenum type, const void* gl_data)
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     if (!gActive || !gl_data || w <= 0 || h <= 0)
     {
         return;
@@ -3910,7 +3910,7 @@ void verify_present_frame()
     {
         DeleteFileA("<work>\\vk-verify.trigger");
     }
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     Image* img = LLVkMirror::backbufferColor();
     if (!gActive || !img || !img->valid() || !LLVkMirror::inFrame())
     {
@@ -3982,7 +3982,7 @@ void verify_present_frame()
 // A snapshot is about to render: record per-pass GL-vs-Vulkan comparisons ("SNAP" lines, every program) for it
 void verify_arm_snapshot()
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     if (!gActive)
     {
         return;
@@ -3999,7 +3999,7 @@ void verify_arm_snapshot()
 
 void verify_tex_image(GLenum target, S32 level, GLenum format, GLenum type, const void* gl_data)
 {
-    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     if (!gActive || !gl_data)
     {
         return;
