@@ -532,6 +532,8 @@ void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean
 }
 
 // Builds the Vulkan twin of this (already linked) GL program. Called at the end of createShader().
+namespace LLVkGL { const LLVk::ProgramInfo* own_program_info(GLuint program); }
+
 void LLGLSLShader::mirrorCreate()
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
@@ -543,9 +545,15 @@ void LLGLSLShader::mirrorCreate()
     }
 
     LLShaderMgr* mgr = LLShaderMgr::instance();
+    LLVk::ProgramInfo info;
+    // while the mirror owns the resources glLinkProgram has compiled the program already
+    const LLVk::ProgramInfo* compiled = LLVkGL::gOwn ? LLVkGL::own_program_info(mProgramObject) : nullptr;
     GLuint objects[1024];
     GLsizei count = 0;
-    glGetAttachedShaders(mProgramObject, 1024, &count, objects);
+    if (!compiled)
+    {
+        glGetAttachedShaders(mProgramObject, 1024, &count, objects);
+    }
     std::vector<LLVk::StageSource> stages;
     for (GLsizei i = 0; i < count; ++i)
     {
@@ -571,8 +579,11 @@ void LLGLSLShader::mirrorCreate()
     env.mAttributeNames = mgr->mReservedAttribs;
     env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
     const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
-    LLVk::ProgramInfo info;
-    if (!LLVk::compileProgram(mName, stages, env, info, dump ? dump : ""))
+    if (compiled)
+    {
+        info = *compiled;
+    }
+    if (!compiled && !LLVk::compileProgram(mName, stages, env, info, dump ? dump : ""))
     {
         LL_WARNS("VkMirror") << "program " << mName << " does not compile for Vulkan: " << info.mError.substr(0, 600) << LL_ENDL;
         return;
