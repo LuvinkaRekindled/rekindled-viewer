@@ -25,6 +25,9 @@ namespace LLVkVerify
     // called where the viewer swaps buffers: compares the whole default framebuffer (every 300th frame or on request)
     void presentFrame();
 
+    // once, when the mirror is up: OpenGL identity and limits against the Vulkan device
+    void startup();
+
     // GL has just filled gl_data with mip 'level' of the texture bound to the active unit
     void texImage(unsigned int target, int level, unsigned int format, unsigned int type, const void* gl_data);
 }

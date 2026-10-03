@@ -67,6 +67,11 @@ struct Capabilities
     U32 mTimestampValidBits = 0;
     VkDeviceSize mUniformAlignment = 256;
     U32 mMaxPushDescriptors = 0;
+    // device limits that answer the viewer's GL_MAX_* questions
+    U32 mMaxImageDim2D = 0, mMaxImageDimCube = 0, mMaxImageDim3D = 0, mMaxArrayLayers = 0;
+    U32 mMaxColorAttachments = 0, mMaxVertexAttribs = 0, mMaxUniformRange = 0, mMaxSampledImagesPerStage = 0;
+    U32 mMaxViewport[2] = {};
+    U32 mMaxSampleCount = 1;        // largest framebuffer colour sample count
 };
 
 struct Buffer

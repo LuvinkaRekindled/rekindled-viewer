@@ -15,6 +15,7 @@
 #if defined(LL_VULKAN)
 
 #include "llvkmirror.h"
+#include "llvkverify.h"
 #include "llglslshader.h"
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
@@ -2875,6 +2876,526 @@ void run_dump()
 }
 
 //-----------------------------------------------------------------------------------------------------
+// hooks: calls that return data or state. With LL_VK_VERIFY set they compare OpenGL's answer with what the mirror's own
+// state (or the Vulkan device) would answer, and tally which questions the viewer actually asks. The emulation here is
+// what a Vulkan-only renderer will have to provide.
+//-----------------------------------------------------------------------------------------------------
+
+namespace
+{
+
+struct GetterTally
+{
+    U64 mCalls = 0, mHandled = 0, mMismatch = 0;
+    double mGl[4] = {}, mEmu[4] = {};       // last mismatching pair
+    U32 mCount = 0;
+};
+// kind: 0 glGetIntegerv, 1 glGetFloatv, 2 glGetBooleanv, 3 glIsEnabled, 4 glGetTexLevelParameteriv, 5 glCheckFramebufferStatus
+std::map<std::pair<int, GLenum>, GetterTally> sGetterTally;
+const char* const kGetterNames[] = { "glGetIntegerv", "glGetFloatv", "glGetBooleanv", "glIsEnabled", "glGetTexLevelParameteriv", "glCheckFramebufferStatus" };
+
+// device limits: the Vulkan device must offer at least what OpenGL reports (the viewer sizes things from these)
+bool emulate_limit(GLenum pname, GLint* out, U32& n)
+{
+    const Capabilities& caps = Context::instance().getCaps();
+    n = 1;
+    switch (pname)
+    {
+    case 0x0D33: out[0] = (GLint)caps.mMaxImageDim2D; return true;                  // MAX_TEXTURE_SIZE
+    case 0x84E8: out[0] = (GLint)caps.mMaxImageDim2D; return true;                  // MAX_RENDERBUFFER_SIZE
+    case 0x851C: out[0] = (GLint)caps.mMaxImageDimCube; return true;                // MAX_CUBE_MAP_TEXTURE_SIZE
+    case 0x8073: out[0] = (GLint)caps.mMaxImageDim3D; return true;                  // MAX_3D_TEXTURE_SIZE
+    case 0x88FF: out[0] = (GLint)caps.mMaxArrayLayers; return true;                 // MAX_ARRAY_TEXTURE_LAYERS
+    case 0x8CDF: out[0] = (GLint)caps.mMaxColorAttachments; return true;           // MAX_COLOR_ATTACHMENTS
+    case 0x8824: out[0] = (GLint)caps.mMaxColorAttachments; return true;           // MAX_DRAW_BUFFERS
+    case 0x8869: out[0] = (GLint)caps.mMaxVertexAttribs; return true;               // MAX_VERTEX_ATTRIBS
+    case 0x8A30: out[0] = (GLint)caps.mMaxUniformRange; return true;                // MAX_UNIFORM_BLOCK_SIZE
+    case 0x8872: case 0x8B4C: case 0x8B4D:                                          // MAX_TEXTURE_IMAGE_UNITS, MAX_VERTEX_TEXTURE_IMAGE_UNITS, MAX_COMBINED_TEXTURE_IMAGE_UNITS
+        out[0] = (GLint)caps.mMaxSampledImagesPerStage; return true;
+    case 0x8D57: out[0] = (GLint)caps.mMaxSampleCount; return true;                 // MAX_SAMPLES
+    case 0x0D3A: out[0] = (GLint)caps.mMaxViewport[0]; out[1] = (GLint)caps.mMaxViewport[1]; n = 2; return true;     // MAX_VIEWPORT_DIMS
+    default: return false;
+    }
+}
+
+// the value the mirror's tracked GL state holds. False if the mirror does not track this one.
+bool emulate_integer(GLenum pname, GLint* out, U32& n)
+{
+    n = 1;
+    switch (pname)
+    {
+    case 0x0BA2:    // VIEWPORT
+        if (!sGL.mViewportSet) return false;
+        for (int i = 0; i < 4; ++i) out[i] = sGL.mViewport[i];
+        n = 4; return true;
+    case 0x0C10:    // SCISSOR_BOX
+        if (!sGL.mScissor[2] && !sGL.mScissor[3]) return false;
+        for (int i = 0; i < 4; ++i) out[i] = sGL.mScissor[i];
+        n = 4; return true;
+    case 0x84E0: out[0] = (GLint)(0x84C0 + sCtx.mActiveUnit); return true;     // ACTIVE_TEXTURE
+    case 0x8069: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][0]; return true;     // TEXTURE_BINDING_2D
+    case 0x8514: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][1]; return true;     // TEXTURE_BINDING_CUBE_MAP
+    case 0x900A: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][2]; return true;     // TEXTURE_BINDING_CUBE_MAP_ARRAY
+    case 0x8C1D: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][3]; return true;     // TEXTURE_BINDING_2D_ARRAY
+    case 0x806A: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][4]; return true;     // TEXTURE_BINDING_3D
+    case 0x8CA6: out[0] = (GLint)sCtx.mDrawFbo; return true;                        // DRAW_FRAMEBUFFER_BINDING / FRAMEBUFFER_BINDING
+    case 0x8CAA: out[0] = (GLint)sCtx.mReadFbo; return true;                        // READ_FRAMEBUFFER_BINDING
+    case 0x8894: out[0] = (GLint)sCtx.mArrayBuffer; return true;                    // ARRAY_BUFFER_BINDING
+    case 0x8895: out[0] = (GLint)current_vao().mElementBuffer; return true;         // ELEMENT_ARRAY_BUFFER_BINDING
+    case 0x85B5: out[0] = (GLint)sCtx.mVao; return true;                            // VERTEX_ARRAY_BINDING
+    case 0x8A28: out[0] = (GLint)sCtx.mUniformBuffer; return true;                  // UNIFORM_BUFFER_BINDING
+    case 0x88EF: out[0] = (GLint)sCtx.mPixelUnpackBuffer; return true;              // PIXEL_UNPACK_BUFFER_BINDING
+    case 0x0CF5: out[0] = sCtx.mUnpackAlignment; return true;                       // UNPACK_ALIGNMENT
+    case 0x0CF2: out[0] = sCtx.mUnpackRowLength; return true;                       // UNPACK_ROW_LENGTH
+    case 0x0B74: out[0] = (GLint)sGL.mDepthFunc; return true;                       // DEPTH_FUNC
+    case 0x0B45: out[0] = (GLint)sGL.mCullFace; return true;                        // CULL_FACE_MODE
+    case 0x80C9: out[0] = (GLint)sGL.mBlendSrcRGB; return true;                     // BLEND_SRC_RGB
+    case 0x80C8: out[0] = (GLint)sGL.mBlendDstRGB; return true;                     // BLEND_DST_RGB
+    case 0x80CB: out[0] = (GLint)sGL.mBlendSrcA; return true;                       // BLEND_SRC_ALPHA
+    case 0x80CA: out[0] = (GLint)sGL.mBlendDstA; return true;                       // BLEND_DST_ALPHA
+    default: return false;
+    }
+}
+
+bool emulate_float(GLenum pname, GLfloat* out, U32& n)
+{
+    n = 1;
+    switch (pname)
+    {
+    case 0x0BA2:
+        if (!sGL.mViewportSet) return false;
+        for (int i = 0; i < 4; ++i) out[i] = (GLfloat)sGL.mViewport[i];
+        n = 4; return true;
+    case 0x0B21: out[0] = sGL.mLineWidth; return true;                              // LINE_WIDTH
+    case 0x0C22: for (int i = 0; i < 4; ++i) out[i] = sGL.mClearColor[i]; n = 4; return true;      // COLOR_CLEAR_VALUE
+    case 0x8038: out[0] = sGL.mOffsetFactor; return true;                           // POLYGON_OFFSET_FACTOR
+    case 0x2A00: out[0] = sGL.mOffsetUnits; return true;                            // POLYGON_OFFSET_UNITS
+    case 0x84FF: out[0] = Context::instance().getCaps().mMaxAnisotropy; return true;               // MAX_TEXTURE_MAX_ANISOTROPY
+    default: return false;
+    }
+}
+
+bool emulate_boolean(GLenum pname, GLboolean* out, U32& n)
+{
+    n = 1;
+    switch (pname)
+    {
+    case 0x0B72: out[0] = sGL.mDepthMask ? 1 : 0; return true;                      // DEPTH_WRITEMASK
+    case 0x0C23: for (int i = 0; i < 4; ++i) out[i] = sGL.mColorMask[i] ? 1 : 0; n = 4; return true;       // COLOR_WRITEMASK
+    default: return false;
+    }
+}
+
+bool emulate_enabled(GLenum cap, bool& value)
+{
+    switch (cap)
+    {
+    case 0x0BE2: value = sGL.mBlend; return true;
+    case 0x0B71: value = sGL.mDepthTest; return true;
+    case 0x0B44: value = sGL.mCull; return true;
+    case 0x0C11: value = sGL.mScissorTest; return true;
+    case 0x0B90: value = sGL.mStencilTest; return true;
+    case 0x8037: value = sGL.mPolyOffset; return true;
+    case 0x864F: value = sGL.mDepthClamp; return true;
+    default: return false;
+    }
+}
+
+void note_getter(int kind, GLenum pname, bool handled, bool mismatch, const double* gl_vals, const double* emu_vals, U32 n)
+{
+    GetterTally& t = sGetterTally[{ kind, pname }];
+    ++t.mCalls;
+    if (!handled) return;
+    ++t.mHandled;
+    if (mismatch)
+    {
+        ++t.mMismatch;
+        for (U32 i = 0; i < 4; ++i) { t.mGl[i] = i < n ? gl_vals[i] : 0; t.mEmu[i] = i < n ? emu_vals[i] : 0; }
+        if (++t.mCount <= 3)
+        {
+            LL_INFOS("VkVerify") << "GETTER MISMATCH " << kGetterNames[kind] << "(0x" << std::hex << pname << std::dec << "): GL (" << t.mGl[0] << "," << t.mGl[1] << "," << t.mGl[2] << "," << t.mGl[3]
+                                 << ") mirror (" << t.mEmu[0] << "," << t.mEmu[1] << "," << t.mEmu[2] << "," << t.mEmu[3] << ")" << LL_ENDL;
+        }
+    }
+}
+
+// ---- queries ----
+struct QueryRec
+{
+    GLenum mTarget = 0;
+    bool mOcc = false, mTime = false;
+    bool mVkHave = false, mHaveStart = false, mHaveEnd = false, mGlHave = false;
+    U64 mVkValue = 0, mTsStart = 0, mTsEnd = 0, mGlValue = 0;
+};
+std::map<U64, QueryRec> sQueries;               // by serial, oldest first
+std::unordered_map<GLuint, U64> sQueryLatest;   // GL query name -> serial of its latest begin
+std::map<GLenum, U64> sQueryActive;             // target -> serial of the query in progress
+U64 sQuerySerial = 0;
+struct QueryTally
+{
+    U64 mOcc = 0, mOccAgree = 0, mGlVisibleVkHidden = 0, mGlHiddenVkVisible = 0, mCountPairs = 0;
+    double mCountRelErr = 0;
+    U64 mTimePairs = 0;
+    double mTimeRatioSum = 0;
+    U64 mNotIssued = 0, mIssued = 0, mDiscarded = 0;
+} sQT;
+
+bool queries_on()
+{
+    static const bool disabled = getenv("LL_VK_NO_QUERIES") != nullptr;
+    return LLVkVerify::gEnabled && !disabled;
+}
+
+void compare_query(U64 serial, QueryRec& rec)
+{
+    if (rec.mOcc)
+    {
+        ++sQT.mOcc;
+        const bool gv = rec.mGlValue != 0, vv = rec.mVkValue != 0;
+        if (gv == vv)
+        {
+            ++sQT.mOccAgree;
+        }
+        else if (gv)
+        {
+            if (++sQT.mGlVisibleVkHidden <= 15)
+                LL_INFOS("VkVerify") << "OCCLUSION: GL says visible (" << rec.mGlValue << " samples), Vulkan says hidden (query " << serial << ", target 0x" << std::hex << rec.mTarget << std::dec << ")" << LL_ENDL;
+        }
+        else
+        {
+            if (++sQT.mGlHiddenVkVisible <= 15)
+                LL_INFOS("VkVerify") << "OCCLUSION: GL says hidden, Vulkan says visible (" << rec.mVkValue << " samples) (query " << serial << ", target 0x" << std::hex << rec.mTarget << std::dec << ")" << LL_ENDL;
+        }
+        if (rec.mTarget == 0x8914 && rec.mGlValue && rec.mVkValue)       // SAMPLES_PASSED: the counts themselves
+        {
+            ++sQT.mCountPairs;
+            sQT.mCountRelErr += std::fabs((double)rec.mGlValue - (double)rec.mVkValue) / (double)std::max(rec.mGlValue, rec.mVkValue);
+        }
+    }
+    else if (rec.mTime)
+    {
+        if (rec.mGlValue)
+        {
+            ++sQT.mTimePairs;
+            const double ratio = (double)rec.mVkValue / (double)rec.mGlValue;
+            sQT.mTimeRatioSum += ratio;
+            if (sQT.mTimePairs <= 12)
+                LL_INFOS("VkVerify") << "TIMER: GL " << rec.mGlValue << " ns, Vulkan " << rec.mVkValue << " ns (ratio " << ratio << ")" << LL_ENDL;
+        }
+    }
+}
+
+// pulls finished Vulkan query results and joins them with what OpenGL reported
+void drain_query_results()
+{
+    if (!Renderer::instance().isReady())
+    {
+        return;
+    }
+    static std::vector<Renderer::QueryResult> results;
+    results.clear();
+    Renderer::instance().takeQueryResults(results);
+    const Capabilities& caps = Context::instance().getCaps();
+    const U64 mask = caps.mTimestampValidBits >= 64 ? ~0ull : ((1ull << caps.mTimestampValidBits) - 1);
+    for (const Renderer::QueryResult& r : results)
+    {
+        auto it = sQueries.find(r.mSerial);
+        if (it == sQueries.end())
+        {
+            continue;
+        }
+        QueryRec& rec = it->second;
+        if (r.mKind == 0) { rec.mVkValue = r.mValue; rec.mVkHave = true; }
+        else if (r.mKind == 1) { rec.mTsStart = r.mValue; rec.mHaveStart = true; }
+        else { rec.mTsEnd = r.mValue; rec.mHaveEnd = true; }
+        if (rec.mTime && rec.mHaveStart && rec.mHaveEnd && !rec.mVkHave)
+        {
+            rec.mVkValue = (U64)(((rec.mTsEnd - rec.mTsStart) & mask) * (double)caps.mTimestampPeriodNs);
+            rec.mVkHave = true;
+        }
+        if (rec.mVkHave && rec.mGlHave)
+        {
+            compare_query(it->first, rec);
+            sQueries.erase(it);
+        }
+    }
+    while (sQueries.size() > 40000)         // results that never found their partner
+    {
+        sQueries.erase(sQueries.begin());
+        ++sQT.mDiscarded;
+    }
+}
+
+void note_query_result(GLuint id, U64 gl_value)
+{
+    drain_query_results();
+    auto lat = sQueryLatest.find(id);
+    if (lat == sQueryLatest.end())
+    {
+        return;
+    }
+    auto it = sQueries.find(lat->second);
+    if (it == sQueries.end())
+    {
+        return;
+    }
+    QueryRec& rec = it->second;
+    rec.mGlValue = gl_value;
+    rec.mGlHave = true;
+    if (rec.mVkHave)
+    {
+        compare_query(it->first, rec);
+        sQueries.erase(it);
+    }
+}
+
+} // anonymous namespace
+
+void on_glGetIntegerv(GLenum pname, GLint* params)
+{
+    if (!LLVkVerify::gEnabled || !params) return;
+    GLint emu[4] = {};
+    U32 n = 1;
+    bool limit = false;
+    bool handled = emulate_integer(pname, emu, n);
+    if (!handled) { handled = emulate_limit(pname, emu, n); limit = handled; }
+    double g[4] = {}, e[4] = {};
+    bool mismatch = false;
+    for (U32 i = 0; handled && i < n; ++i)
+    {
+        g[i] = params[i]; e[i] = emu[i];
+        mismatch |= limit ? (emu[i] < params[i]) : (emu[i] != params[i]);
+    }
+    note_getter(0, pname, handled, mismatch, g, e, n);
+}
+
+void on_glGetFloatv(GLenum pname, GLfloat* params)
+{
+    if (!LLVkVerify::gEnabled || !params) return;
+    GLfloat emu[4] = {};
+    U32 n = 1;
+    const bool handled = emulate_float(pname, emu, n);
+    double g[4] = {}, e[4] = {};
+    bool mismatch = false;
+    for (U32 i = 0; handled && i < n; ++i)
+    {
+        g[i] = params[i]; e[i] = emu[i];
+        const bool limit = pname == 0x84FF;
+        mismatch |= limit ? (emu[i] < params[i]) : (std::fabs(emu[i] - params[i]) > 1e-4f * std::max(1.f, std::fabs(params[i])));
+    }
+    note_getter(1, pname, handled, mismatch, g, e, n);
+}
+
+void on_glGetBooleanv(GLenum pname, GLboolean* params)
+{
+    if (!LLVkVerify::gEnabled || !params) return;
+    GLboolean emu[4] = {};
+    U32 n = 1;
+    const bool handled = emulate_boolean(pname, emu, n);
+    double g[4] = {}, e[4] = {};
+    bool mismatch = false;
+    for (U32 i = 0; handled && i < n; ++i)
+    {
+        g[i] = params[i] ? 1 : 0; e[i] = emu[i];
+        mismatch |= (params[i] != 0) != (emu[i] != 0);
+    }
+    note_getter(2, pname, handled, mismatch, g, e, n);
+}
+
+void on_glIsEnabled(GLenum cap, GLboolean result)
+{
+    if (!LLVkVerify::gEnabled) return;
+    bool emu = false;
+    const bool handled = emulate_enabled(cap, emu);
+    const double g = result ? 1 : 0, e = emu ? 1 : 0;
+    note_getter(3, cap, handled, handled && (result != 0) != emu, &g, &e, 1);
+}
+
+void on_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint* params)
+{
+    if (!LLVkVerify::gEnabled || !params) return;
+    Tex* t = bound_texture(target);
+    GLint emu = 0;
+    bool handled = false;
+    if (t && t->mImage.valid() && level >= 0 && (U32)level < std::max<U32>(1, t->mLevels))
+    {
+        switch (pname)
+        {
+        case 0x1000: emu = (GLint)std::max<U32>(1, t->mWidth >> level); handled = true; break;       // TEXTURE_WIDTH
+        case 0x1001: emu = (GLint)std::max<U32>(1, t->mHeight >> level); handled = true; break;      // TEXTURE_HEIGHT
+        case 0x8071: emu = (GLint)(t->mTarget == GL_TEXTURE_3D ? std::max<U32>(1, t->mDepth >> level) : std::max<U32>(1, t->mDepth)); handled = true; break;    // TEXTURE_DEPTH
+        case 0x1003: emu = t->mInternalFormat; handled = true; break;                                // TEXTURE_INTERNAL_FORMAT
+        default: break;
+        }
+    }
+    const double g = params[0], e = emu;
+    note_getter(4, pname, handled, handled && emu != params[0], &g, &e, 1);
+}
+
+void on_glCheckFramebufferStatus(GLenum target, GLenum result)
+{
+    if (!LLVkVerify::gEnabled) return;
+    const GLuint name = target == GL_READ_FRAMEBUFFER ? sCtx.mReadFbo : sCtx.mDrawFbo;
+    GLenum emu = 0x8CD5;        // FRAMEBUFFER_COMPLETE
+    if (name)
+    {
+        auto it = sGL.mFbos.find(name);
+        bool any = false;
+        if (it != sGL.mFbos.end())
+        {
+            for (const FboAttachment& a : it->second.mColor) any |= a.mTexture != 0;
+            any |= it->second.mDepth.mTexture != 0;
+        }
+        if (!any) emu = 0x8CD7;     // INCOMPLETE_MISSING_ATTACHMENT
+    }
+    const double g = result, e = emu;
+    note_getter(5, target, true, result != emu, &g, &e, 1);
+}
+
+void on_glGenQueries(GLsizei n, GLuint* ids)
+{
+    (void)n; (void)ids;
+}
+
+void on_glDeleteQueries(GLsizei n, const GLuint* ids)
+{
+    if (!queries_on() || !ids) return;
+    for (GLsizei i = 0; i < n; ++i) sQueryLatest.erase(ids[i]);
+}
+
+void on_glBeginQuery(GLenum target, GLuint id)
+{
+    if (!queries_on() || !LLVkMirror::inFrame() || !Renderer::instance().isReady())
+    {
+        if (queries_on()) ++sQT.mNotIssued;
+        return;
+    }
+    Renderer& r = Renderer::instance();
+    QueryRec rec;
+    rec.mTarget = target;
+    const U64 serial = ++sQuerySerial;
+    bool ok = false;
+    if (target == 0x8914 || target == 0x8C2F || target == 0x8D6A)       // SAMPLES_PASSED, ANY_SAMPLES_PASSED(_CONSERVATIVE)
+    {
+        rec.mOcc = true;
+        ok = r.queryBegin(serial);
+    }
+    else if (target == 0x88BF)                                           // TIME_ELAPSED
+    {
+        rec.mTime = true;
+        ok = r.queryTimestamp(serial, false);
+    }
+    if (!ok)
+    {
+        ++sQT.mNotIssued;
+        sQueryActive.erase(target);
+        return;
+    }
+    ++sQT.mIssued;
+    sQueries[serial] = rec;
+    sQueryLatest[id] = serial;
+    sQueryActive[target] = serial;
+}
+
+void on_glEndQuery(GLenum target)
+{
+    if (!queries_on()) return;
+    auto act = sQueryActive.find(target);
+    if (act == sQueryActive.end() || !Renderer::instance().isReady())
+    {
+        return;
+    }
+    auto it = sQueries.find(act->second);
+    if (it != sQueries.end() && LLVkMirror::inFrame())
+    {
+        if (it->second.mOcc) Renderer::instance().queryEnd();
+        else if (it->second.mTime) Renderer::instance().queryTimestamp(act->second, true);
+    }
+    sQueryActive.erase(act);
+}
+
+void on_glQueryCounter(GLuint id, GLenum target)
+{
+    (void)id; (void)target;
+}
+
+void on_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params)
+{
+    if (queries_on() && params && pname == 0x8866) note_query_result(id, (U64)(U32)params[0]);
+}
+
+void on_glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* params)
+{
+    if (queries_on() && params && pname == 0x8866) note_query_result(id, params[0]);
+}
+
+void on_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params)
+{
+    if (queries_on() && params && pname == 0x8866) note_query_result(id, (U64)params[0]);
+}
+
+// the running totals, for the log
+void report_getters_and_queries()
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    if (queries_on())
+    {
+        drain_query_results();
+        LL_INFOS("VkVerify") << "QUERIES: issued to Vulkan " << sQT.mIssued << ", not issued " << sQT.mNotIssued << ", occlusion pairs compared " << sQT.mOcc << " (agree " << sQT.mOccAgree
+                             << ", GL visible/Vulkan hidden " << sQT.mGlVisibleVkHidden << ", GL hidden/Vulkan visible " << sQT.mGlHiddenVkVisible << "), sample-count pairs " << sQT.mCountPairs
+                             << " (mean relative difference " << (sQT.mCountPairs ? sQT.mCountRelErr / sQT.mCountPairs : 0.0) << "), timer pairs " << sQT.mTimePairs
+                             << " (mean Vulkan/GL " << (sQT.mTimePairs ? sQT.mTimeRatioSum / sQT.mTimePairs : 0.0) << "), waiting " << sQueries.size() << ", discarded " << sQT.mDiscarded << LL_ENDL;
+    }
+    std::vector<std::pair<U64, std::pair<int, GLenum>>> order;
+    for (auto& kv : sGetterTally) order.push_back({ kv.second.mCalls, kv.first });
+    std::sort(order.rbegin(), order.rend());
+    std::string line;
+    U32 shown = 0;
+    for (auto& o : order)
+    {
+        if (shown++ >= 45) break;
+        const GetterTally& t = sGetterTally[o.second];
+        char buf[160];
+        snprintf(buf, sizeof(buf), " %s(0x%X): %llu calls, %s%llu mismatch;", kGetterNames[o.second.first], (unsigned)o.second.second, (unsigned long long)t.mCalls,
+                 t.mHandled == t.mCalls ? "all checked, " : (t.mHandled ? "some checked, " : "NOT EMULATED, "), (unsigned long long)t.mMismatch);
+        line += buf;
+        if (line.size() > 1500) { LL_INFOS("VkVerify") << "GETTERS:" << line << LL_ENDL; line.clear(); }
+    }
+    if (!line.empty()) LL_INFOS("VkVerify") << "GETTERS:" << line << LL_ENDL;
+}
+
+// at start-up: the limits and identity the viewer reads once, OpenGL against the Vulkan device
+void verify_startup()
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    const Capabilities& caps = Context::instance().getCaps();
+    const char* gl_renderer = (const char*)glGetString(GL_RENDERER);
+    const char* gl_vendor = (const char*)glGetString(GL_VENDOR);
+    const char* gl_version = (const char*)glGetString(GL_VERSION);
+    LL_INFOS("VkVerify") << "identity: OpenGL renderer '" << (gl_renderer ? gl_renderer : "?") << "' vendor '" << (gl_vendor ? gl_vendor : "?") << "' version '" << (gl_version ? gl_version : "?")
+                         << "'; Vulkan device '" << caps.mDeviceName << "' vendor id 0x" << std::hex << caps.mVendorId << std::dec << " api " << VK_API_VERSION_MAJOR(caps.mApiVersion) << "."
+                         << VK_API_VERSION_MINOR(caps.mApiVersion) << LL_ENDL;
+    static const GLenum limits[] = { 0x0D33, 0x84E8, 0x851C, 0x8073, 0x88FF, 0x8CDF, 0x8824, 0x8869, 0x8A30, 0x8872, 0x8B4C, 0x8B4D, 0x8D57, 0x0D3A };
+    std::string line;
+    U32 bad = 0;
+    for (GLenum p : limits)
+    {
+        GLint gl_vals[4] = {}, emu[4] = {};
+        U32 n = 1;
+        glGetIntegerv(p, gl_vals);
+        if (!emulate_limit(p, emu, n)) continue;
+        bool ok = true;
+        for (U32 i = 0; i < n; ++i) ok &= emu[i] >= gl_vals[i];
+        bad += ok ? 0 : 1;
+        char buf[120];
+        snprintf(buf, sizeof(buf), " 0x%X: GL %d, Vulkan %d%s;", (unsigned)p, gl_vals[0], emu[0], ok ? "" : " (VULKAN LOWER)");
+        line += buf;
+    }
+    LL_INFOS("VkVerify") << "limits (Vulkan must be at least as large as OpenGL, " << bad << " fall short):" << line << LL_ENDL;
+}
+
+
+//-----------------------------------------------------------------------------------------------------
 // LL_VK_VERIFY: compare GL readbacks with the same region read back from Vulkan
 //-----------------------------------------------------------------------------------------------------
 
@@ -3118,7 +3639,15 @@ void verify_present_frame()
     static U64 counter = 0;
     static U32 dumps = 0;
     ++counter;
+    if ((counter % 600) == 0)
+    {
+        report_getters_and_queries();
+    }
     const bool triggered = GetFileAttributesA("D:\\claude\\vk-verify.trigger") != INVALID_FILE_ATTRIBUTES;
+    if (triggered)
+    {
+        report_getters_and_queries();
+    }
     if (!triggered && (counter % 300) != 0)
     {
         return;
@@ -3267,6 +3796,11 @@ void armSnapshot()
 void presentFrame()
 {
     LLVkGL::verify_present_frame();
+}
+
+void startup()
+{
+    LLVkGL::verify_startup();
 }
 
 void texImage(unsigned int target, int level, unsigned int format, unsigned int type, const void* gl_data)

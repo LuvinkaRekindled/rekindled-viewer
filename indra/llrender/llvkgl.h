@@ -91,6 +91,20 @@ namespace LLVkGL
     void on_glScissor(GLint x, GLint y, GLsizei width, GLsizei height);
     void on_glClear(GLbitfield mask);
     void on_glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
+    void on_glGetIntegerv(GLenum pname, GLint* params);
+    void on_glGetFloatv(GLenum pname, GLfloat* params);
+    void on_glGetBooleanv(GLenum pname, GLboolean* params);
+    void on_glIsEnabled(GLenum cap, GLboolean result);
+    void on_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint* params);
+    void on_glCheckFramebufferStatus(GLenum target, GLenum result);
+    void on_glGenQueries(GLsizei n, GLuint* ids);
+    void on_glDeleteQueries(GLsizei n, const GLuint* ids);
+    void on_glBeginQuery(GLenum target, GLuint id);
+    void on_glEndQuery(GLenum target);
+    void on_glQueryCounter(GLuint id, GLenum target);
+    void on_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params);
+    void on_glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* params);
+    void on_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params);
 }
 
 static inline void ll_vk_glGenTextures(GLsizei n, GLuint* textures) { { LLVkGL::GlTimer t_; glGenTextures(n, textures); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glGenTextures(n, textures); } }
@@ -211,6 +225,34 @@ static inline void ll_vk_glClear(GLbitfield mask) { { LLVkGL::GlTimer t_; glClea
 #define glClear ll_vk_glClear
 static inline void ll_vk_glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha) { { LLVkGL::GlTimer t_; glClearColor(red, green, blue, alpha); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glClearColor(red, green, blue, alpha); } }
 #define glClearColor ll_vk_glClearColor
+static inline void ll_vk_glGetIntegerv(GLenum pname, GLint* params) { { LLVkGL::GlTimer t_; glGetIntegerv(pname, params); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glGetIntegerv(pname, params); } }
+#define glGetIntegerv ll_vk_glGetIntegerv
+static inline void ll_vk_glGetFloatv(GLenum pname, GLfloat* params) { { LLVkGL::GlTimer t_; glGetFloatv(pname, params); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glGetFloatv(pname, params); } }
+#define glGetFloatv ll_vk_glGetFloatv
+static inline void ll_vk_glGetBooleanv(GLenum pname, GLboolean* params) { { LLVkGL::GlTimer t_; glGetBooleanv(pname, params); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glGetBooleanv(pname, params); } }
+#define glGetBooleanv ll_vk_glGetBooleanv
+static inline GLboolean ll_vk_glIsEnabled(GLenum cap) { GLboolean r_; { LLVkGL::GlTimer t_; r_ = glIsEnabled(cap); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glIsEnabled(cap, r_); } return r_; }
+#define glIsEnabled ll_vk_glIsEnabled
+static inline void ll_vk_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint* params) { { LLVkGL::GlTimer t_; glGetTexLevelParameteriv(target, level, pname, params); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glGetTexLevelParameteriv(target, level, pname, params); } }
+#define glGetTexLevelParameteriv ll_vk_glGetTexLevelParameteriv
+static inline GLenum ll_vk_glCheckFramebufferStatus(GLenum target) { GLenum r_; { LLVkGL::GlTimer t_; r_ = glCheckFramebufferStatus(target); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glCheckFramebufferStatus(target, r_); } return r_; }
+#define glCheckFramebufferStatus ll_vk_glCheckFramebufferStatus
+static inline void ll_vk_glGenQueries(GLsizei n, GLuint* ids) { { LLVkGL::GlTimer t_; glGenQueries(n, ids); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glGenQueries(n, ids); } }
+#define glGenQueries ll_vk_glGenQueries
+static inline void ll_vk_glDeleteQueries(GLsizei n, const GLuint* ids) { { LLVkGL::GlTimer t_; glDeleteQueries(n, ids); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glDeleteQueries(n, ids); } }
+#define glDeleteQueries ll_vk_glDeleteQueries
+static inline void ll_vk_glBeginQuery(GLenum target, GLuint id) { { LLVkGL::GlTimer t_; glBeginQuery(target, id); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glBeginQuery(target, id); } }
+#define glBeginQuery ll_vk_glBeginQuery
+static inline void ll_vk_glEndQuery(GLenum target) { { LLVkGL::GlTimer t_; glEndQuery(target); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glEndQuery(target); } }
+#define glEndQuery ll_vk_glEndQuery
+static inline void ll_vk_glQueryCounter(GLuint id, GLenum target) { { LLVkGL::GlTimer t_; glQueryCounter(id, target); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glQueryCounter(id, target); } }
+#define glQueryCounter ll_vk_glQueryCounter
+static inline void ll_vk_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params) { { LLVkGL::GlTimer t_; glGetQueryObjectiv(id, pname, params); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glGetQueryObjectiv(id, pname, params); } }
+#define glGetQueryObjectiv ll_vk_glGetQueryObjectiv
+static inline void ll_vk_glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* params) { { LLVkGL::GlTimer t_; glGetQueryObjectuiv(id, pname, params); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glGetQueryObjectuiv(id, pname, params); } }
+#define glGetQueryObjectuiv ll_vk_glGetQueryObjectuiv
+static inline void ll_vk_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params) { { LLVkGL::GlTimer t_; glGetQueryObjectui64v(id, pname, params); } if (LLVkGL::gActive) { LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex); LLVkGL::on_glGetQueryObjectui64v(id, pname, params); } }
+#define glGetQueryObjectui64v ll_vk_glGetQueryObjectui64v
 
 template <typename F, typename... A> inline void ll_vk_timed(F f, A... a) { LLVkGL::GlTimer t_; f(a...); }
 #define glUniform1f(...) ll_vk_timed(glUniform1f, __VA_ARGS__)

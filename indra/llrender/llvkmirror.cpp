@@ -532,6 +532,7 @@ bool LLVkMirror::ensureReady()
     if (LLVkVerify::gEnabled)
     {
         LL_INFOS("VkVerify") << "LL_VK_VERIFY: GL readbacks will be compared with the Vulkan images (do not combine with LL_VK_MIRROR_BENCH)" << LL_ENDL;
+        LLVkVerify::startup();
     }
     bench_init();
     LL_INFOS("VkMirror") << "Vulkan mirror ready" << LL_ENDL;
