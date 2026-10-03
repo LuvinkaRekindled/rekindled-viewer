@@ -6,6 +6,8 @@
 #include "linden_common.h"
 
 #include "llvkshader.h"
+#include "lldir.h"
+#include "llfile.h"
 
 #if defined(LL_VULKAN)
 
@@ -602,8 +604,8 @@ static std::string debug_wrap_fragment(const std::string& src, std::vector<std::
     return out + add.str();
 }
 
-bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
-                    ProgramInfo& out, const std::string& dump_dir)
+static bool compileProgramUncached(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
+                                   ProgramInfo& out, const std::string& dump_dir)
 {
     out = ProgramInfo();
     if (!init_glslang())
@@ -1122,6 +1124,208 @@ bool compileProgram(const std::string& program_name, const std::vector<StageSour
         out.mOutputs.push_back(kv.first);
     }
     return true;
+}
+
+// ---- disk cache of compiled programs --------------------------------------------------------------------------
+// Compiling the viewer's ~200 programs with glslang costs many seconds at every start. The result (SPIR-V plus the reflection data)
+// is stored per program under <cache>/vk_spirv_cache, keyed by a hash of everything that goes into the compile: the stage sources,
+// the environment lists, and this file's build time stamp (the rewriting rules live in this file, so a rebuild drops stale entries).
+// LL_VK_SPIRV_CACHE=0 turns it off.
+namespace
+{
+constexpr U32 kCacheMagic = 0x43535056;     // "VPSC"
+constexpr U32 kCacheVersion = 1;
+
+struct Hasher
+{
+    U64 a = 0xcbf29ce484222325ull, b = 0x84222325cbf29ce4ull;
+    void bytes(const void* d, size_t n)
+    {
+        const U8* p = (const U8*)d;
+        for (size_t i = 0; i < n; ++i)
+        {
+            a = (a ^ p[i]) * 0x100000001b3ull;
+            b = (b ^ (U8)(p[i] + 0x5b)) * 0x9E3779B97F4A7C15ull;
+            b ^= b >> 29;
+        }
+    }
+    void str(const std::string& v) { U64 n = v.size(); bytes(&n, sizeof(n)); bytes(v.data(), v.size()); }
+    std::string hex() const
+    {
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%016llx%016llx", (unsigned long long)a, (unsigned long long)b);
+        return buf;
+    }
+};
+
+struct CacheWriter
+{
+    std::string mData;
+    void u32(U32 v) { mData.append((const char*)&v, 4); }
+    void str(const std::string& v) { u32((U32)v.size()); mData.append(v); }
+    void strs(const std::vector<std::string>& v) { u32((U32)v.size()); for (const std::string& e : v) str(e); }
+    void u32s(const std::vector<U32>& v) { u32((U32)v.size()); mData.append((const char*)v.data(), v.size() * 4); }
+};
+
+struct CacheReader
+{
+    const std::string& mData;
+    size_t mPos = 0;
+    bool mOk = true;
+    explicit CacheReader(const std::string& d) : mData(d) {}
+    U32 u32()
+    {
+        U32 v = 0;
+        if (mPos + 4 > mData.size()) { mOk = false; return 0; }
+        memcpy(&v, mData.data() + mPos, 4);
+        mPos += 4;
+        return v;
+    }
+    std::string str()
+    {
+        const U32 n = u32();
+        if (!mOk || mPos + n > mData.size()) { mOk = false; return std::string(); }
+        std::string v = mData.substr(mPos, n);
+        mPos += n;
+        return v;
+    }
+    std::vector<std::string> strs()
+    {
+        std::vector<std::string> v;
+        const U32 n = u32();
+        for (U32 i = 0; mOk && i < n; ++i) v.push_back(str());
+        return v;
+    }
+    std::vector<U32> u32s()
+    {
+        std::vector<U32> v;
+        const U32 n = u32();
+        if (!mOk || (size_t)n * 4 > mData.size() - mPos) { mOk = false; return v; }
+        v.resize(n);
+        memcpy(v.data(), mData.data() + mPos, (size_t)n * 4);
+        mPos += (size_t)n * 4;
+        return v;
+    }
+};
+
+std::string spirv_cache_dir()
+{
+    static const std::string dir = []() {
+        const char* off = getenv("LL_VK_SPIRV_CACHE");
+        if (off && off[0] == '0') return std::string();
+        std::string d = gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "vk_spirv_cache");
+        LLFile::mkdir(d);
+        return d;
+    }();
+    return dir;
+}
+
+std::string spirv_cache_key(const std::vector<StageSource>& stages, const ShaderEnv& env)
+{
+    Hasher h;
+    h.str(std::string(__DATE__ " " __TIME__));
+    for (const StageSource& st : stages)
+    {
+        U32 stage = (U32)st.mStage;
+        h.bytes(&stage, sizeof(stage));
+        h.str(st.mSource);
+    }
+    for (const std::string& n : env.mAttributeNames) h.str(n);
+    h.str("|blocks");
+    for (const std::string& n : env.mUniformBlockNames) h.str(n);
+    return h.hex();
+}
+
+bool spirv_cache_load(const std::string& path, ProgramInfo& out)
+{
+    llifstream f(path, std::ios::binary);
+    if (!f.is_open()) return false;
+    std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    f.close();
+    CacheReader r(data);
+    if (r.u32() != kCacheMagic || r.u32() != kCacheVersion) return false;
+    ProgramInfo info;
+    const U32 nu = r.u32();
+    for (U32 i = 0; r.mOk && i < nu; ++i)
+    {
+        LooseUniform u;
+        u.mName = r.str(); u.mType = r.str(); u.mArraySize = r.u32(); u.mOffset = r.u32(); u.mSize = r.u32(); u.mInit = r.str();
+        info.mUniforms.push_back(std::move(u));
+    }
+    info.mBlockSize = r.u32();
+    const U32 ns = r.u32();
+    for (U32 i = 0; r.mOk && i < ns; ++i)
+    {
+        SamplerInfo sm;
+        sm.mName = r.str(); sm.mType = r.str(); sm.mBinding = r.u32();
+        info.mSamplers.push_back(std::move(sm));
+    }
+    info.mAttributes = r.strs();
+    info.mAttributeLocations = r.u32s();
+    info.mAttributeTypes = r.strs();
+    info.mOutputs = r.strs();
+    for (int st = 0; st < 3; ++st) info.mSpirv[st] = r.u32s();
+    if (r.u32() != kCacheMagic || !r.mOk || r.mPos != data.size()) return false;
+    out = std::move(info);
+    return true;
+}
+
+void spirv_cache_store(const std::string& path, const ProgramInfo& info)
+{
+    CacheWriter w;
+    w.u32(kCacheMagic); w.u32(kCacheVersion);
+    w.u32((U32)info.mUniforms.size());
+    for (const LooseUniform& u : info.mUniforms)
+    {
+        w.str(u.mName); w.str(u.mType); w.u32(u.mArraySize); w.u32(u.mOffset); w.u32(u.mSize); w.str(u.mInit);
+    }
+    w.u32(info.mBlockSize);
+    w.u32((U32)info.mSamplers.size());
+    for (const SamplerInfo& sm : info.mSamplers) { w.str(sm.mName); w.str(sm.mType); w.u32(sm.mBinding); }
+    w.strs(info.mAttributes);
+    w.u32s(info.mAttributeLocations);
+    w.strs(info.mAttributeTypes);
+    w.strs(info.mOutputs);
+    for (int st = 0; st < 3; ++st) w.u32s(info.mSpirv[st]);
+    w.u32(kCacheMagic);
+    const std::string tmp = path + ".tmp";
+    {
+        llofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f.is_open()) return;
+        f.write(w.mData.data(), (std::streamsize)w.mData.size());
+        if (!f.good()) { f.close(); LLFile::remove(tmp, ENOENT); return; }
+    }
+    if (LLFile::rename(tmp, path, ENOENT) != 0) LLFile::remove(tmp, ENOENT);
+}
+
+U32 sCacheHits = 0, sCacheMisses = 0;
+}
+
+bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
+                    ProgramInfo& out, const std::string& dump_dir)
+{
+    // the debug wrapper records per-program sampler names while compiling, and a dump request needs the compile to run
+    const std::string dir = (debugShadersEnabled() || !dump_dir.empty()) ? std::string() : spirv_cache_dir();
+    std::string path;
+    if (!dir.empty())
+    {
+        path = gDirUtilp->add(dir, spirv_cache_key(stages, env) + ".bin");
+        if (spirv_cache_load(path, out))
+        {
+            if (++sCacheHits % 50 == 0)
+            {
+                LL_INFOS("VkShader") << "SPIR-V disk cache: " << sCacheHits << " programs loaded, " << sCacheMisses << " compiled" << LL_ENDL;
+            }
+            return true;
+        }
+    }
+    const bool ok = compileProgramUncached(program_name, stages, env, out, dump_dir);
+    if (ok && !path.empty())
+    {
+        ++sCacheMisses;
+        spirv_cache_store(path, out);
+    }
+    return ok;
 }
 
 namespace

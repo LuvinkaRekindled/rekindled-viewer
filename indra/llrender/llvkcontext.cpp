@@ -1115,9 +1115,24 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
     }
 
     U32 image_count = caps.minImageCount + 1;
+    if (const char* n = getenv("LL_VK_SC_IMAGES"))
+    {
+        image_count = std::max<U32>(caps.minImageCount, (U32)atoi(n));      // experiment: swapchain image count
+    }
     if (caps.maxImageCount > 0 && image_count > caps.maxImageCount)
     {
         image_count = caps.maxImageCount;
+    }
+    VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+    if (const char* m = getenv("LL_VK_PRESENT"))        // experiment: fifo (default), mailbox, immediate, relaxed
+    {
+        VkPresentModeKHR want = strcmp(m, "mailbox") == 0 ? VK_PRESENT_MODE_MAILBOX_KHR : strcmp(m, "immediate") == 0 ? VK_PRESENT_MODE_IMMEDIATE_KHR
+                              : strcmp(m, "relaxed") == 0 ? VK_PRESENT_MODE_FIFO_RELAXED_KHR : VK_PRESENT_MODE_FIFO_KHR;
+        U32 mcount = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(phys, surface, &mcount, nullptr);
+        std::vector<VkPresentModeKHR> modes(mcount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(phys, surface, &mcount, modes.data());
+        for (VkPresentModeKHR pm : modes) if (pm == want) present_mode = want;
     }
 
     VkSwapchainCreateInfoKHR sc = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
@@ -1131,7 +1146,7 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
     sc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     sc.preTransform = caps.currentTransform;
     sc.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    sc.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    sc.presentMode = present_mode;
     sc.clipped = VK_TRUE;
     sc.oldSwapchain = old_swapchain;
     const bool created = vk_ok(vkCreateSwapchainKHR(dev, &sc, nullptr, &mSwapchain), "vkCreateSwapchainKHR");

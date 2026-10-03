@@ -695,6 +695,41 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
         // presenting into the main window: nobody tells the mirror when it is resized
         RECT rc = {};
         GetClientRect(sMirror.mWindow, &rc);
+        {
+            // LL_VK_NUDGE (experiment): once the size has stopped changing, poke the compositor: r = repaint the window, c = recreate the swapchain, d = DwmFlush
+            static const char* nudge = getenv("LL_VK_NUDGE");
+            static S32 prev_w = -1, prev_h = -1;
+            static ULONGLONG changed_at = 0;
+            static bool pending = false;
+            const ULONGLONG now_ms = GetTickCount64();
+            if (rc.right != prev_w || rc.bottom != prev_h)
+            {
+                prev_w = rc.right; prev_h = rc.bottom;
+                changed_at = now_ms;
+                pending = true;
+            }
+            else if (nudge && pending && now_ms - changed_at >= 200)
+            {
+                pending = false;
+                if (strchr(nudge, 'r'))
+                {
+                    RedrawWindow(sMirror.mWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW | RDW_ALLCHILDREN);
+                }
+                if (strchr(nudge, 'c'))
+                {
+                    sMirror.mResized = true;
+                }
+                if (strchr(nudge, 'd'))
+                {
+                    typedef HRESULT(WINAPI * DwmFlushFn)();
+                    if (HMODULE dwm = LoadLibraryW(L"dwmapi.dll"))
+                    {
+                        if (DwmFlushFn flush = (DwmFlushFn)GetProcAddress(dwm, "DwmFlush")) flush();
+                    }
+                }
+                LL_INFOS("VkSize") << "nudged the window after the resize settled (" << nudge << ")" << LL_ENDL;
+            }
+        }
         static const bool size_log = getenv("LL_VK_SIZELOG") != nullptr;
         if (size_log)
         {
