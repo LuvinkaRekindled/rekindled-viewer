@@ -68,9 +68,20 @@ namespace LLVkAsync
     void uniformMatrix(void* program, unsigned uniform_index, unsigned columns, unsigned rows, unsigned count, const float* data);
 
     // for the occlusion query bookkeeping done while a query command is queued / when the worker harvests a result
-    void queryPending(unsigned id);
-    void queryPublish(unsigned id, unsigned long long value);
-    void queryIdle(unsigned id);
+    // Every query the main thread begins gets a generation number for its GL name (the viewer recycles names constantly). A result only
+    // counts for the viewer when it carries a generation at least as new as the latest one begun.
+    unsigned long long queryBegin(unsigned id);                                           // main thread: the new generation
+    void queryPublish(unsigned id, unsigned long long gen, unsigned long long value);     // worker: the result of generation 'gen'
+    void queryIdle(unsigned id, unsigned long long gen);                                  // worker: generation 'gen' was never issued or has been consumed: report visible
+    unsigned long long workerQueryGen(unsigned id);                                       // worker: the generation of the query being begun / the latest one begun
+    void setWorkerQueryGen(unsigned id, unsigned long long gen);
+    // timer queries are not published: reads of their results go to the worker
+    void queryMarkSync(unsigned id, bool sync);
+    // counters since the last call: [0] marked pending, [1] published, [2] set idle, [3] polls answered ready, [4] polls answered pending, [5] polls answered idle (never issued), [6] result reads sent to the worker
+    void queryStats(unsigned long long out[7]);
+    // result values handed to the viewer (either mode), counted since the last call: zero (occluded) and non-zero (visible)
+    void queryResultTally(bool nonzero);
+    void queryResultStats(unsigned long long out[2]);
 }
 
 #endif // LL_VULKAN

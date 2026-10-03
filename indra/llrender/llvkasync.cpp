@@ -123,10 +123,15 @@ thread_local std::vector<std::pair<unsigned, unsigned>> tlsActiveQueries;     //
 constexpr unsigned QUERY_TABLE = 1u << 20;
 struct PubQuery
 {
-    std::atomic<unsigned> mState{ 0 };              // 0 nothing outstanding, 1 pending, 2 result ready
-    std::atomic<unsigned long long> mValue{ 0 };
+    std::atomic<unsigned long long> mIssued{ 0 };   // the latest generation begun by the main thread
+    std::atomic<unsigned long long> mReady{ 0 };    // the newest generation whose result has been published
+    std::atomic<unsigned long long> mValue{ 1 };    // the result of mReady (1: visible)
+    std::atomic<unsigned> mSync{ 0 };               // 1: a timer query; its results are read through the worker
 };
 PubQuery* gPub = nullptr;
+unsigned long long* gWorkerGen = nullptr;           // worker side: the generation of the latest Begin it has replayed, by name
+std::atomic<unsigned long long> gQStat[7];
+std::atomic<unsigned long long> gQValue[2];
 
 // ---- writing records ----
 inline size_t alignUp(size_t n) { return (n + 7) & ~(size_t)7; }
@@ -340,26 +345,79 @@ void gen_enq(unsigned short op, int kind, S32 n, unsigned* out)
     pushData(op, &n, sizeof(n), out, (size_t)std::max<S32>(n, 0) * 4);
 }
 
-void queryPending(unsigned id)
+void queryResultTally(bool nonzero) { gQValue[nonzero ? 1 : 0].fetch_add(1, std::memory_order_relaxed); }
+void queryResultStats(unsigned long long out[2])
 {
-    if (gPub && id < QUERY_TABLE)
+    out[0] = gQValue[0].exchange(0);
+    out[1] = gQValue[1].exchange(0);
+}
+
+void queryStats(unsigned long long out[7])
+{
+    for (int i = 0; i < 7; ++i)
     {
-        gPub[id].mState.store(1, std::memory_order_release);
+        out[i] = gQStat[i].exchange(0);
     }
 }
-void queryPublish(unsigned id, unsigned long long value)
+
+unsigned long long queryBegin(unsigned id)
+{
+    if (!gPub || id >= QUERY_TABLE)
+    {
+        return 0;
+    }
+    gQStat[0].fetch_add(1, std::memory_order_relaxed);
+    return gPub[id].mIssued.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+void queryMarkSync(unsigned id, bool sync)
 {
     if (gPub && id < QUERY_TABLE)
     {
-        gPub[id].mValue.store(value, std::memory_order_relaxed);
-        gPub[id].mState.store(2, std::memory_order_release);
+        gPub[id].mSync.store(sync ? 1 : 0, std::memory_order_relaxed);
     }
 }
-void queryIdle(unsigned id)
+
+void setWorkerQueryGen(unsigned id, unsigned long long gen)
 {
-    if (gPub && id < QUERY_TABLE)
+    if (gWorkerGen && id < QUERY_TABLE)
     {
-        gPub[id].mState.store(0, std::memory_order_release);
+        gWorkerGen[id] = gen;
+    }
+}
+
+unsigned long long workerQueryGen(unsigned id)
+{
+    return gWorkerGen && id < QUERY_TABLE ? gWorkerGen[id] : 0;
+}
+
+void queryPublish(unsigned id, unsigned long long gen, unsigned long long value)
+{
+    if (!gPub || id >= QUERY_TABLE || gen == 0)
+    {
+        return;
+    }
+    gQStat[1].fetch_add(1, std::memory_order_relaxed);
+    PubQuery& q = gPub[id];
+    if (gen >= q.mReady.load(std::memory_order_relaxed))
+    {
+        q.mValue.store(value, std::memory_order_relaxed);
+        q.mReady.store(gen, std::memory_order_release);
+    }
+}
+
+void queryIdle(unsigned id, unsigned long long gen)
+{
+    if (!gPub || id >= QUERY_TABLE || gen == 0)
+    {
+        return;
+    }
+    gQStat[2].fetch_add(1, std::memory_order_relaxed);
+    PubQuery& q = gPub[id];
+    if (gen >= q.mReady.load(std::memory_order_relaxed))
+    {
+        q.mValue.store(1, std::memory_order_relaxed);
+        q.mReady.store(gen, std::memory_order_release);
     }
 }
 
@@ -370,23 +428,28 @@ bool query_get(int kind, unsigned id, unsigned pname, void* params)
         return false;
     }
     PubQuery& q = gPub[id];
-    const unsigned state = q.mState.load(std::memory_order_acquire);
+    if (q.mSync.load(std::memory_order_relaxed))
+    {
+        return false;               // a timer query: the worker has the real answer
+    }
+    const unsigned long long ready = q.mReady.load(std::memory_order_acquire);
+    const bool pending = ready < q.mIssued.load(std::memory_order_acquire);
     unsigned long long value = 0;
     if (pname == 0x8867)            // QUERY_RESULT_AVAILABLE
     {
-        value = state == 1 ? 0 : 1;
+        value = pending ? 0 : 1;
+        gQStat[pending ? 4 : 3].fetch_add(1, std::memory_order_relaxed);
     }
     else if (pname == 0x8866)       // QUERY_RESULT
     {
-        if (state == 1)
+        if (pending)
         {
+            gQStat[6].fetch_add(1, std::memory_order_relaxed);
             return false;           // not there yet: the worker resolves it
         }
-        value = state == 2 ? q.mValue.load(std::memory_order_relaxed) : 1;      // never issued: report visible
-        if (state == 2)
-        {
-            q.mState.store(0, std::memory_order_release);
-        }
+        value = q.mValue.load(std::memory_order_relaxed);
+        queryResultTally(value != 0);
+        q.mValue.store(1, std::memory_order_relaxed);       // read once: afterwards a query nobody is waiting for reports visible
     }
     else
     {
@@ -575,31 +638,20 @@ void enq_glProgramBinary(GLuint program, GLenum binaryFormat, const void* binary
 
 void enq_glBeginQuery(GLenum target, GLuint id)
 {
-    for (auto& e : tlsActiveQueries)
-    {
-        if (e.first == target) { e.second = id; goto done; }
-    }
-    tlsActiveQueries.push_back({ target, id });
-done:
-    struct A { GLenum target; GLuint id; } a = { target, id };
+    // occlusion queries are the ones the viewer waits for; the others (timers) are answered as before
+    const bool occlusion = target == 0x8914 || target == 0x8C2F || target == 0x8D6A;
+    queryMarkSync(id, !occlusion);
+    struct A { GLenum target; GLuint id; U64 gen; } a = { target, id, occlusion ? queryBegin(id) : 0 };
     push(OP_glBeginQuery, &a, sizeof(a));
 }
 void enq_glEndQuery(GLenum target)
 {
-    for (auto& e : tlsActiveQueries)
-    {
-        if (e.first == target)
-        {
-            queryPending(e.second);
-            break;
-        }
-    }
     struct A { GLenum target; } a = { target };
     push(OP_glEndQuery, &a, sizeof(a));
 }
 void enq_glQueryCounter(GLuint id, GLenum target)
 {
-    queryPending(id);
+    queryMarkSync(id, true);
     struct A { GLuint id; GLenum target; } a = { id, target };
     push(OP_glQueryCounter, &a, sizeof(a));
 }
@@ -624,6 +676,20 @@ struct Blob
     const U8* mData = nullptr;
     size_t mSize = 0;
     void* mFree = nullptr;
+    Blob() = default;
+    Blob(const Blob&) = delete;                 // the heap copy has exactly one owner
+    Blob& operator=(const Blob&) = delete;
+    Blob(Blob&& o) noexcept : mData(o.mData), mSize(o.mSize), mFree(o.mFree) { o.mData = nullptr; o.mFree = nullptr; }
+    Blob& operator=(Blob&& o) noexcept
+    {
+        if (this != &o)
+        {
+            if (mFree) free(mFree);
+            mData = o.mData; mSize = o.mSize; mFree = o.mFree;
+            o.mData = nullptr; o.mFree = nullptr;
+        }
+        return *this;
+    }
     ~Blob() { if (mFree) free(mFree); }
 };
 Blob read_blob(Reader& r, U8 flags)
@@ -639,7 +705,7 @@ Blob read_blob(Reader& r, U8 flags)
     {
         b.mData = r.bytes(b.mSize);
     }
-    return b;
+    return std::move(b);
 }
 
 void run_tex(unsigned short op, Reader& r, U8 flags)
@@ -794,7 +860,15 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
         LLVkGL::on_glProgramBinary(program, format, b.mData, length);
         break;
     }
-    case OP_glBeginQuery: { const GLenum t = r.get<GLenum>(); const GLuint id = r.get<GLuint>(); LLVkGL::on_glBeginQuery(t, id); break; }
+    case OP_glBeginQuery:
+    {
+        const GLenum t = r.get<GLenum>();
+        const GLuint id = r.get<GLuint>();
+        const U64 gen = r.get<U64>();
+        setWorkerQueryGen(id, gen);
+        LLVkGL::on_glBeginQuery(t, id);
+        break;
+    }
     case OP_glEndQuery: { const GLenum t = r.get<GLenum>(); LLVkGL::on_glEndQuery(t); break; }
     case OP_glQueryCounter: { const GLuint id = r.get<GLuint>(); const GLenum t = r.get<GLenum>(); LLVkGL::on_glQueryCounter(id, t); break; }
     default:
@@ -823,9 +897,9 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     case CMD_PROGRAM_BIND:
     {
         LLVk::Program* p = r.get<LLVk::Program*>();
-        if (p && LLVkMirror::isReady())
+        if (LLVkMirror::isReady())
         {
-            LLVk::Renderer::instance().setProgram(p);
+            LLVk::Renderer::instance().setProgram(p);       // null unbinds
         }
         break;
     }
@@ -834,6 +908,11 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVk::Program* p = r.get<LLVk::Program*>();
         if (p)
         {
+            LLVk::Renderer& rr = LLVk::Renderer::instance();
+            if (rr.getProgram() == p)
+            {
+                rr.setProgram(nullptr);     // never leave the renderer pointing at a freed program
+            }
             p->destroy();
             delete p;
         }
@@ -973,6 +1052,17 @@ LONG crash_filter(EXCEPTION_POINTERS* info)
         snprintf(line, sizeof(line), "worker was replaying command %u of context %u; queue head %llu tail %llu; draw path breadcrumb %d (0..17 apply phases, 200+ prepare_draw, 210 before apply, 211 apply)\r\n",
                  (unsigned)gCurrentOp, (unsigned)gCurrentCtx, (unsigned long long)gHead.load(), (unsigned long long)gTail.load(), (int)LLVkMirror::gLastLap);
         out(line);
+        snprintf(line, sizeof(line), "threads that used the Vulkan layer since the worker started: %u (", (unsigned)LLVkMirror::gRendererTidCount);
+        out(line);
+        for (unsigned t = 0; t < 8 && t < LLVkMirror::gRendererTidCount; ++t)
+        {
+            snprintf(line, sizeof(line), "%lu ", (unsigned long)LLVkMirror::gRendererTids[t]);
+            out(line);
+        }
+        snprintf(line, sizeof(line), "); main thread %lu, worker thread %lu\r\n", gMainTid, gWorkerTid);
+        out(line);
+        snprintf(line, sizeof(line), "debug values: mProgram 0x%llX, slot %llu, cmd 0x%llX, ring mapped 0x%llX\r\n", LLVkMirror::gDbg[0], LLVkMirror::gDbg[1], LLVkMirror::gDbg[2], LLVkMirror::gDbg[3]);
+        out(line);
         void* frames[40] = {};
         const USHORT n = CaptureStackBackTrace(0, 40, frames, nullptr);
         // names and lines from the .pdb next to the exe, looked up inside the process
@@ -1101,6 +1191,7 @@ bool start()
     {
         gRing = (U8*)VirtualAlloc(nullptr, RING_BYTES, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         gPub = new PubQuery[QUERY_TABLE];
+        gWorkerGen = new unsigned long long[QUERY_TABLE]();
     }
     if (!gRing)
     {
@@ -1111,6 +1202,8 @@ bool start()
     gBeginsEnqueued.store(0);
     gBeginsDone.store(0);
     LLVkGL::register_main_context();
+    LLVkMirror::gRendererTidCount = 0;
+    LLVkMirror::gAsyncEpoch = LLVkMirror::gAsyncEpoch + 1;
     gRunning.store(true);
     gThread = CreateThread(nullptr, 0, workerMain, nullptr, 0, nullptr);
     if (!gThread)

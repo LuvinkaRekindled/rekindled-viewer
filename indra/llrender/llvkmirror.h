@@ -126,7 +126,22 @@ namespace LLVkMirror
     extern long long gPhaseTicks[PH_COUNT];
     extern bool gPhaseTiming;
     extern unsigned long gMainThreadId;
-    extern volatile int gLastLap;               // where the draw path last got to (printed by the async worker's crash report)         // set by beginFrame: the thread that draws the viewer's frames
+    extern volatile int gLastLap;
+    extern volatile unsigned long long gDbg[4];
+    // which threads have used the Vulkan layer since the async worker started (printed by the worker's crash report)
+    extern volatile unsigned gAsyncEpoch;
+    extern volatile unsigned long gRendererTids[8];
+    extern volatile unsigned gRendererTidCount;
+    void noteRendererThreadSlow();
+    inline void noteRendererThread()
+    {
+        static thread_local unsigned seen_epoch = 0;
+        if (seen_epoch != gAsyncEpoch)
+        {
+            seen_epoch = gAsyncEpoch;
+            noteRendererThreadSlow();
+        }
+    }               // where the draw path last got to (printed by the async worker's crash report)         // set by beginFrame: the thread that draws the viewer's frames
     inline bool onMainThread() { return __readgsdword(0x48) == gMainThreadId; }
     long long phaseNow();       // performance counter ticks
     const char* phaseName(int id);
