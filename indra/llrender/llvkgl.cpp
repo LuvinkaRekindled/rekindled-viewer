@@ -534,7 +534,8 @@ struct DrawStats
 };
 DrawStats sStats, sStatsLast;
 bool sVerifySnapshotPending = false;   // a snapshot render is being mirrored: report on it when its off-screen frame ends
-std::set<GLuint> sCurTargets;           // textures attached to the current draw framebuffer
+std::vector<GLuint> sCurTargets;        // textures attached to the current draw framebuffer
+GLuint sRecentFrameTargets[16] = {};    // cheap filter in front of sFrameTargets: ids inserted recently this frame
 U32 sCurTargetW = 1, sCurTargetH = 1;   // size of the first colour target of the current draw framebuffer
 // the per-draw statistics / pass graph are only gathered when asked for (they cost string work on every draw)
 const bool sStatsEnabled = getenv("LL_VK_STATS") != nullptr || getenv("LL_VK_DEBUG_SHADERS") != nullptr || getenv("LL_VK_VALIDATION") != nullptr;
@@ -809,6 +810,17 @@ Image* read_image()
 }
 
 // makes the renderer's render target match the GL draw framebuffer. Returns false if there is nothing to draw to.
+// remembers that a texture was rendered into this frame; the same few textures come back on every draw, so look in a small cache first
+static inline void note_frame_target(GLuint texture)
+{
+    GLuint& slot = sRecentFrameTargets[texture & 15];
+    if (slot != texture)
+    {
+        slot = texture;
+        sFrameTargets.insert(texture);
+    }
+}
+
 bool sync_target()
 {
     Renderer& r = Renderer::instance();
@@ -865,13 +877,13 @@ bool sync_target()
             break;
         }
         colors[count++] = img;
-        sFrameTargets.insert(fbo.mColor[buf - GL_COLOR_ATTACHMENT0].mTexture);
-        sCurTargets.insert(fbo.mColor[buf - GL_COLOR_ATTACHMENT0].mTexture);
+        note_frame_target(fbo.mColor[buf - GL_COLOR_ATTACHMENT0].mTexture);
+        sCurTargets.push_back(fbo.mColor[buf - GL_COLOR_ATTACHMENT0].mTexture);
     }
     if (fbo.mDepth.mTexture)
     {
-        sFrameTargets.insert(fbo.mDepth.mTexture);
-        sCurTargets.insert(fbo.mDepth.mTexture);
+        note_frame_target(fbo.mDepth.mTexture);
+        sCurTargets.push_back(fbo.mDepth.mTexture);
     }
     Image* depth = attachment_image(fbo.mDepth);
     if (sDbgMatch && sDbgNoDepth)
@@ -1114,7 +1126,7 @@ void sync_textures(Renderer& r, Program& program)
             if (sStatsEnabled)
             {
                 ++sFrameSampled[it->first];
-                if (sCurTargets.count(it->first))
+                if (std::find(sCurTargets.begin(), sCurTargets.end(), it->first) != sCurTargets.end())
                 {
                     ++sStats.mFeedback[program.getName() + " samples " + info.mSamplers[k].mName + " = tex " + std::to_string(it->first)];
                 }
@@ -2786,6 +2798,7 @@ void after_frame()
         }
     }
     sFrameTargets.clear();
+    memset(sRecentFrameTargets, 0, sizeof(sRecentFrameTargets));
     sFrameSampledLast = sFrameSampled;
     sFrameSampled.clear();
     sStatsLast = sStats;

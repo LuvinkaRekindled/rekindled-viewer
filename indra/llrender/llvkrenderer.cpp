@@ -1246,15 +1246,18 @@ U32 Renderer::allocUniform(U32 size)
 // is the depth attachment being written (a feedback loop), in which case a white stand-in is used.
 Image* Renderer::resolveTexture(size_t k, bool depth_ro, Image* depth_root)
 {
-    const SamplerInfo& s = mProgram->mInfo.mSamplers[k];
     const U32 unit = mProgram->mSamplerUnits[k];
     Image* img = unit < MAX_TEXTURE_UNITS ? mTextures[unit] : nullptr;
 
     VkImageViewType need = VK_IMAGE_VIEW_TYPE_2D;
-    if (s.mType.find("CubeArray") != std::string::npos) need = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
-    else if (s.mType.find("Cube") != std::string::npos) need = VK_IMAGE_VIEW_TYPE_CUBE;
-    else if (s.mType.find("2DArray") != std::string::npos) need = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    else if (s.mType.find("3D") != std::string::npos) need = VK_IMAGE_VIEW_TYPE_3D;
+    switch (k < mProgram->mSamplerClass.size() ? mProgram->mSamplerClass[k] : 0)      // classified once when the program was created
+    {
+    case 1: need = VK_IMAGE_VIEW_TYPE_CUBE; break;
+    case 2: need = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY; break;
+    case 3: need = VK_IMAGE_VIEW_TYPE_2D_ARRAY; break;
+    case 4: need = VK_IMAGE_VIEW_TYPE_3D; break;
+    default: break;
+    }
 
     if (img && depth_root && root_of(img) == depth_root && !depth_ro)
     {
@@ -1432,31 +1435,9 @@ void Renderer::applyState()
     // 5. vertex input
     if (mUseVertexInput)
     {
-        // general case: any number of bindings and attributes, recorded on every draw (the buffers can change)
-        VkVertexInputBindingDescription2EXT bindings[16] = {};
-        VkVertexInputAttributeDescription2EXT attrs[16] = {};
-        VkBuffer buffers[16] = {};
-        VkDeviceSize offsets[16] = {};
+        // general case: any number of bindings and attributes, compared with what was last recorded on every draw (the buffers can change)
         const U32 nb = std::min<U32>((U32)mVertexInput.mBindings.size(), 16);
         const U32 na = std::min<U32>((U32)mVertexInput.mAttributes.size(), 16);
-        for (U32 i = 0; i < nb; ++i)
-        {
-            bindings[i].sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT;
-            bindings[i].binding = i;
-            bindings[i].stride = mVertexInput.mBindings[i].mStride;
-            bindings[i].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-            bindings[i].divisor = 1;
-            buffers[i] = mVertexInput.mBindings[i].mBuffer;
-            offsets[i] = mVertexInput.mBindings[i].mOffset;
-        }
-        for (U32 i = 0; i < na; ++i)
-        {
-            attrs[i].sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT;
-            attrs[i].location = mVertexInput.mAttributes[i].mLocation;
-            attrs[i].binding = mVertexInput.mAttributes[i].mBinding;
-            attrs[i].format = mVertexInput.mAttributes[i].mFormat;
-            attrs[i].offset = mVertexInput.mAttributes[i].mOffset;
-        }
         bool same_format = mAppliedVertexInputValid && mAppliedVertexInput.mBindings.size() == mVertexInput.mBindings.size()
             && mAppliedVertexInput.mAttributes.size() == mVertexInput.mAttributes.size();
         bool same_buffers = same_format;
@@ -1475,13 +1456,41 @@ void Renderer::applyState()
         }
         if (!same_format)
         {
+            VkVertexInputBindingDescription2EXT bindings[16];
+            VkVertexInputAttributeDescription2EXT attrs[16];
+            for (U32 i = 0; i < nb; ++i)
+            {
+                bindings[i] = { VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT };
+                bindings[i].binding = i;
+                bindings[i].stride = mVertexInput.mBindings[i].mStride;
+                bindings[i].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+                bindings[i].divisor = 1;
+            }
+            for (U32 i = 0; i < na; ++i)
+            {
+                attrs[i] = { VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT };
+                attrs[i].location = mVertexInput.mAttributes[i].mLocation;
+                attrs[i].binding = mVertexInput.mAttributes[i].mBinding;
+                attrs[i].format = mVertexInput.mAttributes[i].mFormat;
+                attrs[i].offset = mVertexInput.mAttributes[i].mOffset;
+            }
             vkCmdSetVertexInputEXT(mCmd, nb, nb ? bindings : nullptr, na, attrs);
         }
         if (nb && !(same_format && same_buffers))
         {
+            VkBuffer buffers[16];
+            VkDeviceSize offsets[16];
+            for (U32 i = 0; i < nb; ++i)
+            {
+                buffers[i] = mVertexInput.mBindings[i].mBuffer;
+                offsets[i] = mVertexInput.mBindings[i].mOffset;
+            }
             vkCmdBindVertexBuffers(mCmd, 0, nb, buffers, offsets);
         }
-        mAppliedVertexInput = mVertexInput;
+        if (!(same_format && same_buffers))
+        {
+            mAppliedVertexInput = mVertexInput;
+        }
         mAppliedVertexInputValid = true;
     }
     else
