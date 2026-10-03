@@ -270,6 +270,11 @@ public:
     // Submits what the frame has recorded so far, waits, and keeps recording (render targets are kept; the next pass
     // loads rather than clears). Use before a readback that must see this frame's results.
     bool flushAndRestart();
+    // counters the readback cache and the emulated fences use: anything that changes image contents bumps the first, every flushAndRestart the second
+    U64 modificationCount() const { return mModCount; }
+    U64 flushCount() const { return mFlushCount; }
+    // makes every query recorded so far readable: finishes the current frame's work and collects the finished frames' results
+    void resolveQueries();
     // The rectangle (x, y, w, h) of one mip level and layer, tightly packed. Valid right after flushAndRestart().
     bool readbackRegion(Image& image, U32 mip, U32 layer, S32 x, S32 y, U32 w, U32 h, std::vector<U8>& texels);
     // debug: records copies of the given pixel rows of a colour image (level/layer of the view) into a host buffer, tightly packed, in the current frame
@@ -406,6 +411,7 @@ private:
     std::vector<U8> mOccBegun[Context::FRAMES_IN_FLIGHT];
     std::vector<U64> mTsSerial[Context::FRAMES_IN_FLIGHT];
     std::vector<U8> mTsIsEnd[Context::FRAMES_IN_FLIGHT];
+    U64 mModCount = 0, mFlushCount = 0;
     S32 mOccPending = -1;           // allocated, starts with the next draw
     S32 mOccActive = -1;            // begun inside the current pass
     std::vector<QueryResult> mQueryResults;
