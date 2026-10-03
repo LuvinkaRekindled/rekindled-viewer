@@ -57,6 +57,8 @@ namespace LLVkMirror
 
     // switch the mirror off (window closed, error); the viewer carries on with OpenGL only
     void shutdown();
+    // plays what is queued for the mirror thread and stops it (the viewer is quitting); GL calls after this run inline
+    void stopAsync();
 
 #if defined(LL_VULKAN)
     // the inline implementations of the frame calls (the worker thread runs these in async mode)

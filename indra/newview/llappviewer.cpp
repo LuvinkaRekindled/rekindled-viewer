@@ -2103,6 +2103,8 @@ void LLAppViewer::flushLFSIO()
 
 bool LLAppViewer::cleanup()
 {
+    LLVkMirror::stopAsync(); // <FS> the Vulkan mirror thread must be done before anything is torn down
+
 #if LL_VELOPACK
     // Apply any pending Velopack update before shutdown
     if (velopack_is_update_pending())

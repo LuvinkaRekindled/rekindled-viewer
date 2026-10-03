@@ -20,6 +20,7 @@ void LLVkMirror::armSnapshotCompare() {}
 void LLVkMirror::snapshotBoundary(S32) {}
 void LLVkMirror::presentFrame() {}
 void LLVkMirror::shutdown() {}
+void LLVkMirror::stopAsync() {}
 
 #else // LL_VULKAN
 
@@ -623,6 +624,11 @@ bool LLVkMirror::ensureReady()
     bench_init();
     LL_INFOS("VkMirror") << "Vulkan mirror ready" << LL_ENDL;
     return true;
+}
+
+void LLVkMirror::stopAsync()
+{
+    LLVkAsync::stop();
 }
 
 void LLVkMirror::shutdown()
