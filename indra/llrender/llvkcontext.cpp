@@ -690,6 +690,19 @@ bool Context::flushFrameAndWait()
     return ok;
 }
 
+bool Context::frameFinished(U64 n)
+{
+    if (n >= mFrameNumber)
+    {
+        return false;
+    }
+    if (mFrameNumber - n >= FRAMES_IN_FLIGHT)
+    {
+        return true;        // its slot has been reused, which waited for it
+    }
+    return vkGetFenceStatus(mDevice, mFrames[n % FRAMES_IN_FLIGHT].mFence) == VK_SUCCESS;
+}
+
 StagingAlloc Context::allocStaging(VkDeviceSize size, VkDeviceSize alignment)
 {
     Frame& f = mFrames[mFrameSlot];

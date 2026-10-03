@@ -144,6 +144,8 @@ public:
     VkCommandBuffer getCommandBuffer() const { return mFrames[mFrameSlot].mCmd; }
     VkSemaphore getAcquireSemaphore() const { return mFrames[mFrameSlot].mAcquire; }
     U64 getFrameNumber() const { return mFrameNumber; }
+    // true once the GPU has finished the frame that was the n-th to be submitted (false while it is still being recorded)
+    bool frameFinished(U64 n);
     U32 getFrameSlot() const { return mFrameSlot; }
     bool inFrame() const { return mInFrame; }
 

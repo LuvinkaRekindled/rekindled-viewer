@@ -28,6 +28,7 @@
 #include <memory>
 #include <unordered_map>
 #include <cstring>
+#include <thread>
 #include <cstdlib>
 #include <cmath>
 #include <algorithm>
@@ -557,6 +558,17 @@ Tex* bound_texture(GLenum target)
     const GLuint name = sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
     auto it = sGL.mTextures.find(name);
     return it == sGL.mTextures.end() ? nullptr : &it->second;
+}
+
+// which threads feed the mirror (LL_VK_VERIFY): counts by thread and hook name
+std::map<std::thread::id, std::map<std::string, U64>> sThreadCalls;
+std::thread::id sMainThread;
+
+void note_thread(const char* what)
+{
+    if (!LLVkVerify::gEnabled) return;
+    if (sMainThread == std::thread::id()) sMainThread = std::this_thread::get_id();      // the first hook to run is the main thread's
+    ++sThreadCalls[std::this_thread::get_id()][what];
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -1794,6 +1806,7 @@ void on_glPixelStorei(GLenum pname, GLint param)
 
 void on_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
 {
+    note_thread("glTexImage2D");
     Tex* t = bound_texture(target);
     if (!t || width <= 0 || height <= 0)
     {
@@ -1822,6 +1835,7 @@ void on_glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei w
 
 void on_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
 {
+    note_thread("glTexSubImage2D");
     Tex* t = bound_texture(target);
     if (t)
     {
@@ -1840,6 +1854,7 @@ void on_glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset
 
 void on_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
 {
+    note_thread("glCompressedTexImage2D");
     Tex* t = bound_texture(target);
     if (!t || width <= 0 || height <= 0)
     {
@@ -3335,6 +3350,7 @@ void on_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params)
 }
 
 // the running totals, for the log
+void report_syncs_and_threads();
 void report_getters_and_queries()
 {
     std::lock_guard<std::recursive_mutex> lock(gMutex);
@@ -3362,6 +3378,7 @@ void report_getters_and_queries()
         if (line.size() > 1500) { LL_INFOS("VkVerify") << "GETTERS:" << line << LL_ENDL; line.clear(); }
     }
     if (!line.empty()) LL_INFOS("VkVerify") << "GETTERS:" << line << LL_ENDL;
+    report_syncs_and_threads();
 }
 
 // at start-up: the limits and identity the viewer reads once, OpenGL against the Vulkan device
@@ -3392,6 +3409,74 @@ void verify_startup()
         line += buf;
     }
     LL_INFOS("VkVerify") << "limits (Vulkan must be at least as large as OpenGL, " << bad << " fall short):" << line << LL_ENDL;
+}
+
+
+// ---- sync objects and which threads feed the mirror ----
+namespace
+{
+struct SyncRec { U64 mFrame = 0; bool mInFrame = false; };
+std::unordered_map<GLsync, SyncRec> sSyncs;
+struct SyncTally
+{
+    U64 mCreated = 0, mPolls = 0, mPollAgree = 0, mGlDoneVkNot = 0, mVkDoneGlNot = 0, mBlockingWaits = 0, mServerWaits = 0, mUnknown = 0;
+} sST;
+}
+
+void on_glFenceSync(GLenum condition, GLbitfield flags, GLsync result)
+{
+    if (!LLVkVerify::gEnabled || !result) return;
+    SyncRec rec;
+    rec.mFrame = Context::instance().getFrameNumber();
+    rec.mInFrame = LLVkMirror::inFrame();
+    sSyncs[result] = rec;
+    ++sST.mCreated;
+}
+
+void on_glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout, GLenum result)
+{
+    if (!LLVkVerify::gEnabled) return;
+    auto it = sSyncs.find(sync);
+    if (it == sSyncs.end())
+    {
+        ++sST.mUnknown;
+        return;
+    }
+    if (timeout != 0)
+    {
+        ++sST.mBlockingWaits;        // GL waited until its own work was done; Vulkan would have to wait for its frame
+        return;
+    }
+    ++sST.mPolls;
+    const bool gl_done = result == 0x911A || result == 0x911C;      // ALREADY_SIGNALED, CONDITION_SATISFIED
+    const bool vk_done = !it->second.mInFrame || Context::instance().frameFinished(it->second.mFrame);
+    if (gl_done == vk_done) ++sST.mPollAgree;
+    else if (gl_done) ++sST.mGlDoneVkNot;
+    else ++sST.mVkDoneGlNot;
+}
+
+void on_glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout)
+{
+    if (LLVkVerify::gEnabled) ++sST.mServerWaits;
+}
+
+void on_glDeleteSync(GLsync sync)
+{
+    if (LLVkVerify::gEnabled) sSyncs.erase(sync);
+}
+
+void report_syncs_and_threads()
+{
+    LL_INFOS("VkVerify") << "SYNC: fences created " << sST.mCreated << ", polls " << sST.mPolls << " (GL and Vulkan agree " << sST.mPollAgree << ", GL done but Vulkan not " << sST.mGlDoneVkNot
+                         << ", Vulkan done but GL not " << sST.mVkDoneGlNot << "), blocking waits " << sST.mBlockingWaits << ", server-side waits " << sST.mServerWaits << ", unknown fences " << sST.mUnknown << LL_ENDL;
+    std::string line;
+    for (auto& t : sThreadCalls)
+    {
+        line += (t.first == sMainThread ? " main thread:" : " other thread:");
+        for (auto& c : t.second) line += " " + c.first + " x" + std::to_string(c.second) + ",";
+        line += ";";
+    }
+    LL_INFOS("VkVerify") << "THREADS feeding texture uploads into the mirror:" << line << LL_ENDL;
 }
 
 
