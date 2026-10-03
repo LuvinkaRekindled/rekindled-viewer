@@ -361,6 +361,17 @@ private:
     U32 mRingPeak = 0;                  // largest ring use of any frame since the last getRingStats()
     U32 mRingExhausted = 0;             // draws dropped because the ring was full
     UploadStats mUploadStats;
+public:
+    // LL_VK_PHASES diagnostics: how many indexed draws changed nothing but the draw command, and how many of those continued the previous draw's index range
+    struct DrawDiag { U32 mDraws = 0, mUnchanged = 0, mMergeable = 0; };
+    DrawDiag takeDrawDiag() { DrawDiag d = mDrawDiag; mDrawDiag = DrawDiag(); return d; }
+private:
+    DrawDiag mDrawDiag;
+    bool mDiagChanged = false;
+    VkBuffer mDiagLastIndexBuffer = VK_NULL_HANDLE;
+    VkDeviceSize mDiagLastIndexOffset = 0;
+    U64 mDiagLastIndexEnd = ~0ull;
+    S32 mDiagLastVertexOffset = 0;
     bool mDrawBlocked = false;          // applyState could not prepare the draw (ring full)
     U32 mDrawCount = 0;
     bool mStateApplied = false;     // dynamic state has been set at least once in this command buffer
