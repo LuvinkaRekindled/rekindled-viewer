@@ -15,11 +15,14 @@
 #if defined(LL_VULKAN)
 
 #include "llvkmirror.h"
+#include "llglslshader.h"
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
 
 #include <map>
 #include <mutex>
+#include <set>
+#include <cstdio>
 #include <tuple>
 #include <memory>
 #include <unordered_map>
@@ -321,6 +324,7 @@ struct Tex
     GLint mInternalFormat = 0;
     FormatMap mFormat;
     SamplerParams mSampler;
+    U32 mValidLevels = 0;               // contiguous mip levels from 0 that hold data (the rest would sample as black)
     GLenum mSwizzle[4] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };      // GL_TEXTURE_SWIZZLE_R..A
     bool mSwizzleSet = false;
     std::map<std::pair<U32, U32>, std::unique_ptr<Image>> mViews;     // (level, layer) -> render-target view
@@ -417,6 +421,7 @@ struct PerContext
     U32 mActiveUnit = 0;
     GLuint mDrawFbo = 0, mReadFbo = 0;
     GLuint mArrayBuffer = 0;
+    GLuint mUniformBuffer = 0;
     GLuint mPixelUnpackBuffer = 0;
     GLuint mVao = 0;
     GLint mUnpackAlignment = 4;
@@ -434,6 +439,7 @@ struct GLState
     F32 mConstAttrib[16][4];
 
     // draw state
+    bool mDepthClamp = false;
     bool mBlend = false, mDepthTest = false, mCull = false, mScissorTest = false, mStencilTest = false, mPolyOffset = false;
     GLenum mBlendSrcRGB = GL_ONE, mBlendDstRGB = GL_ZERO, mBlendSrcA = GL_ONE, mBlendDstA = GL_ZERO;
     GLenum mDepthFunc = GL_LESS;
@@ -455,7 +461,34 @@ struct GLState
 };
 
 GLState sGL;
+std::set<GLuint> sFrameTargets;         // textures rendered into during the current frame (for the debug dump)
+GLuint sUboBinding[4] = {};             // GL buffer bound to each named uniform block binding point
+std::map<GLuint, U32> sFrameSampled;    // textures read by draws this frame, with use counts
+std::set<GLuint> sDumpTargets;          // the set captured for the dump that is pending
+bool sDumpPending = false;
+std::map<GLuint, U32> sFrameSampledLast;
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
+// draw outcomes of the current frame, by reason (and by program for the skipped ones)
+struct DrawStats
+{
+    U32 mDone = 0, mNoProgram = 0, mNoTarget = 0, mNoVertexInput = 0, mNoElement = 0, mRendererRefused = 0, mNotInFrame = 0;
+    std::map<std::string, U32> mDonePerProgram;
+    std::map<std::string, U32> mSkippedPerProgram;
+    std::map<std::string, std::string> mSamplerInfo;    // program + sampler -> what is bound there (lighting related programs only)
+    std::map<std::string, U32> mFeedback;           // draws that sample a texture that is also a render target of the draw
+    std::map<std::string, U32> mGraph;              // draws per "program -> targets <- sampled textures" (the frame's passes)
+    std::vector<std::string> mGraphOrder;           // the keys of mGraph in order of first appearance
+    std::vector<std::string> mBackbufferEvents;     // draws and clears that target the default framebuffer, in order
+};
+DrawStats sStats, sStatsLast;
+std::set<GLuint> sCurTargets;           // textures attached to the current draw framebuffer
+U32 sCurTargetW = 1, sCurTargetH = 1;   // size of the first colour target of the current draw framebuffer
+bool sDbgMatch = false;                 // the draw being prepared belongs to a program the debug filter selects
+bool sDbgNoDepth = false, sDbgNoDepthWrite = false, sDbgNoDepthTest = false, sDbgNoBlend = false, sDbgNoCull = false, sDbgNoScissor = false,
+     sDbgFullMask = false, sDbgNoFeedback = false;      // debug draw state overrides from <work>\vk-debug.txt
+int sDbgMode = 0;                       // debug shader mode from <work>\vk-debug.txt (0 = off)
+std::string sDbgFilter;                 // programs whose name contains this get the mode
+std::string sDbgSampler;                // sampler shown by mode 2
 bool sHasDepth = false;             // does the current render target have a depth attachment
 
 Vao& current_vao()
@@ -557,10 +590,19 @@ bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U3
     {
         return false;
     }
+    for (auto& kv : sGL.mTextures)
+    {
+        if (&kv.second == &t)
+        {
+            Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(kv.first));
+            break;
+        }
+    }
     t.mTarget = canonical;
     t.mWidth = w;
     t.mHeight = h;
     t.mDepth = depth;
+    t.mValidLevels = 0;
     t.mLevels = td.mMips;
     t.mInternalFormat = internal_format;
     t.mFormat = fm;
@@ -587,6 +629,10 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
     if (!t.mImage.valid() || level < 0 || (U32)level >= t.mLevels)
     {
         return;
+    }
+    if ((U32)level == t.mValidLevels)
+    {
+        ++t.mValidLevels;       // levels are normally defined in order, level 0 first
     }
     const void* src = pixel_source(pixels);
     if (!src)
@@ -691,6 +737,7 @@ Image* read_image()
 bool sync_target()
 {
     Renderer& r = Renderer::instance();
+    sCurTargets.clear();
     if (sCtx.mDrawFbo == 0)
     {
         Image* color = LLVkMirror::backbufferColor();
@@ -702,6 +749,8 @@ bool sync_target()
         Image* colors[1] = { color };
         r.setRenderTarget(colors, 1, depth);
         sHasDepth = depth != nullptr;
+        sCurTargetW = color->mExtent.width;
+        sCurTargetH = color->mExtent.height;
         return true;
     }
     auto it = sGL.mFbos.find(sCtx.mDrawFbo);
@@ -725,14 +774,30 @@ bool sync_target()
             break;
         }
         colors[count++] = img;
+        sFrameTargets.insert(fbo.mColor[buf - GL_COLOR_ATTACHMENT0].mTexture);
+        sCurTargets.insert(fbo.mColor[buf - GL_COLOR_ATTACHMENT0].mTexture);
+    }
+    if (fbo.mDepth.mTexture)
+    {
+        sFrameTargets.insert(fbo.mDepth.mTexture);
+        sCurTargets.insert(fbo.mDepth.mTexture);
     }
     Image* depth = attachment_image(fbo.mDepth);
+    if (sDbgMatch && sDbgNoDepth)
+    {
+        depth = nullptr;
+    }
     if (!count && !depth)
     {
         return false;
     }
     r.setRenderTarget(colors, count, depth);
     sHasDepth = depth != nullptr;
+    if (count)
+    {
+        sCurTargetW = colors[0]->mExtent.width;
+        sCurTargetH = colors[0]->mExtent.height;
+    }
     return true;
 }
 
@@ -820,7 +885,7 @@ SamplerDesc sampler_for(const Tex& t)
     d.mAnisotropy = sp.mAnisotropy;
     d.mCompare = sp.mCompare;
     d.mCompareOp = compare_op(sp.mCompareFunc);
-    const F32 last = (F32)std::max<S32>(0, (S32)t.mLevels - 1);
+    const F32 last = (F32)std::max<S32>(0, (S32)std::min(t.mLevels, std::max<U32>(1, t.mValidLevels)) - 1);
     d.mMinLod = (F32)std::max(0, sp.mBaseLevel);
     d.mMaxLod = mipmapped ? std::min(last, (F32)sp.mMaxLevel) : d.mMinLod + 0.25f;
     if (d.mMaxLod < d.mMinLod) d.mMaxLod = d.mMinLod;
@@ -838,14 +903,28 @@ void sync_draw_state(Renderer& r, bool has_depth)
     rs.mPolygonMode = sGL.mPolygonMode == GL_LINE ? VK_POLYGON_MODE_LINE : (sGL.mPolygonMode == GL_POINT ? VK_POLYGON_MODE_POINT : VK_POLYGON_MODE_FILL);
     rs.mLineWidth = sGL.mLineWidth;
     rs.mDepthBias = sGL.mPolyOffset;
+    rs.mDepthClamp = sGL.mDepthClamp;
     rs.mBiasConstant = sGL.mOffsetUnits;
     rs.mBiasSlope = sGL.mOffsetFactor;
+    // Vulkan's face-orientation area has the opposite sign of GL's for the same framebuffer coordinates (its y axis points down),
+    // and the mirror keeps GL's positive viewport, so GL's counter-clockwise front faces are clockwise here
+    rs.mFrontFace = VK_FRONT_FACE_CLOCKWISE;
+    if (sDbgMatch && sDbgNoCull)
+    {
+        rs.mCull = VK_CULL_MODE_NONE;
+    }
     r.setRasterState(rs);
 
     DepthStencilState ds;
     ds.mDepthTest = sGL.mDepthTest && has_depth;
-    ds.mDepthWrite = sGL.mDepthMask && has_depth;
+    // GL never writes depth while the depth test is disabled; Vulkan does when writes are enabled
+    ds.mDepthWrite = sGL.mDepthMask && sGL.mDepthTest && has_depth;
     ds.mDepthOp = compare_op(sGL.mDepthFunc);
+    if (sDbgMatch)
+    {
+        if (sDbgNoDepthWrite) ds.mDepthWrite = false;
+        if (sDbgNoDepthTest) ds.mDepthTest = false;
+    }
     ds.mStencilTest = false;        // the mirror's depth images carry no stencil yet
     r.setDepthStencilState(ds);
 
@@ -857,14 +936,20 @@ void sync_draw_state(Renderer& r, bool has_depth)
     bs.mDstAlpha = blend_factor(sGL.mBlendDstA);
     bs.mWriteMask = (sGL.mColorMask[0] ? VK_COLOR_COMPONENT_R_BIT : 0) | (sGL.mColorMask[1] ? VK_COLOR_COMPONENT_G_BIT : 0)
         | (sGL.mColorMask[2] ? VK_COLOR_COMPONENT_B_BIT : 0) | (sGL.mColorMask[3] ? VK_COLOR_COMPONENT_A_BIT : 0);
+    if (sDbgMatch)
+    {
+        if (sDbgNoBlend) bs.mEnable = false;
+        if (sDbgFullMask) bs.mWriteMask = 0xF;
+    }
     r.setBlendState(bs);
 
     if (sGL.mViewportSet)
     {
         r.setViewport(sGL.mViewport[0], sGL.mViewport[1], sGL.mViewport[2], sGL.mViewport[3]);
     }
-    r.setScissorEnabled(sGL.mScissorTest);
-    if (sGL.mScissorTest)
+    const bool scissor_on = sGL.mScissorTest && !(sDbgMatch && sDbgNoScissor);
+    r.setScissorEnabled(scissor_on);
+    if (scissor_on)
     {
         r.setScissor(sGL.mScissor[0], sGL.mScissor[1], sGL.mScissor[2], sGL.mScissor[3]);
     }
@@ -889,9 +974,33 @@ void sync_textures(Renderer& r, Program& program)
         else if (type.find("3D") != std::string::npos) cls = 4;
         else if (type.find("MS") != std::string::npos) cls = 5;
         auto it = sGL.mTextures.find(sCtx.mBound[unit][cls]);
+        {
+            static const char* const watch[] = { "Soften", "Windlight Sky", "Deferred Sun", "Deferred Light Shader", "Irradiance Gen", "Radiance Gen", "HUD", "Copy Depth", "Haze", "Tonemap" };
+            bool wanted = false;
+            for (const char* w : watch) if (program.getName().find(w) != std::string::npos) wanted = true;
+            if (wanted)
+            {
+                std::string what = "unit " + std::to_string(unit) + " tex " + std::to_string(sCtx.mBound[unit][cls]) + " ";
+                if (it == sGL.mTextures.end()) what += "UNBOUND";
+                else if (!it->second.mImage.valid()) what += "NO IMAGE";
+                else
+                {
+                    const Tex& tx = it->second;
+                    what += std::to_string(tx.mImage.mExtent.width) + "x" + std::to_string(tx.mImage.mExtent.height) + " vkfmt " + std::to_string((S32)tx.mImage.mFormat)
+                          + " levels " + std::to_string(tx.mValidLevels) + "/" + std::to_string(tx.mLevels) + " layers " + std::to_string(tx.mDepth)
+                          + " compare " + std::to_string(tx.mSampler.mCompare ? 1 : 0);
+                }
+                sStats.mSamplerInfo[program.getName() + " :: " + info.mSamplers[k].mName + " (" + type + ")"] = what;
+            }
+        }
         if (it != sGL.mTextures.end() && it->second.mImage.valid())
         {
             r.setTexture(unit, &it->second.mImage, r.getSampler(sampler_for(it->second)));
+            ++sFrameSampled[it->first];
+            if (sCurTargets.count(it->first))
+            {
+                ++sStats.mFeedback[program.getName() + " samples " + info.mSamplers[k].mName + " = tex " + std::to_string(it->first)];
+            }
         }
         else
         {
@@ -904,9 +1013,27 @@ void sync_textures(Renderer& r, Program& program)
 // buffers and vertex input
 //-----------------------------------------------------------------------------------------------------
 
-VkFormat vertex_format(GLint size, GLenum type, bool normalized, bool integer)
+// numeric_class: 'f' float, 'i' signed integer, 'u' unsigned integer (what the vertex shader declares)
+VkFormat vertex_format(GLint size, GLenum type, bool normalized, bool integer, char numeric_class)
 {
     const U32 n = (U32)std::max(1, std::min(size, 4));
+    if (numeric_class == 'i' || numeric_class == 'u')
+    {
+        // the shader reads integers: pick the integer format of the right signedness for the stored width
+        const bool sign = numeric_class == 'i';
+        const VkFormat b8s[4] = { VK_FORMAT_R8_SINT, VK_FORMAT_R8G8_SINT, VK_FORMAT_R8G8B8_SINT, VK_FORMAT_R8G8B8A8_SINT };
+        const VkFormat b8u[4] = { VK_FORMAT_R8_UINT, VK_FORMAT_R8G8_UINT, VK_FORMAT_R8G8B8_UINT, VK_FORMAT_R8G8B8A8_UINT };
+        const VkFormat b16s[4] = { VK_FORMAT_R16_SINT, VK_FORMAT_R16G16_SINT, VK_FORMAT_R16G16B16_SINT, VK_FORMAT_R16G16B16A16_SINT };
+        const VkFormat b16u[4] = { VK_FORMAT_R16_UINT, VK_FORMAT_R16G16_UINT, VK_FORMAT_R16G16B16_UINT, VK_FORMAT_R16G16B16A16_UINT };
+        const VkFormat b32s[4] = { VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT, VK_FORMAT_R32G32B32_SINT, VK_FORMAT_R32G32B32A32_SINT };
+        const VkFormat b32u[4] = { VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT, VK_FORMAT_R32G32B32A32_UINT };
+        switch (type)
+        {
+        case GL_BYTE: case GL_UNSIGNED_BYTE: return sign ? b8s[n - 1] : b8u[n - 1];
+        case GL_SHORT: case GL_UNSIGNED_SHORT: return sign ? b16s[n - 1] : b16u[n - 1];
+        default: return sign ? b32s[n - 1] : b32u[n - 1];
+        }
+    }
     switch (type)
     {
     case GL_FLOAT:
@@ -1019,7 +1146,9 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
             VertexInput::Attribute va;
             va.mLocation = loc;
             va.mBinding = binding;
-            va.mFormat = vertex_format(at.mSize, at.mType, at.mNormalized, at.mInteger);
+            const std::string& stype = info.mAttributeTypes[a];
+            const char numeric = stype.empty() ? 'f' : (stype[0] == 'u' ? 'u' : (stype[0] == 'i' ? 'i' : 'f'));
+            va.mFormat = vertex_format(at.mSize, at.mType, at.mNormalized, at.mInteger, numeric);
             va.mOffset = attr_offset;
             vi.mAttributes.push_back(va);
         }
@@ -1049,11 +1178,302 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
     return vi.mBindings.size() <= 16;
 }
 
+
+//-----------------------------------------------------------------------------------------------------
+// per-pass snapshots (debug): after the passes that matter, sampled rows of their render targets are read back from OpenGL and
+// recorded for Vulkan, so the first pass where the two disagree can be named
+//-----------------------------------------------------------------------------------------------------
+
+struct Snap
+{
+    U32 mIndex = 0;
+    std::string mLabel;
+    GLuint mTex = 0;
+    U32 mW = 0, mH = 0;
+    VkFormat mFmt = VK_FORMAT_UNDEFINED;
+    Buffer mBuf;
+    std::vector<F32> mGl;       // rows * w * 4 floats
+    U32 mRows = 0;
+};
+
+std::vector<Snap> sSnaps;
+bool sSnapActive = false;
+U32 sSnapStage = 0;
+U32 sSnapCounter = 0;
+std::string sSnapKey;
+std::map<GLuint, std::string> sSnapPending;    // colour targets of the pass in progress -> programs that drew into them
+
+std::vector<std::string> sSnapExtra;    // extra program name substrings from <work>\vk-snap-filter.txt ("*" = every program)
+
+bool snap_watched(const std::string& name)
+{
+    for (const std::string& e : sSnapExtra)
+    {
+        if (e == "*" ? (name != "UI Shader") : (name.find(e) != std::string::npos)) return true;
+    }
+    static const char* const watch[] = { "Soften", "Sun", "Light", "Windlight", "Tonemap", "Exposure", "Luminance", "Haze", "Blur", "Gaussian", "Copy",
+                                         "Reflection Mip", "Radiance", "Irradiance", "SMAA", "Glow", "Post", "Sharpening", "Deferred Emissive", "PBR Opaque", "Material Shader 8", "HUD" };
+    for (const char* w : watch) if (name.find(w) != std::string::npos) return true;
+    return false;
+}
+
+bool decode_texel(VkFormat f, const U8* p, double rgb[4])
+{
+    rgb[0] = rgb[1] = rgb[2] = 0;
+    rgb[3] = 1;
+    switch (f)
+    {
+    case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB:
+        for (int c = 0; c < 4; ++c) rgb[c] = p[c] / 255.0;
+        return true;
+    case VK_FORMAT_R16G16B16A16_SFLOAT:
+        for (int c = 0; c < 4; ++c) { U16 h; memcpy(&h, p + c * 2, 2); rgb[c] = half_to_float(h); }
+        return true;
+    case VK_FORMAT_R16G16B16A16_UNORM:
+        for (int c = 0; c < 4; ++c) { U16 h; memcpy(&h, p + c * 2, 2); rgb[c] = h / 65535.0; }
+        return true;
+    case VK_FORMAT_R16G16_SFLOAT:
+        for (int c = 0; c < 2; ++c) { U16 h; memcpy(&h, p + c * 2, 2); rgb[c] = half_to_float(h); }
+        return true;
+    case VK_FORMAT_R16_SFLOAT:
+        { U16 h; memcpy(&h, p, 2); rgb[0] = half_to_float(h); }
+        return true;
+    case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+    {
+        U32 packed; memcpy(&packed, p, 4);
+        for (int c = 0; c < 3; ++c)
+        {
+            const U32 mant_bits = c == 2 ? 5 : 6;
+            const U32 field = c == 0 ? (packed & 0x7FF) : c == 1 ? ((packed >> 11) & 0x7FF) : ((packed >> 22) & 0x3FF);
+            const U32 e = field >> mant_bits, m = field & ((1u << mant_bits) - 1);
+            rgb[c] = e == 0 ? (m / (double)(1u << mant_bits)) * pow(2.0, -14) : (1.0 + m / (double)(1u << mant_bits)) * pow(2.0, (double)e - 15);
+        }
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+void snap_flush_pending()
+{
+    if (sSnapPending.empty())
+    {
+        return;
+    }
+    Context& ctx = Context::instance();
+    Renderer& r = Renderer::instance();
+    for (auto& kv : sSnapPending)
+    {
+        if (sSnaps.size() >= 80 || !glGetTextureSubImage)
+        {
+            break;
+        }
+        auto it = sGL.mTextures.find(kv.first);
+        if (it == sGL.mTextures.end() || !it->second.mImage.valid())
+        {
+            continue;
+        }
+        Tex& t = it->second;
+        const VkFormat vf = t.mImage.mFormat;
+        double probe[4];
+        U8 zero[16] = {};
+        const FormatInfo fi = formatInfo(vf);
+        if (!decode_texel(vf, zero, probe) || !fi.mKnown || t.mImage.mExtent.width == 0)
+        {
+            continue;
+        }
+        Snap s;
+        s.mIndex = ++sSnapCounter;
+        s.mLabel = kv.second;
+        s.mTex = kv.first;
+        s.mW = t.mImage.mExtent.width;
+        s.mH = t.mImage.mExtent.height;
+        s.mFmt = vf;
+        s.mRows = 48;
+        std::vector<U32> rows;
+        for (U32 i = 0; i < s.mRows; ++i) rows.push_back(std::min(s.mH - 1, (U32)((U64)i * s.mH / s.mRows + s.mH / (2 * s.mRows))));
+        if (!ctx.createBuffer((VkDeviceSize)s.mRows * s.mW * fi.mBytesPerBlock, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Readback, s.mBuf))
+        {
+            continue;
+        }
+        if (!r.recordRowCopies(t.mImage, rows, s.mBuf.mBuffer))
+        {
+            ctx.destroyBuffer(s.mBuf);
+            continue;
+        }
+        s.mGl.assign((size_t)s.mRows * s.mW * 4, 0.f);
+        for (U32 i = 0; i < s.mRows; ++i)
+        {
+            glGetTextureSubImage(kv.first, 0, 0, (GLint)rows[i], 0, (GLsizei)s.mW, 1, 1, GL_RGBA, GL_FLOAT, (GLsizei)(s.mW * 16), &s.mGl[(size_t)i * s.mW * 4]);
+        }
+        sSnaps.push_back(std::move(s));
+    }
+    sSnapPending.clear();
+}
+
+// debug: compares the draw state the mirror tracked with what OpenGL really has right now (finds state calls the mirror does not see)
+void state_check(const std::string& program)
+{
+    static std::set<std::string> reported;
+    auto report = [&](const char* what, long tracked, long real) {
+        if (tracked == real) return;
+        const std::string key = program + "|" + what;
+        if (!reported.insert(key).second) return;
+        LL_INFOS("VkGL") << "STATE MISMATCH in '" << program << "': " << what << " tracked " << tracked << " GL " << real << LL_ENDL;
+    };
+    GLint v[4];
+    report("blend", sGL.mBlend, glIsEnabled(GL_BLEND) ? 1 : 0);
+    glGetIntegerv(GL_BLEND_SRC_RGB, v); report("blend src rgb", sGL.mBlendSrcRGB, v[0]);
+    glGetIntegerv(GL_BLEND_DST_RGB, v); report("blend dst rgb", sGL.mBlendDstRGB, v[0]);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, v); report("blend src alpha", sGL.mBlendSrcA, v[0]);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, v); report("blend dst alpha", sGL.mBlendDstA, v[0]);
+    glGetIntegerv(GL_BLEND_EQUATION_RGB, v); report("blend equation rgb (tracked: add)", GL_FUNC_ADD, v[0]);
+    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, v); report("blend equation alpha (tracked: add)", GL_FUNC_ADD, v[0]);
+    GLboolean cm[4];
+    glGetBooleanv(GL_COLOR_WRITEMASK, cm);
+    for (int i = 0; i < 4; ++i) report("color mask", sGL.mColorMask[i] ? 1 : 0, cm[i] ? 1 : 0);
+    report("depth test", sGL.mDepthTest, glIsEnabled(GL_DEPTH_TEST) ? 1 : 0);
+    GLboolean dm;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &dm); report("depth mask", sGL.mDepthMask ? 1 : 0, dm ? 1 : 0);
+    glGetIntegerv(GL_DEPTH_FUNC, v); report("depth func", sGL.mDepthFunc, v[0]);
+    report("cull", sGL.mCull, glIsEnabled(GL_CULL_FACE) ? 1 : 0);
+    glGetIntegerv(GL_CULL_FACE_MODE, v); report("cull mode", sGL.mCullFace, v[0]);
+    report("scissor test", sGL.mScissorTest, glIsEnabled(GL_SCISSOR_TEST) ? 1 : 0);
+    report("depth clamp", sGL.mDepthClamp, glIsEnabled(GL_DEPTH_CLAMP) ? 1 : 0);
+    GLint vp[4];
+    glGetIntegerv(GL_VIEWPORT, vp);
+    for (int i = 0; i < 4; ++i) report("viewport", sGL.mViewport[i], vp[i]);
+    glGetIntegerv(GL_SCISSOR_BOX, vp);
+    for (int i = 0; i < 4; ++i) report("scissor box", sGL.mScissor[i], vp[i]);
+    GLint fbo = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+    report("draw framebuffer", sCtx.mDrawFbo, fbo);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &fbo);
+}
+
+// called for every mirrored draw
+void snap_track(const std::string& program)
+{
+    if (snap_watched(program))
+    {
+        state_check(program);
+    }
+    std::string key = sCtx.mDrawFbo == 0 ? "S" : "F";
+    for (GLuint n : sCurTargets) key += std::to_string(n) + ",";
+    if (key != sSnapKey)
+    {
+        snap_flush_pending();
+        sSnapKey = key;
+    }
+    if (!snap_watched(program) || sCtx.mDrawFbo == 0)
+    {
+        return;
+    }
+    for (GLuint n : sCurTargets)
+    {
+        auto it = sGL.mTextures.find(n);
+        if (it == sGL.mTextures.end() || !it->second.mImage.valid() || it->second.mImage.mAspect != VK_IMAGE_ASPECT_COLOR_BIT)
+        {
+            continue;
+        }
+        std::string& label = sSnapPending[n];
+        if (label.find(program) == std::string::npos && label.size() < 120)
+        {
+            label += (label.empty() ? "" : " + ") + program;
+        }
+    }
+}
+
+void snap_evaluate()
+{
+    if (sSnaps.empty())
+    {
+        return;
+    }
+    Context::instance().waitIdle();
+    for (Snap& s : sSnaps)
+    {
+        const FormatInfo fi = formatInfo(s.mFmt);
+        double gsum[4] = {}, vsum[4] = {}, diff = 0;
+        size_t n = 0;
+        for (U32 i = 0; i < s.mRows; ++i)
+        {
+            for (U32 x = 0; x < s.mW; x += 4)
+            {
+                double rgb[4];
+                if (!decode_texel(s.mFmt, (const U8*)s.mBuf.mMapped + ((size_t)i * s.mW + x) * fi.mBytesPerBlock, rgb)) continue;
+                const F32* g = &s.mGl[((size_t)i * s.mW + x) * 4];
+                for (int c = 0; c < 4; ++c)
+                {
+                    gsum[c] += g[c]; vsum[c] += rgb[c];
+                    if (c < 3) diff += fabs(g[c] - rgb[c]);
+                }
+                ++n;
+            }
+        }
+        if (n)
+        {
+            LL_INFOS("VkGL") << "SNAP #" << s.mIndex << " tex " << s.mTex << " " << s.mW << "x" << s.mH << " vkfmt " << (S32)s.mFmt << " [" << s.mLabel << "]: GL mean ("
+                             << gsum[0] / n << "," << gsum[1] / n << "," << gsum[2] / n << " a " << gsum[3] / n << ") VK mean (" << vsum[0] / n << "," << vsum[1] / n << ","
+                             << vsum[2] / n << " a " << vsum[3] / n << ") absdiff " << diff / (n * 3) << LL_ENDL;
+        }
+        Context::instance().destroyBuffer(s.mBuf);
+    }
+    sSnaps.clear();
+}
+
+} // anonymous namespace
+
+// the mirror is about to close the frame: the last pass of the frame gets its snapshot
+void before_end_frame()
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    if (sSnapActive)
+    {
+        snap_flush_pending();
+        sSnapKey.clear();
+    }
+}
+
+void after_offscreen()
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    if (sSnapActive)
+    {
+        snap_evaluate();
+        if (++sSnapStage >= 2) { sSnapActive = false; sSnapStage = 0; }
+    }
+}
+
+
+namespace
+{
+
+// hands the bound named uniform blocks to the renderer
+void sync_uniform_blocks(Renderer& r, std::vector<GLuint>& used_buffers)
+{
+    for (U32 i = 0; i < 4; ++i)
+    {
+        auto it = sUboBinding[i] ? sGL.mBuffers.find(sUboBinding[i]) : sGL.mBuffers.end();
+        if (it != sGL.mBuffers.end() && it->second.mVk.valid())
+        {
+            r.setUniformBuffer(i, it->second.mVk.mBuffer, it->second.mVk.mSize);
+            used_buffers.push_back(it->first);
+        }
+        else
+        {
+            r.setUniformBuffer(i, VK_NULL_HANDLE, 0);
+        }
+    }
+}
+
 // common work before a draw; returns false if the draw cannot be mirrored
 bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
 {
     if (!LLVkMirror::inFrame())
     {
+        ++sStats.mNotInFrame;
         return false;
     }
     Renderer& r = Renderer::instance();
@@ -1061,18 +1481,98 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
     if (!program || !program->isValid())
     {
         ++sDrawsSkipped;
+        ++sStats.mNoProgram;
         return false;
     }
+    sDbgMatch = !sDbgFilter.empty() && program->getName().find(sDbgFilter) != std::string::npos;
     if (!sync_target())
     {
         ++sDrawsSkipped;
+        ++sStats.mNoTarget;
+        ++sStats.mSkippedPerProgram[program->getName() + " (no target)"];
         return false;
     }
     sync_draw_state(r, sHasDepth);
     sync_textures(r, *program);
+    if (sSnapActive)
+    {
+        snap_track(program->getName());
+    }
+    if (program->hasUniform("ll_dbg_mode"))
+    {
+        S32 mode = 0, sampler = 0;
+        if (sDbgMode && program->getName().find(sDbgFilter) != std::string::npos)
+        {
+            mode = sDbgMode;
+            if (const std::vector<std::string>* names = findDebugSamplers(program->getName()))
+            {
+                auto sit = std::find(names->begin(), names->end(), sDbgSampler);
+                sampler = sit == names->end() ? 0 : (S32)(sit - names->begin());
+            }
+        }
+        const F32 size[2] = { (F32)sCurTargetW, (F32)sCurTargetH };
+        program->setInts("ll_dbg_mode", &mode, 1);
+        program->setInts("ll_dbg_sampler", &sampler, 1);
+        program->setFloats("ll_dbg_size", size, 2);
+    }
+    {
+        std::string key = program->getName() + " -> ";
+        if (sCtx.mDrawFbo == 0) key += "SCREEN";
+        for (GLuint tname : sCurTargets) key += std::to_string(tname) + " ";
+        key += "<- ";
+        const ProgramInfo& gi = program->getInfo();
+        for (size_t k = 0; k < gi.mSamplers.size(); ++k)
+        {
+            const U32 unit = program->getSamplerUnit(k);
+            if (unit >= 32) continue;
+            GLuint bound = 0;
+            for (U32 c = 0; c < 8 && !bound; ++c)
+            {
+                const std::string& ty = gi.mSamplers[k].mType;
+                const bool cube = ty.find("Cube") != std::string::npos, arr = ty.find("Array") != std::string::npos;
+                const U32 want = ty.find("CubeArray") != std::string::npos ? 2 : cube ? 1 : arr ? 3 : ty.find("3D") != std::string::npos ? 4 : 0;
+                bound = sCtx.mBound[unit][want];
+                break;
+            }
+            if (bound && sFrameTargets.count(bound)) key += std::to_string(bound) + " ";
+        }
+        auto git = sStats.mGraph.find(key);
+        if (git == sStats.mGraph.end())
+        {
+            sStats.mGraphOrder.push_back(key);
+            sStats.mGraph[key] = 1;
+        }
+        else
+        {
+            ++git->second;
+        }
+    }
+    if (sCtx.mDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
+    {
+        std::string e = program->getName();
+        if (e != "UI Shader" && e.compare(0, 3, "HUD") != 0)
+        {
+            const ProgramInfo& pi = program->getInfo();
+            for (size_t k = 0; k < pi.mSamplers.size(); ++k)
+            {
+                const U32 unit = program->getSamplerUnit(k);
+                if (unit >= 32) continue;
+                U32 cls = 0;
+                const std::string& ty = pi.mSamplers[k].mType;
+                if (ty.find("CubeArray") != std::string::npos) cls = 2;
+                else if (ty.find("Cube") != std::string::npos) cls = 1;
+                else if (ty.find("2DArray") != std::string::npos) cls = 3;
+                e += " [" + pi.mSamplers[k].mName + "=" + std::to_string(sCtx.mBound[unit][cls]) + "]";
+            }
+        }
+        sStats.mBackbufferEvents.push_back(e);
+    }
+    sync_uniform_blocks(r, used_buffers);
     if (!build_vertex_input(r, *program, vi, used_buffers))
     {
         ++sDrawsSkipped;
+        ++sStats.mNoVertexInput;
+        ++sStats.mSkippedPerProgram[program->getName() + " (vertex input)"];
         return false;
     }
     return true;
@@ -1315,6 +1815,7 @@ void on_glGenerateMipmap(GLenum target)
     if (t && t->mImage.valid())
     {
         Renderer::instance().generateMipmaps(t->mImage);
+        t->mValidLevels = t->mLevels;
     }
 }
 
@@ -1488,6 +1989,7 @@ void on_glBindBuffer(GLenum target, GLuint buffer)
     if (target == GL_ARRAY_BUFFER) sCtx.mArrayBuffer = buffer;
     else if (target == GL_ELEMENT_ARRAY_BUFFER) current_vao().mElementBuffer = buffer;
     else if (target == GL_PIXEL_UNPACK_BUFFER) sCtx.mPixelUnpackBuffer = buffer;
+    else if (target == GL_UNIFORM_BUFFER) sCtx.mUniformBuffer = buffer;
 }
 
 static GLuint buffer_for_target(GLenum target)
@@ -1495,6 +1997,7 @@ static GLuint buffer_for_target(GLenum target)
     if (target == GL_ARRAY_BUFFER) return sCtx.mArrayBuffer;
     if (target == GL_ELEMENT_ARRAY_BUFFER) return current_vao().mElementBuffer;
     if (target == GL_PIXEL_UNPACK_BUFFER) return sCtx.mPixelUnpackBuffer;
+    if (target == GL_UNIFORM_BUFFER) return sCtx.mUniformBuffer;
     return 0;
 }
 
@@ -1541,7 +2044,18 @@ void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const v
 
 void on_glBindBufferBase(GLenum target, GLuint index, GLuint buffer)
 {
-    (void)target; (void)index; (void)buffer;     // uniform buffers are not mirrored yet
+    if (target == GL_UNIFORM_BUFFER)
+    {
+        sCtx.mUniformBuffer = buffer;
+        if (buffer)
+        {
+            sGL.mBuffers[buffer];
+        }
+        if (index < 4)
+        {
+            sUboBinding[index] = buffer;
+        }
+    }
 }
 
 void on_glGenVertexArrays(GLsizei n, GLuint* arrays)
@@ -1625,7 +2139,15 @@ void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
     Renderer& r = Renderer::instance();
     r.setVertexInput(vi);
     r.setTopology(topology(mode));
-    r.draw((U32)count, (U32)first);
+    if (r.draw((U32)count, (U32)first))
+    {
+        ++sStats.mDone;
+        ++sStats.mDonePerProgram[r.getProgram()->getName()];
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
     mark_used(used, 0);
     ++sDraws;
 }
@@ -1643,6 +2165,8 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     if (eit == sGL.mBuffers.end() || !eit->second.mVk.valid())
     {
         ++sDrawsSkipped;
+        ++sStats.mNoElement;
+        ++sStats.mSkippedPerProgram[Renderer::instance().getProgram()->getName() + " (no index buffer)"];
         return;
     }
     const VkIndexType itype = type == GL_UNSIGNED_INT ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
@@ -1651,7 +2175,15 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     r.setVertexInput(vi);
     r.setTopology(topology(mode));
     r.setIndexBuffer(eit->second.mVk.mBuffer, 0, itype);
-    r.drawIndexed((U32)count, (U32)((U64)indices / index_bytes), 0);
+    if (r.drawIndexed((U32)count, (U32)((U64)indices / index_bytes), 0))
+    {
+        ++sStats.mDone;
+        ++sStats.mDonePerProgram[r.getProgram()->getName()];
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
     mark_used(used, vao.mElementBuffer);
     ++sDraws;
 }
@@ -1670,6 +2202,7 @@ static void set_cap(GLenum cap, bool on)
     case GL_SCISSOR_TEST: sGL.mScissorTest = on; break;
     case GL_STENCIL_TEST: sGL.mStencilTest = on; break;
     case GL_POLYGON_OFFSET_FILL: sGL.mPolyOffset = on; break;
+    case GL_DEPTH_CLAMP: sGL.mDepthClamp = on; break;
     default: break;
     }
 }
@@ -1729,6 +2262,10 @@ void on_glClear(GLbitfield mask)
     {
         return;
     }
+    if (sCtx.mDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
+    {
+        sStats.mBackbufferEvents.push_back(std::string("CLEAR mask ") + std::to_string(mask) + " scissor " + (sGL.mScissorTest ? "on" : "off"));
+    }
     U32 bits = 0;
     if ((mask & GL_COLOR_BUFFER_BIT) && (sGL.mColorMask[0] || sGL.mColorMask[1] || sGL.mColorMask[2] || sGL.mColorMask[3])) bits |= CLEAR_COLOR;
     if ((mask & GL_DEPTH_BUFFER_BIT) && sGL.mDepthMask) bits |= CLEAR_DEPTH;
@@ -1736,6 +2273,430 @@ void on_glClear(GLbitfield mask)
     {
         Renderer::instance().clear(bits, sGL.mClearColor, 1.f, 0);
     }
+}
+
+//-----------------------------------------------------------------------------------------------------
+// debug dump of the render targets of a frame (trigger: create the file <work>\vk-dump.trigger)
+//-----------------------------------------------------------------------------------------------------
+
+namespace
+{
+
+U32 crc32_update(U32 crc, const U8* data, size_t n)
+{
+    static U32 table[256];
+    static bool init = false;
+    if (!init)
+    {
+        for (U32 i = 0; i < 256; ++i)
+        {
+            U32 c = i;
+            for (int k = 0; k < 8; ++k) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+            table[i] = c;
+        }
+        init = true;
+    }
+    crc = ~crc;
+    for (size_t i = 0; i < n; ++i) crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    return ~crc;
+}
+
+void put_be32(std::vector<U8>& v, U32 x)
+{
+    v.push_back((U8)(x >> 24)); v.push_back((U8)(x >> 16)); v.push_back((U8)(x >> 8)); v.push_back((U8)x);
+}
+
+void png_chunk(std::vector<U8>& out, const char* type, const std::vector<U8>& data)
+{
+    put_be32(out, (U32)data.size());
+    std::vector<U8> body(type, type + 4);
+    body.insert(body.end(), data.begin(), data.end());
+    out.insert(out.end(), body.begin(), body.end());
+    put_be32(out, crc32_update(0, body.data(), body.size()));
+}
+
+// minimal PNG writer: 8-bit RGBA, stored (uncompressed) deflate blocks
+bool write_png(const std::string& path, U32 w, U32 h, const std::vector<U8>& rgba)
+{
+    std::vector<U8> raw;
+    raw.reserve((size_t)(w * 4 + 1) * h);
+    for (U32 y = 0; y < h; ++y)
+    {
+        raw.push_back(0);
+        raw.insert(raw.end(), rgba.begin() + (size_t)y * w * 4, rgba.begin() + (size_t)(y + 1) * w * 4);
+    }
+    std::vector<U8> z = { 0x78, 0x01 };
+    U32 a = 1, b = 0;
+    for (U8 byte : raw) { a = (a + byte) % 65521; b = (b + a) % 65521; }
+    for (size_t pos = 0; pos < raw.size();)
+    {
+        const size_t n = std::min<size_t>(65535, raw.size() - pos);
+        z.push_back(pos + n >= raw.size() ? 1 : 0);
+        z.push_back((U8)(n & 0xFF)); z.push_back((U8)(n >> 8)); z.push_back((U8)(~n & 0xFF)); z.push_back((U8)((~n >> 8) & 0xFF));
+        z.insert(z.end(), raw.begin() + pos, raw.begin() + pos + n);
+        pos += n;
+    }
+    put_be32(z, (b << 16) | a);
+
+    std::vector<U8> png = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+    std::vector<U8> ihdr;
+    put_be32(ihdr, w); put_be32(ihdr, h);
+    ihdr.push_back(8); ihdr.push_back(6); ihdr.push_back(0); ihdr.push_back(0); ihdr.push_back(0);
+    png_chunk(png, "IHDR", ihdr);
+    png_chunk(png, "IDAT", z);
+    png_chunk(png, "IEND", {});
+    FILE* f = fopen(path.c_str(), "wb");
+    if (!f) return false;
+    fwrite(png.data(), 1, png.size(), f);
+    fclose(f);
+    return true;
+}
+
+U8 to_byte(F32 v)
+{
+    return (U8)(std::max(0.f, std::min(1.f, v)) * 255.f + 0.5f);
+}
+
+// converts the texels of an image to 8-bit RGBA for viewing. Depth and scalar formats become gray.
+bool to_rgba8(VkFormat f, U32 w, U32 h, const std::vector<U8>& in, std::vector<U8>& out)
+{
+    out.assign((size_t)w * h * 4, 255);
+    const size_t n = (size_t)w * h;
+    switch (f)
+    {
+    case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB:
+        memcpy(out.data(), in.data(), n * 4);
+        for (size_t i = 0; i < n; ++i) out[i * 4 + 3] = 255;       // alpha is data in the G-buffer; show colour only
+        return true;
+    case VK_FORMAT_R16G16B16A16_SFLOAT:
+        for (size_t i = 0; i < n; ++i)
+            for (int c = 0; c < 3; ++c) { U16 hv; memcpy(&hv, &in[(i * 4 + c) * 2], 2); out[i * 4 + c] = to_byte(half_to_float(hv)); }
+        return true;
+    case VK_FORMAT_R32G32B32A32_SFLOAT:
+        for (size_t i = 0; i < n; ++i)
+            for (int c = 0; c < 3; ++c) { F32 v; memcpy(&v, &in[(i * 4 + c) * 4], 4); out[i * 4 + c] = to_byte(v); }
+        return true;
+    case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_D32_SFLOAT:
+        for (size_t i = 0; i < n; ++i) { F32 v; memcpy(&v, &in[i * 4], 4); const U8 g = to_byte(v); out[i * 4] = out[i * 4 + 1] = out[i * 4 + 2] = g; }
+        return true;
+    case VK_FORMAT_R16G16_SFLOAT:
+        for (size_t i = 0; i < n; ++i)
+        {
+            U16 a, b; memcpy(&a, &in[i * 4], 2); memcpy(&b, &in[i * 4 + 2], 2);
+            out[i * 4] = to_byte(half_to_float(a)); out[i * 4 + 1] = to_byte(half_to_float(b)); out[i * 4 + 2] = 0;
+        }
+        return true;
+    case VK_FORMAT_R8_UNORM:
+        for (size_t i = 0; i < n; ++i) out[i * 4] = out[i * 4 + 1] = out[i * 4 + 2] = in[i];
+        return true;
+    case VK_FORMAT_R8G8_UNORM:
+        for (size_t i = 0; i < n; ++i) { out[i * 4] = in[i * 2]; out[i * 4 + 1] = in[i * 2 + 1]; out[i * 4 + 2] = 0; }
+        return true;
+    default:
+        return false;
+    }
+}
+
+} // anonymous namespace
+
+// called by the mirror once per frame after it presents: arms the dump if the trigger file exists
+void after_frame()
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    {
+        static U32 counter = 0;
+        if (debugShadersEnabled() && (++counter % 10) == 0)
+        {
+            int mode = 0;
+            char filter[128] = {}, sampler[128] = {};
+            std::string content;
+            if (FILE* f = fopen("<work>/vk-debug.txt", "rb"))
+            {
+                char buffer[512] = {};
+                const size_t n = fread(buffer, 1, sizeof(buffer) - 1, f);
+                content.assign(buffer, n);
+                fclose(f);
+                sscanf(content.c_str(), "%d %127s %127s", &mode, filter, sampler);
+            }
+            // the words after the first line switch draw state overrides on for the selected programs
+            const size_t eol = content.find('\n');
+            const std::string flags = eol == std::string::npos ? std::string() : content.substr(eol);
+            sDbgNoDepth = flags.find("nodepth") != std::string::npos;
+            sDbgNoDepthWrite = flags.find("nodepthwrite") != std::string::npos;
+            sDbgNoDepthTest = flags.find("nodepthtest") != std::string::npos;
+            sDbgNoBlend = flags.find("noblend") != std::string::npos;
+            sDbgNoCull = flags.find("nocull") != std::string::npos;
+            sDbgNoScissor = flags.find("noscissor") != std::string::npos;
+            sDbgFullMask = flags.find("fullmask") != std::string::npos;
+            if (mode != sDbgMode || sDbgFilter != filter || sDbgSampler != sampler)
+            {
+                sDbgMode = mode;
+                sDbgFilter = filter;
+                sDbgSampler = sampler;
+                LL_INFOS("VkGL") << "debug shader control: mode " << mode << " programs '" << filter << "' sampler '" << sampler << "'" << LL_ENDL;
+            }
+        }
+    }
+    if (!sDumpPending && GetFileAttributesA("<work>\\vk-dump.trigger") != INVALID_FILE_ATTRIBUTES)
+    {
+        DeleteFileA("<work>\\vk-dump.trigger");
+        sDumpTargets = sFrameTargets;
+        sDumpPending = true;
+        LL_INFOS("VkGL") << "debug dump armed: " << sDumpTargets.size() << " render target textures of the last frame" << LL_ENDL;
+    }
+    if (sSnapActive)
+    {
+        snap_evaluate();
+        if (++sSnapStage >= 2) { sSnapActive = false; sSnapStage = 0; }
+    }
+    if (sDumpPending && !sSnapActive)
+    {
+        sSnapActive = true;     // the next frame records per-pass snapshots
+        sSnapStage = 0;
+        sSnapExtra.clear();
+        if (FILE* f = fopen("<work>/vk-snap-filter.txt", "rb"))
+        {
+            char line[256];
+            while (fgets(line, sizeof(line), f))
+            {
+                std::string l = line;
+                while (!l.empty() && (l.back() == '\n' || l.back() == '\r' || l.back() == ' ')) l.pop_back();
+                if (!l.empty()) sSnapExtra.push_back(l);
+            }
+            fclose(f);
+        }
+    }
+    sFrameTargets.clear();
+    sFrameSampledLast = sFrameSampled;
+    sFrameSampled.clear();
+    sStatsLast = sStats;
+    sStats = DrawStats();
+}
+
+// Reads a texture level from real OpenGL (the viewer's own context, DSA so no bindings change) and from the
+// Vulkan mirror and logs the mean colour of each and how far apart they are.
+void compare_with_gl()
+{
+    Context& ctx = Context::instance();
+    ctx.waitIdle();
+    // render targets and the most used sampled textures of the last frame
+    std::vector<std::pair<U32, GLuint>> ranked;
+    for (auto& kv : sFrameSampledLast) ranked.push_back({ kv.second, kv.first });
+    std::sort(ranked.rbegin(), ranked.rend());
+    std::vector<GLuint> names(sDumpTargets.begin(), sDumpTargets.end());
+    for (size_t i = 0; i < ranked.size() && i < 14; ++i) names.push_back(ranked[i].second);
+    for (auto& kv : sFrameSampledLast)      // every array texture and every depth texture that was sampled (reflection probes, irradiance, shadow maps)
+    {
+        auto at = sGL.mTextures.find(kv.first);
+        if (at != sGL.mTextures.end() && at->second.mImage.valid()
+            && (at->second.mTarget == GL_TEXTURE_CUBE_MAP_ARRAY || at->second.mTarget == GL_TEXTURE_2D_ARRAY || at->second.mImage.mFormat == VK_FORMAT_D32_SFLOAT)
+            && std::find(names.begin(), names.end(), kv.first) == names.end())
+        {
+            names.push_back(kv.first);
+        }
+    }
+
+    LL_INFOS("VkGL") << "GL vs Vulkan comparison of " << names.size() << " textures (mean RGB over a sparse grid, then mean abs difference)" << LL_ENDL;
+    for (GLuint name : names)
+    {
+        auto it = sGL.mTextures.find(name);
+        if (it == sGL.mTextures.end() || !it->second.mImage.valid())
+        {
+            continue;
+        }
+        Tex& t = it->second;
+        const VkFormat vf = t.mImage.mFormat;
+        GLenum gl_format = GL_RGBA, gl_type = GL_UNSIGNED_BYTE;
+        U32 bpt = 4;
+        bool ok = false;
+        if (vf == VK_FORMAT_R8G8B8A8_UNORM || vf == VK_FORMAT_R8G8B8A8_SRGB) { ok = true; }
+        else if (vf == VK_FORMAT_R16G16B16A16_SFLOAT) { gl_type = GL_FLOAT; bpt = 16; ok = true; }
+        else if (vf == VK_FORMAT_D32_SFLOAT) { gl_format = GL_DEPTH_COMPONENT; gl_type = GL_FLOAT; bpt = 4; ok = true; }
+        else if (vf == VK_FORMAT_B10G11R11_UFLOAT_PACK32) { gl_type = GL_FLOAT; bpt = 16; ok = true; }
+        if (!ok || !glGetTextureImage)
+        {
+            if (t.mTarget == GL_TEXTURE_CUBE_MAP_ARRAY || t.mTarget == GL_TEXTURE_2D_ARRAY)
+            {
+                LL_INFOS("VkGL") << "cmp skipped array tex " << name << " " << t.mImage.mExtent.width << "x" << t.mImage.mExtent.height << " vk format " << (S32)vf
+                                 << " layers " << t.mDepth << " levels " << t.mImage.mMipLevels << LL_ENDL;
+            }
+            continue;
+        }
+        const bool is_array = t.mTarget == GL_TEXTURE_CUBE_MAP_ARRAY || t.mTarget == GL_TEXTURE_2D_ARRAY;
+        std::vector<U32> layer_list = { 0u };
+        if (is_array)
+        {
+            layer_list = { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 12u, 18u, 24u, 30u, 36u };
+        }
+        for (U32 layer : layer_list)
+        for (U32 level : { 0u, 2u })
+        {
+            if (level >= t.mImage.mMipLevels || layer >= std::max<U32>(1, t.mDepth))
+            {
+                continue;
+            }
+            const U32 w = std::max<U32>(1, t.mImage.mExtent.width >> level), h = std::max<U32>(1, t.mImage.mExtent.height >> level);
+            std::vector<U8> gl_texels((size_t)w * h * bpt, 0), vk_texels;
+            if (!glGetTextureSubImage)
+            {
+                continue;
+            }
+            glGetTextureSubImage(name, (GLint)level, 0, 0, (GLint)layer, (GLsizei)w, (GLsizei)h, 1, gl_format, gl_type, (GLsizei)gl_texels.size(), gl_texels.data());
+            if (!Renderer::instance().readbackImage(t.mImage, level, layer, vk_texels))
+            {
+                continue;
+            }
+            double gsum[3] = {}, vsum[3] = {}, diff = 0;
+            size_t n = 0;
+            const size_t step = std::max<size_t>(1, (size_t)w * h / 4000);
+            for (size_t px = 0; px < (size_t)w * h; px += step)
+            {
+                for (int c = 0; c < 3; ++c)
+                {
+                    double gv, vv;
+                    if (gl_type == GL_UNSIGNED_BYTE)
+                    {
+                        gv = gl_texels[px * 4 + (gl_format == GL_RGBA ? c : 0)] / 255.0;
+                        vv = vk_texels[px * 4 + (gl_format == GL_RGBA ? c : 0)] / 255.0;
+                    }
+                    else if (vf == VK_FORMAT_B10G11R11_UFLOAT_PACK32)
+                    {
+                        F32 a; memcpy(&a, &gl_texels[(px * 4 + c) * 4], 4);
+                        U32 packed; memcpy(&packed, &vk_texels[px * 4], 4);
+                        const U32 mant_bits = c == 2 ? 5 : 6;
+                        const U32 field = c == 0 ? (packed & 0x7FF) : c == 1 ? ((packed >> 11) & 0x7FF) : ((packed >> 22) & 0x3FF);
+                        const U32 e = field >> mant_bits, m = field & ((1u << mant_bits) - 1);
+                        gv = a;
+                        vv = e == 0 ? (m / (double)(1u << mant_bits)) * pow(2.0, -14) : (1.0 + m / (double)(1u << mant_bits)) * pow(2.0, (double)e - 15);
+                    }
+                    else if (vf == VK_FORMAT_D32_SFLOAT)
+                    {
+                        F32 a, b; memcpy(&a, &gl_texels[px * 4], 4); memcpy(&b, &vk_texels[px * 4], 4); gv = a; vv = b;
+                    }
+                    else
+                    {
+                        // RGBA16F in Vulkan, RGBA32F read from GL
+                        F32 a; memcpy(&a, &gl_texels[(px * 4 + c) * 4], 4);
+                        U16 hv; memcpy(&hv, &vk_texels[(px * 4 + c) * 2], 2);
+                        gv = a; vv = half_to_float(hv);
+                    }
+                    gsum[c] += gv; vsum[c] += vv; diff += fabs(gv - vv);
+                }
+                ++n;
+            }
+            if (!n) continue;
+            LL_INFOS("VkGL") << "cmp tex " << name << " " << t.mImage.mExtent.width << "x" << t.mImage.mExtent.height << " fmt " << (S32)vf << " layer " << layer << "/" << t.mDepth << " level " << level
+                             << (sFrameTargets.count(name) || sDumpTargets.count(name) ? " [target]" : " [sampled]") << ": GL mean ("
+                             << gsum[0] / n << "," << gsum[1] / n << "," << gsum[2] / n << ") VK mean (" << vsum[0] / n << "," << vsum[1] / n << ","
+                             << vsum[2] / n << ") absdiff " << diff / (n * 3) << " validLevels " << t.mValidLevels << "/" << t.mLevels << LL_ENDL;
+        }
+    }
+}
+
+// called by the mirror at the start of the next frame, outside any frame: writes the PNGs
+void run_dump()
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    if (!sDumpPending)
+    {
+        return;
+    }
+    sDumpPending = false;
+    {
+        const DrawStats& d = sStatsLast;
+        LL_INFOS("VkGL") << "draw stats of the last mirrored frame: drawn " << d.mDone << ", no program " << d.mNoProgram << ", no target " << d.mNoTarget
+                         << ", no vertex input " << d.mNoVertexInput << ", no index buffer " << d.mNoElement << ", refused by renderer " << d.mRendererRefused
+                         << ", outside frame " << d.mNotInFrame << LL_ENDL;
+        std::vector<std::pair<U32, std::string>> skipped, done;
+        for (auto& kv : d.mSkippedPerProgram) skipped.push_back({ kv.second, kv.first });
+        for (auto& kv : d.mDonePerProgram) done.push_back({ kv.second, kv.first });
+        std::sort(skipped.rbegin(), skipped.rend());
+        std::sort(done.rbegin(), done.rend());
+        for (size_t i = 0; i < skipped.size() && i < 40; ++i)
+            LL_INFOS("VkGL") << "  skipped " << skipped[i].first << "x " << skipped[i].second << LL_ENDL;
+        for (size_t i = 0; i < done.size() && i < 60; ++i)
+            LL_INFOS("VkGL") << "  drawn   " << done[i].first << "x " << done[i].second << LL_ENDL;
+        for (const std::string& key : d.mGraphOrder)
+        {
+            if (key.find("Shadow") == std::string::npos && key.find("UI Shader") == std::string::npos)
+                LL_INFOS("VkGL") << "  pass " << d.mGraph.at(key) << "x " << key << LL_ENDL;
+        }
+        for (auto& kv : d.mSamplerInfo)
+            LL_INFOS("VkGL") << "  sampler " << kv.first << " -> " << kv.second << LL_ENDL;
+        for (auto& kv : d.mFeedback)
+            LL_INFOS("VkGL") << "  feedback " << kv.second << "x " << kv.first << LL_ENDL;
+        // the default framebuffer's history this frame, repeats collapsed
+        {
+            std::string line;
+            size_t i = 0;
+            while (i < d.mBackbufferEvents.size())
+            {
+                size_t j = i;
+                while (j < d.mBackbufferEvents.size() && d.mBackbufferEvents[j] == d.mBackbufferEvents[i]) ++j;
+                line += d.mBackbufferEvents[i] + (j - i > 1 ? " x" + std::to_string(j - i) : std::string()) + " | ";
+                i = j;
+            }
+            LL_INFOS("VkGL") << "default framebuffer events (" << d.mBackbufferEvents.size() << "): " << line << LL_ENDL;
+        }
+    }
+    LLGLSLShader::mirrorCompareAll();
+    for (U32 i = 0; i < 4; ++i)
+    {
+        auto it = sUboBinding[i] ? sGL.mBuffers.find(sUboBinding[i]) : sGL.mBuffers.end();
+        if (it == sGL.mBuffers.end() || !it->second.mVk.valid() || !glGetNamedBufferSubData)
+        {
+            LL_INFOS("VkGL") << "UBO " << i << ": nothing bound" << LL_ENDL;
+            continue;
+        }
+        const U64 n = std::min<U64>(it->second.mSize, 65536);
+        std::vector<U8> gl_bytes(n);
+        glGetNamedBufferSubData(it->first, 0, (GLsizeiptr)n, gl_bytes.data());
+        U64 differing = 0, first = ~0ull;
+        for (U64 b = 0; b < n; ++b)
+        {
+            if (gl_bytes[b] != ((const U8*)it->second.mVk.mMapped)[b])
+            {
+                if (first == ~0ull) first = b;
+                ++differing;
+            }
+        }
+        U64 nonzero = 0;
+        for (U64 b = 0; b < n; ++b) nonzero += gl_bytes[b] != 0;
+        LL_INFOS("VkGL") << "UBO " << i << " (GL buffer " << it->first << ", " << it->second.mSize << " bytes): " << differing << " of " << n
+                         << " bytes differ from OpenGL's copy (first at " << (S64)first << "), " << nonzero << " non-zero bytes in GL's copy" << LL_ENDL;
+    }
+    compare_with_gl();
+    CreateDirectoryA("<work>\\vk-dump", nullptr);
+    Context& ctx = Context::instance();
+    ctx.waitIdle();
+    U32 written = 0;
+    for (GLuint name : sDumpTargets)
+    {
+        auto it = sGL.mTextures.find(name);
+        if (it == sGL.mTextures.end() || !it->second.mImage.valid())
+        {
+            continue;
+        }
+        Tex& t = it->second;
+        std::vector<U8> texels, rgba;
+        if (!Renderer::instance().readbackImage(t.mImage, 0, 0, texels))
+        {
+            continue;
+        }
+        if (!to_rgba8(t.mImage.mFormat, t.mImage.mExtent.width, t.mImage.mExtent.height, texels, rgba))
+        {
+            LL_INFOS("VkGL") << "dump: texture " << name << " has format " << (S32)t.mImage.mFormat << " (not converted)" << LL_ENDL;
+            continue;
+        }
+        // GL images are stored bottom row first; flip for viewing
+        const U32 w = t.mImage.mExtent.width, h = t.mImage.mExtent.height;
+        std::vector<U8> flipped(rgba.size());
+        for (U32 y = 0; y < h; ++y) memcpy(&flipped[(size_t)y * w * 4], &rgba[(size_t)(h - 1 - y) * w * 4], (size_t)w * 4);
+        char path[160];
+        snprintf(path, sizeof(path), "<work>\\vk-dump\\tex%u_%ux%u_fmt%d.png", name, w, h, (S32)t.mImage.mFormat);
+        if (write_png(path, w, h, flipped)) ++written;
+    }
+    LL_INFOS("VkGL") << "debug dump: wrote " << written << " images to <work>\\vk-dump" << LL_ENDL;
 }
 
 } // namespace LLVkGL

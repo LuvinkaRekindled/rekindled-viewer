@@ -12,6 +12,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <regex>
 #include <cctype>
 #include <map>
 #include <memory>
@@ -546,6 +547,61 @@ struct StageWork
 // compileProgram
 //-----------------------------------------------------------------------------------------------------
 
+namespace
+{
+std::map<std::string, std::vector<std::string>> gDebugSamplers;
+}
+
+const std::vector<std::string>* findDebugSamplers(const std::string& program_name)
+{
+    auto it = gDebugSamplers.find(program_name);
+    return it == gDebugSamplers.end() ? nullptr : &it->second;
+}
+
+bool debugShadersEnabled()
+{
+    static const bool enabled = getenv("LL_VK_DEBUG_SHADERS") != nullptr;
+    return enabled;
+}
+
+// Renames the fragment shader's main() and appends a new one that can overwrite frag_color: mode 1 solid magenta, 2 a sampler2D
+// shown at the pixel's screen position, 3 the original alpha as grey, 4 the fragment depth as grey. Returns the source unchanged
+// when the shader does not have the expected shape.
+static std::string debug_wrap_fragment(const std::string& src, std::vector<std::string>& sampler_names)
+{
+    static const std::regex main_re(R"(\bvoid\s+main\s*\(\s*(void)?\s*\))");
+    static const std::regex out_re(R"(\bout\s+vec4\s+frag_color\s*;)");
+    static const std::regex sampler_re(R"(\buniform\s+sampler2D\s+(\w+)\s*;)");
+    std::smatch m;
+    if (!std::regex_search(src, m, main_re) || !std::regex_search(src, out_re))
+    {
+        return src;
+    }
+    std::string out = src.substr(0, m.position(0)) + "void ll_dbg_original_main()" + src.substr(m.position(0) + m.length(0));
+    sampler_names.clear();
+    for (auto it = std::sregex_iterator(src.begin(), src.end(), sampler_re); it != std::sregex_iterator(); ++it)
+    {
+        const std::string name = (*it)[1];
+        if (std::find(sampler_names.begin(), sampler_names.end(), name) == sampler_names.end() && sampler_names.size() < 24)
+        {
+            sampler_names.push_back(name);
+        }
+    }
+    std::ostringstream add;
+    add << "\nuniform int ll_dbg_mode;\nuniform int ll_dbg_sampler;\nuniform vec2 ll_dbg_size;\n";
+    add << "void main()\n{\n    ll_dbg_original_main();\n";
+    add << "    if (ll_dbg_mode == 1) { frag_color = vec4(1.0, 0.0, 1.0, 1.0); }\n";
+    add << "    else if (ll_dbg_mode == 3) { frag_color = vec4(vec3(frag_color.a), 1.0); }\n";
+    add << "    else if (ll_dbg_mode == 4) { frag_color = vec4(vec3(gl_FragCoord.z), 1.0); }\n";
+    add << "    else if (ll_dbg_mode == 2)\n    {\n        vec2 uv = gl_FragCoord.xy / ll_dbg_size;\n";
+    for (size_t i = 0; i < sampler_names.size(); ++i)
+    {
+        add << "        " << (i ? "else " : "") << "if (ll_dbg_sampler == " << i << ") { frag_color = vec4(texture(" << sampler_names[i] << ", uv).rgb, 1.0); }\n";
+    }
+    add << "    }\n}\n";
+    return out + add.str();
+}
+
 bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
                     ProgramInfo& out, const std::string& dump_dir)
 {
@@ -582,6 +638,17 @@ bool compileProgram(const std::string& program_name, const std::vector<StageSour
         {
             return fail("preprocess failed for " + st.mName + ": " + pre.getInfoLog());
         }
+        if (st.mStage == StageSource::Fragment && debugShadersEnabled())
+        {
+            // on the preprocessed text, so declarations in inactive #if branches are not mistaken for real ones
+            std::vector<std::string> sampler_names;
+            const std::string wrapped = debug_wrap_fragment(preprocessed, sampler_names);
+            if (wrapped.size() != preprocessed.size())
+            {
+                preprocessed = wrapped;
+                gDebugSamplers[program_name] = sampler_names;
+            }
+        }
         w.mSplit = split_items(preprocessed);
         works.push_back(std::move(w));
     }
@@ -596,6 +663,7 @@ bool compileProgram(const std::string& program_name, const std::vector<StageSour
     U32 next_varying = 0;
     U32 next_frag_output = 0;
     std::set<std::string> attributes;
+    std::map<std::string, std::string> attribute_types;
 
     for (const StageWork& w : works)
     {
@@ -679,6 +747,7 @@ bool compileProgram(const std::string& program_name, const std::vector<StageSour
                         if (is_in)
                         {
                             attributes.insert(dc.mName);
+                            attribute_types[dc.mName] = d.mType;
                         }
                         else if (!varyings.count(dc.mName))
                         {
@@ -1046,6 +1115,7 @@ bool compileProgram(const std::string& program_name, const std::vector<StageSour
     {
         auto it = std::find(env.mAttributeNames.begin(), env.mAttributeNames.end(), a);
         out.mAttributeLocations.push_back(it == env.mAttributeNames.end() ? 0 : (U32)(it - env.mAttributeNames.begin()));
+        out.mAttributeTypes.push_back(attribute_types[a]);
     }
     for (const auto& kv : frag_outputs)
     {

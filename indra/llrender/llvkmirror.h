@@ -38,6 +38,15 @@ namespace LLVkMirror
     // Call just before the viewer swaps buffers: blits the mirrored backbuffer to the mirror window and presents
     void endFrame();
 
+    // Call where the viewer swaps buffers. Presents the mirrored backbuffer now even while the frame is held; whatever the
+    // viewer still renders until the frame is released (probe updates clear and reuse the default framebuffer) is recorded in
+    // a second, off-screen frame so it cannot disturb the image that was just presented.
+    void presentFrame();
+
+    // While held, endFrame() does nothing and a nested beginFrame() joins the open frame. The main loop holds the frame
+    // across display() and the work that follows it (reflection probe updates, snapshots), then releases it and ends it.
+    void holdFrame(bool hold);
+
     // switch the mirror off (window closed, error); the viewer carries on with OpenGL only
     void shutdown();
 

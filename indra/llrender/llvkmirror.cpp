@@ -15,6 +15,8 @@ bool LLVkMirror::ensureReady() { return false; }
 bool LLVkMirror::inFrame() { return false; }
 void LLVkMirror::beginFrame(S32, S32) {}
 void LLVkMirror::endFrame() {}
+void LLVkMirror::holdFrame(bool) {}
+void LLVkMirror::presentFrame() {}
 void LLVkMirror::shutdown() {}
 
 #else // LL_VULKAN
@@ -24,7 +26,7 @@ void LLVkMirror::shutdown() {}
 
 #include <cstdlib>
 
-namespace LLVkGL { extern bool gActive; extern std::recursive_mutex gMutex; }
+namespace LLVkGL { extern bool gActive; extern std::recursive_mutex gMutex; void after_frame(); void run_dump(); void before_end_frame(); void after_offscreen(); }
 
 namespace
 {
@@ -38,6 +40,8 @@ struct MirrorState
     bool mReady = false;
     bool mFailed = false;
     bool mInFrame = false;
+    bool mHold = false;
+    bool mOffscreen = false;        // the open frame has no swapchain image (work recorded after the present)
 
     HWND mWindow = nullptr;
     volatile bool mClosed = false;
@@ -122,8 +126,9 @@ bool create_backbuffer(U32 width, U32 height)
     }
     sMirror.mBackWidth = width;
     sMirror.mBackHeight = height;
+    ctx.setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)sMirror.mBackbuffer.mImage, "mirror backbuffer color");
+    ctx.setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)sMirror.mDepth.mImage, "mirror backbuffer depth");
     LL_INFOS("VkMirror") << "mirror backbuffer " << width << "x" << height << LL_ENDL;
-    (void)ctx;
     return true;
 }
 
@@ -228,6 +233,10 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
     std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
     if (sMirror.mInFrame)
     {
+        if (sMirror.mHold)
+        {
+            return;     // the main loop holds the frame open across display() and what follows it
+        }
         endFrame();     // the previous frame never reached its swap (early return, snapshot): present what it drew
     }
     sMirror.mInFrame = false;
@@ -249,6 +258,8 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
     LLVk::Context& ctx = LLVk::Context::instance();
     LLVk::Renderer& renderer = LLVk::Renderer::instance();
     LLVk::Swapchain& sc = sMirror.mSwapchain;
+
+    LLVkGL::run_dump();     // debug dump of the previous frame's render targets, if one was requested
 
     if (sMirror.mResized || sc.needsRecreate() || !sc.isValid())
     {
@@ -298,10 +309,48 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
     sMirror.mInFrame = true;
 }
 
+void LLVkMirror::holdFrame(bool hold)
+{
+    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    sMirror.mHold = hold;
+}
+
+void LLVkMirror::presentFrame()
+{
+    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    if (!sMirror.mReady || !sMirror.mInFrame || sMirror.mOffscreen)
+    {
+        return;
+    }
+    const bool held = sMirror.mHold;
+    sMirror.mHold = false;
+    endFrame();
+    sMirror.mHold = held;
+    if (!held || sMirror.mInFrame || !sMirror.mReady)
+    {
+        return;
+    }
+
+    // keep recording what the viewer does until the frame is released, without a swapchain image
+    LLVk::Context& ctx = LLVk::Context::instance();
+    LLVk::Renderer& renderer = LLVk::Renderer::instance();
+    VkCommandBuffer cmd = ctx.beginFrame(false);
+    if (cmd == VK_NULL_HANDLE)
+    {
+        ++sMirror.mSkipped;
+        return;
+    }
+    renderer.beginFrame(cmd, ctx.getFrameSlot());
+    LLVk::Image* colors[1] = { &sMirror.mBackbuffer };
+    renderer.setRenderTarget(colors, 1, &sMirror.mDepth);
+    sMirror.mInFrame = true;
+    sMirror.mOffscreen = true;
+}
+
 void LLVkMirror::endFrame()
 {
     std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
-    if (!sMirror.mReady || !sMirror.mInFrame)
+    if (!sMirror.mReady || !sMirror.mInFrame || sMirror.mHold)
     {
         return;
     }
@@ -311,6 +360,16 @@ void LLVkMirror::endFrame()
     LLVk::Renderer& renderer = LLVk::Renderer::instance();
     LLVk::Swapchain& sc = sMirror.mSwapchain;
     const U32 index = sMirror.mImageIndex;
+
+    LLVkGL::before_end_frame();
+    if (sMirror.mOffscreen)
+    {
+        sMirror.mOffscreen = false;
+        renderer.endFrame();
+        ctx.endFrame(VK_NULL_HANDLE, VK_NULL_HANDLE);
+        LLVkGL::after_offscreen();
+        return;
+    }
 
     LLVk::Image& target = sMirror.mTarget;
     target = LLVk::Image();
@@ -340,6 +399,7 @@ void LLVkMirror::endFrame()
     ctx.endFrame(ctx.getAcquireSemaphore(), sc.getRenderDone(index));
     sc.present(index, sc.getRenderDone(index));
     ++sMirror.mFrames;
+    LLVkGL::after_frame();
 }
 
 #endif // LL_VULKAN

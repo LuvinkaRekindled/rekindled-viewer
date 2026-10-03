@@ -17,6 +17,7 @@
 #include "llvkcontext.h"
 #include "llvkshader.h"
 
+#include <array>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -126,6 +127,7 @@ struct RasterState
     VkPolygonMode mPolygonMode = VK_POLYGON_MODE_FILL;
     F32 mLineWidth = 1.f;
     bool mDepthBias = false;
+    bool mDepthClamp = false;
     F32 mBiasConstant = 0.f;
     F32 mBiasSlope = 0.f;
     bool operator==(const RasterState& o) const;
@@ -210,6 +212,8 @@ class Renderer
 {
 public:
     static const U32 MAX_TEXTURE_UNITS = 32;
+    static const U32 UBO_SET_POOL = 64;
+    static const VkDeviceSize MAX_UNIFORM_RANGE_NAMED = 65536;
     static const U32 MAX_UNIFORM_RANGE = 16384;        // bytes visible to a draw's loose uniform block
 
     static Renderer& instance();
@@ -244,13 +248,21 @@ public:
     void setIndexBuffer(VkBuffer buffer, VkDeviceSize offset, VkIndexType type) { mIndexBuffer = buffer; mIndexOffset = offset; mIndexType = type; }
     void setTexture(U32 unit, Image* image, VkSampler sampler);
 
-    void draw(U32 vertex_count, U32 first_vertex);
-    void drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset);
+    // named uniform blocks (ReflectionProbes, GLTFJoints, GLTFNodes, GLTFMaterials = indices 0..3); a null buffer unbinds
+    void setUniformBuffer(U32 index, VkBuffer buffer, VkDeviceSize range);
+    bool draw(U32 vertex_count, U32 first_vertex);
+    bool drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset);
 
     VkSampler getSampler(const SamplerDesc& desc);
     Image* getWhiteTexture() { return &mWhite; }
     Program* getProgram() const { return mProgram; }
     bool inPass() const { return mRendering; }
+
+    // Reads one mip level / layer of an image into tightly packed texels of its own format. Only valid outside a frame
+    // (it waits for the GPU); used by the mirror's debug dump.
+    bool readbackImage(Image& image, U32 mip, U32 layer, std::vector<U8>& texels);
+    // debug: records copies of the given pixel rows of a colour image (level/layer of the view) into a host buffer, tightly packed, in the current frame
+    bool recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuffer buffer);
 
     // copies a rectangle between images (blit, so formats may differ); ends the current pass
     bool copyRegion(Image& src, S32 sx, S32 sy, Image& dst, U32 dst_mip, U32 dst_layer, S32 dx, S32 dy, S32 width, S32 height);
@@ -276,6 +288,7 @@ private:
     Renderer() = default;
 
     bool createLayouts();
+    Image* resolveTexture(size_t sampler_index, bool depth_ro, Image* depth_root);
     void transition(VkCommandBuffer cmd, Image& image, VkImageLayout layout);
     void withCommandBuffer(const std::function<void(VkCommandBuffer)>& record);
     void applyState();
@@ -289,10 +302,17 @@ private:
     VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorPool mPool = VK_NULL_HANDLE;
     VkDescriptorSet mSet0[Context::FRAMES_IN_FLIGHT] = {};
+    VkDescriptorPool mUboPool[Context::FRAMES_IN_FLIGHT] = {};
+    std::map<std::array<U64, 8>, VkDescriptorSet> mUboSets[Context::FRAMES_IN_FLIGHT];
+    VkBuffer mUbo[4] = {};
+    VkDeviceSize mUboRange[4] = {};
+    VkDescriptorSet mAppliedSet0 = VK_NULL_HANDLE;
+    VkDescriptorSet uboSet();
     VkPipelineCache mPipelineCache = VK_NULL_HANDLE;
     Buffer mRing[Context::FRAMES_IN_FLIGHT];
     Buffer mDummyUbo;
     Image mWhite;
+    Image mFallback[4];             // white stand-ins: 2D array, cube, cube array, 3D (mWhite is the 2D one)
     std::map<SamplerDesc, VkSampler> mSamplers;
 
     // per frame
@@ -316,6 +336,8 @@ private:
     bool mScissorEnabled = false;
     bool mViewportSet = false;
     bool mInBegin = false;
+    bool mDepthRO = false;          // depth attachment is also sampled: bound read-only
+    U32 mAppliedColorCount = 0xFFFF;
 
     // draw state
     Program* mProgram = nullptr;
