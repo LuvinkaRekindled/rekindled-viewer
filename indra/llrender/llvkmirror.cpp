@@ -33,6 +33,14 @@ namespace
 
 const wchar_t* const MIRROR_WINDOW_CLASS = L"LLVkMirrorWindow";
 
+// The mirror never drops a frame by default: OpenGL moves on regardless, so a dropped frame would lose incremental work such as a
+// reflection probe face. LL_VK_MIRROR_DROP=1 restores the non-blocking behaviour (frames are skipped while the GPU is behind).
+bool mirror_blocks()
+{
+    static const bool blocks = getenv("LL_VK_MIRROR_DROP") == nullptr;
+    return blocks;
+}
+
 struct MirrorState
 {
     bool mRequestChecked = false;
@@ -288,7 +296,7 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
     }
 
     // never stall the viewer: if the GPU is behind, this frame simply is not mirrored
-    VkCommandBuffer cmd = ctx.beginFrame(false);
+    VkCommandBuffer cmd = ctx.beginFrame(mirror_blocks() ? true : false);
     if (cmd == VK_NULL_HANDLE)
     {
         ++sMirror.mSkipped;
@@ -334,7 +342,7 @@ void LLVkMirror::presentFrame()
     // keep recording what the viewer does until the frame is released, without a swapchain image
     LLVk::Context& ctx = LLVk::Context::instance();
     LLVk::Renderer& renderer = LLVk::Renderer::instance();
-    VkCommandBuffer cmd = ctx.beginFrame(false);
+    VkCommandBuffer cmd = ctx.beginFrame(mirror_blocks() ? true : false);
     if (cmd == VK_NULL_HANDLE)
     {
         ++sMirror.mSkipped;
