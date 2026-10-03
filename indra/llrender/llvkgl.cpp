@@ -1892,6 +1892,10 @@ void on_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei w
     {
         return;
     }
+    if (level == 0 && !pixel_source(pixels) && t->mImage.valid() && t->mImage.mLayout == VK_IMAGE_LAYOUT_UNDEFINED)
+    {
+        t->mImage.mZeroOnFirstUse = true;       // allocation only: GL would hand back zeros
+    }
     upload_level(*t, target, level, 0, 0, 0, (U32)width, (U32)height, 1, format, type, pixels);
 }
 
@@ -1905,6 +1909,10 @@ void on_glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei w
     if (level == 0 && !ensure_image(*t, target, internalformat, (U32)width, (U32)height, (U32)depth))
     {
         return;
+    }
+    if (level == 0 && !pixel_source(pixels) && t->mImage.valid() && t->mImage.mLayout == VK_IMAGE_LAYOUT_UNDEFINED)
+    {
+        t->mImage.mZeroOnFirstUse = true;
     }
     upload_level(*t, target, level, 0, 0, 0, (U32)width, (U32)height, (U32)depth, format, type, pixels);
 }

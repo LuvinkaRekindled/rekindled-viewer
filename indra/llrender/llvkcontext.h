@@ -99,6 +99,9 @@ struct Image
     U32 mBaseMip = 0;                   // for such views: which mip level and layer of the owner they show
     U32 mBaseLayer = 0;
     VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED;     // tracked by the renderer
+    // GL textures that are allocated without data (render targets) read as zero in practice; Vulkan images start undefined.
+    // Set on such images: the renderer clears them the first time they leave the undefined layout.
+    bool mZeroOnFirstUse = false;
     bool valid() const { return mImage != VK_NULL_HANDLE; }
 };
 
