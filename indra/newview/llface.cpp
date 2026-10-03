@@ -2401,7 +2401,10 @@ F32 LLFace::getTextureVirtualSize()
 
 bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
 {
-    constexpr F32 PIXEL_AREA_UPDATE_PERIOD = 0.1f;
+    // <FS> rigged faces transform the bounding box of every joint they use, which makes them the expensive case; their result
+    // only feeds texture priorities, so refresh it less often
+    const F32 PIXEL_AREA_UPDATE_PERIOD = isState(LLFace::RIGGED) ? 0.25f : 0.1f;
+    // </FS>
     // this is an expensive operation and the result is valid (enough) for several frames
     // don't update every frame
     if (gFrameTimeSeconds - mLastPixelAreaUpdate < PIXEL_AREA_UPDATE_PERIOD)
