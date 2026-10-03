@@ -62,6 +62,7 @@ public:
     void setSamplerUnit(size_t sampler_index, U32 unit) { if (sampler_index < mSamplerUnits.size()) mSamplerUnits[sampler_index] = unit; }
     S32 findSampler(const std::string& name) const;
     U32 getSamplerUnit(size_t sampler_index) const { return sampler_index < mSamplerUnits.size() ? mSamplerUnits[sampler_index] : 0; }
+    U32 getSamplerClass(size_t sampler_index) const { return sampler_index < mSamplerClass.size() ? mSamplerClass[sampler_index] : 0; }
 
     S32 getSamplerBinding(const std::string& name) const;
     bool isDirty() const { return mDirty; }
@@ -80,11 +81,14 @@ private:
     std::unordered_map<std::string, size_t> mUniformIndex;
     std::unordered_map<std::string, U32> mSamplerIndex;
     std::vector<U32> mSamplerUnits;
+    std::vector<U8> mSamplerClass;      // 0 2D, 1 cube, 2 cube array, 3 2D array, 4 3D, 5 multisample (index into the GL per-unit texture bindings)
     std::vector<U8> mShadow;
     bool mDirty = true;
     U32 mRingOffset = 0;                // where this program's block was last written in the uniform ring
     U64 mRingFrame = ~0ull;             // frame number that offset belongs to
     std::map<PipelineKey, VkPipeline> mPipelines;
+    PipelineKey mLastKey;               // the key of the last lookup, answered without searching the map
+    VkPipeline mLastPipeline = VK_NULL_HANDLE;
 };
 
 struct VertexAttribute
@@ -348,6 +352,10 @@ private:
     VertexLayout mLayout;
     VertexInput mVertexInput;
     bool mUseVertexInput = false;
+    VertexInput mAppliedVertexInput;        // what the command buffer's dynamic vertex input state currently holds
+    bool mAppliedVertexInputValid = false;
+    struct PushedBinding { VkImageView mView; VkSampler mSampler; VkImageLayout mLayout; };
+    PushedBinding mPushed[MAX_TEXTURE_UNITS] = {};      // what each push-descriptor binding currently holds
     Buffer mVertexRing[Context::FRAMES_IN_FLIGHT];
     U32 mVertexRingUsed = 0;
     VkBuffer mVertexBuffer = VK_NULL_HANDLE;

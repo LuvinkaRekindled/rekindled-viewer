@@ -58,6 +58,25 @@ namespace LLVkMirror
     LLVk::Image* backbufferColor();
     LLVk::Image* backbufferDepth();
 
+    // CPU phase timers of the translation layer (benchmark mode only; PhaseTimer costs one branch when off)
+    enum Phase { PH_ALL_HOOKS, PH_UNIFORM, PH_DRAW, PH_D_TARGET, PH_D_STATE, PH_D_TEX, PH_D_UBO, PH_D_VERTEX, PH_D_APPLY, PH_D_STATS, PH_COUNT };
+    extern long long gPhaseTicks[PH_COUNT];
+    extern bool gPhaseTiming;
+    long long phaseNow();       // performance counter ticks
+    struct PhaseTimer
+    {
+        int mId;
+        long long mStart = 0;
+        explicit PhaseTimer(int id) : mId(gPhaseTiming ? id : -1) { if (mId >= 0) mStart = phaseNow(); }
+        ~PhaseTimer()
+        {
+            if (mId >= 0)
+            {
+                gPhaseTicks[mId] += phaseNow() - mStart;
+            }
+        }
+    };
+
     // benchmark (LL_VK_MIRROR_BENCH): true while the present frame is recording per-pass-kind GPU timestamps
     bool benchPhasesActive();
     // called before each mirrored draw while benchPhasesActive(): notes which kind of pass the draw belongs to

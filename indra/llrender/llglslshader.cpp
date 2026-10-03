@@ -438,6 +438,7 @@ void LLGLSLShader::mirrorBind()
 void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<double> values)
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
     std::lock_guard<std::recursive_mutex> mirror_lock(LLVkMirror::lock());
     if (!mVkProgram)
     {
@@ -479,6 +480,7 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
 void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data)
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
     std::lock_guard<std::recursive_mutex> mirror_lock(LLVkMirror::lock());
     if (!mVkProgram || !data)
     {
@@ -496,6 +498,7 @@ void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 co
 void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean transpose, U32 count, const GLfloat* data)
 {
     if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
     std::lock_guard<std::recursive_mutex> mirror_lock(LLVkMirror::lock());
     if (!mVkProgram || !data)
     {

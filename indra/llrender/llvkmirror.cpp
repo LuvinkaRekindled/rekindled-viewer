@@ -29,6 +29,18 @@ void LLVkMirror::shutdown() {}
 
 namespace LLVkGL { extern bool gActive; extern std::recursive_mutex gMutex; void after_frame(); void run_dump(); void before_end_frame(); void after_offscreen(); double take_hook_ms(); }
 
+namespace LLVkMirror
+{
+long long gPhaseTicks[PH_COUNT] = {};
+bool gPhaseTiming = false;
+long long phaseNow()
+{
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return now.QuadPart;
+}
+}
+
 namespace
 {
 
@@ -46,6 +58,8 @@ bool bench_enabled()
     static const bool enabled = getenv("LL_VK_MIRROR_BENCH") != nullptr;
     return enabled;
 }
+
+const char* const PHASE_NAMES[] = { "all hooks", "uniform hooks", "draw hooks", "draw: target", "draw: state", "draw: textures", "draw: uniform blocks", "draw: vertex input", "draw: renderer apply+record", "draw: debug stats" };
 
 // LL_VK_MIRROR_GLONLY=1 (with LL_VK_MIRROR_BENCH=1, without LL_VK_MIRROR): no Vulkan at all; only the GL side is timed, at the viewer's natural pace
 bool glonly_mode()
@@ -109,6 +123,7 @@ void bench_init()
         return;
     }
     sBench.mInit = true;
+    LLVkMirror::gPhaseTiming = !glonly_mode();
     glGenQueries(16, &sBench.mGlQ[0][0]);
     if (glonly_mode())
     {
@@ -146,6 +161,18 @@ void bench_log()
                         << (sBench.mVkBN ? sBench.mVkB / sBench.mVkBN : 0.0) << " ms | CPU recording into Vulkan " << sBench.mHook / std::max<U32>(1, sBench.mWallN)
                         << " ms/iter | CPU inside OpenGL calls " << sBench.mGlCpu / std::max<U32>(1, sBench.mWallN) << " ms/iter | CPU of display() up to the swap "
                         << (sBench.mDispN ? sBench.mDispCpu / sBench.mDispN : 0.0) << " ms | main thread CPU busy " << sBench.mThreadCpu / std::max<U32>(1, sBench.mWallN) << " ms/iter" << LL_ENDL;
+    if (LLVkMirror::gPhaseTiming)
+    {
+        LARGE_INTEGER freq;
+        QueryPerformanceFrequency(&freq);
+        std::string text;
+        for (int p = 0; p < LLVkMirror::PH_COUNT; ++p)
+        {
+            text += std::string(PHASE_NAMES[p]) + " " + std::to_string((double)LLVkMirror::gPhaseTicks[p] * 1000.0 / (double)freq.QuadPart / std::max<U32>(1, sBench.mWallN)).substr(0, 5) + " | ";
+            LLVkMirror::gPhaseTicks[p] = 0;
+        }
+        LL_INFOS("VkBench") << "BENCH translator CPU by phase (ms/iter; hooks include the draw phases, 'all hooks' also the unhooked-uniform and state calls): " << text << LL_ENDL;
+    }
     if (sBench.mPhaseFrames)
     {
         std::vector<std::pair<double, U32>> kinds;
