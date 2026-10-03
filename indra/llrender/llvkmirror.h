@@ -49,6 +49,9 @@ namespace LLVkMirror
 
     // A snapshot is about to render: with LL_VK_VERIFY set, compare each of its passes between GL and Vulkan and report on it afterwards
     void armSnapshotCompare();
+    // Snapshot experiment (setting FSVkSnapVariant): called before each display() a snapshot makes.
+    // 1 = flush what has been recorded and carry on, 2 = close the off-screen frame and open a new one, 3 = like 2 but also wait for the GPU.
+    void snapshotBoundary(S32 mode);
 
     // switch the mirror off (window closed, error); the viewer carries on with OpenGL only
     void shutdown();
