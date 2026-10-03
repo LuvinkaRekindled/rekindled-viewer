@@ -19,6 +19,9 @@ namespace LLVkVerify
     // GL has just filled gl_data with the (x, y, w, h) rectangle of the current read framebuffer
     void readPixels(int x, int y, int w, int h, unsigned int format, unsigned int type, const void* gl_data);
 
+    // a snapshot is about to render: compare every pass of it between GL and Vulkan (SNAP lines in the log)
+    void armSnapshot();
+
     // called where the viewer swaps buffers: compares the whole default framebuffer (every 300th frame or on request)
     void presentFrame();
 
@@ -30,11 +33,13 @@ namespace LLVkVerify
     do { if (LLVkVerify::gEnabled) LLVkVerify::readPixels((x), (y), (w), (h), (format), (type), (data)); } while (0)
 #define LL_VK_VERIFY_TEXIMAGE(target, level, format, type, data) \
     do { if (LLVkVerify::gEnabled) LLVkVerify::texImage((target), (level), (format), (type), (data)); } while (0)
+#define LL_VK_VERIFY_ARM_SNAPSHOT()     do { if (LLVkVerify::gEnabled) LLVkVerify::armSnapshot(); } while (0)
 
 #else
 
 #define LL_VK_VERIFY_READPIXELS(x, y, w, h, format, type, data) do {} while (0)
 #define LL_VK_VERIFY_TEXIMAGE(target, level, format, type, data) do {} while (0)
+#define LL_VK_VERIFY_ARM_SNAPSHOT() do {} while (0)
 
 #endif
 
