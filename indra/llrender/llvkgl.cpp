@@ -4156,6 +4156,7 @@ bool own_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLin
         case 0x8071: params[0] = (GLint)(t->mTarget == GL_TEXTURE_3D ? std::max<U32>(1, t->mDepth >> level) : std::max<U32>(1, t->mDepth)); break;
         case 0x1003: params[0] = t->mInternalFormat; break;
         case 0x86A1: params[0] = formatInfo(t->mImage.mFormat).mCompressed ? 1 : 0; break;
+        case 0x86A0: params[0] = (GLint)Renderer::compressedMipBytes(t->mImage, (U32)level); break;     // TEXTURE_COMPRESSED_IMAGE_SIZE
         default: break;
         }
     }
@@ -4325,11 +4326,34 @@ bool own_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, v
 
 bool own_glGetCompressedTexImage(GLenum target, GLint level, void* img)
 {
-    static bool said = false;
-    if (!said)
+    U8* dst = pack_destination(img);
+    Tex* t = bound_texture(target);
+    if (!dst || !t || !t->mImage.valid() || level < 0 || (U32)level >= t->mImage.mMipLevels)
     {
-        said = true;
-        LL_WARNS("VkGL") << "reading back a compressed texture is not supported while the mirror owns the resources" << LL_ENDL;
+        return true;
+    }
+    Renderer& r = Renderer::instance();
+    std::vector<U8> blocks;
+    if (!formatInfo(t->mImage.mFormat).mCompressed)
+    {
+        // generic compressed formats are stored as plain RGBA8 here, so there are no blocks to hand back
+        static bool said = false;
+        if (!said)
+        {
+            said = true;
+            LL_WARNS("VkGL") << "glGetCompressedTexImage on a texture the mirror stores uncompressed (generic compressed format)" << LL_ENDL;
+        }
+        return true;
+    }
+    if (LLVkMirror::inFrame() && !r.flushAndRestart())
+    {
+        return true;
+    }
+    U32 layer = 0;
+    if (target >= 0x8515 && target <= 0x851A) layer = target - 0x8515;
+    if (r.readbackCompressedMip(t->mImage, (U32)level, layer, blocks))
+    {
+        memcpy(dst, blocks.data(), blocks.size());
     }
     return true;
 }

@@ -277,6 +277,9 @@ public:
     void resolveQueries();
     // The rectangle (x, y, w, h) of one mip level and layer, tightly packed. Valid right after flushAndRestart().
     bool readbackRegion(Image& image, U32 mip, U32 layer, S32 x, S32 y, U32 w, U32 h, std::vector<U8>& texels);
+    // one whole mip level of a block-compressed image, the blocks exactly as stored (what glGetCompressedTexImage returns)
+    bool readbackCompressedMip(Image& image, U32 mip, U32 layer, std::vector<U8>& blocks);
+    static U32 compressedMipBytes(const Image& image, U32 mip);
     // debug: records copies of the given pixel rows of a colour image (level/layer of the view) into a host buffer, tightly packed, in the current frame
     bool recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuffer buffer);
 

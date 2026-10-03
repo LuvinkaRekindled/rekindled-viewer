@@ -2016,6 +2016,46 @@ bool Renderer::readbackRegion(Image& view_or_image, U32 mip, U32 layer, S32 x, S
     return true;
 }
 
+U32 Renderer::compressedMipBytes(const Image& image, U32 mip)
+{
+    const FormatInfo fi = formatInfo(image.mFormat);
+    if (!fi.mKnown || !fi.mCompressed || mip >= image.mMipLevels)
+    {
+        return 0;
+    }
+    const U32 mw = std::max<U32>(1, image.mExtent.width >> mip), mh = std::max<U32>(1, image.mExtent.height >> mip);
+    return ((mw + fi.mBlockWidth - 1) / fi.mBlockWidth) * ((mh + fi.mBlockHeight - 1) / fi.mBlockHeight) * fi.mBytesPerBlock;
+}
+
+bool Renderer::readbackCompressedMip(Image& view_or_image, U32 mip, U32 layer, std::vector<U8>& blocks)
+{
+    Context& ctx = Context::instance();
+    Image* image = root_of(&view_or_image);
+    const U32 bytes = compressedMipBytes(*image, mip);
+    if (bytes == 0)
+    {
+        return false;
+    }
+    const U32 mw = std::max<U32>(1, image->mExtent.width >> mip), mh = std::max<U32>(1, image->mExtent.height >> mip);
+    Buffer rb;
+    if (!ctx.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Readback, rb))
+    {
+        return false;
+    }
+    const VkImageLayout old_layout = image->mLayout;
+    ctx.immediateSubmit([&](VkCommandBuffer cmd) {
+        transition(cmd, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkBufferImageCopy c = {};
+        c.imageSubresource = { image->mAspect, mip, layer, 1 };
+        c.imageExtent = { mw, mh, 1 };      // a whole level; the buffer is tightly packed blocks
+        vkCmdCopyImageToBuffer(cmd, image->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb.mBuffer, 1, &c);
+        transition(cmd, *image, old_layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : old_layout);
+    });
+    blocks.assign((U8*)rb.mMapped, (U8*)rb.mMapped + bytes);
+    vmaDestroyBuffer(ctx.getAllocator(), rb.mBuffer, rb.mAllocation);
+    return true;
+}
+
 bool Renderer::recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuffer buffer)
 {
     if (mCmd == VK_NULL_HANDLE)

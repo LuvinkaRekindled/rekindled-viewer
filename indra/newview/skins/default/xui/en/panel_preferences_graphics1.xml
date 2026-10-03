@@ -1877,6 +1877,41 @@ If you do not understand the distinction then leave this control alone."
          top_pad="5"
          width="477"/>
     </panel>
+
+<!--Vulkan (experimental)-->
+    <panel
+     top_pad="5"
+     bottom="-1"
+     left="1"
+     right="-1"
+     follows="all"
+     label="Vulkan"
+     name="Vulkan panel" >
+      <check_box
+       control_name="FSVulkanRenderer"
+       height="16"
+       initial_value="false"
+       label="Use the Vulkan renderer (experimental)"
+       layout="topleft"
+       left="10"
+       name="FSVulkanRenderer"
+       tool_tip="Draw the world with Vulkan instead of OpenGL. Takes effect after the viewer is restarted."
+       top_pad="25"
+       width="400"/>
+      <text
+       type="string"
+       length="1"
+       follows="left|top"
+       height="48"
+       layout="topleft"
+       left_delta="18"
+       name="FSVulkanRendererNote"
+       top_pad="6"
+       width="440"
+       word_wrap="true">
+        Takes effect after restarting the viewer. If Vulkan cannot be started, the viewer uses OpenGL instead.
+      </text>
+    </panel>
 </tab_container>
 
 <!-- These two check boxes are dummies and will never be displayed.  They are here so the control variables

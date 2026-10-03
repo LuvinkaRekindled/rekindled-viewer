@@ -2403,6 +2403,28 @@
       <key>Value</key>
       <integer>80</integer>
     </map>
+    <key>FSTextureUpdateBurstDivisor</key>
+    <map>
+      <key>Comment</key>
+      <string>Texture refresh divisor (see FSTextureUpdateDivisor) used for FSTextureUpdateBurstSeconds after a teleport, region change, or a noticeable camera move or turn. 20 is the stock viewer value.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>20</integer>
+    </map>
+    <key>FSTextureUpdateBurstSeconds</key>
+    <map>
+      <key>Comment</key>
+      <string>How long the fast texture refresh rate stays on after the view changes. 0 turns the fast rate off.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>3.0</real>
+    </map>
     <key>FSShadowFarCascadeInterval</key>
     <map>
       <key>Comment</key>

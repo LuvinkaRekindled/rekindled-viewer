@@ -54,6 +54,7 @@
 #include "llviewermedia.h"
 #include "llviewernetwork.h"
 #include "llviewerregion.h"
+#include "llviewercamera.h"
 #include "llviewerstats.h"
 #include "pipeline.h"
 #include "llappviewer.h"
@@ -1289,7 +1290,39 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
     // <FS> the share of textures refreshed per frame is 1/FSTextureUpdateDivisor (the viewer default was 20 = 5%)
     static LLCachedControl<U32> fs_update_divisor(gSavedSettings, "FSTextureUpdateDivisor", 20);
-    update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size() / llmax((U32) fs_update_divisor, 1u));
+    static LLCachedControl<U32> fs_burst_divisor(gSavedSettings, "FSTextureUpdateBurstDivisor", 20);
+    static LLCachedControl<F32> fs_burst_seconds(gSavedSettings, "FSTextureUpdateBurstSeconds", 3.f);
+    // The slow rate saves CPU while the view is steady, but new textures then wait a long time for their first request. So the
+    // fast (stock) rate is used for a few seconds whenever the view changes: a new region, or the camera has moved or turned
+    // noticeably since the last time it was checked.
+    {
+        static LLViewerRegion* last_region = nullptr;
+        static LLVector3 last_origin;
+        static LLVector3 last_at;
+        static F64 burst_until = 0.0;
+        const F64 now = LLFrameTimer::getElapsedSeconds();
+        LLViewerRegion* region = gAgent.getRegion();
+        const LLVector3 origin = LLViewerCamera::getInstance()->getOrigin();
+        const LLVector3 at = LLViewerCamera::getInstance()->getAtAxis();
+        bool changed = region != last_region;
+        if (!changed && (origin - last_origin).magVec() > 2.f)
+        {
+            changed = true;
+        }
+        if (!changed && (at * last_at) < 0.96f)     // about 16 degrees
+        {
+            changed = true;
+        }
+        if (changed)
+        {
+            last_region = region;
+            last_origin = origin;
+            last_at = at;
+            burst_until = now + fs_burst_seconds;
+        }
+        const U32 divisor = now < burst_until ? llmin((U32) fs_burst_divisor, (U32) fs_update_divisor) : (U32) fs_update_divisor;
+        update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size() / llmax(divisor, 1u));
+    }
     // </FS>
     if (LLViewerTexture::sDesiredDiscardBias > 1.f
         && LLViewerTexture::sBiasTexturesUpdated < (U32)mUUIDMap.size())
