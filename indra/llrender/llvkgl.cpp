@@ -763,7 +763,7 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
         const U32 alignment = (U32)sCtx.mUnpackAlignment, row_length = (U32)sCtx.mUnpackRowLength;
         const VkImage handle = t.mImage.mImage;
         const GLuint name = sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
-        const bool unlocked = (U64)w * h * d >= 16384 && !sCtx.mPixelUnpackBuffer;
+        const bool unlocked = (U64)w * h * d >= 16384 && !sCtx.mPixelUnpackBuffer && !LLVkAsync::gEnabled;      // (the worker does not take the lock)
         unsigned depth_held = 0;
         if (unlocked)
         {
@@ -1692,6 +1692,7 @@ void sync_uniform_blocks(Renderer& r, std::vector<GLuint>& used_buffers)
 // common work before a draw; returns false if the draw cannot be mirrored
 bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
 {
+    LLVkMirror::gLastLap = 200;
     if (!LLVkMirror::inFrame())
     {
         ++sStats.mNotInFrame;
@@ -1710,6 +1711,7 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
         LLVkMirror::benchPass(program->getName().c_str());
     }
     sDbgMatch = !sDbgFilter.empty() && program->getName().find(sDbgFilter) != std::string::npos;
+    LLVkMirror::gLastLap = 201;
     {
         LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_TARGET);
         if (!sync_target())
@@ -1720,14 +1722,17 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
             return false;
         }
     }
+    LLVkMirror::gLastLap = 202;
     {
         LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_STATE);
         sync_draw_state(r, sHasDepth);
     }
+    LLVkMirror::gLastLap = 203;
     {
         LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_TEX);
         sync_textures(r, *program);
     }
+    LLVkMirror::gLastLap = 204;
     if (sSnapActive)
     {
         snap_track(program->getName());
@@ -1807,6 +1812,7 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
         LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_UBO);
         sync_uniform_blocks(r, used_buffers);
     }
+    LLVkMirror::gLastLap = 205;
     LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_VERTEX);
     if (!build_vertex_input(r, *program, vi, used_buffers))
     {
@@ -2450,9 +2456,11 @@ void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
         return;
     }
     Renderer& r = Renderer::instance();
+    LLVkMirror::gLastLap = 210;
     LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
     r.setTopology(topology(mode));
+    LLVkMirror::gLastLap = 211;
     if (r.draw((U32)count, (U32)first))
     {
         if (sStatsEnabled)

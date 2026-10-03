@@ -15,12 +15,14 @@
 
 #include <windows.h>
 #include <synchapi.h>
+#include <dbghelp.h>
 #include <atomic>
 #include <deque>
 #include <mutex>
 #include <vector>
 
 #pragma comment(lib, "Synchronization.lib")
+#pragma comment(lib, "dbghelp.lib")
 
 namespace LLVkGL
 {
@@ -72,6 +74,7 @@ struct SideRec
 {
     U16 mOp = 0;
     U8 mCtx = 0;
+    U64 mAfter = 0;                 // the main thread's queue position when this was queued: replayed only once the worker has got that far
     std::vector<U8> mPayload;
 };
 std::mutex gSideMutex;
@@ -176,6 +179,7 @@ void sidePush(U16 op, std::vector<U8>&& payload)
     SideRec r;
     r.mOp = op;
     r.mCtx = (U8)producerCtx();
+    r.mAfter = gTail.load(std::memory_order_acquire);
     r.mPayload = std::move(payload);
     {
         std::lock_guard<std::mutex> lock(gSideMutex);
@@ -890,8 +894,13 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     }
 }
 
+unsigned short gCurrentOp = 0;
+unsigned char gCurrentCtx = 0;
+
 void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
 {
+    gCurrentOp = op;
+    gCurrentCtx = ctx;
     LLVkGL::set_worker_context(ctx);
     if (op < OP_GL_COUNT)
     {
@@ -911,9 +920,9 @@ bool pollSide()
         SideRec r;
         {
             std::lock_guard<std::mutex> lock(gSideMutex);
-            if (gSide.empty())
+            if (gSide.empty() || gSide.front().mAfter > gHead.load(std::memory_order_relaxed))
             {
-                break;
+                break;          // not yet: the main thread queued work before this that has to run first
             }
             r = std::move(gSide.front());
             gSide.pop_front();
@@ -946,7 +955,80 @@ void idleWait()
     gSleeping.store(0);
 }
 
+LONG crash_filter(EXCEPTION_POINTERS* info)
+{
+    // written with plain file calls: the process is about to die and the log system may not be safe to use
+    const char* path = "<work>\\vk-crash.txt";
+    HANDLE f = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f != INVALID_HANDLE_VALUE)
+    {
+        const U64 base_addr = (U64)GetModuleHandleA(nullptr);
+        char line[256];
+        auto out = [&](const char* s) { DWORD w; WriteFile(f, s, (DWORD)strlen(s), &w, nullptr); };
+        snprintf(line, sizeof(line), "exception 0x%08lX at exe+0x%llX, access address 0x%llX (%s)\r\n", info->ExceptionRecord->ExceptionCode,
+                 (unsigned long long)((U64)info->ExceptionRecord->ExceptionAddress - base_addr),
+                 (unsigned long long)(info->ExceptionRecord->NumberParameters > 1 ? info->ExceptionRecord->ExceptionInformation[1] : 0),
+                 info->ExceptionRecord->NumberParameters > 0 && info->ExceptionRecord->ExceptionInformation[0] ? "write" : "read");
+        out(line);
+        snprintf(line, sizeof(line), "worker was replaying command %u of context %u; queue head %llu tail %llu; draw path breadcrumb %d (0..17 apply phases, 200+ prepare_draw, 210 before apply, 211 apply)\r\n",
+                 (unsigned)gCurrentOp, (unsigned)gCurrentCtx, (unsigned long long)gHead.load(), (unsigned long long)gTail.load(), (int)LLVkMirror::gLastLap);
+        out(line);
+        void* frames[40] = {};
+        const USHORT n = CaptureStackBackTrace(0, 40, frames, nullptr);
+        // names and lines from the .pdb next to the exe, looked up inside the process
+        HANDLE proc = GetCurrentProcess();
+        char exe_path[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
+        char* slash = strrchr(exe_path, '\\');
+        if (slash) *slash = 0;
+        SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+        const bool have_syms = SymInitialize(proc, exe_path, TRUE) != FALSE;
+        alignas(8) char sym_buf[sizeof(SYMBOL_INFO) + 512] = {};
+        for (USHORT i = 0; i < n; ++i)
+        {
+            const char* name = "?";
+            DWORD64 disp = 0;
+            DWORD line_disp = 0;
+            IMAGEHLP_LINE64 li = {};
+            li.SizeOfStruct = sizeof(li);
+            char where[200] = "";
+            if (have_syms)
+            {
+                SYMBOL_INFO* si = (SYMBOL_INFO*)sym_buf;
+                si->SizeOfStruct = sizeof(SYMBOL_INFO);
+                si->MaxNameLen = 500;
+                if (SymFromAddr(proc, (DWORD64)frames[i], &disp, si))
+                {
+                    name = si->Name;
+                }
+                if (SymGetLineFromAddr64(proc, (DWORD64)frames[i], &line_disp, &li))
+                {
+                    snprintf(where, sizeof(where), " (%s:%lu)", li.FileName, li.LineNumber);
+                }
+            }
+            snprintf(line, sizeof(line), "frame %u: exe+0x%llX %s+0x%llX%s\r\n", (unsigned)i, (unsigned long long)((U64)frames[i] - base_addr), name, (unsigned long long)disp, where);
+            out(line);
+        }
+        CloseHandle(f);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void run_loop();
+
 DWORD WINAPI workerMain(LPVOID)
+{
+    __try
+    {
+        run_loop();
+    }
+    __except (crash_filter(GetExceptionInformation()))
+    {
+    }
+    return 0;
+}
+
+void run_loop()
 {
     gWorkerTid = __readgsdword(0x48);
     LLVkMirror::gMainThreadId = gWorkerTid;                 // the phase timers now measure the worker
@@ -998,7 +1080,6 @@ DWORD WINAPI workerMain(LPVOID)
         }
     }
     gRunning.store(false);
-    return 0;
 }
 
 } // anonymous namespace

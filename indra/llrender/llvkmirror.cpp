@@ -40,6 +40,7 @@ namespace LLVkMirror
 long long gPhaseTicks[PH_COUNT] = {};
 bool gPhaseTiming = false;
 unsigned long gMainThreadId = 0;
+volatile int gLastLap = 0;
 long long phaseNow()
 {
     LARGE_INTEGER now;
