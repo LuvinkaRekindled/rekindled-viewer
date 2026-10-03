@@ -6,6 +6,7 @@
 #include "linden_common.h"
 
 #include "llvkrenderer.h"
+#include "llvkmirror.h"
 
 #if defined(LL_VULKAN)
 
@@ -1286,6 +1287,7 @@ Image* Renderer::resolveTexture(size_t k, bool depth_ro, Image* depth_root)
 
 void Renderer::applyState()
 {
+    long long lap_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
     // 1. A texture that is also the depth attachment is a feedback loop. Reading it while depth writes are off is
     //    legal with a read-only depth layout (the viewer's lighting passes do this); with writes on it cannot work.
     Image* depth_root = mDepthTarget ? root_of(mDepthTarget) : nullptr;
@@ -1325,8 +1327,10 @@ void Renderer::applyState()
         }
     }
 
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_TEX, lap_t);
     // 3. pass
     beginRenderingIfNeeded();
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_PASS, lap_t);
 
     // 3. pipeline
     PipelineKey key;
@@ -1343,6 +1347,7 @@ void Renderer::applyState()
         vkCmdBindPipeline(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         mBoundPipeline = pipeline;
     }
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_PIPE, lap_t);
 
     // 4. dynamic state (only what changed since it was last recorded)
     const Image* ref = mColorCount ? mColorTargets[0] : mDepthTarget;
@@ -1422,6 +1427,7 @@ void Renderer::applyState()
         mAppliedColorCount = mColorCount;
     }
     mStateApplied = true;
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_DYN, lap_t);
 
     // 5. vertex input
     if (mUseVertexInput)
@@ -1507,6 +1513,7 @@ void Renderer::applyState()
         }
     }
 
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_VI, lap_t);
     // 6. loose uniforms: copy this program's shadow into the ring when it changed (or on its first use this frame)
     if (mProgram->mDirty || mProgram->mRingFrame != Context::instance().getFrameNumber())
     {
@@ -1534,6 +1541,7 @@ void Renderer::applyState()
         mSet0Bound = true;
     }
 
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_UNI, lap_t);
     // 7. textures, pushed for exactly the samplers the program declares
     if (!mProgram->mInfo.mSamplers.empty())
     {
@@ -1572,6 +1580,7 @@ void Renderer::applyState()
             vkCmdPushDescriptorSetKHR(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 1, n, writes);
         }
     }
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_PUSH, lap_t);
 }
 
 void Renderer::setUniformBuffer(U32 index, VkBuffer buffer, VkDeviceSize range)
@@ -1642,8 +1651,10 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
         mDrawBlocked = false;
         return false;
     }
+    long long cmd_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
     startPendingQuery();
     vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
     ++mDrawCount;
     ++mModCount;
     return true;
@@ -1662,9 +1673,11 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         mDrawBlocked = false;
         return false;
     }
+    long long cmd_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
     vkCmdBindIndexBuffer(mCmd, mIndexBuffer, mIndexOffset, mIndexType);
     startPendingQuery();
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
     ++mDrawCount;
     ++mModCount;
     return true;

@@ -65,10 +65,22 @@ namespace LLVkMirror
     LLVk::Image* backbufferDepth();
 
     // CPU phase timers of the translation layer (benchmark mode only; PhaseTimer costs one branch when off)
-    enum Phase { PH_ALL_HOOKS, PH_UNIFORM, PH_DRAW, PH_D_TARGET, PH_D_STATE, PH_D_TEX, PH_D_UBO, PH_D_VERTEX, PH_D_APPLY, PH_D_STATS, PH_COUNT };
+    enum Phase { PH_ALL_HOOKS, PH_UNIFORM, PH_DRAW, PH_D_TARGET, PH_D_STATE, PH_D_TEX, PH_D_UBO, PH_D_VERTEX, PH_D_APPLY, PH_D_STATS,
+                 PH_A_TEX, PH_A_PASS, PH_A_PIPE, PH_A_DYN, PH_A_VI, PH_A_UNI, PH_A_PUSH, PH_A_CMD, PH_COUNT };
     extern long long gPhaseTicks[PH_COUNT];
     extern bool gPhaseTiming;
     long long phaseNow();       // performance counter ticks
+    const char* phaseName(int id);
+    // adds the time since 't' to a phase and restarts the lap
+    inline void phaseLap(int id, long long& t)
+    {
+        if (gPhaseTiming)
+        {
+            const long long n = phaseNow();
+            gPhaseTicks[id] += n - t;
+            t = n;
+        }
+    }
     struct PhaseTimer
     {
         int mId;
