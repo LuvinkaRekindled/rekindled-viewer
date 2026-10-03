@@ -38,6 +38,9 @@ namespace LLVk
 // name of the program of the draw being recorded, for validation messages
 extern const char* gDebugProgram;
 
+// set when the device reports VK_ERROR_DEVICE_LOST; the mirror then switches itself off
+extern bool gDeviceLost;
+
 // Vulkan entry points (loaded by Context::init)
 #define LL_VK_GLOBAL_FN(name) extern PFN_##name name;
 #define LL_VK_INSTANCE_FN(name) extern PFN_##name name;
@@ -155,6 +158,9 @@ public:
     void destroyImage(Image& image);        // deferred
 
     void waitIdle();
+    // "heap 0 (device) 3200/15000 MB; heap 1 (host) ..." : usage and budget of every memory heap, for the benchmark log
+    std::string memoryBudgetText();
+    size_t pendingDestroys() const;      // resources queued for destruction that no frame has released yet
     // names an object for the validation layer messages (only when validation is on)
     void setObjectName(VkObjectType type, U64 handle, const std::string& name);
 
