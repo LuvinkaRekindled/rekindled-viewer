@@ -1291,6 +1291,7 @@ Image* Renderer::resolveTexture(size_t k, bool depth_ro, Image* depth_root)
 void Renderer::applyState()
 {
     long long lap_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
+    mDiagChanged = false;
     // 1. A texture that is also the depth attachment is a feedback loop. Reading it while depth writes are off is
     //    legal with a read-only depth layout (the viewer's lighting passes do this); with writes on it cannot work.
     Image* depth_root = mDepthTarget ? root_of(mDepthTarget) : nullptr;
@@ -1349,6 +1350,7 @@ void Renderer::applyState()
     {
         vkCmdBindPipeline(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         mBoundPipeline = pipeline;
+        mDiagChanged = true;
     }
     LLVkMirror::phaseLap(LLVkMirror::PH_A_PIPE, lap_t);
 
@@ -1364,6 +1366,7 @@ void Renderer::applyState()
         VkViewport v = { (F32)vp[0], (F32)vp[1], (F32)vp[2], (F32)vp[3], 0.f, 1.f };
         vkCmdSetViewport(mCmd, 0, 1, &v);
         memcpy(mAppliedViewport, vp, sizeof(vp));
+        mDiagChanged = true;
     }
     S32 sc[4] = { 0, 0, (S32)ref->mExtent.width, (S32)ref->mExtent.height };
     if (mScissorEnabled)
@@ -1380,10 +1383,12 @@ void Renderer::applyState()
         VkRect2D r = { { sc[0], sc[1] }, { (U32)sc[2], (U32)sc[3] } };
         vkCmdSetScissor(mCmd, 0, 1, &r);
         memcpy(mAppliedScissor, sc, sizeof(sc));
+        mDiagChanged = true;
     }
 
     if (!mStateApplied || !(mRaster == mAppliedRaster))
     {
+        mDiagChanged = true;
         vkCmdSetCullMode(mCmd, mRaster.mCull);
         vkCmdSetFrontFace(mCmd, mRaster.mFrontFace);
         vkCmdSetPolygonModeEXT(mCmd, mRaster.mPolygonMode);
@@ -1398,6 +1403,7 @@ void Renderer::applyState()
     }
     if (!mStateApplied || !(mDepthStencil == mAppliedDepthStencil))
     {
+        mDiagChanged = true;
         vkCmdSetDepthTestEnable(mCmd, mDepthStencil.mDepthTest ? VK_TRUE : VK_FALSE);
         vkCmdSetDepthWriteEnable(mCmd, mDepthStencil.mDepthWrite ? VK_TRUE : VK_FALSE);
         vkCmdSetDepthCompareOp(mCmd, mDepthStencil.mDepthOp);
@@ -1410,6 +1416,7 @@ void Renderer::applyState()
     }
     if (!mStateApplied || !(mBlend == mAppliedBlend) || mColorCount != mAppliedColorCount)
     {
+        mDiagChanged = true;
         const VkBool32 enable = mBlend.mEnable ? VK_TRUE : VK_FALSE;
         VkBool32 enables[8];
         VkColorBlendEquationEXT eqs[8];
@@ -1453,6 +1460,10 @@ void Renderer::applyState()
             const VertexInput::Attribute& a = mAppliedVertexInput.mAttributes[i];
             const VertexInput::Attribute& b = mVertexInput.mAttributes[i];
             same_format = a.mLocation == b.mLocation && a.mBinding == b.mBinding && a.mFormat == b.mFormat && a.mOffset == b.mOffset;
+        }
+        if (!same_format || !same_buffers)
+        {
+            mDiagChanged = true;
         }
         if (!same_format)
         {
@@ -1533,6 +1544,7 @@ void Renderer::applyState()
             return;
         }
         mProgram->mRingOffset = ring_offset;
+        mDiagChanged = true;
         memcpy((U8*)mRing[mSlot].mMapped + mProgram->mRingOffset, mProgram->mShadow.data(), mProgram->mShadow.size());
         mProgram->mRingFrame = Context::instance().getFrameNumber();
         mProgram->mDirty = false;
@@ -1544,6 +1556,7 @@ void Renderer::applyState()
     }
     if (!mSet0Bound || mAppliedDynamicOffset != mProgram->mRingOffset || mAppliedSet0 != set0)
     {
+        mDiagChanged = true;
         vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 0, 1, &set0, 1, &mProgram->mRingOffset);
         mAppliedDynamicOffset = mProgram->mRingOffset;
         mAppliedSet0 = set0;
@@ -1586,6 +1599,7 @@ void Renderer::applyState()
         }
         if (n)
         {
+            mDiagChanged = true;
             vkCmdPushDescriptorSetKHR(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 1, n, writes);
         }
     }
@@ -1683,6 +1697,22 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         return false;
     }
     long long cmd_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
+    if (LLVkMirror::gPhaseTiming && LLVkMirror::onMainThread())
+    {
+        ++mDrawDiag.mDraws;
+        if (!mDiagChanged)
+        {
+            ++mDrawDiag.mUnchanged;
+            if (mIndexBuffer == mDiagLastIndexBuffer && mIndexOffset == mDiagLastIndexOffset && (U64)first_index == mDiagLastIndexEnd && vertex_offset == mDiagLastVertexOffset)
+            {
+                ++mDrawDiag.mMergeable;
+            }
+        }
+        mDiagLastIndexBuffer = mIndexBuffer;
+        mDiagLastIndexOffset = mIndexOffset;
+        mDiagLastIndexEnd = (U64)first_index + index_count;
+        mDiagLastVertexOffset = vertex_offset;
+    }
     vkCmdBindIndexBuffer(mCmd, mIndexBuffer, mIndexOffset, mIndexType);
     startPendingQuery();
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);

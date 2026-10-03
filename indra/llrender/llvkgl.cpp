@@ -2821,6 +2821,11 @@ void after_frame()
                         LL_INFOS("VkPhases") << (part ? "hooks on OTHER threads per frame (time shown per viewer frame): " : "hooks on the MAIN thread per frame, most CPU time first: ") << top << LL_ENDL;
                     }
                     for (int i = 0; i < 2 * HOOK_COUNT; ++i) { gHookStatTicks[i] = 0; gHookStatCalls[i] = 0; }
+                    {
+                        const Renderer::DrawDiag dd = Renderer::instance().takeDrawDiag();
+                        LL_INFOS("VkPhases") << "indexed draws per frame: " << (double)dd.mDraws / frames << ", of which changed nothing but the draw command: " << (double)dd.mUnchanged / frames
+                                             << ", of which also continued the previous index range (mergeable): " << (double)dd.mMergeable / frames << LL_ENDL;
+                    }
                     const Renderer::UploadStats up = Renderer::instance().takeUploadStats();
                     LL_INFOS("VkPhases") << "texture uploads per frame: " << (double)up.mCount / frames << " uploads, " << (double)up.mBytes / frames / 1024.0 << " KB, "
                                          << (double)up.mPassSplits / frames << " ended a render pass in progress" << LL_ENDL;
