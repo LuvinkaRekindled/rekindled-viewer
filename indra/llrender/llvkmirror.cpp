@@ -694,6 +694,18 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
         // presenting into the main window: nobody tells the mirror when it is resized
         RECT rc = {};
         GetClientRect(sMirror.mWindow, &rc);
+        static const bool size_log = getenv("LL_VK_SIZELOG") != nullptr;
+        if (size_log)
+        {
+            static S32 last_sizes[6] = {};
+            const S32 now[6] = { width, height, (S32)rc.right, (S32)rc.bottom, (S32)sMirror.mSwapchain.getExtent().width, (S32)sMirror.mSwapchain.getExtent().height };
+            if (memcmp(now, last_sizes, sizeof(now)) != 0)
+            {
+                memcpy(last_sizes, now, sizeof(now));
+                LL_INFOS("VkSize") << "beginFrame: viewer window " << width << "x" << height << ", client area " << rc.right << "x" << rc.bottom << ", swapchain "
+                                   << now[4] << "x" << now[5] << ", backbuffer " << sMirror.mBackWidth << "x" << sMirror.mBackHeight << LL_ENDL;
+            }
+        }
         const LLVk::Swapchain& swap = sMirror.mSwapchain;
         if (swap.isValid() ? ((U32)rc.right != swap.getExtent().width || (U32)rc.bottom != swap.getExtent().height) : (rc.right > 0 && rc.bottom > 0))
         {
@@ -829,6 +841,47 @@ void LLVkMirror::presentFrame()
     sMirror.mOffscreen = true;
 }
 
+namespace
+{
+
+// The window changed size between drawing the frame and showing it, so the present was refused. Without this the old picture stays on
+// screen until the viewer happens to draw again. Recreate the swapchain at the new size and show the finished backbuffer on it now.
+bool represent_after_resize()
+{
+    LLVk::Context& ctx = LLVk::Context::instance();
+    LLVk::Swapchain& sc = sMirror.mSwapchain;
+    LLVk::Image& back = sMirror.mBackbuffer;
+    if (!back.valid() || !sc.create(ctx.getSurface(), sMirror.mWindow) || !sc.isValid())
+    {
+        return false;
+    }
+    U32 index = 0;
+    if (!sc.acquireBlocking(index))
+    {
+        return false;
+    }
+    const VkExtent2D extent = sc.getExtent();
+    const VkImage target = sc.getImage(index);
+    const U32 src_w = sMirror.mBackWidth, src_h = sMirror.mBackHeight;
+    ctx.immediateSubmit([&](VkCommandBuffer cmd) {
+        // the backbuffer was left in TRANSFER_SRC_OPTIMAL by the frame's own present blit
+        LLVk::imageBarrier(cmd, target, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        VkImageBlit blit = {};
+        blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.srcOffsets[1] = { (S32)src_w, (S32)src_h, 1 };
+        blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.dstOffsets[0] = { 0, (S32)extent.height, 0 };      // the picture is stored bottom row first
+        blit.dstOffsets[1] = { (S32)extent.width, 0, 1 };
+        LLVk::vkCmdBlitImage(cmd, back.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+        LLVk::imageBarrier(cmd, target, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                           VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0);
+    });
+    return sc.presentNoWait(index);
+}
+
+}
+
 void LLVkMirror::endFrame()
 {
     std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
@@ -892,7 +945,11 @@ void LLVkMirror::endFrame()
     renderer.endFrame();
     bench_vk_end(ctx.getCommandBuffer());
     ctx.endFrame(ctx.getAcquireSemaphore(), sc.getRenderDone(index));
-    sc.present(index, sc.getRenderDone(index));
+    if (!sc.present(index, sc.getRenderDone(index)) && sc.lastPresentOutOfDate() && !sMirror.mOwnsWindow)
+    {
+        ctx.waitIdle();
+        represent_after_resize();
+    }
     bench_vk_collect(false);
     bench_gl_stamp(2);
     ++sMirror.mFrames;

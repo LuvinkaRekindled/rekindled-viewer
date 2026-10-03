@@ -71,6 +71,7 @@ struct Capabilities
     U32 mMaxImageDim2D = 0, mMaxImageDimCube = 0, mMaxImageDim3D = 0, mMaxArrayLayers = 0;
     U32 mMaxColorAttachments = 0, mMaxVertexAttribs = 0, mMaxUniformRange = 0, mMaxSampledImagesPerStage = 0;
     U32 mMaxViewport[2] = {};
+    F32 mLineWidthRange[2] = { 1.f, 1.f };
     U32 mMaxSampleCount = 1;        // largest framebuffer colour sample count
 };
 
@@ -235,6 +236,12 @@ public:
     bool acquire(VkSemaphore signal, U32& index, U64 timeout_ns = 0);
     // returns false if the swapchain needs recreating
     bool present(U32 index, VkSemaphore wait);
+    // true if the last present was rejected as out of date (the window changed size before it could be shown)
+    bool lastPresentOutOfDate() const { return mPresentOutOfDate; }
+    // Acquire an image and wait for it on the CPU, and present one that has no semaphore to wait for (everything was waited for already).
+    // Used to show the picture again right after the swapchain had to be recreated.
+    bool acquireBlocking(U32& index);
+    bool presentNoWait(U32 index);
 
     bool isValid() const { return mSwapchain != VK_NULL_HANDLE; }
     bool needsRecreate() const { return mNeedsRecreate; }
@@ -254,6 +261,7 @@ private:
     std::vector<VkImageView> mViews;
     std::vector<VkSemaphore> mRenderDone;
     bool mNeedsRecreate = false;
+    bool mPresentOutOfDate = false;
 };
 
 // helper: image layout transition barrier for a whole colour image (sync2)
