@@ -125,7 +125,8 @@ namespace LLVkMirror
                  PH_A_TEX, PH_A_PASS, PH_A_PIPE, PH_A_DYN, PH_A_VI, PH_A_UNI, PH_A_PUSH, PH_A_CMD, PH_COUNT };
     extern long long gPhaseTicks[PH_COUNT];
     extern bool gPhaseTiming;
-    extern unsigned long gMainThreadId;         // set by beginFrame: the thread that draws the viewer's frames
+    extern unsigned long gMainThreadId;
+    extern volatile int gLastLap;               // where the draw path last got to (printed by the async worker's crash report)         // set by beginFrame: the thread that draws the viewer's frames
     inline bool onMainThread() { return __readgsdword(0x48) == gMainThreadId; }
     long long phaseNow();       // performance counter ticks
     const char* phaseName(int id);
@@ -137,6 +138,7 @@ namespace LLVkMirror
             const long long n = phaseNow();
             gPhaseTicks[id] += n - t;
             t = n;
+            gLastLap = id;
         }
     }
     struct PhaseTimer
