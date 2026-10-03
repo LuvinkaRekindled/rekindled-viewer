@@ -888,6 +888,11 @@ SamplerDesc sampler_for(const Tex& t)
     const F32 last = (F32)std::max<S32>(0, (S32)std::min(t.mLevels, std::max<U32>(1, t.mValidLevels)) - 1);
     d.mMinLod = (F32)std::max(0, sp.mBaseLevel);
     d.mMaxLod = mipmapped ? std::min(last, (F32)sp.mMaxLevel) : d.mMinLod + 0.25f;
+    if (!mipmapped)
+    {
+        // maxLod 0.25 with linear mip mode would blend a quarter of the next (unwritten) level into every minified sample
+        d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    }
     if (d.mMaxLod < d.mMinLod) d.mMaxLod = d.mMinLod;
     return d;
 }
@@ -975,7 +980,7 @@ void sync_textures(Renderer& r, Program& program)
         else if (type.find("MS") != std::string::npos) cls = 5;
         auto it = sGL.mTextures.find(sCtx.mBound[unit][cls]);
         {
-            static const char* const watch[] = { "Soften", "Windlight Sky", "Deferred Sun", "Deferred Light Shader", "Irradiance Gen", "Radiance Gen", "HUD", "Copy Depth", "Haze", "Tonemap" };
+            static const char* const watch[] = { "Soften", "Windlight Sky", "Deferred Sun", "Deferred Light Shader", "Irradiance Gen", "Radiance Gen", "HUD", "Copy Depth", "Haze", "Tonemap", "Reflection Mip", "Glow" };
             bool wanted = false;
             for (const char* w : watch) if (program.getName().find(w) != std::string::npos) wanted = true;
             if (wanted)
@@ -989,6 +994,10 @@ void sync_textures(Renderer& r, Program& program)
                     what += std::to_string(tx.mImage.mExtent.width) + "x" + std::to_string(tx.mImage.mExtent.height) + " vkfmt " + std::to_string((S32)tx.mImage.mFormat)
                           + " levels " + std::to_string(tx.mValidLevels) + "/" + std::to_string(tx.mLevels) + " layers " + std::to_string(tx.mDepth)
                           + " compare " + std::to_string(tx.mSampler.mCompare ? 1 : 0);
+                    const SamplerDesc sd = sampler_for(tx);
+                    what += std::string(" mag ") + (sd.mMag == VK_FILTER_LINEAR ? "lin" : "nearest") + " min " + (sd.mMin == VK_FILTER_LINEAR ? "lin" : "nearest")
+                          + " mip " + (sd.mMip == VK_SAMPLER_MIPMAP_MODE_LINEAR ? "lin" : "nearest") + " lod " + std::to_string(sd.mMinLod) + ".." + std::to_string(sd.mMaxLod)
+                          + " wrap " + std::to_string((S32)sd.mAddressU) + "," + std::to_string((S32)sd.mAddressV) + " glminfilter " + std::to_string(tx.mSampler.mMinFilter);
                 }
                 sStats.mSamplerInfo[program.getName() + " :: " + info.mSamplers[k].mName + " (" + type + ")"] = what;
             }
@@ -1290,7 +1299,7 @@ void snap_flush_pending()
         s.mW = t.mImage.mExtent.width;
         s.mH = t.mImage.mExtent.height;
         s.mFmt = vf;
-        s.mRows = 48;
+        s.mRows = (U64)s.mW * s.mH <= 700 * 700 ? s.mH : 48;      // small targets in full, large ones as a sparse set of rows
         std::vector<U32> rows;
         for (U32 i = 0; i < s.mRows; ++i) rows.push_back(std::min(s.mH - 1, (U32)((U64)i * s.mH / s.mRows + s.mH / (2 * s.mRows))));
         if (!ctx.createBuffer((VkDeviceSize)s.mRows * s.mW * fi.mBytesPerBlock, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Readback, s.mBuf))
@@ -1399,7 +1408,7 @@ void snap_evaluate()
         size_t n = 0;
         for (U32 i = 0; i < s.mRows; ++i)
         {
-            for (U32 x = 0; x < s.mW; x += 4)
+            for (U32 x = 0; x < s.mW; x += (s.mRows == s.mH ? 1 : 4))
             {
                 double rgb[4];
                 if (!decode_texel(s.mFmt, (const U8*)s.mBuf.mMapped + ((size_t)i * s.mW + x) * fi.mBytesPerBlock, rgb)) continue;

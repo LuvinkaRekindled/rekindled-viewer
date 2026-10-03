@@ -1506,6 +1506,34 @@ bool Renderer::createTexture(const TextureDesc& d, Image& out)
         out = Image();
         return false;
     }
+
+    // GL textures start out zeroed; Vulkan images hold whatever the memory had. Render targets and arrays are only partly written
+    // (a probe face at a time), so they start cleared. Compressed formats cannot be cleared and are always fully uploaded.
+    const bool attachable = (d.mUsage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) != 0;
+    const bool array_like = d.mType == TexType::Tex2DArray || d.mType == TexType::CubeArray || d.mType == TexType::Cube;
+    if ((attachable || array_like) && !(fi.mKnown && fi.mCompressed) && out.mMipLevels > 0)
+    {
+        Image* image = &out;
+        ctx.immediateSubmit([image](VkCommandBuffer cmd) {
+            imageBarrier(cmd, image->mImage, image->mAspect, image->mMipLevels, image->mLayers, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            const VkImageSubresourceRange range = { image->mAspect, 0, image->mMipLevels, 0, image->mLayers };
+            if (image->mAspect == VK_IMAGE_ASPECT_COLOR_BIT)
+            {
+                const VkClearColorValue zero = {};
+                vkCmdClearColorImage(cmd, image->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &range);
+            }
+            else
+            {
+                const VkClearDepthStencilValue zero = { 0.f, 0 };
+                vkCmdClearDepthStencilImage(cmd, image->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &range);
+            }
+            imageBarrier(cmd, image->mImage, image->mAspect, image->mMipLevels, image->mLayers, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        });
+        out.mLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
     return true;
 }
 
