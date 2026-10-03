@@ -17,6 +17,7 @@ void LLVkMirror::beginFrame(S32, S32) {}
 void LLVkMirror::endFrame() {}
 void LLVkMirror::holdFrame(bool) {}
 void LLVkMirror::armSnapshotCompare() {}
+void LLVkMirror::snapshotBoundary(S32) {}
 void LLVkMirror::presentFrame() {}
 void LLVkMirror::shutdown() {}
 
@@ -852,6 +853,59 @@ void LLVkMirror::holdFrame(bool hold)
     sMirror.mHold = hold;
 }
 
+namespace
+{
+// opens a frame that has no swapchain image: the work the viewer does after the present (probe updates, snapshots) is recorded into it
+bool begin_offscreen_frame()
+{
+    LLVk::Context& ctx = LLVk::Context::instance();
+    LLVk::Renderer& renderer = LLVk::Renderer::instance();
+    VkCommandBuffer cmd = ctx.beginFrame(mirror_blocks() ? true : false);
+    if (cmd == VK_NULL_HANDLE)
+    {
+        ++sMirror.mSkipped;
+        return false;
+    }
+    renderer.beginFrame(cmd, ctx.getFrameSlot());
+    bench_vk_begin(cmd, true);
+    LLVk::Image* colors[1] = { &sMirror.mBackbuffer };
+    renderer.setRenderTarget(colors, 1, &sMirror.mDepth);
+    sMirror.mInFrame = true;
+    sMirror.mOffscreen = true;
+    return true;
+}
+}
+
+void LLVkMirror::snapshotBoundary(S32 mode)
+{
+    std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    if (mode <= 0 || !sMirror.mReady || !sMirror.mInFrame)
+    {
+        return;
+    }
+    LL_INFOS("VkSnap") << "snapshot boundary, variant " << mode << (sMirror.mOffscreen ? " (off-screen frame)" : " (present frame)") << LL_ENDL;
+    if (mode == 1)
+    {
+        LLVk::Renderer::instance().flushAndRestart();
+        return;
+    }
+    if (sMirror.mOffscreen)
+    {
+        const bool held = sMirror.mHold;
+        sMirror.mHold = false;
+        endFrame();                 // closes the off-screen frame
+        if (mode >= 3)
+        {
+            LLVk::Context::instance().waitIdle();
+        }
+        sMirror.mHold = held;
+        if (sMirror.mReady && !sMirror.mInFrame)
+        {
+            begin_offscreen_frame();
+        }
+    }
+}
+
 void LLVkMirror::presentFrame()
 {
     std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
@@ -882,20 +936,7 @@ void LLVkMirror::presentFrame()
     }
 
     // keep recording what the viewer does until the frame is released, without a swapchain image
-    LLVk::Context& ctx = LLVk::Context::instance();
-    LLVk::Renderer& renderer = LLVk::Renderer::instance();
-    VkCommandBuffer cmd = ctx.beginFrame(mirror_blocks() ? true : false);
-    if (cmd == VK_NULL_HANDLE)
-    {
-        ++sMirror.mSkipped;
-        return;
-    }
-    renderer.beginFrame(cmd, ctx.getFrameSlot());
-    bench_vk_begin(cmd, true);
-    LLVk::Image* colors[1] = { &sMirror.mBackbuffer };
-    renderer.setRenderTarget(colors, 1, &sMirror.mDepth);
-    sMirror.mInFrame = true;
-    sMirror.mOffscreen = true;
+    begin_offscreen_frame();
 }
 
 namespace

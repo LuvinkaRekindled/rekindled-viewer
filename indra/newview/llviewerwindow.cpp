@@ -59,6 +59,7 @@
 #include "llrender.h"
 #include "llvkverify.h"
 #include "llvkmirror.h"
+#include "llimagepng.h"
 
 #include "stringize.h"
 
@@ -6173,6 +6174,11 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     }
 
     // PRE SNAPSHOT
+    // <FS> snapshot experiment and diagnostics for the Vulkan renderer (inert without the setting / environment variable)
+    static LLCachedControl<S32> fs_vk_snap_variant(gSavedSettings, "FSVkSnapVariant", 0);
+    LL_INFOS("VkSnap") << "rawSnapshot " << image_width << "x" << image_height << " keep_aspect " << keep_window_aspect << " texture " << is_texture
+                       << " ui " << show_ui << " hud " << show_hud << " no_post " << no_post << " type " << (S32)type << " variant " << (S32)fs_vk_snap_variant << LL_ENDL;
+    // </FS>
     gSnapshotNoPost = no_post;
     gDisplaySwapBuffers = false;
 
@@ -6372,6 +6378,13 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
             if (read_width && read_height)
             {
                 const U32 subfield = subimage_x+(subimage_y*llceil(scale_factor));
+                // <FS> snapshot experiment: variants 1-3 put a frame boundary before the render, 4 renders twice and keeps the second
+                LLVkMirror::snapshotBoundary(fs_vk_snap_variant);
+                if (fs_vk_snap_variant == 4)
+                {
+                    display(do_rebuild, scale_factor, subfield, true);
+                }
+                // </FS>
                 display(do_rebuild, scale_factor, subfield, true);
 
                 if (!LLPipeline::sRenderDeferred)
@@ -6475,6 +6488,21 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
         }
         output_buffer_offset_y += subimage_y_offset;
     }
+
+    // <FS> LL_VK_SNAPDUMP=<folder>: write what every snapshot render read back as a PNG, to compare the renders with each other
+    if (const char* dump_dir = getenv("LL_VK_SNAPDUMP"))
+    {
+        static S32 dump_count = 0;
+        LLPointer<LLImagePNG> png = new LLImagePNG;
+        if (png->encode(raw, 0.f))
+        {
+            const std::string path = llformat("%s\\snap%03d_%dx%d.png", dump_dir, dump_count++, raw->getWidth(), raw->getHeight());
+            llofstream out(path, std::ios::binary);
+            out.write((const char*)png->getData(), (std::streamsize)png->getDataSize());
+            LL_INFOS("VkSnap") << "wrote " << path << LL_ENDL;
+        }
+    }
+    // </FS>
 
     gDisplaySwapBuffers = false;
     gSnapshotNoPost = false;
