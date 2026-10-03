@@ -270,9 +270,11 @@ void syncCall(const std::function<void()>& fn)
 {
     std::atomic<int> done{ 0 };
     struct Args { const std::function<void()>* mFn; std::atomic<int>* mDone; } a = { &fn, &done };
-    if (!gRunning.load() || __readgsdword(0x48) == gWorkerTid)
+    // inline when this thread is the one that replays commands (the worker, or the main thread in loopback mode) or nothing is replaying them (stopped)
+    const bool replayer = gMode == 2 ? isMainThread() : (!gRunning.load() || __readgsdword(0x48) == gWorkerTid);
+    if (replayer)
     {
-        fn();           // nobody to wait for (stopped), or this already is the worker
+        fn();
         return;
     }
     push(CMD_SYNC, &a, sizeof(a));
@@ -436,7 +438,8 @@ void queryIdle(unsigned id, unsigned long long gen)
 
 bool query_get(int kind, unsigned id, unsigned pname, void* params)
 {
-    if (!gPub || id >= QUERY_TABLE || !params)
+    static const bool no_table = getenv("LL_VK_ASYNC_NOQT") != nullptr;      // debugging: every query read goes through the mirror's own bookkeeping
+    if (no_table || !gPub || id >= QUERY_TABLE || !params)
     {
         return false;
     }
