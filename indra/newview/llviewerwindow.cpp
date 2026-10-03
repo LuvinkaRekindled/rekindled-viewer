@@ -58,6 +58,7 @@
 #include "llslurl.h"
 #include "llrender.h"
 #include "llvkverify.h"
+#include "llvkmirror.h"
 
 #include "stringize.h"
 
@@ -6348,7 +6349,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
 
     // Subimages are in fact partial rendering of the final view. This happens when the final view is bigger than the screen.
     // In most common cases, scale_factor is 1 and there's no more than 1 iteration on x and y
-    LL_VK_VERIFY_ARM_SNAPSHOT();     // <FS>
+    LLVkMirror::armSnapshotCompare();     // <FS>
     for (int subimage_y = 0; subimage_y < scale_factor; ++subimage_y)
     {
         S32 subimage_y_offset = llclamp(buffer_y_offset - (subimage_y * window_height), 0, window_height);;

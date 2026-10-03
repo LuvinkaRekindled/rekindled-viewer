@@ -47,6 +47,9 @@ namespace LLVkMirror
     // across display() and the work that follows it (reflection probe updates, snapshots), then releases it and ends it.
     void holdFrame(bool hold);
 
+    // A snapshot is about to render: with LL_VK_VERIFY set, compare each of its passes between GL and Vulkan and report on it afterwards
+    void armSnapshotCompare();
+
     // switch the mirror off (window closed, error); the viewer carries on with OpenGL only
     void shutdown();
 

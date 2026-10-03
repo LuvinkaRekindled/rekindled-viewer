@@ -16,6 +16,7 @@ bool LLVkMirror::inFrame() { return false; }
 void LLVkMirror::beginFrame(S32, S32) {}
 void LLVkMirror::endFrame() {}
 void LLVkMirror::holdFrame(bool) {}
+void LLVkMirror::armSnapshotCompare() {}
 void LLVkMirror::presentFrame() {}
 void LLVkMirror::shutdown() {}
 
@@ -660,6 +661,14 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
     LLVk::Image* colors[1] = { &sMirror.mBackbuffer };
     renderer.setRenderTarget(colors, 1, &sMirror.mDepth);
     sMirror.mInFrame = true;
+}
+
+void LLVkMirror::armSnapshotCompare()
+{
+    if (LLVkVerify::gEnabled)
+    {
+        LLVkVerify::armSnapshot();
+    }
 }
 
 void LLVkMirror::holdFrame(bool hold)
