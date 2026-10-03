@@ -332,10 +332,18 @@ void LLReflectionMapManager::update()
     LLReflectionMap* oldestProbe = nullptr;
     LLReflectionMap* oldestOccluded = nullptr;
 
+    // <FS> spread the probe face renders out: one face every N frames instead of every frame (frame time vs how fast lighting changes show up in reflections)
+    static LLCachedControl<U32> fs_probe_interval(gSavedSettings, "FSProbeUpdateInterval", 2);
+    const bool probe_frame_skipped = fs_probe_interval > 1 && (LLFrameTimer::getFrameCount() % fs_probe_interval) != 0;
+    // </FS>
+
     if (mUpdatingProbe != nullptr)
     {
         did_update = true;
-        doProbeUpdate();
+        if (!probe_frame_skipped)
+        {
+            doProbeUpdate();
+        }
     }
 
     // update distance to camera for all probes
@@ -499,7 +507,7 @@ void LLReflectionMapManager::update()
     }
 
     // switch to updating the next oldest probe
-    if (!did_update && oldestProbe != nullptr)
+    if (!did_update && oldestProbe != nullptr && !probe_frame_skipped)
     {
         LLReflectionMap* probe = oldestProbe;
         llassert(probe->mCubeIndex != -1);

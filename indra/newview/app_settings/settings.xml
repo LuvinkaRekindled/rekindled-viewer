@@ -2381,6 +2381,28 @@
       <key>Value</key>
       <real>25.0</real>
     </map>
+    <key>FSProbeUpdateInterval</key>
+    <map>
+      <key>Comment</key>
+      <string>Reflection probes render one cube face every Nth frame instead of every frame. Higher values cost less per frame but changes in lighting show up in reflections more slowly. 1 is the stock behaviour.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>2</integer>
+    </map>
+    <key>FSTextureUpdateDivisor</key>
+    <map>
+      <key>Comment</key>
+      <string>Each frame 1/N of the loaded textures get their priority and fetch state refreshed (stock viewer: 20, i.e. 5%). Higher values cost less per frame but textures react to camera movement more slowly.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>80</integer>
+    </map>
     <key>FSShadowFarCascadeInterval</key>
     <map>
       <key>Comment</key>
