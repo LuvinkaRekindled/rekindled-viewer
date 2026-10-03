@@ -246,7 +246,14 @@ public:
     void setTopology(VkPrimitiveTopology t) { mTopology = t; }
     void setVertexLayout(const VertexLayout& layout) { mLayout = layout; mVertexInputDirty = true; mUseVertexInput = false; }
     void setVertexBuffer(VkBuffer buffer, VkDeviceSize offset) { mVertexBuffer = buffer; mVertexOffset = offset; }
-    void setVertexInput(const VertexInput& input) { mVertexInput = input; mVertexInputDirty = true; mUseVertexInput = true; }
+    // takes the vectors' storage (the caller's input is left empty)
+    void setVertexInput(VertexInput& input)
+    {
+        mVertexInput.mBindings.swap(input.mBindings);
+        mVertexInput.mAttributes.swap(input.mAttributes);
+        mVertexInputDirty = true;
+        mUseVertexInput = true;
+    }
 
     // per-frame host-visible scratch memory usable as vertex or index data (reset every frame)
     struct ScratchAlloc { VkBuffer mBuffer = VK_NULL_HANDLE; VkDeviceSize mOffset = 0; void* mPtr = nullptr; };
