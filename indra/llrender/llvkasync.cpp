@@ -44,6 +44,7 @@ namespace LLVkAsync
 {
 
 bool gEnabled = false;
+static int gMode = 1;
 
 namespace
 {
@@ -104,10 +105,17 @@ inline void wake()
     WakeByAddressSingle(&gWakeWord);
 }
 
+void drain_inline();
+void wait_drained();
+
 inline bool workAvailable()
 {
     return gHead.load(std::memory_order_relaxed) != gTail.load(std::memory_order_acquire) || gSideCount.load(std::memory_order_relaxed) > 0;
 }
+
+// argument layouts of the uniform commands: one definition for both sides so the padding can never differ
+struct UniformVecArgs { void* mProgram; unsigned mIndex, mComponents, mCount; };
+struct UniformMatArgs { void* mProgram; unsigned mIndex, mColumns, mRows, mCount; };
 
 // ---- main-side shadows of the state the encoders need ----
 struct PixelStoreShadow
@@ -173,6 +181,11 @@ inline void mainCommit(size_t payload_bytes)
 {
     const size_t total = alignUp(sizeof(RecHeader) + payload_bytes);
     gTail.store(gTail.load(std::memory_order_relaxed) + total, std::memory_order_release);
+    if (gMode == 2)
+    {
+        drain_inline();
+        return;
+    }
     if (gSleeping.load(std::memory_order_relaxed))
     {
         wake();
@@ -297,8 +310,8 @@ void frameBegin(S32 width, S32 height)
     push(CMD_FRAME_BEGIN, a, sizeof(a));
     wake();
 }
-void frameEnd() { push(CMD_FRAME_END, nullptr, 0); wake(); }
-void framePresent() { push(CMD_PRESENT, nullptr, 0); wake(); }
+void frameEnd() { push(CMD_FRAME_END, nullptr, 0); wake(); if (gMode == 3) wait_drained(); }
+void framePresent() { push(CMD_PRESENT, nullptr, 0); wake(); if (gMode == 3) wait_drained(); }
 void frameHold(bool hold) { S32 a = hold ? 1 : 0; push(CMD_HOLD, &a, sizeof(a)); }
 void snapshotBoundary(S32 mode) { push(CMD_SNAPSHOT_BOUNDARY, &mode, sizeof(mode)); }
 void armSnapshot() { push(CMD_ARM_SNAPSHOT, nullptr, 0); }
@@ -326,12 +339,12 @@ void uniformScalar(void* program, unsigned uniform_index, int kind, unsigned n, 
 }
 void uniformVector(void* program, unsigned uniform_index, unsigned components, unsigned count, const void* data)
 {
-    struct A { void* p; unsigned idx, comps, count; } a = { program, uniform_index, components, count };
+    const UniformVecArgs a = { program, uniform_index, components, count };
     pushData(CMD_UNIFORM_VECTOR, &a, sizeof(a), data, (size_t)components * count * 4);
 }
 void uniformMatrix(void* program, unsigned uniform_index, unsigned columns, unsigned rows, unsigned count, const float* data)
 {
-    struct A { void* p; unsigned idx, cols, rows, count; } a = { program, uniform_index, columns, rows, count };
+    const UniformMatArgs a = { program, uniform_index, columns, rows, count };
     pushData(CMD_UNIFORM_MATRIX, &a, sizeof(a), data, (size_t)columns * rows * count * 4);
 }
 
@@ -944,18 +957,18 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     }
     case CMD_UNIFORM_VECTOR:
     {
-        LLVk::Program* p = r.get<LLVk::Program*>();
-        const unsigned idx = r.get<unsigned>(), comps = r.get<unsigned>(), count = r.get<unsigned>();
+        const UniformVecArgs a = r.get<UniformVecArgs>();
+        LLVk::Program* p = (LLVk::Program*)a.mProgram;
         Blob b = read_blob(r, flags);
-        if (p && b.mData) p->setFloatsAt((size_t)idx, reinterpret_cast<const F32*>(b.mData), comps, count);
+        if (p && b.mData) p->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(b.mData), a.mComponents, a.mCount);
         break;
     }
     case CMD_UNIFORM_MATRIX:
     {
-        LLVk::Program* p = r.get<LLVk::Program*>();
-        const unsigned idx = r.get<unsigned>(), cols = r.get<unsigned>(), rows = r.get<unsigned>(), count = r.get<unsigned>();
+        const UniformMatArgs a = r.get<UniformMatArgs>();
+        LLVk::Program* p = (LLVk::Program*)a.mProgram;
         Blob b = read_blob(r, flags);
-        if (p && b.mData) p->setMatricesAt((size_t)idx, reinterpret_cast<const F32*>(b.mData), cols, rows, count);
+        if (p && b.mData) p->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(b.mData), a.mColumns, a.mRows, a.mCount);
         break;
     }
     case CMD_SYNC:
@@ -1118,6 +1131,71 @@ DWORD WINAPI workerMain(LPVOID)
     return 0;
 }
 
+// plays every record in the ring (and the other threads' records that are due); returns true if it ran the stop command
+bool process_ring(bool& did, U32& count)
+{
+    bool stopping = false;
+    U64 head = gHead.load(std::memory_order_relaxed);
+    const U64 tail = gTail.load(std::memory_order_acquire);
+    while (head != tail)
+    {
+        const size_t pos = (size_t)(head % RING_BYTES);
+        RecHeader h;
+        memcpy(&h, gRing + pos, sizeof(h));
+        if (h.mOp == CMD_WRAP)
+        {
+            head += h.mSize;
+            gHead.store(head, std::memory_order_release);
+            continue;
+        }
+        if (h.mOp == CMD_STOP)
+        {
+            stopping = true;
+        }
+        else
+        {
+            execute(h.mOp, h.mCtx, h.mFlags, gRing + pos + sizeof(RecHeader));
+        }
+        head += h.mSize;
+        gHead.store(head, std::memory_order_release);
+        did = true;
+        if ((++count & 63) == 0 && gSideCount.load(std::memory_order_relaxed) > 0)
+        {
+            pollSide();
+        }
+        if (stopping)
+        {
+            break;
+        }
+    }
+    return stopping;
+}
+
+void drain_inline()
+{
+    static thread_local bool draining = false;
+    if (draining)
+    {
+        return;         // a command being replayed queued another one: the loop below plays it
+    }
+    draining = true;
+    bool did = false;
+    U32 count = 0;
+    process_ring(did, count);
+    pollSide();
+    draining = false;
+}
+
+void wait_drained()
+{
+    int spins = 0;
+    while (gHead.load(std::memory_order_acquire) != gTail.load(std::memory_order_acquire))
+    {
+        wake();
+        if (++spins < 500) YieldProcessor(); else SwitchToThread();
+    }
+}
+
 void run_loop()
 {
     gWorkerTid = __readgsdword(0x48);
@@ -1127,38 +1205,10 @@ void run_loop()
     while (!stopping)
     {
         bool did = false;
-        U64 head = gHead.load(std::memory_order_relaxed);
-        const U64 tail = gTail.load(std::memory_order_acquire);
-        while (head != tail)
+        stopping = process_ring(did, count);
+        if (stopping)
         {
-            const size_t pos = (size_t)(head % RING_BYTES);
-            RecHeader h;
-            memcpy(&h, gRing + pos, sizeof(h));
-            if (h.mOp == CMD_WRAP)
-            {
-                head += h.mSize;
-                gHead.store(head, std::memory_order_release);
-                continue;
-            }
-            if (h.mOp == CMD_STOP)
-            {
-                stopping = true;
-            }
-            else
-            {
-                execute(h.mOp, h.mCtx, h.mFlags, gRing + pos + sizeof(RecHeader));
-            }
-            head += h.mSize;
-            gHead.store(head, std::memory_order_release);
-            did = true;
-            if ((++count & 63) == 0 && gSideCount.load(std::memory_order_relaxed) > 0)
-            {
-                pollSide();
-            }
-            if (stopping)
-            {
-                break;
-            }
+            break;
         }
         if (pollSide())
         {
@@ -1176,7 +1226,13 @@ void run_loop()
 
 bool requested()
 {
-    static const bool on = getenv("LL_VK_ASYNC") != nullptr;
+    static const bool on = []() {
+        const char* v = getenv("LL_VK_ASYNC");
+        if (!v) return false;
+        if (strcmp(v, "loopback") == 0) gMode = 2;
+        else if (strcmp(v, "lockstep") == 0) gMode = 3;
+        return true;
+    }();
     return on;
 }
 
@@ -1204,6 +1260,14 @@ bool start()
     LLVkGL::register_main_context();
     LLVkMirror::gRendererTidCount = 0;
     LLVkMirror::gAsyncEpoch = LLVkMirror::gAsyncEpoch + 1;
+    if (gMode == 2)
+    {
+        // loopback: everything is encoded into the queue, and the main thread replays it at once
+        gWorkerTid = gMainTid;
+        gEnabled = true;
+        LL_INFOS("VkAsync") << "LL_VK_ASYNC=loopback: GL calls go through the queue and are replayed at once on the main thread (no worker thread)" << LL_ENDL;
+        return true;
+    }
     gRunning.store(true);
     gThread = CreateThread(nullptr, 0, workerMain, nullptr, 0, nullptr);
     if (!gThread)
@@ -1212,12 +1276,18 @@ bool start()
         return false;
     }
     gEnabled = true;
-    LL_INFOS("VkAsync") << "the Vulkan mirror runs on its own thread (LL_VK_ASYNC): GL calls are queued by the main thread" << LL_ENDL;
+    LL_INFOS("VkAsync") << (gMode == 3 ? "LL_VK_ASYNC=lockstep: the Vulkan mirror runs on its own thread, the main thread waits for it at the end of every frame"
+                                       : "the Vulkan mirror runs on its own thread (LL_VK_ASYNC): GL calls are queued by the main thread") << LL_ENDL;
     return true;
 }
 
 void stop()
 {
+    if (gMode == 2)
+    {
+        gEnabled = false;
+        return;
+    }
     if (!gEnabled || __readgsdword(0x48) == gWorkerTid)
     {
         return;         // not running, or called from the worker itself (a failure inside it)
