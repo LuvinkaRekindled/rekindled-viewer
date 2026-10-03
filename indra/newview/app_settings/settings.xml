@@ -2469,6 +2469,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>FSVulkanRenderer</key>
+    <map>
+      <key>Comment</key>
+      <string>Experimental: draw the world with Vulkan instead of OpenGL (OpenGL still creates the window). Takes effect after a restart; falls back to OpenGL if Vulkan cannot be set up.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSParallelAvatarMotion</key>
     <map>
       <key>Comment</key>

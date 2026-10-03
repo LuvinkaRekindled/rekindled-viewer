@@ -3872,6 +3872,18 @@ bool LLAppViewer::initWindow()
         .ignore_pixel_depth(ignorePixelDepth)
         .first_run(mIsFirstRun);
 
+#if LL_WINDOWS
+    // <FS> FSVulkanRenderer: draw with Vulkan in the main window. The mirror reads its mode from the environment, so the setting
+    // is translated here, before the window and its OpenGL context exist. Variables set by hand take precedence. If Vulkan cannot be
+    // set up the mirror logs it and the viewer carries on with OpenGL.
+    if (gSavedSettings.getBOOL("FSVulkanRenderer") && !getenv("LL_VK_MIRROR"))
+    {
+        LL_INFOS("AppInit") << "FSVulkanRenderer is set: asking for the Vulkan renderer in the main window" << LL_ENDL;
+        _putenv_s("LL_VK_MIRROR", "1");
+        _putenv_s("LL_VK_OWN", "1");
+        _putenv_s("LL_VK_EMBED", "main");
+    }
+#endif
     gViewerWindow = new LLViewerWindow(window_params);
 
     LL_INFOS("AppInit") << "gViewerwindow created." << LL_ENDL;
