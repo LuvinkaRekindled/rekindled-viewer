@@ -300,9 +300,10 @@ void syncCall(const std::function<void()>& fn)
 
 void frameBegin(S32 width, S32 height)
 {
-    // at most two frames ahead of the worker
+    // how many frames the main thread may be ahead of the worker: one keeps the frame times even (LL_VK_ASYNC_DEPTH overrides, for comparing)
+    static const unsigned depth = []() { const char* v = getenv("LL_VK_ASYNC_DEPTH"); return v ? (unsigned)std::max(1, atoi(v)) : 1u; }();
     int spins = 0;
-    while (gBeginsEnqueued.load(std::memory_order_relaxed) - gBeginsDone.load(std::memory_order_acquire) > 2)
+    while (gBeginsEnqueued.load(std::memory_order_relaxed) - gBeginsDone.load(std::memory_order_acquire) > depth)
     {
         wake();
         if (++spins < 200) YieldProcessor(); else SwitchToThread();
