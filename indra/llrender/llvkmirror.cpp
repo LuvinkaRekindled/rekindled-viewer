@@ -30,7 +30,7 @@ void LLVkMirror::shutdown() {}
 
 #include <cstdlib>
 
-namespace LLVkGL { extern bool gActive; extern std::recursive_mutex gMutex; void after_frame(); void run_dump(); void before_end_frame(); void after_offscreen(); double take_hook_ms(); std::string resource_summary(); }
+namespace LLVkGL { extern bool gActive; extern bool gOwn; extern std::recursive_mutex gMutex; void after_frame(); void run_dump(); void before_end_frame(); void after_offscreen(); double take_hook_ms(); std::string resource_summary(); }
 
 namespace LLVkMirror
 {
@@ -528,7 +528,12 @@ bool LLVkMirror::ensureReady()
     }
     sMirror.mReady = true;
     LLVkGL::gActive = true;
-    LLVkVerify::gEnabled = getenv("LL_VK_VERIFY") != nullptr;
+    LLVkGL::gOwn = getenv("LL_VK_OWN") != nullptr;
+    LLVkVerify::gEnabled = getenv("LL_VK_VERIFY") != nullptr && !LLVkGL::gOwn;      // nothing to compare against once OpenGL stops doing the work
+    if (LLVkGL::gOwn)
+    {
+        LL_INFOS("VkMirror") << "LL_VK_OWN: the mirror owns textures, buffers, framebuffers, vertex arrays, queries and fences; OpenGL no longer executes them or the draws. The main window stays blank, the picture is in the mirror window." << LL_ENDL;
+    }
     if (LLVkVerify::gEnabled)
     {
         LL_INFOS("VkVerify") << "LL_VK_VERIFY: GL readbacks will be compared with the Vulkan images (do not combine with LL_VK_MIRROR_BENCH)" << LL_ENDL;
@@ -542,7 +547,12 @@ bool LLVkMirror::ensureReady()
 void LLVkMirror::shutdown()
 {
     std::lock_guard<std::recursive_mutex> lock(LLVkGL::gMutex);
+    if (LLVkGL::gOwn)
+    {
+        LL_WARNS("VkMirror") << "the mirror shut down while it owned the resources: nothing can be drawn any more" << LL_ENDL;
+    }
     LLVkGL::gActive = false;
+    LLVkGL::gOwn = false;
     LLVkVerify::gEnabled = false;
     LLVk::Context& ctx = LLVk::Context::instance();
     if (ctx.isReady())

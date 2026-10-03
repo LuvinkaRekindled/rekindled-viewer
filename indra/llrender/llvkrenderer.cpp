@@ -741,6 +741,23 @@ void Renderer::harvestQueries(U32 slot)
     }
 }
 
+void Renderer::resolveQueries()
+{
+    if (mCmd != VK_NULL_HANDLE)
+    {
+        flushAndRestart();
+    }
+    Context& ctx = Context::instance();
+    ctx.waitIdle();
+    for (U32 slot = 0; slot < Context::FRAMES_IN_FLIGHT; ++slot)
+    {
+        if (slot != mSlot || mCmd == VK_NULL_HANDLE)
+        {
+            harvestQueries(slot);       // the work that used these pools has finished
+        }
+    }
+}
+
 bool Renderer::queryBegin(U64 serial)
 {
     if (mCmd == VK_NULL_HANDLE || !mOccPool[mSlot] || mOccSerial[mSlot].size() >= MAX_OCC_QUERIES)
@@ -1103,6 +1120,7 @@ void Renderer::beginRenderingIfNeeded()
 
 void Renderer::clear(U32 bits, const F32 color[4], F32 depth, U32 stencil)
 {
+    ++mModCount;
     if (bits & CLEAR_COLOR)
     {
         memcpy(mClearColor, color, sizeof(mClearColor));
@@ -1603,6 +1621,7 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
     startPendingQuery();
     vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
     ++mDrawCount;
+    ++mModCount;
     return true;
 }
 
@@ -1623,6 +1642,7 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
     startPendingQuery();
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
     ++mDrawCount;
+    ++mModCount;
     return true;
 }
 
@@ -1682,6 +1702,7 @@ void Renderer::withCommandBuffer(const std::function<void(VkCommandBuffer)>& rec
 
 bool Renderer::createTexture(const TextureDesc& d, Image& out)
 {
+    ++mModCount;
     Context& ctx = Context::instance();
     const FormatInfo fi = formatInfo(d.mFormat);
     if (!fi.mKnown && d.mFormat != VK_FORMAT_UNDEFINED)
@@ -1790,6 +1811,7 @@ bool Renderer::createTexture(const TextureDesc& d, Image& out)
 
 bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, const void* data, VkDeviceSize bytes)
 {
+    ++mModCount;
     Context& ctx = Context::instance();
     const FormatInfo fi = formatInfo(image.mFormat);
     if (!fi.mKnown || mip >= image.mMipLevels)
@@ -1845,6 +1867,7 @@ bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32
 
 bool Renderer::generateMipmaps(Image& image)
 {
+    ++mModCount;
     if (image.mMipLevels < 2)
     {
         return true;
@@ -1947,6 +1970,7 @@ bool Renderer::flushAndRestart()
     {
         return false;
     }
+    ++mFlushCount;
     beginFrame(cmd, slot);      // forgets everything cached about the old recording
     mColorCount = color_count;
     for (U32 i = 0; i < color_count; ++i)
@@ -2025,6 +2049,7 @@ bool Renderer::recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuff
 
 bool Renderer::copyRegion(Image& src, S32 sx, S32 sy, Image& dst, U32 dst_mip, U32 dst_layer, S32 dx, S32 dy, S32 width, S32 height)
 {
+    ++mModCount;
     if (mCmd == VK_NULL_HANDLE || width <= 0 || height <= 0)
     {
         return false;

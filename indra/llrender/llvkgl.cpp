@@ -86,6 +86,7 @@ namespace LLVkGL
 {
 
 bool gActive = false;
+bool gOwn = false;      // LL_VK_OWN: the mirror owns the GL resources (see llvkgl.h)
 std::recursive_mutex gMutex;
 
 // CPU time spent inside the translator's draw/clear hooks (the cost of recording the work into Vulkan), in ticks of the performance counter
@@ -466,6 +467,9 @@ struct PerContext
     GLuint mVao = 0;
     GLint mUnpackAlignment = 4;
     GLint mUnpackRowLength = 0;
+    GLint mPackAlignment = 4;
+    GLint mPackRowLength = 0;
+    GLuint mPixelPackBuffer = 0;
 };
 thread_local PerContext sCtx;
 
@@ -1802,6 +1806,8 @@ void on_glPixelStorei(GLenum pname, GLint param)
 {
     if (pname == GL_UNPACK_ALIGNMENT) sCtx.mUnpackAlignment = param;
     else if (pname == GL_UNPACK_ROW_LENGTH) sCtx.mUnpackRowLength = param;
+    else if (pname == 0x0D05) sCtx.mPackAlignment = param;          // PACK_ALIGNMENT
+    else if (pname == 0x0D02) sCtx.mPackRowLength = param;          // PACK_ROW_LENGTH
 }
 
 void on_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
@@ -2105,6 +2111,7 @@ void on_glDeleteBuffers(GLsizei n, const GLuint* buffers)
         }
         if (sCtx.mArrayBuffer == buffers[i]) sCtx.mArrayBuffer = 0;
         if (sCtx.mPixelUnpackBuffer == buffers[i]) sCtx.mPixelUnpackBuffer = 0;
+        if (sCtx.mPixelPackBuffer == buffers[i]) sCtx.mPixelPackBuffer = 0;
     }
 }
 
@@ -2117,6 +2124,7 @@ void on_glBindBuffer(GLenum target, GLuint buffer)
     if (target == GL_ARRAY_BUFFER) sCtx.mArrayBuffer = buffer;
     else if (target == GL_ELEMENT_ARRAY_BUFFER) current_vao().mElementBuffer = buffer;
     else if (target == GL_PIXEL_UNPACK_BUFFER) sCtx.mPixelUnpackBuffer = buffer;
+    else if (target == 0x88EB) sCtx.mPixelPackBuffer = buffer;      // PIXEL_PACK_BUFFER
     else if (target == GL_UNIFORM_BUFFER) sCtx.mUniformBuffer = buffer;
 }
 
@@ -2125,6 +2133,7 @@ static GLuint buffer_for_target(GLenum target)
     if (target == GL_ARRAY_BUFFER) return sCtx.mArrayBuffer;
     if (target == GL_ELEMENT_ARRAY_BUFFER) return current_vao().mElementBuffer;
     if (target == GL_PIXEL_UNPACK_BUFFER) return sCtx.mPixelUnpackBuffer;
+    if (target == 0x88EB) return sCtx.mPixelPackBuffer;
     if (target == GL_UNIFORM_BUFFER) return sCtx.mUniformBuffer;
     return 0;
 }
@@ -3058,7 +3067,7 @@ struct QueryTally
 bool queries_on()
 {
     static const bool disabled = getenv("LL_VK_NO_QUERIES") != nullptr;
-    return LLVkVerify::gEnabled && !disabled;
+    return (LLVkVerify::gEnabled || gOwn) && !disabled;
 }
 
 void compare_query(U64 serial, QueryRec& rec)
@@ -3415,7 +3424,7 @@ void verify_startup()
 // ---- sync objects and which threads feed the mirror ----
 namespace
 {
-struct SyncRec { U64 mFrame = 0; bool mInFrame = false; };
+struct SyncRec { U64 mFrame = 0; bool mInFrame = false; U64 mFlush = 0; };
 std::unordered_map<GLsync, SyncRec> sSyncs;
 struct SyncTally
 {
@@ -3859,6 +3868,450 @@ void verify_tex_image(GLenum target, S32 level, GLenum format, GLenum type, cons
     std::string what = "getTexImage tex " + std::to_string(bound) + " level " + std::to_string(level);
     verify_compare(what, t.mImage.mFormat, texels, w, h, format, type, gl_data);
 }
+
+//-----------------------------------------------------------------------------------------------------
+// LL_VK_OWN: the mirror owns the resources. The wrappers no longer make the sink calls in real OpenGL; the objects exist only
+// in Vulkan, and the calls that return something are answered here.
+//-----------------------------------------------------------------------------------------------------
+
+void own_gen(int kind, GLsizei n, GLuint* out)
+{
+    static GLuint next[5] = { 1, 1, 1, 1, 1 };       // textures, framebuffers, buffers, vertex arrays, queries; 0 is never a name
+    for (GLsizei i = 0; i < n; ++i)
+    {
+        out[i] = next[kind]++;
+    }
+}
+
+namespace
+{
+
+U32 pack_alignment() { return sCtx.mPackAlignment > 0 ? (U32)sCtx.mPackAlignment : 4u; }
+
+// the questions the mirror could not answer and left to OpenGL (logged once each)
+void note_fallback(const char* fn, GLenum pname)
+{
+    static std::set<std::pair<std::string, GLenum>> seen;
+    if (seen.insert({ fn, pname }).second)
+    {
+        LL_INFOS("VkOwn") << "not answered by the mirror, OpenGL answers (and its state is stale): " << fn << "(0x" << std::hex << pname << std::dec << ")" << LL_ENDL;
+    }
+}
+
+// where a pack operation writes: the bound pixel pack buffer (the pointer is then an offset) or client memory
+U8* pack_destination(void* pixels)
+{
+    if (sCtx.mPixelPackBuffer)
+    {
+        auto it = sGL.mBuffers.find(sCtx.mPixelPackBuffer);
+        if (it == sGL.mBuffers.end() || !it->second.mVk.valid() || !it->second.mVk.mMapped)
+        {
+            return nullptr;
+        }
+        return (U8*)it->second.mVk.mMapped + (size_t)(uintptr_t)pixels;
+    }
+    return (U8*)pixels;
+}
+
+U16 float_to_half_bits(float f)
+{
+    U32 x;
+    memcpy(&x, &f, 4);
+    const U32 sign = (x >> 16) & 0x8000u;
+    S32 exp = (S32)((x >> 23) & 0xFF) - 127 + 15;
+    U32 man = x & 0x7FFFFF;
+    if (exp <= 0) return (U16)sign;                              // flush denormals to zero
+    if (exp >= 31) return (U16)(sign | 0x7C00u);
+    return (U16)(sign | ((U32)exp << 10) | (man >> 13));
+}
+
+// writes decoded RGBA floats (w x h, row 0 first) into GL's pixel layout
+bool encode_to_gl(const std::vector<float>& rgba, S32 w, S32 h, GLenum format, GLenum type, U8* dst, S32 row_length = 0)
+{
+    std::vector<int> ch;
+    const U32 tb = gl_type_bytes(type);
+    if (!dst || !gl_channels(format, ch) || !tb)
+    {
+        return false;
+    }
+    const size_t pixel_bytes = ch.size() * tb;
+    const size_t row_pixels = row_length > 0 ? (size_t)row_length : (size_t)w;
+    const U32 align = pack_alignment();
+    const size_t stride = ((row_pixels * pixel_bytes + align - 1) / align) * align;
+    for (S32 y = 0; y < h; ++y)
+    {
+        U8* row = dst + (size_t)y * stride;
+        for (S32 x = 0; x < w; ++x)
+        {
+            for (size_t c = 0; c < ch.size(); ++c)
+            {
+                const float v = rgba[((size_t)y * w + x) * 4 + ch[c]];
+                U8* p = row + (size_t)x * pixel_bytes + c * tb;
+                if (type == GL_UNSIGNED_BYTE)
+                {
+                    *p = (U8)std::lround(std::min(1.f, std::max(0.f, v)) * 255.f);
+                }
+                else if (type == GL_HALF_FLOAT)
+                {
+                    const U16 hb = float_to_half_bits(v);
+                    memcpy(p, &hb, 2);
+                }
+                else
+                {
+                    memcpy(p, &v, 4);
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// The last full mip level read back, so a snapshot that reads it row by row costs one readback
+struct ReadCache
+{
+    const Image* mImage = nullptr;
+    U32 mMip = 0, mLayer = 0;
+    U64 mEpoch = ~0ull;
+    U32 mW = 0, mH = 0;
+    VkFormat mFormat = VK_FORMAT_UNDEFINED;
+    std::vector<U8> mTexels;
+} sReadCache;
+
+// tightly packed texels of the rectangle (x, y, w, h) of 'view', as the image holds them
+bool fetch_rect_cached(Image& view, S32 x, S32 y, S32 w, S32 h, std::vector<U8>& out, VkFormat& fmt)
+{
+    Renderer& r = Renderer::instance();
+    Image* root = view.mOwner ? view.mOwner : &view;
+    const U32 mip = view.mOwner ? view.mBaseMip : 0, layer = view.mOwner ? view.mBaseLayer : 0;
+    const FormatInfo fi = formatInfo(root->mFormat);
+    if (!fi.mKnown || fi.mCompressed)
+    {
+        return false;
+    }
+    if (sReadCache.mImage != &view || sReadCache.mMip != mip || sReadCache.mLayer != layer || sReadCache.mEpoch != r.modificationCount())
+    {
+        if (LLVkMirror::inFrame() && !r.flushAndRestart())
+        {
+            return false;
+        }
+        const U32 mw = std::max<U32>(1, root->mExtent.width >> mip), mh = std::max<U32>(1, root->mExtent.height >> mip);
+        sReadCache.mTexels.clear();
+        if (!r.readbackRegion(view, mip, layer, 0, 0, mw, mh, sReadCache.mTexels))
+        {
+            sReadCache.mImage = nullptr;
+            return false;
+        }
+        sReadCache.mImage = &view;
+        sReadCache.mMip = mip;
+        sReadCache.mLayer = layer;
+        sReadCache.mEpoch = r.modificationCount();
+        sReadCache.mW = mw;
+        sReadCache.mH = mh;
+        sReadCache.mFormat = root->mFormat;
+    }
+    if (x < 0 || y < 0 || (U32)(x + w) > sReadCache.mW || (U32)(y + h) > sReadCache.mH)
+    {
+        return false;
+    }
+    fmt = sReadCache.mFormat;
+    out.resize((size_t)w * h * fi.mBytesPerBlock);
+    for (S32 row = 0; row < h; ++row)
+    {
+        memcpy(&out[(size_t)row * w * fi.mBytesPerBlock], &sReadCache.mTexels[((size_t)(y + row) * sReadCache.mW + x) * fi.mBytesPerBlock], (size_t)w * fi.mBytesPerBlock);
+    }
+    return true;
+}
+
+// ---- query answers ----
+bool own_query_value(GLuint id, GLenum pname, U64& value)
+{
+    drain_query_results();
+    auto lat = sQueryLatest.find(id);
+    auto it = lat == sQueryLatest.end() ? sQueries.end() : sQueries.find(lat->second);
+    if (pname == 0x8867)         // QUERY_RESULT_AVAILABLE
+    {
+        value = (it == sQueries.end() || it->second.mVkHave) ? 1 : 0;
+        return true;
+    }
+    if (pname != 0x8866)         // QUERY_RESULT
+    {
+        return false;
+    }
+    if (it == sQueries.end())
+    {
+        value = 1;               // never issued to Vulkan: report 'visible' so nothing is wrongly hidden
+        return true;
+    }
+    if (!it->second.mVkHave)
+    {
+        Renderer::instance().resolveQueries();
+        drain_query_results();
+        it = sQueries.find(lat->second);
+    }
+    if (it != sQueries.end() && it->second.mVkHave)
+    {
+        value = it->second.mVkValue;
+        if (it->second.mOcc && it->second.mTarget != 0x8914) value = value ? 1 : 0;      // ANY_SAMPLES_PASSED is a boolean
+        sQueries.erase(it);
+        sQueryLatest.erase(lat);
+        return true;
+    }
+    value = it != sQueries.end() && it->second.mOcc ? 1 : 0;
+    return true;
+}
+
+} // anonymous namespace
+
+bool own_glGetIntegerv(GLenum pname, GLint* params)
+{
+    GLint emu[4] = {};
+    U32 n = 1;
+    if (!params || !(emulate_integer(pname, emu, n) || emulate_limit(pname, emu, n)))
+    {
+        note_fallback("glGetIntegerv", pname);
+        return false;
+    }
+    for (U32 i = 0; i < n; ++i) params[i] = emu[i];
+    return true;
+}
+
+bool own_glGetFloatv(GLenum pname, GLfloat* params)
+{
+    GLfloat emu[4] = {};
+    U32 n = 1;
+    if (!params || !emulate_float(pname, emu, n))
+    {
+        note_fallback("glGetFloatv", pname);
+        return false;
+    }
+    for (U32 i = 0; i < n; ++i) params[i] = emu[i];
+    return true;
+}
+
+bool own_glGetBooleanv(GLenum pname, GLboolean* params)
+{
+    GLboolean emu[4] = {};
+    U32 n = 1;
+    if (!params || !emulate_boolean(pname, emu, n))
+    {
+        note_fallback("glGetBooleanv", pname);
+        return false;
+    }
+    for (U32 i = 0; i < n; ++i) params[i] = emu[i];
+    return true;
+}
+
+bool own_glIsEnabled(GLenum cap, GLboolean& out)
+{
+    bool v = false;
+    if (!emulate_enabled(cap, v))
+    {
+        note_fallback("glIsEnabled", cap);
+        return false;
+    }
+    out = v ? GL_TRUE : GL_FALSE;
+    return true;
+}
+
+bool own_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint* params)
+{
+    if (!params)
+    {
+        return true;
+    }
+    Tex* t = bound_texture(target);
+    params[0] = 0;
+    if (t && t->mImage.valid() && level >= 0 && (U32)level < std::max<U32>(1, t->mLevels))
+    {
+        switch (pname)
+        {
+        case 0x1000: params[0] = (GLint)std::max<U32>(1, t->mWidth >> level); break;
+        case 0x1001: params[0] = (GLint)std::max<U32>(1, t->mHeight >> level); break;
+        case 0x8071: params[0] = (GLint)(t->mTarget == GL_TEXTURE_3D ? std::max<U32>(1, t->mDepth >> level) : std::max<U32>(1, t->mDepth)); break;
+        case 0x1003: params[0] = t->mInternalFormat; break;
+        case 0x86A1: params[0] = formatInfo(t->mImage.mFormat).mCompressed ? 1 : 0; break;
+        default: break;
+        }
+    }
+    return true;
+}
+
+bool own_glCheckFramebufferStatus(GLenum target, GLenum& out)
+{
+    const GLuint name = target == GL_READ_FRAMEBUFFER ? sCtx.mReadFbo : sCtx.mDrawFbo;
+    out = 0x8CD5;       // FRAMEBUFFER_COMPLETE
+    if (name)
+    {
+        auto it = sGL.mFbos.find(name);
+        bool any = false;
+        if (it != sGL.mFbos.end())
+        {
+            for (const FboAttachment& a : it->second.mColor) any |= a.mTexture != 0;
+            any |= it->second.mDepth.mTexture != 0;
+        }
+        if (!any) out = 0x8CD7;     // INCOMPLETE_MISSING_ATTACHMENT
+    }
+    return true;
+}
+
+bool own_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params)
+{
+    U64 v = 0;
+    if (!params || !own_query_value(id, pname, v)) return false;
+    params[0] = (GLint)v;
+    return true;
+}
+
+bool own_glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* params)
+{
+    U64 v = 0;
+    if (!params || !own_query_value(id, pname, v)) return false;
+    params[0] = (GLuint)v;
+    return true;
+}
+
+bool own_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params)
+{
+    U64 v = 0;
+    if (!params || !own_query_value(id, pname, v)) return false;
+    params[0] = v;
+    return true;
+}
+
+bool own_glFenceSync(GLenum condition, GLbitfield flags, GLsync& out)
+{
+    static U64 counter = 1;
+    out = (GLsync)(uintptr_t)(++counter << 4);
+    SyncRec rec;
+    rec.mFrame = Context::instance().getFrameNumber();
+    rec.mInFrame = LLVkMirror::inFrame();
+    rec.mFlush = Renderer::instance().flushCount();
+    sSyncs[out] = rec;
+    return true;
+}
+
+bool own_glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout, GLenum& out)
+{
+    auto it = sSyncs.find(sync);
+    if (it == sSyncs.end())
+    {
+        out = 0x911A;       // ALREADY_SIGNALED
+        return true;
+    }
+    Context& ctx = Context::instance();
+    Renderer& r = Renderer::instance();
+    const SyncRec& rec = it->second;
+    const bool done = !rec.mInFrame || ctx.frameFinished(rec.mFrame) || r.flushCount() != rec.mFlush;
+    if (done)
+    {
+        out = 0x911A;
+        return true;
+    }
+    if (timeout == 0)
+    {
+        out = 0x911B;       // TIMEOUT_EXPIRED
+        return true;
+    }
+    // a blocking wait: finish what has been recorded so far (the frame goes on afterwards), or wait for the earlier frames
+    if (rec.mFrame == ctx.getFrameNumber() && LLVkMirror::inFrame())
+    {
+        r.flushAndRestart();
+    }
+    else
+    {
+        ctx.waitIdle();
+    }
+    out = 0x911C;           // CONDITION_SATISFIED
+    return true;
+}
+
+bool own_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels)
+{
+    U8* dst = pack_destination(pixels);
+    Image* img = read_image();
+    std::vector<U8> texels;
+    VkFormat fmt = VK_FORMAT_UNDEFINED;
+    std::vector<float> rgba;
+    if (width <= 0 || height <= 0)
+    {
+        return true;
+    }
+    if (!dst)
+    {
+        return true;
+    }
+    if (!img || !img->valid() || !fetch_rect_cached(*img, x, y, width, height, texels, fmt) || !decode_vk_texels(fmt, texels, (size_t)width * height, rgba)
+        || !encode_to_gl(rgba, width, height, format, type, dst, sCtx.mPackRowLength))
+    {
+        static U32 reported = 0;
+        if (reported++ < 5)
+        {
+            LL_WARNS("VkGL") << "glReadPixels could not be answered from Vulkan (" << width << "x" << height << " format 0x" << std::hex << format << " type 0x" << type << std::dec << ")" << LL_ENDL;
+        }
+        // GL would have written something; hand back zeros so the caller does not read garbage
+        std::vector<int> ch;
+        if (gl_channels(format, ch) && gl_type_bytes(type))
+        {
+            const size_t stride = (((size_t)width * ch.size() * gl_type_bytes(type) + pack_alignment() - 1) / pack_alignment()) * pack_alignment();
+            memset(dst, 0, stride * (size_t)height);
+        }
+    }
+    return true;
+}
+
+bool own_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, void* pixels)
+{
+    U8* dst = pack_destination(pixels);
+    Tex* t = bound_texture(target);
+    if (!dst || !t || !t->mImage.valid() || level < 0 || (U32)level >= t->mImage.mMipLevels)
+    {
+        return true;
+    }
+    Renderer& r = Renderer::instance();
+    if (LLVkMirror::inFrame() && !r.flushAndRestart())
+    {
+        return true;
+    }
+    const S32 w = (S32)std::max<U32>(1, t->mImage.mExtent.width >> level), h = (S32)std::max<U32>(1, t->mImage.mExtent.height >> level);
+    std::vector<int> ch;
+    if (!gl_channels(format, ch) || !gl_type_bytes(type))
+    {
+        return true;
+    }
+    const size_t stride = (((size_t)w * ch.size() * gl_type_bytes(type) + pack_alignment() - 1) / pack_alignment()) * pack_alignment();
+    // 2D: one image; cube map face: that face; arrays and cube maps: every layer one after the other
+    U32 first_layer = 0, layers = 1;
+    if (target >= 0x8515 && target <= 0x851A) first_layer = target - 0x8515;
+    else if (target_class(target) == 2 || target_class(target) == 3) layers = t->mImage.mLayers;
+    else if (target_class(target) == 1) layers = 6;
+    for (U32 l = 0; l < layers; ++l)
+    {
+        std::vector<U8> texels;
+        std::vector<float> rgba;
+        if (!r.readbackRegion(t->mImage, (U32)level, first_layer + l, 0, 0, (U32)w, (U32)h, texels) || !decode_vk_texels(t->mImage.mFormat, texels, (size_t)w * h, rgba))
+        {
+            continue;
+        }
+        encode_to_gl(rgba, w, h, format, type, dst + (size_t)l * stride * h, 0);
+    }
+    return true;
+}
+
+bool own_glGetCompressedTexImage(GLenum target, GLint level, void* img)
+{
+    static bool said = false;
+    if (!said)
+    {
+        said = true;
+        LL_WARNS("VkGL") << "reading back a compressed texture is not supported while the mirror owns the resources" << LL_ENDL;
+    }
+    return true;
+}
+
+void on_glReadPixels(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*) {}
+void on_glGetTexImage(GLenum, GLint, GLenum, GLenum, void*) {}
+void on_glGetCompressedTexImage(GLenum, GLint, void*) {}
+
 
 } // namespace LLVkGL
 
