@@ -1031,6 +1031,30 @@ void Renderer::transition(VkCommandBuffer cmd, Image& view_or_image, VkImageLayo
         view_or_image.mLayout = layout;
         return;
     }
+    if (image.mLayout == VK_IMAGE_LAYOUT_UNDEFINED && image.mZeroOnFirstUse)
+    {
+        image.mZeroOnFirstUse = false;
+        imageBarrier(cmd, image.mImage, image.mAspect, image.mMipLevels, image.mLayers, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        VkImageSubresourceRange range = { image.mAspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS };
+        if (image.mAspect & VK_IMAGE_ASPECT_DEPTH_BIT)
+        {
+            VkClearDepthStencilValue zero = { 1.f, 0 };
+            vkCmdClearDepthStencilImage(cmd, image.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &range);
+        }
+        else
+        {
+            VkClearColorValue zero = {};
+            vkCmdClearColorImage(cmd, image.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &range);
+        }
+        image.mLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        if (layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+        {
+            view_or_image.mLayout = layout;
+            return;
+        }
+    }
     imageBarrier(cmd, image.mImage, image.mAspect, image.mMipLevels, image.mLayers, image.mLayout, layout,
                  VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
