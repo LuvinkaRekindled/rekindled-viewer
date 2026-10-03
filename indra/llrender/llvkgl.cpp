@@ -553,6 +553,7 @@ bool sDumpPending = false;
 std::map<GLuint, U32> sFrameSampledLast;
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
 U64 sDrawsTotal = 0;
+std::map<std::pair<int, GLenum>, U64> sGetterCounts;    // LL_VK_PHASES: state getter calls by function and parameter
 // draw outcomes of the current frame, by reason (and by program for the skipped ones)
 struct DrawStats
 {
@@ -2820,6 +2821,36 @@ void after_frame()
                         }
                         LL_INFOS("VkPhases") << (part ? "hooks on OTHER threads per frame (time shown per viewer frame): " : "hooks on the MAIN thread per frame, most CPU time first: ") << top << LL_ENDL;
                     }
+                    {
+                        // the hooks that hand a value back to the viewer: each would be a wait if the work were queued for another thread
+                        std::string answers;
+                        for (int i = 0; i < HOOK_COUNT; ++i)
+                        {
+                            const char* n = kHookNames[i];
+                            const bool value = strncmp(n, "glGet", 5) == 0 || strncmp(n, "glIs", 4) == 0 || strncmp(n, "glCheck", 7) == 0 || strncmp(n, "glFence", 7) == 0
+                                               || strncmp(n, "glClientWait", 12) == 0 || strncmp(n, "glReadPixels", 12) == 0 || strncmp(n, "glCreate", 8) == 0;
+                            if (value && gHookStatCalls[i])
+                            {
+                                char buf[120];
+                                snprintf(buf, sizeof(buf), "%s %.1f calls | ", n, (double)gHookStatCalls[i] / frames);
+                                answers += buf;
+                            }
+                        }
+                        LL_INFOS("VkPhases") << "value-returning hooks per frame (main thread): " << answers << LL_ENDL;
+                        static const char* const fn_names[] = { "glGetIntegerv", "glGetFloatv", "glGetBooleanv", "glIsEnabled", "glGetTexLevelParameteriv" };
+                        std::vector<std::pair<U64, std::pair<int, GLenum>>> order;
+                        for (const auto& kv : sGetterCounts) order.push_back({ kv.second, kv.first });
+                        std::sort(order.rbegin(), order.rend());
+                        std::string getters;
+                        for (size_t k = 0; k < order.size() && k < 12; ++k)
+                        {
+                            char buf[120];
+                            snprintf(buf, sizeof(buf), "%s(0x%X) %.1f | ", fn_names[order[k].second.first], order[k].second.second, (double)order[k].first / frames);
+                            getters += buf;
+                        }
+                        LL_INFOS("VkPhases") << "state getters per frame by parameter: " << getters << LL_ENDL;
+                        sGetterCounts.clear();
+                    }
                     for (int i = 0; i < 2 * HOOK_COUNT; ++i) { gHookStatTicks[i] = 0; gHookStatCalls[i] = 0; }
                     {
                         const Renderer::DrawDiag dd = Renderer::instance().takeDrawDiag();
@@ -4303,8 +4334,18 @@ bool own_query_value(GLuint id, GLenum pname, U64& value)
 
 } // anonymous namespace
 
+// LL_VK_PHASES: which state getters the viewer asks for, by function and parameter name
+void phase_getter(int fn, GLenum pname)
+{
+    if (LLVkMirror::gPhaseTiming && LLVkMirror::onMainThread())
+    {
+        ++sGetterCounts[{ fn, pname }];
+    }
+}
+
 bool own_glGetIntegerv(GLenum pname, GLint* params)
 {
+    phase_getter(0, pname);
     GLint emu[4] = {};
     U32 n = 1;
     if (!params || !(emulate_integer(pname, emu, n) || emulate_limit(pname, emu, n)))
@@ -4318,6 +4359,7 @@ bool own_glGetIntegerv(GLenum pname, GLint* params)
 
 bool own_glGetFloatv(GLenum pname, GLfloat* params)
 {
+    phase_getter(1, pname);
     GLfloat emu[4] = {};
     U32 n = 1;
     if (!params || !emulate_float(pname, emu, n))
@@ -4331,6 +4373,7 @@ bool own_glGetFloatv(GLenum pname, GLfloat* params)
 
 bool own_glGetBooleanv(GLenum pname, GLboolean* params)
 {
+    phase_getter(2, pname);
     GLboolean emu[4] = {};
     U32 n = 1;
     if (!params || !emulate_boolean(pname, emu, n))
@@ -4344,6 +4387,7 @@ bool own_glGetBooleanv(GLenum pname, GLboolean* params)
 
 bool own_glIsEnabled(GLenum cap, GLboolean& out)
 {
+    phase_getter(3, cap);
     bool v = false;
     if (!emulate_enabled(cap, v))
     {
@@ -4356,6 +4400,7 @@ bool own_glIsEnabled(GLenum cap, GLboolean& out)
 
 bool own_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint* params)
 {
+    phase_getter(4, pname);
     if (!params)
     {
         return true;
