@@ -1020,6 +1020,7 @@ void LLRender::syncMatrices()
 
     static glm::mat4 cached_mvp;
     static glm::mat4 cached_inv_mdv;
+    static U32 cached_inv_hash = 0xFFFFFFFF;    // <FS> modelview hash cached_inv_mdv was computed for
     static U32 cached_mvp_mdv_hash = 0xFFFFFFFF;
     static U32 cached_mvp_proj_hash = 0xFFFFFFFF;
 
@@ -1035,17 +1036,21 @@ void LLRender::syncMatrices()
         { //update modelview, normal, and MVP
             const glm::mat4& mat = mMatrix[MM_MODELVIEW][mMatIdx[MM_MODELVIEW]];
 
-            // if MDV has changed, update the cached inverse as well
-            if (cached_mvp_mdv_hash != mMatHash[MM_MODELVIEW])
+            // <FS> only invert the modelview matrix when the bound shader actually uses the inverse or the normal matrix
+            const S32 normal_loc = shader->getUniformLocation(LLShaderMgr::NORMAL_MATRIX);
+            const S32 inv_mdv_loc = shader->getUniformLocation(LLShaderMgr::INVERSE_MODELVIEW_MATRIX);
+            if ((normal_loc > -1 || inv_mdv_loc > -1) && cached_inv_hash != mMatHash[MM_MODELVIEW])
             {
                 cached_inv_mdv = glm::inverse(mat);
+                cached_inv_hash = mMatHash[MM_MODELVIEW];
             }
+            // </FS>
 
             shader->uniformMatrix4fv(name[MM_MODELVIEW], 1, GL_FALSE, glm::value_ptr(mat));
             shader->mMatHash[MM_MODELVIEW] = mMatHash[MM_MODELVIEW];
 
             //update normal matrix
-            S32 loc = shader->getUniformLocation(LLShaderMgr::NORMAL_MATRIX);
+            S32 loc = normal_loc;
             if (loc > -1)
             {
                 if (cached_normal_hash != mMatHash[i])
@@ -1066,7 +1071,7 @@ void LLRender::syncMatrices()
                 shader->uniformMatrix3fv(LLShaderMgr::NORMAL_MATRIX, 1, GL_FALSE, norm_mat);
             }
 
-            if (shader->getUniformLocation(LLShaderMgr::INVERSE_MODELVIEW_MATRIX))
+            if (inv_mdv_loc > -1)
             {
                 shader->uniformMatrix4fv(LLShaderMgr::INVERSE_MODELVIEW_MATRIX, 1, GL_FALSE, glm::value_ptr(cached_inv_mdv));
             }
