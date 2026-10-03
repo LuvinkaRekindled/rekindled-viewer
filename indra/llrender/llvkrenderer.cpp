@@ -1891,6 +1891,12 @@ bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32
     }
     memcpy(stage.mPtr, data, (size_t)expected);
 
+    ++mUploadStats.mCount;
+    mUploadStats.mBytes += expected;
+    if (mCmd != VK_NULL_HANDLE && mRendering)
+    {
+        ++mUploadStats.mPassSplits;
+    }
     const bool is_3d = image.mViewType == VK_IMAGE_VIEW_TYPE_3D;
     withCommandBuffer([&](VkCommandBuffer cmd) {
         transition(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);

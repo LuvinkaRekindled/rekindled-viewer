@@ -257,6 +257,38 @@ bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void*
     U32 src_row_bytes = src_row_texels * comps * tb;
     src_row_bytes = (src_row_bytes + alignment - 1) / alignment * alignment;
     const U32 dst_texel = fm.mTexelBytes;
+
+    // the common case, an 8-bit RGBA or RGB image into an RGBA8 texture: rows are copied or widened without any per-texel decisions
+    if (!fm.mDepth && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R8G8B8A8_SRGB) && type == GL_UNSIGNED_BYTE
+        && ((comps == 4 && format != 0x80E1) || (comps == 3 && format != 0x80E0)))
+    {
+        out.resize((size_t)width * height * depth * 4);
+        const U8* fbase = (const U8*)src;
+        for (U32 z = 0; z < depth; ++z)
+        {
+            for (U32 y = 0; y < height; ++y)
+            {
+                const U8* row = fbase + ((size_t)z * height + y) * src_row_bytes;
+                U8* dst = out.data() + (((size_t)z * height + y) * width) * 4;
+                if (comps == 4)
+                {
+                    memcpy(dst, row, (size_t)width * 4);
+                }
+                else
+                {
+                    for (U32 x = 0; x < width; ++x)
+                    {
+                        dst[x * 4 + 0] = row[x * 3 + 0];
+                        dst[x * 4 + 1] = row[x * 3 + 1];
+                        dst[x * 4 + 2] = row[x * 3 + 2];
+                        dst[x * 4 + 3] = 255;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     out.assign((size_t)width * height * depth * dst_texel, 0);
 
     const U8* base = (const U8*)src;
@@ -701,6 +733,8 @@ const void* pixel_source(const void* pixels)
     return pixels;
 }
 
+void upload_converted(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels);
+
 void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, GLenum format, GLenum type, const void* pixels)
 {
     if (!t.mImage.valid() || level < 0 || (U32)level >= t.mLevels)
@@ -716,8 +750,43 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
     {
         return;     // nothing to upload (allocation only)
     }
-    std::vector<U8> texels;
-    if (!convert_pixels(t.mFormat, format, type, src, w, h, d, (U32)sCtx.mUnpackAlignment, (U32)sCtx.mUnpackRowLength, texels))
+    static thread_local std::vector<U8> texels;       // reused between uploads of one thread
+    {
+        // A large conversion takes milliseconds; the viewer's texture thread and its main thread both feed this lock, so a big image
+        // is converted without holding it. Nothing the conversion reads is shared: the pixels belong to the caller, who is waiting.
+        const FormatMap fm = t.mFormat;
+        const U32 alignment = (U32)sCtx.mUnpackAlignment, row_length = (U32)sCtx.mUnpackRowLength;
+        const VkImage handle = t.mImage.mImage;
+        const GLuint name = sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
+        const bool unlocked = (U64)w * h * d >= 16384 && !sCtx.mPixelUnpackBuffer;
+        unsigned depth_held = 0;
+        if (unlocked)
+        {
+            depth_held = LLVkGL::gMutex.releaseAll();
+        }
+        const bool converted = convert_pixels(fm, format, type, src, w, h, d, alignment, row_length, texels);
+        if (unlocked)
+        {
+            LLVkGL::gMutex.reacquire(depth_held);
+            // the texture may have been deleted or replaced while the lock was free
+            auto it = sGL.mTextures.find(name);
+            if (it == sGL.mTextures.end() || it->second.mImage.mImage != handle)
+            {
+                return;
+            }
+            return upload_converted(it->second, target, level, x, y, z, w, h, d, converted, texels);
+        }
+        if (!converted)
+        {
+            return;
+        }
+    }
+    upload_converted(t, target, level, x, y, z, w, h, d, true, texels);
+}
+
+void upload_converted(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels)
+{
+    if (!converted || !t.mImage.valid())
     {
         return;
     }
@@ -2730,24 +2799,31 @@ void after_frame()
                 LL_INFOS("VkPhases") << frames << " frames, " << wall_ms / frames << " ms/frame wall, " << (sDrawsTotal - draws_at_start) / frames
                                      << " draws/frame; CPU ms/frame by phase: " << text << LL_ENDL;
                 {
-                    // the sink hooks, most expensive first (time includes waiting for the lock; the draw hooks contain the draw phases above)
-                    std::vector<std::pair<long long, int>> order;
-                    for (int i = 0; i < HOOK_COUNT; ++i)
+                    // the sink hooks, most expensive first, for the main thread and for all other threads (time includes waiting for the lock;
+                    // the draw hooks contain the draw phases above)
+                    for (int part = 0; part < 2; ++part)
                     {
-                        if (gHookStatCalls[i]) order.push_back({ gHookStatTicks[i], i });
+                        std::vector<std::pair<long long, int>> order;
+                        for (int i = part * HOOK_COUNT; i < (part + 1) * HOOK_COUNT; ++i)
+                        {
+                            if (gHookStatCalls[i]) order.push_back({ gHookStatTicks[i], i });
+                        }
+                        std::sort(order.rbegin(), order.rend());
+                        std::string top;
+                        for (size_t k = 0; k < order.size() && k < (part ? 8u : 14u); ++k)
+                        {
+                            const int i = order[k].second;
+                            const double ms = (double)gHookStatTicks[i] * 1000.0 / (double)freq.QuadPart;
+                            char buf[160];
+                            snprintf(buf, sizeof(buf), "%s %.1f calls %.2f ms %.0f ns/call | ", kHookNames[i - part * HOOK_COUNT], (double)gHookStatCalls[i] / frames, ms / frames, ms * 1e6 / (double)gHookStatCalls[i]);
+                            top += buf;
+                        }
+                        LL_INFOS("VkPhases") << (part ? "hooks on OTHER threads per frame (time shown per viewer frame): " : "hooks on the MAIN thread per frame, most CPU time first: ") << top << LL_ENDL;
                     }
-                    std::sort(order.rbegin(), order.rend());
-                    std::string top;
-                    for (size_t k = 0; k < order.size() && k < 20; ++k)
-                    {
-                        const int i = order[k].second;
-                        const double ms = (double)gHookStatTicks[i] * 1000.0 / (double)freq.QuadPart;
-                        char buf[160];
-                        snprintf(buf, sizeof(buf), "%s %.0f calls %.2f ms %.0f ns/call | ", kHookNames[i], (double)gHookStatCalls[i] / frames, ms / frames, ms * 1e6 / (double)gHookStatCalls[i]);
-                        top += buf;
-                    }
-                    for (int i = 0; i < HOOK_COUNT; ++i) { gHookStatTicks[i] = 0; gHookStatCalls[i] = 0; }
-                    LL_INFOS("VkPhases") << "sink hooks per frame, most CPU time first: " << top << LL_ENDL;
+                    for (int i = 0; i < 2 * HOOK_COUNT; ++i) { gHookStatTicks[i] = 0; gHookStatCalls[i] = 0; }
+                    const Renderer::UploadStats up = Renderer::instance().takeUploadStats();
+                    LL_INFOS("VkPhases") << "texture uploads per frame: " << (double)up.mCount / frames << " uploads, " << (double)up.mBytes / frames / 1024.0 << " KB, "
+                                         << (double)up.mPassSplits / frames << " ended a render pass in progress" << LL_ENDL;
                 }
                 draws_at_start = sDrawsTotal;
                 frames = 0;

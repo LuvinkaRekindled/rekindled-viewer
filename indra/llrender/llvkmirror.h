@@ -90,6 +90,19 @@ namespace LLVkMirror
                 mOwner.store(0, std::memory_order_release);
             }
         }
+        // gives the lock up completely (whatever the nesting) and takes it back at the same depth later
+        unsigned releaseAll()
+        {
+            const unsigned depth = mDepth;
+            mDepth = 0;
+            mOwner.store(0, std::memory_order_release);
+            return depth;
+        }
+        void reacquire(unsigned depth)
+        {
+            lock();
+            mDepth = depth;
+        }
     private:
         void lockSlow(unsigned long me);
         std::atomic<unsigned long> mOwner{ 0 };
@@ -105,6 +118,8 @@ namespace LLVkMirror
                  PH_A_TEX, PH_A_PASS, PH_A_PIPE, PH_A_DYN, PH_A_VI, PH_A_UNI, PH_A_PUSH, PH_A_CMD, PH_COUNT };
     extern long long gPhaseTicks[PH_COUNT];
     extern bool gPhaseTiming;
+    extern unsigned long gMainThreadId;         // set by beginFrame: the thread that draws the viewer's frames
+    inline bool onMainThread() { return __readgsdword(0x48) == gMainThreadId; }
     long long phaseNow();       // performance counter ticks
     const char* phaseName(int id);
     // adds the time since 't' to a phase and restarts the lap
@@ -121,7 +136,7 @@ namespace LLVkMirror
     {
         int mId;
         long long mStart = 0;
-        explicit PhaseTimer(int id) : mId(gPhaseTiming ? id : -1) { if (mId >= 0) mStart = phaseNow(); }
+        explicit PhaseTimer(int id) : mId(gPhaseTiming && onMainThread() ? id : -1) { if (mId >= 0) mStart = phaseNow(); }
         ~PhaseTimer()
         {
             if (mId >= 0)
