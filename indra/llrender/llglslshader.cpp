@@ -1655,7 +1655,14 @@ void LLGLSLShader::unbind(void)
 #if defined(LL_VULKAN)
     if (LLVkMirror::isReady())
     {
-        LLVk::Renderer::instance().setProgram(nullptr);
+        if (LLVkAsync::gEnabled)
+        {
+            LLVkAsync::programBind(nullptr);        // in order with the draws already queued
+        }
+        else
+        {
+            LLVk::Renderer::instance().setProgram(nullptr);
+        }
     }
 #endif
 }

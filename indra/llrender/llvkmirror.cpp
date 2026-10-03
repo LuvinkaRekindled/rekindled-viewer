@@ -41,6 +41,15 @@ long long gPhaseTicks[PH_COUNT] = {};
 bool gPhaseTiming = false;
 unsigned long gMainThreadId = 0;
 volatile int gLastLap = 0;
+volatile unsigned long long gDbg[4] = {};
+volatile unsigned gAsyncEpoch = 0;
+volatile unsigned long gRendererTids[8] = {};
+volatile unsigned gRendererTidCount = 0;
+void noteRendererThreadSlow()
+{
+    const unsigned i = InterlockedIncrement((volatile LONG*)&gRendererTidCount) - 1;
+    if (i < 8) gRendererTids[i] = __readgsdword(0x48);
+}
 long long phaseNow()
 {
     LARGE_INTEGER now;

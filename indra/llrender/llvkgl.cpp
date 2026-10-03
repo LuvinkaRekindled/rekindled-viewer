@@ -557,6 +557,7 @@ bool sDumpPending = false;
 std::map<GLuint, U32> sFrameSampledLast;
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
 U64 sDrawsTotal = 0;
+std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
 std::map<std::pair<int, GLenum>, U64> sGetterCounts;    // LL_VK_PHASES: state getter calls by function and parameter
 // draw outcomes of the current frame, by reason (and by program for the skipped ones)
 struct DrawStats
@@ -2463,6 +2464,10 @@ void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
     LLVkMirror::gLastLap = 211;
     if (r.draw((U32)count, (U32)first))
     {
+        if (LLVkMirror::gPhaseTiming)
+        {
+            ++sPhaseProgramDraws[r.getProgram()->getName()];
+        }
         if (sStatsEnabled)
         {
             ++sStats.mDone;
@@ -2511,6 +2516,10 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     r.setIndexBuffer(eit->second.mVk.mBuffer, 0, itype);
     if (r.drawIndexed((U32)count, (U32)((U64)indices / index_bytes), 0))
     {
+        if (LLVkMirror::gPhaseTiming)
+        {
+            ++sPhaseProgramDraws[r.getProgram()->getName()];
+        }
         if (sStatsEnabled)
         {
             ++sStats.mDone;
@@ -2874,6 +2883,33 @@ void after_frame()
                         const Renderer::DrawDiag dd = Renderer::instance().takeDrawDiag();
                         LL_INFOS("VkPhases") << "indexed draws per frame: " << (double)dd.mDraws / frames << ", of which changed nothing but the draw command: " << (double)dd.mUnchanged / frames
                                              << ", of which also continued the previous index range (mergeable): " << (double)dd.mMergeable / frames << LL_ENDL;
+                    }
+                    {
+                        std::vector<std::pair<U32, std::string>> by_count;
+                        for (const auto& kv : sPhaseProgramDraws) by_count.push_back({ kv.second, kv.first });
+                        std::sort(by_count.rbegin(), by_count.rend());
+                        std::string text;
+                        for (size_t k = 0; k < by_count.size() && k < 16; ++k)
+                        {
+                            char buf[200];
+                            snprintf(buf, sizeof(buf), "%s %.1f | ", by_count[k].second.c_str(), (double)by_count[k].first / frames);
+                            text += buf;
+                        }
+                        LL_INFOS("VkPhases") << "draws per frame by program (top 16): " << text << LL_ENDL;
+                        sPhaseProgramDraws.clear();
+                    }
+                    {
+                        unsigned long long v[2];
+                        LLVkAsync::queryResultStats(v);
+                        LL_INFOS("VkPhases") << "occlusion results handed to the viewer per frame: occluded (0) " << (double)v[0] / frames << ", visible " << (double)v[1] / frames << LL_ENDL;
+                    }
+                    if (LLVkAsync::gEnabled)
+                    {
+                        unsigned long long q[7];
+                        LLVkAsync::queryStats(q);
+                        LL_INFOS("VkPhases") << "occlusion queries per frame: marked pending " << (double)q[0] / frames << ", published " << (double)q[1] / frames << ", set idle " << (double)q[2] / frames
+                                             << "; polls answered ready " << (double)q[3] / frames << ", pending " << (double)q[4] / frames << ", idle " << (double)q[5] / frames
+                                             << ", result reads sent to the worker " << (double)q[6] / frames << LL_ENDL;
                     }
                     const Renderer::UploadStats up = Renderer::instance().takeUploadStats();
                     LL_INFOS("VkPhases") << "texture uploads per frame: " << (double)up.mCount / frames << " uploads, " << (double)up.mBytes / frames / 1024.0 << " KB, "
@@ -3337,6 +3373,7 @@ void note_getter(int kind, GLenum pname, bool handled, bool mismatch, const doub
 struct QueryRec
 {
     GLuint mName = 0;                   // the GL name the query was begun under
+    U64 mGen = 0;                       // the async generation of that begin (0 in inline mode)
     GLenum mTarget = 0;
     bool mOcc = false, mTime = false;
     bool mVkHave = false, mHaveStart = false, mHaveEnd = false, mGlHave = false;
@@ -3428,16 +3465,12 @@ void drain_query_results()
             rec.mVkValue = (U64)(((rec.mTsEnd - rec.mTsStart) & mask) * (double)caps.mTimestampPeriodNs);
             rec.mVkHave = true;
         }
-        if (rec.mVkHave && LLVkAsync::gEnabled)
+        if (rec.mVkHave && LLVkAsync::gEnabled && rec.mGen)
         {
             // hand the result to the main thread, which polls without waiting for this thread
-            auto lat = sQueryLatest.find(rec.mName);
-            if (lat != sQueryLatest.end() && lat->second == r.mSerial)
-            {
-                U64 v = rec.mVkValue;
-                if (rec.mOcc && rec.mTarget != 0x8914) v = v ? 1 : 0;
-                LLVkAsync::queryPublish(rec.mName, v);
-            }
+            U64 v = rec.mVkValue;
+            if (rec.mOcc && rec.mTarget != 0x8914) v = v ? 1 : 0;
+            LLVkAsync::queryPublish(rec.mName, rec.mGen, v);
         }
         if (rec.mVkHave && rec.mGlHave)
         {
@@ -3594,12 +3627,13 @@ void on_glBeginQuery(GLenum target, GLuint id)
     if (!queries_on() || !LLVkMirror::inFrame() || !Renderer::instance().isReady())
     {
         if (queries_on()) ++sQT.mNotIssued;
-        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id);
+        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
         return;
     }
     Renderer& r = Renderer::instance();
     QueryRec rec;
     rec.mName = id;
+    rec.mGen = LLVkAsync::gEnabled ? LLVkAsync::workerQueryGen(id) : 0;
     rec.mTarget = target;
     const U64 serial = ++sQuerySerial;
     bool ok = false;
@@ -3617,7 +3651,7 @@ void on_glBeginQuery(GLenum target, GLuint id)
     {
         ++sQT.mNotIssued;
         sQueryActive.erase(target);
-        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id);
+        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
         return;
     }
     ++sQT.mIssued;
@@ -4373,9 +4407,10 @@ bool own_query_value(GLuint id, GLenum pname, U64& value)
     {
         value = it->second.mVkValue;
         if (it->second.mOcc && it->second.mTarget != 0x8914) value = value ? 1 : 0;      // ANY_SAMPLES_PASSED is a boolean
+        LLVkAsync::queryResultTally(value != 0);
         sQueries.erase(it);
         sQueryLatest.erase(lat);
-        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id);
+        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
         return true;
     }
     value = it != sQueries.end() && it->second.mOcc ? 1 : 0;

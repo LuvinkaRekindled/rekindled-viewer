@@ -1290,6 +1290,7 @@ Image* Renderer::resolveTexture(size_t k, bool depth_ro, Image* depth_root)
 
 void Renderer::applyState()
 {
+    LLVkMirror::noteRendererThread();
     long long lap_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
     mDiagChanged = false;
     // 1. A texture that is also the depth attachment is a feedback loop. Reading it while depth writes are off is
@@ -1534,10 +1535,17 @@ void Renderer::applyState()
     }
 
     LLVkMirror::phaseLap(LLVkMirror::PH_A_VI, lap_t);
+    LLVkMirror::gLastLap = 301;
+    LLVkMirror::gDbg[0] = (unsigned long long)mProgram;
+    LLVkMirror::gDbg[1] = mSlot;
+    LLVkMirror::gDbg[2] = (unsigned long long)mCmd;
+    LLVkMirror::gDbg[3] = (unsigned long long)mRing[mSlot].mMapped;
     // 6. loose uniforms: copy this program's shadow into the ring when it changed (or on its first use this frame)
     if (mProgram->mDirty || mProgram->mRingFrame != Context::instance().getFrameNumber())
     {
+        LLVkMirror::gLastLap = 302;
         const U32 ring_offset = allocUniform((U32)mProgram->mShadow.size());
+        LLVkMirror::gLastLap = 303;
         if (ring_offset == 0xFFFFFFFFu)
         {
             mDrawBlocked = true;
@@ -1549,11 +1557,13 @@ void Renderer::applyState()
         mProgram->mRingFrame = Context::instance().getFrameNumber();
         mProgram->mDirty = false;
     }
+    LLVkMirror::gLastLap = 304;
     VkDescriptorSet set0 = mSet0[mSlot];
     if (mUbo[0] || mUbo[1] || mUbo[2] || mUbo[3])
     {
         set0 = uboSet();
     }
+    LLVkMirror::gLastLap = 305;
     if (!mSet0Bound || mAppliedDynamicOffset != mProgram->mRingOffset || mAppliedSet0 != set0)
     {
         mDiagChanged = true;
@@ -1887,6 +1897,7 @@ bool Renderer::createTexture(const TextureDesc& d, Image& out)
 
 bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, const void* data, VkDeviceSize bytes)
 {
+    LLVkMirror::noteRendererThread();
     ++mModCount;
     Context& ctx = Context::instance();
     const FormatInfo fi = formatInfo(image.mFormat);
