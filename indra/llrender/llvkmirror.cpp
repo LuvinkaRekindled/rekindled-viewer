@@ -694,7 +694,7 @@ void LLVkMirror::beginFrameImpl(S32 width, S32 height)
         {
             return;     // the main loop holds the frame open across display() and what follows it
         }
-        endFrame();     // the previous frame never reached its swap (early return, snapshot): present what it drew
+        endFrameImpl();     // the previous frame never reached its swap (early return, snapshot): present what it drew
     }
     sMirror.mInFrame = false;
     if (!ensureReady())
@@ -935,7 +935,7 @@ void LLVkMirror::snapshotBoundaryImpl(S32 mode)
     {
         const bool held = sMirror.mHold;
         sMirror.mHold = false;
-        endFrame();                 // closes the off-screen frame
+        endFrameImpl();             // closes the off-screen frame
         if (mode >= 3)
         {
             LLVk::Context::instance().waitIdle();
@@ -970,7 +970,7 @@ void LLVkMirror::presentFrameImpl()
     bench_gl_stamp(1);
     const bool held = sMirror.mHold;
     sMirror.mHold = false;
-    endFrame();
+    endFrameImpl();
     sMirror.mHold = held;
     if (!held || sMirror.mInFrame || !sMirror.mReady)
     {
