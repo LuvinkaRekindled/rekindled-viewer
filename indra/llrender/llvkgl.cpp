@@ -22,6 +22,7 @@
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
 
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <set>
@@ -421,6 +422,9 @@ struct Buf
     Buffer mVk;
     U64 mSize = 0;
     U64 mLastUseFrame = ~0ull;
+    // The Vulkan buffer lives in write-combined video memory, which is very slow to read from the CPU. This copy in ordinary memory
+    // is what a renamed buffer is refilled from when only part of it is rewritten.
+    std::vector<U8> mShadow;
 };
 
 struct VaoAttrib
@@ -1739,6 +1743,35 @@ void mark_used(const std::vector<GLuint>& buffers, GLuint element)
 }
 
 // writes into a GL buffer's host memory, renaming the Vulkan buffer first if a frame in flight may still read it
+// how much time the buffer renames take (logged when it gets noticeable)
+struct RenameStats
+{
+    U32 mCount = 0;
+    U64 mBytes = 0;
+    U64 mMicros = 0;
+    U64 mShadowlessCopies = 0;
+    std::chrono::steady_clock::time_point mWindowStart = std::chrono::steady_clock::now();
+};
+RenameStats sRenameStats;
+
+void report_renames()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - sRenameStats.mWindowStart < std::chrono::seconds(5))
+    {
+        return;
+    }
+    if (sRenameStats.mMicros > 20000)
+    {
+        U64 shadow_bytes = 0;
+        for (const auto& kv : sGL.mBuffers) shadow_bytes += kv.second.mShadow.size();
+        LL_INFOS("VkGL") << "buffer renames in the last 5 s: " << sRenameStats.mCount << " copies, " << (sRenameStats.mBytes >> 20) << " MB, "
+                         << sRenameStats.mMicros / 1000 << " ms on the main thread (" << sRenameStats.mShadowlessCopies << " read from video memory); system memory copies hold "
+                         << (shadow_bytes >> 20) << " MB" << LL_ENDL;
+    }
+    sRenameStats = RenameStats();
+}
+
 void write_buffer(Buf& b, U64 offset, U64 size, const void* data, bool whole)
 {
     Context& ctx = Context::instance();
@@ -1746,22 +1779,40 @@ void write_buffer(Buf& b, U64 offset, U64 size, const void* data, bool whole)
     const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::FRAMES_IN_FLIGHT + 1;
     if (in_flight && b.mVk.valid())
     {
+        const auto t0 = std::chrono::steady_clock::now();
         Buffer fresh;
         if (ctx.createBuffer(b.mSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                              Context::Memory::UploadDevice, fresh))
         {
+            const size_t keep = (size_t)std::min<U64>(b.mSize, b.mVk.mSize);
             if (!whole)
             {
-                memcpy(fresh.mMapped, b.mVk.mMapped, (size_t)std::min<U64>(b.mSize, b.mVk.mSize));
+                if (b.mShadow.size() >= keep)
+                {
+                    memcpy(fresh.mMapped, b.mShadow.data(), keep);
+                }
+                else
+                {
+                    memcpy(fresh.mMapped, b.mVk.mMapped, keep);     // no copy in system memory: the slow way
+                    ++sRenameStats.mShadowlessCopies;
+                }
             }
             ctx.destroyBuffer(b.mVk);
             b.mVk = fresh;
             b.mLastUseFrame = ~0ull;
+            ++sRenameStats.mCount;
+            sRenameStats.mBytes += keep;
         }
+        sRenameStats.mMicros += (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
+        report_renames();
     }
     if (b.mVk.valid() && data && offset + size <= b.mVk.mSize)
     {
         memcpy((U8*)b.mVk.mMapped + offset, data, (size_t)size);
+        if (b.mShadow.size() >= offset + size)
+        {
+            memcpy(b.mShadow.data() + offset, data, (size_t)size);
+        }
     }
 }
 
@@ -2173,14 +2224,17 @@ void on_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum us
     }
     b.mSize = (U64)size;
     b.mLastUseFrame = ~0ull;
+    b.mShadow.clear();
     if (size == 0 || !ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                        Context::Memory::UploadDevice, b.mVk))
     {
         return;
     }
+    b.mShadow.assign((size_t)size, 0);
     if (data)
     {
         memcpy(b.mVk.mMapped, data, (size_t)size);
+        memcpy(b.mShadow.data(), data, (size_t)size);
     }
     else
     {
