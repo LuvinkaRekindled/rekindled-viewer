@@ -1161,6 +1161,9 @@ void LLShaderMgr::persistShaderCacheMetadata()
 bool LLShaderMgr::loadCachedProgramBinary(LLGLSLShader* shader)
 {
     if (!mShaderCacheEnabled) return false;
+#if defined(LL_VULKAN)
+    if (LLVkGL::gOwn) return false;     // keep the viewer's GL binary cache untouched; the programs are compiled for Vulkan
+#endif
 
     glProgramParameteri(shader->mProgramObject, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 
@@ -1208,6 +1211,9 @@ bool LLShaderMgr::loadCachedProgramBinary(LLGLSLShader* shader)
 bool LLShaderMgr::saveCachedProgramBinary(LLGLSLShader* shader)
 {
     if (!mShaderCacheEnabled) return true;
+#if defined(LL_VULKAN)
+    if (LLVkGL::gOwn) return true;      // there is no GL program to take a binary from
+#endif
 
     ProgramBinaryData binary_info = ProgramBinaryData();
     glGetProgramiv(shader->mProgramObject, GL_PROGRAM_BINARY_LENGTH, &binary_info.mBinaryLength);
