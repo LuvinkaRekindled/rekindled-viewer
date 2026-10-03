@@ -514,8 +514,18 @@ bool query_get(int kind, unsigned id, unsigned pname, void* params)
     {
         if (pending)
         {
+            // The viewer gives up waiting after a few polls and forces the read. Waiting for the worker (and the GPU) would stall the main thread
+            // for a frame or more; answer "visible", which is what the viewer assumes for a query it cannot resolve. The late result is ignored
+            // (it carries an older generation than the next query begun under this name).
             gQStat[6].fetch_add(1, std::memory_order_relaxed);
-            return false;           // not there yet: the worker resolves it
+            queryResultTally(true);
+            switch (kind)
+            {
+            case 0: *(GLint*)params = 1; break;
+            case 1: *(GLuint*)params = 1; break;
+            default: *(GLuint64*)params = 1; break;
+            }
+            return true;
         }
         value = q.mValue.load(std::memory_order_relaxed);
         queryResultTally(value != 0);
