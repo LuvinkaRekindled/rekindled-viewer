@@ -2390,18 +2390,18 @@
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>2</integer>
+      <integer>3</integer>
     </map>
     <key>FSShadowFarCascadeFirst</key>
     <map>
       <key>Comment</key>
-      <string>Index (0-3) of the first sun shadow cascade that FSShadowFarCascadeInterval applies to. 2 means the two farthest cascades.</string>
+      <string>Index (0-3) of the first sun shadow cascade that FSShadowFarCascadeInterval applies to. 1 (the default) means cascades 1 to 3, leaving the nearest one updated every frame.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>2</integer>
+      <integer>1</integer>
     </map>
     <key>FSShadowFarCascadeMaxCameraMove</key>
     <map>
