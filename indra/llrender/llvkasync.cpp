@@ -141,6 +141,35 @@ unsigned long long* gWorkerGen = nullptr;           // worker side: the generati
 std::atomic<unsigned long long> gQStat[7];
 std::atomic<unsigned long long> gQValue[2];
 
+// ---- frame pacing statistics (LL_VK_PHASES) ----
+std::mutex gPaceMutex;
+std::vector<float> gBeginGaps, gPresentGaps;        // milliseconds between consecutive frame starts (main) / presents (worker)
+long long gLastBeginTick = 0, gLastPresentTick = 0;
+long long gMainWaitTicks = 0, gWorkerIdleTicks = 0;
+double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
+long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
+void note_gap(std::vector<float>& gaps, long long& last)
+{
+    const long long n = now_ticks();
+    if (last)
+    {
+        std::lock_guard<std::mutex> lock(gPaceMutex);
+        gaps.push_back((float)ticks_to_ms(n - last));
+        if (gaps.size() > 4000) gaps.erase(gaps.begin(), gaps.begin() + 2000);
+    }
+    last = n;
+}
+std::string describe(std::vector<float>& v)
+{
+    if (v.empty()) return "no frames";
+    std::sort(v.begin(), v.end());
+    double sum = 0;
+    for (float f : v) sum += f;
+    char buf[200];
+    snprintf(buf, sizeof(buf), "n %zu, avg %.1f, p50 %.1f, p95 %.1f, p99 %.1f, max %.1f", v.size(), sum / v.size(), v[v.size() / 2], v[(size_t)(v.size() * 0.95)], v[(size_t)(v.size() * 0.99)], v.back());
+    return buf;
+}
+
 // ---- writing records ----
 inline size_t alignUp(size_t n) { return (n + 7) & ~(size_t)7; }
 
@@ -298,8 +327,28 @@ void syncCall(const std::function<void()>& fn)
 // frame boundaries
 // ---------------------------------------------------------------------------------------------------------------------------------
 
+std::string pacingReport()
+{
+    std::vector<float> b, p;
+    double main_wait = 0, worker_idle = 0;
+    {
+        std::lock_guard<std::mutex> lock(gPaceMutex);
+        b.swap(gBeginGaps);
+        p.swap(gPresentGaps);
+        main_wait = ticks_to_ms(gMainWaitTicks);
+        worker_idle = ticks_to_ms(gWorkerIdleTicks);
+        gMainWaitTicks = gWorkerIdleTicks = 0;
+    }
+    const size_t frames = std::max<size_t>(1, p.size());
+    char buf[160];
+    snprintf(buf, sizeof(buf), " | main thread waited for the worker %.1f ms/frame, worker waited for work %.1f ms/frame", main_wait / frames, worker_idle / frames);
+    return "frame starts on the main thread (ms between): " + describe(b) + " | worker presents (ms between): " + describe(p) + buf;
+}
+
 void frameBegin(S32 width, S32 height)
 {
+    note_gap(gBeginGaps, gLastBeginTick);
+    const long long wait_start = now_ticks();
     // how many frames the main thread may be ahead of the worker: one keeps the frame times even (LL_VK_ASYNC_DEPTH overrides, for comparing)
     static const unsigned depth = []() { const char* v = getenv("LL_VK_ASYNC_DEPTH"); return v ? (unsigned)std::max(1, atoi(v)) : 1u; }();
     int spins = 0;
@@ -307,6 +356,10 @@ void frameBegin(S32 width, S32 height)
     {
         wake();
         if (++spins < 200) YieldProcessor(); else SwitchToThread();
+    }
+    {
+        std::lock_guard<std::mutex> lock(gPaceMutex);
+        gMainWaitTicks += now_ticks() - wait_start;
     }
     gBeginsEnqueued.fetch_add(1);
     S32 a[2] = { width, height };
@@ -907,7 +960,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         break;
     }
     case CMD_FRAME_END: LLVkMirror::endFrameImpl(); break;
-    case CMD_PRESENT: LLVkMirror::presentFrameImpl(); break;
+    case CMD_PRESENT: LLVkMirror::presentFrameImpl(); note_gap(gPresentGaps, gLastPresentTick); break;
     case CMD_HOLD: LLVkMirror::holdFrameImpl(r.get<S32>() != 0); break;
     case CMD_SNAPSHOT_BOUNDARY: LLVkMirror::snapshotBoundaryImpl(r.get<S32>()); break;
     case CMD_ARM_SNAPSHOT: LLVkMirror::armSnapshotCompareImpl(); break;
@@ -1034,6 +1087,8 @@ bool pollSide()
 
 void idleWait()
 {
+    const long long idle_start = now_ticks();
+    struct Timer { long long mStart; ~Timer() { std::lock_guard<std::mutex> lock(gPaceMutex); gWorkerIdleTicks += now_ticks() - mStart; } } idle_timer = { idle_start };
     for (int i = 0; i < 300; ++i)
     {
         YieldProcessor();

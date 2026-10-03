@@ -2905,6 +2905,10 @@ void after_frame()
                     }
                     if (LLVkAsync::gEnabled)
                     {
+                        LL_INFOS("VkPhases") << "frame pacing: " << LLVkAsync::pacingReport() << LL_ENDL;
+                    }
+                    if (LLVkAsync::gEnabled)
+                    {
                         unsigned long long q[7];
                         LLVkAsync::queryStats(q);
                         LL_INFOS("VkPhases") << "occlusion queries per frame: marked pending " << (double)q[0] / frames << ", published " << (double)q[1] / frames << ", set idle " << (double)q[2] / frames
