@@ -519,6 +519,7 @@ struct DrawStats
     std::vector<std::string> mBackbufferEvents;     // draws and clears that target the default framebuffer, in order
 };
 DrawStats sStats, sStatsLast;
+bool sVerifySnapshotPending = false;   // a snapshot render is being mirrored: report on it when its off-screen frame ends
 std::set<GLuint> sCurTargets;           // textures attached to the current draw framebuffer
 U32 sCurTargetW = 1, sCurTargetH = 1;   // size of the first colour target of the current draw framebuffer
 // the per-draw statistics / pass graph are only gathered when asked for (they cost string work on every draw)
@@ -580,6 +581,10 @@ bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U3
     FormatMap fm;
     if (!map_internal_format(internal_format, fm))
     {
+        if (sVerifySnapshotPending)
+        {
+            LL_INFOS("VkVerify") << "snapshot: texture " << (S32)w << "x" << (S32)h << " with GL internal format " << internal_format << " has no Vulkan format; it will not exist in Vulkan" << LL_ENDL;
+        }
         return false;
     }
     const U32 cls = target_class(target);
@@ -607,6 +612,11 @@ bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U3
     }
     if (t.mImage.valid())
     {
+        if (sVerifySnapshotPending)
+        {
+            LL_INFOS("VkVerify") << "snapshot: texture re-specified from " << t.mWidth << "x" << t.mHeight << " fmt " << t.mInternalFormat << " to " << w << "x" << h << " fmt " << internal_format
+                                 << ", Vulkan image recreated (anything drawn into it so far is lost)" << LL_ENDL;
+        }
         destroy_tex_images(t);
     }
 
@@ -1514,6 +1524,18 @@ void after_offscreen()
     {
         snap_evaluate();
         if (++sSnapStage >= 2) { sSnapActive = false; sSnapStage = 0; }
+    }
+    if (sVerifySnapshotPending)
+    {
+        // the off-screen frame held the snapshot's render: make the next frame report on it (draw stats, pass graph,
+        // texture comparisons incl. the probe arrays, render target dumps), as the vk-dump.trigger path would
+        sVerifySnapshotPending = false;
+        sStatsLast = sStats;
+        sStats = DrawStats();
+        sDumpTargets = sFrameTargets;
+        sFrameSampledLast = sFrameSampled;
+        sDumpPending = true;
+        LL_INFOS("VkVerify") << "snapshot frame finished: full report armed (" << sDumpTargets.size() << " render targets)" << LL_ENDL;
     }
 }
 
@@ -3174,6 +3196,24 @@ void verify_present_frame()
 }
 
 
+// A snapshot is about to render: record per-pass GL-vs-Vulkan comparisons ("SNAP" lines, every program) for it
+void verify_arm_snapshot()
+{
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    if (!gActive)
+    {
+        return;
+    }
+    sSnaps.clear();
+    sSnapActive = true;
+    sSnapStage = 0;
+    sSnapKey.clear();
+    sSnapExtra.assign(1, "*");
+    sVerifySnapshotPending = true;
+    sStats = DrawStats();
+    LL_INFOS("VkVerify") << "snapshot starting: per-pass GL/Vulkan comparison armed for every program" << LL_ENDL;
+}
+
 void verify_tex_image(GLenum target, S32 level, GLenum format, GLenum type, const void* gl_data)
 {
     std::lock_guard<std::recursive_mutex> lock(gMutex);
@@ -3217,6 +3257,11 @@ bool gEnabled = false;
 void readPixels(int x, int y, int w, int h, unsigned int format, unsigned int type, const void* gl_data)
 {
     LLVkGL::verify_read_pixels(x, y, w, h, format, type, gl_data);
+}
+
+void armSnapshot()
+{
+    LLVkGL::verify_arm_snapshot();
 }
 
 void presentFrame()
