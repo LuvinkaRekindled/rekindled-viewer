@@ -682,6 +682,10 @@ void LLVkMirror::presentFrame()
     {
         return;
     }
+    if (LLVkVerify::gEnabled)
+    {
+        LLVkVerify::presentFrame();
+    }
     bench_mark_present();
     bench_gl_stamp(1);
     const bool held = sMirror.mHold;

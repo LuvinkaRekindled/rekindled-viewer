@@ -33,6 +33,9 @@
 #include <string>
 
 // constants that older GL headers may not define
+#ifndef GL_READ_FRAMEBUFFER_BINDING
+#define GL_READ_FRAMEBUFFER_BINDING 0x8CAA
+#endif
 #ifndef GL_BGR
 #define GL_BGR 0x80E0
 #endif
@@ -3085,6 +3088,92 @@ void verify_read_pixels(S32 x, S32 y, S32 w, S32 h, GLenum format, GLenum type, 
     }
 }
 
+// Whole-frame check at the moment the viewer swaps buffers: GL's default framebuffer against the mirror's backbuffer.
+// Runs every 300th frame, or when the file <work>\vk-verify.trigger exists (it is deleted). Logs the share of pixels that
+// differ per cell of a 8x6 grid, and writes both images when the frames differ a lot.
+void verify_present_frame()
+{
+    static U64 counter = 0;
+    static U32 dumps = 0;
+    ++counter;
+    const bool triggered = GetFileAttributesA("<work>\\vk-verify.trigger") != INVALID_FILE_ATTRIBUTES;
+    if (!triggered && (counter % 300) != 0)
+    {
+        return;
+    }
+    if (triggered)
+    {
+        DeleteFileA("<work>\\vk-verify.trigger");
+    }
+    std::lock_guard<std::recursive_mutex> lock(gMutex);
+    Image* img = LLVkMirror::backbufferColor();
+    if (!gActive || !img || !img->valid() || !LLVkMirror::inFrame())
+    {
+        return;
+    }
+    const U32 w = img->mExtent.width, h = img->mExtent.height;
+    std::vector<U8> gl_px((size_t)w * h * 4, 0), vk_px, vk_rgba;
+    GLint prev_read = 0, align = 4;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &align);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, (GLsizei)w, (GLsizei)h, GL_RGBA, GL_UNSIGNED_BYTE, gl_px.data());
+    glPixelStorei(GL_PACK_ALIGNMENT, align);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)prev_read);
+
+    Renderer& r = Renderer::instance();
+    if (!r.flushAndRestart() || !r.readbackRegion(*img, 0, 0, 0, 0, w, h, vk_px) || !to_rgba8(img->mFormat, w, h, vk_px, vk_rgba))
+    {
+        verify_skip("present-frame readback failed");
+        return;
+    }
+    const int GX = 8, GY = 6;
+    std::vector<U32> cell_bad(GX * GY, 0), cell_total(GX * GY, 0);
+    size_t bad = 0;
+    for (U32 y = 0; y < h; ++y)
+    {
+        for (U32 x = 0; x < w; ++x)
+        {
+            const size_t i = ((size_t)y * w + x) * 4;
+            const int d = std::max({ std::abs((int)gl_px[i] - (int)vk_rgba[i]), std::abs((int)gl_px[i + 1] - (int)vk_rgba[i + 1]), std::abs((int)gl_px[i + 2] - (int)vk_rgba[i + 2]) });
+            const int cell = (int)(y * GY / h) * GX + (int)(x * GX / w);      // row 0 of the grid is the bottom of the image
+            ++cell_total[cell];
+            if (d > 40) { ++cell_bad[cell]; ++bad; }
+        }
+    }
+    std::string grid;
+    for (int gy = GY - 1; gy >= 0; --gy)        // print the top of the image first
+    {
+        grid += " [";
+        for (int gx = 0; gx < GX; ++gx)
+        {
+            grid += std::to_string(cell_bad[gy * GX + gx] * 100 / std::max<U32>(1, cell_total[gy * GX + gx])) + (gx + 1 < GX ? " " : "");
+        }
+        grid += "]";
+    }
+    const double pct = 100.0 * bad / ((double)w * h);
+    LL_INFOS("VkVerify") << (triggered ? "TRIGGERED " : "") << "present frame " << w << "x" << h << ": " << pct << "% of pixels differ by more than 40; percent per grid cell, top row first:" << grid << LL_ENDL;
+    if (pct > 1.0 && dumps < 6)
+    {
+        ++dumps;
+        CreateDirectoryA("<work>\\vk-dump", nullptr);
+        std::vector<U8> gl_flip(gl_px.size()), vk_flip(vk_rgba.size());
+        for (U32 y = 0; y < h; ++y)
+        {
+            memcpy(&gl_flip[(size_t)y * w * 4], &gl_px[(size_t)(h - 1 - y) * w * 4], (size_t)w * 4);
+            memcpy(&vk_flip[(size_t)y * w * 4], &vk_rgba[(size_t)(h - 1 - y) * w * 4], (size_t)w * 4);
+        }
+        char path[160];
+        snprintf(path, sizeof(path), "<work>\\vk-dump\\present%u_gl_%ux%u.png", dumps, w, h);
+        write_png(path, w, h, gl_flip);
+        snprintf(path, sizeof(path), "<work>\\vk-dump\\present%u_vk_%ux%u.png", dumps, w, h);
+        write_png(path, w, h, vk_flip);
+        LL_INFOS("VkVerify") << "present frame dump " << dumps << " written to <work>\\vk-dump" << LL_ENDL;
+    }
+}
+
+
 void verify_tex_image(GLenum target, S32 level, GLenum format, GLenum type, const void* gl_data)
 {
     std::lock_guard<std::recursive_mutex> lock(gMutex);
@@ -3128,6 +3217,11 @@ bool gEnabled = false;
 void readPixels(int x, int y, int w, int h, unsigned int format, unsigned int type, const void* gl_data)
 {
     LLVkGL::verify_read_pixels(x, y, w, h, format, type, gl_data);
+}
+
+void presentFrame()
+{
+    LLVkGL::verify_present_frame();
 }
 
 void texImage(unsigned int target, int level, unsigned int format, unsigned int type, const void* gl_data)

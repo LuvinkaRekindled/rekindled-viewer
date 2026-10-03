@@ -19,6 +19,9 @@ namespace LLVkVerify
     // GL has just filled gl_data with the (x, y, w, h) rectangle of the current read framebuffer
     void readPixels(int x, int y, int w, int h, unsigned int format, unsigned int type, const void* gl_data);
 
+    // called where the viewer swaps buffers: compares the whole default framebuffer (every 300th frame or on request)
+    void presentFrame();
+
     // GL has just filled gl_data with mip 'level' of the texture bound to the active unit
     void texImage(unsigned int target, int level, unsigned int format, unsigned int type, const void* gl_data);
 }
