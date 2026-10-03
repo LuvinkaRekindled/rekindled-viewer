@@ -72,6 +72,7 @@
 #include "lltracethreadrecorder.h"
 #include "llviewerwindow.h"
 #include "llviewerdisplay.h"
+#include "llvkmirror.h" // <FS> Vulkan mirror
 #include "llviewermedia.h"
 #include "llviewerparcelaskplay.h"
 #include "llviewerparcelmedia.h"
@@ -1779,6 +1780,7 @@ bool LLAppViewer::doFrame()
                 pingMainloopTimeout("Main:Display");
                 gGLActive = true;
 
+                LLVkMirror::holdFrame(true); // <FS> the mirror frame spans display() and the probe update / snapshots below
                 display();
 
                 if (LLStartUp::getStartupState() == STATE_STARTED) // <FS:Beq/> FIRE-34590 - Bugsplat caused by updating maps before world is loaded.
@@ -1793,6 +1795,8 @@ bool LLAppViewer::doFrame()
                     FSFloaterPrimfeed::update(); // <FS:Beq/> Primfeed support
                     gGLActive = false;
                 }
+                LLVkMirror::holdFrame(false); // <FS>
+                LLVkMirror::endFrame(); // <FS>
 
                 if (LLViewerStatsRecorder::instanceExists())
                 {

@@ -35,6 +35,9 @@
 namespace LLVk
 {
 
+// name of the program of the draw being recorded, for validation messages
+extern const char* gDebugProgram;
+
 // Vulkan entry points (loaded by Context::init)
 #define LL_VK_GLOBAL_FN(name) extern PFN_##name name;
 #define LL_VK_INSTANCE_FN(name) extern PFN_##name name;
@@ -51,6 +54,7 @@ struct Capabilities
     bool mDiscrete = false;
     bool mMemoryBudget = false;     // VK_EXT_memory_budget available
     bool mWideLines = false;
+    bool mDepthClamp = false;       // dynamic depth clamp (the shadow passes need it)
     bool mAnisotropy = false;
     bool mBC = false;               // BC1-7 texture compression
     bool mGeometryShader = false;
@@ -151,6 +155,8 @@ public:
     void destroyImage(Image& image);        // deferred
 
     void waitIdle();
+    // names an object for the validation layer messages (only when validation is on)
+    void setObjectName(VkObjectType type, U64 handle, const std::string& name);
 
     // Records into a one-off command buffer, submits it and waits. For start-up work and rare uploads only.
     bool immediateSubmit(const std::function<void(VkCommandBuffer)>& record);

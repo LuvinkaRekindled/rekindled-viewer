@@ -57,7 +57,7 @@ bool PipelineKey::operator<(const PipelineKey& o) const
 bool RasterState::operator==(const RasterState& o) const
 {
     return mCull == o.mCull && mFrontFace == o.mFrontFace && mPolygonMode == o.mPolygonMode && mLineWidth == o.mLineWidth
-        && mDepthBias == o.mDepthBias && mBiasConstant == o.mBiasConstant && mBiasSlope == o.mBiasSlope;
+        && mDepthBias == o.mDepthBias && mDepthClamp == o.mDepthClamp && mBiasConstant == o.mBiasConstant && mBiasSlope == o.mBiasSlope;
 }
 
 bool DepthStencilState::operator==(const DepthStencilState& o) const
@@ -129,8 +129,60 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
     // numeric initializers from the GLSL ("uniform float x = 0.5;") become the starting values
     for (const LooseUniform& u : mInfo.mUniforms)
     {
-        if (u.mInit.empty() || u.mArraySize != 0)
+        if (u.mInit.empty())
         {
+            continue;
+        }
+        if (u.mArraySize != 0 || u.mType == "vec2" || u.mType == "vec3" || u.mType == "vec4")
+        {
+            // constructor initializers ("vec3[2](vec3(0.1, 0.2, 0.3), ...)"): take the numbers in order, skipping type names and array sizes
+            const U32 comps = u.mType == "vec2" ? 2 : u.mType == "vec3" ? 3 : u.mType == "vec4" ? 4 : u.mType == "float" ? 1 : 0;
+            if (!comps)
+            {
+                continue;
+            }
+            std::vector<F32> values;
+            const std::string& text = u.mInit;
+            for (size_t p = 0; p < text.size();)
+            {
+                const char c = text[p];
+                if (isalpha((unsigned char)c) || c == '_')
+                {
+                    while (p < text.size() && (isalnum((unsigned char)text[p]) || text[p] == '_')) ++p;
+                }
+                else if (c == '[')
+                {
+                    while (p < text.size() && text[p] != ']') ++p;
+                    ++p;
+                }
+                else if (isdigit((unsigned char)c) || c == '.' || ((c == '-' || c == '+') && p + 1 < text.size() && (isdigit((unsigned char)text[p + 1]) || text[p + 1] == '.')))
+                {
+                    char* end = nullptr;
+                    const double v = strtod(text.c_str() + p, &end);
+                    if (end == text.c_str() + p)
+                    {
+                        ++p;
+                        continue;
+                    }
+                    values.push_back((F32)v);
+                    p = (size_t)(end - text.c_str());
+                    while (p < text.size() && (text[p] == 'f' || text[p] == 'F')) ++p;
+                }
+                else
+                {
+                    ++p;
+                }
+            }
+            const U32 elements = std::max<U32>(1, u.mArraySize);
+            const U32 stride = u.mArraySize ? u.mSize / u.mArraySize : 0;
+            for (U32 e = 0; e < elements && (size_t)(e + 1) * comps <= values.size(); ++e)
+            {
+                const U32 offset = u.mOffset + e * stride;
+                if (offset + comps * 4 <= mShadow.size())
+                {
+                    memcpy(&mShadow[offset], &values[(size_t)e * comps], comps * 4);
+                }
+            }
             continue;
         }
         char* end = nullptr;
@@ -305,7 +357,7 @@ VkPipeline Program::getPipeline(const PipelineKey& key)
     cb.attachmentCount = key.mColorCount;
     cb.pAttachments = attachments;
 
-    const VkDynamicState dynamic[] = {
+    VkDynamicState dynamic[21] = {
         VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_DEPTH_BIAS,
         VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK, VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE,
         VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
@@ -313,8 +365,13 @@ VkPipeline Program::getPipeline(const PipelineKey& key)
         VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_VERTEX_INPUT_EXT, VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
         VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT, VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT, VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT,
     };
+    U32 dynamic_count = 20;
+    if (Context::instance().getCaps().mDepthClamp)
+    {
+        dynamic[dynamic_count++] = VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
+    }
     VkPipelineDynamicStateCreateInfo dyn = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-    dyn.dynamicStateCount = (U32)LL_ARRAY_SIZE(dynamic);
+    dyn.dynamicStateCount = dynamic_count;
     dyn.pDynamicStates = dynamic;
 
     VkPipelineRenderingCreateInfo ri = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
@@ -482,6 +539,24 @@ bool Renderer::init()
         vkUpdateDescriptorSets(dev, 5, w, 0, nullptr);
     }
 
+    // descriptor sets for the combinations of named uniform blocks bound during a frame (reset every frame)
+    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    {
+        VkDescriptorPoolSize usizes[2] = {};
+        usizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        usizes[0].descriptorCount = UBO_SET_POOL;
+        usizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        usizes[1].descriptorCount = 4 * UBO_SET_POOL;
+        VkDescriptorPoolCreateInfo upi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+        upi.maxSets = UBO_SET_POOL;
+        upi.poolSizeCount = 2;
+        upi.pPoolSizes = usizes;
+        if (!vk_ok(vkCreateDescriptorPool(dev, &upi, nullptr, &mUboPool[i]), "uniform block descriptor pool"))
+        {
+            return false;
+        }
+    }
+
     VkPipelineCacheCreateInfo pc = { VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
     if (!vk_ok(vkCreatePipelineCache(dev, &pc, nullptr, &mPipelineCache), "pipeline cache"))
     {
@@ -514,6 +589,27 @@ bool Renderer::init()
     ctx.waitIdle();
     vmaDestroyBuffer(ctx.getAllocator(), staging.mBuffer, staging.mAllocation);
 
+    // white stand-ins for samplers of other kinds (an unbound cube-array sampler must still see a cube-array view)
+    {
+        const TexType types[4] = { TexType::Tex2DArray, TexType::Cube, TexType::CubeArray, TexType::Tex3D };
+        const U32 layers[4] = { 1, 6, 6, 1 };
+        const U8 white[4] = { 255, 255, 255, 255 };
+        for (U32 i = 0; i < 4; ++i)
+        {
+            TextureDesc td;
+            td.mType = types[i];
+            td.mWidth = td.mHeight = 1;
+            td.mDepth = 1;
+            if (createTexture(td, mFallback[i]))
+            {
+                for (U32 l = 0; l < layers[i]; ++l)
+                {
+                    uploadTexture(mFallback[i], 0, l, 0, 0, 1, 1, 1, white, 4);
+                }
+            }
+        }
+    }
+
     mReady = true;
     LL_INFOS("Vulkan") << "Vulkan renderer ready" << LL_ENDL;
     return true;
@@ -534,6 +630,11 @@ void Renderer::shutdown()
         mSamplers.clear();
         if (mPipelineCache) vkDestroyPipelineCache(dev, mPipelineCache, nullptr);
         if (mPool) vkDestroyDescriptorPool(dev, mPool, nullptr);
+        for (VkDescriptorPool& p : mUboPool)
+        {
+            if (p) vkDestroyDescriptorPool(dev, p, nullptr);
+            p = VK_NULL_HANDLE;
+        }
         if (mPipelineLayout) vkDestroyPipelineLayout(dev, mPipelineLayout, nullptr);
         if (mSet0Layout) vkDestroyDescriptorSetLayout(dev, mSet0Layout, nullptr);
         if (mSet1Layout) vkDestroyDescriptorSetLayout(dev, mSet1Layout, nullptr);
@@ -555,6 +656,15 @@ void Renderer::shutdown()
             vmaDestroyImage(ctx.getAllocator(), mWhite.mImage, mWhite.mAllocation);
         }
         mWhite = Image();
+        for (Image& f : mFallback)
+        {
+            if (f.valid())
+            {
+                vkDestroyImageView(dev, f.mView, nullptr);
+                vmaDestroyImage(ctx.getAllocator(), f.mImage, f.mAllocation);
+            }
+            f = Image();
+        }
     }
     mPipelineCache = VK_NULL_HANDLE;
     mPool = VK_NULL_HANDLE;
@@ -610,10 +720,18 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mRendering = false;
     mPendingClear = 0;
     mStateApplied = false;
+    mDepthRO = false;
+    mAppliedColorCount = 0xFFFF;
     mBoundPipeline = VK_NULL_HANDLE;
     mVertexInputDirty = true;
     mSet0Bound = false;
     mAppliedDynamicOffset = 0xFFFFFFFF;
+    mAppliedSet0 = VK_NULL_HANDLE;
+    mUboSets[frame_slot].clear();
+    if (mUboPool[frame_slot])
+    {
+        vkResetDescriptorPool(Context::instance().getDevice(), mUboPool[frame_slot], 0);
+    }
     for (S32& v : mAppliedViewport) v = -1;
     for (S32& v : mAppliedScissor) v = -1;
     mColorCount = 0;
@@ -720,13 +838,10 @@ void Renderer::ensureLayout(Image& image, VkImageLayout layout)
         }
         return attached;
     };
-    // a pass that has this image attached must end before the image changes layout
+    // barriers are not allowed inside a render pass: any layout change ends the current one
     if (mRendering)
     {
-        if (is_attached())
-        {
-            endRendering();
-        }
+        endRendering();
     }
     else if (mPendingClear && !mInBegin)
     {
@@ -763,11 +878,12 @@ void Renderer::beginRenderingIfNeeded()
     VkRenderingAttachmentInfo depth = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
     if (mDepthTarget)
     {
-        ensureLayout(*mDepthTarget, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        const VkImageLayout depth_layout = mDepthRO ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        ensureLayout(*mDepthTarget, depth_layout);
         depth.imageView = mDepthTarget->mView;
-        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depth.loadOp = (mPendingClear & CLEAR_DEPTH) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.imageLayout = depth_layout;
+        depth.loadOp = ((mPendingClear & CLEAR_DEPTH) && !mDepthRO) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = mDepthRO ? VK_ATTACHMENT_STORE_OP_NONE : VK_ATTACHMENT_STORE_OP_STORE;
         depth.clearValue.depthStencil = { mClearDepth, mClearStencil };
         if (extent.width == 0)
         {
@@ -884,23 +1000,89 @@ U32 Renderer::allocUniform(U32 size)
     return start;
 }
 
+// The image a sampler reads: what is bound, unless it is of the wrong kind for the shader's sampler type, or
+// is the depth attachment being written (a feedback loop), in which case a white stand-in is used.
+Image* Renderer::resolveTexture(size_t k, bool depth_ro, Image* depth_root)
+{
+    const SamplerInfo& s = mProgram->mInfo.mSamplers[k];
+    const U32 unit = mProgram->mSamplerUnits[k];
+    Image* img = unit < MAX_TEXTURE_UNITS ? mTextures[unit] : nullptr;
+
+    VkImageViewType need = VK_IMAGE_VIEW_TYPE_2D;
+    if (s.mType.find("CubeArray") != std::string::npos) need = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+    else if (s.mType.find("Cube") != std::string::npos) need = VK_IMAGE_VIEW_TYPE_CUBE;
+    else if (s.mType.find("2DArray") != std::string::npos) need = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    else if (s.mType.find("3D") != std::string::npos) need = VK_IMAGE_VIEW_TYPE_3D;
+
+    if (img && depth_root && root_of(img) == depth_root && !depth_ro)
+    {
+        img = nullptr;          // sampling the depth buffer while writing it
+    }
+    for (U32 i = 0; img && i < mColorCount; ++i)
+    {
+        if (root_of(mColorTargets[i]) == root_of(img))
+        {
+            img = nullptr;      // a stale binding of a colour target being rendered to (unused by the shader in practice)
+        }
+    }
+    if (img && img->mViewType != need)
+    {
+        img = nullptr;
+    }
+    if (img)
+    {
+        return img;
+    }
+    switch (need)
+    {
+    case VK_IMAGE_VIEW_TYPE_2D_ARRAY: return mFallback[0].valid() ? &mFallback[0] : &mWhite;
+    case VK_IMAGE_VIEW_TYPE_CUBE: return mFallback[1].valid() ? &mFallback[1] : &mWhite;
+    case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY: return mFallback[2].valid() ? &mFallback[2] : &mWhite;
+    case VK_IMAGE_VIEW_TYPE_3D: return mFallback[3].valid() ? &mFallback[3] : &mWhite;
+    default: return &mWhite;
+    }
+}
+
 void Renderer::applyState()
 {
-    // 1. textures must be in a sampling layout before a pass is (re)started
-    if (mProgram)
+    // 1. A texture that is also the depth attachment is a feedback loop. Reading it while depth writes are off is
+    //    legal with a read-only depth layout (the viewer's lighting passes do this); with writes on it cannot work.
+    Image* depth_root = mDepthTarget ? root_of(mDepthTarget) : nullptr;
+    bool depth_sampled = false;
+    if (mProgram && depth_root)
     {
         for (size_t k = 0; k < mProgram->mInfo.mSamplers.size(); ++k)
         {
             const U32 unit = mProgram->mSamplerUnits[k];
             Image* img = unit < MAX_TEXTURE_UNITS ? mTextures[unit] : nullptr;
-            if (img)
+            if (img && root_of(img) == depth_root)
+            {
+                depth_sampled = true;
+            }
+        }
+    }
+    const bool depth_ro = depth_sampled && !mDepthStencil.mDepthWrite;
+    if (depth_ro != mDepthRO)
+    {
+        flushPendingClear();
+        endRendering();
+        mDepthRO = depth_ro;
+    }
+
+    // 2. textures must be in a sampling layout before a pass is (re)started
+    if (mProgram)
+    {
+        for (size_t k = 0; k < mProgram->mInfo.mSamplers.size(); ++k)
+        {
+            Image* img = resolveTexture(k, depth_ro, depth_root);
+            if (img && img != &mWhite && !(depth_root && root_of(img) == depth_root))
             {
                 ensureLayout(*img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
         }
     }
 
-    // 2. pass
+    // 3. pass
     beginRenderingIfNeeded();
 
     // 3. pipeline
@@ -954,6 +1136,10 @@ void Renderer::applyState()
         vkCmdSetCullMode(mCmd, mRaster.mCull);
         vkCmdSetFrontFace(mCmd, mRaster.mFrontFace);
         vkCmdSetPolygonModeEXT(mCmd, mRaster.mPolygonMode);
+        if (Context::instance().getCaps().mDepthClamp)
+        {
+            vkCmdSetDepthClampEnableEXT(mCmd, mRaster.mDepthClamp ? VK_TRUE : VK_FALSE);
+        }
         vkCmdSetLineWidth(mCmd, Context::instance().getCaps().mWideLines ? mRaster.mLineWidth : 1.f);
         vkCmdSetDepthBiasEnable(mCmd, mRaster.mDepthBias ? VK_TRUE : VK_FALSE);
         vkCmdSetDepthBias(mCmd, mRaster.mBiasConstant, 0.f, mRaster.mBiasSlope);
@@ -971,7 +1157,7 @@ void Renderer::applyState()
         vkCmdSetStencilReference(mCmd, VK_STENCIL_FACE_FRONT_AND_BACK, mDepthStencil.mReference);
         mAppliedDepthStencil = mDepthStencil;
     }
-    if (!mStateApplied || !(mBlend == mAppliedBlend))
+    if (!mStateApplied || !(mBlend == mAppliedBlend) || mColorCount != mAppliedColorCount)
     {
         const VkBool32 enable = mBlend.mEnable ? VK_TRUE : VK_FALSE;
         VkBool32 enables[8];
@@ -990,6 +1176,7 @@ void Renderer::applyState()
             vkCmdSetColorWriteMaskEXT(mCmd, 0, mColorCount, masks);
         }
         mAppliedBlend = mBlend;
+        mAppliedColorCount = mColorCount;
     }
     mStateApplied = true;
 
@@ -1063,10 +1250,16 @@ void Renderer::applyState()
         mProgram->mRingFrame = Context::instance().getFrameNumber();
         mProgram->mDirty = false;
     }
-    if (!mSet0Bound || mAppliedDynamicOffset != mProgram->mRingOffset)
+    VkDescriptorSet set0 = mSet0[mSlot];
+    if (mUbo[0] || mUbo[1] || mUbo[2] || mUbo[3])
     {
-        vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 0, 1, &mSet0[mSlot], 1, &mProgram->mRingOffset);
+        set0 = uboSet();
+    }
+    if (!mSet0Bound || mAppliedDynamicOffset != mProgram->mRingOffset || mAppliedSet0 != set0)
+    {
+        vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 0, 1, &set0, 1, &mProgram->mRingOffset);
         mAppliedDynamicOffset = mProgram->mRingOffset;
+        mAppliedSet0 = set0;
         mSet0Bound = true;
     }
 
@@ -1085,8 +1278,10 @@ void Renderer::applyState()
             {
                 continue;
             }
-            Image* img = mTextures[unit] ? mTextures[unit] : &mWhite;
-            infos[n] = { mTextureSamplers[unit] ? mTextureSamplers[unit] : fallback, img->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            Image* img = resolveTexture(k, depth_ro, depth_root);
+            const bool is_depth_target = depth_root && root_of(img) == depth_root;
+            infos[n] = { mTextureSamplers[unit] ? mTextureSamplers[unit] : fallback, img->mView,
+                         is_depth_target ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
             writes[n] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
             writes[n].dstBinding = s.mBinding;
             writes[n].descriptorCount = 1;
@@ -1098,27 +1293,86 @@ void Renderer::applyState()
     }
 }
 
-void Renderer::draw(U32 vertex_count, U32 first_vertex)
+void Renderer::setUniformBuffer(U32 index, VkBuffer buffer, VkDeviceSize range)
+{
+    if (index < 4)
+    {
+        mUbo[index] = buffer;
+        mUboRange[index] = buffer ? std::min<VkDeviceSize>(range, MAX_UNIFORM_RANGE_NAMED) : 0;
+    }
+}
+
+// the set 0 variant for the named uniform blocks currently bound (built once per combination per frame)
+VkDescriptorSet Renderer::uboSet()
+{
+    std::array<U64, 8> key = {};
+    for (U32 i = 0; i < 4; ++i)
+    {
+        key[i] = (U64)mUbo[i];
+        key[4 + i] = (U64)mUboRange[i];
+    }
+    auto& sets = mUboSets[mSlot];
+    auto it = sets.find(key);
+    if (it != sets.end())
+    {
+        return it->second;
+    }
+    Context& ctx = Context::instance();
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+    ai.descriptorPool = mUboPool[mSlot];
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &mSet0Layout;
+    if (!mUboPool[mSlot] || vkAllocateDescriptorSets(ctx.getDevice(), &ai, &set) != VK_SUCCESS)
+    {
+        return mSet0[mSlot];
+    }
+    VkDescriptorBufferInfo infos[5];
+    infos[0] = { mRing[mSlot].mBuffer, 0, MAX_UNIFORM_RANGE };
+    VkWriteDescriptorSet w[5] = {};
+    for (U32 b = 0; b < 5; ++b)
+    {
+        if (b > 0)
+        {
+            infos[b] = mUbo[b - 1] ? VkDescriptorBufferInfo{ mUbo[b - 1], 0, mUboRange[b - 1] } : VkDescriptorBufferInfo{ mDummyUbo.mBuffer, 0, DUMMY_UBO_BYTES };
+        }
+        w[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[b].dstSet = set;
+        w[b].dstBinding = b;
+        w[b].descriptorCount = 1;
+        w[b].descriptorType = b == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        w[b].pBufferInfo = &infos[b];
+    }
+    vkUpdateDescriptorSets(ctx.getDevice(), 5, w, 0, nullptr);
+    sets[key] = set;
+    return set;
+}
+
+bool Renderer::draw(U32 vertex_count, U32 first_vertex)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget))
     {
-        return;
+        return false;
     }
+    gDebugProgram = mProgram->getName().c_str();
     applyState();
     vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
     ++mDrawCount;
+    return true;
 }
 
-void Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
+bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget) || !mIndexBuffer)
     {
-        return;
+        return false;
     }
+    gDebugProgram = mProgram->getName().c_str();
     applyState();
     vkCmdBindIndexBuffer(mCmd, mIndexBuffer, mIndexOffset, mIndexType);
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
     ++mDrawCount;
+    return true;
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -1359,6 +1613,68 @@ bool Renderer::generateMipmaps(Image& image)
         level_barrier(image.mMipLevels - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         image.mLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     });
+    return true;
+}
+
+bool Renderer::readbackImage(Image& view_or_image, U32 mip, U32 layer, std::vector<U8>& texels)
+{
+    Context& ctx = Context::instance();
+    Image* image = root_of(&view_or_image);
+    const FormatInfo fi = formatInfo(image->mFormat);
+    if (mCmd != VK_NULL_HANDLE || !fi.mKnown || fi.mCompressed || mip >= image->mMipLevels)
+    {
+        return false;
+    }
+    const U32 w = std::max<U32>(1, image->mExtent.width >> mip), h = std::max<U32>(1, image->mExtent.height >> mip);
+    const VkDeviceSize bytes = (VkDeviceSize)w * h * fi.mBytesPerBlock;
+    Buffer rb;
+    if (!ctx.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Readback, rb))
+    {
+        return false;
+    }
+    const VkImageLayout old_layout = image->mLayout;
+    ctx.immediateSubmit([&](VkCommandBuffer cmd) {
+        transition(cmd, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkBufferImageCopy c = {};
+        c.imageSubresource = { image->mAspect, mip, layer, 1 };
+        c.imageExtent = { w, h, 1 };
+        vkCmdCopyImageToBuffer(cmd, image->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb.mBuffer, 1, &c);
+        transition(cmd, *image, old_layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : old_layout);
+    });
+    texels.assign((U8*)rb.mMapped, (U8*)rb.mMapped + bytes);
+    ctx.waitIdle();
+    vmaDestroyBuffer(ctx.getAllocator(), rb.mBuffer, rb.mAllocation);
+    return true;
+}
+
+bool Renderer::recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuffer buffer)
+{
+    if (mCmd == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    Image* root = root_of(&view);
+    const FormatInfo fi = formatInfo(root->mFormat);
+    if (!fi.mKnown || fi.mCompressed || root->mAspect != VK_IMAGE_ASPECT_COLOR_BIT)
+    {
+        return false;
+    }
+    flushPendingClear();
+    endRendering();
+    const VkImageLayout old_layout = root->mLayout;
+    transition(mCmd, view, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    const U32 w = view.mExtent.width;
+    std::vector<VkBufferImageCopy> regions(rows.size());
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        regions[i] = {};
+        regions[i].bufferOffset = (VkDeviceSize)i * w * fi.mBytesPerBlock;
+        regions[i].imageSubresource = { root->mAspect, view.mBaseMip, view.mBaseLayer, 1 };
+        regions[i].imageOffset = { 0, (S32)rows[i], 0 };
+        regions[i].imageExtent = { w, 1, 1 };
+    }
+    vkCmdCopyImageToBuffer(mCmd, root->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, (U32)regions.size(), regions.data());
+    transition(mCmd, view, old_layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : old_layout);
     return true;
 }
 

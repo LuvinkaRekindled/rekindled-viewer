@@ -1742,7 +1742,7 @@ void swap()
     LL_PROFILE_GPU_ZONE("swap");
     if (gDisplaySwapBuffers)
     {
-        LLVkMirror::endFrame(); // <FS>
+        LLVkMirror::presentFrame(); // <FS>
         gViewerWindow->getWindow()->swapBuffers();
     }
     gDisplaySwapBuffers = true;

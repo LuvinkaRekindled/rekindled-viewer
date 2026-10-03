@@ -20,6 +20,7 @@ namespace LLVk
 #define LL_VK_DEVICE_FN(name) PFN_##name name = nullptr;
 #include "llvkfunctions.inl"
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
+const char* gDebugProgram = nullptr;
 
 namespace
 {
@@ -51,11 +52,11 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
 {
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
     {
-        LL_WARNS("VulkanValidation") << "ERROR: " << data->pMessage << LL_ENDL;
+        LL_WARNS("VulkanValidation") << "ERROR [draw: " << (gDebugProgram ? gDebugProgram : "-") << "]: " << data->pMessage << LL_ENDL;
     }
     else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
     {
-        LL_WARNS("VulkanValidation") << data->pMessage << LL_ENDL;
+        LL_WARNS("VulkanValidation") << "[draw: " << (gDebugProgram ? gDebugProgram : "-") << "] " << data->pMessage << LL_ENDL;
     }
     return VK_FALSE;
 }
@@ -123,6 +124,27 @@ VkImageAspectFlags aspectForFormat(VkFormat format)
         return VK_IMAGE_ASPECT_DEPTH_BIT;
     default:
         return VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+}
+
+void Context::setObjectName(VkObjectType type, U64 handle, const std::string& name)
+{
+    if (mMessenger == VK_NULL_HANDLE || mDevice == VK_NULL_HANDLE)
+    {
+        return;
+    }
+    static PFN_vkSetDebugUtilsObjectNameEXT set_name = nullptr;
+    if (!set_name)
+    {
+        set_name = (PFN_vkSetDebugUtilsObjectNameEXT)vkGetInstanceProcAddr(mInstance, "vkSetDebugUtilsObjectNameEXT");
+    }
+    if (set_name)
+    {
+        VkDebugUtilsObjectNameInfoEXT info = { VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT };
+        info.objectType = type;
+        info.objectHandle = handle;
+        info.pObjectName = name.c_str();
+        set_name(mDevice, &info);
     }
 }
 
@@ -320,6 +342,7 @@ bool Context::pickDevice()
             mCaps.mDiscrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
             mCaps.mMemoryBudget = has_extension(exts, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
             mCaps.mWideLines = chain.f2.features.wideLines != VK_FALSE;
+            mCaps.mDepthClamp = chain.f2.features.depthClamp != VK_FALSE && chain.eds3.extendedDynamicState3DepthClampEnable != VK_FALSE;
             mCaps.mAnisotropy = chain.f2.features.samplerAnisotropy != VK_FALSE;
             mCaps.mBC = chain.f2.features.textureCompressionBC != VK_FALSE;
             mCaps.mGeometryShader = chain.f2.features.geometryShader != VK_FALSE;

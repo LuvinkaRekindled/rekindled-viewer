@@ -166,6 +166,7 @@ LL_VK_DEVICE_FN(vkCmdSetRasterizerDiscardEnable)
 
 // dynamic state (extensions required by the backend)
 LL_VK_DEVICE_FN(vkCmdSetPolygonModeEXT)
+LL_VK_DEVICE_FN(vkCmdSetDepthClampEnableEXT)
 LL_VK_DEVICE_FN(vkCmdSetColorBlendEnableEXT)
 LL_VK_DEVICE_FN(vkCmdSetColorBlendEquationEXT)
 LL_VK_DEVICE_FN(vkCmdSetColorWriteMaskEXT)
