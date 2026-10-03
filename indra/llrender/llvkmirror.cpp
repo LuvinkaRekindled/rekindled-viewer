@@ -765,8 +765,22 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
         ++sMirror.mSkipped;
         return;
     }
+    // While the mirror owns the resources a skipped frame leaves the window showing the old picture until the viewer happens to draw again,
+    // so wait for an image (a swapchain image is normally free within a vsync) and recreate the swapchain if the surface changed under us.
     U32 image_index = 0;
-    if (!sc.acquire(ctx.getAcquireSemaphore(), image_index))
+    bool acquired = false;
+    for (int attempt = 0; attempt < 3 && !acquired; ++attempt)
+    {
+        acquired = sc.acquire(ctx.getAcquireSemaphore(), image_index, LLVkGL::gOwn ? 250ull * 1000 * 1000 : 0ull);
+        if (!acquired)
+        {
+            if (!sc.needsRecreate() || !sc.create(ctx.getSurface(), sMirror.mWindow) || !sc.isValid())
+            {
+                break;
+            }
+        }
+    }
+    if (!acquired)
     {
         ctx.endFrame(VK_NULL_HANDLE, VK_NULL_HANDLE);
         ++sMirror.mSkipped;
