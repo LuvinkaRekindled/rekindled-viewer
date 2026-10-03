@@ -15,6 +15,8 @@
 
 #if defined(LL_VULKAN)
 #include <mutex>
+#include <atomic>
+#include <intrin.h>
 namespace LLVk { struct Image; }
 #endif
 
@@ -58,7 +60,41 @@ namespace LLVkMirror
 
 #if defined(LL_VULKAN)
     // the lock every mirror entry point takes (the viewer calls GL from more than one thread)
-    std::recursive_mutex& lock();
+    class Mutex;
+    Mutex& lock();
+
+    // The lock every hook runs under. The same thread takes it again and again (tens of thousands of times per frame), so the
+    // uncontended path is a compare-exchange; a thread that has to wait spins briefly and then yields.
+    class Mutex
+    {
+    public:
+        void lock()
+        {
+            const unsigned long me = __readgsdword(0x48);       // the thread id, read from the thread environment block
+            if (mOwner.load(std::memory_order_relaxed) == me)
+            {
+                ++mDepth;
+                return;
+            }
+            unsigned long expected = 0;
+            if (!mOwner.compare_exchange_strong(expected, me, std::memory_order_acquire))
+            {
+                lockSlow(me);
+            }
+            mDepth = 1;
+        }
+        void unlock()
+        {
+            if (--mDepth == 0)
+            {
+                mOwner.store(0, std::memory_order_release);
+            }
+        }
+    private:
+        void lockSlow(unsigned long me);
+        std::atomic<unsigned long> mOwner{ 0 };
+        unsigned mDepth = 0;
+    };
 
     // the image the viewer's default framebuffer maps to (valid while ready)
     LLVk::Image* backbufferColor();
