@@ -391,6 +391,8 @@ bool Context::pickDevice()
             mCaps.mMaxVertexAttribs = props.limits.maxVertexInputAttributes;
             mCaps.mMaxUniformRange = props.limits.maxUniformBufferRange;
             mCaps.mMaxSampledImagesPerStage = props.limits.maxPerStageDescriptorSampledImages;
+            mCaps.mLineWidthRange[0] = props.limits.lineWidthRange[0];
+            mCaps.mLineWidthRange[1] = props.limits.lineWidthRange[1];
             mCaps.mMaxViewport[0] = props.limits.maxViewportDimensions[0];
             mCaps.mMaxViewport[1] = props.limits.maxViewportDimensions[1];
             {
@@ -1197,10 +1199,49 @@ bool Swapchain::present(U32 index, VkSemaphore wait)
     {
         LL_WARNS("Vulkan") << "vkQueuePresentKHR returned " << (S32)r << LL_ENDL;
     }
+    mPresentOutOfDate = r == VK_ERROR_OUT_OF_DATE_KHR;
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
     {
         mNeedsRecreate = true;
         return false;
+    }
+    return r == VK_SUCCESS;
+}
+
+bool Swapchain::acquireBlocking(U32& index)
+{
+    if (mSwapchain == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    VkDevice dev = Context::instance().getDevice();
+    VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    VkFence fence = VK_NULL_HANDLE;
+    if (vkCreateFence(dev, &fi, nullptr, &fence) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkResult r = vkAcquireNextImageKHR(dev, mSwapchain, 1000ull * 1000 * 1000, VK_NULL_HANDLE, fence, &index);
+    bool ok = r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR;
+    if (ok)
+    {
+        ok = vkWaitForFences(dev, 1, &fence, VK_TRUE, 1000ull * 1000 * 1000) == VK_SUCCESS;
+    }
+    vkDestroyFence(dev, fence, nullptr);
+    return ok;
+}
+
+bool Swapchain::presentNoWait(U32 index)
+{
+    VkPresentInfoKHR pi = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
+    pi.swapchainCount = 1;
+    pi.pSwapchains = &mSwapchain;
+    pi.pImageIndices = &index;
+    VkResult r = vkQueuePresentKHR(Context::instance().getQueue(), &pi);
+    mPresentOutOfDate = r == VK_ERROR_OUT_OF_DATE_KHR;
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
+    {
+        mNeedsRecreate = true;
     }
     return r == VK_SUCCESS;
 }

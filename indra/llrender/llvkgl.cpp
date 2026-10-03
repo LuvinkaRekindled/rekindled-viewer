@@ -495,6 +495,7 @@ struct GLState
     F32 mOffsetFactor = 0.f, mOffsetUnits = 0.f;
     GLenum mPolygonMode = GL_FILL;
     F32 mLineWidth = 1.f;
+    std::map<GLenum, bool> mOtherCaps;      // every other glEnable / glDisable capability the viewer has set
     S32 mViewport[4] = { 0, 0, 0, 0 };
     bool mViewportSet = false;
     S32 mScissor[4] = { 0, 0, 0, 0 };
@@ -814,6 +815,23 @@ bool sync_target()
         if (!color)
         {
             return false;
+        }
+        {
+            // LL_VK_SIZELOG: what the viewer draws into the default framebuffer, logged when it changes
+            static const bool size_log = getenv("LL_VK_SIZELOG") != nullptr;
+            static S32 last[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+            if (size_log)
+            {
+                const S32 now[9] = { sGL.mViewport[0], sGL.mViewport[1], sGL.mViewport[2], sGL.mViewport[3],
+                                     sGL.mScissorTest ? sGL.mScissor[0] : -1, sGL.mScissorTest ? sGL.mScissor[1] : -1,
+                                     sGL.mScissorTest ? sGL.mScissor[2] : -1, sGL.mScissorTest ? sGL.mScissor[3] : -1, (S32)color->mExtent.width };
+                if (memcmp(now, last, sizeof(now)) != 0)
+                {
+                    memcpy(last, now, sizeof(now));
+                    LL_INFOS("VkSize") << "drawing to the backbuffer " << color->mExtent.width << "x" << color->mExtent.height << ": viewport (" << now[0] << "," << now[1] << "," << now[2] << "," << now[3]
+                                       << ") scissor (" << now[4] << "," << now[5] << "," << now[6] << "," << now[7] << ")" << LL_ENDL;
+                }
+            }
         }
         Image* colors[1] = { color };
         r.setRenderTarget(colors, 1, depth);
@@ -2364,7 +2382,7 @@ static void set_cap(GLenum cap, bool on)
     case GL_STENCIL_TEST: sGL.mStencilTest = on; break;
     case GL_POLYGON_OFFSET_FILL: sGL.mPolyOffset = on; break;
     case GL_DEPTH_CLAMP: sGL.mDepthClamp = on; break;
-    default: break;
+    default: sGL.mOtherCaps[cap] = on; break;
     }
 }
 
@@ -2997,6 +3015,8 @@ bool emulate_float(GLenum pname, GLfloat* out, U32& n)
     case 0x8038: out[0] = sGL.mOffsetFactor; return true;                           // POLYGON_OFFSET_FACTOR
     case 0x2A00: out[0] = sGL.mOffsetUnits; return true;                            // POLYGON_OFFSET_UNITS
     case 0x84FF: out[0] = Context::instance().getCaps().mMaxAnisotropy; return true;               // MAX_TEXTURE_MAX_ANISOTROPY
+    case 0x846E: case 0x0B22:                                                                       // ALIASED_LINE_WIDTH_RANGE, SMOOTH_LINE_WIDTH_RANGE
+        out[0] = Context::instance().getCaps().mLineWidthRange[0]; out[1] = Context::instance().getCaps().mLineWidthRange[1]; n = 2; return true;
     default: return false;
     }
 }
@@ -3023,7 +3043,12 @@ bool emulate_enabled(GLenum cap, bool& value)
     case 0x0B90: value = sGL.mStencilTest; return true;
     case 0x8037: value = sGL.mPolyOffset; return true;
     case 0x864F: value = sGL.mDepthClamp; return true;
-    default: return false;
+    default:
+    {
+        auto it = sGL.mOtherCaps.find(cap);
+        value = it != sGL.mOtherCaps.end() ? it->second : (cap == 0x0BD0 || cap == 0x809D);      // DITHER and MULTISAMPLE start enabled, the rest disabled
+        return true;
+    }
     }
 }
 
