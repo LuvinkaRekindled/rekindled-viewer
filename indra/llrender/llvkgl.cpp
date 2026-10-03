@@ -2944,20 +2944,20 @@ void verify_skip(const std::string& why)
 }
 
 // Compare GL's bytes with the decoded Vulkan region. 'what' labels the log line.
-void verify_compare(const std::string& what, VkFormat vf, const std::vector<U8>& vk_texels, S32 w, S32 h, GLenum format, GLenum type, const void* gl_data)
+double verify_compare(const std::string& what, VkFormat vf, const std::vector<U8>& vk_texels, S32 w, S32 h, GLenum format, GLenum type, const void* gl_data)
 {
     std::vector<int> ch;
     const U32 tb = gl_type_bytes(type);
     if (!gl_channels(format, ch) || !tb)
     {
         verify_skip("GL format/type not handled: " + std::to_string((S32)format) + "/" + std::to_string((S32)type));
-        return;
+        return 0;
     }
     std::vector<float> src;
     if (!decode_vk_texels(vf, vk_texels, (size_t)w * h, src))
     {
         verify_skip("Vulkan format not handled: " + std::to_string((S32)vf));
-        return;
+        return 0;
     }
     GLint pack_align = 4, row_length = 0;
     glGetIntegerv(GL_PACK_ALIGNMENT, &pack_align);
@@ -3002,6 +3002,45 @@ void verify_compare(const std::string& what, VkFormat vf, const std::vector<U8>&
                              << (mismatch ? (" first at (" + std::to_string(first_x) + "," + std::to_string(first_y) + ") GL " + std::to_string(first_gl) + " VK " + std::to_string(first_vk)) : std::string())
                              << " [checks " << sVerify.mChecks << ", mismatching " << sVerify.mMismatching << ", skipped " << sVerify.mSkipped << "]" << LL_ENDL;
     }
+    return sum / std::max<size_t>(1, compared);
+}
+
+// writes the whole default framebuffer as GL has it and as Vulkan has it, for looking at (first few bad cases only)
+void verify_dump_backbuffer(Image& view)
+{
+    static U32 dumped = 0;
+    if (dumped >= 4 || sCtx.mReadFbo != 0)
+    {
+        return;
+    }
+    ++dumped;
+    CreateDirectoryA("<work>\\vk-dump", nullptr);
+    const U32 w = view.mExtent.width, h = view.mExtent.height;
+    std::vector<U8> gl_px((size_t)w * h * 4, 0), vk_px, vk_rgba;
+    GLint align = 4;
+    glGetIntegerv(GL_PACK_ALIGNMENT, &align);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, (GLsizei)w, (GLsizei)h, GL_RGBA, GL_UNSIGNED_BYTE, gl_px.data());
+    glPixelStorei(GL_PACK_ALIGNMENT, align);
+    Renderer& r = Renderer::instance();
+    if (!r.readbackRegion(view, 0, 0, 0, 0, w, h, vk_px) || !to_rgba8(view.mFormat, w, h, vk_px, vk_rgba))
+    {
+        LL_INFOS("VkVerify") << "dump: could not read the Vulkan backbuffer" << LL_ENDL;
+        return;
+    }
+    // GL images are stored bottom row first; flip for viewing
+    std::vector<U8> gl_flip(gl_px.size()), vk_flip(vk_rgba.size());
+    for (U32 y = 0; y < h; ++y)
+    {
+        memcpy(&gl_flip[(size_t)y * w * 4], &gl_px[(size_t)(h - 1 - y) * w * 4], (size_t)w * 4);
+        memcpy(&vk_flip[(size_t)y * w * 4], &vk_rgba[(size_t)(h - 1 - y) * w * 4], (size_t)w * 4);
+    }
+    char path[160];
+    snprintf(path, sizeof(path), "<work>\\vk-dump\\verify%u_gl_%ux%u.png", dumped, w, h);
+    write_png(path, w, h, gl_flip);
+    snprintf(path, sizeof(path), "<work>\\vk-dump\\verify%u_vk_%ux%u.png", dumped, w, h);
+    write_png(path, w, h, vk_flip);
+    LL_INFOS("VkVerify") << "dump " << dumped << ": wrote GL and Vulkan backbuffer images (" << w << "x" << h << ") to <work>\\vk-dump, mirror inFrame " << LLVkMirror::inFrame() << LL_ENDL;
 }
 
 // the Vulkan side of a readback: make the frame's work visible, then copy the rectangle out
@@ -3039,7 +3078,11 @@ void verify_read_pixels(S32 x, S32 y, S32 w, S32 h, GLenum format, GLenum type, 
         return;
     }
     std::string what = "readPixels " + std::string(sCtx.mReadFbo == 0 ? "backbuffer" : ("fbo " + std::to_string(sCtx.mReadFbo))) + " @(" + std::to_string(x) + "," + std::to_string(y) + ")";
-    verify_compare(what, vf, texels, w, h, format, type, gl_data);
+    const double mean = verify_compare(what, vf, texels, w, h, format, type, gl_data);
+    if (mean > 0.05 && sCtx.mReadFbo == 0)
+    {
+        verify_dump_backbuffer(*img);
+    }
 }
 
 void verify_tex_image(GLenum target, S32 level, GLenum format, GLenum type, const void* gl_data)
