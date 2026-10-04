@@ -456,6 +456,10 @@ struct Buf
     Buffer mVk;
     U64 mSize = 0;
     U64 mLastUseFrame = ~0ull;
+    // Large vertex / index buffers live in plain video memory and are changed with GPU copies (Renderer::updateBuffer). Small and streaming
+    // buffers (and uniform / pixel buffers) keep the host-visible path below.
+    bool mDevicePath = false;
+    bool mPending = false;              // device path: a write has not been recorded into the command stream yet
     // The Vulkan buffer lives in write-combined video memory, which is very slow to read from the CPU. This copy in ordinary memory
     // is what a renamed buffer is refilled from when only part of it is rewritten.
     std::vector<U8> mShadow;
@@ -1636,9 +1640,12 @@ void snap_evaluate()
 } // anonymous namespace
 
 // the mirror is about to close the frame: the last pass of the frame gets its snapshot
+namespace { void flush_buffer_updates(); }
+
 void before_end_frame()
 {
     std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
+    flush_buffer_updates();
     if (sSnapActive)
     {
         snap_flush_pending();
@@ -1825,6 +1832,60 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
     return true;
 }
 
+// ---- device-local buffers: writes become GPU copies, recorded when a draw is about to read the buffer ----
+std::vector<GLuint> sPendingBufs;       // the buffers whose Buf::mPending is set
+
+void flush_buffer_updates()
+{
+    if (sPendingBufs.empty())
+    {
+        return;
+    }
+    if (!Renderer::instance().flushBufferUpdates())
+    {
+        return;                         // no frame is being recorded: the writes stay queued
+    }
+    for (GLuint n : sPendingBufs)
+    {
+        auto it = sGL.mBuffers.find(n);
+        if (it != sGL.mBuffers.end()) it->second.mPending = false;
+    }
+    sPendingBufs.clear();
+}
+
+// called before a draw is recorded: if it reads a buffer with an unrecorded write, record the writes first
+void ensure_buffers_current(const std::vector<GLuint>& used, GLuint element)
+{
+    if (sPendingBufs.empty())
+    {
+        return;
+    }
+    bool stale = false;
+    for (GLuint n : used)
+    {
+        auto it = sGL.mBuffers.find(n);
+        if (it != sGL.mBuffers.end() && it->second.mPending) { stale = true; break; }
+    }
+    if (!stale && element)
+    {
+        auto it = sGL.mBuffers.find(element);
+        stale = it != sGL.mBuffers.end() && it->second.mPending;
+    }
+    if (stale)
+    {
+        flush_buffer_updates();
+    }
+}
+
+U64 device_buffer_min_bytes()
+{
+    static const U64 v = []() {
+        const char* e = getenv("LL_VK_DEVICE_BUF_MIN");
+        return e ? (U64)atoll(e) : (U64)(128 * 1024);
+    }();
+    return v;
+}
+
 void mark_used(const std::vector<GLuint>& buffers, GLuint element)
 {
     const U64 frame = Context::instance().getFrameNumber();
@@ -1867,8 +1928,21 @@ void report_renames()
     sRenameStats = RenameStats();
 }
 
-void write_buffer(Buf& b, U64 offset, U64 size, const void* data, bool whole)
+void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, bool whole)
 {
+    if (b.mDevicePath)
+    {
+        if (b.mVk.valid() && data && size && offset + size <= b.mVk.mSize)
+        {
+            Renderer::instance().updateBuffer(b.mVk.mBuffer, offset, size, data);
+            if (!b.mPending)
+            {
+                b.mPending = true;
+                sPendingBufs.push_back(name);
+            }
+        }
+        return;
+    }
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
     const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::FRAMES_IN_FLIGHT + 1;
@@ -2321,6 +2395,23 @@ void on_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum us
     }
     Buf& b = it->second;
     Context& ctx = Context::instance();
+    // large vertex / index buffers take the device path (GPU copies, no CPU access, no shadow copy)
+    const bool want_device = (target == GL_ARRAY_BUFFER || target == GL_ELEMENT_ARRAY_BUFFER) && (U64)size >= device_buffer_min_bytes() && !getenv("LL_VK_NO_DEVICE_BUFFERS");
+    if (want_device && b.mDevicePath && b.mVk.valid() && b.mVk.mSize == (VkDeviceSize)size)
+    {
+        // the same size again (the viewer re-specifies a buffer to rewrite it): keep the Vulkan buffer, queue the data
+        b.mSize = (U64)size;
+        if (data)
+        {
+            Renderer::instance().updateBuffer(b.mVk.mBuffer, 0, (VkDeviceSize)size, data);
+            if (!b.mPending)
+            {
+                b.mPending = true;
+                sPendingBufs.push_back(name);
+            }
+        }
+        return;
+    }
     if (b.mVk.valid())
     {
         ctx.destroyBuffer(b.mVk);
@@ -2328,6 +2419,21 @@ void on_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum us
     b.mSize = (U64)size;
     b.mLastUseFrame = ~0ull;
     b.mShadow.clear();
+    b.mDevicePath = want_device;
+    if (want_device)
+    {
+        if (ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                             Context::Memory::Device, b.mVk) && data)
+        {
+            Renderer::instance().updateBuffer(b.mVk.mBuffer, 0, (VkDeviceSize)size, data);
+            if (!b.mPending)
+            {
+                b.mPending = true;
+                sPendingBufs.push_back(name);
+            }
+        }
+        return;
+    }
     if (size == 0 || !ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                        Context::Memory::UploadDevice, b.mVk))
     {
@@ -2351,7 +2457,7 @@ void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const v
     auto it = sGL.mBuffers.find(name);
     if (it != sGL.mBuffers.end() && data && size > 0 && offset >= 0)
     {
-        write_buffer(it->second, (U64)offset, (U64)size, data, false);
+        write_buffer(name, it->second, (U64)offset, (U64)size, data, false);
     }
 }
 
@@ -2457,6 +2563,7 @@ void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
         return;
     }
     Renderer& r = Renderer::instance();
+    ensure_buffers_current(used, 0);
     LLVkMirror::gLastLap = 210;
     LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
@@ -2510,6 +2617,7 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     const VkIndexType itype = type == GL_UNSIGNED_INT ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     const U32 index_bytes = type == GL_UNSIGNED_INT ? 4 : 2;
     Renderer& r = Renderer::instance();
+    ensure_buffers_current(used, vao.mElementBuffer);
     LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
     r.setTopology(topology(mode));
@@ -2902,6 +3010,19 @@ void after_frame()
                         unsigned long long v[2];
                         LLVkAsync::queryResultStats(v);
                         LL_INFOS("VkPhases") << "occlusion results handed to the viewer per frame: occluded (0) " << (double)v[0] / frames << ", visible " << (double)v[1] / frames << LL_ENDL;
+                    }
+                    {
+                        U64 dev_bytes = 0, host_bytes = 0, shadow_bytes = 0;
+                        U32 dev_count = 0, host_count = 0;
+                        for (const auto& kv : sGL.mBuffers)
+                        {
+                            if (!kv.second.mVk.valid()) continue;
+                            if (kv.second.mDevicePath) { dev_bytes += kv.second.mVk.mSize; ++dev_count; }
+                            else { host_bytes += kv.second.mVk.mSize; ++host_count; }
+                            shadow_bytes += kv.second.mShadow.size();
+                        }
+                        LL_INFOS("VkPhases") << "GL buffers: " << dev_count << " in video memory (copies, " << (dev_bytes >> 20) << " MB), " << host_count << " host-visible ("
+                                             << (host_bytes >> 20) << " MB), system-memory shadow copies " << (shadow_bytes >> 20) << " MB" << LL_ENDL;
                     }
                     if (LLVkAsync::gEnabled)
                     {
