@@ -3884,6 +3884,10 @@ bool LLAppViewer::initWindow()
         _putenv_s("LL_VK_MIRROR", "1");
         _putenv_s("LL_VK_OWN", "1");
         _putenv_s("LL_VK_EMBED", "main");
+        if (gSavedSettings.getBOOL("FSVulkanAsync") && !getenv("LL_VK_ASYNC"))
+        {
+            _putenv_s("LL_VK_ASYNC", "1");      // the Vulkan work runs on its own thread
+        }
     }
 #endif
     gViewerWindow = new LLViewerWindow(window_params);
