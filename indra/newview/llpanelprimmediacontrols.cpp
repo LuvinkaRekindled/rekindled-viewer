@@ -650,7 +650,7 @@ void LLPanelPrimMediaControls::updateShape()
         glm::mat4 mat = glm::identity<glm::mat4>();
         if (!is_hud)
         {
-            mat = get_current_projection() * get_current_modelview();
+            mat = LLViewerCamera::getScreenProjection() * get_current_modelview();
         }
         else {
             glm::mat4 proj, modelview;
