@@ -11,6 +11,7 @@
 #if defined(LL_VULKAN)
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 
 namespace LLVk
@@ -499,6 +500,16 @@ bool Context::createFrames()
         {
             return false;
         }
+        if (mCaps.mTimestampValidBits > 0)
+        {
+            VkQueryPoolCreateInfo qi = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+            qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            qi.queryCount = 2;
+            if (vkCreateQueryPool(mDevice, &qi, nullptr, &f.mTsPool) != VK_SUCCESS)
+            {
+                f.mTsPool = VK_NULL_HANDLE;
+            }
+        }
         VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
         fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
         VkSemaphoreCreateInfo si = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
@@ -545,6 +556,7 @@ void Context::destroyFrameResources(Frame& f)
         }
     }
     f.mStagingBlocks.clear();
+    if (f.mTsPool) vkDestroyQueryPool(mDevice, f.mTsPool, nullptr);
     if (f.mAcquire) vkDestroySemaphore(mDevice, f.mAcquire, nullptr);
     if (f.mFence) vkDestroyFence(mDevice, f.mFence, nullptr);
     if (f.mPool) vkDestroyCommandPool(mDevice, f.mPool, nullptr);
@@ -618,8 +630,26 @@ VkCommandBuffer Context::beginFrame(bool wait)
     {
         return VK_NULL_HANDLE;
     }
+    const auto wait_start = std::chrono::steady_clock::now();
     vkWaitForFences(mDevice, 1, &f.mFence, VK_TRUE, UINT64_MAX);
+    gSyncStats.mFenceWaitMicros.fetch_add((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - wait_start).count(), std::memory_order_relaxed);
     vkResetFences(mDevice, 1, &f.mFence);
+
+    if (f.mTsPending && f.mTsPool)
+    {
+        f.mTsPending = false;
+        U64 r[4] = {};      // start, its availability, end, its availability
+        if (vkGetQueryPoolResults(mDevice, f.mTsPool, 0, 2, sizeof(r), r, 16, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) == VK_SUCCESS && r[1] && r[3])
+        {
+            const U32 bits = mCaps.mTimestampValidBits;
+            const U64 mask = bits >= 64 ? ~0ull : ((1ull << bits) - 1);
+            const U64 micros = (U64)((double)((r[2] - r[0]) & mask) * (double)mCaps.mTimestampPeriodNs / 1000.0);
+            gSyncStats.mGpuFrames.fetch_add(1, std::memory_order_relaxed);
+            gSyncStats.mGpuMicros.fetch_add(micros, std::memory_order_relaxed);
+            U64 prev = gSyncStats.mGpuMaxMicros.load(std::memory_order_relaxed);
+            while (micros > prev && !gSyncStats.mGpuMaxMicros.compare_exchange_weak(prev, micros, std::memory_order_relaxed)) {}
+        }
+    }
 
     // everything queued while this slot was last current is now safe to destroy
     for (auto& fn : f.mDeferred)
@@ -644,6 +674,11 @@ VkCommandBuffer Context::beginFrame(bool wait)
     VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(f.mCmd, &bi);
+    if (f.mTsPool)
+    {
+        vkCmdResetQueryPool(f.mCmd, f.mTsPool, 0, 2);
+        vkCmdWriteTimestamp2(f.mCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, f.mTsPool, 0);
+    }
     mInFrame = true;
     return f.mCmd;
 }
@@ -652,6 +687,11 @@ void Context::endFrame(VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
 {
     llassert(mInFrame);
     Frame& f = mFrames[mFrameSlot];
+    if (f.mTsPool)
+    {
+        vkCmdWriteTimestamp2(f.mCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, f.mTsPool, 1);
+        f.mTsPending = true;
+    }
     vkEndCommandBuffer(f.mCmd);
 
     VkCommandBufferSubmitInfo cbi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
@@ -708,6 +748,11 @@ bool Context::flushFrameAndWait()
     VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(f.mCmd, &bi);
+    if (f.mTsPool)
+    {
+        vkCmdResetQueryPool(f.mCmd, f.mTsPool, 0, 2);
+        vkCmdWriteTimestamp2(f.mCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, f.mTsPool, 0);
+    }
     return ok;
 }
 
@@ -1219,7 +1264,9 @@ bool Swapchain::acquire(VkSemaphore signal, U32& index, U64 timeout_ns)
     {
         return false;
     }
+    const auto acquire_start = std::chrono::steady_clock::now();
     VkResult r = vkAcquireNextImageKHR(Context::instance().getDevice(), mSwapchain, timeout_ns, signal, VK_NULL_HANDLE, &index);
+    gSyncStats.mAcquireWaitMicros.fetch_add((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - acquire_start).count(), std::memory_order_relaxed);
     static U32 sLogged = 0;
     if (r != VK_SUCCESS && r != VK_NOT_READY && r != VK_TIMEOUT && sLogged++ < 20)
     {
@@ -1246,7 +1293,9 @@ bool Swapchain::present(U32 index, VkSemaphore wait)
     pi.swapchainCount = 1;
     pi.pSwapchains = &mSwapchain;
     pi.pImageIndices = &index;
+    const auto present_start = std::chrono::steady_clock::now();
     VkResult r = vkQueuePresentKHR(Context::instance().getQueue(), &pi);
+    gSyncStats.mPresentMicros.fetch_add((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - present_start).count(), std::memory_order_relaxed);
     static U32 sLogged = 0;
     if (r != VK_SUCCESS && sLogged++ < 20)
     {

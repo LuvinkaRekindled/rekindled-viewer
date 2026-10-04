@@ -193,6 +193,8 @@ private:
         VkFence mFence = VK_NULL_HANDLE;
         VkSemaphore mAcquire = VK_NULL_HANDLE;
         bool mSubmitted = false;
+        VkQueryPool mTsPool = VK_NULL_HANDLE;   // two timestamps: the start and the end of this frame's command buffer
+        bool mTsPending = false;                // the end timestamp was written and has not been read yet
         std::vector<std::function<void()>> mDeferred;
         std::vector<Buffer> mStagingBlocks;     // blocks used this frame (the first is kept for reuse)
         VkDeviceSize mStagingUsed = 0;
@@ -275,6 +277,14 @@ struct SyncStats
     std::atomic<U64> mPipelinesBuilt{ 0 };
     std::atomic<U64> mPipelineBuildMicros{ 0 };
     std::atomic<U64> mPipelineBuildMaxMicros{ 0 };
+    // GPU time of each frame's command buffer (first to last command; harvested a few frames later) and how long the thread that records the frames
+    // is blocked on the GPU (the frame fence), on the swapchain (acquire) and in present
+    std::atomic<U64> mGpuFrames{ 0 };
+    std::atomic<U64> mGpuMicros{ 0 };
+    std::atomic<U64> mGpuMaxMicros{ 0 };
+    std::atomic<U64> mFenceWaitMicros{ 0 };
+    std::atomic<U64> mAcquireWaitMicros{ 0 };
+    std::atomic<U64> mPresentMicros{ 0 };
 };
 extern SyncStats gSyncStats;
 

@@ -563,6 +563,29 @@ std::map<GLuint, U32> sFrameSampledLast;
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
 U64 sDrawsTotal = 0;
 std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
+std::map<std::string, long long> sPhaseProgramTicks; // LL_VK_PHASES: the thread's time from the previous draw to this one (the state calls in between included), by program
+std::map<std::string, long long> sPhaseTargetTicks;  // the same, by the render target being drawn into (one entry per shadow cascade, the G-buffer, ...)
+std::map<std::string, U32> sPhaseTargetDraws;
+long long sPhaseLastDrawTick = 0;
+
+// LL_VK_PHASES: charges the time since the previous draw to the program of this one. Gaps over 2 ms (a frame boundary, a wait) are not counted.
+void note_draw_time(const std::string& program_name)
+{
+    LARGE_INTEGER now, freq;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    if (sPhaseLastDrawTick)
+    {
+        const long long d = now.QuadPart - sPhaseLastDrawTick;
+        if (d >= 0 && d < freq.QuadPart / 500)
+        {
+            sPhaseProgramTicks[program_name] += d;
+            const std::string target = Renderer::instance().describeTarget();
+            sPhaseTargetTicks[target] += d;
+        }
+    }
+    sPhaseLastDrawTick = now.QuadPart;
+}
 std::map<std::pair<int, GLenum>, U64> sGetterCounts;    // LL_VK_PHASES: state getter calls by function and parameter
 // draw outcomes of the current frame, by reason (and by program for the skipped ones)
 struct DrawStats
@@ -2579,6 +2602,8 @@ void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
         if (LLVkMirror::gPhaseTiming)
         {
             ++sPhaseProgramDraws[r.getProgram()->getName()];
+            ++sPhaseTargetDraws[r.describeTarget()];
+            note_draw_time(r.getProgram()->getName());
         }
         if (sStatsEnabled)
         {
@@ -2632,6 +2657,8 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
         if (LLVkMirror::gPhaseTiming)
         {
             ++sPhaseProgramDraws[r.getProgram()->getName()];
+            ++sPhaseTargetDraws[r.describeTarget()];
+            note_draw_time(r.getProgram()->getName());
         }
         if (sStatsEnabled)
         {
@@ -3009,6 +3036,47 @@ void after_frame()
                             text += buf;
                         }
                         LL_INFOS("VkPhases") << "draws per frame by program (top 16): " << text << LL_ENDL;
+                        {
+                            // the thread's time per frame by program (everything from the previous draw to this one), with the average cost of one draw
+                            LARGE_INTEGER freq;
+                            QueryPerformanceFrequency(&freq);
+                            std::vector<std::pair<long long, std::string>> by_time;
+                            long long total_ticks = 0;
+                            for (const auto& kv : sPhaseProgramTicks) { by_time.push_back({ kv.second, kv.first }); total_ticks += kv.second; }
+                            std::sort(by_time.rbegin(), by_time.rend());
+                            std::string time_text;
+                            for (size_t k = 0; k < by_time.size() && k < 14; ++k)
+                            {
+                                const auto draws_it = sPhaseProgramDraws.find(by_time[k].second);
+                                const double draws = draws_it != sPhaseProgramDraws.end() ? (double)draws_it->second : 1.0;
+                                char buf[220];
+                                snprintf(buf, sizeof(buf), "%s %.2f ms (%.2f us/draw) | ", by_time[k].second.c_str(), (double)by_time[k].first * 1000.0 / (double)freq.QuadPart / frames,
+                                         (double)by_time[k].first * 1e6 / (double)freq.QuadPart / draws);
+                                time_text += buf;
+                            }
+                            LL_INFOS("VkPhases") << "time per frame between draws, by program (all draws " << (double)total_ticks * 1000.0 / (double)freq.QuadPart / frames << " ms): " << time_text << LL_ENDL;
+                            sPhaseProgramTicks.clear();
+                        }
+                        {
+                            LARGE_INTEGER freq;
+                            QueryPerformanceFrequency(&freq);
+                            std::vector<std::pair<long long, std::string>> by_time;
+                            for (const auto& kv : sPhaseTargetTicks) by_time.push_back({ kv.second, kv.first });
+                            std::sort(by_time.rbegin(), by_time.rend());
+                            std::string text;
+                            for (size_t k = 0; k < by_time.size() && k < 14; ++k)
+                            {
+                                const auto it = sPhaseTargetDraws.find(by_time[k].second);
+                                const double draws = it != sPhaseTargetDraws.end() ? (double)it->second : 1.0;
+                                char buf[200];
+                                snprintf(buf, sizeof(buf), "[%s] %.2f ms, %.0f draws (%.2f us/draw) | ", by_time[k].second.c_str(), (double)by_time[k].first * 1000.0 / (double)freq.QuadPart / frames,
+                                         draws / frames, (double)by_time[k].first * 1e6 / (double)freq.QuadPart / draws);
+                                text += buf;
+                            }
+                            LL_INFOS("VkPhases") << "time per frame between draws, by render target: " << text << LL_ENDL;
+                            sPhaseTargetTicks.clear();
+                            sPhaseTargetDraws.clear();
+                        }
                         sPhaseProgramDraws.clear();
                     }
                     {
@@ -3056,6 +3124,24 @@ void after_frame()
                         last_barriers = barriers;
                         last_built = built;
                         last_micros = micros;
+                    }
+                    {
+                        static U64 last_gpu_frames = 0, last_gpu = 0, last_fence = 0, last_acquire = 0, last_present = 0;
+                        const U64 gpu_frames = gSyncStats.mGpuFrames.load(std::memory_order_relaxed);
+                        const U64 gpu = gSyncStats.mGpuMicros.load(std::memory_order_relaxed);
+                        const U64 gpu_max = gSyncStats.mGpuMaxMicros.exchange(0, std::memory_order_relaxed);
+                        const U64 fence = gSyncStats.mFenceWaitMicros.load(std::memory_order_relaxed);
+                        const U64 acquire = gSyncStats.mAcquireWaitMicros.load(std::memory_order_relaxed);
+                        const U64 present = gSyncStats.mPresentMicros.load(std::memory_order_relaxed);
+                        const double n = (double)std::max<U64>(1, gpu_frames - last_gpu_frames);
+                        LL_INFOS("VkPhases") << "GPU time per frame (command buffer start to end): avg " << (double)(gpu - last_gpu) / n / 1000.0 << " ms, slowest " << (double)gpu_max / 1000.0
+                                             << " ms; the Vulkan thread is blocked per frame: waiting for the GPU (frame fence) " << (double)(fence - last_fence) / frames / 1000.0
+                                             << " ms, swapchain acquire " << (double)(acquire - last_acquire) / frames / 1000.0 << " ms, present " << (double)(present - last_present) / frames / 1000.0 << " ms" << LL_ENDL;
+                        last_gpu_frames = gpu_frames;
+                        last_gpu = gpu;
+                        last_fence = fence;
+                        last_acquire = acquire;
+                        last_present = present;
                     }
                 }
                 draws_at_start = sDrawsTotal;
