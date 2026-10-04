@@ -2513,6 +2513,28 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSVkDLSS</key>
+    <map>
+      <key>Comment</key>
+      <string>Experimental, needs FSVulkanRenderer and an NVIDIA RTX card: render the world at FSVkDLSSScale of the window size and upscale it with DLSS. Takes effect after a restart.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
+    <key>FSVkDLSSScale</key>
+    <map>
+      <key>Comment</key>
+      <string>Render resolution as a fraction of the window with FSVkDLSS (0.5 performance, 0.58 balanced, 0.67 quality). Takes effect after a restart.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.67</real>
+    </map>
     <key>FSVulkanRenderer</key>
     <map>
       <key>Comment</key>

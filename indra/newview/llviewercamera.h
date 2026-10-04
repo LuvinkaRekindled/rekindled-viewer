@@ -33,6 +33,8 @@
 #include "m4math.h"
 #include "llcoord.h"
 #include "lltrace.h"
+#include "glm/mat4x4.hpp"
+#include "glm/vec2.hpp"
 
 class LLViewerObject;
 const bool FOR_SELECTION = true;
@@ -99,6 +101,15 @@ public:
     const LLVector3& getPointOfInterest() const { return mLastPointOfInterest; }
     F32 getPixelMeterRatio() const              { return mPixelMeterRatio; }
     S32 getScreenPixelArea() const              { return mScreenPixelArea; }
+
+    // DLSS (FSVkDLSS): the next setPerspective for the main scene shifts the image by a sub-pixel amount. The jitter is in pixels of the render
+    // resolution, +x towards higher columns and +y towards higher rows of the render targets (texel space, as DLSS wants it); setPerspective keeps the projection without the shift in sUnjitteredProjection.
+    static bool sJitterActive;
+    static glm::vec2 sJitterPixels;
+    static glm::vec2 sJitterRenderSize;
+    static glm::mat4 sUnjitteredProjection;
+    static glm::mat4 sJitteredProjection;       // what the scene was actually drawn with
+    static glm::mat4 sJitterModelview;      // the view matrix that went with sUnjitteredProjection
 
     void setZoomParameters(F32 factor, S16 subregion) { mZoomFactor = factor; mZoomSubregion = subregion; }
     F32 getZoomFactor() const { return mZoomFactor; }

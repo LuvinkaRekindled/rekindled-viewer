@@ -58,6 +58,13 @@
 // System includes
 #include <iomanip> // for setprecision
 
+bool LLViewerCamera::sJitterActive = false;
+glm::vec2 LLViewerCamera::sJitterPixels(0.f);
+glm::vec2 LLViewerCamera::sJitterRenderSize(1.f);
+glm::mat4 LLViewerCamera::sUnjitteredProjection(1.f);
+glm::mat4 LLViewerCamera::sJitteredProjection(1.f);
+glm::mat4 LLViewerCamera::sJitterModelview(1.f);
+
 LLTrace::CountStatHandle<> LLViewerCamera::sVelocityStat("camera_velocity");
 LLTrace::CountStatHandle<> LLViewerCamera::sAngularVelocityStat("camera_angular_velocity");
 
@@ -380,6 +387,18 @@ void LLViewerCamera::setPerspective(bool for_selection,
 
     proj_mat *= glm::perspective(fov_y,aspect,z_near,z_far);
 
+    if (sJitterActive && !for_selection && mZoomFactor == 1.f)
+    {
+        // shift the whole image by a fraction of a render pixel (NDC spans 2 units). The Vulkan mirror keeps GL's orientation: row 0 of every
+        // image is NDC y = -1, so a row index grows with NDC y and the jitter, which DLSS wants in texel space, maps to NDC with the same sign.
+        sUnjitteredProjection = proj_mat;
+        glm::mat4 shift(1.f);   // adds (shift * w) to clip x and y, i.e. moves the image in NDC
+        shift[3][0] = 2.f * sJitterPixels.x / sJitterRenderSize.x;
+        shift[3][1] = 2.f * sJitterPixels.y / sJitterRenderSize.y;
+        proj_mat = shift * proj_mat;
+        sJitteredProjection = proj_mat;
+    }
+
     gGL.loadMatrix(glm::value_ptr(proj_mat));
 
     set_current_projection(proj_mat);
@@ -395,6 +414,11 @@ void LLViewerCamera::setPerspective(bool for_selection,
     modelview *= glm::make_mat4(ogl_matrix);
 
     gGL.loadMatrix(glm::value_ptr(modelview));
+
+    if (sJitterActive && !for_selection && mZoomFactor == 1.f)
+    {
+        sJitterModelview = modelview;
+    }
 
     if (for_selection && (width > 1 || height > 1))
     {

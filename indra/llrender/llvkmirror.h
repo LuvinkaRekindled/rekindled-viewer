@@ -55,6 +55,22 @@ namespace LLVkMirror
     // 1 = flush what has been recorded and carry on, 2 = close the off-screen frame and open a new one, 3 = like 2 but also wait for the GPU.
     void snapshotBoundary(S32 mode);
 
+    // ---- DLSS upscaling (setting FSVkDLSS; see llvkdlss.h) ----
+    // The GL names of four textures and what the upscaler needs to know about them; sizes are in pixels.
+    struct UpscaleArgs
+    {
+        U32 mColor = 0, mDepth = 0, mMotion = 0, mOutput = 0;
+        U32 mRenderWidth = 0, mRenderHeight = 0, mOutputWidth = 0, mOutputHeight = 0;
+        F32 mJitterX = 0.f, mJitterY = 0.f;             // this frame's jitter in render pixels (+x right, +y down)
+        F32 mMotionScaleX = 1.f, mMotionScaleY = 1.f;
+        S32 mReset = 0;                                 // the history is useless (camera cut)
+        S32 mHdr = 0;                                   // the colour is linear HDR
+    };
+    // DLSS is initialised and usable (decided when the Vulkan device was created)
+    bool upscaleAvailable();
+    // queues (async) or runs the upscale: colour + depth + motion -> output, all textures the mirror owns
+    void upscale(const UpscaleArgs& args);
+
     // switch the mirror off (window closed, error); the viewer carries on with OpenGL only
     void shutdown();
     // plays what is queued for the mirror thread and stops it (the viewer is quitting); GL calls after this run inline
@@ -68,6 +84,7 @@ namespace LLVkMirror
     void holdFrameImpl(bool hold);
     void snapshotBoundaryImpl(S32 mode);
     void armSnapshotCompareImpl();
+    void upscaleImpl(const UpscaleArgs& args);
     // the lock every mirror entry point takes (the viewer calls GL from more than one thread)
     class Mutex;
     Mutex& lock();

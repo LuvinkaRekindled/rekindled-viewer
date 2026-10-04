@@ -305,6 +305,9 @@ public:
 
     // makes sure an image is in 'layout', ending the current pass if the image is one of its attachments
     void ensureLayout(Image& image, VkImageLayout layout);
+    // Records work that is not a draw (an NGX call) into the current frame: puts each image in the layout it needs, ends the render pass, then runs
+    // 'record'. Afterwards the images are in the layouts the callback leaves them in, which must be the ones asked for. False outside a frame.
+    bool recordExternal(const std::vector<std::pair<Image*, VkImageLayout>>& images, const std::function<void(VkCommandBuffer)>& record);
     // a clear with nothing drawn after it still has to happen: begins (and leaves open) a pass for it
     void flushPendingClear();
 

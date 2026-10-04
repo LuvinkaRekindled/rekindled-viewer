@@ -34,6 +34,7 @@ set(llrender_SOURCE_FILES
     lluiimage.cpp
     llvertexbuffer.cpp
     llvkcontext.cpp
+    llvkdlss.cpp
     llvkasync.cpp
     llvkmirror.cpp
     llvkgl.cpp
@@ -74,6 +75,7 @@ set(llrender_HEADER_FILES
     lluiimage.inl
     llvertexbuffer.h
     llvkcontext.h
+    llvkdlss.h
     llvkfunctions.inl
     llvkasync.h
     llvkmirror.h
@@ -127,6 +129,14 @@ if (USE_VULKAN)
           "${VULKAN_SDK_DIR}/Lib/SPIRV-Tools-opt.lib"
           "${VULKAN_SDK_DIR}/Lib/SPIRV-Tools.lib"
           )
+  # NVIDIA DLSS (optional): the SDK is not part of the source tree; point DLSS_SDK_DIR at a clone of github.com/NVIDIA/DLSS (its DLSS folder)
+  set(DLSS_SDK_DIR "<work>/DLSS/DLSS" CACHE PATH "NVIDIA DLSS SDK root (include/nvsdk_ngx_vk.h, lib/Windows_x86_64/x64)")
+  if (EXISTS "${DLSS_SDK_DIR}/include/nvsdk_ngx_vk.h" AND EXISTS "${DLSS_SDK_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
+    message(STATUS "DLSS SDK found at ${DLSS_SDK_DIR}")
+    target_include_directories(llrender SYSTEM PRIVATE "${DLSS_SDK_DIR}/include")
+    target_compile_definitions(llrender PRIVATE LL_DLSS=1)
+    target_link_libraries(llrender "${DLSS_SDK_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
+  endif ()
 endif ()
 
 set_property(TARGET llrender PROPERTY POSITION_INDEPENDENT_CODE ON)

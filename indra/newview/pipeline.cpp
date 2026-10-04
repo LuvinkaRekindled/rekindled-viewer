@@ -79,6 +79,7 @@
 #include "lltool.h"
 #include "lltoolmgr.h"
 #include "llviewercamera.h"
+#include "llvkmirror.h"
 #include "llviewermediafocus.h"
 #include "llviewertexturelist.h"
 #include "llviewerobject.h"
@@ -157,6 +158,7 @@ U32 LLPipeline::RenderResolutionDivisor;
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
 F32 LLPipeline::RenderResolutionMultiplier;
 // [/SL:KB]
+bool LLPipeline::sDLSS = false;
 bool LLPipeline::RenderUIBuffer;
 S32 LLPipeline::RenderShadowDetail;
 S32 LLPipeline::RenderShadowSplits;
@@ -943,6 +945,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     // remember these dimensions
     mRT->width = resX;
     mRT->height = resY;
+    const U32 window_res_x = resX;      // before any render-resolution scaling
+    const U32 window_res_y = resY;
 
     U32 res_mod = RenderResolutionDivisor;
 
@@ -1037,6 +1041,18 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         else
         {
             mSceneMap.release();
+        }
+
+        if (sDLSS)
+        {
+            // motion vectors at the render size; the upscaled picture at the window size
+            if (!mMotionMap.allocate(resX, resY, GL_RG16F)) return false;
+            if (!mUpscaledMap.allocate(window_res_x, window_res_y, GL_RGBA)) return false;
+        }
+        else
+        {
+            mMotionMap.release();
+            mUpscaledMap.release();
         }
 
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("mPostMapBuffer"); // <FS:Beq/> improve Tracy scoping 
@@ -1218,6 +1234,13 @@ void LLPipeline::refreshCachedSettings()
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     RenderResolutionMultiplier = gSavedSettings.getF32("RenderResolutionMultiplier");
 // [/SL:KB]
+    sDLSS = gSavedSettings.getBOOL("FSVkDLSS") && gSavedSettings.getBOOL("FSVulkanRenderer");
+    if (sDLSS)
+    {
+        // the world is drawn smaller and the upscaler brings it back to the window size
+        RenderResolutionDivisor = 1;
+        RenderResolutionMultiplier = llclamp(gSavedSettings.getF32("FSVkDLSSScale"), 0.33f, 1.f);
+    }
     RenderUIBuffer = gSavedSettings.getBOOL("RenderUIBuffer");
     RenderShadowDetail = gSavedSettings.getS32("RenderShadowDetail");
     RenderShadowSplits = gSavedSettings.getS32("RenderShadowSplits");
@@ -1405,6 +1428,8 @@ void LLPipeline::releaseScreenBuffers()
     mRT->screen.release();
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
+    mMotionMap.release();
+    mUpscaledMap.release();
 
     mAuxillaryRT.screen.release();
     mAuxillaryRT.deferredScreen.release();
@@ -8246,6 +8271,118 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
     }
 }
 
+// ---- DLSS proof of concept ----
+
+static F32 halton(U32 index, U32 base)
+{
+    F32 f = 1.f, r = 0.f;
+    while (index > 0)
+    {
+        f /= (F32)base;
+        r += f * (F32)(index % base);
+        index /= base;
+    }
+    return r;
+}
+
+void LLPipeline::updateJitter()
+{
+    LLViewerCamera::sJitterActive = false;
+    if (!sDLSS || gCubeSnapshot || LLViewerCamera::getInstance()->getZoomFactor() > 1.f || !LLVkMirror::upscaleAvailable())
+    {
+        return;
+    }
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (frame != mJitterFrame)
+    {
+        mJitterFrame = frame;
+        ++mJitterIndex;
+    }
+    // the sequence is long enough that the upscaler sees every sub-pixel position of the output pixel: 8 * (window / render)^2
+    const F32 scale = llmax(RenderResolutionMultiplier, 0.33f);
+    const U32 phases = (U32)ceilf(8.f / (scale * scale));
+    const U32 i = (mJitterIndex % phases) + 1;
+    LLViewerCamera::sJitterPixels = glm::vec2(halton(i, 2) - 0.5f, halton(i, 3) - 0.5f);
+    const F32 w = (F32)gViewerWindow->getWorldViewWidthRaw();
+    const F32 h = (F32)gViewerWindow->getWorldViewHeightRaw();
+    LLViewerCamera::sJitterRenderSize = glm::vec2(llmax(1.f, floorf(w * scale)), llmax(1.f, floorf(h * scale)));
+    LLViewerCamera::sJitterActive = true;
+}
+
+void LLPipeline::noteSceneMatrices()
+{
+    if (!sDLSS || gCubeSnapshot)
+    {
+        return;
+    }
+    mViewProjPrev = mViewProjCur;
+    mViewProjCur = LLViewerCamera::sUnjitteredProjection * LLViewerCamera::sJitterModelview;
+    mViewProjPrevValid = mJitterFrame != ~0u;
+}
+
+void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
+{
+    LL_PROFILE_GPU_ZONE("motion vectors");
+    // the depth buffer was drawn with the jittered projection: undo exactly that to get back to world space, then project the point with this
+    // frame's and last frame's matrices without jitter. Everything stays homogeneous so that the sky (depth 1) works as well.
+    const glm::dmat4 inv_scene = glm::inverse(glm::dmat4(LLViewerCamera::sJitteredProjection) * glm::dmat4(LLViewerCamera::sJitterModelview));
+    const glm::mat4 to_cur = glm::mat4(glm::dmat4(mViewProjCur) * inv_scene);
+    const glm::mat4 to_prev = glm::mat4(glm::dmat4(mViewProjPrevValid ? mViewProjPrev : mViewProjCur) * inv_scene);
+
+    dst->bindTarget();
+    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+    gMotionVectorProgram.bind();
+    gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
+    static LLStaticHashedString to_cur_s("to_cur"), to_prev_s("to_prev"), res_s("render_res");
+    gMotionVectorProgram.uniformMatrix4fv(to_cur_s, 1, GL_FALSE, glm::value_ptr(to_cur));
+    gMotionVectorProgram.uniformMatrix4fv(to_prev_s, 1, GL_FALSE, glm::value_ptr(to_prev));
+    gMotionVectorProgram.uniform2f(res_s, (F32)dst->getWidth(), (F32)dst->getHeight());
+    mScreenTriangleVB->setBuffer();
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    gMotionVectorProgram.unbind();
+    dst->flush();
+}
+
+bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
+{
+    if (!LLVkMirror::upscaleAvailable())
+    {
+        return false;
+    }
+    static U32 last_frame = ~0u;
+    static U32 last_size[2] = {};
+    const U32 frame = LLFrameTimer::getFrameCount();
+    LLVkMirror::UpscaleArgs a;
+    a.mColor = src->getTexture(0);
+    a.mDepth = mRT->deferredScreen.getDepth();
+    a.mMotion = mMotionMap.getTexture(0);
+    a.mOutput = dst->getTexture(0);
+    a.mRenderWidth = src->getWidth();
+    a.mRenderHeight = src->getHeight();
+    a.mOutputWidth = dst->getWidth();
+    a.mOutputHeight = dst->getHeight();
+    a.mJitterX = LLViewerCamera::sJitterPixels.x;
+    a.mJitterY = LLViewerCamera::sJitterPixels.y;
+    // the history is useless after a pause in rendering or a resize
+    a.mReset = (!mViewProjPrevValid || frame != last_frame + 1 || last_size[0] != a.mRenderWidth || last_size[1] != a.mRenderHeight) ? 1 : 0;
+    last_frame = frame;
+    last_size[0] = a.mRenderWidth;
+    last_size[1] = a.mRenderHeight;
+    if (!a.mColor || !a.mDepth || !a.mMotion || !a.mOutput)
+    {
+        return false;
+    }
+    LL_PROFILE_GPU_ZONE("dlss");
+    static U32 logged = 0;
+    if (logged++ < 3)
+    {
+        LL_INFOS("VkDlss") << "upscale call " << logged << ": render " << a.mRenderWidth << "x" << a.mRenderHeight << " -> " << a.mOutputWidth << "x" << a.mOutputHeight
+                           << ", jitter " << a.mJitterX << "," << a.mJitterY << ", reset " << a.mReset << LL_ENDL;
+    }
+    LLVkMirror::upscale(a);
+    return true;
+}
+
 void LLPipeline::applyCAS(LLRenderTarget* src, LLRenderTarget* dst)
 {
     static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
@@ -9098,6 +9235,14 @@ void LLPipeline::renderFinalize()
 
     static LLCachedControl<bool> has_hdr(gSavedSettings, "RenderHDREnabled", true);
     bool hdr = gGLManager.mGLVersion > 4.05f && has_hdr();
+
+    const bool dlss = sDLSS && !gCubeSnapshot && mMotionMap.isComplete() && mUpscaledMap.isComplete() && LLVkMirror::upscaleAvailable()
+                      && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
+    if (dlss)
+    {
+        generateMotionVectors(&mMotionMap);
+    }
+
     if (hdr)
     {
         copyScreenSpaceReflections(&mRT->screen, &mSceneMap);
@@ -9146,7 +9291,11 @@ void LLPipeline::renderFinalize()
         std::swap(sourceBuffer, targetBuffer);
     }
 
-     if (RenderFSAAType == 1)
+     if (dlss)
+    {
+        // the upscaler does its own anti-aliasing
+    }
+    else if (RenderFSAAType == 1)
     {
         applyFXAA(sourceBuffer, targetBuffer);
         std::swap(sourceBuffer, targetBuffer);
@@ -9217,6 +9366,11 @@ void LLPipeline::renderFinalize()
         default:
             break;
         }
+    }
+
+    if (dlss && applyUpscale(sourceBuffer, &mUpscaledMap))
+    {
+        sourceBuffer = &mUpscaledMap;
     }
 
     // Present the screen target.
@@ -10045,6 +10199,8 @@ void LLPipeline::renderDeferredLighting()
 
     if (!gCubeSnapshot)
     {
+        noteSceneMatrices();
+
         // this is the end of the 3D scene render, grab a copy of the modelview and projection
         // matrix for use in off-by-one-frame effects in the next frame
         for (U32 i = 0; i < 16; i++)

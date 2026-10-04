@@ -18,6 +18,8 @@ void LLVkMirror::endFrame() {}
 void LLVkMirror::holdFrame(bool) {}
 void LLVkMirror::armSnapshotCompare() {}
 void LLVkMirror::snapshotBoundary(S32) {}
+bool LLVkMirror::upscaleAvailable() { return false; }
+void LLVkMirror::upscale(const UpscaleArgs&) {}
 void LLVkMirror::presentFrame() {}
 void LLVkMirror::shutdown() {}
 void LLVkMirror::stopAsync() {}
@@ -27,6 +29,7 @@ void LLVkMirror::stopAsync() {}
 #include "llglheaders.h"
 #include <psapi.h>
 #include "llvkcontext.h"
+#include "llvkdlss.h"
 #include "llvkrenderer.h"
 #include "llvkverify.h"
 #include "llvkasync.h"
@@ -1191,6 +1194,27 @@ void LLVkMirror::armSnapshotCompare()
         return;
     }
     armSnapshotCompareImpl();
+}
+
+bool LLVkMirror::upscaleAvailable()
+{
+    return sMirror.mReady && LLVkDlss::ready();
+}
+
+void LLVkMirror::upscale(const UpscaleArgs& args)
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::push(LLVkAsync::CMD_UPSCALE, &args, sizeof(args));
+        return;
+    }
+    upscaleImpl(args);
+}
+
+void LLVkMirror::upscaleImpl(const UpscaleArgs& args)
+{
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    LLVkGL::on_upscale(args);
 }
 
 #endif // LL_VULKAN

@@ -36,6 +36,8 @@ namespace LLVkGL
     // true when the mirror owns the resources: sink calls are not made in real OpenGL, the answers come from the mirror (LL_VK_OWN)
     extern bool gOwn;
     void own_gen(int kind, GLsizei n, GLuint* out);
+    // DLSS: runs the upscaler on four mirror-owned textures (colour, depth, motion vectors -> output); the gMutex must be held
+    void on_upscale(const LLVkMirror::UpscaleArgs& args);
     void on_glGenTextures(GLsizei n, GLuint* textures);
     void on_glDeleteTextures(GLsizei n, const GLuint* textures);
     void on_glBindTexture(GLenum target, GLuint texture);

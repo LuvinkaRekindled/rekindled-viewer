@@ -261,7 +261,9 @@ void display_update_camera()
 // </FS:CR> Aurora sim
     LLViewerCamera::getInstance()->setFar(final_far);
     LLVOAvatar::sRenderDistance = llclamp(final_far, 16.f, 256.f);
+    gPipeline.updateJitter();   // FSVkDLSS: this projection is the main scene's
     gViewerWindow->setup3DRender();
+    LLViewerCamera::sJitterActive = false;
 
     if (!gCubeSnapshot)
     {

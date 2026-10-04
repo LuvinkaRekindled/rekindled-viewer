@@ -974,6 +974,13 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     case CMD_HOLD: LLVkMirror::holdFrameImpl(r.get<S32>() != 0); break;
     case CMD_SNAPSHOT_BOUNDARY: LLVkMirror::snapshotBoundaryImpl(r.get<S32>()); break;
     case CMD_ARM_SNAPSHOT: LLVkMirror::armSnapshotCompareImpl(); break;
+    case CMD_UPSCALE:
+    {
+        LLVkMirror::UpscaleArgs a;
+        memcpy(&a, payload, sizeof(a));         // the same struct the producer pushed
+        LLVkMirror::upscaleImpl(a);
+        break;
+    }
     case CMD_PROGRAM_BIND:
     {
         LLVk::Program* p = r.get<LLVk::Program*>();
