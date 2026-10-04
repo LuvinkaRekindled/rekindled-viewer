@@ -884,10 +884,12 @@ bool begin_offscreen_frame()
 {
     LLVk::Context& ctx = LLVk::Context::instance();
     LLVk::Renderer& renderer = LLVk::Renderer::instance();
+    ctx.setNextFrameOffscreen(true);
     VkCommandBuffer cmd = ctx.beginFrame(mirror_blocks() ? true : false);
     if (cmd == VK_NULL_HANDLE)
     {
         ++sMirror.mSkipped;
+        ctx.setNextFrameOffscreen(false);
         return false;
     }
     renderer.beginFrame(cmd, ctx.getFrameSlot());

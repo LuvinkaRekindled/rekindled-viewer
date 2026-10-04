@@ -483,8 +483,10 @@ bool Context::createDevice()
 
 bool Context::createFrames()
 {
-    for (Frame& f : mFrames)
+    LL_INFOS("Vulkan") << "frame slots in flight: " << frameCount() << LL_ENDL;
+    for (U32 slot = 0; slot < frameCount(); ++slot)
     {
+        Frame& f = mFrames[slot];
         VkCommandPoolCreateInfo pi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
         pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
         pi.queueFamilyIndex = mQueueFamily;
@@ -504,7 +506,7 @@ bool Context::createFrames()
         {
             VkQueryPoolCreateInfo qi = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
             qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
-            qi.queryCount = 2;
+            qi.queryCount = 2 + MAX_GPU_STAMPS;
             if (vkCreateQueryPool(mDevice, &qi, nullptr, &f.mTsPool) != VK_SUCCESS)
             {
                 f.mTsPool = VK_NULL_HANDLE;
@@ -621,6 +623,48 @@ void Context::waitIdle()
     }
 }
 
+namespace
+{
+std::vector<std::string>& stamp_names()
+{
+    static std::vector<std::string> names = { "(uploads and copies before the first pass)" };
+    return names;
+}
+}
+
+U32 Context::stampTag(const std::string& name)
+{
+    auto& names = stamp_names();
+    for (U32 i = 0; i < (U32)names.size(); ++i)
+    {
+        if (names[i] == name) return i;
+    }
+    names.push_back(name);
+    return (U32)names.size() - 1;
+}
+
+std::string Context::stampTagName(U32 tag)
+{
+    auto& names = stamp_names();
+    return tag < names.size() ? names[tag] : "?";
+}
+
+void Context::gpuStamp(U32 tag)
+{
+    if (!mInFrame)
+    {
+        return;
+    }
+    Frame& f = mFrames[mFrameSlot];
+    const U32 n = (U32)f.mStampTags.size();
+    if (!f.mTsPool || n >= MAX_GPU_STAMPS)
+    {
+        return;
+    }
+    vkCmdWriteTimestamp2(f.mCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, f.mTsPool, 2 + n);
+    f.mStampTags.push_back(tag);
+}
+
 VkCommandBuffer Context::beginFrame(bool wait)
 {
     llassert(!mInFrame);
@@ -638,18 +682,43 @@ VkCommandBuffer Context::beginFrame(bool wait)
     if (f.mTsPending && f.mTsPool)
     {
         f.mTsPending = false;
-        U64 r[4] = {};      // start, its availability, end, its availability
-        if (vkGetQueryPoolResults(mDevice, f.mTsPool, 0, 2, sizeof(r), r, 16, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) == VK_SUCCESS && r[1] && r[3])
+        const U32 n = (U32)f.mStampTags.size();
+        std::vector<U64> r((size_t)(2 + n) * 2);        // per query: the value and its availability
+        const VkResult res = vkGetQueryPoolResults(mDevice, f.mTsPool, 0, 2 + n, r.size() * sizeof(U64), r.data(), 16, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+        bool all = res == VK_SUCCESS;
+        for (U32 q = 0; all && q < 2 + n; ++q) all = r[q * 2 + 1] != 0;
+        if (all)
         {
             const U32 bits = mCaps.mTimestampValidBits;
             const U64 mask = bits >= 64 ? ~0ull : ((1ull << bits) - 1);
-            const U64 micros = (U64)((double)((r[2] - r[0]) & mask) * (double)mCaps.mTimestampPeriodNs / 1000.0);
+            auto to_micros = [&](U64 from, U64 to) { return (U64)((double)((to - from) & mask) * (double)mCaps.mTimestampPeriodNs / 1000.0); };
+            const U64 start = r[0], end = r[2];
+            const U64 micros = to_micros(start, end);
             gSyncStats.mGpuFrames.fetch_add(1, std::memory_order_relaxed);
             gSyncStats.mGpuMicros.fetch_add(micros, std::memory_order_relaxed);
             U64 prev = gSyncStats.mGpuMaxMicros.load(std::memory_order_relaxed);
             while (micros > prev && !gSyncStats.mGpuMaxMicros.compare_exchange_weak(prev, micros, std::memory_order_relaxed)) {}
+            if (f.mOffscreen) { mPassStats.mOffMicros += micros; ++mPassStats.mOffFrames; mPassStats.mOffMax = std::max(mPassStats.mOffMax, micros); }
+            else { mPassStats.mMainMicros += micros; ++mPassStats.mMainFrames; mPassStats.mMainMax = std::max(mPassStats.mMainMax, micros); }
+            if (n)
+            {
+                // the time from one pass's stamp to the next is that pass's; the first stretch (uploads, copies) and the last pass run to the frame's own start and end
+                U64 last = start;
+                U32 last_tag = 0;
+                for (U32 i = 0; i < n; ++i)
+                {
+                    const U64 stamp = r[(2 + i) * 2];
+                    mPassStats.mMicros[last_tag] += to_micros(last, stamp);
+                    last = stamp;
+                    last_tag = f.mStampTags[i];
+                }
+                mPassStats.mMicros[last_tag] += to_micros(last, end);
+            }
         }
     }
+    f.mStampTags.clear();
+    f.mOffscreen = mNextOffscreen;
+    mNextOffscreen = false;
 
     // everything queued while this slot was last current is now safe to destroy
     for (auto& fn : f.mDeferred)
@@ -676,7 +745,7 @@ VkCommandBuffer Context::beginFrame(bool wait)
     vkBeginCommandBuffer(f.mCmd, &bi);
     if (f.mTsPool)
     {
-        vkCmdResetQueryPool(f.mCmd, f.mTsPool, 0, 2);
+        vkCmdResetQueryPool(f.mCmd, f.mTsPool, 0, 2 + MAX_GPU_STAMPS);
         vkCmdWriteTimestamp2(f.mCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, f.mTsPool, 0);
     }
     mInFrame = true;
@@ -714,7 +783,7 @@ void Context::endFrame(VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
     vk_ok(vkQueueSubmit2(mQueue, 1, &si, f.mFence), "vkQueueSubmit2");
 
     mInFrame = false;
-    mFrameSlot = (mFrameSlot + 1) % FRAMES_IN_FLIGHT;
+    mFrameSlot = (mFrameSlot + 1) % frameCount();
     ++mFrameNumber;
 }
 
@@ -750,7 +819,8 @@ bool Context::flushFrameAndWait()
     vkBeginCommandBuffer(f.mCmd, &bi);
     if (f.mTsPool)
     {
-        vkCmdResetQueryPool(f.mCmd, f.mTsPool, 0, 2);
+        f.mStampTags.clear();       // the reset below wipes the stamps of the first part
+        vkCmdResetQueryPool(f.mCmd, f.mTsPool, 0, 2 + MAX_GPU_STAMPS);
         vkCmdWriteTimestamp2(f.mCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, f.mTsPool, 0);
     }
     return ok;
@@ -762,11 +832,11 @@ bool Context::frameFinished(U64 n)
     {
         return false;
     }
-    if (mFrameNumber - n >= FRAMES_IN_FLIGHT)
+    if (mFrameNumber - n >= frameCount())
     {
         return true;        // its slot has been reused, which waited for it
     }
-    return vkGetFenceStatus(mDevice, mFrames[n % FRAMES_IN_FLIGHT].mFence) == VK_SUCCESS;
+    return vkGetFenceStatus(mDevice, mFrames[n % frameCount()].mFence) == VK_SUCCESS;
 }
 
 StagingAlloc Context::allocStaging(VkDeviceSize size, VkDeviceSize alignment)
@@ -811,7 +881,7 @@ StagingAlloc Context::allocStaging(VkDeviceSize size, VkDeviceSize alignment)
 
 void Context::destroyLater(std::function<void()> fn)
 {
-    const U32 slot = mInFrame ? mFrameSlot : (mFrameSlot + FRAMES_IN_FLIGHT - 1) % FRAMES_IN_FLIGHT;
+    const U32 slot = mInFrame ? mFrameSlot : (mFrameSlot + frameCount() - 1) % frameCount();
     mFrames[slot].mDeferred.push_back(std::move(fn));
 }
 

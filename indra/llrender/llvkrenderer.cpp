@@ -566,14 +566,14 @@ bool Renderer::init()
     VkDevice dev = ctx.getDevice();
 
     // uniform rings (one per frame in flight) and a stand-in for named uniform blocks nobody has bound
-    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    for (U32 i = 0; i < Context::frameCount(); ++i)
     {
         if (!ctx.createBuffer(RING_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, Context::Memory::UploadDevice, mRing[i]))
         {
             return false;
         }
     }
-    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    for (U32 i = 0; i < Context::frameCount(); ++i)
     {
         if (!ctx.createBuffer(VERTEX_RING_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, Context::Memory::UploadDevice, mVertexRing[i]))
         {
@@ -589,11 +589,11 @@ bool Renderer::init()
     // descriptor sets for set 0
     VkDescriptorPoolSize sizes[2] = {};
     sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    sizes[0].descriptorCount = Context::FRAMES_IN_FLIGHT;
+    sizes[0].descriptorCount = Context::frameCount();
     sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    sizes[1].descriptorCount = 4 * Context::FRAMES_IN_FLIGHT;
+    sizes[1].descriptorCount = 4 * Context::frameCount();
     VkDescriptorPoolCreateInfo pi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-    pi.maxSets = Context::FRAMES_IN_FLIGHT;
+    pi.maxSets = Context::frameCount();
     pi.poolSizeCount = 2;
     pi.pPoolSizes = sizes;
     if (!vk_ok(vkCreateDescriptorPool(dev, &pi, nullptr, &mPool), "descriptor pool"))
@@ -604,13 +604,13 @@ bool Renderer::init()
     for (auto& l : set_layouts) l = mSet0Layout;
     VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
     ai.descriptorPool = mPool;
-    ai.descriptorSetCount = Context::FRAMES_IN_FLIGHT;
+    ai.descriptorSetCount = Context::frameCount();
     ai.pSetLayouts = set_layouts;
     if (!vk_ok(vkAllocateDescriptorSets(dev, &ai, mSet0), "allocate set 0"))
     {
         return false;
     }
-    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    for (U32 i = 0; i < Context::frameCount(); ++i)
     {
         VkDescriptorBufferInfo ring = { mRing[i].mBuffer, 0, MAX_UNIFORM_RANGE };
         VkDescriptorBufferInfo dummy = { mDummyUbo.mBuffer, 0, DUMMY_UBO_BYTES };
@@ -628,7 +628,7 @@ bool Renderer::init()
     }
 
     // descriptor sets for the combinations of named uniform blocks bound during a frame (reset every frame)
-    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    for (U32 i = 0; i < Context::frameCount(); ++i)
     {
         VkDescriptorPoolSize usizes[2] = {};
         usizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
@@ -742,7 +742,7 @@ bool Renderer::init()
 bool Renderer::createQueryPools()
 {
     VkDevice dev = Context::instance().getDevice();
-    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    for (U32 i = 0; i < Context::frameCount(); ++i)
     {
         VkQueryPoolCreateInfo qi = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         qi.queryType = VK_QUERY_TYPE_OCCLUSION;
@@ -770,7 +770,7 @@ bool Renderer::createQueryPools()
 void Renderer::destroyQueryPools()
 {
     VkDevice dev = Context::instance().getDevice();
-    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    for (U32 i = 0; i < Context::frameCount(); ++i)
     {
         if (mOccPool[i]) vkDestroyQueryPool(dev, mOccPool[i], nullptr);
         if (mTsPool[i]) vkDestroyQueryPool(dev, mTsPool[i], nullptr);
@@ -833,7 +833,7 @@ void Renderer::resolveQueries()
     }
     Context& ctx = Context::instance();
     ctx.waitIdle();
-    for (U32 slot = 0; slot < Context::FRAMES_IN_FLIGHT; ++slot)
+    for (U32 slot = 0; slot < Context::frameCount(); ++slot)
     {
         if (slot != mSlot || mCmd == VK_NULL_HANDLE)
         {
@@ -1323,6 +1323,10 @@ void Renderer::beginRenderingIfNeeded()
         return;
     }
     mInBegin = true;
+    if (LLVkMirror::gPhaseTiming)
+    {
+        Context::instance().gpuStamp(Context::stampTag(describeTarget()));      // LL_VK_PHASES: GPU time by render pass
+    }
     VkExtent2D extent = { 0, 0 };
     VkRenderingAttachmentInfo colors[8] = {};
     for (U32 i = 0; i < mColorCount; ++i)
@@ -2002,6 +2006,10 @@ bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>
     if (mCmd == VK_NULL_HANDLE)
     {
         return false;
+    }
+    if (LLVkMirror::gPhaseTiming)
+    {
+        Context::instance().gpuStamp(Context::stampTag("external (DLSS)"));
     }
     for (const auto& i : images)
     {

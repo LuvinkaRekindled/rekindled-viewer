@@ -1973,7 +1973,7 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
     }
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
-    const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::FRAMES_IN_FLIGHT + 1;
+    const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1;
     if (in_flight && b.mVk.valid())
     {
         const auto t0 = std::chrono::steady_clock::now();
@@ -3134,9 +3134,30 @@ void after_frame()
                         const U64 acquire = gSyncStats.mAcquireWaitMicros.load(std::memory_order_relaxed);
                         const U64 present = gSyncStats.mPresentMicros.load(std::memory_order_relaxed);
                         const double n = (double)std::max<U64>(1, gpu_frames - last_gpu_frames);
-                        LL_INFOS("VkPhases") << "GPU time per frame (command buffer start to end): avg " << (double)(gpu - last_gpu) / n / 1000.0 << " ms, slowest " << (double)gpu_max / 1000.0
-                                             << " ms; the Vulkan thread is blocked per frame: waiting for the GPU (frame fence) " << (double)(fence - last_fence) / frames / 1000.0
+                        (void)gpu_max;
+                        LL_INFOS("VkPhases") << "GPU time averaged over every command buffer (" << n / frames << " per viewer frame): " << (double)(gpu - last_gpu) / n / 1000.0
+                                             << " ms each; the Vulkan thread is blocked per frame: waiting for the GPU (frame fence) " << (double)(fence - last_fence) / frames / 1000.0
                                              << " ms, swapchain acquire " << (double)(acquire - last_acquire) / frames / 1000.0 << " ms, present " << (double)(present - last_present) / frames / 1000.0 << " ms" << LL_ENDL;
+                        {
+                            Context::GpuPassStats gp;
+                            Context::instance().takeGpuPassStats(gp);
+                            const double total = (double)(gp.mMainMicros + gp.mOffMicros);
+                            LL_INFOS("VkPhases") << "GPU time per viewer frame: " << total / 1000.0 / frames << " ms in all (the frame that is presented " << (double)gp.mMainMicros / 1000.0 / std::max<double>(1, (double)gp.mMainFrames)
+                                                 << " ms avg, slowest " << (double)gp.mMainMax / 1000.0 << " ms; the off-screen frame after it " << (double)gp.mOffMicros / 1000.0 / std::max<double>(1, (double)gp.mOffFrames)
+                                                 << " ms avg, slowest " << (double)gp.mOffMax / 1000.0 << " ms). Timestamps between passes make this a little higher than an unprofiled run" << LL_ENDL;
+                            std::vector<std::pair<U64, U32>> by_time;
+                            for (const auto& kv : gp.mMicros) by_time.push_back({ kv.second, kv.first });
+                            std::sort(by_time.rbegin(), by_time.rend());
+                            std::string text;
+                            for (size_t k = 0; k < by_time.size() && k < 16; ++k)
+                            {
+                                char buf[220];
+                                snprintf(buf, sizeof(buf), "[%s] %.2f ms (%.0f%%) | ", Context::stampTagName(by_time[k].second).c_str(), (double)by_time[k].first / 1000.0 / frames,
+                                         total > 0 ? 100.0 * (double)by_time[k].first / total : 0.0);
+                                text += buf;
+                            }
+                            LL_INFOS("VkPhases") << "GPU time by render pass (per viewer frame): " << text << LL_ENDL;
+                        }
                         last_gpu_frames = gpu_frames;
                         last_gpu = gpu;
                         last_fence = fence;
