@@ -3884,6 +3884,10 @@ bool LLAppViewer::initWindow()
         _putenv_s("LL_VK_MIRROR", "1");
         _putenv_s("LL_VK_OWN", "1");
         _putenv_s("LL_VK_EMBED", "main");
+        if (gSavedSettings.getBOOL("FSVkDLSS") && !getenv("LL_VK_DLSS"))
+        {
+            _putenv_s("LL_VK_DLSS", "1");       // NVIDIA DLSS upscaling (experimental)
+        }
         if (gSavedSettings.getBOOL("FSVulkanAsync") && !getenv("LL_VK_ASYNC"))
         {
             _putenv_s("LL_VK_ASYNC", "1");      // the Vulkan work runs on its own thread

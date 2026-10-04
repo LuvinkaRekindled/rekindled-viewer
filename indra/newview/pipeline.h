@@ -159,6 +159,20 @@ public:
     void gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst);
     void generateGlow(LLRenderTarget* src);
     void applyCAS(LLRenderTarget* src, LLRenderTarget* dst);
+
+    // DLSS proof of concept (FSVkDLSS): jitter the main scene's projection each frame, work out where every pixel was last frame, hand both to the upscaler
+    void updateJitter();                                // call right before the main scene's setup3DRender
+    void noteSceneMatrices();                           // call at the end of the main scene render
+    void generateMotionVectors(LLRenderTarget* dst);    // camera motion from depth and the last two view-projection matrices, in render pixels
+    bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst);    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
+    static bool sDLSS;
+    LLRenderTarget          mMotionMap;
+    LLRenderTarget          mUpscaledMap;
+    glm::mat4               mViewProjCur = glm::mat4(1.f);          // unjittered, this frame's
+    glm::mat4               mViewProjPrev = glm::mat4(1.f);         // unjittered, last frame's
+    bool                    mViewProjPrevValid = false;
+    U32                     mJitterIndex = 0;
+    U32                     mJitterFrame = ~0u;
     void applyFXAA(LLRenderTarget* src, LLRenderTarget* dst);
     void generateSMAABuffers(LLRenderTarget* src);
     void applySMAA(LLRenderTarget* src, LLRenderTarget* dst);

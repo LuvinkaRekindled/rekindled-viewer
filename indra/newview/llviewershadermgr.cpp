@@ -205,6 +205,7 @@ LLGLSLShader            gLegacyPostGammaCorrectProgram;
 LLGLSLShader            gExposureProgram;
 LLGLSLShader            gExposureProgramNoFade;
 LLGLSLShader            gLuminanceProgram;
+LLGLSLShader            gMotionVectorProgram;
 LLGLSLShader            gFXAAProgram[4];
 LLGLSLShader            gSMAAEdgeDetectProgram[4];
 LLGLSLShader            gSMAABlendWeightsProgram[4];
@@ -1153,6 +1154,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gExposureProgram.unload();
         gExposureProgramNoFade.unload();
         gLuminanceProgram.unload();
+        gMotionVectorProgram.unload();
         gDeferredPostGammaCorrectProgram.unload();
         gLegacyPostGammaCorrectProgram.unload();
         gDeferredPostTonemapProgram.unload();
@@ -2475,6 +2477,18 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gLuminanceProgram.mShaderFiles.push_back(make_pair("deferred/luminanceF.glsl", GL_FRAGMENT_SHADER));
         gLuminanceProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gLuminanceProgram.createShader();
+        llassert(success);
+    }
+
+    if (success)
+    {
+        gMotionVectorProgram.mName = "Motion Vectors";
+        gMotionVectorProgram.mShaderFiles.clear();
+        gMotionVectorProgram.clearPermutations();
+        gMotionVectorProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gMotionVectorProgram.mShaderFiles.push_back(make_pair("deferred/motionVectorsF.glsl", GL_FRAGMENT_SHADER));
+        gMotionVectorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = gMotionVectorProgram.createShader();
         llassert(success);
     }
 

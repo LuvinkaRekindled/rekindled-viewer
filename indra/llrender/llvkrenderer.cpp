@@ -1785,6 +1785,32 @@ U32 mipLevelCount(U32 width, U32 height)
     return n;
 }
 
+bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>>& images, const std::function<void(VkCommandBuffer)>& record)
+{
+    if (mCmd == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    for (const auto& i : images)
+    {
+        ensureLayout(*i.first, i.second);
+    }
+    endRendering();
+    record(mCmd);
+    ++mModCount;
+    // whatever the callback bound or set, the next draw starts from scratch
+    mStateApplied = false;
+    mBoundPipeline = VK_NULL_HANDLE;
+    mVertexInputDirty = true;
+    mAppliedVertexInputValid = false;
+    mSet0Bound = false;
+    mAppliedDynamicOffset = 0xFFFFFFFF;
+    mAppliedSet0 = VK_NULL_HANDLE;
+    for (S32& v : mAppliedViewport) v = -1;
+    for (S32& v : mAppliedScissor) v = -1;
+    return true;
+}
+
 void Renderer::withCommandBuffer(const std::function<void(VkCommandBuffer)>& record)
 {
     if (mCmd != VK_NULL_HANDLE)

@@ -21,6 +21,7 @@
 #include "llvkshader.h"
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
+#include "llvkdlss.h"
 
 #include <chrono>
 #include "llvkgl_hooks.inc"      // generated: storage and names for the per-hook statistics
@@ -704,6 +705,10 @@ bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U3
     else if (!fm.mCompressed)
     {
         td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        if (LLVkDlss::ready() && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+        {
+            td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;        // DLSS writes its output into an image like this
+        }
     }
     if (!Renderer::instance().createTexture(td, t.mImage))
     {
@@ -5200,6 +5205,63 @@ void on_glUniformBlockBinding(GLuint, GLuint, GLuint) {}
 void on_glUseProgram(GLuint) {}
 void on_glProgramParameteri(GLuint, GLenum, GLint) {}
 void on_glProgramBinary(GLuint, GLenum, const void*, GLsizei) {}
+
+void on_upscale(const LLVkMirror::UpscaleArgs& a)
+{
+    static U32 failures = 0;
+    if (!gActive || !LLVkDlss::ready())
+    {
+        return;
+    }
+    auto find = [](GLuint name) -> Tex* {
+        auto it = sGL.mTextures.find(name);
+        return it != sGL.mTextures.end() && it->second.mImage.valid() ? &it->second : nullptr;
+    };
+    Tex* color = find(a.mColor);
+    Tex* depth = find(a.mDepth);
+    Tex* motion = find(a.mMotion);
+    Tex* output = find(a.mOutput);
+    if (!color || !depth || !motion || !output)
+    {
+        if (failures++ < 5)
+        {
+            LL_WARNS("VkDlss") << "upscale: a texture is missing (colour " << (color != nullptr) << ", depth " << (depth != nullptr) << ", motion " << (motion != nullptr)
+                               << ", output " << (output != nullptr) << ")" << LL_ENDL;
+        }
+        return;
+    }
+    LLVkDlss::Params p;
+    p.mColor = &color->mImage;
+    p.mDepth = &depth->mImage;
+    p.mMotion = &motion->mImage;
+    p.mOutput = &output->mImage;
+    p.mRenderWidth = a.mRenderWidth;
+    p.mRenderHeight = a.mRenderHeight;
+    p.mOutputWidth = a.mOutputWidth;
+    p.mOutputHeight = a.mOutputHeight;
+    p.mJitterX = a.mJitterX;
+    p.mJitterY = a.mJitterY;
+    p.mMotionScaleX = a.mMotionScaleX;
+    p.mMotionScaleY = a.mMotionScaleY;
+    p.mReset = a.mReset != 0;
+    p.mHdr = a.mHdr != 0;
+    const std::vector<std::pair<Image*, VkImageLayout>> needs = {
+        { p.mColor, LLVkDlss::inputLayout(*p.mColor) },
+        { p.mDepth, LLVkDlss::inputLayout(*p.mDepth) },
+        { p.mMotion, LLVkDlss::inputLayout(*p.mMotion) },
+        { p.mOutput, LLVkDlss::outputLayout() },
+    };
+    bool done = false;
+    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDlss::evaluate(cmd, p); });
+    if (done)
+    {
+        output->mValidLevels = 1;       // what was written counts as the texture's content
+    }
+    else if (failures++ < 5)
+    {
+        LL_WARNS("VkDlss") << "the upscale did not run" << LL_ENDL;
+    }
+}
 
 
 } // namespace LLVkGL

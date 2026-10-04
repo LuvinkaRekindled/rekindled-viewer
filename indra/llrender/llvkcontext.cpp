@@ -6,6 +6,7 @@
 #include "linden_common.h"
 
 #include "llvkcontext.h"
+#include "llvkdlss.h"
 
 #if defined(LL_VULKAN)
 
@@ -227,6 +228,10 @@ bool Context::createInstance()
     vkEnumerateInstanceExtensionProperties(nullptr, &count, available.data());
 
     std::vector<const char*> wanted = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
+    if (LLVkDlss::requested())
+    {
+        LLVkDlss::addInstanceExtensions(wanted);
+    }
     for (const char* name : wanted)
     {
         if (!has_extension(available, name))
@@ -435,8 +440,13 @@ bool Context::createDevice()
     dci.pNext = &chain.f2;     // enables every supported feature in the chain (all required ones are present)
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
-    dci.enabledExtensionCount = (U32)LL_ARRAY_SIZE(REQUIRED_DEVICE_EXTENSIONS);
-    dci.ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS;
+    std::vector<const char*> device_extensions(REQUIRED_DEVICE_EXTENSIONS, REQUIRED_DEVICE_EXTENSIONS + LL_ARRAY_SIZE(REQUIRED_DEVICE_EXTENSIONS));
+    if (LLVkDlss::requested())
+    {
+        LLVkDlss::addDeviceExtensions(mInstance, mPhysical, device_extensions);
+    }
+    dci.enabledExtensionCount = (U32)device_extensions.size();
+    dci.ppEnabledExtensionNames = device_extensions.data();
     if (!vk_ok(vkCreateDevice(mPhysical, &dci, nullptr, &mDevice), "vkCreateDevice"))
     {
         return false;
@@ -459,7 +469,15 @@ bool Context::createDevice()
     ai.instance = mInstance;
     ai.vulkanApiVersion = VK_API_VERSION_1_3;
     ai.pVulkanFunctions = &funcs;
-    return vk_ok(vmaCreateAllocator(&ai, &mAllocator), "vmaCreateAllocator");
+    if (!vk_ok(vmaCreateAllocator(&ai, &mAllocator), "vmaCreateAllocator"))
+    {
+        return false;
+    }
+    if (LLVkDlss::requested())
+    {
+        LLVkDlss::init(mInstance, mPhysical, mDevice);      // not fatal: without it the viewer just does not upscale
+    }
+    return true;
 }
 
 bool Context::createFrames()
@@ -538,6 +556,7 @@ void Context::shutdown()
     if (mDevice != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(mDevice);
+        LLVkDlss::shutdown();
         for (Frame& f : mFrames)
         {
             destroyFrameResources(f);
