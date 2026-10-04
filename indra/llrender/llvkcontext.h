@@ -16,6 +16,8 @@
 #include "linden_common.h"
 
 #include <atomic>
+#include <map>
+#include <string>
 #include <functional>
 #include <vector>
 
@@ -120,7 +122,18 @@ struct StagingAlloc
 class Context
 {
 public:
-    static const U32 FRAMES_IN_FLIGHT = 3;
+    // The most frame slots there can be (array bounds). How many are used: frameCount(), 3 unless LL_VK_FRAMES says otherwise (2..6). Every viewer frame uses two
+    // slots (the frame and the off-screen frame after its present), so with 3 the thread that records them can only be about 1.5 viewer frames ahead of the GPU.
+    static const U32 FRAMES_IN_FLIGHT = 6;
+    static U32 frameCount()
+    {
+        static const U32 count = []() {
+            char buf[16] = {};
+            const U32 n = GetEnvironmentVariableA("LL_VK_FRAMES", buf, sizeof(buf)) > 0 ? (U32)atoi(buf) : 3;
+            return n < 2 ? 2u : (n > FRAMES_IN_FLIGHT ? FRAMES_IN_FLIGHT : n);
+        }();
+        return count;
+    }
 
     static Context& instance();
 
@@ -129,6 +142,20 @@ public:
     bool init(HWND present_window);
     void shutdown();
     bool isReady() const { return mReady; }
+
+    // ---- LL_VK_PHASES: GPU time by render pass ----
+    // A timestamp is written when each render pass begins; the time up to the next one is charged to that pass's tag. Read back when the frame slot is reused.
+    static const U32 MAX_GPU_STAMPS = 320;
+    static U32 stampTag(const std::string& name);       // the number standing for a pass description (0 is "start of frame")
+    static std::string stampTagName(U32 tag);
+    void gpuStamp(U32 tag);
+    struct GpuPassStats
+    {
+        std::map<U32, U64> mMicros;                     // by tag
+        U64 mMainMicros = 0, mOffMicros = 0, mMainFrames = 0, mOffFrames = 0, mMainMax = 0, mOffMax = 0;
+    };
+    void takeGpuPassStats(GpuPassStats& out) { out = mPassStats; mPassStats = GpuPassStats(); }
+    void setNextFrameOffscreen(bool offscreen) { mNextOffscreen = offscreen; }
 
     VkInstance getInstance() const { return mInstance; }
     VkPhysicalDevice getPhysicalDevice() const { return mPhysical; }
@@ -193,8 +220,10 @@ private:
         VkFence mFence = VK_NULL_HANDLE;
         VkSemaphore mAcquire = VK_NULL_HANDLE;
         bool mSubmitted = false;
-        VkQueryPool mTsPool = VK_NULL_HANDLE;   // two timestamps: the start and the end of this frame's command buffer
+        VkQueryPool mTsPool = VK_NULL_HANDLE;   // timestamps: 0 the start and 1 the end of this frame's command buffer, then one per render pass (LL_VK_PHASES)
         bool mTsPending = false;                // the end timestamp was written and has not been read yet
+        bool mOffscreen = false;                // the off-screen frame the mirror opens after the present (not the frame that is presented)
+        std::vector<U32> mStampTags;            // what each per-pass timestamp stands for (see Context::stampTag)
         std::vector<std::function<void()>> mDeferred;
         std::vector<Buffer> mStagingBlocks;     // blocks used this frame (the first is kept for reuse)
         VkDeviceSize mStagingUsed = 0;
@@ -208,6 +237,8 @@ private:
     bool selfTest();
     void destroyFrameResources(Frame& f);
 
+    GpuPassStats mPassStats;
+    bool mNextOffscreen = false;
     bool mReady = false;
     HMODULE mLoader = nullptr;
     HWND mWindow = nullptr;
