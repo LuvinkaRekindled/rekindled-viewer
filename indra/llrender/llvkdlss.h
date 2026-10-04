@@ -48,6 +48,10 @@ namespace LLVkDlss
     // and whenever the sizes change. False if anything failed (then nothing was recorded that matters).
     bool evaluate(VkCommandBuffer cmd, const Params& p);
 
+    // The extra texture sharpness DLSS wants because it draws fewer pixels than it shows: log2(render scale), a negative number added to the mip level
+    // every filtered texture lookup picks (0 when DLSS is off). LL_VK_DLSS_LODBIAS overrides it.
+    float lodBias();
+
     // layouts NGX reads / writes the images in
     VkImageLayout inputLayout(const LLVk::Image& image);
     VkImageLayout outputLayout();

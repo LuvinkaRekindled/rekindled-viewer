@@ -8288,6 +8288,10 @@ static F32 halton(U32 index, U32 base)
 void LLPipeline::updateJitter()
 {
     LLViewerCamera::sJitterActive = false;
+    if (!gCubeSnapshot)
+    {
+        LLViewerCamera::sJitterInEffect = false;        // set again if this frame's projection gets jittered
+    }
     if (!sDLSS || gCubeSnapshot || LLViewerCamera::getInstance()->getZoomFactor() > 1.f || !LLVkMirror::upscaleAvailable())
     {
         return;

@@ -272,6 +272,7 @@ void LLHUDText::renderText()
         LLRect screen_rect;        
         screen_rect.setCenterAndSize(0, static_cast<S32>(lltrunc(-mBackgroundHeight / 2 + mOffsetY + mBackgroundOffsetY)), // <FS:minerjr> [FIRE-35078] llSetText(...) differences in latest Nightly Builds
                                      static_cast<S32>(lltrunc(mBackgroundWidth)), static_cast<S32>(lltrunc(mBackgroundHeight))); // Added background width independent of the LLHUDTexts mWidth </FS:minerjr>
+        LLUnjitteredScope unjittered;
         mRoundedRectImgp->draw3D(render_position, x_pixel_vec, y_pixel_vec, screen_rect, bg_color);
     }
     // </FS:minerjr> [FIRE-35019]

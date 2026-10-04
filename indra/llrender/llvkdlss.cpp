@@ -14,6 +14,7 @@
 #include "nvsdk_ngx_helpers_vk.h"
 #endif
 
+#include <cmath>
 #include <string>
 
 namespace LLVkDlss
@@ -25,6 +26,27 @@ bool requested()
 {
     static const bool on = GetEnvironmentVariableA("LL_VK_DLSS", nullptr, 0) > 0;
     return on;
+}
+
+float lodBias()
+{
+    static const float bias = []() {
+        char buf[32] = {};
+        if (GetEnvironmentVariableA("LL_VK_DLSS_LODBIAS", buf, sizeof(buf)) > 0)
+        {
+            return (float)atof(buf);
+        }
+        if (requested() && GetEnvironmentVariableA("LL_VK_DLSS_SCALE", buf, sizeof(buf)) > 0)
+        {
+            const float scale = (float)atof(buf);
+            if (scale > 0.1f && scale < 1.f)
+            {
+                return log2f(scale);
+            }
+        }
+        return 0.f;
+    }();
+    return bias;
 }
 
 #if !defined(LL_DLSS)

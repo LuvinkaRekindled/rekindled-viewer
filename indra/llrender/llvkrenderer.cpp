@@ -6,6 +6,7 @@
 #include "linden_common.h"
 
 #include "llvkrenderer.h"
+#include "llvkdlss.h"
 #include "llvkmirror.h"
 
 #if defined(LL_VULKAN)
@@ -902,6 +903,10 @@ VkSampler Renderer::getSampler(const SamplerDesc& desc)
     si.compareOp = desc.mCompareOp;
     si.minLod = desc.mMinLod;
     si.maxLod = desc.mMaxLod;
+    if (!desc.mCompare && desc.mMip == VK_SAMPLER_MIPMAP_MODE_LINEAR)
+    {
+        si.mipLodBias = LLVkDlss::lodBias();        // DLSS: sample textures sharper to make up for the smaller render size
+    }
     si.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     VkSampler s = VK_NULL_HANDLE;
     if (!vk_ok(vkCreateSampler(ctx.getDevice(), &si, nullptr, &s), "vkCreateSampler"))

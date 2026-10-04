@@ -295,7 +295,10 @@ void LLHUDNameTag::renderText()
     LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
     LLRect screen_rect;
     screen_rect.setCenterAndSize(0, static_cast<S32>(lltrunc(-mHeight / 2 + mOffsetY)), static_cast<S32>(lltrunc(mWidth)), static_cast<S32>(lltrunc(mHeight)));
-    mRoundedRectImgp->draw3D(render_position, x_pixel_vec, y_pixel_vec, screen_rect, bg_color);
+    {
+        LLUnjitteredScope unjittered;       // the box follows the text, which is placed without the DLSS jitter
+        mRoundedRectImgp->draw3D(render_position, x_pixel_vec, y_pixel_vec, screen_rect, bg_color);
+    }
     if (mLabelSegments.size())
     {
         LLRect label_top_rect = screen_rect;
@@ -307,6 +310,7 @@ void LLHUDNameTag::renderText()
         label_top_color.mV[VALPHA] = color_alpha;
         // </FS:Ansariel>
 
+        LLUnjitteredScope unjittered;
         mRoundedRectTopImgp->draw3D(render_position, x_pixel_vec, y_pixel_vec, label_top_rect, label_top_color);
     }
 

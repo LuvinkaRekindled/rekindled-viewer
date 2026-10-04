@@ -64,6 +64,38 @@ glm::vec2 LLViewerCamera::sJitterRenderSize(1.f);
 glm::mat4 LLViewerCamera::sUnjitteredProjection(1.f);
 glm::mat4 LLViewerCamera::sJitteredProjection(1.f);
 glm::mat4 LLViewerCamera::sJitterModelview(1.f);
+bool LLViewerCamera::sJitterInEffect = false;
+
+LLUnjitteredScope::LLUnjitteredScope()
+{
+    mActive = LLViewerCamera::sJitterInEffect && get_current_projection() == LLViewerCamera::sJitteredProjection;
+    if (mActive)
+    {
+        mSaved = get_current_projection();
+        gGL.matrixMode(LLRender::MM_PROJECTION);
+        gGL.pushMatrix();
+        gGL.loadMatrix(glm::value_ptr(LLViewerCamera::sUnjitteredProjection));
+        set_current_projection(LLViewerCamera::sUnjitteredProjection);
+        gGL.matrixMode(LLRender::MM_MODELVIEW);
+    }
+}
+
+LLUnjitteredScope::~LLUnjitteredScope()
+{
+    if (mActive)
+    {
+        gGL.matrixMode(LLRender::MM_PROJECTION);
+        gGL.popMatrix();
+        set_current_projection(mSaved);
+        gGL.matrixMode(LLRender::MM_MODELVIEW);
+    }
+}
+
+glm::mat4 LLViewerCamera::getScreenProjection()
+{
+    const glm::mat4 current = get_current_projection();
+    return (sJitterInEffect && current == sJitteredProjection) ? sUnjitteredProjection : current;
+}
 
 LLTrace::CountStatHandle<> LLViewerCamera::sVelocityStat("camera_velocity");
 LLTrace::CountStatHandle<> LLViewerCamera::sAngularVelocityStat("camera_angular_velocity");
@@ -397,6 +429,7 @@ void LLViewerCamera::setPerspective(bool for_selection,
         shift[3][1] = 2.f * sJitterPixels.y / sJitterRenderSize.y;
         proj_mat = shift * proj_mat;
         sJitteredProjection = proj_mat;
+        sJitterInEffect = true;
     }
 
     gGL.loadMatrix(glm::value_ptr(proj_mat));
@@ -446,7 +479,7 @@ void LLViewerCamera::setPerspective(bool for_selection,
 // screen coordinates to the agent's region.
 void LLViewerCamera::projectScreenToPosAgent(const S32 screen_x, const S32 screen_y, LLVector3* pos_agent) const
 {
-    glm::vec3 agent_coord = glm::unProject(glm::vec3(screen_x, screen_y, 0.f), get_current_modelview(), get_current_projection(), glm::make_vec4(gGLViewport));
+    glm::vec3 agent_coord = glm::unProject(glm::vec3(screen_x, screen_y, 0.f), get_current_modelview(), getScreenProjection(), glm::make_vec4(gGLViewport));
     pos_agent->setVec( (F32)agent_coord.x, (F32)agent_coord.y, (F32)agent_coord.z );
 }
 
@@ -474,7 +507,7 @@ bool LLViewerCamera::projectPosAgentToScreen(const LLVector3 &pos_agent, LLCoord
 
     LLRect world_view_rect = gViewerWindow->getWorldViewRectRaw();
     glm::ivec4 viewport(world_view_rect.mLeft, world_view_rect.mBottom, world_view_rect.getWidth(), world_view_rect.getHeight());
-    glm::vec3 win_coord = glm::project(glm::vec3(pos_agent), get_current_modelview(), get_current_projection(), viewport);
+    glm::vec3 win_coord = glm::project(glm::vec3(pos_agent), get_current_modelview(), getScreenProjection(), viewport);
 
     {
         // convert screen coordinates to virtual UI coordinates
@@ -568,7 +601,7 @@ bool LLViewerCamera::projectPosAgentToScreenEdge(const LLVector3 &pos_agent,
     LLRect world_view_rect = gViewerWindow->getWorldViewRectRaw();
 
     glm::ivec4 viewport(world_view_rect.mLeft, world_view_rect.mBottom, world_view_rect.getWidth(), world_view_rect.getHeight());
-    glm::vec3 win_coord = glm::project(glm::vec3(pos_agent), get_current_modelview(), get_current_projection(), viewport);
+    glm::vec3 win_coord = glm::project(glm::vec3(pos_agent), get_current_modelview(), getScreenProjection(), viewport);
 
     {
         win_coord.x /= gViewerWindow->getDisplayScale().mV[VX];
