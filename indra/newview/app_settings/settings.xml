@@ -2461,24 +2461,24 @@
     <key>FSShadowFarCascadeMaxCameraMove</key>
     <map>
       <key>Comment</key>
-      <string>A far cascade's previous shadow map is only reused if the camera moved less than this many meters since it was rendered. Small on purpose: while the camera (and your avatar) walk, reused shadows lag behind and flicker.</string>
+      <string>A far cascade's previous shadow map is only reused if the camera moved less than this many meters since it was rendered. Raised from 0.03 to 0.3 after testing at 125+ fps with the Vulkan renderer: the one-frame lag is not visible there and the reuse stays active while walking. At low frame rates a smaller value avoids lagging, flickering shadows.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.03</real>
+      <real>0.3</real>
     </map>
     <key>FSShadowFarCascadeMaxCameraTurn</key>
     <map>
       <key>Comment</key>
-      <string>A far cascade's previous shadow map is only reused if the camera turned less than this many degrees since it was rendered.</string>
+      <string>A far cascade's previous shadow map is only reused if the camera turned less than this many degrees since it was rendered. Raised from 1 to 3 together with FSShadowFarCascadeMaxCameraMove.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>1.0</real>
+      <real>3.0</real>
     </map>
     <key>FSVulkanProbe</key>
     <map>

@@ -275,6 +275,20 @@ public:
     Image* getWhiteTexture() { return &mWhite; }
     Program* getProgram() const { return mProgram; }
     bool inPass() const { return mRendering; }
+    // LL_VK_PHASES: a short description of the current render target ("1483x777 c4 d" = size, colour attachments, depth) with the depth image's identity, so
+    // that passes of the same size (the shadow cascades) stay apart
+    std::string describeTarget() const
+    {
+        const Image* ref = mColorCount ? mColorTargets[0] : mDepthTarget;
+        if (!ref)
+        {
+            return "no target";
+        }
+        const Image* depth = mDepthTarget ? (mDepthTarget->mOwner ? mDepthTarget->mOwner : mDepthTarget) : nullptr;
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%ux%u c%u%s #%04x", ref->mExtent.width, ref->mExtent.height, mColorCount, depth ? " d" : "", (unsigned)(((size_t)depth >> 4) & 0xFFFF));
+        return buf;
+    }
 
     // Reads one mip level / layer of an image into tightly packed texels of its own format. Only valid outside a frame
     // (it waits for the GPU); used by the mirror's debug dump.
