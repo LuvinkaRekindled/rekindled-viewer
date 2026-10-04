@@ -1910,13 +1910,60 @@ If you do not understand the distinction then leave this control alone."
        tool_tip="Takes effect after the viewer is restarted."
        top_pad="8"
        width="400"/>
+      <check_box
+       control_name="FSVkDLSS"
+       enabled_control="FSVulkanRenderer"
+       height="16"
+       initial_value="false"
+       label="Upscale with NVIDIA DLSS (RTX graphics cards, experimental)"
+       layout="topleft"
+       left_delta="0"
+       name="FSVkDLSS"
+       tool_tip="Draws the world at a lower resolution and upscales it with DLSS: a lot faster, with little visible difference. Needs an NVIDIA RTX card and the Vulkan renderer. Takes effect after the viewer is restarted."
+       top_pad="8"
+       width="400"/>
+      <text
+       type="string"
+       length="1"
+       follows="left|top"
+       height="14"
+       layout="topleft"
+       left_delta="18"
+       name="FSVkDLSSQualityText"
+       top_pad="8"
+       width="200">
+        DLSS quality:
+      </text>
+      <combo_box
+       control_name="FSVkDLSSQuality"
+       enabled_control="FSVkDLSS"
+       height="23"
+       layout="topleft"
+       left_delta="0"
+       name="FSVkDLSSQuality"
+       tool_tip="Performance draws the fewest pixels (50% of the window size) and gains the most speed. Takes effect after the viewer is restarted."
+       top_pad="3"
+       width="250">
+        <combo_box.item
+         label="Performance (50%)"
+         name="0"
+         value="0"/>
+        <combo_box.item
+         label="Balanced (58%)"
+         name="1"
+         value="1"/>
+        <combo_box.item
+         label="Quality (67%)"
+         name="2"
+         value="2"/>
+      </combo_box>
       <text
        type="string"
        length="1"
        follows="left|top"
        height="48"
        layout="topleft"
-       left_delta="0"
+       left_delta="-18"
        name="FSVulkanRendererNote"
        top_pad="6"
        width="440"

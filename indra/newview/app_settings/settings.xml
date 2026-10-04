@@ -2524,16 +2524,27 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>FSVkDLSSQuality</key>
+    <map>
+      <key>Comment</key>
+      <string>With FSVkDLSS: 0 Performance (renders at 50% of the window size), 1 Balanced (58%), 2 Quality (67%). Takes effect after a restart.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSVkDLSSScale</key>
     <map>
       <key>Comment</key>
-      <string>Render resolution as a fraction of the window with FSVkDLSS (0.5 performance, 0.58 balanced, 0.67 quality). Takes effect after a restart.</string>
+      <string>Overrides FSVkDLSSQuality with an exact render resolution as a fraction of the window (0.33 to 1.0; 1.0 is DLAA, anti-aliasing only). 0 uses FSVkDLSSQuality. Takes effect after a restart.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.67</real>
+      <real>0</real>
     </map>
     <key>FSVulkanRenderer</key>
     <map>

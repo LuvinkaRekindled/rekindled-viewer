@@ -166,6 +166,7 @@ public:
     void generateMotionVectors(LLRenderTarget* dst);    // camera motion from depth and the last two view-projection matrices, in render pixels
     bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst);    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
     static bool sDLSS;
+    static F32 getDLSSScale();          // the render resolution as a fraction of the window: FSVkDLSSScale if set, else from FSVkDLSSQuality
     LLRenderTarget          mMotionMap;
     LLRenderTarget          mUpscaledMap;
     glm::mat4               mViewProjCur = glm::mat4(1.f);          // unjittered, this frame's

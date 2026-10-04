@@ -3887,7 +3887,7 @@ bool LLAppViewer::initWindow()
         if (gSavedSettings.getBOOL("FSVkDLSS") && !getenv("LL_VK_DLSS"))
         {
             _putenv_s("LL_VK_DLSS", "1");       // NVIDIA DLSS upscaling (experimental)
-            _putenv_s("LL_VK_DLSS_SCALE", std::to_string(gSavedSettings.getF32("FSVkDLSSScale")).c_str());     // the render scale, for the texture LOD bias
+            _putenv_s("LL_VK_DLSS_SCALE", std::to_string(LLPipeline::getDLSSScale()).c_str());     // the render scale, for the texture LOD bias
         }
         if (gSavedSettings.getBOOL("FSVulkanAsync") && !getenv("LL_VK_ASYNC"))
         {

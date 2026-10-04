@@ -1239,7 +1239,7 @@ void LLPipeline::refreshCachedSettings()
     {
         // the world is drawn smaller and the upscaler brings it back to the window size
         RenderResolutionDivisor = 1;
-        RenderResolutionMultiplier = llclamp(gSavedSettings.getF32("FSVkDLSSScale"), 0.33f, 1.f);
+        RenderResolutionMultiplier = getDLSSScale();
     }
     RenderUIBuffer = gSavedSettings.getBOOL("RenderUIBuffer");
     RenderShadowDetail = gSavedSettings.getS32("RenderShadowDetail");
@@ -8283,6 +8283,21 @@ static F32 halton(U32 index, U32 base)
         index /= base;
     }
     return r;
+}
+
+F32 LLPipeline::getDLSSScale()
+{
+    F32 scale = gSavedSettings.getF32("FSVkDLSSScale");
+    if (scale <= 0.f)
+    {
+        switch (gSavedSettings.getS32("FSVkDLSSQuality"))
+        {
+        case 0: scale = 0.5f; break;
+        case 2: scale = 0.67f; break;
+        default: scale = 0.58f; break;
+        }
+    }
+    return llclamp(scale, 0.33f, 1.f);
 }
 
 void LLPipeline::updateJitter()
