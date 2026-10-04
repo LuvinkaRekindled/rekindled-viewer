@@ -3044,6 +3044,19 @@ void after_frame()
                     const Renderer::UploadStats up = Renderer::instance().takeUploadStats();
                     LL_INFOS("VkPhases") << "texture uploads per frame: " << (double)up.mCount / frames << " uploads, " << (double)up.mBytes / frames / 1024.0 << " KB, "
                                          << (double)up.mPassSplits / frames << " ended a render pass in progress" << LL_ENDL;
+                    {
+                        static U64 last_barriers = 0, last_built = 0, last_micros = 0;
+                        const U64 barriers = gSyncStats.mImageBarriers.load(std::memory_order_relaxed);
+                        const U64 built = gSyncStats.mPipelinesBuilt.load(std::memory_order_relaxed);
+                        const U64 micros = gSyncStats.mPipelineBuildMicros.load(std::memory_order_relaxed);
+                        const U64 slowest = gSyncStats.mPipelineBuildMaxMicros.exchange(0, std::memory_order_relaxed);
+                        LL_INFOS("VkPhases") << "image barriers per frame: " << (double)(barriers - last_barriers) / frames << "; graphics pipelines built in this period: "
+                                             << (built - last_built) << " (" << (double)(micros - last_micros) / 1000.0 << " ms in the driver in total, slowest "
+                                             << (double)slowest / 1000.0 << " ms)" << LL_ENDL;
+                        last_barriers = barriers;
+                        last_built = built;
+                        last_micros = micros;
+                    }
                 }
                 draws_at_start = sDrawsTotal;
                 frames = 0;

@@ -11,11 +11,50 @@
 
 #if defined(LL_VULKAN)
 
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
+#include "lldir.h"
+#include "llfile.h"
 
 namespace LLVk
 {
+
+namespace
+{
+// where the driver's pipeline cache lives between runs; empty when switched off
+std::string pipeline_cache_path()
+{
+    static const std::string path = []() {
+        const char* off = getenv("LL_VK_PIPELINE_CACHE");
+        if (off && off[0] == '0')
+        {
+            return std::string();
+        }
+        return gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "vk_pipeline_cache.bin");
+    }();
+    return path;
+}
+
+// the header every Vulkan pipeline cache starts with (spec: header size, version, vendor, device, UUID)
+bool pipeline_cache_header_matches(const std::vector<U8>& data)
+{
+    if (data.size() < 16 + VK_UUID_SIZE)
+    {
+        return false;
+    }
+    U32 header_size = 0, version = 0, vendor = 0, device = 0;
+    memcpy(&header_size, data.data(), 4);
+    memcpy(&version, data.data() + 4, 4);
+    memcpy(&vendor, data.data() + 8, 4);
+    memcpy(&device, data.data() + 12, 4);
+    const Capabilities& caps = Context::instance().getCaps();
+    VkPhysicalDeviceProperties props = {};
+    vkGetPhysicalDeviceProperties(Context::instance().getPhysicalDevice(), &props);
+    return version == VK_PIPELINE_CACHE_HEADER_VERSION_ONE && header_size >= 16 + VK_UUID_SIZE && vendor == props.vendorID && device == props.deviceID
+           && memcmp(data.data() + 16, props.pipelineCacheUUID, VK_UUID_SIZE) == 0 && caps.mVendorId == props.vendorID;
+}
+}
 
 namespace
 {
@@ -432,10 +471,19 @@ VkPipeline Program::getPipeline(const PipelineKey& key)
     gi.layout = r.mPipelineLayout;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
+    const auto build_start = std::chrono::steady_clock::now();
     if (!vk_ok(vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &pipeline), "vkCreateGraphicsPipelines"))
     {
         LL_WARNS("Vulkan") << "pipeline creation failed for program " << mName << LL_ENDL;
         return VK_NULL_HANDLE;
+    }
+    {
+        const U64 micros = (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - build_start).count();
+        gSyncStats.mPipelinesBuilt.fetch_add(1, std::memory_order_relaxed);
+        gSyncStats.mPipelineBuildMicros.fetch_add(micros, std::memory_order_relaxed);
+        U64 prev = gSyncStats.mPipelineBuildMaxMicros.load(std::memory_order_relaxed);
+        while (micros > prev && !gSyncStats.mPipelineBuildMaxMicros.compare_exchange_weak(prev, micros, std::memory_order_relaxed)) {}
+        r.mPipelinesSinceSave++;
     }
     mPipelines[key] = pipeline;
     mLastKey = key;
@@ -598,10 +646,44 @@ bool Renderer::init()
     }
 
     VkPipelineCacheCreateInfo pc = { VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
+    std::vector<U8> cache_data;
+    {
+        const std::string path = pipeline_cache_path();
+        if (!path.empty())
+        {
+            if (FILE* f = fopen(path.c_str(), "rb"))
+            {
+                fseek(f, 0, SEEK_END);
+                const long size = ftell(f);
+                fseek(f, 0, SEEK_SET);
+                if (size > 0 && size < (256l << 20))
+                {
+                    cache_data.resize((size_t)size);
+                    if (fread(cache_data.data(), 1, cache_data.size(), f) != cache_data.size())
+                    {
+                        cache_data.clear();
+                    }
+                }
+                fclose(f);
+            }
+            // only data written by this driver on this device is handed over (the header carries the vendor, device and cache UUID)
+            if (!pipeline_cache_header_matches(cache_data))
+            {
+                if (!cache_data.empty())
+                {
+                    LL_INFOS("Vulkan") << "the pipeline cache on disk is from another driver or device and is ignored" << LL_ENDL;
+                }
+                cache_data.clear();
+            }
+        }
+    }
+    pc.initialDataSize = cache_data.size();
+    pc.pInitialData = cache_data.empty() ? nullptr : cache_data.data();
     if (!vk_ok(vkCreatePipelineCache(dev, &pc, nullptr, &mPipelineCache), "pipeline cache"))
     {
         return false;
     }
+    LL_INFOS("Vulkan") << "pipeline cache: " << cache_data.size() / 1024 << " KB loaded from disk" << LL_ENDL;
 
     // 1x1 white texture: what an unbound texture unit samples
     if (!ctx.createImage2D(1, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, mWhite))
@@ -835,6 +917,7 @@ void Renderer::shutdown()
         destroyQueryPools();
         for (auto& kv : mSamplers) vkDestroySampler(dev, kv.second, nullptr);
         mSamplers.clear();
+        savePipelineCache();
         if (mPipelineCache) vkDestroyPipelineCache(dev, mPipelineCache, nullptr);
         if (mPool) vkDestroyDescriptorPool(dev, mPool, nullptr);
         for (VkDescriptorPool& p : mUboPool)
@@ -882,6 +965,40 @@ void Renderer::shutdown()
     mReady = false;
 }
 
+void Renderer::savePipelineCache()
+{
+    const std::string path = pipeline_cache_path();
+    if (path.empty() || !mPipelineCache)
+    {
+        return;
+    }
+    VkDevice dev = Context::instance().getDevice();
+    size_t size = 0;
+    if (vkGetPipelineCacheData(dev, mPipelineCache, &size, nullptr) != VK_SUCCESS || size == 0)
+    {
+        return;
+    }
+    std::vector<U8> data(size);
+    if (vkGetPipelineCacheData(dev, mPipelineCache, &size, data.data()) != VK_SUCCESS)
+    {
+        return;
+    }
+    data.resize(size);
+    const std::string tmp = path + ".tmp";
+    if (FILE* f = fopen(tmp.c_str(), "wb"))
+    {
+        const bool ok = fwrite(data.data(), 1, data.size(), f) == data.size();
+        fclose(f);
+        if (ok)
+        {
+            remove(path.c_str());
+            rename(tmp.c_str(), path.c_str());
+            LL_INFOS("Vulkan") << "pipeline cache saved: " << data.size() / 1024 << " KB (" << mPipelinesSinceSave << " pipelines built since the last save)" << LL_ENDL;
+            mPipelinesSinceSave = 0;
+        }
+    }
+}
+
 VkSampler Renderer::getSampler(const SamplerDesc& desc)
 {
     auto it = mSamplers.find(desc);
@@ -923,6 +1040,11 @@ VkSampler Renderer::getSampler(const SamplerDesc& desc)
 
 void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
 {
+    if (mPipelinesSinceSave > 0 && ++mPipelineCacheLastSaveFrame >= 18000)
+    {
+        mPipelineCacheLastSaveFrame = 0;
+        savePipelineCache();
+    }
     harvestQueries(frame_slot);
     mOccPending = mOccActive = -1;
     mCmd = cmd;
@@ -1039,6 +1161,72 @@ static Image* root_of(Image* i)
     return i->mOwner ? i->mOwner : i;
 }
 
+// What a layout transition has to wait for and to block, by the layout the image leaves and the one it enters. Waiting for "all commands" at every
+// transition makes the GPU drain completely between passes; naming the stages that really touch the image lets unrelated work overlap.
+// LL_VK_COARSE_BARRIERS=1 goes back to the old all-commands barrier.
+namespace
+{
+struct LayoutSync
+{
+    VkPipelineStageFlags2 mStage;
+    VkAccessFlags2 mAccess;
+};
+
+constexpr VkPipelineStageFlags2 SHADER_STAGES = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+constexpr VkPipelineStageFlags2 DEPTH_STAGES = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+constexpr LayoutSync CONSERVATIVE = { VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT };
+
+bool coarse_barriers()
+{
+    static const bool coarse = getenv("LL_VK_COARSE_BARRIERS") != nullptr;
+    return coarse;
+}
+
+// the work that used the image in 'layout' and has to be finished (and its writes made available)
+LayoutSync sync_leaving(VkImageLayout layout)
+{
+    switch (layout)
+    {
+    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        return { VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT };
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+        return { DEPTH_STAGES, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT };
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+        return { DEPTH_STAGES | SHADER_STAGES, 0 };         // only reads: an execution dependency is enough
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+        return { SHADER_STAGES, 0 };
+    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+        return { VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT };
+    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+        return { VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, 0 };
+    default:
+        return { VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT };     // general (DLSS), present, anything unforeseen
+    }
+}
+
+// the work that will use the image in 'layout' and has to wait
+LayoutSync sync_entering(VkImageLayout layout)
+{
+    switch (layout)
+    {
+    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        return { VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT };
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+        return { DEPTH_STAGES, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT };
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+        return { DEPTH_STAGES | SHADER_STAGES, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT };
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+        return { SHADER_STAGES, VK_ACCESS_2_SHADER_READ_BIT };
+    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+        return { VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT };
+    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+        return { VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT };
+    default:
+        return CONSERVATIVE;
+    }
+}
+}
+
 void Renderer::transition(VkCommandBuffer cmd, Image& view_or_image, VkImageLayout layout)
 {
     Image& image = *root_of(&view_or_image);     // views of one layer/mip share the owner's layout (whole image)
@@ -1067,13 +1255,32 @@ void Renderer::transition(VkCommandBuffer cmd, Image& view_or_image, VkImageLayo
         image.mLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         if (layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
         {
+            // the layout stays, so no transition follows: whatever is written next (the first upload into a new texture) must still come after the clear
+            VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+            mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+            mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+            mb.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            VkDependencyInfo dep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            dep.memoryBarrierCount = 1;
+            dep.pMemoryBarriers = &mb;
+            vkCmdPipelineBarrier2(cmd, &dep);
             view_or_image.mLayout = layout;
             return;
         }
     }
-    imageBarrier(cmd, image.mImage, image.mAspect, image.mMipLevels, image.mLayers, image.mLayout, layout,
-                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
-                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    if (coarse_barriers())
+    {
+        imageBarrier(cmd, image.mImage, image.mAspect, image.mMipLevels, image.mLayers, image.mLayout, layout,
+                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    }
+    else
+    {
+        const LayoutSync before = sync_leaving(image.mLayout);
+        const LayoutSync after = sync_entering(layout);
+        imageBarrier(cmd, image.mImage, image.mAspect, image.mMipLevels, image.mLayers, image.mLayout, layout, before.mStage, before.mAccess, after.mStage, after.mAccess);
+    }
     image.mLayout = layout;
     view_or_image.mLayout = layout;
 }

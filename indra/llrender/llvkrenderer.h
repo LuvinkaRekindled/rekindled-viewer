@@ -225,6 +225,11 @@ public:
     void getRingStats(U32& peak, U32& exhausted) { peak = std::max(mRingPeak, mRingUsed); exhausted = mRingExhausted; mRingPeak = 0; mRingExhausted = 0; }
     bool init();
     void shutdown();
+    // The driver's compiled pipelines, kept between runs (<cache>/vk_pipeline_cache.bin): loaded in init(), written at shutdown and every few minutes
+    // while new pipelines keep being built, so a crash does not lose a whole session of them. LL_VK_PIPELINE_CACHE=0 turns it off.
+    void savePipelineCache();
+    U32 mPipelinesSinceSave = 0;
+    U64 mPipelineCacheLastSaveFrame = 0;
     bool isReady() const { return mReady; }
 
     // frame bracketing: 'cmd' and 'frame_slot' come from Context::beginFrame / the frame ring

@@ -15,6 +15,7 @@
 
 #include "linden_common.h"
 
+#include <atomic>
 #include <functional>
 #include <vector>
 
@@ -266,6 +267,16 @@ private:
     bool mNeedsRecreate = false;
     bool mPresentOutOfDate = false;
 };
+
+// LL_VK_PHASES statistics: image barriers recorded, graphics pipelines built (and how long the driver took)
+struct SyncStats
+{
+    std::atomic<U64> mImageBarriers{ 0 };
+    std::atomic<U64> mPipelinesBuilt{ 0 };
+    std::atomic<U64> mPipelineBuildMicros{ 0 };
+    std::atomic<U64> mPipelineBuildMaxMicros{ 0 };
+};
+extern SyncStats gSyncStats;
 
 // helper: image layout transition barrier for a whole colour image (sync2)
 void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect, U32 mips, U32 layers,
