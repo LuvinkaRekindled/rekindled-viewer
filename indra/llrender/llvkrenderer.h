@@ -286,6 +286,13 @@ public:
     bool readbackRegion(Image& image, U32 mip, U32 layer, S32 x, S32 y, U32 w, U32 h, std::vector<U8>& texels);
     // one whole mip level of a block-compressed image, the blocks exactly as stored (what glGetCompressedTexImage returns)
     bool readbackCompressedMip(Image& image, U32 mip, U32 layer, std::vector<U8>& blocks);
+    // ---- device-local buffers (large vertex / index buffers) ----
+    // The CPU never touches these. A write goes into staging memory now (or, outside a frame, into a private copy until the next frame
+    // starts) and becomes a GPU copy of just the changed bytes when flushBufferUpdates() records it: before a draw that reads the buffer, and
+    // at the end of the frame. Copies are ordered against the draws recorded before them by barriers, as GL promises.
+    bool updateBuffer(VkBuffer dst, VkDeviceSize offset, VkDeviceSize size, const void* data);
+    // records every pending copy (ends the current render pass if there is something to record); false while no frame is being recorded
+    bool flushBufferUpdates();
     // texture uploads since the last call: how many, how many bytes, how many ended a render pass that was in progress
     struct UploadStats { U32 mCount = 0; U64 mBytes = 0; U32 mPassSplits = 0; };
     UploadStats takeUploadStats() { UploadStats s = mUploadStats; mUploadStats = UploadStats(); return s; }
@@ -361,6 +368,10 @@ private:
     U32 mRingPeak = 0;                  // largest ring use of any frame since the last getRingStats()
     U32 mRingExhausted = 0;             // draws dropped because the ring was full
     UploadStats mUploadStats;
+    struct BufferCopy { VkBuffer mDst; VkDeviceSize mDstOffset; VkBuffer mSrc; VkDeviceSize mSrcOffset; VkDeviceSize mSize; };
+    struct DeferredCopy { VkBuffer mDst; VkDeviceSize mDstOffset; std::vector<U8> mData; };
+    std::vector<BufferCopy> mPendingCopies;         // in staging memory, to be recorded
+    std::vector<DeferredCopy> mDeferredCopies;      // written outside a frame: staged when the next frame begins
 public:
     // LL_VK_PHASES diagnostics: how many indexed draws changed nothing but the draw command, and how many of those continued the previous draw's index range
     struct DrawDiag { U32 mDraws = 0, mUnchanged = 0, mMergeable = 0; };

@@ -922,6 +922,16 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mOccPending = mOccActive = -1;
     mCmd = cmd;
     mSlot = frame_slot;
+    // buffer writes made between frames get their staging space now
+    if (!mDeferredCopies.empty())
+    {
+        std::vector<DeferredCopy> deferred;
+        deferred.swap(mDeferredCopies);
+        for (DeferredCopy& d : deferred)
+        {
+            updateBuffer(d.mDst, d.mDstOffset, (VkDeviceSize)d.mData.size(), d.mData.data());
+        }
+    }
     mRingPeak = std::max(mRingPeak, mRingUsed);
     mRingUsed = 0;
     mVertexRingUsed = 0;
@@ -2022,6 +2032,72 @@ bool Renderer::readbackImage(Image& view_or_image, U32 mip, U32 layer, std::vect
     texels.assign((U8*)rb.mMapped, (U8*)rb.mMapped + bytes);
     ctx.waitIdle();
     vmaDestroyBuffer(ctx.getAllocator(), rb.mBuffer, rb.mAllocation);
+    return true;
+}
+
+bool Renderer::updateBuffer(VkBuffer dst, VkDeviceSize offset, VkDeviceSize size, const void* data)
+{
+    if (dst == VK_NULL_HANDLE || !data || size == 0)
+    {
+        return false;
+    }
+    ++mModCount;
+    if (mCmd == VK_NULL_HANDLE)
+    {
+        DeferredCopy d;
+        d.mDst = dst;
+        d.mDstOffset = offset;
+        d.mData.assign((const U8*)data, (const U8*)data + size);
+        mDeferredCopies.push_back(std::move(d));
+        return true;
+    }
+    StagingAlloc stage = Context::instance().allocStaging(size, 16);
+    if (!stage.valid())
+    {
+        LL_WARNS("Vulkan") << "updateBuffer: no staging space for " << size << " bytes" << LL_ENDL;
+        return false;
+    }
+    memcpy(stage.mPtr, data, (size_t)size);
+    mPendingCopies.push_back({ dst, offset, stage.mBuffer, stage.mOffset, size });
+    return true;
+}
+
+bool Renderer::flushBufferUpdates()
+{
+    if (mCmd == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    if (mPendingCopies.empty())
+    {
+        return true;
+    }
+    ++mModCount;
+    withCommandBuffer([&](VkCommandBuffer cmd) {
+        // everything recorded so far (and earlier frames still on the GPU) finishes reading before the copies overwrite
+        VkMemoryBarrier2 before = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        before.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        before.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        before.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        before.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        VkDependencyInfo dep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &before;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        for (const BufferCopy& c : mPendingCopies)
+        {
+            VkBufferCopy region = { c.mSrcOffset, c.mDstOffset, c.mSize };
+            vkCmdCopyBuffer(cmd, c.mSrc, c.mDst, 1, &region);
+        }
+        VkMemoryBarrier2 after = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        after.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        after.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        after.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        after.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        dep.pMemoryBarriers = &after;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    });
+    mPendingCopies.clear();
     return true;
 }
 
