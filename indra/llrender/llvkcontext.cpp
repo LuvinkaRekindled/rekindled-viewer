@@ -1299,11 +1299,14 @@ bool Swapchain::presentNoWait(U32 index)
     return r == VK_SUCCESS;
 }
 
+SyncStats gSyncStats;
+
 void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect, U32 mips, U32 layers,
                   VkImageLayout from, VkImageLayout to,
                   VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
                   VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access)
 {
+    gSyncStats.mImageBarriers.fetch_add(1, std::memory_order_relaxed);
     VkImageMemoryBarrier2 b = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
     b.srcStageMask = src_stage;
     b.srcAccessMask = src_access;
