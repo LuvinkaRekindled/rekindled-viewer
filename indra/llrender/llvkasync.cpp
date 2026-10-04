@@ -1297,7 +1297,7 @@ bool requested()
 {
     static const bool on = []() {
         const char* v = getenv("LL_VK_ASYNC");
-        if (!v) return false;
+        if (!v || strcmp(v, "0") == 0) return false;        // LL_VK_ASYNC=0 forces the inline mirror whatever the setting says
         if (strcmp(v, "loopback") == 0) gMode = 2;
         else if (strcmp(v, "lockstep") == 0) gMode = 3;
         return true;
