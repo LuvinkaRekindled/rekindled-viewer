@@ -2502,6 +2502,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>FSVulkanAsync</key>
+    <map>
+      <key>Comment</key>
+      <string>With FSVulkanRenderer: run the Vulkan work on its own thread (faster in busy scenes). Takes effect after a restart.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSVulkanRenderer</key>
     <map>
       <key>Comment</key>
