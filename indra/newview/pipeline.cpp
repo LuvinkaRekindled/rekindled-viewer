@@ -3795,7 +3795,7 @@ static thread_local ShadowCascadeCull sShadowCascadeCull; // <FS> per thread, se
 
 
 // true if every part of the avatar is in front of the slice start by more than the margin
-static bool shadow_cascade_skips_avatar(const LLVOAvatar* avatar)
+static bool shadow_cascade_skips_avatar(const LLVOAvatar* avatar, const ShadowCascadeCull& cascade_cull)
 {
     const LLDrawable* drawable = avatar->mDrawable;
     if (!drawable)
@@ -3812,9 +3812,9 @@ static bool shadow_cascade_skips_avatar(const LLVOAvatar* avatar)
 
     const F32 radius = llmax(half.getLength3().getF32(), 2.f);
     const LLVector3 position(center.getF32ptr());
-    const F32 depth = (position - sShadowCascadeCull.mCameraOrigin) * sShadowCascadeCull.mCameraAt;
+    const F32 depth = (position - cascade_cull.mCameraOrigin) * cascade_cull.mCameraAt;
 
-    return depth + radius + sShadowCascadeCull.mMargin < sShadowCascadeCull.mSliceStart;
+    return depth + radius + cascade_cull.mMargin < cascade_cull.mSliceStart;
 }
 
 static void count_shadow_batch(const LLDrawInfo* info); // <FS> defined below
@@ -3855,6 +3855,9 @@ void LLPipeline::postSort(LLCamera &camera)
     // build render map
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("build render map");
+    // <FS> the thread-local state is looked up once here, not once per draw info (a thread_local with a constructor costs a guard check per access)
+    const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
+    const bool cascade_cull_active = cascade_cull.mActive;
     for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
     {
         LLSpatialGroup *group = *i;
@@ -3888,7 +3891,7 @@ void LLPipeline::postSort(LLCamera &camera)
             {
                 LLDrawInfo *info = *k;
 
-                if (sShadowCascadeCull.mActive && info->mAvatar.notNull() && shadow_cascade_skips_avatar(info->mAvatar.get()))
+                if (cascade_cull_active && info->mAvatar.notNull() && shadow_cascade_skips_avatar(info->mAvatar.get(), cascade_cull))
                 {
                     // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
                     if (LLGpuZoneTimer::isActive())
@@ -4478,6 +4481,8 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
     ShadowPrepScope scope(prep);
 
     LLCullResult& result = *prep.mResult;
+    const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
+    const bool cascade_cull_active = cascade_cull.mActive;
 
     for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
     {
@@ -4506,7 +4511,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             {
                 LLDrawInfo* info = *k;
 
-                if (sShadowCascadeCull.mActive && info->mAvatar.notNull() && shadow_cascade_skips_avatar(info->mAvatar.get()))
+                if (cascade_cull_active && info->mAvatar.notNull() && shadow_cascade_skips_avatar(info->mAvatar.get(), cascade_cull))
                 {
                     continue; // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
                 }

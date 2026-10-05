@@ -1064,12 +1064,16 @@ public:
         }
 
         LLSpatialGroup* group = (LLSpatialGroup*)base_group;
-        group->checkOcclusion();
+        if (LLPipeline::sUseOcclusion >= 2)         // <FS> checkOcclusion() does nothing below 2: no call
+        {
+            group->checkOcclusion();
+        }
 
-        if (group->getOctreeNode() &&
-            group->getOctreeNode()->getParent() &&  //never occlusion cull the root node
-            LLPipeline::sUseOcclusion &&            //ignore occlusion if disabled
-            group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        // <FS> the cheap tests first: the group's own occlusion state before the walk to the octree node and its parent (cache misses)
+        if (LLPipeline::sUseOcclusion &&            //ignore occlusion if disabled
+            group->isOcclusionState(LLSpatialGroup::OCCLUDED) &&
+            group->getOctreeNode() &&
+            group->getOctreeNode()->getParent())    //never occlusion cull the root node
         {
             gPipeline.markOccluder(group);
             return true;
@@ -1158,9 +1162,9 @@ public:
     {
         LLSpatialGroup* group = (LLSpatialGroup*)base_group;
 
-        if (group->getOctreeNode()->getParent() &&  //never occlusion cull the root node
-            LLPipeline::sUseOcclusion &&            //ignore occlusion if disabled
-            group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        if (LLPipeline::sUseOcclusion &&            //ignore occlusion if disabled
+            group->isOcclusionState(LLSpatialGroup::OCCLUDED) &&
+            group->getOctreeNode()->getParent())    //never occlusion cull the root node
         {
             return true;
         }
