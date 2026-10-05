@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include <chrono>
 
 #include "llviewerobjectlist.h"
 #include "llforkjoinpool.h"
@@ -1018,6 +1019,17 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
     LLVOAvatar::cullAvatarsByPixelArea();
 }
 
+// <FS> avatar update timing (see llvoavatar.cpp), logged every 300 frames
+extern U64 gFSAvStatNs[32];
+extern U32 gFSAvStatCount[32];
+extern bool gFSAvTimersOn;
+static U64 gFSAvBatchBlendNs = 0;
+static U64 gFSAvBatchCompleteNs = 0;
+static U32 gFSAvBatchSize = 0;
+static U32 gFSAvBatchCount = 0;
+static U64 gFSAvIdleLoopNs = 0;
+static U32 gFSAvFrames = 0;
+
 namespace
 {
 // Runs the deferred pose blend of every avatar in the batch, in parallel when
@@ -1025,6 +1037,7 @@ namespace
 void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    const auto batch_start = gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
 
     LLForkJoinPool* pool = LLForkJoinPool::shared();
 
@@ -1046,9 +1059,18 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         }
     }
 
+    const auto blend_end = gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
     for (LLPointer<LLVOAvatar>& avatar : batch)
     {
         avatar->completeDeferredMotionUpdate();
+    }
+    if (gFSAvTimersOn)
+    {
+        const auto complete_end = std::chrono::steady_clock::now();
+        gFSAvBatchBlendNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(blend_end - batch_start).count();
+        gFSAvBatchCompleteNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(complete_end - blend_end).count();
+        gFSAvBatchSize += (U32)batch.size();
+        gFSAvBatchCount++;
     }
 }
 }
@@ -1188,12 +1210,17 @@ void LLViewerObjectList::update(LLAgent &agent)
             LLVOAvatar::sMotionUpdateBatch = &motion_batch;
         }
 
+        const auto idle_loop_start = gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
         for (std::vector<LLViewerObject*>::iterator idle_iter = idle_list.begin();
             idle_iter != idle_end; idle_iter++)
         {
             objectp = *idle_iter;
             llassert(objectp->isActive());
                 objectp->idleUpdate(agent, frame_time);
+        }
+        if (gFSAvTimersOn)
+        {
+            gFSAvIdleLoopNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - idle_loop_start).count();
         }
 
         LLVOAvatar::sMotionUpdateBatch = nullptr;
@@ -1203,6 +1230,45 @@ void LLViewerObjectList::update(LLAgent &agent)
             motion_batch.clear();
         }
         // </FS>
+
+        // <FS> the avatar update timers
+        if (gFSAvTimersOn && ++gFSAvFrames >= 300)
+        {
+            static const char* const names[12] = { "idleUpdate", "idleUpdate before updateCharacter", "updateCharacter", "  hidden (no update needed)",
+                "  root position+rotation", "  hidden update", "  motion begin (deferred)", "  motion update inline", "  post-motion inline",
+                "idleUpdatePostCharacter inline", "deferred completion", "" };
+            std::string line;
+            for (int i = 0; i < 11; ++i)
+            {
+                if (gFSAvStatCount[i] > 0)
+                {
+                    line += llformat(" [%s: %.3f ms/frame, %.1f avatars/frame, %.1f us each]", names[i], (double)gFSAvStatNs[i] / 1.0e6 / gFSAvFrames,
+                        (double)gFSAvStatCount[i] / gFSAvFrames, (double)gFSAvStatNs[i] / 1.0e3 / gFSAvStatCount[i]);
+                }
+            }
+            LL_INFOS("AvatarUpdate") << "per frame over " << gFSAvFrames << " frames:" << line << LL_ENDL;
+            {
+                static const char* const sub_names[] = { "voice visualizer", "name tag position", "idleUpdateMisc", "appearance animation", "lipsync+loading+water+wind",
+                    "name tag", "render complexity", "debug info", "head offset", "footsteps", "joint matrices", "updateOrientation" };
+                std::string sub;
+                for (int i = 14; i < 26; ++i)
+                {
+                    sub += llformat(" [%s: %.3f ms/frame, %.1f us each over %.1f/frame]", sub_names[i - 14], (double)gFSAvStatNs[i] / 1.0e6 / gFSAvFrames,
+                        gFSAvStatCount[i] ? (double)gFSAvStatNs[i] / 1.0e3 / gFSAvStatCount[i] : 0.0, (double)gFSAvStatCount[i] / gFSAvFrames);
+                }
+                LL_INFOS("AvatarUpdate") << "pieces:" << sub << LL_ENDL;
+            }
+            LL_INFOS("AvatarUpdate") << llformat("inline normal updates per frame: self %.1f, animesh %.1f, other %.1f",
+                (double)gFSAvStatCount[11] / gFSAvFrames, (double)gFSAvStatCount[12] / gFSAvFrames, (double)gFSAvStatCount[13] / gFSAvFrames) << LL_ENDL;
+            LL_INFOS("AvatarUpdate") << llformat("idle loop total %.3f ms/frame; parallel blend wall %.3f ms/frame, completion loop %.3f ms/frame, %.1f avatars/batch",
+                (double)gFSAvIdleLoopNs / 1.0e6 / gFSAvFrames, (double)gFSAvBatchBlendNs / 1.0e6 / gFSAvFrames,
+                (double)gFSAvBatchCompleteNs / 1.0e6 / gFSAvFrames, gFSAvBatchCount ? (double)gFSAvBatchSize / gFSAvBatchCount : 0.0) << LL_ENDL;
+            memset(gFSAvStatNs, 0, sizeof(gFSAvStatNs));
+            memset(gFSAvStatCount, 0, sizeof(gFSAvStatCount));
+            gFSAvBatchBlendNs = gFSAvBatchCompleteNs = gFSAvIdleLoopNs = 0;
+            gFSAvBatchSize = gFSAvBatchCount = 0;
+            gFSAvFrames = 0;
+        }
 
         //update flexible objects
         LLVolumeImplFlexible::updateClass();

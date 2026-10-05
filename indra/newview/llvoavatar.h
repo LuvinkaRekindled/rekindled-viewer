@@ -619,6 +619,7 @@ private:
 
     // state carried across a deferred motion update, see sMotionUpdateBatch
     bool        mMotionUpdateDeferred = false;
+    bool        mDeferredMatricesOnly = false; // <FS> hidden avatar: only its skeleton's world matrices are worked out on the worker (no pose blend)
     bool        mDeferredSitGroundConstrained = false;
     bool        mDeferredVisible = false;
     bool        mDeferredDetailedUpdate = false;

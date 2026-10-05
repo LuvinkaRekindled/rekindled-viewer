@@ -4215,6 +4215,45 @@ void note_shadow_prep_time(bool parallel, std::chrono::steady_clock::time_point 
     sShadowPrepTimes[parallel ? 1 : 0].mNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
 }
 
+enum ShadowPrepPhase
+{
+    PH_PASS1,           // generateSunShadow's per-cascade setup (cascades that get a real render), including the next line
+    PH_POINT_CLOUD,     // getVisiblePointCloud: an octree walk per cascade
+    PH_SERIAL_CULL,     // serial path: updateCull
+    PH_SERIAL_SORT,     // serial path: stateSort + postSort
+    PH_SETUP,           // parallel path: partition list, root rebound, clip planes
+    PH_CULL,            // parallel path: the workers' cull and marking (wall time of the fork-join)
+    PH_REBUILD_MESH,    // main thread: rebuildMesh of the cascades' groups
+    PH_REBUILD_GEOM,    // main thread: rebuildGeom of drawable groups
+    PH_PRIORITY,        // main thread: rebuildPriorityGroups
+    PH_NEW_DRAWINFO,    // main thread: the NEW_DRAWINFO rebuilds
+    PH_MESH_DIRTY,      // main thread: dirty mesh queue + flushBuffers
+    PH_RENDER_MAP,      // parallel path: the workers' render map (wall time of the fork-join)
+    PH_FIN_VOCACHE,     // parallel path, right before the draw: object cache partitions
+    PH_FIN_SKY,         // sky
+    PH_FIN_POOLS,       // the pool fill (stateSort of the pool drawables)
+    PH_RENDERSHADOW,    // the whole renderShadow call of a sun cascade, preparation included
+    PH_COUNT
+};
+const char* const sShadowPrepPhaseNames[PH_COUNT] = {
+    "pass 1", "(point cloud)", "serial cull", "serial sort", "setup", "cull", "rebuildMesh", "rebuildGeom", "priority groups",
+    "new drawinfo", "mesh dirty+flush", "render map", "vocache", "sky", "pools", "renderShadow total" };
+U64 sShadowPrepPhaseNs[2][PH_COUNT];
+int sShadowPrepPhaseMode = 0; // [parallel]
+
+// adds the time since the last mark (or since construction) to a phase
+struct PhaseLap
+{
+    std::chrono::steady_clock::time_point mLast = std::chrono::steady_clock::now();
+    void mark(ShadowPrepPhase phase)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        sShadowPrepPhaseNs[sShadowPrepPhaseMode][phase] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(now - mLast).count();
+        mLast = now;
+    }
+    void reset() { mLast = std::chrono::steady_clock::now(); }
+};
+
 void note_shadow_prep_frame(bool parallel, U32 cascades)
 {
     ShadowPrepTimes& t = sShadowPrepTimes[parallel ? 1 : 0];
@@ -4225,6 +4264,17 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
         LL_INFOS("ShadowPrep") << (parallel ? "parallel" : "serial") << " sun cascade preparation: "
             << llformat("%.3f ms/frame on the main thread, %.1f cascades/frame", (double)t.mNs / 1.0e6 / t.mFrames, (double)t.mCascades / t.mFrames)
             << " (" << t.mFrames << " frames)" << LL_ENDL;
+        std::string phases;
+        for (int p = 0; p < PH_COUNT; ++p)
+        {
+            U64& ns = sShadowPrepPhaseNs[parallel ? 1 : 0][p];
+            if (ns > 0)
+            {
+                phases += llformat(" %s %.3f,", sShadowPrepPhaseNames[p], (double)ns / 1.0e6 / t.mFrames);
+                ns = 0;
+            }
+        }
+        LL_INFOS("ShadowPrep") << (parallel ? "parallel" : "serial") << " phases (ms/frame):" << phases << LL_ENDL;
         t = ShadowPrepTimes();
     }
 }
@@ -4343,6 +4393,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
     sVolumeSAFrame = 0.f; //ZK LBG
 
     const LLViewerCamera::eCameraID saved_camera_id = LLViewerCamera::sCurCameraID;
+    PhaseLap lap;
 
     for (ShadowCascadePrep& prep : preps)
     {
@@ -4365,6 +4416,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
                 group->rebuildMesh();
             }
         }
+        lap.mark(PH_REBUILD_MESH);
         // rebuild drawable geometry
         for (LLCullResult::sg_iterator iter = result.beginDrawableGroups(); iter != result.endDrawableGroups(); ++iter)
         {
@@ -4374,9 +4426,11 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
                 group->rebuildGeom();
             }
         }
+        lap.mark(PH_REBUILD_GEOM);
     }
 
     rebuildPriorityGroups();
+    lap.mark(PH_PRIORITY);
 
     for (ShadowCascadePrep& prep : preps)
     {
@@ -4402,6 +4456,8 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
         }
     }
 
+    lap.mark(PH_NEW_DRAWINFO);
+
     // pack vertex buffers for groups that chose to delay their updates
     for (LLSpatialGroup::sg_vector_t::iterator iter = mMeshDirtyGroup.begin(); iter != mMeshDirtyGroup.end(); ++iter)
     {
@@ -4410,6 +4466,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
     mMeshDirtyGroup.clear();
 
     LLVertexBuffer::flushBuffers();
+    lap.mark(PH_MESH_DIRTY);
 
     LLViewerCamera::sCurCameraID = saved_camera_id;
 }
@@ -4505,6 +4562,8 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
 
     grabReferences(result);
 
+    PhaseLap lap;
+
     // what updateCull does besides the partitions
     for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
     {
@@ -4514,6 +4573,7 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
             vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive());
         }
     }
+    lap.mark(PH_FIN_VOCACHE);
 
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
         gSky.mVOSkyp.notNull() &&
@@ -4534,6 +4594,8 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
         sCull->pushDrawable(gSky.mVOWLSkyp->mDrawable);
     }
 
+    lap.mark(PH_FIN_SKY);
+
     // the part of stateSort that fills the pools
     for (LLDrawable* drawablep : prep.mDeferred)
     {
@@ -4550,6 +4612,7 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
             stateSort(drawablep, camera);
         }
     }
+    lap.mark(PH_FIN_POOLS);
 }
 
 // check mode: the result of the serial path (reference, made before the workers ran) against the one the workers built.
@@ -11264,11 +11327,17 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
         else
         {
+            PhaseLap lap;
             updateCull(shadow_cam, result);
+            if (sShadowPrepTimed)
+            {
+                lap.mark(PH_SERIAL_CULL);
+            }
 
             stateSort(shadow_cam, result);
             if (sShadowPrepTimed)
             {
+                lap.mark(PH_SERIAL_SORT);
                 note_shadow_prep_time(false, prep_start);
             }
         }
@@ -11951,6 +12020,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             prep_pool = nullptr;
         }
         const bool defer_cascades = prep_pool != nullptr;
+        sShadowPrepPhaseMode = defer_cascades ? 1 : 0;
         std::vector<ShadowCascadePrep> pending;
         U32 cascades_prepared = 0;
         static LLCullResult result[4];
@@ -11987,7 +12057,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 }
 
                 sShadowPrepTimed = !prepared;
+                PhaseLap shadow_lap;
                 renderShadow(prep.mView, prep.mProj, shadow_cam, *prep.mResult, true, prepared ? &prep : nullptr);
+                shadow_lap.mark(PH_RENDERSHADOW);
                 sShadowPrepTimed = false;
 
                 sShadowCascadeCull.mActive = false;
@@ -12027,6 +12099,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
 
             LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0+j);
+            PhaseLap pass1_lap;
 
             //restore render matrices
             set_current_modelview(saved_view);
@@ -12071,7 +12144,10 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
             std::vector<LLVector3> fp;
 
-            if (!gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir)
+            PhaseLap point_cloud_lap;
+            const bool have_point_cloud = gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir);
+            point_cloud_lap.mark(PH_POINT_CLOUD);
+            if (!have_point_cloud
                 || j > RenderShadowSplits)
             {
                 //no possible shadow receivers
@@ -12425,6 +12501,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 static LLCachedControl<F32> cascade_min_elevation(gSavedSettings, "FSShadowCascadeCullMinSunElevation", 25.f);
                 const F32 sun_elevation_sin = caster_dir.mV[VZ]; // z is up, caster_dir points at the sun or moon
 
+                pass1_lap.mark(PH_PASS1);
                 ShadowCascadePrep local_prep;
                 ShadowCascadePrep& prep = defer_cascades ? pending.emplace_back() : local_prep;
                 prep.mIndex = j;
@@ -12456,6 +12533,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             // <FS> prepare the collected cascades together
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("parallel shadow prep");
             const auto prep_start = std::chrono::steady_clock::now();
+            PhaseLap lap;
 
             // the partitions every cascade culls, with their root bounds brought up to date here (rebound() writes)
             std::vector<LLSpatialPartition*> partitions;
@@ -12506,13 +12584,17 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 LLViewerCamera::sCurCameraID = saved_camera_id;
             }
 
+            lap.mark(PH_SETUP);
             const std::function<void(size_t)> cull_job = [&](size_t i) { shadowPrepCull(pending[i], partitions); };
             prep_pool->run(pending.size(), cull_job);
+            lap.mark(PH_CULL);
 
             shadowPrepRebuild(pending);
+            lap.reset();
 
             const std::function<void(size_t)> map_job = [&](size_t i) { shadowPrepRenderMap(pending[i]); };
             prep_pool->run(pending.size(), map_job);
+            lap.mark(PH_RENDER_MAP);
 
             sUseOcclusion = saved_occlusion;
             LLPipeline::sShadowRender = saved_shadow_render;
