@@ -125,6 +125,8 @@
 #include "llvisualeffect.h"
 #include "rlvactions.h"
 #include "rlvlocks.h"
+#include "llforkjoinpool.h" // <FS> parallel shadow cascade preparation
+#include <chrono>
 // [/RLVa:KB]
 
 #include "llenvironment.h"
@@ -365,6 +367,7 @@ LLVector3 LLPipeline::sLastFocusPoint={};// <FS:Beq/> FIRE-16728 focus point loc
 bool    LLPipeline::sDoFEnabled = false;
 
 F32 LLPipeline::sVolumeSAFrame = 0.f; // ZK LBG
+thread_local bool LLPipeline::sParallelPrep = false; // <FS>
 
 bool    LLPipeline::sRenderParticles; // <FS:LO> flag to hold correct, user selected, status of particles
 // [SL:KB] - Patch: Render-TextureToggle (Catznip-4.0)
@@ -374,7 +377,7 @@ bool    LLPipeline::sRenderTextures = true;
 // EventHost API LLPipeline listener.
 static LLPipelineListener sPipelineListener;
 
-static LLCullResult* sCull = NULL;
+static thread_local LLCullResult* sCull = NULL; // <FS> per thread: the parallel shadow cascade preparation culls into several results at once
 
 void validate_framebuffer_object();
 
@@ -2778,7 +2781,10 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
         // an occlusion query to find out if it's an occluder
         markOccluder(group);
     }
-    mNumVisibleNodes++;
+    if (!sParallelPrep) // <FS> only a statistic: not worth sharing between the threads of the parallel shadow preparation
+    {
+        mNumVisibleNodes++;
+    }
 }
 
 void LLPipeline::markOccluder(LLSpatialGroup* group)
@@ -3785,7 +3791,7 @@ struct ShadowCascadeCull
     F32 mSliceStart = 0.f;  // view depth where this cascade's slice begins
     F32 mMargin = 0.f;
 };
-static ShadowCascadeCull sShadowCascadeCull;
+static thread_local ShadowCascadeCull sShadowCascadeCull; // <FS> per thread, see sCull
 
 
 // true if every part of the avatar is in front of the slice start by more than the margin
@@ -4146,6 +4152,462 @@ void LLPipeline::postSort(LLCamera &camera)
     LL_PUSH_CALLSTACKS();
 }
 
+
+// <FS> ---------------------------------------------------------------------------------------------------------------
+// Parallel preparation of the sun shadow cascades.
+//
+// A shadow cascade is prepared in steps that used to run back to back, once per cascade, inside renderShadow: cull the scene
+// (updateCull), mark the visible groups and drawables (the first half of stateSort), and build the render map of the
+// visible groups (the loop in postSort). The cascades do not depend on one another, so the cull and the render map of each
+// are built on their own thread - with their own camera id, cull result and cascade cull settings (the thread-local statics) -
+// while whatever touches state the cascades share stays on the main thread, in the old order:
+//   - the root bounds of the partitions are brought up to date before the workers start (rebound() writes), and a bridge is
+//     locked while it is culled (every cascade that sees it rebounds and walks its octree)
+//   - mesh and geometry rebuilds (GL buffers), the priority group queue and the dirty mesh queue
+//   - the draw pools (avatars, terrain, water, trees, grass) and the sky: reset and filled per cascade right before it is drawn
+// FSParallelShadowPrep turns it on and off live. FSParallelShadowPrepCheck also runs the old serial path for each cascade
+// and logs where the two results differ.
+
+namespace
+{
+// puts back the thread-local state a job changes (the calling thread runs jobs too)
+struct ShadowPrepScope
+{
+    LLViewerCamera::eCameraID mCameraID = LLViewerCamera::sCurCameraID;
+    LLCullResult* mCull = sCull;
+    ShadowCascadeCull mCascadeCull = sShadowCascadeCull;
+    bool mParallel = LLPipeline::sParallelPrep;
+
+    ShadowPrepScope(const LLPipeline::ShadowCascadePrep& prep)
+    {
+        LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
+        LLPipeline::sParallelPrep = true;
+        sCull = prep.mResult;
+        sShadowCascadeCull.mActive = prep.mCullActive;
+        sShadowCascadeCull.mCameraOrigin = prep.mCullOrigin;
+        sShadowCascadeCull.mCameraAt = prep.mCullAt;
+        sShadowCascadeCull.mSliceStart = prep.mCullSliceStart;
+        sShadowCascadeCull.mMargin = prep.mCullMargin;
+    }
+
+    ~ShadowPrepScope()
+    {
+        LLViewerCamera::sCurCameraID = mCameraID;
+        sCull = mCull;
+        sShadowCascadeCull = mCascadeCull;
+        LLPipeline::sParallelPrep = mParallel;
+    }
+};
+
+// what the main thread spends on the preparation, logged every 300 frames for each mode
+struct ShadowPrepTimes
+{
+    U64 mNs = 0;
+    U32 mFrames = 0;
+    U32 mCascades = 0;
+};
+ShadowPrepTimes sShadowPrepTimes[2]; // [parallel]
+LLCullResult sShadowPrepReference[4];    // check mode: the serial path's result for each cascade, made before the workers run
+bool sShadowPrepTimed = false;       // the serial path of a sun cascade is running: renderShadow times its cull and sort
+
+void note_shadow_prep_time(bool parallel, std::chrono::steady_clock::time_point start)
+{
+    sShadowPrepTimes[parallel ? 1 : 0].mNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+}
+
+void note_shadow_prep_frame(bool parallel, U32 cascades)
+{
+    ShadowPrepTimes& t = sShadowPrepTimes[parallel ? 1 : 0];
+    t.mFrames++;
+    t.mCascades += cascades;
+    if (t.mFrames >= 300)
+    {
+        LL_INFOS("ShadowPrep") << (parallel ? "parallel" : "serial") << " sun cascade preparation: "
+            << llformat("%.3f ms/frame on the main thread, %.1f cascades/frame", (double)t.mNs / 1.0e6 / t.mFrames, (double)t.mCascades / t.mFrames)
+            << " (" << t.mFrames << " frames)" << LL_ENDL;
+        t = ShadowPrepTimes();
+    }
+}
+
+// the user clip plane part of updateCull
+void apply_shadow_clip_plane(LLCamera& camera)
+{
+    if (LLPipeline::isWaterClip())
+    {
+        LLVector3 pnorm;
+        const F32 water_height = LLEnvironment::instance().getWaterHeight();
+        if (LLPipeline::sUnderWaterRender)
+        {
+            pnorm.setVec(0, 0, 1); // camera is below water, cull above water
+        }
+        else
+        {
+            pnorm = LLVector3(0, 0, -1); // camera is above water, cull below water
+        }
+        LLPlane plane;
+        plane.setVec(LLVector3(0, 0, water_height), pnorm);
+        camera.setUserClipPlane(plane);
+    }
+    else
+    {
+        camera.disableUserClipPlane();
+    }
+}
+
+template <class It>
+std::vector<const void*> sorted_pointers(It begin, It end)
+{
+    std::vector<const void*> v;
+    for (; begin != end; ++begin)
+    {
+        v.push_back(*begin);
+    }
+    std::sort(v.begin(), v.end());
+    return v;
+}
+}
+
+// worker: cull the cascade, mark the visible groups and drawables
+void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    ShadowPrepScope scope(prep);
+
+    LLCamera& camera = prep.mCamera;
+    LLCullResult& result = *prep.mResult;
+    result.clear();
+    prep.mDeferred.clear();
+
+    for (LLSpatialPartition* part : partitions)
+    {
+        part->cull(camera);
+    }
+
+    // the drawable groups: what stateSort does with them when there is no occlusion culling, less the mesh rebuild
+    for (LLCullResult::sg_iterator iter = result.beginDrawableGroups(); iter != result.endDrawableGroups(); ++iter)
+    {
+        LLSpatialGroup* group = *iter;
+        if (group->isDead())
+        {
+            continue;
+        }
+        group->setVisible();
+        for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
+        {
+            LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
+            markVisible(drawablep, camera);
+        }
+    }
+
+    // the visible groups: stateSort(group), less the mesh rebuild
+    for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
+    {
+        LLSpatialGroup* group = *iter;
+        if (group->isDead())
+        {
+            continue;
+        }
+        group->setVisible();
+        if (!group->changeLOD())
+        {
+            continue;
+        }
+        for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
+        {
+            LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
+            if (!drawablep || drawablep->isDead() || !hasRenderType(drawablep->getRenderType()))
+            {
+                continue;
+            }
+            if (RenderSpotLight && drawablep == RenderSpotLight)
+            {
+                continue;
+            }
+            if (!drawablep->getVOVolume())
+            {
+                prep.mDeferred.push_back(drawablep); // pools: the main thread
+                continue;
+            }
+            if (!drawablep->isState(LLDrawable::INVISIBLE | LLDrawable::FORCE_INVISIBLE))
+            {
+                drawablep->setVisible(camera, NULL, false);
+            }
+        }
+    }
+}
+
+// main thread, after the culls: the geometry rebuilds that stateSort and postSort did for each cascade
+void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    sVolumeSAFrame = 0.f; //ZK LBG
+
+    const LLViewerCamera::eCameraID saved_camera_id = LLViewerCamera::sCurCameraID;
+
+    for (ShadowCascadePrep& prep : preps)
+    {
+        LLCullResult& result = *prep.mResult;
+        LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
+
+        for (LLCullResult::sg_iterator iter = result.beginDrawableGroups(); iter != result.endDrawableGroups(); ++iter)
+        {
+            LLSpatialGroup* group = *iter;
+            if (!group->isDead() && group->hasState(LLSpatialGroup::MESH_DIRTY))
+            {
+                group->rebuildMesh();
+            }
+        }
+        for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
+        {
+            LLSpatialGroup* group = *iter;
+            if (!group->isDead() && group->hasState(LLSpatialGroup::MESH_DIRTY))
+            {
+                group->rebuildMesh();
+            }
+        }
+        // rebuild drawable geometry
+        for (LLCullResult::sg_iterator iter = result.beginDrawableGroups(); iter != result.endDrawableGroups(); ++iter)
+        {
+            LLSpatialGroup* group = *iter;
+            if (!group->isDead())
+            {
+                group->rebuildGeom();
+            }
+        }
+    }
+
+    rebuildPriorityGroups();
+
+    for (ShadowCascadePrep& prep : preps)
+    {
+        LLCullResult& result = *prep.mResult;
+        LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
+
+        for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
+        {
+            LLSpatialGroup* group = *iter;
+            if (group->isDead())
+            {
+                continue;
+            }
+            if (RenderAutoHideSurfaceAreaLimit > 0.f &&
+                group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f))
+            {
+                continue;
+            }
+            if (group->hasState(LLSpatialGroup::NEW_DRAWINFO) && group->hasState(LLSpatialGroup::GEOM_DIRTY))
+            {  // no way this group is going to be drawable without a rebuild
+                group->rebuildGeom();
+            }
+        }
+    }
+
+    // pack vertex buffers for groups that chose to delay their updates
+    for (LLSpatialGroup::sg_vector_t::iterator iter = mMeshDirtyGroup.begin(); iter != mMeshDirtyGroup.end(); ++iter)
+    {
+        (*iter)->rebuildMesh();
+    }
+    mMeshDirtyGroup.clear();
+
+    LLVertexBuffer::flushBuffers();
+
+    LLViewerCamera::sCurCameraID = saved_camera_id;
+}
+
+// worker: the render map of the cascade (the loop in postSort)
+void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    ShadowPrepScope scope(prep);
+
+    LLCullResult& result = *prep.mResult;
+
+    for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
+    {
+        LLSpatialGroup* group = *i;
+
+        if (group->isDead())
+        {
+            continue;
+        }
+
+        if (RenderAutoHideSurfaceAreaLimit > 0.f &&
+            group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f))
+        {
+            continue;
+        }
+
+        for (LLSpatialGroup::draw_map_t::iterator j = group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
+        {
+            LLSpatialGroup::drawmap_elem_t& src_vec = j->second;
+            if (!hasRenderType(j->first))
+            {
+                continue;
+            }
+
+            for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
+            {
+                LLDrawInfo* info = *k;
+
+                if (sShadowCascadeCull.mActive && info->mAvatar.notNull() && shadow_cascade_skips_avatar(info->mAvatar.get()))
+                {
+                    continue; // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
+                }
+
+                sCull->pushDrawInfo(j->first, info);
+            }
+        }
+
+        if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+        {
+            LLSpatialGroup::draw_map_t::iterator alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
+
+            if (alpha != group->mDrawMap.end())
+            {  // store alpha groups for sorting
+                if (hasRenderType(LLDrawPool::POOL_ALPHA))
+                {
+                    sCull->pushAlphaGroup(group);
+                }
+            }
+
+            LLSpatialGroup::draw_map_t::iterator rigged_alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA_RIGGED);
+
+            if (rigged_alpha != group->mDrawMap.end())
+            {
+                if (hasRenderType(LLDrawPool::POOL_ALPHA))
+                {
+                    sCull->pushRiggedAlphaGroup(group);
+                }
+            }
+        }
+    }
+}
+
+// main thread, right before the cascade is drawn: the pools and the sky, which every cascade fills for itself
+void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    LLCamera& camera = prep.mCamera;
+    LLCullResult& result = *prep.mResult;
+
+    if (hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
+                      LLPipeline::RENDER_TYPE_CONTROL_AV,
+                      LLPipeline::RENDER_TYPE_TERRAIN,
+                      LLPipeline::RENDER_TYPE_TREE,
+                      LLPipeline::RENDER_TYPE_SKY,
+                      LLPipeline::RENDER_TYPE_VOIDWATER,
+                      LLPipeline::RENDER_TYPE_WATER,
+                      LLPipeline::END_RENDER_TYPES))
+    {
+        //clear faces from face pools
+        gPipeline.resetDrawOrders();
+    }
+
+    grabReferences(result);
+
+    // what updateCull does besides the partitions
+    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    {
+        LLVOCachePartition* vo_part = region->getVOCachePartition();
+        if (vo_part)
+        {
+            vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive());
+        }
+    }
+
+    if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
+        gSky.mVOSkyp.notNull() &&
+        gSky.mVOSkyp->mDrawable.notNull())
+    {
+        gSky.mVOSkyp->mDrawable->setVisible(camera);
+        sCull->pushDrawable(gSky.mVOSkyp->mDrawable);
+        gSky.updateCull();
+        stop_glerror();
+    }
+
+    if (hasRenderType(LLPipeline::RENDER_TYPE_WL_SKY) &&
+        gPipeline.canUseWindLightShaders() &&
+        gSky.mVOWLSkyp.notNull() &&
+        gSky.mVOWLSkyp->mDrawable.notNull())
+    {
+        gSky.mVOWLSkyp->mDrawable->setVisible(camera);
+        sCull->pushDrawable(gSky.mVOWLSkyp->mDrawable);
+    }
+
+    // the part of stateSort that fills the pools
+    for (LLDrawable* drawablep : prep.mDeferred)
+    {
+        if (!drawablep->isDead())
+        {
+            stateSort(drawablep, camera);
+        }
+    }
+    for (LLCullResult::drawable_iterator iter = result.beginVisibleList(); iter != result.endVisibleList(); ++iter)
+    {
+        LLDrawable* drawablep = *iter;
+        if (!drawablep->isDead())
+        {
+            stateSort(drawablep, camera);
+        }
+    }
+}
+
+// check mode: the result of the serial path (reference, made before the workers ran) against the one the workers built.
+// The workers mark groups and drawables visible as they go, and whether an attachment's bridge is culled depends on that
+// (it asks whether its avatar was seen), so a serial run after them can see more than a serial run before them. What the
+// parallel result lacks compared with a serial run made first is the problem; extras are only counted.
+void LLPipeline::shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& reference)
+{
+    LLCullResult& r = *prep.mResult;
+    std::string diff;
+    U32 extras = 0;
+
+    auto check = [&diff, &extras](const char* what, const std::vector<const void*>& parallel, const std::vector<const void*>& serial)
+    {
+        if (parallel == serial)
+        {
+            return;
+        }
+        std::vector<const void*> missing;
+        std::vector<const void*> extra;
+        std::set_difference(serial.begin(), serial.end(), parallel.begin(), parallel.end(), std::back_inserter(missing));
+        std::set_difference(parallel.begin(), parallel.end(), serial.begin(), serial.end(), std::back_inserter(extra));
+        extras += (U32)extra.size();
+        if (!missing.empty())
+        {
+            diff += llformat(" %s: %u missing, %u extra,", what, (U32)missing.size(), (U32)extra.size());
+        }
+    };
+    check("visible groups", sorted_pointers(r.beginVisibleGroups(), r.endVisibleGroups()), sorted_pointers(reference.beginVisibleGroups(), reference.endVisibleGroups()));
+    check("drawable groups", sorted_pointers(r.beginDrawableGroups(), r.endDrawableGroups()), sorted_pointers(reference.beginDrawableGroups(), reference.endDrawableGroups()));
+    check("alpha groups", sorted_pointers(r.beginAlphaGroups(), r.endAlphaGroups()), sorted_pointers(reference.beginAlphaGroups(), reference.endAlphaGroups()));
+    check("rigged alpha groups", sorted_pointers(r.beginRiggedAlphaGroups(), r.endRiggedAlphaGroups()), sorted_pointers(reference.beginRiggedAlphaGroups(), reference.endRiggedAlphaGroups()));
+    check("bridges", sorted_pointers(r.beginVisibleBridge(), r.endVisibleBridge()), sorted_pointers(reference.beginVisibleBridge(), reference.endVisibleBridge()));
+    check("visible drawables", sorted_pointers(r.beginVisibleList(), r.endVisibleList()), sorted_pointers(reference.beginVisibleList(), reference.endVisibleList()));
+    for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
+    {
+        check(llformat("render map %u", type).c_str(), sorted_pointers(r.beginRenderMap(type), r.endRenderMap(type)), sorted_pointers(reference.beginRenderMap(type), reference.endRenderMap(type)));
+    }
+
+    static U32 sChecks = 0;
+    static U32 sMismatches = 0;
+    static U64 sExtras = 0;
+    ++sChecks;
+    sExtras += extras;
+    if (!diff.empty())
+    {
+        ++sMismatches;
+        if (sMismatches <= 20 || sMismatches % 300 == 0)
+        {
+            LL_WARNS("ShadowPrep") << "cascade " << prep.mIndex << " lacks entries of the serial result:" << diff << LL_ENDL;
+        }
+    }
+    if (sChecks % 1200 == 0)
+    {
+        LL_INFOS("ShadowPrep") << "check: " << sMismatches << " of " << sChecks << " cascades lacked entries of the serial result; "
+            << sExtras << " extra entries in total (marks made by the workers)" << LL_ENDL;
+    }
+}
 
 void render_hud_elements()
 {
@@ -10745,7 +11207,7 @@ static LLTrace::BlockTimerStatHandle FTM_SHADOW_ALPHA_TREE("Alpha Tree");
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_ALPHA_GRASS("Alpha Grass");
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_FULLBRIGHT_ALPHA_MASKED("Fullbright Alpha Masked");
 
-void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp)
+void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_RENDER);
     LL_PROFILE_GPU_ZONE("renderShadow");
@@ -10787,9 +11249,30 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_LESS);
 
-    updateCull(shadow_cam, result);
+    {
+        // <FS> the cull and the sort: done by the parallel preparation when `prepared` (what is left of them is the pools and the sky)
+        const auto prep_start = std::chrono::steady_clock::now();
+        if (prepared)
+        {
+            static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
+            shadowPrepFinish(*prepared);
+            if (check_prep)
+            {
+                shadowPrepCompare(*prepared, sShadowPrepReference[prepared->mIndex & 3]);
+            }
+            note_shadow_prep_time(true, prep_start);
+        }
+        else
+        {
+            updateCull(shadow_cam, result);
 
-    stateSort(shadow_cam, result);
+            stateSort(shadow_cam, result);
+            if (sShadowPrepTimed)
+            {
+                note_shadow_prep_time(false, prep_start);
+            }
+        }
+    }
 
     //generate shadow map
     gGL.matrixMode(LLRender::MM_PROJECTION);
@@ -11453,6 +11936,89 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     }
     else
     {
+        // <FS> parallel preparation of the cascades (see shadowPrepCull): the cascades that need a real render are collected
+        // in the loop and prepared together after it. Not for reflection probe renders, not while the GPU zone timers count
+        // batches (they share counters), not while selected objects are hidden (that check reads the selection).
+        static LLCachedControl<bool> parallel_prep(gSavedSettings, "FSParallelShadowPrep", false);
+        // <FS> FSParallelShadowPrepAB: test mode, the setting is ignored and the mode alternates every 30 seconds (the log shows both)
+        static LLCachedControl<bool> parallel_prep_ab(gSavedSettings, "FSParallelShadowPrepAB", false);
+        const bool use_parallel = parallel_prep_ab
+            ? ((std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 30) % 2) == 1
+            : (bool)parallel_prep;
+        LLForkJoinPool* prep_pool = (use_parallel && !gCubeSnapshot) ? LLForkJoinPool::shared() : nullptr;
+        if (prep_pool && (LLGpuZoneTimer::isActive() || LLSelectMgr::getInstance()->mHideSelectedObjects))
+        {
+            prep_pool = nullptr;
+        }
+        const bool defer_cascades = prep_pool != nullptr;
+        std::vector<ShadowCascadePrep> pending;
+        U32 cascades_prepared = 0;
+        static LLCullResult result[4];
+
+        // draw one cascade: its target, the shadow pass, and the bookkeeping that follows it
+        auto render_cascade = [&](ShadowCascadePrep& prep, bool prepared)
+        {
+            const S32 j = prep.mIndex;
+            LLCamera& shadow_cam = prep.mCamera;
+            ++cascades_prepared;
+
+            if (prepared)
+            {   // the loop is over: set what it had set when it got to this cascade
+                LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + j);
+                set_current_modelview(prep.mView);
+                set_current_projection(prep.mProj);
+                set_last_modelview(prep.mLastView);
+                set_last_projection(prep.mLastProj);
+            }
+
+            mRT->shadow[j].bindTarget();
+            mRT->shadow[j].getViewport(gGLViewport);
+            mRT->shadow[j].clear();
+
+            {
+                // <FS> arm the cascade avatar cull for this pass
+                if (prep.mCullActive)
+                {
+                    sShadowCascadeCull.mActive = true;
+                    sShadowCascadeCull.mCameraOrigin = prep.mCullOrigin;
+                    sShadowCascadeCull.mCameraAt = prep.mCullAt;
+                    sShadowCascadeCull.mSliceStart = prep.mCullSliceStart;
+                    sShadowCascadeCull.mMargin = prep.mCullMargin;
+                }
+
+                sShadowPrepTimed = !prepared;
+                renderShadow(prep.mView, prep.mProj, shadow_cam, *prep.mResult, true, prepared ? &prep : nullptr);
+                sShadowPrepTimed = false;
+
+                sShadowCascadeCull.mActive = false;
+            }
+
+            mRT->shadow[j].flush();
+
+            if (!gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_SHADOW_FRUSTA) && !gCubeSnapshot)
+            {
+                mShadowCamera[j+4] = shadow_cam;
+            }
+
+            if (!gCubeSnapshot)
+            {
+                CascadeReuse& cr = sCascadeReuse[j];     // <FS> remember what this real render used
+                cr.mValid = true;
+                cr.mFrame = LLFrameTimer::getFrameCount();
+                cr.mTexture = mRT->shadow[j].getDepth();
+                cr.mView = prep.mView;
+                cr.mProj = prep.mProj;
+                cr.mError = mShadowError.mV[j];
+                cr.mFOV = mShadowFOV.mV[j];
+                cr.mCameraOrigin = camera.getOrigin();
+                cr.mCameraAt = camera.getAtAxis();
+                cr.mCasterDir = caster_dir;
+                cr.mCameraView = camera.getView();
+                cr.mSplitNear = dist[j];
+                cr.mSplitFar = dist[j + 1];
+            }
+        };
+
         for (S32 j = 0; j < (gCubeSnapshot ? 2 : 4); j++)
         {
             if (!hasRenderDebugMask(RENDER_DEBUG_SHADOW_FRUSTA) && !gCubeSnapshot)
@@ -11841,6 +12407,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             set_current_modelview(view[j]);
             set_current_projection(proj[j]);
 
+            const glm::mat4 last_view = mShadowModelview[j];        // <FS> kept for the deferred (parallel) render of the cascade
+            const glm::mat4 last_proj = mShadowProjection[j];
             set_last_modelview(mShadowModelview[j]);
             set_last_projection(mShadowProjection[j]);
 
@@ -11850,56 +12418,116 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
             stop_glerror();
 
-            mRT->shadow[j].bindTarget();
-            mRT->shadow[j].getViewport(gGLViewport);
-            mRT->shadow[j].clear();
-
             {
                 // <FS> arm the cascade avatar cull for this pass
                 static LLCachedControl<bool> cascade_cull(gSavedSettings, "FSShadowCascadeAvatarCull", true);
                 static LLCachedControl<F32> cascade_margin(gSavedSettings, "FSShadowCascadeCullMargin", 12.f);
                 static LLCachedControl<F32> cascade_min_elevation(gSavedSettings, "FSShadowCascadeCullMinSunElevation", 25.f);
                 const F32 sun_elevation_sin = caster_dir.mV[VZ]; // z is up, caster_dir points at the sun or moon
-                if (cascade_cull && !gCubeSnapshot && j >= 1
-                    && sun_elevation_sin >= sinf(cascade_min_elevation * DEG_TO_RAD))
+
+                ShadowCascadePrep local_prep;
+                ShadowCascadePrep& prep = defer_cascades ? pending.emplace_back() : local_prep;
+                prep.mIndex = j;
+                prep.mCamera = shadow_cam;
+                prep.mResult = &result[j];
+                prep.mView = view[j];
+                prep.mProj = proj[j];
+                prep.mLastView = last_view;
+                prep.mLastProj = last_proj;
+                prep.mCullActive = cascade_cull && !gCubeSnapshot && j >= 1
+                    && sun_elevation_sin >= sinf(cascade_min_elevation * DEG_TO_RAD);
+                if (prep.mCullActive)
                 {
-                    sShadowCascadeCull.mActive = true;
-                    sShadowCascadeCull.mCameraOrigin = camera.getOrigin();
-                    sShadowCascadeCull.mCameraAt = camera.getAtAxis();
-                    sShadowCascadeCull.mSliceStart = dist[j];
-                    sShadowCascadeCull.mMargin = cascade_margin;
+                    prep.mCullOrigin = camera.getOrigin();
+                    prep.mCullAt = camera.getAtAxis();
+                    prep.mCullSliceStart = dist[j];
+                    prep.mCullMargin = cascade_margin;
                 }
 
-                static LLCullResult result[4];
-                renderShadow(view[j], proj[j], shadow_cam, result[j], true);
-
-                sShadowCascadeCull.mActive = false;
+                if (!defer_cascades)
+                {
+                    render_cascade(prep, false);
+                }
             }
+        }
 
-            mRT->shadow[j].flush();
+        if (!pending.empty())
+        {
+            // <FS> prepare the collected cascades together
+            LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("parallel shadow prep");
+            const auto prep_start = std::chrono::steady_clock::now();
 
-            if (!gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_SHADOW_FRUSTA) && !gCubeSnapshot)
+            // the partitions every cascade culls, with their root bounds brought up to date here (rebound() writes)
+            std::vector<LLSpatialPartition*> partitions;
+            for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
             {
-                mShadowCamera[j+4] = shadow_cam;
+                for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
+                {
+                    LLSpatialPartition* part = region->getSpatialPartition(i);
+                    if (part && (LLViewerRegion::PARTITION_BRIDGE == i || hasRenderType(part->mDrawableType)))
+                    {
+                        ((LLSpatialGroup*)part->mOctree->getListener(0))->rebound();
+                        partitions.push_back(part);
+                    }
+                }
+            }
+            for (ShadowCascadePrep& prep : pending)
+            {
+                apply_shadow_clip_plane(prep.mCamera);
             }
 
-            if (!gCubeSnapshot)
+            // what renderShadow sets for the whole of a shadow pass
+            const S32 saved_occlusion = sUseOcclusion;
+            const bool saved_shadow_render = LLPipeline::sShadowRender;
+            sUseOcclusion = 0;
+            LLPipeline::sShadowRender = true;
+
+            static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
+            if (check_prep)
             {
-                CascadeReuse& cr = sCascadeReuse[j];     // <FS> remember what this real render used
-                cr.mValid = true;
-                cr.mFrame = LLFrameTimer::getFrameCount();
-                cr.mTexture = mRT->shadow[j].getDepth();
-                cr.mView = view[j];
-                cr.mProj = proj[j];
-                cr.mError = mShadowError.mV[j];
-                cr.mFOV = mShadowFOV.mV[j];
-                cr.mCameraOrigin = camera.getOrigin();
-                cr.mCameraAt = camera.getAtAxis();
-                cr.mCasterDir = caster_dir;
-                cr.mCameraView = camera.getView();
-                cr.mSplitNear = dist[j];
-                cr.mSplitFar = dist[j + 1];
+                // the serial path first, for the comparison (see shadowPrepCompare)
+                const LLViewerCamera::eCameraID saved_camera_id = LLViewerCamera::sCurCameraID;
+                for (ShadowCascadePrep& prep : pending)
+                {
+                    LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
+                    if (prep.mCullActive)
+                    {
+                        sShadowCascadeCull.mActive = true;
+                        sShadowCascadeCull.mCameraOrigin = prep.mCullOrigin;
+                        sShadowCascadeCull.mCameraAt = prep.mCullAt;
+                        sShadowCascadeCull.mSliceStart = prep.mCullSliceStart;
+                        sShadowCascadeCull.mMargin = prep.mCullMargin;
+                    }
+                    LLCamera reference_camera = prep.mCamera;
+                    updateCull(reference_camera, sShadowPrepReference[prep.mIndex & 3]);
+                    stateSort(reference_camera, sShadowPrepReference[prep.mIndex & 3]);
+                    sShadowCascadeCull.mActive = false;
+                }
+                LLViewerCamera::sCurCameraID = saved_camera_id;
             }
+
+            const std::function<void(size_t)> cull_job = [&](size_t i) { shadowPrepCull(pending[i], partitions); };
+            prep_pool->run(pending.size(), cull_job);
+
+            shadowPrepRebuild(pending);
+
+            const std::function<void(size_t)> map_job = [&](size_t i) { shadowPrepRenderMap(pending[i]); };
+            prep_pool->run(pending.size(), map_job);
+
+            sUseOcclusion = saved_occlusion;
+            LLPipeline::sShadowRender = saved_shadow_render;
+
+            note_shadow_prep_time(true, prep_start);
+
+            for (ShadowCascadePrep& prep : pending)
+            {
+                render_cascade(prep, true);
+            }
+        }
+
+        if (!gCubeSnapshot)
+        {
+            note_shadow_prep_frame(defer_cascades, cascades_prepared);
         }
     }
 
