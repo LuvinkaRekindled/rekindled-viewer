@@ -391,12 +391,14 @@ void LLHUDNameTag::renderText()
 void LLHUDNameTag::setString(const std::string &text_utf8)
 {
     mTextSegments.clear();
+    mSizeDirty = true; // <FS>
     addLine(text_utf8, mColor);
 }
 
 void LLHUDNameTag::clearString()
 {
     mTextSegments.clear();
+    mSizeDirty = true; // <FS>
 }
 
 
@@ -444,14 +446,14 @@ void LLHUDNameTag::addLine(const std::string &text_utf8,
                         segment_length = font->maxDrawableChars(iter->substr(line_length).c_str(), max_pixels - elipses_width, static_cast<S32>(wline.length()), LLFontGL::ANYWHERE);
                         const LLWString dots(utf8str_to_wstring(std::string("...")));
                         LLHUDTextSegment segment(iter->substr(line_length, segment_length) + dots, style, color, font);
-                        mTextSegments.push_back(segment);
+                        mTextSegments.push_back(segment); mSizeDirty = true; // <FS>
                         break; // consider it to be complete
                     }
                     else
                     {
                         // token fits fully into string
                         LLHUDTextSegment segment(iter->substr(line_length, segment_length), style, color, font);
-                        mTextSegments.push_back(segment);
+                        mTextSegments.push_back(segment); mSizeDirty = true; // <FS>
                         line_length += segment_length;
                     }
                 } while (line_length != iter->size());
@@ -464,7 +466,7 @@ void LLHUDNameTag::addLine(const std::string &text_utf8,
                 {
                     S32 segment_length = font->maxDrawableChars(iter->substr(line_length).c_str(), max_pixels, static_cast<S32>(wline.length()), LLFontGL::WORD_BOUNDARY_IF_POSSIBLE);
                     LLHUDTextSegment segment(iter->substr(line_length, segment_length), style, color, font);
-                    mTextSegments.push_back(segment);
+                    mTextSegments.push_back(segment); mSizeDirty = true; // <FS>
                     line_length += segment_length;
                 } while (line_length != iter->size());
             }
@@ -476,6 +478,7 @@ void LLHUDNameTag::addLine(const std::string &text_utf8,
 void LLHUDNameTag::setLabel(const std::string &label_utf8)
 {
     mLabelSegments.clear();
+    mSizeDirty = true; // <FS>
     addLabel(label_utf8);
 }
 
@@ -503,7 +506,7 @@ void LLHUDNameTag::addLabel(const std::string& label_utf8, F32 max_pixels)
                 S32 segment_length = mFontp->maxDrawableChars(iter->substr(line_length).c_str(),
                     max_pixels, static_cast<S32>(wstr.length()), LLFontGL::WORD_BOUNDARY_IF_POSSIBLE);
                 LLHUDTextSegment segment(iter->substr(line_length, segment_length), LLFontGL::NORMAL, mColor, mFontp);
-                mLabelSegments.push_back(segment);
+                mLabelSegments.push_back(segment); mSizeDirty = true; // <FS>
                 line_length += segment_length;
             }
             while (line_length != iter->size());
@@ -520,6 +523,7 @@ void LLHUDNameTag::setZCompare(const bool zcompare)
 void LLHUDNameTag::setFont(const LLFontGL* font)
 {
     mFontp = font;
+    mSizeDirty = true; // <FS>
 }
 
 
@@ -671,6 +675,14 @@ LLVector2 LLHUDNameTag::updateScreenPos(LLVector2 &offset)
 
 void LLHUDNameTag::updateSize()
 {
+    // <FS> the size is worked out again only when the text, label, font, line limit or UI scale changed
+    if (!mSizeDirty && getMaxLines() == mSizeMaxLines)
+    {
+        return;
+    }
+    mSizeDirty = false;
+    mSizeMaxLines = getMaxLines();
+
     F32 height = 0.f;
     F32 width = 0.f;
 
@@ -921,11 +933,13 @@ void LLHUDNameTag::reshape()
              segment_iter != textp->mTextSegments.end(); ++segment_iter )
         {
             segment_iter->clearFontWidthMap();
+            textp->mSizeDirty = true; // <FS>
         }
         for(segment_iter = textp->mLabelSegments.begin();
             segment_iter != textp->mLabelSegments.end(); ++segment_iter )
         {
             segment_iter->clearFontWidthMap();
+            textp->mSizeDirty = true; // <FS>
         }
     }
 }

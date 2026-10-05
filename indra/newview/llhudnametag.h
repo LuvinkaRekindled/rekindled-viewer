@@ -173,6 +173,8 @@ private:
     LLVector2       mTargetPositionOffset;
     F32             mMass;
     S32             mMaxLines;
+    bool            mSizeDirty = true;      // <FS> see updateSize()
+    S32             mSizeMaxLines = -2;
     S32             mOffsetY;
     F32             mRadius;
     std::vector<LLHUDTextSegment> mTextSegments;
