@@ -17,6 +17,7 @@ void LLVkMirror::beginFrame(S32, S32) {}
 void LLVkMirror::endFrame() {}
 void LLVkMirror::holdFrame(bool) {}
 void LLVkMirror::armSnapshotCompare() {}
+void LLVkMirror::setPresentPreference(S32, bool) {}
 void LLVkMirror::snapshotBoundary(S32) {}
 bool LLVkMirror::upscaleAvailable() { return false; }
 void LLVkMirror::upscale(const UpscaleArgs&) {}
@@ -549,6 +550,11 @@ bool create_backbuffer(U32 width, U32 height)
 }
 
 } // anonymous namespace
+
+void LLVkMirror::setPresentPreference(S32 mode, bool vsync_on)
+{
+    LLVk::setPresentPreference((int)mode, vsync_on);
+}
 
 bool LLVkMirror::isRequested()
 {

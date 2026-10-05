@@ -1195,6 +1195,40 @@ void Swapchain::destroy()
     }
 }
 
+namespace
+{
+std::atomic<int> gPresentModePref{ 0 };
+std::atomic<bool> gVsyncPref{ true };
+
+VkPresentModeKHR wanted_present_mode()
+{
+    static const char* env = getenv("LL_VK_PRESENT");        // experiment: fifo, mailbox, immediate, relaxed; wins over the settings
+    if (env)
+    {
+        return strcmp(env, "mailbox") == 0 ? VK_PRESENT_MODE_MAILBOX_KHR : strcmp(env, "immediate") == 0 ? VK_PRESENT_MODE_IMMEDIATE_KHR
+             : strcmp(env, "relaxed") == 0 ? VK_PRESENT_MODE_FIFO_RELAXED_KHR : VK_PRESENT_MODE_FIFO_KHR;
+    }
+    switch (gPresentModePref.load(std::memory_order_relaxed))
+    {
+    case 1: return VK_PRESENT_MODE_FIFO_KHR;
+    case 2: return VK_PRESENT_MODE_IMMEDIATE_KHR;
+    case 3: return VK_PRESENT_MODE_MAILBOX_KHR;
+    default: return gVsyncPref.load(std::memory_order_relaxed) ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
+    }
+}
+}
+
+void setPresentPreference(int mode, bool vsync_on)
+{
+    gPresentModePref.store(mode, std::memory_order_relaxed);
+    gVsyncPref.store(vsync_on, std::memory_order_relaxed);
+}
+
+bool Swapchain::needsRecreate() const
+{
+    return mNeedsRecreate || (mSwapchain != VK_NULL_HANDLE && mRequestedMode != wanted_present_mode());
+}
+
 bool Swapchain::create(VkSurfaceKHR surface, HWND window)
 {
     Context& ctx = Context::instance();
@@ -1258,10 +1292,9 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
         image_count = caps.maxImageCount;
     }
     VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-    if (const char* m = getenv("LL_VK_PRESENT"))        // experiment: fifo (default), mailbox, immediate, relaxed
     {
-        VkPresentModeKHR want = strcmp(m, "mailbox") == 0 ? VK_PRESENT_MODE_MAILBOX_KHR : strcmp(m, "immediate") == 0 ? VK_PRESENT_MODE_IMMEDIATE_KHR
-                              : strcmp(m, "relaxed") == 0 ? VK_PRESENT_MODE_FIFO_RELAXED_KHR : VK_PRESENT_MODE_FIFO_KHR;
+        const VkPresentModeKHR want = wanted_present_mode();
+        mRequestedMode = want;
         U32 mcount = 0;
         vkGetPhysicalDeviceSurfacePresentModesKHR(phys, surface, &mcount, nullptr);
         std::vector<VkPresentModeKHR> modes(mcount);

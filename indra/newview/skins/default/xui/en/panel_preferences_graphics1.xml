@@ -1961,9 +1961,48 @@ If you do not understand the distinction then leave this control alone."
        type="string"
        length="1"
        follows="left|top"
-       height="48"
+       height="14"
        layout="topleft"
        left_delta="-18"
+       name="FSVkPresentModeText"
+       top_pad="12"
+       width="300">
+        Frame rate limit:
+      </text>
+      <combo_box
+       control_name="FSVkPresentMode"
+       enabled_control="FSVulkanRenderer"
+       height="23"
+       layout="topleft"
+       left_delta="0"
+       name="FSVkPresentMode"
+       tool_tip="How frames reach the screen. Uncapped lets the frame rate go above the monitor's refresh rate. Takes effect at once."
+       top_pad="3"
+       width="300">
+        <combo_box.item
+         label="Follow the Vertical Sync preference"
+         name="0"
+         value="0"/>
+        <combo_box.item
+         label="Capped to the refresh rate (vsync)"
+         name="1"
+         value="1"/>
+        <combo_box.item
+         label="Uncapped (can tear)"
+         name="2"
+         value="2"/>
+        <combo_box.item
+         label="Uncapped, no tearing"
+         name="3"
+         value="3"/>
+      </combo_box>
+      <text
+       type="string"
+       length="1"
+       follows="left|top"
+       height="48"
+       layout="topleft"
+       left_delta="0"
        name="FSVulkanRendererNote"
        top_pad="6"
        width="440"

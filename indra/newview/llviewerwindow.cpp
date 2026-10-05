@@ -2024,6 +2024,8 @@ LLViewerWindow::LLViewerWindow(const Params& p)
     */
     // create window
 
+    LLVkMirror::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), gSavedSettings.getBOOL("RenderVSyncEnable")); // <FS> before the swapchain exists
+
     U32 max_core_count = gSavedSettings.getU32("EmulateCoreCount");
     F32 max_gl_version = gSavedSettings.getF32("RenderMaxOpenGLVersion");
 

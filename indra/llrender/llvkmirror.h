@@ -49,6 +49,10 @@ namespace LLVkMirror
     // across display() and the work that follows it (reflection probe updates, snapshots), then releases it and ends it.
     void holdFrame(bool hold);
 
+    // Present mode (setting FSVkPresentMode with the Vertical Sync preference): 0 follow Vertical Sync, 1 vsync, 2 uncapped, 3 uncapped without tearing.
+    // Safe to call at any time; the swapchain follows at the start of the next frame.
+    void setPresentPreference(S32 mode, bool vsync_on);
+
     // A snapshot is about to render: with LL_VK_VERIFY set, compare each of its passes between GL and Vulkan and report on it afterwards
     void armSnapshotCompare();
     // Snapshot experiment (setting FSVkSnapVariant): called before each display() a snapshot makes.

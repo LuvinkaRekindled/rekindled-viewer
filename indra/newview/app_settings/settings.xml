@@ -2500,7 +2500,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.3</real>
+      <real>0.05</real>
     </map>
     <key>FSShadowFarCascadeMaxCameraTurn</key>
     <map>
@@ -2554,6 +2554,17 @@
       <integer>1</integer>
       <key>Type</key>
       <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
+    <key>FSVkPresentMode</key>
+    <map>
+      <key>Comment</key>
+      <string>Vulkan renderer: how frames are shown. 0 follows the Vertical Sync preference (on: capped to the refresh rate, off: uncapped), 1 always vsync, 2 uncapped (can tear), 3 uncapped without tearing. Takes effect at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
       <key>Value</key>
       <integer>0</integer>
     </map>
