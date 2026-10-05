@@ -121,6 +121,7 @@
 #include "nd/ndlogthrottle.h"
 // <FS:Zi> Run Prio 0 default bento pose in the background to fix splayed hands, open mouths, etc.
 #include "llanimationstates.h"
+#include "llvkmirror.h" // <FS> Vulkan present mode
 
 // Third party library includes
 #include <boost/algorithm/string.hpp>
@@ -383,9 +384,17 @@ static bool handleAnisotropicChanged(const LLSD& newvalue)
     return true;
 }
 
+// <FS> Vulkan present mode: follows FSVkPresentMode, and the Vertical Sync preference while that is 0
+static bool handleVkPresentModeChanged(const LLSD& newvalue)
+{
+    LLVkMirror::setPresentPreference((S32)newvalue.asInteger(), gSavedSettings.getBOOL("RenderVSyncEnable"));
+    return true;
+}
+
 static bool handleVSyncChanged(const LLSD& newvalue)
 {
     LLPerfStats::tunables.vsyncEnabled = newvalue.asBoolean();
+    LLVkMirror::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), newvalue.asBoolean()); // <FS>
     if (gViewerWindow && gViewerWindow->getWindow())
     {
         gViewerWindow->getWindow()->toggleVSync(newvalue.asBoolean());
@@ -1344,6 +1353,7 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "RenderMaxPartCount", handleMaxPartCountChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderDynamicLOD", handleRenderDynamicLODChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderVSyncEnable", handleVSyncChanged);
+    setting_setup_signal_listener(gSavedSettings, "FSVkPresentMode", handleVkPresentModeChanged); // <FS>
     setting_setup_signal_listener(gSavedSettings, "RenderDeferredNoise", handleReleaseGLBufferChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderDebugPipeline", handleRenderDebugPipelineChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderResolutionDivisor", handleRenderResolutionDivisorChanged);

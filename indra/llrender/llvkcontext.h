@@ -262,6 +262,11 @@ private:
     std::vector<std::function<void()>> mPendingDeferred;     // destroyed with the next frame slot that completes
 };
 
+// How the swapchain presents (setting FSVkPresentMode with the Vertical Sync preference; the environment variable LL_VK_PRESENT overrides both).
+// mode: 0 follow the Vertical Sync preference (on: FIFO, off: IMMEDIATE), 1 vsync (FIFO), 2 uncapped (IMMEDIATE, can tear), 3 uncapped without tearing (MAILBOX).
+// Takes effect at once: the swapchain is recreated at the start of the next frame.
+void setPresentPreference(int mode, bool vsync_on);
+
 // A swapchain for a presentation surface. Recreated on resize or when the surface becomes out of date.
 class Swapchain
 {
@@ -281,7 +286,7 @@ public:
     bool presentNoWait(U32 index);
 
     bool isValid() const { return mSwapchain != VK_NULL_HANDLE; }
-    bool needsRecreate() const { return mNeedsRecreate; }
+    bool needsRecreate() const;
     VkImage getImage(U32 i) const { return mImages[i]; }
     VkImageView getView(U32 i) const { return mViews[i]; }
     VkSemaphore getRenderDone(U32 i) const { return mRenderDone[i]; }
@@ -298,6 +303,7 @@ private:
     std::vector<VkImageView> mViews;
     std::vector<VkSemaphore> mRenderDone;
     bool mNeedsRecreate = false;
+    VkPresentModeKHR mRequestedMode = VK_PRESENT_MODE_FIFO_KHR;   // what was asked for when the swapchain was made (the device may not offer it)
     bool mPresentOutOfDate = false;
 };
 
