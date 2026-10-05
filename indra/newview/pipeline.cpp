@@ -4210,6 +4210,8 @@ struct ShadowPrepTimes
     U32 mCascades = 0;
 };
 ShadowPrepTimes sShadowPrepTimes[2]; // [parallel]
+U64 sCascadeRenderNs[4];                 // renderShadow of each sun cascade (preparation included), summed over the renders
+U32 sCascadeRenders[4];
 LLCullResult sShadowPrepReference[4];    // check mode: the serial path's result for each cascade, made before the workers run
 bool sShadowPrepTimed = false;       // the serial path of a sun cascade is running: renderShadow times its cull and sort
 
@@ -4278,6 +4280,14 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
             }
         }
         LL_INFOS("ShadowPrep") << (parallel ? "parallel" : "serial") << " phases (ms/frame):" << phases << LL_ENDL;
+        std::string per_cascade;
+        for (int c = 0; c < 4; ++c)
+        {
+            per_cascade += llformat(" cascade %d: %.3f ms per render (%u renders)", c, sCascadeRenders[c] ? (double)sCascadeRenderNs[c] / 1.0e6 / sCascadeRenders[c] : 0.0, sCascadeRenders[c]);
+            sCascadeRenderNs[c] = 0;
+            sCascadeRenders[c] = 0;
+        }
+        LL_INFOS("ShadowPrep") << "renderShadow by cascade:" << per_cascade << LL_ENDL;
         t = ShadowPrepTimes();
     }
 }
@@ -12063,8 +12073,14 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
                 sShadowPrepTimed = !prepared;
                 PhaseLap shadow_lap;
+                const auto cascade_start = std::chrono::steady_clock::now();
                 renderShadow(prep.mView, prep.mProj, shadow_cam, *prep.mResult, true, prepared ? &prep : nullptr);
                 shadow_lap.mark(PH_RENDERSHADOW);
+                if (!gCubeSnapshot && j >= 0 && j < 4)
+                {
+                    sCascadeRenderNs[j] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - cascade_start).count();
+                    sCascadeRenders[j]++;
+                }
                 sShadowPrepTimed = false;
 
                 sShadowCascadeCull.mActive = false;
