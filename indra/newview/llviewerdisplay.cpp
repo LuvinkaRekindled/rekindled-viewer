@@ -1667,6 +1667,10 @@ void render_ui(F32 zoom_factor, int subfield)
     // apply gamma correction and post effects
     gPipeline.renderFinalize();
 
+    // <FS> DLSS: from here on everything is drawn straight into the full-size window, after the upscale. It must not carry the camera jitter of the scene (nothing
+    // averages it out any more, so billboards such as the voice dot, beams and selection outlines would vibrate by up to a pixel).
+    LLUnjitteredScope unjittered_ui;
+
     {
         LLGLState::checkStates();
 
