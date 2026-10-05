@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include <chrono>
 
 #include "llvoavatar.h"
 
@@ -3122,12 +3123,72 @@ void LLVOAvatar::dumpAnimationState()
     }
 }
 
+// <FS> Where the main thread's avatar update time goes, per avatar and path (logged from LLViewerObjectList::update every 300 frames; reset there).
+U64 gFSAvStatNs[32];
+U32 gFSAvStatCount[32];
+bool gFSAvTimersOn = getenv("FS_AVATAR_TIMERS") != nullptr; // the timers cost a clock read pair per scope: opt-in (log tag AvatarUpdate)
+namespace
+{
+enum
+{
+    AV_IDLE_TOTAL,      // idleUpdate, the serial part (a deferred avatar's completion is counted apart)
+    AV_IDLE_PRE,        // idleUpdate before updateCharacter
+    AV_CHAR_TOTAL,      // updateCharacter
+    AV_CHAR_EARLY,      // updateMotions(HIDDEN) of an avatar that needs no update
+    AV_CHAR_ROOT,       // updateRootPositionAndRotation
+    AV_CHAR_HIDDEN,     // updateMotions(HIDDEN) of an invisible avatar
+    AV_CHAR_BEGIN,      // beginNormalMotionUpdate (deferred)
+    AV_CHAR_INLINE,     // updateMotions(NORMAL) inline: not deferred (self, animesh, ...)
+    AV_CHAR_POST,       // updateCharacterPostMotion inline
+    AV_IDLE_POSTCHAR,   // idleUpdatePostCharacter inline
+    AV_DEFERRED_DONE,   // completeDeferredMotionUpdate
+    AV_INL_SELF,        // counts only: why an avatar's normal update ran inline
+    AV_INL_CONTROL,
+    AV_INL_OTHER,
+    AV_PC_VOICEVIS,     // idleUpdatePostCharacter pieces
+    AV_PC_NAMEPOS,
+    AV_PC_MISC,
+    AV_PC_APPEARANCE,
+    AV_PC_DETAILED,     // lipsync, loading effect, below water, wind
+    AV_PC_NAMETAG,
+    AV_PC_COMPLEXITY,
+    AV_PC_DEBUGINFO,
+    AV_PM_HEADOFFSET,   // updateCharacterPostMotion pieces
+    AV_PM_FOOTSTEP,
+    AV_PM_MATRIX,
+    AV_ROOT_ORIENT,     // updateOrientation inside updateRootPositionAndRotation
+    AV_COUNT
+};
+
+struct AvScope
+{
+    int mSlot;
+    std::chrono::steady_clock::time_point mStart;
+    explicit AvScope(int slot) : mSlot(slot)
+    {
+        if (gFSAvTimersOn)
+        {
+            mStart = std::chrono::steady_clock::now();
+        }
+    }
+    ~AvScope()
+    {
+        if (gFSAvTimersOn)
+        {
+            gFSAvStatNs[mSlot] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mStart).count();
+            gFSAvStatCount[mSlot]++;
+        }
+    }
+};
+}
+
 //------------------------------------------------------------------------
 // idleUpdate()
 //------------------------------------------------------------------------
 void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    AvScope idle_total_scope(AV_IDLE_TOTAL);
 
     if (LLApp::isExiting())
         return;
@@ -3270,6 +3331,11 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     // animate the character
     // store off last frame's root position to be consistent with camera position
     mLastRootPos = mRoot->getWorldPosition();
+    if (gFSAvTimersOn)
+    {
+        gFSAvStatNs[AV_IDLE_PRE] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - idle_total_scope.mStart).count();
+        gFSAvStatCount[AV_IDLE_PRE]++;
+    }
     bool detailed_update = updateCharacter(agent);
 
     if (mMotionUpdateDeferred)
@@ -3279,7 +3345,10 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
         return;
     }
 
-    idleUpdatePostCharacter(detailed_update);
+    {
+        AvScope post_scope(AV_IDLE_POSTCHAR);
+        idleUpdatePostCharacter(detailed_update);
+    }
 }
 
 void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
@@ -3290,20 +3359,37 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
     bool voice_enabled = (visualizers_in_calls || LLVoiceClient::getInstance()->inProximalChannel()) &&
                          LLVoiceClient::getInstance()->getVoiceEnabled(mID);
 
-    LLVector3 hud_name_pos = idleCalcNameTagPosition(mLastRootPos);
+    LLVector3 hud_name_pos;
+    {
+        AvScope s(AV_PC_NAMEPOS);
+        hud_name_pos = idleCalcNameTagPosition(mLastRootPos);
+    }
 
-    idleUpdateVoiceVisualizer(voice_enabled, hud_name_pos);
-    idleUpdateMisc( detailed_update );
-    idleUpdateAppearanceAnimation();
+    {
+        AvScope s(AV_PC_VOICEVIS);
+        idleUpdateVoiceVisualizer(voice_enabled, hud_name_pos);
+    }
+    {
+        AvScope s(AV_PC_MISC);
+        idleUpdateMisc( detailed_update );
+    }
+    {
+        AvScope s(AV_PC_APPEARANCE);
+        idleUpdateAppearanceAnimation();
+    }
     if (detailed_update)
     {
+        AvScope s(AV_PC_DETAILED);
         idleUpdateLipSync( voice_enabled );
         idleUpdateLoadingEffect();
         idleUpdateBelowWater(); // wind effect uses this
         idleUpdateWindEffect();
     }
 
-    idleUpdateNameTag(hud_name_pos);
+    {
+        AvScope s(AV_PC_NAMETAG);
+        idleUpdateNameTag(hud_name_pos);
+    }
 
     // Complexity has stale mechanics, but updates still can be very rapid
     // so spread avatar complexity calculations over frames to lesen load from
@@ -3338,9 +3424,13 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
         // replace with LLPipeline::profileAvatar?
         // Avatar profile takes ~ 0.5ms while idleUpdateRenderComplexity takes ~5ms
         // (both are unacceptably costly)
+        AvScope s(AV_PC_COMPLEXITY);
         idleUpdateRenderComplexity();
     }
-    idleUpdateDebugInfo();
+    {
+        AvScope s(AV_PC_DEBUGINFO);
+        idleUpdateDebugInfo();
+    }
 }
 
 void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &position)
@@ -5661,6 +5751,7 @@ void LLVOAvatar::updateRootPositionAndRotation(LLAgent& agent, F32 speed, bool w
         {
             // Rotation fixups for avatars in motion.
             // Skip for animated objects.
+            AvScope orient_scope(AV_ROOT_ORIENT);
             updateOrientation(agent, speed, delta_time);
         }
     }
@@ -5731,6 +5822,7 @@ bool LLVOAvatar::computeNeedsUpdate()
 //------------------------------------------------------------------------
 bool LLVOAvatar::updateCharacter(LLAgent &agent)
 {
+    AvScope char_total_scope(AV_CHAR_TOTAL);
     updateDebugText();
 
     if (!mIsBuilt)
@@ -5762,6 +5854,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     //--------------------------------------------------------------------
     if (!needs_update && !isSelf())
     {
+        AvScope early_scope(AV_CHAR_EARLY);
         updateMotions(LLCharacter::HIDDEN_UPDATE);
         return false;
     }
@@ -5811,7 +5904,10 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // In some cases, calls updateOrientation() for a lot of the
     // work
     // --------------------------------------------------------------------
-    updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
+    {
+        AvScope root_scope(AV_CHAR_ROOT);
+        updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
+    }
 
     //-------------------------------------------------------------------------
     // Update character motions
@@ -5822,7 +5918,18 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // update animations
     if (!visible && !isSelf()) // NOTE: never do a "hidden update" for self avatar as it interrupts controller processing
     {
+        AvScope hidden_scope(AV_CHAR_HIDDEN);
         updateMotions(LLCharacter::HIDDEN_UPDATE);
+        if (sMotionUpdateBatch && mSpecialRenderMode == 0 && !isUIAvatar() && mRoot)
+        {
+            // <FS> nothing to blend, but the skeleton's world matrices still follow the root: worked out in the parallel batch, then the rest of the update completes
+            mMotionUpdateDeferred = true;
+            mDeferredMatricesOnly = true;
+            mDeferredSitGroundConstrained = was_sit_ground_constrained;
+            mDeferredVisible = visible;
+            sMotionUpdateBatch->push_back(this);
+            return visible;
+        }
     }
     else if (mSpecialRenderMode == 1) // Animation Preview
     {
@@ -5832,7 +5939,12 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     {
         // Serial part now; the pose blend runs later, possibly on a worker
         // thread, and then completeDeferredMotionUpdate() finishes the frame.
-        if (beginNormalMotionUpdate())
+        bool began;
+        {
+            AvScope begin_scope(AV_CHAR_BEGIN);
+            began = beginNormalMotionUpdate();
+        }
+        if (began)
         {
             mMotionUpdateDeferred = true;
             mDeferredSitGroundConstrained = was_sit_ground_constrained;
@@ -5844,10 +5956,18 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     else
     {
         // Might be better to do HIDDEN_UPDATE if cloud
+        if (gFSAvTimersOn)
+        {
+            gFSAvStatCount[isSelf() ? AV_INL_SELF : (isControlAvatar() ? AV_INL_CONTROL : AV_INL_OTHER)]++;
+        }
+        AvScope inline_scope(AV_CHAR_INLINE);
         updateMotions(LLCharacter::NORMAL_UPDATE);
     }
 
-    updateCharacterPostMotion(was_sit_ground_constrained, visible);
+    {
+        AvScope post_scope(AV_CHAR_POST);
+        updateCharacterPostMotion(was_sit_ground_constrained, visible);
+    }
 
     return visible;
 }
@@ -5861,7 +5981,6 @@ bool LLVOAvatar::canDeferMotionUpdate() const
 {
     if (!sMotionUpdateBatch
         || isSelf()                     // own avatar: motion stop requests go to the network
-        || isControlAvatar()
         || isUIAvatar()
         || mSpecialRenderMode != 0
         || !canDeferNormalMotionUpdate())
@@ -5884,6 +6003,14 @@ bool LLVOAvatar::canDeferMotionUpdate() const
 // updateCharacterPostMotion() (which then finds the matrices clean). The counters of LLJoint are statistics only.
 void LLVOAvatar::runDeferredMotionBlend()
 {
+    if (mDeferredMatricesOnly)
+    {
+        if (mRoot)
+        {
+            mRoot->updateWorldMatrixChildren();
+        }
+        return;
+    }
     finishNormalMotionUpdate();
     if (mRoot)
     {
@@ -5898,12 +6025,14 @@ void LLVOAvatar::completeDeferredMotionUpdate()
         return;
     }
     mMotionUpdateDeferred = false;
+    mDeferredMatricesOnly = false;
 
     if (isDead())
     {
         return;
     }
 
+    AvScope done_scope(AV_DEFERRED_DONE);
     updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible);
     idleUpdatePostCharacter(mDeferredDetailedUpdate);
 }
@@ -5930,13 +6059,22 @@ void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool
     }
 
     // update head position
-    updateHeadOffset();
+    {
+        AvScope s(AV_PM_HEADOFFSET);
+        updateHeadOffset();
+    }
 
     // Generate footstep sounds when feet hit the ground
-    updateFootstepSounds();
+    {
+        AvScope s(AV_PM_FOOTSTEP);
+        updateFootstepSounds();
+    }
 
     // Update child joints as needed.
-    mRoot->updateWorldMatrixChildren();
+    {
+        AvScope s(AV_PM_MATRIX);
+        mRoot->updateWorldMatrixChildren();
+    }
 
     if (visible)
     {
