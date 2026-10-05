@@ -1069,6 +1069,9 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mDepthRO = false;
     mAppliedColorCount = 0xFFFF;
     mBoundPipeline = VK_NULL_HANDLE;
+    mBoundIndexBuffer = VK_NULL_HANDLE;
+    mUboKeyDirty = true;
+    mLastUboSet = VK_NULL_HANDLE;
     mVertexInputDirty = true;
     mSet0Bound = false;
     mAppliedDynamicOffset = 0xFFFFFFFF;
@@ -1846,14 +1849,23 @@ void Renderer::setUniformBuffer(U32 index, VkBuffer buffer, VkDeviceSize range)
 {
     if (index < 4)
     {
-        mUbo[index] = buffer;
-        mUboRange[index] = buffer ? std::min<VkDeviceSize>(range, MAX_UNIFORM_RANGE_NAMED) : 0;
+        const VkDeviceSize used_range = buffer ? std::min<VkDeviceSize>(range, MAX_UNIFORM_RANGE_NAMED) : 0;
+        if (mUbo[index] != buffer || mUboRange[index] != used_range)
+        {
+            mUbo[index] = buffer;
+            mUboRange[index] = used_range;
+            mUboKeyDirty = true;
+        }
     }
 }
 
 // the set 0 variant for the named uniform blocks currently bound (built once per combination per frame)
 VkDescriptorSet Renderer::uboSet()
 {
+    if (!mUboKeyDirty && mLastUboSet != VK_NULL_HANDLE)
+    {
+        return mLastUboSet;         // <FS> same uniform buffers as the last draw of this frame: no key, no map lookup
+    }
     std::array<U64, 8> key = {};
     for (U32 i = 0; i < 4; ++i)
     {
@@ -1864,6 +1876,8 @@ VkDescriptorSet Renderer::uboSet()
     auto it = sets.find(key);
     if (it != sets.end())
     {
+        mLastUboSet = it->second;
+        mUboKeyDirty = false;
         return it->second;
     }
     Context& ctx = Context::instance();
@@ -1894,6 +1908,8 @@ VkDescriptorSet Renderer::uboSet()
     }
     vkUpdateDescriptorSets(ctx.getDevice(), 5, w, 0, nullptr);
     sets[key] = set;
+    mLastUboSet = set;
+    mUboKeyDirty = false;
     return set;
 }
 
@@ -1949,7 +1965,13 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         mDiagLastIndexEnd = (U64)first_index + index_count;
         mDiagLastVertexOffset = vertex_offset;
     }
-    vkCmdBindIndexBuffer(mCmd, mIndexBuffer, mIndexOffset, mIndexType);
+    if (mIndexBuffer != mBoundIndexBuffer || mIndexOffset != mBoundIndexOffset || mIndexType != mBoundIndexType)
+    {
+        vkCmdBindIndexBuffer(mCmd, mIndexBuffer, mIndexOffset, mIndexType);       // <FS> only when it differs from what the command buffer holds
+        mBoundIndexBuffer = mIndexBuffer;
+        mBoundIndexOffset = mIndexOffset;
+        mBoundIndexType = mIndexType;
+    }
     startPendingQuery();
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
     LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
@@ -2021,6 +2043,8 @@ bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>
     // whatever the callback bound or set, the next draw starts from scratch
     mStateApplied = false;
     mBoundPipeline = VK_NULL_HANDLE;
+    mBoundIndexBuffer = VK_NULL_HANDLE;
+    mUboKeyDirty = true;
     mVertexInputDirty = true;
     mAppliedVertexInputValid = false;
     mSet0Bound = false;

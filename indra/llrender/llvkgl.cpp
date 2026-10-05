@@ -25,6 +25,11 @@
 
 #include <chrono>
 #include "llvkgl_hooks.inc"      // generated: storage and names for the per-hook statistics
+
+namespace LLVkGL
+{
+const char* hook_name(int i) { return (i >= 0 && i < HOOK_COUNT) ? kHookNames[i] : "?"; }
+}
 #include "llvkasync.h"
 #include <map>
 #include <mutex>
@@ -104,12 +109,16 @@ namespace
 struct HookTimer
 {
     LARGE_INTEGER mStart;
-    HookTimer() { QueryPerformanceCounter(&mStart); }
+    const bool mOn = LLVkMirror::gPhaseTiming;      // the total only goes into the LL_VK_PHASES report: no clock reads (two per draw) otherwise
+    HookTimer() { if (mOn) QueryPerformanceCounter(&mStart); }
     ~HookTimer()
     {
-        LARGE_INTEGER end;
-        QueryPerformanceCounter(&end);
-        gHookTicks += end.QuadPart - mStart.QuadPart;
+        if (mOn)
+        {
+            LARGE_INTEGER end;
+            QueryPerformanceCounter(&end);
+            gHookTicks += end.QuadPart - mStart.QuadPart;
+        }
     }
 };
 
@@ -1346,6 +1355,10 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
     struct BindingKey { GLuint mBuffer; GLsizei mStride; U64 mBase; U32 mBinding; };
     BindingKey made[16];
     U32 made_count = 0;
+    // <FS> the attributes of a draw mostly come from one buffer: it is looked up once, and marked as used right here (mark_used used to look every buffer up again)
+    GLuint last_name = 0;
+    auto last_it = sGL.mBuffers.end();
+    const U64 frame_now = Context::instance().getFrameNumber();
 
     for (size_t a = 0; a < info.mAttributes.size(); ++a)
     {
@@ -1355,9 +1368,21 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
             continue;
         }
         VaoAttrib& at = vao.mAttrib[loc];
-        auto bit = sGL.mBuffers.find(at.mBuffer);
-        if (at.mEnabled && at.mBuffer && bit != sGL.mBuffers.end() && bit->second.mVk.valid())
+        auto bit = sGL.mBuffers.end();
+        bool from_buffer = false;
+        if (at.mEnabled && at.mBuffer)
         {
+            if (at.mBuffer != last_name)
+            {
+                last_name = at.mBuffer;
+                last_it = sGL.mBuffers.find(at.mBuffer);
+            }
+            bit = last_it;
+            from_buffer = bit != sGL.mBuffers.end() && bit->second.mVk.valid();
+        }
+        if (from_buffer)
+        {
+            bit->second.mLastUseFrame = frame_now;
             const U32 tb = attrib_type_bytes(at.mType);
             const GLsizei stride = at.mStride ? at.mStride : (GLsizei)(tb * (U32)at.mSize);
             // Vulkan limits attribute offsets to a couple of KB. An offset at least as large as the stride is the
@@ -1715,6 +1740,7 @@ void sync_uniform_blocks(Renderer& r, std::vector<GLuint>& used_buffers)
         auto it = sUboBinding[i] ? sGL.mBuffers.find(sUboBinding[i]) : sGL.mBuffers.end();
         if (it != sGL.mBuffers.end() && it->second.mVk.valid())
         {
+            it->second.mLastUseFrame = Context::instance().getFrameNumber();      // <FS> (mark_used no longer walks the buffers of a draw)
             r.setUniformBuffer(i, it->second.mVk.mBuffer, it->second.mVk.mSize);
             used_buffers.push_back(it->first);
         }
@@ -1914,16 +1940,16 @@ U64 device_buffer_min_bytes()
     return v;
 }
 
+// <FS> the vertex and uniform buffers of a draw are marked as they are found (build_vertex_input, sync_uniform_blocks); only the element buffer is left, and only
+// when the draw has one (glDrawArrays passes 0: it used to look up buffer 0 for nothing)
 void mark_used(const std::vector<GLuint>& buffers, GLuint element)
 {
-    const U64 frame = Context::instance().getFrameNumber();
-    for (GLuint b : buffers)
+    (void)buffers;
+    if (element)
     {
-        auto it = sGL.mBuffers.find(b);
-        if (it != sGL.mBuffers.end()) it->second.mLastUseFrame = frame;
+        auto eit = sGL.mBuffers.find(element);
+        if (eit != sGL.mBuffers.end()) eit->second.mLastUseFrame = Context::instance().getFrameNumber();
     }
-    auto eit = sGL.mBuffers.find(element);
-    if (element && eit != sGL.mBuffers.end()) eit->second.mLastUseFrame = frame;
 }
 
 // writes into a GL buffer's host memory, renaming the Vulkan buffer first if a frame in flight may still read it
@@ -3100,6 +3126,7 @@ void after_frame()
                     if (LLVkAsync::gEnabled)
                     {
                         LL_INFOS("VkPhases") << "frame pacing: " << LLVkAsync::pacingReport() << LL_ENDL;
+                        LL_INFOS("VkPhases") << "worker operations: " << LLVkAsync::opStatsReport((size_t)frames) << LL_ENDL;
                     }
                     if (LLVkAsync::gEnabled)
                     {

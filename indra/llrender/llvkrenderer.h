@@ -400,6 +400,12 @@ public:
     DrawDiag takeDrawDiag() { DrawDiag d = mDrawDiag; mDrawDiag = DrawDiag(); return d; }
 private:
     DrawDiag mDrawDiag;
+    // <FS> what is bound in the command buffer already, so a draw does not record it again (reset where mBoundPipeline is)
+    VkBuffer mBoundIndexBuffer = VK_NULL_HANDLE;
+    VkDeviceSize mBoundIndexOffset = 0;
+    VkIndexType mBoundIndexType = VK_INDEX_TYPE_UINT16;
+    bool mUboKeyDirty = true;               // the bound uniform buffers changed since uboSet() last looked its set up
+    VkDescriptorSet mLastUboSet = VK_NULL_HANDLE;
     bool mDiagChanged = false;
     VkBuffer mDiagLastIndexBuffer = VK_NULL_HANDLE;
     VkDeviceSize mDiagLastIndexOffset = 0;
