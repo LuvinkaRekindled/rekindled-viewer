@@ -5879,6 +5879,18 @@ bool LLVOAvatar::canDeferMotionUpdate() const
 //-----------------------------------------------------------------------------
 // completeDeferredMotionUpdate()
 //-----------------------------------------------------------------------------
+// <FS> The deferred pose blend, run on a worker thread (see run_avatar_motion_batch). The skeleton's world matrices follow the blend: each joint is worked out from
+// its own local transform and its parent's (read only), and every avatar has its own joints, so this is done here, in parallel, instead of serially afterwards in
+// updateCharacterPostMotion() (which then finds the matrices clean). The counters of LLJoint are statistics only.
+void LLVOAvatar::runDeferredMotionBlend()
+{
+    finishNormalMotionUpdate();
+    if (mRoot)
+    {
+        mRoot->updateWorldMatrixChildren();
+    }
+}
+
 void LLVOAvatar::completeDeferredMotionUpdate()
 {
     if (!mMotionUpdateDeferred)
