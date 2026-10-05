@@ -44,7 +44,8 @@ namespace LLVkAsync
         CMD_BASE = 1000,
         CMD_FRAME_BEGIN, CMD_FRAME_END, CMD_PRESENT, CMD_HOLD, CMD_SNAPSHOT_BOUNDARY, CMD_ARM_SNAPSHOT,
         CMD_UPSCALE, CMD_PROGRAM_BIND, CMD_UNIFORM_SCALAR, CMD_UNIFORM_VECTOR, CMD_UNIFORM_MATRIX, CMD_SAMPLER_UNIT, CMD_PROGRAM_DESTROY,
-        CMD_SYNC, CMD_STOP, CMD_WRAP
+        CMD_SYNC, CMD_STOP, CMD_WRAP,
+        CMD_BIND_TEXTURE_UNIT, CMD_ARRAY_RUN       // merged records, see the coalescing in llvkasync.cpp
     };
 
     // frame boundaries: the main thread may be at most two frames ahead of the worker
