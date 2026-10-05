@@ -19,6 +19,8 @@
 #include <atomic>
 #include <deque>
 #include <mutex>
+#include <algorithm>
+#include <intrin.h>
 #include <vector>
 
 #pragma comment(lib, "Synchronization.lib")
@@ -146,6 +148,20 @@ std::mutex gPaceMutex;
 std::vector<float> gBeginGaps, gPresentGaps;        // milliseconds between consecutive frame starts (main) / presents (worker)
 long long gLastBeginTick = 0, gLastPresentTick = 0;
 long long gMainWaitTicks = 0, gWorkerIdleTicks = 0;
+
+// LL_VK_PHASES: the worker's time per operation, in processor time-stamp ticks (a cheap read; converted with a ratio measured against the performance counter)
+static_assert(OP_GL_COUNT == LLVkGL::HOOK_COUNT, "the worker statistics name an operation by its place in the hook table");
+constexpr int OP_STAT_SLOTS = OP_GL_COUNT + 24;
+bool gOpStats = false;
+bool gOpStatsPeriodic = false;      // LL_VK_OPSTATS without LL_VK_PHASES: the worker logs the numbers itself every 600 presented frames
+unsigned gOpStatsFrames = 0;
+unsigned long long gOpStatTicks[OP_STAT_SLOTS] = {};
+unsigned long long gOpStatCalls[OP_STAT_SLOTS] = {};
+unsigned long long gOpStatTsc0 = 0;
+long long gOpStatQpc0 = 0;
+inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
+const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap" };
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 void note_gap(std::vector<float>& gaps, long long& last)
@@ -326,6 +342,52 @@ void syncCall(const std::function<void()>& fn)
 // ---------------------------------------------------------------------------------------------------------------------------------
 // frame boundaries
 // ---------------------------------------------------------------------------------------------------------------------------------
+
+std::string opStatsReport(size_t frames)
+{
+    if (!gOpStats)
+    {
+        return "(off)";
+    }
+    frames = std::max<size_t>(1, frames);
+    LARGE_INTEGER qf, qn;
+    QueryPerformanceFrequency(&qf);
+    QueryPerformanceCounter(&qn);
+    const unsigned long long tsc_now = __rdtsc();
+    const long long window_qpc = std::max<long long>(1, qn.QuadPart - gOpStatQpc0);      // this report's window, before it is restarted below
+    const double tsc_per_qpc = (double)(tsc_now - gOpStatTsc0) / (double)std::max<long long>(1, qn.QuadPart - gOpStatQpc0);
+    const double ms_per_tick = 1000.0 / ((double)qf.QuadPart * tsc_per_qpc);
+    struct Row { int mSlot; unsigned long long mTicks, mCalls; };
+    std::vector<Row> rows;
+    unsigned long long total = 0;
+    for (int i = 0; i < OP_STAT_SLOTS; ++i)
+    {
+        if (gOpStatCalls[i])
+        {
+            rows.push_back({ i, gOpStatTicks[i], gOpStatCalls[i] });
+            total += gOpStatTicks[i];
+        }
+        gOpStatTicks[i] = 0;
+        gOpStatCalls[i] = 0;
+    }
+    gOpStatTsc0 = tsc_now;
+    gOpStatQpc0 = qn.QuadPart;
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.mTicks > b.mTicks; });
+    std::string out;
+    char buf[200];
+    const double wall_ms = (double)window_qpc * 1000.0 / (double)qf.QuadPart;
+    snprintf(buf, sizeof(buf), "%.2f ms/frame in operations out of %.2f ms/frame wall (the timer costs about 15 ns per operation) | ", (double)total * ms_per_tick / (double)frames, wall_ms / (double)frames);
+    out = buf;
+    for (size_t k = 0; k < rows.size() && k < 22; ++k)
+    {
+        const Row& r = rows[k];
+        const char* name = r.mSlot < OP_GL_COUNT ? LLVkGL::hook_name(r.mSlot) : (r.mSlot - OP_GL_COUNT < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[r.mSlot - OP_GL_COUNT] : "cmd?");
+        snprintf(buf, sizeof(buf), "%s %.0f calls %.2f ms %.0f ns | ", name, (double)r.mCalls / (double)frames, (double)r.mTicks * ms_per_tick / (double)frames,
+                 (double)r.mTicks * ms_per_tick * 1e6 / (double)r.mCalls);
+        out += buf;
+    }
+    return out;
+}
 
 std::string pacingReport()
 {
@@ -970,7 +1032,16 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         break;
     }
     case CMD_FRAME_END: LLVkMirror::endFrameImpl(); break;
-    case CMD_PRESENT: LLVkMirror::presentFrameImpl(); note_gap(gPresentGaps, gLastPresentTick); break;
+    case CMD_PRESENT:
+        LLVkMirror::presentFrameImpl();
+        note_gap(gPresentGaps, gLastPresentTick);
+        if (gOpStatsPeriodic && ++gOpStatsFrames >= 600)
+        {
+            LL_INFOS("VkOps") << "frame pacing: " << pacingReport() << LL_ENDL;
+            LL_INFOS("VkOps") << "worker operations: " << opStatsReport(gOpStatsFrames) << LL_ENDL;
+            gOpStatsFrames = 0;
+        }
+        break;
     case CMD_HOLD: LLVkMirror::holdFrameImpl(r.get<S32>() != 0); break;
     case CMD_SNAPSHOT_BOUNDARY: LLVkMirror::snapshotBoundaryImpl(r.get<S32>()); break;
     case CMD_ARM_SNAPSHOT: LLVkMirror::armSnapshotCompareImpl(); break;
@@ -1068,6 +1139,7 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
     gCurrentOp = op;
     gCurrentCtx = ctx;
     LLVkGL::set_worker_context(ctx);
+    const unsigned long long t0 = gOpStats ? __rdtsc() : 0;
     if (op < OP_GL_COUNT)
     {
         dispatch_gl(op, flags, payload);
@@ -1075,6 +1147,12 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
     else
     {
         dispatch_cmd(op, flags, payload);
+    }
+    if (gOpStats)
+    {
+        const int slot = opStatSlot(op);
+        gOpStatTicks[slot] += __rdtsc() - t0;
+        ++gOpStatCalls[slot];
     }
 }
 
@@ -1343,6 +1421,15 @@ bool start()
         gEnabled = true;
         LL_INFOS("VkAsync") << "LL_VK_ASYNC=loopback: GL calls go through the queue and are replayed at once on the main thread (no worker thread)" << LL_ENDL;
         return true;
+    }
+    if (getenv("LL_VK_PHASES") || getenv("LL_VK_OPSTATS"))
+    {
+        gOpStatsPeriodic = getenv("LL_VK_PHASES") == nullptr;
+        LARGE_INTEGER qn;
+        QueryPerformanceCounter(&qn);
+        gOpStatQpc0 = qn.QuadPart;
+        gOpStatTsc0 = __rdtsc();
+        gOpStats = true;
     }
     gRunning.store(true);
     gThread = CreateThread(nullptr, 0, workerMain, nullptr, 0, nullptr);

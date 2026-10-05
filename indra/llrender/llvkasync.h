@@ -85,6 +85,8 @@ namespace LLVkAsync
     void queryResultStats(unsigned long long out[2]);
     // frame pacing since the last call: spacing of the main thread's frame starts and of the worker's presents (ms: n, avg, p50, p95, p99, max), and how long each side waited for the other
     std::string pacingReport();
+    // LL_VK_PHASES: what the worker thread spent its time on since the last call, per GL / command operation (calls, ms per frame, ns per call)
+    std::string opStatsReport(size_t frames);
 }
 
 #endif // LL_VULKAN

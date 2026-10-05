@@ -179,6 +179,7 @@ namespace LLVkGL
 {
     // LL_VK_PHASES: calls and CPU time of every sink hook (the time includes waiting for the lock)
     constexpr int HOOK_COUNT = 107;
+    const char* hook_name(int i);       // name of GL operation i (LLVkAsync::Op order), for the worker's per-operation statistics
     extern long long gHookStatTicks[2 * HOOK_COUNT];     // the second half: calls made by other threads
     extern long long gHookStatCalls[2 * HOOK_COUNT];
     struct HookStat
