@@ -60,7 +60,7 @@ public:
         NUM_CAMERAS
     } eCameraID;
 
-    static eCameraID sCurCameraID;
+    static thread_local eCameraID sCurCameraID; // <FS> per thread: the parallel shadow cascade preparation runs several cameras at once
 
     bool updateCameraLocation(const LLVector3 &center,
                                 const LLVector3 &up_direction,

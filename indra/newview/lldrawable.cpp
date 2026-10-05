@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "lldrawable.h"
+#include <mutex>
 
 // library includes
 #include "material_codes.h"
@@ -1559,6 +1560,16 @@ void LLSpatialBridge::setVisible(LLCamera& camera_in, std::vector<LLDrawable*>* 
         }
     }
 
+
+    // <FS> the parallel shadow cascade preparation culls the same bridge from several threads: rebound() writes and the walk
+    // below reads, so one thread at a time per bridge. Control avatar bridges read each other's bounds in rebound(): they share one lock.
+    std::unique_lock<std::mutex> bridge_lock;
+    if (LLPipeline::sParallelPrep)
+    {
+        static std::mutex sBridgeLocks[16];
+        const size_t stripe = (mDrawableType == LLPipeline::RENDER_TYPE_CONTROL_AV) ? 0 : 1 + ((reinterpret_cast<uintptr_t>(this) >> 6) % 15);
+        bridge_lock = std::unique_lock<std::mutex>(sBridgeLocks[stripe]);
+    }
 
     LLSpatialGroup* group = (LLSpatialGroup*) mOctree->getListener(0);
     group->rebound();

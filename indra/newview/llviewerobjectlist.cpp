@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llviewerobjectlist.h"
+#include "llforkjoinpool.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -1019,121 +1020,13 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
 
 namespace
 {
-// Minimal fork-join pool for the avatar motion blend phase. run() calls
-// fn(0..count-1), spread over the workers and the calling thread, and only
-// returns once every call has finished. While it runs the caller must not do
-// anything else, so the callbacks have the world to themselves.
-class LLAvatarMotionPool
-{
-public:
-    explicit LLAvatarMotionPool(U32 num_workers)
-    {
-        for (U32 i = 0; i < num_workers; ++i)
-        {
-            mThreads.emplace_back([this] { workerLoop(); });
-        }
-    }
-
-    ~LLAvatarMotionPool()
-    {
-        {
-            std::lock_guard<std::mutex> lock(mMutex);
-            mStop = true;
-        }
-        mWake.notify_all();
-        for (std::thread& thread : mThreads)
-        {
-            thread.join();
-        }
-    }
-
-    void run(size_t count, const std::function<void(size_t)>& fn)
-    {
-        {
-            std::lock_guard<std::mutex> lock(mMutex);
-            mFn = &fn;
-            mCount = count;
-            mNext = 0;
-            mRemaining = count;
-            ++mGeneration;
-        }
-        mWake.notify_all();
-
-        drain();
-
-        std::unique_lock<std::mutex> lock(mMutex);
-        mDone.wait(lock, [this] { return mRemaining == 0; });
-        mFn = nullptr;
-    }
-
-private:
-    void drain()
-    {
-        for (;;)
-        {
-            const size_t index = mNext.fetch_add(1);
-            if (index >= mCount)
-            {
-                return;
-            }
-            (*mFn)(index);
-            if (mRemaining.fetch_sub(1) == 1)
-            {
-                std::lock_guard<std::mutex> lock(mMutex);
-                mDone.notify_all();
-            }
-        }
-    }
-
-    void workerLoop()
-    {
-        U64 seen_generation = 0;
-        for (;;)
-        {
-            {
-                std::unique_lock<std::mutex> lock(mMutex);
-                mWake.wait(lock, [&] { return mStop || mGeneration != seen_generation; });
-                if (mStop)
-                {
-                    return;
-                }
-                seen_generation = mGeneration;
-            }
-            drain();
-        }
-    }
-
-    std::vector<std::thread> mThreads;
-    std::mutex mMutex;
-    std::condition_variable mWake;
-    std::condition_variable mDone;
-    const std::function<void(size_t)>* mFn = nullptr;
-    std::atomic<size_t> mCount{ 0 };
-    std::atomic<size_t> mNext{ 0 };
-    std::atomic<size_t> mRemaining{ 0 };
-    U64 mGeneration = 0;
-    bool mStop = false;
-};
-
 // Runs the deferred pose blend of every avatar in the batch, in parallel when
 // that is worth it, then finishes their idle updates on the calling thread.
 void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
-    static std::unique_ptr<LLAvatarMotionPool> pool;
-    static bool pool_checked = false;
-    if (!pool_checked)
-    {
-        pool_checked = true;
-        const U32 hardware_threads = std::thread::hardware_concurrency();
-        // the calling thread works too, so one worker fewer than the budget
-        const U32 workers = (hardware_threads >= 8) ? llmin(hardware_threads / 2, 8U) - 1 : 0;
-        if (workers > 0)
-        {
-            pool = std::make_unique<LLAvatarMotionPool>(workers);
-        }
-    }
+    LLForkJoinPool* pool = LLForkJoinPool::shared();
 
     constexpr size_t MIN_PARALLEL_BATCH = 4;
     if (pool && batch.size() >= MIN_PARALLEL_BATCH)

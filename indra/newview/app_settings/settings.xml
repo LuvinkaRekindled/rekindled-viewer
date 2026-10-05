@@ -2348,6 +2348,39 @@
       <key>Value</key>
       <integer>2</integer>
     </map>
+    <key>FSParallelShadowPrep</key>
+    <map>
+      <key>Comment</key>
+      <string>Prepare the sun shadow cascades (cull and render map) on worker threads, one cascade per thread, instead of one after the other on the main thread. Takes effect at once. The log (channel ShadowPrep) shows the main thread time per frame for both modes every 300 frames, so the two can be compared.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
+    <key>FSParallelShadowPrepAB</key>
+    <map>
+      <key>Comment</key>
+      <string>Test mode: ignore FSParallelShadowPrep and alternate between the serial and the parallel sun cascade preparation every 30 seconds, so the ShadowPrep log lines can be compared without touching settings.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
+    <key>FSParallelShadowPrepCheck</key>
+    <map>
+      <key>Comment</key>
+      <string>With FSParallelShadowPrep on, also run the serial cull and sort of every cascade and log where its result differs from the parallel one. Slower than either mode; for testing.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSShadowCascadeAvatarCull</key>
     <map>
       <key>Comment</key>

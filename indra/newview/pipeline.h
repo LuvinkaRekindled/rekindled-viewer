@@ -300,6 +300,32 @@ public:
     void stateSort(LLDrawable* drawablep, LLCamera& camera);
     void postSort(LLCamera& camera);
 
+    // <FS> Parallel preparation of the sun shadow cascades. The cull and the render map of each cascade are built on worker
+    // threads (each with its own camera id and cull result); everything that touches shared or GL state (geometry rebuilds,
+    // the draw pools) stays on the main thread. See generateSunShadow.
+    struct ShadowCascadePrep
+    {
+        S32 mIndex = 0;                         // cascade number
+        LLCamera mCamera;                       // the cascade's shadow camera, frustum planes set
+        LLCullResult* mResult = nullptr;
+        glm::mat4 mView;                        // the cascade's matrices, and the ones it had the frame before
+        glm::mat4 mProj;
+        glm::mat4 mLastView;
+        glm::mat4 mLastProj;
+        bool mCullActive = false;               // FSShadowCascadeAvatarCull for this cascade
+        LLVector3 mCullOrigin;
+        LLVector3 mCullAt;
+        F32 mCullSliceStart = 0.f;
+        F32 mCullMargin = 0.f;
+        std::vector<LLDrawable*> mDeferred;     // drawables of visible groups the workers left for the main thread (not volumes)
+    };
+    void shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions);
+    void shadowPrepRenderMap(ShadowCascadePrep& prep);
+    void shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps);
+    void shadowPrepFinish(ShadowCascadePrep& prep);
+    static void shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& reference);
+    static thread_local bool sParallelPrep; // true while a worker thread prepares a cascade: no shared statistics, bridges are locked
+
     void forAllVisibleDrawables(void (*func)(LLDrawable*));
 
     void renderObjects(U32 type, bool texture = true, bool batch_texture = false, bool rigged = false);
@@ -364,7 +390,7 @@ public:
 
     void renderHighlight(const LLViewerObject* obj, F32 fade);
 
-    void renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& camera, LLCullResult& result, bool depth_clamp);
+    void renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& camera, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared = nullptr); // <FS> prepared: the cull and sort were done by the parallel preparation
     void renderSelectedFaces(const LLColor4& color);
     void renderHighlights();
     bool renderVignette(LLRenderTarget* src, LLRenderTarget* dst);
