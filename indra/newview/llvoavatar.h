@@ -290,7 +290,7 @@ public:
     bool            canDeferMotionUpdate() const;
     // Runs the deferred pose blend phase. Safe to call from a worker thread
     // while no other thread touches avatars or the world.
-    void            runDeferredMotionBlend() { finishNormalMotionUpdate(); }
+    void            runDeferredMotionBlend();
     // Runs the rest of idleUpdate() on the main thread once the blend is done.
     void            completeDeferredMotionUpdate();
     void            updateFootstepSounds();
