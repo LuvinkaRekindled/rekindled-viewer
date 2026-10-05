@@ -331,6 +331,7 @@ void LLHUDText::renderText()
 void LLHUDText::setString(const std::string &text_utf8)
 {
     mTextSegments.clear();
+    mSizeDirty = true; // <FS>
 //  addLine(text_utf8, mColor);
 // [RLVa:KB] - Checked: RLVa-2.0.3
     // NOTE: setString() is called for debug and map beacons as well
@@ -362,6 +363,7 @@ void LLHUDText::setString(const std::string &text_utf8)
 void LLHUDText::clearString()
 {
     mTextSegments.clear();
+    mSizeDirty = true; // <FS>
 }
 
 
@@ -370,6 +372,7 @@ void LLHUDText::addLine(const std::string &text_utf8,
                         const LLFontGL::StyleFlags style,
                         const LLFontGL* font)
 {
+    mSizeDirty = true; // <FS>
     LLWString wline = utf8str_to_wstring(text_utf8);
     if (!wline.empty())
     {
@@ -410,6 +413,7 @@ void LLHUDText::setZCompare(const bool zcompare)
 void LLHUDText::setFont(const LLFontGL* font)
 {
     mFontp = font;
+    mSizeDirty = true; // <FS>
 }
 
 
@@ -620,6 +624,14 @@ LLVector2 LLHUDText::updateScreenPos(LLVector2 &offset)
 
 void LLHUDText::updateSize()
 {
+    // <FS> the size is worked out again only when the text, label, font, line limit or UI scale changed
+    if (!mSizeDirty && getMaxLines() == mSizeMaxLines)
+    {
+        return;
+    }
+    mSizeDirty = false;
+    mSizeMaxLines = getMaxLines();
+
     F32 height = 0.f;
     F32 width = 0.f;
 
@@ -794,6 +806,7 @@ void LLHUDText::reshape()
              segment_iter != textp->mTextSegments.end(); ++segment_iter )
         {
             segment_iter->clearFontWidthMap();
+            textp->mSizeDirty = true; // <FS>
         }
     }
 }
