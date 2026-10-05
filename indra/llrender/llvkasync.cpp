@@ -246,15 +246,17 @@ inline void mainCommit(size_t payload_bytes)
 // Nothing is dropped and nothing is reordered: whatever else is queued first writes out what is held, and the worker plays a merged record
 // by calling the same functions in the same order.
 bool gCoalesce = true;
+bool gFoldElement = true;                    // LL_VK_COALESCE=2 (default): the index buffer bind joins the run; 1: runs without it; 0: off
 unsigned long long gMainRecords = 0;        // records actually written by the main thread
 
 struct BindTexUnitArgs { GLenum mUnit; GLenum mTarget; GLuint mTexture; U32 mPad; };
 struct BufArgs { GLenum target; GLuint buffer; };
-struct RunHeader { GLenum mTarget; GLuint mBuffer; U32 mCount; U32 mHasBind; };
+struct RunHeader { GLenum mTarget; GLuint mBuffer; U32 mCount; U32 mFlags; GLuint mElem; U32 mPad; };   // flags: bit 0 array buffer bind, bit 1 index buffer bind (played after the pointers)
 struct RunEntry { U32 mKind; GLuint mIndex; GLint mSize; GLenum mType; GLsizei mStride; U32 mNormalized; const void* mPointer; };   // kind 0: glVertexAttribPointer, 1: glVertexAttribIPointer
 static_assert(sizeof(RunEntry) == 32, "run entry");
 constexpr U32 MAX_RUN = 16;
 constexpr GLenum GL_ARRAY_BUFFER_ENUM = 0x8892;
+constexpr GLenum GL_ELEMENT_ARRAY_BUFFER_ENUM = 0x8893;
 
 struct Coalesce
 {
@@ -262,6 +264,8 @@ struct Coalesce
     GLenum mActiveUnit = 0;
     bool mRunOpen = false;
     bool mRunHasBind = false;
+    bool mRunHasElem = false;
+    GLuint mElemBuffer = 0;
     GLenum mBindTarget = 0;
     GLuint mBindBuffer = 0;
     U32 mCount = 0;
@@ -297,7 +301,7 @@ void coFlushRun()
         return;
     }
     gCo.mRunOpen = false;
-    if (gCo.mCount == 0)
+    if (gCo.mCount == 0 && !gCo.mRunHasElem)
     {
         if (gCo.mRunHasBind)
         {
@@ -308,12 +312,16 @@ void coFlushRun()
     }
     const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * gCo.mCount);
     U8* p = mainReserve(payload, CMD_ARRAY_RUN, 0);
-    const RunHeader h = { gCo.mBindTarget, gCo.mBindBuffer, gCo.mCount, gCo.mRunHasBind ? 1u : 0u };
+    const RunHeader h = { gCo.mBindTarget, gCo.mBindBuffer, gCo.mCount, (gCo.mRunHasBind ? 1u : 0u) | (gCo.mRunHasElem ? 2u : 0u), gCo.mElemBuffer, 0 };
     memcpy(p, &h, sizeof(h));
-    memcpy(p + sizeof(h), gCo.mEntries, sizeof(RunEntry) * gCo.mCount);
+    if (gCo.mCount)
+    {
+        memcpy(p + sizeof(h), gCo.mEntries, sizeof(RunEntry) * gCo.mCount);
+    }
     mainCommit(payload);
     ++gMainRecords;
     gCo.mCount = 0;
+    gCo.mRunHasElem = false;
 }
 
 inline void coFlushAll()
@@ -351,6 +359,23 @@ bool coPush(U16 op, const void* args)
     case OP_glBindBuffer:
     {
         const BufArgs* a = (const BufArgs*)args;
+        if (a->target == GL_ELEMENT_ARRAY_BUFFER_ENUM && gFoldElement)
+        {
+            coFlushActive();
+            if (gCo.mRunOpen && gCo.mRunHasElem)
+            {
+                coFlushRun();           // one index buffer bind per run: the next one starts a run of its own
+            }
+            if (!gCo.mRunOpen)
+            {
+                gCo.mRunOpen = true;
+                gCo.mRunHasBind = false;
+                gCo.mCount = 0;
+            }
+            gCo.mRunHasElem = true;
+            gCo.mElemBuffer = a->buffer;
+            return true;
+        }
         if (a->target != GL_ARRAY_BUFFER_ENUM)
         {
             coFlushAll();
@@ -1223,7 +1248,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         const RunHeader* h = (const RunHeader*)payload;
         const RunEntry* e = (const RunEntry*)(payload + sizeof(RunHeader));
-        if (h->mHasBind)
+        if (h->mFlags & 1)
         {
             LLVkGL::on_glBindBuffer(h->mTarget, h->mBuffer);
         }
@@ -1237,6 +1262,10 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             {
                 LLVkGL::on_glVertexAttribIPointer(e[i].mIndex, e[i].mSize, e[i].mType, e[i].mStride, e[i].mPointer);
             }
+        }
+        if (h->mFlags & 2)
+        {
+            LLVkGL::on_glBindBuffer(0x8893, h->mElem);
         }
         break;
     }
@@ -1605,7 +1634,7 @@ bool start()
         return true;
     }
     gMainTid = __readgsdword(0x48);
-    { const char* co = getenv("LL_VK_COALESCE"); gCoalesce = !(co && co[0] == '0'); }
+    { const char* co = getenv("LL_VK_COALESCE"); gCoalesce = !(co && co[0] == '0'); gFoldElement = gCoalesce && !(co && co[0] == '1'); }
     if (!gRing)
     {
         gRing = (U8*)VirtualAlloc(nullptr, RING_BYTES, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
