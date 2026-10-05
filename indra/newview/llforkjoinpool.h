@@ -20,6 +20,8 @@
 #define LL_LLFORKJOINPOOL_H
 
 #include <atomic>
+#include <chrono>
+#include <intrin.h>
 #include <condition_variable>
 #include <functional>
 #include <memory>
@@ -45,7 +47,7 @@ public:
     {
         {
             std::lock_guard<std::mutex> lock(mMutex);
-            mStop = true;
+            mStop.store(true);
         }
         mWake.notify_all();
         for (std::thread& thread : mThreads)
@@ -64,14 +66,18 @@ public:
             mCount = count;
             mNext = 0;
             mRemaining = count;
-            ++mGeneration;
+            mGeneration.store(mGeneration.load(std::memory_order_relaxed) + 1, std::memory_order_release);
         }
         mWake.notify_all();
 
         drain();
 
-        std::unique_lock<std::mutex> lock(mMutex);
-        mDone.wait(lock, [this] { return mRemaining == 0; });
+        // the last jobs are usually a moment from done: spin for a short while before sleeping on the condition variable (a wake-up costs tens of microseconds)
+        if (!spinUntil([this] { return mRemaining.load(std::memory_order_acquire) == 0; }, 100))
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            mDone.wait(lock, [this] { return mRemaining == 0; });
+        }
         mFn = nullptr;
     }
 
@@ -96,6 +102,25 @@ public:
     }
 
 private:
+    // true if the condition held within the given microseconds
+    template <class F>
+    static bool spinUntil(F&& condition, int microseconds)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        for (unsigned i = 0;; ++i)
+        {
+            if (condition())
+            {
+                return true;
+            }
+            _mm_pause();
+            if ((i & 31) == 31 && std::chrono::steady_clock::now() - start > std::chrono::microseconds(microseconds))
+            {
+                return condition();
+            }
+        }
+    }
+
     void drain()
     {
         for (;;)
@@ -119,15 +144,17 @@ private:
         unsigned long long seen_generation = 0;
         for (;;)
         {
+            // the next run of a frame often follows within a moment (shadow culls, then render maps): spin briefly before sleeping
+            if (!spinUntil([&] { return mStop.load(std::memory_order_relaxed) || mGeneration.load(std::memory_order_acquire) != seen_generation; }, 150))
             {
                 std::unique_lock<std::mutex> lock(mMutex);
-                mWake.wait(lock, [&] { return mStop || mGeneration != seen_generation; });
-                if (mStop)
-                {
-                    return;
-                }
-                seen_generation = mGeneration;
+                mWake.wait(lock, [&] { return mStop.load() || mGeneration.load(std::memory_order_acquire) != seen_generation; });
             }
+            if (mStop.load())
+            {
+                return;
+            }
+            seen_generation = mGeneration.load(std::memory_order_acquire);
             drain();
         }
     }
@@ -140,8 +167,8 @@ private:
     std::atomic<size_t> mCount{ 0 };
     std::atomic<size_t> mNext{ 0 };
     std::atomic<size_t> mRemaining{ 0 };
-    unsigned long long mGeneration = 0;
-    bool mStop = false;
+    std::atomic<unsigned long long> mGeneration{ 0 };
+    std::atomic<bool> mStop{ false };
 };
 
 #endif // LL_LLFORKJOINPOOL_H
