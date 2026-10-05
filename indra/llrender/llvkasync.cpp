@@ -80,6 +80,9 @@ struct SideRec
     U64 mAfter = 0;                 // the main thread's queue position when this was queued: replayed only once the worker has got that far
     std::vector<U8> mPayload;
 };
+// LL_VK_OPSTATS: what the main thread spends writing records (one write in 16 is timed, the total scaled up, so the timer does not distort it)
+unsigned long long gMainPushOps = 0;
+unsigned long long gMainPushTicks = 0;
 std::mutex gSideMutex;
 std::deque<SideRec> gSide;
 std::atomic<int> gSideCount{ 0 };
@@ -161,7 +164,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun" };
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 void note_gap(std::vector<float>& gaps, long long& last)
@@ -237,6 +240,164 @@ inline void mainCommit(size_t payload_bytes)
     }
 }
 
+// ---- merging records on the main thread (LL_VK_COALESCE=0 turns it off) ----
+// A draw is preceded by runs of glActiveTexture + glBindTexture and of glBindBuffer(ARRAY) + glVertexAttribPointer*. They are held back
+// and written as one record each: BIND_TEXTURE_UNIT (the unit and the bind) and ARRAY_RUN (the buffer bind and its attribute pointers).
+// Nothing is dropped and nothing is reordered: whatever else is queued first writes out what is held, and the worker plays a merged record
+// by calling the same functions in the same order.
+bool gCoalesce = true;
+unsigned long long gMainRecords = 0;        // records actually written by the main thread
+
+struct BindTexUnitArgs { GLenum mUnit; GLenum mTarget; GLuint mTexture; U32 mPad; };
+struct BufArgs { GLenum target; GLuint buffer; };
+struct RunHeader { GLenum mTarget; GLuint mBuffer; U32 mCount; U32 mHasBind; };
+struct RunEntry { U32 mKind; GLuint mIndex; GLint mSize; GLenum mType; GLsizei mStride; U32 mNormalized; const void* mPointer; };   // kind 0: glVertexAttribPointer, 1: glVertexAttribIPointer
+static_assert(sizeof(RunEntry) == 32, "run entry");
+constexpr U32 MAX_RUN = 16;
+constexpr GLenum GL_ARRAY_BUFFER_ENUM = 0x8892;
+
+struct Coalesce
+{
+    bool mActiveValid = false;
+    GLenum mActiveUnit = 0;
+    bool mRunOpen = false;
+    bool mRunHasBind = false;
+    GLenum mBindTarget = 0;
+    GLuint mBindBuffer = 0;
+    U32 mCount = 0;
+    RunEntry mEntries[MAX_RUN];
+};
+Coalesce gCo;
+
+inline void rawPush(U16 op, const void* args, unsigned size)
+{
+    U8* p = mainReserve(size, op, 0);
+    if (size)
+    {
+        memcpy(p, args, size);
+    }
+    mainCommit(size);
+    ++gMainRecords;
+}
+
+void coFlushActive()
+{
+    if (gCo.mActiveValid)
+    {
+        gCo.mActiveValid = false;
+        A_glActiveTexture a = { gCo.mActiveUnit };
+        rawPush(OP_glActiveTexture, &a, sizeof(a));
+    }
+}
+
+void coFlushRun()
+{
+    if (!gCo.mRunOpen)
+    {
+        return;
+    }
+    gCo.mRunOpen = false;
+    if (gCo.mCount == 0)
+    {
+        if (gCo.mRunHasBind)
+        {
+            BufArgs a = { gCo.mBindTarget, gCo.mBindBuffer };
+            rawPush(OP_glBindBuffer, &a, sizeof(a));
+        }
+        return;
+    }
+    const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * gCo.mCount);
+    U8* p = mainReserve(payload, CMD_ARRAY_RUN, 0);
+    const RunHeader h = { gCo.mBindTarget, gCo.mBindBuffer, gCo.mCount, gCo.mRunHasBind ? 1u : 0u };
+    memcpy(p, &h, sizeof(h));
+    memcpy(p + sizeof(h), gCo.mEntries, sizeof(RunEntry) * gCo.mCount);
+    mainCommit(payload);
+    ++gMainRecords;
+    gCo.mCount = 0;
+}
+
+inline void coFlushAll()
+{
+    if (gCo.mActiveValid || gCo.mRunOpen)
+    {
+        coFlushActive();
+        coFlushRun();
+    }
+}
+
+// true: the call was held or merged; false: it has to be written as it is (what was held has been written first)
+bool coPush(U16 op, const void* args)
+{
+    switch (op)
+    {
+    case OP_glActiveTexture:
+        coFlushRun();
+        gCo.mActiveUnit = ((const A_glActiveTexture*)args)->texture;
+        gCo.mActiveValid = true;
+        return true;
+    case OP_glBindTexture:
+    {
+        coFlushRun();
+        if (!gCo.mActiveValid)
+        {
+            return false;
+        }
+        const A_glBindTexture* a = (const A_glBindTexture*)args;
+        const BindTexUnitArgs b = { gCo.mActiveUnit, a->target, a->texture, 0 };
+        gCo.mActiveValid = false;
+        rawPush(CMD_BIND_TEXTURE_UNIT, &b, sizeof(b));
+        return true;
+    }
+    case OP_glBindBuffer:
+    {
+        const BufArgs* a = (const BufArgs*)args;
+        if (a->target != GL_ARRAY_BUFFER_ENUM)
+        {
+            coFlushAll();
+            return false;
+        }
+        coFlushActive();
+        coFlushRun();
+        gCo.mRunOpen = true;
+        gCo.mRunHasBind = true;
+        gCo.mBindTarget = a->target;
+        gCo.mBindBuffer = a->buffer;
+        gCo.mCount = 0;
+        return true;
+    }
+    case OP_glVertexAttribPointer:
+    case OP_glVertexAttribIPointer:
+    {
+        coFlushActive();
+        if (!gCo.mRunOpen)
+        {
+            gCo.mRunOpen = true;
+            gCo.mRunHasBind = false;
+            gCo.mCount = 0;
+        }
+        RunEntry& e = gCo.mEntries[gCo.mCount++];
+        if (op == OP_glVertexAttribPointer)
+        {
+            const A_glVertexAttribPointer* a = (const A_glVertexAttribPointer*)args;
+            e = { 0, a->index, a->size, a->type, a->stride, (U32)a->normalized, a->pointer };
+        }
+        else
+        {
+            const A_glVertexAttribIPointer* a = (const A_glVertexAttribIPointer*)args;
+            e = { 1, a->index, a->size, a->type, a->stride, 0, a->pointer };
+        }
+        if (gCo.mCount == MAX_RUN)
+        {
+            coFlushRun();
+        }
+        return true;
+    }
+    default:
+        coFlushAll();
+        return false;
+    }
+}
+
 void sidePush(U16 op, std::vector<U8>&& payload)
 {
     SideRec r;
@@ -258,12 +419,16 @@ void push(unsigned short op, const void* args, unsigned size)
 {
     if (isMainThread())
     {
-        U8* p = mainReserve(size, op, 0);
-        if (size)
+        const bool timed = gOpStats && ((++gMainPushOps & 15) == 0);
+        const unsigned long long t0 = timed ? __rdtsc() : 0;
+        if (!(gCoalesce && coPush(op, args)))
         {
-            memcpy(p, args, size);
+            rawPush(op, args, size);
         }
-        mainCommit(size);
+        if (timed)
+        {
+            gMainPushTicks += (__rdtsc() - t0) * 16;
+        }
         return;
     }
     std::vector<U8> payload((const U8*)args, (const U8*)args + size);
@@ -274,6 +439,11 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
 {
     if (isMainThread())
     {
+        const bool timed = gOpStats && ((++gMainPushOps & 15) == 0);
+        const unsigned long long t0 = timed ? __rdtsc() : 0;
+        struct Lap { const bool mTimed; const unsigned long long mT0; ~Lap() { if (mTimed) { gMainPushTicks += (__rdtsc() - mT0) * 16; } } } lap = { timed, t0 };
+        coFlushAll();
+        ++gMainRecords;
         const bool heap = data_size > MAX_INLINE;
         const size_t payload = size + sizeof(U64) + (heap ? sizeof(U64) : data_size);
         U8* p = mainReserve(payload, op, heap ? 1 : 0);
@@ -376,8 +546,18 @@ std::string opStatsReport(size_t frames)
     std::string out;
     char buf[200];
     const double wall_ms = (double)window_qpc * 1000.0 / (double)qf.QuadPart;
+    {
+        const unsigned long long push_ops = gMainPushOps, push_ticks = gMainPushTicks, records = gMainRecords;
+        gMainPushOps = 0;
+        gMainPushTicks = 0;
+        gMainRecords = 0;
+        snprintf(buf, sizeof(buf), "MAIN THREAD writing the queue (coalescing %s): %.0f calls/frame -> %.0f records/frame, %.2f ms/frame (%.0f ns per call) | ", gCoalesce ? "on" : "off",
+                 (double)push_ops / (double)frames, (double)records / (double)frames,
+                 (double)push_ticks * ms_per_tick / (double)frames, push_ops ? (double)push_ticks * ms_per_tick * 1e6 / (double)push_ops : 0.0);
+        out = buf;
+    }
     snprintf(buf, sizeof(buf), "%.2f ms/frame in operations out of %.2f ms/frame wall (the timer costs about 15 ns per operation) | ", (double)total * ms_per_tick / (double)frames, wall_ms / (double)frames);
-    out = buf;
+    out += buf;
     for (size_t k = 0; k < rows.size() && k < 22; ++k)
     {
         const Row& r = rows[k];
@@ -1032,6 +1212,34 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         break;
     }
     case CMD_FRAME_END: LLVkMirror::endFrameImpl(); break;
+    case CMD_BIND_TEXTURE_UNIT:
+    {
+        const BindTexUnitArgs* a = (const BindTexUnitArgs*)payload;
+        LLVkGL::on_glActiveTexture(a->mUnit);
+        LLVkGL::on_glBindTexture(a->mTarget, a->mTexture);
+        break;
+    }
+    case CMD_ARRAY_RUN:
+    {
+        const RunHeader* h = (const RunHeader*)payload;
+        const RunEntry* e = (const RunEntry*)(payload + sizeof(RunHeader));
+        if (h->mHasBind)
+        {
+            LLVkGL::on_glBindBuffer(h->mTarget, h->mBuffer);
+        }
+        for (U32 i = 0; i < h->mCount; ++i)
+        {
+            if (e[i].mKind == 0)
+            {
+                LLVkGL::on_glVertexAttribPointer(e[i].mIndex, e[i].mSize, e[i].mType, (GLboolean)e[i].mNormalized, e[i].mStride, e[i].mPointer);
+            }
+            else
+            {
+                LLVkGL::on_glVertexAttribIPointer(e[i].mIndex, e[i].mSize, e[i].mType, e[i].mStride, e[i].mPointer);
+            }
+        }
+        break;
+    }
     case CMD_PRESENT:
         LLVkMirror::presentFrameImpl();
         note_gap(gPresentGaps, gLastPresentTick);
@@ -1397,6 +1605,7 @@ bool start()
         return true;
     }
     gMainTid = __readgsdword(0x48);
+    { const char* co = getenv("LL_VK_COALESCE"); gCoalesce = !(co && co[0] == '0'); }
     if (!gRing)
     {
         gRing = (U8*)VirtualAlloc(nullptr, RING_BYTES, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
