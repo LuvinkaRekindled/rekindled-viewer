@@ -8953,6 +8953,7 @@ F32 LLPipeline::getDLSSScale()
         {
         case 0: scale = 0.5f; break;
         case 2: scale = 0.67f; break;
+        case 3: scale = 1.f; break;         // DLAA: the full window size, the network only anti-aliases
         default: scale = 0.58f; break;
         }
     }
