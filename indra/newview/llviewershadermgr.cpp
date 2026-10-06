@@ -169,6 +169,7 @@ LLGLSLShader            gDeferredSkinnedShadowProgram;
 LLGLSLShader            gDeferredShadowCubeProgram;
 LLGLSLShader            gDeferredShadowPullProgram;
 LLGLSLShader            gDeferredShadowAlphaPullProgram;
+LLGLSLShader            gDeferredShadowSkinPullProgram;
 LLGLSLShader            gDeferredShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredSkinnedShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredShadowGLTFAlphaMaskProgram;
@@ -1130,6 +1131,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowCubeProgram.unload();
         gDeferredShadowPullProgram.unload();
         gDeferredShadowAlphaPullProgram.unload();
+        gDeferredShadowSkinPullProgram.unload();
         gDeferredShadowAlphaMaskProgram.unload();
         gDeferredSkinnedShadowAlphaMaskProgram.unload();
         gDeferredShadowGLTFAlphaMaskProgram.unload();
@@ -2296,6 +2298,23 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             LL_WARNS("ShadowPackets") << "the shadow alpha pull shader could not be made: alpha masked casters stay on the old path" << LL_ENDL;
             gDeferredShadowAlphaPullProgram.unload();
+        }
+    }
+
+    // <FS> ... and the one for rigged casters
+    if (success && LLVkMirror::shadowPacketsAvailable())
+    {
+        gDeferredShadowSkinPullProgram.mName = "Deferred Shadow Skin Pull Shader";
+        gDeferredShadowSkinPullProgram.mFeatures.isDeferred = true;
+        gDeferredShadowSkinPullProgram.mFeatures.hasShadows = true;
+        gDeferredShadowSkinPullProgram.mShaderFiles.clear();
+        gDeferredShadowSkinPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowSkinPullV.glsl", GL_VERTEX_SHADER));
+        gDeferredShadowSkinPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowSkinPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gDeferredShadowSkinPullProgram.createShader())
+        {
+            LL_WARNS("ShadowPackets") << "the shadow skin pull shader could not be made: rigged casters stay on the old path" << LL_ENDL;
+            gDeferredShadowSkinPullProgram.unload();
         }
     }
 

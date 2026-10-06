@@ -498,6 +498,7 @@ struct LLShadowDrawStats
     U64 mStaticMatrixChanges = 0;
     U64 mPacketEntries = 0, mPacketFallback = 0, mPacketRecords = 0;      // shadow packets: draws sent in records, draws left to the old path, records
     U64 mAlphaEntries = 0, mAlphaFallback = 0, mAlphaRecords = 0, mAlphaTextures = 0;      // the same for the alpha masked casters; distinct textures bound for them
+    U64 mSkinEntries = 0, mSkinFallback = 0, mSkinRecords = 0, mSkinPalettes = 0;      // the same for the rigged untextured casters; distinct palettes sent
     const void* mLastVB = nullptr;
     const void* mLastMatrix = nullptr;
     std::unordered_set<const void*> mPassVBs;

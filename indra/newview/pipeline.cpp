@@ -8222,11 +8222,15 @@ void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
 // Currently only used for shadows -Cosmic,2023-04-19
 // <FS> Render packets with textures: can this static draw be an entry of a record of alpha masked casters? The pull shader reads 16 bit indices, positions
 // first, and takes the draw's texture(s) from a table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
-static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures)
+static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
-    if (!p.mCount || p.mAvatar || p.mGLTFMaterial || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+    if (!p.mCount || rigged != (p.mAvatar != nullptr) || p.mGLTFMaterial || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+    {
+        return false;
+    }
+    if (rigged && (!vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || p.mSkinInfo.isNull()))
     {
         return false;
     }
@@ -8235,6 +8239,30 @@ static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures)
         return p.mTextureList.size() <= 4;
     }
     return !(p.mTexture.notNull() && p.mTextureMatrix);
+}
+
+// <FS> The palette of a rigged draw, added once to the palettes of a packet record: its offset (in floats) and joint count. False when the old path would not draw it
+// either (no avatar, skin not loaded yet). The palette is what uploadMatrixPalette() sends as matrixPalette: 12 floats per joint.
+static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints)
+{
+    if (!avatar || !skin)
+    {
+        return false;
+    }
+    const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(skin);
+    joints = (U32)mpc.mMatrixPalette.size();
+    if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12)
+    {
+        return false;
+    }
+    auto it = offsets.find(mpc.mGLMp.data());
+    if (it == offsets.end())
+    {
+        it = offsets.emplace(mpc.mGLMp.data(), (U32)data.size()).first;
+        data.insert(data.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
+    }
+    offset = it->second;
+    return true;
 }
 
 void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
@@ -8269,7 +8297,7 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
             continue;
         }
 
-        if (skip_packet_draws && !rigged && shadow_alpha_packet_ok(*pparams, true))
+        if (skip_packet_draws && shadow_alpha_packet_ok(*pparams, true, rigged))
         {
             continue;       // <FS> already part of the alpha packet record of this pass
         }
@@ -11328,6 +11356,31 @@ static bool shadow_packets_enabled()
     return on && gDeferredShadowPullProgram.mProgramObject != 0 && LLVkMirror::shadowPacketsAvailable();
 }
 
+// <FS> the rigged casters (avatars and their attachments) go as records too when the packets are on, unless FS_SHADOW_NO_RIGGED is set; FS_SHADOW_RIGGED_AB=1 alternates only
+// them every 30 seconds (half a period out of step with nothing: the static packets stay on)
+static bool shadow_rigged_packets_enabled()
+{
+    static const bool off = getenv("FS_SHADOW_NO_RIGGED") != nullptr;
+    static const bool alternate = getenv("FS_SHADOW_RIGGED_AB") != nullptr;
+    if (off || !shadow_packets_enabled())
+    {
+        return false;
+    }
+    if (alternate)
+    {
+        const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const bool on = ((seconds / 30) % 2) == 1;
+        static int last = -1;
+        if ((int)on != last)
+        {
+            last = (int)on;
+            LL_INFOS("ShadowPackets") << "[phase] rigged shadow packets now " << (on ? "ON" : "off") << LL_ENDL;
+        }
+        return on;
+    }
+    return true;
+}
+
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_RENDER);
@@ -11497,9 +11550,101 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         gGLLastMatrix = NULL;
     };
 
+    // <FS> Render packets for the rigged untextured casters: one entry per draw, with the weight4 array and the draw's matrix palette (sent with the record, once per distinct palette)
+    auto render_skin_packets = [this](const U32* list, size_t count)
+    {
+        std::vector<LLVkMirror::ShadowSkinEntry> entries;
+        std::vector<F32> matrices(16, 0.f);
+        matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
+        std::unordered_map<const void*, U32> matrix_numbers;
+        std::vector<F32> palettes;
+        std::unordered_map<const F32*, U32> palette_offsets;
+        std::vector<LLDrawInfo*> fallback;
+        for (size_t t = 0; t < count; ++t)
+        {
+            auto* begin = beginRenderMap(list[t] + 1);      // the rigged variant of a pass type is the next number
+            auto* end = endRenderMap(list[t] + 1);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                if (!params->mCount || !params->mAvatar)
+                {
+                    continue;       // nothing to draw, or no palette: the old path draws nothing either
+                }
+                const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+                    || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || params->mSkinInfo.isNull())
+                {
+                    fallback.push_back(params);
+                    continue;
+                }
+                LLVkMirror::ShadowSkinEntry e = {};
+                if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                {
+                    continue;       // the skin is not loaded yet: not drawn, as before
+                }
+                e.mVertexBuffer = vb->getGLBuffer();
+                e.mIndexBuffer = vb->getGLIndices();
+                e.mFirstIndex = params->mOffset;
+                e.mIndexCount = params->mCount;
+                e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                if (params->mModelMatrix)
+                {
+                    auto it = matrix_numbers.find(params->mModelMatrix);
+                    if (it == matrix_numbers.end())
+                    {
+                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                        matrices.insert(matrices.end(), m, m + 16);
+                    }
+                    e.mMatrix = it->second;
+                }
+                entries.push_back(e);
+            }
+        }
+        if (!entries.empty())
+        {
+            LLVkMirror::ShadowPacketsHeader header;
+            header.mKind = 2;
+            header.mEntries = (U32)entries.size();
+            header.mMatrices = (U32)(matrices.size() / 16);
+            header.mPaletteFloats = (U32)palettes.size();
+            const glm::mat4 view_proj = gGL.getProjectionMatrix() * glm::make_mat4(gGLModelView);
+            memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
+            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
+            memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
+            LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+            gShadowDrawStats.mSkinEntries += entries.size();
+            gShadowDrawStats.mSkinPalettes += palette_offsets.size();
+            ++gShadowDrawStats.mSkinRecords;
+        }
+        if (!fallback.empty())
+        {
+            gShadowDrawStats.mSkinFallback += fallback.size();
+            gDeferredShadowProgram.bind(true);
+            gGL.loadMatrix(gGLModelView);
+            gGLLastMatrix = NULL;
+            const LLVOAvatar* last_avatar = nullptr;
+            U64 last_mesh = 0;
+            bool skip_last = false;
+            for (LLDrawInfo* params : fallback)
+            {
+                if (LLRenderPass::uploadMatrixPalette(params->mAvatar, params->mSkinInfo, last_avatar, last_mesh, skip_last))
+                {
+                    mSimplePool->pushUntexturedBatch(*params);
+                }
+            }
+        }
+        gGL.loadMatrix(gGLModelView);
+        gGLLastMatrix = NULL;
+    };
+
     // <FS> Render packets with textures: the static alpha masked casters of a shadow pass (masked, fullbright masked, blended, grass, the materials' masks) leave
     // as one record. Every entry names its texture(s) by GL name; the worker gives them slots in a bindless table and the fragment shader does the alpha test.
-    auto render_alpha_packets = [this](S32 sun_up, U32 target_width)
+    auto render_alpha_packets = [this](S32 sun_up, U32 target_width, bool rigged)
     {
         enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_GRASS, KIND_MATERIAL };
         struct Source { U32 type; int kind; };
@@ -11519,6 +11664,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         std::unordered_map<const void*, U32> matrix_numbers;
         std::unordered_map<const LLViewerTexture*, U32> texture_names;
         std::vector<LLDrawInfo*> fallback[KIND_MATERIAL + 1];
+        std::vector<F32> palettes;
+        std::unordered_map<const F32*, U32> palette_offsets;
         // what the old path does for a texture at its bind: marks it in use, regenerates a deleted one and applies its filtering and wrap options (the worker reads those)
         auto texture_name = [&](LLViewerTexture* tex) -> U32
         {
@@ -11536,22 +11683,27 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         };
         for (const Source& source : sources)
         {
+            if (rigged && source.kind == KIND_GRASS)
+            {
+                continue;       // grass is only drawn in the static pass
+            }
             const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
-            auto* begin = beginRenderMap(source.type);
-            auto* end = endRenderMap(source.type);
+            const U32 type = (rigged && source.kind != KIND_ALPHA) ? source.type + 1 : source.type;       // the rigged variant of a pass type is the next number (PASS_ALPHA holds both)
+            auto* begin = beginRenderMap(type);
+            auto* end = endRenderMap(type);
             for (LLCullResult::drawinfo_iterator i = begin; i != end; )
             {
                 LLDrawInfo* params = *i;
                 LLCullResult::increment_iterator(i, end);
-                if (!params->mCount || params->mAvatar)
+                if (!params->mCount || rigged != (params->mAvatar != nullptr))
                 {
-                    continue;       // nothing to draw (the old path returns), or a rigged draw of the rigged loop
+                    continue;       // nothing to draw (the old path returns), or a draw of the other loop (no avatar: the old rigged path draws nothing)
                 }
                 if (source.kind == KIND_ALPHA && params->mGLTFMaterial)
                 {
                     continue;       // left to renderAlphaObjects
                 }
-                if (!shadow_alpha_packet_ok(*params, batch))
+                if (!shadow_alpha_packet_ok(*params, batch, rigged))
                 {
                     if (source.kind != KIND_ALPHA)
                     {
@@ -11565,6 +11717,14 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 e.mIndexBuffer = vb->getGLIndices();
                 e.mFirstIndex = params->mOffset;
                 e.mIndexCount = params->mCount;
+                if (rigged)
+                {
+                    if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                    {
+                        continue;       // the skin is not loaded yet: not drawn, as before
+                    }
+                    e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                }
                 if (params->mModelMatrix)
                 {
                     auto it = matrix_numbers.find(params->mModelMatrix);
@@ -11576,7 +11736,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     }
                     e.mMatrix = it->second;
                 }
-                U32 flags = 0;
+                U32 flags = rigged ? (U32)LLVkMirror::ALPHA_RIGGED : 0u;
                 if (source.kind == KIND_FULLBRIGHT)
                 {
                     flags |= LLVkMirror::ALPHA_FULLBRIGHT;
@@ -11631,6 +11791,11 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+            header.mPaletteFloats = (U32)palettes.size();
+            if (!palettes.empty())
+            {
+                blob.insert(blob.end(), (const U8*)palettes.data(), (const U8*)(palettes.data() + palettes.size()));
+            }
             LLVkMirror::shadowPackets(header, blob.data(), blob.size());
             gShadowDrawStats.mAlphaEntries += entries.size();
             ++gShadowDrawStats.mAlphaRecords;
@@ -11644,7 +11809,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 return;
             }
             gShadowDrawStats.mAlphaFallback += list.size();
-            program.bind(false);
+            program.bind(rigged);
             if (alpha_uniforms)
             {
                 LLGLSLShader::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
@@ -11652,9 +11817,16 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
             gGL.loadMatrix(gGLModelView);
             gGLLastMatrix = NULL;
+            const LLVOAvatar* last_avatar = nullptr;
+            U64 last_mesh = 0;
+            bool skip_last = false;
             for (LLDrawInfo* params : list)
             {
                 LLGLSLShader::sCurBoundShaderPtr->setMinimumAlpha(fixed_cutoff ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff);
+                if (rigged && !LLRenderPass::uploadMatrixPalette(params->mAvatar, params->mSkinInfo, last_avatar, last_mesh, skip_last))
+                {
+                    continue;
+                }
                 pool->pushBatch(*params, true, batch);
             }
             gGL.loadMatrix(gGLModelView);
@@ -11672,9 +11844,14 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         bool rigged = j == 1;
         LL_GPU_TIMER_ZONE(rigged ? "shadow simple: rigged" : "shadow simple: static"); // <FS>
         const bool packets = !rigged && shadow_packets_enabled();
+        const bool skin_packets = rigged && shadow_rigged_packets_enabled() && gDeferredShadowSkinPullProgram.mProgramObject != 0;
         if (packets)
         {
             gDeferredShadowPullProgram.bind();
+        }
+        else if (skin_packets)
+        {
+            gDeferredShadowSkinPullProgram.bind();
         }
         else
         {
@@ -11702,6 +11879,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         if (packets)
         {
             render_shadow_packets(types, sizeof(types) / sizeof(types[0]));
+        }
+        else if (skin_packets)
+        {
+            render_skin_packets(types, sizeof(types) / sizeof(types[0]));
         }
         else
         {
@@ -11743,13 +11924,13 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             LL_GPU_TIMER_ZONE(rigged ? "shadow alpha: rigged" : "shadow alpha: static"); // <FS>
 
             // <FS> render packets with textures: one record for the static casters, then the draws it could not carry (the glTF ones among them)
-            if (!rigged && shadow_packets_enabled() && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkMirror::shadowAlphaPacketsAvailable())
+            if (shadow_packets_enabled() && (!rigged || shadow_rigged_packets_enabled()) && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkMirror::shadowAlphaPacketsAvailable())
             {
-                render_alpha_packets(sun_up, target_width);
+                render_alpha_packets(sun_up, target_width, rigged);
                 {
                     LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow alpha blend");
                     LL_PROFILE_GPU_ZONE("shadow alpha blend");
-                    renderAlphaObjects(false, true);
+                    renderAlphaObjects(rigged, true);
                 }
                 continue;
             }
@@ -11871,6 +12052,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 LL_INFOS("ShadowDraws") << "shadow packets per frame: " << st.mPacketRecords / frames << " records, " << st.mPacketEntries / frames << " draws in them, "
                     << st.mPacketFallback / frames << " draws left to the old path" << LL_ENDL;
             }
+            if (st.mSkinRecords)
+            {
+                LL_INFOS("ShadowDraws") << "shadow rigged packets per frame: " << st.mSkinRecords / frames << " records, " << st.mSkinEntries / frames << " draws in them, "
+                    << st.mSkinFallback / frames << " draws left to the old path, " << st.mSkinPalettes / frames << " palettes sent" << LL_ENDL;
+            }
+            st.mSkinEntries = st.mSkinFallback = st.mSkinRecords = st.mSkinPalettes = 0;
             if (st.mAlphaRecords)
             {
                 LL_INFOS("ShadowDraws") << "shadow alpha packets per frame: " << st.mAlphaRecords / frames << " records, " << st.mAlphaEntries / frames << " draws in them, "
