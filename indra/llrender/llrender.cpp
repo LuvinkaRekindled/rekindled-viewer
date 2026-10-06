@@ -191,6 +191,19 @@ void LLTexUnit::disable(void)
     }
 }
 
+void LLTexUnit::applyTexOptions(LLImageGL* gl_tex)
+{
+    glActiveTexture(GL_TEXTURE0 + mIndex);
+    gGL.mCurrTextureUnitIndex = mIndex;
+    mCurrTexture = gl_tex->getTexName();
+    mCurrTexType = gl_tex->getTarget();
+    glBindTexture(sGLTextureType[gl_tex->getTarget()], mCurrTexture);
+    mHasMipMaps = gl_tex->mHasMipMaps;
+    gl_tex->mTexOptionsDirty = false;
+    setTextureAddressModeFast(gl_tex->mAddressMode, gl_tex->getTarget());
+    setTextureFilteringOptionFast(gl_tex->mFilterOption, gl_tex->getTarget());
+}
+
 void LLTexUnit::bindFast(LLTexture* texture)
 {
     LLImageGL* gl_tex = texture->getGLTexture();
