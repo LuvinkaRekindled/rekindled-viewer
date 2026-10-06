@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llgpuzonetimer.h"
 
 #include "llappviewer.h"
 
@@ -1841,6 +1842,7 @@ bool LLAppViewer::doFrame()
                 {
                     LLPerfStats::RecordSceneTime T (LLPerfStats::StatType_t::RENDER_IDLE);
                     LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df idle");
+                    LL_CPU_ZONE("main loop: idle()");
                     idle();
                 }
 
@@ -1874,13 +1876,17 @@ bool LLAppViewer::doFrame()
                 gGLActive = true;
 
                 LLVkMirror::holdFrame(true); // <FS> the mirror frame spans display() and the probe update / snapshots below
-                display();
+                {
+                    LL_CPU_ZONE("main loop: display()");
+                    display();
+                }
 
                 if (LLStartUp::getStartupState() == STATE_STARTED) // <FS:Beq/> FIRE-34590 - Bugsplat caused by updating maps before world is loaded.
                 {
                     LLPerfStats::RecordSceneTime T(LLPerfStats::StatType_t::RENDER_IDLE);
                     LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df Snapshot");
                     pingMainloopTimeout("Main:Snapshot");
+                    LL_CPU_ZONE("main loop: probes + snapshots");
                     gPipeline.mReflectionMapManager.update();
                     LLFloaterSnapshot::update(); // take snapshots
                     LLFloaterSimpleSnapshot::update();
@@ -1890,6 +1896,7 @@ bool LLAppViewer::doFrame()
                 }
                 LLVkMirror::holdFrame(false); // <FS>
                 LLVkMirror::endFrame(); // <FS>
+                LLCpuZoneScope::frame(); // <FS>
                 apply_dev_settings(); // <FS>
 
                 if (LLViewerStatsRecorder::instanceExists())

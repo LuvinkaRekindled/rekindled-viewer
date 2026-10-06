@@ -4988,6 +4988,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                 for( S32 i = 0; i < poolp->getNumDeferredPasses(); i++ )
                 {
                     LL_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, false));
+                    LL_CPU_ZONE(pool_gpu_zone_name(cur_type, false));
                     const U64 pool_draws_before = LLVertexBuffer::sDrawCalls;
                     LLVertexBuffer::unbind();
                     poolp->beginDeferredPass(i);
@@ -5223,6 +5224,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
             for( S32 i = 0; i < poolp->getNumPostDeferredPasses(); i++ )
             {
                 LL_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, true));
+                LL_CPU_ZONE(pool_gpu_zone_name(cur_type, true));
                 const U64 pool_draws_before = LLVertexBuffer::sDrawCalls;
                 LLVertexBuffer::unbind();
                 poolp->beginPostDeferredPass(i);
@@ -11455,6 +11457,7 @@ static bool shadow_rigged_packets_enabled()
 
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
 {
+    LL_CPU_ZONE("renderShadow (all passes)");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_RENDER);
     LL_PROFILE_GPU_ZONE("renderShadow");
 
