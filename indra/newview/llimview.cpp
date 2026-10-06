@@ -1955,7 +1955,8 @@ void LLIMModel::addMessage(const LLUUID& session_id, const std::string& from, co
                            const std::string& utf8_text, bool log2file /* = true */, bool is_region_msg /* = false */, U32 time_stamp /* = 0 */, bool is_announcement /* = false */, bool keyword_alert_performed /* = false */)
 {
     //if (gSavedSettings.getBOOL("TranslateChat") && (from != SYSTEM_FROM))
-    if (gSavedSettings.getBOOL("TranslateChat") && (from != SYSTEM_FROM) && !is_announcement && !keyword_alert_performed)
+    // <FS> only when the selected translation service can work (see process_chat_from_simulator)
+    if (gSavedSettings.getBOOL("TranslateChat") && (from != SYSTEM_FROM) && !is_announcement && !keyword_alert_performed && LLTranslate::isTranslationConfigured())
     {
         const std::string from_lang = ""; // leave empty to trigger autodetect
         const std::string to_lang = LLTranslate::getTranslateLanguage();
