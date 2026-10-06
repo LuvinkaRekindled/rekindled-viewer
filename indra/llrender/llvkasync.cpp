@@ -164,7 +164,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "shadowPackets" };
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 void note_gap(std::vector<float>& gaps, long long& last)
@@ -1266,6 +1266,16 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         if (h->mFlags & 2)
         {
             LLVkGL::on_glBindBuffer(0x8893, h->mElem);
+        }
+        break;
+    }
+    case CMD_SHADOW_PACKETS:
+    {
+        const LLVkMirror::ShadowPacketsHeader h = r.get<LLVkMirror::ShadowPacketsHeader>();
+        Blob b = read_blob(r, flags);
+        if (b.mData)
+        {
+            LLVkMirror::shadowPacketsImpl(h, b.mData);
         }
         break;
     }

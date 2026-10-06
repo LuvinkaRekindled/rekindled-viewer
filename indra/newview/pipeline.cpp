@@ -11285,6 +11285,27 @@ static LLTrace::BlockTimerStatHandle FTM_SHADOW_ALPHA_TREE("Alpha Tree");
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_ALPHA_GRASS("Alpha Grass");
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_FULLBRIGHT_ALPHA_MASKED("Fullbright Alpha Masked");
 
+// <FS> Render packets: the static, untextured casters of a shadow pass leave as one record the Vulkan worker draws by reading the buffers by address.
+// Setting FSShadowPackets, or FS_SHADOW_PACKETS_AB=1 to alternate every 30 seconds (the log says which: tag ShadowPackets).
+static bool shadow_packets_enabled()
+{
+    static LLCachedControl<bool> setting(gSavedSettings, "FSShadowPackets", false);
+    static const bool alternate = getenv("FS_SHADOW_PACKETS_AB") != nullptr;
+    bool on = setting;
+    if (alternate)
+    {
+        const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        on = ((seconds / 30) % 2) == 1;
+        static int last = -1;
+        if ((int)on != last)
+        {
+            last = (int)on;
+            LL_INFOS("ShadowPackets") << "[phase] shadow packets now " << (on ? "ON" : "off") << LL_ENDL;
+        }
+    }
+    return on && gDeferredShadowPullProgram.mProgramObject != 0 && LLVkMirror::shadowPacketsAvailable();
+}
+
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_RENDER);
@@ -11383,12 +11404,91 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     };
 
 
+    // <FS> Render packets: every draw of the static, untextured types becomes one entry of a record (buffer names, index range, model matrix number)
+    auto render_shadow_packets = [this](const U32* list, size_t count)
+    {
+        std::vector<LLVkMirror::ShadowPacketEntry> entries;
+        std::vector<F32> matrices(16, 0.f);
+        matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
+        std::unordered_map<const void*, U32> matrix_numbers;
+        std::vector<LLDrawInfo*> fallback;
+        for (size_t t = 0; t < count; ++t)
+        {
+            auto* begin = beginRenderMap(list[t]);
+            auto* end = endRenderMap(list[t]);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                if (!params->mCount)
+                {
+                    continue;
+                }
+                const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+                    || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+                {
+                    fallback.push_back(params);     // a layout the shader does not read: drawn the old way
+                    continue;
+                }
+                U32 matrix = 0;
+                if (params->mModelMatrix)
+                {
+                    auto it = matrix_numbers.find(params->mModelMatrix);
+                    if (it == matrix_numbers.end())
+                    {
+                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                        matrices.insert(matrices.end(), m, m + 16);
+                    }
+                    matrix = it->second;
+                }
+                entries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, 0 });
+            }
+        }
+        if (!entries.empty())
+        {
+            LLVkMirror::ShadowPacketsHeader header;
+            header.mEntries = (U32)entries.size();
+            header.mMatrices = (U32)(matrices.size() / 16);
+            const glm::mat4 view_proj = gGL.getProjectionMatrix() * glm::make_mat4(gGLModelView);
+            memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
+            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
+            memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+            LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+            gShadowDrawStats.mPacketEntries += entries.size();
+            ++gShadowDrawStats.mPacketRecords;
+        }
+        if (!fallback.empty())
+        {
+            gShadowDrawStats.mPacketFallback += fallback.size();
+            gDeferredShadowProgram.bind(false);
+            gGL.loadMatrix(gGLModelView);
+            gGLLastMatrix = NULL;
+            for (LLDrawInfo* params : fallback)
+            {
+                mSimplePool->pushUntexturedBatch(*params);
+            }
+        }
+        gGL.loadMatrix(gGLModelView);
+        gGLLastMatrix = NULL;
+    };
+
     LLVertexBuffer::unbind();
     for (int j = 0; j < 2; ++j) // 0 -- static, 1 -- rigged
     {
         bool rigged = j == 1;
         LL_GPU_TIMER_ZONE(rigged ? "shadow simple: rigged" : "shadow simple: static"); // <FS>
-        gDeferredShadowProgram.bind(rigged);
+        const bool packets = !rigged && shadow_packets_enabled();
+        if (packets)
+        {
+            gDeferredShadowPullProgram.bind();
+        }
+        else
+        {
+            gDeferredShadowProgram.bind(rigged);
+        }
 
         gGL.diffuseColor4f(1, 1, 1, 1);
 
@@ -11408,9 +11508,16 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             gShadowDrawStats.beginStaticPass();
         }
-        for (U32 type : types)
+        if (packets)
         {
-            renderObjects(type, false, false, rigged);
+            render_shadow_packets(types, sizeof(types) / sizeof(types[0]));
+        }
+        else
+        {
+            for (U32 type : types)
+            {
+                renderObjects(type, false, false, rigged);
+            }
         }
         if (!rigged)
         {
@@ -11556,6 +11663,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 << st.mBadNames / frames << ", 32-bit indices " << st.mWideIndices / frames << ", no position " << st.mNoPosition / frames << ", position not first " << st.mPositionNotFirst / frames
                 << ", index range outside the index buffer " << st.mBadRange / frames << ", vertex range outside the vertex buffer " << st.mBadIndexRange / frames
                 << ", no model matrix " << st.mNullMatrix / frames << LL_ENDL;
+            if (st.mPacketRecords)
+            {
+                LL_INFOS("ShadowDraws") << "shadow packets per frame: " << st.mPacketRecords / frames << " records, " << st.mPacketEntries / frames << " draws in them, "
+                    << st.mPacketFallback / frames << " draws left to the old path" << LL_ENDL;
+            }
+            st.mPacketEntries = st.mPacketFallback = st.mPacketRecords = 0;
             st.mTablePasses = st.mTableEntries = st.mTableMax = st.mBadNames = st.mWideIndices = st.mPositionNotFirst = st.mNoPosition = st.mBadRange = st.mBadIndexRange = st.mNullMatrix = st.mDistinctPairs = 0;
             st.mPasses = st.mTotalDraws = st.mStaticUntex = st.mStaticVBChanges = st.mStaticDistinctVB = st.mRiggedUntex = st.mTextured = st.mGLTF = st.mStaticMatrixChanges = 0;
             st.mLastReport = frame;

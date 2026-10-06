@@ -142,6 +142,7 @@ LL_VK_DEVICE_FN(vkCmdBindIndexBuffer)
 LL_VK_DEVICE_FN(vkCmdDraw)
 LL_VK_DEVICE_FN(vkCmdDrawIndexed)
 LL_VK_DEVICE_FN(vkCmdDrawIndexedIndirect)
+LL_VK_DEVICE_FN(vkGetBufferDeviceAddress)
 LL_VK_DEVICE_FN(vkCmdDispatch)
 
 // dynamic state (core 1.0 / 1.3)

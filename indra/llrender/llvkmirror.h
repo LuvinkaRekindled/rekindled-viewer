@@ -72,6 +72,21 @@ namespace LLVkMirror
     };
     // DLSS is initialised and usable (decided when the Vulkan device was created)
     bool upscaleAvailable();
+
+    // ---- shadow packets (render packets) ----
+    // One record that draws a whole pass of static, untextured shadow casters. For every draw: the GL names of its vertex and index buffer, its index range and the
+    // index of its model matrix. The worker reads the vertices and indices from the buffers by address (shadowPullV.glsl): nothing is bound between the draws.
+    struct ShadowPacketsHeader
+    {
+        U32 mEntries = 0;           // draws, as ShadowPacketEntry after the header
+        U32 mMatrices = 0;          // model matrices (16 floats each, column-major) after the entries; matrix 0 is the identity
+        F32 mViewProj[16] = {};     // projection * view of the pass, column-major
+    };
+    struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mPad; };
+    // the device can read buffers by address and the mirror is running
+    bool shadowPacketsAvailable();
+    // blob: mEntries ShadowPacketEntry, then mMatrices * 16 floats
+    void shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes);
     // queues (async) or runs the upscale: colour + depth + motion -> output, all textures the mirror owns
     void upscale(const UpscaleArgs& args);
 
@@ -89,6 +104,7 @@ namespace LLVkMirror
     void snapshotBoundaryImpl(S32 mode);
     void armSnapshotCompareImpl();
     void upscaleImpl(const UpscaleArgs& args);
+    void shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob);
     // the lock every mirror entry point takes (the viewer calls GL from more than one thread)
     class Mutex;
     Mutex& lock();
