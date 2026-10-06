@@ -11551,6 +11551,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 << st.mStaticUntex / frames << " (vertex buffer changes " << st.mStaticVBChanges / frames << ", distinct vertex buffers summed over passes " << st.mStaticDistinctVB / frames
                 << ", model matrix changes " << st.mStaticMatrixChanges / frames << "), rigged untextured " << st.mRiggedUntex / frames << ", textured " << st.mTextured / frames
                 << ", glTF " << st.mGLTF / frames << ", other " << ((double)st.mTotalDraws - (double)classified) / frames << LL_ENDL;
+            LL_INFOS("ShadowDraws") << "packet table check per frame: " << st.mTablePasses / frames << " static passes, " << st.mTableEntries / frames << " entries (largest pass "
+                << st.mTableMax << ", " << (st.mTableMax * 32) / 1024 << " KB at 32 bytes each), distinct buffer pairs " << st.mDistinctPairs / frames << "; entries with: unnamed buffer "
+                << st.mBadNames / frames << ", 32-bit indices " << st.mWideIndices / frames << ", no position " << st.mNoPosition / frames << ", position not first " << st.mPositionNotFirst / frames
+                << ", index range outside the index buffer " << st.mBadRange / frames << ", vertex range outside the vertex buffer " << st.mBadIndexRange / frames
+                << ", no model matrix " << st.mNullMatrix / frames << LL_ENDL;
+            st.mTablePasses = st.mTableEntries = st.mTableMax = st.mBadNames = st.mWideIndices = st.mPositionNotFirst = st.mNoPosition = st.mBadRange = st.mBadIndexRange = st.mNullMatrix = st.mDistinctPairs = 0;
             st.mPasses = st.mTotalDraws = st.mStaticUntex = st.mStaticVBChanges = st.mStaticDistinctVB = st.mRiggedUntex = st.mTextured = st.mGLTF = st.mStaticMatrixChanges = 0;
             st.mLastReport = frame;
         }

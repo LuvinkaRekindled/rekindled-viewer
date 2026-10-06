@@ -639,6 +639,51 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
 
 LLShadowDrawStats gShadowDrawStats;
 
+void LLShadowDrawStats::endStaticPass()
+{
+    mStaticDistinctVB += mPassVBs.size();
+
+    ++mTablePasses;
+    mTableEntries += mTable.size();
+    mTableMax = std::max<U64>(mTableMax, mTable.size());
+    std::unordered_set<U64> pairs;
+    for (const Caster& c : mTable)
+    {
+        const LLVertexBuffer* vb = c.mVB;
+        if (!vb->getGLBuffer() || !vb->getGLIndices())
+        {
+            ++mBadNames;
+        }
+        pairs.insert(((U64)vb->getGLBuffer() << 32) | vb->getGLIndices());
+        if (vb->getIndicesType() != GL_UNSIGNED_SHORT)
+        {
+            ++mWideIndices;
+        }
+        if (!vb->hasDataType(LLVertexBuffer::TYPE_VERTEX))
+        {
+            ++mNoPosition;
+        }
+        else if (vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+        {
+            ++mPositionNotFirst;
+        }
+        // the index range the draw reads must lie inside the index buffer, the vertex range inside the vertex buffer
+        if ((U64)(c.mIndexOffset + c.mCount) * vb->getIndicesStride() > vb->getIndicesSize())
+        {
+            ++mBadRange;
+        }
+        if (c.mEnd >= vb->getNumVerts())
+        {
+            ++mBadIndexRange;
+        }
+        if (!c.mMatrix)
+        {
+            ++mNullMatrix;
+        }
+    }
+    mDistinctPairs += pairs.size();
+}
+
 void LLRenderPass::pushUntexturedBatch(LLDrawInfo& params)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
@@ -669,6 +714,7 @@ void LLRenderPass::pushUntexturedBatch(LLDrawInfo& params)
                 st.mLastMatrix = params.mModelMatrix;
             }
             st.mPassVBs.insert(params.mVertexBuffer.get());
+            st.mTable.push_back({ params.mVertexBuffer.get(), params.mStart, params.mEnd, params.mCount, params.mOffset, params.mModelMatrix });
         }
     }
 

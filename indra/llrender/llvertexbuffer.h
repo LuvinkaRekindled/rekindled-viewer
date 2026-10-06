@@ -262,6 +262,10 @@ public:
     U8* getMappedData() const               { return mMappedData; }
     U8* getMappedIndices() const            { return mMappedIndexData; }
     U32 getOffset(AttributeType type) const { return mOffsets[type]; }
+    U32 getGLBuffer() const                 { return mGLBuffer; }       // <FS> GL names and index format (render packets)
+    U32 getGLIndices() const                { return mGLIndices; }
+    U32 getIndicesType() const              { return mIndicesType; }
+    U32 getIndicesStride() const            { return mIndicesStride; }
 
     // these functions assume (and assert on) the current VBO being bound
     // Detailed error checking can be enabled by setting gDebugGL to true
