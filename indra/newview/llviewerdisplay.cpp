@@ -210,7 +210,7 @@ void display_startup()
     if (gViewerWindow)
     gViewerWindow->setup2DRender();
     if (gViewerWindow)
-    gViewerWindow->draw();
+    { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
     gGL.flush();
 
     LLVertexBuffer::unbind();
@@ -1541,7 +1541,7 @@ void render_hud_attachments()
         LLSpatialGroup::sNoDelete = false;
         //gPipeline.clearReferences();
 
-        render_hud_elements();
+        { LL_CPU_ZONE("ui: render_hud_elements"); render_hud_elements(); }
 
         //restore type mask
         gPipeline.popRenderTypeMask();
@@ -1698,7 +1698,7 @@ void render_ui(F32 zoom_factor, int subfield)
 
 
         LL_PROFILE_ZONE_NAMED_CATEGORY_UI("HUD");
-    render_hud_elements();
+    { LL_CPU_ZONE("ui: render_hud_elements"); render_hud_elements(); }
 // [RLVa:KB] - Checked: RLVa-2.2 (@setoverlay)
         if (RlvActions::hasBehaviour(RLV_BHVR_SETOVERLAY))
         {
@@ -1723,7 +1723,7 @@ void render_ui(F32 zoom_factor, int subfield)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_UI("UI 3D"); //LL_RECORD_BLOCK_TIME(FTM_RENDER_UI_3D);
                 LLGLState::checkStates();
-                render_ui_3d();
+                { LL_CPU_ZONE("ui: render_ui_3d"); render_ui_3d(); }
                 LLGLState::checkStates();
             }
             else
@@ -1740,7 +1740,7 @@ void render_ui(F32 zoom_factor, int subfield)
         if (render_ui)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_UI("UI 2D"); //LL_RECORD_BLOCK_TIME(FTM_RENDER_UI_2D);
-            LLHUDObject::renderAll();
+            { LL_CPU_ZONE("ui: LLHUDObject::renderAll (name tags)"); LLHUDObject::renderAll(); }
             render_ui_2d();
         }
         // <FS:Beq> FIRE-33239 - particles do not sie when UI is disabled
@@ -1752,8 +1752,8 @@ void render_ui(F32 zoom_factor, int subfield)
         // </FS:Beq>
 
         gViewerWindow->setup2DRender();
-        gViewerWindow->updateDebugText();
-        gViewerWindow->drawDebugText();
+        { LL_CPU_ZONE("ui: updateDebugText"); gViewerWindow->updateDebugText(); }
+        { LL_CPU_ZONE("ui: drawDebugText"); gViewerWindow->drawDebugText(); }
     }
 
     if (!gSnapshot)
@@ -1933,12 +1933,12 @@ void render_ui_3d()
     }
     // </FS:PP>
 
-    gViewerWindow->renderSelections(false, false, true); // Non HUD call in render_hud_elements
+    { LL_CPU_ZONE("ui: renderSelections"); gViewerWindow->renderSelections(false, false, true); } // Non HUD call in render_hud_elements
 
     if (gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
     {
         // Render debugging beacons.
-        gObjectList.renderObjectBeacons();
+        { LL_CPU_ZONE("ui: object beacons"); gObjectList.renderObjectBeacons(); }
         gObjectList.resetObjectBeacons();
         gSky.addSunMoonBeacons();
     }
@@ -2046,7 +2046,7 @@ void render_ui_2d()
 
                 gGL.clearBuffers(GL_COLOR_BUFFER_BIT);
 
-                gViewerWindow->draw();
+                { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
             }
 
             gPipeline.mUIScreen.flush();
@@ -2070,7 +2070,7 @@ void render_ui_2d()
     }
     else
     {
-        gViewerWindow->draw();
+        { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
     }
 
     // reset current origin for font rendering, in case of tiling render
