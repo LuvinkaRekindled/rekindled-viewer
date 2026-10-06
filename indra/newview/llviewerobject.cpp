@@ -1202,6 +1202,73 @@ U32 LLViewerObject::extractSpatialExtents(LLDataPackerBinaryBuffer *dp, LLVector
     return parent_id;
 }
 
+// <FS> The viewer's object cache decides which cached objects to create from their bounds. A light's bounds are those of its (often tiny) source, so its glow was ignored and the
+// light did not exist until the source was in view. This reads the radius of the light from the same packed data the object is created from.
+//static
+F32 LLViewerObject::extractLightRadius(LLDataPackerBinaryBuffer* dp)
+{
+    F32 radius = 0.f;
+    dp->reset();
+    dp->shift(sObjectDataMap["SpecialCode"]);
+    U32 value = 0;
+    bool ok = dp->unpackU32(value, "SpecialCode");
+    if (ok && !(value & (0x8 | 0x1)))      // 0x8: legacy particle source, 0x1: scratch pad data: sizes not decoded here
+    {
+        LLUUID owner;
+        LLVector3 vec;
+        ok = dp->unpackUUID(owner, "Owner");
+        if (ok && (value & 0x80))
+        {
+            ok = dp->unpackVector3(vec, "Omega");
+        }
+        if (ok && (value & 0x20))
+        {
+            U32 parent_id;
+            ok = dp->unpackU32(parent_id, "ParentID");
+        }
+        if (ok && (value & 0x2))
+        {
+            U8 tree_data;
+            ok = dp->unpackU8(tree_data, "TreeData");
+        }
+        if (ok && (value & 0x4))
+        {
+            std::string text;
+            U8 text_color[4];
+            ok = dp->unpackString(text, "Text") && dp->unpackBinaryDataFixed(text_color, 4, "Color");
+        }
+        if (ok && (value & 0x200))
+        {
+            std::string media_url;
+            ok = dp->unpackString(media_url, "MediaURL");
+        }
+        U8 num_parameters = 0;
+        if (ok)
+        {
+            ok = dp->unpackU8(num_parameters, "num_params");
+        }
+        U8 param_block[MAX_OBJECT_PARAMS_SIZE];
+        for (U8 param = 0; ok && param < num_parameters; ++param)
+        {
+            U16 param_type;
+            S32 param_size;
+            ok = dp->unpackU16(param_type, "param_type") && dp->unpackBinaryData(param_block, MAX_OBJECT_PARAMS_SIZE, param_size, "param_data");
+            if (ok && param_type == LLNetworkData::PARAMS_LIGHT)
+            {
+                LLDataPackerBinaryBuffer dp2(param_block, param_size);
+                LLLightParams light;
+                if (light.unpack(dp2))
+                {
+                    radius = light.getRadius();
+                }
+                break;
+            }
+        }
+    }
+    dp->reset();
+    return radius;
+}
+
 U32 LLViewerObject::processUpdateMessage(LLMessageSystem *mesgsys,
                      void **user_data,
                      U32 block_num,
