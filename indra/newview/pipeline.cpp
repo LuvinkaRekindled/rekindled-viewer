@@ -11905,6 +11905,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             gShadowDrawStats.endStaticPass();
         }
 
+        if (packets || skin_packets)
+        {
+            // <FS> the glTF casters below are drawn the old way, with the regular shadow program (it was bound here before the packets): the pull programs ignore
+            // the vertex input and would draw whatever their table entry 0 holds
+            gDeferredShadowProgram.bind(rigged);
+        }
         renderGLTFObjects(LLRenderPass::PASS_GLTF_PBR, false, rigged);
 
         gGL.getTexUnit(0)->enable(LLTexUnit::TT_TEXTURE);
@@ -12066,6 +12072,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 LL_INFOS("ShadowDraws") << "shadow rigged packets per frame: " << st.mSkinRecords / frames << " records, " << st.mSkinEntries / frames << " draws in them, "
                     << st.mSkinFallback / frames << " draws left to the old path, " << st.mSkinPalettes / frames << " palettes sent" << LL_ENDL;
             }
+            LL_INFOS("ShadowDraws") << "sun elevation " << asinf(llclamp(mSunDir.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG << " degrees, sun up " << (LLEnvironment::instance().getIsSunUp() ? 1 : 0) << LL_ENDL;
             st.mSkinEntries = st.mSkinFallback = st.mSkinRecords = st.mSkinPalettes = 0;
             if (st.mAlphaRecords)
             {
