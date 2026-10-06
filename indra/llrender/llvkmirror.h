@@ -108,6 +108,22 @@ namespace LLVkMirror
         F32 mCutoff;                // alpha below this is discarded
         U32 mWeightOffset, mPaletteOffset, mJoints;     // rigged draws, as ShadowSkinEntry
     };
+    // kind 3: a draw of a deferred geometry pass (the colour passes). The matrices after the entries are 44 floats each: modelview, modelview * projection, and the normal
+    // matrix as three vec4 columns (the viewer computes them, once per model matrix). Matrix 0 is the view alone.
+    enum GeoFlags : U32
+    {
+        GEO_ONE_TEXTURE = 1         // one diffuse texture, mTextures[0]: the vertices carry no texture index
+    };
+    struct GeoEntry
+    {
+        U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix;
+        U32 mFlags;                 // GeoFlags
+        U32 mNormalOffset, mTexcoordOffset, mColorOffset;      // byte offsets of the arrays in the vertex buffer
+        U32 mTextures[4];           // GL names of the diffuse textures the vertices' texture index picks from, 0 = none (white)
+        U32 mNormalMap, mSpecularMap;   // GL names (materials passes), 0 = none
+        F32 mSpecular[4];
+        F32 mEnvIntensity, mCutoff, mBrightness, mPad;
+    };
     // the device can read buffers by address and the mirror is running
     bool shadowPacketsAvailable();
     // ... and the device can index sampled images at run time (the textured kind)

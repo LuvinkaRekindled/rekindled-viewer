@@ -385,6 +385,10 @@ public:
     void pushMaskBatches(U32 type, bool texture = true, bool batch_textures = false);
     void pushRiggedMaskBatches(U32 type, bool texture = true, bool batch_textures = false);
     void pushBatch(LLDrawInfo& params, bool texture, bool batch_textures = false);
+    // <FS> render packets for the deferred geometry passes (Vulkan mirror only): sends the static draws of a pass type as one record, with the program bound by the caller
+    // (a pull program); the draws it cannot carry are returned to be drawn the old way
+    static bool deferredPacketsEnabled();
+    static void pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback);
     void pushUntexturedBatch(LLDrawInfo& params);
     void pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_textures = false);
     static bool uploadMatrixPalette(LLDrawInfo& params);
@@ -518,6 +522,13 @@ struct LLShadowDrawStats
     void endStaticPass();
 };
 extern LLShadowDrawStats gShadowDrawStats;
+
+// <FS> geometry packet statistics (logged with the DeferredDraws report)
+struct LLGeometryPacketStats
+{
+    U64 mEntries = 0, mFallback = 0, mRecords = 0, mTextures = 0, mMatrices = 0;
+};
+extern LLGeometryPacketStats gGeometryPacketStats;
 
 
 #endif //LL_LLDRAWPOOL_H

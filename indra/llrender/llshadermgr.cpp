@@ -654,7 +654,19 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
         extra_code_text[extra_code_count++] = strdup( "#define IS_AMD_CARD 1\n" );
     }
 
-    if (texture_index_channels > 0 && type == GL_FRAGMENT_SHADER)
+    if (defines && defines->find("LL_BINDLESS_DIFFUSE") != defines->end() && type == GL_FRAGMENT_SHADER)
+    {
+        // <FS> render packets (Vulkan mirror only): the draw's texture comes from the bindless table (set 2), by the slot the vertex shader passes on, instead of tex0..texN
+        extra_code_text[extra_code_count++] = strdup("#define HAS_DIFFUSE_LOOKUP\n");
+        extra_code_text[extra_code_count++] = strdup("#extension GL_EXT_nonuniform_qualifier : require\n");
+        extra_code_text[extra_code_count++] = strdup("layout(set = 2, binding = 0) uniform sampler2D ll_bindless_textures[];\n");
+        extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot;\n");
+        extra_code_text[extra_code_count++] = strdup("vec4 diffuseLookup(vec2 texcoord)\n");
+        extra_code_text[extra_code_count++] = strdup("{\n");
+        extra_code_text[extra_code_count++] = strdup("    return texture(ll_bindless_textures[nonuniformEXT(vary_slot)], texcoord);\n");
+        extra_code_text[extra_code_count++] = strdup("}\n");
+    }
+    else if (texture_index_channels > 0 && type == GL_FRAGMENT_SHADER)
     {
         //use specified number of texture channels for indexed texture rendering
 

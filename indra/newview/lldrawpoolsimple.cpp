@@ -102,8 +102,26 @@ void LLDrawPoolSimple::renderDeferred(S32 pass)
     LLGLDisable blend(GL_BLEND);
 
     //render static
-    gDeferredDiffuseProgram.bind();
-    pushBatches(LLRenderPass::PASS_SIMPLE, true, true);
+    if (deferredPacketsEnabled())
+    {
+        // <FS> render packets: the static draws as one record; what it cannot carry is drawn the old way
+        std::vector<LLDrawInfo*> fallback;
+        gDeferredDiffusePullProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_SIMPLE, fallback);
+        if (!fallback.empty())
+        {
+            gDeferredDiffuseProgram.bind();
+            for (LLDrawInfo* params : fallback)
+            {
+                pushBatch(*params, true, true);
+            }
+        }
+    }
+    else
+    {
+        gDeferredDiffuseProgram.bind();
+        pushBatches(LLRenderPass::PASS_SIMPLE, true, true);
+    }
 
     //render rigged
     gDeferredDiffuseProgram.bind(true);
