@@ -416,6 +416,9 @@ struct Tex
     std::map<std::pair<U32, U32>, std::unique_ptr<Image>> mViews;     // (level, layer) -> render-target view
     VkSampler mVkSampler = VK_NULL_HANDLE;      // cached sampler for the parameters hashed in mSamplerSig
     U64 mSamplerSig = 0;
+    U32 mBindlessEpoch = 0;                     // <FS> the slot this texture holds in the bindless table, for the frame (epoch) and image view it was taken for
+    U32 mBindlessSlot = 0;
+    VkImageView mBindlessView = VK_NULL_HANDLE;
 };
 
 VkComponentSwizzle swizzle_component(GLenum s)
@@ -2053,6 +2056,8 @@ void on_glGenTextures(GLsizei n, GLuint* textures)
     }
 }
 
+static U64 sPacketTextureGeneration = 0;     // <FS> bumped when a texture entry goes: the packet records' lookup cache starts over
+
 void on_glDeleteTextures(GLsizei n, const GLuint* textures)
 {
     for (GLsizei i = 0; i < n; ++i)
@@ -2062,6 +2067,7 @@ void on_glDeleteTextures(GLsizei n, const GLuint* textures)
         {
             destroy_tex_images(it->second);
             sGL.mTextures.erase(it);
+            ++sPacketTextureGeneration;
         }
         for (auto& unit : sCtx.mBound)
         {
@@ -2704,10 +2710,226 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     ++sDrawsTotal;
 }
 
+// <FS> Render packets with textures. The buffers and textures of the draws, found through direct-mapped caches of the entries of sGL.mBuffers and sGL.mTextures
+// (their nodes keep their place until erased, and erasing starts the cache over).
+static Buf* packet_buffer(GLuint name)
+{
+    static Buf* cache_buf[1024];
+    static GLuint cache_name[1024];
+    static U64 cache_generation = ~0ull;
+    if (cache_generation != sPacketBufferGeneration)
+    {
+        memset(cache_buf, 0, sizeof(cache_buf));
+        memset(cache_name, 0, sizeof(cache_name));
+        cache_generation = sPacketBufferGeneration;
+    }
+    const U32 slot = (name * 2654435761u) >> 22;
+    if (cache_name[slot] == name && cache_buf[slot])
+    {
+        return cache_buf[slot];
+    }
+    auto it = sGL.mBuffers.find(name);
+    if (it == sGL.mBuffers.end())
+    {
+        return nullptr;
+    }
+    cache_name[slot] = name;
+    cache_buf[slot] = &it->second;
+    return &it->second;
+}
+
+static Tex* packet_texture(GLuint name)
+{
+    static Tex* cache_tex[1024];
+    static GLuint cache_name[1024];
+    static U64 cache_generation = ~0ull;
+    if (cache_generation != sPacketTextureGeneration)
+    {
+        memset(cache_tex, 0, sizeof(cache_tex));
+        memset(cache_name, 0, sizeof(cache_name));
+        cache_generation = sPacketTextureGeneration;
+    }
+    const U32 slot = (name * 2654435761u) >> 22;
+    if (cache_name[slot] == name && cache_tex[slot])
+    {
+        return cache_tex[slot];
+    }
+    auto it = sGL.mTextures.find(name);
+    if (it == sGL.mTextures.end())
+    {
+        return nullptr;
+    }
+    cache_name[slot] = name;
+    cache_tex[slot] = &it->second;
+    return &it->second;
+}
+
+// the slot of a texture in the frame's bindless table; 0 (white) for one that has no usable image, which is what the bound-texture path samples then too
+static U32 packet_texture_slot(Renderer& r, GLuint name)
+{
+    Tex* t = packet_texture(name);
+    if (!t || !t->mImage.valid() || t->mImage.mViewType != VK_IMAGE_VIEW_TYPE_2D)
+    {
+        return 0;
+    }
+    if (t->mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    {
+        r.ensureLayout(t->mImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    const U32 epoch = r.bindlessEpoch();
+    if (t->mBindlessEpoch == epoch && t->mBindlessView == t->mImage.mView)
+    {
+        return t->mBindlessSlot;
+    }
+    const U32 slot = r.bindlessSlot(&t->mImage, texture_sampler(r, *t));
+    t->mBindlessEpoch = epoch;
+    t->mBindlessView = t->mImage.mView;
+    t->mBindlessSlot = slot;
+    return slot;
+}
+
+// the worker side of a record of alpha masked casters (shadowAlphaPullV.glsl / shadowAlphaPullF.glsl): the entries also name their textures
+static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+{
+    struct AlphaGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mFirst, mCount, mModel, mFlags; U32 mSlots[2]; F32 mCutoff; U32 mPad; };
+    static_assert(sizeof(AlphaGpu) == 64, "alpha packet entry");
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<GLuint> used_cache, packet_used;
+    static thread_local std::vector<U32> counts;
+    VertexInput& vi = vi_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used_cache.clear();
+    packet_used.clear();
+
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (h.mEntries == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table") || !r.bindlessAvailable())
+    {
+        ++sStats.mNoProgram;
+        return;
+    }
+    const LLVkMirror::ShadowAlphaEntry* entries = (const LLVkMirror::ShadowAlphaEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowAlphaEntry) * h.mEntries);
+    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(AlphaGpu) * (size_t)h.mEntries);
+    Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
+    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
+    {
+        return;
+    }
+    const U64 frame_now = Context::instance().getFrameNumber();
+    counts.assign(h.mEntries, 0);
+    AlphaGpu* out = (AlphaGpu*)table.mPtr;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const LLVkMirror::ShadowAlphaEntry& e = entries[i];
+        AlphaGpu& g = out[i];
+        memset(&g, 0, sizeof(g));
+        Buf* vb = packet_buffer(e.mVertexBuffer);
+        Buf* ib = packet_buffer(e.mIndexBuffer);
+        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+        {
+            continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
+        }
+        const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
+        g.mPositions[0] = (U32)pa;
+        g.mPositions[1] = (U32)(pa >> 32);
+        g.mIndices[0] = (U32)ia;
+        g.mIndices[1] = (U32)(ia >> 32);
+        U32 flags = e.mFlags;
+        if (flags & LLVkMirror::ALPHA_HAS_TEXCOORD)
+        {
+            const U64 a = pa + e.mTexcoordOffset;
+            g.mTexcoords[0] = (U32)a;
+            g.mTexcoords[1] = (U32)(a >> 32);
+        }
+        if (flags & LLVkMirror::ALPHA_HAS_COLOR)
+        {
+            const U64 a = pa + e.mColorOffset;
+            g.mColors[0] = (U32)a;
+            g.mColors[1] = (U32)(a >> 32);
+        }
+        g.mFirst = e.mFirstIndex;
+        g.mCount = e.mIndexCount;
+        g.mModel = e.mMatrix;
+        g.mFlags = flags;
+        U32 slot[4] = {};
+        for (U32 t = 0; t < 4; ++t)
+        {
+            if (e.mTextures[t])
+            {
+                slot[t] = packet_texture_slot(r, e.mTextures[t]);
+            }
+        }
+        g.mSlots[0] = slot[0] | (slot[1] << 16);
+        g.mSlots[1] = slot[2] | (slot[3] << 16);
+        g.mCutoff = e.mCutoff;
+        counts[i] = e.mIndexCount;
+        vb->mLastUseFrame = frame_now;
+        ib->mLastUseFrame = frame_now;
+        if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
+        {
+            packet_used.push_back(e.mVertexBuffer);
+            packet_used.push_back(e.mIndexBuffer);
+        }
+    }
+    memcpy(models.mPtr, matrices, 64 * (size_t)h.mMatrices);
+
+    const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress;
+    const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
+    const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
+    program->setInts("ll_packet_table", table_words, 2);
+    program->setInts("ll_packet_models", models_words, 2);
+    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+    program->setFloats("ll_target_width", &h.mTargetWidth, 1);
+
+    if (!prepare_draw(vi, used_cache))
+    {
+        return;
+    }
+    ensure_buffers_current(packet_used, 0);
+    r.setVertexInput(vi);
+    r.setTopology(topology(GL_TRIANGLES));
+    r.bindlessFlush();
+
+    Renderer::ScratchAlloc commands;
+    const auto& caps = Context::instance().getCaps();
+    if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
+    {
+        commands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)h.mEntries);
+        if (commands.mPtr)
+        {
+            VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)commands.mPtr;
+            for (U32 i = 0; i < h.mEntries; ++i)
+            {
+                c[i] = { counts[i], 1u, 0u, i };
+            }
+        }
+    }
+    if (r.drawPackets(counts.data(), h.mEntries, commands.mPtr ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
+    {
+        if (sStatsEnabled)
+        {
+            sStats.mDone += h.mEntries;
+        }
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
+    sDraws += h.mEntries;
+    sDrawsTotal += h.mEntries;
+}
+
 // <FS> Render packets: the worker side of LLVkMirror::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
 {
+    if (h.mKind == 1)
+    {
+        on_shadow_alpha_packets(h, blob);
+        return;
+    }
     struct PacketGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
     static_assert(sizeof(PacketGpu) == 32, "packet entry");
     static thread_local VertexInput vi_cache;

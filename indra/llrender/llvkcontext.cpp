@@ -411,10 +411,29 @@ bool Context::pickDevice()
             }
 
             VkPhysicalDevicePushDescriptorPropertiesKHR push = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR };
+            VkPhysicalDeviceVulkan12Properties p12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES };
             VkPhysicalDeviceProperties2 props2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
             props2.pNext = &push;
+            push.pNext = &p12;
             vkGetPhysicalDeviceProperties2(dev, &props2);
             mCaps.mMaxPushDescriptors = push.maxPushDescriptors;
+
+            // <FS> bindless sampled images for the render packets: the features, and a table size that leaves room for the push set and the uniform set
+            if (chain.f12.runtimeDescriptorArray && chain.f12.descriptorBindingPartiallyBound && chain.f12.descriptorBindingSampledImageUpdateAfterBind
+                && chain.f12.shaderSampledImageArrayNonUniformIndexing && mCaps.mBufferDeviceAddress)
+            {
+                auto room = [](U32 limit, U32 reserve) -> U32 { return limit > reserve ? limit - reserve : 0; };
+                const U32 n = std::min<U32>({ 8192u,
+                    room(p12.maxPerStageDescriptorUpdateAfterBindSamplers, 96), room(p12.maxPerStageDescriptorUpdateAfterBindSampledImages, 96),
+                    room(p12.maxPerStageUpdateAfterBindResources, 160), room(p12.maxDescriptorSetUpdateAfterBindSamplers, 96),
+                    room(p12.maxDescriptorSetUpdateAfterBindSampledImages, 96) });
+                mCaps.mBindlessSlots = n >= 1024 ? n : 0;
+            }
+            LL_INFOS("Vulkan") << "descriptor indexing: runtime arrays " << (chain.f12.runtimeDescriptorArray ? 1 : 0) << ", partially bound "
+                << (chain.f12.descriptorBindingPartiallyBound ? 1 : 0) << ", sampled image update after bind " << (chain.f12.descriptorBindingSampledImageUpdateAfterBind ? 1 : 0)
+                << ", non-uniform sampled image indexing " << (chain.f12.shaderSampledImageArrayNonUniformIndexing ? 1 : 0) << ", update-after-bind limits per stage samplers "
+                << p12.maxPerStageDescriptorUpdateAfterBindSamplers << " sampled images " << p12.maxPerStageDescriptorUpdateAfterBindSampledImages << " resources "
+                << p12.maxPerStageUpdateAfterBindResources << " -> bindless slots " << mCaps.mBindlessSlots << LL_ENDL;
         }
     }
 
