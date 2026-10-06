@@ -363,7 +363,7 @@ namespace
         long long mNanos = 0;
         unsigned mCalls = 0;
     };
-    CpuZone sCpuZones[96];
+    CpuZone sCpuZones[512];
     unsigned sCpuZoneCount = 0;
     std::thread::id sCpuMainThread;
     bool sCpuMainThreadKnown = false;
@@ -412,6 +412,26 @@ LLCpuZoneScope::~LLCpuZoneScope()
     }
 }
 
+
+#include "llview.h"
+namespace
+{
+    // the draw time of the views near the top of the UI tree, by view name (inclusive: a floater counts its children)
+    std::vector<LLCpuZoneScope*> sViewScopes;
+    void cpu_view_hook(const LLView* view, bool begin)
+    {
+        if (begin)
+        {
+            sViewScopes.push_back(new LLCpuZoneScope(view->getName().c_str()));
+        }
+        else if (!sViewScopes.empty())
+        {
+            delete sViewScopes.back();
+            sViewScopes.pop_back();
+        }
+    }
+}
+
 // static
 void LLCpuZoneScope::frame()
 {
@@ -423,6 +443,7 @@ void LLCpuZoneScope::frame()
     {
         sCpuMainThread = std::this_thread::get_id();
         sCpuMainThreadKnown = true;
+        LLView::sDrawHook = &cpu_view_hook;
     }
     if (sCpuFrames == 0)
     {
@@ -437,8 +458,10 @@ void LLCpuZoneScope::frame()
     std::vector<CpuZone> zones(sCpuZones, sCpuZones + sCpuZoneCount);
     std::sort(zones.begin(), zones.end(), [](const CpuZone& a, const CpuZone& b) { return a.mNanos > b.mNanos; });
     std::string text;
+    size_t listed = 0;
     for (const CpuZone& z : zones)
     {
+        if (++listed > 90) break;
         text += llformat(" | %s %.2f ms (%.1f calls)", z.mName, (double)z.mNanos / 1.0e6 / frames, (double)z.mCalls / frames);
     }
     LL_INFOS("CpuZones") << "main thread per frame over " << sCpuFrames << " frames: loop interval " << interval_ms << " ms (inclusive zones, nested ones count in their parents)" << text << LL_ENDL;

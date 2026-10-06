@@ -62,6 +62,7 @@ bool    LLView::sDebugRects = false;
 bool    LLView::sDebugUnicode = false;
 bool    LLView::sDebugCamera = false;
 bool    LLView::sIsRectDirty = false;
+void (*LLView::sDrawHook)(const LLView* view, bool begin) = nullptr;
 LLRect  LLView::sDirtyRect;
 bool    LLView::sDebugRectsShowNames = true;
 bool    LLView::sDebugKeys = false;
@@ -1317,7 +1318,9 @@ void LLView::drawChildren()
                         LLUI::translate((F32)viewp->getRect().mLeft, (F32)viewp->getRect().mBottom);
                         // flag the fact we are in draw here, in case overridden draw() method attempts to remove this widget
                         viewp->mInDraw = true;
+                        if (sDrawHook && sDepth <= 3) sDrawHook(viewp, true);
                         viewp->draw();
+                        if (sDrawHook && sDepth <= 3) sDrawHook(viewp, false);
                         viewp->mInDraw = false;
 
                         if (sDebugRects)
