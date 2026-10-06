@@ -575,7 +575,7 @@ bool Renderer::init()
     }
     for (U32 i = 0; i < Context::frameCount(); ++i)
     {
-        if (!ctx.createBuffer(VERTEX_RING_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, Context::Memory::UploadDevice, mVertexRing[i]))
+        if (!ctx.createBuffer(VERTEX_RING_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, Context::Memory::UploadDevice, mVertexRing[i]))
         {
             return false;
         }
@@ -1938,7 +1938,7 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
 
 // <FS> Render packets: the draws of one record share everything but their vertex count and their instance index (the shader finds the rest by it): the state is
 // applied once and every draw is one command
-bool Renderer::drawPackets(const U32* vertex_counts, U32 draws)
+bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirect, VkDeviceSize indirect_offset)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget) || draws == 0)
     {
@@ -1952,12 +1952,26 @@ bool Renderer::drawPackets(const U32* vertex_counts, U32 draws)
         return false;
     }
     startPendingQuery();
-    for (U32 i = 0; i < draws; ++i)
+    if (indirect != VK_NULL_HANDLE)
     {
-        if (vertex_counts[i])
+        // the arguments (vertex count, one instance, first vertex 0, first instance = the draw number) are in the buffer: one command for the whole record
+        for (U32 done = 0; done < draws; )
         {
-            vkCmdDraw(mCmd, vertex_counts[i], 1, 0, i);
-            ++mDrawCount;
+            const U32 n = std::min<U32>(draws - done, 65535u);
+            vkCmdDrawIndirect(mCmd, indirect, indirect_offset + (VkDeviceSize)done * sizeof(VkDrawIndirectCommand), n, (U32)sizeof(VkDrawIndirectCommand));
+            done += n;
+        }
+        mDrawCount += draws;
+    }
+    else
+    {
+        for (U32 i = 0; i < draws; ++i)
+        {
+            if (vertex_counts[i])
+            {
+                vkCmdDraw(mCmd, vertex_counts[i], 1, 0, i);
+                ++mDrawCount;
+            }
         }
     }
     ++mModCount;
