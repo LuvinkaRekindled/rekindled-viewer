@@ -28,6 +28,7 @@
 // TODO: create 2 classes for images w/ and w/o discard levels?
 
 #include "linden_common.h"
+#include <chrono>
 
 #include "llimagegl.h"
 
@@ -441,16 +442,30 @@ void LLImageGL::markTexOptionsDirty()
 //static
 void LLImageGL::flushDirtyTexOptions()
 {
+    static U64 sCalls = 0, sImages = 0, sApplied = 0, sMaxApplied = 0, sNs = 0;
+    const auto start = std::chrono::steady_clock::now();
+    U64 applied = 0;
     std::lock_guard<std::mutex> lock(sDirtyOptionMutex);
+    sImages += sDirtyOptionImages.size();
     for (LLImageGL* image : sDirtyOptionImages)
     {
         image->mTexOptionsQueued = false;
         if (image->mTexOptionsDirty && image->mTexName)
         {
             gGL.getTexUnit(0)->applyTexOptions(image);
+            ++applied;
         }
     }
     sDirtyOptionImages.clear();
+    sApplied += applied;
+    sMaxApplied = std::max(sMaxApplied, applied);
+    sNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+    if (++sCalls % 600 == 0)
+    {
+        LL_INFOS("TexOptFlush") << "per frame over 600 frames: " << (double)sImages / 600.0 << " images queued, " << (double)sApplied / 600.0 << " applied (max "
+            << sMaxApplied << " in one frame), " << (double)sNs / 1.0e6 / 600.0 << " ms" << LL_ENDL;
+        sImages = sApplied = sMaxApplied = sNs = 0;
+    }
 }
 
 //static
