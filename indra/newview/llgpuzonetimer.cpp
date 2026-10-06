@@ -346,3 +346,106 @@ void LLGpuZoneTimer::count(const char* name, double value)
         sCounters[name] += value;
     }
 }
+
+// <FS> CPU zones of the main thread (see llgpuzonetimer.h)
+#include <algorithm>
+#include <chrono>
+#include <string>
+#include <thread>
+#include <vector>
+#include "llstring.h"
+
+namespace
+{
+    struct CpuZone
+    {
+        const char* mName = nullptr;
+        long long mNanos = 0;
+        unsigned mCalls = 0;
+    };
+    CpuZone sCpuZones[96];
+    unsigned sCpuZoneCount = 0;
+    std::thread::id sCpuMainThread;
+    bool sCpuMainThreadKnown = false;
+    const bool sCpuZonesOn = getenv("FS_CPU_ZONES") != nullptr;
+    unsigned sCpuFrames = 0;
+    long long sCpuFirstFrame = 0;
+
+    long long cpu_now()
+    {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+}
+
+LLCpuZoneScope::LLCpuZoneScope(const char* name)
+    : mName(nullptr), mStart(0)
+{
+    if (sCpuZonesOn && sCpuMainThreadKnown && std::this_thread::get_id() == sCpuMainThread)
+    {
+        mName = name;
+        mStart = cpu_now();
+    }
+}
+
+LLCpuZoneScope::~LLCpuZoneScope()
+{
+    if (!mName)
+    {
+        return;
+    }
+    const long long d = cpu_now() - mStart;
+    for (unsigned i = 0; i < sCpuZoneCount; ++i)
+    {
+        if (sCpuZones[i].mName == mName)
+        {
+            sCpuZones[i].mNanos += d;
+            ++sCpuZones[i].mCalls;
+            return;
+        }
+    }
+    if (sCpuZoneCount < sizeof(sCpuZones) / sizeof(sCpuZones[0]))
+    {
+        sCpuZones[sCpuZoneCount].mName = mName;
+        sCpuZones[sCpuZoneCount].mNanos = d;
+        sCpuZones[sCpuZoneCount].mCalls = 1;
+        ++sCpuZoneCount;
+    }
+}
+
+// static
+void LLCpuZoneScope::frame()
+{
+    if (!sCpuZonesOn)
+    {
+        return;
+    }
+    if (!sCpuMainThreadKnown)
+    {
+        sCpuMainThread = std::this_thread::get_id();
+        sCpuMainThreadKnown = true;
+    }
+    if (sCpuFrames == 0)
+    {
+        sCpuFirstFrame = cpu_now();
+    }
+    if (++sCpuFrames < 600)
+    {
+        return;
+    }
+    const double frames = (double)sCpuFrames;
+    const double interval_ms = (double)(cpu_now() - sCpuFirstFrame) / 1.0e6 / frames;
+    std::vector<CpuZone> zones(sCpuZones, sCpuZones + sCpuZoneCount);
+    std::sort(zones.begin(), zones.end(), [](const CpuZone& a, const CpuZone& b) { return a.mNanos > b.mNanos; });
+    std::string text;
+    for (const CpuZone& z : zones)
+    {
+        text += llformat(" | %s %.2f ms (%.1f calls)", z.mName, (double)z.mNanos / 1.0e6 / frames, (double)z.mCalls / frames);
+    }
+    LL_INFOS("CpuZones") << "main thread per frame over " << sCpuFrames << " frames: loop interval " << interval_ms << " ms (inclusive zones, nested ones count in their parents)" << text << LL_ENDL;
+    for (unsigned i = 0; i < sCpuZoneCount; ++i)
+    {
+        sCpuZones[i].mNanos = 0;
+        sCpuZones[i].mCalls = 0;
+    }
+    sCpuFrames = 0;
+}

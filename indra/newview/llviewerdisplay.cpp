@@ -910,9 +910,15 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Update Geom");
             const F32 max_geom_update_time = 0.005f*10.f*gFrameIntervalSeconds.value(); // 50 ms/second update time
-            gPipeline.createObjects(max_geom_update_time);
+            {
+                LL_CPU_ZONE("display: createObjects");
+                gPipeline.createObjects(max_geom_update_time);
+            }
             gPipeline.processPartitionQ();
-            gPipeline.updateGeom(max_geom_update_time);
+            {
+                LL_CPU_ZONE("display: updateGeom");
+                gPipeline.updateGeom(max_geom_update_time);
+            }
             stop_glerror();
         }
 
@@ -940,7 +946,10 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         static LLCullResult result;
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
         LLPipeline::sUnderWaterRender = LLViewerCamera::getInstance()->cameraUnderWater();
-        gPipeline.updateCull(*LLViewerCamera::getInstance(), result);
+        {
+            LL_CPU_ZONE("display: updateCull");
+            gPipeline.updateCull(*LLViewerCamera::getInstance(), result);
+        }
         stop_glerror();
 
         LLGLState::checkStates();
@@ -965,6 +974,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 if (gFrameCount > 1 && !for_snapshot)
                 { //for some reason, ATI 4800 series will error out if you
                   //try to generate a shadow before the first frame is through
+                    LL_CPU_ZONE("display: generateSunShadow");
                     gPipeline.generateSunShadow(*LLViewerCamera::getInstance());
                 }
 
@@ -1042,7 +1052,10 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("display - 4")
             LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
-            gPipeline.stateSort(camera, result); // <FS:Ansariel> Factor out calls to getInstance
+            {
+                LL_CPU_ZONE("display: stateSort");
+                gPipeline.stateSort(camera, result); // <FS:Ansariel> Factor out calls to getInstance
+            }
             stop_glerror();
 
             if (rebuild)
@@ -1173,7 +1186,10 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             }
 
             gGL.setColorMask(true, true);
-            gPipeline.renderGeomDeferred(*LLViewerCamera::getInstance(), true);
+            {
+                LL_CPU_ZONE("display: renderGeomDeferred");
+                gPipeline.renderGeomDeferred(*LLViewerCamera::getInstance(), true);
+            }
         }
 
         {
@@ -1195,6 +1211,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         if (LLPipeline::sRenderDeferred)
         {
+            LL_CPU_ZONE("display: renderDeferredLighting (incl. post-deferred)");
             gPipeline.renderDeferredLighting();
         }
 
@@ -1667,7 +1684,10 @@ void render_ui(F32 zoom_factor, int subfield)
     }
 
     // apply gamma correction and post effects
-    gPipeline.renderFinalize();
+    {
+        LL_CPU_ZONE("display: renderFinalize");
+        gPipeline.renderFinalize();
+    }
 
     // <FS> DLSS: from here on everything is drawn straight into the full-size window, after the upscale. It must not carry the camera jitter of the scene (nothing
     // averages it out any more, so billboards such as the voice dot, beams and selection outlines would vibrate by up to a pixel).

@@ -24,4 +24,21 @@ public:
     static void count(const char* name, double value);
 };
 
+// <FS> CPU zones of the main thread. With the environment variable FS_CPU_ZONES=1 every LL_CPU_ZONE scope adds its wall time to a named, inclusive zone and the log
+// (tag CpuZones) gets a summary of the milliseconds per frame of each zone every 600 frames. Does nothing without the variable.
+class LLCpuZoneScope
+{
+public:
+    explicit LLCpuZoneScope(const char* name);
+    ~LLCpuZoneScope();
+    // once per main loop iteration
+    static void frame();
+private:
+    const char* mName;
+    long long mStart;
+};
+#define LL_CPU_ZONE_CAT2(a, b) a##b
+#define LL_CPU_ZONE_CAT(a, b) LL_CPU_ZONE_CAT2(a, b)
+#define LL_CPU_ZONE(name) LLCpuZoneScope LL_CPU_ZONE_CAT(llcpuzone_, __LINE__)(name);
+
 #endif // LL_LLGPUZONETIMER_H
