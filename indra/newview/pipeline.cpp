@@ -11746,9 +11746,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             {
                 return found->second;
             }
-            gGL.getTexUnit(0)->bindFast(tex);
-            LLImageGL* gl_tex = tex->getGLTexture();
-            const U32 name = gl_tex ? gl_tex->getTexName() : 0;
+            const U32 name = gGL.getTexUnit(0)->prepareFast(tex);
             texture_names.emplace(tex, name);
             ++gShadowDrawStats.mAlphaTextures;
             return name;

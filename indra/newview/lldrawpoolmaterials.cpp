@@ -102,6 +102,9 @@ void LLDrawPoolMaterials::endDeferredPass(S32 pass)
     LLRenderPass::endRenderPass(pass);
 }
 
+// <FS> the index in gDeferredMaterialProgram[] of the program of each of the 12 deferred passes (the same table as in beginDeferredPass)
+static const U32 sMaterialPassShader[] = { 0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15 };
+
 void LLDrawPoolMaterials::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;
@@ -138,6 +141,29 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     if (rigged)
     {
         type += 1;
+    }
+
+    // <FS> render packets: the static draws as one record (the pull program of this pass bound instead of the old one); what it cannot carry is drawn the old way below
+    std::vector<LLDrawInfo*> packet_fallback;
+    bool packets_used = false;
+    if (!rigged && deferredPacketsEnabled())
+    {
+        const U32 idx = sMaterialPassShader[pass];
+        LLGLSLShader* pull = &gDeferredMaterialPullProgram[idx];
+        if (pull->mProgramObject != 0)
+        {
+            LLGeometryPassInfo info;
+            info.mNormalMap = (idx & 0x8) != 0;
+            info.mSpecularMap = (idx & 0x4) != 0;
+            gPipeline.bindDeferredShader(*pull);
+            pushGeometryPackets(type, packet_fallback, &info);
+            packets_used = true;
+            if (packet_fallback.empty())
+            {
+                return;
+            }
+            gPipeline.bindDeferredShader(*mShader);
+        }
     }
 
     LLCullResult::drawinfo_iterator begin = gPipeline.beginRenderMap(type);
@@ -187,12 +213,9 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     U64 lastMeshId = 0;
     bool skipLastSkin = false;
 
-    for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+    auto draw_one = [&](LLDrawInfo& params)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_MATERIAL("materials draw loop");
-        LLDrawInfo& params = **i;
-
-        LLCullResult::increment_iterator(i, end);
 
         if (specular > -1 && params.mSpecColor != lastSpecular)
         {
@@ -251,7 +274,7 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         {
             if (!uploadMatrixPalette(params.mAvatar, params.mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
             {
-                continue;
+                return;
             }
         }
 
@@ -285,5 +308,23 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
             gGL.loadIdentity();
             gGL.matrixMode(LLRender::MM_MODELVIEW);
         }
+    };
+
+    if (packets_used)
+    {
+        for (LLDrawInfo* params : packet_fallback)
+        {
+            draw_one(*params);
+        }
+        return;
+    }
+
+    for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+    {
+        LLDrawInfo& params = **i;
+
+        LLCullResult::increment_iterator(i, end);
+
+        draw_one(params);
     }
 }

@@ -123,6 +123,7 @@ namespace LLVkMirror
         U32 mNormalMap, mSpecularMap;   // GL names (materials passes), 0 = none
         F32 mSpecular[4];
         F32 mEnvIntensity, mCutoff, mBrightness, mPad;
+        U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
     };
     // the device can read buffers by address and the mirror is running
     bool shadowPacketsAvailable();

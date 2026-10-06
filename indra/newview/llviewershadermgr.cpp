@@ -171,6 +171,7 @@ LLGLSLShader            gDeferredShadowPullProgram;
 LLGLSLShader            gDeferredShadowAlphaPullProgram;
 LLGLSLShader            gDeferredShadowSkinPullProgram;
 LLGLSLShader            gDeferredDiffusePullProgram;
+LLGLSLShader            gDeferredMaterialPullProgram[16];
 LLGLSLShader            gDeferredShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredSkinnedShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredShadowGLTFAlphaMaskProgram;
@@ -1134,6 +1135,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowAlphaPullProgram.unload();
         gDeferredShadowSkinPullProgram.unload();
         gDeferredDiffusePullProgram.unload();
+        for (LLGLSLShader& pull : gDeferredMaterialPullProgram)
+        {
+            pull.unload();
+        }
         gDeferredShadowAlphaMaskProgram.unload();
         gDeferredSkinnedShadowAlphaMaskProgram.unload();
         gDeferredShadowGLTFAlphaMaskProgram.unload();
@@ -2335,6 +2340,54 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             LL_WARNS("ShadowPackets") << "the deferred diffuse pull shader could not be made: the diffuse pass stays on the old path" << LL_ENDL;
             gDeferredDiffusePullProgram.unload();
+        }
+    }
+
+    // <FS> ... and the materials passes: the unskinned programs of the 12 deferred passes (alpha mode in bits 0-1, specular map bit 2, normal map bit 3). Optional too.
+    if (success && LLVkMirror::shadowAlphaPacketsAvailable())
+    {
+        static const U32 pull_indices[] = { 0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15 };
+        for (U32 i : pull_indices)
+        {
+            LLGLSLShader& pull = gDeferredMaterialPullProgram[i];
+            pull.mName = llformat("Material Pull Shader %d", i);
+            pull.mShaderFiles.clear();
+            pull.mShaderFiles.push_back(make_pair("deferred/materialPullV.glsl", GL_VERTEX_SHADER));
+            pull.mShaderFiles.push_back(make_pair("deferred/materialF.glsl", GL_FRAGMENT_SHADER));
+            pull.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            pull.clearPermutations();
+            if (i & 0x8)
+            {
+                pull.addPermutation("HAS_NORMAL_MAP", "1");
+            }
+            if (i & 0x4)
+            {
+                pull.addPermutation("HAS_SPECULAR_MAP", "1");
+            }
+            const U32 alpha_mode = i & 0x3;
+            pull.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
+            if (alpha_mode != 0)
+            {
+                pull.mFeatures.hasAlphaMask = true;
+                pull.addPermutation("HAS_ALPHA_MASK", "1");
+            }
+            if (use_sun_shadow)
+            {
+                pull.addPermutation("HAS_SUN_SHADOW", "1");
+            }
+            pull.addPermutation("LL_BINDLESS_MATERIAL", "1");
+            add_common_permutations(&pull);
+            pull.mFeatures.hasSrgb = true;
+            pull.mFeatures.calculatesAtmospherics = true;
+            pull.mFeatures.hasAtmospherics = true;
+            pull.mFeatures.hasGamma = true;
+            pull.mFeatures.hasShadows = use_sun_shadow;
+            pull.mFeatures.hasReflectionProbes = true;
+            if (!pull.createShader())
+            {
+                LL_WARNS("ShadowPackets") << "a materials pull shader could not be made (index " << i << "): that materials pass stays on the old path" << LL_ENDL;
+                pull.unload();
+            }
         }
     }
 

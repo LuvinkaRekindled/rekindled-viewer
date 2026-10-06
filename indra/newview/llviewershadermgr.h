@@ -243,6 +243,7 @@ extern LLGLSLShader         gDeferredShadowPullProgram;   // <FS> render packets
 extern LLGLSLShader         gDeferredShadowAlphaPullProgram;   // <FS> render packets: the same for alpha masked casters, textures from the bindless table
 extern LLGLSLShader         gDeferredShadowSkinPullProgram;   // <FS> render packets: rigged casters (weights and palette read by address)
 extern LLGLSLShader         gDeferredDiffusePullProgram;      // <FS> render packets: the deferred diffuse pass, vertices by address, textures from the bindless table
+extern LLGLSLShader         gDeferredMaterialPullProgram[16]; // <FS> render packets: the deferred materials passes (the unskinned indices of gDeferredMaterialProgram)
 extern LLGLSLShader         gDeferredShadowAlphaMaskProgram;
 extern LLGLSLShader         gDeferredShadowGLTFAlphaMaskProgram;
 extern LLGLSLShader         gDeferredShadowGLTFAlphaBlendProgram;

@@ -654,6 +654,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
         extra_code_text[extra_code_count++] = strdup( "#define IS_AMD_CARD 1\n" );
     }
 
+    const bool pull_material = defines && defines->find("LL_BINDLESS_MATERIAL") != defines->end() && type == GL_FRAGMENT_SHADER;
     if (defines && defines->find("LL_BINDLESS_DIFFUSE") != defines->end() && type == GL_FRAGMENT_SHADER)
     {
         // <FS> render packets (Vulkan mirror only): the draw's texture comes from the bindless table (set 2), by the slot the vertex shader passes on, instead of tex0..texN
@@ -665,6 +666,20 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
         extra_code_text[extra_code_count++] = strdup("{\n");
         extra_code_text[extra_code_count++] = strdup("    return texture(ll_bindless_textures[nonuniformEXT(vary_slot)], texcoord);\n");
         extra_code_text[extra_code_count++] = strdup("}\n");
+    }
+    else if (pull_material)
+    {
+        // <FS> render packets: the materials fragment shader takes its textures from the bindless table (the slots come from the vertex shader) and its per-draw uniforms
+        // (rewritten line by line below) as flat inputs
+        extra_code_text[extra_code_count++] = strdup("#extension GL_EXT_nonuniform_qualifier : require\n");
+        extra_code_text[extra_code_count++] = strdup("layout(set = 2, binding = 0) uniform sampler2D ll_bindless_textures[];\n");
+        extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot;\n");
+        extra_code_text[extra_code_count++] = strdup("#ifdef HAS_NORMAL_MAP\n");
+        extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_normal;\n");
+        extra_code_text[extra_code_count++] = strdup("#endif\n");
+        extra_code_text[extra_code_count++] = strdup("#ifdef HAS_SPECULAR_MAP\n");
+        extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_specular;\n");
+        extra_code_text[extra_code_count++] = strdup("#endif\n");
     }
     else if (texture_index_channels > 0 && type == GL_FRAGMENT_SHADER)
     {
@@ -823,7 +838,33 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
         }
         else
         {
-            shader_code_text[shader_code_count] = (GLchar *)strdup((char *)buff);
+            if (pull_material)
+            {
+                std::string fixed((const char*)buff);
+                auto replace = [&fixed](const char* from, const char* to)
+                {
+                    const size_t from_len = strlen(from), to_len = strlen(to);
+                    for (size_t at = fixed.find(from); at != std::string::npos; at = fixed.find(from, at + to_len))
+                    {
+                        fixed.replace(at, from_len, to);
+                    }
+                };
+                replace("uniform sampler2D diffuseMap;", "");
+                replace("uniform sampler2D bumpMap;", "");
+                replace("uniform sampler2D specularMap;", "");
+                replace("texture(diffuseMap,", "texture(ll_bindless_textures[nonuniformEXT(vary_slot)],");
+                replace("texture(bumpMap,", "texture(ll_bindless_textures[nonuniformEXT(vary_slot_normal)],");
+                replace("texture(specularMap,", "texture(ll_bindless_textures[nonuniformEXT(vary_slot_specular)],");
+                replace("uniform float emissive_brightness;", "flat in float emissive_brightness;");
+                replace("uniform float env_intensity;", "flat in float env_intensity;");
+                replace("uniform vec4 specular_color;", "flat in vec4 specular_color;");
+                replace("uniform float minimum_alpha;", "flat in float minimum_alpha;");
+                shader_code_text[shader_code_count] = (GLchar *)strdup(fixed.c_str());
+            }
+            else
+            {
+                shader_code_text[shader_code_count] = (GLchar *)strdup((char *)buff);
+            }
 
             if(flag_write_to_out_of_extra_block_area & flags)
             {

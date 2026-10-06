@@ -129,6 +129,13 @@ public:
     bool mSkipRender;
 };
 
+// <FS> what a materials pass adds to a geometry record: which maps its draws carry
+struct LLGeometryPassInfo
+{
+    bool mNormalMap = false;
+    bool mSpecularMap = false;
+};
+
 class LLRenderPass : public LLDrawPool
 {
 public:
@@ -388,7 +395,7 @@ public:
     // <FS> render packets for the deferred geometry passes (Vulkan mirror only): sends the static draws of a pass type as one record, with the program bound by the caller
     // (a pull program); the draws it cannot carry are returned to be drawn the old way
     static bool deferredPacketsEnabled();
-    static void pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback);
+    static void pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials = nullptr);
     void pushUntexturedBatch(LLDrawInfo& params);
     void pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_textures = false);
     static bool uploadMatrixPalette(LLDrawInfo& params);

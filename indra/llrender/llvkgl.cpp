@@ -2949,13 +2949,14 @@ static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
 {
     struct GeoGpu
     {
-        U32 mPositions[2]; U32 mNormals[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mIndices[2];
+        U32 mPositions[2]; U32 mNormals[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mIndices[2]; U32 mTangents[2]; U32 mTexcoords1[2]; U32 mTexcoords2[2];
         U32 mFirst, mModel, mFlags, mMapSlots;
         U32 mSlots[2];
+        U32 mPad[2];
         F32 mSpecular[4];
-        F32 mEnvIntensity, mCutoff, mBrightness, mPad;
+        F32 mEnvIntensity, mCutoff, mBrightness, mPad2;
     };
-    static_assert(sizeof(GeoGpu) == 96, "geometry packet entry");
+    static_assert(sizeof(GeoGpu) == 128, "geometry packet entry");
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<GLuint> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
@@ -2996,6 +2997,7 @@ static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         const U64 na = pa + e.mNormalOffset, ta = pa + e.mTexcoordOffset, ca = pa + e.mColorOffset;
+        const U64 tga = pa + e.mTangentOffset, t1a = pa + e.mTexcoord1Offset, t2a = pa + e.mTexcoord2Offset;
         g.mPositions[0] = (U32)pa;
         g.mPositions[1] = (U32)(pa >> 32);
         g.mNormals[0] = (U32)na;
@@ -3006,6 +3008,12 @@ static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
         g.mColors[1] = (U32)(ca >> 32);
         g.mIndices[0] = (U32)ia;
         g.mIndices[1] = (U32)(ia >> 32);
+        g.mTangents[0] = (U32)tga;
+        g.mTangents[1] = (U32)(tga >> 32);
+        g.mTexcoords1[0] = (U32)t1a;
+        g.mTexcoords1[1] = (U32)(t1a >> 32);
+        g.mTexcoords2[0] = (U32)t2a;
+        g.mTexcoords2[1] = (U32)(t2a >> 32);
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;

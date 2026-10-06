@@ -184,6 +184,8 @@ public:
     //  - mTexOptionsDirty is false
     //  -
     void bindFast(LLTexture* texture);
+    // <FS> render packets: the effects of bindFast() on the texture (marks it in use, regenerates a deleted one, applies changed options) without binding it; returns its GL name
+    GLuint prepareFast(LLTexture* texture);
     // <FS> binds the image on this unit and sends its address mode and filtering options (what bindFast does when they are dirty)
     void applyTexOptions(LLImageGL* gl_tex);
 
