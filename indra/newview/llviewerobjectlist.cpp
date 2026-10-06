@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llgpuzonetimer.h"
 #include <chrono>
 
 #include "llviewerobjectlist.h"
@@ -1216,7 +1217,7 @@ void LLViewerObjectList::update(LLAgent &agent)
         {
             objectp = *idle_iter;
             llassert(objectp->isActive());
-                objectp->idleUpdate(agent, frame_time);
+                { LL_CPU_ZONE(objectp->isAvatar() ? "objectlist: idleUpdate (avatars)" : "objectlist: idleUpdate (other objects)"); objectp->idleUpdate(agent, frame_time); }
         }
         if (gFSAvTimersOn)
         {
@@ -1226,7 +1227,7 @@ void LLViewerObjectList::update(LLAgent &agent)
         LLVOAvatar::sMotionUpdateBatch = nullptr;
         if (!motion_batch.empty())
         {
-            run_avatar_motion_batch(motion_batch);
+            { LL_CPU_ZONE("objectlist: avatar motion batch"); run_avatar_motion_batch(motion_batch); }
             motion_batch.clear();
         }
         // </FS>
@@ -1271,28 +1272,28 @@ void LLViewerObjectList::update(LLAgent &agent)
         }
 
         //update flexible objects
-        LLVolumeImplFlexible::updateClass();
+        { LL_CPU_ZONE("objectlist: flexible objects"); LLVolumeImplFlexible::updateClass(); }
 
         //update animated textures
         if (gAnimateTextures)
         {
-            LLViewerTextureAnim::updateClass();
+            { LL_CPU_ZONE("objectlist: animated textures"); LLViewerTextureAnim::updateClass(); }
         }
     }
 
 
 
-    fetchObjectCosts();
-    fetchPhysicsFlags();
+    { LL_CPU_ZONE("objectlist: fetchObjectCosts"); fetchObjectCosts(); }
+    { LL_CPU_ZONE("objectlist: fetchPhysicsFlags"); fetchPhysicsFlags(); }
 
     // update max computed render cost
-    LLVOVolume::updateRenderComplexity();
+    { LL_CPU_ZONE("objectlist: updateRenderComplexity"); LLVOVolume::updateRenderComplexity(); }
 
     // compute all sorts of time-based stats
     // don't factor frames that were paused into the stats
     if (! mWasPaused)
     {
-        LLViewerStats::getInstance()->updateFrameStats(time_diff);
+        { LL_CPU_ZONE("objectlist: frame stats"); LLViewerStats::getInstance()->updateFrameStats(time_diff); }
     }
 
     /*
