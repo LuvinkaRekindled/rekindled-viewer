@@ -667,7 +667,7 @@ bool LLRenderPass::deferredPacketsEnabled()
 
 // can this static draw be an entry of a geometry record? The pull shader reads 16 bit indices, position first, and the normal, texcoord 0 and colour arrays; the textures
 // come from the bindless table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
-static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures)
+static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount || p.mAvatar || p.mGLTFMaterial || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
@@ -675,6 +675,23 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures)
         || !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
     {
         return false;
+    }
+    if (materials)
+    {
+        // the materials passes apply the texture matrix to every texcoord set, and need the maps their program samples
+        if (p.mTextureMatrix)
+        {
+            return false;
+        }
+        if (materials->mNormalMap && (p.mNormalMap.isNull() || !vb->hasDataType(LLVertexBuffer::TYPE_TANGENT) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD1)))
+        {
+            return false;
+        }
+        if (materials->mSpecularMap && (p.mSpecularMap.isNull() || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD2)))
+        {
+            return false;
+        }
+        return true;
     }
     if (batch_textures && p.mTextureList.size() > 1)
     {
@@ -684,7 +701,7 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures)
 }
 
 // static
-void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback)
+void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     std::vector<LLVkMirror::GeoEntry> entries;
@@ -728,9 +745,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         {
             return found->second;
         }
-        gGL.getTexUnit(0)->bindFast(tex);
-        LLImageGL* gl_tex = tex->getGLTexture();
-        const U32 name = gl_tex ? gl_tex->getTexName() : 0;
+        const U32 name = gGL.getTexUnit(0)->prepareFast(tex);
         texture_names.emplace(tex, name);
         ++gGeometryPacketStats.mTextures;
         return name;
@@ -746,7 +761,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         {
             continue;       // nothing to draw (the old path returns)
         }
-        if (!geometry_packet_ok(*params, true))
+        if (!geometry_packet_ok(*params, materials == nullptr, materials))
         {
             fallback.push_back(params);
             continue;
@@ -760,6 +775,18 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
         e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
         e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+        if (materials)
+        {
+            if (materials->mNormalMap)
+            {
+                e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_TANGENT);
+                e.mTexcoord1Offset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD1);
+            }
+            if (materials->mSpecularMap)
+            {
+                e.mTexcoord2Offset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD2);
+            }
+        }
         if (params->mModelMatrix)
         {
             auto it = matrix_numbers.find(params->mModelMatrix);
@@ -769,7 +796,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             }
             e.mMatrix = it->second;
         }
-        if (params->mTextureList.size() > 1)
+        if (!materials && params->mTextureList.size() > 1)
         {
             for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
             {
@@ -785,6 +812,22 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             if (params->mTexture.notNull())
             {
                 e.mTextures[0] = texture_name(params->mTexture.get());
+            }
+            if (materials)
+            {
+                // the values the materials loop sets as uniforms before a draw
+                if (materials->mNormalMap)
+                {
+                    e.mNormalMap = texture_name(params->mNormalMap.get());
+                }
+                if (materials->mSpecularMap)
+                {
+                    e.mSpecularMap = texture_name(params->mSpecularMap.get());
+                }
+                memcpy(e.mSpecular, params->mSpecColor.mV, sizeof(e.mSpecular));
+                e.mEnvIntensity = params->mEnvIntensity;
+                e.mCutoff = params->mAlphaMaskCutoff;
+                e.mBrightness = params->mFullbright ? 1.f : 0.f;
             }
         }
         entries.push_back(e);

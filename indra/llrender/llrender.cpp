@@ -230,6 +230,26 @@ void LLTexUnit::bindFast(LLTexture* texture)
     }
 }
 
+GLuint LLTexUnit::prepareFast(LLTexture* texture)
+{
+    LLImageGL* gl_tex = texture->getGLTexture();
+    if (gl_tex->mTexOptionsDirty)
+    {
+        // the options are set on the bound texture: the full path
+        bindFast(texture);
+        return gl_tex->getTexName();
+    }
+    texture->setActive();
+    const GLuint name = gl_tex->getTexName();
+    if (!name)
+    {
+        //if deleted, will re-generate it immediately
+        texture->forceImmediateUpdate();
+        gl_tex->forceUpdateBindStats();
+    }
+    return name;
+}
+
 bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;

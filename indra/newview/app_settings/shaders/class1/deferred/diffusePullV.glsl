@@ -24,7 +24,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Ge
 layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer GeoVec2 { vec2 t[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer GeoWords { uint w[]; };
 
-// 96 bytes. flags: 1 = one texture (no texture index in position.w)
+// 128 bytes. flags: 1 = one texture (no texture index in position.w)
 struct GeoPacket
 {
     uvec2 positions;
@@ -32,16 +32,20 @@ struct GeoPacket
     uvec2 texcoords;
     uvec2 colors;
     uvec2 indices;
+    uvec2 tangents;     // the materials passes
+    uvec2 texcoords1;
+    uvec2 texcoords2;
     uint first;
     uint model;
     uint flags;
     uint mapSlots;      // normal map slot | specular map slot << 16 (the materials passes)
     uvec2 slots;        // four 16 bit slots of the diffuse textures
+    uvec2 pad;
     vec4 specular;
     float envIntensity;
     float cutoff;
     float brightness;
-    float pad;
+    float pad2;
 };
 
 // 176 bytes
