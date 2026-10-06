@@ -271,6 +271,12 @@ public:
     bool draw(U32 vertex_count, U32 first_vertex);
     bool drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset);
     bool drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0);      // <FS> render packets
+    // <FS> bindless sampled images (set 2) for the render packets with textures: one slot per distinct (image view, sampler) pair a frame uses, handed out on first
+    // use; slot 0 is the white image. The caller makes sure the image is in the sampling layout.
+    bool bindlessAvailable() const { return mSet2Layout != VK_NULL_HANDLE; }
+    U32 bindlessEpoch() const { return mBindlessEpoch; }         // changes every frame: a slot number from an earlier epoch means nothing
+    U32 bindlessSlot(Image* image, VkSampler sampler);
+    void bindlessFlush();           // writes the slots taken since the last call into the frame's set and binds it
 
     VkSampler getSampler(const SamplerDesc& desc);
     Image* getWhiteTexture() { return &mWhite; }
@@ -371,6 +377,27 @@ private:
     VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorPool mPool = VK_NULL_HANDLE;
     VkDescriptorSet mSet0[Context::FRAMES_IN_FLIGHT] = {};
+    // <FS> bindless table (set 2)
+    struct BindlessKey
+    {
+        VkImageView mView;
+        VkSampler mSampler;
+        bool operator==(const BindlessKey& o) const { return mView == o.mView && mSampler == o.mSampler; }
+    };
+    struct BindlessKeyHash
+    {
+        size_t operator()(const BindlessKey& k) const { return (size_t)(((U64)k.mView * 0x9E3779B97F4A7C15ull) ^ (((U64)k.mSampler * 0xC2B2AE3D27D4EB4Full) >> 7)); }
+    };
+    void bindlessStart();
+    VkDescriptorSetLayout mSet2Layout = VK_NULL_HANDLE;
+    VkDescriptorPool mBindlessPool = VK_NULL_HANDLE;
+    VkDescriptorSet mBindlessSet[Context::FRAMES_IN_FLIGHT] = {};
+    std::unordered_map<BindlessKey, U32, BindlessKeyHash> mBindlessMap;
+    std::vector<VkDescriptorImageInfo> mBindlessInfos;      // by slot: what the slot holds this frame
+    U32 mBindlessWritten = 0;                               // slots of mBindlessInfos already written into the frame's set
+    U32 mBindlessCapacity = 0;
+    U32 mBindlessEpoch = 1;
+    bool mBindlessBound = false;
     VkDescriptorPool mUboPool[Context::FRAMES_IN_FLIGHT] = {};
     std::map<std::array<U64, 8>, VkDescriptorSet> mUboSets[Context::FRAMES_IN_FLIGHT];
     VkBuffer mUbo[4] = {};

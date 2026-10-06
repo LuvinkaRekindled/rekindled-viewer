@@ -168,6 +168,7 @@ LLGLSLShader            gDeferredShadowProgram;
 LLGLSLShader            gDeferredSkinnedShadowProgram;
 LLGLSLShader            gDeferredShadowCubeProgram;
 LLGLSLShader            gDeferredShadowPullProgram;
+LLGLSLShader            gDeferredShadowAlphaPullProgram;
 LLGLSLShader            gDeferredShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredSkinnedShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredShadowGLTFAlphaMaskProgram;
@@ -1128,6 +1129,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSkinnedShadowProgram.unload();
         gDeferredShadowCubeProgram.unload();
         gDeferredShadowPullProgram.unload();
+        gDeferredShadowAlphaPullProgram.unload();
         gDeferredShadowAlphaMaskProgram.unload();
         gDeferredSkinnedShadowAlphaMaskProgram.unload();
         gDeferredShadowGLTFAlphaMaskProgram.unload();
@@ -2277,6 +2279,23 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             LL_WARNS("ShadowPackets") << "the shadow pull shader could not be made: shadow packets stay off" << LL_ENDL;
             gDeferredShadowPullProgram.unload();
+        }
+    }
+
+    // <FS> ... and the one for the alpha masked casters, which needs the device to index sampled images at run time. Also optional.
+    if (success && LLVkMirror::shadowAlphaPacketsAvailable())
+    {
+        gDeferredShadowAlphaPullProgram.mName = "Deferred Shadow Alpha Pull Shader";
+        gDeferredShadowAlphaPullProgram.mFeatures.isDeferred = true;
+        gDeferredShadowAlphaPullProgram.mFeatures.hasShadows = true;
+        gDeferredShadowAlphaPullProgram.mShaderFiles.clear();
+        gDeferredShadowAlphaPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaPullV.glsl", GL_VERTEX_SHADER));
+        gDeferredShadowAlphaPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaPullF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowAlphaPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gDeferredShadowAlphaPullProgram.createShader())
+        {
+            LL_WARNS("ShadowPackets") << "the shadow alpha pull shader could not be made: alpha masked casters stay on the old path" << LL_ENDL;
+            gDeferredShadowAlphaPullProgram.unload();
         }
     }
 

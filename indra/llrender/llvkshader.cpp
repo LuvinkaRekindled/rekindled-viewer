@@ -687,6 +687,10 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                 {
                     if (is_opaque_type(d.mType))
                     {
+                        if (d.mLayout.find("set") != std::string::npos)
+                        {
+                            continue;       // <FS> a sampler array with a layout of its own (the bindless table, set 2): not one of the program's samplers
+                        }
                         if (!sampler_index.count(dc.mName))
                         {
                             sampler_index[dc.mName] = samplers.size();
@@ -940,6 +944,11 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
             {
                 if (is_opaque_type(d.mType))
                 {
+                    if (d.mLayout.find("set") != std::string::npos)
+                    {
+                        text << item.mText << "\n";        // <FS> the bindless table keeps the layout the shader gave it
+                        continue;
+                    }
                     for (const Declarator& dc : d.mDeclarators)
                     {
                         const U32 binding = samplers[sampler_index[dc.mName]].mBinding;

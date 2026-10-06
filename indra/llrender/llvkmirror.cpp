@@ -21,6 +21,7 @@ void LLVkMirror::setPresentPreference(S32, bool) {}
 void LLVkMirror::snapshotBoundary(S32) {}
 bool LLVkMirror::upscaleAvailable() { return false; }
 bool LLVkMirror::shadowPacketsAvailable() { return false; }
+bool LLVkMirror::shadowAlphaPacketsAvailable() { return false; }
 void LLVkMirror::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
 void LLVkMirror::upscale(const UpscaleArgs&) {}
 void LLVkMirror::presentFrame() {}
@@ -1235,6 +1236,11 @@ namespace LLVkGL
 bool LLVkMirror::shadowPacketsAvailable()
 {
     return sMirror.mReady && LLVk::Context::instance().getCaps().mBufferDeviceAddress;
+}
+
+bool LLVkMirror::shadowAlphaPacketsAvailable()
+{
+    return shadowPacketsAvailable() && LLVk::Context::instance().getCaps().mBindlessSlots != 0;
 }
 
 void LLVkMirror::shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes)

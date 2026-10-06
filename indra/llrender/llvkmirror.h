@@ -81,10 +81,32 @@ namespace LLVkMirror
         U32 mEntries = 0;           // draws, as ShadowPacketEntry after the header
         U32 mMatrices = 0;          // model matrices (16 floats each, column-major) after the entries; matrix 0 is the identity
         F32 mViewProj[16] = {};     // projection * view of the pass, column-major
+        U32 mKind = 0;              // 0 = untextured casters (ShadowPacketEntry), 1 = alpha masked casters (ShadowAlphaEntry)
+        F32 mTargetWidth = 0.f;     // kind 1: the width of the shadow target (the dithering of semi-transparent casters)
     };
     struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mPad; };
+    // kind 1: the same, with what the alpha test needs
+    enum ShadowAlphaFlags : U32
+    {
+        ALPHA_FULLBRIGHT = 1,       // the vertex colour's alpha does not count
+        ALPHA_TREE = 2,             // tree style: no vertex alpha, no dithering (grass and the materials' masks)
+        ALPHA_NO_INDEX = 4,         // one texture, mTextures[0]: the vertices carry no texture index
+        ALPHA_HAS_TEXCOORD = 8,     // mTexcoordOffset is valid
+        ALPHA_HAS_COLOR = 16        // mColorOffset is valid
+    };
+    struct ShadowAlphaEntry
+    {
+        U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix;
+        U32 mFlags;                 // ShadowAlphaFlags
+        U32 mTexcoordOffset;        // byte offset of the texcoord0 array in the vertex buffer
+        U32 mColorOffset;           // byte offset of the colour array
+        U32 mTextures[4];           // GL names of the textures the vertices' texture index picks from, 0 = none (white)
+        F32 mCutoff;                // alpha below this is discarded
+    };
     // the device can read buffers by address and the mirror is running
     bool shadowPacketsAvailable();
+    // ... and the device can index sampled images at run time (the textured kind)
+    bool shadowAlphaPacketsAvailable();
     // blob: mEntries ShadowPacketEntry, then mMatrices * 16 floats
     void shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes);
     // queues (async) or runs the upscale: colour + depth + motion -> output, all textures the mirror owns

@@ -545,9 +545,62 @@ bool Renderer::createLayouts()
         return false;
     }
 
-    VkDescriptorSetLayout layouts[2] = { mSet0Layout, mSet1Layout };
+    // <FS> set 2: a table of sampled images that shaders index at run time, written as a frame needs them (render packets with textures). Not needed to run.
+    if (const U32 slots = ctx.getCaps().mBindlessSlots)
+    {
+        VkDescriptorSetLayoutBinding b2 = {};
+        b2.binding = 0;
+        b2.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        b2.descriptorCount = slots;
+        b2.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorBindingFlags binding_flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+        VkDescriptorSetLayoutBindingFlagsCreateInfo fi = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
+        fi.bindingCount = 1;
+        fi.pBindingFlags = &binding_flags;
+        VkDescriptorSetLayoutCreateInfo l2 = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+        l2.pNext = &fi;
+        l2.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+        l2.bindingCount = 1;
+        l2.pBindings = &b2;
+        bool ok = vk_ok(vkCreateDescriptorSetLayout(dev, &l2, nullptr, &mSet2Layout), "set 2 layout");
+        if (ok)
+        {
+            VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, slots * Context::frameCount() };
+            VkDescriptorPoolCreateInfo bi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+            bi.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+            bi.maxSets = Context::frameCount();
+            bi.poolSizeCount = 1;
+            bi.pPoolSizes = &ps;
+            ok = vk_ok(vkCreateDescriptorPool(dev, &bi, nullptr, &mBindlessPool), "bindless pool");
+        }
+        if (ok)
+        {
+            VkDescriptorSetLayout set_layouts[Context::FRAMES_IN_FLIGHT];
+            for (auto& l : set_layouts) l = mSet2Layout;
+            VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+            ai.descriptorPool = mBindlessPool;
+            ai.descriptorSetCount = Context::frameCount();
+            ai.pSetLayouts = set_layouts;
+            ok = vk_ok(vkAllocateDescriptorSets(dev, &ai, mBindlessSet), "allocate bindless sets");
+        }
+        if (ok)
+        {
+            mBindlessCapacity = slots;
+            LL_INFOS("Vulkan") << "bindless sampled image table: " << slots << " slots per frame" << LL_ENDL;
+        }
+        else
+        {
+            if (mBindlessPool) vkDestroyDescriptorPool(dev, mBindlessPool, nullptr);
+            if (mSet2Layout) vkDestroyDescriptorSetLayout(dev, mSet2Layout, nullptr);
+            mBindlessPool = VK_NULL_HANDLE;
+            mSet2Layout = VK_NULL_HANDLE;
+            LL_WARNS("Vulkan") << "the bindless sampled image table could not be made: render packets with textures stay off" << LL_ENDL;
+        }
+    }
+
+    VkDescriptorSetLayout layouts[3] = { mSet0Layout, mSet1Layout, mSet2Layout };
     VkPipelineLayoutCreateInfo pl = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-    pl.setLayoutCount = 2;
+    pl.setLayoutCount = mSet2Layout ? 3 : 2;
     pl.pSetLayouts = layouts;
     return vk_ok(vkCreatePipelineLayout(dev, &pl, nullptr, &mPipelineLayout), "pipeline layout");
 }
@@ -928,6 +981,8 @@ void Renderer::shutdown()
         if (mPipelineLayout) vkDestroyPipelineLayout(dev, mPipelineLayout, nullptr);
         if (mSet0Layout) vkDestroyDescriptorSetLayout(dev, mSet0Layout, nullptr);
         if (mSet1Layout) vkDestroyDescriptorSetLayout(dev, mSet1Layout, nullptr);
+        if (mBindlessPool) vkDestroyDescriptorPool(dev, mBindlessPool, nullptr);
+        if (mSet2Layout) vkDestroyDescriptorSetLayout(dev, mSet2Layout, nullptr);
         for (Buffer& b : mRing)
         {
             if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
@@ -961,6 +1016,10 @@ void Renderer::shutdown()
     mPipelineLayout = VK_NULL_HANDLE;
     mSet0Layout = VK_NULL_HANDLE;
     mSet1Layout = VK_NULL_HANDLE;
+    mSet2Layout = VK_NULL_HANDLE;
+    mBindlessPool = VK_NULL_HANDLE;
+    mBindlessMap.clear();
+    mBindlessInfos.clear();
     mProgram = nullptr;
     mReady = false;
 }
@@ -1074,6 +1133,15 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mLastUboSet = VK_NULL_HANDLE;
     mVertexInputDirty = true;
     mSet0Bound = false;
+    if (mSet2Layout)
+    {
+        // the table starts over: this frame's slots are handed out again from 1
+        ++mBindlessEpoch;
+        mBindlessMap.clear();
+        mBindlessInfos.clear();
+        mBindlessWritten = 0;
+        mBindlessBound = false;
+    }
     mAppliedDynamicOffset = 0xFFFFFFFF;
     mAppliedSet0 = VK_NULL_HANDLE;
     mAppliedVertexInputValid = false;
@@ -1436,6 +1504,68 @@ void Renderer::setTexture(U32 unit, Image* image, VkSampler sampler)
     {
         mTextures[unit] = image;
         mTextureSamplers[unit] = sampler;
+    }
+}
+
+// slot 0 of every frame's table: the white image, what an unbound texture unit samples
+void Renderer::bindlessStart()
+{
+    if (mBindlessInfos.empty())
+    {
+        VkDescriptorImageInfo white = { getSampler(SamplerDesc()), mWhite.mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        mBindlessInfos.push_back(white);
+    }
+}
+
+U32 Renderer::bindlessSlot(Image* image, VkSampler sampler)
+{
+    if (!mSet2Layout || !image || !image->valid() || !sampler)
+    {
+        return 0;
+    }
+    bindlessStart();
+    const BindlessKey key = { image->mView, sampler };
+    auto it = mBindlessMap.find(key);
+    if (it != mBindlessMap.end())
+    {
+        return it->second;
+    }
+    if (mBindlessInfos.size() >= mBindlessCapacity)
+    {
+        LL_WARNS_ONCE("Vulkan") << "bindless table full: the textures after the first " << mBindlessCapacity << " of a frame are drawn white" << LL_ENDL;
+        return 0;
+    }
+    const U32 slot = (U32)mBindlessInfos.size();
+    VkDescriptorImageInfo info = { sampler, image->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    mBindlessInfos.push_back(info);
+    mBindlessMap.emplace(key, slot);
+    return slot;
+}
+
+void Renderer::bindlessFlush()
+{
+    if (!mSet2Layout || mCmd == VK_NULL_HANDLE)
+    {
+        return;
+    }
+    bindlessStart();
+    if (mBindlessWritten < mBindlessInfos.size())
+    {
+        // the slots taken since the last flush are contiguous: one write
+        VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        w.dstSet = mBindlessSet[mSlot];
+        w.dstBinding = 0;
+        w.dstArrayElement = mBindlessWritten;
+        w.descriptorCount = (U32)mBindlessInfos.size() - mBindlessWritten;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo = mBindlessInfos.data() + mBindlessWritten;
+        vkUpdateDescriptorSets(Context::instance().getDevice(), 1, &w, 0, nullptr);
+        mBindlessWritten = (U32)mBindlessInfos.size();
+    }
+    if (!mBindlessBound)
+    {
+        vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 2, 1, &mBindlessSet[mSlot], 0, nullptr);
+        mBindlessBound = true;
     }
 }
 
