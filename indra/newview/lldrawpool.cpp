@@ -53,6 +53,10 @@
 #include "llglcommonfunc.h"
 #include "llvoavatar.h"
 #include "llviewershadermgr.h"
+#include "llvkmirror.h"
+#include "glm/glm.hpp"
+#include "glm/gtc/type_ptr.hpp"
+#include <chrono>
 
 S32 LLDrawPool::sNumDrawPools = 0;
 
@@ -638,6 +642,169 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
 }
 
 LLShadowDrawStats gShadowDrawStats;
+LLGeometryPacketStats gGeometryPacketStats;
+
+// <FS> Render packets for the deferred geometry passes. Setting FSDeferredPackets, or FS_DEFERRED_PACKETS_AB=1 to alternate every 30 seconds (the log says which: tag ShadowPackets).
+// static
+bool LLRenderPass::deferredPacketsEnabled()
+{
+    static LLCachedControl<bool> setting(gSavedSettings, "FSDeferredPackets", false);
+    static const bool alternate = getenv("FS_DEFERRED_PACKETS_AB") != nullptr;
+    bool on = setting;
+    if (alternate)
+    {
+        const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        on = ((seconds / 30) % 2) == 1;
+        static int last = -1;
+        if ((int)on != last)
+        {
+            last = (int)on;
+            LL_INFOS("ShadowPackets") << "[phase] deferred packets now " << (on ? "ON" : "off") << LL_ENDL;
+        }
+    }
+    return on && gDeferredDiffusePullProgram.mProgramObject != 0 && LLVkMirror::shadowAlphaPacketsAvailable();
+}
+
+// can this static draw be an entry of a geometry record? The pull shader reads 16 bit indices, position first, and the normal, texcoord 0 and colour arrays; the textures
+// come from the bindless table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
+static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures)
+{
+    const LLVertexBuffer* vb = p.mVertexBuffer.get();
+    if (!p.mCount || p.mAvatar || p.mGLTFMaterial || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+        || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0
+        || !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+    {
+        return false;
+    }
+    if (batch_textures && p.mTextureList.size() > 1)
+    {
+        return p.mTextureList.size() <= 4;
+    }
+    return !(p.mTexture.notNull() && p.mTextureMatrix);
+}
+
+// static
+void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
+    std::vector<LLVkMirror::GeoEntry> entries;
+    std::vector<F32> matrices;
+    std::unordered_map<const void*, U32> matrix_numbers;
+    std::unordered_map<const LLViewerTexture*, U32> texture_names;
+    const glm::mat4 view = glm::make_mat4(gGLModelView);
+    const glm::mat4 proj = gGL.getProjectionMatrix();
+
+    // the matrices the shader would get from LLRender::syncMatrices() for this model matrix: modelview, modelview * projection, normal matrix (inverse transpose)
+    auto add_matrix = [&](const LLMatrix4* model) -> U32
+    {
+        glm::mat4 mv = view;
+        if (model)
+        {
+            mv = view * glm::make_mat4((const F32*)model->mMatrix);
+        }
+        const glm::mat4 mvp = proj * mv;
+        const glm::mat4 n = glm::transpose(glm::inverse(mv));
+        const size_t at = matrices.size();
+        matrices.resize(at + 44);
+        memcpy(&matrices[at], glm::value_ptr(mv), 64);
+        memcpy(&matrices[at + 16], glm::value_ptr(mvp), 64);
+        for (int c = 0; c < 3; ++c)
+        {
+            F32* d = &matrices[at + 32 + 4 * c];
+            d[0] = n[c][0];
+            d[1] = n[c][1];
+            d[2] = n[c][2];
+            d[3] = 0.f;
+        }
+        return (U32)(at / 44);
+    };
+    add_matrix(nullptr);        // matrix 0: no model matrix
+
+    // what the old path does for a texture at its bind: marks it in use, regenerates a deleted one and applies its filtering and wrap options (the worker reads those)
+    auto texture_name = [&](LLViewerTexture* tex) -> U32
+    {
+        auto found = texture_names.find(tex);
+        if (found != texture_names.end())
+        {
+            return found->second;
+        }
+        gGL.getTexUnit(0)->bindFast(tex);
+        LLImageGL* gl_tex = tex->getGLTexture();
+        const U32 name = gl_tex ? gl_tex->getTexName() : 0;
+        texture_names.emplace(tex, name);
+        ++gGeometryPacketStats.mTextures;
+        return name;
+    };
+
+    auto* begin = gPipeline.beginRenderMap(type);
+    auto* end = gPipeline.endRenderMap(type);
+    for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+    {
+        LLDrawInfo* params = *i;
+        LLCullResult::increment_iterator(i, end);
+        if (!params->mCount)
+        {
+            continue;       // nothing to draw (the old path returns)
+        }
+        if (!geometry_packet_ok(*params, true))
+        {
+            fallback.push_back(params);
+            continue;
+        }
+        const LLVertexBuffer* vb = params->mVertexBuffer.get();
+        LLVkMirror::GeoEntry e = {};
+        e.mVertexBuffer = vb->getGLBuffer();
+        e.mIndexBuffer = vb->getGLIndices();
+        e.mFirstIndex = params->mOffset;
+        e.mIndexCount = params->mCount;
+        e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
+        e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+        e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+        if (params->mModelMatrix)
+        {
+            auto it = matrix_numbers.find(params->mModelMatrix);
+            if (it == matrix_numbers.end())
+            {
+                it = matrix_numbers.emplace(params->mModelMatrix, add_matrix(params->mModelMatrix)).first;
+            }
+            e.mMatrix = it->second;
+        }
+        if (params->mTextureList.size() > 1)
+        {
+            for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
+            {
+                if (params->mTextureList[t].notNull())
+                {
+                    e.mTextures[t] = texture_name(params->mTextureList[t].get());
+                }
+            }
+        }
+        else
+        {
+            e.mFlags |= LLVkMirror::GEO_ONE_TEXTURE;
+            if (params->mTexture.notNull())
+            {
+                e.mTextures[0] = texture_name(params->mTexture.get());
+            }
+        }
+        entries.push_back(e);
+    }
+    if (!entries.empty())
+    {
+        LLVkMirror::ShadowPacketsHeader header;
+        header.mKind = 3;
+        header.mEntries = (U32)entries.size();
+        header.mMatrices = (U32)(matrices.size() / 44);
+        std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
+        memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
+        memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+        LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+        gGeometryPacketStats.mEntries += entries.size();
+        gGeometryPacketStats.mMatrices += header.mMatrices;
+        ++gGeometryPacketStats.mRecords;
+    }
+    gGeometryPacketStats.mFallback += fallback.size();
+}
 
 void LLShadowDrawStats::endStaticPass()
 {

@@ -170,6 +170,7 @@ LLGLSLShader            gDeferredShadowCubeProgram;
 LLGLSLShader            gDeferredShadowPullProgram;
 LLGLSLShader            gDeferredShadowAlphaPullProgram;
 LLGLSLShader            gDeferredShadowSkinPullProgram;
+LLGLSLShader            gDeferredDiffusePullProgram;
 LLGLSLShader            gDeferredShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredSkinnedShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredShadowGLTFAlphaMaskProgram;
@@ -1132,6 +1133,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowPullProgram.unload();
         gDeferredShadowAlphaPullProgram.unload();
         gDeferredShadowSkinPullProgram.unload();
+        gDeferredDiffusePullProgram.unload();
         gDeferredShadowAlphaMaskProgram.unload();
         gDeferredSkinnedShadowAlphaMaskProgram.unload();
         gDeferredShadowGLTFAlphaMaskProgram.unload();
@@ -2315,6 +2317,24 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             LL_WARNS("ShadowPackets") << "the shadow skin pull shader could not be made: rigged casters stay on the old path" << LL_ENDL;
             gDeferredShadowSkinPullProgram.unload();
+        }
+    }
+
+    // <FS> The deferred diffuse pass from render packets (same fragment shader as gDeferredDiffuseProgram, the diffuse lookup from the bindless table). Optional.
+    if (success && LLVkMirror::shadowAlphaPacketsAvailable())
+    {
+        gDeferredDiffusePullProgram.mName = "Deferred Diffuse Pull Shader";
+        gDeferredDiffusePullProgram.mFeatures.hasSrgb = true;
+        gDeferredDiffusePullProgram.mShaderFiles.clear();
+        gDeferredDiffusePullProgram.mShaderFiles.push_back(make_pair("deferred/diffusePullV.glsl", GL_VERTEX_SHADER));
+        gDeferredDiffusePullProgram.mShaderFiles.push_back(make_pair("deferred/diffuseIndexedF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredDiffusePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gDeferredDiffusePullProgram.addPermutation("LL_BINDLESS_DIFFUSE", "1");
+        add_common_permutations(&gDeferredDiffusePullProgram);
+        if (!gDeferredDiffusePullProgram.createShader())
+        {
+            LL_WARNS("ShadowPackets") << "the deferred diffuse pull shader could not be made: the diffuse pass stays on the old path" << LL_ENDL;
+            gDeferredDiffusePullProgram.unload();
         }
     }
 

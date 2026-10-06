@@ -4888,6 +4888,13 @@ static void report_pool_draws()
             }
         }
     }
+    if (gGeometryPacketStats.mRecords)
+    {
+        const LLGeometryPacketStats& g = gGeometryPacketStats;
+        LL_INFOS("DeferredDraws") << "geometry packets per frame: " << g.mRecords / frames << " records, " << g.mEntries / frames << " draws in them, " << g.mFallback / frames
+            << " draws left to the old path, " << g.mMatrices / frames << " matrices, " << g.mTextures / frames << " textures bound" << LL_ENDL;
+    }
+    gGeometryPacketStats = LLGeometryPacketStats();
     memset(sPoolDraws.mDraws, 0, sizeof(sPoolDraws.mDraws));
 }
 
