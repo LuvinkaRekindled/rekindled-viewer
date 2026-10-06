@@ -1915,11 +1915,11 @@ If you do not understand the distinction then leave this control alone."
        enabled_control="FSVulkanRenderer"
        height="16"
        initial_value="false"
-       label="Upscale with NVIDIA DLSS (RTX graphics cards, experimental)"
+       label="Use NVIDIA DLSS / DLAA (RTX graphics cards, experimental)"
        layout="topleft"
        left_delta="0"
        name="FSVkDLSS"
-       tool_tip="Draws the world at a lower resolution and upscales it with DLSS: a lot faster, with little visible difference. Needs an NVIDIA RTX card and the Vulkan renderer. Takes effect after the viewer is restarted."
+       tool_tip="Draws the world with NVIDIA DLSS. Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. DLAA draws at the full window size and uses the same neural network only to smooth edges: the sharpest picture, no speed gain. Needs an NVIDIA RTX card and the Vulkan renderer. Takes effect after the viewer is restarted."
        top_pad="8"
        width="400"/>
       <text
@@ -1932,7 +1932,7 @@ If you do not understand the distinction then leave this control alone."
        name="FSVkDLSSQualityText"
        top_pad="8"
        width="200">
-        DLSS quality:
+        DLSS mode:
       </text>
       <combo_box
        control_name="FSVkDLSSQuality"
@@ -1941,7 +1941,7 @@ If you do not understand the distinction then leave this control alone."
        layout="topleft"
        left_delta="0"
        name="FSVkDLSSQuality"
-       tool_tip="Performance draws the fewest pixels (50% of the window size) and gains the most speed. Takes effect after the viewer is restarted."
+       tool_tip="Performance draws the fewest pixels (50% of the window size) and gains the most speed. DLAA draws every pixel and only anti-aliases (best for photos). Takes effect after the viewer is restarted."
        top_pad="3"
        width="250">
         <combo_box.item
@@ -1956,6 +1956,10 @@ If you do not understand the distinction then leave this control alone."
          label="Quality (67%)"
          name="2"
          value="2"/>
+        <combo_box.item
+         label="DLAA (100%, anti-aliasing only)"
+         name="3"
+         value="3"/>
       </combo_box>
       <text
        type="string"

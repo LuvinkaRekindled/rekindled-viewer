@@ -2626,7 +2626,7 @@
     <key>FSVkDLSSQuality</key>
     <map>
       <key>Comment</key>
-      <string>With FSVkDLSS: 0 Performance (renders at 50% of the window size), 1 Balanced (58%), 2 Quality (67%). Takes effect after a restart.</string>
+      <string>With FSVkDLSS: 0 Performance (renders at 50% of the window size), 1 Balanced (58%), 2 Quality (67%), 3 DLAA (100%: the full window size, the network only anti-aliases). Takes effect after a restart.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
