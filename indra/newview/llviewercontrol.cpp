@@ -1360,6 +1360,10 @@ void settings_setup_listeners()
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     setting_setup_signal_listener(gSavedSettings, "RenderResolutionMultiplier", handleRenderResolutionDivisorChanged);
 // [/SL:KB]
+    // <FS> DLSS: the render size follows the mode, so the screen buffers are made again when it changes
+    setting_setup_signal_listener(gSavedSettings, "FSVkDLSS", handleRenderResolutionDivisorChanged);
+    setting_setup_signal_listener(gSavedSettings, "FSVkDLSSQuality", handleRenderResolutionDivisorChanged);
+    setting_setup_signal_listener(gSavedSettings, "FSVkDLSSScale", handleRenderResolutionDivisorChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeLevel", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeDetail", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeCount", handleReflectionProbeCountChanged);

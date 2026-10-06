@@ -590,6 +590,10 @@ void LLPipeline::init()
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     connectRefreshCachedSettingsSafe("RenderResolutionMultiplier");
 // [/SL:KB]
+    // <FS> DLSS: a changed mode or switch re-reads the render scale (the screen buffers are reallocated by the listeners in llviewercontrol.cpp)
+    connectRefreshCachedSettingsSafe("FSVkDLSS");
+    connectRefreshCachedSettingsSafe("FSVkDLSSQuality");
+    connectRefreshCachedSettingsSafe("FSVkDLSSScale");
     connectRefreshCachedSettingsSafe("RenderUIBuffer");
     connectRefreshCachedSettingsSafe("RenderShadowDetail");
     connectRefreshCachedSettingsSafe("RenderShadowSplits");
@@ -1237,7 +1241,9 @@ void LLPipeline::refreshCachedSettings()
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     RenderResolutionMultiplier = gSavedSettings.getF32("RenderResolutionMultiplier");
 // [/SL:KB]
-    sDLSS = gSavedSettings.getBOOL("FSVkDLSS") && gSavedSettings.getBOOL("FSVulkanRenderer");
+    // DLSS can only run if the viewer started with it on (the upscaler and its Vulkan extensions are set up then; LL_VK_DLSS is set at start-up by FSVkDLSS)
+    static const bool dlss_started = getenv("LL_VK_DLSS") != nullptr;
+    sDLSS = dlss_started && gSavedSettings.getBOOL("FSVkDLSS") && gSavedSettings.getBOOL("FSVulkanRenderer");
     if (sDLSS)
     {
         // the world is drawn smaller and the upscaler brings it back to the window size
