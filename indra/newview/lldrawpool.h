@@ -500,8 +500,19 @@ struct LLShadowDrawStats
     const void* mLastMatrix = nullptr;
     std::unordered_set<const void*> mPassVBs;
     U32 mLastReport = 0;
-    void beginStaticPass() { mLastVB = nullptr; mLastMatrix = nullptr; mPassVBs.clear(); }
-    void endStaticPass() { mStaticDistinctVB += mPassVBs.size(); }
+
+    // Render packets P1: the table of one static shadow pass (what a packet record would carry), built next to the normal draws and checked, not used
+    struct Caster
+    {
+        const LLVertexBuffer* mVB;
+        U32 mStart, mEnd, mCount, mIndexOffset;
+        const void* mMatrix;
+    };
+    std::vector<Caster> mTable;
+    U64 mTablePasses = 0, mTableEntries = 0, mTableMax = 0;
+    U64 mBadNames = 0, mWideIndices = 0, mPositionNotFirst = 0, mNoPosition = 0, mBadRange = 0, mBadIndexRange = 0, mNullMatrix = 0, mDistinctPairs = 0;
+    void beginStaticPass() { mLastVB = nullptr; mLastMatrix = nullptr; mPassVBs.clear(); mTable.clear(); }
+    void endStaticPass();
 };
 extern LLShadowDrawStats gShadowDrawStats;
 
