@@ -2417,13 +2417,13 @@
     <key>FSShadowPackets</key>
     <map>
       <key>Comment</key>
-      <string>Draw the static, untextured shadow casters of a pass as one record that the Vulkan worker reads by address (FS_SHADOW_PACKETS_AB=1 alternates it every 30 seconds)</string>
+      <string>Draw the shadow casters (static, alpha masked, rigged) as records that the Vulkan worker reads by address; only active in Vulkan mode on a device that supports it (FS_SHADOW_PACKETS_AB=1 alternates it every 30 seconds)</string>
       <key>Persist</key>
       <integer>0</integer>
       <key>Type</key>
       <string>Boolean</string>
       <key>Value</key>
-      <integer>0</integer>
+      <integer>1</integer>
     </map>
     <key>FSParallelShadowPrepCheck</key>
     <map>
