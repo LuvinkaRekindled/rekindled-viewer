@@ -2825,7 +2825,8 @@ void LLViewerRegion::decodeBoundingInfo(LLVOCacheEntry* entry)
 
     // <FS> A light reaches far beyond its source: the cull below must see the glow (the radius the lighting pass uses, 1.5 x the light radius), or the light does not exist
     // until its source is in view.
-    if (entry->getDP() && entry->getDP()->getBufferSize() > 0)
+    static const bool light_bounds = getenv("FS_NO_LIGHT_BOUNDS") == nullptr;      // FS_NO_LIGHT_BOUNDS=1: the cull sees only the source, as before (for A/B runs)
+    if (light_bounds && entry->getDP() && entry->getDP()->getBufferSize() > 0)
     {
         const F32 glow = LLViewerObject::extractLightRadius(entry->getDP()) * 1.5f;
         if (glow > 0.f)
