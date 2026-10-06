@@ -11356,6 +11356,15 @@ static bool shadow_packets_enabled()
     return on && gDeferredShadowPullProgram.mProgramObject != 0 && LLVkMirror::shadowPacketsAvailable();
 }
 
+// <FS> debug switches for the kinds of records, changeable live in Debug Settings: 0 static untextured, 1 alpha masked/blended (static and rigged), 2 rigged
+static bool shadow_kind_on(int kind)
+{
+    static LLCachedControl<bool> untextured(gSavedSettings, "FSShadowPacketsStatic", true);
+    static LLCachedControl<bool> alpha(gSavedSettings, "FSShadowPacketsAlpha", true);
+    static LLCachedControl<bool> rigged(gSavedSettings, "FSShadowPacketsRigged", true);
+    return kind == 0 ? (bool)untextured : kind == 1 ? (bool)alpha : (bool)rigged;
+}
+
 // <FS> the rigged casters (avatars and their attachments) go as records too when the packets are on, unless FS_SHADOW_NO_RIGGED is set; FS_SHADOW_RIGGED_AB=1 alternates only
 // them every 30 seconds (half a period out of step with nothing: the static packets stay on)
 static bool shadow_rigged_packets_enabled()
@@ -11843,8 +11852,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     {
         bool rigged = j == 1;
         LL_GPU_TIMER_ZONE(rigged ? "shadow simple: rigged" : "shadow simple: static"); // <FS>
-        const bool packets = !rigged && shadow_packets_enabled();
-        const bool skin_packets = rigged && shadow_rigged_packets_enabled() && gDeferredShadowSkinPullProgram.mProgramObject != 0;
+        const bool packets = !rigged && shadow_packets_enabled() && shadow_kind_on(0);
+        const bool skin_packets = rigged && shadow_rigged_packets_enabled() && shadow_kind_on(2) && gDeferredShadowSkinPullProgram.mProgramObject != 0;
         if (packets)
         {
             gDeferredShadowPullProgram.bind();
@@ -11924,7 +11933,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             LL_GPU_TIMER_ZONE(rigged ? "shadow alpha: rigged" : "shadow alpha: static"); // <FS>
 
             // <FS> render packets with textures: one record for the static casters, then the draws it could not carry (the glTF ones among them)
-            if (shadow_packets_enabled() && (!rigged || shadow_rigged_packets_enabled()) && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkMirror::shadowAlphaPacketsAvailable())
+            if (shadow_packets_enabled() && shadow_kind_on(1) && (!rigged || (shadow_rigged_packets_enabled() && shadow_kind_on(2))) && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkMirror::shadowAlphaPacketsAvailable())
             {
                 render_alpha_packets(sun_up, target_width, rigged);
                 {

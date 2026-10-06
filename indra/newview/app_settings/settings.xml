@@ -2370,6 +2370,39 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>FSShadowPacketsStatic</key>
+    <map>
+      <key>Comment</key>
+      <string>With FSShadowPackets: send the static untextured shadow casters as records (debug switch, can be changed live)</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
+    <key>FSShadowPacketsAlpha</key>
+    <map>
+      <key>Comment</key>
+      <string>With FSShadowPackets: send the alpha masked and blended shadow casters, static and rigged, as records (debug switch, can be changed live)</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
+    <key>FSShadowPacketsRigged</key>
+    <map>
+      <key>Comment</key>
+      <string>With FSShadowPackets: send the rigged shadow casters (avatars, attachments) as records (debug switch, can be changed live)</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSShadowPackets</key>
     <map>
       <key>Comment</key>
