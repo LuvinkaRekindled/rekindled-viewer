@@ -65,6 +65,7 @@ struct Capabilities
     bool mBC = false;               // BC1-7 texture compression
     bool mGeometryShader = false;
     bool mMultiDrawIndirect = false;
+    bool mBufferDeviceAddress = false;  // shaders can read buffers by address (render packets)
     F32 mMaxAnisotropy = 1.f;
     F32 mTimestampPeriodNs = 1.f;   // nanoseconds per timestamp tick
     U32 mTimestampValidBits = 0;
@@ -84,6 +85,7 @@ struct Buffer
     VmaAllocation mAllocation = nullptr;
     void* mMapped = nullptr;        // persistently mapped for host-visible buffers
     VkDeviceSize mSize = 0;
+    VkDeviceAddress mAddress = 0;   // the address a shader reads the buffer by (0 when the device cannot)
     bool valid() const { return mBuffer != VK_NULL_HANDLE; }
 };
 

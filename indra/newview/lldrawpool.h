@@ -496,6 +496,7 @@ struct LLShadowDrawStats
     U64 mStaticUntex = 0, mStaticVBChanges = 0, mStaticDistinctVB = 0;
     U64 mRiggedUntex = 0, mTextured = 0, mGLTF = 0;
     U64 mStaticMatrixChanges = 0;
+    U64 mPacketEntries = 0, mPacketFallback = 0, mPacketRecords = 0;      // shadow packets: draws sent in records, draws left to the old path, records
     const void* mLastVB = nullptr;
     const void* mLastMatrix = nullptr;
     std::unordered_set<const void*> mPassVBs;

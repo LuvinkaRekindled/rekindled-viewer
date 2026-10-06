@@ -1452,6 +1452,7 @@ Renderer::ScratchAlloc Renderer::allocVertexScratch(VkDeviceSize size)
     a.mBuffer = mVertexRing[mSlot].mBuffer;
     a.mOffset = start;
     a.mPtr = (U8*)mVertexRing[mSlot].mMapped + start;
+    a.mAddress = mVertexRing[mSlot].mAddress ? mVertexRing[mSlot].mAddress + start : 0;
     return a;
 }
 
@@ -1931,6 +1932,34 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
     vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
     LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
     ++mDrawCount;
+    ++mModCount;
+    return true;
+}
+
+// <FS> Render packets: the draws of one record share everything but their vertex count and their instance index (the shader finds the rest by it): the state is
+// applied once and every draw is one command
+bool Renderer::drawPackets(const U32* vertex_counts, U32 draws)
+{
+    if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget) || draws == 0)
+    {
+        return false;
+    }
+    gDebugProgram = mProgram->getName().c_str();
+    applyState();
+    if (mDrawBlocked)
+    {
+        mDrawBlocked = false;
+        return false;
+    }
+    startPendingQuery();
+    for (U32 i = 0; i < draws; ++i)
+    {
+        if (vertex_counts[i])
+        {
+            vkCmdDraw(mCmd, vertex_counts[i], 1, 0, i);
+            ++mDrawCount;
+        }
+    }
     ++mModCount;
     return true;
 }

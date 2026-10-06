@@ -2701,6 +2701,108 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     ++sDrawsTotal;
 }
 
+// <FS> Render packets: the worker side of LLVkMirror::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
+// every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
+void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+{
+    struct PacketGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
+    static_assert(sizeof(PacketGpu) == 32, "packet entry");
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<GLuint> used_cache, packet_used;
+    static thread_local std::vector<U32> counts;
+    VertexInput& vi = vi_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used_cache.clear();
+    packet_used.clear();
+
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (h.mEntries == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    {
+        ++sStats.mNoProgram;
+        return;
+    }
+    const LLVkMirror::ShadowPacketEntry* entries = (const LLVkMirror::ShadowPacketEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowPacketEntry) * h.mEntries);
+    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(PacketGpu) * (size_t)h.mEntries);
+    Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
+    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
+    {
+        return;
+    }
+    const U64 frame_now = Context::instance().getFrameNumber();
+    counts.assign(h.mEntries, 0);
+    PacketGpu* out = (PacketGpu*)table.mPtr;
+    GLuint last_vb = 0, last_ib = 0;
+    auto vit = sGL.mBuffers.end(), iit = sGL.mBuffers.end();
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const LLVkMirror::ShadowPacketEntry& e = entries[i];
+        PacketGpu& g = out[i];
+        memset(&g, 0, sizeof(g));
+        if (e.mVertexBuffer != last_vb)
+        {
+            last_vb = e.mVertexBuffer;
+            vit = sGL.mBuffers.find(last_vb);
+        }
+        if (e.mIndexBuffer != last_ib)
+        {
+            last_ib = e.mIndexBuffer;
+            iit = sGL.mBuffers.find(last_ib);
+        }
+        if (vit == sGL.mBuffers.end() || iit == sGL.mBuffers.end() || !vit->second.mVk.valid() || !iit->second.mVk.valid() || !vit->second.mVk.mAddress || !iit->second.mVk.mAddress)
+        {
+            continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
+        }
+        const U64 pa = (U64)vit->second.mVk.mAddress, ia = (U64)iit->second.mVk.mAddress;
+        g.mPositions[0] = (U32)pa;
+        g.mPositions[1] = (U32)(pa >> 32);
+        g.mIndices[0] = (U32)ia;
+        g.mIndices[1] = (U32)(ia >> 32);
+        g.mFirst = e.mFirstIndex;
+        g.mCount = e.mIndexCount;
+        g.mModel = e.mMatrix;
+        counts[i] = e.mIndexCount;
+        vit->second.mLastUseFrame = frame_now;
+        iit->second.mLastUseFrame = frame_now;
+        if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != last_vb || packet_used.back() != last_ib)
+        {
+            packet_used.push_back(last_vb);
+            packet_used.push_back(last_ib);
+        }
+    }
+    memcpy(models.mPtr, matrices, 64 * (size_t)h.mMatrices);
+
+    const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress;
+    const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
+    const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
+    program->setInts("ll_packet_table", table_words, 2);
+    program->setInts("ll_packet_models", models_words, 2);
+    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+
+    if (!prepare_draw(vi, used_cache))
+    {
+        return;
+    }
+    ensure_buffers_current(packet_used, 0);
+    r.setVertexInput(vi);
+    r.setTopology(topology(GL_TRIANGLES));
+    if (r.drawPackets(counts.data(), h.mEntries))
+    {
+        if (sStatsEnabled)
+        {
+            sStats.mDone += h.mEntries;
+        }
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
+    sDraws += h.mEntries;
+    sDrawsTotal += h.mEntries;
+}
+
 //-----------------------------------------------------------------------------------------------------
 // hooks: state and clears
 //-----------------------------------------------------------------------------------------------------

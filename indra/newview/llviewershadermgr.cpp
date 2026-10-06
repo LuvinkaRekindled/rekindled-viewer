@@ -44,6 +44,7 @@
 
 #include "llfile.h"
 #include "llviewerwindow.h"
+#include "llvkmirror.h"
 #include "llwindow.h"
 
 #include "lljoint.h"
@@ -166,6 +167,7 @@ LLGLSLShader            gDeferredSoftenProgram;
 LLGLSLShader            gDeferredShadowProgram;
 LLGLSLShader            gDeferredSkinnedShadowProgram;
 LLGLSLShader            gDeferredShadowCubeProgram;
+LLGLSLShader            gDeferredShadowPullProgram;
 LLGLSLShader            gDeferredShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredSkinnedShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredShadowGLTFAlphaMaskProgram;
@@ -1125,6 +1127,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowProgram.unload();
         gDeferredSkinnedShadowProgram.unload();
         gDeferredShadowCubeProgram.unload();
+        gDeferredShadowPullProgram.unload();
         gDeferredShadowAlphaMaskProgram.unload();
         gDeferredSkinnedShadowAlphaMaskProgram.unload();
         gDeferredShadowGLTFAlphaMaskProgram.unload();
@@ -2258,6 +2261,23 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowCubeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredShadowCubeProgram.createShader();
         llassert(success);
+    }
+
+    // <FS> Render packets: the shadow program that reads vertices and indices by address. Not needed to run: if it cannot be made the packets stay off.
+    if (success && LLVkMirror::shadowPacketsAvailable())
+    {
+        gDeferredShadowPullProgram.mName = "Deferred Shadow Pull Shader";
+        gDeferredShadowPullProgram.mFeatures.isDeferred = true;
+        gDeferredShadowPullProgram.mFeatures.hasShadows = true;
+        gDeferredShadowPullProgram.mShaderFiles.clear();
+        gDeferredShadowPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowPullV.glsl", GL_VERTEX_SHADER));
+        gDeferredShadowPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gDeferredShadowPullProgram.createShader())
+        {
+            LL_WARNS("ShadowPackets") << "the shadow pull shader could not be made: shadow packets stay off" << LL_ENDL;
+            gDeferredShadowPullProgram.unload();
+        }
     }
 
     if (success)

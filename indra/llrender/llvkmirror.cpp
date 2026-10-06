@@ -20,6 +20,8 @@ void LLVkMirror::armSnapshotCompare() {}
 void LLVkMirror::setPresentPreference(S32, bool) {}
 void LLVkMirror::snapshotBoundary(S32) {}
 bool LLVkMirror::upscaleAvailable() { return false; }
+bool LLVkMirror::shadowPacketsAvailable() { return false; }
+void LLVkMirror::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
 void LLVkMirror::upscale(const UpscaleArgs&) {}
 void LLVkMirror::presentFrame() {}
 void LLVkMirror::shutdown() {}
@@ -1223,6 +1225,32 @@ void LLVkMirror::upscaleImpl(const UpscaleArgs& args)
 {
     std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     LLVkGL::on_upscale(args);
+}
+
+namespace LLVkGL
+{
+    void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& header, const U8* blob);
+}
+
+bool LLVkMirror::shadowPacketsAvailable()
+{
+    return sMirror.mReady && LLVk::Context::instance().getCaps().mBufferDeviceAddress;
+}
+
+void LLVkMirror::shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes)
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::pushData(LLVkAsync::CMD_SHADOW_PACKETS, &header, sizeof(header), blob, blob_bytes);
+        return;
+    }
+    shadowPacketsImpl(header, (const U8*)blob);
+}
+
+void LLVkMirror::shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob)
+{
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    LLVkGL::on_shadow_packets(header, blob);
 }
 
 #endif // LL_VULKAN

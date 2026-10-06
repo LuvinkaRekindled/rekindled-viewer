@@ -385,6 +385,7 @@ bool Context::pickDevice()
             mCaps.mBC = chain.f2.features.textureCompressionBC != VK_FALSE;
             mCaps.mGeometryShader = chain.f2.features.geometryShader != VK_FALSE;
             mCaps.mMultiDrawIndirect = chain.f2.features.multiDrawIndirect != VK_FALSE;
+            mCaps.mBufferDeviceAddress = chain.f12.bufferDeviceAddress != VK_FALSE;
             mCaps.mMaxAnisotropy = props.limits.maxSamplerAnisotropy;
             mCaps.mTimestampPeriodNs = props.limits.timestampPeriod;
             mCaps.mTimestampValidBits = families[(U32)family].timestampValidBits;
@@ -470,6 +471,10 @@ bool Context::createDevice()
     ai.instance = mInstance;
     ai.vulkanApiVersion = VK_API_VERSION_1_3;
     ai.pVulkanFunctions = &funcs;
+    if (mCaps.mBufferDeviceAddress)
+    {
+        ai.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    }
     if (!vk_ok(vmaCreateAllocator(&ai, &mAllocator), "vmaCreateAllocator"))
     {
         return false;
@@ -890,6 +895,10 @@ bool Context::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory m
     VkBufferCreateInfo bi = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
     bi.size = size;
     bi.usage = usage;
+    if (mCaps.mBufferDeviceAddress)
+    {
+        bi.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;      // every buffer can be read by address (render packets)
+    }
     bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VmaAllocationCreateInfo ai = {};
@@ -924,6 +933,12 @@ bool Context::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory m
     }
     out.mMapped = info.pMappedData;
     out.mSize = size;
+    if (mCaps.mBufferDeviceAddress)
+    {
+        VkBufferDeviceAddressInfo address_info = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+        address_info.buffer = out.mBuffer;
+        out.mAddress = vkGetBufferDeviceAddress(mDevice, &address_info);
+    }
     if (memory == Memory::UploadDevice)
     {
         static bool logged = false;

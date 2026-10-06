@@ -261,7 +261,7 @@ public:
     }
 
     // per-frame host-visible scratch memory usable as vertex or index data (reset every frame)
-    struct ScratchAlloc { VkBuffer mBuffer = VK_NULL_HANDLE; VkDeviceSize mOffset = 0; void* mPtr = nullptr; };
+    struct ScratchAlloc { VkBuffer mBuffer = VK_NULL_HANDLE; VkDeviceSize mOffset = 0; void* mPtr = nullptr; VkDeviceAddress mAddress = 0; };
     ScratchAlloc allocVertexScratch(VkDeviceSize size);
     void setIndexBuffer(VkBuffer buffer, VkDeviceSize offset, VkIndexType type) { mIndexBuffer = buffer; mIndexOffset = offset; mIndexType = type; }
     void setTexture(U32 unit, Image* image, VkSampler sampler);
@@ -270,6 +270,7 @@ public:
     void setUniformBuffer(U32 index, VkBuffer buffer, VkDeviceSize range);
     bool draw(U32 vertex_count, U32 first_vertex);
     bool drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset);
+    bool drawPackets(const U32* vertex_counts, U32 draws);      // <FS> render packets
 
     VkSampler getSampler(const SamplerDesc& desc);
     Image* getWhiteTexture() { return &mWhite; }
