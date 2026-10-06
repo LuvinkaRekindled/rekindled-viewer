@@ -51,6 +51,8 @@ namespace LLVkDlss
     // The extra texture sharpness DLSS wants because it draws fewer pixels than it shows: log2(render scale), a negative number added to the mip level
     // every filtered texture lookup picks (0 when DLSS is off). LL_VK_DLSS_LODBIAS overrides it.
     float lodBias();
+    // the render scale changed (a different DLSS mode, or DLSS switched on or off): samplers made from now on use this bias; ignored while LL_VK_DLSS_LODBIAS is set
+    void setLodBias(float bias);
 
     // layouts NGX reads / writes the images in
     VkImageLayout inputLayout(const LLVk::Image& image);

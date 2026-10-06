@@ -126,7 +126,8 @@ bool SamplerDesc::operator<(const SamplerDesc& o) const
     if (mCompare != o.mCompare) return mCompare < o.mCompare;
     if (mCompareOp != o.mCompareOp) return mCompareOp < o.mCompareOp;
     if (mMinLod != o.mMinLod) return mMinLod < o.mMinLod;
-    return mMaxLod < o.mMaxLod;
+    if (mMaxLod != o.mMaxLod) return mMaxLod < o.mMaxLod;
+    return mLodBias < o.mLodBias;
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -1058,8 +1059,10 @@ void Renderer::savePipelineCache()
     }
 }
 
-VkSampler Renderer::getSampler(const SamplerDesc& desc)
+VkSampler Renderer::getSampler(const SamplerDesc& wanted)
 {
+    SamplerDesc desc = wanted;
+    desc.mLodBias = (!desc.mCompare && desc.mMip == VK_SAMPLER_MIPMAP_MODE_LINEAR) ? LLVkDlss::lodBias() : 0.f;      // DLSS: sample textures sharper to make up for the smaller render size
     auto it = mSamplers.find(desc);
     if (it != mSamplers.end())
     {
@@ -1079,10 +1082,7 @@ VkSampler Renderer::getSampler(const SamplerDesc& desc)
     si.compareOp = desc.mCompareOp;
     si.minLod = desc.mMinLod;
     si.maxLod = desc.mMaxLod;
-    if (!desc.mCompare && desc.mMip == VK_SAMPLER_MIPMAP_MODE_LINEAR)
-    {
-        si.mipLodBias = LLVkDlss::lodBias();        // DLSS: sample textures sharper to make up for the smaller render size
-    }
+    si.mipLodBias = desc.mLodBias;
     si.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     VkSampler s = VK_NULL_HANDLE;
     if (!vk_ok(vkCreateSampler(ctx.getDevice(), &si, nullptr, &s), "vkCreateSampler"))

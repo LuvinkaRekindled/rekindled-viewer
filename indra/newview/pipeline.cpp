@@ -1244,6 +1244,7 @@ void LLPipeline::refreshCachedSettings()
         RenderResolutionDivisor = 1;
         RenderResolutionMultiplier = getDLSSScale();
     }
+    LLVkMirror::setUpscaleLodBias(sDLSS ? log2f(getDLSSScale()) : 0.f);       // <FS> textures sharper by what the smaller render size loses (0 for DLAA and with DLSS off)
     RenderUIBuffer = gSavedSettings.getBOOL("RenderUIBuffer");
     RenderShadowDetail = gSavedSettings.getS32("RenderShadowDetail");
     RenderShadowSplits = gSavedSettings.getS32("RenderShadowSplits");

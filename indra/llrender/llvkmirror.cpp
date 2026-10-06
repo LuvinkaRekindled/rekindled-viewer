@@ -20,6 +20,7 @@ void LLVkMirror::armSnapshotCompare() {}
 void LLVkMirror::setPresentPreference(S32, bool) {}
 void LLVkMirror::snapshotBoundary(S32) {}
 bool LLVkMirror::upscaleAvailable() { return false; }
+void LLVkMirror::setUpscaleLodBias(float) {}
 bool LLVkMirror::shadowPacketsAvailable() { return false; }
 bool LLVkMirror::shadowAlphaPacketsAvailable() { return false; }
 void LLVkMirror::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
@@ -1205,6 +1206,11 @@ void LLVkMirror::armSnapshotCompare()
         return;
     }
     armSnapshotCompareImpl();
+}
+
+void LLVkMirror::setUpscaleLodBias(float bias)
+{
+    LLVkDlss::setLodBias(bias);
 }
 
 bool LLVkMirror::upscaleAvailable()

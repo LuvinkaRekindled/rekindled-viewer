@@ -72,6 +72,8 @@ namespace LLVkMirror
     };
     // DLSS is initialised and usable (decided when the Vulkan device was created)
     bool upscaleAvailable();
+    // the texture mip bias DLSS wants for the current render scale (log2 of it, 0 at 100% or with DLSS off); samplers made afterwards use it
+    void setUpscaleLodBias(float bias);
 
     // ---- shadow packets (render packets) ----
     // One record that draws a whole pass of static, untextured shadow casters. For every draw: the GL names of its vertex and index buffer, its index range and the
