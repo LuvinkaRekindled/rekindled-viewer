@@ -40,6 +40,9 @@
 #include "threadpool.h"
 #include "workqueue.h"
 #include <unordered_set>
+#include <vector>
+#include <mutex>
+#include <algorithm>
 
 #define LL_IMAGEGL_THREAD_CHECK 0 //set to 1 to enable thread debugging for ImageGL
 
@@ -268,6 +271,17 @@ protected:
     S8 mMaxDiscardLevel;
 
     bool    mTexOptionsDirty;
+    bool    mTexOptionsQueued = false;      // <FS> in sDirtyOptionImages
+
+public:
+    // <FS> The sampler options (address mode, filtering) of a texture are sent to the GPU side by the first bind after they changed. A thread that only records
+    // draws for the queue must not be the one that does that (another recording may use the texture before it in the queue), so every image whose options
+    // changed is queued here and flushDirtyTexOptions() sends them all at once, on the main thread, before the passes that bind textures are recorded.
+    void markTexOptionsDirty();
+    static void flushDirtyTexOptions();
+private:
+    static std::vector<LLImageGL*> sDirtyOptionImages;
+    static std::mutex sDirtyOptionMutex;
     LLTexUnit::eTextureAddressMode      mAddressMode;   // Defaults to TAM_WRAP
     LLTexUnit::eTextureFilterOptions    mFilterOption;  // Defaults to TFO_ANISOTROPIC
 

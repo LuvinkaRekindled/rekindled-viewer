@@ -608,6 +608,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 F32 max_image_decode_time = 0.050f * gFrameIntervalSeconds.value();          // 50 ms/second decode time
                 max_image_decode_time     = llclamp(max_image_decode_time, 0.002f, 0.005f);  // min 2ms/frame, max 5ms/frame)
                 gTextureList.updateImages(max_image_decode_time);
+                LLImageGL::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
             }
 
             {
@@ -1017,6 +1018,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 F32 max_image_decode_time = 0.050f*gFrameIntervalSeconds.value(); // 50 ms/second decode time
                 max_image_decode_time = llclamp(max_image_decode_time, 0.002f, 0.005f ); // min 2ms/frame, max 5ms/frame)
                 gTextureList.updateImages(max_image_decode_time);
+                LLImageGL::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
             }
 
             {

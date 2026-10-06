@@ -424,12 +424,41 @@ void LLImageGL::destroyGL()
     }
 }
 
+std::vector<LLImageGL*> LLImageGL::sDirtyOptionImages;
+std::mutex LLImageGL::sDirtyOptionMutex;
+
+void LLImageGL::markTexOptionsDirty()
+{
+    mTexOptionsDirty = true;
+    std::lock_guard<std::mutex> lock(sDirtyOptionMutex);
+    if (!mTexOptionsQueued)
+    {
+        mTexOptionsQueued = true;
+        sDirtyOptionImages.push_back(this);
+    }
+}
+
+//static
+void LLImageGL::flushDirtyTexOptions()
+{
+    std::lock_guard<std::mutex> lock(sDirtyOptionMutex);
+    for (LLImageGL* image : sDirtyOptionImages)
+    {
+        image->mTexOptionsQueued = false;
+        if (image->mTexOptionsDirty && image->mTexName)
+        {
+            gGL.getTexUnit(0)->applyTexOptions(image);
+        }
+    }
+    sDirtyOptionImages.clear();
+}
+
 //static
 void LLImageGL::dirtyTexOptions()
 {
     for (auto& glimage : sImageList)
     {
-        glimage->mTexOptionsDirty = true;
+        glimage->markTexOptionsDirty();
         stop_glerror();
     }
 
@@ -501,6 +530,7 @@ LLImageGL::LLImageGL(
 {
     init(false, true);
     mTexName = texName;
+    markTexOptionsDirty();
     mTarget = target;
     mComponents = components;
     mAddressMode = addressMode;
@@ -512,6 +542,11 @@ LLImageGL::LLImageGL(
 
 LLImageGL::~LLImageGL()
 {
+    if (mTexOptionsQueued)
+    {
+        std::lock_guard<std::mutex> lock(sDirtyOptionMutex);
+        sDirtyOptionImages.erase(std::remove(sDirtyOptionImages.begin(), sDirtyOptionImages.end(), this), sDirtyOptionImages.end());
+    }
     if (!mExternalTexture && gGLManager.mInited)
     {
         LLImageGL::cleanup();
@@ -758,7 +793,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         gGL.getTexUnit(0)->unbind(mBindTarget);
 
         mHasMipMaps = true;
-        mTexOptionsDirty = true;
+        markTexOptionsDirty();
         setFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
     }
     else
@@ -1730,6 +1765,7 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
                 LLImageGL::deleteTextures(1, &old_texname);
             }
             mTexName = new_texname;
+            markTexOptionsDirty();      // <FS> the new GL texture gets its sampler options with the others
         }
     }
 
@@ -1807,6 +1843,7 @@ void LLImageGL::syncTexName(LLGLuint texname)
             LLImageGL::deleteTextures(1, &mTexName);
         }
         mTexName = texname;
+        markTexOptionsDirty();
     }
 }
 
@@ -1980,7 +2017,7 @@ void LLImageGL::setAddressMode(LLTexUnit::eTextureAddressMode mode)
 {
     if (mAddressMode != mode)
     {
-        mTexOptionsDirty = true;
+        markTexOptionsDirty();
         mAddressMode = mode;
     }
 
@@ -1995,7 +2032,7 @@ void LLImageGL::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
 {
     if (mFilterOption != option)
     {
-        mTexOptionsDirty = true;
+        markTexOptionsDirty();
         mFilterOption = option;
     }
 
@@ -2510,7 +2547,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
             glCopyTexSubImage2D(mTarget, 0, 0, 0, 0, 0, desired_width, desired_height);
             alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
 
-            mTexOptionsDirty = true;
+            markTexOptionsDirty();
 
             if (mHasMipMaps)
             { // generate mipmaps if needed

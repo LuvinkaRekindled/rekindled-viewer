@@ -184,6 +184,8 @@ public:
     //  - mTexOptionsDirty is false
     //  -
     void bindFast(LLTexture* texture);
+    // <FS> binds the image on this unit and sends its address mode and filtering options (what bindFast does when they are dirty)
+    void applyTexOptions(LLImageGL* gl_tex);
 
     // Binds a cubemap to this texture unit
     // (automatically enables the texture unit for cubemaps)
