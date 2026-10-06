@@ -179,6 +179,7 @@ struct SamplerDesc
     VkCompareOp mCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     F32 mMinLod = 0.f;
     F32 mMaxLod = 1000.f;
+    F32 mLodBias = 0.f;         // filled in by Renderer::getSampler (the DLSS texture sharpening in force when the sampler is made)
     bool operator<(const SamplerDesc& o) const;
 };
 

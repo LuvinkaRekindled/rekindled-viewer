@@ -1919,7 +1919,7 @@ If you do not understand the distinction then leave this control alone."
        layout="topleft"
        left_delta="0"
        name="FSVkDLSS"
-       tool_tip="Draws the world with NVIDIA DLSS. Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. DLAA draws at the full window size and uses the same neural network only to smooth edges: the sharpest picture, no speed gain. Needs an NVIDIA RTX card and the Vulkan renderer. Takes effect after the viewer is restarted."
+       tool_tip="Draws the world with NVIDIA DLSS. Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. DLAA draws at the full window size and uses the same neural network only to smooth edges: the sharpest picture, no speed gain. Needs an NVIDIA RTX card and the Vulkan renderer. If the viewer was started with this off, restart it after turning it on; once DLSS is running, switching it off and changing the mode apply at once."
        top_pad="8"
        width="400"/>
       <text
@@ -1941,7 +1941,7 @@ If you do not understand the distinction then leave this control alone."
        layout="topleft"
        left_delta="0"
        name="FSVkDLSSQuality"
-       tool_tip="Performance draws the fewest pixels (50% of the window size) and gains the most speed. DLAA draws every pixel and only anti-aliases (best for photos). Takes effect after the viewer is restarted."
+       tool_tip="Performance draws the fewest pixels (50% of the window size) and gains the most speed. DLAA draws every pixel and only anti-aliases (best for photos). Applies at once while DLSS is running."
        top_pad="3"
        width="250">
         <combo_box.item

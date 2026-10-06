@@ -1131,6 +1131,12 @@ VkSampler texture_sampler(Renderer& r, Tex& t)
     U32 aniso_bits;
     memcpy(&aniso_bits, &sp.mAnisotropy, 4);
     mix(aniso_bits); mix(t.mLevels); mix(t.mValidLevels);
+    {
+        const float bias = LLVkDlss::lodBias();      // a new DLSS mode changes it: the sampler is made again
+        U32 bias_bits;
+        memcpy(&bias_bits, &bias, 4);
+        mix(bias_bits);
+    }
     if (!t.mVkSampler || h != t.mSamplerSig)
     {
         t.mVkSampler = r.getSampler(sampler_for(t));

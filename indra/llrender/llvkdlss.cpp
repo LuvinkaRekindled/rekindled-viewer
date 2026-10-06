@@ -14,6 +14,7 @@
 #include "nvsdk_ngx_helpers_vk.h"
 #endif
 
+#include <atomic>
 #include <cmath>
 #include <string>
 
@@ -28,25 +29,48 @@ bool requested()
     return on;
 }
 
+namespace
+{
+    std::atomic<float> sLodBias(0.f);       // read by the Vulkan thread when it makes a sampler, written when the render scale changes
+    bool sLodBiasLocked = false;            // LL_VK_DLSS_LODBIAS is set: it stays
+
+    // the value at start: the environment (the scale the viewer started with, or an explicit bias)
+    void initLodBias()
+    {
+        static const bool done = []() {
+            char buf[32] = {};
+            if (GetEnvironmentVariableA("LL_VK_DLSS_LODBIAS", buf, sizeof(buf)) > 0)
+            {
+                sLodBias.store((float)atof(buf));
+                sLodBiasLocked = true;
+            }
+            else if (requested() && GetEnvironmentVariableA("LL_VK_DLSS_SCALE", buf, sizeof(buf)) > 0)
+            {
+                const float scale = (float)atof(buf);
+                if (scale > 0.1f && scale < 1.f)
+                {
+                    sLodBias.store(log2f(scale));
+                }
+            }
+            return true;
+        }();
+        (void)done;
+    }
+}
+
 float lodBias()
 {
-    static const float bias = []() {
-        char buf[32] = {};
-        if (GetEnvironmentVariableA("LL_VK_DLSS_LODBIAS", buf, sizeof(buf)) > 0)
-        {
-            return (float)atof(buf);
-        }
-        if (requested() && GetEnvironmentVariableA("LL_VK_DLSS_SCALE", buf, sizeof(buf)) > 0)
-        {
-            const float scale = (float)atof(buf);
-            if (scale > 0.1f && scale < 1.f)
-            {
-                return log2f(scale);
-            }
-        }
-        return 0.f;
-    }();
-    return bias;
+    initLodBias();
+    return sLodBias.load();
+}
+
+void setLodBias(float bias)
+{
+    initLodBias();
+    if (!sLodBiasLocked)
+    {
+        sLodBias.store(bias);
+    }
 }
 
 #if !defined(LL_DLSS)
