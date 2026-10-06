@@ -3380,7 +3380,8 @@ void process_chat_from_simulator(LLMessageSystem *msg, void **user_data)
         // <FS:PP> gSavedSettings to LLCachedControl
         // if (gSavedSettings.getBOOL("TranslateChat") && chat.mSourceType != CHAT_SOURCE_SYSTEM)
         static LLCachedControl<bool> TranslateChat(gSavedSettings, "TranslateChat");
-        if (TranslateChat && chat.mSourceType != CHAT_SOURCE_SYSTEM)
+        // <FS> only when the selected translation service can work: with none configured the translation request ends without calling back and the line was never shown
+        if (TranslateChat && chat.mSourceType != CHAT_SOURCE_SYSTEM && LLTranslate::isTranslationConfigured())
         // </FS:PP>
         {
             if (chat.mChatStyle == CHAT_STYLE_IRC)
