@@ -2823,6 +2823,19 @@ void LLViewerRegion::decodeBoundingInfo(LLVOCacheEntry* entry)
     //decode spatial info and parent info
     U32 parent_id = entry->getDP() ? LLViewerObject::extractSpatialExtents(entry->getDP(), pos, scale, rot) : entry->getParentID();
 
+    // <FS> A light reaches far beyond its source: the cull below must see the glow (the radius the lighting pass uses, 1.5 x the light radius), or the light does not exist
+    // until its source is in view.
+    if (entry->getDP() && entry->getDP()->getBufferSize() > 0)
+    {
+        const F32 glow = LLViewerObject::extractLightRadius(entry->getDP()) * 1.5f;
+        if (glow > 0.f)
+        {
+            scale.mV[VX] = llmax(scale.mV[VX], glow);
+            scale.mV[VY] = llmax(scale.mV[VY], glow);
+            scale.mV[VZ] = llmax(scale.mV[VZ], glow);
+        }
+    }
+
     U32 old_parent_id = entry->getParentID();
     bool same_old_parent = false;
     if(parent_id != old_parent_id) //parent changed.

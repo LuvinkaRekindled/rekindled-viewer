@@ -707,6 +707,8 @@ public:
     static void unpackU32(LLDataPackerBinaryBuffer* dp, U32& value, std::string name);
     static void unpackU8(LLDataPackerBinaryBuffer* dp, U8& value, std::string name);
     static U32 unpackParentID(LLDataPackerBinaryBuffer* dp, U32& parent_id);
+    // <FS> the radius of the light a cached compressed update carries, 0 if it has none (or a layout this does not skip: legacy particle sources, scratch pad data)
+    static F32 extractLightRadius(LLDataPackerBinaryBuffer* dp);
 
 public:
     //counter-translation
