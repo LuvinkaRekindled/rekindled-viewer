@@ -241,6 +241,7 @@ extern LLGLSLShader         gDeferredShadowProgram;
 extern LLGLSLShader         gDeferredShadowCubeProgram;
 extern LLGLSLShader         gDeferredShadowPullProgram;   // <FS> render packets: reads vertices and indices by address (Vulkan mirror only)
 extern LLGLSLShader         gDeferredShadowAlphaPullProgram;   // <FS> render packets: the same for alpha masked casters, textures from the bindless table
+extern LLGLSLShader         gDeferredShadowSkinPullProgram;   // <FS> render packets: rigged casters (weights and palette read by address)
 extern LLGLSLShader         gDeferredShadowAlphaMaskProgram;
 extern LLGLSLShader         gDeferredShadowGLTFAlphaMaskProgram;
 extern LLGLSLShader         gDeferredShadowGLTFAlphaBlendProgram;

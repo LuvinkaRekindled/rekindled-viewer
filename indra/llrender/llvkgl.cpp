@@ -2791,8 +2791,8 @@ static U32 packet_texture_slot(Renderer& r, GLuint name)
 // the worker side of a record of alpha masked casters (shadowAlphaPullV.glsl / shadowAlphaPullF.glsl): the entries also name their textures
 static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
 {
-    struct AlphaGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mFirst, mCount, mModel, mFlags; U32 mSlots[2]; F32 mCutoff; U32 mPad; };
-    static_assert(sizeof(AlphaGpu) == 64, "alpha packet entry");
+    struct AlphaGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mFirst, mCount, mModel, mFlags; U32 mSlots[2]; F32 mCutoff; U32 mPad; U32 mWeights[2]; U32 mPalette[2]; };
+    static_assert(sizeof(AlphaGpu) == 80, "alpha packet entry");
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<GLuint> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
@@ -2820,6 +2820,16 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
     AlphaGpu* out = (AlphaGpu*)table.mPtr;
+    Renderer::ScratchAlloc palettes;
+    if (h.mPaletteFloats)
+    {
+        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+        if (!palettes.mPtr || !palettes.mAddress)
+        {
+            return;
+        }
+        memcpy(palettes.mPtr, matrices + 16 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
+    }
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         const LLVkMirror::ShadowAlphaEntry& e = entries[i];
@@ -2853,6 +2863,19 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
         g.mCount = e.mIndexCount;
         g.mModel = e.mMatrix;
         g.mFlags = flags;
+        if (flags & LLVkMirror::ALPHA_RIGGED)
+        {
+            if (!palettes.mAddress)
+            {
+                continue;
+            }
+            const U64 wa = pa + e.mWeightOffset, pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+            g.mWeights[0] = (U32)wa;
+            g.mWeights[1] = (U32)(wa >> 32);
+            g.mPalette[0] = (U32)pal;
+            g.mPalette[1] = (U32)(pal >> 32);
+            g.mCount = e.mJoints;       // the shader's joint count (the draw's index count is in the indirect command)
+        }
         U32 slot[4] = {};
         for (U32 t = 0; t < 4; ++t)
         {
@@ -2921,6 +2944,119 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
     sDrawsTotal += h.mEntries;
 }
 
+// the worker side of a record of rigged untextured casters (shadowSkinPullV.glsl)
+static void on_shadow_skin_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+{
+    struct SkinGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mWeights[2]; U32 mPalette[2]; U32 mFirst, mJoints, mModel, mPad; };
+    static_assert(sizeof(SkinGpu) == 48, "skin packet entry");
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<GLuint> used_cache, packet_used;
+    static thread_local std::vector<U32> counts;
+    VertexInput& vi = vi_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used_cache.clear();
+    packet_used.clear();
+
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (h.mEntries == 0 || h.mPaletteFloats == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    {
+        ++sStats.mNoProgram;
+        return;
+    }
+    const LLVkMirror::ShadowSkinEntry* entries = (const LLVkMirror::ShadowSkinEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowSkinEntry) * h.mEntries);
+    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(SkinGpu) * (size_t)h.mEntries);
+    Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
+    Renderer::ScratchAlloc palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+    if (!table.mPtr || !models.mPtr || !palettes.mPtr || !table.mAddress || !models.mAddress || !palettes.mAddress)
+    {
+        return;
+    }
+    memcpy(palettes.mPtr, matrices + 16 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
+    const U64 frame_now = Context::instance().getFrameNumber();
+    counts.assign(h.mEntries, 0);
+    SkinGpu* out = (SkinGpu*)table.mPtr;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const LLVkMirror::ShadowSkinEntry& e = entries[i];
+        SkinGpu& g = out[i];
+        memset(&g, 0, sizeof(g));
+        Buf* vb = packet_buffer(e.mVertexBuffer);
+        Buf* ib = packet_buffer(e.mIndexBuffer);
+        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+        {
+            continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
+        }
+        const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
+        const U64 wa = pa + e.mWeightOffset, pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+        g.mPositions[0] = (U32)pa;
+        g.mPositions[1] = (U32)(pa >> 32);
+        g.mIndices[0] = (U32)ia;
+        g.mIndices[1] = (U32)(ia >> 32);
+        g.mWeights[0] = (U32)wa;
+        g.mWeights[1] = (U32)(wa >> 32);
+        g.mPalette[0] = (U32)pal;
+        g.mPalette[1] = (U32)(pal >> 32);
+        g.mFirst = e.mFirstIndex;
+        g.mJoints = e.mJoints;
+        g.mModel = e.mMatrix;
+        counts[i] = e.mIndexCount;
+        vb->mLastUseFrame = frame_now;
+        ib->mLastUseFrame = frame_now;
+        if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
+        {
+            packet_used.push_back(e.mVertexBuffer);
+            packet_used.push_back(e.mIndexBuffer);
+        }
+    }
+    memcpy(models.mPtr, matrices, 64 * (size_t)h.mMatrices);
+
+    const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress;
+    const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
+    const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
+    program->setInts("ll_packet_table", table_words, 2);
+    program->setInts("ll_packet_models", models_words, 2);
+    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+
+    if (!prepare_draw(vi, used_cache))
+    {
+        return;
+    }
+    ensure_buffers_current(packet_used, 0);
+    r.setVertexInput(vi);
+    r.setTopology(topology(GL_TRIANGLES));
+
+    Renderer::ScratchAlloc commands;
+    const auto& caps = Context::instance().getCaps();
+    if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
+    {
+        commands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)h.mEntries);
+        if (commands.mPtr)
+        {
+            VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)commands.mPtr;
+            for (U32 i = 0; i < h.mEntries; ++i)
+            {
+                c[i] = { counts[i], 1u, 0u, i };
+            }
+        }
+    }
+    if (r.drawPackets(counts.data(), h.mEntries, commands.mPtr ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
+    {
+        if (sStatsEnabled)
+        {
+            sStats.mDone += h.mEntries;
+        }
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
+    sDraws += h.mEntries;
+    sDrawsTotal += h.mEntries;
+}
+
 // <FS> Render packets: the worker side of LLVkMirror::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
@@ -2928,6 +3064,11 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     if (h.mKind == 1)
     {
         on_shadow_alpha_packets(h, blob);
+        return;
+    }
+    if (h.mKind == 2)
+    {
+        on_shadow_skin_packets(h, blob);
         return;
     }
     struct PacketGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
