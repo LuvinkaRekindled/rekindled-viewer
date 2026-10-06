@@ -2698,7 +2698,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         camera.disableUserClipPlane();
     }
 
-    grabReferences(result);
+    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     sCull->clear();
 
@@ -2714,7 +2714,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
             {
                 if (!hud_attachments ? LLViewerRegion::PARTITION_BRIDGE == i || hasRenderType(part->mDrawableType) : hasRenderType(part->mDrawableType))
                 {
-                    part->cull(camera);
+                    { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
                 }
             }
         }
@@ -2725,7 +2725,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         {
             // <FS:Beq> Fix area search again
             //vo_part->cull(camera, sUseOcclusion > 0);
-            vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive());
+            { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive()); }
         }
     }
 
@@ -3337,9 +3337,10 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
 
     //LLVertexBuffer::unbind();
 
-    grabReferences(result);
+    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("checkOcclusionAndRebuildMesh");
+        LL_CPU_ZONE("stateSort: drawable groups (occlusion + rebuild)");
     for (LLCullResult::sg_iterator iter = sCull->beginDrawableGroups(); iter != sCull->endDrawableGroups(); ++iter)
     {
         LLSpatialGroup* group = *iter;
@@ -3362,7 +3363,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
             }
 
             { //rebuild mesh as soon as we know it's visible
-                group->rebuildMesh();
+                { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
             }
         }
     }
@@ -3371,6 +3372,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("WorldCamera");
+        LL_CPU_ZONE("stateSort: visible bridges");
         LLSpatialGroup* last_group = NULL;
         bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
         for (LLCullResult::bridge_iterator i = sCull->beginVisibleBridge(); i != sCull->endVisibleBridge(); ++i)
@@ -3406,6 +3408,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
     }
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("StateSort: visible groups");
+        LL_CPU_ZONE("stateSort: visible groups");
     for (LLCullResult::sg_iterator iter = sCull->beginVisibleGroups(); iter != sCull->endVisibleGroups(); ++iter)
     {
         LLSpatialGroup* group = *iter;
@@ -3424,13 +3427,14 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
             stateSort(group, camera);
 
             { //rebuild mesh as soon as we know it's visible
-                group->rebuildMesh();
+                { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
             }
         }
     }}
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWABLE("stateSort"); // LL_RECORD_BLOCK_TIME(FTM_STATESORT_DRAWABLE);
+        LL_CPU_ZONE("stateSort: visible drawables");
         for (LLCullResult::drawable_iterator iter = sCull->beginVisibleList();
              iter != sCull->endVisibleList(); ++iter)
         {
@@ -3442,7 +3446,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
         }
     }
 
-    postSort(camera);
+    { LL_CPU_ZONE("stateSort: postSort"); postSort(camera); }
 }
 
 void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
@@ -4343,7 +4347,7 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
 
     for (LLSpatialPartition* part : partitions)
     {
-        part->cull(camera);
+        { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
     }
 
     // the drawable groups: what stateSort does with them when there is no occlusion culling, less the mesh rebuild
@@ -4418,7 +4422,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
             LLSpatialGroup* group = *iter;
             if (!group->isDead() && group->hasState(LLSpatialGroup::MESH_DIRTY))
             {
-                group->rebuildMesh();
+                { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
             }
         }
         for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
@@ -4426,7 +4430,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
             LLSpatialGroup* group = *iter;
             if (!group->isDead() && group->hasState(LLSpatialGroup::MESH_DIRTY))
             {
-                group->rebuildMesh();
+                { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
             }
         }
         lap.mark(PH_REBUILD_MESH);
@@ -4575,7 +4579,7 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
         gPipeline.resetDrawOrders();
     }
 
-    grabReferences(result);
+    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     PhaseLap lap;
 
@@ -4585,7 +4589,7 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
         LLVOCachePartition* vo_part = region->getVOCachePartition();
         if (vo_part)
         {
-            vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive());
+            { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive()); }
         }
     }
     lap.mark(PH_FIN_VOCACHE);
@@ -13234,14 +13238,14 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
             lap.mark(PH_SETUP);
             const std::function<void(size_t)> cull_job = [&](size_t i) { shadowPrepCull(pending[i], partitions); };
-            prep_pool->run(pending.size(), cull_job);
+            { LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->run(pending.size(), cull_job); }
             lap.mark(PH_CULL);
 
-            shadowPrepRebuild(pending);
+            { LL_CPU_ZONE("shadow prep: rebuild"); shadowPrepRebuild(pending); }
             lap.reset();
 
             const std::function<void(size_t)> map_job = [&](size_t i) { shadowPrepRenderMap(pending[i]); };
-            prep_pool->run(pending.size(), map_job);
+            { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(pending.size(), map_job); }
             lap.mark(PH_RENDER_MAP);
 
             sUseOcclusion = saved_occlusion;
@@ -13266,6 +13270,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
     if (gen_shadow)
     {
+        LL_CPU_ZONE("generateSunShadow: spot/projector shadows");
         if (!gCubeSnapshot) //skip updating spot shadow maps during cubemap updates
         {
             LLTrace::CountStatHandle<>* velocity_stat = LLViewerCamera::getVelocityStat();
@@ -13551,7 +13556,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
     static LLCullResult result;
     result.clear();
-    grabReferences(result);
+    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     if (!avatar || avatar->isDead() || !avatar->mDrawable)
     {
