@@ -172,7 +172,7 @@ void display_startup()
         return;
     }
 
-    gPipeline.updateGL();
+    { LL_CPU_ZONE("display: updateGL"); gPipeline.updateGL(); }
 
     // <FS> Vulkan mirror frame (does nothing unless LL_VK_MIRROR is set)
     LLVkMirror::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
@@ -567,7 +567,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         if (rebuild)
         {
             stop_glerror();
-            gPipeline.rebuildPools();
+            { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
             stop_glerror();
         }
 
@@ -600,14 +600,14 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Image Update Bump");
-                gBumpImageList.updateImages();  // must be called before gTextureList version so that it's textures are thrown out first.
+                { LL_CPU_ZONE("display: bump image list"); gBumpImageList.updateImages(); }  // must be called before gTextureList version so that it's textures are thrown out first.
             }
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("List");
                 F32 max_image_decode_time = 0.050f * gFrameIntervalSeconds.value();          // 50 ms/second decode time
                 max_image_decode_time     = llclamp(max_image_decode_time, 0.002f, 0.005f);  // min 2ms/frame, max 5ms/frame)
-                gTextureList.updateImages(max_image_decode_time);
+                { LL_CPU_ZONE("display: gTextureList.updateImages"); gTextureList.updateImages(max_image_decode_time); }
                 LLImageGL::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
             }
 
@@ -821,8 +821,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     if (gDisconnected)
     {
         LLAppViewer::instance()->pingMainloopTimeout("Display:Disconnected");
-        render_ui();
-        swap();
+        { LL_CPU_ZONE("display: render_ui"); render_ui(); }
+        { LL_CPU_ZONE("display: swap"); swap(); }
     }
 
     //////////////////////////
@@ -890,7 +890,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         }
 
         stop_glerror();
-        display_update_camera();
+        { LL_CPU_ZONE("display: display_update_camera"); display_update_camera(); }
         stop_glerror();
 
         {
@@ -903,7 +903,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("HUD Update");
             LLHUDManager::getInstance()->updateEffects();
-            LLHUDObject::updateAll();
+            { LL_CPU_ZONE("display: HUD objects update"); LLHUDObject::updateAll(); }
             stop_glerror();
         }
 
@@ -914,7 +914,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 LL_CPU_ZONE("display: createObjects");
                 gPipeline.createObjects(max_geom_update_time);
             }
-            gPipeline.processPartitionQ();
+            { LL_CPU_ZONE("display: processPartitionQ"); gPipeline.processPartitionQ(); }
             {
                 LL_CPU_ZONE("display: updateGeom");
                 gPipeline.updateGeom(max_geom_update_time);
@@ -922,7 +922,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             stop_glerror();
         }
 
-        gPipeline.updateGL();
+        { LL_CPU_ZONE("display: updateGL"); gPipeline.updateGL(); }
 
         stop_glerror();
 
@@ -1020,14 +1020,14 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Image Update Bump");
-                gBumpImageList.updateImages();  // must be called before gTextureList version so that it's textures are thrown out first.
+                { LL_CPU_ZONE("display: bump image list"); gBumpImageList.updateImages(); }  // must be called before gTextureList version so that it's textures are thrown out first.
             }
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("List");
                 F32 max_image_decode_time = 0.050f*gFrameIntervalSeconds.value(); // 50 ms/second decode time
                 max_image_decode_time = llclamp(max_image_decode_time, 0.002f, 0.005f ); // min 2ms/frame, max 5ms/frame)
-                gTextureList.updateImages(max_image_decode_time);
+                { LL_CPU_ZONE("display: gTextureList.updateImages"); gTextureList.updateImages(max_image_decode_time); }
                 LLImageGL::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
             }
 
@@ -1065,7 +1065,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 // rebuildPools
                 //
                 //
-                gPipeline.rebuildPools();
+                { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
                 stop_glerror();
             }
         }
@@ -1079,7 +1079,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LLAppViewer::instance()->pingMainloopTimeout("Display:Sky");
             LL_PROFILE_ZONE_NAMED_CATEGORY_ENVIRONMENT("update sky"); //LL_RECORD_BLOCK_TIME(FTM_UPDATE_SKY);
-            gSky.updateSky();
+            { LL_CPU_ZONE("display: updateSky"); gSky.updateSky(); }
         }
 
         if(gUseWireframe)
@@ -1225,8 +1225,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLAppViewer::instance()->pingMainloopTimeout("Display:RenderUI");
         if (!for_snapshot)
         {
-            render_ui();
-            swap();
+            { LL_CPU_ZONE("display: render_ui"); render_ui(); }
+            { LL_CPU_ZONE("display: swap"); swap(); }
         }
 
 
@@ -1366,7 +1366,7 @@ void display_cube_face()
         gPipeline.toggleRenderType(LLPipeline::RENDER_TYPE_HUD_PARTICLES);
     }
 
-    display_update_camera();
+    { LL_CPU_ZONE("display: display_update_camera"); display_update_camera(); }
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Env Update");
@@ -1403,7 +1403,7 @@ void display_cube_face()
             // rebuildPools
             //
             //
-            gPipeline.rebuildPools();
+            { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
             stop_glerror();
         }
     }
@@ -1706,7 +1706,7 @@ void render_ui(F32 zoom_factor, int subfield)
         }
 // [/RLVa:KB]
         LLGLState::checkStates();
-        render_hud_attachments();
+        { LL_CPU_ZONE("display: render_hud_attachments"); render_hud_attachments(); }
 
         LLGLState::checkStates();
 

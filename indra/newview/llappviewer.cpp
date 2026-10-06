@@ -6035,7 +6035,7 @@ void LLAppViewer::idle()
 
     static LLCachedControl<U32> downscale_method(gSavedSettings, "RenderDownScaleMethod");
     gGLManager.mDownScaleMethod = downscale_method;
-    LLImageGL::updateClass();
+    { LL_CPU_ZONE("idle: LLImageGL::updateClass"); LLImageGL::updateClass(); }
 
     // Service the WorkQueue we use for replies from worker threads.
     // Use function statics for the timeslice setting so we only have to fetch
@@ -6049,7 +6049,7 @@ void LLAppViewer::idle()
     // std::chrono::nanoseconds.
     static std::chrono::nanoseconds MainWorkTimeNanoSec{
         std::chrono::nanoseconds::rep(MainWorkTimeMs.value() * 1000000)};
-    gMainloopWork.runFor(MainWorkTimeNanoSec);
+    { LL_CPU_ZONE("idle: main loop work queue"); gMainloopWork.runFor(MainWorkTimeNanoSec); }
 
     // Cap out-of-control frame times
     // Too low because in menus, swapping, debugger, etc.
@@ -6135,7 +6135,7 @@ void LLAppViewer::idle()
             gAgent.autoPilot(&yaw);
         }
 
-        send_agent_update(false);
+        { LL_CPU_ZONE("idle: send_agent_update"); send_agent_update(false); }
 
         // After calling send_agent_update() in the mainloop we always clear
         // the agent's ephemeral ControlFlags (whether an AgentUpdate was
@@ -6197,8 +6197,8 @@ void LLAppViewer::idle()
         // NOTE: Starting at this point, we may still have pointers to "dead" objects
         // floating throughout the various object lists.
         //
-        idleNameCache();
-        idleNetwork();
+        { LL_CPU_ZONE("idle: idleNameCache"); idleNameCache(); }
+        { LL_CPU_ZONE("idle: idleNetwork"); idleNetwork(); }
 
 
         // Check for away from keyboard, kick idle agents.
@@ -6206,7 +6206,7 @@ void LLAppViewer::idle()
         idle_afk_check();
 
         //  Update statistics for this frame
-        update_statistics();
+        { LL_CPU_ZONE("idle: update_statistics"); update_statistics(); }
     }
 
     ////////////////////////////////////////
@@ -6224,8 +6224,8 @@ void LLAppViewer::idle()
         // Do event notifications if necessary.  Yes, we may want to move this elsewhere.
         gEventNotifier.update();
 
-        gIdleCallbacks.callFunctions();
-        gInventory.idleNotifyObservers();
+        { LL_CPU_ZONE("idle: idle callbacks"); gIdleCallbacks.callFunctions(); }
+        { LL_CPU_ZONE("idle: inventory observers"); gInventory.idleNotifyObservers(); }
         LLAvatarTracker::instance().idleNotifyObservers();
     }
 
@@ -6253,7 +6253,7 @@ void LLAppViewer::idle()
     // updateUI() needs to be called even in case viewer disconected
     // since related notification still needs handling and allows
     // opening chat.
-    gViewerWindow->updateUI();
+    { LL_CPU_ZONE("idle: updateUI"); gViewerWindow->updateUI(); }
 
     if (gDisconnected)
     {
@@ -6279,7 +6279,7 @@ void LLAppViewer::idle()
             {
                 LL_RECORD_BLOCK_TIME(FTM_REGION_UPDATE);
                 const F32 max_region_update_time = .001f; // 1ms
-                LLWorld::getInstance()->updateRegions(max_region_update_time);
+                { LL_CPU_ZONE("idle: updateRegions"); LLWorld::getInstance()->updateRegions(max_region_update_time); }
             }
         }
 
@@ -6301,9 +6301,9 @@ void LLAppViewer::idle()
     {
         // Handle pending gesture processing
         LL_RECORD_BLOCK_TIME(FTM_AGENT_POSITION);
-        LLGestureMgr::instance().update();
+        { LL_CPU_ZONE("idle: gestures"); LLGestureMgr::instance().update(); }
 
-        gAgent.updateAgentPosition(gFrameDTClamped, yaw, current_mouse.mX, current_mouse.mY);
+        { LL_CPU_ZONE("idle: updateAgentPosition"); gAgent.updateAgentPosition(gFrameDTClamped, yaw, current_mouse.mX, current_mouse.mY); }
     }
 
     {
@@ -6312,8 +6312,8 @@ void LLAppViewer::idle()
         if (!(logoutRequestSent() && hasSavedFinalSnapshot()))
         {
             LLPerfStats::tunedAvatars=0; // <FS:Beq> reset the number of avatars that have been tweaked.
-            gObjectList.update(gAgent);
-            LL::GLTFSceneManager::instance().update();
+            { LL_CPU_ZONE("idle: gObjectList.update"); gObjectList.update(gAgent); }
+            { LL_CPU_ZONE("idle: GLTFSceneManager.update"); LL::GLTFSceneManager::instance().update(); }
         }
     }
 
@@ -6326,11 +6326,11 @@ void LLAppViewer::idle()
     {
         LL_RECORD_BLOCK_TIME(FTM_CLEANUP);
         {
-            gObjectList.cleanDeadObjects();
+            { LL_CPU_ZONE("idle: cleanDeadObjects"); gObjectList.cleanDeadObjects(); }
         }
         {
             LL_RECORD_BLOCK_TIME(FTM_CLEANUP_DRAWABLES);
-            LLDrawable::cleanupDeadDrawables();
+            { LL_CPU_ZONE("idle: cleanupDeadDrawables"); LLDrawable::cleanupDeadDrawables(); }
         }
     }
 
@@ -6369,11 +6369,11 @@ void LLAppViewer::idle()
     // Update surfaces, and surface textures as well.
     //
 
-    LLWorld::getInstance()->updateVisibilities();
+    { LL_CPU_ZONE("idle: updateVisibilities"); LLWorld::getInstance()->updateVisibilities(); }
     {
         const F32 max_region_update_time = .001f; // 1ms
         LL_RECORD_BLOCK_TIME(FTM_REGION_UPDATE);
-        LLWorld::getInstance()->updateRegions(max_region_update_time);
+        { LL_CPU_ZONE("idle: updateRegions"); LLWorld::getInstance()->updateRegions(max_region_update_time); }
     }
 
     /////////////////////////
@@ -6410,10 +6410,10 @@ void LLAppViewer::idle()
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_APP("world update"); //LL_RECORD_BLOCK_TIME(FTM_WORLD_UPDATE);
-        gPipeline.updateMove();
+        { LL_CPU_ZONE("idle: updateMove"); gPipeline.updateMove(); }
     }
 
-    LLWorld::getInstance()->updateParticles();
+    { LL_CPU_ZONE("idle: updateParticles"); LLWorld::getInstance()->updateParticles(); }
 
     if (gAgentPilot.isPlaying() && gAgentPilot.getOverrideCamera())
     {
@@ -6430,7 +6430,7 @@ void LLAppViewer::idle()
             LLViewerJoystick::getInstance()->moveObjects();
         }
 
-        gAgentCamera.updateCamera();
+        { LL_CPU_ZONE("idle: updateCamera"); gAgentCamera.updateCamera(); }
     }
 
     // update media focus
@@ -6443,11 +6443,11 @@ void LLAppViewer::idle()
     // objects and camera should be in sync, do LOD calculations now
     {
         LL_RECORD_BLOCK_TIME(FTM_LOD_UPDATE);
-        gObjectList.updateApparentAngles(gAgent);
+        { LL_CPU_ZONE("idle: updateApparentAngles"); gObjectList.updateApparentAngles(gAgent); }
     }
 
     // Update AV render info
-    LLAvatarRenderInfoAccountant::getInstance()->idle();
+    { LL_CPU_ZONE("idle: avatar render info"); LLAvatarRenderInfoAccountant::getInstance()->idle(); }
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_APP("audio update"); //LL_RECORD_BLOCK_TIME(FTM_AUDIO_UPDATE);
@@ -6459,7 +6459,7 @@ void LLAppViewer::idle()
             audio_update_wind(false);
 
             // this line actually commits the changes we've made to source positions, etc.
-            gAudiop->idle();
+            { LL_CPU_ZONE("idle: audio"); gAudiop->idle(); }
         }
     }
 
