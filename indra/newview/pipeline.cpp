@@ -11291,6 +11291,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     LL_PROFILE_GPU_ZONE("renderShadow");
 
     LLPipeline::sShadowRender = true;
+    const U64 shadow_draws_before = LLVertexBuffer::sDrawCalls;       // <FS> shadow draw statistics
 
     // <FS> which shadow pass of the frame is this (for the GPU timer log)
     sCurrentShadowPass = sShadowPassIndex++;
@@ -11403,9 +11404,17 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         LL_PROFILE_GPU_ZONE("shadow simple");
         gGL.getTexUnit(0)->disable();
 
+        if (!rigged)
+        {
+            gShadowDrawStats.beginStaticPass();
+        }
         for (U32 type : types)
         {
             renderObjects(type, false, false, rigged);
+        }
+        if (!rigged)
+        {
+            gShadowDrawStats.endStaticPass();
         }
 
         renderGLTFObjects(LLRenderPass::PASS_GLTF_PBR, false, rigged);
@@ -11523,6 +11532,29 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // reset occlusion culling flag
     sUseOcclusion = saved_occlusion;
     LLPipeline::sShadowRender = false;
+
+    // <FS> shadow draw statistics (log tag ShadowDraws, every 600 frames)
+    {
+        LLShadowDrawStats& st = gShadowDrawStats;
+        ++st.mPasses;
+        st.mTotalDraws += LLVertexBuffer::sDrawCalls - shadow_draws_before;
+        const U32 frame = LLFrameTimer::getFrameCount();
+        if (st.mLastReport == 0)
+        {
+            st.mLastReport = frame;
+        }
+        else if (frame - st.mLastReport >= 600)
+        {
+            const double frames = (double)(frame - st.mLastReport);
+            const U64 classified = st.mStaticUntex + st.mRiggedUntex + st.mTextured + st.mGLTF;
+            LL_INFOS("ShadowDraws") << "per frame over " << (U32)frames << " frames: " << st.mPasses / frames << " shadow passes, " << st.mTotalDraws / frames << " draws; static untextured "
+                << st.mStaticUntex / frames << " (vertex buffer changes " << st.mStaticVBChanges / frames << ", distinct vertex buffers summed over passes " << st.mStaticDistinctVB / frames
+                << ", model matrix changes " << st.mStaticMatrixChanges / frames << "), rigged untextured " << st.mRiggedUntex / frames << ", textured " << st.mTextured / frames
+                << ", glTF " << st.mGLTF / frames << ", other " << ((double)st.mTotalDraws - (double)classified) / frames << LL_ENDL;
+            st.mPasses = st.mTotalDraws = st.mStaticUntex = st.mStaticVBChanges = st.mStaticDistinctVB = st.mRiggedUntex = st.mTextured = st.mGLTF = st.mStaticMatrixChanges = 0;
+            st.mLastReport = frame;
+        }
+    }
 }
 
 bool LLPipeline::getVisiblePointCloud(LLCamera& camera, LLVector3& min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir)

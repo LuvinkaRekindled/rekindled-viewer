@@ -31,6 +31,7 @@
 #include "v2math.h"
 #include "v3math.h"
 #include "llvertexbuffer.h"
+#include <unordered_set>
 
 class LLFace;
 class LLViewerTexture;
@@ -487,6 +488,22 @@ public:
         static bool sOverrideFaceColor;
     };
 };
+
+// <FS> Shadow draw statistics (render packets, stage P0): how the draws of the shadow passes split up, and how often consecutive static untextured draws change vertex buffer
+struct LLShadowDrawStats
+{
+    U64 mPasses = 0, mTotalDraws = 0;
+    U64 mStaticUntex = 0, mStaticVBChanges = 0, mStaticDistinctVB = 0;
+    U64 mRiggedUntex = 0, mTextured = 0, mGLTF = 0;
+    U64 mStaticMatrixChanges = 0;
+    const void* mLastVB = nullptr;
+    const void* mLastMatrix = nullptr;
+    std::unordered_set<const void*> mPassVBs;
+    U32 mLastReport = 0;
+    void beginStaticPass() { mLastVB = nullptr; mLastMatrix = nullptr; mPassVBs.clear(); }
+    void endStaticPass() { mStaticDistinctVB += mPassVBs.size(); }
+};
+extern LLShadowDrawStats gShadowDrawStats;
 
 
 #endif //LL_LLDRAWPOOL_H

@@ -580,6 +580,11 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
         return;
     }
 
+    if (LLPipeline::sShadowRender)
+    {
+        ++gShadowDrawStats.mTextured;
+    }
+
     applyModelMatrix(params);
 
     bool tex_setup = false;
@@ -632,6 +637,8 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
     }
 }
 
+LLShadowDrawStats gShadowDrawStats;
+
 void LLRenderPass::pushUntexturedBatch(LLDrawInfo& params)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
@@ -639,6 +646,30 @@ void LLRenderPass::pushUntexturedBatch(LLDrawInfo& params)
     if (!params.mCount)
     {
         return;
+    }
+
+    if (LLPipeline::sShadowRender)
+    {
+        LLShadowDrawStats& st = gShadowDrawStats;
+        if (params.mAvatar)
+        {
+            ++st.mRiggedUntex;
+        }
+        else
+        {
+            ++st.mStaticUntex;
+            if (st.mLastVB != params.mVertexBuffer.get())
+            {
+                ++st.mStaticVBChanges;
+                st.mLastVB = params.mVertexBuffer.get();
+            }
+            if (st.mLastMatrix != params.mModelMatrix)
+            {
+                ++st.mStaticMatrixChanges;
+                st.mLastMatrix = params.mModelMatrix;
+            }
+            st.mPassVBs.insert(params.mVertexBuffer.get());
+        }
     }
 
     applyModelMatrix(params);
@@ -821,6 +852,10 @@ void LLRenderPass::pushUntexturedGLTFBatches(U32 type)
 // static
 void LLRenderPass::pushGLTFBatch(LLDrawInfo& params)
 {
+    if (LLPipeline::sShadowRender)
+    {
+        ++gShadowDrawStats.mGLTF;
+    }
     auto& mat = params.mGLTFMaterial;
 
     if (mat.notNull())
@@ -843,6 +878,10 @@ void LLRenderPass::pushGLTFBatch(LLDrawInfo& params)
 // static
 void LLRenderPass::pushUntexturedGLTFBatch(LLDrawInfo& params)
 {
+    if (LLPipeline::sShadowRender)
+    {
+        ++gShadowDrawStats.mGLTF;
+    }
     auto& mat = params.mGLTFMaterial;
 
     LLGLDisable cull_face(mat->mDoubleSided ? GL_CULL_FACE : 0);

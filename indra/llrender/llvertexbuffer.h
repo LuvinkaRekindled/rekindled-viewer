@@ -108,6 +108,7 @@ public:
     static void drawElements(U32 mode, const LLVector4a* pos, const LLVector2* tc, U32 num_indices, const U16* indicesp);
 
     static void unbind(); //unbind any bound vertex buffer
+    static U64 sDrawCalls; // <FS> every draw call made through a vertex buffer (the shadow draw statistics read the difference around a pass)
 
     //get the size of a vertex with the given typemask
     static U32 calcVertexSize(const U32& typemask);
