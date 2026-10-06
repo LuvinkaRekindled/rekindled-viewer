@@ -270,7 +270,7 @@ public:
     void setUniformBuffer(U32 index, VkBuffer buffer, VkDeviceSize range);
     bool draw(U32 vertex_count, U32 first_vertex);
     bool drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset);
-    bool drawPackets(const U32* vertex_counts, U32 draws);      // <FS> render packets
+    bool drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0);      // <FS> render packets
 
     VkSampler getSampler(const SamplerDesc& desc);
     Image* getWhiteTexture() { return &mWhite; }

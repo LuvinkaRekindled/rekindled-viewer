@@ -2399,6 +2399,8 @@ void on_glGenBuffers(GLsizei n, GLuint* buffers)
     }
 }
 
+static U64 sPacketBufferGeneration = 0;      // <FS> bumped when a buffer entry goes: the packet records' lookup cache starts over
+
 void on_glDeleteBuffers(GLsizei n, const GLuint* buffers)
 {
     Context& ctx = Context::instance();
@@ -2409,6 +2411,7 @@ void on_glDeleteBuffers(GLsizei n, const GLuint* buffers)
         {
             ctx.destroyBuffer(it->second.mVk);
             sGL.mBuffers.erase(it);
+            ++sPacketBufferGeneration;
         }
         if (sCtx.mArrayBuffer == buffers[i]) sCtx.mArrayBuffer = 0;
         if (sCtx.mPixelUnpackBuffer == buffers[i]) sCtx.mPixelUnpackBuffer = 0;
@@ -2734,28 +2737,47 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
     PacketGpu* out = (PacketGpu*)table.mPtr;
+    // the buffers of the draws: a direct-mapped cache of the entries of sGL.mBuffers (their nodes keep their place until erased, and erasing starts the cache over)
+    static Buf* cache_buf[1024];
+    static GLuint cache_name[1024];
+    static U64 cache_generation = ~0ull;
+    if (cache_generation != sPacketBufferGeneration)
+    {
+        memset(cache_buf, 0, sizeof(cache_buf));
+        memset(cache_name, 0, sizeof(cache_name));
+        cache_generation = sPacketBufferGeneration;
+    }
+    auto lookup = [&](GLuint name) -> Buf*
+    {
+        const U32 slot = (name * 2654435761u) >> 22;
+        if (cache_name[slot] == name && cache_buf[slot])
+        {
+            return cache_buf[slot];
+        }
+        auto it = sGL.mBuffers.find(name);
+        if (it == sGL.mBuffers.end())
+        {
+            return nullptr;
+        }
+        cache_name[slot] = name;
+        cache_buf[slot] = &it->second;
+        return &it->second;
+    };
     GLuint last_vb = 0, last_ib = 0;
-    auto vit = sGL.mBuffers.end(), iit = sGL.mBuffers.end();
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         const LLVkMirror::ShadowPacketEntry& e = entries[i];
         PacketGpu& g = out[i];
         memset(&g, 0, sizeof(g));
-        if (e.mVertexBuffer != last_vb)
-        {
-            last_vb = e.mVertexBuffer;
-            vit = sGL.mBuffers.find(last_vb);
-        }
-        if (e.mIndexBuffer != last_ib)
-        {
-            last_ib = e.mIndexBuffer;
-            iit = sGL.mBuffers.find(last_ib);
-        }
-        if (vit == sGL.mBuffers.end() || iit == sGL.mBuffers.end() || !vit->second.mVk.valid() || !iit->second.mVk.valid() || !vit->second.mVk.mAddress || !iit->second.mVk.mAddress)
+        Buf* vb = lookup(e.mVertexBuffer);
+        Buf* ib = lookup(e.mIndexBuffer);
+        last_vb = e.mVertexBuffer;
+        last_ib = e.mIndexBuffer;
+        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
         }
-        const U64 pa = (U64)vit->second.mVk.mAddress, ia = (U64)iit->second.mVk.mAddress;
+        const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         g.mPositions[0] = (U32)pa;
         g.mPositions[1] = (U32)(pa >> 32);
         g.mIndices[0] = (U32)ia;
@@ -2764,8 +2786,8 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
         g.mCount = e.mIndexCount;
         g.mModel = e.mMatrix;
         counts[i] = e.mIndexCount;
-        vit->second.mLastUseFrame = frame_now;
-        iit->second.mLastUseFrame = frame_now;
+        vb->mLastUseFrame = frame_now;
+        ib->mLastUseFrame = frame_now;
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != last_vb || packet_used.back() != last_ib)
         {
             packet_used.push_back(last_vb);
@@ -2788,7 +2810,23 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
     r.setTopology(topology(GL_TRIANGLES));
-    if (r.drawPackets(counts.data(), h.mEntries))
+
+    // one indirect command for the record when the device allows the first instance in indirect draws (the draw number is the first instance)
+    Renderer::ScratchAlloc commands;
+    const auto& caps = Context::instance().getCaps();
+    if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
+    {
+        commands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)h.mEntries);
+        if (commands.mPtr)
+        {
+            VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)commands.mPtr;
+            for (U32 i = 0; i < h.mEntries; ++i)
+            {
+                c[i] = { counts[i], 1u, 0u, i };
+            }
+        }
+    }
+    if (r.drawPackets(counts.data(), h.mEntries, commands.mPtr ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
     {
         if (sStatsEnabled)
         {

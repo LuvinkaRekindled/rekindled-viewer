@@ -66,6 +66,7 @@ struct Capabilities
     bool mGeometryShader = false;
     bool mMultiDrawIndirect = false;
     bool mBufferDeviceAddress = false;  // shaders can read buffers by address (render packets)
+    bool mDrawIndirectFirstInstance = false;    // indirect draws may use a first instance (render packets: the draw number)
     F32 mMaxAnisotropy = 1.f;
     F32 mTimestampPeriodNs = 1.f;   // nanoseconds per timestamp tick
     U32 mTimestampValidBits = 0;
