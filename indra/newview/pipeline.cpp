@@ -4840,6 +4840,57 @@ U32 LLPipeline::sCurRenderPoolType = 0 ;
 
 static const char* pool_gpu_zone_name(U32 type, bool post); // <FS> GPU timer zone names, defined below
 
+// <FS> Draw calls per pool type of the deferred and post-deferred passes, main view and reflection probes apart (log tag DeferredDraws, every 600 frames of the main view)
+static struct
+{
+    U64 mDraws[2][2][32] = {};      // [probe cube][post deferred][pool type]
+    U64 mFrames[2] = {};            // renders counted, main view / probe
+    U32 mLastReport = 0;
+} sPoolDraws;
+
+static void note_pool_draws(bool cube, bool post, U32 type, U64 draws)
+{
+    sPoolDraws.mDraws[cube ? 1 : 0][post ? 1 : 0][llmin(type, 31U)] += draws;
+}
+
+static void report_pool_draws()
+{
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (sPoolDraws.mLastReport == 0)
+    {
+        sPoolDraws.mLastReport = frame;
+        return;
+    }
+    if (frame - sPoolDraws.mLastReport < 600)
+    {
+        return;
+    }
+    const double frames = (double)(frame - sPoolDraws.mLastReport);
+    sPoolDraws.mLastReport = frame;
+    for (int cube = 0; cube < 2; ++cube)
+    {
+        for (int post = 0; post < 2; ++post)
+        {
+            std::string text;
+            double total = 0.0;
+            for (U32 t = 0; t < 32; ++t)
+            {
+                const U64 n = sPoolDraws.mDraws[cube][post][t];
+                if (n)
+                {
+                    total += (double)n / frames;
+                    text += llformat(" %s %.0f,", pool_gpu_zone_name(t, post != 0), (double)n / frames);
+                }
+            }
+            if (total > 0.0)
+            {
+                LL_INFOS("DeferredDraws") << (cube ? "probe " : "main view ") << (post ? "post-deferred" : "deferred") << " draws per frame " << total << ":" << text << LL_ENDL;
+            }
+        }
+    }
+    memset(sPoolDraws.mDraws, 0, sizeof(sPoolDraws.mDraws));
+}
+
 void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 {
     LLAppViewer::instance()->pingMainloopTimeout("Pipeline:RenderGeomDeferred");
@@ -4930,6 +4981,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                 for( S32 i = 0; i < poolp->getNumDeferredPasses(); i++ )
                 {
                     LL_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, false));
+                    const U64 pool_draws_before = LLVertexBuffer::sDrawCalls;
                     LLVertexBuffer::unbind();
                     poolp->beginDeferredPass(i);
                     for (iter2 = iter1; iter2 != mPools.end(); iter2++)
@@ -4944,6 +4996,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                     }
                     poolp->endDeferredPass(i);
                     LLVertexBuffer::unbind();
+                    note_pool_draws(gCubeSnapshot, false, cur_type, LLVertexBuffer::sDrawCalls - pool_draws_before);
 
                     LLGLState::checkStates();
                 }
@@ -5163,6 +5216,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
             for( S32 i = 0; i < poolp->getNumPostDeferredPasses(); i++ )
             {
                 LL_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, true));
+                const U64 pool_draws_before = LLVertexBuffer::sDrawCalls;
                 LLVertexBuffer::unbind();
                 poolp->beginPostDeferredPass(i);
                 for (iter2 = iter1; iter2 != mPools.end(); iter2++)
@@ -5177,6 +5231,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
                 }
                 poolp->endPostDeferredPass(i);
                 LLVertexBuffer::unbind();
+                note_pool_draws(gCubeSnapshot, true, cur_type, LLVertexBuffer::sDrawCalls - pool_draws_before);
 
                 if (gDebugGL || gDebugPipeline)
                 {
@@ -5206,6 +5261,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
     if (!gCubeSnapshot)
     {
+        report_pool_draws();
         // debug displays
         renderHighlights();
         mHighlightFaces.clear();
