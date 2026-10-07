@@ -2454,9 +2454,17 @@ static GLuint buffer_for_target(GLenum target)
     return 0;
 }
 
+void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data, GLenum usage);
+void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data);
+
 void on_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum usage)
 {
-    const GLuint name = buffer_for_target(target);
+    on_bufferData(buffer_for_target(target), target, size, data, usage);
+}
+
+// <FS> N1b/N4: the buffer is named by the record, not by what is bound (LLVertexBuffer's typed uploads)
+void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data, GLenum usage)
+{
     auto it = sGL.mBuffers.find(name);
     if (it == sGL.mBuffers.end() || size < 0)
     {
@@ -2522,7 +2530,11 @@ void on_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum us
 
 void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data)
 {
-    const GLuint name = buffer_for_target(target);
+    on_bufferSubData(buffer_for_target(target), offset, size, data);
+}
+
+void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data)
+{
     auto it = sGL.mBuffers.find(name);
     if (it != sGL.mBuffers.end() && data && size > 0 && offset >= 0)
     {

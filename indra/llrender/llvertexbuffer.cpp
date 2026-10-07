@@ -458,15 +458,25 @@ public:
 
             mMisses++;
             name = gen_buffer();
-            glBindBuffer(type, name);
-            glBufferData(type, size, nullptr, GL_DYNAMIC_DRAW);
-            if (type == GL_ELEMENT_ARRAY_BUFFER)
+#if defined(LL_VULKAN)
+            if (LLVkAsync::mainProducer())
             {
-                LLVertexBuffer::sGLRenderIndices = name;
+                // <FS> N4: the storage is specified for the buffer by name; nothing is bound, so the bound-buffer caches stay as they are
+                LLVkAsync::bufferData(name, type, size, nullptr, GL_DYNAMIC_DRAW);
             }
             else
+#endif
             {
-                LLVertexBuffer::sGLRenderBuffer = name;
+                glBindBuffer(type, name);
+                glBufferData(type, size, nullptr, GL_DYNAMIC_DRAW);
+                if (type == GL_ELEMENT_ARRAY_BUFFER)
+                {
+                    LLVertexBuffer::sGLRenderIndices = name;
+                }
+                else
+                {
+                    LLVertexBuffer::sGLRenderBuffer = name;
+                }
             }
 
             data = (U8*)ll_aligned_malloc_16(size);
@@ -1414,7 +1424,13 @@ void LLVertexBuffer::flush_vbo(GLenum target, U32 start, U32 end, void* data, U8
     }
     else
     {
-        llassert(target == GL_ARRAY_BUFFER ? sGLRenderBuffer == mGLBuffer : sGLRenderIndices == mGLIndices);
+#if defined(LL_VULKAN)
+        const bool typed = LLVkAsync::mainProducer();
+        if (!typed)
+#endif
+        {
+            llassert(target == GL_ARRAY_BUFFER ? sGLRenderBuffer == mGLBuffer : sGLRenderIndices == mGLIndices);
+        }
 
         // skip mapped data and stream to GPU via glBufferSubData
         if (end != 0)
@@ -1432,6 +1448,13 @@ void LLVertexBuffer::flush_vbo(GLenum target, U32 start, U32 end, void* data, U8
                 //LL_PROFILE_GPU_ZONE("glBufferSubData");
                 U32 tend = llmin(i + block_size, end);
                 U32 size = tend - i + 1;
+#if defined(LL_VULKAN)
+                if (typed)
+                {
+                    LLVkAsync::bufferSubData(target == GL_ARRAY_BUFFER ? mGLBuffer : mGLIndices, i, size, (U8*)data + (i - start));
+                    continue;
+                }
+#endif
                 glBufferSubData(target, i, size, (U8*) data + (i-start));
             }
         }
@@ -1515,7 +1538,11 @@ void LLVertexBuffer::_unmapBuffer()
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("unmapBuffer - vertex");
 
-            if (sGLRenderBuffer != mGLBuffer)
+            if (sGLRenderBuffer != mGLBuffer
+#if defined(LL_VULKAN)
+                && !LLVkAsync::mainProducer()       // typed uploads name the buffer; nothing is bound for them
+#endif
+                )
             {
                 glBindBuffer(GL_ARRAY_BUFFER, mGLBuffer);
                 sGLRenderBuffer = mGLBuffer;
@@ -1549,7 +1576,11 @@ void LLVertexBuffer::_unmapBuffer()
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("unmapBuffer - index");
 
-            if (mGLIndices != sGLRenderIndices)
+            if (mGLIndices != sGLRenderIndices
+#if defined(LL_VULKAN)
+                && !LLVkAsync::mainProducer()
+#endif
+                )
             {
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mGLIndices);
                 sGLRenderIndices = mGLIndices;
