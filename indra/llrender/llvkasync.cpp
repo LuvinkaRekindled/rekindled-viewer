@@ -395,6 +395,7 @@ inline bool texIndependent(U16 op)
     case OP_glBlendFunc: case OP_glBlendFuncSeparate: case OP_glEnable: case OP_glDisable: case OP_glDepthFunc: case OP_glDepthMask:
     case OP_glCullFace: case OP_glScissor: case OP_glColorMask: case OP_glViewport: case OP_glPolygonMode: case OP_glPolygonOffset:
     case OP_glStencilFunc: case OP_glStencilOp: case OP_glStencilMask: case OP_glLineWidth: case OP_glClear: case OP_glClearColor:
+    case OP_glBufferData: case OP_glBufferSubData: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA:
     case OP_glBindBufferBase: case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
     case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
         return true;
@@ -725,7 +726,14 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         {
             ++gMainOpCalls[opStatSlot(op)];
         }
-        coFlushAll(opStatSlot(op));
+        if (texIndependent(op))
+        {
+            coFlushRun();       // uniforms and buffer data cannot read texture state: the pending slots stay for the draw
+        }
+        else
+        {
+            coFlushAll(opStatSlot(op));
+        }
         ++gMainRecords;
         const bool heap = data_size > MAX_INLINE;
         const size_t payload = size + sizeof(U64) + (heap ? sizeof(U64) : data_size);
