@@ -6,6 +6,7 @@
 #include "linden_common.h"
 
 #include "llvkshader.h"
+#include "llvkcontext.h"
 #include "lldir.h"
 #include "llfile.h"
 
@@ -534,7 +535,20 @@ struct SamplerEntry
     std::string mType;
     std::string mArray;
     U32 mBinding = 0;
+    S32 mIndexUniform = -1;
 };
+
+// the bindless table (set 2 binding) a sampler type reads, -1: not supported (the program keeps the push descriptor path)
+static int bindless_table(const std::string& type)
+{
+    if (type == "sampler2D") return 0;
+    if (type == "samplerCube") return 1;
+    if (type == "samplerCubeArray") return 2;
+    if (type == "sampler2DShadow") return 3;
+    return -1;
+}
+
+
 
 struct StageWork
 {
@@ -666,6 +680,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
     U32 next_frag_output = 0;
     std::set<std::string> attributes;
     std::map<std::string, std::string> attribute_types;
+    bool has_own_table = false;                         // the shader declares a set-2 table itself (the shadow packet shaders)
 
     for (const StageWork& w : works)
     {
@@ -689,6 +704,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                     {
                         if (d.mLayout.find("set") != std::string::npos)
                         {
+                            has_own_table = true;
                             continue;       // <FS> a sampler array with a layout of its own (the bindless table, set 2): not one of the program's samplers
                         }
                         if (!sampler_index.count(dc.mName))
@@ -790,6 +806,51 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         }
     }
 
+    // <FS> bindless samplers: every sampler of the program is a plain 2D / cube / cube array / 2D shadow sampler (not an array), no geometry stage, no table of its own.
+    // Each sampler becomes a table slot read from a loose uint uniform (ll_ti_<name>); the viewer's sampler name is a macro for the table element.
+    bool bindless = env.mBindless && !samplers.empty() && !has_own_table;
+    for (const SamplerEntry& s : samplers)
+    {
+        if (!s.mArray.empty() || bindless_table(s.mType) < 0)
+        {
+            bindless = false;
+        }
+    }
+    for (const StageWork& w : works)
+    {
+        if (w.mStage == StageSource::Geometry)
+        {
+            bindless = false;
+        }
+    }
+    std::ostringstream bindless_decl;
+    if (bindless)
+    {
+        static const char* const table_types[4] = { "sampler2D", "samplerCube", "samplerCubeArray", "sampler2DShadow" };
+        bool used[4] = {};
+        for (SamplerEntry& s : samplers)
+        {
+            used[bindless_table(s.mType)] = true;
+            UniformEntry u;
+            u.mName = "ll_ti_" + s.mName;
+            u.mType = "uint";
+            s.mIndexUniform = (S32)uniforms.size();
+            uniform_index[u.mName] = uniforms.size();
+            uniforms.push_back(u);
+        }
+        for (int t = 0; t < 4; ++t)
+        {
+            if (used[t])
+            {
+                bindless_decl << "layout(set = 2, binding = " << t << ") uniform " << table_types[t] << " ll_vk_tbl" << t << "[];\n";
+            }
+        }
+        for (const SamplerEntry& s : samplers)
+        {
+            bindless_decl << "#define " << s.mName << " ll_vk_tbl" << bindless_table(s.mType) << "[ll_ti_" << s.mName << "]\n";
+        }
+    }
+
     // std140 layout of the loose uniform block
     U32 offset = 0;
     for (UniformEntry& u : uniforms)
@@ -861,11 +922,15 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
     {
         std::ostringstream text;
         text << "#version 450\n";
+        if (bindless)
+        {
+            text << "#extension GL_EXT_nonuniform_qualifier : enable\n";
+        }
         for (const std::string& ext : w.mSplit.mExtensions)
         {
             text << ext << "\n";
         }
-        text << bool_defines.str() << block.str();
+        text << bool_defines.str() << block.str() << bindless_decl.str();
 
         bool have_main = false;
         for (const Item& item : w.mSplit.mItems)
@@ -948,6 +1013,10 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                     {
                         text << item.mText << "\n";        // <FS> the bindless table keeps the layout the shader gave it
                         continue;
+                    }
+                    if (bindless)
+                    {
+                        continue;       // declared through the tables and the defines above
                     }
                     for (const Declarator& dc : d.mDeclarators)
                     {
@@ -1119,8 +1188,9 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
     out.mBlockSize = uniforms.empty() ? 0 : block_size;
     for (const SamplerEntry& s : samplers)
     {
-        out.mSamplers.push_back({ s.mName, s.mType, s.mBinding });
+        out.mSamplers.push_back({ s.mName, s.mType, s.mBinding, s.mIndexUniform });
     }
+    out.mBindless = bindless;
     out.mAttributes.assign(attributes.begin(), attributes.end());
     for (const std::string& a : out.mAttributes)
     {
@@ -1143,7 +1213,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
 namespace
 {
 constexpr U32 kCacheMagic = 0x43535056;     // "VPSC"
-constexpr U32 kCacheVersion = 1;
+constexpr U32 kCacheVersion = 2;
 
 struct Hasher
 {
@@ -1240,6 +1310,7 @@ std::string spirv_cache_key(const std::vector<StageSource>& stages, const Shader
         h.str(st.mSource);
     }
     for (const std::string& n : env.mAttributeNames) h.str(n);
+    h.str(env.mBindless ? "|bindless" : "|classic");
     h.str("|blocks");
     for (const std::string& n : env.mUniformBlockNames) h.str(n);
     return h.hex();
@@ -1266,9 +1337,10 @@ bool spirv_cache_load(const std::string& path, ProgramInfo& out)
     for (U32 i = 0; r.mOk && i < ns; ++i)
     {
         SamplerInfo sm;
-        sm.mName = r.str(); sm.mType = r.str(); sm.mBinding = r.u32();
+        sm.mName = r.str(); sm.mType = r.str(); sm.mBinding = r.u32(); sm.mIndexUniform = (S32)r.u32();
         info.mSamplers.push_back(std::move(sm));
     }
+    info.mBindless = r.u32() != 0;
     info.mAttributes = r.strs();
     info.mAttributeLocations = r.u32s();
     info.mAttributeTypes = r.strs();
@@ -1290,7 +1362,8 @@ void spirv_cache_store(const std::string& path, const ProgramInfo& info)
     }
     w.u32(info.mBlockSize);
     w.u32((U32)info.mSamplers.size());
-    for (const SamplerInfo& sm : info.mSamplers) { w.str(sm.mName); w.str(sm.mType); w.u32(sm.mBinding); }
+    for (const SamplerInfo& sm : info.mSamplers) { w.str(sm.mName); w.str(sm.mType); w.u32(sm.mBinding); w.u32((U32)sm.mIndexUniform); }
+    w.u32(info.mBindless ? 1u : 0u);
     w.strs(info.mAttributes);
     w.u32s(info.mAttributeLocations);
     w.strs(info.mAttributeTypes);
@@ -1308,6 +1381,12 @@ void spirv_cache_store(const std::string& path, const ProgramInfo& info)
 }
 
 U32 sCacheHits = 0, sCacheMisses = 0;
+}
+
+bool bindlessShaders()
+{
+    static const bool off = getenv("LL_VK_BINDLESS") && getenv("LL_VK_BINDLESS")[0] == '0';
+    return !off && Context::instance().getCaps().mBindlessSlots != 0;
 }
 
 bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
@@ -1328,7 +1407,15 @@ bool compileProgram(const std::string& program_name, const std::vector<StageSour
             return true;
         }
     }
-    const bool ok = compileProgramUncached(program_name, stages, env, out, dump_dir);
+    bool ok = compileProgramUncached(program_name, stages, env, out, dump_dir);
+    if (!ok && env.mBindless)
+    {
+        // the bindless translation did not compile (an unusual use of a sampler): the program keeps the push descriptor path
+        ShaderEnv classic = env;
+        classic.mBindless = false;
+        LL_WARNS("VkShader") << "bindless translation of " << program_name << " failed (" << out.mError.substr(0, 300) << "), using the classic path" << LL_ENDL;
+        ok = compileProgramUncached(program_name, stages, classic, out, dump_dir);
+    }
     if (ok && !path.empty())
     {
         ++sCacheMisses;
