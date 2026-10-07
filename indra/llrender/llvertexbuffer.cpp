@@ -1020,9 +1020,34 @@ void LLVertexBuffer::initClass(LLWindow* window)
 }
 
 //static
+void LLVertexBuffer::arrayMaskChange(U32 data_mask, U32& enable, U32& disable)
+{
+    const U32 valid = (1u << TYPE_MAX) - 1;
+    enable = data_mask & ~sLastMask & valid;
+    disable = sLastMask & ~data_mask & valid;
+    sLastMask = data_mask;
+}
+
+//static
+void LLVertexBuffer::forgetBoundBuffers()
+{
+    sGLRenderBuffer = 0;
+    sGLRenderIndices = 0;
+}
+
+//static
 void LLVertexBuffer::unbind()
 {
     STOP_GLERROR;
+#if defined(LL_VULKAN)
+    if (LLVkAsync::mainProducer())
+    {
+        LLVkAsync::setArrayState(true, 0, true, 0, nullptr, 0);      // both buffer binds as one record
+        sGLRenderBuffer = 0;
+        sGLRenderIndices = 0;
+        return;
+    }
+#endif
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     STOP_GLERROR;

@@ -144,6 +144,18 @@ static inline void ll_bindTexUnit(S32 unit_index, GLenum target, GLuint texture)
     glBindTexture(target, texture);
 }
 
+static inline void ll_activeTexUnit(S32 unit_index)
+{
+#if defined(LL_VULKAN)
+    if (LLVkAsync::mainProducer())
+    {
+        LLVkAsync::activeTextureUnit(GL_TEXTURE0 + unit_index);
+        return;
+    }
+#endif
+    glActiveTexture(GL_TEXTURE0 + unit_index);
+}
+
 U32 LLTexUnit::getInternalType(eTextureType type)
 {
     return sGLTextureType[type];
@@ -175,7 +187,7 @@ void LLTexUnit::activate(void)
     if ((S32)gGL.mCurrTextureUnitIndex != mIndex || gGL.mDirty)
     {
         gGL.flush();
-        glActiveTexture(GL_TEXTURE0 + mIndex);
+        ll_activeTexUnit(mIndex);
         gGL.mCurrTextureUnitIndex = mIndex;
     }
 }

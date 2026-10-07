@@ -108,6 +108,10 @@ public:
     static void drawElements(U32 mode, const LLVector4a* pos, const LLVector2* tc, U32 num_indices, const U16* indicesp);
 
     static void unbind(); //unbind any bound vertex buffer
+    // <FS> the attribute arrays to switch on / off to go from the last mask to data_mask (sets the last mask, like setupClientArrays, but issues no GL call)
+    static void arrayMaskChange(U32 data_mask, U32& enable, U32& disable);
+    // <FS> forgets the bound buffers (the state unbind() leaves behind) without issuing a GL call
+    static void forgetBoundBuffers();
     static U64 sDrawCalls; // <FS> every draw call made through a vertex buffer (the shadow draw statistics read the difference around a pass)
 
     //get the size of a vertex with the given typemask
