@@ -373,6 +373,14 @@ private:
     U32 allocUniform(U32 size);
 
     bool mReady = false;
+    // <FS> Tracy GPU zones from the Vulkan timestamps (one zone per render pass, only while a Tracy client is connected). The Tracy types stay out of this header.
+    void* mTracyCtx = nullptr;
+    alignas(16) unsigned char mTracyScope[96] = {};
+    bool mTracyScopeLive = false;
+    void tracyInit();
+    void tracyShutdown();
+    void tracyBeginPass();
+    void tracyEndPass();
     VkDescriptorSetLayout mSet0Layout = VK_NULL_HANDLE;
     VkDescriptorSetLayout mSet1Layout = VK_NULL_HANDLE;
     VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
