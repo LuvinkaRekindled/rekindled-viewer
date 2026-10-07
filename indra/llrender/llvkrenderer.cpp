@@ -6,6 +6,12 @@
 #include "linden_common.h"
 
 #include "llvkrenderer.h"
+
+// <FS> Tracy GPU zones from the Vulkan timestamps. Tracy loads its Vulkan functions through the proc-address tables (our Vulkan is loaded at run time).
+#if defined(TRACY_ENABLE)
+#define TRACY_VK_USE_SYMBOL_TABLE
+#include <tracy/TracyVulkan.hpp>
+#endif
 #include "llvkdlss.h"
 #include "llvkmirror.h"
 
@@ -789,8 +795,85 @@ bool Renderer::init()
     createQueryPools();     // optional: without them queries just report nothing
 
     mReady = true;
+    tracyInit();
     LL_INFOS("Vulkan") << "Vulkan renderer ready" << LL_ENDL;
     return true;
+}
+
+void Renderer::tracyInit()
+{
+#if defined(TRACY_ENABLE)
+    Context& ctx = Context::instance();
+    VkDevice dev = ctx.getDevice();
+    // Tracy records and submits a command buffer of its own to line the GPU clock up with the CPU clock: give it a throw-away one
+    VkCommandPoolCreateInfo pi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+    pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pi.queueFamilyIndex = ctx.getQueueFamily();
+    VkCommandPool pool = VK_NULL_HANDLE;
+    if (vkCreateCommandPool(dev, &pi, nullptr, &pool) != VK_SUCCESS)
+    {
+        return;
+    }
+    VkCommandBufferAllocateInfo ai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    ai.commandPool = pool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(dev, &ai, &cmd) == VK_SUCCESS)
+    {
+        mTracyCtx = TracyVkContext(ctx.getInstance(), ctx.getPhysicalDevice(), dev, ctx.getQueue(), cmd, vkGetInstanceProcAddr, vkGetDeviceProcAddr);
+        if (mTracyCtx)
+        {
+            tracy::VkCtx* tctx = (tracy::VkCtx*)mTracyCtx;
+            TracyVkContextName(tctx, "Vulkan", 6);
+            LL_INFOS("Vulkan") << "Tracy GPU zones from Vulkan timestamps are available (one zone per render pass while a Tracy client is connected)" << LL_ENDL;
+        }
+    }
+    vkDestroyCommandPool(dev, pool, nullptr);
+#endif
+}
+
+void Renderer::tracyShutdown()
+{
+#if defined(TRACY_ENABLE)
+    tracyEndPass();
+    if (mTracyCtx)
+    {
+        TracyVkDestroy((tracy::VkCtx*)mTracyCtx);
+        mTracyCtx = nullptr;
+    }
+#endif
+}
+
+void Renderer::tracyBeginPass()
+{
+#if defined(TRACY_ENABLE)
+    static_assert(sizeof(tracy::VkCtxScope) <= sizeof(Renderer::mTracyScope), "grow mTracyScope");
+    if (!mTracyCtx || mTracyScopeLive)
+    {
+        return;
+    }
+#if defined(TRACY_ON_DEMAND)
+    if (!tracy::GetProfiler().IsConnected())
+    {
+        return;
+    }
+#endif
+    const std::string name = describeTarget();
+    new (mTracyScope) tracy::VkCtxScope((tracy::VkCtx*)mTracyCtx, __LINE__, __FILE__, strlen(__FILE__), "render pass", 11, name.c_str(), name.size(), mCmd, true);
+    mTracyScopeLive = true;
+#endif
+}
+
+void Renderer::tracyEndPass()
+{
+#if defined(TRACY_ENABLE)
+    if (mTracyScopeLive)
+    {
+        ((tracy::VkCtxScope*)mTracyScope)->~VkCtxScope();
+        mTracyScopeLive = false;
+    }
+#endif
 }
 
 bool Renderer::createQueryPools()
@@ -968,6 +1051,7 @@ void Renderer::shutdown()
     if (dev != VK_NULL_HANDLE)
     {
         ctx.waitIdle();
+        tracyShutdown();
         destroyQueryPools();
         for (auto& kv : mSamplers) vkDestroySampler(dev, kv.second, nullptr);
         mSamplers.clear();
@@ -1165,6 +1249,13 @@ void Renderer::endFrame()
 {
     flushPendingClear();
     endRendering();
+#if defined(TRACY_ENABLE)
+    if (mTracyCtx && mCmd != VK_NULL_HANDLE)
+    {
+        tracy::VkCtx* tctx = (tracy::VkCtx*)mTracyCtx;
+        TracyVkCollect(tctx, mCmd);      // hands the finished timestamps to Tracy and resets the queries that were read
+    }
+#endif
     mCmd = VK_NULL_HANDLE;
 }
 
@@ -1187,6 +1278,7 @@ void Renderer::endRendering()
         }
         vkCmdEndRendering(mCmd);
         mRendering = false;
+        tracyEndPass();
     }
 }
 
@@ -1398,6 +1490,7 @@ void Renderer::beginRenderingIfNeeded()
     {
         Context::instance().gpuStamp(Context::stampTag(describeTarget()));      // LL_VK_PHASES: GPU time by render pass
     }
+    tracyBeginPass();
     VkExtent2D extent = { 0, 0 };
     VkRenderingAttachmentInfo colors[8] = {};
     for (U32 i = 0; i < mColorCount; ++i)
