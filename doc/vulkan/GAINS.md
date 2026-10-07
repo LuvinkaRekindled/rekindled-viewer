@@ -49,6 +49,14 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 | Rigged attachments of standing avatars updated every 8th frame (FSSkipStaticRiggedAttachmentUpdates, on) | about +3 fps (Adam, dancers) |
 | Object-cache light bounds | correctness (lights exist before their source is in view), costs a little more light work |
 
+## 5. native-vk (2026-10-07)
+
+| Change | Result |
+|---|---|
+| No OpenGL at all (no context, no GL imports in the exe, dead GL code deleted) | runs at ~228 fps in an empty scene; GPU class 5; small clean log |
+| Tracy GPU zones from Vulkan timestamps | context created; zone count logged (not yet seen in the Tracy UI) |
+| N1b typed records: vertex array state, texture binds, draws (`LL_VK_TYPED=0` turns them off) | same spot, same 20 s: main-thread queue writing 0.68-0.70 -> 0.51 ms/frame (53k -> 38k calls/frame), frame 10.9-11.2 -> 10.7 ms. About 3% of the frame; not visible as fps |
+
 ## Where the main thread stands (blues place, 43 dancers, loop about 16 ms)
 display 11-12 ms (sun shadows 2.4-3.0, alpha pass about 1.6, stateSort 1.7, G-buffer 1.5, UI 1.2, lighting 0.5), idle 4.6 ms (object list 3.2: avatar update, animated textures 0.5-0.7).
 Octree operations are about 1.2 ms of it. What is left is spread thin; the per-draw work of the alpha pass is about 0.7 us per draw.
