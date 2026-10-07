@@ -193,6 +193,17 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
             mSamplerClass.push_back(cls);
         }
     }
+    {
+        // <FS> how many programs read their textures through the bindless tables (the rest keep the push descriptor path)
+        static U32 sPrograms = 0, sBindlessPrograms = 0, sNoSamplers = 0;
+        ++sPrograms;
+        if (mBindless) ++sBindlessPrograms;
+        if (mInfo.mSamplers.empty()) ++sNoSamplers;
+        if (sPrograms % 50 == 0)
+        {
+            LL_INFOS("VkShader") << "programs: " << sPrograms << " created, " << sBindlessPrograms << " with bindless textures, " << sNoSamplers << " without samplers" << LL_ENDL;
+        }
+    }
 
     // numeric initializers from the GLSL ("uniform float x = 0.5;") become the starting values
     for (const LooseUniform& u : mInfo.mUniforms)
