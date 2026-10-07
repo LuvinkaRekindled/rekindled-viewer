@@ -50,6 +50,9 @@ namespace LLVkAsync
     // draws (LLVertexBuffer): the same records glDrawRangeElements / glDrawArrays queue, written without the call coalescer in between
     void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices);
     void drawArrays(U32 mode, S32 first, S32 count);
+    // buffer storage by name (LLVertexBuffer): (re)specify a buffer / write a range of it, without binding it first. target only says vertex or index.
+    void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage);
+    void bufferSubData(U32 name, S64 offset, S64 size, const void* data);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
     // commands that are not GL calls (the GL calls are numbered by the generated enum in llvkgl.h)
@@ -60,6 +63,7 @@ namespace LLVkAsync
         CMD_UPSCALE, CMD_PROGRAM_BIND, CMD_UNIFORM_SCALAR, CMD_UNIFORM_VECTOR, CMD_UNIFORM_MATRIX, CMD_SAMPLER_UNIT, CMD_PROGRAM_DESTROY,
         CMD_SYNC, CMD_STOP, CMD_WRAP,
         CMD_BIND_TEXTURE_UNIT, CMD_ARRAY_RUN,      // merged records, see the coalescing in llvkasync.cpp
+        CMD_BUFFER_DATA, CMD_BUFFER_SUBDATA,       // named buffer storage (bufferData / bufferSubData)
         CMD_SHADOW_PACKETS                         // a pass of shadow casters in one record (LLVkMirror::shadowPackets)
     };
 

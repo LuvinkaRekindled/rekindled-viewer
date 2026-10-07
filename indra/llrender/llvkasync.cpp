@@ -30,6 +30,8 @@ namespace LLVkGL
 {
     void set_worker_context(int id);
     void register_main_context();
+    void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data, GLenum usage);
+    void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data);
 }
 
 namespace LLVkMirror
@@ -486,6 +488,25 @@ void bindTextureUnit(U32 unit, U32 target, U32 texture)
     gCo.mActiveValid = false;       // the record sets the unit itself
     const BindTexUnitArgs b = { unit, target, texture, 0 };
     rawPush(CMD_BIND_TEXTURE_UNIT, &b, sizeof(b));
+}
+
+namespace
+{
+    struct NamedBufArgs { U32 mName; U32 mTarget; U32 mUsage; U32 mPad; S64 mOffset; S64 mSize; };
+}
+
+void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage)
+{
+    MainLap lap;
+    const NamedBufArgs a = { name, target, usage, 0, 0, size };
+    pushData(CMD_BUFFER_DATA, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
+}
+
+void bufferSubData(U32 name, S64 offset, S64 size, const void* data)
+{
+    MainLap lap;
+    const NamedBufArgs a = { name, 0, 0, 0, offset, size };
+    pushData(CMD_BUFFER_SUBDATA, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
 }
 
 void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
@@ -1196,6 +1217,20 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
         const GLuint index = r.get<GLuint>();
         Blob b = read_blob(r, flags);
         LLVkGL::on_glVertexAttrib4fv(index, (const GLfloat*)b.mData);
+        break;
+    }
+    case CMD_BUFFER_DATA:
+    {
+        const NamedBufArgs a = r.get<NamedBufArgs>();
+        Blob b = read_blob(r, flags);
+        LLVkGL::on_bufferData(a.mName, a.mTarget, (GLsizeiptr)a.mSize, b.mData, a.mUsage);
+        break;
+    }
+    case CMD_BUFFER_SUBDATA:
+    {
+        const NamedBufArgs a = r.get<NamedBufArgs>();
+        Blob b = read_blob(r, flags);
+        LLVkGL::on_bufferSubData(a.mName, (GLintptr)a.mOffset, (GLsizeiptr)a.mSize, b.mData);
         break;
     }
     case OP_glBufferData:
