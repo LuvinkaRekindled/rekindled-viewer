@@ -3891,6 +3891,10 @@ bool LLAppViewer::initWindow()
         _putenv_s("LL_VK_MIRROR", "1");
         _putenv_s("LL_VK_OWN", "1");
         _putenv_s("LL_VK_EMBED", "main");
+        if (!getenv("LL_VK_NOGL"))
+        {
+            _putenv_s("LL_VK_NOGL", "1");       // native branch: no OpenGL context at all (LL_VK_NOGL=0 brings it back for comparison)
+        }
         if (gSavedSettings.getBOOL("FSVkDLSS") && !getenv("LL_VK_DLSS"))
         {
             _putenv_s("LL_VK_DLSS", "1");       // NVIDIA DLSS upscaling (experimental)

@@ -32,6 +32,7 @@
 #define LL_VK_NO_INTERCEPT    // <FS> the GL function pointers are defined and loaded in this file
 #include "linden_common.h"
 #include "llvkmirror.h"
+#include <atomic>
 
 #include "boost/tokenizer.hpp"
 
@@ -1026,6 +1027,34 @@ LLGLManager::LLGLManager() :
 {
 }
 
+// <FS> LL_VK_NOGL: no OpenGL context exists at all. The strings the viewer reads with glGetString are the ones made from the Vulkan device in initGLNoGL.
+bool ll_nogl()
+{
+    static const bool nogl = []() { const char* v = getenv("LL_VK_NOGL"); return v && v[0] != '0'; }();
+    return nogl;
+}
+
+static std::string sNoGLVendor, sNoGLRenderer, sNoGLVersion, sNoGLGlsl, sNoGLExtensions;
+
+const GLubyte* ll_nogl_string(GLenum name)
+{
+    switch (name)
+    {
+    case GL_VENDOR: return (const GLubyte*)sNoGLVendor.c_str();
+    case GL_RENDERER: return (const GLubyte*)sNoGLRenderer.c_str();
+    case GL_VERSION: return (const GLubyte*)sNoGLVersion.c_str();
+    case GL_SHADING_LANGUAGE_VERSION: return (const GLubyte*)sNoGLGlsl.c_str();
+    case GL_EXTENSIONS: return (const GLubyte*)sNoGLExtensions.c_str();
+    default: return (const GLubyte*)"";
+    }
+}
+
+// glGetString where this file talks to GL directly (the part before the mirror's wrappers apply)
+static const char* gl_info_string(GLenum name)
+{
+    return ll_nogl() ? (const char*)ll_nogl_string(name) : (const char*)glGetString(name);
+}
+
 //---------------------------------------------------------------------
 // Global initialization for GL
 //---------------------------------------------------------------------
@@ -1080,6 +1109,11 @@ bool LLGLManager::initGL()
     if (mInited)
     {
         LL_ERRS("RenderInit") << "Calling init on LLGLManager after already initialized!" << LL_ENDL;
+    }
+
+    if (ll_nogl())
+    {
+        return initGLNoGL();
     }
 
 #if 0 && LL_WINDOWS
@@ -1325,9 +1359,9 @@ void LLGLManager::getGLInfo(LLSD& info)
     }
     else
     {
-        info["GLInfo"]["GLVendor"] = ll_safe_string((const char *)glGetString(GL_VENDOR));
-        info["GLInfo"]["GLRenderer"] = ll_safe_string((const char *)glGetString(GL_RENDERER));
-        info["GLInfo"]["GLVersion"] = ll_safe_string((const char *)glGetString(GL_VERSION));
+        info["GLInfo"]["GLVendor"] = ll_safe_string(gl_info_string(GL_VENDOR));
+        info["GLInfo"]["GLRenderer"] = ll_safe_string(gl_info_string(GL_RENDERER));
+        info["GLInfo"]["GLVersion"] = ll_safe_string(gl_info_string(GL_VERSION));
     }
 
 #if !LL_MESA_HEADLESS
@@ -1353,9 +1387,9 @@ std::string LLGLManager::getGLInfoString()
     }
     else
     {
-        info_str += std::string("GL_VENDOR      ") + ll_safe_string((const char *)glGetString(GL_VENDOR)) + std::string("\n");
-        info_str += std::string("GL_RENDERER    ") + ll_safe_string((const char *)glGetString(GL_RENDERER)) + std::string("\n");
-        info_str += std::string("GL_VERSION     ") + ll_safe_string((const char *)glGetString(GL_VERSION)) + std::string("\n");
+        info_str += std::string("GL_VENDOR      ") + ll_safe_string(gl_info_string(GL_VENDOR)) + std::string("\n");
+        info_str += std::string("GL_RENDERER    ") + ll_safe_string(gl_info_string(GL_RENDERER)) + std::string("\n");
+        info_str += std::string("GL_VERSION     ") + ll_safe_string(gl_info_string(GL_VERSION)) + std::string("\n");
     }
 
 #if !LL_MESA_HEADLESS
@@ -1377,9 +1411,9 @@ void LLGLManager::printGLInfoString()
     }
     else
     {
-        LL_INFOS("RenderInit") << "GL_VENDOR:     " << ll_safe_string((const char *)glGetString(GL_VENDOR)) << LL_ENDL;
-        LL_INFOS("RenderInit") << "GL_RENDERER:   " << ll_safe_string((const char *)glGetString(GL_RENDERER)) << LL_ENDL;
-        LL_INFOS("RenderInit") << "GL_VERSION:    " << ll_safe_string((const char *)glGetString(GL_VERSION)) << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_VENDOR:     " << ll_safe_string(gl_info_string(GL_VENDOR)) << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_RENDERER:   " << ll_safe_string(gl_info_string(GL_RENDERER)) << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_VERSION:    " << ll_safe_string(gl_info_string(GL_VERSION)) << LL_ENDL;
     }
 
 #if !LL_MESA_HEADLESS
@@ -1398,7 +1432,7 @@ std::string LLGLManager::getRawGLString()
     }
     else
     {
-        gl_string = ll_safe_string((char*)glGetString(GL_VENDOR)) + " " + ll_safe_string((char*)glGetString(GL_RENDERER));
+        gl_string = ll_safe_string(gl_info_string(GL_VENDOR)) + " " + ll_safe_string(gl_info_string(GL_RENDERER));
     }
     return gl_string;
 }
@@ -1435,8 +1469,11 @@ void LLGLManager::shutdownGL()
 {
     if (mInited)
     {
-        glFinish();
-        stop_glerror();
+        if (!ll_nogl())
+        {
+            glFinish();
+            stop_glerror();
+        }
         mInited = false;
     }
 }
@@ -2346,6 +2383,101 @@ void LLGLManager::initExtensions()
 #undef LL_VK_NO_INTERCEPT
 #include "llvkgl.h"
 #endif
+
+// <FS> LL_VK_NOGL start-up: what initGL and initExtensions work out from a GL context, worked out from the Vulkan device instead
+bool LLGLManager::initGLNoGL()
+{
+    LL_INFOS("RenderInit") << "Initializing without OpenGL (LL_VK_NOGL): the renderer is Vulkan only" << LL_ENDL;
+
+    std::string vendor, renderer, version;
+    U32 vram_mb = 0;
+    if (!LLVkMirror::describeDevice(vendor, renderer, version, vram_mb))
+    {
+        LL_WARNS("RenderInit") << "Vulkan could not be started: there is no OpenGL to fall back on" << LL_ENDL;
+        return false;
+    }
+    sNoGLVendor = vendor;
+    sNoGLRenderer = renderer;
+    sNoGLVersion = version;
+    sNoGLGlsl = "4.60";
+    sNoGLExtensions = "GL_EXT_texture_filter_anisotropic GL_ARB_texture_cube_map_array GL_ARB_buffer_storage GL_ARB_multi_draw_indirect";
+    free(gGLHExts.mSysExts);
+    gGLHExts.mSysExts = strdup(sNoGLExtensions.c_str());
+
+    mGLVendor = vendor;
+    LLStringUtil::toUpper(mGLVendor);
+    mGLRenderer = renderer;
+    LLStringUtil::toUpper(mGLRenderer);
+
+    parse_gl_version(&mDriverVersionMajor, &mDriverVersionMinor, &mDriverVersionRelease, &mDriverVersionVendorString, &mGLVersionString);
+    mGLVersion = mDriverVersionMajor + mDriverVersionMinor * .1f;
+    parse_glsl_version(mGLSLVersionMajor, mGLSLVersionMinor);
+
+    if (mGLVendor.find("AMD") != std::string::npos || mGLVendor.substr(0, 4) == "ATI ")
+    {
+        mGLVendorShort = "AMD";
+        mIsAMD = true;
+    }
+    else if (mGLVendor.find("NVIDIA") != std::string::npos)
+    {
+        mGLVendorShort = "NVIDIA";
+        mIsNVIDIA = true;
+    }
+    else if (mGLVendor.find("INTEL") != std::string::npos)
+    {
+        mGLVendorShort = "INTEL";
+        mIsIntel = true;
+    }
+    else
+    {
+        mGLVendorShort = "MISC";
+    }
+
+    // what initExtensions sets from the version and the extension list
+    mHasCubeMapArray = true;
+    mHasTransformFeedback = false;
+    mHasDebugOutput = false;
+    mHasAnisotropic = true;
+    mHasNVXGpuMemoryInfo = false;
+    mHasATIMemInfo = false;
+    mHasAMDAssociations = false;
+    glGetIntegerv(GL_MAX_ELEMENTS_VERTICES, (GLint*)&mGLMaxVertexRange);
+    glGetIntegerv(GL_MAX_ELEMENTS_INDICES, (GLint*)&mGLMaxIndexRange);
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, (GLint*)&mGLMaxTextureSize);
+    if (mGLMaxTextureSize <= 0)
+    {
+        mGLMaxTextureSize = 16384;
+    }
+    mVRAM = (S32)vram_mb;
+    mInited = true;
+
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &mNumTextureImageUnits);
+    glGetIntegerv(GL_MAX_COLOR_TEXTURE_SAMPLES, &mMaxColorTextureSamples);
+    glGetIntegerv(GL_MAX_DEPTH_TEXTURE_SAMPLES, &mMaxDepthTextureSamples);
+    glGetIntegerv(GL_MAX_INTEGER_SAMPLES, &mMaxIntegerSamples);
+    glGetIntegerv(GL_MAX_SAMPLE_MASK_WORDS, &mMaxSampleMaskWords);
+    glGetIntegerv(GL_MAX_SAMPLES, &mMaxSamples);
+    glGetIntegerv(GL_MAX_VARYING_VECTORS, &mMaxVaryingVectors);
+    glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &mMaxUniformBlockSize);
+    mMaxUniformBlockSize = llclamp(mMaxUniformBlockSize, 16384, 65536);
+    if (mNumTextureImageUnits <= 0)
+    {
+        mNumTextureImageUnits = 32;
+    }
+    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &mMaxAnisotropy);
+    if (mMaxAnisotropy < 1.f)
+    {
+        mMaxAnisotropy = 16.f;
+    }
+
+    LL_INFOS("RenderInit") << "GL_VENDOR:     " << sNoGLVendor << LL_ENDL;
+    LL_INFOS("RenderInit") << "GL_RENDERER:   " << sNoGLRenderer << LL_ENDL;
+    LL_INFOS("RenderInit") << "GL_VERSION:    " << sNoGLVersion << " (reported to the viewer)" << LL_ENDL;
+    LL_INFOS("RenderInit") << "VRAM:          " << mVRAM << " MB" << LL_ENDL;
+
+    initGLStates();
+    return true;
+}
 
 void rotate_quat(LLQuaternion& rotation)
 {

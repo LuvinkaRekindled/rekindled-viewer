@@ -141,6 +141,25 @@ size_t Context::pendingDestroys() const
     return n;
 }
 
+U64 Context::deviceLocalBytes() const
+{
+    if (!mAllocator)
+    {
+        return 0;
+    }
+    const VkPhysicalDeviceMemoryProperties* props = nullptr;
+    vmaGetMemoryProperties(mAllocator, &props);
+    U64 total = 0;
+    for (U32 i = 0; props && i < props->memoryHeapCount; ++i)
+    {
+        if (props->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+        {
+            total += props->memoryHeaps[i].size;
+        }
+    }
+    return total;
+}
+
 std::string Context::memoryBudgetText()
 {
     if (!mAllocator)

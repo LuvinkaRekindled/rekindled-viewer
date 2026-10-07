@@ -41,6 +41,7 @@
 #include "llexception.h"
 #include "llfasttimer.h"
 #include "llgl.h"
+#include "llvkmirror.h"     // <FS> LL_VK_NOGL: the main window is handed to Vulkan
 #include "llstring.h"
 #include "lldir.h"
 #include "llsdutil.h"
@@ -527,7 +528,10 @@ LLWindowWin32::LLWindowWin32(LLWindowCallbacks* callbacks,
     mWindowThread = new LLWindowWin32Thread();
 
     //MAINT-516 -- force a load of opengl32.dll just in case windows went sideways
-    LoadLibrary(L"opengl32.dll");
+    if (!ll_nogl())
+    {
+        LoadLibrary(L"opengl32.dll");
+    }
 
     // Request high-performance GPU before creating OpenGL context
     // This increases probability of discrete GPU being used when
@@ -1426,6 +1430,20 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
 
     LL_INFOS("Window") << "Device context retrieved." << LL_ENDL ;
 
+    if (ll_nogl())
+    {
+        // <FS> LL_VK_NOGL: no pixel format and no OpenGL context at all. Vulkan presents into this window.
+        LLVkMirror::setMainWindow(mWindowHandle);
+        mhRC = 0;
+        if (!gGLManager.initGL())
+        {
+            LLError::LLUserWarningMsg::show(mCallbacks->translateString("MBVideoDrvErr"), 8/*LAST_EXEC_GRAPHICS_INIT*/);
+            close();
+            return false;
+        }
+    }
+    else
+    {
     try
     {
         // Looks like ChoosePixelFormat can crash in case of faulty driver
@@ -1793,6 +1811,8 @@ const   S32   max_format  = (S32)num_formats - 1;
         return false;
     }
 
+    }   // <FS> end of the OpenGL context creation (not made with LL_VK_NOGL)
+
     // Setup Tracy gpu context
     {
         LL_PROFILER_GPU_CONTEXT;
@@ -1948,6 +1968,10 @@ void LLWindowWin32::recreateWindow(RECT window_rect, DWORD dw_ex_style, DWORD dw
 
 void* LLWindowWin32::createSharedContext()
 {
+    if (ll_nogl())
+    {
+        return nullptr;     // <FS> no OpenGL: the worker threads need no context
+    }
     mMaxGLVersion = llclamp(mMaxGLVersion, 3.f, 4.6f);
 
     S32 version_major = llfloor(mMaxGLVersion);
@@ -2004,17 +2028,29 @@ void* LLWindowWin32::createSharedContext()
 
 void LLWindowWin32::makeContextCurrent(void* contextPtr)
 {
+    if (ll_nogl())
+    {
+        return;
+    }
     wglMakeCurrent(mhDC, (HGLRC) contextPtr);
 
 }
 
 void LLWindowWin32::destroySharedContext(void* contextPtr)
 {
+    if (ll_nogl())
+    {
+        return;
+    }
     wglDeleteContext((HGLRC)contextPtr);
 }
 
 void LLWindowWin32::toggleVSync(bool enable_vsync)
 {
+    if (ll_nogl())
+    {
+        return;     // <FS> the present mode is the swapchain's (FSVkPresentMode)
+    }
     if (wglSwapIntervalEXT == nullptr)
     {
         LL_INFOS("Window") << "VSync: wglSwapIntervalEXT not initialized" << LL_ENDL;

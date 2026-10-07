@@ -203,6 +203,8 @@ public:
     void waitIdle();
     // "heap 0 (device) 3200/15000 MB; heap 1 (host) ..." : usage and budget of every memory heap, for the benchmark log
     std::string memoryBudgetText();
+    // size of the device-local memory heaps in bytes (the GPU's video memory)
+    U64 deviceLocalBytes() const;
     size_t pendingDestroys() const;      // resources queued for destruction that no frame has released yet
     // names an object for the validation layer messages (only when validation is on)
     void setObjectName(VkObjectType type, U64 handle, const std::string& name);

@@ -126,6 +126,28 @@ FUNCS = [
     ('void', 'glDeleteSync', 'GLsync sync'),
 ]
 
+# (return type, name, parameters, value returned with LL_VK_NOGL: the viewer has no OpenGL context and these are not made)
+PASS = [
+    ('GLenum', 'glGetError', '', 'GLenum(0)'),
+    ('const GLubyte*', 'glGetString', 'GLenum name', 'll_nogl_string(name)'),
+    ('const GLubyte*', 'glGetStringi', 'GLenum name, GLuint index', '(const GLubyte*)""'),
+    ('void', 'glFlush', '', ''),
+    ('void', 'glFinish', '', ''),
+    ('void', 'glHint', 'GLenum target, GLenum mode', ''),
+    ('void', 'glGetBufferParameteriv', 'GLenum target, GLenum pname, GLint* params', ''),
+    ('void', 'glObjectLabel', 'GLenum identifier, GLuint name, GLsizei length, const GLchar* label', ''),
+    ('void', 'glClientActiveTexture', 'GLenum texture', ''),
+    ('void', 'glGetUniformiv', 'GLuint program, GLint location, GLint* params', ''),
+    ('void', 'glGetUniformfv', 'GLuint program, GLint location, GLfloat* params', ''),
+    ('GLboolean', 'glAreTexturesResident', 'GLsizei n, const GLuint* textures, GLboolean* residences', 'GLboolean(GL_TRUE)'),
+    ('void', 'glPushAttrib', 'GLbitfield mask', ''),
+    ('void', 'glPopAttrib', '', ''),
+    ('void', 'glPushClientAttrib', 'GLbitfield mask', ''),
+    ('void', 'glPopClientAttrib', '', ''),
+    ('void', 'glDebugMessageCallback', 'GLDEBUGPROC callback, const void* userParam', ''),
+    ('void', 'glGetProgramBinary', 'GLuint program, GLsizei bufSize, GLsizei* length, GLenum* binaryFormat, void* binary', ''),
+]
+
 def arg_names(params):
     if not params.strip():
         return ''
@@ -181,6 +203,7 @@ ANSWER = {'glGetIntegerv', 'glGetFloatv', 'glGetBooleanv', 'glIsEnabled', 'glGet
 
 out.append('    // true when the mirror owns the resources: sink calls are not made in real OpenGL, the answers come from the mirror (LL_VK_OWN)')
 out.append('    extern bool gOwn;')
+out.append('    // LL_VK_NOGL: there is no OpenGL context at all; calls that would reach real GL are answered here (see ll_nogl in llgl.cpp)')
 out.append('    void own_gen(int kind, GLsizei n, GLuint* out);')
 out.append('    // DLSS: runs the upscaler on four mirror-owned textures (colour, depth, motion vectors -> output); the gMutex must be held')
 out.append('    void on_upscale(const LLVkMirror::UpscaleArgs& args);')
@@ -201,6 +224,7 @@ out.append('    // LL_VK_PHASES: calls and CPU time of every sink hook (the time
 out.append('    constexpr int HOOK_COUNT = %d;' % len(FUNCS))
 out.append('    extern long long gHookStatTicks[2 * HOOK_COUNT];     // the second half: calls made by other threads')
 out.append('    extern long long gHookStatCalls[2 * HOOK_COUNT];')
+out.append('    const char* hook_name(int i);       // name of GL operation i (LLVkAsync::Op order), for the per-operation statistics of the worker')
 out.append('    struct HookStat')
 out.append('    {')
 out.append('        int mId;')
@@ -267,14 +291,21 @@ for idx, (ret, name, params) in enumerate(FUNCS):
         assert ret == 'void', name
         own = 'if (LLVkGL::gOwn) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_%s(%s); return; } %s %s LLVkGL::on_%s(%s); return; } ' % (name, args, sink_phase, lock, name, args)
     if ret == 'void':
-        body = '{ LLVkGL::GlTimer t_; %s(%s); } if (LLVkGL::gActive) { %s %s LLVkGL::on_%s(%s); }' % (name, args, phase, lock, name, args)
+        body = 'if (ll_nogl()) return; { LLVkGL::GlTimer t_; %s(%s); } if (LLVkGL::gActive) { %s %s LLVkGL::on_%s(%s); }' % (name, args, phase, lock, name, args)
         out.append('static inline void ll_vk_%s(%s) { %s%s }' % (name, params, own, body))
     else:
-        body = '%s r_; { LLVkGL::GlTimer t_; r_ = %s(%s); } if (LLVkGL::gActive) { %s %s LLVkGL::on_%s(%sr_); } return r_;' % (ret, name, args, phase, lock, name, args + ', ' if args else '')
+        body = 'if (ll_nogl()) return %s(); %s r_; { LLVkGL::GlTimer t_; r_ = %s(%s); } if (LLVkGL::gActive) { %s %s LLVkGL::on_%s(%sr_); } return r_;' % (ret, ret, name, args, phase, lock, name, args + ', ' if args else '')
         out.append('static inline %s ll_vk_%s(%s) { %s%s }' % (ret, name, params, own, body))
     out.append('#define %s ll_vk_%s' % (name, name))
+for ret, name, params, nogl in PASS:
+    args = arg_names(params)
+    if ret == 'void':
+        out.append('static inline void ll_vk_%s(%s) { if (ll_nogl()) { %s; return; } %s(%s); }' % (name, params, nogl or '(void)0', name, args))
+    else:
+        out.append('static inline %s ll_vk_%s(%s) { if (ll_nogl()) return %s; return %s(%s); }' % (ret, name, params, nogl, name, args))
+    out.append('#define %s ll_vk_%s' % (name, name))
 # timing-only wrappers for the calls the mirror does not need to see (uniform uploads, program binds)
-out.append('\ntemplate <typename F, typename... A> inline void ll_vk_timed(F f, A... a) { if (LLVkGL::gOwn) return; LLVkGL::GlTimer t_; f(a...); }')
+out.append('\ntemplate <typename F, typename... A> inline void ll_vk_timed(F f, A... a) { if (LLVkGL::gOwn || ll_nogl()) return; LLVkGL::GlTimer t_; f(a...); }')
 for name in ['glUniform1f', 'glUniform2f', 'glUniform3f', 'glUniform4f', 'glUniform1i', 'glUniform2i', 'glUniform1fv', 'glUniform2fv', 'glUniform3fv',
              'glUniform4fv', 'glUniform1iv', 'glUniform4iv', 'glUniform4uiv', 'glUniformMatrix2fv', 'glUniformMatrix3fv', 'glUniformMatrix3x4fv',
              'glUniformMatrix4fv']:
