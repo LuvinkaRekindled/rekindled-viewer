@@ -246,6 +246,7 @@ inline void mainCommit(size_t payload_bytes)
 // Nothing is dropped and nothing is reordered: whatever else is queued first writes out what is held, and the worker plays a merged record
 // by calling the same functions in the same order.
 bool gCoalesce = true;
+bool gTyped = true;                           // LL_VK_TYPED=0: typed records (LLVertexBuffer::setBuffer) off, the separate calls are queued as before
 bool gFoldElement = true;                    // LL_VK_COALESCE=2 (default): the index buffer bind joins the run; 1: runs without it; 0: off
 unsigned long long gMainRecords = 0;        // records actually written by the main thread
 
@@ -462,7 +463,7 @@ void push(unsigned short op, const void* args, unsigned size)
 
 bool mainProducer()
 {
-    return gEnabled && isMainThread();
+    return gEnabled && gTyped && isMainThread();
 }
 
 void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count)
@@ -1665,6 +1666,7 @@ bool start()
         return true;
     }
     gMainTid = __readgsdword(0x48);
+    { const char* ty = getenv("LL_VK_TYPED"); gTyped = !(ty && ty[0] == '0'); }
     { const char* co = getenv("LL_VK_COALESCE"); gCoalesce = !(co && co[0] == '0'); gFoldElement = gCoalesce && !(co && co[0] == '1'); }
     if (!gRing)
     {
