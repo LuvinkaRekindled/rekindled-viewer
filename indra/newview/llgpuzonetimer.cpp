@@ -250,10 +250,6 @@ void LLGpuZoneTimer::onFrameEnd()
 
     if (enabled && !sHooked)
     {
-        if (!glQueryCounter || !glGetQueryObjectui64v || !glGenQueries || !glGetQueryObjectiv)
-        {
-            return;
-        }
         sMainThread = std::this_thread::get_id();
         LLGpuZoneHooks::sBegin = &zoneBegin;
         LLGpuZoneHooks::sEnd = &zoneEnd;

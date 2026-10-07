@@ -12,7 +12,9 @@
  * returns 0 and logs the name once, which finds any caller that was missed.
  */
 
+#define LL_VK_NO_INTERCEPT      // the GL function pointers below are named here as plain variables
 #include "linden_common.h"
+#include "llglheaders.h"
 
 #if LL_WINDOWS && defined(LL_VULKAN)
 
@@ -101,5 +103,11 @@ extern "C" const unsigned char* gluErrorString(unsigned int)
     note_gl_stub("gluErrorString");
     return (const unsigned char*)"";
 }
+
+// GL function pointers that the mirror's GL-versus-Vulkan verification code (LL_VK_VERIFY, dead without OpenGL) still names. They stay null.
+PFNGLGETTEXTURESUBIMAGEPROC glGetTextureSubImage = nullptr;
+PFNGLGETTEXTUREIMAGEPROC glGetTextureImage = nullptr;
+PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer = nullptr;
+PFNGLGETNAMEDBUFFERSUBDATAPROC glGetNamedBufferSubData = nullptr;
 
 #endif // LL_WINDOWS && LL_VULKAN

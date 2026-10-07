@@ -272,44 +272,42 @@ for idx, (ret, name, params) in enumerate(FUNCS):
     phase = 'LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS);'
     sink_phase = phase + ' LLVkGL::HookStat s_(%d);' % idx
     if name in GEN:
-        own = 'if (LLVkGL::gOwn) { if (LLVkAsync::gEnabled) { LLVkAsync::gen_enq(LLVkAsync::OP_%s, %d, %s); return; } %s LLVkGL::own_gen(%d, %s); LLVkGL::on_%s(%s); return; } ' % (
+        body = 'if (LLVkAsync::gEnabled) { LLVkAsync::gen_enq(LLVkAsync::OP_%s, %d, %s); return; } %s LLVkGL::own_gen(%d, %s); LLVkGL::on_%s(%s);' % (
             name, GEN[name], args, lock, GEN[name], args, name, args)
+        out.append('static inline void ll_vk_%s(%s) { %s }' % (name, params, body))
     elif name in ANSWER:
         stat = 'LLVkGL::HookStat s_(%d);' % idx
         if name in ('glGetQueryObjectiv', 'glGetQueryObjectuiv', 'glGetQueryObjectui64v'):
             kind = {'glGetQueryObjectiv': 0, 'glGetQueryObjectuiv': 1, 'glGetQueryObjectui64v': 2}[name]
-            fast = 'if (LLVkAsync::gEnabled && LLVkAsync::query_get(%d, %s)) return; ' % (kind, args)
+            fast = 'if (LLVkAsync::gEnabled && LLVkAsync::query_get(%d, %s)) return%s; ' % (kind, args, '' if ret == 'void' else ' ' + ret + '()')
         else:
             fast = ''
+        zero = 'if (params) *params = 0; ' if name in ('glGetIntegerv', 'glGetFloatv', 'glGetBooleanv', 'glGetTexLevelParameteriv') else ''   # an unanswered getter reads as 0, not as stack garbage
         if ret == 'void':
-            asyn = 'if (LLVkAsync::gEnabled) { %sbool h_ = false; LLVkAsync::syncCall([&]() { h_ = LLVkGL::own_%s(%s); }); if (h_) return; } else ' % (fast, name, args)
-            own = 'if (LLVkGL::gOwn) { %s{ %s %s if (LLVkGL::own_%s(%s)) return; } } ' % (asyn, stat, lock, name, args)
+            body = zero + ('if (LLVkAsync::gEnabled) { %sLLVkAsync::syncCall([&]() { LLVkGL::own_%s(%s); }); return; } { %s %s LLVkGL::own_%s(%s); }' % (fast, name, args, stat, lock, name, args))
+            out.append('static inline void ll_vk_%s(%s) { %s }' % (name, params, body))
         else:
-            asyn = 'if (LLVkAsync::gEnabled) { %s%s o_ = %s(); bool h_ = false; LLVkAsync::syncCall([&]() { h_ = LLVkGL::own_%s(%so_); }); if (h_) return o_; } else ' % (fast, ret, ret, name, args + ', ' if args else '')
-            own = 'if (LLVkGL::gOwn) { %s{ %s %s %s o_; if (LLVkGL::own_%s(%so_)) return o_; } } ' % (asyn, stat, lock, ret, name, args + ', ' if args else '')
+            comma = args + ', ' if args else ''
+            body = ('if (LLVkAsync::gEnabled) { %s%s o_ = %s(); LLVkAsync::syncCall([&]() { LLVkGL::own_%s(%so_); }); return o_; } '
+                    '{ %s %s %s o_ = %s(); LLVkGL::own_%s(%so_); return o_; }') % (fast, ret, ret, name, comma, stat, lock, ret, ret, name, comma)
+            out.append('static inline %s ll_vk_%s(%s) { %s }' % (ret, name, params, body))
     else:
         assert ret == 'void', name
-        own = 'if (LLVkGL::gOwn) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_%s(%s); return; } %s %s LLVkGL::on_%s(%s); return; } ' % (name, args, sink_phase, lock, name, args)
-    if ret == 'void':
-        body = 'if (ll_nogl()) return; { LLVkGL::GlTimer t_; %s(%s); } if (LLVkGL::gActive) { %s %s LLVkGL::on_%s(%s); }' % (name, args, phase, lock, name, args)
-        out.append('static inline void ll_vk_%s(%s) { %s%s }' % (name, params, own, body))
-    else:
-        body = 'if (ll_nogl()) return %s(); %s r_; { LLVkGL::GlTimer t_; r_ = %s(%s); } if (LLVkGL::gActive) { %s %s LLVkGL::on_%s(%sr_); } return r_;' % (ret, ret, name, args, phase, lock, name, args + ', ' if args else '')
-        out.append('static inline %s ll_vk_%s(%s) { %s%s }' % (ret, name, params, own, body))
+        body = 'if (LLVkAsync::gEnabled) { LLVkAsync::enq_%s(%s); return; } %s %s LLVkGL::on_%s(%s);' % (name, args, sink_phase, lock, name, args)
+        out.append('static inline void ll_vk_%s(%s) { %s }' % (name, params, body))
     out.append('#define %s ll_vk_%s' % (name, name))
 for ret, name, params, nogl in PASS:
     args = arg_names(params)
     if ret == 'void':
-        out.append('static inline void ll_vk_%s(%s) { if (ll_nogl()) { %s; return; } %s(%s); }' % (name, params, nogl or '(void)0', name, args))
+        out.append('static inline void ll_vk_%s(%s) { %s; }' % (name, params, nogl or '(void)0'))
     else:
-        out.append('static inline %s ll_vk_%s(%s) { if (ll_nogl()) return %s; return %s(%s); }' % (ret, name, params, nogl, name, args))
+        out.append('static inline %s ll_vk_%s(%s) { return %s; }' % (ret, name, params, nogl))
     out.append('#define %s ll_vk_%s' % (name, name))
-# timing-only wrappers for the calls the mirror does not need to see (uniform uploads, program binds)
-out.append('\ntemplate <typename F, typename... A> inline void ll_vk_timed(F f, A... a) { if (LLVkGL::gOwn || ll_nogl()) return; LLVkGL::GlTimer t_; f(a...); }')
+# the uniform uploads and program binds of real GL: the mirror gets uniforms through LLGLSLShader's own hooks, so these do nothing
 for name in ['glUniform1f', 'glUniform2f', 'glUniform3f', 'glUniform4f', 'glUniform1i', 'glUniform2i', 'glUniform1fv', 'glUniform2fv', 'glUniform3fv',
              'glUniform4fv', 'glUniform1iv', 'glUniform4iv', 'glUniform4uiv', 'glUniformMatrix2fv', 'glUniformMatrix3fv', 'glUniformMatrix3x4fv',
              'glUniformMatrix4fv']:
-    out.append('#define %s(...) ll_vk_timed(%s, __VA_ARGS__)' % (name, name))
+    out.append('#define %s(...) ((void)0)' % name)
 out.append('\n#endif // LL_VULKAN && !LL_VK_NO_INTERCEPT\n')
 
 inc_lines = ['// generated by gen_llvkgl.py: storage and names for the per-hook statistics (LL_VK_PHASES)', 'namespace LLVkGL', '{',
