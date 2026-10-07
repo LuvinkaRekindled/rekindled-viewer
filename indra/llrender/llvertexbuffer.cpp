@@ -31,6 +31,9 @@
 #include "llvertexbuffer.h"
 // #include "llrender.h"
 #include "llglheaders.h"
+#if defined(LL_VULKAN)
+#include "llvkasync.h"
+#endif
 #include "llrender.h"
 #include "llvector4a.h"
 #include "llshadermgr.h"
@@ -1682,6 +1685,45 @@ bool LLVertexBuffer::getClothWeightStrider(LLStrider<LLVector4a>& strider, U32 i
 //----------------------------------------------------------------------------
 
 
+// <FS> N1b: while setBuffer() writes a typed record, setupVertexBuffer() collects its attribute pointers here instead of calling GL
+#if defined(LL_VULKAN)
+namespace
+{
+    struct AttribSink
+    {
+        LLVkAsync::VertexAttrib mAttribs[24];
+        U32 mCount = 0;
+    };
+    thread_local AttribSink* sAttribSink = nullptr;
+}
+#endif
+
+static inline void ll_attribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer)
+{
+#if defined(LL_VULKAN)
+    if (sAttribSink)
+    {
+        llassert(sAttribSink->mCount < 24);
+        sAttribSink->mAttribs[sAttribSink->mCount++] = { 0, index, size, type, stride, (U32)normalized, pointer };
+        return;
+    }
+#endif
+    glVertexAttribPointer(index, size, type, normalized, stride, pointer);
+}
+
+static inline void ll_attribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer)
+{
+#if defined(LL_VULKAN)
+    if (sAttribSink)
+    {
+        llassert(sAttribSink->mCount < 24);
+        sAttribSink->mAttribs[sAttribSink->mCount++] = { 1, index, size, type, stride, 0, pointer };
+        return;
+    }
+#endif
+    glVertexAttribIPointer(index, size, type, stride, pointer);
+}
+
 // Set for rendering
 void LLVertexBuffer::setBuffer()
 {
@@ -1707,20 +1749,55 @@ void LLVertexBuffer::setBuffer()
         "Attribute mask mismatch! mTypeMask should be a superset of data_mask.  data_mask: 0x"
                 << std::hex << data_mask << " mTypeMask: 0x" << mTypeMask << " Missing: 0x" << (data_mask & ~mTypeMask) <<  std::dec);
 
-    if (sGLRenderBuffer != mGLBuffer)
+    const bool bind_array = sGLRenderBuffer != mGLBuffer;
+    const bool setup = bind_array || sLastMask != data_mask;
+    const bool bind_elem = mGLIndices != sGLRenderIndices;
+
+#if defined(LL_VULKAN)
+    if (LLVkAsync::mainProducer())
+    {
+        // <FS> N1b: the whole vertex array state is one typed record (buffer binds and every attribute pointer), not 8-12 queued GL-shaped calls
+        if (bind_array || setup || bind_elem)
+        {
+            AttribSink sink;
+            if (setup)
+            {
+                sAttribSink = &sink;
+                setupVertexBuffer();
+                sAttribSink = nullptr;
+            }
+            LLVkAsync::setArrayState(bind_array, mGLBuffer, bind_elem, mGLIndices, sink.mAttribs, sink.mCount);
+            if (bind_array)
+            {
+                sGLRenderBuffer = mGLBuffer;
+            }
+            else if (setup)
+            {
+                sLastMask = data_mask;
+            }
+            if (bind_elem)
+            {
+                sGLRenderIndices = mGLIndices;
+            }
+        }
+        return;
+    }
+#endif
+
+    if (bind_array)
     {
         glBindBuffer(GL_ARRAY_BUFFER, mGLBuffer);
         sGLRenderBuffer = mGLBuffer;
 
         setupVertexBuffer();
     }
-    else if (sLastMask != data_mask)
+    else if (setup)
     {
         setupVertexBuffer();
         sLastMask = data_mask;
     }
 
-    if (mGLIndices != sGLRenderIndices)
+    if (bind_elem)
     {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mGLIndices);
         sGLRenderIndices = mGLIndices;
@@ -1742,92 +1819,92 @@ void LLVertexBuffer::setupVertexBuffer()
     {
         AttributeType loc = TYPE_NORMAL;
         void* ptr = (void*)(base + mOffsets[TYPE_NORMAL]);
-        glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_NORMAL], ptr);
+        ll_attribPointer(loc, 3, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_NORMAL], ptr);
     }
     if (data_mask & MAP_TEXCOORD3)
     {
         AttributeType loc = TYPE_TEXCOORD3;
         void* ptr = (void*)(base + mOffsets[TYPE_TEXCOORD3]);
-        glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TEXCOORD3], ptr);
+        ll_attribPointer(loc, 2, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TEXCOORD3], ptr);
     }
     if (data_mask & MAP_TEXCOORD2)
     {
         AttributeType loc = TYPE_TEXCOORD2;
         void* ptr = (void*)(base + mOffsets[TYPE_TEXCOORD2]);
-        glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TEXCOORD2], ptr);
+        ll_attribPointer(loc, 2, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TEXCOORD2], ptr);
     }
     if (data_mask & MAP_TEXCOORD1)
     {
         AttributeType loc = TYPE_TEXCOORD1;
         void* ptr = (void*)(base + mOffsets[TYPE_TEXCOORD1]);
-        glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TEXCOORD1], ptr);
+        ll_attribPointer(loc, 2, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TEXCOORD1], ptr);
     }
     if (data_mask & MAP_TANGENT)
     {
         AttributeType loc = TYPE_TANGENT;
         void* ptr = (void*)(base + mOffsets[TYPE_TANGENT]);
-        glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TANGENT], ptr);
+        ll_attribPointer(loc, 4, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TANGENT], ptr);
     }
     if (data_mask & MAP_TEXCOORD0)
     {
         AttributeType loc = TYPE_TEXCOORD0;
         void* ptr = (void*)(base + mOffsets[TYPE_TEXCOORD0]);
-        glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TEXCOORD0], ptr);
+        ll_attribPointer(loc, 2, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_TEXCOORD0], ptr);
     }
     if (data_mask & MAP_COLOR)
     {
         AttributeType loc = TYPE_COLOR;
         //bind emissive instead of color pointer if emissive is present
         void* ptr = (data_mask & MAP_EMISSIVE) ? (void*)(base + mOffsets[TYPE_EMISSIVE]) : (void*)(base + mOffsets[TYPE_COLOR]);
-        glVertexAttribPointer(loc, 4, GL_UNSIGNED_BYTE, GL_TRUE, LLVertexBuffer::sTypeSize[TYPE_COLOR], ptr);
+        ll_attribPointer(loc, 4, GL_UNSIGNED_BYTE, GL_TRUE, LLVertexBuffer::sTypeSize[TYPE_COLOR], ptr);
     }
     if (data_mask & MAP_EMISSIVE)
     {
         AttributeType loc = TYPE_EMISSIVE;
         void* ptr = (void*)(base + mOffsets[TYPE_EMISSIVE]);
-        glVertexAttribPointer(loc, 4, GL_UNSIGNED_BYTE, GL_TRUE, LLVertexBuffer::sTypeSize[TYPE_EMISSIVE], ptr);
+        ll_attribPointer(loc, 4, GL_UNSIGNED_BYTE, GL_TRUE, LLVertexBuffer::sTypeSize[TYPE_EMISSIVE], ptr);
 
         if (!(data_mask & MAP_COLOR))
         { //map emissive to color channel when color is not also being bound to avoid unnecessary shader swaps
             loc = TYPE_COLOR;
-            glVertexAttribPointer(loc, 4, GL_UNSIGNED_BYTE, GL_TRUE, LLVertexBuffer::sTypeSize[TYPE_EMISSIVE], ptr);
+            ll_attribPointer(loc, 4, GL_UNSIGNED_BYTE, GL_TRUE, LLVertexBuffer::sTypeSize[TYPE_EMISSIVE], ptr);
         }
     }
     if (data_mask & MAP_WEIGHT)
     {
         AttributeType loc = TYPE_WEIGHT;
         void* ptr = (void*)(base + mOffsets[TYPE_WEIGHT]);
-        glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_WEIGHT], ptr);
+        ll_attribPointer(loc, 1, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_WEIGHT], ptr);
     }
     if (data_mask & MAP_WEIGHT4)
     {
         AttributeType loc = TYPE_WEIGHT4;
         void* ptr = (void*)(base + mOffsets[TYPE_WEIGHT4]);
-        glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_WEIGHT4], ptr);
+        ll_attribPointer(loc, 4, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_WEIGHT4], ptr);
     }
     if (data_mask & MAP_JOINT)
     {
         AttributeType loc = TYPE_JOINT;
         void* ptr = (void*)(base + mOffsets[TYPE_JOINT]);
-        glVertexAttribIPointer(loc, 4, GL_UNSIGNED_SHORT, LLVertexBuffer::sTypeSize[TYPE_JOINT], ptr);
+        ll_attribIPointer(loc, 4, GL_UNSIGNED_SHORT, LLVertexBuffer::sTypeSize[TYPE_JOINT], ptr);
     }
     if (data_mask & MAP_CLOTHWEIGHT)
     {
         AttributeType loc = TYPE_CLOTHWEIGHT;
         void* ptr = (void*)(base + mOffsets[TYPE_CLOTHWEIGHT]);
-        glVertexAttribPointer(loc, 4, GL_FLOAT, GL_TRUE, LLVertexBuffer::sTypeSize[TYPE_CLOTHWEIGHT], ptr);
+        ll_attribPointer(loc, 4, GL_FLOAT, GL_TRUE, LLVertexBuffer::sTypeSize[TYPE_CLOTHWEIGHT], ptr);
     }
     if (data_mask & MAP_TEXTURE_INDEX)
     {
         AttributeType loc = TYPE_TEXTURE_INDEX;
         void* ptr = (void*)(base + mOffsets[TYPE_VERTEX] + 12);
-        glVertexAttribIPointer(loc, 1, GL_UNSIGNED_INT, LLVertexBuffer::sTypeSize[TYPE_VERTEX], ptr);
+        ll_attribIPointer(loc, 1, GL_UNSIGNED_INT, LLVertexBuffer::sTypeSize[TYPE_VERTEX], ptr);
     }
     if (data_mask & MAP_VERTEX)
     {
         AttributeType loc = TYPE_VERTEX;
         void* ptr = (void*)(base + mOffsets[TYPE_VERTEX]);
-        glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_VERTEX], ptr);
+        ll_attribPointer(loc, 3, GL_FLOAT, GL_FALSE, LLVertexBuffer::sTypeSize[TYPE_VERTEX], ptr);
     }
     STOP_GLERROR;
 }

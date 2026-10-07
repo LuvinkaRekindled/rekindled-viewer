@@ -460,6 +460,27 @@ void push(unsigned short op, const void* args, unsigned size)
     sidePush(op, std::move(payload));
 }
 
+bool mainProducer()
+{
+    return gEnabled && isMainThread();
+}
+
+void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count)
+{
+    static_assert(sizeof(VertexAttrib) == sizeof(RunEntry), "typed attribute record matches the run entry");
+    coFlushAll();       // anything held (texture binds, an open run) goes first: same order as the separate calls
+    const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * count);
+    U8* p = mainReserve(payload, CMD_ARRAY_RUN, 0);
+    const RunHeader h = { GL_ARRAY_BUFFER_ENUM, array_buffer, count, (bind_array ? 1u : 0u) | (bind_elem ? 2u : 0u), elem_buffer, 0 };
+    memcpy(p, &h, sizeof(h));
+    if (count)
+    {
+        memcpy(p + sizeof(h), attribs, sizeof(RunEntry) * count);
+    }
+    mainCommit(payload);
+    ++gMainRecords;
+}
+
 void pushData(unsigned short op, const void* args, unsigned size, const void* data, size_t data_size)
 {
     if (isMainThread())
