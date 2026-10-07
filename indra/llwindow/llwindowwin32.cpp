@@ -1813,7 +1813,8 @@ const   S32   max_format  = (S32)num_formats - 1;
 
     }   // <FS> end of the OpenGL context creation (not made with LL_VK_NOGL)
 
-    // Setup Tracy gpu context
+    // Setup Tracy gpu context (Tracy's GPU profiling is an OpenGL feature: not with LL_VK_NOGL)
+    if (!ll_nogl())
     {
         LL_PROFILER_GPU_CONTEXT;
     }
@@ -4004,7 +4005,10 @@ void LLWindowWin32::swapBuffers()
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_WIN32("GPU Collect");
-        LL_PROFILER_GPU_COLLECT;
+        if (!ll_nogl())
+        {
+            LL_PROFILER_GPU_COLLECT;
+        }
     }
 }
 

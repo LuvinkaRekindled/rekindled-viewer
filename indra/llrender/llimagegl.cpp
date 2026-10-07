@@ -1845,7 +1845,10 @@ void LLImageGL::syncToMainThread(LLGLuint new_tex_name)
             unref();
         });
 
-    LL_PROFILER_GPU_COLLECT;
+    if (!ll_nogl())
+    {
+        LL_PROFILER_GPU_COLLECT;
+    }
 }
 
 

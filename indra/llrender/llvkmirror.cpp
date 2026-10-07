@@ -626,6 +626,10 @@ bool LLVkMirror::describeDevice(std::string& vendor, std::string& renderer, std:
     default:     vendor = "Unknown vendor"; break;
     }
     renderer = caps.mDeviceName;
+    if (caps.mVendorId == 0x10DE)
+    {
+        renderer += "/PCIe/SSE2";        // what the NVIDIA driver's GL_RENDERER said: the viewer compares this string with the one it saved to notice a GPU change
+    }
     // the driver version is packed by the vendor; NVIDIA uses 10.8.8.6 bits
     const U32 d = caps.mDriverVersion;
     char buf[96];
