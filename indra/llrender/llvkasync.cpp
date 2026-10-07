@@ -1219,20 +1219,6 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
         LLVkGL::on_glVertexAttrib4fv(index, (const GLfloat*)b.mData);
         break;
     }
-    case CMD_BUFFER_DATA:
-    {
-        const NamedBufArgs a = r.get<NamedBufArgs>();
-        Blob b = read_blob(r, flags);
-        LLVkGL::on_bufferData(a.mName, a.mTarget, (GLsizeiptr)a.mSize, b.mData, a.mUsage);
-        break;
-    }
-    case CMD_BUFFER_SUBDATA:
-    {
-        const NamedBufArgs a = r.get<NamedBufArgs>();
-        Blob b = read_blob(r, flags);
-        LLVkGL::on_bufferSubData(a.mName, (GLintptr)a.mOffset, (GLsizeiptr)a.mSize, b.mData);
-        break;
-    }
     case OP_glBufferData:
     {
         const GLenum target = r.get<GLenum>(), usage = r.get<GLenum>();
@@ -1363,6 +1349,20 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         {
             LLVkGL::on_glBindBuffer(0x8893, h->mElem);
         }
+        break;
+    }
+    case CMD_BUFFER_DATA:
+    {
+        const NamedBufArgs a = r.get<NamedBufArgs>();
+        Blob b = read_blob(r, flags);
+        LLVkGL::on_bufferData(a.mName, a.mTarget, (GLsizeiptr)a.mSize, b.mData, a.mUsage);
+        break;
+    }
+    case CMD_BUFFER_SUBDATA:
+    {
+        const NamedBufArgs a = r.get<NamedBufArgs>();
+        Blob b = read_blob(r, flags);
+        LLVkGL::on_bufferSubData(a.mName, (GLintptr)a.mOffset, (GLsizeiptr)a.mSize, b.mData);
         break;
     }
     case CMD_SHADOW_PACKETS:
