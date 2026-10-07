@@ -47,6 +47,9 @@ namespace LLVkAsync
     // Only on the main producer (see mainProducer()); one record, played by the worker through the same functions the separate calls reach.
     // a texture bind with its unit (LLTexUnit): replaces a held glActiveTexture + glBindTexture pair
     void bindTextureUnit(U32 unit, U32 target, U32 texture);
+    // draws (LLVertexBuffer): the same records glDrawRangeElements / glDrawArrays queue, written without the call coalescer in between
+    void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices);
+    void drawArrays(U32 mode, S32 first, S32 count);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
     // commands that are not GL calls (the GL calls are numbered by the generated enum in llvkgl.h)
