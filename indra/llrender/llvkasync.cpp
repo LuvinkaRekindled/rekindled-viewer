@@ -365,6 +365,7 @@ void flushPendingTex()
     mainCommit(payload);
     ++gMainRecords;
     gPendMask = 0;
+    gCo.mActiveValid = false;       // the record set the active unit (gLatestActive)
 }
 
 // held glActiveTexture and the open array run (what the coalescer holds), not the pending texture slots
@@ -491,7 +492,7 @@ bool coPush(U16 op, const void* args)
     default:
         if (texIndependent(op))
         {
-            coFlushHeld();
+            coFlushRun();       // the held active unit and the pending slots stay where they are
         }
         else
         {
@@ -601,7 +602,7 @@ void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh)
 void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
 {
     MainLap lap;
-    coFlushAll();
+    coFlushRun();
     struct A { void* mProgram; U32 mEnable; U32 mDisable; } a = { program, enable_mask, disable_mask };
     rawPush(CMD_SHADER_BIND, &a, sizeof(a));
 }
@@ -652,7 +653,7 @@ namespace
 void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
 {
     MainLap lap;
-    coFlushHeld();
+    coFlushRun();
     if (!gPendMask)
     {
         const A_glDrawRangeElements a = { mode, start, end, count, type, indices };
@@ -668,12 +669,13 @@ void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const 
     mainCommit(payload);
     ++gMainRecords;
     gPendMask = 0;
+    gCo.mActiveValid = false;
 }
 
 void drawArrays(U32 mode, S32 first, S32 count)
 {
     MainLap lap;
-    coFlushHeld();
+    coFlushRun();
     if (!gPendMask)
     {
         const A_glDrawArrays a = { mode, first, count };
@@ -689,13 +691,14 @@ void drawArrays(U32 mode, S32 first, S32 count)
     mainCommit(payload);
     ++gMainRecords;
     gPendMask = 0;
+    gCo.mActiveValid = false;
 }
 
 void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count)
 {
     MainLap lap;
     static_assert(sizeof(VertexAttrib) == sizeof(RunEntry), "typed attribute record matches the run entry");
-    coFlushAll();       // anything held (texture binds, an open run) goes first: same order as the separate calls
+    coFlushRun();       // an open run goes first; the array state does not depend on texture state, so the pending slots and the held unit stay
     const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * count);
     U8* p = mainReserve(payload, CMD_ARRAY_RUN, 0);
     const RunHeader h = { GL_ARRAY_BUFFER_ENUM, array_buffer, count, (bind_array ? 1u : 0u) | (bind_elem ? 2u : 0u), elem_buffer, 0 };
