@@ -78,7 +78,8 @@ namespace LLVkAsync
         CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (LLVkMirror::shadowPackets)
         CMD_SHADER_BIND,                           // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
         CMD_TEX_PARAMS,                            // texture parameters of the bound texture, several in one record (LLTexUnit sampler state)
-        CMD_FBO_ATTACH, CMD_TARGET_STATE           // render target commands (framebufferAttach, targetState)
+        CMD_FBO_ATTACH, CMD_TARGET_STATE,          // render target commands (framebufferAttach, targetState)
+        CMD_TEX_SLOTS, CMD_DRAW                    // texture slots that changed since the last draw, alone or folded into the draw record
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 

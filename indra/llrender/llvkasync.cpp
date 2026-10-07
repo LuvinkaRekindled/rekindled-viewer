@@ -156,7 +156,7 @@ long long gMainWaitTicks = 0, gWorkerIdleTicks = 0;
 
 // LL_VK_PHASES: the worker's time per operation, in processor time-stamp ticks (a cheap read; converted with a ratio measured against the performance counter)
 static_assert(OP_GL_COUNT == LLVkGL::HOOK_COUNT, "the worker statistics name an operation by its place in the hook table");
-constexpr int OP_STAT_SLOTS = OP_GL_COUNT + 24;
+constexpr int OP_STAT_SLOTS = OP_GL_COUNT + 40;
 bool gOpStats = false;
 bool gOpStatsPeriodic = false;      // LL_VK_OPSTATS without LL_VK_PHASES: the worker logs the numbers itself every 600 presented frames
 unsigned gOpStatsFrames = 0;
@@ -166,7 +166,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
@@ -328,7 +328,47 @@ void coFlushRun()
     gCo.mRunHasElem = false;
 }
 
-inline void coFlushAll()
+// <FS> draw-record plan step 1: texture binds of LLTexUnit do not write a record each. The producer keeps the slot table (unit -> target, name) and the last
+// active unit; what changed since the last draw is written with that draw (CMD_DRAW) or, when something that can read texture state comes first, as CMD_TEX_SLOTS.
+struct PendTex { U32 mTarget; U32 mName; };
+inline U32 lowBit(U32 m) { unsigned long i; _BitScanForward(&i, m); return (U32)i; }
+constexpr U32 TEX_UNIT_BASE = 0x84C0;       // GL_TEXTURE0
+PendTex gPendTex[32];
+U32 gPendMask = 0;
+U32 gLatestActive = TEX_UNIT_BASE;          // the active unit as the producer sees it (the worker's after everything queued)
+
+// the entries of the pending slots in unit order, appended to p; returns the bytes
+U32 pendTexWrite(U8* p)
+{
+    U32 n = 0;
+    for (U32 m = gPendMask; m; m &= m - 1)
+    {
+        const U32 u = lowBit(m);
+        memcpy(p + n * sizeof(PendTex), &gPendTex[u], sizeof(PendTex));
+        ++n;
+    }
+    return n * (U32)sizeof(PendTex);
+}
+
+void flushPendingTex()
+{
+    if (!gPendMask)
+    {
+        return;
+    }
+    const U32 count = (U32)__popcnt(gPendMask);
+    const U32 payload = (U32)(sizeof(U32) * 3 + sizeof(PendTex) * count);
+    U8* p = mainReserve(payload, CMD_TEX_SLOTS, 0);
+    const U32 head[3] = { gPendMask, gLatestActive, count };
+    memcpy(p, head, sizeof(head));
+    pendTexWrite(p + sizeof(head));
+    mainCommit(payload);
+    ++gMainRecords;
+    gPendMask = 0;
+}
+
+// held glActiveTexture and the open array run (what the coalescer holds), not the pending texture slots
+inline void coFlushHeld()
 {
     if (gCo.mActiveValid || gCo.mRunOpen)
     {
@@ -337,14 +377,41 @@ inline void coFlushAll()
     }
 }
 
+inline void coFlushAll()
+{
+    flushPendingTex();
+    coFlushHeld();
+}
+
+// operations that cannot read or change texture state: they do not force the pending slots out
+inline bool texIndependent(U16 op)
+{
+    switch (op)
+    {
+    case OP_glBlendFunc: case OP_glBlendFuncSeparate: case OP_glEnable: case OP_glDisable: case OP_glDepthFunc: case OP_glDepthMask:
+    case OP_glCullFace: case OP_glScissor: case OP_glColorMask: case OP_glViewport: case OP_glPolygonMode: case OP_glPolygonOffset:
+    case OP_glStencilFunc: case OP_glStencilOp: case OP_glStencilMask: case OP_glLineWidth: case OP_glClear: case OP_glClearColor:
+    case OP_glBindBufferBase: case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
+    case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // true: the call was held or merged; false: it has to be written as it is (what was held has been written first)
 bool coPush(U16 op, const void* args)
 {
+    if (gPendMask && op != OP_glActiveTexture && !texIndependent(op))
+    {
+        flushPendingTex();
+    }
     switch (op)
     {
     case OP_glActiveTexture:
         coFlushRun();
         gCo.mActiveUnit = ((const A_glActiveTexture*)args)->texture;
+        gLatestActive = gCo.mActiveUnit;
         gCo.mActiveValid = true;
         return true;
     case OP_glBindTexture:
@@ -422,7 +489,14 @@ bool coPush(U16 op, const void* args)
         return true;
     }
     default:
-        coFlushAll();
+        if (texIndependent(op))
+        {
+            coFlushHeld();
+        }
+        else
+        {
+            coFlushAll();
+        }
         return false;
     }
 }
@@ -485,6 +559,7 @@ bool mainProducer()
 void activeTextureUnit(U32 unit)
 {
     MainLap lap;
+    gLatestActive = unit;
     coFlushRun();       // the same order the held glActiveTexture call keeps
     if (gCo.mActiveValid && gCo.mActiveUnit != unit)
     {
@@ -534,14 +609,19 @@ void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
 void bindTextureUnit(U32 unit, U32 target, U32 texture)
 {
     MainLap lap;
-    coFlushRun();
-    if (gCo.mActiveValid && gCo.mActiveUnit != unit)
+    const U32 u = unit - TEX_UNIT_BASE;
+    if (u >= 32)
     {
-        coFlushActive();
+        coFlushAll();
+        const BindTexUnitArgs b = { unit, target, texture, 0 };
+        rawPush(CMD_BIND_TEXTURE_UNIT, &b, sizeof(b));
+        return;
     }
-    gCo.mActiveValid = false;       // the record sets the unit itself
-    const BindTexUnitArgs b = { unit, target, texture, 0 };
-    rawPush(CMD_BIND_TEXTURE_UNIT, &b, sizeof(b));
+    // the slot table is the record: a held glActiveTexture is superseded (the last unit is carried with the slots), nothing is written here
+    gCo.mActiveValid = false;
+    gPendTex[u] = { target, texture };
+    gPendMask |= 1u << u;
+    gLatestActive = unit;
 }
 
 namespace
@@ -563,20 +643,52 @@ void bufferSubData(U32 name, S64 offset, S64 size, const void* data)
     pushData(CMD_BUFFER_SUBDATA, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
 }
 
+// a draw record: the draw and the texture slots that changed since the last one (CMD_DRAW), or the plain draw call record when none changed
+namespace
+{
+    struct DrawHeader { U32 mKind; U32 mMode; U32 mStart; U32 mEnd; S32 mCount; U32 mType; const void* mIndices; U32 mMask; U32 mActive; U32 mCountTex; U32 mPad; };
+}
+
 void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
 {
     MainLap lap;
-    coFlushAll();
-    const A_glDrawRangeElements a = { mode, start, end, count, type, indices };
-    rawPush(OP_glDrawRangeElements, &a, sizeof(a));
+    coFlushHeld();
+    if (!gPendMask)
+    {
+        const A_glDrawRangeElements a = { mode, start, end, count, type, indices };
+        rawPush(OP_glDrawRangeElements, &a, sizeof(a));
+        return;
+    }
+    const U32 n = (U32)__popcnt(gPendMask);
+    const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n);
+    U8* p = mainReserve(payload, CMD_DRAW, 0);
+    const DrawHeader h = { 0, mode, start, end, count, type, indices, gPendMask, gLatestActive, n, 0 };
+    memcpy(p, &h, sizeof(h));
+    pendTexWrite(p + sizeof(h));
+    mainCommit(payload);
+    ++gMainRecords;
+    gPendMask = 0;
 }
 
 void drawArrays(U32 mode, S32 first, S32 count)
 {
     MainLap lap;
-    coFlushAll();
-    const A_glDrawArrays a = { mode, first, count };
-    rawPush(OP_glDrawArrays, &a, sizeof(a));
+    coFlushHeld();
+    if (!gPendMask)
+    {
+        const A_glDrawArrays a = { mode, first, count };
+        rawPush(OP_glDrawArrays, &a, sizeof(a));
+        return;
+    }
+    const U32 n = (U32)__popcnt(gPendMask);
+    const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n);
+    U8* p = mainReserve(payload, CMD_DRAW, 0);
+    const DrawHeader h = { 1, mode, (U32)first, 0, count, 0, nullptr, gPendMask, gLatestActive, n, 0 };
+    memcpy(p, &h, sizeof(h));
+    pendTexWrite(p + sizeof(h));
+    mainCommit(payload);
+    ++gMainRecords;
+    gPendMask = 0;
 }
 
 void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count)
@@ -1473,6 +1585,40 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVkMirror::UpscaleArgs a;
         memcpy(&a, payload, sizeof(a));         // the same struct the producer pushed
         LLVkMirror::upscaleImpl(a);
+        break;
+    }
+    case CMD_TEX_SLOTS:
+    {
+        const U32* head = (const U32*)payload;
+        const PendTex* e = (const PendTex*)(payload + sizeof(U32) * 3);
+        U32 k = 0;
+        for (U32 m = head[0]; m; m &= m - 1, ++k)
+        {
+            LLVkGL::on_glActiveTexture(TEX_UNIT_BASE + lowBit(m));
+            LLVkGL::on_glBindTexture(e[k].mTarget, e[k].mName);
+        }
+        LLVkGL::on_glActiveTexture(head[1]);
+        break;
+    }
+    case CMD_DRAW:
+    {
+        const DrawHeader* h = (const DrawHeader*)payload;
+        const PendTex* e = (const PendTex*)(payload + sizeof(DrawHeader));
+        U32 k = 0;
+        for (U32 m = h->mMask; m; m &= m - 1, ++k)
+        {
+            LLVkGL::on_glActiveTexture(TEX_UNIT_BASE + lowBit(m));
+            LLVkGL::on_glBindTexture(e[k].mTarget, e[k].mName);
+        }
+        LLVkGL::on_glActiveTexture(h->mActive);
+        if (h->mKind == 0)
+        {
+            LLVkGL::on_glDrawRangeElements(h->mMode, h->mStart, h->mEnd, h->mCount, h->mType, h->mIndices);
+        }
+        else
+        {
+            LLVkGL::on_glDrawArrays(h->mMode, (GLint)h->mStart, h->mCount);
+        }
         break;
     }
     case CMD_FBO_ATTACH:
