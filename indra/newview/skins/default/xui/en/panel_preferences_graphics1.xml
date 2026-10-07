@@ -290,12 +290,36 @@
           function="Pref.RenderOptionUpdate" />
         </check_box>
         <check_box
+         control_name="FSSSRWaterTrace"
+         enabled_control="RenderScreenSpaceReflections"
+         height="16"
+         initial_value="true"
+         label="Better water reflections"
+         layout="topleft"
+         left_delta="18"
+         name="FSSSRWaterTrace"
+         tool_tip="Traces water reflections with a steadier method: no bands, grain or flicker on the waves. Applies at once. Turn it off to compare with the original."
+         top_pad="1"
+         width="238"/>
+        <check_box
+         control_name="FSSSRSurfaceTrace"
+         enabled_control="RenderScreenSpaceReflections"
+         height="16"
+         initial_value="false"
+         label="Better surface reflections"
+         layout="topleft"
+         left_delta="0"
+         name="FSSSRSurfaceTrace"
+         tool_tip="Uses the same steadier trace on wet floors and shiny materials (experimental, for comparing). Applies at once."
+         top_pad="1"
+         width="238"/>
+        <check_box
          control_name="RenderMirrors"
          height="16"
          initial_value="false"
          label="Mirrors"
          layout="topleft"
-         left_delta="0"
+         left_delta="-18"
          name="Mirrors"
          top_pad="1"
          width="280">

@@ -11332,6 +11332,11 @@ void LLPipeline::bindReflectionProbes(LLGLSLShader& shader)
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_NOISE_SINE, (GLfloat)mPoissonOffset);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_ADAPTIVE_STEP_MULT, RenderScreenSpaceReflectionAdaptiveStepMultiplier);
 
+    // <FS> the improved reflection trace: bit 0 water, bit 1 other glossy surfaces (live, read every time the probes are bound)
+    static LLCachedControl<bool> ssr_water_trace(gSavedSettings, "FSSSRWaterTrace", true);
+    static LLCachedControl<bool> ssr_surface_trace(gSavedSettings, "FSSSRSurfaceTrace", false);
+    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_TRACE_MODE, (GLfloat)((ssr_water_trace ? 1 : 0) | (ssr_surface_trace ? 2 : 0)));
+
     channel = shader.enableTexture(LLShaderMgr::SCENE_DEPTH);
     if (channel > -1)
     {
