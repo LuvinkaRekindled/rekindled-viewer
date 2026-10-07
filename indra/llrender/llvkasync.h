@@ -45,6 +45,8 @@ namespace LLVkAsync
     struct VertexAttrib { U32 mKind; U32 mIndex; S32 mSize; U32 mType; S32 mStride; U32 mNormalized; const void* mPointer; };
     // the vertex array state of LLVertexBuffer::setBuffer(): optional array buffer bind, the attribute pointers, optional index buffer bind (played in that order).
     // Only on the main producer (see mainProducer()); one record, played by the worker through the same functions the separate calls reach.
+    // a texture bind with its unit (LLTexUnit): replaces a held glActiveTexture + glBindTexture pair
+    void bindTextureUnit(U32 unit, U32 target, U32 texture);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
     // commands that are not GL calls (the GL calls are numbered by the generated enum in llvkgl.h)
