@@ -166,7 +166,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
@@ -480,6 +480,26 @@ struct MainLap
 bool mainProducer()
 {
     return gEnabled && gTyped && isMainThread();
+}
+
+void activeTextureUnit(U32 unit)
+{
+    MainLap lap;
+    coFlushRun();       // the same order the held glActiveTexture call keeps
+    if (gCo.mActiveValid && gCo.mActiveUnit != unit)
+    {
+        coFlushActive();
+    }
+    gCo.mActiveUnit = unit;
+    gCo.mActiveValid = true;
+}
+
+void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
+{
+    MainLap lap;
+    coFlushAll();
+    struct A { void* mProgram; U32 mEnable; U32 mDisable; } a = { program, enable_mask, disable_mask };
+    rawPush(CMD_SHADER_BIND, &a, sizeof(a));
 }
 
 void bindTextureUnit(U32 unit, U32 target, U32 texture)
@@ -1424,6 +1444,23 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVkMirror::UpscaleArgs a;
         memcpy(&a, payload, sizeof(a));         // the same struct the producer pushed
         LLVkMirror::upscaleImpl(a);
+        break;
+    }
+    case CMD_SHADER_BIND:
+    {
+        struct A { void* mProgram; U32 mEnable; U32 mDisable; };
+        const A* a = (const A*)payload;
+        LLVkGL::on_glBindBuffer(0x8892, 0);
+        LLVkGL::on_glBindBuffer(0x8893, 0);
+        if (a->mProgram && LLVkMirror::isReady())
+        {
+            LLVk::Renderer::instance().setProgram((LLVk::Program*)a->mProgram);
+        }
+        for (U32 i = 0; i < 32; ++i)
+        {
+            if (a->mEnable & (1u << i)) LLVkGL::on_glEnableVertexAttribArray(i);
+            if (a->mDisable & (1u << i)) LLVkGL::on_glDisableVertexAttribArray(i);
+        }
         break;
     }
     case CMD_PROGRAM_BIND:

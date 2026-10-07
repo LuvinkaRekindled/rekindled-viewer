@@ -1599,13 +1599,29 @@ void LLGLSLShader::bind()
         {
             sCurBoundShaderPtr->readProfileQuery();
         }
-        LLVertexBuffer::unbind();
-        glUseProgram(mProgramObject);
-        sCurBoundShader = mProgramObject;
-        sCurBoundShaderPtr = this;
-        mirrorBind();
-        placeProfileQuery();
-        LLVertexBuffer::setupClientArrays(mAttributeMask);
+#if defined(LL_VULKAN)
+        if (LLVkAsync::mainProducer())
+        {
+            // <FS> N4: one record for the buffer unbinds, the program bind and the attribute array switches
+            LLVertexBuffer::forgetBoundBuffers();
+            sCurBoundShader = mProgramObject;
+            sCurBoundShaderPtr = this;
+            U32 enable = 0, disable = 0;
+            LLVertexBuffer::arrayMaskChange(mAttributeMask, enable, disable);
+            LLVkAsync::shaderBind(mVkProgram, enable, disable);
+            placeProfileQuery();
+        }
+        else
+#endif
+        {
+            LLVertexBuffer::unbind();
+            glUseProgram(mProgramObject);
+            sCurBoundShader = mProgramObject;
+            sCurBoundShaderPtr = this;
+            mirrorBind();
+            placeProfileQuery();
+            LLVertexBuffer::setupClientArrays(mAttributeMask);
+        }
     }
 
     if (mUniformsDirty)
