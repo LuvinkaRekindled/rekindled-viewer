@@ -166,7 +166,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
@@ -505,6 +505,22 @@ void texParameters(U32 target, const TexParam* params, U32 count)
     memcpy(p + sizeof(head), params, sizeof(TexParam) * count);
     mainCommit(payload);
     ++gMainRecords;
+}
+
+void framebufferAttach(U32 fbo, U32 attachment, U32 textarget, U32 texture, U32 restore_fbo)
+{
+    MainLap lap;
+    coFlushAll();
+    const U32 a[5] = { fbo, attachment, textarget, texture, restore_fbo };
+    rawPush(CMD_FBO_ATTACH, a, sizeof(a));
+}
+
+void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh)
+{
+    MainLap lap;
+    coFlushAll();
+    const S32 a[6] = { (S32)fbo, draw_buffers, vx, vy, vw, vh };
+    rawPush(CMD_TARGET_STATE, a, sizeof(a));
 }
 
 void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
@@ -1457,6 +1473,37 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVkMirror::UpscaleArgs a;
         memcpy(&a, payload, sizeof(a));         // the same struct the producer pushed
         LLVkMirror::upscaleImpl(a);
+        break;
+    }
+    case CMD_FBO_ATTACH:
+    {
+        const U32* a = (const U32*)payload;
+        LLVkGL::on_glBindFramebuffer(0x8D40, a[0]);                     // GL_FRAMEBUFFER
+        LLVkGL::on_glFramebufferTexture2D(0x8D40, a[1], a[2], a[3], 0);
+        LLVkGL::on_glBindFramebuffer(0x8D40, a[4]);
+        break;
+    }
+    case CMD_TARGET_STATE:
+    {
+        const S32* a = (const S32*)payload;
+        LLVkGL::on_glBindFramebuffer(0x8D40, (GLuint)a[0]);
+        if (a[1] > 0)
+        {
+            const GLenum bufs[4] = { 0x8CE0, 0x8CE1, 0x8CE2, 0x8CE3 };     // GL_COLOR_ATTACHMENT0..3
+            LLVkGL::on_glDrawBuffers(std::min(a[1], 4), bufs);
+            LLVkGL::on_glReadBuffer(0x8CE0);
+        }
+        else if (a[1] == 0)
+        {
+            LLVkGL::on_glDrawBuffer(0);                                  // GL_NONE
+            LLVkGL::on_glReadBuffer(0);
+        }
+        else
+        {
+            LLVkGL::on_glReadBuffer(0x0405);                             // GL_BACK
+            LLVkGL::on_glDrawBuffer(0x0405);
+        }
+        LLVkGL::on_glViewport(a[2], a[3], a[4], a[5]);
         break;
     }
     case CMD_TEX_PARAMS:
