@@ -63,6 +63,7 @@ uniform float depthRejectBias;
 uniform float glossySampleCount;
 uniform float adaptiveStepMultiplier;
 uniform float noiseSine;
+uniform float ssrTraceMode;     // <FS> bit 0: the improved trace for water, bit 1: the improved trace for other surfaces (FSSSRWaterTrace, FSSSRSurfaceTrace)
 
 float epsilon = 0.1;
 
@@ -335,12 +336,13 @@ vec3 getPoissonSample(int i) {
     return POISSON3D_SAMPLES[i] * 2 - 1;
 }
 
-// <FS> Water reflection trace. The general marcher below takes exponentially growing steps and only counts a hit that lands within a fixed 1.5 cm of a surface, so
+// <FS> Fast reflection trace (water, and other glossy surfaces when FSSSRSurfaceTrace is on). The general marcher below takes exponentially growing steps and only counts a hit that lands within a fixed 1.5 cm of a surface, so
 // which step the ray happens to land on decides if it hits: one flat band of reflection per step length, and grain where neighbouring ripples disagree. This one
 // walks a fixed number of steps in screen space (perspective correct), accepts a crossing within a thickness that grows with the step, and finds the exact crossing
 // with a binary search. The screen position of the hit is returned (alpha is the confidence).
-vec4 traceWaterReflection(vec3 viewPos, vec3 dir, vec3 rejectUp, vec2 uvOffset)
+vec4 traceScreenRayFast(vec3 viewPos, vec3 dir, vec3 rejectUp, vec2 uvOffset)
 {
+    bool water = dot(rejectUp, rejectUp) > 0.5;
     vec3 P0 = (inv_modelview_delta * vec4(viewPos, 1.0)).xyz;       // the scene map is the previous frame: work in its camera space
     vec3 R = normalize(mat3(inv_modelview_delta) * dir);
     vec3 upPrev = mat3(inv_modelview_delta) * rejectUp;
@@ -413,9 +415,9 @@ vec4 traceWaterReflection(vec3 viewPos, vec3 dir, vec3 rejectUp, vec2 uvOffset)
             }
             vec2 huv = s0 + d * hi;
             vec3 hp = getPositionWithDepth(huv, texture(sceneDepth, huv).r).xyz;
-            if (dot(hp - P0, upPrev) < 0.5)
+            if (water ? (dot(hp - P0, upPrev) < 0.5) : (length(hp - P0) < 0.15))
             {
-                return vec4(0);                     // the water itself (the scene map contains it), not something standing on it
+                return vec4(0);                     // water: the water itself (the scene map contains it), not something standing on it; other surfaces: the surface itself
             }
             vec2 e2 = min(huv, 1.0 - huv);
             float edge = clamp(min(e2.x, e2.y) * 10.0, 0.0, 1.0);
@@ -436,11 +438,20 @@ collectedColor = vec4(1, 0, 1, 1);
     collectedColor = vec4(0);
     int hits = 0;
 
-    // <FS> water (rejectUp is set): the ray is traced against a mostly smoothed normal so that neighbouring pixels reflect a coherent picture instead of
+    // <FS> which trace: the improved one for water (rejectUp is set) and/or for other surfaces, or the original marcher
+    bool isWater = dot(rejectUp, rejectUp) > 0.5;
+    int traceMode = int(ssrTraceMode + 0.5);
+    bool useFastTrace = isWater ? ((traceMode & 1) != 0) : ((traceMode & 2) != 0);
+    if (!useFastTrace)
+    {
+        rejectUp = vec3(0);
+    }
+
+    // water with the improved trace: the ray is traced against a mostly smoothed normal so that neighbouring pixels reflect a coherent picture instead of
     // each ripple sending its ray somewhere else, and the ripples only shift where the colour is read (so the reflection wobbles instead of flickering)
     vec3 nTrace = normalize(n);
     vec2 uvOffset = vec2(0);
-    if (dot(rejectUp, rejectUp) > 0.5)
+    if (isWater && useFastTrace)
     {
         nTrace = normalize(mix(rejectUp, nTrace, 0.12));
         uvOffset = (normalize(n).xy - nTrace.xy) * 0.1;
@@ -450,10 +461,10 @@ collectedColor = vec4(1, 0, 1, 1);
 
     vec3 rayDirection = normalize(reflect(viewPos, nTrace));
 
-    if (dot(rejectUp, rejectUp) > 0.5)
+    if (isWater && useFastTrace)
     {
-        // water: the trace above, one ray (the normal is smoothed, extra random directions would only add grain)
-        collectedColor = traceWaterReflection(viewPos, rayDirection, rejectUp, uvOffset);
+        // water: one ray (the normal is smoothed, extra random directions would only add grain)
+        collectedColor = traceScreenRayFast(viewPos, rayDirection, rejectUp, uvOffset);
         return collectedColor.a;
     }
 
@@ -490,7 +501,17 @@ collectedColor = vec4(1, 0, 1, 1);
 
                 //float hitDepth;
 
-                bool hit = traceScreenRay(viewPos, normalize(reflectionDirectionRandomized), hitpoint, depth, depth, source, rejectUp, uvOffset);
+                bool hit;
+                if (useFastTrace)
+                {
+                    vec4 fast = traceScreenRayFast(viewPos, normalize(reflectionDirectionRandomized), vec3(0), vec2(0));
+                    hit = fast.a > 0.0;
+                    hitpoint = vec4(fast.rgb, 0.0);
+                }
+                else
+                {
+                    hit = traceScreenRay(viewPos, normalize(reflectionDirectionRandomized), hitpoint, depth, depth, source, rejectUp, uvOffset);
+                }
 
                 hitpoint.a = 0;
 

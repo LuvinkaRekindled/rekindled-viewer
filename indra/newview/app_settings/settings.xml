@@ -2645,6 +2645,28 @@
       <key>Value</key>
       <real>0</real>
     </map>
+    <key>FSSSRWaterTrace</key>
+    <map>
+      <key>Comment</key>
+      <string>Screen space reflections on water use the improved trace (fixed screen-space steps with a binary search, smoothed trace normal, no hits on the water itself) instead of the original ray marcher. Fixes bands, grain and flicker on rippled water. Applies at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
+    <key>FSSSRSurfaceTrace</key>
+    <map>
+      <key>Comment</key>
+      <string>Screen space reflections on other glossy surfaces (wet floors, shiny materials) use the improved trace instead of the original ray marcher (experimental, for comparison). Applies at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSVulkanRenderer</key>
     <map>
       <key>Comment</key>
