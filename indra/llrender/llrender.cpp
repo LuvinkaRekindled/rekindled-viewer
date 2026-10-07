@@ -168,7 +168,7 @@ void LLTexUnit::refreshState(void)
 
     gGL.flush();
 
-    glActiveTexture(GL_TEXTURE0 + mIndex);
+    ll_activeTexUnit(mIndex);
 
     if (mCurrTexType != TT_NONE)
     {
@@ -222,7 +222,7 @@ void LLTexUnit::disable(void)
 
 void LLTexUnit::applyTexOptions(LLImageGL* gl_tex)
 {
-    glActiveTexture(GL_TEXTURE0 + mIndex);
+    ll_activeTexUnit(mIndex);
     gGL.mCurrTextureUnitIndex = mIndex;
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
@@ -237,7 +237,7 @@ void LLTexUnit::bindFast(LLTexture* texture)
 {
     LLImageGL* gl_tex = texture->getGLTexture();
     texture->setActive();
-    glActiveTexture(GL_TEXTURE0 + mIndex);
+    ll_activeTexUnit(mIndex);
     gGL.mCurrTextureUnitIndex = mIndex;
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
