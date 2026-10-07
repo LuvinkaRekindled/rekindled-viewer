@@ -38,6 +38,15 @@ namespace LLVkAsync
     // runs fn on the worker after everything queued before it, and waits for it to finish
     void syncCall(const std::function<void()>& fn);
 
+    // ---- typed records (N1b): state the viewer knows as a whole is written as one record instead of a run of GL-shaped calls ----
+    // true on the thread that writes the queue while the worker runs
+    bool mainProducer();
+    // one vertex attribute: kind 0 is glVertexAttribPointer, kind 1 glVertexAttribIPointer (same layout the coalesced run uses)
+    struct VertexAttrib { U32 mKind; U32 mIndex; S32 mSize; U32 mType; S32 mStride; U32 mNormalized; const void* mPointer; };
+    // the vertex array state of LLVertexBuffer::setBuffer(): optional array buffer bind, the attribute pointers, optional index buffer bind (played in that order).
+    // Only on the main producer (see mainProducer()); one record, played by the worker through the same functions the separate calls reach.
+    void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
+
     // commands that are not GL calls (the GL calls are numbered by the generated enum in llvkgl.h)
     enum Cmd : unsigned short
     {
