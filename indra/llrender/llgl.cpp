@@ -2464,6 +2464,10 @@ bool LLGLManager::initGLNoGL()
     {
         mNumTextureImageUnits = 32;
     }
+    if (mMaxVaryingVectors <= 0)
+    {
+        mMaxVaryingVectors = 31;
+    }
     glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &mMaxAnisotropy);
     if (mMaxAnisotropy < 1.f)
     {
