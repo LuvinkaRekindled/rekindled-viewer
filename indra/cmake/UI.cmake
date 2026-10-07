@@ -31,7 +31,6 @@ if (LINUX)
 endif (LINUX)
 if( WINDOWS )
   target_link_libraries( ll::uilibraries INTERFACE
-          opengl32
           comdlg32
           dxguid
           kernel32
