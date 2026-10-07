@@ -461,6 +461,15 @@ void push(unsigned short op, const void* args, unsigned size)
     sidePush(op, std::move(payload));
 }
 
+// the typed records are timed like the pushed calls (every 16th one), so the 'main thread writing the queue' figure covers them
+struct MainLap
+{
+    const bool mTimed;
+    const unsigned long long mT0;
+    MainLap() : mTimed(gOpStats && ((++gMainPushOps & 15) == 0)), mT0(mTimed ? __rdtsc() : 0) {}
+    ~MainLap() { if (mTimed) { gMainPushTicks += (__rdtsc() - mT0) * 16; } }
+};
+
 bool mainProducer()
 {
     return gEnabled && gTyped && isMainThread();
@@ -468,6 +477,7 @@ bool mainProducer()
 
 void bindTextureUnit(U32 unit, U32 target, U32 texture)
 {
+    MainLap lap;
     coFlushRun();
     if (gCo.mActiveValid && gCo.mActiveUnit != unit)
     {
@@ -478,8 +488,25 @@ void bindTextureUnit(U32 unit, U32 target, U32 texture)
     rawPush(CMD_BIND_TEXTURE_UNIT, &b, sizeof(b));
 }
 
+void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
+{
+    MainLap lap;
+    coFlushAll();
+    const A_glDrawRangeElements a = { mode, start, end, count, type, indices };
+    rawPush(OP_glDrawRangeElements, &a, sizeof(a));
+}
+
+void drawArrays(U32 mode, S32 first, S32 count)
+{
+    MainLap lap;
+    coFlushAll();
+    const A_glDrawArrays a = { mode, first, count };
+    rawPush(OP_glDrawArrays, &a, sizeof(a));
+}
+
 void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count)
 {
+    MainLap lap;
     static_assert(sizeof(VertexAttrib) == sizeof(RunEntry), "typed attribute record matches the run entry");
     coFlushAll();       // anything held (texture binds, an open run) goes first: same order as the separate calls
     const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * count);

@@ -929,6 +929,13 @@ void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indi
     llassert(mGLIndices == sGLRenderIndices);
     gGL.syncMatrices();
     STOP_GLERROR;
+#if defined(LL_VULKAN)
+    if (LLVkAsync::mainProducer())
+    {
+        LLVkAsync::drawRangeElements(sGLMode[mode], start, end, count, mIndicesType, (const void*)(indices_offset * (size_t) mIndicesStride));
+        return;
+    }
+#endif
     glDrawRangeElements(sGLMode[mode], start, end, count, mIndicesType,
         (GLvoid*) (indices_offset * (size_t) mIndicesStride));
     STOP_GLERROR;
@@ -937,6 +944,13 @@ void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indi
 void LLVertexBuffer::drawRangeFast(U32 mode, U32 start, U32 end, U32 count, U32 indices_offset) const
 {
     ++sDrawCalls;
+#if defined(LL_VULKAN)
+    if (LLVkAsync::mainProducer())
+    {
+        LLVkAsync::drawRangeElements(sGLMode[mode], start, end, count, mIndicesType, (const void*)(indices_offset * (size_t)mIndicesStride));
+        return;
+    }
+#endif
     glDrawRangeElements(sGLMode[mode], start, end, count, mIndicesType,
         (GLvoid*)(indices_offset * (size_t)mIndicesStride));
 }
@@ -957,6 +971,13 @@ void LLVertexBuffer::drawArrays(U32 mode, U32 first, U32 count) const
 
     gGL.syncMatrices();
     STOP_GLERROR;
+#if defined(LL_VULKAN)
+    if (LLVkAsync::mainProducer())
+    {
+        LLVkAsync::drawArrays(sGLMode[mode], first, count);
+        return;
+    }
+#endif
     glDrawArrays(sGLMode[mode], first, count);
     STOP_GLERROR;
 }
