@@ -166,7 +166,8 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "shadowPackets" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets" };
+unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 void note_gap(std::vector<float>& gaps, long long& last)
@@ -449,6 +450,10 @@ void push(unsigned short op, const void* args, unsigned size)
     {
         const bool timed = gOpStats && ((++gMainPushOps & 15) == 0);
         const unsigned long long t0 = timed ? __rdtsc() : 0;
+        if (gOpStats)
+        {
+            ++gMainOpCalls[opStatSlot(op)];
+        }
         if (!(gCoalesce && coPush(op, args)))
         {
             rawPush(op, args, size);
@@ -549,6 +554,10 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         const bool timed = gOpStats && ((++gMainPushOps & 15) == 0);
         const unsigned long long t0 = timed ? __rdtsc() : 0;
         struct Lap { const bool mTimed; const unsigned long long mT0; ~Lap() { if (mTimed) { gMainPushTicks += (__rdtsc() - mT0) * 16; } } } lap = { timed, t0 };
+        if (gOpStats)
+        {
+            ++gMainOpCalls[opStatSlot(op)];
+        }
         coFlushAll();
         ++gMainRecords;
         const bool heap = data_size > MAX_INLINE;
@@ -662,6 +671,28 @@ std::string opStatsReport(size_t frames)
                  (double)push_ops / (double)frames, (double)records / (double)frames,
                  (double)push_ticks * ms_per_tick / (double)frames, push_ops ? (double)push_ticks * ms_per_tick * 1e6 / (double)push_ops : 0.0);
         out = buf;
+    }
+    {
+        // the plain calls still pushed one by one (candidates for typed records), most frequent first
+        std::vector<std::pair<unsigned long long, int>> mc;
+        for (int i = 0; i < OP_STAT_SLOTS; ++i)
+        {
+            if (gMainOpCalls[i])
+            {
+                mc.push_back({ gMainOpCalls[i], i });
+            }
+            gMainOpCalls[i] = 0;
+        }
+        std::sort(mc.begin(), mc.end(), [](const std::pair<unsigned long long, int>& a, const std::pair<unsigned long long, int>& b) { return a.first > b.first; });
+        out += "main thread pushed calls/frame: ";
+        for (size_t k = 0; k < mc.size() && k < 16; ++k)
+        {
+            const int slot = mc[k].second;
+            const char* name = slot < OP_GL_COUNT ? LLVkGL::hook_name(slot) : (slot - OP_GL_COUNT < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot - OP_GL_COUNT] : "cmd?");
+            snprintf(buf, sizeof(buf), "%s %.0f, ", name, (double)mc[k].first / (double)frames);
+            out += buf;
+        }
+        out += "| ";
     }
     snprintf(buf, sizeof(buf), "%.2f ms/frame in operations out of %.2f ms/frame wall (the timer costs about 15 ns per operation) | ", (double)total * ms_per_tick / (double)frames, wall_ms / (double)frames);
     out += buf;
