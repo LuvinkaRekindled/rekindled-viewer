@@ -466,6 +466,18 @@ bool mainProducer()
     return gEnabled && gTyped && isMainThread();
 }
 
+void bindTextureUnit(U32 unit, U32 target, U32 texture)
+{
+    coFlushRun();
+    if (gCo.mActiveValid && gCo.mActiveUnit != unit)
+    {
+        coFlushActive();
+    }
+    gCo.mActiveValid = false;       // the record sets the unit itself
+    const BindTexUnitArgs b = { unit, target, texture, 0 };
+    rawPush(CMD_BIND_TEXTURE_UNIT, &b, sizeof(b));
+}
+
 void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count)
 {
     static_assert(sizeof(VertexAttrib) == sizeof(RunEntry), "typed attribute record matches the run entry");

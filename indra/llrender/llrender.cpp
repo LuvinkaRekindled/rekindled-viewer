@@ -37,6 +37,9 @@
 #include "llshadermgr.h"
 #include "hbxxh.h"
 #include "llvkverify.h"
+#if defined(LL_VULKAN)
+#include "llvkasync.h"
+#endif
 #include "glm/gtc/type_ptr.hpp"
 
 #if LL_WINDOWS
@@ -127,6 +130,20 @@ LLTexUnit::LLTexUnit(S32 index)
 }
 
 //static
+// <FS> N1b: a texture bind on the queue's producer is one typed record that carries the unit (the separate glActiveTexture before it is not queued).
+// Anywhere else it is the plain glBindTexture on the unit the caller activated.
+static inline void ll_bindTexUnit(S32 unit_index, GLenum target, GLuint texture)
+{
+#if defined(LL_VULKAN)
+    if (LLVkAsync::mainProducer())
+    {
+        LLVkAsync::bindTextureUnit(GL_TEXTURE0 + unit_index, target, texture);
+        return;
+    }
+#endif
+    glBindTexture(target, texture);
+}
+
 U32 LLTexUnit::getInternalType(eTextureType type)
 {
     return sGLTextureType[type];
@@ -143,11 +160,11 @@ void LLTexUnit::refreshState(void)
 
     if (mCurrTexType != TT_NONE)
     {
-        glBindTexture(sGLTextureType[mCurrTexType], mCurrTexture);
+        ll_bindTexUnit(mIndex, sGLTextureType[mCurrTexType], mCurrTexture);
     }
     else
     {
-        glBindTexture(GL_TEXTURE_2D, 0);
+        ll_bindTexUnit(mIndex, GL_TEXTURE_2D, 0);
     }
 }
 
@@ -197,7 +214,7 @@ void LLTexUnit::applyTexOptions(LLImageGL* gl_tex)
     gGL.mCurrTextureUnitIndex = mIndex;
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
-    glBindTexture(sGLTextureType[gl_tex->getTarget()], mCurrTexture);
+    ll_bindTexUnit(mIndex, sGLTextureType[gl_tex->getTarget()], mCurrTexture);
     mHasMipMaps = gl_tex->mHasMipMaps;
     gl_tex->mTexOptionsDirty = false;
     setTextureAddressModeFast(gl_tex->mAddressMode, gl_tex->getTarget());
@@ -220,7 +237,7 @@ void LLTexUnit::bindFast(LLTexture* texture)
         gl_tex->forceUpdateBindStats();
         texture->bindDefaultImage(mIndex);
     }
-    glBindTexture(sGLTextureType[gl_tex->getTarget()], mCurrTexture);
+    ll_bindTexUnit(mIndex, sGLTextureType[gl_tex->getTarget()], mCurrTexture);
     mHasMipMaps = gl_tex->mHasMipMaps;
     if (gl_tex->mTexOptionsDirty)
     {
@@ -270,7 +287,7 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
                     activate();
                     enable(gl_tex->getTarget());
                     mCurrTexture = gl_tex->getTexName();
-                    glBindTexture(sGLTextureType[gl_tex->getTarget()], mCurrTexture);
+                    ll_bindTexUnit(mIndex, sGLTextureType[gl_tex->getTarget()], mCurrTexture);
                     if(gl_tex->updateBindStats())
                     {
                         texture->setActive() ;
@@ -347,7 +364,7 @@ bool LLTexUnit::bind(LLImageGL* texture, bool for_rendering, bool forceBind, S32
         enable(texture->getTarget());
         stop_glerror();
         mCurrTexture = texname;
-        glBindTexture(sGLTextureType[texture->getTarget()], mCurrTexture);
+        ll_bindTexUnit(mIndex, sGLTextureType[texture->getTarget()], mCurrTexture);
         stop_glerror();
         texture->updateBindStats();
         mHasMipMaps = texture->mHasMipMaps;
@@ -385,7 +402,7 @@ bool LLTexUnit::bind(LLCubeMap* cubeMap)
             activate();
             enable(LLTexUnit::TT_CUBE_MAP);
             mCurrTexture = cubeMap->mImages[0]->getTexName();
-            glBindTexture(GL_TEXTURE_CUBE_MAP, mCurrTexture);
+            ll_bindTexUnit(mIndex, GL_TEXTURE_CUBE_MAP, mCurrTexture);
             mHasMipMaps = cubeMap->mImages[0]->mHasMipMaps;
             cubeMap->mImages[0]->updateBindStats();
             if (cubeMap->mImages[0]->mTexOptionsDirty)
@@ -440,7 +457,7 @@ bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips)
         activate();
         enable(type);
         mCurrTexture = texture;
-        glBindTexture(sGLTextureType[type], texture);
+        ll_bindTexUnit(mIndex, sGLTextureType[type], texture);
         mHasMipMaps = hasMips;
     }
     return true;
@@ -464,11 +481,11 @@ void LLTexUnit::unbind(eTextureType type)
 
         if (type == LLTexUnit::TT_TEXTURE)
         {
-            glBindTexture(sGLTextureType[type], sWhiteTexture);
+            ll_bindTexUnit(mIndex, sGLTextureType[type], sWhiteTexture);
         }
         else
         {
-            glBindTexture(sGLTextureType[type], 0);
+            ll_bindTexUnit(mIndex, sGLTextureType[type], 0);
         }
         stop_glerror();
     }
@@ -485,11 +502,11 @@ void LLTexUnit::unbindFast(eTextureType type)
 
         if (type == LLTexUnit::TT_TEXTURE)
         {
-            glBindTexture(sGLTextureType[type], sWhiteTexture);
+            ll_bindTexUnit(mIndex, sGLTextureType[type], sWhiteTexture);
         }
         else
         {
-            glBindTexture(sGLTextureType[type], 0);
+            ll_bindTexUnit(mIndex, sGLTextureType[type], 0);
         }
     }
 }
