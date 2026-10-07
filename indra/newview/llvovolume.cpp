@@ -27,6 +27,7 @@
 // A "volume" is a box, cylinder, sphere, or other primitive shape.
 
 #include "llviewerprecompiledheaders.h"
+#include "llgpuzonetimer.h"
 
 #include "llvovolume.h"
 
@@ -722,14 +723,17 @@ void LLVOVolume::onDrawableUpdateFromServer()
 
 void LLVOVolume::animateTextures()
 {
+    LL_CPU_ZONE("texanim: per object");
     if (!mDead && mDrawable) // <FS:Beq/> FIRE-34601 - bugsplat accessing null drawable.
     {
-        shrinkWrap();
+        { LL_CPU_ZONE("texanim: shrinkWrap"); shrinkWrap(); }
         F32 off_s = 0.f, off_t = 0.f, scale_s = 1.f, scale_t = 1.f, rot = 0.f;
-        S32 result = mTextureAnimp->animateTextures(off_s, off_t, scale_s, scale_t, rot);
+        S32 result;
+        { LL_CPU_ZONE("texanim: frame calculation"); result = mTextureAnimp->animateTextures(off_s, off_t, scale_s, scale_t, rot); }
 
         if (result)
         {
+            LL_CPU_ZONE("texanim: changed (face matrices)");
             if (!mTexAnimMode)
             {
                 mFaceMappingChanged = true;

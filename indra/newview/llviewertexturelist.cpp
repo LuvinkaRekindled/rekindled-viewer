@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llgpuzonetimer.h"
 
 #include <sys/stat.h>
 
@@ -874,16 +875,17 @@ void LLViewerTextureList::updateImages(F32 max_time)
     F32 remaining_time = max_time;
 
     //loading from fast cache
-    remaining_time -= updateImagesLoadingFastCache(remaining_time);
+    { LL_CPU_ZONE("textures: fast cache"); remaining_time -= updateImagesLoadingFastCache(remaining_time); }
     remaining_time = llmax(remaining_time, min_time);
 
     //dispatch to texture fetch threads
-    remaining_time -= updateImagesFetchTextures(remaining_time);
+    { LL_CPU_ZONE("textures: fetch dispatch"); remaining_time -= updateImagesFetchTextures(remaining_time); }
     remaining_time = llmax(remaining_time, min_time);
 
     //handle results from decode threads
-    updateImagesCreateTextures(remaining_time);
+    { LL_CPU_ZONE("textures: create from decoded"); updateImagesCreateTextures(remaining_time); }
 
+    LL_CPU_ZONE("textures: loaded callbacks + stats");
     bool didone = false;
     for (image_list_t::iterator iter = mCallbackList.begin();
         iter != mCallbackList.end(); )

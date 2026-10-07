@@ -809,6 +809,11 @@ private:
     F32         mImpostorDistance;
     F32         mImpostorPixelArea;
     LLVector3   mLastAnimExtents[2];
+    // <FS> the avatar's world box and attachment count at the last frame its rigged attachments were updated, and for how many frames in a row
+    // they have been the same (see FSSkipStaticRiggedAttachmentUpdates in idleUpdateMisc)
+    LLVector3   mAttBBoxLast[2];
+    U32         mAttBBoxStable = 0;
+    U32         mAttCountLast = 0;
     LLVector3   mLastAnimBasePos;
 
     LLCachedControl<bool> mRenderUnloadedAvatar;

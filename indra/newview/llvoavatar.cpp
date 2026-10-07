@@ -3593,8 +3593,52 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
     // update attachments positions
     if (detailed_update)
     {
+        LL_CPU_ZONE("att: attachment loop (per avatar)");
         U32 draw_order = 0;
         bool attachment_selected = LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment();
+
+        // <FS> A rigged attachment is culled with the avatar's own world box (override_bbox) and drawn with the avatar's joints, so while that box has not
+        // changed there is nothing for its per-frame update to change: the box it would get, its drawable move and its bridge move all come out the same.
+        // When the avatar's box and its attachments have been the same for a couple of frames, the rigged attachments are only updated every 8th frame
+        // (staggered per avatar); anything that moves the avatar, changes what it wears, or selects an attachment brings the full update back at once.
+        static LLCachedControl<bool> skip_static_rigged(gSavedSettings, "FSSkipStaticRiggedAttachmentUpdates", true);
+        bool skip_rigged_this_frame = false;
+        if (skip_static_rigged && !isSelf() && !attachment_selected && mDrawable.notNull())
+        {
+            U32 attachment_count = 0;
+            for (const auto& [id, point] : mAttachmentPoints)
+            {
+                if (point)
+                {
+                    attachment_count += (U32)point->mAttachedObjects.size();
+                }
+            }
+            const LLVector4a* box = mDrawable->getSpatialExtents();
+            const F32* box_min = box[0].getF32ptr();
+            const F32* box_max = box[1].getF32ptr();
+            constexpr F32 tolerance = 0.01f;
+            bool same = attachment_count == mAttCountLast;
+            for (S32 axis = 0; axis < 3 && same; ++axis)
+            {
+                same = fabsf(box_min[axis] - mAttBBoxLast[0].mV[axis]) < tolerance && fabsf(box_max[axis] - mAttBBoxLast[1].mV[axis]) < tolerance;
+            }
+            if (same)
+            {
+                ++mAttBBoxStable;
+            }
+            else
+            {
+                mAttBBoxStable = 0;
+                mAttBBoxLast[0].set(box_min);
+                mAttBBoxLast[1].set(box_max);
+                mAttCountLast = attachment_count;
+            }
+            skip_rigged_this_frame = mAttBBoxStable >= 2 && ((LLFrameTimer::getFrameCount() + mID.mData[0]) & 7) != 0;
+        }
+        else
+        {
+            mAttBBoxStable = 0;
+        }
         for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
         {
             // <FS:Ansariel> Possible crash fix
@@ -3624,25 +3668,33 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     {
                         //transform avatar bounding box into attachment's coordinate frame
                         LLVector4a extents[2];
-                        bridge->transformExtents(mDrawable->getSpatialExtents(), extents);
+                        { LL_CPU_ZONE("att: transformExtents"); bridge->transformExtents(mDrawable->getSpatialExtents(), extents); }
 
                         if (attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
                         {
                             rigged = true;
-                            override_bbox(attached_object->mDrawable, extents);
+                            if (!skip_rigged_this_frame)
+                            {
+                                override_bbox(attached_object->mDrawable, extents);
+                            }
                         }
                     }
+                    const bool skip_update = rigged && skip_rigged_this_frame;
 
                     // if selecting any attachments, update all of them as non-damped
-                    if (attachment_selected)
+                    if (!skip_update)
                     {
-                        gPipeline.updateMoveNormalAsync(attached_object->mDrawable);
-                    }
-                    else
-                    {
-                        // Note: SL-17415; While most objects follow joints,
-                        // some objects get position updates from server
-                        gPipeline.updateMoveDampedAsync(attached_object->mDrawable);
+                        LL_CPU_ZONE("att: drawable move");
+                        if (attachment_selected)
+                        {
+                            gPipeline.updateMoveNormalAsync(attached_object->mDrawable);
+                        }
+                        else
+                        {
+                            // Note: SL-17415; While most objects follow joints,
+                            // some objects get position updates from server
+                            gPipeline.updateMoveDampedAsync(attached_object->mDrawable);
+                        }
                     }
 
                     // override_bbox calls movePartition() and getSpatialPartition(),
@@ -3653,14 +3705,19 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     {
                         if (!rigged)
                         {
+                            LL_CPU_ZONE("att: bridge move (not rigged)");
                             gPipeline.updateMoveNormalAsync(bridge);
                         }
                         else
                         {
+                            LL_CPU_ZONE("att: bridge move (rigged)");
                             //specialized impl of updateMoveNormalAsync just for rigged attachment SpatialBridge
-                            bridge->setState(LLDrawable::MOVE_UNDAMPED);
-                            bridge->updateMove();
-                            bridge->setState(LLDrawable::EARLY_MOVE);
+                            if (!skip_update)
+                            {
+                                bridge->setState(LLDrawable::MOVE_UNDAMPED);
+                                bridge->updateMove();
+                                bridge->setState(LLDrawable::EARLY_MOVE);
+                            }
 
                             LLSpatialGroup* group = attached_object->mDrawable->getSpatialGroup();
                             if (group)
@@ -3671,7 +3728,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                         }
                     }
 
-                    attached_object->updateText();
+                    { LL_CPU_ZONE("att: updateText"); attached_object->updateText(); }
                 }
             }
         }
