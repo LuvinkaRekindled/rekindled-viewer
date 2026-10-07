@@ -350,12 +350,15 @@ U32 pendTexWrite(U8* p)
     return n * (U32)sizeof(PendTex);
 }
 
-void flushPendingTex()
+unsigned long long gTexFlushWhy[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: what forced the pending texture slots out as a record of their own (slot of the operation)
+
+void flushPendingTex(int why = 0)
 {
     if (!gPendMask)
     {
         return;
     }
+    ++gTexFlushWhy[why];
     const U32 count = (U32)__popcnt(gPendMask);
     const U32 payload = (U32)(sizeof(U32) * 3 + sizeof(PendTex) * count);
     U8* p = mainReserve(payload, CMD_TEX_SLOTS, 0);
@@ -378,9 +381,9 @@ inline void coFlushHeld()
     }
 }
 
-inline void coFlushAll()
+inline void coFlushAll(int why = 0)
 {
-    flushPendingTex();
+    flushPendingTex(why);
     coFlushHeld();
 }
 
@@ -405,7 +408,7 @@ bool coPush(U16 op, const void* args)
 {
     if (gPendMask && op != OP_glActiveTexture && !texIndependent(op))
     {
-        flushPendingTex();
+        flushPendingTex(opStatSlot(op));
     }
     switch (op)
     {
@@ -496,7 +499,7 @@ bool coPush(U16 op, const void* args)
         }
         else
         {
-            coFlushAll();
+            coFlushAll(opStatSlot(op));
         }
         return false;
     }
@@ -573,7 +576,7 @@ void activeTextureUnit(U32 unit)
 void texParameters(U32 target, const TexParam* params, U32 count)
 {
     MainLap lap;
-    coFlushAll();       // the active unit and any open run go first
+    coFlushAll(opStatSlot(CMD_TEX_PARAMS));       // the active unit and any open run go first
     const U32 payload = (U32)(sizeof(U32) * 2 + sizeof(TexParam) * count);
     U8* p = mainReserve(payload, CMD_TEX_PARAMS, 0);
     const U32 head[2] = { target, count };
@@ -586,7 +589,7 @@ void texParameters(U32 target, const TexParam* params, U32 count)
 void framebufferAttach(U32 fbo, U32 attachment, U32 textarget, U32 texture, U32 restore_fbo)
 {
     MainLap lap;
-    coFlushAll();
+    coFlushAll(opStatSlot(CMD_FBO_ATTACH));
     const U32 a[5] = { fbo, attachment, textarget, texture, restore_fbo };
     rawPush(CMD_FBO_ATTACH, a, sizeof(a));
 }
@@ -594,7 +597,7 @@ void framebufferAttach(U32 fbo, U32 attachment, U32 textarget, U32 texture, U32 
 void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh)
 {
     MainLap lap;
-    coFlushAll();
+    coFlushAll(opStatSlot(CMD_TARGET_STATE));
     const S32 a[6] = { (S32)fbo, draw_buffers, vx, vy, vw, vh };
     rawPush(CMD_TARGET_STATE, a, sizeof(a));
 }
@@ -722,7 +725,7 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         {
             ++gMainOpCalls[opStatSlot(op)];
         }
-        coFlushAll();
+        coFlushAll(opStatSlot(op));
         ++gMainRecords;
         const bool heap = data_size > MAX_INLINE;
         const size_t payload = size + sizeof(U64) + (heap ? sizeof(U64) : data_size);
@@ -854,6 +857,28 @@ std::string opStatsReport(size_t frames)
             const int slot = mc[k].second;
             const char* name = slot < OP_GL_COUNT ? LLVkGL::hook_name(slot) : (slot - OP_GL_COUNT < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot - OP_GL_COUNT] : "cmd?");
             snprintf(buf, sizeof(buf), "%s %.0f, ", name, (double)mc[k].first / (double)frames);
+            out += buf;
+        }
+        out += "| ";
+    }
+    {
+        // what forced the pending texture slots out as records of their own (everything else folds into a draw)
+        std::vector<std::pair<unsigned long long, int>> fw;
+        for (int i = 0; i < OP_STAT_SLOTS; ++i)
+        {
+            if (gTexFlushWhy[i])
+            {
+                fw.push_back({ gTexFlushWhy[i], i });
+            }
+            gTexFlushWhy[i] = 0;
+        }
+        std::sort(fw.begin(), fw.end(), [](const std::pair<unsigned long long, int>& a, const std::pair<unsigned long long, int>& b) { return a.first > b.first; });
+        out += "texture slots flushed alone by (per frame): ";
+        for (size_t k = 0; k < fw.size() && k < 8; ++k)
+        {
+            const int slot = fw[k].second;
+            const char* name = slot == 0 ? "other" : (slot < OP_GL_COUNT ? LLVkGL::hook_name(slot) : (slot - OP_GL_COUNT < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot - OP_GL_COUNT] : "cmd?"));
+            snprintf(buf, sizeof(buf), "%s %.0f, ", name, (double)fw[k].first / (double)frames);
             out += buf;
         }
         out += "| ";
