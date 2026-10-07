@@ -166,7 +166,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
@@ -492,6 +492,19 @@ void activeTextureUnit(U32 unit)
     }
     gCo.mActiveUnit = unit;
     gCo.mActiveValid = true;
+}
+
+void texParameters(U32 target, const TexParam* params, U32 count)
+{
+    MainLap lap;
+    coFlushAll();       // the active unit and any open run go first
+    const U32 payload = (U32)(sizeof(U32) * 2 + sizeof(TexParam) * count);
+    U8* p = mainReserve(payload, CMD_TEX_PARAMS, 0);
+    const U32 head[2] = { target, count };
+    memcpy(p, head, sizeof(head));
+    memcpy(p + sizeof(head), params, sizeof(TexParam) * count);
+    mainCommit(payload);
+    ++gMainRecords;
 }
 
 void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
@@ -1444,6 +1457,17 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVkMirror::UpscaleArgs a;
         memcpy(&a, payload, sizeof(a));         // the same struct the producer pushed
         LLVkMirror::upscaleImpl(a);
+        break;
+    }
+    case CMD_TEX_PARAMS:
+    {
+        const U32* head = (const U32*)payload;
+        const LLVkAsync::TexParam* e = (const LLVkAsync::TexParam*)(payload + sizeof(U32) * 2);
+        for (U32 i = 0; i < head[1]; ++i)
+        {
+            if (e[i].mIsFloat) LLVkGL::on_glTexParameterf(head[0], e[i].mPname, e[i].mFloat);
+            else LLVkGL::on_glTexParameteri(head[0], e[i].mPname, e[i].mInt);
+        }
         break;
     }
     case CMD_SHADER_BIND:
