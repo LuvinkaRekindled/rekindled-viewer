@@ -60,6 +60,10 @@ namespace LLVkAsync
     // texture parameters (wrap, filter, anisotropy) of the texture bound on the active unit, written as one record (played as glTexParameteri / glTexParameterf in order)
     struct TexParam { U32 mPname; U32 mIsFloat; S32 mInt; F32 mFloat; };
     void texParameters(U32 target, const TexParam* params, U32 count);
+    // render targets (LLRenderTarget): attach a texture to a framebuffer by name (then bind restore_fbo again), and make a framebuffer current with its draw buffers and viewport
+    void framebufferAttach(U32 fbo, U32 attachment, U32 textarget, U32 texture, U32 restore_fbo);
+    // draw_buffers: the number of colour attachments to draw to (0: none, -1: the back buffer)
+    void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
     // commands that are not GL calls (the GL calls are numbered by the generated enum in llvkgl.h)
@@ -73,7 +77,8 @@ namespace LLVkAsync
         CMD_BUFFER_DATA, CMD_BUFFER_SUBDATA,       // named buffer storage (bufferData / bufferSubData)
         CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (LLVkMirror::shadowPackets)
         CMD_SHADER_BIND,                           // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
-        CMD_TEX_PARAMS                             // texture parameters of the bound texture, several in one record (LLTexUnit sampler state)
+        CMD_TEX_PARAMS,                            // texture parameters of the bound texture, several in one record (LLTexUnit sampler state)
+        CMD_FBO_ATTACH, CMD_TARGET_STATE           // render target commands (framebufferAttach, targetState)
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 
