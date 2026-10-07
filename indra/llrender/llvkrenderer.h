@@ -377,6 +377,7 @@ private:
     void* mTracyCtx = nullptr;
     alignas(16) unsigned char mTracyScope[96] = {};
     bool mTracyScopeLive = false;
+    U64 mTracyZones = 0;
     void tracyInit();
     void tracyShutdown();
     void tracyBeginPass();

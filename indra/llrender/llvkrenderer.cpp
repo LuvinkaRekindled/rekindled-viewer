@@ -836,6 +836,7 @@ void Renderer::tracyInit()
 void Renderer::tracyShutdown()
 {
 #if defined(TRACY_ENABLE)
+    LL_INFOS("Vulkan") << "Tracy: " << mTracyZones << " GPU zones recorded while a client was connected" << LL_ENDL;
     tracyEndPass();
     if (mTracyCtx)
     {
@@ -862,6 +863,10 @@ void Renderer::tracyBeginPass()
     const std::string name = describeTarget();
     new (mTracyScope) tracy::VkCtxScope((tracy::VkCtx*)mTracyCtx, __LINE__, __FILE__, strlen(__FILE__), "render pass", 11, name.c_str(), name.size(), mCmd, true);
     mTracyScopeLive = true;
+    if (++mTracyZones == 1)
+    {
+        LL_INFOS("Vulkan") << "Tracy: first GPU zone recorded (\"" << name << "\")" << LL_ENDL;
+    }
 #endif
 }
 
