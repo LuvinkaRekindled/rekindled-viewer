@@ -168,8 +168,19 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
     {
         mUniformIndex[mInfo.mUniforms[i].mName] = i;
     }
+    mBindless = info.mBindless;
     for (const SamplerInfo& s : mInfo.mSamplers)
     {
+        if (mBindless)
+        {
+            const bool ok = s.mIndexUniform >= 0 && (size_t)s.mIndexUniform < mInfo.mUniforms.size();
+            mSlotOffset.push_back(ok ? mInfo.mUniforms[s.mIndexUniform].mOffset : 0);
+            mSamplerTable.push_back(s.mType == "samplerCube" ? 1 : s.mType == "samplerCubeArray" ? 2 : s.mType == "sampler2DShadow" ? 3 : 0);
+            if (!ok)
+            {
+                mBindless = false;
+            }
+        }
         mSamplerIndex[s.mName] = s.mBinding;
         mSamplerUnits.push_back(s.mBinding);
         {
@@ -555,24 +566,28 @@ bool Renderer::createLayouts()
     // <FS> set 2: a table of sampled images that shaders index at run time, written as a frame needs them (render packets with textures). Not needed to run.
     if (const U32 slots = ctx.getCaps().mBindlessSlots)
     {
-        VkDescriptorSetLayoutBinding b2 = {};
-        b2.binding = 0;
-        b2.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        b2.descriptorCount = slots;
-        b2.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        VkDescriptorBindingFlags binding_flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+        VkDescriptorSetLayoutBinding b2[BINDLESS_TABLES] = {};
+        VkDescriptorBindingFlags binding_flags[BINDLESS_TABLES];
+        for (U32 t = 0; t < BINDLESS_TABLES; ++t)
+        {
+            b2[t].binding = t;      // 0: 2D (render packets and bindless programs), 1: cube, 2: cube array, 3: 2D shadow
+            b2[t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            b2[t].descriptorCount = slots;
+            b2[t].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            binding_flags[t] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+        }
         VkDescriptorSetLayoutBindingFlagsCreateInfo fi = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
-        fi.bindingCount = 1;
-        fi.pBindingFlags = &binding_flags;
+        fi.bindingCount = BINDLESS_TABLES;
+        fi.pBindingFlags = binding_flags;
         VkDescriptorSetLayoutCreateInfo l2 = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
         l2.pNext = &fi;
         l2.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-        l2.bindingCount = 1;
-        l2.pBindings = &b2;
+        l2.bindingCount = BINDLESS_TABLES;
+        l2.pBindings = b2;
         bool ok = vk_ok(vkCreateDescriptorSetLayout(dev, &l2, nullptr, &mSet2Layout), "set 2 layout");
         if (ok)
         {
-            VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, slots * Context::frameCount() };
+            VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, slots * BINDLESS_TABLES * Context::frameCount() };
             VkDescriptorPoolCreateInfo bi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
             bi.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
             bi.maxSets = Context::frameCount();
@@ -593,7 +608,7 @@ bool Renderer::createLayouts()
         if (ok)
         {
             mBindlessCapacity = slots;
-            LL_INFOS("Vulkan") << "bindless sampled image table: " << slots << " slots per frame" << LL_ENDL;
+            LL_INFOS("Vulkan") << "bindless sampled image tables: " << BINDLESS_TABLES << " x " << slots << " slots per frame (2D, cube, cube array, 2D shadow)" << LL_ENDL;
         }
         else
         {
@@ -1108,8 +1123,7 @@ void Renderer::shutdown()
     mSet1Layout = VK_NULL_HANDLE;
     mSet2Layout = VK_NULL_HANDLE;
     mBindlessPool = VK_NULL_HANDLE;
-    mBindlessMap.clear();
-    mBindlessInfos.clear();
+    for (BindlessTable& t : mBindlessTbl) { t.mMap.clear(); t.mInfos.clear(); t.mWritten = 0; }
     mProgram = nullptr;
     mReady = false;
 }
@@ -1226,9 +1240,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     {
         // the table starts over: this frame's slots are handed out again from 1
         ++mBindlessEpoch;
-        mBindlessMap.clear();
-        mBindlessInfos.clear();
-        mBindlessWritten = 0;
+        for (BindlessTable& t : mBindlessTbl) { t.mMap.clear(); t.mInfos.clear(); t.mWritten = 0; }
         mBindlessBound = false;
     }
     mAppliedDynamicOffset = 0xFFFFFFFF;
@@ -1605,38 +1617,50 @@ void Renderer::setTexture(U32 unit, Image* image, VkSampler sampler)
     }
 }
 
-// slot 0 of every frame's table: the white image, what an unbound texture unit samples
+// slot 0 of every frame's tables: a stand-in image of the table's kind, what an unbound texture unit samples
 void Renderer::bindlessStart()
 {
-    if (mBindlessInfos.empty())
+    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
     {
-        VkDescriptorImageInfo white = { getSampler(SamplerDesc()), mWhite.mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-        mBindlessInfos.push_back(white);
+        if (mBindlessTbl[t].mInfos.empty())
+        {
+            const Image* stand_in = &mWhite;
+            if (t == 1 && mFallback[1].valid()) stand_in = &mFallback[1];
+            if (t == 2 && mFallback[2].valid()) stand_in = &mFallback[2];
+            VkDescriptorImageInfo white = { getSampler(SamplerDesc()), stand_in->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            mBindlessTbl[t].mInfos.push_back(white);
+        }
     }
 }
 
 U32 Renderer::bindlessSlot(Image* image, VkSampler sampler)
 {
-    if (!mSet2Layout || !image || !image->valid() || !sampler)
+    return bindlessSlotIn(0, image, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout)
+{
+    if (!mSet2Layout || table >= BINDLESS_TABLES || !image || !image->valid() || !sampler)
     {
         return 0;
     }
     bindlessStart();
-    const BindlessKey key = { image->mView, sampler };
-    auto it = mBindlessMap.find(key);
-    if (it != mBindlessMap.end())
+    BindlessTable& tbl = mBindlessTbl[table];
+    const BindlessKey key = { image->mView, sampler, layout };
+    auto it = tbl.mMap.find(key);
+    if (it != tbl.mMap.end())
     {
         return it->second;
     }
-    if (mBindlessInfos.size() >= mBindlessCapacity)
+    if (tbl.mInfos.size() >= mBindlessCapacity)
     {
         LL_WARNS_ONCE("Vulkan") << "bindless table full: the textures after the first " << mBindlessCapacity << " of a frame are drawn white" << LL_ENDL;
         return 0;
     }
-    const U32 slot = (U32)mBindlessInfos.size();
-    VkDescriptorImageInfo info = { sampler, image->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    mBindlessInfos.push_back(info);
-    mBindlessMap.emplace(key, slot);
+    const U32 slot = (U32)tbl.mInfos.size();
+    VkDescriptorImageInfo info = { sampler, image->mView, layout };
+    tbl.mInfos.push_back(info);
+    tbl.mMap.emplace(key, slot);
     return slot;
 }
 
@@ -1647,18 +1671,28 @@ void Renderer::bindlessFlush()
         return;
     }
     bindlessStart();
-    if (mBindlessWritten < mBindlessInfos.size())
+    VkWriteDescriptorSet writes[BINDLESS_TABLES];
+    U32 n = 0;
+    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
     {
-        // the slots taken since the last flush are contiguous: one write
-        VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-        w.dstSet = mBindlessSet[mSlot];
-        w.dstBinding = 0;
-        w.dstArrayElement = mBindlessWritten;
-        w.descriptorCount = (U32)mBindlessInfos.size() - mBindlessWritten;
-        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        w.pImageInfo = mBindlessInfos.data() + mBindlessWritten;
-        vkUpdateDescriptorSets(Context::instance().getDevice(), 1, &w, 0, nullptr);
-        mBindlessWritten = (U32)mBindlessInfos.size();
+        BindlessTable& tbl = mBindlessTbl[t];
+        if (tbl.mWritten < tbl.mInfos.size())
+        {
+            // the slots taken since the last flush are contiguous: one write per table
+            writes[n] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+            writes[n].dstSet = mBindlessSet[mSlot];
+            writes[n].dstBinding = t;
+            writes[n].dstArrayElement = tbl.mWritten;
+            writes[n].descriptorCount = (U32)tbl.mInfos.size() - tbl.mWritten;
+            writes[n].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[n].pImageInfo = tbl.mInfos.data() + tbl.mWritten;
+            tbl.mWritten = (U32)tbl.mInfos.size();
+            ++n;
+        }
+    }
+    if (n)
+    {
+        vkUpdateDescriptorSets(Context::instance().getDevice(), n, writes, 0, nullptr);
     }
     if (!mBindlessBound)
     {
@@ -1998,6 +2032,31 @@ void Renderer::applyState()
     LLVkMirror::gDbg[1] = mSlot;
     LLVkMirror::gDbg[2] = (unsigned long long)mCmd;
     LLVkMirror::gDbg[3] = (unsigned long long)mRing[mSlot].mMapped;
+    // 5b. <FS> bindless programs: the slot of each sampler's texture is written into the loose uniform block (copied to the ring below); no descriptors are pushed
+    if (mProgram->mBindless)
+    {
+        VkSampler fallback_sampler = getSampler(SamplerDesc());
+        for (size_t k = 0; k < mProgram->mInfo.mSamplers.size(); ++k)
+        {
+            const U32 unit = mProgram->mSamplerUnits[k];
+            if (unit >= MAX_TEXTURE_UNITS)
+            {
+                continue;
+            }
+            Image* img = k < MAX_TEXTURE_UNITS && resolved[k] ? resolved[k] : resolveTexture(k, depth_ro, depth_root);
+            const bool is_depth_target = depth_root && root_of(img) == depth_root;
+            const VkSampler sampler = mTextureSamplers[unit] ? mTextureSamplers[unit] : fallback_sampler;
+            const VkImageLayout layout = is_depth_target ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            const U32 slot = bindlessSlotIn(mProgram->mSamplerTable[k], img, sampler, layout);
+            U32* dst = (U32*)(mProgram->mShadow.data() + mProgram->mSlotOffset[k]);
+            if (*dst != slot)
+            {
+                *dst = slot;
+                mProgram->mDirty = true;
+            }
+        }
+        bindlessFlush();
+    }
     // 6. loose uniforms: copy this program's shadow into the ring when it changed (or on its first use this frame)
     if (mProgram->mDirty || mProgram->mRingFrame != Context::instance().getFrameNumber())
     {
@@ -2033,7 +2092,7 @@ void Renderer::applyState()
 
     LLVkMirror::phaseLap(LLVkMirror::PH_A_UNI, lap_t);
     // 7. textures, pushed for exactly the samplers the program declares
-    if (!mProgram->mInfo.mSamplers.empty())
+    if (!mProgram->mBindless && !mProgram->mInfo.mSamplers.empty())
     {
         VkDescriptorImageInfo infos[MAX_TEXTURE_UNITS];
         VkWriteDescriptorSet writes[MAX_TEXTURE_UNITS];

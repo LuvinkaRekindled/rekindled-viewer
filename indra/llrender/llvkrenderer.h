@@ -46,6 +46,7 @@ public:
     const std::string& getName() const { return mName; }
     const ProgramInfo& getInfo() const { return mInfo; }
     bool isValid() const { return mValid; }
+    bool isBindless() const { return mBindless; }
 
     // loose uniforms (write into the shadow copy; uploaded to the uniform ring on the next draw)
     bool hasUniform(const std::string& name) const { return mUniformIndex.count(name) != 0; }
@@ -83,6 +84,9 @@ private:
     std::vector<U32> mSamplerUnits;
     std::vector<U8> mSamplerClass;      // 0 2D, 1 cube, 2 cube array, 3 2D array, 4 3D, 5 multisample (index into the GL per-unit texture bindings)
     std::vector<U8> mShadow;
+    bool mBindless = false;             // <FS> samplers are table slots written into mShadow (see ProgramInfo::mBindless)
+    std::vector<U8> mSamplerTable;      // per sampler: the bindless table it reads (0 2D, 1 cube, 2 cube array, 3 2D shadow)
+    std::vector<U32> mSlotOffset;       // per sampler: byte offset of its slot in mShadow
     bool mDirty = true;
     U32 mRingOffset = 0;                // where this program's block was last written in the uniform ring
     U64 mRingFrame = ~0ull;             // frame number that offset belongs to
@@ -277,6 +281,7 @@ public:
     bool bindlessAvailable() const { return mSet2Layout != VK_NULL_HANDLE; }
     U32 bindlessEpoch() const { return mBindlessEpoch; }         // changes every frame: a slot number from an earlier epoch means nothing
     U32 bindlessSlot(Image* image, VkSampler sampler);
+    U32 bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout);     // table 0 2D, 1 cube, 2 cube array, 3 2D shadow
     void bindlessFlush();           // writes the slots taken since the last call into the frame's set and binds it
 
     VkSampler getSampler(const SamplerDesc& desc);
@@ -392,19 +397,25 @@ private:
     {
         VkImageView mView;
         VkSampler mSampler;
-        bool operator==(const BindlessKey& o) const { return mView == o.mView && mSampler == o.mSampler; }
+        VkImageLayout mLayout;
+        bool operator==(const BindlessKey& o) const { return mView == o.mView && mSampler == o.mSampler && mLayout == o.mLayout; }
     };
     struct BindlessKeyHash
     {
-        size_t operator()(const BindlessKey& k) const { return (size_t)(((U64)k.mView * 0x9E3779B97F4A7C15ull) ^ (((U64)k.mSampler * 0xC2B2AE3D27D4EB4Full) >> 7)); }
+        size_t operator()(const BindlessKey& k) const { return (size_t)(((U64)k.mView * 0x9E3779B97F4A7C15ull) ^ (((U64)k.mSampler * 0xC2B2AE3D27D4EB4Full) >> 7) ^ ((U64)k.mLayout * 0x165667B19E3779F9ull)); }
     };
     void bindlessStart();
     VkDescriptorSetLayout mSet2Layout = VK_NULL_HANDLE;
     VkDescriptorPool mBindlessPool = VK_NULL_HANDLE;
     VkDescriptorSet mBindlessSet[Context::FRAMES_IN_FLIGHT] = {};
-    std::unordered_map<BindlessKey, U32, BindlessKeyHash> mBindlessMap;
-    std::vector<VkDescriptorImageInfo> mBindlessInfos;      // by slot: what the slot holds this frame
-    U32 mBindlessWritten = 0;                               // slots of mBindlessInfos already written into the frame's set
+    static constexpr U32 BINDLESS_TABLES = 4;               // set 2 bindings: 2D, cube, cube array, 2D shadow
+    struct BindlessTable
+    {
+        std::unordered_map<BindlessKey, U32, BindlessKeyHash> mMap;
+        std::vector<VkDescriptorImageInfo> mInfos;          // by slot: what the slot holds this frame
+        U32 mWritten = 0;                                   // slots of mInfos already written into the frame's set
+    };
+    BindlessTable mBindlessTbl[BINDLESS_TABLES];
     U32 mBindlessCapacity = 0;
     U32 mBindlessEpoch = 1;
     bool mBindlessBound = false;

@@ -43,6 +43,7 @@ struct ShaderEnv
 {
     std::vector<std::string> mAttributeNames;       // vertex attribute locations, by index
     std::vector<std::string> mUniformBlockNames;    // named uniform blocks, binding = 1 + index
+    bool mBindless = false;                         // <FS> samplers become indices into the bindless tables (set 2) when every sampler of the program allows it
 };
 
 struct LooseUniform
@@ -60,6 +61,7 @@ struct SamplerInfo
     std::string mName;
     std::string mType;
     U32 mBinding = 0;
+    S32 mIndexUniform = -1;     // bindless programs: index in mUniforms of the uint that holds this sampler's table slot (ll_ti_<name>)
 };
 
 struct ProgramInfo
@@ -67,6 +69,7 @@ struct ProgramInfo
     std::vector<LooseUniform> mUniforms;
     U32 mBlockSize = 0;
     std::vector<SamplerInfo> mSamplers;
+    bool mBindless = false;                     // the samplers are read through the bindless tables: the draw writes their slots into the loose uniform block
     std::vector<std::string> mAttributes;       // vertex inputs the program declares
     std::vector<U32> mAttributeLocations;       // their locations (index in the viewer's reserved attribute list)
     std::vector<std::string> mAttributeTypes;   // their GLSL types ("vec4", "int", ...)
@@ -74,6 +77,9 @@ struct ProgramInfo
     std::vector<U32> mSpirv[3];                 // indexed by StageSource::Stage
     std::string mError;
 };
+
+// true when programs should be translated with bindless samplers (the device supports it and LL_VK_BINDLESS is not 0)
+bool bindlessShaders();
 
 // Compile one program. On failure returns false and mError says why. If dump_dir is not empty the
 // rewritten source of a failing stage is written there for inspection.

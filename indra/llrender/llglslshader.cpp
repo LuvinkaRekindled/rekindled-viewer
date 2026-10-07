@@ -644,6 +644,7 @@ void LLGLSLShader::mirrorCreate()
     LLVk::ShaderEnv env;
     env.mAttributeNames = mgr->mReservedAttribs;
     env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
+    env.mBindless = LLVk::bindlessShaders();
     const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
     if (compiled)
     {
@@ -901,6 +902,7 @@ static void vulkan_check_program(const std::string& name, GLuint program)
     LLVk::ShaderEnv env;
     env.mAttributeNames = mgr->mReservedAttribs;
     env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
+    env.mBindless = LLVk::bindlessShaders();
 
     const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
     LLVk::ProgramInfo info;
