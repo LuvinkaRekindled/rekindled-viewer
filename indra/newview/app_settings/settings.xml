@@ -2645,6 +2645,17 @@
       <key>Value</key>
       <real>0</real>
     </map>
+    <key>FSSkipStaticRiggedAttachmentUpdates</key>
+    <map>
+      <key>Comment</key>
+      <string>Avatars: while another avatar's bounding box and attachments have not changed for a couple of frames (dancing in place), update its rigged attachments (box override, drawable move, bridge move) only every 8th frame instead of every frame. They are culled with the avatar's own box and drawn with its joints, so nothing they would update has changed. Debug switch, applies at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSSkipUnchangedBBoxOverride</key>
     <map>
       <key>Comment</key>
