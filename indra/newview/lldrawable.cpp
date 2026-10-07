@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llgpuzonetimer.h"
 
 #include "lldrawable.h"
 #include <mutex>
@@ -775,6 +776,7 @@ void LLDrawable::moveUpdatePipeline(bool moved)
 
 void LLDrawable::movePartition()
 {
+    LL_CPU_ZONE("octree: drawable movePartition");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
 
     LLSpatialPartition* part = getSpatialPartition();
@@ -786,6 +788,7 @@ void LLDrawable::movePartition()
 
 bool LLDrawable::updateMove()
 {
+    LL_CPU_ZONE("drawable: updateMove");
     if (isDead())
     {
         LL_WARNS() << "Update move on dead drawable!" << LL_ENDL;
@@ -1068,6 +1071,7 @@ const LLVector3& LLDrawable::getBounds(LLVector3& min, LLVector3& max) const
 
 void LLDrawable::updateSpatialExtents()
 {
+    LL_CPU_ZONE("drawable: updateSpatialExtents");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
 
     if (mVObjp)
@@ -1340,6 +1344,7 @@ void LLSpatialBridge::destroyTree()
 
 void LLSpatialBridge::updateSpatialExtents()
 {
+    LL_CPU_ZONE("bridge: updateSpatialExtents");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
 
     LLSpatialGroup* root = (LLSpatialGroup*) mOctree->getListener(0);
@@ -1679,6 +1684,7 @@ void LLSpatialBridge::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool imm
 
 bool LLSpatialBridge::updateMove()
 {
+    LL_CPU_ZONE("bridge: updateMove");
     llassert_always(mDrawable);
     llassert_always(mDrawable->mVObjp);
     llassert_always(mDrawable->getRegion());

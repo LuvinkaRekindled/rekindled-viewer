@@ -2210,6 +2210,7 @@ void LLPipeline::resetFrameStats()
 //external functions for asynchronous updating
 void LLPipeline::updateMoveDampedAsync(LLDrawable* drawablep)
 {
+    LL_CPU_ZONE("pipeline: updateMoveDampedAsync");
     LL_PROFILE_ZONE_SCOPED;
     if (FreezeTime)
     {
@@ -2241,6 +2242,7 @@ void LLPipeline::updateMoveDampedAsync(LLDrawable* drawablep)
 
 void LLPipeline::updateMoveNormalAsync(LLDrawable* drawablep)
 {
+    LL_CPU_ZONE("pipeline: updateMoveNormalAsync");
     LL_PROFILE_ZONE_SCOPED;
     if (FreezeTime)
     {
@@ -2272,6 +2274,7 @@ void LLPipeline::updateMoveNormalAsync(LLDrawable* drawablep)
 
 void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
 {
+    LL_CPU_ZONE("pipeline: updateMovedList");
     LL_PROFILE_ZONE_SCOPED;
     for (LLDrawable::drawable_vector_t::iterator iter = moved_list.begin();
          iter != moved_list.end(); )
@@ -2336,6 +2339,7 @@ void LLPipeline::updateMove()
     updateMovedList(mMovedList);
 
     //balance octrees
+    LL_CPU_ZONE("octree: balance (all partitions)");
     for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
         iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
     {
@@ -3039,6 +3043,7 @@ void LLPipeline::rebuildPriorityGroups()
 
 void LLPipeline::updateGeom(F32 max_dtime)
 {
+    LL_CPU_ZONE("pipeline: updateGeom");
     LLTimer update_timer;
     LLPointer<LLDrawable> drawablep;
 
