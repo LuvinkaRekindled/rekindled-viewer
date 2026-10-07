@@ -56,3 +56,14 @@ Candidates once M4 works, each judged by eye and by cost: temporal AA (DLAA/TAA)
 - Thread-safety of the resource/handle tables (design above: ids allocated on the producer with atomics, objects created on the executor).
 - Readback paths (snapshot, pick, texture save, previews) need real completions instead of GL's implicit sync.
 - Media plugin textures (CEF) need external-memory interop: leave media off until M5.
+
+## Status (2026-10-07): stage N1a done, LL_VK_NOGL works
+The viewer now runs with no OpenGL context at all (branch `native-vk`, commits bac2360b, 21cac4b9, 01ca05e3). Adam: login, web content, quick clean login and load, about 228 fps in a mostly empty scene; GPU class 5; log clean (7 informational unanswered limit queries).
+What it took, for the record:
+- generator: wrappers skip real GL with LL_VK_NOGL; pass-through wrappers for the 18 unhooked GL calls (glGetError, glGetString, glFlush, ...).
+- start-up: GL strings, limits and VRAM come from the Vulkan device (`LLGLManager::initGLNoGL`, `LLVkMirror::describeDevice`); the GL_RENDERER string must stay byte-identical to what the driver reported (`.../PCIe/SSE2`), or the viewer decides the GPU changed and resets and saves the graphics settings (see memory: backup user_settings first).
+- window: no pixel format and no WGL context; the main window is given to Vulkan.
+- worker threads: `createSharedContext` returns a dummy non-null token, otherwise the texture/media upload threads never start while the code still queues work for them (black web view, stuck uploads).
+- Tracy's GPU profiling creates a GL context: three places guarded.
+- the GPU benchmark times GL queries: replaced by a fixed bandwidth in this mode.
+Not done yet (N1a-2): the process still has OPENGL32.dll, GLU32.dll and NVIDIA's nvoglv64.dll loaded (link-time imports of the dead GL paths, and something loads the driver). Remove: drop opengl32 from the link, delete the dead real-GL branches and the GL function pointer loader, find the nvoglv64 loader. Then N1b (typed command stream, state objects) and the class-by-class native objects.
