@@ -72,7 +72,6 @@ public:
     void shutdownGL();
 
 #if LL_WINDOWS
-    void initWGL(); // Initializes stupid WGL extensions
 #endif
 
     std::string getRawGLString(); // For sending to simulator
@@ -146,7 +145,6 @@ public:
     std::string mGLRenderer;
 
 private:
-    void initExtensions();
     void initGLStates();
 };
 
