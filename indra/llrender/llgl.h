@@ -68,6 +68,7 @@ public:
     LLGLManager();
 
     bool initGL();
+    bool initGLNoGL();     // <FS> LL_VK_NOGL: everything comes from the Vulkan device
     void shutdownGL();
 
 #if LL_WINDOWS

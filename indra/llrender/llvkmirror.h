@@ -31,6 +31,12 @@ namespace LLVkMirror
     // initialises Vulkan lazily on first use; returns isReady()
     bool ensureReady();
 
+    // LL_VK_NOGL: the viewer has no OpenGL context, so the main window is given here (once it exists) and the picture is presented into it
+    void setMainWindow(void* hwnd);
+    // LL_VK_NOGL: what the GL strings the viewer parses at start-up say (vendor, renderer, version) and the video memory in MB; starts Vulkan if needed.
+    // False if Vulkan cannot be started.
+    bool describeDevice(std::string& vendor, std::string& renderer, std::string& version, U32& vram_mb);
+
     // true between beginFrame() and endFrame() of a frame that is being recorded
     bool inFrame();
 

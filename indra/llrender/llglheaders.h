@@ -1092,6 +1092,10 @@ extern void glGetBufferPointervARB (GLenum, GLenum, GLvoid* *);
 #endif
 
 
+// <FS> LL_VK_NOGL: the viewer runs without any OpenGL context (see llgl.cpp)
+bool ll_nogl();
+const GLubyte* ll_nogl_string(GLenum name);
+
 // <FS> Vulkan mirror: wrap the GL functions the viewer draws with (does nothing without USE_VULKAN)
 #include "llvkgl.h"
 

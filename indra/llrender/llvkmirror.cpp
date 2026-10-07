@@ -12,6 +12,8 @@
 bool LLVkMirror::isRequested() { return false; }
 bool LLVkMirror::isReady() { return false; }
 bool LLVkMirror::ensureReady() { return false; }
+void LLVkMirror::setMainWindow(void*) {}
+bool LLVkMirror::describeDevice(std::string&, std::string&, std::string&, U32&) { return false; }
 bool LLVkMirror::inFrame() { return false; }
 void LLVkMirror::beginFrame(S32, S32) {}
 void LLVkMirror::endFrame() {}
@@ -379,6 +381,7 @@ void bench_vk_collect(bool offscreen)
 }
 
 const wchar_t* const MIRROR_WINDOW_CLASS = L"LLVkMirrorWindow";
+void* sMainWindowHandle = nullptr;        // LL_VK_NOGL: the viewer's main window (no GL context to find it from)
 
 // The mirror never drops a frame by default: OpenGL moves on regardless, so a dropped frame would lose incremental work such as a
 // reflection probe face. LL_VK_MIRROR_DROP=1 restores the non-blocking behaviour (frames are skipped while the GPU is behind).
@@ -476,7 +479,11 @@ bool create_window()
     const char* embed = getenv("LL_VK_EMBED");
     if (embed != nullptr)
     {
-        if (HDC dc = wglGetCurrentDC())
+        if (sMainWindowHandle)
+        {
+            parent = (HWND)sMainWindowHandle;       // no OpenGL context (LL_VK_NOGL): the window code told us
+        }
+        else if (HDC dc = wglGetCurrentDC())
         {
             parent = WindowFromDC(dc);
         }
@@ -597,6 +604,42 @@ LLVk::Image* LLVkMirror::backbufferDepth()
 bool LLVkMirror::inFrame()
 {
     return sMirror.mReady && sMirror.mInFrame;
+}
+
+void LLVkMirror::setMainWindow(void* hwnd)
+{
+    sMainWindowHandle = hwnd;
+}
+
+bool LLVkMirror::describeDevice(std::string& vendor, std::string& renderer, std::string& version, U32& vram_mb)
+{
+    if (!ensureReady())
+    {
+        return false;
+    }
+    const LLVk::Capabilities& caps = LLVk::Context::instance().getCaps();
+    switch (caps.mVendorId)
+    {
+    case 0x10DE: vendor = "NVIDIA Corporation"; break;
+    case 0x1002: vendor = "ATI Technologies Inc."; break;
+    case 0x8086: vendor = "Intel"; break;
+    default:     vendor = "Unknown vendor"; break;
+    }
+    renderer = caps.mDeviceName;
+    // the driver version is packed by the vendor; NVIDIA uses 10.8.8.6 bits
+    const U32 d = caps.mDriverVersion;
+    char buf[96];
+    if (caps.mVendorId == 0x10DE)
+    {
+        snprintf(buf, sizeof(buf), "4.6.0 NVIDIA %u.%u (Vulkan %u.%u)", d >> 22, (d >> 14) & 0xFF, VK_API_VERSION_MAJOR(caps.mApiVersion), VK_API_VERSION_MINOR(caps.mApiVersion));
+    }
+    else
+    {
+        snprintf(buf, sizeof(buf), "4.6.0 Vulkan %u.%u", VK_API_VERSION_MAJOR(caps.mApiVersion), VK_API_VERSION_MINOR(caps.mApiVersion));
+    }
+    version = buf;
+    vram_mb = (U32)(LLVk::Context::instance().deviceLocalBytes() / (1024 * 1024));
+    return true;
 }
 
 bool LLVkMirror::ensureReady()
