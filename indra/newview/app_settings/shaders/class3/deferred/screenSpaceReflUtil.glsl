@@ -75,8 +75,13 @@ float getLinearDepth(vec2 tc)
     return -pos.z;
 }
 
-bool traceScreenRay(vec3 position, vec3 reflection, out vec4 hitColor, out float hitDepth, float depth, sampler2D textureFrame)
+// <FS> rejectUp: the view space up vector when the surface is water (zero otherwise). A hit on a pixel at or below the water plane is the water itself (the scene map
+// is the previous frame, which contains the water): with the ripples those self hits come and go from pixel to pixel and from frame to frame, which showed as bands
+// and flicker. Only things standing above the water count as reflections.
+bool traceScreenRay(vec3 position, vec3 reflection, out vec4 hitColor, out float hitDepth, float depth, sampler2D textureFrame, vec3 rejectUp, vec2 uvOffset)
 {
+    bool rejectLow = dot(rejectUp, rejectUp) > 0.5;
+    vec3 upPrev = mat3(inv_modelview_delta) * rejectUp;
     // transform position and reflection into same coordinate frame as the sceneMap and sceneDepth
     reflection += position;
     position = (inv_modelview_delta * vec4(position, 1)).xyz;
@@ -84,6 +89,8 @@ bool traceScreenRay(vec3 position, vec3 reflection, out vec4 hitColor, out float
     reflection -= position;
 
     depth = -position.z;
+    vec3 originPrev = position;
+    bool rejected = false;
 
     vec3 step = rayStep * reflection;
     vec3 marchingPosition = position + step;
@@ -115,10 +122,15 @@ bool traceScreenRay(vec3 position, vec3 reflection, out vec4 hitColor, out float
 
             if (abs(delta) < distanceBias)
             {
+                if (rejectLow && dot(getPositionWithDepth(screenPosition, texture(sceneDepth, screenPosition).r).xyz - originPrev, upPrev) < 0.5)
+                {
+                    rejected = true;
+                    break;
+                }
                 vec4 color = vec4(1);
                 if(debugDraw)
                     color = vec4( 0.5+ sign(delta)/2,0.3,0.5- sign(delta)/2, 0);
-                hitColor = texture(sceneMap, screenPosition) * color;
+                hitColor = texture(sceneMap, screenPosition + uvOffset) * color;
                 hitDepth = depthFromScreen;
                 hit = true;
                 break;
@@ -145,7 +157,7 @@ bool traceScreenRay(vec3 position, vec3 reflection, out vec4 hitColor, out float
                 step *= adaptiveStepMultiplier;
             }
         }
-        if(isBinarySearchEnabled)
+        if(isBinarySearchEnabled && !rejected)
         {
             for(; i < iterationCount && !hit; i++)
             {
@@ -169,10 +181,14 @@ bool traceScreenRay(vec3 position, vec3 reflection, out vec4 hitColor, out float
 
                 if (abs(delta) < distanceBias && depthFromScreen != (depth - distanceBias))
                 {
+                    if (rejectLow && dot(getPositionWithDepth(screenPosition, texture(sceneDepth, screenPosition).r).xyz - originPrev, upPrev) < 0.5)
+                    {
+                        break;
+                    }
                     vec4 color = vec4(1);
                     if(debugDraw)
                         color = vec4( 0.5+ sign(delta)/2,0.3,0.5- sign(delta)/2, 0);
-                    hitColor = texture(sceneMap, screenPosition) * color;
+                    hitColor = texture(sceneMap, screenPosition + uvOffset) * color;
                     hitDepth = depthFromScreen;
                     hit = true;
                     break;
@@ -319,7 +335,99 @@ vec3 getPoissonSample(int i) {
     return POISSON3D_SAMPLES[i] * 2 - 1;
 }
 
-float tapScreenSpaceReflection(int totalSamples, vec2 tc, vec3 viewPos, vec3 n, inout vec4 collectedColor, sampler2D source, float glossiness)
+// <FS> Water reflection trace. The general marcher below takes exponentially growing steps and only counts a hit that lands within a fixed 1.5 cm of a surface, so
+// which step the ray happens to land on decides if it hits: one flat band of reflection per step length, and grain where neighbouring ripples disagree. This one
+// walks a fixed number of steps in screen space (perspective correct), accepts a crossing within a thickness that grows with the step, and finds the exact crossing
+// with a binary search. The screen position of the hit is returned (alpha is the confidence).
+vec4 traceWaterReflection(vec3 viewPos, vec3 dir, vec3 rejectUp, vec2 uvOffset)
+{
+    vec3 P0 = (inv_modelview_delta * vec4(viewPos, 1.0)).xyz;       // the scene map is the previous frame: work in its camera space
+    vec3 R = normalize(mat3(inv_modelview_delta) * dir);
+    vec3 upPrev = mat3(inv_modelview_delta) * rejectUp;
+
+    const float nearZ = 0.1;
+    vec3 P1 = P0 + R * 400.0;
+    if (P1.z > -nearZ)
+    {
+        P1 = P0 + (P1 - P0) * ((-nearZ - P0.z) / (P1.z - P0.z));
+    }
+
+    vec4 c0 = projection_matrix * vec4(P0, 1.0);
+    vec4 c1 = projection_matrix * vec4(P1, 1.0);
+    float k0 = 1.0 / c0.w;
+    float k1 = 1.0 / c1.w;
+    vec2 s0 = c0.xy * k0 * 0.5 + 0.5;
+    vec2 s1 = c1.xy * k1 * 0.5 + 0.5;
+    vec2 d = s1 - s0;
+
+    // stop where the ray leaves the screen
+    float tmax = 1.0;
+    if (d.x > 0.0) tmax = min(tmax, (1.0 - s0.x) / d.x); else if (d.x < 0.0) tmax = min(tmax, -s0.x / d.x);
+    if (d.y > 0.0) tmax = min(tmax, (1.0 - s0.y) / d.y); else if (d.y < 0.0) tmax = min(tmax, -s0.y / d.y);
+    tmax = max(tmax, 0.0);
+
+    vec2 res = vec2(textureSize(sceneDepth, 0));
+    float lenPx = length(d * res) * tmax;
+    if (lenPx < 2.0)
+    {
+        return vec4(0);
+    }
+
+    const int maxSteps = 48;
+    int steps = int(clamp(ceil(lenPx / 5.0), 2.0, float(maxSteps)));
+    float dt = tmax / float(steps);
+    float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));     // fixed per pixel: no shimmer over time
+
+    float prevT = 0.0;
+    float prevZ = 1.0 / k0;
+    for (int i = 1; i <= maxSteps; i++)
+    {
+        if (i > steps)
+        {
+            break;
+        }
+        float t = min(dt * (float(i) + jitter), tmax);
+        vec2 uv = s0 + d * t;
+        float z = 1.0 / (k0 + (k1 - k0) * t);
+        float sceneZ = getLinearDepth(uv);
+        float diff = z - sceneZ;                    // positive: the ray is behind the surface
+        float thick = max(0.3, abs(z - prevZ) * 1.5);
+        if (diff > 0.0 && diff < thick)
+        {
+            // the crossing is between prevT and t: narrow it down
+            float lo = prevT;
+            float hi = t;
+            for (int b = 0; b < 6; b++)
+            {
+                float mid = 0.5 * (lo + hi);
+                vec2 muv = s0 + d * mid;
+                float mz = 1.0 / (k0 + (k1 - k0) * mid);
+                if (mz - getLinearDepth(muv) > 0.0)
+                {
+                    hi = mid;
+                }
+                else
+                {
+                    lo = mid;
+                }
+            }
+            vec2 huv = s0 + d * hi;
+            vec3 hp = getPositionWithDepth(huv, texture(sceneDepth, huv).r).xyz;
+            if (dot(hp - P0, upPrev) < 0.5)
+            {
+                return vec4(0);                     // the water itself (the scene map contains it), not something standing on it
+            }
+            vec2 e2 = min(huv, 1.0 - huv);
+            float edge = clamp(min(e2.x, e2.y) * 10.0, 0.0, 1.0);
+            return vec4(texture(sceneMap, huv + uvOffset).rgb, edge);
+        }
+        prevT = t;
+        prevZ = z;
+    }
+    return vec4(0);
+}
+
+float tapScreenSpaceReflection(int totalSamples, vec2 tc, vec3 viewPos, vec3 n, inout vec4 collectedColor, sampler2D source, float glossiness, vec3 rejectUp)
 {
 #ifdef TRANSPARENT_SURFACE
 collectedColor = vec4(1, 0, 1, 1);
@@ -328,9 +436,26 @@ collectedColor = vec4(1, 0, 1, 1);
     collectedColor = vec4(0);
     int hits = 0;
 
+    // <FS> water (rejectUp is set): the ray is traced against a mostly smoothed normal so that neighbouring pixels reflect a coherent picture instead of
+    // each ripple sending its ray somewhere else, and the ripples only shift where the colour is read (so the reflection wobbles instead of flickering)
+    vec3 nTrace = normalize(n);
+    vec2 uvOffset = vec2(0);
+    if (dot(rejectUp, rejectUp) > 0.5)
+    {
+        nTrace = normalize(mix(rejectUp, nTrace, 0.12));
+        uvOffset = (normalize(n).xy - nTrace.xy) * 0.1;
+    }
+
     float depth = -viewPos.z;
 
-    vec3 rayDirection = normalize(reflect(viewPos, normalize(n)));
+    vec3 rayDirection = normalize(reflect(viewPos, nTrace));
+
+    if (dot(rejectUp, rejectUp) > 0.5)
+    {
+        // water: the trace above, one ray (the normal is smoothed, extra random directions would only add grain)
+        collectedColor = traceWaterReflection(viewPos, rayDirection, rejectUp, uvOffset);
+        return collectedColor.a;
+    }
 
     vec2 uv2 = tc * screen_res;
     float c = (uv2.x + uv2.y) * 0.125;
@@ -338,7 +463,7 @@ collectedColor = vec4(1, 0, 1, 1);
 
     vec2 screenpos = 1 - abs(tc * 2 - 1);
     float vignette = clamp((abs(screenpos.x) * abs(screenpos.y)) * 16,0, 1);
-    vignette *= clamp((dot(normalize(viewPos), n) * 0.5 + 0.5) * 5.5 - 0.8, 0, 1);
+    vignette *= clamp((dot(normalize(viewPos), nTrace) * 0.5 + 0.5) * 5.5 - 0.8, 0, 1);
 
     float zFar = 128.0;
     vignette *= clamp(1.0+(viewPos.z/zFar), 0.0, 1.0);
@@ -365,7 +490,7 @@ collectedColor = vec4(1, 0, 1, 1);
 
                 //float hitDepth;
 
-                bool hit = traceScreenRay(viewPos, normalize(reflectionDirectionRandomized), hitpoint, depth, depth, source);
+                bool hit = traceScreenRay(viewPos, normalize(reflectionDirectionRandomized), hitpoint, depth, depth, source, rejectUp, uvOffset);
 
                 hitpoint.a = 0;
 

@@ -26,7 +26,7 @@
 #define FLT_MAX 3.402823466e+38
 
 #if defined(SSR)
-float tapScreenSpaceReflection(int totalSamples, vec2 tc, vec3 viewPos, vec3 n, inout vec4 collectedColor, sampler2D source, float glossiness);
+float tapScreenSpaceReflection(int totalSamples, vec2 tc, vec3 viewPos, vec3 n, inout vec4 collectedColor, sampler2D source, float glossiness, vec3 rejectUp);
 #endif
 
 uniform samplerCubeArray   reflectionProbes;
@@ -733,6 +733,9 @@ void tapHeroProbe(inout vec3 glossenv, vec3 pos, vec3 norm, float glossiness)
 
 
 
+// <FS> set by sampleReflectionProbesWater: the screen space reflection ignores hits on the water plane itself (see traceScreenRay)
+bool probe_water_surface = false;
+
 void doProbeSample(inout vec3 ambenv, inout vec3 glossenv,
         vec2 tc, vec3 pos, vec3 norm, float glossiness, bool transparent, vec3 amblit)
 {
@@ -753,14 +756,15 @@ void doProbeSample(inout vec3 ambenv, inout vec3 glossenv,
     if (cube_snapshot != 1 && glossiness >= 0.9)
     {
         vec4 ssr = vec4(0);
+        vec3 rejectUp = probe_water_surface ? vec3(0, 0, 1) * env_mat : vec3(0);     // world up in view space
         if (transparent)
         {
-            tapScreenSpaceReflection(1, tc, pos, norm, ssr, sceneMap, 1);
+            tapScreenSpaceReflection(1, tc, pos, norm, ssr, sceneMap, 1, rejectUp);
             ssr.a *= glossiness;
         }
         else
         {
-            tapScreenSpaceReflection(1, tc, pos, norm, ssr, sceneMap, glossiness);
+            tapScreenSpaceReflection(1, tc, pos, norm, ssr, sceneMap, glossiness, rejectUp);
         }
 
 
@@ -788,7 +792,9 @@ void sampleReflectionProbesWater(inout vec3 ambenv, inout vec3 glossenv,
     // always include void probe on water
     probeIndex[probeInfluences++] = 0;
 
+    probe_water_surface = true;
     doProbeSample(ambenv, glossenv, tc, pos, norm, glossiness, false, amblit);
+    probe_water_surface = false;
 }
 
 void debugTapRefMap(vec3 pos, vec3 dir, float depth, int i, inout vec4 col)
@@ -871,12 +877,12 @@ void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout 
 
         if (transparent)
         {
-            tapScreenSpaceReflection(1, tc, pos, norm, ssr, sceneMap, 1);
+            tapScreenSpaceReflection(1, tc, pos, norm, ssr, sceneMap, 1, vec3(0));
             ssr.a *= glossiness;
         }
         else
         {
-            tapScreenSpaceReflection(1, tc, pos, norm, ssr, sceneMap, glossiness);
+            tapScreenSpaceReflection(1, tc, pos, norm, ssr, sceneMap, glossiness, vec3(0));
         }
 
         glossenv = mix(glossenv, ssr.rgb, ssr.a);
