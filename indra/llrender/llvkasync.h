@@ -57,6 +57,9 @@ namespace LLVkAsync
     void shaderBind(void* program, U32 enable_mask, U32 disable_mask);
     // the unit a following texture bind or texture call uses (LLTexUnit::activate): held until the next record, replaces a glActiveTexture call
     void activeTextureUnit(U32 unit);
+    // texture parameters (wrap, filter, anisotropy) of the texture bound on the active unit, written as one record (played as glTexParameteri / glTexParameterf in order)
+    struct TexParam { U32 mPname; U32 mIsFloat; S32 mInt; F32 mFloat; };
+    void texParameters(U32 target, const TexParam* params, U32 count);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
     // commands that are not GL calls (the GL calls are numbered by the generated enum in llvkgl.h)
@@ -69,7 +72,9 @@ namespace LLVkAsync
         CMD_BIND_TEXTURE_UNIT, CMD_ARRAY_RUN,      // merged records, see the coalescing in llvkasync.cpp
         CMD_BUFFER_DATA, CMD_BUFFER_SUBDATA,       // named buffer storage (bufferData / bufferSubData)
         CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (LLVkMirror::shadowPackets)
-        CMD_SHADER_BIND                            // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
+        CMD_SHADER_BIND,                           // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
+        CMD_TEX_PARAMS                             // texture parameters of the bound texture, several in one record (LLTexUnit sampler state)
+        // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 
     // frame boundaries: the main thread may be at most two frames ahead of the worker

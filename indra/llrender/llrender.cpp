@@ -534,13 +534,47 @@ void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
     setTextureAddressModeFast(mode, mCurrTexType);
 }
 
+// <FS> N4: the sampler parameters of one texture are written as one record on the queue's producer (the plain glTexParameter calls anywhere else)
+struct TexParams
+{
+    GLenum mTarget;
+#if defined(LL_VULKAN)
+    bool mTyped;
+    LLVkAsync::TexParam mE[8];
+    U32 mN = 0;
+    explicit TexParams(GLenum target) : mTarget(target), mTyped(LLVkAsync::mainProducer()) {}
+    void i(GLenum pname, GLint v)
+    {
+        if (mTyped) mE[mN++] = { (U32)pname, 0, (S32)v, 0.f };
+        else glTexParameteri(mTarget, pname, v);
+    }
+    void f(GLenum pname, GLfloat v)
+    {
+        if (mTyped) mE[mN++] = { (U32)pname, 1, 0, v };
+        else glTexParameterf(mTarget, pname, v);
+    }
+    ~TexParams()
+    {
+        if (mTyped && mN)
+        {
+            LLVkAsync::texParameters(mTarget, mE, mN);
+        }
+    }
+#else
+    explicit TexParams(GLenum target) : mTarget(target) {}
+    void i(GLenum pname, GLint v) { glTexParameteri(mTarget, pname, v); }
+    void f(GLenum pname, GLfloat v) { glTexParameterf(mTarget, pname, v); }
+#endif
+};
+
 void LLTexUnit::setTextureAddressModeFast(eTextureAddressMode mode, eTextureType tex_type)
 {
-    glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_WRAP_S, sGLAddressMode[mode]);
-    glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_WRAP_T, sGLAddressMode[mode]);
+    TexParams p(sGLTextureType[tex_type]);
+    p.i(GL_TEXTURE_WRAP_S, sGLAddressMode[mode]);
+    p.i(GL_TEXTURE_WRAP_T, sGLAddressMode[mode]);
     if (tex_type == TT_CUBE_MAP || tex_type == TT_CUBE_MAP_ARRAY || tex_type == TT_TEXTURE_3D)
     {
-        glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_WRAP_R, sGLAddressMode[mode]);
+        p.i(GL_TEXTURE_WRAP_R, sGLAddressMode[mode]);
     }
 }
 
@@ -555,39 +589,40 @@ void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions optio
 
 void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions option, eTextureType tex_type)
 {
+    TexParams p(sGLTextureType[tex_type]);
     if (option == TFO_POINT)
     {
-        glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        p.i(GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
     else
     {
-        glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        p.i(GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
 
     if (option >= TFO_TRILINEAR && mHasMipMaps)
     {
-        glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        p.i(GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     }
     else if (option >= TFO_BILINEAR)
     {
         if (mHasMipMaps)
         {
-            glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+            p.i(GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
         }
         else
         {
-            glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            p.i(GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         }
     }
     else
     {
         if (mHasMipMaps)
         {
-            glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+            p.i(GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
         }
         else
         {
-            glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            p.i(GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         }
     }
 
@@ -595,11 +630,11 @@ void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions o
     {
         if (LLImageGL::sGlobalUseAnisotropic && option == TFO_ANISOTROPIC)
         {
-            glTexParameterf(sGLTextureType[tex_type], GL_TEXTURE_MAX_ANISOTROPY, gGLManager.mMaxAnisotropy);
+            p.f(GL_TEXTURE_MAX_ANISOTROPY, gGLManager.mMaxAnisotropy);
         }
         else
         {
-            glTexParameterf(sGLTextureType[tex_type], GL_TEXTURE_MAX_ANISOTROPY, 1.f);
+            p.f(GL_TEXTURE_MAX_ANISOTROPY, 1.f);
         }
     }
 }
