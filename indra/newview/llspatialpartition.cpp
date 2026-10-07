@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llgpuzonetimer.h"
 
 #include "llspatialpartition.h"
 
@@ -229,6 +230,7 @@ void LLSpatialGroup::validateDrawMap()
 
 bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
 {
+    LL_CPU_ZONE("octree: group updateInGroup");
     LL_PROFILE_ZONE_SCOPED;
     drawablep->updateSpatialExtents();
 
@@ -349,6 +351,7 @@ void LLSpatialGroup::rebuildMesh()
 
 void LLSpatialPartition::rebuildGeom(LLSpatialGroup* group)
 {
+    LL_CPU_ZONE("octree: partition rebuildGeom");
     if (group->isDead() || !group->hasState(LLSpatialGroup::GEOM_DIRTY))
     {
         return;
@@ -947,6 +950,7 @@ LLSpatialPartition::~LLSpatialPartition()
 
 LLSpatialGroup *LLSpatialPartition::put(LLDrawable *drawablep, bool was_visible)
 {
+    LL_CPU_ZONE("octree: partition put");
     LL_PROFILE_ZONE_SCOPED;
     drawablep->updateSpatialExtents();
 
@@ -973,6 +977,7 @@ LLSpatialGroup *LLSpatialPartition::put(LLDrawable *drawablep, bool was_visible)
 
 bool LLSpatialPartition::remove(LLDrawable *drawablep, LLSpatialGroup *curp)
 {
+    LL_CPU_ZONE("octree: partition remove");
     LL_PROFILE_ZONE_SCOPED;
     if (!curp->removeObject(drawablep))
     {
@@ -990,6 +995,7 @@ bool LLSpatialPartition::remove(LLDrawable *drawablep, LLSpatialGroup *curp)
 
 void LLSpatialPartition::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool immediate)
 {
+    LL_CPU_ZONE("octree: partition move");
     LL_PROFILE_ZONE_SCOPED;
     // sanity check submitted by open source user bushing Spatula
     // who was seeing crashing here. (See VWR-424 reported by Bunny Mayne)
@@ -1454,6 +1460,7 @@ extern bool gCubeSnapshot;
 
 S32 LLSpatialPartition::cull(LLCamera &camera, bool do_occlusion)
 {
+    LL_CPU_ZONE("octree: partition cull (render)");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SPATIAL;
 #if LL_OCTREE_PARANOIA_CHECK
     ((LLSpatialGroup*)mOctree->getListener(0))->checkStates();

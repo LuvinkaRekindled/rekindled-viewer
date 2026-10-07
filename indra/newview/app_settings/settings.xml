@@ -2645,6 +2645,17 @@
       <key>Value</key>
       <real>0</real>
     </map>
+    <key>FSSkipUnchangedBBoxOverride</key>
+    <map>
+      <key>Comment</key>
+      <string>Avatars: do not re-apply the avatar's bounding box to a rigged attachment (and move it in the octree) when the box has not changed by more than a centimetre. Debug switch, applies at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSSSRWaterTrace</key>
     <map>
       <key>Comment</key>

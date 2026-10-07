@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llgpuzonetimer.h"
 #include <chrono>
 
 #include "llvoavatar.h"
@@ -3539,9 +3540,38 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
     }//if ( voiceEnabled )
 }
 
+// <FS> debug switch (live): skip override_bbox() when the box has not changed
+static bool FSSkipUnchangedBBoxOverride()
+{
+    static LLCachedControl<bool> skip(gSavedSettings, "FSSkipUnchangedBBoxOverride", true);
+    return skip;
+}
+
 static void override_bbox(LLDrawable* drawable, LLVector4a* extents)
 {
+    LL_CPU_ZONE("octree: avatar override_bbox");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SPATIAL;
+
+    // <FS> A rigged attachment keeps the box it was given (LLVOVolume::updateSpatialExtents does nothing), so giving it the same box again only makes
+    // movePartition() run updateInGroup(): the bin radius is worked out again, the group is marked dirty, for nothing. Skip it when the box has not
+    // moved (within a centimetre) and the drawable is still in its octree node.
+    if (drawable->getSpatialGroup() && FSSkipUnchangedBBoxOverride())
+    {
+        const F32* cur = drawable->getSpatialExtents()[0].getF32ptr();
+        const F32* cur_max = drawable->getSpatialExtents()[1].getF32ptr();
+        const F32* pos = drawable->getPositionGroup().getF32ptr();
+        const F32* new_min = extents[0].getF32ptr();
+        const F32* new_max = extents[1].getF32ptr();
+        constexpr F32 tolerance = 0.01f;
+        if (pos[0] == 0.f && pos[1] == 0.f && pos[2] == 0.f
+            && fabsf(cur[0] - new_min[0]) < tolerance && fabsf(cur[1] - new_min[1]) < tolerance && fabsf(cur[2] - new_min[2]) < tolerance
+            && fabsf(cur_max[0] - new_max[0]) < tolerance && fabsf(cur_max[1] - new_max[1]) < tolerance && fabsf(cur_max[2] - new_max[2]) < tolerance)
+        {
+            return;
+        }
+    }
+
+    LL_CPU_ZONE("octree: avatar override_bbox applied");
     drawable->setSpatialExtents(extents[0], extents[1]);
     drawable->setPositionGroup(LLVector4a(0.f, 0.f, 0.f));
     drawable->movePartition();
