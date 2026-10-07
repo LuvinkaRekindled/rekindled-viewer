@@ -238,7 +238,10 @@ public:
     {
         mWindow->makeContextCurrent(mContext);
         gGL.init(false);
-        LL_PROFILER_GPU_CONTEXT_NS("LLGLWorker Context", 18);
+        if (!ll_nogl())
+        {
+            LL_PROFILER_GPU_CONTEXT_NS("LLGLWorker Context", 18);     // Tracy's GPU profiling needs real OpenGL
+        }
         mQueue->runUntilClose();
         gGL.shutdown();
         mWindow->destroySharedContext(mContext);

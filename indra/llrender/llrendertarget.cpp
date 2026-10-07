@@ -29,6 +29,8 @@
 #include "llrendertarget.h"
 #include "llrender.h"
 #include "llgl.h"
+#include <atomic>
+#include <windows.h>        // CaptureStackBackTrace
 
 LLRenderTarget* LLRenderTarget::sBoundTarget = NULL;
 U32 LLRenderTarget::sBytesAllocated = 0;
@@ -482,7 +484,27 @@ U32 LLRenderTarget::getTexture(U32 attachment) const
 {
     if (attachment >= mTex.size())
     {
-        LL_WARNS() << "Invalid attachment index " << attachment << " for size " << mTex.size() << LL_ENDL;
+        // <FS> this was logged on every call (a million times in a few minutes with LL_VK_NOGL): the first few with the caller, then now and then
+        static std::atomic<U32> sInvalidCount(0);
+        const U32 n = sInvalidCount.fetch_add(1);
+        if (n < 4)
+        {
+            void* frames[10] = {};
+            const USHORT count = CaptureStackBackTrace(1, 10, frames, nullptr);
+            std::string where;
+            for (USHORT i = 0; i < count; ++i)
+            {
+                char buf[24];
+                snprintf(buf, sizeof(buf), " %p", frames[i]);
+                where += buf;
+            }
+            LL_WARNS() << "Invalid attachment index " << attachment << " for size " << mTex.size() << " (target " << mResX << "x" << mResY << ", depth "
+                << mDepth << "), called from:" << where << LL_ENDL;
+        }
+        else if ((n & 0xFFFFF) == 0)
+        {
+            LL_WARNS() << "Invalid attachment index " << attachment << " for size " << mTex.size() << " (" << n << " times so far)" << LL_ENDL;
+        }
         llassert(false);
         return 0;
     }

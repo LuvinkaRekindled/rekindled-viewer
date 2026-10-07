@@ -1971,7 +1971,9 @@ void* LLWindowWin32::createSharedContext()
 {
     if (ll_nogl())
     {
-        return nullptr;     // <FS> no OpenGL: the worker threads need no context
+        // <FS> no OpenGL: there is no context to make, but the texture and media upload threads (LLImageGLThread, LLVertexBuffer's) only start when they get
+        // one; a dummy token keeps them running (makeContextCurrent / destroySharedContext ignore it)
+        return (void*)1;
     }
     mMaxGLVersion = llclamp(mMaxGLVersion, 3.f, 4.6f);
 

@@ -2718,7 +2718,10 @@ void LLImageGLThread::run()
     // WorkQueue, likewise cleanup afterwards.
     mWindow->makeContextCurrent(mContext);
     gGL.init(false);
-    LL_PROFILER_GPU_CONTEXT_NS("LLImageGL Context", 17);
+    if (!ll_nogl())
+    {
+        LL_PROFILER_GPU_CONTEXT_NS("LLImageGL Context", 17);        // Tracy's GPU profiling needs real OpenGL
+    }
     LL::ThreadPool::run();
     gGL.shutdown();
     mWindow->destroySharedContext(mContext);
