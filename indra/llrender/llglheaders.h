@@ -1087,9 +1087,7 @@ extern void glGetBufferPointervARB (GLenum, GLenum, GLvoid* *);
 #define GL_RENDERBUFFER_FREE_MEMORY_ATI            0x87FD
 #endif
 
-#if defined(TRACY_ENABLE) && LL_PROFILER_ENABLE_TRACY_OPENGL
-    #include <tracy/TracyOpenGL.hpp>
-#endif
+// <FS> native-vk: no Tracy OpenGL header (its GPU zones are not used any more, see llprofiler.h)
 
 
 // <FS> LL_VK_NOGL: the viewer runs without any OpenGL context (see llgl.cpp)
