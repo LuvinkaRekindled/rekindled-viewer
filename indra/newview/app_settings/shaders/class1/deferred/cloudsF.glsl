@@ -98,6 +98,13 @@ void main()
     alpha1 *= altitude_blend_factor;
     alpha1 = clamp(alpha1, 0.0, 1.0);
 
+    // <FS> where there is no cloud the blend (source alpha 0) leaves the destination exactly as it is in every attachment, so the pixel is thrown away here:
+    // no second noise lookup, no colour work, and no blended write into the four G-buffer targets for the clear parts of the sky. The picture is identical.
+    if (alpha1 <= 0.0)
+    {
+        discard;
+    }
+
     // Compute alpha2, for self shadowing effect
     // (1 - alpha2) will later be used as percentage of incoming sunlight
     float alpha2 = (cloudNoise(uv2).x - 0.5);
