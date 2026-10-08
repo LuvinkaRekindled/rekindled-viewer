@@ -2667,6 +2667,28 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSTextureUpdateSteadyFactor</key>
+    <map>
+      <key>Comment</key>
+      <string>Textures: when the view has not changed for FSTextureUpdateSteadySeconds (no new region, camera still) the per-frame texture refresh runs this many times slower than FSTextureUpdateDivisor says (and the object texture priority pass every other frame). The normal rate is back as soon as the camera moves. 1 turns it off. Applies at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>2</integer>
+    </map>
+    <key>FSTextureUpdateSteadySeconds</key>
+    <map>
+      <key>Comment</key>
+      <string>Textures: seconds without a change of view before FSTextureUpdateSteadyFactor applies.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>10.0</real>
+    </map>
     <key>FSSkipHiddenTextureAnim</key>
     <map>
       <key>Comment</key>

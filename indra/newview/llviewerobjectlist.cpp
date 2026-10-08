@@ -941,6 +941,11 @@ void LLViewerObjectList::setAllObjectPBRDefaultTextures(const LLUUID& override_i
 
 void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
 {
+    // <FS> while the view is steady (see LLViewerTextureList::sViewSteady) the lazy texture priority pass runs every other frame: the objects' turn comes round half as often
+    if (LLViewerTextureList::sViewSteady && (LLFrameTimer::getFrameCount() & 1))
+    {
+        return;
+    }
     S32 i;
     LLViewerObject *objectp;
 
