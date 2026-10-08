@@ -66,6 +66,9 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 | Worker draw path: flat texture/buffer lookups, cached render-target resolution, draw state translated on change only | render target and state phases now 0.24 ms/frame together; the rest of the worker draw time is spread (uniform block 1.2, textures 0.7, vertex input 1.0 ms/frame at 4,000 draws) |
 | **Animated textures skipped for objects out of view (FSSkipHiddenTextureAnim) + face matrices in closed form** | **loop 14.5-15.0 -> 11.95-12.0 ms at Adam's spot (about 20%)**: animated textures 1.7 -> 0.47 ms, 1,953 -> 340 objects per frame, idle() 5.1 -> 3.3 ms, display() 9.4 -> 8.5 ms |
 | **Other residents' avatars that are not in view get the full update every 2nd frame (4th beyond 50 m), FSReduceHiddenAvatarUpdates** | **loop 11.99 -> 11.15 ms**: full avatar updates 66 -> 28.5 per frame, object list 2.22 -> 1.73 ms, avatar motion batch 0.91 -> 0.64 ms. Together with the animated-texture change the loop went from 14.5-15.0 to 11.15 ms (about 23%) |
+| **Bug fix: the no-GL start-up reported the device's descriptor limit (1,048,576) as the number of texture units; display() loops over every unit each frame** | **loop 12.64 -> 7.69 ms, display() 9.15 -> 5.06 ms, idle() 3.27 -> 2.41 ms; Adam measured +45 fps at the spot.** Found with a Tracy self-time export ("Texture Unbind" 7.3 ms self) and a CPU zone around the loop; now reports 32 per stage / 192 combined like a driver |
+
+Since the start of the 2026-10-07 evening session the loop at Adam's spot went from 14.5-15.0 ms to 7.7 ms.
 
 Main-thread profile at the spot before this change (loop 14.5-15 ms): object list 3.9 (animated textures 1.7, avatar motion 1.2, avatar update 0.9), sun shadows 1.7, UI about 2.3, lighting 0.9, G-buffer pass 0.9, state sort 0.7, texture updates and fetch about 1.2. The G-buffer pass being only 0.9 ms is why the GPU-scene first slice was not the best target for this scene.
 
