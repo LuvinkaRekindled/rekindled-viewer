@@ -1369,8 +1369,8 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
         if (imagep->getNumRefs() > 1) // make sure this image hasn't been deleted before attempting to update (may happen as a side effect of some other image updating)
         {
-            updateImageDecodePriority(imagep);
-            imagep->updateFetch();
+            { LL_CPU_ZONE("textures: decode priority (per texture)"); updateImageDecodePriority(imagep); }
+            { LL_CPU_ZONE("textures: updateFetch (per texture)"); imagep->updateFetch(); }
         }
 
         if (timer.getElapsedTimeF32() > max_time)
