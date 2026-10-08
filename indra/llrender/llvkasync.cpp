@@ -891,6 +891,24 @@ std::string opStatsReport(size_t frames)
         }
         out += "| ";
     }
+    if (LLVkMirror::gPhaseTiming)
+    {
+        // LL_VK_WORKERPHASES: where the worker's draw time goes (ms per frame; the timers themselves add about 25 ns per reading)
+        LARGE_INTEGER pf;
+        QueryPerformanceFrequency(&pf);
+        out += "worker draw phases ms/frame: ";
+        for (int p = 0; p < LLVkMirror::PH_COUNT; ++p)
+        {
+            const double ms = (double)LLVkMirror::gPhaseTicks[p] * 1000.0 / (double)pf.QuadPart / (double)frames;
+            LLVkMirror::gPhaseTicks[p] = 0;
+            if (ms >= 0.01)
+            {
+                snprintf(buf, sizeof(buf), "%s %.2f, ", LLVkMirror::phaseName(p), ms);
+                out += buf;
+            }
+        }
+        out += "| ";
+    }
     snprintf(buf, sizeof(buf), "%.2f ms/frame in operations out of %.2f ms/frame wall (the timer costs about 15 ns per operation) | ", (double)total * ms_per_tick / (double)frames, wall_ms / (double)frames);
     out += buf;
     for (size_t k = 0; k < rows.size() && k < 22; ++k)
@@ -2096,6 +2114,10 @@ bool start()
         gOpStatQpc0 = qn.QuadPart;
         gOpStatTsc0 = __rdtsc();
         gOpStats = true;
+    }
+    if (getenv("LL_VK_WORKERPHASES"))
+    {
+        LLVkMirror::gPhaseTiming = true;        // the draw path's own phase timers (they run on the thread that replays the frames: the worker here); each costs a counter read
     }
     gRunning.store(true);
     gThread = CreateThread(nullptr, 0, workerMain, nullptr, 0, nullptr);
