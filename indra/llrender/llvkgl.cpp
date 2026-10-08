@@ -566,6 +566,67 @@ struct GLState
 };
 
 GLState sGL;
+
+// <FS> flat lookup of the entries of sGL.mTextures / mBuffers by GL name (the names are small integers from the viewer's name pools). A hash lookup for every sampler of
+// every draw cost more than the rest of the draw's bookkeeping. The pointers are to the nodes of the maps (stable until erased); erasing forgets them.
+std::vector<Tex*> sTexFlat;
+std::vector<Buf*> sBufFlat;
+
+inline Tex* tex_ptr(GLuint name)
+{
+    if (name < sTexFlat.size())
+    {
+        if (Tex* t = sTexFlat[name])
+        {
+            return t;
+        }
+    }
+    auto it = sGL.mTextures.find(name);
+    if (it == sGL.mTextures.end())
+    {
+        return nullptr;
+    }
+    if (name < (1u << 22))
+    {
+        if (name >= sTexFlat.size())
+        {
+            sTexFlat.resize(std::max<size_t>((size_t)name + 1, sTexFlat.size() * 2), nullptr);
+        }
+        sTexFlat[name] = &it->second;
+    }
+    return &it->second;
+}
+inline void tex_forget(GLuint name) { if (name < sTexFlat.size()) sTexFlat[name] = nullptr; }
+
+inline Buf* buf_ptr(GLuint name)
+{
+    if (name < sBufFlat.size())
+    {
+        if (Buf* b = sBufFlat[name])
+        {
+            return b;
+        }
+    }
+    auto it = sGL.mBuffers.find(name);
+    if (it == sGL.mBuffers.end())
+    {
+        return nullptr;
+    }
+    if (name < (1u << 22))
+    {
+        if (name >= sBufFlat.size())
+        {
+            sBufFlat.resize(std::max<size_t>((size_t)name + 1, sBufFlat.size() * 2), nullptr);
+        }
+        sBufFlat[name] = &it->second;
+    }
+    return &it->second;
+}
+inline void buf_forget(GLuint name) { if (name < sBufFlat.size()) sBufFlat[name] = nullptr; }
+
+// <FS> what sync_target() resolved for the current draw framebuffer, valid until something that can change it happens (bumps sTargetEpoch)
+U64 sTargetEpoch = 1;
+const void* sTargetNamesOwner = nullptr;      // whose list of attachment names sCurTargets holds
 std::set<GLuint> sFrameTargets;         // textures rendered into during the current frame (for the debug dump)
 GLuint sUboBinding[4] = {};             // GL buffer bound to each named uniform block binding point
 std::map<GLuint, U32> sFrameSampled;    // textures read by draws this frame, with use counts
@@ -669,6 +730,7 @@ void note_thread(const char* what)
 
 void destroy_tex_images(Tex& t)
 {
+    ++sTargetEpoch;
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
     for (auto& kv : t.mViews)
@@ -715,6 +777,7 @@ bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U3
     {
         return true;        // same specification again: keep the image and just upload into it
     }
+    ++sTargetEpoch;
     if (t.mImage.valid())
     {
         if (sVerifySnapshotPending)
@@ -866,12 +929,12 @@ void upload_converted(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLin
 // view of one level / layer of a texture, usable as a render target
 Image* texture_view(GLuint name, GLint level, U32 layer)
 {
-    auto it = sGL.mTextures.find(name);
-    if (it == sGL.mTextures.end() || !it->second.mImage.valid())
+    Tex* tp = tex_ptr(name);
+    if (!tp || !tp->mImage.valid())
     {
         return nullptr;
     }
-    Tex& t = it->second;
+    Tex& t = *tp;
     auto key = std::make_pair((U32)level, layer);
     auto vit = t.mViews.find(key);
     if (vit != t.mViews.end())
@@ -944,7 +1007,11 @@ static inline void note_frame_target(GLuint texture)
 bool sync_target()
 {
     Renderer& r = Renderer::instance();
-    sCurTargets.clear();
+    if (sCtx.mDrawFbo == 0)
+    {
+        sCurTargets.clear();
+        sTargetNamesOwner = nullptr;
+    }
     if (sCtx.mDrawFbo == 0)
     {
         Image* color = LLVkMirror::backbufferColor();
@@ -976,6 +1043,28 @@ bool sync_target()
         sCurTargetH = color->mExtent.height;
         return true;
     }
+    // the framebuffer's attachments were resolved for an earlier draw and nothing that could change them has happened since (and the frame did not turn over)
+    struct TargetCache { U64 mEpoch = 0; GLuint mFbo = ~0u; U64 mFrame = ~0ull; Image* mColors[8] = {}; U32 mCount = 0; Image* mDepth = nullptr; bool mOk = false; std::vector<GLuint> mNames; };
+    static TargetCache cache;
+    const U64 frame_now = Context::instance().getFrameNumber();
+    if (cache.mEpoch == sTargetEpoch && cache.mFbo == sCtx.mDrawFbo && cache.mFrame == frame_now && !sDbgMatch && cache.mOk)
+    {
+        if (sTargetNamesOwner != &cache)
+        {
+            sCurTargets = cache.mNames;
+            sTargetNamesOwner = &cache;
+        }
+        r.setRenderTarget(cache.mColors, cache.mCount, cache.mDepth);
+        sHasDepth = cache.mDepth != nullptr;
+        if (cache.mCount)
+        {
+            sCurTargetW = cache.mColors[0]->mExtent.width;
+            sCurTargetH = cache.mColors[0]->mExtent.height;
+        }
+        return true;
+    }
+    sTargetNamesOwner = nullptr;
+    sCurTargets.clear();
     auto it = sGL.mFbos.find(sCtx.mDrawFbo);
     if (it == sGL.mFbos.end())
     {
@@ -1021,6 +1110,15 @@ bool sync_target()
         sCurTargetW = colors[0]->mExtent.width;
         sCurTargetH = colors[0]->mExtent.height;
     }
+    cache.mEpoch = sTargetEpoch;
+    cache.mFbo = sCtx.mDrawFbo;
+    cache.mFrame = frame_now;
+    memcpy(cache.mColors, colors, sizeof(colors));
+    cache.mCount = count;
+    cache.mDepth = depth;
+    cache.mNames = sCurTargets;
+    cache.mOk = true;
+    sTargetNamesOwner = &cache;
     return true;
 }
 
@@ -1148,6 +1246,30 @@ VkSampler texture_sampler(Renderer& r, Tex& t)
 // translates the tracked GL state into renderer state for the next draw
 void sync_draw_state(Renderer& r, bool has_depth)
 {
+    // <FS> the whole translation below is a function of these GL state values: when none changed (and the renderer's state was not set by anything else) it is skipped
+    struct DrawStateKey
+    {
+        U32 mFlags;
+        GLenum mCullFace, mPolygonMode, mDepthFunc, mBlendSrcRGB, mBlendDstRGB, mBlendSrcA, mBlendDstA;
+        F32 mLineWidth, mOffsetUnits, mOffsetFactor;
+        S32 mViewport[4], mScissor[4];
+    };
+    static DrawStateKey last;
+    static U32 last_gen = 0;
+    static bool last_valid = false;
+    DrawStateKey key;
+    memset(&key, 0, sizeof(key));
+    key.mFlags = (sGL.mCull ? 1u : 0) | (sGL.mPolyOffset ? 2u : 0) | (sGL.mDepthClamp ? 4u : 0) | (sGL.mDepthTest ? 8u : 0) | (sGL.mDepthMask ? 16u : 0) | (sGL.mBlend ? 32u : 0)
+        | (sGL.mColorMask[0] ? 64u : 0) | (sGL.mColorMask[1] ? 128u : 0) | (sGL.mColorMask[2] ? 256u : 0) | (sGL.mColorMask[3] ? 512u : 0) | (sGL.mViewportSet ? 1024u : 0)
+        | (sGL.mScissorTest ? 2048u : 0) | (has_depth ? 4096u : 0);
+    key.mCullFace = sGL.mCullFace; key.mPolygonMode = sGL.mPolygonMode; key.mDepthFunc = sGL.mDepthFunc;
+    key.mBlendSrcRGB = sGL.mBlendSrcRGB; key.mBlendDstRGB = sGL.mBlendDstRGB; key.mBlendSrcA = sGL.mBlendSrcA; key.mBlendDstA = sGL.mBlendDstA;
+    key.mLineWidth = sGL.mLineWidth; key.mOffsetUnits = sGL.mOffsetUnits; key.mOffsetFactor = sGL.mOffsetFactor;
+    for (int i = 0; i < 4; ++i) { key.mViewport[i] = sGL.mViewport[i]; key.mScissor[i] = sGL.mScissor[i]; }
+    if (!sDbgMatch && last_valid && last_gen == r.stateGeneration() && memcmp(&key, &last, sizeof(key)) == 0)
+    {
+        return;
+    }
     RasterState rs;
     if (sGL.mCull)
     {
@@ -1206,6 +1328,9 @@ void sync_draw_state(Renderer& r, bool has_depth)
     {
         r.setScissor(sGL.mScissor[0], sGL.mScissor[1], sGL.mScissor[2], sGL.mScissor[3]);
     }
+    last = key;
+    last_gen = r.stateGeneration();
+    last_valid = true;
 }
 
 // binds the textures the program's samplers read
@@ -1220,7 +1345,7 @@ void sync_textures(Renderer& r, Program& program)
             continue;
         }
         const U32 cls = program.getSamplerClass(k);
-        auto it = sGL.mTextures.find(sCtx.mBound[unit][cls]);
+        Tex* tex = tex_ptr(sCtx.mBound[unit][cls]);
         if (sStatsEnabled)
         {
             const std::string& type = info.mSamplers[k].mType;
@@ -1230,11 +1355,11 @@ void sync_textures(Renderer& r, Program& program)
             if (wanted)
             {
                 std::string what = "unit " + std::to_string(unit) + " tex " + std::to_string(sCtx.mBound[unit][cls]) + " ";
-                if (it == sGL.mTextures.end()) what += "UNBOUND";
-                else if (!it->second.mImage.valid()) what += "NO IMAGE";
+                if (!tex) what += "UNBOUND";
+                else if (!tex->mImage.valid()) what += "NO IMAGE";
                 else
                 {
-                    const Tex& tx = it->second;
+                    const Tex& tx = *tex;
                     what += std::to_string(tx.mImage.mExtent.width) + "x" + std::to_string(tx.mImage.mExtent.height) + " vkfmt " + std::to_string((S32)tx.mImage.mFormat)
                           + " levels " + std::to_string(tx.mValidLevels) + "/" + std::to_string(tx.mLevels) + " layers " + std::to_string(tx.mDepth)
                           + " compare " + std::to_string(tx.mSampler.mCompare ? 1 : 0);
@@ -1246,15 +1371,16 @@ void sync_textures(Renderer& r, Program& program)
                 sStats.mSamplerInfo[program.getName() + " :: " + info.mSamplers[k].mName + " (" + type + ")"] = what;
             }
         }
-        if (it != sGL.mTextures.end() && it->second.mImage.valid())
+        if (tex && tex->mImage.valid())
         {
-            r.setTexture(unit, &it->second.mImage, texture_sampler(r, it->second));
+            r.setTexture(unit, &tex->mImage, texture_sampler(r, *tex));
             if (sStatsEnabled)
             {
-                ++sFrameSampled[it->first];
-                if (std::find(sCurTargets.begin(), sCurTargets.end(), it->first) != sCurTargets.end())
+                const GLuint tname = sCtx.mBound[unit][cls];
+                ++sFrameSampled[tname];
+                if (std::find(sCurTargets.begin(), sCurTargets.end(), tname) != sCurTargets.end())
                 {
-                    ++sStats.mFeedback[program.getName() + " samples " + info.mSamplers[k].mName + " = tex " + std::to_string(it->first)];
+                    ++sStats.mFeedback[program.getName() + " samples " + info.mSamplers[k].mName + " = tex " + std::to_string(tname)];
                 }
             }
         }
@@ -2072,7 +2198,9 @@ void on_glDeleteTextures(GLsizei n, const GLuint* textures)
         if (it != sGL.mTextures.end())
         {
             destroy_tex_images(it->second);
+            tex_forget(it->first);
             sGL.mTextures.erase(it);
+            ++sTargetEpoch;
             ++sPacketTextureGeneration;
         }
         for (auto& unit : sCtx.mBound)
@@ -2322,6 +2450,7 @@ void on_glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers)
     for (GLsizei i = 0; i < n; ++i)
     {
         sGL.mFbos.erase(framebuffers[i]);
+        ++sTargetEpoch;
         if (sCtx.mDrawFbo == framebuffers[i]) sCtx.mDrawFbo = 0;
         if (sCtx.mReadFbo == framebuffers[i]) sCtx.mReadFbo = 0;
     }
@@ -2330,6 +2459,7 @@ void on_glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers)
 void on_glBindFramebuffer(GLenum target, GLuint framebuffer)
 {
     if (target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER) sCtx.mDrawFbo = framebuffer;
+    ++sTargetEpoch;
     if (target == GL_FRAMEBUFFER || target == GL_READ_FRAMEBUFFER) sCtx.mReadFbo = framebuffer;
     if (framebuffer)
     {
@@ -2344,6 +2474,7 @@ void on_glFramebufferTexture2D(GLenum target, GLenum attachment, GLenum textarge
     {
         return;
     }
+    ++sTargetEpoch;
     Fbo& fbo = sGL.mFbos[fbo_name];
     FboAttachment a;
     a.mTexture = texture;
@@ -2365,6 +2496,7 @@ void on_glDrawBuffers(GLsizei n, const GLenum* bufs)
     {
         return;
     }
+    ++sTargetEpoch;
     Fbo& fbo = sGL.mFbos[sCtx.mDrawFbo];
     fbo.mDrawCount = (U32)std::min<GLsizei>(n, 8);
     for (U32 i = 0; i < fbo.mDrawCount; ++i)
@@ -2379,6 +2511,7 @@ void on_glDrawBuffer(GLenum buf)
     {
         return;
     }
+    ++sTargetEpoch;
     Fbo& fbo = sGL.mFbos[sCtx.mDrawFbo];
     if (buf >= GL_COLOR_ATTACHMENT0 && buf < GL_COLOR_ATTACHMENT0 + 8)
     {
@@ -2422,6 +2555,7 @@ void on_glDeleteBuffers(GLsizei n, const GLuint* buffers)
         if (it != sGL.mBuffers.end())
         {
             ctx.destroyBuffer(it->second.mVk);
+            buf_forget(it->first);
             sGL.mBuffers.erase(it);
             ++sPacketBufferGeneration;
         }

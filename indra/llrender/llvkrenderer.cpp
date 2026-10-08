@@ -1335,16 +1335,19 @@ void Renderer::setViewport(S32 x, S32 y, S32 width, S32 height)
 {
     mViewport[0] = x; mViewport[1] = y; mViewport[2] = width; mViewport[3] = height;
     mViewportSet = true;
+    ++mStateGen;
 }
 
 void Renderer::setScissor(S32 x, S32 y, S32 width, S32 height)
 {
     mScissor[0] = x; mScissor[1] = y; mScissor[2] = width; mScissor[3] = height;
+    ++mStateGen;
 }
 
 void Renderer::setScissorEnabled(bool enabled)
 {
     mScissorEnabled = enabled;
+    ++mStateGen;
 }
 
 static Image* root_of(Image* i)

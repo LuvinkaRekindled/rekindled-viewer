@@ -250,9 +250,11 @@ public:
 
     // pipeline state
     void setProgram(Program* program);
-    void setRasterState(const RasterState& s) { mRaster = s; }
-    void setDepthStencilState(const DepthStencilState& s) { mDepthStencil = s; }
-    void setBlendState(const BlendState& s) { mBlend = s; }
+    void setRasterState(const RasterState& s) { mRaster = s; ++mStateGen; }
+    void setDepthStencilState(const DepthStencilState& s) { mDepthStencil = s; ++mStateGen; }
+    void setBlendState(const BlendState& s) { mBlend = s; ++mStateGen; }
+    U32 stateGeneration() const { return mStateGen; }        // <FS> changes whenever the raster / depth / blend / viewport / scissor state is set: lets a caller skip setting what it set last
+
     void setTopology(VkPrimitiveTopology t) { mTopology = t; }
     void setVertexLayout(const VertexLayout& layout) { mLayout = layout; mVertexInputDirty = true; mUseVertexInput = false; }
     void setVertexBuffer(VkBuffer buffer, VkDeviceSize offset) { mVertexBuffer = buffer; mVertexOffset = offset; }
@@ -436,6 +438,7 @@ private:
     VkCommandBuffer mCmd = VK_NULL_HANDLE;
     U32 mSlot = 0;
     U32 mRingUsed = 0;
+    U32 mStateGen = 1;
     U32 mRingPeak = 0;                  // largest ring use of any frame since the last getRingStats()
     U32 mRingExhausted = 0;             // draws dropped because the ring was full
     UploadStats mUploadStats;
