@@ -1309,12 +1309,9 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         const LLVector3 origin = LLViewerCamera::getInstance()->getOrigin();
         const LLVector3 at = LLViewerCamera::getInstance()->getAtAxis();
         bool changed = region != last_region;
-        // <FS> new textures arriving (an object or an avatar rezzing) end a steady view as well: they should not wait for the slow rate
+        // <FS> new textures arriving (an object or an avatar rezzing) end the steady-view slowdown below (the normal rate then applies, not the fast burst)
         static size_t last_texture_count = 0;
-        if (mUUIDMap.size() > last_texture_count)
-        {
-            changed = true;
-        }
+        const bool new_textures = mUUIDMap.size() > last_texture_count;
         last_texture_count = mUUIDMap.size();
         if (!changed && (origin - last_origin).magVec() > 2.f)
         {
@@ -1336,7 +1333,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         static LLCachedControl<U32> fs_steady_factor(gSavedSettings, "FSTextureUpdateSteadyFactor", 2);
         static LLCachedControl<F32> fs_steady_seconds(gSavedSettings, "FSTextureUpdateSteadySeconds", 10.f);
         static F64 last_change_time = 0.0;
-        if (changed)
+        if (changed || new_textures)
         {
             last_change_time = now;
         }
