@@ -77,6 +77,9 @@ GPU time at Adam's spot after the fixes (LL_VK_PHASES + FSGpuZoneTimers, run-vie
 | **Water reflection ray: at most 30 uneven steps instead of up to 48 (FSWaterTraceAdaptive)** | **water 0.85 -> 0.63 ms GPU (-26%), total GPU 6.47 -> 6.22 ms; no visible difference (Adam)** |
 | Tried and removed: skipping the lighting of transparent pixels under 2% alpha | 0.03 ms, not worth the code |
 
+| Loose uniform writes pile up on the main thread and are written with the next draw (draw-record plan, uniform step) | records per frame 18,900-19,900 -> 13,550; queue writing unchanged within noise |
+| Deleted the dead GL-dependent debug code (verification, snapshot comparison, render target dumps, GL stubs): llvkgl.cpp 6,120 -> 5,260 lines | no behaviour change expected; one live call (before_end_frame, the end-of-frame flush of pending device-buffer writes) was deleted by mistake and restored after it caused deformed avatars and a device loss |
+
 Main-thread profile at the spot before this change (loop 14.5-15 ms): object list 3.9 (animated textures 1.7, avatar motion 1.2, avatar update 0.9), sun shadows 1.7, UI about 2.3, lighting 0.9, G-buffer pass 0.9, state sort 0.7, texture updates and fetch about 1.2. The G-buffer pass being only 0.9 ms is why the GPU-scene first slice was not the best target for this scene.
 
 ## Where the main thread stands (blues place, 43 dancers, loop about 16 ms)

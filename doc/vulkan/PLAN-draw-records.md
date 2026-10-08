@@ -36,3 +36,9 @@ Measure after each step with `LL_VK_OPSTATS` (records per frame, main-thread que
 - Are there GL calls that depend on the active unit besides binds (glTexImage*, glGenerateMipmap, glCopyTexSubImage2D on the bound texture)? They become named operations (texture id) in step 5; until then they keep the existing path.
 - Does anything read a bound texture back (glGetIntegerv(TEXTURE_BINDING)) on the main thread? (`LLImageGL::...` line 190 does, in a debug path.)
 - Per-draw uniform values that are set by `gGL.syncMatrices()` (matrices are 2.9k of the records): they must go into the same ring.
+
+## Status 2026-10-07 (end of day)
+Done: step 1 (texture slot table, changed slots written with the draw), the uniform step (loose uniform writes carried by the draw), bindless textures for 169 of 200 programs, typed records for vertex state, shader bind, sampler parameters, render targets and buffers by name, worker per-draw caches (render target resolution, draw state), the cleanup of dead GL-dependent debug code.
+Measured, then left alone on purpose: vertex layout ids (vertex input is about 0.45 ms of worker time per frame in total) and the buffer arena (renames cost about 1% of a worker that is idle half the frame). Both would add risk (a stale buffer handle is a GPU fault) for well under 0.4 ms. Revisit only if the worker becomes the limit.
+Still open: the GL-shaped objects the worker keeps by name (textures, buffers, framebuffers, VAO attribute state) and the benchmark mode in llvkmirror.cpp (GL-versus-Vulkan GPU timing, dead without OpenGL; not removed because it was not clear it is separate from the phase reporting).
+Rule learned: before deleting a function that looks like debug code, read its body: a compile cannot show a live call that has just vanished (before_end_frame).
