@@ -78,5 +78,18 @@ Main-thread profile at the spot before this change (loop 14.5-15 ms): object lis
 display 11-12 ms (sun shadows 2.4-3.0, alpha pass about 1.6, stateSort 1.7, G-buffer 1.5, UI 1.2, lighting 0.5), idle 4.6 ms (object list 3.2: avatar update, animated textures 0.5-0.7).
 Octree operations are about 1.2 ms of it. What is left is spread thin; the per-draw work of the alpha pass is about 0.7 us per draw.
 
+## End-to-end comparison (2026-10-07, same spot in a crowded club sim, graphics preset "5060", window about 2558x1360, measured by Adam from the fps counter)
+
+| Build | Settings | fps | GPU busy |
+|---|---|---|---|
+| Stock Firestorm 7.2.4 x64 release (OpenGL; one minor version behind the branch base 7.2.5) | full resolution, no DLSS (not available) | **66** | not recorded |
+| native-vk (this branch) | full resolution, DLSS off, same window size | **about 112** (log: 8.6-8.8 ms per frame, no upscale step) | 96+% |
+| native-vk | DLSS Quality (67%: renders 1713x898, upscaled to the window) | **135-145** (a repeat read about 150) | 90-96% |
+| Frozen reference (render-clean with the Vulkan mirror, before the native work) | DLSS Quality (67%), same settings as the native runs | **about 115** (two runs) | 70-75% |
+
+Like for like (full resolution, no upscaling): **about 112 fps against 66, 70% faster than the stock release**. With DLSS Quality the same branch reaches 135-150 fps, which stock cannot do. Against the frozen pre-native reference at the same settings: 17-26% faster, with the GPU busier (balanced use).
+Crowd size drifts between runs (two native runs read 135 and 145 minutes apart), so differences under about 10% are inside the noise. Not measured: the stock viewer's GPU usage, a second stock run.
+Open item: the DLSS checkbox may not apply live when unchecked (the tooltip says it should); one run on 2026-10-07 kept DLSS on after the box was meant to be off (the log showed the upscale step in every frame). Not reproduced on purpose; run-viewer-clean-dlssoff.bat starts with it off.
+
 ## What a single end-to-end number needs
 The same spot, the same settings, the official OpenGL viewer against `run-viewer-clean.bat`, read off the fps counter. Not done yet.
