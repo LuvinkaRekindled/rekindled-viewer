@@ -1815,6 +1815,16 @@ struct RenameStats
 };
 RenameStats sRenameStats;
 
+// buffer traffic per VkPhases interval (arena baseline: how hot would the allocator and the retire list be)
+struct BufTraffic
+{
+    U32 mSpecDevSame = 0, mSpecDevNew = 0, mSpecHost = 0;      // glBufferData: device path same size (kept), device path new allocation, host-visible path
+    U64 mSpecDevNewBytes = 0, mSpecHostBytes = 0;
+    U32 mSubDev = 0, mSubHost = 0;                             // glBufferSubData / write_buffer calls
+    U64 mSubDevBytes = 0, mSubHostBytes = 0;
+};
+BufTraffic sBufTraffic;
+
 void report_renames()
 {
     const auto now = std::chrono::steady_clock::now();
@@ -1837,6 +1847,8 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
 {
     if (b.mDevicePath)
     {
+        ++sBufTraffic.mSubDev;
+        sBufTraffic.mSubDevBytes += size;
         if (b.mVk.valid() && data && size && offset + size <= b.mVk.mSize)
         {
             Renderer::instance().updateBuffer(b.mVk.mBuffer, offset, size, data);
@@ -1848,6 +1860,8 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
         }
         return;
     }
+    ++sBufTraffic.mSubHost;
+    sBufTraffic.mSubHostBytes += size;
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
     const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1;
@@ -2328,6 +2342,7 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
     {
         // the same size again (the viewer re-specifies a buffer to rewrite it): keep the Vulkan buffer, queue the data
         b.mSize = (U64)size;
+        ++sBufTraffic.mSpecDevSame;
         if (data)
         {
             Renderer::instance().updateBuffer(b.mVk.mBuffer, 0, (VkDeviceSize)size, data);
@@ -2349,6 +2364,8 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
     b.mDevicePath = want_device;
     if (want_device)
     {
+        ++sBufTraffic.mSpecDevNew;
+        sBufTraffic.mSpecDevNewBytes += (U64)size;
         if (ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                              Context::Memory::Device, b.mVk) && data)
         {
@@ -2366,6 +2383,8 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
     {
         return;
     }
+    ++sBufTraffic.mSpecHost;
+    sBufTraffic.mSpecHostBytes += (U64)size;
     b.mShadow.assign((size_t)size, 0);
     if (data)
     {
@@ -3536,6 +3555,12 @@ void after_frame()
                         }
                         LL_INFOS("VkPhases") << "GL buffers: " << dev_count << " in video memory (copies, " << (dev_bytes >> 20) << " MB), " << host_count << " host-visible ("
                                              << (host_bytes >> 20) << " MB), system-memory shadow copies " << (shadow_bytes >> 20) << " MB" << LL_ENDL;
+                        const BufTraffic& t = sBufTraffic;
+                        LL_INFOS("VkPhases") << "buffer traffic per frame: glBufferData device same size " << (double)t.mSpecDevSame / frames << ", device new allocation "
+                                             << (double)t.mSpecDevNew / frames << " (" << (double)t.mSpecDevNewBytes / frames / 1024 << " KB), host-visible " << (double)t.mSpecHost / frames
+                                             << " (" << (double)t.mSpecHostBytes / frames / 1024 << " KB); sub-writes device " << (double)t.mSubDev / frames << " ("
+                                             << (double)t.mSubDevBytes / frames / 1024 << " KB), host-visible " << (double)t.mSubHost / frames << " (" << (double)t.mSubHostBytes / frames / 1024 << " KB)" << LL_ENDL;
+                        sBufTraffic = BufTraffic();
                     }
                     if (LLVkAsync::gEnabled)
                     {
