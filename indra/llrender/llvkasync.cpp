@@ -167,7 +167,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
@@ -372,6 +372,48 @@ void flushPendingTex(int why = 0)
     gCo.mActiveValid = false;       // the record set the active unit (gLatestActive)
 }
 
+// <FS> draw-record plan: loose uniform writes (scalar, vector, matrix) of the main thread are not records of their own either. They pile up here as
+// {op, payload bytes, payload} entries (the argument struct and the values, padded to 8) and are written inside the next draw record. Anything that can
+// need them earlier flushes them first (every operation that is not independent of them goes through coFlushAll).
+struct UniformScalarArgs { void* mProgram; unsigned mIndex; int mKind; unsigned mN; float mF[4]; int mI[4]; };
+std::vector<U8> gPendUni;
+
+void flushPendingUni(int why = 0)
+{
+    (void)why;
+    if (gPendUni.empty())
+    {
+        return;
+    }
+    const U32 bytes = (U32)gPendUni.size();
+    const U32 payload = (U32)(sizeof(U32) * 2 + bytes);
+    U8* p = mainReserve(payload, CMD_UNIFORM_BATCH, 0);
+    const U32 head[2] = { bytes, 0 };
+    memcpy(p, head, sizeof(head));
+    memcpy(p + sizeof(head), gPendUni.data(), bytes);
+    mainCommit(payload);
+    ++gMainRecords;
+    gPendUni.clear();
+}
+
+inline void uniAppend(U32 op, const void* args, size_t asz, const void* data, size_t dsz)
+{
+    const size_t payload = (asz + dsz + 7) & ~(size_t)7;
+    const size_t off = gPendUni.size();
+    gPendUni.resize(off + 8 + payload);
+    const U32 head[2] = { op, (U32)payload };
+    memcpy(&gPendUni[off], head, 8);
+    memcpy(&gPendUni[off + 8], args, asz);
+    if (dsz)
+    {
+        memcpy(&gPendUni[off + 8 + asz], data, dsz);
+    }
+    if (gPendUni.size() > (1u << 20))
+    {
+        flushPendingUni();      // bounded: a long run of uniform writes with no draw in between
+    }
+}
+
 // held glActiveTexture and the open array run (what the coalescer holds), not the pending texture slots
 inline void coFlushHeld()
 {
@@ -385,6 +427,7 @@ inline void coFlushHeld()
 inline void coFlushAll(int why = 0)
 {
     flushPendingTex(why);
+    flushPendingUni(why);
     coFlushHeld();
 }
 
@@ -652,51 +695,69 @@ void bufferSubData(U32 name, S64 offset, S64 size, const void* data)
 // a draw record: the draw and the texture slots that changed since the last one (CMD_DRAW), or the plain draw call record when none changed
 namespace
 {
-    struct DrawHeader { U32 mKind; U32 mMode; U32 mStart; U32 mEnd; S32 mCount; U32 mType; const void* mIndices; U32 mMask; U32 mActive; U32 mCountTex; U32 mPad; };
+    struct DrawHeader { U32 mKind; U32 mMode; U32 mStart; U32 mEnd; S32 mCount; U32 mType; const void* mIndices; U32 mMask; U32 mActive; U32 mCountTex; U32 mUniBytes; };
 }
 
 void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
 {
     MainLap lap;
     coFlushRun();
-    if (!gPendMask)
+    if (!gPendMask && gPendUni.empty())
     {
         const A_glDrawRangeElements a = { mode, start, end, count, type, indices };
         rawPush(OP_glDrawRangeElements, &a, sizeof(a));
         return;
     }
     const U32 n = (U32)__popcnt(gPendMask);
-    const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n);
+    const U32 uni = (U32)gPendUni.size();
+    const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n + uni);
     U8* p = mainReserve(payload, CMD_DRAW, 0);
-    const DrawHeader h = { 0, mode, start, end, count, type, indices, gPendMask, gLatestActive, n, 0 };
+    const DrawHeader h = { 0, mode, start, end, count, type, indices, gPendMask, gLatestActive, n, uni };
     memcpy(p, &h, sizeof(h));
     pendTexWrite(p + sizeof(h));
+    if (uni)
+    {
+        memcpy(p + sizeof(h) + sizeof(PendTex) * n, gPendUni.data(), uni);
+    }
     mainCommit(payload);
     ++gMainRecords;
     gPendMask = 0;
-    gCo.mActiveValid = false;
+    gPendUni.clear();
+    if (n)
+    {
+        gCo.mActiveValid = false;
+    }
 }
 
 void drawArrays(U32 mode, S32 first, S32 count)
 {
     MainLap lap;
     coFlushRun();
-    if (!gPendMask)
+    if (!gPendMask && gPendUni.empty())
     {
         const A_glDrawArrays a = { mode, first, count };
         rawPush(OP_glDrawArrays, &a, sizeof(a));
         return;
     }
     const U32 n = (U32)__popcnt(gPendMask);
-    const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n);
+    const U32 uni = (U32)gPendUni.size();
+    const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n + uni);
     U8* p = mainReserve(payload, CMD_DRAW, 0);
-    const DrawHeader h = { 1, mode, (U32)first, 0, count, 0, nullptr, gPendMask, gLatestActive, n, 0 };
+    const DrawHeader h = { 1, mode, (U32)first, 0, count, 0, nullptr, gPendMask, gLatestActive, n, uni };
     memcpy(p, &h, sizeof(h));
     pendTexWrite(p + sizeof(h));
+    if (uni)
+    {
+        memcpy(p + sizeof(h) + sizeof(PendTex) * n, gPendUni.data(), uni);
+    }
     mainCommit(payload);
     ++gMainRecords;
     gPendMask = 0;
-    gCo.mActiveValid = false;
+    gPendUni.clear();
+    if (n)
+    {
+        gCo.mActiveValid = false;
+    }
 }
 
 void gpuZone(const char* name, bool begin)
@@ -997,16 +1058,34 @@ void uniformScalar(void* program, unsigned uniform_index, int kind, unsigned n, 
         a.f[k] = f ? f[k] : 0.f;
         a.i[k] = i ? i[k] : 0;
     }
+    if (mainProducer())
+    {
+        MainLap lap;
+        uniAppend(CMD_UNIFORM_SCALAR, &a, sizeof(a), nullptr, 0);
+        return;
+    }
     push(CMD_UNIFORM_SCALAR, &a, sizeof(a));
 }
 void uniformVector(void* program, unsigned uniform_index, unsigned components, unsigned count, const void* data)
 {
     const UniformVecArgs a = { program, uniform_index, components, count };
+    if (mainProducer())
+    {
+        MainLap lap;
+        uniAppend(CMD_UNIFORM_VECTOR, &a, sizeof(a), data, (size_t)components * count * 4);
+        return;
+    }
     pushData(CMD_UNIFORM_VECTOR, &a, sizeof(a), data, (size_t)components * count * 4);
 }
 void uniformMatrix(void* program, unsigned uniform_index, unsigned columns, unsigned rows, unsigned count, const float* data)
 {
     const UniformMatArgs a = { program, uniform_index, columns, rows, count };
+    if (mainProducer())
+    {
+        MainLap lap;
+        uniAppend(CMD_UNIFORM_MATRIX, &a, sizeof(a), data, (size_t)columns * rows * count * 4);
+        return;
+    }
     pushData(CMD_UNIFORM_MATRIX, &a, sizeof(a), data, (size_t)columns * rows * count * 4);
 }
 
@@ -1563,6 +1642,52 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
     }
 }
 
+// plays the entries of a batch of loose uniform writes (see uniAppend) with the same calls the separate records make
+void applyUniformBatch(const U8* p, U32 bytes)
+{
+    const U8* end = p + bytes;
+    while (p + 8 <= end)
+    {
+        U32 head[2];
+        memcpy(head, p, 8);
+        const U8* d = p + 8;
+        switch (head[0])
+        {
+        case CMD_UNIFORM_SCALAR:
+        {
+            UniformScalarArgs a;
+            memcpy(&a, d, sizeof(a));
+            LLVk::Program* pr = (LLVk::Program*)a.mProgram;
+            if (pr)
+            {
+                if (a.mKind == 0) pr->setFloatsAt((size_t)a.mIndex, a.mF, a.mN, 1);
+                else pr->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(a.mI), a.mN, 1);
+            }
+            break;
+        }
+        case CMD_UNIFORM_VECTOR:
+        {
+            UniformVecArgs a;
+            memcpy(&a, d, sizeof(a));
+            LLVk::Program* pr = (LLVk::Program*)a.mProgram;
+            if (pr) pr->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(d + sizeof(a)), a.mComponents, a.mCount);
+            break;
+        }
+        case CMD_UNIFORM_MATRIX:
+        {
+            UniformMatArgs a;
+            memcpy(&a, d, sizeof(a));
+            LLVk::Program* pr = (LLVk::Program*)a.mProgram;
+            if (pr) pr->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(d + sizeof(a)), a.mColumns, a.mRows, a.mCount);
+            break;
+        }
+        default:
+            break;
+        }
+        p += 8 + head[1];
+    }
+}
+
 void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
 {
     Reader r{ payload };
@@ -1672,10 +1797,21 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVkGL::on_glActiveTexture(head[1]);
         break;
     }
+    case CMD_UNIFORM_BATCH:
+    {
+        U32 bytes;
+        memcpy(&bytes, payload, sizeof(bytes));
+        applyUniformBatch(payload + sizeof(U32) * 2, bytes);
+        break;
+    }
     case CMD_DRAW:
     {
         const DrawHeader* h = (const DrawHeader*)payload;
         const PendTex* e = (const PendTex*)(payload + sizeof(DrawHeader));
+        if (h->mUniBytes)
+        {
+            applyUniformBatch(payload + sizeof(DrawHeader) + sizeof(PendTex) * h->mCountTex, h->mUniBytes);
+        }
         U32 k = 0;
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
         {
