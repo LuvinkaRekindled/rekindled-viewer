@@ -29,6 +29,8 @@
 #include "llviewertextureanim.h"
 #include "llvovolume.h"
 #include "lldrawable.h"
+#include "llspatialpartition.h"
+#include "llviewercamera.h"
 #include "llviewercontrol.h"
 
 #include "llmath.h"
@@ -69,6 +71,28 @@ void LLViewerTextureAnim::reset()
 }
 
 //static
+// <FS> true when a camera other than the main view saw the object's spatial group in the last few frames: the near sun shadow cascades (its shadow falls into view) and the water
+// reflection cameras (it shows in a reflection). Those frames are drawn with the object's current texture animation, so it keeps animating.
+static bool seen_by_other_cameras(LLDrawable* drawable)
+{
+    LLSpatialGroup* group = drawable->getSpatialGroup();
+    if (!group)
+    {
+        return true;        // not in a group (yet): treat as seen
+    }
+    const S32 now = LLDrawable::getCurrentFrame();
+    constexpr S32 RANGE = 4;
+    static const LLViewerCamera::eCameraID ids[] = { LLViewerCamera::CAMERA_SUN_SHADOW0, LLViewerCamera::CAMERA_SUN_SHADOW1, LLViewerCamera::CAMERA_WATER0, LLViewerCamera::CAMERA_WATER1 };
+    for (LLViewerCamera::eCameraID id : ids)
+    {
+        if (now - group->getVisible(id) < RANGE)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void LLViewerTextureAnim::updateClass()
 {
     // <FS> an object that is not in view does not need its animated texture advanced this frame: the frame counter is a function of the timer (and the smooth
@@ -78,7 +102,7 @@ void LLViewerTextureAnim::updateClass()
     for (std::vector<LLViewerTextureAnim*>::iterator iter = sInstanceList.begin(); iter != sInstanceList.end(); ++iter)
     {
         LLVOVolume* vobj = (*iter)->mVObj;
-        if (skip && vobj->mDrawable.notNull() && !vobj->mDrawable->isVisible())
+        if (skip && vobj->mDrawable.notNull() && !vobj->mDrawable->isVisible() && !seen_by_other_cameras(vobj->mDrawable))
         {
             continue;
         }
