@@ -721,6 +721,26 @@ void LLVOVolume::onDrawableUpdateFromServer()
     }
 }
 
+// <FS> the texture matrix of an animated face in closed form. It is
+//   translate(-0.5, -0.5) * rotate(rot about -z) * scale(sx, sy) * translate(off_s + 0.5, off_t + 0.5)
+// with LLMatrix4's row-vector convention, which the matrix classes built with three matrix products and a quaternion for every face every frame. The first faces are
+// computed both ways and compared; the way that matches is used from then on, and if neither does the original calculation stays.
+static void texanim_matrix(LLMatrix4& m, F32 off_s, F32 off_t, F32 scale_s, F32 scale_t, F32 rot, int convention)
+{
+    const F32 c = cosf(rot);
+    const F32 s = sinf(rot) * (convention == 1 ? 1.f : -1.f);
+    const F32 m00 = c, m01 = -s, m10 = s, m11 = c;
+    memset(m.mMatrix, 0, sizeof(m.mMatrix));
+    m.mMatrix[0][0] = m00 * scale_s;
+    m.mMatrix[0][1] = m01 * scale_t;
+    m.mMatrix[1][0] = m10 * scale_s;
+    m.mMatrix[1][1] = m11 * scale_t;
+    m.mMatrix[2][2] = 1.f;
+    m.mMatrix[3][0] = -0.5f * (m00 + m10) * scale_s + off_s + 0.5f;
+    m.mMatrix[3][1] = -0.5f * (m01 + m11) * scale_t + off_t + 0.5f;
+    m.mMatrix[3][3] = 1.f;
+}
+
 void LLVOVolume::animateTextures()
 {
     LL_CPU_ZONE("texanim: per object");
@@ -792,6 +812,13 @@ void LLVOVolume::animateTextures()
                 }
 
                 LLMatrix4& tex_mat = *facep->mTextureMatrix;
+                static int sTexAnimConvention = 0;      // 0: not yet decided, 1 / 2: the closed form that matched, 3: none matched
+                static U32 sTexAnimChecked = 0;
+                if (sTexAnimConvention == 1 || sTexAnimConvention == 2)
+                {
+                    texanim_matrix(tex_mat, off_s, off_t, scale_s, scale_t, rot, sTexAnimConvention);
+                    continue;
+                }
                 tex_mat.setIdentity();
                 LLVector3 trans ;
 
@@ -809,6 +836,32 @@ void LLVOVolume::animateTextures()
                 tex_mat *= mat;
 
                 tex_mat.translate(trans);
+
+                if (sTexAnimConvention == 0)
+                {
+                    auto same = [&](int convention)
+                    {
+                        LLMatrix4 mine;
+                        texanim_matrix(mine, off_s, off_t, scale_s, scale_t, rot, convention);
+                        for (int r = 0; r < 4; ++r)
+                            for (int c = 0; c < 4; ++c)
+                                if (fabsf(mine.mMatrix[r][c] - tex_mat.mMatrix[r][c]) > 1e-4f) return false;
+                        return true;
+                    };
+                    // a rotation of zero cannot tell the conventions apart: wait for a face that turns
+                    const bool turns = fabsf(sinf(rot)) > 0.05f;
+                    if (turns || sTexAnimChecked > 4000)
+                    {
+                        if (same(1)) sTexAnimConvention = 1;
+                        else if (same(2)) sTexAnimConvention = 2;
+                        else sTexAnimConvention = 3;
+                        if (sTexAnimConvention)
+                        {
+                            LL_INFOS("TexAnim") << "texture animation matrices: closed form " << (sTexAnimConvention == 3 ? "does not match, keeping the matrix products" : "matches and is used") << LL_ENDL;
+                        }
+                    }
+                    ++sTexAnimChecked;
+                }
             }
         }
         else

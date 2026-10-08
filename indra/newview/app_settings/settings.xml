@@ -2656,6 +2656,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSSkipHiddenTextureAnim</key>
+    <map>
+      <key>Comment</key>
+      <string>Animated textures: do not advance the texture animation of an object that is not in view this frame. The state catches up the next time it is processed, so a face coming into view can show its frame one frame late at most. Applies at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSSkipUnchangedBBoxOverride</key>
     <map>
       <key>Comment</key>
