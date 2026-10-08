@@ -823,6 +823,25 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
             bindless = false;
         }
     }
+    if (env.mBindless && !bindless)
+    {
+        static int sLogged = 0;
+        if (sLogged < 12)
+        {
+            ++sLogged;
+            std::string why = samplers.empty() ? "no samplers" : has_own_table ? "declares its own set-2 table" : "";
+            for (const SamplerEntry& s : samplers)
+            {
+                if (!s.mArray.empty()) why = "sampler array " + s.mName + s.mArray;
+                else if (bindless_table(s.mType) < 0) why = "sampler type '" + s.mType + "' (" + s.mName + ")";
+            }
+            for (const StageWork& w : works)
+            {
+                if (w.mStage == StageSource::Geometry) why = "geometry stage";
+            }
+            LL_INFOS("VkShader") << "bindless off for " << program_name << ": " << why << LL_ENDL;
+        }
+    }
     std::ostringstream bindless_decl;
     if (bindless)
     {
@@ -1386,7 +1405,14 @@ U32 sCacheHits = 0, sCacheMisses = 0;
 bool bindlessShaders()
 {
     static const bool off = getenv("LL_VK_BINDLESS") && getenv("LL_VK_BINDLESS")[0] == '0';
-    return !off && Context::instance().getCaps().mBindlessSlots != 0;
+    const bool on = !off && Context::instance().getCaps().mBindlessSlots != 0;
+    static bool sLogged = false;
+    if (!sLogged)
+    {
+        sLogged = true;
+        LL_INFOS("VkShader") << "bindless shaders: " << (on ? "on" : "off") << " (LL_VK_BINDLESS " << (off ? "0" : "unset") << ", slots " << Context::instance().getCaps().mBindlessSlots << ")" << LL_ENDL;
+    }
+    return on;
 }
 
 bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
