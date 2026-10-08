@@ -28,6 +28,8 @@
 
 #include "llviewertextureanim.h"
 #include "llvovolume.h"
+#include "lldrawable.h"
+#include "llviewercontrol.h"
 
 #include "llmath.h"
 #include "llerror.h"
@@ -69,9 +71,18 @@ void LLViewerTextureAnim::reset()
 //static
 void LLViewerTextureAnim::updateClass()
 {
+    // <FS> an object that is not in view does not need its animated texture advanced this frame: the frame counter is a function of the timer (and the smooth
+    // modes accumulate the time since their last call), so the next call that happens brings it to the right state. Seen again, it can be one frame late at most.
+    static LLCachedControl<bool> skip_hidden(gSavedSettings, "FSSkipHiddenTextureAnim", true);
+    const bool skip = skip_hidden;
     for (std::vector<LLViewerTextureAnim*>::iterator iter = sInstanceList.begin(); iter != sInstanceList.end(); ++iter)
     {
-        (*iter)->mVObj->animateTextures();
+        LLVOVolume* vobj = (*iter)->mVObj;
+        if (skip && vobj->mDrawable.notNull() && !vobj->mDrawable->isVisible())
+        {
+            continue;
+        }
+        vobj->animateTextures();
     }
 }
 
