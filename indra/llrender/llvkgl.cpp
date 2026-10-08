@@ -4336,7 +4336,9 @@ bool emulate_limit(GLenum pname, GLint* out, U32& n)
     case 0x8869: out[0] = (GLint)caps.mMaxVertexAttribs; return true;               // MAX_VERTEX_ATTRIBS
     case 0x8A30: out[0] = (GLint)caps.mMaxUniformRange; return true;                // MAX_UNIFORM_BLOCK_SIZE
     case 0x8872: case 0x8B4C: case 0x8B4D:                                          // MAX_TEXTURE_IMAGE_UNITS, MAX_VERTEX_TEXTURE_IMAGE_UNITS, MAX_COMBINED_TEXTURE_IMAGE_UNITS
-        out[0] = (GLint)caps.mMaxSampledImagesPerStage; return true;
+        // <FS> what a GL driver reports (32 per stage, 192 combined), not the descriptor limit of the device (a million): the viewer loops over this many texture units
+        // (display() unbinds every one of them each frame: 2.6 ms for a million).
+        out[0] = (GLint)std::min<U32>((U32)caps.mMaxSampledImagesPerStage, pname == 0x8B4D ? 192u : 32u); return true;
     case 0x8D57: out[0] = (GLint)caps.mMaxSampleCount; return true;                 // MAX_SAMPLES
     case 0x0D3A: out[0] = (GLint)caps.mMaxViewport[0]; out[1] = (GLint)caps.mMaxViewport[1]; n = 2; return true;     // MAX_VIEWPORT_DIMS
     default: return false;
