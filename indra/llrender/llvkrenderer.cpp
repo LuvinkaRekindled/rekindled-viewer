@@ -834,13 +834,14 @@ void Renderer::gpuZone(const char* name, bool begin)
     }
     if (begin)
     {
-        mZoneStack.push_back(Context::stampTag(std::string("zone: ") + name));
+        // the shadow zones also name the render target, so that the cascades show up separately in the report
+        mZoneStack.push_back(Context::stampTag(std::string("zone: ") + name + (strncmp(name, "shadow", 6) == 0 ? " " + describeTarget() : std::string())));
         Context::instance().gpuStamp(mZoneStack.back());
     }
     else if (!mZoneStack.empty())
     {
         mZoneStack.pop_back();
-        Context::instance().gpuStamp(mZoneStack.empty() ? mPassTag : mZoneStack.back());
+        Context::instance().gpuStamp(mZoneStack.empty() ? mPassTag : mZoneStack.back());      // (inside a pass that spans the zone the pass keeps its own entry)
     }
 }
 
@@ -1539,7 +1540,10 @@ void Renderer::beginRenderingIfNeeded()
     if (LLVkMirror::gPhaseTiming)
     {
         mPassTag = Context::stampTag(describeTarget());
-        Context::instance().gpuStamp(mZoneStack.empty() ? mPassTag : mZoneStack.back());      // LL_VK_PHASES: GPU time by render pass (or by the viewer's zone that spans it)
+        mBeginTag = mZoneStack.empty() ? mPassTag : mZoneStack.back();
+        // a pass that starts with a clear: the layout changes, the begin and the clear get their own entry, so that they are not counted as the first draws' time
+        mBeginSplit = mPendingClear != 0;
+        Context::instance().gpuStamp(mBeginSplit ? Context::stampTag("pass begin + clear " + describeTarget()) : mBeginTag);      // LL_VK_PHASES: GPU time by render pass (or by the viewer's zone that spans it)
     }
     tracyBeginPass();
     VkExtent2D extent = { 0, 0 };
@@ -1582,6 +1586,11 @@ void Renderer::beginRenderingIfNeeded()
     mRendering = true;
     mPendingClear = 0;
     mInBegin = false;
+    if (mBeginSplit)
+    {
+        mBeginSplit = false;
+        Context::instance().gpuStamp(mBeginTag);
+    }
 }
 
 void Renderer::clear(U32 bits, const F32 color[4], F32 depth, U32 stencil)
