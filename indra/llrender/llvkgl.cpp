@@ -5736,6 +5736,7 @@ void own_link(GLuint id)
     ShaderEnv env;
     env.mAttributeNames = LLShaderMgr::instance()->mReservedAttribs;
     env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
+    env.mBindless = bindlessShaders();      // <FS> this is the compile every program takes while the mirror owns the resources
     const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
     ProgramInfo info;
     if (!compileProgram("program " + std::to_string(id), stages, env, info, dump ? dump : ""))
