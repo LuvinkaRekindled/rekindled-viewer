@@ -183,10 +183,6 @@ void main()
 
     float shadow = 1.0f;
 
-#ifdef HAS_SUN_SHADOW
-    shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
-#endif
-
 #ifdef USE_DIFFUSE_TEX
     vec4 diffuse_tap = texture(diffuseMap,vary_texcoord0.xy);
 #endif
@@ -242,6 +238,11 @@ void main()
     diffuse_srgb.rgb *= vertex_color.rgb;
     diffuse_linear.rgb = srgb_to_linear(diffuse_srgb.rgb);
 #endif // USE_VERTEX_COLOR
+
+    // <FS> the sun shadow lookup (the most expensive part of this shader) comes after the alpha discards above, so the pixels that are thrown away do not pay for it
+#ifdef HAS_SUN_SHADOW
+    shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+#endif
 
     vec3 sunlit;
     vec3 amblit;
