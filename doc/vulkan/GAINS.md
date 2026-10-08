@@ -57,6 +57,17 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 | Tracy GPU zones from Vulkan timestamps | context created; zone count logged (not yet seen in the Tracy UI) |
 | N1b typed records: vertex array state, texture binds, draws (`LL_VK_TYPED=0` turns them off) | same spot, same 20 s: main-thread queue writing 0.68-0.70 -> 0.51 ms/frame (53k -> 38k calls/frame), frame 10.9-11.2 -> 10.7 ms. About 3% of the frame; not visible as fps |
 
+### native-vk, continued (2026-10-07, evening)
+
+| Change | Result |
+|---|---|
+| Draw records: texture binds as a producer-side slot table, changed slots written with the draw; vertex array state, shader bind, sampler params, render target binds as single records | records per frame 28,300 -> about 19,900; no fps change (CPU-bound spot); queue writing about 0.5-0.6 ms of the frame |
+| Bindless textures for 169 of 200 programs (the rest: no samplers 16, geometry stage, 8 SMAA programs whose helper parameters collide with sampler names) | neutral at a CPU-bound spot (A/B: both about 75 fps; frames settle faster); the foundation for indirect draws. Worker time per draw is about 1.0 us either way |
+| Worker draw path: flat texture/buffer lookups, cached render-target resolution, draw state translated on change only | render target and state phases now 0.24 ms/frame together; the rest of the worker draw time is spread (uniform block 1.2, textures 0.7, vertex input 1.0 ms/frame at 4,000 draws) |
+| **Animated textures skipped for objects out of view (FSSkipHiddenTextureAnim) + face matrices in closed form** | **loop 14.5-15.0 -> 11.95-12.0 ms at Adam's spot (about 20%)**: animated textures 1.7 -> 0.47 ms, 1,953 -> 340 objects per frame, idle() 5.1 -> 3.3 ms, display() 9.4 -> 8.5 ms |
+
+Main-thread profile at the spot before this change (loop 14.5-15 ms): object list 3.9 (animated textures 1.7, avatar motion 1.2, avatar update 0.9), sun shadows 1.7, UI about 2.3, lighting 0.9, G-buffer pass 0.9, state sort 0.7, texture updates and fetch about 1.2. The G-buffer pass being only 0.9 ms is why the GPU-scene first slice was not the best target for this scene.
+
 ## Where the main thread stands (blues place, 43 dancers, loop about 16 ms)
 display 11-12 ms (sun shadows 2.4-3.0, alpha pass about 1.6, stateSort 1.7, G-buffer 1.5, UI 1.2, lighting 0.5), idle 4.6 ms (object list 3.2: avatar update, animated textures 0.5-0.7).
 Octree operations are about 1.2 ms of it. What is left is spread thin; the per-draw work of the alpha pass is about 0.7 us per draw.
