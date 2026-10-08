@@ -129,13 +129,6 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
     {
         shader->setMinimumAlpha(MINIMUM_ALPHA);
     }
-    {
-        // <FS> see alphaF.glsl: pixels fainter than this skip their lighting (0 turns it off; impostor renders keep every pixel)
-        static LLCachedControl<F32> faint_skip(gSavedSettings, "FSAlphaFaintSkip", 0.02f);
-        static LLStaticHashedString faint_alpha_name("faint_alpha");
-        shader->uniform1f(faint_alpha_name, LLPipeline::sImpostorRender ? 0.f : (F32)faint_skip);
-    }
-
     //also prepare rigged variant
     if (shader->mRiggedVariant && shader->mRiggedVariant != shader)
     {

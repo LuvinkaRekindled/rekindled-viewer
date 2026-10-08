@@ -2700,17 +2700,6 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSAlphaFaintSkip</key>
-    <map>
-      <key>Comment</key>
-      <string>Transparent surfaces: pixels with less alpha than this skip their lighting (shadow, atmospherics, reflection probes, lights). 0 turns it off. Not applied to additive or other custom blends. Applies at once.</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>F32</string>
-      <key>Value</key>
-      <real>0.02</real>
-    </map>
     <key>FSSkipHiddenTextureAnim</key>
     <map>
       <key>Comment</key>
