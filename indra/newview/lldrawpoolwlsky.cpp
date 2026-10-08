@@ -485,15 +485,23 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
 
     if (gPipeline.canUseWindLightShaders())
     {
-        renderSkyHazeDeferred(origin, camHeightLocal);
-        renderHeavenlyBodies();
+        {
+            LL_PROFILE_GPU_ZONE("sky haze");
+            renderSkyHazeDeferred(origin, camHeightLocal);
+        }
+        {
+            LL_PROFILE_GPU_ZONE("sky sun and moon");
+            renderHeavenlyBodies();
+        }
         if (!gCubeSnapshot)
         {
+            LL_PROFILE_GPU_ZONE("sky stars");
             renderStarsDeferred(origin);
         }
 
         if (!gCubeSnapshot || gPipeline.mReflectionMapManager.isRadiancePass()) // don't draw clouds in irradiance maps to avoid popping
         {
+            LL_PROFILE_GPU_ZONE("sky clouds");
             renderSkyCloudsDeferred(origin, camHeightLocal, cloud_shader);
         }
     }
