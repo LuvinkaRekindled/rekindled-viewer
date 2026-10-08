@@ -375,8 +375,11 @@ vec4 traceScreenRayFast(vec3 viewPos, vec3 dir, vec3 rejectUp, vec2 uvOffset)
         return vec4(0);
     }
 
+    // <FS> bit 2 of ssrTraceMode (FSWaterTraceAdaptive): water rays take fewer steps, spaced unevenly: fine next to the surface where nearby things reflect, coarse far away
+    // where the reflected picture is small and soft anyway. The thickness test below already scales with the step.
+    bool adaptive = water && ((int(ssrTraceMode + 0.5) & 4) != 0);
     const int maxSteps = 48;
-    int steps = int(clamp(ceil(lenPx / 5.0), 2.0, float(maxSteps)));
+    int steps = adaptive ? int(clamp(ceil(lenPx / 8.0), 2.0, 30.0)) : int(clamp(ceil(lenPx / 5.0), 2.0, float(maxSteps)));
     float dt = tmax / float(steps);
     float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));     // fixed per pixel: no shimmer over time
 
@@ -389,6 +392,11 @@ vec4 traceScreenRayFast(vec3 viewPos, vec3 dir, vec3 rejectUp, vec2 uvOffset)
             break;
         }
         float t = min(dt * (float(i) + jitter), tmax);
+        if (adaptive)
+        {
+            float u = min((float(i) + jitter) / float(steps), 1.0);
+            t = tmax * u * sqrt(u);       // u^1.5
+        }
         vec2 uv = s0 + d * t;
         float z = 1.0 / (k0 + (k1 - k0) * t);
         float sceneZ = getLinearDepth(uv);
