@@ -64,6 +64,8 @@ namespace LLVkAsync
     void framebufferAttach(U32 fbo, U32 attachment, U32 textarget, U32 texture, U32 restore_fbo);
     // draw_buffers: the number of colour attachments to draw to (0: none, -1: the back buffer)
     void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh);
+    // a named GPU zone (the viewer's LL_PROFILE_GPU_ZONE scopes, enabled with FSGpuZoneTimers + LL_VK_PHASES): the worker writes a GPU timestamp at this point of the frame
+    void gpuZone(const char* name, bool begin);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
     // commands that are not GL calls (the GL calls are numbered by the generated enum in llvkgl.h)
@@ -79,7 +81,8 @@ namespace LLVkAsync
         CMD_SHADER_BIND,                           // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
         CMD_TEX_PARAMS,                            // texture parameters of the bound texture, several in one record (LLTexUnit sampler state)
         CMD_FBO_ATTACH, CMD_TARGET_STATE,          // render target commands (framebufferAttach, targetState)
-        CMD_TEX_SLOTS, CMD_DRAW                    // texture slots that changed since the last draw, alone or folded into the draw record
+        CMD_TEX_SLOTS, CMD_DRAW,                   // texture slots that changed since the last draw, alone or folded into the draw record
+        CMD_GPU_ZONE                               // a named GPU timing zone begins or ends here in the command stream (FSGpuZoneTimers)
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 

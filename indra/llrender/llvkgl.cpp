@@ -3981,7 +3981,7 @@ void after_frame()
                             for (const auto& kv : gp.mMicros) by_time.push_back({ kv.second, kv.first });
                             std::sort(by_time.rbegin(), by_time.rend());
                             std::string text;
-                            for (size_t k = 0; k < by_time.size() && k < 16; ++k)
+                            for (size_t k = 0; k < by_time.size() && k < 60; ++k)
                             {
                                 char buf[220];
                                 snprintf(buf, sizeof(buf), "[%s] %.2f ms (%.0f%%) | ", Context::stampTagName(by_time[k].second).c_str(), (double)by_time[k].first / 1000.0 / frames,

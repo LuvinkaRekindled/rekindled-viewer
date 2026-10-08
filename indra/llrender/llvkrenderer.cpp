@@ -826,6 +826,24 @@ bool Renderer::init()
     return true;
 }
 
+void Renderer::gpuZone(const char* name, bool begin)
+{
+    if (!LLVkMirror::gPhaseTiming)
+    {
+        return;
+    }
+    if (begin)
+    {
+        mZoneStack.push_back(Context::stampTag(std::string("zone: ") + name));
+        Context::instance().gpuStamp(mZoneStack.back());
+    }
+    else if (!mZoneStack.empty())
+    {
+        mZoneStack.pop_back();
+        Context::instance().gpuStamp(mZoneStack.empty() ? mPassTag : mZoneStack.back());
+    }
+}
+
 void Renderer::tracyInit()
 {
 #if defined(TRACY_ENABLE)
@@ -1213,6 +1231,7 @@ VkSampler Renderer::getSampler(const SamplerDesc& wanted)
 
 void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
 {
+    mZoneStack.clear();         // GPU zones do not span command buffers
     if (mPipelinesSinceSave > 0 && ++mPipelineCacheLastSaveFrame >= 18000)
     {
         mPipelineCacheLastSaveFrame = 0;
@@ -1519,7 +1538,8 @@ void Renderer::beginRenderingIfNeeded()
     mInBegin = true;
     if (LLVkMirror::gPhaseTiming)
     {
-        Context::instance().gpuStamp(Context::stampTag(describeTarget()));      // LL_VK_PHASES: GPU time by render pass
+        mPassTag = Context::stampTag(describeTarget());
+        Context::instance().gpuStamp(mZoneStack.empty() ? mPassTag : mZoneStack.back());      // LL_VK_PHASES: GPU time by render pass (or by the viewer's zone that spans it)
     }
     tracyBeginPass();
     VkExtent2D extent = { 0, 0 };
