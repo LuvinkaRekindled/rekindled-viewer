@@ -737,6 +737,12 @@ void LLVkMirror::beginFrameImpl(S32 width, S32 height)
     }
     if (LLVk::gDeviceLost && !sMirror.mFailed)
     {
+        if (ll_nogl())
+        {
+            // <FS> there is no OpenGL to fall back to: carrying on would leave a blank window. Stop with a message the crash report carries.
+            LL_ERRS("VkMirror") << "The graphics device was lost (VK_ERROR_DEVICE_LOST): the GPU or its driver stopped answering. The viewer cannot continue; please restart it. "
+                                   "If this repeats, the log lines before this one name what was being drawn." << LL_ENDL;
+        }
         LL_WARNS("VkMirror") << "the Vulkan device was lost; switching the mirror off, the viewer carries on with OpenGL" << LL_ENDL;
         shutdown();
         sMirror.mFailed = true;
