@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include <chrono>
 
 #include "llviewerdisplay.h"
 #include "llgpuzonetimer.h"
@@ -1198,13 +1199,31 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Texture Unbind");
             LL_CPU_ZONE("display: texture unbind");
+            static U32 sUnbindLogged = 0;
+            U32 unbound = 0;
             for (S32 i = 0; i < gGLManager.mNumTextureImageUnits; i++)
             { //dummy cleanup of any currently bound textures
                 if (gGL.getTexUnit(i)->getCurrType() != LLTexUnit::TT_NONE)
                 {
+                    const auto t0 = std::chrono::steady_clock::now();
                     gGL.getTexUnit(i)->unbind(gGL.getTexUnit(i)->getCurrType());
+                    const auto t1 = std::chrono::steady_clock::now();
                     gGL.getTexUnit(i)->disable();
+                    const auto t2 = std::chrono::steady_clock::now();
+                    ++unbound;
+                    const auto us_unbind = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+                    const auto us_disable = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+                    if ((us_unbind > 100 || us_disable > 100) && sUnbindLogged < 24)
+                    {
+                        ++sUnbindLogged;
+                        LL_INFOS("DisplayStall") << "texture unit " << i << ": unbind " << us_unbind << " us, disable " << us_disable << " us (units " << gGLManager.mNumTextureImageUnits << ")" << LL_ENDL;
+                    }
                 }
+            }
+            static U32 sUnbindReports = 0;
+            if (sUnbindReports < 3 && (++sUnbindReports == 1 || (gFrameCount % 600) == 0))
+            {
+                LL_INFOS("DisplayStall") << "texture unbind loop: " << unbound << " units were bound, loop over " << gGLManager.mNumTextureImageUnits << " units" << LL_ENDL;
             }
         }
 
