@@ -8984,7 +8984,7 @@ void LLPipeline::updateJitter()
         return;
     }
     const U32 frame = LLFrameTimer::getFrameCount();
-    if (frame != mJitterFrame)
+    if (frame != mJitterFrame || gSnapshot)       // <FS> a snapshot renders several times in one frame: each takes the next sub-pixel position
     {
         mJitterFrame = frame;
         ++mJitterIndex;

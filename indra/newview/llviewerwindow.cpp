@@ -6381,11 +6381,21 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
             {
                 const U32 subfield = subimage_x+(subimage_y*llceil(scale_factor));
                 // <FS> snapshot experiment: variants 1-3 put a frame boundary before the render, 4 renders twice and keeps the second
-                LLVkMirror::snapshotBoundary(fs_vk_snap_variant);
+                // The picture the viewer keeps is the last of a few renders of the same view. The water reflection reads last frame's scene copy and the DLSS upscaler
+                // builds its picture from the frames before it; the first render after the live view has neither at this size (the snapshot's world view differs from the
+                // live one: no UI), so it came out without reflections and with an upscale that has no history. Two or three more renders are cheap next to a snapshot.
+                static LLCachedControl<S32> fs_snap_warmup(gSavedSettings, "FSSnapshotWarmupFrames", 3);
+                S32 warmup = LLPipeline::sRenderDeferred ? (LLPipeline::sDLSS && scale_factor <= 1.f ? (S32)fs_snap_warmup : llmin((S32)fs_snap_warmup, 1)) : 0;
                 if (fs_vk_snap_variant == 4)
                 {
+                    warmup = llmax(warmup, 1);
+                }
+                for (S32 w = 0; w < warmup; ++w)
+                {
+                    LLVkMirror::snapshotBoundary(fs_vk_snap_variant);
                     display(do_rebuild, scale_factor, subfield, true);
                 }
+                LLVkMirror::snapshotBoundary(fs_vk_snap_variant);
                 // </FS>
                 display(do_rebuild, scale_factor, subfield, true);
 

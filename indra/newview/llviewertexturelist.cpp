@@ -63,6 +63,7 @@
 #include "lltracerecording.h"
 #include "llviewerdisplay.h"
 #include "llviewerwindow.h"
+#include "llwindow.h"
 #include "llprogressview.h"
 
 ////////////////////////////////////////////////////////////////////////////
@@ -1170,7 +1171,11 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
         }
     }
 
-    if (!mDownScaleQueue.empty() && gPipeline.mDownResMap.isComplete())
+    // <FS> native-vk: the downscale draws into a render target and copies the result into the texture's new storage. A minimized or hidden window has no frame to
+    // record that into (the draw and the copy are dropped), which left the texture replaced by an empty one: hair and other textures were black after a minimize
+    // until they were fetched again. So the queue waits (the entries stay: a restored window needs no downscale and each is then a no-op).
+    const bool can_render = gViewerWindow && gViewerWindow->getWindow()->getVisible() && !gViewerWindow->getWindow()->getMinimized();
+    if (can_render && !mDownScaleQueue.empty() && gPipeline.mDownResMap.isComplete())
     {
         LLGLDisable blend(GL_BLEND);
         gGL.setColorMask(true, true);
