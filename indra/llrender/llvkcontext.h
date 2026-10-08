@@ -149,7 +149,7 @@ public:
 
     // ---- LL_VK_PHASES: GPU time by render pass ----
     // A timestamp is written when each render pass begins; the time up to the next one is charged to that pass's tag. Read back when the frame slot is reused.
-    static const U32 MAX_GPU_STAMPS = 640;
+    static const U32 MAX_GPU_STAMPS = 1024;
     static U32 stampTag(const std::string& name);       // the number standing for a pass description (0 is "start of frame")
     static std::string stampTagName(U32 tag);
     void gpuStamp(U32 tag);
