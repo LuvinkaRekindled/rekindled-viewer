@@ -70,6 +70,8 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 
 Since the start of the 2026-10-07 evening session the loop at Adam's spot went from 14.5-15.0 ms to 7.7 ms.
 
+GPU time at Adam's spot after the fixes (LL_VK_PHASES + FSGpuZoneTimers, run-viewer-clean-gpuzones.bat; GPU 6.5-6.7 ms per frame, GPU busy about 80-90%): alpha pass (post water) 1.47 ms (22%), DLSS 1.17 (18%), water 0.82 (12%), G-buffer materials 0.46 (7%), sun lighting program 0.33, sky 0.31, atmospherics 0.23, soften shadow 0.23, alpha (pre water) 0.21, all sun shadow maps about 0.35, local lights 0.01. The CPU side is about 7.5 ms (display 5.1, idle 2.4). Both sides are now close to balanced.
+
 Main-thread profile at the spot before this change (loop 14.5-15 ms): object list 3.9 (animated textures 1.7, avatar motion 1.2, avatar update 0.9), sun shadows 1.7, UI about 2.3, lighting 0.9, G-buffer pass 0.9, state sort 0.7, texture updates and fetch about 1.2. The G-buffer pass being only 0.9 ms is why the GPU-scene first slice was not the best target for this scene.
 
 ## Where the main thread stands (blues place, 43 dancers, loop about 16 ms)
