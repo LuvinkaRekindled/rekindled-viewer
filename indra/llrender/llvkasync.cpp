@@ -166,7 +166,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
@@ -395,7 +395,7 @@ inline bool texIndependent(U16 op)
     case OP_glBlendFunc: case OP_glBlendFuncSeparate: case OP_glEnable: case OP_glDisable: case OP_glDepthFunc: case OP_glDepthMask:
     case OP_glCullFace: case OP_glScissor: case OP_glColorMask: case OP_glViewport: case OP_glPolygonMode: case OP_glPolygonOffset:
     case OP_glStencilFunc: case OP_glStencilOp: case OP_glStencilMask: case OP_glLineWidth: case OP_glClear: case OP_glClearColor:
-    case OP_glBufferData: case OP_glBufferSubData: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA:
+    case OP_glBufferData: case OP_glBufferSubData: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_GPU_ZONE:
     case OP_glBindBufferBase: case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
     case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
         return true;
@@ -696,6 +696,16 @@ void drawArrays(U32 mode, S32 first, S32 count)
     ++gMainRecords;
     gPendMask = 0;
     gCo.mActiveValid = false;
+}
+
+void gpuZone(const char* name, bool begin)
+{
+    char text[64];
+    const size_t len = name ? std::min<size_t>(strlen(name), sizeof(text) - 1) : 0;
+    if (len) memcpy(text, name, len);
+    text[len] = 0;
+    const U32 head[2] = { begin ? 1u : 0u, (U32)len };
+    pushData(CMD_GPU_ZONE, head, sizeof(head), text, len + 1);
 }
 
 void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count)
@@ -1639,6 +1649,13 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVkMirror::UpscaleArgs a;
         memcpy(&a, payload, sizeof(a));         // the same struct the producer pushed
         LLVkMirror::upscaleImpl(a);
+        break;
+    }
+    case CMD_GPU_ZONE:
+    {
+        const U32 head[2] = { r.get<U32>(), r.get<U32>() };
+        Blob b = read_blob(r, flags);
+        LLVk::Renderer::instance().gpuZone(b.mData ? (const char*)b.mData : "", head[0] != 0);
         break;
     }
     case CMD_TEX_SLOTS:

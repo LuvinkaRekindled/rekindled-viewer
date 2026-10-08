@@ -281,6 +281,7 @@ public:
     // <FS> bindless sampled images (set 2) for the render packets with textures: one slot per distinct (image view, sampler) pair a frame uses, handed out on first
     // use; slot 0 is the white image. The caller makes sure the image is in the sampling layout.
     bool bindlessAvailable() const { return mSet2Layout != VK_NULL_HANDLE; }
+    void gpuZone(const char* name, bool begin);       // a GPU timing zone begins / ends at this point of the command stream
     U32 bindlessEpoch() const { return mBindlessEpoch; }         // changes every frame: a slot number from an earlier epoch means nothing
     U32 bindlessSlot(Image* image, VkSampler sampler);
     U32 bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout);     // table 0 2D, 1 cube, 2 cube array, 3 2D shadow
@@ -389,6 +390,9 @@ private:
     void tracyShutdown();
     void tracyBeginPass();
     void tracyEndPass();
+    // named GPU zones (see LLVkAsync::gpuZone): the stamps that attribute GPU time to the viewer's own zones, nested
+    std::vector<U32> mZoneStack;
+    U32 mPassTag = 0;
     VkDescriptorSetLayout mSet0Layout = VK_NULL_HANDLE;
     VkDescriptorSetLayout mSet1Layout = VK_NULL_HANDLE;
     VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
