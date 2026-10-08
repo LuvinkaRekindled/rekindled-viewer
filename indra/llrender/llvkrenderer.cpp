@@ -2058,7 +2058,18 @@ void Renderer::applyState()
             const bool is_depth_target = depth_root && root_of(img) == depth_root;
             const VkSampler sampler = mTextureSamplers[unit] ? mTextureSamplers[unit] : fallback_sampler;
             const VkImageLayout layout = is_depth_target ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            const U32 slot = bindlessSlotIn(mProgram->mSamplerTable[k], img, sampler, layout);
+            const U32 table = mProgram->mSamplerTable[k];
+            UnitSlot& cached = mUnitSlot[unit];
+            U32 slot;
+            if (cached.mEpoch == mBindlessEpoch && cached.mView == img->mView && cached.mSampler == sampler && cached.mLayout == layout && cached.mTable == table)
+            {
+                slot = cached.mSlot;
+            }
+            else
+            {
+                slot = bindlessSlotIn(table, img, sampler, layout);
+                cached = { img->mView, sampler, layout, table, mBindlessEpoch, slot };
+            }
             U32* dst = (U32*)(mProgram->mShadow.data() + mProgram->mSlotOffset[k]);
             if (*dst != slot)
             {
