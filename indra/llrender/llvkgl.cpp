@@ -3362,6 +3362,14 @@ double take_hook_ms()
 // called by the mirror once per frame after it presents: arms the dump if the trigger file exists
 namespace { void drain_query_results(); }
 
+// <FS> the mirror is about to close the frame: the writes to device-local buffers that no draw has read yet are recorded now (they stage in the frame's own memory,
+// which a later frame reuses)
+void before_end_frame()
+{
+    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
+    flush_buffer_updates();
+}
+
 void after_frame()
 {
     std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
