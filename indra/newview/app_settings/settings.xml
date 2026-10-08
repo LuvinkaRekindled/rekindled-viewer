@@ -2700,6 +2700,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSSnapshotWarmupFrames</key>
+    <map>
+      <key>Comment</key>
+      <string>Snapshots: how many extra renders of the view come before the one that is kept, so that water reflections (which read the previous frame) and the DLSS upscale (which accumulates frames) are complete. 0 turns it off.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>3</integer>
+    </map>
     <key>FSSkipHiddenTextureAnim</key>
     <map>
       <key>Comment</key>
