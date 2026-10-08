@@ -44,7 +44,7 @@ void LLVkMirror::stopAsync() {}
 
 #include <cstdlib>
 
-namespace LLVkGL { extern bool gActive; extern bool gOwn; extern LLVkMirror::Mutex gMutex; void after_frame(); double take_hook_ms(); std::string resource_summary(); }
+namespace LLVkGL { extern bool gActive; extern bool gOwn; extern LLVkMirror::Mutex gMutex; void after_frame(); void before_end_frame(); double take_hook_ms(); std::string resource_summary(); }
 
 namespace LLVkMirror
 {
@@ -1092,6 +1092,7 @@ void LLVkMirror::endFrameImpl()
     LLVk::Swapchain& sc = sMirror.mSwapchain;
     const U32 index = sMirror.mImageIndex;
 
+    LLVkGL::before_end_frame();
     if (sMirror.mOffscreen)
     {
         sMirror.mOffscreen = false;
