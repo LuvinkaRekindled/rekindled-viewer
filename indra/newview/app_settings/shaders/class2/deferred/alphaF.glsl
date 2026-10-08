@@ -52,7 +52,6 @@ in vec4 vertex_color; //vertex color should be treated as sRGB
 #endif
 
 uniform float minimum_alpha;
-uniform float faint_alpha;     // <FS> FSAlphaFaintSkip: where the blend is the usual source-alpha one (minimum_alpha > 0) a pixel with less alpha than this skips the lighting
 
 uniform mat4 proj_mat;
 uniform mat4 inv_proj;
@@ -239,14 +238,6 @@ void main()
     diffuse_srgb.rgb *= vertex_color.rgb;
     diffuse_linear.rgb = srgb_to_linear(diffuse_srgb.rgb);
 #endif // USE_VERTEX_COLOR
-
-    // <FS> a pixel this faint changes the picture by less than a quantisation step: skip the shadow, atmospherics, reflection probes and lights for it. Not for custom
-    // blend functions (additive glow and the like: they set minimum_alpha to 0 because their colour matters whatever the alpha).
-    if (minimum_alpha > 0.0 && final_alpha < faint_alpha)
-    {
-        frag_color = vec4(diffuse_linear.rgb * 0.6, final_alpha);
-        return;
-    }
 
     // <FS> the sun shadow lookup (the most expensive part of this shader) comes after the alpha discards above, so the pixels that are thrown away do not pay for it
 #ifdef HAS_SUN_SHADOW
