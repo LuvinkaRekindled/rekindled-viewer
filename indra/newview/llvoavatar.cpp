@@ -3236,11 +3236,11 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
 
     // <FS> An avatar nobody can see does not need the whole per-frame update: its motions, matrices, name tag and the rest are all driven by elapsed time (the impostor
     // path already runs them every 32-64 frames), and it is picked up in full the frame after it comes into view. Others' avatars only, and not when something is waiting
-    // for the next full update (an impostor refresh, a sit, a special render mode): every second frame, every fourth when the avatar is far away, staggered by avatar id.
+    // for the next full update (a first update, a special render mode): every second frame, every fourth when the avatar is far away, staggered by avatar id.
     {
         static LLCachedControl<bool> reduce_hidden(gSavedSettings, "FSReduceHiddenAvatarUpdates", true);
-        if (reduce_hidden && !isSelf() && !mIsControlAvatar && !isUIAvatar() && mDrawable.notNull() && !getParent() && mSpecialRenderMode == 0
-            && !mNeedsAnimUpdate && !mNeedsImpostorUpdate && !isVisible())
+        if (reduce_hidden && !isSelf() && !mIsControlAvatar && !isUIAvatar() && mDrawable.notNull() && mSpecialRenderMode == 0
+            && !mNeedsAnimUpdate && !isVisible())
         {
             const F32 distance = (getPositionAgent() - LLViewerCamera::getInstance()->getOrigin()).length();
             const S32 period = distance > 50.f ? 4 : 2;
