@@ -2656,6 +2656,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSReduceHiddenAvatarUpdates</key>
+    <map>
+      <key>Comment</key>
+      <string>Avatars: another resident's avatar that is not in view gets its full update every second frame (every fourth when more than 50 m away) instead of every frame. Its motions, matrices and name tag are driven by elapsed time, and it is updated in full as soon as it is in view. Applies at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSSkipHiddenTextureAnim</key>
     <map>
       <key>Comment</key>
