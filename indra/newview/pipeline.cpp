@@ -9055,7 +9055,9 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     a.mJitterX = LLViewerCamera::sJitterPixels.x;
     a.mJitterY = LLViewerCamera::sJitterPixels.y;
     // the history is useless after a pause in rendering or a resize
-    a.mReset = (!mViewProjPrevValid || frame != last_frame + 1 || last_size[0] != a.mRenderWidth || last_size[1] != a.mRenderHeight) ? 1 : 0;
+    // <FS> a snapshot renders several times within one frame number: those renders continue each other's history
+    const bool continues = frame == last_frame + 1 || (gSnapshot && frame == last_frame);
+    a.mReset = (!mViewProjPrevValid || !continues || last_size[0] != a.mRenderWidth || last_size[1] != a.mRenderHeight) ? 1 : 0;
     last_frame = frame;
     last_size[0] = a.mRenderWidth;
     last_size[1] = a.mRenderHeight;
