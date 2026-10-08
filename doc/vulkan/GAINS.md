@@ -101,3 +101,10 @@ Open item: the DLSS checkbox may not apply live when unchecked (the tooltip says
 
 ## What a single end-to-end number needs
 The same spot, the same settings, the official OpenGL viewer against `run-viewer-clean.bat`, read off the fps counter. Not done yet.
+
+## Regression-checklist findings fixed (2026-10-08)
+| Finding | Cause | Fix |
+|---|---|---|
+| Saved snapshots had no water reflections | the first render after the live view has no previous-frame scene copy at the snapshot's size (world view without UI differs from the live one) | FSSnapshotWarmupFrames extra renders before the kept one |
+| Saved snapshots had no DLSS anti-aliasing | each render of a snapshot shares one frame number, so the upscale reset its history every time | renders of one snapshot continue each other's history, 18 warm-up frames (one jitter cycle), 3 for thumbnails; jitter advances per render |
+| Hair and other textures black after minimize | texture downscale needs a frame to draw and copy into; a minimized window has none, so the new storage stayed empty | the downscale queue waits while the window is minimized or hidden |
