@@ -503,6 +503,9 @@ private:
     VkIndexType mIndexType = VK_INDEX_TYPE_UINT16;
     Image* mTextures[MAX_TEXTURE_UNITS] = {};
     VkSampler mTextureSamplers[MAX_TEXTURE_UNITS] = {};
+    // <FS> the bindless slot a unit's texture got last (this frame's tables): the same texture drawn again costs no table lookup
+    struct UnitSlot { VkImageView mView = VK_NULL_HANDLE; VkSampler mSampler = VK_NULL_HANDLE; VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED; U32 mTable = 0; U32 mEpoch = 0; U32 mSlot = 0; };
+    UnitSlot mUnitSlot[MAX_TEXTURE_UNITS];
 
     // what has already been recorded
     VkPipeline mBoundPipeline = VK_NULL_HANDLE;
