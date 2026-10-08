@@ -23,6 +23,28 @@ A bottom-level acceleration structure (BLAS) is built from a vertex buffer and a
 - **Uniform buffers and pixel buffers stay outside** (separate path; a per-frame ring later if wanted).
 - A switch keeps the old path: `LL_VK_ARENA=0` (and `FSVkBufferArena` while it is being proven). Remove both when the checklist has been run twice.
 
+## Phase 0 baseline (measured 2026-10-08, `run-viewer-clean-buffers.bat`, windowed, commit caa9c80f)
+Route: busy spot, teleport (loading), light sim. Log lines "GL buffers:" and "buffer traffic per frame:" (VkPhases, needs LL_VK_PHASES=1; the `-phases` launcher does not set it).
+
+| | busy spot | light sim | loading after teleport (peak) |
+|---|---|---|---|
+| device-path buffers (>= 128 KB) | 2,800 / 1,810 MB | 1,470 / 775 MB | |
+| host-visible buffers (< 128 KB, and UBOs) | 31,000-37,000 / 287-395 MB | 31,100 / 287 MB | |
+| system-memory shadow copies | 393 MB | 287 MB | |
+| glBufferData device, same size (kept buffer) | 0 | 0 | 0 |
+| glBufferData device, new allocation per frame | 0.02-0.05 (10-19 KB) | 0.002-0.008 | 0.8-1.4 (440-1,140 KB) |
+| glBufferData host-visible per frame | 2-4 | 2 (93 KB) | 9-29 (210-280 KB) |
+| sub-writes device per frame | 17-29 (0.8-1.4 MB) | 24 (1.15 MB) | 51-73 (2.7-3.9 MB) |
+| sub-writes host-visible per frame | 200-285 (0.9-1.4 MB) | 163 (1.15 MB) | 340-620 (1.3-4.5 MB) |
+
+Renames while loading (existing counter): 23-39k copies per 5 s, 150-660 MB, 27-78 ms main thread per 5 s; zero in steady view. Queue: about 18.7k records/frame busy, about 9k light; main thread queue writing 0.33-1.0 ms/frame.
+
+What it changes in the plan:
+- The census is much larger than the plan assumed (398 buffers / 241 MB, measured at another spot): 1,470-2,800 device buffers and **31-37k host-visible buffers** (about 9 KB average). One `VkBuffer` each is what the arena removes; the virtual block must hold 40k+ live suballocations (fine for VMA virtual blocks) and the arena needs about 2.2 GB of device memory at the busy spot, not 256 MB: use several blocks (start 512 MB, add on 85% full) or the large buffers stay as dedicated allocations and only the small ones go into the arena.
+- Shadow copies are 287-395 MB of system memory: phase 2 saves more than the plan said.
+- The viewer never re-specifies a device buffer with the same size (0): "same size" is not a case to optimise. Re-specification with a new size is rare in a steady view (0.002-0.05/frame) and about 1/frame while loading: the retire list is cold.
+- Steady state still writes about 1.15 MB/frame into device buffers (24 sub-writes; animated avatars and similar) and 1.15 MB/frame into host buffers (about 163): that is the traffic the staging ring has to carry; for ray tracing it is also the set of buffers whose BLAS must be refit or rebuilt each frame. Phase 3 must find out which buffers those are.
+
 ## Phases (each one ends with a measurable gate and a test run)
 0. **Baseline (one run, no code).** At one busy spot and one light sim, windowed, `run-viewer-clean-phases.bat` + `LL_VK_OPSTATS`: records/frame, worker ms and "vertex input" ms, buffer counts and MB (device and host-visible), shadow copy MB, rename counts during a teleport.
 1. **Arena for what is already on the device path** (vertex/index >= 128 KB). Same behaviour, new allocator, `BufferRef` and retire list. Gate: picture identical (two snapshots before/after; repeatable now with the warm-up fix), records and worker times unchanged within noise, no validation messages (run once with the validation layer on).
