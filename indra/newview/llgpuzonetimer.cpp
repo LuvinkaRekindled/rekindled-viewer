@@ -14,9 +14,7 @@
 
 #include "llfasttimer.h"
 #include "llglheaders.h"
-#if defined(LL_VULKAN)
-#include "llvkasync.h"
-#endif
+#include "llvkzones.h"
 #include "llviewercontrol.h"
 
 #ifndef GL_TIMESTAMP
@@ -96,14 +94,12 @@ namespace
         {
             return;
         }
-#if defined(LL_VULKAN)
-        if (LLVkAsync::mainProducer())
+        if (LLVkZones::available())
         {
             // <FS> native-vk: the zone is a record in the command stream; the Vulkan worker stamps the GPU timeline there (the GL timestamp queries below do not exist)
-            LLVkAsync::gpuZone(name, true);
+            LLVkZones::zone(name, true);
             return;
         }
-#endif
         Zone z{ name, acquireQuery(), 0 };
         gGL.queryTimestamp(z.mStart);
         sOpen.push_back((U32)sCurrent.size());
@@ -116,13 +112,11 @@ namespace
         {
             return;
         }
-#if defined(LL_VULKAN)
-        if (LLVkAsync::mainProducer())
+        if (LLVkZones::available())
         {
-            LLVkAsync::gpuZone(nullptr, false);
+            LLVkZones::zone(nullptr, false);
             return;
         }
-#endif
         if (sOpen.empty())
         {
             return;

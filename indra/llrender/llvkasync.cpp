@@ -11,6 +11,7 @@
 #include "llglheaders.h"
 #include "llvkgl.h"             // the generated GL command numbers and enq_ declarations (with the intercepting macros)
 #include "llvkmirror.h"
+#include "llvkzones.h"
 #include "llvkrenderer.h"
 
 #include <windows.h>
@@ -2174,5 +2175,15 @@ void stop()
 }
 
 } // namespace LLVkAsync
+
+bool LLVkZones::available()
+{
+    return LLVkAsync::mainProducer();
+}
+
+void LLVkZones::zone(const char* name, bool begin)
+{
+    LLVkAsync::gpuZone(name, begin);
+}
 
 #endif // LL_VULKAN
