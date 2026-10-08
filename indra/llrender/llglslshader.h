@@ -333,9 +333,7 @@ public:
     LLVk::Program* mVkProgram = nullptr;
     std::unordered_map<GLint, S32> mVkLocations;
     void mirrorCreate();
-    void mirrorCheckIntrospection();    // LL_VK_VERIFY: the uniforms OpenGL reports as active against the Vulkan program's
     void mirrorDestroy();
-    static void mirrorCompareAll();     // debug: logs loose uniforms whose OpenGL and Vulkan values differ
     void mirrorBind();
     void mirrorScalar(GLint location, int kind, std::initializer_list<double> values);   // kind 0: float, 1: int
     void mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data);
