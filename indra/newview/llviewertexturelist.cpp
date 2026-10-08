@@ -1275,6 +1275,8 @@ void LLViewerTextureList::forceImmediateUpdate(LLViewerFetchedTexture* imagep)
     return ;
 }
 
+bool LLViewerTextureList::sViewSteady = false;
+
 F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -1322,7 +1324,21 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
             last_at = at;
             burst_until = now + fs_burst_seconds;
         }
-        const U32 divisor = now < burst_until ? llmin((U32) fs_burst_divisor, (U32) fs_update_divisor) : (U32) fs_update_divisor;
+        // <FS> a view that has not changed for a while (no new region, camera still) refreshes the textures at a slower rate again: nothing it would find has changed, and the
+        // fast rate comes back as soon as the camera moves or turns. LLViewerTextureList::sViewSteady is also read by the object texture priority pass.
+        static LLCachedControl<U32> fs_steady_factor(gSavedSettings, "FSTextureUpdateSteadyFactor", 2);
+        static LLCachedControl<F32> fs_steady_seconds(gSavedSettings, "FSTextureUpdateSteadySeconds", 10.f);
+        static F64 last_change_time = 0.0;
+        if (changed)
+        {
+            last_change_time = now;
+        }
+        sViewSteady = fs_steady_factor > 1 && now >= burst_until && (now - last_change_time) > fs_steady_seconds;
+        U32 divisor = now < burst_until ? llmin((U32) fs_burst_divisor, (U32) fs_update_divisor) : (U32) fs_update_divisor;
+        if (sViewSteady)
+        {
+            divisor *= llmax((U32) fs_steady_factor, 1u);
+        }
         update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size() / llmax(divisor, 1u));
     }
     // </FS>

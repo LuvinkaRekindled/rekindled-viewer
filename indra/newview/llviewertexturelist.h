@@ -92,6 +92,7 @@ class LLViewerTextureList
     friend class LLLocalBitmap;
 
 public:
+    static bool sViewSteady;    // <FS> the view has not changed for a while (see updateImagesFetchTextures): slower texture refresh rates
     static bool createUploadFile(LLPointer<LLImageRaw> raw_image,
                                  const std::string& out_filename,
                                  const S32 max_image_dimentions = LLViewerFetchedTexture::MAX_IMAGE_SIZE_DEFAULT,
