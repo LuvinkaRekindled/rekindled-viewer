@@ -703,172 +703,18 @@ void LLGLSLShader::mirrorCreate()
             mVkProgram->setSamplerUnit(s, (U32)atoi(name.c_str() + 3));
         }
     }
-
-    if (LLVkVerify::gEnabled)
-    {
-        mirrorCheckIntrospection();
-    }
 }
 #else
 void LLGLSLShader::mirrorDestroy() {}
 void LLGLSLShader::mirrorBind() {}
 void LLGLSLShader::mirrorCreate() {}
-void LLGLSLShader::mirrorCheckIntrospection() {}
 void LLGLSLShader::mirrorScalar(GLint, int, std::initializer_list<double>) {}
 void LLGLSLShader::mirrorVector(GLint, int, U32, U32, const void*) {}
 void LLGLSLShader::mirrorMatrix(GLint, U32, U32, GLboolean, U32, const GLfloat*) {}
-void LLGLSLShader::mirrorCompareAll() {}
 #endif
 
 #if defined(LL_VULKAN)
-#ifndef GL_UNIFORM_BLOCK_INDEX
-#define GL_UNIFORM_BLOCK_INDEX 0x8A3A
-#endif
-// <FS> LL_VK_VERIFY: the uniforms OpenGL reports as active in this program against the ones the Vulkan program reflects. A uniform only OpenGL
-// knows would never reach Vulkan; one only Vulkan knows is normally something GL optimised away.
-void LLGLSLShader::mirrorCheckIntrospection()
-{
-    static U32 programs = 0, with_gl_only = 0, with_vk_only = 0, logged = 0;
-    ++programs;
-    if (mVkProgram && mProgramObject)
-    {
-        const LLVk::ProgramInfo& pi = mVkProgram->getInfo();
-        std::set<std::string> vk_names, gl_names;
-        for (const LLVk::LooseUniform& u : pi.mUniforms) vk_names.insert(u.mName);
-        for (const LLVk::SamplerInfo& s : pi.mSamplers) vk_names.insert(s.mName);
-        GLint count = 0;
-        glGetProgramiv(mProgramObject, GL_ACTIVE_UNIFORMS, &count);
-        std::string gl_only, vk_only;
-        U32 n_gl_only = 0, n_vk_only = 0;
-        for (GLint i = 0; i < count; ++i)
-        {
-            GLchar name[1024] = {};
-            GLsizei length = 0;
-            GLint size = 0;
-            GLenum type = 0;
-            glGetActiveUniform(mProgramObject, (GLuint)i, 1024, &length, &size, &type, name);
-            GLuint index = (GLuint)i;
-            GLint block = -1;
-            glGetActiveUniformsiv(mProgramObject, 1, &index, GL_UNIFORM_BLOCK_INDEX, &block);
-            if (block != -1)
-            {
-                continue;       // members of named uniform blocks are not loose uniforms
-            }
-            std::string n(name, (size_t)length);
-            if (n.size() > 3 && n.compare(n.size() - 3, 3, "[0]") == 0) n.resize(n.size() - 3);
-            if (n.compare(0, 3, "gl_") == 0) continue;
-            gl_names.insert(n);
-            if (!vk_names.count(n))
-            {
-                ++n_gl_only;
-                if (gl_only.size() < 260) gl_only += n + " ";
-            }
-        }
-        for (const std::string& n : vk_names)
-        {
-            if (!gl_names.count(n))
-            {
-                ++n_vk_only;
-                if (vk_only.size() < 260) vk_only += n + " ";
-            }
-        }
-        with_gl_only += n_gl_only ? 1 : 0;
-        with_vk_only += n_vk_only ? 1 : 0;
-        if ((n_gl_only || n_vk_only) && logged++ < 60)
-        {
-            LL_INFOS("VkVerify") << "uniforms of '" << mName << "': " << n_gl_only << " active in OpenGL but not in Vulkan [" << gl_only << "], " << n_vk_only
-                                 << " in Vulkan but not active in OpenGL [" << vk_only << "]" << LL_ENDL;
-        }
-    }
-    if (programs % 40 == 0)
-    {
-        LL_INFOS("VkVerify") << "uniform introspection: " << programs << " programs checked, " << with_gl_only << " with uniforms OpenGL has and Vulkan lacks, " << with_vk_only
-                             << " with uniforms only Vulkan has" << LL_ENDL;
-    }
-}
 
-// <FS> debug: compares every loose uniform of the lighting related programs as OpenGL holds it with the Vulkan shadow copy
-void LLGLSLShader::mirrorCompareAll()
-{
-    static const char* const interesting[] = { "Soften", "Light Shader", "MultiLight", "Sun Shader", "Radiance", "Irradiance", "Reflection Mip",
-                                               "Windlight Sky", "Tonemap", "Exposure", "Luminance", "Copy Depth", "Gaussian", "Water Haze", "Haze Shader", "HUD", "Deferred Emissive", "PBR" };
-    for (LLGLSLShader* sh : sInstances)
-    {
-        if (!sh->mVkProgram || !sh->mProgramObject)
-        {
-            continue;
-        }
-        bool wanted = false;
-        for (const char* key : interesting)
-        {
-            if (sh->mName.find(key) != std::string::npos) wanted = true;
-        }
-        if (!wanted)
-        {
-            continue;
-        }
-        const LLVk::ProgramInfo& info = sh->mVkProgram->getInfo();
-        const U8* data = sh->mVkProgram->getUniformData();
-        const U32 size = sh->mVkProgram->getUniformSize();
-        U32 checked = 0, bad = 0;
-        for (const LLVk::LooseUniform& u : info.mUniforms)
-        {
-            GLint loc = glGetUniformLocation(sh->mProgramObject, u.mName.c_str());
-            if (loc < 0 && u.mArraySize) loc = glGetUniformLocation(sh->mProgramObject, (u.mName + "[0]").c_str());
-            if (loc < 0)
-            {
-                continue;
-            }
-            const bool is_int = u.mType == "int" || u.mType == "bool" || u.mType == "ivec2" || u.mType == "ivec3" || u.mType == "ivec4" || u.mType == "uint";
-            U32 comps = 1, columns = 1, rows = 1;
-            if (u.mType == "vec2" || u.mType == "ivec2") comps = 2;
-            else if (u.mType == "vec3" || u.mType == "ivec3") comps = 3;
-            else if (u.mType == "vec4" || u.mType == "ivec4") comps = 4;
-            else if (u.mType == "mat4") { columns = 4; rows = 4; comps = 4; }
-            else if (u.mType == "mat3") { columns = 3; rows = 3; comps = 3; }
-            else if (u.mType == "mat2") { columns = 2; rows = 2; comps = 2; }
-            const U32 elements = std::max<U32>(1, u.mArraySize);
-            for (U32 e = 0; e < std::min<U32>(elements, 4); ++e)      // the first few array elements are enough
-            {
-                GLint eloc = loc;
-                if (u.mArraySize)
-                {
-                    eloc = glGetUniformLocation(sh->mProgramObject, (u.mName + "[" + std::to_string(e) + "]").c_str());
-                    if (eloc < 0) continue;
-                }
-                GLfloat gl_f[16] = {};
-                GLint gl_i[4] = {};
-                if (is_int) glGetUniformiv(sh->mProgramObject, eloc, gl_i);
-                else glGetUniformfv(sh->mProgramObject, eloc, gl_f);
-                // where the Vulkan side keeps this element
-                const U32 stride = u.mArraySize ? (u.mSize / u.mArraySize) : 0;
-                U32 offset = u.mOffset + e * stride;
-                for (U32 c = 0; c < columns; ++c)
-                {
-                    for (U32 r = 0; r < comps; ++r)
-                    {
-                        const U32 off = offset + (columns > 1 ? c * 16 : 0) + r * 4;
-                        if (off + 4 > size) continue;
-                        const U32 gl_index = columns > 1 ? c * rows + r : r;
-                        double gv, vv;
-                        if (is_int) { gv = gl_i[gl_index]; S32 x; memcpy(&x, data + off, 4); vv = x; }
-                        else { gv = gl_f[gl_index]; F32 x; memcpy(&x, data + off, 4); vv = x; }
-                        ++checked;
-                        if (fabs(gv - vv) > 1e-4 * std::max(1.0, fabs(gv)))
-                        {
-                            if (bad++ < 6)
-                            {
-                                LL_INFOS("VkGL") << "uniform mismatch in '" << sh->mName << "': " << u.mName << (u.mArraySize ? "[" + std::to_string(e) + "]" : "")
-                                                 << " (" << u.mType << ") component " << c * comps + r << " GL " << gv << " Vulkan " << vv << LL_ENDL;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        LL_INFOS("VkGL") << "uniform check '" << sh->mName << "': " << checked << " values compared, " << bad << " differ" << LL_ENDL;
-    }
-}
 
 // <FS> compiles an already linked GL program a second time through the Vulkan shader path and logs the result
 static void vulkan_check_program(const std::string& name, GLuint program)

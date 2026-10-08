@@ -104,10 +104,4 @@ extern "C" const unsigned char* gluErrorString(unsigned int)
     return (const unsigned char*)"";
 }
 
-// GL function pointers that the mirror's GL-versus-Vulkan verification code (LL_VK_VERIFY, dead without OpenGL) still names. They stay null.
-PFNGLGETTEXTURESUBIMAGEPROC glGetTextureSubImage = nullptr;
-PFNGLGETTEXTUREIMAGEPROC glGetTextureImage = nullptr;
-PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer = nullptr;
-PFNGLGETNAMEDBUFFERSUBDATAPROC glGetNamedBufferSubData = nullptr;
-
 #endif // LL_WINDOWS && LL_VULKAN

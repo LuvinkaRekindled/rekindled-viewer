@@ -44,7 +44,7 @@ void LLVkMirror::stopAsync() {}
 
 #include <cstdlib>
 
-namespace LLVkGL { extern bool gActive; extern bool gOwn; extern LLVkMirror::Mutex gMutex; void after_frame(); void run_dump(); void before_end_frame(); void after_offscreen(); double take_hook_ms(); std::string resource_summary(); }
+namespace LLVkGL { extern bool gActive; extern bool gOwn; extern LLVkMirror::Mutex gMutex; void after_frame(); double take_hook_ms(); std::string resource_summary(); }
 
 namespace LLVkMirror
 {
@@ -671,15 +671,9 @@ bool LLVkMirror::ensureReady()
     sMirror.mReady = true;
     LLVkGL::gActive = true;
     LLVkGL::gOwn = getenv("LL_VK_OWN") != nullptr;
-    LLVkVerify::gEnabled = getenv("LL_VK_VERIFY") != nullptr && !LLVkGL::gOwn;      // nothing to compare against once OpenGL stops doing the work
     if (LLVkGL::gOwn)
     {
         LL_INFOS("VkMirror") << "LL_VK_OWN: the mirror owns textures, buffers, framebuffers, vertex arrays, queries and fences; OpenGL no longer executes them or the draws. The main window stays blank, the picture is in the mirror window." << LL_ENDL;
-    }
-    if (LLVkVerify::gEnabled)
-    {
-        LL_INFOS("VkVerify") << "LL_VK_VERIFY: GL readbacks will be compared with the Vulkan images (do not combine with LL_VK_MIRROR_BENCH)" << LL_ENDL;
-        LLVkVerify::startup();
     }
     bench_init();
     LL_INFOS("VkMirror") << "Vulkan mirror ready" << LL_ENDL;
@@ -853,8 +847,6 @@ void LLVkMirror::beginFrameImpl(S32 width, S32 height)
     LLVk::Renderer& renderer = LLVk::Renderer::instance();
     LLVk::Swapchain& sc = sMirror.mSwapchain;
 
-    LLVkGL::run_dump();     // debug dump of the previous frame's render targets, if one was requested
-
     if (sMirror.mResized || sc.needsRecreate() || !sc.isValid())
     {
         sMirror.mResized = false;
@@ -922,10 +914,7 @@ void LLVkMirror::beginFrameImpl(S32 width, S32 height)
 
 void LLVkMirror::armSnapshotCompareImpl()
 {
-    if (LLVkVerify::gEnabled)
-    {
-        LLVkVerify::armSnapshot();
-    }
+    // the GL-versus-Vulkan snapshot comparison went with OpenGL
 }
 
 void LLVkMirror::holdFrameImpl(bool hold)
@@ -1024,10 +1013,6 @@ void LLVkMirror::presentFrameImpl()
     {
         return;
     }
-    if (LLVkVerify::gEnabled)
-    {
-        LLVkVerify::presentFrame();
-    }
     bench_mark_present();
     bench_gl_stamp(1);
     const bool held = sMirror.mHold;
@@ -1107,7 +1092,6 @@ void LLVkMirror::endFrameImpl()
     LLVk::Swapchain& sc = sMirror.mSwapchain;
     const U32 index = sMirror.mImageIndex;
 
-    LLVkGL::before_end_frame();
     if (sMirror.mOffscreen)
     {
         sMirror.mOffscreen = false;
@@ -1116,7 +1100,6 @@ void LLVkMirror::endFrameImpl()
         bench_vk_end(ctx.getCommandBuffer());
         ctx.endFrame(VK_NULL_HANDLE, VK_NULL_HANDLE);
         bench_vk_collect(true);
-        LLVkGL::after_offscreen();
         return;
     }
 
