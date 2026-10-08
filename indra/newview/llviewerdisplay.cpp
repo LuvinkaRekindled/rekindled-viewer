@@ -1141,6 +1141,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         gGL.setColorMask(true, true);
 
+        {
+        LL_CPU_ZONE("display: deferredScreen bind + clear");
         gPipeline.mRT->deferredScreen.bindTarget();
         if (gUseWireframe)
         {
@@ -1152,6 +1154,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             gGL.setClearColor(1, 0, 1, 1);
         }
         gPipeline.mRT->deferredScreen.clear();
+        }
 
         gGL.setColorMask(true, false);
 
@@ -1194,6 +1197,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Texture Unbind");
+            LL_CPU_ZONE("display: texture unbind");
             for (S32 i = 0; i < gGLManager.mNumTextureImageUnits; i++)
             { //dummy cleanup of any currently bound textures
                 if (gGL.getTexUnit(i)->getCurrType() != LLTexUnit::TT_NONE)
@@ -1207,7 +1211,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLAppViewer::instance()->pingMainloopTimeout("Display:RenderFlush");
 
         LLRenderTarget &rt = (gPipeline.sRenderDeferred ? gPipeline.mRT->deferredScreen : gPipeline.mRT->screen);
-        rt.flush();
+        { LL_CPU_ZONE("display: deferredScreen flush"); rt.flush(); }
 
         if (LLPipeline::sRenderDeferred)
         {
@@ -1219,6 +1223,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         {
             //capture the frame buffer.
+            LL_CPU_ZONE("display: scene monitor capture");
             LLSceneMonitor::getInstance()->capture();
         }
 
@@ -1232,14 +1237,14 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         LLSpatialGroup::sNoDelete = false;
 
-        gPipeline.clearReferences();
+        { LL_CPU_ZONE("display: clearReferences"); gPipeline.clearReferences(); }
     }
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:FrameStats");
 
     stop_glerror();
 
-    display_stats();
+    { LL_CPU_ZONE("display: display_stats"); display_stats(); }
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:Done");
 
