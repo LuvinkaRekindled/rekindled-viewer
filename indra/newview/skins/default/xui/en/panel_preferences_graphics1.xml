@@ -1912,31 +1912,29 @@ If you do not understand the distinction then leave this control alone."
      label="Vulkan"
      name="Vulkan panel" >
       <check_box
-       control_name="FSVulkanRenderer"
+       enabled="false"
        height="16"
-       initial_value="false"
-       label="Use the Vulkan renderer (experimental)"
+       initial_value="true"
+       label="Use the Vulkan renderer (always on)"
        layout="topleft"
        left="10"
        name="FSVulkanRenderer"
-       tool_tip="Draw the world with Vulkan instead of OpenGL. Takes effect after the viewer is restarted."
+       tool_tip="This viewer draws with Vulkan only."
        top_pad="25"
        width="400"/>
       <check_box
-       control_name="FSVulkanAsync"
-       enabled_control="FSVulkanRenderer"
+       enabled="false"
        height="16"
        initial_value="true"
-       label="Run Vulkan on its own thread (faster in busy scenes)"
+       label="Run Vulkan on its own thread (always on)"
        layout="topleft"
        left_delta="18"
        name="FSVulkanAsync"
-       tool_tip="Takes effect after the viewer is restarted."
+       tool_tip="Vulkan work always runs on its own thread."
        top_pad="8"
        width="400"/>
       <check_box
        control_name="FSVkDLSS"
-       enabled_control="FSVulkanRenderer"
        height="16"
        initial_value="false"
        label="Use NVIDIA DLSS / DLAA (RTX graphics cards, experimental)"
@@ -1999,7 +1997,6 @@ If you do not understand the distinction then leave this control alone."
       </text>
       <combo_box
        control_name="FSVkPresentMode"
-       enabled_control="FSVulkanRenderer"
        height="23"
        layout="topleft"
        left_delta="0"
@@ -2035,7 +2032,7 @@ If you do not understand the distinction then leave this control alone."
        top_pad="6"
        width="440"
        word_wrap="true">
-        Takes effect after restarting the viewer. If Vulkan cannot be started, the viewer uses OpenGL instead.
+        Some of these options take effect after restarting the viewer.
       </text>
     </panel>
 </tab_container>
