@@ -207,8 +207,13 @@ out.append('    // LL_VK_NOGL: there is no OpenGL context at all; calls that wou
 out.append('    void own_gen(int kind, GLsizei n, GLuint* out);')
 out.append('    // DLSS: runs the upscaler on four mirror-owned textures (colour, depth, motion vectors -> output); the gMutex must be held')
 out.append('    void on_upscale(const LLVkMirror::UpscaleArgs& args);')
+# the GL-versus-Vulkan comparison hooks of these answered calls are gone with OpenGL: they have no on_ function any more
+NO_ON = {'glGetIntegerv', 'glGetFloatv', 'glGetBooleanv', 'glIsEnabled', 'glGetTexLevelParameteriv', 'glCheckFramebufferStatus',
+         'glGetQueryObjectiv', 'glGetQueryObjectuiv', 'glGetQueryObjectui64v', 'glFenceSync', 'glClientWaitSync'}
 for ret, name, params in FUNCS:
-    if ret == 'void':
+    if name in NO_ON:
+        pass
+    elif ret == 'void':
         out.append('    void on_%s(%s);' % (name, params))
     else:
         out.append('    void on_%s(%s%s result);' % (name, params + ', ' if params else '', ret))

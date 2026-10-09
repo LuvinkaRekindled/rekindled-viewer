@@ -59,8 +59,6 @@ namespace LLVkMirror
     // Safe to call at any time; the swapchain follows at the start of the next frame.
     void setPresentPreference(S32 mode, bool vsync_on);
 
-    // A snapshot is about to render: with LL_VK_VERIFY set, compare each of its passes between GL and Vulkan and report on it afterwards
-    void armSnapshotCompare();
     // Snapshot experiment (setting FSVkSnapVariant): called before each display() a snapshot makes.
     // 1 = flush what has been recorded and carry on, 2 = close the off-screen frame and open a new one, 3 = like 2 but also wait for the GPU.
     void snapshotBoundary(S32 mode);
@@ -154,7 +152,6 @@ namespace LLVkMirror
     void presentFrameImpl();
     void holdFrameImpl(bool hold);
     void snapshotBoundaryImpl(S32 mode);
-    void armSnapshotCompareImpl();
     void upscaleImpl(const UpscaleArgs& args);
     void shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob);
     // the lock every mirror entry point takes (the viewer calls GL from more than one thread)

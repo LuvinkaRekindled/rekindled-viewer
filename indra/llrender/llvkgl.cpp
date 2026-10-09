@@ -15,7 +15,6 @@
 #if defined(LL_VULKAN)
 
 #include "llvkmirror.h"
-#include "llvkverify.h"
 #include "llglslshader.h"
 #include "llshadermgr.h"
 #include "llvkshader.h"
@@ -709,17 +708,6 @@ Tex* bound_texture(GLenum target)
     const GLuint name = sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
     auto it = sGL.mTextures.find(name);
     return it == sGL.mTextures.end() ? nullptr : &it->second;
-}
-
-// which threads feed the mirror (LL_VK_VERIFY): counts by thread and hook name
-std::map<std::thread::id, std::map<std::string, U64>> sThreadCalls;
-std::thread::id sMainThread;
-
-void note_thread(const char* what)
-{
-    if (!LLVkVerify::gEnabled) return;
-    if (sMainThread == std::thread::id()) sMainThread = std::this_thread::get_id();      // the first hook to run is the main thread's
-    ++sThreadCalls[std::this_thread::get_id()][what];
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -1999,7 +1987,6 @@ void on_glPixelStorei(GLenum pname, GLint param)
 
 void on_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
 {
-    note_thread("glTexImage2D");
     Tex* t = bound_texture(target);
     if (!t || width <= 0 || height <= 0)
     {
@@ -2036,7 +2023,6 @@ void on_glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei w
 
 void on_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
 {
-    note_thread("glTexSubImage2D");
     Tex* t = bound_texture(target);
     if (t)
     {
@@ -2055,7 +2041,6 @@ void on_glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset
 
 void on_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
 {
-    note_thread("glCompressedTexImage2D");
     Tex* t = bound_texture(target);
     if (!t || width <= 0 || height <= 0)
     {
@@ -3725,23 +3710,11 @@ void after_frame()
 }
 
 //-----------------------------------------------------------------------------------------------------
-// hooks: calls that return data or state. With LL_VK_VERIFY set they compare OpenGL's answer with what the mirror's own
-// state (or the Vulkan device) would answer, and tally which questions the viewer actually asks. The emulation here is
-// what a Vulkan-only renderer will have to provide.
+// hooks: calls that return data or state, answered from the mirror's own state (or the Vulkan device)
 //-----------------------------------------------------------------------------------------------------
 
 namespace
 {
-
-struct GetterTally
-{
-    U64 mCalls = 0, mHandled = 0, mMismatch = 0;
-    double mGl[4] = {}, mEmu[4] = {};       // last mismatching pair
-    U32 mCount = 0;
-};
-// kind: 0 glGetIntegerv, 1 glGetFloatv, 2 glGetBooleanv, 3 glIsEnabled, 4 glGetTexLevelParameteriv, 5 glCheckFramebufferStatus
-std::map<std::pair<int, GLenum>, GetterTally> sGetterTally;
-const char* const kGetterNames[] = { "glGetIntegerv", "glGetFloatv", "glGetBooleanv", "glIsEnabled", "glGetTexLevelParameteriv", "glCheckFramebufferStatus" };
 
 // device limits: the Vulkan device must offer at least what OpenGL reports (the viewer sizes things from these)
 bool emulate_limit(GLenum pname, GLint* out, U32& n)
@@ -3859,23 +3832,6 @@ bool emulate_enabled(GLenum cap, bool& value)
     }
 }
 
-void note_getter(int kind, GLenum pname, bool handled, bool mismatch, const double* gl_vals, const double* emu_vals, U32 n)
-{
-    GetterTally& t = sGetterTally[{ kind, pname }];
-    ++t.mCalls;
-    if (!handled) return;
-    ++t.mHandled;
-    if (mismatch)
-    {
-        ++t.mMismatch;
-        for (U32 i = 0; i < 4; ++i) { t.mGl[i] = i < n ? gl_vals[i] : 0; t.mEmu[i] = i < n ? emu_vals[i] : 0; }
-        if (++t.mCount <= 3)
-        {
-            LL_INFOS("VkVerify") << "GETTER MISMATCH " << kGetterNames[kind] << "(0x" << std::hex << pname << std::dec << "): GL (" << t.mGl[0] << "," << t.mGl[1] << "," << t.mGl[2] << "," << t.mGl[3]
-                                 << ") mirror (" << t.mEmu[0] << "," << t.mEmu[1] << "," << t.mEmu[2] << "," << t.mEmu[3] << ")" << LL_ENDL;
-        }
-    }
-}
 
 // ---- queries ----
 struct QueryRec
@@ -3884,68 +3840,21 @@ struct QueryRec
     U64 mGen = 0;                       // the async generation of that begin (0 in inline mode)
     GLenum mTarget = 0;
     bool mOcc = false, mTime = false;
-    bool mVkHave = false, mHaveStart = false, mHaveEnd = false, mGlHave = false;
-    U64 mVkValue = 0, mTsStart = 0, mTsEnd = 0, mGlValue = 0;
+    bool mVkHave = false, mHaveStart = false, mHaveEnd = false;
+    U64 mVkValue = 0, mTsStart = 0, mTsEnd = 0;
 };
 std::map<U64, QueryRec> sQueries;               // by serial, oldest first
 std::unordered_map<GLuint, U64> sQueryLatest;   // GL query name -> serial of its latest begin
 std::map<GLenum, U64> sQueryActive;             // target -> serial of the query in progress
 U64 sQuerySerial = 0;
-struct QueryTally
-{
-    U64 mOcc = 0, mOccAgree = 0, mGlVisibleVkHidden = 0, mGlHiddenVkVisible = 0, mCountPairs = 0;
-    double mCountRelErr = 0;
-    U64 mTimePairs = 0;
-    double mTimeRatioSum = 0;
-    U64 mNotIssued = 0, mIssued = 0, mDiscarded = 0;
-} sQT;
 
 bool queries_on()
 {
     static const bool disabled = getenv("LL_VK_NO_QUERIES") != nullptr;
-    return (LLVkVerify::gEnabled || gOwn) && !disabled;
+    return gOwn && !disabled;
 }
 
-void compare_query(U64 serial, QueryRec& rec)
-{
-    if (rec.mOcc)
-    {
-        ++sQT.mOcc;
-        const bool gv = rec.mGlValue != 0, vv = rec.mVkValue != 0;
-        if (gv == vv)
-        {
-            ++sQT.mOccAgree;
-        }
-        else if (gv)
-        {
-            if (++sQT.mGlVisibleVkHidden <= 15)
-                LL_INFOS("VkVerify") << "OCCLUSION: GL says visible (" << rec.mGlValue << " samples), Vulkan says hidden (query " << serial << ", target 0x" << std::hex << rec.mTarget << std::dec << ")" << LL_ENDL;
-        }
-        else
-        {
-            if (++sQT.mGlHiddenVkVisible <= 15)
-                LL_INFOS("VkVerify") << "OCCLUSION: GL says hidden, Vulkan says visible (" << rec.mVkValue << " samples) (query " << serial << ", target 0x" << std::hex << rec.mTarget << std::dec << ")" << LL_ENDL;
-        }
-        if (rec.mTarget == 0x8914 && rec.mGlValue && rec.mVkValue)       // SAMPLES_PASSED: the counts themselves
-        {
-            ++sQT.mCountPairs;
-            sQT.mCountRelErr += std::fabs((double)rec.mGlValue - (double)rec.mVkValue) / (double)std::max(rec.mGlValue, rec.mVkValue);
-        }
-    }
-    else if (rec.mTime)
-    {
-        if (rec.mGlValue)
-        {
-            ++sQT.mTimePairs;
-            const double ratio = (double)rec.mVkValue / (double)rec.mGlValue;
-            sQT.mTimeRatioSum += ratio;
-            if (sQT.mTimePairs <= 12)
-                LL_INFOS("VkVerify") << "TIMER: GL " << rec.mGlValue << " ns, Vulkan " << rec.mVkValue << " ns (ratio " << ratio << ")" << LL_ENDL;
-        }
-    }
-}
-
-// pulls finished Vulkan query results and joins them with what OpenGL reported
+// pulls finished Vulkan query results and hands them to the main thread
 void drain_query_results()
 {
     if (!Renderer::instance().isReady())
@@ -3980,144 +3889,21 @@ void drain_query_results()
             if (rec.mOcc && rec.mTarget != 0x8914) v = v ? 1 : 0;
             LLVkAsync::queryPublish(rec.mName, rec.mGen, v);
         }
-        if (rec.mVkHave && rec.mGlHave)
-        {
-            compare_query(it->first, rec);
-            sQueries.erase(it);
-        }
     }
     while (sQueries.size() > 40000)         // results that never found their partner
     {
         sQueries.erase(sQueries.begin());
-        ++sQT.mDiscarded;
     }
 }
 
-void note_query_result(GLuint id, U64 gl_value)
-{
-    drain_query_results();
-    auto lat = sQueryLatest.find(id);
-    if (lat == sQueryLatest.end())
-    {
-        return;
-    }
-    auto it = sQueries.find(lat->second);
-    if (it == sQueries.end())
-    {
-        return;
-    }
-    QueryRec& rec = it->second;
-    rec.mGlValue = gl_value;
-    rec.mGlHave = true;
-    if (rec.mVkHave)
-    {
-        compare_query(it->first, rec);
-        sQueries.erase(it);
-    }
-}
 
 } // anonymous namespace
 
-void on_glGetIntegerv(GLenum pname, GLint* params)
-{
-    if (!LLVkVerify::gEnabled || !params) return;
-    GLint emu[4] = {};
-    U32 n = 1;
-    bool limit = false;
-    bool handled = emulate_integer(pname, emu, n);
-    if (!handled) { handled = emulate_limit(pname, emu, n); limit = handled; }
-    double g[4] = {}, e[4] = {};
-    bool mismatch = false;
-    for (U32 i = 0; handled && i < n; ++i)
-    {
-        g[i] = params[i]; e[i] = emu[i];
-        mismatch |= limit ? (emu[i] < params[i]) : (emu[i] != params[i]);
-    }
-    note_getter(0, pname, handled, mismatch, g, e, n);
-}
 
-void on_glGetFloatv(GLenum pname, GLfloat* params)
-{
-    if (!LLVkVerify::gEnabled || !params) return;
-    GLfloat emu[4] = {};
-    U32 n = 1;
-    const bool handled = emulate_float(pname, emu, n);
-    double g[4] = {}, e[4] = {};
-    bool mismatch = false;
-    for (U32 i = 0; handled && i < n; ++i)
-    {
-        g[i] = params[i]; e[i] = emu[i];
-        const bool limit = pname == 0x84FF;
-        mismatch |= limit ? (emu[i] < params[i]) : (std::fabs(emu[i] - params[i]) > 1e-4f * std::max(1.f, std::fabs(params[i])));
-    }
-    note_getter(1, pname, handled, mismatch, g, e, n);
-}
 
-void on_glGetBooleanv(GLenum pname, GLboolean* params)
-{
-    if (!LLVkVerify::gEnabled || !params) return;
-    GLboolean emu[4] = {};
-    U32 n = 1;
-    const bool handled = emulate_boolean(pname, emu, n);
-    double g[4] = {}, e[4] = {};
-    bool mismatch = false;
-    for (U32 i = 0; handled && i < n; ++i)
-    {
-        g[i] = params[i] ? 1 : 0; e[i] = emu[i];
-        mismatch |= (params[i] != 0) != (emu[i] != 0);
-    }
-    note_getter(2, pname, handled, mismatch, g, e, n);
-}
 
-void on_glIsEnabled(GLenum cap, GLboolean result)
-{
-    if (!LLVkVerify::gEnabled) return;
-    bool emu = false;
-    const bool handled = emulate_enabled(cap, emu);
-    const double g = result ? 1 : 0, e = emu ? 1 : 0;
-    note_getter(3, cap, handled, handled && (result != 0) != emu, &g, &e, 1);
-}
 
-void on_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint* params)
-{
-    if (!LLVkVerify::gEnabled || !params) return;
-    Tex* t = bound_texture(target);
-    GLint emu = 0;
-    bool handled = false;
-    if (t && t->mImage.valid() && level >= 0 && (U32)level < std::max<U32>(1, t->mLevels))
-    {
-        switch (pname)
-        {
-        case 0x1000: emu = (GLint)std::max<U32>(1, t->mWidth >> level); handled = true; break;       // TEXTURE_WIDTH
-        case 0x1001: emu = (GLint)std::max<U32>(1, t->mHeight >> level); handled = true; break;      // TEXTURE_HEIGHT
-        case 0x8071: emu = (GLint)(t->mTarget == GL_TEXTURE_3D ? std::max<U32>(1, t->mDepth >> level) : std::max<U32>(1, t->mDepth)); handled = true; break;    // TEXTURE_DEPTH
-        case 0x1003: emu = t->mInternalFormat; handled = true; break;                                // TEXTURE_INTERNAL_FORMAT
-        default: break;
-        }
-    }
-    const double g = params[0], e = emu;
-    note_getter(4, pname, handled, handled && emu != params[0], &g, &e, 1);
-}
 
-void on_glCheckFramebufferStatus(GLenum target, GLenum result)
-{
-    if (!LLVkVerify::gEnabled) return;
-    const GLuint name = target == GL_READ_FRAMEBUFFER ? sCtx.mReadFbo : sCtx.mDrawFbo;
-    GLenum emu = 0x8CD5;        // FRAMEBUFFER_COMPLETE
-    if (name)
-    {
-        auto it = sGL.mFbos.find(name);
-        bool any = false;
-        if (it != sGL.mFbos.end())
-        {
-            for (const FboAttachment& a : it->second.mColor) any |= a.mTexture != 0;
-            any |= it->second.mDepth.mTexture != 0;
-        }
-        if (!any) emu = 0x8CD7;     // INCOMPLETE_MISSING_ATTACHMENT
-    }
-    const double g = result, e = emu;
-    note_getter(5, target, true, result != emu, &g, &e, 1);
-}
 
 void on_glGenQueries(GLsizei n, GLuint* ids)
 {
@@ -4134,7 +3920,6 @@ void on_glBeginQuery(GLenum target, GLuint id)
 {
     if (!queries_on() || !LLVkMirror::inFrame() || !Renderer::instance().isReady())
     {
-        if (queries_on()) ++sQT.mNotIssued;
         if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
         return;
     }
@@ -4157,12 +3942,10 @@ void on_glBeginQuery(GLenum target, GLuint id)
     }
     if (!ok)
     {
-        ++sQT.mNotIssued;
         sQueryActive.erase(target);
         if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
         return;
     }
-    ++sQT.mIssued;
     sQueries[serial] = rec;
     sQueryLatest[id] = serial;
     sQueryActive[target] = serial;
@@ -4190,52 +3973,10 @@ void on_glQueryCounter(GLuint id, GLenum target)
     (void)id; (void)target;
 }
 
-void on_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params)
-{
-    if (queries_on() && params && pname == 0x8866) note_query_result(id, (U64)(U32)params[0]);
-}
 
-void on_glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* params)
-{
-    if (queries_on() && params && pname == 0x8866) note_query_result(id, params[0]);
-}
 
-void on_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params)
-{
-    if (queries_on() && params && pname == 0x8866) note_query_result(id, (U64)params[0]);
-}
 
 // the running totals, for the log
-void report_syncs_and_threads();
-void report_getters_and_queries()
-{
-    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
-    if (queries_on())
-    {
-        drain_query_results();
-        LL_INFOS("VkVerify") << "QUERIES: issued to Vulkan " << sQT.mIssued << ", not issued " << sQT.mNotIssued << ", occlusion pairs compared " << sQT.mOcc << " (agree " << sQT.mOccAgree
-                             << ", GL visible/Vulkan hidden " << sQT.mGlVisibleVkHidden << ", GL hidden/Vulkan visible " << sQT.mGlHiddenVkVisible << "), sample-count pairs " << sQT.mCountPairs
-                             << " (mean relative difference " << (sQT.mCountPairs ? sQT.mCountRelErr / sQT.mCountPairs : 0.0) << "), timer pairs " << sQT.mTimePairs
-                             << " (mean Vulkan/GL " << (sQT.mTimePairs ? sQT.mTimeRatioSum / sQT.mTimePairs : 0.0) << "), waiting " << sQueries.size() << ", discarded " << sQT.mDiscarded << LL_ENDL;
-    }
-    std::vector<std::pair<U64, std::pair<int, GLenum>>> order;
-    for (auto& kv : sGetterTally) order.push_back({ kv.second.mCalls, kv.first });
-    std::sort(order.rbegin(), order.rend());
-    std::string line;
-    U32 shown = 0;
-    for (auto& o : order)
-    {
-        if (shown++ >= 45) break;
-        const GetterTally& t = sGetterTally[o.second];
-        char buf[160];
-        snprintf(buf, sizeof(buf), " %s(0x%X): %llu calls, %s%llu mismatch;", kGetterNames[o.second.first], (unsigned)o.second.second, (unsigned long long)t.mCalls,
-                 t.mHandled == t.mCalls ? "all checked, " : (t.mHandled ? "some checked, " : "NOT EMULATED, "), (unsigned long long)t.mMismatch);
-        line += buf;
-        if (line.size() > 1500) { LL_INFOS("VkVerify") << "GETTERS:" << line << LL_ENDL; line.clear(); }
-    }
-    if (!line.empty()) LL_INFOS("VkVerify") << "GETTERS:" << line << LL_ENDL;
-    report_syncs_and_threads();
-}
 
 
 // ---- sync objects and which threads feed the mirror ----
@@ -4243,71 +3984,24 @@ namespace
 {
 struct SyncRec { U64 mFrame = 0; bool mInFrame = false; U64 mFlush = 0; };
 std::unordered_map<GLsync, SyncRec> sSyncs;
-struct SyncTally
-{
-    U64 mCreated = 0, mPolls = 0, mPollAgree = 0, mGlDoneVkNot = 0, mVkDoneGlNot = 0, mBlockingWaits = 0, mServerWaits = 0, mUnknown = 0;
-} sST;
 }
 
-void on_glFenceSync(GLenum condition, GLbitfield flags, GLsync result)
-{
-    if (!LLVkVerify::gEnabled || !result) return;
-    SyncRec rec;
-    rec.mFrame = Context::instance().getFrameNumber();
-    rec.mInFrame = LLVkMirror::inFrame();
-    sSyncs[result] = rec;
-    ++sST.mCreated;
-}
 
-void on_glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout, GLenum result)
-{
-    if (!LLVkVerify::gEnabled) return;
-    auto it = sSyncs.find(sync);
-    if (it == sSyncs.end())
-    {
-        ++sST.mUnknown;
-        return;
-    }
-    if (timeout != 0)
-    {
-        ++sST.mBlockingWaits;        // GL waited until its own work was done; Vulkan would have to wait for its frame
-        return;
-    }
-    ++sST.mPolls;
-    const bool gl_done = result == 0x911A || result == 0x911C;      // ALREADY_SIGNALED, CONDITION_SATISFIED
-    const bool vk_done = !it->second.mInFrame || Context::instance().frameFinished(it->second.mFrame);
-    if (gl_done == vk_done) ++sST.mPollAgree;
-    else if (gl_done) ++sST.mGlDoneVkNot;
-    else ++sST.mVkDoneGlNot;
-}
 
 void on_glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout)
 {
-    if (LLVkVerify::gEnabled) ++sST.mServerWaits;
+    (void)sync; (void)flags; (void)timeout;      // server-side waits have no meaning here: the mirror owns the fences
 }
 
 void on_glDeleteSync(GLsync sync)
 {
-    if (LLVkVerify::gEnabled) sSyncs.erase(sync);
+    sSyncs.erase(sync);
 }
 
-void report_syncs_and_threads()
-{
-    LL_INFOS("VkVerify") << "SYNC: fences created " << sST.mCreated << ", polls " << sST.mPolls << " (GL and Vulkan agree " << sST.mPollAgree << ", GL done but Vulkan not " << sST.mGlDoneVkNot
-                         << ", Vulkan done but GL not " << sST.mVkDoneGlNot << "), blocking waits " << sST.mBlockingWaits << ", server-side waits " << sST.mServerWaits << ", unknown fences " << sST.mUnknown << LL_ENDL;
-    std::string line;
-    for (auto& t : sThreadCalls)
-    {
-        line += (t.first == sMainThread ? " main thread:" : " other thread:");
-        for (auto& c : t.second) line += " " + c.first + " x" + std::to_string(c.second) + ",";
-        line += ";";
-    }
-    LL_INFOS("VkVerify") << "THREADS feeding texture uploads into the mirror:" << line << LL_ENDL;
-}
 
 
 //-----------------------------------------------------------------------------------------------------
-// LL_VK_VERIFY: compare GL readbacks with the same region read back from Vulkan
+// texel decoding and read-back helpers for glReadPixels / glGetTexImage answers
 //-----------------------------------------------------------------------------------------------------
 
 namespace
@@ -5315,13 +5009,6 @@ void on_upscale(const LLVkMirror::UpscaleArgs& a)
 
 
 } // namespace LLVkGL
-
-#include "llvkverify.h"
-
-namespace LLVkVerify
-{
-bool gEnabled = false;       // the GL-versus-Vulkan comparisons are gone with OpenGL; the flag stays false for the code that still asks
-}
 
 #endif // LL_VULKAN
 
