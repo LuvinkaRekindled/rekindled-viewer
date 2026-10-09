@@ -1581,7 +1581,7 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
 
 } // anonymous namespace
 
-namespace { void flush_buffer_updates(); }
+namespace { void flush_buffer_updates(bool frame_end = false); }
 
 
 namespace
@@ -1740,16 +1740,21 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
 // ---- device-local buffers: writes become GPU copies, recorded when a draw is about to read the buffer ----
 std::vector<GLuint> sPendingBufs;       // the buffers whose Buf::mPending is set
 
-void flush_buffer_updates()
+struct BufTraffic;
+void note_flush(bool frame_end, size_t buffers);
+
+void flush_buffer_updates(bool frame_end)
 {
     if (sPendingBufs.empty())
     {
         return;
     }
+    const size_t pending = sPendingBufs.size();
     if (!Renderer::instance().flushBufferUpdates())
     {
         return;                         // no frame is being recorded: the writes stay queued
     }
+    note_flush(frame_end, pending);
     for (GLuint n : sPendingBufs)
     {
         auto it = sGL.mBuffers.find(n);
@@ -1822,8 +1827,21 @@ struct BufTraffic
     U64 mSpecDevNewBytes = 0, mSpecHostBytes = 0;
     U32 mSubDev = 0, mSubHost = 0;                             // glBufferSubData / write_buffer calls
     U64 mSubDevBytes = 0, mSubHostBytes = 0;
+    U32 mFlushDraw = 0, mFlushFrameEnd = 0;                    // forced flushes of device-buffer writes (each ends the render pass and adds two full barriers)
+    U64 mFlushBuffers = 0;                                     // buffers with pending writes, summed over the flushes
 };
 BufTraffic sBufTraffic;
+
+void note_flush(bool frame_end, size_t buffers)
+{
+    if (frame_end) ++sBufTraffic.mFlushFrameEnd; else ++sBufTraffic.mFlushDraw;
+    sBufTraffic.mFlushBuffers += buffers;
+}
+
+// LL_VK_PHASES: bytes written per buffer name in the interval, to find who writes every frame
+struct WriterStat { U32 mWrites = 0; U64 mBytes = 0; };
+std::unordered_map<GLuint, WriterStat> sWriters;
+const bool sWriterStatsOn = getenv("LL_VK_PHASES") != nullptr;
 
 void report_renames()
 {
@@ -1845,6 +1863,12 @@ void report_renames()
 
 void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, bool whole)
 {
+    if (sWriterStatsOn)
+    {
+        WriterStat& w = sWriters[name];
+        ++w.mWrites;
+        w.mBytes += size;
+    }
     if (b.mDevicePath)
     {
         ++sBufTraffic.mSubDev;
@@ -3386,7 +3410,7 @@ namespace { void drain_query_results(); }
 void before_end_frame()
 {
     std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
-    flush_buffer_updates();
+    flush_buffer_updates(true);
 }
 
 void after_frame()
@@ -3560,6 +3584,27 @@ void after_frame()
                                              << (double)t.mSpecDevNew / frames << " (" << (double)t.mSpecDevNewBytes / frames / 1024 << " KB), host-visible " << (double)t.mSpecHost / frames
                                              << " (" << (double)t.mSpecHostBytes / frames / 1024 << " KB); sub-writes device " << (double)t.mSubDev / frames << " ("
                                              << (double)t.mSubDevBytes / frames / 1024 << " KB), host-visible " << (double)t.mSubHost / frames << " (" << (double)t.mSubHostBytes / frames / 1024 << " KB)" << LL_ENDL;
+                        LL_INFOS("VkPhases") << "buffer flushes per frame: by a draw " << (double)t.mFlushDraw / frames << ", at frame end " << (double)t.mFlushFrameEnd / frames
+                                             << "; buffers with pending writes per flush " << ((t.mFlushDraw + t.mFlushFrameEnd) ? (double)t.mFlushBuffers / (t.mFlushDraw + t.mFlushFrameEnd) : 0.0) << LL_ENDL;
+                        {
+                            std::vector<std::pair<GLuint, WriterStat>> top(sWriters.begin(), sWriters.end());
+                            const size_t n = std::min<size_t>(top.size(), 6);
+                            std::partial_sort(top.begin(), top.begin() + n, top.end(), [](const auto& a, const auto& b) { return a.second.mBytes > b.second.mBytes; });
+                            std::string text;
+                            for (size_t i = 0; i < n; ++i)
+                            {
+                                const auto bit = sGL.mBuffers.find(top[i].first);
+                                char line[200];
+                                snprintf(line, sizeof(line), "%s#%u %s %llu KB x%u (%llu KB/write)", i ? "; " : "", (unsigned)top[i].first,
+                                         bit != sGL.mBuffers.end() ? (bit->second.mDevicePath ? "device" : "host") : "gone",
+                                         (unsigned long long)(top[i].second.mBytes >> 10), (unsigned)top[i].second.mWrites,
+                                         (unsigned long long)(top[i].second.mBytes / top[i].second.mWrites >> 10));
+                                text += line;
+                                if (bit != sGL.mBuffers.end()) text += " size " + std::to_string(bit->second.mSize >> 10) + " KB";
+                            }
+                            LL_INFOS("VkPhases") << "buffers written most in the interval (" << sWriters.size() << " distinct): " << text << LL_ENDL;
+                            sWriters.clear();
+                        }
                         sBufTraffic = BufTraffic();
                     }
                     if (LLVkAsync::gEnabled)

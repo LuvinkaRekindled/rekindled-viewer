@@ -366,6 +366,13 @@ bool Context::pickDevice()
         vkGetPhysicalDeviceQueueFamilyProperties(dev, &qcount, nullptr);
         std::vector<VkQueueFamilyProperties> families(qcount);
         vkGetPhysicalDeviceQueueFamilyProperties(dev, &qcount, families.data());
+        for (U32 i = 0; i < qcount; ++i)
+        {
+            const VkQueueFlags f = families[i].queueFlags;
+            LL_INFOS("Vulkan") << "  queue family " << i << ": " << families[i].queueCount << " queue(s)" << ((f & VK_QUEUE_GRAPHICS_BIT) ? " graphics" : "") << ((f & VK_QUEUE_COMPUTE_BIT) ? " compute" : "")
+                               << ((f & VK_QUEUE_TRANSFER_BIT) ? " transfer" : "") << ((f & VK_QUEUE_SPARSE_BINDING_BIT) ? " sparse" : "") << ((f & VK_QUEUE_VIDEO_DECODE_BIT_KHR) ? " video-decode" : "")
+                               << ((f & VK_QUEUE_OPTICAL_FLOW_BIT_NV) ? " optical-flow" : "") << LL_ENDL;
+        }
         S32 family = -1;
         for (U32 i = 0; i < qcount; ++i)
         {
