@@ -259,12 +259,7 @@ LLGLManager::LLGLManager() :
 {
 }
 
-// <FS> LL_VK_NOGL: no OpenGL context exists at all. The strings the viewer reads with glGetString are the ones made from the Vulkan device in initGLNoGL.
-bool ll_nogl()
-{
-    static const bool nogl = []() { const char* v = getenv("LL_VK_NOGL"); return v && v[0] != '0'; }();
-    return nogl;
-}
+// <FS> there is no OpenGL context at all. The strings the viewer reads with glGetString are the ones made from the Vulkan device in initGLNoGL.
 
 static std::string sNoGLVendor, sNoGLRenderer, sNoGLVersion, sNoGLGlsl, sNoGLExtensions;
 
@@ -284,7 +279,7 @@ const GLubyte* ll_nogl_string(GLenum name)
 // glGetString where this file talks to GL directly (the part before the mirror's wrappers apply)
 static const char* gl_info_string(GLenum name)
 {
-    return ll_nogl() ? (const char*)ll_nogl_string(name) : (const char*)glGetString(name);
+    return (const char*)ll_nogl_string(name);
 }
 
 //---------------------------------------------------------------------
@@ -422,11 +417,6 @@ void LLGLManager::shutdownGL()
 {
     if (mInited)
     {
-        if (!ll_nogl())
-        {
-            glFinish();
-            stop_glerror();
-        }
         mInited = false;
     }
 }

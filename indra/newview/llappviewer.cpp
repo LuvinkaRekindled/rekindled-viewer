@@ -3885,22 +3885,18 @@ bool LLAppViewer::initWindow()
     // <FS> FSVulkanRenderer: draw with Vulkan in the main window. The mirror reads its mode from the environment, so the setting
     // is translated here, before the window and its OpenGL context exist. Variables set by hand take precedence. If Vulkan cannot be
     // set up the mirror logs it and the viewer carries on with OpenGL.
-    if (gSavedSettings.getBOOL("FSVulkanRenderer") && !getenv("LL_VK_MIRROR"))
+    if (!getenv("LL_VK_MIRROR"))
     {
         LL_INFOS("AppInit") << "FSVulkanRenderer is set: asking for the Vulkan renderer in the main window" << LL_ENDL;
         _putenv_s("LL_VK_MIRROR", "1");
         _putenv_s("LL_VK_OWN", "1");
         _putenv_s("LL_VK_EMBED", "main");
-        if (!getenv("LL_VK_NOGL"))
-        {
-            _putenv_s("LL_VK_NOGL", "1");       // native branch: no OpenGL context at all (LL_VK_NOGL=0 brings it back for comparison)
-        }
         if (gSavedSettings.getBOOL("FSVkDLSS") && !getenv("LL_VK_DLSS"))
         {
             _putenv_s("LL_VK_DLSS", "1");       // NVIDIA DLSS upscaling (experimental)
             _putenv_s("LL_VK_DLSS_SCALE", std::to_string(LLPipeline::getDLSSScale()).c_str());     // the render scale, for the texture LOD bias
         }
-        if (gSavedSettings.getBOOL("FSVulkanAsync") && !getenv("LL_VK_ASYNC"))
+        if (!getenv("LL_VK_ASYNC"))
         {
             _putenv_s("LL_VK_ASYNC", "1");      // the Vulkan work runs on its own thread
         }
