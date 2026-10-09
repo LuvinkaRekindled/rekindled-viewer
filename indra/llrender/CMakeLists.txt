@@ -19,7 +19,6 @@ set(llrender_SOURCE_FILES
     llfontvertexbuffer.cpp
     llfontregistry.cpp
     llgl.cpp
-    llglstubs.cpp
     llglslshader.cpp
     llgltexture.cpp
     llimagegl.cpp
@@ -90,12 +89,6 @@ set(llrender_HEADER_FILES
 
 list(APPEND llrender_SOURCE_FILES ${llrender_HEADER_FILES})
 
-# <FS> native-vk: the stand-ins for the GL imports must be an ordinary object file: with whole program optimization (/GL) the linker cannot see their symbols
-# when it decides which library members to pull in
-if (WINDOWS)
-  set_source_files_properties(llglstubs.cpp PROPERTIES COMPILE_FLAGS "/GL-")
-endif ()
-
 if (BUILD_HEADLESS)
   add_library (llrenderheadless
     ${llrender_SOURCE_FILES}
@@ -161,7 +154,7 @@ target_link_libraries(llrender
         ll::freetype
         )
 if (NOT WINDOWS)
-  # <FS> native-vk: on Windows the viewer is linked without the OpenGL import libraries (llglstubs.cpp)
+  # <FS> native-vk: on Windows the viewer is linked without the OpenGL import libraries and calls no GL function directly
   target_link_libraries(llrender
           OpenGL::GL
           OpenGL::GLU
