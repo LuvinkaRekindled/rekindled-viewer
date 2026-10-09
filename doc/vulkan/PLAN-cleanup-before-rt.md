@@ -15,7 +15,7 @@ One route, always the same: busy spot (2 min), teleport, light sim (2 min), wind
 The first baseline already exists for the buffer numbers (PLAN-stable-vertex-buffers.md, phase 0 table); C1 adds the missing lines.
 
 ## C1. Diagnostics bundle (one test run, no behaviour change)
-Added to the `VkPhases` buffer line: forced flushes per frame by cause (a draw read a pending buffer / frame end), copies and bytes per flush; the top writers per interval (buffer name, size, path, writes, bytes); graphic pipeline creations per interval with time, and a log line for any single one over 1 ms (hitching); the queue families of the device (flags, counts) once at start. Gate: none; the numbers decide C3, C7 and whether pipeline pre-warming is needed.
+New in the `VkPhases` block (commit f53efc7b): forced buffer flushes per frame by cause (a draw read a pending buffer / frame end) and buffers with pending writes per flush; the six buffers written most per interval (name, size, path, writes, KB); the queue families of the device, once at start. Already there and read in the same run: "graphics pipelines built in this period: N (total ms in the driver, slowest ms)" and "texture uploads per frame ... N ended a render pass in progress" (C4). Gate: none; the numbers decide C3, C4, C7 and C8.
 
 ## C2. Delete the scaffolding (low risk, per-call win)
 The inline (non-async) mirror path with its hook timers, mutex and HookStat objects; `LL_VK_VERIFY`/`llvkverify.h`; remaining `ll_nogl()` guards; dead `mhRC` code; the 22-entry stats and debug-filter branches in `prepare_draw` behind one flag. Read each body first (lesson: `before_end_frame`). Gate: build clean, checklist, picture identical, worker ms and main-thread queue ms not worse (expected better), startup unchanged.
@@ -35,8 +35,11 @@ Texture ids as direct table indices with the sampler in the entry, vertex layout
 ## C7. Queues and synchronisation (a decision, needed by ray tracing phase 3)
 Today: one queue family, one queue (`vkGetDeviceQueue(.., 0)`), fences. Ray tracing wants BLAS builds and compute skinning off the graphics queue timeline, and texture/buffer uploads on a transfer queue. C1 logs which families exist. Design only unless the data says a second queue pays: a transfer queue for uploads with timeline semaphores (`timelineSemaphore` is Vulkan 1.2 core), compute on the graphics queue first. Gate: a written design in this file, and a probe if cheap.
 
+## C8. Pipeline creation off the draw path (conditional)
+Pipelines are created synchronously where the draw needs them (`Program::getPipeline` -> `vkCreateGraphicsPipelines` on the worker), backed by an on-disk pipeline cache. With a warm cache this costs nothing; with a cold one (new driver, new shader variant, first run) every miss stalls the worker. The C1 line "pipelines built in this period / slowest ms" says how often and how long, ideally from a cold start too (delete the cache file once for a baseline). If misses show up in normal play: build missing variants on a background thread (the draw waits or is skipped for a frame only on a true miss) and pre-warm the common variants at startup from a recorded list. Gate: slowest build ms and frame-time max/p99 after a fresh start.
+
 ## Order
-C0/C1 (one run) -> C2 -> C3 -> C4 -> C6 -> C7 design -> (C5 only if the numbers ask for it) -> buffer arena phases 0-3 (`PLAN-stable-vertex-buffers.md`, phase 0 is done) -> ray tracing (`PLAN-ray-tracing.md`).
+C0/C1 (one run) -> C2 -> C3 -> C4 -> C6 -> C7 design -> (C5 and C8 only if the numbers ask for them) -> buffer arena phases 0-3 (`PLAN-stable-vertex-buffers.md`, phase 0 is done) -> ray tracing (`PLAN-ray-tracing.md`).
 
 ## Not looked at yet (C1 and C0 numbers will tell if they matter)
-Shader/pipeline compile hitching (a persistent pipeline cache exists: `llvkrenderer.cpp` saves `vkGetPipelineCacheData`); occlusion query cost (about 100-140 begin/end per frame, results handed back asynchronously); present mode and latency settings (`LL_VK_PRESENT`, vsync preference).
+Occlusion query cost (about 100-140 begin/end per frame, results handed back asynchronously); present mode and latency settings (`LL_VK_PRESENT`, vsync preference).
