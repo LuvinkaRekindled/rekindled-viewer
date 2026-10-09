@@ -500,12 +500,6 @@ LLWindowWin32::LLWindowWin32(LLWindowCallbacks* callbacks,
     sMainThreadId = LLThread::currentID();
     mWindowThread = new LLWindowWin32Thread();
 
-    //MAINT-516 -- force a load of opengl32.dll just in case windows went sideways
-    if (!ll_nogl())
-    {
-        LoadLibrary(L"opengl32.dll");
-    }
-
     // Request high-performance GPU before creating OpenGL context
     // This increases probability of discrete GPU being used when
     // the context is created.
@@ -560,7 +554,6 @@ LLWindowWin32::LLWindowWin32(LLWindowCallbacks* callbacks,
     mKeyScanCode = 0;
     mKeyVirtualKey = 0;
     mhDC = NULL;
-    mhRC = NULL;
     memset(mCurrentGammaRamp, 0, sizeof(mCurrentGammaRamp));
     memset(mPrevGammaRamp, 0, sizeof(mPrevGammaRamp));
     mCustomGammaSet = false;
@@ -1009,22 +1002,6 @@ void LLWindowWin32::close()
         gGLManager.shutdownGL();
     }
 
-    LL_DEBUGS("Window") << "Releasing Context" << LL_ENDL;
-    if (mhRC)
-    {
-        if (!wglMakeCurrent(NULL, NULL))
-        {
-            LL_WARNS("Window") << "Release of DC and RC failed" << LL_ENDL;
-        }
-
-        if (!wglDeleteContext(mhRC))
-        {
-            LL_WARNS("Window") << "Release of rendering context failed" << LL_ENDL;
-        }
-
-        mhRC = NULL;
-    }
-
     // Restore gamma to the system values.
     restoreGamma();
 
@@ -1222,12 +1199,6 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
     S32 height = size.mY;
     bool auto_show = false;
 
-    if (mhRC)
-    {
-        auto_show = true;
-        resetDisplayResolution();
-    }
-
     if (EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dev_mode))
     {
         current_refresh = dev_mode.dmDisplayFrequency;
@@ -1239,22 +1210,6 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
     mRefreshRate = current_refresh;
 
     gGLManager.shutdownGL();
-    //destroy gl context
-    if (mhRC)
-    {
-        if (!wglMakeCurrent(NULL, NULL))
-        {
-            LL_WARNS("Window") << "Release of DC and RC failed" << LL_ENDL;
-        }
-
-        if (!wglDeleteContext(mhRC))
-        {
-            LL_WARNS("Window") << "Release of rendering context failed" << LL_ENDL;
-        }
-
-        mhRC = NULL;
-    }
-
     if (fullscreen)
     {
         mFullscreen = true;
@@ -1405,19 +1360,12 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
     {
         // <FS> native-vk: no pixel format and no OpenGL context at all. Vulkan presents into this window.
         LLVkMirror::setMainWindow(mWindowHandle);
-        mhRC = 0;
         if (!gGLManager.initGL())
         {
             LLError::LLUserWarningMsg::show(mCallbacks->translateString("MBVideoDrvErr"), 8/*LAST_EXEC_GRAPHICS_INIT*/);
             close();
             return false;
         }
-    }
-
-    // Setup Tracy gpu context (Tracy's GPU profiling is an OpenGL feature: not with LL_VK_NOGL)
-    if (!ll_nogl())
-    {
-        LL_PROFILER_GPU_CONTEXT;
     }
 
     // Disable vertical sync for swap
@@ -3525,10 +3473,6 @@ void LLWindowWin32::swapBuffers()
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_WIN32("GPU Collect");
-        if (!ll_nogl())
-        {
-            LL_PROFILER_GPU_COLLECT;
-        }
     }
 }
 

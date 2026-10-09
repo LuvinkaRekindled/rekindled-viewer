@@ -1243,7 +1243,7 @@ void LLPipeline::refreshCachedSettings()
 // [/SL:KB]
     // DLSS can only run if the viewer started with it on (the upscaler and its Vulkan extensions are set up then; LL_VK_DLSS is set at start-up by FSVkDLSS)
     static const bool dlss_started = getenv("LL_VK_DLSS") != nullptr;
-    sDLSS = dlss_started && gSavedSettings.getBOOL("FSVkDLSS") && gSavedSettings.getBOOL("FSVulkanRenderer");
+    sDLSS = dlss_started && gSavedSettings.getBOOL("FSVkDLSS");
     if (sDLSS)
     {
         // the world is drawn smaller and the upscaler brings it back to the window size
