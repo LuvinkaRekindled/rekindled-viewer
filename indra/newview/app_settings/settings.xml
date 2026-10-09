@@ -2593,7 +2593,7 @@
     <key>FSVulkanAsync</key>
     <map>
       <key>Comment</key>
-      <string>With FSVulkanRenderer: run the Vulkan work on its own thread (faster in busy scenes; on by default). Takes effect after a restart.</string>
+      <string>No longer used: the Vulkan work always runs on its own thread.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2604,7 +2604,7 @@
     <key>FSVkDLSS</key>
     <map>
       <key>Comment</key>
-      <string>Experimental, needs FSVulkanRenderer and an NVIDIA RTX card: render the world at FSVkDLSSScale of the window size and upscale it with DLSS. Takes effect after a restart.</string>
+      <string>Experimental, needs an NVIDIA RTX card: render the world at FSVkDLSSScale of the window size and upscale it with DLSS. Takes effect after a restart.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2758,7 +2758,7 @@
     <key>FSVulkanRenderer</key>
     <map>
       <key>Comment</key>
-      <string>Experimental: draw the world with Vulkan instead of OpenGL (OpenGL still creates the window). Takes effect after a restart; falls back to OpenGL if Vulkan cannot be set up.</string>
+      <string>No longer used: the viewer always draws with Vulkan.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
