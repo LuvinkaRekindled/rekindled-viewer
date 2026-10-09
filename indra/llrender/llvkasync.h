@@ -72,7 +72,7 @@ namespace LLVkAsync
     enum Cmd : unsigned short
     {
         CMD_BASE = 1000,
-        CMD_FRAME_BEGIN, CMD_FRAME_END, CMD_PRESENT, CMD_HOLD, CMD_SNAPSHOT_BOUNDARY, CMD_ARM_SNAPSHOT,
+        CMD_FRAME_BEGIN, CMD_FRAME_END, CMD_PRESENT, CMD_HOLD, CMD_SNAPSHOT_BOUNDARY,
         CMD_UPSCALE, CMD_PROGRAM_BIND, CMD_UNIFORM_SCALAR, CMD_UNIFORM_VECTOR, CMD_UNIFORM_MATRIX, CMD_SAMPLER_UNIT, CMD_PROGRAM_DESTROY,
         CMD_SYNC, CMD_STOP, CMD_WRAP,
         CMD_BIND_TEXTURE_UNIT, CMD_ARRAY_RUN,      // merged records, see the coalescing in llvkasync.cpp
@@ -93,7 +93,6 @@ namespace LLVkAsync
     void framePresent();
     void frameHold(bool hold);
     void snapshotBoundary(S32 mode);
-    void armSnapshot();
 
     // names for glGen*: handed out on the calling thread, created on the worker
     void gen_enq(unsigned short op, int kind, S32 n, unsigned* out);

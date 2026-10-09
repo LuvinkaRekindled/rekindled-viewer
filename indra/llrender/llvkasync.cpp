@@ -42,7 +42,6 @@ namespace LLVkMirror
     void presentFrameImpl();
     void holdFrameImpl(bool hold);
     void snapshotBoundaryImpl(S32 mode);
-    void armSnapshotCompareImpl();
 }
 
 namespace LLVkAsync
@@ -166,7 +165,7 @@ unsigned long long gOpStatCalls[OP_STAT_SLOTS] = {};
 unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
-const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "armSnapshot", "upscale", "programBind", "uniformScalar",
+const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
                                   "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
@@ -1037,7 +1036,6 @@ void frameEnd() { push(CMD_FRAME_END, nullptr, 0); wake(); if (gMode == 3) wait_
 void framePresent() { push(CMD_PRESENT, nullptr, 0); wake(); if (gMode == 3) wait_drained(); }
 void frameHold(bool hold) { S32 a = hold ? 1 : 0; push(CMD_HOLD, &a, sizeof(a)); }
 void snapshotBoundary(S32 mode) { push(CMD_SNAPSHOT_BOUNDARY, &mode, sizeof(mode)); }
-void armSnapshot() { push(CMD_ARM_SNAPSHOT, nullptr, 0); }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // shader program commands
@@ -1769,7 +1767,6 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         break;
     case CMD_HOLD: LLVkMirror::holdFrameImpl(r.get<S32>() != 0); break;
     case CMD_SNAPSHOT_BOUNDARY: LLVkMirror::snapshotBoundaryImpl(r.get<S32>()); break;
-    case CMD_ARM_SNAPSHOT: LLVkMirror::armSnapshotCompareImpl(); break;
     case CMD_UPSCALE:
     {
         LLVkMirror::UpscaleArgs a;

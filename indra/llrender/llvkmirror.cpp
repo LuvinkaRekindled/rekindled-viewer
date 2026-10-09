@@ -18,7 +18,6 @@ bool LLVkMirror::inFrame() { return false; }
 void LLVkMirror::beginFrame(S32, S32) {}
 void LLVkMirror::endFrame() {}
 void LLVkMirror::holdFrame(bool) {}
-void LLVkMirror::armSnapshotCompare() {}
 void LLVkMirror::setPresentPreference(S32, bool) {}
 void LLVkMirror::snapshotBoundary(S32) {}
 bool LLVkMirror::upscaleAvailable() { return false; }
@@ -38,7 +37,6 @@ void LLVkMirror::stopAsync() {}
 #include "llvkcontext.h"
 #include "llvkdlss.h"
 #include "llvkrenderer.h"
-#include "llvkverify.h"
 #include "llvkasync.h"
 #include "llwindow.h"
 
@@ -695,7 +693,6 @@ void LLVkMirror::shutdown()
     }
     LLVkGL::gActive = false;
     LLVkGL::gOwn = false;
-    LLVkVerify::gEnabled = false;
     LLVk::Context& ctx = LLVk::Context::instance();
     if (ctx.isReady())
     {
@@ -909,11 +906,6 @@ void LLVkMirror::beginFrameImpl(S32 width, S32 height)
     LLVk::Image* colors[1] = { &sMirror.mBackbuffer };
     renderer.setRenderTarget(colors, 1, &sMirror.mDepth);
     sMirror.mInFrame = true;
-}
-
-void LLVkMirror::armSnapshotCompareImpl()
-{
-    // the GL-versus-Vulkan snapshot comparison went with OpenGL
 }
 
 void LLVkMirror::holdFrameImpl(bool hold)
@@ -1170,7 +1162,7 @@ namespace
 // The worker takes over between two frames: once a frame has been closed in the usual way and the mirror is ready.
 void maybe_start_async()
 {
-    if (!LLVkAsync::gEnabled && LLVkAsync::requested() && sMirror.mReady && !sMirror.mInFrame && !sMirror.mHold && LLVkGL::gOwn && !LLVkVerify::gEnabled)
+    if (!LLVkAsync::gEnabled && LLVkAsync::requested() && sMirror.mReady && !sMirror.mInFrame && !sMirror.mHold && LLVkGL::gOwn)
     {
         LLVkAsync::start();
     }
@@ -1226,16 +1218,6 @@ void LLVkMirror::snapshotBoundary(S32 mode)
         return;
     }
     snapshotBoundaryImpl(mode);
-}
-
-void LLVkMirror::armSnapshotCompare()
-{
-    if (LLVkAsync::gEnabled)
-    {
-        LLVkAsync::armSnapshot();
-        return;
-    }
-    armSnapshotCompareImpl();
 }
 
 void LLVkMirror::setUpscaleLodBias(float bias)
