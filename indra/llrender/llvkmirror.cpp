@@ -479,11 +479,7 @@ bool create_window()
     {
         if (sMainWindowHandle)
         {
-            parent = (HWND)sMainWindowHandle;       // no OpenGL context (LL_VK_NOGL): the window code told us
-        }
-        else if (HDC dc = wglGetCurrentDC())
-        {
-            parent = WindowFromDC(dc);
+            parent = (HWND)sMainWindowHandle;       // the window code told us
         }
         if (parent && strcmp(embed, "main") == 0)
         {

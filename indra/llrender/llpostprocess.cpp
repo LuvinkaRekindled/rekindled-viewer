@@ -406,7 +406,7 @@ bool LLPostProcess::checkError(void)
     while (glErr != GL_NO_ERROR)
     {
         // shaderErrorLog << (const char *) gluErrorString(glErr) << std::endl;
-        char const * err_str_raw = (const char *) gluErrorString(glErr);
+        char const * err_str_raw = nullptr;      // no glu: the code is reported as a number
 
         if(err_str_raw == NULL)
         {
