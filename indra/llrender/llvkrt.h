@@ -48,6 +48,27 @@ struct Caster
     LLVkGL::BufferInfo mVi, mIi;         // where the vertex and index buffers live now (the handler has them at hand: no lookups later)
 };
 
+// A rigged caster draw (kind 2 shadow packets): its vertices are bind pose, skinned by a compute pass every frame into a copy the avatar's structure is built from.
+// mPalette is the device address of the draw's matrix palette (12 floats per joint), valid until the frame's memory is reused, i.e. for this frame only.
+struct SkinCaster
+{
+    U32 mAvatarId = 0, mSkinId = 0;     // stable identities (the avatar, and the skin of the draw)
+    U32 mVb = 0, mIb = 0;               // GL buffer names
+    U32 mFirst = 0, mCount = 0;         // index range
+    U32 mVertexFirst = 0, mVertexCount = 0;
+    U32 mWeightOffset = 0;              // byte offset of the weight4 array in the vertex buffer
+    U32 mJoints = 0;
+    U64 mPalette = 0;
+    const F32* mModel = nullptr;        // 16 floats column-major, null = identity
+    U32 mPass = 0;
+    F32 mAvatarPos[3] = {};             // where the avatar is (the probe of the skinned data compares with it)
+    U32 mKind = 0;                      // 0 = opaque, 1 = alpha masked (mAlpha)
+    U32 mMode = 0;                      // how the vertices are skinned: 0 = weight4 array + palette, 1 = avatar body (one weight float per vertex, palette of 15 joints), 2 = rigid under mModel
+    const AlphaInfo* mAlpha = nullptr;
+    LLVkGL::BufferInfo mVi, mIi;
+};
+void noteSkinned(const SkinCaster& c);
+
 // the slot of a texture (by GL name) in this frame's bindless table
 typedef U32 (*TextureSlotFn)(U32 gl_name);
 

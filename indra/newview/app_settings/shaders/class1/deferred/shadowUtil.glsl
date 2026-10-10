@@ -283,6 +283,21 @@ float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen)
     float rt = rtSunShadow(pos, norm, light_dir, pos_screen);
 #if LL_RT_SHADOWS == 1
     return rt;
+#elif LL_RT_SHADOWS == 5
+    // debug: rays only, with the sun swung sideways so that shadows fall far from their casters (a high sun puts them under the feet and hides what is in the scene)
+    return rtSunShadow(pos, norm, normalize(light_dir + vec3(1.2, 0.0, 0.0)), pos_screen);
+#elif LL_RT_SHADOWS == 4
+    // x-ray of the skinned avatar structures (instance mask 4): a ray from the eye through this pixel; lit where the ray scene has a surface at the depth of the visible one,
+    // dark elsewhere. Shows what of the avatars the ray scene really covers, in their current pose.
+    float depth = length(pos);
+    rayQueryEXT xq;
+    rayQueryInitializeEXT(xq, ll_rt_tlas, gl_RayFlagsOpaqueEXT, 0x04, vec3(0.0), 0.01, pos / depth, depth + 3.0);
+    while (rayQueryProceedEXT(xq)) { }
+    if (rayQueryGetIntersectionTypeEXT(xq, true) == gl_RayQueryCommittedIntersectionNoneEXT)
+    {
+        return 0.0;
+    }
+    return abs(rayQueryGetIntersectionTEXT(xq, true) - depth) < max(0.04, 0.012 * depth) ? 1.0 : 0.0;
 #elif LL_RT_SHADOWS == 2
     // split screen: the cascades on the left half, the rays on the right
     if (abs(pos_screen.x * 2.0 - screen_res.x) < 4.0)

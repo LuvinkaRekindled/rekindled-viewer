@@ -52,6 +52,10 @@ public:
 
     // Render time method to upload batches of joint matrices
     void uploadJointMatrices();
+    // the palette uploadJointMatrices sends (3 rows x 15 joints of 4 floats), with or without the current modelview (the ray scene wants world space)
+    void computeJointPalette(F32* mat, bool with_modelview);
+    // ray tracing: names this mesh (once per frame) to the ray scene, which skins it on the GPU
+    void noteRayShadow();
 
     // overloaded from base class
     U32 drawShape( F32 pixelArea, bool first_pass, bool is_dummy ) override;

@@ -11,6 +11,10 @@
 #include "llvkrenderer.h"
 #include "llvkmirror.h"
 
+#include <glslang/Public/ShaderLang.h>
+#include <glslang/Public/ResourceLimits.h>
+#include <glslang/SPIRV/GlslangToSpv.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -55,6 +59,11 @@ struct GpuGeom
 };
 static_assert(sizeof(GpuGeom) == 56, "geometry record");
 constexpr U32 kMaxRecords = (U32)(kTableBytes / sizeof(GpuGeom));
+constexpr U32 kMaxSkinJobs = 2048;                          // compute skinning jobs per scene call
+constexpr U32 kSkinChunkVerts = 128;                        // vertices per workgroup (one chunk table entry)
+constexpr U32 kMaxSkinChunks = 131072;
+constexpr VkDeviceSize kSkinJobBytes = 96ull * kMaxSkinJobs;
+constexpr VkDeviceSize kSkinBytes = kSkinJobBytes + 8ull * kMaxSkinChunks;
 constexpr U32 kPasses = 8;                                  // shadow passes tracked: 0-3 sun cascades, 4-5 spot shadows, 6 other
 
 struct Range
@@ -116,6 +125,7 @@ struct Blas
     VkDeviceAddress mAddress = 0;
     ArenaRef mStorage;
     VkDeviceSize mUpdateScratch = 0;
+    ArenaRef mSkinOut;                              // the compute pass output the structure is built from (skin test and stage C), same indexing as the source vertex buffer
     U32 mPrims = 0;
     U32 mRefits = 0;                                // since the last build (a refit keeps the tree: after a number of them, build again)
     U64 mLastSeen = 0;                              // scene call number
@@ -129,6 +139,7 @@ struct Tlas
     Buffer mStorage;
     Buffer mInstances;                              // kCalls regions of mCapacity instances
     Buffer mTable;                                  // kCalls regions of kTableBytes
+    Buffer mSkin;                                   // kCalls regions of kSkinBytes: the compute skinning job and chunk tables
     U32 mCapacity = 0;
     VkDescriptorSet mSet = VK_NULL_HANDLE;
     U64 mCallFrame = ~0ull;                         // frame number of the calls counted in mCalls
@@ -138,6 +149,7 @@ struct Tlas
 struct Stats
 {
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
+    U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0;
     U64 mOverCap = 0, mExtraCalls = 0, mBadVertices = 0, mBadMatrices = 0, mChecked = 0, mSingular = 0, mCompared = 0, mMismatched = 0;
     F32 mMaxScale = 0.f;
     Key mMaxScaleKey;
@@ -173,6 +185,10 @@ struct DebugSwitches
     bool mCompare = false;          // compare the system-memory copy of host-written buffers with the mapped video memory (a few per call), log mismatches
     bool mDynCasters = false;       // include casters with a matrix of their own (avatar attachments, moving linksets): they go wrong in the ray scene so far (see PLAN-rt-shadows.md)
     bool mCallLog = false;          // one line per scene call into <work>/rt-calls.log (wall clock, frame, call, jobs, instances)
+    bool mSkinProbe = false;        // about every 90 scene calls: run the skin jobs again on their own, read a few results back and log their bounding boxes
+    bool mRigged = true;            // rigged opaque casters (avatar attachments) in the scene, skinned by the compute pass
+    bool mSkinTest = false;         // stage C step C1: structures of opaque casters are built from a compute-pass copy of their vertices (must look identical to the direct path)
+    bool mBBox = false;             // one line per build/refit of a structure with a matrix of its own (CPU-visible data only) into <work>/rt-bbox.log: bounding box, largest coordinate (stage C step 0)
 };
 DebugSwitches sDbg;
 std::chrono::steady_clock::time_point sDbgRead;
@@ -192,6 +208,8 @@ void read_debug_switches()
     d.mCheck = env_u64("LL_VK_RT_CHECK", 0) != 0;
     d.mSkipBad = env_u64("LL_VK_RT_SKIPBAD", 1) != 0;
     d.mDynCasters = env_u64("LL_VK_RT_DYNAMIC", 0) != 0;
+    d.mSkinTest = env_u64("LL_VK_RT_SKINTEST", 0) != 0;
+    d.mRigged = env_u64("LL_VK_RT_RIGGED", 1) != 0;
     if (FILE* f = fopen(path, "rb"))
     {
         char line[256];
@@ -222,6 +240,10 @@ void read_debug_switches()
                 else if (k == "serial") d.mSerial = v != 0;
                 else if (k == "pad") d.mPad = (U32)v;
                 else if (k == "calllog") d.mCallLog = v != 0;
+                else if (k == "bbox") d.mBBox = v != 0;
+                else if (k == "skintest") d.mSkinTest = v != 0;
+                else if (k == "rigged") d.mRigged = v != 0;
+                else if (k == "skinprobe") d.mSkinProbe = v != 0;
                 else if (k == "dyncasters") d.mDynCasters = v != 0;
                 else if (k == "compare") d.mCompare = v != 0;
                 else if (k == "maxvtx") d.mMaxVtx = (U32)v;
@@ -232,14 +254,45 @@ void read_debug_switches()
     }
     if (d.mSingle != sDbg.mSingle || d.mNoRefit != sDbg.mNoRefit || d.mKeep != sDbg.mKeep || d.mCommonOnly != sDbg.mCommonOnly || d.mAlpha != sDbg.mAlpha || d.mCheck != sDbg.mCheck
         || d.mSkipBad != sDbg.mSkipBad || d.mOnly != sDbg.mOnly || d.mMoving != sDbg.mMoving || d.mDynamic != sDbg.mDynamic || d.mKind != sDbg.mKind || d.mMinDist != sDbg.mMinDist
-        || d.mMaxDist != sDbg.mMaxDist || d.mSingular != sDbg.mSingular || d.mMaxInstances != sDbg.mMaxInstances || d.mBuildMax != sDbg.mBuildMax || d.mSerial != sDbg.mSerial || d.mPad != sDbg.mPad || d.mCallLog != sDbg.mCallLog || d.mDynCasters != sDbg.mDynCasters || d.mCompare != sDbg.mCompare || d.mMaxVtx != sDbg.mMaxVtx || d.mSkipBuf != sDbg.mSkipBuf)
+        || d.mMaxDist != sDbg.mMaxDist || d.mSingular != sDbg.mSingular || d.mMaxInstances != sDbg.mMaxInstances || d.mBuildMax != sDbg.mBuildMax || d.mSerial != sDbg.mSerial || d.mPad != sDbg.mPad || d.mCallLog != sDbg.mCallLog || d.mDynCasters != sDbg.mDynCasters || d.mCompare != sDbg.mCompare || d.mBBox != sDbg.mBBox || d.mSkinTest != sDbg.mSkinTest || d.mRigged != sDbg.mRigged || d.mMaxVtx != sDbg.mMaxVtx || d.mSkipBuf != sDbg.mSkipBuf)
     {
         LL_INFOS("VkRt") << "debug switches: single " << d.mSingle << ", norefit " << d.mNoRefit << ", keep " << d.mKeep << ", common_only " << d.mCommonOnly << ", alpha " << d.mAlpha
                          << ", check " << d.mCheck << ", skipbad " << d.mSkipBad << ", only " << d.mOnly << ", moving " << d.mMoving << ", dynamic " << d.mDynamic << ", kind " << d.mKind
-                         << ", dist " << d.mMinDist << ".." << d.mMaxDist << ", dump " << d.mDump << ", dynamic casters " << d.mDynCasters << ", singular " << d.mSingular << ", max instances " << d.mMaxInstances << ", build max " << d.mBuildMax << ", serial " << d.mSerial << ", pad " << d.mPad << LL_ENDL;
+                         << ", dist " << d.mMinDist << ".." << d.mMaxDist << ", dump " << d.mDump << ", dynamic casters " << d.mDynCasters << ", singular " << d.mSingular << ", max instances " << d.mMaxInstances << ", build max " << d.mBuildMax << ", serial " << d.mSerial << ", pad " << d.mPad << ", skintest " << d.mSkinTest << ", rigged " << d.mRigged << LL_ENDL;
     }
     sDbg = d;
 }
+
+// a rigged caster draw of an avatar (a draw of a rigged mesh: body parts do not come through here, attachments do)
+struct SkinDraw
+{
+    U32 mVb = 0, mIb = 0, mFirst = 0, mCount = 0, mVertexFirst = 0, mVertexCount = 0, mSkinId = 0, mWeightOffset = 0, mJoints = 0;
+    U64 mPalette = 0;                   // this frame's palette (memory of the frame; valid in the frame it was named)
+    F32 mModel[16] = {};
+    bool mHasModel = false;
+    U32 mKind = 0;                      // 0 opaque, 1 alpha masked
+    U32 mMode = 0;                      // skinning mode of the compute pass
+    F32 mAvatarPos[3] = {};
+    AlphaInfo mAlpha;
+    LLVkGL::BufferInfo mVi, mIi;
+    U64 mNotedTag = 0, mSkinnedTag = 0;
+    ArenaRef mOut;                      // the skinned vertices (world space), indexed like the vertex buffer relative to mVertexFirst
+};
+
+// one structure per avatar: a geometry per rigged draw of the frame, over the skinned copies
+struct Avatar
+{
+    Key mKey;
+    Blas* mBlas = nullptr;
+    std::vector<SkinDraw> mDraws;
+    std::vector<U64> mSig;              // what the structure was built from
+    std::vector<U32> mBuiltIdx;         // its geometries: indices into mDraws (mDraws only grows, except where mSig is cleared)
+    U64 mNotedTag = 0;                  // latest frame a draw was named
+    F32 mPos[3] = {};                   // where the avatar is (named by its body meshes)
+    bool mHasPos = false;
+    U64 mProcessedTag = 0;              // frame whose jobs were made
+    VkDeviceAddress mAddressNow = 0;    // the structure the scene uses (a new one when it is being built this call)
+};
 
 bool sInit = false;
 bool sFailed = false;
@@ -252,6 +305,7 @@ Buffer sScratch;
 std::unordered_map<Key, Group, KeyHash> sGroups;
 U64 sPassFrame[kPasses] = {};                           // per pass: the frame number + 1 of its latest note
 std::unordered_map<Key, Blas, KeyHash> sBlas;
+std::unordered_map<U32, Avatar> sAvatars;
 U64 sSceneCalls = 0;
 U64 sBlasStorageBytes = 0;
 U32 sLastInstances = 0;
@@ -298,10 +352,34 @@ void drop_blas(Blas& b)
     b.mAs = VK_NULL_HANDLE;
     b.mAddress = 0;
     b.mStorage = ArenaRef();
+    if (b.mSkinOut.valid())
+    {
+        Context::instance().arenaFree(b.mSkinOut);
+        b.mSkinOut = ArenaRef();
+    }
     b.mBuilt.clear();
     b.mVbVersion = b.mIbVersion = ~0ull;
     b.mPrims = 0;
     b.mRefits = 0;
+}
+
+void release_avatar(Avatar& a)
+{
+    Context& ctx = Context::instance();
+    for (SkinDraw& d : a.mDraws)
+    {
+        if (d.mOut.valid())
+        {
+            ctx.arenaFree(d.mOut);
+        }
+    }
+    a.mDraws.clear();
+    if (a.mBlas)
+    {
+        drop_blas(*a.mBlas);
+        sBlas.erase(a.mKey);
+        a.mBlas = nullptr;
+    }
 }
 
 void tlas_sizes(U32 capacity, VkAccelerationStructureBuildSizesInfoKHR& sizes)
@@ -329,11 +407,13 @@ bool make_tlas(Tlas& t, U32 capacity)
     tlas_sizes(capacity, sizes);
     if (!ctx.createBuffer(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, Context::Memory::Device, t.mStorage)
         || !ctx.createBuffer(64ull * capacity * kCalls, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, Context::Memory::UploadDevice, t.mInstances)
-        || !ctx.createBuffer(kTableBytes * kCalls, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, t.mTable))
+        || !ctx.createBuffer(kTableBytes * kCalls, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, t.mTable)
+        || !ctx.createBuffer(kSkinBytes * kCalls, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, t.mSkin))
     {
         ctx.destroyBuffer(t.mStorage);
         ctx.destroyBuffer(t.mInstances);
         ctx.destroyBuffer(t.mTable);
+        ctx.destroyBuffer(t.mSkin);
         return false;
     }
     memset(t.mTable.mMapped, 0, (size_t)(kTableBytes * kCalls));
@@ -347,6 +427,7 @@ bool make_tlas(Tlas& t, U32 capacity)
         ctx.destroyBuffer(t.mStorage);
         ctx.destroyBuffer(t.mInstances);
         ctx.destroyBuffer(t.mTable);
+        ctx.destroyBuffer(t.mSkin);
         return false;
     }
     t.mCapacity = capacity;
@@ -395,6 +476,176 @@ void full_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src_stage, VkAccess
     vkCmdPipelineBarrier2(cmd, &dep);
 }
 
+// ---- compute skinning pass (stage C, doc/vulkan/PLAN-rt-shadows.md) --------------------------------------------------------------------------------------------------------
+// One dispatch per scene call over a list of jobs; a job turns a range of a source vertex array (vec4 positions, bind pose) into world space positions at the same indices of an
+// output array: mode 0 = rigged (weight4 array + matrix palette, 12 floats per joint), mode 1 = an avatar's own mesh (one weight float), mode 2 = model matrix only (also the plain copy of the skin test). The model matrix of a job
+// is applied last (rows of a 3x4). dst is the address the shader indexes by the ABSOLUTE vertex index (the caller subtracts 16 * first from the range's address).
+struct SkinJob
+{
+    U32 mSrc[2];
+    U32 mWeights[2];
+    U32 mPalette[2];
+    U32 mDst[2];
+    U32 mFirst, mCount, mMode, mJoints;
+    F32 mModel[12];                 // three rows of four
+};
+static_assert(sizeof(SkinJob) == 96, "skin job");
+
+struct SkinChunk
+{
+    U32 mJob, mOffset;
+};
+
+const char* kSkinShader = R"GLSL(#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(local_size_x = 128) in;
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer InVec4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer InFloat { float w[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer OutVec4 { vec4 v[]; };
+struct Joint { vec4 c0; vec4 c1; vec4 c2; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Palette { Joint j[]; };
+struct Job { uvec2 src; uvec2 weights; uvec2 palette; uvec2 dst; uint first; uint count; uint mode; uint joints; vec4 m0; vec4 m1; vec4 m2; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Jobs { Job j[]; };
+struct Chunk { uint job; uint offset; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer Chunks { Chunk c[]; };
+layout(push_constant) uniform Push { uvec2 jobs; uvec2 chunks; } pc;
+void main()
+{
+    Chunk ch = Chunks(pc.chunks).c[gl_WorkGroupID.x];
+    Job job = Jobs(pc.jobs).j[ch.job];
+    uint i = ch.offset + gl_LocalInvocationID.x;
+    if (i >= job.count)
+    {
+        return;
+    }
+    uint v = job.first + i;
+    vec4 source = InVec4(job.src).v[v];
+    vec3 pos = source.xyz;
+    if (job.mode == 0u)
+    {
+        // as getObjectSkinnedTransform() in objectSkinV.glsl; the joint numbers stay inside the palette that was sent
+        vec4 weight4 = InVec4(job.weights).v[v];
+        vec4 w = fract(weight4);
+        vec4 joint = clamp(floor(weight4), vec4(0.0), vec4(float(job.joints) - 1.0));
+        float weight_sum = w.x + w.y + w.z + w.w;
+        w = weight_sum > 1e-6 ? w / weight_sum : vec4(1.0, 0.0, 0.0, 0.0);
+        Palette palette = Palette(job.palette);
+        Joint j1 = palette.j[int(joint.x)];
+        Joint j2 = palette.j[int(joint.y)];
+        Joint j3 = palette.j[int(joint.z)];
+        Joint j4 = palette.j[int(joint.w)];
+        mat3 m = mat3(j1.c0.xyz, j1.c1.xyz, j1.c2.xyz) * w.x;
+        m += mat3(j2.c0.xyz, j2.c1.xyz, j2.c2.xyz) * w.y;
+        m += mat3(j3.c0.xyz, j3.c1.xyz, j3.c2.xyz) * w.z;
+        m += mat3(j4.c0.xyz, j4.c1.xyz, j4.c2.xyz) * w.w;
+        vec3 trans = vec3(j1.c0.w, j1.c1.w, j1.c2.w) * w.x;
+        trans += vec3(j2.c0.w, j2.c1.w, j2.c2.w) * w.y;
+        trans += vec3(j3.c0.w, j3.c1.w, j3.c2.w) * w.z;
+        trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
+        pos = m * pos + trans;
+    }
+    else if (job.mode == 1u)
+    {
+        // an avatar's own mesh (avatarSkinV.glsl): one weight per vertex, the joints i and i + 1 of the palette mixed
+        float weight = InFloat(job.weights).w[v];
+        int i = int(clamp(floor(weight), 0.0, float(job.joints) - 1.0));
+        int i2 = min(i + 1, int(job.joints) - 1);
+        float x = fract(weight);
+        Palette palette = Palette(job.palette);
+        Joint ja = palette.j[i];
+        Joint jb = palette.j[i2];
+        vec4 ps = vec4(pos, 1.0);
+        pos = vec3(dot(mix(ja.c0, jb.c0, x), ps), dot(mix(ja.c1, jb.c1, x), ps), dot(mix(ja.c2, jb.c2, x), ps));
+    }
+    vec4 p4 = vec4(pos, 1.0);
+    OutVec4(job.dst).v[v] = vec4(dot(job.m0, p4), dot(job.m1, p4), dot(job.m2, p4), source.w);       // w: the texture index of masked draws
+}
+)GLSL";
+
+struct SkinPipeline
+{
+    VkShaderModule mModule = VK_NULL_HANDLE;
+    VkPipelineLayout mLayout = VK_NULL_HANDLE;
+    VkPipeline mPipe = VK_NULL_HANDLE;
+    bool mTried = false;
+} sSkinPipe;
+
+bool ensure_skin_pipeline()
+{
+    if (sSkinPipe.mPipe != VK_NULL_HANDLE)
+    {
+        return true;
+    }
+    if (sSkinPipe.mTried)
+    {
+        return false;
+    }
+    sSkinPipe.mTried = true;
+    static const bool glslang_ready = glslang::InitializeProcess();
+    if (!glslang_ready)
+    {
+        LL_WARNS("VkRt") << "skinning pass: glslang did not start" << LL_ENDL;
+        return false;
+    }
+    glslang::TShader shader(EShLangCompute);
+    const char* strings[1] = { kSkinShader };
+    shader.setStrings(strings, 1);
+    shader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientVulkan, 100);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_6);
+    const EShMessages msgs = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+    if (!shader.parse(GetDefaultResources(), 450, ECoreProfile, false, false, msgs))
+    {
+        LL_WARNS("VkRt") << "skinning pass: compile failed: " << shader.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    glslang::TProgram program;
+    program.addShader(&shader);
+    if (!program.link(msgs))
+    {
+        LL_WARNS("VkRt") << "skinning pass: link failed: " << program.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    std::vector<unsigned int> spirv;
+    spv::SpvBuildLogger logger;
+    glslang::SpvOptions options;
+    options.validate = false;
+    glslang::GlslangToSpv(*program.getIntermediate(EShLangCompute), spirv, &logger, &options);
+    if (spirv.empty())
+    {
+        LL_WARNS("VkRt") << "skinning pass: no SPIR-V: " << logger.getAllMessages() << LL_ENDL;
+        return false;
+    }
+    VkDevice dev = Context::instance().getDevice();
+    VkShaderModuleCreateInfo mi = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    mi.codeSize = spirv.size() * sizeof(unsigned int);
+    mi.pCode = spirv.data();
+    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 16 };
+    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &pcr;
+    VkComputePipelineCreateInfo pi = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    if (vkCreateShaderModule(dev, &mi, nullptr, &sSkinPipe.mModule) != VK_SUCCESS || vkCreatePipelineLayout(dev, &li, nullptr, &sSkinPipe.mLayout) != VK_SUCCESS)
+    {
+        LL_WARNS("VkRt") << "skinning pass: shader module or layout failed" << LL_ENDL;
+        return false;
+    }
+    pi.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    pi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pi.stage.module = sSkinPipe.mModule;
+    pi.stage.pName = "main";
+    pi.layout = sSkinPipe.mLayout;
+    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &sSkinPipe.mPipe) != VK_SUCCESS)
+    {
+        LL_WARNS("VkRt") << "skinning pass: pipeline failed" << LL_ENDL;
+        sSkinPipe.mPipe = VK_NULL_HANDLE;
+        return false;
+    }
+    LL_INFOS("VkRt") << "skinning pass ready (compute, " << kSkinChunkVerts << " vertices per workgroup, up to " << kMaxSkinJobs << " jobs and " << kMaxSkinChunks << " chunks per scene call)" << LL_ENDL;
+    return true;
+}
+
 struct Job
 {
     Key mKey;
@@ -412,6 +663,8 @@ struct Job
     U32 mPrims = 0;
     U64 mVbVersion = 0, mIbVersion = 0;
     bool mFresh = false;            // there was no structure before (the others replace one or refit it)
+    bool mHasSkin = false;          // a compute pass job fills the vertex data the structure is built from
+    SkinJob mSkin = {};
 };
 
 } // anonymous namespace
@@ -420,7 +673,7 @@ U32 shadowMode()
 {
     static const U32 mode = []() {
         const U64 v = env_u64("LL_VK_RT_SHADOWS", 0);
-        return v >= 1 && v <= 3 ? (U32)v : 0u;
+        return v >= 1 && v <= 5 ? (U32)v : 0u;
     }();
     return mode;
 }
@@ -534,6 +787,19 @@ void shutdown()
         drop_blas(kv.second);
     }
     sBlas.clear();
+    if (sSkinPipe.mPipe != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(dev, sSkinPipe.mPipe, nullptr);
+    }
+    if (sSkinPipe.mLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(dev, sSkinPipe.mLayout, nullptr);
+    }
+    if (sSkinPipe.mModule != VK_NULL_HANDLE)
+    {
+        vkDestroyShaderModule(dev, sSkinPipe.mModule, nullptr);
+    }
+    sSkinPipe = SkinPipeline();
     for (Tlas& t : sTlas)
     {
         if (t.mAs != VK_NULL_HANDLE)
@@ -615,6 +881,96 @@ void noteCaster(const Caster& c)
             g.mBlas->mAlpha[r.id()] = g.mAlpha.back();     // the alpha test data of each range of a masked structure, as last drawn
         }
     }
+}
+
+void noteSkinned(const SkinCaster& c)
+{
+    if (!sInit || sFailed || !sDbg.mRigged || c.mCount < 3 || c.mVertexCount == 0 || (c.mMode != 2 && (!c.mPalette || c.mJoints == 0)))
+    {
+        return;
+    }
+    auto it = sAvatars.find(c.mAvatarId);
+    if (it == sAvatars.end())
+    {
+        Key key;
+        key.mVb = c.mAvatarId;
+        key.mIb = 0xFFFFFFFFu;
+        key.mMatrixId = 0;
+        key.mKind = 3;
+        it = sAvatars.emplace(c.mAvatarId, Avatar()).first;
+        it->second.mKey = key;
+        it->second.mBlas = &sBlas[key];
+    }
+    Avatar& a = it->second;
+    if (c.mAvatarPos[0] != 0.f || c.mAvatarPos[1] != 0.f || c.mAvatarPos[2] != 0.f)
+    {
+        memcpy(a.mPos, c.mAvatarPos, sizeof(a.mPos));
+        a.mHasPos = true;
+    }
+    const U64 tag = Context::instance().getFrameNumber() + 1;
+    if (a.mNotedTag != tag)
+    {
+        a.mNotedTag = tag;
+        a.mBlas->mLastSeen = sSceneCalls;
+    }
+    ++sStats.mCasters;
+    for (SkinDraw& d : a.mDraws)
+    {
+        if (d.mVb == c.mVb && d.mIb == c.mIb && d.mFirst == c.mFirst && d.mCount == c.mCount && d.mVertexFirst == c.mVertexFirst && d.mVertexCount == c.mVertexCount && d.mSkinId == c.mSkinId && d.mKind == c.mKind && d.mMode == c.mMode)
+        {
+            if (c.mAlpha)
+            {
+                d.mAlpha = *c.mAlpha;               // the textures may have changed
+            }
+            if (d.mNotedTag != tag)
+            {
+                // first note of this frame (the cascades name a draw once each): this frame's palette and where the buffers are now
+                d.mNotedTag = tag;
+                d.mPalette = c.mPalette;
+                d.mJoints = c.mJoints;
+                d.mVi = c.mVi;
+                d.mIi = c.mIi;
+                d.mWeightOffset = c.mWeightOffset;
+                d.mHasModel = c.mModel != nullptr;
+                if (c.mModel)
+                {
+                    memcpy(d.mModel, c.mModel, sizeof(d.mModel));
+                }
+            }
+            return;
+        }
+    }
+    if (a.mDraws.size() >= 256)
+    {
+        return;
+    }
+    SkinDraw d;
+    d.mVb = c.mVb;
+    d.mIb = c.mIb;
+    d.mFirst = c.mFirst;
+    d.mCount = c.mCount;
+    d.mVertexFirst = c.mVertexFirst;
+    d.mVertexCount = c.mVertexCount;
+    d.mSkinId = c.mSkinId;
+    d.mKind = c.mKind;
+    d.mMode = c.mMode;
+    memcpy(d.mAvatarPos, c.mAvatarPos, sizeof(d.mAvatarPos));
+    if (c.mAlpha)
+    {
+        d.mAlpha = *c.mAlpha;
+    }
+    d.mWeightOffset = c.mWeightOffset;
+    d.mJoints = c.mJoints;
+    d.mPalette = c.mPalette;
+    d.mVi = c.mVi;
+    d.mIi = c.mIi;
+    d.mNotedTag = tag;
+    d.mHasModel = c.mModel != nullptr;
+    if (c.mModel)
+    {
+        memcpy(d.mModel, c.mModel, sizeof(d.mModel));
+    }
+    a.mDraws.push_back(std::move(d));
 }
 
 VkDescriptorSet descriptorSet(U32 frame_slot)
@@ -726,6 +1082,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     // ---- 1. what is stale -----------------------------------------------------------------------------------
     std::vector<Job> jobs;
     jobs.reserve((size_t)max_builds);
+    std::vector<SkinJob> skin_jobs;
+    std::vector<SkinChunk> skin_chunks;
+    std::vector<SkinDraw*> skin_job_draws;      // the draw behind each job (null for the skin test copies), for the probe
+    const bool skin_on = sDbg.mSkinTest && ensure_skin_pipeline();
     U64 tris_budget = max_tris;
     LLVkGL::BufferInfo vi, ii;
     VkDeviceSize scratch_total = 0;
@@ -861,7 +1221,48 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         job.mBlas = &b;
         LLVkGL::markBufferUsed(g.mKey.mVb);         // the build reads them when the GPU gets here: a CPU rewrite in place before that would tear the data
         LLVkGL::markBufferUsed(g.mKey.mIb);
-        job.mUpdate = !grew && !ib_changed && b.mRefits < rebuild_after_refits && b.mAs != VK_NULL_HANDLE && !sDbg.mNoRefit;
+        // skin test: the structure is built from the compute pass output (a copy of the vertex buffer), not from the buffer itself
+        VkDeviceAddress vertex_address = vi.mAddress;
+        bool force_build = false;
+        const bool skin_copy = skin_on && g.mKey.mKind == 0;
+        if (skin_copy)
+        {
+            const U32 vertex_count = (U32)(vi.mSize / 16);
+            const U32 chunks_needed = (vertex_count + kSkinChunkVerts - 1) / kSkinChunkVerts;
+            if (skin_jobs.size() >= kMaxSkinJobs || skin_chunks.size() + chunks_needed > kMaxSkinChunks)
+            {
+                ++sStats.mDeferred;
+                continue;
+            }
+            const VkDeviceSize bytes = ((VkDeviceSize)vertex_count * 16 + 255) / 256 * 256;
+            if (!b.mSkinOut.valid() || b.mSkinOut.mSize < bytes)
+            {
+                if (b.mSkinOut.valid())
+                {
+                    ctx.arenaFree(b.mSkinOut);
+                    b.mSkinOut = ArenaRef();
+                }
+                if (!ctx.arenaAlloc(bytes, 256, ArenaKind::Device, b.mSkinOut))
+                {
+                    ++sStats.mSkinFailed;
+                    continue;
+                }
+                force_build = true;             // the structure was built from other memory
+            }
+            vertex_address = b.mSkinOut.mAddress;
+            job.mHasSkin = true;
+            SkinJob& sj = job.mSkin;
+            memset(&sj, 0, sizeof(sj));
+            sj.mSrc[0] = (U32)vi.mAddress;
+            sj.mSrc[1] = (U32)(vi.mAddress >> 32);
+            sj.mDst[0] = (U32)b.mSkinOut.mAddress;
+            sj.mDst[1] = (U32)(b.mSkinOut.mAddress >> 32);
+            sj.mFirst = 0;
+            sj.mCount = vertex_count;
+            sj.mMode = 2;
+            sj.mModel[0] = sj.mModel[5] = sj.mModel[10] = 1.f;
+        }
+        job.mUpdate = !grew && !ib_changed && !force_build && b.mRefits < rebuild_after_refits && b.mAs != VK_NULL_HANDLE && !sDbg.mNoRefit;
         job.mVbVersion = vi.mVersion;
         job.mIbVersion = ii.mVersion;
         std::sort(want.begin(), want.end());
@@ -876,7 +1277,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             VkAccelerationStructureGeometryTrianglesDataKHR& t = geo.geometry.triangles;
             t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
             t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-            t.vertexData.deviceAddress = vi.mAddress;
+            t.vertexData.deviceAddress = vertex_address;
             t.vertexStride = 16;
             t.maxVertex = max_vertex;
             t.indexType = VK_INDEX_TYPE_UINT16;
@@ -979,7 +1380,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                     VkAccelerationStructureGeometryTrianglesDataKHR& t = geo.geometry.triangles;
                     t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
                     t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-                    t.vertexData.deviceAddress = vi.mAddress;
+                    t.vertexData.deviceAddress = vertex_address;
                     t.vertexStride = 16;
                     t.maxVertex = max_vertex;
                     t.indexType = VK_INDEX_TYPE_UINT16;
@@ -992,6 +1393,59 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                     prims += range.primitiveCount;
                 }
                 job.mPrims = (U32)prims;
+            }
+        }
+        if (sDbg.mBBox && (g.mKey.mMatrixId & 0x80000000u) == 0 && g.mKey.mMatrixId != 0)
+        {
+            // stage C step 0: the size of what a structure with a matrix of its own is about to be built or refitted over (flexible prims that go unstable would show up as outsized boxes)
+            static FILE* bb_log = fopen("<work>/rt-bbox.log", "ab");
+            if (bb_log)
+            {
+                F32 lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
+                F32 max_abs = 0.f;
+                U32 nonfinite = 0, out_of_range = 0, verts_seen = 0;
+                if (vi.mCpu && ii.mCpu)
+                {
+                    const F32* pos = (const F32*)vi.mCpu;
+                    const U16* idx = (const U16*)ii.mCpu;
+                    const U64 verts = vi.mSize / 16;
+                    for (const Range& r : want)
+                    {
+                        for (U32 k = 0; k < r.mCount; ++k)
+                        {
+                            const U32 v = idx[r.mFirst + k];
+                            if (v >= verts)
+                            {
+                                ++out_of_range;
+                                continue;
+                            }
+                            ++verts_seen;
+                            for (int a = 0; a < 3; ++a)
+                            {
+                                const F32 c = pos[4 * (size_t)v + a];
+                                if (!(c > -1e30f && c < 1e30f))
+                                {
+                                    ++nonfinite;
+                                    continue;
+                                }
+                                lo[a] = std::min(lo[a], c);
+                                hi[a] = std::max(hi[a], c);
+                                max_abs = std::max(max_abs, fabsf(c));
+                            }
+                        }
+                    }
+                }
+                const F32 extent = verts_seen ? std::max(hi[0] - lo[0], std::max(hi[1] - lo[1], hi[2] - lo[2])) : -1.f;
+                F32 scale = 0.f;
+                for (int c = 0; c < 3; ++c)
+                {
+                    scale = std::max(scale, sqrtf(g.mModel[c * 4] * g.mModel[c * 4] + g.mModel[c * 4 + 1] * g.mModel[c * 4 + 1] + g.mModel[c * 4 + 2] * g.mModel[c * 4 + 2]));
+                }
+                const long long wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                fprintf(bb_log, "%lld frame %llu vb %u ib %u matrix %u kind %u %s prims %llu ranges %zu cpu %d verts %u nonfinite %u oor %u extent %.3f maxabs %.3f lo %.2f %.2f %.2f hi %.2f %.2f %.2f scale %.3f pos %.1f %.1f %.1f\n",
+                        wall, (unsigned long long)ctx.getFrameNumber(), g.mKey.mVb, g.mKey.mIb, g.mKey.mMatrixId, g.mKey.mKind, job.mUpdate ? "refit" : (fresh ? "new" : "rebuild"), (unsigned long long)prims, want.size(),
+                        (vi.mCpu && ii.mCpu) ? 1 : 0, verts_seen, nonfinite, out_of_range, extent, max_abs, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], scale, g.mModel[12], g.mModel[13], g.mModel[14]);
+                fflush(bb_log);
             }
         }
         job.mSet = std::move(want);
@@ -1039,8 +1493,264 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         scratch_total = job.mScratchOffset + job.mScratchSize + sDbg.mPad;
         tris_budget = prims >= tris_budget ? 0 : tris_budget - prims;
         jobs.push_back(std::move(job));
+        if (jobs.back().mHasSkin)
+        {
+            const U32 ji = (U32)skin_jobs.size();
+            skin_jobs.push_back(jobs.back().mSkin);
+            skin_job_draws.push_back(nullptr);
+            for (U32 off = 0; off < jobs.back().mSkin.mCount; off += kSkinChunkVerts)
+            {
+                skin_chunks.push_back({ ji, off });
+            }
+        }
         b.mJob = &jobs.back();
         b.mJobCall = sSceneCalls;
+    }
+
+    // ---- 1b. rigged draws: skin them on the GPU, one structure per avatar over the skinned copies -------------------------------------------------
+    const U64 av_tag = ctx.getFrameNumber() + 1;
+    static const U64 skin_refit_limit = env_u64("LL_VK_RT_SKIN_REFITS", 32);
+    static const U64 skin_vertex_budget = env_u64("LL_VK_RT_SKIN_VERTS", 2000000);
+    U64 skin_verts_left = skin_vertex_budget;
+    std::vector<std::pair<float, Avatar*>> av_order;
+    for (auto ait = sAvatars.begin(); ait != sAvatars.end();)
+    {
+        Avatar& a = ait->second;
+        if (av_tag > a.mNotedTag + 120)
+        {
+            release_avatar(a);
+            ait = sAvatars.erase(ait);
+            continue;
+        }
+        ++ait;
+        if (a.mNotedTag != av_tag || a.mProcessedTag == av_tag || !sDbg.mRigged)
+        {
+            continue;
+        }
+        float dist2 = 0.f;
+        if (a.mHasPos)
+        {
+            const float ex = view[0] * a.mPos[0] + view[4] * a.mPos[1] + view[8] * a.mPos[2] + view[12];
+            const float ey = view[1] * a.mPos[0] + view[5] * a.mPos[1] + view[9] * a.mPos[2] + view[13];
+            const float ez = view[2] * a.mPos[0] + view[6] * a.mPos[1] + view[10] * a.mPos[2] + view[14];
+            dist2 = ex * ex + ey * ey + ez * ez;
+        }
+        av_order.emplace_back(dist2, &a);
+    }
+    // nearest first: when the budget runs out it is the far avatars that keep their last pose
+    std::sort(av_order.begin(), av_order.end(), [](const std::pair<float, Avatar*>& l, const std::pair<float, Avatar*>& r) { return l.first < r.first; });
+    for (const auto& av_entry : av_order)
+    {
+        Avatar& a = *av_entry.second;
+        for (size_t k = 0; k < a.mDraws.size();)
+        {
+            if (av_tag > a.mDraws[k].mNotedTag + 60)
+            {
+                if (a.mDraws[k].mOut.valid())
+                {
+                    ctx.arenaFree(a.mDraws[k].mOut);
+                }
+                a.mDraws.erase(a.mDraws.begin() + k);
+                a.mSig.clear();                     // the geometry indices of the structure are void
+                a.mBuiltIdx.clear();
+            }
+            else
+            {
+                ++k;
+            }
+        }
+        Blas& b = *a.mBlas;
+        std::vector<SkinDraw*> cur;
+        U64 total_verts = 0, chunks_needed = 0;
+        for (SkinDraw& d : a.mDraws)
+        {
+            if (d.mNotedTag != av_tag)
+            {
+                continue;
+            }
+            // the ranges must lie inside the buffers as they are now
+            const U64 weight_stride = d.mMode == 0 ? 16 : (d.mMode == 1 ? 4 : 0);
+            if (!d.mVi.mAddress || !d.mIi.mAddress || ((U64)d.mVertexFirst + d.mVertexCount) * 16 > d.mVi.mSize
+                || (weight_stride && (U64)d.mWeightOffset + ((U64)d.mVertexFirst + d.mVertexCount) * weight_stride > d.mVi.mSize) || ((U64)d.mFirst + d.mCount) * 2 > d.mIi.mSize)
+            {
+                ++sStats.mNoData;
+                continue;
+            }
+            cur.push_back(&d);
+            total_verts += d.mVertexCount;
+            chunks_needed += (d.mVertexCount + kSkinChunkVerts - 1) / kSkinChunkVerts;
+        }
+        if (cur.empty())
+        {
+            continue;
+        }
+        if (total_verts > skin_verts_left)
+        {
+            ++sStats.mSkinOver;
+            continue;
+        }
+        if (jobs.size() >= max_builds || skin_jobs.size() + cur.size() > kMaxSkinJobs || skin_chunks.size() + chunks_needed > kMaxSkinChunks)
+        {
+            ++sStats.mDeferred;
+            continue;
+        }
+        if (!ensure_skin_pipeline())
+        {
+            continue;
+        }
+        // what the structure covers: a change in the draws (or in the index data they use) means a new structure, otherwise it is refitted over the new pose
+        std::vector<U64> sig;
+        for (SkinDraw* d : cur)
+        {
+            U64 h = 1469598103934665603ull;
+            for (U64 v : { (U64)d->mVb, (U64)d->mIb, (U64)d->mFirst, (U64)d->mCount, (U64)d->mVertexFirst, (U64)d->mVertexCount, (U64)d->mSkinId, (U64)d->mKind, (U64)d->mMode, d->mIi.mEpoch, d->mIi.mVersion, d->mVi.mEpoch })
+            {
+                h = (h ^ v) * 1099511628211ull;
+            }
+            sig.push_back(h);
+        }
+        bool need_build = b.mAs == VK_NULL_HANDLE || sig != a.mSig || b.mRefits >= skin_refit_limit || sDbg.mNoRefit;
+        bool alloc_failed = false;
+        for (SkinDraw* d : cur)
+        {
+            const VkDeviceSize bytes = ((VkDeviceSize)d->mVertexCount * 16 + 255) / 256 * 256;
+            if (!d->mOut.valid() || d->mOut.mSize < bytes)
+            {
+                if (d->mOut.valid())
+                {
+                    ctx.arenaFree(d->mOut);
+                    d->mOut = ArenaRef();
+                }
+                if (!ctx.arenaAlloc(bytes, 256, ArenaKind::Device, d->mOut))
+                {
+                    ++sStats.mSkinFailed;
+                    alloc_failed = true;
+                    break;
+                }
+                need_build = true;
+            }
+        }
+        if (alloc_failed)
+        {
+            continue;
+        }
+        Job job;
+        job.mFresh = b.mAs == VK_NULL_HANDLE;
+        job.mKey = a.mKey;
+        job.mBlas = &b;
+        job.mUpdate = !need_build;
+        U64 prims = 0;
+        for (SkinDraw* d : cur)
+        {
+            LLVkGL::markBufferUsed(d->mVb);         // the compute pass and the build read them when the GPU gets here
+            LLVkGL::markBufferUsed(d->mIb);
+            if (d->mSkinnedTag != av_tag)
+            {
+                d->mSkinnedTag = av_tag;
+                const U32 ji = (U32)skin_jobs.size();
+                SkinJob sj;
+                memset(&sj, 0, sizeof(sj));
+                const U64 src = d->mVi.mAddress, weights = d->mMode == 2 ? 0ull : d->mVi.mAddress + d->mWeightOffset, dst = d->mOut.mAddress - 16ull * d->mVertexFirst;
+                sj.mSrc[0] = (U32)src;
+                sj.mSrc[1] = (U32)(src >> 32);
+                sj.mWeights[0] = (U32)weights;
+                sj.mWeights[1] = (U32)(weights >> 32);
+                sj.mPalette[0] = (U32)d->mPalette;
+                sj.mPalette[1] = (U32)(d->mPalette >> 32);
+                sj.mDst[0] = (U32)dst;
+                sj.mDst[1] = (U32)(dst >> 32);
+                sj.mFirst = d->mVertexFirst;
+                sj.mCount = d->mVertexCount;
+                sj.mMode = d->mMode;
+                sj.mJoints = d->mJoints;
+                const F32* m = d->mHasModel ? d->mModel : kIdentity;
+                for (int row = 0; row < 3; ++row)
+                {
+                    for (int col = 0; col < 4; ++col)
+                    {
+                        sj.mModel[row * 4 + col] = m[col * 4 + row];
+                    }
+                }
+                skin_jobs.push_back(sj);
+                skin_job_draws.push_back(d);
+                for (U32 off = 0; off < d->mVertexCount; off += kSkinChunkVerts)
+                {
+                    skin_chunks.push_back({ ji, off });
+                }
+            }
+            VkAccelerationStructureGeometryKHR geo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
+            geo.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            geo.flags = d->mKind == 1 ? VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR : VK_GEOMETRY_OPAQUE_BIT_KHR;
+            VkAccelerationStructureGeometryTrianglesDataKHR& t = geo.geometry.triangles;
+            t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+            t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+            t.vertexData.deviceAddress = d->mOut.mAddress - 16ull * d->mVertexFirst;       // indices are absolute: the copy is indexed relative to its first vertex
+            t.vertexStride = 16;
+            t.maxVertex = d->mVertexFirst + d->mVertexCount - 1;
+            t.indexType = VK_INDEX_TYPE_UINT16;
+            t.indexData.deviceAddress = d->mIi.mAddress + 2ull * d->mFirst;
+            job.mGeometries.push_back(geo);
+            VkAccelerationStructureBuildRangeInfoKHR range = {};
+            range.primitiveCount = d->mCount / 3;
+            job.mRanges.push_back(range);
+            job.mCounts.push_back(range.primitiveCount);
+            prims += range.primitiveCount;
+        }
+        job.mPrims = (U32)prims;
+        job.mInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        job.mInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        job.mInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        job.mInfo.mode = job.mUpdate ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        job.mInfo.geometryCount = (U32)job.mGeometries.size();
+        job.mInfo.pGeometries = job.mGeometries.data();
+        VkAccelerationStructureBuildSizesInfoKHR sizes = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+        vkGetAccelerationStructureBuildSizesKHR(dev, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &job.mInfo, job.mCounts.data(), &sizes);
+        job.mUpdateScratch = sizes.updateScratchSize;
+        if (job.mUpdate)
+        {
+            job.mInfo.srcAccelerationStructure = b.mAs;
+            job.mInfo.dstAccelerationStructure = b.mAs;
+            job.mScratchSize = sizes.updateScratchSize;
+        }
+        else
+        {
+            if (!ctx.arenaAlloc(sizes.accelerationStructureSize, 256, ArenaKind::Accel, job.mNewStorage))
+            {
+                ++sStats.mFailed;
+                continue;
+            }
+            VkAccelerationStructureCreateInfoKHR ci = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
+            ci.buffer = job.mNewStorage.mBuffer;
+            ci.offset = job.mNewStorage.mOffset;
+            ci.size = sizes.accelerationStructureSize;
+            ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            if (vkCreateAccelerationStructureKHR(dev, &ci, nullptr, &job.mNewAs) != VK_SUCCESS)
+            {
+                ctx.arenaFree(job.mNewStorage);
+                ++sStats.mFailed;
+                continue;
+            }
+            VkAccelerationStructureDeviceAddressInfoKHR ai = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR };
+            ai.accelerationStructure = job.mNewAs;
+            job.mNewAddress = vkGetAccelerationStructureDeviceAddressKHR(dev, &ai);
+            job.mInfo.dstAccelerationStructure = job.mNewAs;
+            job.mScratchSize = sizes.buildScratchSize;
+            sBlasStorageBytes += job.mNewStorage.mSize;
+        }
+        job.mScratchOffset = (scratch_total + align - 1) / align * align;
+        scratch_total = job.mScratchOffset + job.mScratchSize;
+        skin_verts_left -= total_verts;
+        a.mSig = sig;
+        a.mBuiltIdx.clear();
+        for (SkinDraw* d : cur)
+        {
+            a.mBuiltIdx.push_back((U32)(d - a.mDraws.data()));
+        }
+        a.mProcessedTag = av_tag;
+        a.mAddressNow = job.mUpdate ? b.mAddress : job.mNewAddress;
+        b.mLastSeen = sSceneCalls;
+        ++sStats.mAvatars;
+        jobs.push_back(std::move(job));
     }
 
     lap(2, t_lap);
@@ -1227,12 +1937,154 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         instances.push_back(inst);
     }
 
+    auto slot_lookup = [&](U32 name) -> U32
+    {
+        // many geometries share textures: a texture's slot is asked for once per frame
+        const U32 h = (name * 2654435761u) >> 21;
+        if (sSlotCacheTag != frame_now + 1 || sSlotCacheName[h] != name)
+        {
+            if (sSlotCacheTag != frame_now + 1)
+            {
+                memset(sSlotCacheName, 0, sizeof(sSlotCacheName));
+                sSlotCacheTag = frame_now + 1;
+            }
+            sSlotCacheName[h] = name;
+            sSlotCacheSlot[h] = slot_of ? (slot_of(name) & 0xFFFFu) : 0u;
+        }
+        return sSlotCacheSlot[h];
+    };
+    for (auto& kv : sAvatars)
+    {
+        Avatar& a = kv.second;
+        if (!a.mAddressNow || av_tag > a.mNotedTag + keep || !sDbg.mRigged || a.mBuiltIdx.empty())
+        {
+            continue;
+        }
+        if (instances.size() >= kInstanceCapacity)
+        {
+            ++sStats.mOverCap;
+            break;
+        }
+        // masked geometries need a record each (the shader finds it by the geometry's place in the structure): what the alpha test reads, at the buffers' addresses of now
+        bool any_alpha = false;
+        for (U32 idx : a.mBuiltIdx)
+        {
+            any_alpha = any_alpha || (idx < a.mDraws.size() && a.mDraws[idx].mKind == 1);
+        }
+        U32 custom_index = 0;
+        if (any_alpha)
+        {
+            if (records + a.mBuiltIdx.size() > kMaxRecords)
+            {
+                ++sStats.mTableFull;
+                continue;
+            }
+            std::vector<LLVkGL::BufferInfo> vis(a.mBuiltIdx.size()), iis(a.mBuiltIdx.size());
+            bool ok = true;
+            for (size_t k = 0; k < a.mBuiltIdx.size() && ok; ++k)
+            {
+                const SkinDraw& d = a.mDraws[a.mBuiltIdx[k]];
+                if (d.mKind != 1)
+                {
+                    continue;
+                }
+                if (d.mNotedTag == av_tag)
+                {
+                    vis[k] = d.mVi;
+                    iis[k] = d.mIi;
+                }
+                else
+                {
+                    ok = LLVkGL::getBufferInfo(d.mVb, vis[k]) && LLVkGL::getBufferInfo(d.mIb, iis[k]) && vis[k].mEpoch == d.mVi.mEpoch && iis[k].mEpoch == d.mIi.mEpoch;
+                }
+                ok = ok && vis[k].mAddress && iis[k].mAddress;
+            }
+            if (!ok)
+            {
+                ++sStats.mNoData;
+                continue;
+            }
+            custom_index = records;
+            for (size_t k = 0; k < a.mBuiltIdx.size(); ++k)
+            {
+                const SkinDraw& d = a.mDraws[a.mBuiltIdx[k]];
+                GpuGeom& rec = table[records++];
+                memset(&rec, 0, sizeof(rec));
+                if (d.mKind != 1)
+                {
+                    continue;                       // an opaque geometry: its candidates never reach the alpha test
+                }
+                LLVkGL::markBufferUsed(d.mVb);      // the alpha test reads texcoords, colours and indices while the lighting runs
+                LLVkGL::markBufferUsed(d.mIb);
+                const U64 pa = d.mOut.mAddress - 16ull * d.mVertexFirst, ia = iis[k].mAddress, va = vis[k].mAddress;
+                rec.mPositions[0] = (U32)pa;
+                rec.mPositions[1] = (U32)(pa >> 32);
+                rec.mIndices[0] = (U32)ia;
+                rec.mIndices[1] = (U32)(ia >> 32);
+                if (d.mAlpha.mFlags & 8u)
+                {
+                    const U64 t = va + d.mAlpha.mTexcoordOffset;
+                    rec.mTexcoords[0] = (U32)t;
+                    rec.mTexcoords[1] = (U32)(t >> 32);
+                }
+                if (d.mAlpha.mFlags & 16u)
+                {
+                    const U64 c = va + d.mAlpha.mColorOffset;
+                    rec.mColors[0] = (U32)c;
+                    rec.mColors[1] = (U32)(c >> 32);
+                }
+                U32 slot[4] = {};
+                for (U32 t = 0; t < 4; ++t)
+                {
+                    if (d.mAlpha.mTextures[t])
+                    {
+                        slot[t] = slot_lookup(d.mAlpha.mTextures[t]);
+                    }
+                }
+                rec.mSlots[0] = slot[0] | (slot[1] << 16);
+                rec.mSlots[1] = slot[2] | (slot[3] << 16);
+                rec.mFlags = d.mAlpha.mFlags;
+                rec.mCutoff = d.mAlpha.mCutoff;
+                rec.mFirst = d.mFirst;
+            }
+            ++sStats.mAlphaStructs;
+        }
+        VkAccelerationStructureInstanceKHR inst = {};
+        for (int row = 0; row < 3; ++row)
+        {
+            for (int col = 0; col < 4; ++col)
+            {
+                inst.transform.matrix[row][col] = view[col * 4 + row];      // the skinned vertices are in world space: the instance is just the view
+            }
+        }
+        inst.instanceCustomIndex = custom_index;
+        inst.mask = 1u | (any_alpha ? 2u : 0u) | 4u;        // opaque (bit 0) and masked (bit 1) casters, what the shadow rays trace; bit 2 marks avatars (mode 4 shows only these)
+        inst.instanceShaderBindingTableRecordOffset = 0;
+        inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        inst.accelerationStructureReference = a.mAddressNow;
+        instances.push_back(inst);
+    }
+
     lap(3, t_lap);
     // ---- 3. record: builds, then the top-level structure -----------------------------------------------------
     VkAccelerationStructureBuildSizesInfoKHR tlas_size;
     tlas_sizes(tlas.mCapacity, tlas_size);
     const VkDeviceSize scratch_needed = std::max(scratch_total, tlas_size.buildScratchSize) + 2 * align;
     auto undo_jobs = [&]() {
+        for (auto& kv : sAvatars)
+        {
+            Avatar& a = kv.second;
+            if (a.mProcessedTag == av_tag)
+            {
+                a.mProcessedTag = 0;
+                a.mAddressNow = a.mBlas ? a.mBlas->mAddress : 0;
+                a.mSig.clear();
+                for (SkinDraw& d : a.mDraws)
+                {
+                    d.mSkinnedTag = 0;
+                }
+            }
+        }
         for (Job& j : jobs)
         {
             if (j.mNewAs != VK_NULL_HANDLE)
@@ -1254,6 +2106,91 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     if (!instances.empty())
     {
         memcpy((U8*)tlas.mInstances.mMapped + instance_offset, instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
+    }
+    VkDeviceAddress skin_jobs_address = 0, skin_chunks_address = 0;
+    if (!skin_chunks.empty())
+    {
+        U8* base = (U8*)tlas.mSkin.mMapped + (size_t)call * kSkinBytes;
+        memcpy(base, skin_jobs.data(), sizeof(SkinJob) * skin_jobs.size());
+        memcpy(base + kSkinJobBytes, skin_chunks.data(), sizeof(SkinChunk) * skin_chunks.size());
+        skin_jobs_address = tlas.mSkin.mAddress + (VkDeviceAddress)call * kSkinBytes;
+        skin_chunks_address = skin_jobs_address + kSkinJobBytes;
+    }
+    static U64 last_probe_call = 0;
+    if (sDbg.mSkinProbe && !skin_chunks.empty() && sSceneCalls >= last_probe_call + 90 && ensure_skin_pipeline())
+    {
+        last_probe_call = sSceneCalls;
+        // Debug: the same dispatch again, on its own, then the first few skinned ranges copied to host memory (the outputs do not change: the jobs are idempotent).
+        static Buffer probe_buffer;
+        if (!probe_buffer.valid())
+        {
+            ctx.createBuffer(8u << 20, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Readback, probe_buffer);
+        }
+        struct Target { U32 mJob; VkDeviceSize mOffset, mBytes; };
+        std::vector<Target> targets;
+        VkDeviceSize used = 0;
+        std::unordered_map<U32, U32> per_avatar;
+        for (U32 ji = 0; ji < skin_job_draws.size() && targets.size() < 12; ++ji)
+        {
+            const SkinDraw* d = skin_job_draws[ji];
+            if (!d || !d->mOut.valid() || per_avatar[d->mAvatarPos[0] != 0.f ? (U32)d->mSkinId : 0u] >= 2)
+            {
+                continue;
+            }
+            const VkDeviceSize bytes = (VkDeviceSize)d->mVertexCount * 16;
+            if (used + bytes > probe_buffer.mSize)
+            {
+                continue;
+            }
+            ++per_avatar[d->mAvatarPos[0] != 0.f ? (U32)d->mSkinId : 0u];
+            targets.push_back({ ji, used, bytes });
+            used += (bytes + 15) / 16 * 16;
+        }
+        if (probe_buffer.valid() && !targets.empty())
+        {
+            const VkDeviceAddress pj = skin_jobs_address, pc = skin_chunks_address;
+            const bool ok = ctx.immediateSubmit([&](VkCommandBuffer cmd) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sSkinPipe.mPipe);
+                const U32 push[4] = { (U32)pj, (U32)(pj >> 32), (U32)pc, (U32)(pc >> 32) };
+                vkCmdPushConstants(cmd, sSkinPipe.mLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push);
+                vkCmdDispatch(cmd, (U32)skin_chunks.size(), 1, 1);
+                full_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+                for (const Target& t : targets)
+                {
+                    const SkinDraw* d = skin_job_draws[t.mJob];
+                    VkBufferCopy region = { d->mOut.mOffset, t.mOffset, t.mBytes };
+                    vkCmdCopyBuffer(cmd, d->mOut.mBuffer, probe_buffer.mBuffer, 1, &region);
+                }
+                full_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
+            });
+            if (ok)
+            {
+                for (const Target& t : targets)
+                {
+                    const SkinDraw* d = skin_job_draws[t.mJob];
+                    const F32* v = (const F32*)((const U8*)probe_buffer.mMapped + t.mOffset);
+                    F32 lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
+                    U32 bad = 0;
+                    for (U32 k = 0; k < d->mVertexCount; ++k)
+                    {
+                        for (int a = 0; a < 3; ++a)
+                        {
+                            const F32 c = v[4 * (size_t)k + a];
+                            if (!(c > -1e6f && c < 1e6f))
+                            {
+                                ++bad;
+                                continue;
+                            }
+                            lo[a] = std::min(lo[a], c);
+                            hi[a] = std::max(hi[a], c);
+                        }
+                    }
+                    LL_INFOS("VkRt") << "skin probe: avatar " << d->mSkinId << " mode " << d->mMode << " kind " << d->mKind << " vertices " << d->mVertexCount << " (from " << d->mVertexFirst
+                                     << ") bounds (" << lo[0] << "," << lo[1] << "," << lo[2] << ")-(" << hi[0] << "," << hi[1] << "," << hi[2] << ") bad " << bad << ", avatar at ("
+                                     << d->mAvatarPos[0] << "," << d->mAvatarPos[1] << "," << d->mAvatarPos[2] << "), first vertex (" << v[0] << "," << v[1] << "," << v[2] << ")" << LL_ENDL;
+                }
+            }
+        }
     }
     const VkDeviceAddress scratch_base = (sScratch.mAddress + align - 1) / align * align;
     std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
@@ -1283,8 +2220,19 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     const bool recorded = Renderer::instance().recordExternal({}, [&](VkCommandBuffer cmd) {
         ctx.gpuStamp(Context::stampTag("rt scene"));
         // earlier work (last frame's traces, the shadow passes that wrote the vertex data) is done before anything is built over it
-        full_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                     VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        full_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        if (!skin_chunks.empty())
+        {
+            // the compute pass writes the vertices the builds below read (and the alpha test reads later): one dispatch, every job of the call
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sSkinPipe.mPipe);
+            const U32 push[4] = { (U32)skin_jobs_address, (U32)(skin_jobs_address >> 32), (U32)skin_chunks_address, (U32)(skin_chunks_address >> 32) };
+            vkCmdPushConstants(cmd, sSkinPipe.mLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push);
+            vkCmdDispatch(cmd, (U32)skin_chunks.size(), 1, 1);
+            full_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        }
+        ctx.gpuStamp(Context::stampTag("rt scene builds"));
         if (!infos.empty() && sDbg.mSerial)
         {
             for (size_t k = 0; k < infos.size(); ++k)
@@ -1336,6 +2284,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         b.mIbVersion = j.mIbVersion;
         b.mPrims = j.mPrims;
         b.mUpdateScratch = j.mUpdateScratch;
+    }
+    for (const SkinJob& sj : skin_jobs)
+    {
+        ++sStats.mSkinJobs;
+        sStats.mSkinVerts += sj.mCount;
     }
     lap(4, t_lap);
     ++sStats.mScenes;
@@ -1394,16 +2347,16 @@ std::string report(double frames)
     const Stats& s = sStats;
     const double scenes = std::max<double>(1.0, (double)s.mScenes);
     const double f = std::max(1.0, frames);
-    char buf[1000];
+    char buf[1600];
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
              "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
-             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
+             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; skin: %.1f jobs/frame, %.0f vertices/frame, avatars %.2f/frame (over budget %.2f), failed %.3f; casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
              shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / f, (double)s.mBuilds / f,
              (double)s.mPrimsBuilt / f, (double)s.mRefits / f, (double)s.mPrimsRefit / f, (double)s.mDeferred / f, (double)s.mNoData / f, (double)s.mAlphaStructs / f, (double)s.mTableFull / f,
              (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax, s.mPhaseMs[0] / scenes, s.mPhaseMs[1] / scenes, s.mPhaseMs[2] / scenes, s.mPhaseMs[3] / scenes, s.mPhaseMs[4] / scenes,
              (double)sScratch.mSize / 1048576.0, (double)s.mWhyNew / f, (double)s.mWhyEpoch / f, (double)s.mWhyGrew / f, (double)s.mWhyIb / f, (double)s.mWhyRefitLimit / f,
-             (double)s.mNewGroups / f, sGroups.size(), (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
+             (double)s.mSkinJobs / f, (double)s.mSkinVerts / f, (double)s.mAvatars / f, (double)s.mSkinOver / f, (double)s.mSkinFailed / f, (double)s.mNewGroups / f, sGroups.size(), (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
              s.mMaxScaleKey.mMatrixId, s.mMaxScaleKey.mKind);
     return buf;
 }

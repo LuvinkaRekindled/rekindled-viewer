@@ -55,6 +55,9 @@
 #include "m4math.h"
 #include "llmatrix4a.h"
 #include "llperfstats.h"
+#include "llvkmirror.h"
+
+#include <unordered_set>
 
 #if !LL_DARWIN && !LL_LINUX
 extern PFNGLWEIGHTPOINTERARBPROC glWeightPointerARB;
@@ -102,7 +105,7 @@ static LLVector4    gJointPivot[LL_CHARACTER_MAX_JOINTS_PER_MESH];
 //-----------------------------------------------------------------------------
 // uploadJointMatrices()
 //-----------------------------------------------------------------------------
-void LLViewerJointMesh::uploadJointMatrices()
+void LLViewerJointMesh::computeJointPalette(F32* mat, bool with_modelview)
 {
     S32 joint_num;
     LLPolyMesh *reference_mesh = mMesh->getReferenceMesh();
@@ -113,7 +116,10 @@ void LLViewerJointMesh::uploadJointMatrices()
     {
         LLMatrix4 joint_mat = *reference_mesh->mJointRenderData[joint_num]->mWorldMatrix;
 
-        joint_mat *= LLDrawPoolAvatar::getModelView();
+        if (with_modelview)
+        {
+            joint_mat *= LLDrawPoolAvatar::getModelView();
+        }
         gJointMatUnaligned[joint_num] = joint_mat;
         gJointRotUnaligned[joint_num] = joint_mat.getMat3();
     }
@@ -164,8 +170,7 @@ void LLViewerJointMesh::uploadJointMatrices()
         gJointMatUnaligned[i].translate(pivot);
     }
 
-    // upload matrices
-        GLfloat mat[45*4];
+    // the palette
         memset(mat, 0, sizeof(GLfloat)*45*4);
 
         for (joint_num = 0; joint_num < num_joints; joint_num++)
@@ -179,6 +184,12 @@ void LLViewerJointMesh::uploadJointMatrices()
                 memcpy(mat+offset*4, vector, sizeof(GLfloat)*4);
             }
         }
+}
+
+void LLViewerJointMesh::uploadJointMatrices()
+{
+    GLfloat mat[45*4];
+    computeJointPalette(mat, true);
         stop_glerror();
         if (LLGLSLShader::sCurBoundShaderPtr)
         {
@@ -186,6 +197,90 @@ void LLViewerJointMesh::uploadJointMatrices()
         }
         stop_glerror();
 }
+
+// <FS> Ray tracing (doc/vulkan/PLAN-rt-shadows.md, stage C): the ray scene skins the body on the GPU, from the same buffer and the same joints as the shadow maps draw it. One small
+// record per mesh and frame (the four cascades draw it four times); nothing is drawn by it.
+void LLViewerJointMesh::noteRayShadow()
+{
+    static U32 last_frame = ~0u;
+    static std::unordered_set<const LLViewerJointMesh*> done;
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (frame != last_frame)
+    {
+        done.clear();
+        last_frame = frame;
+    }
+    if (!done.insert(this).second)
+    {
+        return;
+    }
+    LLVertexBuffer* buff = mFace ? mFace->getVertexBuffer() : nullptr;
+    LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;
+    if (!buff || !drawable || !mMesh || !buff->getGLBuffer() || !buff->getGLIndices() || buff->getIndicesType() != GL_UNSIGNED_SHORT
+        || !buff->hasDataType(LLVertexBuffer::TYPE_VERTEX) || buff->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || mMesh->mFaceVertexCount == 0 || mMesh->mFaceIndexCount < 3)
+    {
+        return;
+    }
+    LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(drawable->getVObj().get());
+    if (!avatar)
+    {
+        return;
+    }
+    LLVkMirror::ShadowBodyEntry e = {};
+    e.mVertexBuffer = buff->getGLBuffer();
+    e.mIndexBuffer = buff->getGLIndices();
+    e.mFirstIndex = mMesh->mFaceIndexOffset;
+    e.mIndexCount = mMesh->mFaceIndexCount;
+    e.mVertexFirst = mMesh->mFaceVertexOffset;
+    e.mVertexCount = mMesh->mFaceVertexCount;
+    e.mAvatarId = (U32)(((uintptr_t)avatar) >> 4);
+    e.mMeshId = (U32)(((uintptr_t)this) >> 4);
+    {
+        const LLVector3 avatar_position = avatar->getRenderPosition();
+        e.mAvatarPos[0] = avatar_position.mV[0];
+        e.mAvatarPos[1] = avatar_position.mV[1];
+        e.mAvatarPos[2] = avatar_position.mV[2];
+    }
+    std::vector<F32> palette;
+    if (mMesh->hasWeights())
+    {
+        if (!buff->hasDataType(LLVertexBuffer::TYPE_WEIGHT))
+        {
+            return;
+        }
+        e.mMode = 1;
+        e.mWeightOffset = buff->getOffset(LLVertexBuffer::TYPE_WEIGHT);
+        e.mJoints = LL_CHARACTER_MAX_JOINTS_PER_MESH;
+        F32 mat[45 * 4];
+        computeJointPalette(mat, false);
+        palette.resize(12 * LL_CHARACTER_MAX_JOINTS_PER_MESH);
+        for (S32 j = 0; j < LL_CHARACTER_MAX_JOINTS_PER_MESH; ++j)
+        {
+            for (S32 axis = 0; axis < 3; ++axis)
+            {
+                memcpy(&palette[j * 12 + axis * 4], mat + (LL_CHARACTER_MAX_JOINTS_PER_MESH * axis + j) * 4, 4 * sizeof(F32));
+            }
+        }
+    }
+    else
+    {
+        e.mMode = 2;
+        const LLMatrix4 joint_to_world = getWorldMatrix();
+        memcpy(e.mModel, joint_to_world.mMatrix, sizeof(e.mModel));
+    }
+    LLVkMirror::ShadowPacketsHeader header;
+    header.mKind = 4;
+    header.mEntries = 1;
+    header.mPaletteFloats = (U32)palette.size();
+    std::vector<U8> blob(sizeof(e) + palette.size() * sizeof(F32));
+    memcpy(blob.data(), &e, sizeof(e));
+    if (!palette.empty())
+    {
+        memcpy(blob.data() + sizeof(e), palette.data(), palette.size() * sizeof(F32));
+    }
+    LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+}
+
 
 //--------------------------------------------------------------------
 // DrawElementsBLEND and utility code
@@ -221,6 +316,11 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     }
 
     U32 triangle_count = 0;
+
+    if (LLDrawPoolAvatar::sShadowPass == LLDrawPoolAvatar::SHADOW_PASS_AVATAR_OPAQUE && LLVkMirror::rtShadowMode())
+    {
+        noteRayShadow();
+    }
 
     S32 diffuse_channel = LLDrawPoolAvatar::sDiffuseChannel;
 
