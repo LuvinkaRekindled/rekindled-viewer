@@ -151,6 +151,7 @@ struct Stats
 {
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
     U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0;
+    U64 mAvatarInstances = 0, mAvatarStale = 0, mAvatarStaleFrames = 0, mAvatarStaleMax = 0;
     U64 mOverCap = 0, mExtraCalls = 0, mBadVertices = 0, mBadMatrices = 0, mChecked = 0, mSingular = 0, mCompared = 0, mMismatched = 0;
     F32 mMaxScale = 0.f;
     Key mMaxScaleKey;
@@ -186,6 +187,7 @@ struct DebugSwitches
     bool mCompare = false;          // compare the system-memory copy of host-written buffers with the mapped video memory (a few per call), log mismatches
     bool mDynCasters = false;       // include casters with a matrix of their own (avatar attachments, moving linksets): they go wrong in the ray scene so far (see PLAN-rt-shadows.md)
     bool mCallLog = false;          // one line per scene call into <work>/rt-calls.log (wall clock, frame, call, jobs, instances)
+    bool mAvatarLog = false;        // one line per avatar instance of every scene call into <work>/rt-avatars.log: how old its data is, why it was not refreshed
     bool mSkinProbe = false;        // about every 90 scene calls: run the skin jobs again on their own, read a few results back and log their bounding boxes
     bool mRigged = true;            // rigged opaque casters (avatar attachments) in the scene, skinned by the compute pass
     bool mSkinTest = false;         // stage C step C1: structures of opaque casters are built from a compute-pass copy of their vertices (must look identical to the direct path)
@@ -245,6 +247,7 @@ void read_debug_switches()
                 else if (k == "skintest") d.mSkinTest = v != 0;
                 else if (k == "rigged") d.mRigged = v != 0;
                 else if (k == "skinprobe") d.mSkinProbe = v != 0;
+                else if (k == "avlog") d.mAvatarLog = v != 0;
                 else if (k == "dyncasters") d.mDynCasters = v != 0;
                 else if (k == "compare") d.mCompare = v != 0;
                 else if (k == "maxvtx") d.mMaxVtx = (U32)v;
@@ -273,6 +276,7 @@ struct SkinDraw
     bool mHasModel = false;
     U32 mKind = 0;                      // 0 opaque, 1 alpha masked
     U32 mMode = 0;                      // skinning mode of the compute pass
+    bool mDead = false;                 // not named for a while: its output is freed (a structure built over it still lists it)
     F32 mAvatarPos[3] = {};
     AlphaInfo mAlpha;
     LLVkGL::BufferInfo mVi, mIi;
@@ -291,7 +295,11 @@ struct Avatar
     U64 mNotedTag = 0;                  // latest frame a draw was named
     F32 mPos[3] = {};                   // where the avatar is (named by its body meshes)
     bool mHasPos = false;
+    bool mSelf = false;                 // the viewer's own avatar
     U64 mProcessedTag = 0;              // frame whose jobs were made
+    U64 mOverTag = 0;                   // frame in which it was named but left alone (vertex budget, job tables full, no data)
+    U64 mLastBuildTag = 0;              // frame of the latest build or refit
+    bool mLastWasRefit = false;
     VkDeviceAddress mAddressNow = 0;    // the structure the scene uses (a new one when it is being built this call)
 };
 
@@ -907,6 +915,7 @@ void noteSkinned(const SkinCaster& c)
     {
         memcpy(a.mPos, c.mAvatarPos, sizeof(a.mPos));
         a.mHasPos = true;
+        a.mSelf = c.mSelf != 0;
     }
     const U64 tag = Context::instance().getFrameNumber() + 1;
     if (a.mNotedTag != tag)
@@ -923,6 +932,7 @@ void noteSkinned(const SkinCaster& c)
             {
                 d.mAlpha = *c.mAlpha;               // the textures may have changed
             }
+            d.mDead = false;
             if (d.mNotedTag != tag)
             {
                 // first note of this frame (the cascades name a draw once each): this frame's palette and where the buffers are now
@@ -941,9 +951,22 @@ void noteSkinned(const SkinCaster& c)
             return;
         }
     }
-    if (a.mDraws.size() >= 256)
+    SkinDraw* slot = nullptr;
+    if (a.mDraws.size() >= 128)
     {
-        return;
+        // draws come and go (buffer names are recycled): a slot of a dead draw is reused. A structure built over the old draw is rebuilt in this frame's scene call (the avatar is named now).
+        for (SkinDraw& old_draw : a.mDraws)
+        {
+            if (old_draw.mDead && !old_draw.mOut.valid())
+            {
+                slot = &old_draw;
+                break;
+            }
+        }
+        if (!slot && a.mDraws.size() >= 512)
+        {
+            return;
+        }
     }
     SkinDraw d;
     d.mVb = c.mVb;
@@ -971,7 +994,16 @@ void noteSkinned(const SkinCaster& c)
     {
         memcpy(d.mModel, c.mModel, sizeof(d.mModel));
     }
-    a.mDraws.push_back(std::move(d));
+    if (slot)
+    {
+        *slot = std::move(d);
+        a.mSig.clear();                     // the geometry indices of a built structure may point at this slot: it is rebuilt before it is used again
+        a.mBuiltIdx.clear();
+    }
+    else
+    {
+        a.mDraws.push_back(std::move(d));
+    }
 }
 
 VkDescriptorSet descriptorSet(U32 frame_slot)
@@ -1528,8 +1560,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             continue;
         }
-        float dist2 = 0.f;
-        if (a.mHasPos)
+        float dist2 = a.mSelf ? -1.f : 0.f;       // the viewer's own avatar is refreshed first
+        if (a.mHasPos && !a.mSelf)
         {
             const float ex = view[0] * a.mPos[0] + view[4] * a.mPos[1] + view[8] * a.mPos[2] + view[12];
             const float ey = view[1] * a.mPos[0] + view[5] * a.mPos[1] + view[9] * a.mPos[2] + view[13];
@@ -1543,21 +1575,16 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     for (const auto& av_entry : av_order)
     {
         Avatar& a = *av_entry.second;
-        for (size_t k = 0; k < a.mDraws.size();)
+        for (SkinDraw& dead : a.mDraws)
         {
-            if (av_tag > a.mDraws[k].mNotedTag + 60)
+            if (!dead.mDead && av_tag > dead.mNotedTag + 60)
             {
-                if (a.mDraws[k].mOut.valid())
+                if (dead.mOut.valid())
                 {
-                    ctx.arenaFree(a.mDraws[k].mOut);
+                    ctx.arenaFree(dead.mOut);
+                    dead.mOut = ArenaRef();
                 }
-                a.mDraws.erase(a.mDraws.begin() + k);
-                a.mSig.clear();                     // the geometry indices of the structure are void
-                a.mBuiltIdx.clear();
-            }
-            else
-            {
-                ++k;
+                dead.mDead = true;                  // the slot stays: the indices of a built structure must stay valid
             }
         }
         Blas& b = *a.mBlas;
@@ -1588,11 +1615,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         if (total_verts > skin_verts_left)
         {
             ++sStats.mSkinOver;
+            a.mOverTag = av_tag;
             continue;
         }
         if (jobs.size() >= max_builds || skin_jobs.size() + cur.size() > kMaxSkinJobs || skin_chunks.size() + chunks_needed > kMaxSkinChunks)
         {
             ++sStats.mDeferred;
+            a.mOverTag = av_tag;
             continue;
         }
         if (!ensure_skin_pipeline())
@@ -1748,6 +1777,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             a.mBuiltIdx.push_back((U32)(d - a.mDraws.data()));
         }
         a.mProcessedTag = av_tag;
+        a.mLastBuildTag = av_tag;
+        a.mLastWasRefit = job.mUpdate;
         a.mAddressNow = job.mUpdate ? b.mAddress : job.mNewAddress;
         b.mLastSeen = sSceneCalls;
         ++sStats.mAvatars;
@@ -1955,11 +1986,26 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         }
         return sSlotCacheSlot[h];
     };
+    auto avatar_skipped = [&](const Avatar& a, U32 id, const char* why)
+    {
+        if (sDbg.mAvatarLog && a.mSelf)
+        {
+            static FILE* skip_log = fopen("<work>/rt-avatars.log", "ab");
+            if (skip_log)
+            {
+                const long long wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                fprintf(skip_log, "%lld frame %llu SKIP avatar %u self 1 why %s named_age %llu address %d built_geometries %zu draws %zu\n", wall, (unsigned long long)frame_now, id, why, (unsigned long long)(av_tag - a.mNotedTag),
+                        a.mAddressNow ? 1 : 0, a.mBuiltIdx.size(), a.mDraws.size());
+                fflush(skip_log);
+            }
+        }
+    };
     for (auto& kv : sAvatars)
     {
         Avatar& a = kv.second;
         if (!a.mAddressNow || av_tag > a.mNotedTag + keep || !sDbg.mRigged || a.mBuiltIdx.empty())
         {
+            avatar_skipped(a, kv.first, !a.mAddressNow ? "no structure yet" : (av_tag > a.mNotedTag + keep ? "not named for too long" : (!sDbg.mRigged ? "switched off" : "no geometries")));
             continue;
         }
         if (instances.size() >= kInstanceCapacity)
@@ -1979,32 +2025,34 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             if (records + a.mBuiltIdx.size() > kMaxRecords)
             {
                 ++sStats.mTableFull;
+                avatar_skipped(a, kv.first, "geometry table full");
                 continue;
             }
             std::vector<LLVkGL::BufferInfo> vis(a.mBuiltIdx.size()), iis(a.mBuiltIdx.size());
-            bool ok = true;
-            for (size_t k = 0; k < a.mBuiltIdx.size() && ok; ++k)
+            std::vector<char> usable(a.mBuiltIdx.size(), 1);
+            for (size_t k = 0; k < a.mBuiltIdx.size(); ++k)
             {
                 const SkinDraw& d = a.mDraws[a.mBuiltIdx[k]];
                 if (d.mKind != 1)
                 {
                     continue;
                 }
-                if (d.mNotedTag == av_tag)
+                bool ok = !d.mDead && d.mOut.valid();
+                if (ok && d.mNotedTag == av_tag)
                 {
                     vis[k] = d.mVi;
                     iis[k] = d.mIi;
                 }
-                else
+                else if (ok)
                 {
                     ok = LLVkGL::getBufferInfo(d.mVb, vis[k]) && LLVkGL::getBufferInfo(d.mIb, iis[k]) && vis[k].mEpoch == d.mVi.mEpoch && iis[k].mEpoch == d.mIi.mEpoch;
                 }
                 ok = ok && vis[k].mAddress && iis[k].mAddress;
-            }
-            if (!ok)
-            {
-                ++sStats.mNoData;
-                continue;
+                if (!ok)
+                {
+                    usable[k] = 0;                  // the buffers of this draw changed since it was named: its alpha test is skipped (candidates rejected), the rest of the avatar stays
+                    ++sStats.mNoData;
+                }
             }
             custom_index = records;
             for (size_t k = 0; k < a.mBuiltIdx.size(); ++k)
@@ -2015,6 +2063,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 if (d.mKind != 1)
                 {
                     continue;                       // an opaque geometry: its candidates never reach the alpha test
+                }
+                if (!usable[k])
+                {
+                    rec.mFlags = 256u;              // the shader rejects the candidates without reading anything
+                    continue;
                 }
                 LLVkGL::markBufferUsed(d.mVb);      // the alpha test reads texcoords, colours and indices while the lighting runs
                 LLVkGL::markBufferUsed(d.mIb);
@@ -2051,6 +2104,27 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 memcpy(rec.mUv, d.mAlpha.mUv, sizeof(rec.mUv));
             }
             ++sStats.mAlphaStructs;
+        }
+        {
+            ++sStats.mAvatarInstances;
+            const U64 age = av_tag - a.mNotedTag;               // frames since a shadow pass named a draw of it
+            const U64 data_age = av_tag - a.mLastBuildTag;      // frames since its structure was refitted (the pose it shows)
+            if (data_age > 0)
+            {
+                ++sStats.mAvatarStale;
+                sStats.mAvatarStaleFrames += data_age;
+                sStats.mAvatarStaleMax = std::max<U64>(sStats.mAvatarStaleMax, data_age);
+            }
+            if (sDbg.mAvatarLog)
+            {
+                static FILE* av_log = fopen("<work>/rt-avatars.log", "ab");
+                if (av_log)
+                {
+                    const long long wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                    fprintf(av_log, "%lld frame %llu call %u avatar %u self %d named_age %llu data_age %llu over_budget %d processed %d refit %d draws %zu built_draws %zu pos %.1f %.1f %.1f\n", wall, (unsigned long long)frame_now, call, kv.first, a.mSelf ? 1 : 0,
+                            (unsigned long long)age, (unsigned long long)data_age, a.mOverTag == av_tag ? 1 : 0, a.mProcessedTag == av_tag ? 1 : 0, a.mLastWasRefit ? 1 : 0, a.mDraws.size(), a.mBuiltIdx.size(), a.mPos[0], a.mPos[1], a.mPos[2]);
+                }
+            }
         }
         VkAccelerationStructureInstanceKHR inst = {};
         for (int row = 0; row < 3; ++row)
@@ -2350,16 +2424,16 @@ std::string report(double frames)
     const Stats& s = sStats;
     const double scenes = std::max<double>(1.0, (double)s.mScenes);
     const double f = std::max(1.0, frames);
-    char buf[1600];
+    char buf[2400];
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
              "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
-             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; skin: %.1f jobs/frame, %.0f vertices/frame, avatars %.2f/frame (over budget %.2f), failed %.3f; casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
+             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; skin: %.1f jobs/frame, %.0f vertices/frame, avatars %.2f/frame (over budget %.2f), failed %.3f, avatar instances %.2f/call of which showing an older pose %.2f (on average %.1f frames old, oldest %llu); casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
              shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / f, (double)s.mBuilds / f,
              (double)s.mPrimsBuilt / f, (double)s.mRefits / f, (double)s.mPrimsRefit / f, (double)s.mDeferred / f, (double)s.mNoData / f, (double)s.mAlphaStructs / f, (double)s.mTableFull / f,
              (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax, s.mPhaseMs[0] / scenes, s.mPhaseMs[1] / scenes, s.mPhaseMs[2] / scenes, s.mPhaseMs[3] / scenes, s.mPhaseMs[4] / scenes,
              (double)sScratch.mSize / 1048576.0, (double)s.mWhyNew / f, (double)s.mWhyEpoch / f, (double)s.mWhyGrew / f, (double)s.mWhyIb / f, (double)s.mWhyRefitLimit / f,
-             (double)s.mSkinJobs / f, (double)s.mSkinVerts / f, (double)s.mAvatars / f, (double)s.mSkinOver / f, (double)s.mSkinFailed / f, (double)s.mNewGroups / f, sGroups.size(), (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
+             (double)s.mSkinJobs / f, (double)s.mSkinVerts / f, (double)s.mAvatars / f, (double)s.mSkinOver / f, (double)s.mSkinFailed / f, (double)s.mAvatarInstances / scenes, (double)s.mAvatarStale / scenes, s.mAvatarStale ? (double)s.mAvatarStaleFrames / (double)s.mAvatarStale : 0.0, (unsigned long long)s.mAvatarStaleMax, (double)s.mNewGroups / f, sGroups.size(), (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
              s.mMaxScaleKey.mMatrixId, s.mMaxScaleKey.mKind);
     return buf;
 }

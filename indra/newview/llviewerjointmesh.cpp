@@ -235,6 +235,7 @@ void LLViewerJointMesh::noteRayShadow()
     e.mVertexCount = mMesh->mFaceVertexCount;
     e.mAvatarId = (U32)(((uintptr_t)avatar) >> 4);
     e.mMeshId = (U32)(((uintptr_t)this) >> 4);
+    e.mSelf = avatar->isSelf() ? 1u : 0u;
     {
         const LLVector3 avatar_position = avatar->getRenderPosition();
         e.mAvatarPos[0] = avatar_position.mV[0];
