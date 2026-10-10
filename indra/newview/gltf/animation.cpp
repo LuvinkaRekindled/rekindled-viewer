@@ -452,9 +452,7 @@ void Skin::uploadMatrixPalette(Asset& asset)
         mp[idx + 11] = m[14];
     }
 
-    gGL.bindBuffer(GL_UNIFORM_BUFFER, mUBO);
-    gGL.bufferData(GL_UNIFORM_BUFFER, glmp.size() * sizeof(F32), glmp.data(), GL_STREAM_DRAW);
-    gGL.bindBuffer(GL_UNIFORM_BUFFER, 0);
+    gGL.bufferData(mUBO, GL_UNIFORM_BUFFER, glmp.size() * sizeof(F32), glmp.data(), GL_STREAM_DRAW);
 }
 
 bool Skin::prep(Asset& asset)

@@ -1327,9 +1327,7 @@ void LLReflectionMapManager::updateUniforms()
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("rmmsu - update buffer");
-        gGL.bindBuffer(GL_UNIFORM_BUFFER, mUBO);
-        gGL.bufferData(GL_UNIFORM_BUFFER, sizeof(ReflectionProbeData), &mProbeData, GL_STREAM_DRAW);
-        gGL.bindBuffer(GL_UNIFORM_BUFFER, 0);
+        gGL.bufferData(mUBO, GL_UNIFORM_BUFFER, sizeof(ReflectionProbeData), &mProbeData, GL_STREAM_DRAW);
     }
 
 #if 0
@@ -1359,7 +1357,7 @@ void LLReflectionMapManager::setUniforms()
     {
         updateUniforms();
     }
-    gGL.bindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_REFLECTION_PROBES, mUBO);
+    gGL.bindUniformBlock(LLGLSLShader::UB_REFLECTION_PROBES, mUBO);
 }
 
 

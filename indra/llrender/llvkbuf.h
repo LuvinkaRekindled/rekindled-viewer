@@ -1,0 +1,36 @@
+/**
+ * @file llvkbuf.h
+ * @brief F1.3: buffers that are named by their id (the handle) and the vertex input state as typed values.
+ *
+ * Same idea as llvktex.h: a buffer write names its buffer, it does not depend on what is bound to which target; uniform blocks are bound by index with
+ * their own record; nothing here is a GL binding point.
+ *
+ * Compiled only with -DUSE_VULKAN=ON.
+ */
+
+#ifndef LL_LLVKBUF_H
+#define LL_LLVKBUF_H
+
+#if defined(LL_VULKAN)
+
+#include "linden_common.h"
+
+namespace LLVkBuf
+{
+    // handles: the producer allocates the ids, the worker makes and destroys the buffers in stream order
+    void create(S32 count, U32* ids);
+    void destroy(S32 count, const U32* ids);
+    // (re)specifies the storage of a buffer and optionally fills it (target says what the contents are for: vertex, index or uniform data)
+    void setData(U32 id, U32 target, S64 size, const void* data, U32 usage);
+    // makes a buffer the contents of a numbered uniform block (what the shaders' named blocks read)
+    void bindUniformBlock(U32 binding, U32 id);
+}
+
+namespace LLVkGL
+{
+    void uniform_block_bind(unsigned binding, unsigned buffer);
+}
+
+#endif // LL_VULKAN
+
+#endif // LL_LLVKBUF_H

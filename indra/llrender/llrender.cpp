@@ -42,6 +42,7 @@
 #include "glm/gtc/type_ptr.hpp"
 #include "llvkstate.h"
 #include "llvktex.h"
+#include "llvkbuf.h"
 
 thread_local LLRender gGL;
 
@@ -1542,27 +1543,22 @@ void LLRender::getQueryObjectui64v(U32 id, U32 gl_pname, U64* result)
 
 void LLRender::genBuffers(S32 count, U32* ids)
 {
-    glGenBuffers(count, ids);
+    LLVkBuf::create(count, ids);
 }
 
 void LLRender::deleteBuffers(S32 count, const U32* ids)
 {
-    glDeleteBuffers(count, ids);
+    LLVkBuf::destroy(count, ids);
 }
 
-void LLRender::bindBuffer(U32 gl_target, U32 id)
+void LLRender::bufferData(U32 buffer, U32 gl_target, S64 size, const void* data, U32 gl_usage)
 {
-    glBindBuffer(gl_target, id);
+    LLVkBuf::setData(buffer, gl_target, size, data, gl_usage);
 }
 
-void LLRender::bufferData(U32 gl_target, S64 size, const void* data, U32 gl_usage)
+void LLRender::bindUniformBlock(U32 binding, U32 id)
 {
-    glBufferData(gl_target, (GLsizeiptr)size, data, gl_usage);
-}
-
-void LLRender::bindBufferBase(U32 gl_target, U32 index, U32 id)
-{
-    glBindBufferBase(gl_target, index, id);
+    LLVkBuf::bindUniformBlock(binding, id);
 }
 
 void LLRender::copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height)

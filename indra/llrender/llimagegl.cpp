@@ -45,6 +45,7 @@
 #include "llvkasync.h"
 #include "llvkstate.h"
 #include "llvktex.h"
+#include "llvertexbuffer.h"
 #include <unordered_set>
 
 extern LL_COMMON_API bool on_main_thread();
@@ -163,8 +164,6 @@ S32 LLImageGL::sMaxCategories = 1 ;
 
 //optimization for when we don't need to calculate mIsMask
 bool LLImageGL::sSkipAnalyzeAlpha;
-U32  LLImageGL::sScratchPBO = 0;
-U32  LLImageGL::sScratchPBOSize = 0;
 U32* LLImageGL::sManualScratch = nullptr;
 
 
@@ -255,11 +254,6 @@ void LLImageGL::initClass(LLWindow* window, S32 num_catagories, bool skip_analyz
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     sSkipAnalyzeAlpha = skip_analyze_alpha;
 
-    if (sScratchPBO == 0)
-    {
-        glGenBuffers(1, &sScratchPBO);
-    }
-
     if (thread_texture_loads || thread_media_updates)
     {
         LLImageGLThread::createInstance(window);
@@ -289,12 +283,6 @@ void LLImageGL::cleanupClass()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     LLImageGLThread::deleteSingleton();
-    if (sScratchPBO != 0)
-    {
-        glDeleteBuffers(1, &sScratchPBO);
-        sScratchPBO = 0;
-        sScratchPBOSize = 0;
-    }
 
     delete[] sManualScratch;
 }
@@ -2522,14 +2510,13 @@ bool LLImageGL::scaleDown(S32 desired_discard)
     S32 desired_width = getWidth(desired_discard);
     S32 desired_height = getHeight(desired_discard);
 
-    if (gGLManager.mDownScaleMethod == 0)
-    { // use an FBO to downscale the texture
+    { // use an FBO to downscale the texture (the only method: the PBO readback method of RenderDownScaleMethod 1 is gone with the GL buffer binds)
         LLVkState::setViewport(0, 0, desired_width, desired_height);
 
         // draw a full screen triangle
         if (gGL.getTexUnit(0)->bind(this, true, true))
         {
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            LLVertexBuffer::drawNoAttributes(LLRender::TRIANGLES, 0, 3);
 
 #if LL_DARWIN
             // On mac OS, flush before freeing, otherwise the texture may be
@@ -2557,46 +2544,6 @@ bool LLImageGL::scaleDown(S32 desired_discard)
             LL_WARNS_ONCE("LLImageGL") << "Failed to bind texture for downscaling." << LL_ENDL;
             return false;
         }
-    }
-    else
-    { // use a PBO to downscale the texture
-        U64 size = getBytes(desired_discard);
-        llassert(size <= 2048 * 2048 * 4); // we shouldn't be using this method to downscale huge textures, but it'll work
-        gGL.getTexUnit(0)->bind(this, false, true);
-
-        if (sScratchPBO == 0)
-        {
-            glGenBuffers(1, &sScratchPBO);
-            sScratchPBOSize = 0;
-        }
-
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, sScratchPBO);
-
-        if (size > sScratchPBOSize)
-        {
-            glBufferData(GL_PIXEL_PACK_BUFFER, size, NULL, GL_STREAM_COPY);
-            sScratchPBOSize = (U32)size;
-        }
-
-        LLVkTex::getImage(mTexName, mTarget, mip, mFormatPrimary, mFormatType, nullptr);
-
-        free_tex_image(mTexName);
-
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, sScratchPBO);
-        LLVkTex::image2D(mTexName, mTarget, 0, mFormatInternal, desired_width, desired_height, 0, mFormatPrimary, mFormatType, nullptr);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-
-        alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
-
-        if (mHasMipMaps)
-        {
-            LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("scaleDown - glGenerateMipmap");
-            LLVkTex::generateMipmap(mTexName, mTarget);
-        }
-
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
     }
 
     mCurrentDiscardLevel = desired_discard;

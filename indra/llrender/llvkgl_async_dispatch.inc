@@ -9,7 +9,6 @@
         case LLVkAsync::OP_glFramebufferTexture2D: { const LLVkAsync::A_glFramebufferTexture2D* a = (const LLVkAsync::A_glFramebufferTexture2D*)p; LLVkGL::on_glFramebufferTexture2D(a->target, a->attachment, a->textarget, a->texture, a->level); break; }
         case LLVkAsync::OP_glDrawBuffer: { const LLVkAsync::A_glDrawBuffer* a = (const LLVkAsync::A_glDrawBuffer*)p; LLVkGL::on_glDrawBuffer(a->buf); break; }
         case LLVkAsync::OP_glReadBuffer: { const LLVkAsync::A_glReadBuffer* a = (const LLVkAsync::A_glReadBuffer*)p; LLVkGL::on_glReadBuffer(a->src); break; }
-        case LLVkAsync::OP_glBindBufferBase: { const LLVkAsync::A_glBindBufferBase* a = (const LLVkAsync::A_glBindBufferBase*)p; LLVkGL::on_glBindBufferBase(a->target, a->index, a->buffer); break; }
         case LLVkAsync::OP_glBindVertexArray: { const LLVkAsync::A_glBindVertexArray* a = (const LLVkAsync::A_glBindVertexArray*)p; LLVkGL::on_glBindVertexArray(a->array); break; }
         case LLVkAsync::OP_glVertexAttribPointer: { const LLVkAsync::A_glVertexAttribPointer* a = (const LLVkAsync::A_glVertexAttribPointer*)p; LLVkGL::on_glVertexAttribPointer(a->index, a->size, a->type, a->normalized, a->stride, a->pointer); break; }
         case LLVkAsync::OP_glVertexAttribIPointer: { const LLVkAsync::A_glVertexAttribIPointer* a = (const LLVkAsync::A_glVertexAttribIPointer*)p; LLVkGL::on_glVertexAttribIPointer(a->index, a->size, a->type, a->stride, a->pointer); break; }
