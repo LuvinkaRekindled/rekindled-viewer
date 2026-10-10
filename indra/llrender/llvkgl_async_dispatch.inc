@@ -9,14 +9,6 @@
         case LLVkAsync::OP_glFramebufferTexture2D: { const LLVkAsync::A_glFramebufferTexture2D* a = (const LLVkAsync::A_glFramebufferTexture2D*)p; LLVkGL::on_glFramebufferTexture2D(a->target, a->attachment, a->textarget, a->texture, a->level); break; }
         case LLVkAsync::OP_glDrawBuffer: { const LLVkAsync::A_glDrawBuffer* a = (const LLVkAsync::A_glDrawBuffer*)p; LLVkGL::on_glDrawBuffer(a->buf); break; }
         case LLVkAsync::OP_glReadBuffer: { const LLVkAsync::A_glReadBuffer* a = (const LLVkAsync::A_glReadBuffer*)p; LLVkGL::on_glReadBuffer(a->src); break; }
-        case LLVkAsync::OP_glBindVertexArray: { const LLVkAsync::A_glBindVertexArray* a = (const LLVkAsync::A_glBindVertexArray*)p; LLVkGL::on_glBindVertexArray(a->array); break; }
-        case LLVkAsync::OP_glVertexAttribPointer: { const LLVkAsync::A_glVertexAttribPointer* a = (const LLVkAsync::A_glVertexAttribPointer*)p; LLVkGL::on_glVertexAttribPointer(a->index, a->size, a->type, a->normalized, a->stride, a->pointer); break; }
-        case LLVkAsync::OP_glVertexAttribIPointer: { const LLVkAsync::A_glVertexAttribIPointer* a = (const LLVkAsync::A_glVertexAttribIPointer*)p; LLVkGL::on_glVertexAttribIPointer(a->index, a->size, a->type, a->stride, a->pointer); break; }
-        case LLVkAsync::OP_glEnableVertexAttribArray: { const LLVkAsync::A_glEnableVertexAttribArray* a = (const LLVkAsync::A_glEnableVertexAttribArray*)p; LLVkGL::on_glEnableVertexAttribArray(a->index); break; }
-        case LLVkAsync::OP_glDisableVertexAttribArray: { const LLVkAsync::A_glDisableVertexAttribArray* a = (const LLVkAsync::A_glDisableVertexAttribArray*)p; LLVkGL::on_glDisableVertexAttribArray(a->index); break; }
-        case LLVkAsync::OP_glVertexAttrib4f: { const LLVkAsync::A_glVertexAttrib4f* a = (const LLVkAsync::A_glVertexAttrib4f*)p; LLVkGL::on_glVertexAttrib4f(a->index, a->x, a->y, a->z, a->w); break; }
-        case LLVkAsync::OP_glDrawArrays: { const LLVkAsync::A_glDrawArrays* a = (const LLVkAsync::A_glDrawArrays*)p; LLVkGL::on_glDrawArrays(a->mode, a->first, a->count); break; }
-        case LLVkAsync::OP_glDrawRangeElements: { const LLVkAsync::A_glDrawRangeElements* a = (const LLVkAsync::A_glDrawRangeElements*)p; LLVkGL::on_glDrawRangeElements(a->mode, a->start, a->end, a->count, a->type, a->indices); break; }
         case LLVkAsync::OP_glClear: { const LLVkAsync::A_glClear* a = (const LLVkAsync::A_glClear*)p; LLVkGL::on_glClear(a->mask); break; }
         case LLVkAsync::OP_glClearColor: { const LLVkAsync::A_glClearColor* a = (const LLVkAsync::A_glClearColor*)p; LLVkGL::on_glClearColor(a->red, a->green, a->blue, a->alpha); break; }
         case LLVkAsync::OP_glCompileShader: { const LLVkAsync::A_glCompileShader* a = (const LLVkAsync::A_glCompileShader*)p; LLVkGL::on_glCompileShader(a->shader); break; }

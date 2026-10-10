@@ -101,7 +101,8 @@ namespace LLVkAsync
         CMD_RT_SCENE,                              // the ray tracing scene of the frame is built from the casters named so far (LLVkMirror::rtScene)
         CMD_STATE,                                 // F1.1: the render state block (LLVkState::Block) changed since the last one written
         CMD_TEX_IMAGE, CMD_TEX_PARAMS_ID, CMD_TEX_OP,  // F1.2: texture edits that name their texture (llvktex.h): image data, parameters, small operations
-        CMD_UNIFORM_BLOCK                          // F1.3: a buffer becomes the contents of a numbered uniform block (llvkbuf.h)
+        CMD_UNIFORM_BLOCK,                         // F1.3: a buffer becomes the contents of a numbered uniform block (llvkbuf.h)
+        CMD_CONST_ATTRIB                           // F1.3: the constant value of a vertex attribute that has no array
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 

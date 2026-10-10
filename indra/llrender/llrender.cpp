@@ -905,19 +905,6 @@ bool LLRender::init(bool needs_vertex_buffer)
 
     // necessary for reflection maps
 
-#if LL_WINDOWS
-    if (glGenVertexArrays == nullptr)
-    {
-        return false;
-    }
-#endif
-
-    { //bind a dummy vertex array object so we're core profile compliant
-        U32 ret;
-        glGenVertexArrays(1, &ret);
-        glBindVertexArray(ret);
-    }
-
     if (needs_vertex_buffer)
     {
         initVertexBuffer();

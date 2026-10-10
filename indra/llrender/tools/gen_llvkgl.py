@@ -34,20 +34,7 @@ FUNCS = [
     # buffers and vertex arrays
     ('void', 'glGenBuffers', 'GLsizei n, GLuint* buffers'),
     ('void', 'glDeleteBuffers', 'GLsizei n, const GLuint* buffers'),
-    ('void', 'glBindBuffer', 'GLenum target, GLuint buffer'),
-    ('void', 'glBufferData', 'GLenum target, GLsizeiptr size, const void* data, GLenum usage'),
-    ('void', 'glBufferSubData', 'GLenum target, GLintptr offset, GLsizeiptr size, const void* data'),
-    ('void', 'glGenVertexArrays', 'GLsizei n, GLuint* arrays'),
-    ('void', 'glBindVertexArray', 'GLuint array'),
-    ('void', 'glVertexAttribPointer', 'GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer'),
-    ('void', 'glVertexAttribIPointer', 'GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer'),
-    ('void', 'glEnableVertexAttribArray', 'GLuint index'),
-    ('void', 'glDisableVertexAttribArray', 'GLuint index'),
-    ('void', 'glVertexAttrib4f', 'GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w'),
-    ('void', 'glVertexAttrib4fv', 'GLuint index, const GLfloat* v'),
     # draws
-    ('void', 'glDrawArrays', 'GLenum mode, GLint first, GLsizei count'),
-    ('void', 'glDrawRangeElements', 'GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices'),
     # state: the render state is not GL-shaped any more (llvkstate.h); only clears are still calls
     ('void', 'glClear', 'GLbitfield mask'),
     ('void', 'glClearColor', 'GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha'),
