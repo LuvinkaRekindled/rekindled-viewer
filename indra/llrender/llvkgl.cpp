@@ -3782,6 +3782,14 @@ bool emulate_limit(GLenum pname, GLint* out, U32& n)
         // (display() unbinds every one of them each frame: 2.6 ms for a million).
         out[0] = (GLint)std::min<U32>((U32)caps.mMaxSampledImagesPerStage, pname == 0x8B4D ? 192u : 32u); return true;
     case 0x8D57: out[0] = (GLint)caps.mMaxSampleCount; return true;                 // MAX_SAMPLES
+    // C6: the limits that used to read as 0 (nothing answered them)
+    case 0x80E8: out[0] = (GLint)caps.mRecommendedMaxVertices; return true;         // MAX_ELEMENTS_VERTICES
+    case 0x80E9: out[0] = (GLint)caps.mRecommendedMaxIndices; return true;          // MAX_ELEMENTS_INDICES
+    case 0x910E: out[0] = (GLint)caps.mMaxColorTextureSamples; return true;         // MAX_COLOR_TEXTURE_SAMPLES
+    case 0x910F: out[0] = (GLint)caps.mMaxDepthTextureSamples; return true;         // MAX_DEPTH_TEXTURE_SAMPLES
+    case 0x9110: out[0] = (GLint)caps.mMaxIntegerSamples; return true;              // MAX_INTEGER_SAMPLES
+    case 0x8E59: out[0] = (GLint)caps.mMaxSampleMaskWords; return true;             // MAX_SAMPLE_MASK_WORDS
+    case 0x8DFC: out[0] = (GLint)caps.mMaxVaryingVectors; return true;              // MAX_VARYING_VECTORS
     case 0x0D3A: out[0] = (GLint)caps.mMaxViewport[0]; out[1] = (GLint)caps.mMaxViewport[1]; n = 2; return true;     // MAX_VIEWPORT_DIMS
     default: return false;
     }

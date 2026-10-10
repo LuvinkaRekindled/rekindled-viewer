@@ -79,6 +79,32 @@ struct Capabilities
     U32 mMaxViewport[2] = {};
     F32 mLineWidthRange[2] = { 1.f, 1.f };
     U32 mMaxSampleCount = 1;        // largest framebuffer colour sample count
+    // C6: what the viewer's GL-shaped limit queries ask for that Vulkan answers differently (values a GL driver of this class reports; see Context::pickDevice)
+    U32 mMaxColorTextureSamples = 1, mMaxDepthTextureSamples = 1, mMaxIntegerSamples = 1;   // sampled multisample images
+    U32 mMaxSampleMaskWords = 1;
+    U32 mMaxVaryingVectors = 15;
+    U32 mRecommendedMaxVertices = 0, mRecommendedMaxIndices = 0;    // GL_MAX_ELEMENTS_*: Vulkan has no such hint (only a hard index limit), see pickDevice
+    F32 mMemoryBandwidthGBps = 0.f; // measured device-local copy throughput (read + write), 0 = not measured
+
+    // C6: ray tracing. mExt* = the device offers the extension, the rest = the device says the feature works. Nothing here is switched on at device creation
+    // unless ray tracing was asked for (LL_VK_RT=1): mEnabled tells whether the extensions and features are on the device that was created.
+    struct RayTracing
+    {
+        bool mExtAccel = false, mExtDeferredHost = false, mExtRayQuery = false, mExtPipeline = false, mExtPositionFetch = false, mExtMaintenance1 = false;
+        bool mExtReorder = false, mExtOpacityMicromap = false, mExtCluster = false;     // vendor / later: reported, never enabled so far
+        bool mAccelStruct = false;          // VK_KHR_acceleration_structure: BLAS / TLAS builds on the GPU
+        bool mRayQuery = false;             // inline ray queries from any shader stage (the first ray tracing step needs only this and the above)
+        bool mPipeline = false;             // ray tracing pipelines (raygen / hit / miss)
+        bool mPositionFetch = false;        // triangle vertex positions from a hit without reading the vertex buffer
+        bool mMaintenance1 = false;
+        bool mReorder = false;              // VK_NV_ray_tracing_invocation_reorder (shader execution reordering)
+        bool mOpacityMicromap = false;
+        bool mClusterAccel = false;         // VK_NV_cluster_acceleration_structure
+        bool mUsable = false;               // accel structure + ray query + device addresses: ray query shadows / reflections can be built on this device
+        bool mEnabled = false;
+        U64 mMaxGeometryCount = 0, mMaxInstanceCount = 0, mMaxPrimitiveCount = 0;
+        U32 mScratchAlignment = 0, mMaxRecursionDepth = 0;
+    } mRt;
 };
 
 struct Buffer
@@ -241,6 +267,7 @@ private:
     bool createDevice();
     bool createFrames();
     bool selfTest();
+    void measureBandwidth();            // C6: device-local copy throughput into mCaps.mMemoryBandwidthGBps (start-up, single threaded)
     void destroyFrameResources(Frame& f);
 
     GpuPassStats mPassStats;

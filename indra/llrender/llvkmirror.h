@@ -33,9 +33,22 @@ namespace LLVkMirror
 
     // LL_VK_NOGL: the viewer has no OpenGL context, so the main window is given here (once it exists) and the picture is presented into it
     void setMainWindow(void* hwnd);
-    // LL_VK_NOGL: what the GL strings the viewer parses at start-up say (vendor, renderer, version) and the video memory in MB; starts Vulkan if needed.
-    // False if Vulkan cannot be started.
-    bool describeDevice(std::string& vendor, std::string& renderer, std::string& version, U32& vram_mb);
+    // What the viewer needs to know about the graphics device, in plain types (C6): identity strings in the form the viewer parses, the limits its feature
+    // code reads (values as a GL driver of this class reports them), the measured memory bandwidth and the ray tracing / DLSS capabilities.
+    struct DeviceInfo
+    {
+        std::string mVendor, mRenderer, mVersion;
+        U32 mVramMb = 0;
+        S32 mMaxTextureSize = 0, mTextureImageUnits = 0, mMaxSamples = 1, mMaxColorTextureSamples = 1, mMaxDepthTextureSamples = 1, mMaxIntegerSamples = 1;
+        S32 mMaxSampleMaskWords = 1, mMaxVaryingVectors = 15, mMaxUniformBlockSize = 0, mMaxVertexRange = 0, mMaxIndexRange = 0;
+        F32 mMaxAnisotropy = 1.f;
+        F32 mMemoryBandwidthGBps = 0.f;     // measured; 0 = not measured
+        bool mAccelStruct = false, mRayQuery = false, mRayTracingPipeline = false, mRayTracingUsable = false;
+        bool mRayTracingEnabled = false;    // switched on at device creation (LL_VK_RT=1)
+        bool mRayReconstruction = false;    // DLSS ray reconstruction can run (needs DLSS on and its DLL)
+    };
+    // The device the viewer renders with, starting Vulkan if needed. False if Vulkan cannot be started.
+    bool describeDevice(DeviceInfo& out);
 
     // true between beginFrame() and endFrame() of a frame that is being recorded
     bool inFrame();

@@ -78,6 +78,16 @@ struct FeatureChain
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT eds3 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT };
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT vids = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT };
 
+    // C6: ray tracing. Chained after the others only for extensions the device has (a struct of an extension the device lacks must not be in the chain)
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accel = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
+    VkPhysicalDeviceRayQueryFeaturesKHR rayQuery = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR };
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipeline = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR };
+    VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR posFetch = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR };
+    VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR maint1 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_MAINTENANCE_1_FEATURES_KHR };
+    VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV reorder = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_NV };
+    VkPhysicalDeviceOpacityMicromapFeaturesEXT omm = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT };
+    VkPhysicalDeviceClusterAccelerationStructureFeaturesNV cluster = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV };
+
     FeatureChain()
     {
         f2.pNext = &f11;
@@ -88,7 +98,37 @@ struct FeatureChain
     }
     FeatureChain(const FeatureChain&) = delete;
     FeatureChain& operator=(const FeatureChain&) = delete;
+
+    // appends the ray tracing structs of the extensions in 'rt' (the ones for the vendor / later extensions only when 'all' is set: they are queried, not enabled)
+    void addRayTracing(const Capabilities::RayTracing& rt, bool all)
+    {
+        void** tail = &vids.pNext;
+        auto link = [&](bool have, void* s, void** s_next) { if (have) { *tail = s; tail = s_next; } };
+        link(rt.mExtAccel, &accel, &accel.pNext);
+        link(rt.mExtRayQuery, &rayQuery, &rayQuery.pNext);
+        link(rt.mExtPipeline, &rtPipeline, &rtPipeline.pNext);
+        link(rt.mExtPositionFetch, &posFetch, &posFetch.pNext);
+        link(rt.mExtMaintenance1, &maint1, &maint1.pNext);
+        link(all && rt.mExtReorder, &reorder, &reorder.pNext);
+        link(all && rt.mExtOpacityMicromap, &omm, &omm.pNext);
+        link(all && rt.mExtCluster, &cluster, &cluster.pNext);
+    }
 };
+
+// ray tracing is switched on at device creation only on request (LL_VK_RT=1): until the renderer uses it, nothing about the device should differ from a build without it
+bool rayTracingRequested()
+{
+    static const bool on = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_RT", b, sizeof(b)) > 0 && b[0] != '0'; }();
+    return on;
+}
+
+// the largest sample count in a VkSampleCountFlags
+U32 max_sample_count(VkSampleCountFlags counts)
+{
+    U32 best = 1;
+    for (U32 c : { 2u, 4u, 8u, 16u, 32u, 64u }) if (counts & c) best = c;
+    return best;
+}
 
 const char* const REQUIRED_DEVICE_EXTENSIONS[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -355,6 +395,17 @@ bool Context::pickDevice()
         }
 
         FeatureChain chain;
+        Capabilities::RayTracing rt;
+        rt.mExtAccel = has_extension(exts, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        rt.mExtDeferredHost = has_extension(exts, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        rt.mExtRayQuery = has_extension(exts, VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        rt.mExtPipeline = has_extension(exts, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        rt.mExtPositionFetch = has_extension(exts, VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME);
+        rt.mExtMaintenance1 = has_extension(exts, VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME);
+        rt.mExtReorder = has_extension(exts, VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME);
+        rt.mExtOpacityMicromap = has_extension(exts, VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME);
+        rt.mExtCluster = has_extension(exts, VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        chain.addRayTracing(rt, true);
         vkGetPhysicalDeviceFeatures2(dev, &chain.f2);
         if (const char* missing = missing_feature(chain))
         {
@@ -429,20 +480,66 @@ bool Context::pickDevice()
             mCaps.mLineWidthRange[1] = props.limits.lineWidthRange[1];
             mCaps.mMaxViewport[0] = props.limits.maxViewportDimensions[0];
             mCaps.mMaxViewport[1] = props.limits.maxViewportDimensions[1];
-            {
-                const VkSampleCountFlags counts = props.limits.framebufferColorSampleCounts;
-                U32 best = 1;
-                for (U32 c : { 2u, 4u, 8u, 16u, 32u, 64u }) if (counts & c) best = c;
-                mCaps.mMaxSampleCount = best;
-            }
+            mCaps.mMaxSampleCount = max_sample_count(props.limits.framebufferColorSampleCounts);
+            // C6: the limits a GL driver reports that have no one-to-one Vulkan limit
+            mCaps.mMaxColorTextureSamples = max_sample_count(props.limits.sampledImageColorSampleCounts);
+            mCaps.mMaxDepthTextureSamples = max_sample_count(props.limits.sampledImageDepthSampleCounts);
+            mCaps.mMaxIntegerSamples = max_sample_count(props.limits.sampledImageIntegerSampleCounts);
+            mCaps.mMaxSampleMaskWords = std::max(1u, (mCaps.mMaxSampleCount + 31) / 32);      // one 32 bit word per 32 samples
+            // GL counts the vectors a vertex shader hands on without the position (a driver with 128 output components reports 31)
+            mCaps.mMaxVaryingVectors = std::min(props.limits.maxVertexOutputComponents, props.limits.maxFragmentInputComponents) / 4 - 1;
+            // GL_MAX_ELEMENTS_VERTICES / INDICES are a recommendation for glDrawRangeElements (NVIDIA says 1048575), not a limit; Vulkan only has the largest index value.
+            // The viewer batches grass quads up to this size, so it must not read 0.
+            mCaps.mRecommendedMaxVertices = mCaps.mRecommendedMaxIndices = (U32)std::min<U64>(1048575u, props.limits.maxDrawIndexedIndexValue);
 
             VkPhysicalDevicePushDescriptorPropertiesKHR push = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR };
             VkPhysicalDeviceVulkan12Properties p12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES };
+            VkPhysicalDeviceAccelerationStructurePropertiesKHR accel_props = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR };
+            VkPhysicalDeviceRayTracingPipelinePropertiesKHR rt_pipe_props = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR };
             VkPhysicalDeviceProperties2 props2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
             props2.pNext = &push;
             push.pNext = &p12;
+            void** props_tail = &p12.pNext;
+            if (rt.mExtAccel)
+            {
+                *props_tail = &accel_props;
+                props_tail = &accel_props.pNext;
+            }
+            if (rt.mExtPipeline)
+            {
+                *props_tail = &rt_pipe_props;
+                props_tail = &rt_pipe_props.pNext;
+            }
             vkGetPhysicalDeviceProperties2(dev, &props2);
             mCaps.mMaxPushDescriptors = push.maxPushDescriptors;
+
+            // C6: ray tracing as the device reports it (the feature structs were filled by the query above)
+            rt.mAccelStruct = rt.mExtAccel && rt.mExtDeferredHost && chain.accel.accelerationStructure != VK_FALSE;
+            rt.mRayQuery = rt.mExtRayQuery && chain.rayQuery.rayQuery != VK_FALSE;
+            rt.mPipeline = rt.mExtPipeline && chain.rtPipeline.rayTracingPipeline != VK_FALSE;
+            rt.mPositionFetch = rt.mExtPositionFetch && chain.posFetch.rayTracingPositionFetch != VK_FALSE;
+            rt.mMaintenance1 = rt.mExtMaintenance1 && chain.maint1.rayTracingMaintenance1 != VK_FALSE;
+            rt.mReorder = rt.mExtReorder && chain.reorder.rayTracingInvocationReorder != VK_FALSE;
+            rt.mOpacityMicromap = rt.mExtOpacityMicromap && chain.omm.micromap != VK_FALSE;
+            rt.mClusterAccel = rt.mExtCluster && chain.cluster.clusterAccelerationStructure != VK_FALSE;
+            rt.mUsable = rt.mAccelStruct && rt.mRayQuery && mCaps.mBufferDeviceAddress;
+            if (rt.mExtAccel)
+            {
+                rt.mMaxGeometryCount = accel_props.maxGeometryCount;
+                rt.mMaxInstanceCount = accel_props.maxInstanceCount;
+                rt.mMaxPrimitiveCount = accel_props.maxPrimitiveCount;
+                rt.mScratchAlignment = accel_props.minAccelerationStructureScratchOffsetAlignment;
+            }
+            if (rt.mExtPipeline)
+            {
+                rt.mMaxRecursionDepth = rt_pipe_props.maxRayRecursionDepth;
+            }
+            mCaps.mRt = rt;
+            LL_INFOS("Vulkan") << "ray tracing: acceleration structure " << rt.mAccelStruct << ", ray query " << rt.mRayQuery << ", pipeline " << rt.mPipeline
+                << ", position fetch " << rt.mPositionFetch << ", maintenance1 " << rt.mMaintenance1 << ", invocation reorder " << rt.mReorder << ", opacity micromap "
+                << rt.mOpacityMicromap << ", cluster acceleration structure " << rt.mClusterAccel << " -> usable " << rt.mUsable << "; limits: geometries " << rt.mMaxGeometryCount
+                << ", instances " << rt.mMaxInstanceCount << ", primitives " << rt.mMaxPrimitiveCount << ", scratch alignment " << rt.mScratchAlignment
+                << ", recursion " << rt.mMaxRecursionDepth << (rayTracingRequested() ? "" : " (not enabled on the device: LL_VK_RT=1 does that)") << LL_ENDL;
 
             // <FS> bindless sampled images for the render packets: the features, and a table size that leaves room for the push set and the uniform set
             if (chain.f12.runtimeDescriptorArray && chain.f12.descriptorBindingPartiallyBound && chain.f12.descriptorBindingSampledImageUpdateAfterBind
@@ -476,6 +573,19 @@ bool Context::pickDevice()
 bool Context::createDevice()
 {
     FeatureChain chain;
+    // C6: ray tracing goes onto the device only when asked for and the device can do it. The extension structs of the vendor / later extensions stay out
+    // (reported by pickDevice, not enabled): only what the first ray tracing steps use, which is what a device creation check should cover.
+    const bool rt_on = rayTracingRequested() && mCaps.mRt.mUsable;
+    if (rt_on)
+    {
+        Capabilities::RayTracing want = mCaps.mRt;
+        want.mExtReorder = want.mExtOpacityMicromap = want.mExtCluster = false;
+        chain.addRayTracing(want, false);
+    }
+    else if (rayTracingRequested())
+    {
+        LL_WARNS("Vulkan") << "LL_VK_RT is set but this device cannot do ray queries (acceleration structure " << mCaps.mRt.mAccelStruct << ", ray query " << mCaps.mRt.mRayQuery << ")" << LL_ENDL;
+    }
     vkGetPhysicalDeviceFeatures2(mPhysical, &chain.f2);
 
     const float priority = 1.f;
@@ -489,6 +599,16 @@ bool Context::createDevice()
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
     std::vector<const char*> device_extensions(REQUIRED_DEVICE_EXTENSIONS, REQUIRED_DEVICE_EXTENSIONS + LL_ARRAY_SIZE(REQUIRED_DEVICE_EXTENSIONS));
+    if (rt_on)
+    {
+        const Capabilities::RayTracing& rt = mCaps.mRt;
+        device_extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        device_extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        device_extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        if (rt.mExtPipeline) device_extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        if (rt.mExtPositionFetch) device_extensions.push_back(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME);
+        if (rt.mExtMaintenance1) device_extensions.push_back(VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME);
+    }
     if (LLVkDlss::requested())
     {
         LLVkDlss::addDeviceExtensions(mInstance, mPhysical, device_extensions);
@@ -498,6 +618,11 @@ bool Context::createDevice()
     if (!vk_ok(vkCreateDevice(mPhysical, &dci, nullptr, &mDevice), "vkCreateDevice"))
     {
         return false;
+    }
+    mCaps.mRt.mEnabled = rt_on;
+    if (rt_on)
+    {
+        LL_INFOS("Vulkan") << "ray tracing extensions and features are enabled on the device (LL_VK_RT)" << LL_ENDL;
     }
 
 #define LL_VK_GLOBAL_FN(name)
@@ -590,6 +715,7 @@ bool Context::init(HWND present_window)
         return false;
     }
     mReady = true;
+    measureBandwidth();
     LL_INFOS("Vulkan") << "Vulkan context ready" << LL_ENDL;
     return true;
 }
@@ -1223,6 +1349,78 @@ bool Context::selfTest()
     if (readback.valid()) vmaDestroyBuffer(mAllocator, readback.mBuffer, readback.mAllocation);
     if (image.valid()) vmaDestroyImage(mAllocator, image.mImage, image.mAllocation);
     return ok;
+}
+
+// C6: the viewer sorts GPUs into classes by memory bandwidth (LLFeatureManager::loadGPUClass; thresholds 48 / 96 / 192 / 384 GB/s times the CPU bias). The GL
+// benchmark that used to feed it is gone, so this one measures what the device really does: large device-local copies, bytes read plus bytes written over the
+// wall time of the submit. The first run wakes the memory clock up, the best of the following runs counts.
+void Context::measureBandwidth()
+{
+    const U64 vram = deviceLocalBytes();
+    VkDeviceSize chunk = 256ull * 1024 * 1024;
+    while (chunk > 16ull * 1024 * 1024 && (vram == 0 || chunk * 8 > vram))
+    {
+        chunk /= 2;
+    }
+    Buffer a, b;
+    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (!createBuffer(chunk, usage, Memory::Device, a) || !createBuffer(chunk, usage, Memory::Device, b))
+    {
+        LL_WARNS("Vulkan") << "bandwidth measurement skipped: no memory for the test buffers" << LL_ENDL;
+        if (a.valid()) vmaDestroyBuffer(mAllocator, a.mBuffer, a.mAllocation);
+        return;
+    }
+
+    auto barrier = [](VkCommandBuffer cmd) {
+        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        mb.srcStageMask = mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        VkDependencyInfo dep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    };
+    const U32 copies_per_run = 8;
+    auto run = [&]() -> double {
+        LARGE_INTEGER f, t0, t1;
+        QueryPerformanceFrequency(&f);
+        QueryPerformanceCounter(&t0);
+        const bool ok = immediateSubmit([&](VkCommandBuffer cmd) {
+            const VkBufferCopy region = { 0, 0, chunk };
+            for (U32 i = 0; i < copies_per_run; ++i)
+            {
+                vkCmdCopyBuffer(cmd, (i & 1) ? b.mBuffer : a.mBuffer, (i & 1) ? a.mBuffer : b.mBuffer, 1, &region);
+                barrier(cmd);
+            }
+        });
+        QueryPerformanceCounter(&t1);
+        const double seconds = (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart;
+        return ok && seconds > 0.0 ? (double)copies_per_run * 2.0 * (double)chunk / seconds / 1.0e9 : 0.0;
+    };
+
+    // the buffers start out undefined; write them once so the copies read real data
+    bool ok = immediateSubmit([&](VkCommandBuffer cmd) { vkCmdFillBuffer(cmd, a.mBuffer, 0, chunk, 0x3F800000u); vkCmdFillBuffer(cmd, b.mBuffer, 0, chunk, 0u); barrier(cmd); });
+    double best = 0.0, first = 0.0;
+    for (U32 i = 0; ok && i < 4; ++i)
+    {
+        const double gbps = run();
+        if (i == 0) first = gbps;
+        else best = std::max(best, gbps);
+    }
+    vmaDestroyBuffer(mAllocator, a.mBuffer, a.mAllocation);
+    vmaDestroyBuffer(mAllocator, b.mBuffer, b.mAllocation);
+    if (!ok || best <= 0.0)
+    {
+        LL_WARNS("Vulkan") << "bandwidth measurement failed" << LL_ENDL;
+        return;
+    }
+    // A copy reaches about 85% of what the memory can do (RTX 5060 Ti: 379.7 measured, 448 in the data sheet), and the class thresholds are in peak terms
+    // (384 GB/s is the Class 5 edge), so the raw figure would put a card that is Class 5 on paper into Class 4. Scaled to the estimated peak.
+    const double COPY_EFFICIENCY = 0.85;
+    mCaps.mMemoryBandwidthGBps = (F32)(best / COPY_EFFICIENCY);
+    LL_INFOS("Vulkan") << "memory bandwidth (device-local copy, read + write): " << best << " GB/s measured (first run " << first << ", buffers " << (chunk >> 20) << " MB each), "
+                       << mCaps.mMemoryBandwidthGBps << " GB/s estimated peak (copy efficiency " << COPY_EFFICIENCY << ")" << LL_ENDL;
 }
 
 //-----------------------------------------------------------------------------------------------------

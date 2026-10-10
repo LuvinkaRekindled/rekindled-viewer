@@ -30,6 +30,9 @@ namespace LLVkDlss
     bool ready();
     void shutdown();
 
+    // C6: NGX says DLSS ray reconstruction (the denoiser + upscaler for ray traced input, nvngx_dlssd.dll) can run here. Known after init(); false while DLSS is off.
+    bool rayReconstructionAvailable();
+
     struct Params
     {
         LLVk::Image* mColor = nullptr;            // render size, sampled

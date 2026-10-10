@@ -465,9 +465,13 @@ bool LLFeatureManager::loadGPUClass()
             // <FS:ND> Allow to skip gpu_benchmark with -noprobe.
             // This can make sense for some Intel GPUs which can take 15+ Minutes or crash during gpu_benchmark
             gbps = -1.0f;
-            // <FS> no OpenGL: the benchmark times GL queries and would measure nothing. This card has about 450 GB/s; the viewer only compares with thresholds.
-            // (C6: take it from the Vulkan device instead of a constant)
-            gbps = 450.f;
+            // <FS> no OpenGL: the GL benchmark is gone. The Vulkan device measured its own memory bandwidth at start-up (large device-local copies, read + write);
+            // not measured (0) stays "could not bench" as before.
+            if (gGLManager.mMemoryBandwidthGBps > 0.f)
+            {
+                gbps = gGLManager.mMemoryBandwidthGBps;
+            }
+            LL_INFOS("RenderInit") << "GPU memory bandwidth " << gbps << " GB/s (Vulkan copy measurement)" << LL_ENDL;
             // </FS:ND>
         }
         catch (const std::exception& e)
