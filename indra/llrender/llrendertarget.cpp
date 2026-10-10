@@ -35,42 +35,25 @@
 #include "llvkasync.h"
 #include "llvkstate.h"
 #include "llvktex.h"
+#include "llvktarget.h"
 #endif
 
-// <FS> N4: attaching a texture to a framebuffer is one record on the queue's producer (bind, attach, bind the framebuffer that was current)
+// attaching a texture to a target: a slot (colour attachment index, or the depth slot) of the target names the texture
 static void ll_fboAttach(GLuint fbo, GLenum attachment, GLenum textarget, GLuint texture, GLuint restore)
 {
-#if defined(LL_VULKAN)
-    if (LLVkAsync::mainProducer())
-    {
-        LLVkAsync::framebufferAttach(fbo, attachment, textarget, texture, restore);
-        return;
-    }
-#endif
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, textarget, texture, 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, restore);
+    (void)textarget;
+    (void)restore;
+    LLVkTarget::attach(fbo, attachment == GL_DEPTH_ATTACHMENT ? LLVkTarget::DEPTH_SLOT : (U32)(attachment - GL_COLOR_ATTACHMENT0), texture);
 }
 
 LLRenderTarget* LLRenderTarget::sBoundTarget = NULL;
-U32 LLRenderTarget::sBytesAllocated = 0;
 
-void check_framebuffer_status()
+void LLRenderTarget::setCurrentDrawBufferCount(S32 count)
 {
-    if (gDebugGL)
-    {
-        GLenum status = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
-        switch (status)
-        {
-        case GL_FRAMEBUFFER_COMPLETE:
-            break;
-        default:
-            LL_WARNS() << "check_framebuffer_status failed -- " << std::hex << status << LL_ENDL;
-            ll_fail("check_framebuffer_status failed");
-            break;
-        }
-    }
+    LLVkAsync::targetDrawBuffers(sCurFBO, count);
 }
+
+U32 LLRenderTarget::sBytesAllocated = 0;
 
 bool LLRenderTarget::sUseFBO = false;
 U32 LLRenderTarget::sCurFBO = 0;
@@ -161,7 +144,7 @@ bool LLRenderTarget::allocate(U32 resx, U32 resy, U32 color_fmt, bool depth, LLT
         }
     }
 
-    glGenFramebuffers(1, (GLuint *) &mFBO);
+    LLVkTarget::create((U32*)&mFBO);
 
     if (mDepth)
     {
@@ -182,7 +165,7 @@ void LLRenderTarget::setColorAttachment(LLImageGL* img, LLGLuint use_name)
 
     if (mFBO == 0)
     {
-        glGenFramebuffers(1, (GLuint*)&mFBO);
+        LLVkTarget::create((U32*)&mFBO);
     }
 
     mResX = img->getWidth();
@@ -199,7 +182,6 @@ void LLRenderTarget::setColorAttachment(LLImageGL* img, LLGLuint use_name)
     ll_fboAttach(mFBO, GL_COLOR_ATTACHMENT0, LLTexUnit::getInternalType(mUsage), use_name, sCurFBO);
     stop_glerror();
 
-    check_framebuffer_status();
 }
 
 void LLRenderTarget::releaseColorAttachment()
@@ -287,7 +269,6 @@ bool LLRenderTarget::addColorAttachment(U32 color_fmt)
     {
         ll_fboAttach(mFBO, GL_COLOR_ATTACHMENT0+offset, LLTexUnit::getInternalType(mUsage), tex, sCurFBO);
 
-        check_framebuffer_status();
     }
 
     mTex.push_back(tex);
@@ -349,7 +330,6 @@ void LLRenderTarget::shareDepthBuffer(LLRenderTarget& target)
     {
         ll_fboAttach(target.mFBO, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), mDepth, sCurFBO);
 
-        check_framebuffer_status();
 
         target.mUseDepth = true;
     }
@@ -396,10 +376,10 @@ void LLRenderTarget::release()
         if (mFBO == sCurFBO)
         {
             sCurFBO = 0;
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            LLVkAsync::targetState(0, -1, gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
         }
 
-        glDeleteFramebuffers(1, (GLuint *) &mFBO);
+        LLVkTarget::destroy(mFBO);
         mFBO = 0;
     }
 
@@ -421,39 +401,9 @@ void LLRenderTarget::bindTarget()
     llassert(mFBO);
     llassert(!isBoundInStack());
 
-#if defined(LL_VULKAN)
-    if (LLVkAsync::mainProducer())
-    {
-        // <FS> N4: the framebuffer, its draw buffers and the viewport are one record
-        sCurFBO = mFBO;
-        LLVkAsync::targetState(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY);
-    }
-    else
-#endif
-    {
-        glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
-        sCurFBO = mFBO;
-
-        //setup multiple render targets
-        GLenum drawbuffers[] = {GL_COLOR_ATTACHMENT0,
-                                GL_COLOR_ATTACHMENT1,
-                                GL_COLOR_ATTACHMENT2,
-                                GL_COLOR_ATTACHMENT3};
-
-        if (mTex.empty())
-        { //no color buffer to draw to
-            glDrawBuffer(GL_NONE);
-            glReadBuffer(GL_NONE);
-        }
-        else
-        {
-            glDrawBuffers(static_cast<GLsizei>(mTex.size()), drawbuffers);
-            glReadBuffer(GL_COLOR_ATTACHMENT0);
-        }
-        check_framebuffer_status();
-
-        LLVkState::setViewport(0, 0, mResX, mResY);
-    }
+    // the target, its colour attachment count and the viewport are one record
+    sCurFBO = mFBO;
+    LLVkAsync::targetState(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY);
     sCurResX = mResX;
     sCurResY = mResY;
 
@@ -473,17 +423,13 @@ void LLRenderTarget::clear(U32 mask_in)
     }
     if (mFBO)
     {
-        check_framebuffer_status();
-        stop_glerror();
-        glClear(mask & mask_in);
-        stop_glerror();
+        gGL.clearBuffers(mask & mask_in);
     }
     else
     {
         LLGLEnable scissor(GL_SCISSOR_TEST);
         LLVkState::setScissor(0, 0, mResX, mResY);
-        stop_glerror();
-        glClear(mask & mask_in);
+        gGL.clearBuffers(mask & mask_in);
     }
 }
 
@@ -554,25 +500,10 @@ void LLRenderTarget::flush()
     else
     {
         sBoundTarget = nullptr;
-#if defined(LL_VULKAN)
-        if (LLVkAsync::mainProducer())
-        {
-            LLVkAsync::targetState(0, -1, gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
-            sCurFBO = 0;
-            sCurResX = gGLViewport[2];
-            sCurResY = gGLViewport[3];
-        }
-        else
-#endif
-        {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            sCurFBO = 0;
-            LLVkState::setViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
-            sCurResX = gGLViewport[2];
-            sCurResY = gGLViewport[3];
-            glReadBuffer(GL_BACK);
-            glDrawBuffer(GL_BACK);
-        }
+        LLVkAsync::targetState(0, -1, gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
+        sCurFBO = 0;
+        sCurResX = gGLViewport[2];
+        sCurResY = gGLViewport[3];
     }
 }
 

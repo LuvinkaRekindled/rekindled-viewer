@@ -173,6 +173,8 @@ public:
     void swapFBORefs(LLRenderTarget& other);
 
     static LLRenderTarget* sBoundTarget;
+    // the number of colour attachments draws write to on the current target (the rest are not written until the target is bound again)
+    static void setCurrentDrawBufferCount(S32 count);
 
 protected:
     U32 mResX;

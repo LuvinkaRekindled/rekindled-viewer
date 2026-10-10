@@ -43,6 +43,7 @@
 #include "llvkstate.h"
 #include "llvktex.h"
 #include "llvkbuf.h"
+#include "llvktarget.h"
 
 thread_local LLRender gGL;
 
@@ -1429,12 +1430,12 @@ void LLRender::setColorMask(bool writeColorR, bool writeColorG, bool writeColorB
 
 void LLRender::clearBuffers(U32 gl_buffer_mask)
 {
-    glClear(gl_buffer_mask);
+    LLVkTarget::clear((gl_buffer_mask & GL_COLOR_BUFFER_BIT) != 0, (gl_buffer_mask & GL_DEPTH_BUFFER_BIT) != 0, mClearColor);
 }
 
 void LLRender::setClearColor(F32 r, F32 g, F32 b, F32 a)
 {
-    glClearColor(r, g, b, a);
+    mClearColor[0] = r; mClearColor[1] = g; mClearColor[2] = b; mClearColor[3] = a;
 }
 
 void LLRender::setViewport(S32 x, S32 y, S32 width, S32 height)
@@ -1481,11 +1482,6 @@ void LLRender::setStencilMask(U32 mask)
 void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data)
 {
     glReadPixels(x, y, width, height, gl_format, gl_type, data);
-}
-
-void LLRender::drawBuffers(S32 count, const U32* gl_buffers)
-{
-    glDrawBuffers(count, gl_buffers);
 }
 
 void LLRender::genQueries(S32 count, U32* ids)
@@ -1548,14 +1544,14 @@ void LLRender::bindUniformBlock(U32 binding, U32 id)
     LLVkBuf::bindUniformBlock(binding, id);
 }
 
-void LLRender::copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height)
+void LLRender::copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
 {
-    LLVkTex::copySubImage(texture, gl_target, level, xoffset, yoffset, 0, x, y, width, height);
+    LLVkTex::copySubImage(texture, gl_target, level, xoffset, yoffset, 0, x, y, width, height, source_fbo);
 }
 
-void LLRender::copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height)
+void LLRender::copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
 {
-    LLVkTex::copySubImage(texture, gl_target, level, xoffset, yoffset, zoffset, x, y, width, height);
+    LLVkTex::copySubImage(texture, gl_target, level, xoffset, yoffset, zoffset, x, y, width, height, source_fbo);
 }
 
 void LLRender::generateMipmap(U32 texture, U32 gl_target)
@@ -1571,16 +1567,6 @@ void LLRender::texParameteri(U32 texture, U32 gl_target, U32 gl_pname, S32 param
 void LLRender::texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data)
 {
     LLVkTex::image2D(texture, gl_target, level, internal_format, width, height, border, gl_format, gl_type, data);
-}
-
-void LLRender::bindFramebuffer(U32 gl_target, U32 id)
-{
-    glBindFramebuffer(gl_target, id);
-}
-
-U32 LLRender::checkFramebufferStatus(U32 gl_target)
-{
-    return glCheckFramebufferStatus(gl_target);
 }
 
 U32 LLRender::getError()

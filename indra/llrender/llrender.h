@@ -474,7 +474,6 @@ public:
     void setStencilOp(U32 gl_sfail, U32 gl_dpfail, U32 gl_dppass);
     void setStencilMask(U32 mask);
     void readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data);
-    void drawBuffers(S32 count, const U32* gl_buffers);
     void genQueries(S32 count, U32* ids);
     void deleteQueries(S32 count, const U32* ids);
     void beginQuery(U32 gl_target, U32 id);
@@ -487,13 +486,11 @@ public:
     void deleteBuffers(S32 count, const U32* ids);
     void bufferData(U32 buffer, U32 gl_target, S64 size, const void* data, U32 gl_usage);     // names the buffer: nothing is bound
     void bindUniformBlock(U32 binding, U32 id);
-    void copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height);
-    void copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height);
+    void copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);     // source_fbo: the render target read from (0: the back buffer)
+    void copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);
     void generateMipmap(U32 texture, U32 gl_target);
     void texParameteri(U32 texture, U32 gl_target, U32 gl_pname, S32 param);
     void texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data);
-    void bindFramebuffer(U32 gl_target, U32 id);
-    U32 checkFramebufferStatus(U32 gl_target);
     U32 getError();
     void bindTextureSlot(S32 unit, U32 gl_target, U32 id);     // raw slot write, bypasses the LLTexUnit cache (as the old direct call did)
     void deleteTextures(S32 count, const U32* ids);
@@ -559,6 +556,7 @@ private:
     U32             mCount;
     U32             mMode;
     U32             mCurrTextureUnitIndex;
+    F32             mClearColor[4] = { 0.f, 0.f, 0.f, 0.f };     // the colour clearBuffers() clears to
     bool                mCurrColorMask[4];
     F32             mLineWidth; // <FS> Line width OGL core profile fix by Rye Mutt
     // <FS:Ansariel> Don't ignore OpenGL max line width

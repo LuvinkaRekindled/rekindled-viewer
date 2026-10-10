@@ -8521,7 +8521,7 @@ void apply_cube_face_rotation(U32 face)
 void validate_framebuffer_object()
 {
     GLenum status;
-    status = gGL.checkFramebufferStatus(GL_FRAMEBUFFER_EXT);
+    status = GL_FRAMEBUFFER_COMPLETE;       // a render target has no completeness state of its own any more
     switch(status)
     {
         case GL_FRAMEBUFFER_COMPLETE:
@@ -14489,8 +14489,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     { //create alpha mask based on depth buffer (grey out if muted)
         if (LLPipeline::sRenderDeferred)
         {
-            GLuint buff = GL_COLOR_ATTACHMENT0;
-            gGL.drawBuffers(1, &buff);
+            LLRenderTarget::setCurrentDrawBufferCount(1);
         }
 
         LLGLDisable blend(GL_BLEND);

@@ -60,9 +60,13 @@ namespace LLVkAsync
     // one texture parameter (wrap, filter, anisotropy ...), see LLVkTex::params
     struct TexParam { U32 mPname; U32 mIsFloat; S32 mInt; F32 mFloat; };
     // render targets (LLRenderTarget): attach a texture to a framebuffer by name (then bind restore_fbo again), and make a framebuffer current with its draw buffers and viewport
-    void framebufferAttach(U32 fbo, U32 attachment, U32 textarget, U32 texture, U32 restore_fbo);
+    void framebufferAttach(U32 fbo, U32 slot, U32 texture);
+    // clears the current target (the state block is written first): colour and/or depth with the given colour
+    void clearTarget(bool color, bool depth, const F32* rgba);
     // draw_buffers: the number of colour attachments to draw to (0: none, -1: the back buffer)
     void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh);
+    // the colour attachment count of a target without touching the viewport
+    void targetDrawBuffers(U32 fbo, S32 draw_buffers);
     // a named GPU zone (the viewer's LL_PROFILE_GPU_ZONE scopes, enabled with FSGpuZoneTimers + LL_VK_PHASES): the worker writes a GPU timestamp at this point of the frame
     void gpuZone(const char* name, bool begin);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
@@ -102,7 +106,8 @@ namespace LLVkAsync
         CMD_STATE,                                 // F1.1: the render state block (LLVkState::Block) changed since the last one written
         CMD_TEX_IMAGE, CMD_TEX_PARAMS_ID, CMD_TEX_OP,  // F1.2: texture edits that name their texture (llvktex.h): image data, parameters, small operations
         CMD_UNIFORM_BLOCK,                         // F1.3: a buffer becomes the contents of a numbered uniform block (llvkbuf.h)
-        CMD_CONST_ATTRIB                           // F1.3: the constant value of a vertex attribute that has no array
+        CMD_CONST_ATTRIB,                          // F1.3: the constant value of a vertex attribute that has no array
+        CMD_CLEAR                                  // F1.4: clear the current target (llvktarget.h)
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 

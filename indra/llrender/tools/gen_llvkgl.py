@@ -18,33 +18,22 @@ FUNCS = [
     ('void', 'glTexParameteri', 'GLenum target, GLenum pname, GLint param'),
     ('void', 'glTexParameterf', 'GLenum target, GLenum pname, GLfloat param'),
     ('void', 'glTexParameteriv', 'GLenum target, GLenum pname, const GLint* params'),
-    ('void', 'glCopyTexSubImage2D', 'GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height'),
-    ('void', 'glCopyTexSubImage3D', 'GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height'),
-    ('void', 'glCopyTexImage2D', 'GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border'),
     ('void', 'glGenerateMipmap', 'GLenum target'),
     ('void', 'glPixelStorei', 'GLenum pname, GLint param'),
     # framebuffers and renderbuffers
     ('void', 'glGenFramebuffers', 'GLsizei n, GLuint* framebuffers'),
     ('void', 'glDeleteFramebuffers', 'GLsizei n, const GLuint* framebuffers'),
-    ('void', 'glBindFramebuffer', 'GLenum target, GLuint framebuffer'),
-    ('void', 'glFramebufferTexture2D', 'GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level'),
-    ('void', 'glDrawBuffers', 'GLsizei n, const GLenum* bufs'),
-    ('void', 'glDrawBuffer', 'GLenum buf'),
-    ('void', 'glReadBuffer', 'GLenum src'),
     # buffers and vertex arrays
     ('void', 'glGenBuffers', 'GLsizei n, GLuint* buffers'),
     ('void', 'glDeleteBuffers', 'GLsizei n, const GLuint* buffers'),
     # draws
     # state: the render state is not GL-shaped any more (llvkstate.h); only clears are still calls
-    ('void', 'glClear', 'GLbitfield mask'),
-    ('void', 'glClearColor', 'GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha'),
     # calls that return data or state: the hook checks (and later will supply) the answer
     ('void', 'glGetIntegerv', 'GLenum pname, GLint* params'),
     ('void', 'glGetFloatv', 'GLenum pname, GLfloat* params'),
     ('void', 'glGetBooleanv', 'GLenum pname, GLboolean* params'),
     ('GLboolean', 'glIsEnabled', 'GLenum cap'),
     ('void', 'glGetTexLevelParameteriv', 'GLenum target, GLint level, GLenum pname, GLint* params'),
-    ('GLenum', 'glCheckFramebufferStatus', 'GLenum target'),
     # queries
     ('void', 'glGenQueries', 'GLsizei n, GLuint* ids'),
     ('void', 'glDeleteQueries', 'GLsizei n, const GLuint* ids'),
@@ -206,7 +195,7 @@ out.append('        ~HookStat() { if (mId >= 0) { gHookStatTicks[mId] += LLVkMir
 out.append('    };')
 out.append('}\n')
 # ---- commands for the worker thread (LL_VK_ASYNC) ----
-SPECIAL = set(GEN) | {'glDeleteTextures', 'glDeleteFramebuffers', 'glDeleteBuffers', 'glDeleteQueries', 'glTexParameteriv', 'glDrawBuffers',
+SPECIAL = set(GEN) | {'glDeleteTextures', 'glDeleteFramebuffers', 'glDeleteBuffers', 'glDeleteQueries', 'glTexParameteriv',
                       'glVertexAttrib4fv', 'glBufferData', 'glBufferSubData', 'glTexImage2D', 'glTexImage3D', 'glTexSubImage2D', 'glTexSubImage3D',
                       'glCompressedTexImage2D', 'glShaderSource', 'glBindAttribLocation', 'glProgramBinary', 'glPixelStorei', 'glBindBuffer',
                       'glBeginQuery', 'glEndQuery', 'glQueryCounter'}
