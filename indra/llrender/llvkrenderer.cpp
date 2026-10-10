@@ -491,6 +491,23 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         }
     }
 
+    {
+        // LL_VK_UNIFORM_DUMP=1: every program's loose uniforms and samplers, for the uniform class table (doc/vulkan/F0-inventory.md)
+        static FILE* dump = getenv("LL_VK_UNIFORM_DUMP") ? fopen("<work>/run-logs/program-uniforms.txt", "wb") : nullptr;
+        if (dump)
+        {
+            fprintf(dump, "PROGRAM\t%s\tbindless=%d\tblock=%zu\n", mName.c_str(), mBindless ? 1 : 0, mShadow.size());
+            for (const LooseUniform& u : mInfo.mUniforms)
+            {
+                fprintf(dump, "U\t%s\t%s\t%u\t%u\n", u.mName.c_str(), u.mType.c_str(), u.mArraySize, u.mSize);
+            }
+            for (const SamplerInfo& sm : mInfo.mSamplers)
+            {
+                fprintf(dump, "S\t%s\n", sm.mName.c_str());
+            }
+            fflush(dump);
+        }
+    }
     mValid = true;
     mDirty = true;
     {

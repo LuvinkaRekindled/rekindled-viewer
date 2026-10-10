@@ -43,7 +43,20 @@ The pull shaders already read their per-draw data from records by buffer address
 - Not yet records (per-draw state of the alpha pass, set today as uniforms/GL state): shader variant (simple, fullbright, material variants by mask, PBR, rigged), blend function pair per draw (becomes dynamic blend state, already dynamic in the executor), minimum alpha, specular color, environment intensity, emissive brightness, texture matrix, glTF material parameters and texture transforms, emissive second draw.
 So S0's `Materials[]` = the material half of GeoPacket (specular, env, cutoff, brightness, map and texture slots) plus the alpha-only fields above; the entry = the address half plus first/count/model/flags.
 
-## 5. Still to do for F0
-- Class table for every uniform of every program (static pass over the shader sources with the program-family key), merged with the measured frequencies above; unknown = pass class.
-- Re-run the uniform measurement in a second scene (many particles, UI-heavy, a busy crowd) to catch uniforms the plaza never sets.
-- The 18 pass-through hooks that never reached the worker.
+## 5. The full uniform table (all compiled programs, `uniform-classes.tsv`)
+Dumped from the compiled programs themselves (`LL_VK_UNIFORM_DUMP=1`, login screen only, 2026-10-10): **226 programs, 305 distinct loose uniforms, 70 distinct sampler names; loose blocks average 2.35 KB, at most 9.6 KB** (the skinned PBR alpha and skinned material shaders). `doc/vulkan/uniform-classes.tsv` lists every uniform with its class, type, array size, bytes, number of programs, the program families that use it and, where measured, its changes per frame.
+| Class | Uniforms | Notes |
+|---|---|---|
+| skin palette | 1 (`matrixPalette`) | 226 KB of block space summed over the 42 skinned programs (5.3 KB each), the biggest part of every skinned block |
+| per draw (instance) | 5: modelview_matrix, modelview_projection_matrix, normal_matrix, texture_matrix0.., inv_modelview family | 26 KB summed |
+| per light draw | 24 (center, size, falloff, noiseSine, box_center/size, proj_* and the light-array uniforms) | 19 KB summed; 9 of them were never written in the plaza |
+| per material | 11 (specular_color, env_intensity, minimum_alpha, metallic/roughness factors, emissive, texture transforms ...) | 2 KB summed |
+| per pass / per view | 263 (everything else: camera, fog, sky, shadows, probes, post-process parameters) | 240 KB summed; of these only 9 were written 14-79 times per frame in the plaza |
+Ambiguous names that need the program family as key: `color` (393 changes/frame: light colour in the lighting programs, tint in UI/particles), `size`, `center` (lights, but also used by other families). The class is decided per (family, name) in the table; `color` is listed as "measured >= 100, unclassified by name" until the second scene confirms the split.
+Consequence for the design: the per-draw part of a block (instance, material, light) is under 100 bytes in all programs except the palette and the light arrays; the other 2.2 KB average is per-pass data that can be written once per pass instead of per draw.
+
+## 6. The GL surface to replace, complete
+The generator (`gen_llvkgl.py`) hooks **108 GL functions** (listed in its FUNCS table: textures 16, framebuffers 7, buffers 6, vertex arrays 8, draws 2, state 17, queries 11, readbacks 3, shader/program objects 30, fences 4, plus glUseProgram/glProgramBinary/glUniformBlockBinding). Uniform setters (`glUniform*`) do not go through the hook table: `LLGLSLShader` mirrors them into the program directly (`mirror*` methods, the `setFloatsAt`/`setMatricesAt` setters measured above). Unhooked calls (`glGetError`, `glGetString`, `glFlush`, ...) were given pass-through wrappers for the no-GL start-up; they disappear with the classes. This list is the exact checklist for F5 (the deletion): when no file includes `llvkgl.h`, none of the 108 hooks exists.
+
+## 7. Still open in F0
+One measurement that needs a different place: the uniform change counts in a scene with many particles, a crowded UI and a busy crowd (the plaza never sets 9 of the light uniforms and several particle/UI ones). To collect it: start `run-viewer-clean-rtshadows.bat 1` (it already logs `LL_VK_PHASES`), spend two or three minutes at such a spot, quit; the log's "uniform value changes per frame" lines are then merged into `uniform-classes.tsv` and the `color`/`size`/`center` split is settled.
