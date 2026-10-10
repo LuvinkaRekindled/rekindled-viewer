@@ -121,6 +121,7 @@ struct Stats
 {
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
     U64 mOverCap = 0, mExtraCalls = 0;
+    U64 mWhyNew = 0, mWhyEpoch = 0, mWhyGrew = 0, mWhyIb = 0, mWhyRefitLimit = 0, mNewGroups = 0, mNewMasked = 0;      // why structures were built (and how many casters were new)
     double mCpuMs = 0, mCpuMsMax = 0;
 };
 
@@ -444,6 +445,7 @@ void noteCaster(const Caster& c)
     {
         it = sGroups.emplace(key, Group()).first;
         it->second.mKey = key;
+        ++sStats.mNewGroups;
     }
     it->second.mSeen = Context::instance().getFrameNumber();
     memcpy(it->second.mModel, c.mModel ? c.mModel : kIdentity, sizeof(it->second.mModel));       // the matrix of the object now
@@ -560,6 +562,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             drop_blas(b);                       // the names hold something else now
             b.mAlpha.clear();
+            ++sStats.mWhyEpoch;
         }
         if (b.mAs == VK_NULL_HANDLE)
         {
@@ -590,6 +593,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             continue;
         }
+        const bool fresh = b.mAs == VK_NULL_HANDLE;
         const bool ib_changed = b.mAs != VK_NULL_HANDLE && b.mIbVersion != ii.mVersion;
         const bool vb_changed = b.mAs != VK_NULL_HANDLE && b.mVbVersion != vi.mVersion;
         if (!grew && !ib_changed && !vb_changed && b.mRefits < rebuild_after_refits)
@@ -600,6 +604,22 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             ++sStats.mDeferred;
             continue;
+        }
+        if (fresh)
+        {
+            ++sStats.mWhyNew;
+        }
+        else if (grew)
+        {
+            ++sStats.mWhyGrew;
+        }
+        else if (ib_changed)
+        {
+            ++sStats.mWhyIb;
+        }
+        else if (!vb_changed)
+        {
+            ++sStats.mWhyRefitLimit;
         }
         Job job;
         job.mKey = g.mKey;
@@ -940,11 +960,12 @@ std::string report(double frames)
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
              "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
-             "CPU %.3f ms/call (worst %.2f ms), scratch %.1f MB",
+             "CPU %.3f ms/call (worst %.2f ms), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; casters new %.2f/frame, groups held %zu",
              shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / f, (double)s.mBuilds / f,
              (double)s.mPrimsBuilt / f, (double)s.mRefits / f, (double)s.mPrimsRefit / f, (double)s.mDeferred / f, (double)s.mNoData / f, (double)s.mAlphaStructs / f, (double)s.mTableFull / f,
              (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax,
-             (double)sScratch.mSize / 1048576.0);
+             (double)sScratch.mSize / 1048576.0, (double)s.mWhyNew / f, (double)s.mWhyEpoch / f, (double)s.mWhyGrew / f, (double)s.mWhyIb / f, (double)s.mWhyRefitLimit / f,
+             (double)s.mNewGroups / f, sGroups.size());
     return buf;
 }
 
