@@ -3451,6 +3451,50 @@ static void on_rt_only_packets(const LLVkMirror::ShadowPacketsHeader& h, const U
     }
 }
 
+// the worker side of kinds 6 and 7: rigged draws of the main view, only named to the ray scene (palettes are copied into the frame's scratch memory the scene call reads)
+static void on_rigged_note_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!Rt::active() || h.mEntries == 0 || h.mPaletteFloats == 0)
+    {
+        return;
+    }
+    const bool alpha_entries = h.mKind == 7;
+    const size_t entry_bytes = alpha_entries ? sizeof(LLVkMirror::ShadowAlphaEntry) : sizeof(LLVkMirror::ShadowSkinEntry);
+    const F32* matrices = (const F32*)(blob + entry_bytes * h.mEntries);
+    Renderer& r = Renderer::instance();
+    Renderer::ScratchAlloc palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+    if (!palettes.mPtr || !palettes.mAddress)
+    {
+        return;
+    }
+    memcpy(palettes.mPtr, matrices + 16 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        if (alpha_entries)
+        {
+            const LLVkMirror::ShadowAlphaEntry& e = ((const LLVkMirror::ShadowAlphaEntry*)blob)[i];
+            Buf* vb = packet_buffer(e.mVertexBuffer);
+            Buf* ib = packet_buffer(e.mIndexBuffer);
+            if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress || !(e.mFlags & LLVkMirror::ALPHA_RIGGED))
+            {
+                continue;
+            }
+            note_rt_skinned_alpha(h.mPass, e, *vb, *ib, (U64)palettes.mAddress + 4ull * e.mPaletteOffset, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+        }
+        else
+        {
+            const LLVkMirror::ShadowSkinEntry& e = ((const LLVkMirror::ShadowSkinEntry*)blob)[i];
+            Buf* vb = packet_buffer(e.mVertexBuffer);
+            Buf* ib = packet_buffer(e.mIndexBuffer);
+            if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+            {
+                continue;
+            }
+            note_rt_skinned(h.mPass, e, *vb, *ib, (U64)palettes.mAddress + 4ull * e.mPaletteOffset, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+        }
+    }
+}
+
 // the worker side of a record of the body meshes of avatars (kind 4): nothing is drawn, the ray scene skins them on the GPU
 static void on_body_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -3969,6 +4013,11 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     if (h.mKind == 5)
     {
         on_rt_only_packets(h, blob);
+        return;
+    }
+    if (h.mKind == 6 || h.mKind == 7)
+    {
+        on_rigged_note_packets(h, blob);
         return;
     }
     struct PacketGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
