@@ -3330,7 +3330,24 @@ std::string probe_report(double frames)
 } // anonymous namespace
 
 // ray query shadows: a caster draw of a shadow pass, for the scene the lighting traces (llvkrt.cpp)
-static void note_rt_caster(U32 pass, U32 vb, U32 ib, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha = nullptr)
+static void buffer_info_of(const Buf& b, BufferInfo& out)
+{
+    out = BufferInfo();
+    out.mAddress = b.mArena.valid() ? (unsigned long long)b.mVk.mAddress : 0;
+    out.mSize = b.mSize;
+    out.mEpoch = b.mEpoch;
+    out.mVersion = b.mVersion;
+    out.mMoves = b.mMoves;
+    out.mDevice = b.mDevicePath;
+    out.mMapped = b.mArena.valid() ? b.mArena.mMapped : nullptr;
+    out.mCpu = (!b.mShadow.empty() && b.mShadow.size() >= b.mSize) ? b.mShadow.data() : nullptr;
+    if (!b.mVk.valid())
+    {
+        out.mAddress = 0;
+    }
+}
+
+static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha = nullptr)
 {
     Rt::Caster c;
     c.mVb = vb;
@@ -3342,6 +3359,8 @@ static void note_rt_caster(U32 pass, U32 vb, U32 ib, U32 first, U32 count, U32 m
     c.mModel = model;
     c.mAlpha = alpha;
     c.mPass = pass;
+    buffer_info_of(vbuf, c.mVi);
+    buffer_info_of(ibuf, c.mIi);
     Rt::noteCaster(c);
 }
 
@@ -3406,7 +3425,7 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
             alpha.mColorOffset = e.mColorOffset;
             memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
             alpha.mCutoff = e.mCutoff;
-            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr, &alpha);
+            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr, &alpha);
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         g.mPositions[0] = (U32)pa;
@@ -3866,7 +3885,7 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
         }
         if (Rt::active())
         {
-            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         g.mPositions[0] = (U32)pa;

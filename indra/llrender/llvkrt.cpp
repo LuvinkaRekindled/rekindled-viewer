@@ -82,6 +82,8 @@ struct KeyHash
     }
 };
 
+struct Blas;
+
 // what the shadow passes of a frame drew from one buffer pair with one matrix
 struct Group
 {
@@ -90,12 +92,17 @@ struct Group
     std::vector<Range> mRanges;
     std::vector<AlphaInfo> mAlpha;      // kind 1: parallel to mRanges
     U64 mPassSeen[kPasses] = {};        // per shadow pass: the frame number + 1 of the latest note (0 = never)
-    bool mSkip = false;                 // left out of this scene call (debug switches)
+    bool mSkip = false;                 // left out of this scene call
+    Blas* mBlas = nullptr;              // its structure (sBlas nodes keep their place)
+    LLVkGL::BufferInfo mVi, mIi;        // the buffers as of the latest note
+    U64 mNotedTag = 0;                  // frame tag of the latest note
     F32 mPrevModel[16] = {};            // the matrix of the note before
     bool mMoving = false;               // the matrix changed between the last two notes
     bool mDynamic = false;              // its vertex data was rewritten since the structure was last built or refitted (this call)
     float mDistance = 0.f;              // eye space distance of the object's origin (this call)
 };
+
+struct Job;
 
 struct Blas
 {
@@ -112,6 +119,8 @@ struct Blas
     U32 mPrims = 0;
     U32 mRefits = 0;                                // since the last build (a refit keeps the tree: after a number of them, build again)
     U64 mLastSeen = 0;                              // scene call number
+    U64 mJobCall = 0;                               // the scene call a job for this structure belongs to (mJob is valid only then)
+    Job* mJob = nullptr;
 };
 
 struct Tlas
@@ -134,6 +143,7 @@ struct Stats
     Key mMaxScaleKey;
     U64 mWhyNew = 0, mWhyEpoch = 0, mWhyGrew = 0, mWhyIb = 0, mWhyRefitLimit = 0, mNewGroups = 0, mNewMasked = 0;      // why structures were built (and how many casters were new)
     double mCpuMs = 0, mCpuMsMax = 0;
+    double mPhaseMs[6] = {};        // expire, order, scan (with sort), instances, recording, the rest
 };
 
 // Switches that can be changed while the viewer runs: the file named by LL_VK_RT_DEBUG_FILE (default D:/claude/rt-debug.txt) is read again every half second (key=value lines:
@@ -179,7 +189,7 @@ void read_debug_switches()
     DebugSwitches d;
     d.mKeep = env_u64("LL_VK_RT_KEEP_FRAMES", 8);
     d.mAlpha = env_u64("LL_VK_RT_ALPHA", 1) != 0;
-    d.mCheck = env_u64("LL_VK_RT_CHECK", 1) != 0;
+    d.mCheck = env_u64("LL_VK_RT_CHECK", 0) != 0;
     d.mSkipBad = env_u64("LL_VK_RT_SKIPBAD", 1) != 0;
     d.mDynCasters = env_u64("LL_VK_RT_DYNAMIC", 0) != 0;
     if (FILE* f = fopen(path, "rb"))
@@ -247,6 +257,9 @@ U64 sBlasStorageBytes = 0;
 U32 sLastInstances = 0;
 U32 sLastBuilt = 0;
 U32 sTableOffset = 0;
+U32 sSlotCacheName[2048] = {};
+U32 sSlotCacheSlot[2048] = {};
+U64 sSlotCacheTag = 0;
 Stats sStats;
 
 // column-major 4x4 product
@@ -554,32 +567,41 @@ void noteCaster(const Caster& c)
     {
         it = sGroups.emplace(key, Group()).first;
         it->second.mKey = key;
+        it->second.mBlas = &sBlas[key];
         ++sStats.mNewGroups;
     }
+    Group& g = it->second;
     const U32 pass = std::min<U32>(c.mPass, kPasses - 1);
     const U64 frame_tag = Context::instance().getFrameNumber() + 1;
-    it->second.mPassSeen[pass] = frame_tag;
+    g.mPassSeen[pass] = frame_tag;
     sPassFrame[pass] = frame_tag;
+    if (g.mNotedTag != frame_tag)
     {
+        // first note of this frame: the matrix of the object now, and where its buffers live now
         const F32* now_model = c.mModel ? c.mModel : kIdentity;
         F32 diff = 0.f;
         for (int k = 0; k < 16; ++k)
         {
-            diff = std::max(diff, fabsf(now_model[k] - it->second.mModel[k]));
+            diff = std::max(diff, fabsf(now_model[k] - g.mModel[k]));
         }
-        memcpy(it->second.mPrevModel, it->second.mModel, sizeof(it->second.mModel));
-        it->second.mMoving = diff > 1e-5f;
-        memcpy(it->second.mModel, now_model, sizeof(it->second.mModel));       // the matrix of the object now
+        memcpy(g.mPrevModel, g.mModel, sizeof(g.mModel));
+        g.mMoving = diff > 1e-5f;
+        memcpy(g.mModel, now_model, sizeof(g.mModel));
+        g.mVi = c.mVi;
+        g.mIi = c.mIi;
+        g.mNotedTag = frame_tag;
+        g.mBlas->mLastSeen = sSceneCalls;
     }
-    std::vector<Range>& ranges = it->second.mRanges;
+    std::vector<Range>& ranges = g.mRanges;
     const Range r = { c.mFirst, c.mCount };
     for (size_t k = 0; k < ranges.size(); ++k)
     {
         if (ranges[k] == r)
         {
-            if (c.mAlpha)
+            if (c.mAlpha && memcmp(&g.mAlpha[k], c.mAlpha, sizeof(AlphaInfo)) != 0)
             {
-                it->second.mAlpha[k] = *c.mAlpha;       // the textures may have changed
+                g.mAlpha[k] = *c.mAlpha;                // the textures may have changed
+                g.mBlas->mAlpha[r.id()] = *c.mAlpha;
             }
             return;
         }
@@ -587,7 +609,11 @@ void noteCaster(const Caster& c)
     if (ranges.size() < 512)
     {
         ranges.push_back(r);
-        it->second.mAlpha.push_back(c.mAlpha ? *c.mAlpha : AlphaInfo());
+        g.mAlpha.push_back(c.mAlpha ? *c.mAlpha : AlphaInfo());
+        if (c.mKind == 1)
+        {
+            g.mBlas->mAlpha[r.id()] = g.mAlpha.back();     // the alpha test data of each range of a masked structure, as last drawn
+        }
     }
 }
 
@@ -635,6 +661,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     ++sSceneCalls;
     const U64 keep = sDbg.mKeep;
 
+    auto lap = [&](int phase, std::chrono::steady_clock::time_point& last) {
+        const auto now = std::chrono::steady_clock::now();
+        sStats.mPhaseMs[phase] += std::chrono::duration<double, std::milli>(now - last).count();
+        last = now;
+    };
+    auto t_lap = t0;
+
     // forget structures that were not named for a while, and casters nothing has named for a few frames
     if (sSceneCalls % 120 == 0)
     {
@@ -653,7 +686,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         }
     }
 
+    static U64 expired_tag = 0;
+    if (expired_tag != ctx.getFrameNumber() + 1)
     {
+        expired_tag = ctx.getFrameNumber() + 1;
         const U64 tag = ctx.getFrameNumber() + 1;
         for (auto it = sGroups.begin(); it != sGroups.end();)
         {
@@ -686,61 +722,48 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         }
     }
 
+    lap(0, t_lap);
     // ---- 1. what is stale -----------------------------------------------------------------------------------
     std::vector<Job> jobs;
     jobs.reserve((size_t)max_builds);
     U64 tris_budget = max_tris;
     LLVkGL::BufferInfo vi, ii;
     VkDeviceSize scratch_total = 0;
-    // nearest first (the distance of the object's origin in eye space): while a scene loads the budget goes to what is around the camera
+    // Which groups may need work: never built, or named this frame with changed buffers or new ranges. Everything else is left alone (the scan does no lookups for the many
+    // groups that did not change). Nearest first (the distance of the object's origin in eye space): while a scene loads the budget goes to what is around the camera.
+    const U64 scan_tag = ctx.getFrameNumber() + 1;
     std::vector<std::pair<float, Group*>> order;
-    order.reserve(sGroups.size());
-    U32 common_id = 0;
-    std::unordered_map<U32, U32> id_counts;
-    {
-        U32 best = 0;
-        for (auto& kv : sGroups)
-        {
-            const U32 n = ++id_counts[kv.second.mKey.mMatrixId];
-            if (n > best)
-            {
-                best = n;
-                common_id = kv.second.mKey.mMatrixId;
-            }
-        }
-    }
-    const S32 only_mode = sDbg.mCommonOnly ? 1 : sDbg.mOnly;
-    U32 dumped = 0;
     for (auto& kv : sGroups)
     {
         Group& g = kv.second;
+        // a region's own matrix is marked by the viewer (top bit of the id, pipeline.cpp rt_matrix_id); anything else is an object that moves or is attached
+        g.mSkip = (g.mKey.mKind == 1 && !alpha_on) || (!sDbg.mDynCasters && (g.mKey.mMatrixId & 0x80000000u) == 0 && g.mKey.mMatrixId != 0);
+        if (g.mSkip)
+        {
+            continue;
+        }
+        const Blas& b = *g.mBlas;
+        if (b.mAs != VK_NULL_HANDLE)
+        {
+            if (g.mNotedTag != scan_tag)
+            {
+                continue;                       // built, and not named this frame
+            }
+            bool changed = b.mVbEpoch != g.mVi.mEpoch || b.mIbEpoch != g.mIi.mEpoch || b.mVbVersion != g.mVi.mVersion || b.mIbVersion != g.mIi.mVersion || b.mRefits >= rebuild_after_refits;
+            for (size_t k = 0; !changed && k < g.mRanges.size(); ++k)
+            {
+                changed = std::find(b.mBuilt.begin(), b.mBuilt.end(), g.mRanges[k]) == b.mBuilt.end();
+            }
+            if (!changed)
+            {
+                continue;
+            }
+        }
         F32 m[16];
         mat_mul(view, g.mModel, m);
-        g.mDistance = sqrtf(m[12] * m[12] + m[13] * m[13] + m[14] * m[14]);
-        // a region's matrix is shared by hundreds of groups (every spatial group of the region, and the neighbours have theirs); a moving object's own matrix by a few
-        // the viewer marks a region's own matrix with the top bit of the id (pipeline.cpp rt_matrix_id); anything else is an object that moves or is attached
-        const bool region = (g.mKey.mMatrixId & 0x80000000u) != 0;
-        const bool null_matrix = g.mKey.mMatrixId == 0;
-        g.mSkip = false;
-        if (!sDbg.mDynCasters && !region && !null_matrix) g.mSkip = true;
-        if (only_mode == 1 && !region) g.mSkip = true;
-        if (only_mode == 2 && !region && !null_matrix) g.mSkip = true;
-        if (only_mode == 3 && !region && null_matrix) g.mSkip = true;
-        if (sDbg.mMoving == 1 && g.mMoving) g.mSkip = true;
-        if (sDbg.mMoving == 2 && !g.mMoving) g.mSkip = true;
-        if (sDbg.mKind == 1 && g.mKey.mKind != 0) g.mSkip = true;
-        if (sDbg.mKind == 2 && g.mKey.mKind != 1) g.mSkip = true;
-        if (!region && (g.mDistance < sDbg.mMinDist || (sDbg.mMaxDist > 0.f && g.mDistance > sDbg.mMaxDist))) g.mSkip = true;
-        if (sDbg.mDump && !region && dumped < 80)
-        {
-            ++dumped;
-            auto bi = sBlas.find(g.mKey);
-            LL_INFOS("VkRt") << "non-region group: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " kind " << g.mKey.mKind << " matrix id " << g.mKey.mMatrixId << " ranges " << g.mRanges.size()
-                             << " dist " << g.mDistance << " moving " << g.mMoving << " model diag " << g.mModel[0] << "," << g.mModel[5] << "," << g.mModel[10] << " pos " << g.mModel[12] << ","
-                             << g.mModel[13] << "," << g.mModel[14] << " prims " << (bi != sBlas.end() ? bi->second.mPrims : 0) << " refits " << (bi != sBlas.end() ? bi->second.mRefits : 0) << LL_ENDL;
-        }
         order.emplace_back(m[12] * m[12] + m[13] * m[13] + m[14] * m[14], &g);
     }
+    lap(1, t_lap);
     std::sort(order.begin(), order.end(), [](const std::pair<float, Group*>& a, const std::pair<float, Group*>& b) { return a.first < b.first; });
     for (const auto& entry : order)
     {
@@ -749,51 +772,26 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             continue;
         }
-        if (!LLVkGL::getBufferInfo(g.mKey.mVb, vi) || !LLVkGL::getBufferInfo(g.mKey.mIb, ii) || !vi.mAddress || !ii.mAddress || vi.mSize < 16 || ii.mSize < 6)
+        if (g.mNotedTag == scan_tag)
+        {
+            vi = g.mVi;
+            ii = g.mIi;
+        }
+        else if (!LLVkGL::getBufferInfo(g.mKey.mVb, vi) || !LLVkGL::getBufferInfo(g.mKey.mIb, ii))
         {
             ++sStats.mNoData;
             continue;
         }
-        Blas& b = sBlas[g.mKey];
+        if (!vi.mAddress || !ii.mAddress || vi.mSize < 16 || ii.mSize < 6)
+        {
+            ++sStats.mNoData;
+            continue;
+        }
+        Blas& b = *g.mBlas;
         b.mLastSeen = sSceneCalls;
-        if (sDbg.mCompare && vi.mCpu && vi.mMapped && ii.mCpu && ii.mMapped)
-        {
-            static U32 compared = 0, mismatched = 0;
-            ++compared;
-            ++sStats.mCompared;
-            const size_t vn = (size_t)std::min<U64>(vi.mSize, 8192), in = (size_t)std::min<U64>(ii.mSize, 8192);
-            const bool vbad = memcmp(vi.mCpu, vi.mMapped, vn) != 0, ibad = memcmp(ii.mCpu, ii.mMapped, in) != 0;
-            if (vbad || ibad)
-            {
-                ++mismatched;
-                ++sStats.mMismatched;
-                if (mismatched <= 40)
-                {
-                    size_t vdiff = 0, idiff = 0;
-                    for (size_t k = 0; k < vn; ++k) vdiff += ((const U8*)vi.mCpu)[k] != ((const U8*)vi.mMapped)[k];
-                    for (size_t k = 0; k < in; ++k) idiff += ((const U8*)ii.mCpu)[k] != ((const U8*)ii.mMapped)[k];
-                    LL_WARNS("VkRt") << "system copy differs from the mapped video memory: vb " << g.mKey.mVb << " (" << vi.mSize << " bytes, " << vdiff << " of the first " << vn << " bytes differ) ib "
-                                     << g.mKey.mIb << " (" << ii.mSize << " bytes, " << idiff << " of the first " << in << " differ), version " << vi.mVersion << " moves " << vi.mMoves
-                                     << " (compared " << compared << ", mismatched " << mismatched << ")" << LL_ENDL;
-                }
-            }
-        }
-        const bool device_buffers = vi.mDevice || ii.mDevice;
-        if ((sDbg.mSkipBuf == 1 && device_buffers) || (sDbg.mSkipBuf == 2 && !device_buffers))
-        {
-            g.mSkip = true;
-            continue;
-        }
-        g.mDynamic = b.mAs != VK_NULL_HANDLE && (b.mVbVersion != vi.mVersion || b.mIbVersion != ii.mVersion);
-        if ((sDbg.mDynamic == 1 && g.mDynamic) || (sDbg.mDynamic == 2 && !g.mDynamic))
-        {
-            g.mSkip = true;
-            continue;
-        }
         if (b.mAs != VK_NULL_HANDLE && (b.mVbEpoch != vi.mEpoch || b.mIbEpoch != ii.mEpoch))
         {
             drop_blas(b);                       // the names hold something else now
-            b.mAlpha.clear();
             ++sStats.mWhyEpoch;
         }
         if (b.mAs == VK_NULL_HANDLE)
@@ -818,10 +816,6 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             if (!b.mBad.empty() && std::find(b.mBad.begin(), b.mBad.end(), r.id()) != b.mBad.end())
             {
                 continue;                       // failed the data check for these buffer versions
-            }
-            if (g.mKey.mKind == 1)
-            {
-                b.mAlpha[r.id()] = g.mAlpha[k];     // the textures and cutoff as drawn now
             }
             if (std::find(want.begin(), want.end(), r) == want.end())
             {
@@ -1045,8 +1039,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         scratch_total = job.mScratchOffset + job.mScratchSize + sDbg.mPad;
         tris_budget = prims >= tris_budget ? 0 : tris_budget - prims;
         jobs.push_back(std::move(job));
+        b.mJob = &jobs.back();
+        b.mJobCall = sSceneCalls;
     }
 
+    lap(2, t_lap);
     // ---- 2. instances and the geometry table of the masked structures --------------------------------------
     // a structure that is being (re)built now is part of this frame's scene: its new address is used
     Tlas& tlas = sTlas[ctx.getFrameSlot()];
@@ -1069,27 +1066,16 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
 
     std::vector<VkAccelerationStructureInstanceKHR> instances;
     instances.reserve(sGroups.size());
-    std::unordered_map<Key, const Job*, KeyHash> job_of;
-    for (const Job& j : jobs)
-    {
-        job_of[j.mKey] = &j;
-    }
     for (auto& kv : sGroups)
     {
         const Group& g = kv.second;
-        if ((g.mKey.mKind == 1 && !alpha_on) || g.mSkip)
+        if (g.mSkip || (g.mKey.mKind == 1 && !alpha_on))
         {
             continue;
         }
-        auto bit = sBlas.find(g.mKey);
-        if (bit == sBlas.end())
-        {
-            continue;
-        }
-        const Blas& b = bit->second;
+        const Blas& b = *g.mBlas;
         VkDeviceAddress address = b.mAddress;
-        auto jit = job_of.find(g.mKey);
-        const Job* job = jit != job_of.end() ? jit->second : nullptr;
+        const Job* job = b.mJobCall == sSceneCalls ? b.mJob : nullptr;
         if (job && !job->mUpdate)
         {
             address = job->mNewAddress;
@@ -1108,7 +1094,17 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             // one record per geometry, in the order of the structure's geometry list
             const std::vector<Range>& set = job ? job->mSet : b.mBuilt;
-            if (records + set.size() > kMaxRecords || !LLVkGL::getBufferInfo(g.mKey.mVb, vi) || !LLVkGL::getBufferInfo(g.mKey.mIb, ii))
+            if (g.mNotedTag == scan_tag)
+            {
+                vi = g.mVi;
+                ii = g.mIi;
+            }
+            else if (!LLVkGL::getBufferInfo(g.mKey.mVb, vi) || !LLVkGL::getBufferInfo(g.mKey.mIb, ii))
+            {
+                ++sStats.mNoData;
+                continue;
+            }
+            if (records + set.size() > kMaxRecords)
             {
                 ++sStats.mTableFull;
                 continue;
@@ -1145,7 +1141,20 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 {
                     if (a.mTextures[k] && slot_of)
                     {
-                        slot[k] = slot_of(a.mTextures[k]) & 0xFFFFu;
+                        // many geometries share textures: a texture's slot is asked for once per frame
+                        const U32 name = a.mTextures[k];
+                        const U32 h = (name * 2654435761u) >> 21;
+                        if (sSlotCacheTag != frame_now + 1 || sSlotCacheName[h] != name)
+                        {
+                            if (sSlotCacheTag != frame_now + 1)
+                            {
+                                memset(sSlotCacheName, 0, sizeof(sSlotCacheName));
+                                sSlotCacheTag = frame_now + 1;
+                            }
+                            sSlotCacheName[h] = name;
+                            sSlotCacheSlot[h] = slot_of(name) & 0xFFFFu;
+                        }
+                        slot[k] = sSlotCacheSlot[h];
                     }
                 }
                 rec.mSlots[0] = slot[0] | (slot[1] << 16);
@@ -1218,6 +1227,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         instances.push_back(inst);
     }
 
+    lap(3, t_lap);
     // ---- 3. record: builds, then the top-level structure -----------------------------------------------------
     VkAccelerationStructureBuildSizesInfoKHR tlas_size;
     tlas_sizes(tlas.mCapacity, tlas_size);
@@ -1327,6 +1337,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         b.mPrims = j.mPrims;
         b.mUpdateScratch = j.mUpdateScratch;
     }
+    lap(4, t_lap);
     ++sStats.mScenes;
     sStats.mInstances += instances.size();
     sLastInstances = (U32)instances.size();
@@ -1387,10 +1398,10 @@ std::string report(double frames)
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
              "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
-             "CPU %.3f ms/call (worst %.2f ms), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
+             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
              shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / f, (double)s.mBuilds / f,
              (double)s.mPrimsBuilt / f, (double)s.mRefits / f, (double)s.mPrimsRefit / f, (double)s.mDeferred / f, (double)s.mNoData / f, (double)s.mAlphaStructs / f, (double)s.mTableFull / f,
-             (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax,
+             (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax, s.mPhaseMs[0] / scenes, s.mPhaseMs[1] / scenes, s.mPhaseMs[2] / scenes, s.mPhaseMs[3] / scenes, s.mPhaseMs[4] / scenes,
              (double)sScratch.mSize / 1048576.0, (double)s.mWhyNew / f, (double)s.mWhyEpoch / f, (double)s.mWhyGrew / f, (double)s.mWhyIb / f, (double)s.mWhyRefitLimit / f,
              (double)s.mNewGroups / f, sGroups.size(), (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
              s.mMaxScaleKey.mMatrixId, s.mMaxScaleKey.mKind);
