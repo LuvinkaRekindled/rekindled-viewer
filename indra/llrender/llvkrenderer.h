@@ -331,6 +331,10 @@ public:
     // texture uploads since the last call: how many, how many bytes, how many ended a render pass that was in progress
     struct UploadStats { U32 mCount = 0; U64 mBytes = 0; U32 mPassSplits = 0; };
     UploadStats takeUploadStats() { UploadStats s = mUploadStats; mUploadStats = UploadStats(); return s; }
+    // C9 diagnostics (LL_VK_PHASES): what the image layout transitions were for. setBarrierCause names the reason for the transitions made until it is set again (returns the old one).
+    const char* setBarrierCause(const char* cause) { const char* old = mBarrierCause; mBarrierCause = cause; return old; }
+    // the transitions since the last call grouped by cause, image kind and layout change (per frame), the images with the most, and how many ended a render pass
+    std::string takeBarrierReport(size_t frames);
     static U32 compressedMipBytes(const Image& image, U32 mip);
     // debug: records copies of the given pixel rows of a colour image (level/layer of the view) into a host buffer, tightly packed, in the current frame
     bool recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuffer buffer);
@@ -451,6 +455,17 @@ private:
     U32 mRingPeak = 0;                  // largest ring use of any frame since the last getRingStats()
     U32 mRingExhausted = 0;             // draws dropped because the ring was full
     UploadStats mUploadStats;
+    const char* mBarrierCause = "other";
+    struct BarrierStat { U32 mCount = 0; U32 mEndedPass = 0; };
+    std::unordered_map<std::string, BarrierStat> mBarrierStats;
+    std::unordered_map<const Image*, U32> mBarrierPerImage;
+    bool mBarrierEndedPass = false;                 // the transition being made had to end a render pass first
+    void noteBarrier(const Image& image, VkImageLayout from, VkImageLayout to);
+    // C9: the depth-target use of each draw (write on / depth buffer sampled by the program) and what each change of use cost
+    U32 mDepthUseCounts[4] = {};
+    int mDepthUsePrev = -1;
+    const Image* mDepthUseRoot = nullptr;
+    std::unordered_map<std::string, U32> mDepthUseChanges;      // "from>to program" -> draws that changed the use
     struct BufferCopy { VkBuffer mDst; VkDeviceSize mDstOffset; VkBuffer mSrc; VkDeviceSize mSrcOffset; VkDeviceSize mSize; };
     struct DeferredCopy { VkBuffer mDst; VkDeviceSize mDstOffset; std::vector<U8> mData; };
     std::vector<BufferCopy> mPendingCopies;         // in staging memory, to be recorded
@@ -491,6 +506,7 @@ private:
     bool mViewportSet = false;
     bool mInBegin = false;
     bool mDepthRO = false;          // depth attachment is also sampled: bound read-only
+    const Image* mDepthRORoot = nullptr;   // the depth image the read-only binding was chosen for
     U32 mAppliedColorCount = 0xFFFF;
 
     // draw state

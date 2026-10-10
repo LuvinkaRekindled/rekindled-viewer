@@ -2701,7 +2701,9 @@ static U32 packet_texture_slot(Renderer& r, GLuint name)
     }
     if (t->mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
     {
+        const char* prev_cause = r.setBarrierCause("packet texture");
         r.ensureLayout(t->mImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        r.setBarrierCause(prev_cause);
     }
     const U32 epoch = r.bindlessEpoch();
     if (t->mBindlessEpoch == epoch && t->mBindlessView == t->mImage.mView)
@@ -3646,6 +3648,7 @@ void after_frame()
                         const U64 built = gSyncStats.mPipelinesBuilt.load(std::memory_order_relaxed);
                         const U64 micros = gSyncStats.mPipelineBuildMicros.load(std::memory_order_relaxed);
                         const U64 slowest = gSyncStats.mPipelineBuildMaxMicros.exchange(0, std::memory_order_relaxed);
+                        LL_INFOS("VkPhases") << "barrier causes: " << Renderer::instance().takeBarrierReport((size_t)frames) << LL_ENDL;
                         LL_INFOS("VkPhases") << "image barriers per frame: " << (double)(barriers - last_barriers) / frames << "; graphics pipelines built in this period: "
                                              << (built - last_built) << " (" << (double)(micros - last_micros) / 1000.0 << " ms in the driver in total, slowest "
                                              << (double)slowest / 1000.0 << " ms)" << LL_ENDL;

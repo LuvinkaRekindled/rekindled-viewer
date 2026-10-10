@@ -1450,6 +1450,7 @@ void Renderer::transition(VkCommandBuffer cmd, Image& view_or_image, VkImageLayo
         view_or_image.mLayout = layout;
         return;
     }
+    noteBarrier(image, image.mLayout, layout);
     if (image.mLayout == VK_IMAGE_LAYOUT_UNDEFINED && image.mZeroOnFirstUse)
     {
         image.mZeroOnFirstUse = false;
@@ -1500,6 +1501,104 @@ void Renderer::transition(VkCommandBuffer cmd, Image& view_or_image, VkImageLayo
     view_or_image.mLayout = layout;
 }
 
+static const char* layout_name(VkImageLayout l)
+{
+    switch (l)
+    {
+    case VK_IMAGE_LAYOUT_UNDEFINED: return "undef";
+    case VK_IMAGE_LAYOUT_GENERAL: return "general";
+    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: return "color";
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL: return "depth";
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL: return "depthRO";
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: return "sample";
+    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: return "xferSrc";
+    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: return "xferDst";
+    case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR: return "present";
+    default: return "other";
+    }
+}
+
+static std::string image_kind(const Image& im)
+{
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%ux%u f%d m%u l%u", im.mExtent.width, im.mExtent.height, (int)im.mFormat, im.mMipLevels, im.mLayers);
+    return buf;
+}
+
+void Renderer::noteBarrier(const Image& image, VkImageLayout from, VkImageLayout to)
+{
+    static const bool on = getenv("LL_VK_PHASES") != nullptr;
+    if (!on)
+    {
+        mBarrierEndedPass = false;
+        return;
+    }
+    const std::string key = std::string(mBarrierCause) + " | " + image_kind(image) + " | " + layout_name(from) + ">" + layout_name(to);
+    BarrierStat& st = mBarrierStats[key];
+    ++st.mCount;
+    if (mBarrierEndedPass)
+    {
+        ++st.mEndedPass;
+    }
+    ++mBarrierPerImage[&image];
+    mBarrierEndedPass = false;
+}
+
+std::string Renderer::takeBarrierReport(size_t frames)
+{
+    const double f = (double)std::max<size_t>(1, frames);
+    std::vector<std::pair<std::string, BarrierStat>> rows(mBarrierStats.begin(), mBarrierStats.end());
+    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.second.mCount > b.second.mCount; });
+    U64 total = 0, ended = 0;
+    std::map<std::string, U64> by_cause;
+    for (const auto& r : rows)
+    {
+        total += r.second.mCount;
+        ended += r.second.mEndedPass;
+        by_cause[r.first.substr(0, r.first.find(" | "))] += r.second.mCount;
+    }
+    std::string out;
+    char buf[256];
+    snprintf(buf, sizeof(buf), "layout transitions per frame %.1f (%.1f of them ended a render pass); by cause:", (double)total / f, (double)ended / f);
+    out = buf;
+    for (const auto& c : by_cause)
+    {
+        snprintf(buf, sizeof(buf), " %s %.1f,", c.first.c_str(), (double)c.second / f);
+        out += buf;
+    }
+    out += " | top changes (cause | image | layouts: per frame, ended a pass):";
+    for (size_t i = 0; i < rows.size() && i < 14; ++i)
+    {
+        snprintf(buf, sizeof(buf), " [%s: %.1f, %.1f]", rows[i].first.c_str(), (double)rows[i].second.mCount / f, (double)rows[i].second.mEndedPass / f);
+        out += buf;
+    }
+    std::vector<std::pair<const Image*, U32>> imgs(mBarrierPerImage.begin(), mBarrierPerImage.end());
+    std::sort(imgs.begin(), imgs.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    out += " | images with the most transitions per frame (of " + std::to_string(imgs.size()) + " distinct):";
+    for (size_t i = 0; i < imgs.size() && i < 8; ++i)
+    {
+        snprintf(buf, sizeof(buf), " [#%04x %s: %.1f]", (unsigned)(((size_t)imgs[i].first >> 4) & 0xFFFF), image_kind(*imgs[i].first).c_str(), (double)imgs[i].second / f);
+        out += buf;
+    }
+    {
+        snprintf(buf, sizeof(buf), " | draws by depth use per frame: plain %.1f, samples %.1f, writes %.1f, writes+samples %.1f; changes of use (per frame):",
+                 (double)mDepthUseCounts[0] / f, (double)mDepthUseCounts[1] / f, (double)mDepthUseCounts[2] / f, (double)mDepthUseCounts[3] / f);
+        out += buf;
+        std::vector<std::pair<std::string, U32>> ch(mDepthUseChanges.begin(), mDepthUseChanges.end());
+        std::sort(ch.begin(), ch.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        for (size_t i = 0; i < ch.size() && i < 12; ++i)
+        {
+            snprintf(buf, sizeof(buf), " [%s: %.1f]", ch[i].first.c_str(), (double)ch[i].second / f);
+            out += buf;
+        }
+        for (U32& c : mDepthUseCounts) c = 0;
+        mDepthUseChanges.clear();
+    }
+    mBarrierStats.clear();
+    mBarrierPerImage.clear();
+    return out;
+}
+
 void Renderer::ensureLayout(Image& image, VkImageLayout layout)
 {
     Image* root = root_of(&image);
@@ -1519,6 +1618,7 @@ void Renderer::ensureLayout(Image& image, VkImageLayout layout)
     if (mRendering)
     {
         endRendering();
+        mBarrierEndedPass = true;
     }
     else if (mPendingClear && !mInBegin)
     {
@@ -1526,6 +1626,7 @@ void Renderer::ensureLayout(Image& image, VkImageLayout layout)
         {
             flushPendingClear();     // the clear is recorded before the image changes layout
             endRendering();
+            mBarrierEndedPass = true;
         }
     }
     transition(mCmd, image, layout);
@@ -1552,7 +1653,9 @@ void Renderer::beginRenderingIfNeeded()
     for (U32 i = 0; i < mColorCount; ++i)
     {
         Image* img = mColorTargets[i];
+        const char* prev_cause = setBarrierCause("attach color");
         ensureLayout(*img, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        setBarrierCause(prev_cause);
         colors[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
         colors[i].imageView = img->mView;
         colors[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -1565,7 +1668,9 @@ void Renderer::beginRenderingIfNeeded()
     if (mDepthTarget)
     {
         const VkImageLayout depth_layout = mDepthRO ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        const char* prev_cause = setBarrierCause(mDepthRO ? "attach depthRO" : "attach depth");
         ensureLayout(*mDepthTarget, depth_layout);
+        setBarrierCause(prev_cause);
         depth.imageView = mDepthTarget->mView;
         depth.imageLayout = depth_layout;
         depth.loadOp = ((mPendingClear & CLEAR_DEPTH) && !mDepthRO) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -1845,12 +1950,46 @@ void Renderer::applyState()
             }
         }
     }
-    const bool depth_ro = depth_sampled && !mDepthStencil.mDepthWrite;
+    {
+        static const bool diag = getenv("LL_VK_PHASES") != nullptr;
+        if (diag && depth_root && mProgram)
+        {
+            static const char* const use_name[4] = { "plain", "samples", "writes", "writes+samples" };       // plain: no write, not sampled
+            const int use = (mDepthStencil.mDepthWrite ? 2 : 0) + (depth_sampled ? 1 : 0);
+            ++mDepthUseCounts[use];
+            if (mDepthUseRoot != depth_root)
+            {
+                mDepthUseRoot = depth_root;
+                mDepthUsePrev = -1;
+            }
+            if (mDepthUsePrev >= 0 && mDepthUsePrev != use)
+            {
+                ++mDepthUseChanges[std::string(use_name[mDepthUsePrev]) + ">" + use_name[use] + " " + mProgram->mName];
+            }
+            mDepthUsePrev = use;
+        }
+    }
+    bool depth_ro = depth_sampled && !mDepthStencil.mDepthWrite;
+    {
+        // C9: a draw that neither writes depth nor reads the depth buffer works in either layout, so it keeps the one the pass is in (it used to force the
+        // writable layout, which ended the pass and turned the layout back and forth around every draw that samples the depth: about 50 times a frame in a busy scene)
+        static const bool sticky = getenv("LL_VK_STICKY_DEPTH") == nullptr || getenv("LL_VK_STICKY_DEPTH")[0] != '0';
+        const DepthStencilState& ds = mDepthStencil;
+        const bool stencil_writes = ds.mStencilTest && ds.mWriteMask && (ds.mFail != VK_STENCIL_OP_KEEP || ds.mDepthFail != VK_STENCIL_OP_KEEP || ds.mPass != VK_STENCIL_OP_KEEP);
+        if (sticky && depth_root && !depth_sampled && !ds.mDepthWrite && !stencil_writes && mDepthRO && mDepthRORoot == depth_root && !(mPendingClear & CLEAR_DEPTH))
+        {
+            depth_ro = true;
+        }
+    }
     if (depth_ro != mDepthRO)
     {
         flushPendingClear();
         endRendering();
         mDepthRO = depth_ro;
+    }
+    if (depth_ro)
+    {
+        mDepthRORoot = depth_root;
     }
 
     // 2. textures must be in a sampling layout before a pass is (re)started
@@ -1863,7 +2002,9 @@ void Renderer::applyState()
             resolved[k] = img;
             if (img && img != &mWhite && !(depth_root && root_of(img) == depth_root) && img->mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             {
+                const char* prev_cause = setBarrierCause("draw samples");
                 ensureLayout(*img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                setBarrierCause(prev_cause);
             }
         }
     }
@@ -2420,7 +2561,9 @@ bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>
     }
     for (const auto& i : images)
     {
+        const char* prev_cause = setBarrierCause("external");
         ensureLayout(*i.first, i.second);
+        setBarrierCause(prev_cause);
     }
     endRendering();
     record(mCmd);
