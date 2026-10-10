@@ -58,6 +58,9 @@ namespace LLVkTex
     void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out);
     void getCompressedImage(U32 id, U32 target, S32 level, void* out);
 
+    // a texture slot (LLTexUnit): what a draw samples from the unit. Typed record on the main producer; applied directly in inline mode; other threads render nothing, so nothing.
+    void bindSlot(S32 unit, U32 target, U32 id);
+
     // ---- slot table for the helpers that act on 'the bound texture' (main thread) ----
     inline U32 targetClass(U32 target)
     {
@@ -95,6 +98,7 @@ namespace LLVkGL
     int tex_level_parameter(unsigned id, unsigned target, int level, unsigned pname);
     void tex_get_image(unsigned id, unsigned target, int level, unsigned format, unsigned type, void* out);
     void tex_get_compressed_image(unsigned id, unsigned target, int level, void* out);
+    void slot_bind(unsigned unit, unsigned target, unsigned name);
     // the calling thread's unpack state in inline mode (before the queue starts)
     LLVkTex::PixelStore inline_pixel_store();
 }

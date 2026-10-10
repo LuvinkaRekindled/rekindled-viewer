@@ -275,8 +275,6 @@ constexpr GLenum GL_ELEMENT_ARRAY_BUFFER_ENUM = 0x8893;
 
 struct Coalesce
 {
-    bool mActiveValid = false;
-    GLenum mActiveUnit = 0;
     bool mRunOpen = false;
     bool mRunHasBind = false;
     bool mRunHasElem = false;
@@ -297,16 +295,6 @@ inline void rawPush(U16 op, const void* args, unsigned size)
     }
     mainCommit(size);
     ++gMainRecords;
-}
-
-void coFlushActive()
-{
-    if (gCo.mActiveValid)
-    {
-        gCo.mActiveValid = false;
-        A_glActiveTexture a = { gCo.mActiveUnit };
-        rawPush(OP_glActiveTexture, &a, sizeof(a));
-    }
 }
 
 void coFlushRun()
@@ -379,7 +367,6 @@ void flushPendingTex(int why = 0)
     mainCommit(payload);
     ++gMainRecords;
     gPendMask = 0;
-    gCo.mActiveValid = false;       // the record set the active unit (gLatestActive)
 }
 
 // <FS> draw-record plan: loose uniform writes (scalar, vector, matrix) of the main thread are not records of their own either. They pile up here as
@@ -427,9 +414,8 @@ inline void uniAppend(U32 op, const void* args, size_t asz, const void* data, si
 // held glActiveTexture and the open array run (what the coalescer holds), not the pending texture slots
 inline void coFlushHeld()
 {
-    if (gCo.mActiveValid || gCo.mRunOpen)
+    if (gCo.mRunOpen)
     {
-        coFlushActive();
         coFlushRun();
     }
 }
@@ -460,37 +446,17 @@ inline bool texIndependent(U16 op)
 // true: the call was held or merged; false: it has to be written as it is (what was held has been written first)
 bool coPush(U16 op, const void* args)
 {
-    if (gPendMask && op != OP_glActiveTexture && !texIndependent(op))
+    if (gPendMask && !texIndependent(op))
     {
         flushPendingTex(opStatSlot(op));
     }
     switch (op)
     {
-    case OP_glActiveTexture:
-        coFlushRun();
-        gCo.mActiveUnit = ((const A_glActiveTexture*)args)->texture;
-        gLatestActive = gCo.mActiveUnit;
-        gCo.mActiveValid = true;
-        return true;
-    case OP_glBindTexture:
-    {
-        coFlushRun();
-        if (!gCo.mActiveValid)
-        {
-            return false;
-        }
-        const A_glBindTexture* a = (const A_glBindTexture*)args;
-        const BindTexUnitArgs b = { gCo.mActiveUnit, a->target, a->texture, 0 };
-        gCo.mActiveValid = false;
-        rawPush(CMD_BIND_TEXTURE_UNIT, &b, sizeof(b));
-        return true;
-    }
     case OP_glBindBuffer:
     {
         const BufArgs* a = (const BufArgs*)args;
         if (a->target == GL_ELEMENT_ARRAY_BUFFER_ENUM && gFoldElement)
         {
-            coFlushActive();
             if (gCo.mRunOpen && gCo.mRunHasElem)
             {
                 coFlushRun();           // one index buffer bind per run: the next one starts a run of its own
@@ -510,7 +476,6 @@ bool coPush(U16 op, const void* args)
             coFlushAll();
             return false;
         }
-        coFlushActive();
         coFlushRun();
         gCo.mRunOpen = true;
         gCo.mRunHasBind = true;
@@ -522,7 +487,6 @@ bool coPush(U16 op, const void* args)
     case OP_glVertexAttribPointer:
     case OP_glVertexAttribIPointer:
     {
-        coFlushActive();
         if (!gCo.mRunOpen)
         {
             gCo.mRunOpen = true;
@@ -630,32 +594,6 @@ bool mainProducer()
     return gEnabled && gTyped && isMainThread();
 }
 
-void activeTextureUnit(U32 unit)
-{
-    MainLap lap;
-    gLatestActive = unit;
-    coFlushRun();       // the same order the held glActiveTexture call keeps
-    if (gCo.mActiveValid && gCo.mActiveUnit != unit)
-    {
-        coFlushActive();
-    }
-    gCo.mActiveUnit = unit;
-    gCo.mActiveValid = true;
-}
-
-void texParameters(U32 target, const TexParam* params, U32 count)
-{
-    MainLap lap;
-    coFlushAll(opStatSlot(CMD_TEX_PARAMS));       // the active unit and any open run go first
-    const U32 payload = (U32)(sizeof(U32) * 2 + sizeof(TexParam) * count);
-    U8* p = mainReserve(payload, CMD_TEX_PARAMS, 0);
-    const U32 head[2] = { target, count };
-    memcpy(p, head, sizeof(head));
-    memcpy(p + sizeof(head), params, sizeof(TexParam) * count);
-    mainCommit(payload);
-    ++gMainRecords;
-}
-
 void framebufferAttach(U32 fbo, U32 attachment, U32 textarget, U32 texture, U32 restore_fbo)
 {
     MainLap lap;
@@ -690,16 +628,11 @@ void bindTextureUnit(U32 unit, U32 target, U32 texture)
     const U32 u = unit - TEX_UNIT_BASE;
     if (u >= 32)
     {
-        coFlushAll();
-        const BindTexUnitArgs b = { unit, target, texture, 0 };
-        rawPush(CMD_BIND_TEXTURE_UNIT, &b, sizeof(b));
         return;
     }
-    // the slot table is the record: a held glActiveTexture is superseded (the last unit is carried with the slots), nothing is written here
-    gCo.mActiveValid = false;
+    // the slot table is the record: nothing is written here, what changed goes out with the next draw (or when something that can read texture state comes first)
     gPendTex[u] = { target, texture };
     gPendMask |= 1u << u;
-    gLatestActive = unit;
 }
 
 namespace
@@ -760,10 +693,6 @@ void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const 
     ++gMainRecords;
     gPendMask = 0;
     gPendUni.clear();
-    if (n)
-    {
-        gCo.mActiveValid = false;
-    }
 }
 
 void drawArrays(U32 mode, S32 first, S32 count)
@@ -792,10 +721,6 @@ void drawArrays(U32 mode, S32 first, S32 count)
     ++gMainRecords;
     gPendMask = 0;
     gPendUni.clear();
-    if (n)
-    {
-        gCo.mActiveValid = false;
-    }
 }
 
 void gpuZone(const char* name, bool begin)
@@ -1492,6 +1417,21 @@ void pushImage(TexKind kind, TexArgs a, const void* pixels, size_t bytes)
 inline std::lock_guard<LLVkMirror::Mutex> inlineLock() { return std::lock_guard<LLVkMirror::Mutex>(LLVkGL::gMutex); }
 }
 
+void bindSlot(S32 unit, U32 target, U32 id)
+{
+    noteBind(unit, target, id);
+    if (LLVkAsync::gEnabled)
+    {
+        if (isMainThread())
+        {
+            LLVkAsync::bindTextureUnit(TEX_UNIT_BASE + (U32)unit, target, id);
+        }
+        return;
+    }
+    auto lock = inlineLock();
+    LLVkGL::slot_bind((unsigned)unit, target, id);
+}
+
 void verifyBound(const char* what, U32 id, U32 target)
 {
     static const bool on = getenv("LL_VK_TEX_VERIFY") != nullptr;
@@ -2132,8 +2072,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     case CMD_BIND_TEXTURE_UNIT:
     {
         const BindTexUnitArgs* a = (const BindTexUnitArgs*)payload;
-        LLVkGL::on_glActiveTexture(a->mUnit);
-        LLVkGL::on_glBindTexture(a->mTarget, a->mTexture);
+        LLVkGL::slot_bind(a->mUnit - TEX_UNIT_BASE, a->mTarget, a->mTexture);
         break;
     }
     case CMD_ARRAY_RUN:
@@ -2232,10 +2171,8 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         U32 k = 0;
         for (U32 m = head[0]; m; m &= m - 1, ++k)
         {
-            LLVkGL::on_glActiveTexture(TEX_UNIT_BASE + lowBit(m));
-            LLVkGL::on_glBindTexture(e[k].mTarget, e[k].mName);
+            LLVkGL::slot_bind(lowBit(m), e[k].mTarget, e[k].mName);
         }
-        LLVkGL::on_glActiveTexture(head[1]);
         break;
     }
     case CMD_UNIFORM_BATCH:
@@ -2256,10 +2193,8 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         U32 k = 0;
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
         {
-            LLVkGL::on_glActiveTexture(TEX_UNIT_BASE + lowBit(m));
-            LLVkGL::on_glBindTexture(e[k].mTarget, e[k].mName);
+            LLVkGL::slot_bind(lowBit(m), e[k].mTarget, e[k].mName);
         }
-        LLVkGL::on_glActiveTexture(h->mActive);
         if (h->mKind == 0)
         {
             LLVkGL::on_glDrawRangeElements(h->mMode, h->mStart, h->mEnd, h->mCount, h->mType, h->mIndices);
@@ -2311,17 +2246,6 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     case CMD_TEX_IMAGE: runImage(r, flags); break;
     case CMD_TEX_PARAMS_ID: runParams(r, flags); break;
     case CMD_TEX_OP: runOp(r); break;
-    case CMD_TEX_PARAMS:
-    {
-        const U32* head = (const U32*)payload;
-        const LLVkAsync::TexParam* e = (const LLVkAsync::TexParam*)(payload + sizeof(U32) * 2);
-        for (U32 i = 0; i < head[1]; ++i)
-        {
-            if (e[i].mIsFloat) LLVkGL::on_glTexParameterf(head[0], e[i].mPname, e[i].mFloat);
-            else LLVkGL::on_glTexParameteri(head[0], e[i].mPname, e[i].mInt);
-        }
-        break;
-    }
     case CMD_SHADER_BIND:
     {
         struct A { void* mProgram; U32 mEnable; U32 mDisable; };
