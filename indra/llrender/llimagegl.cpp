@@ -883,11 +883,6 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                 }
                 else
                 {
-                    if(mFormatSwapBytes)
-                    {
-                        glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
-                        stop_glerror();
-                    }
 
                     LLImageGL::setManualImageFor(edit_name, mTarget, gl_level, mFormatInternal, w, h, mFormatPrimary, GL_UNSIGNED_BYTE, (GLvoid*)data_in, mAllowCompression);
                     if (gl_level == 0)
@@ -896,11 +891,6 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     }
                     updatePickMask(w, h, data_in);
 
-                    if(mFormatSwapBytes)
-                    {
-                        glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
-                        stop_glerror();
-                    }
 
                     stop_glerror();
                 }
@@ -913,11 +903,6 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
             {
                 stop_glerror();
                 {
-                    if(mFormatSwapBytes)
-                    {
-                        glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
-                        stop_glerror();
-                    }
 
                     S32 w = getWidth(mCurrentDiscardLevel);
                     S32 h = getHeight(mCurrentDiscardLevel);
@@ -941,11 +926,6 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
 
                     updatePickMask(w, h, data_in);
 
-                    if(mFormatSwapBytes)
-                    {
-                        glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
-                        stop_glerror();
-                    }
 
                     if (LLRender::sGLCoreProfile)
                     {
@@ -1030,11 +1010,6 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     llassert(w > 0 && h > 0 && cur_mip_data);
                     (void)cur_mip_data;
                     {
-                        if(mFormatSwapBytes)
-                        {
-                            glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
-                            stop_glerror();
-                        }
 
                         LLImageGL::setManualImageFor(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data, mAllowCompression);
                         if (m == 0)
@@ -1047,11 +1022,6 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                             updatePickMask(w, h, cur_mip_data);
                         }
 
-                        if(mFormatSwapBytes)
-                        {
-                            glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
-                            stop_glerror();
-                        }
                     }
                     if (prev_mip_data && prev_mip_data != data_in)
                     {
@@ -1086,11 +1056,6 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         }
         else
         {
-            if(mFormatSwapBytes)
-            {
-                glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
-                stop_glerror();
-            }
 
             LLImageGL::setManualImageFor(edit_name, mTarget, 0, mFormatInternal, w, h,
                          mFormatPrimary, mFormatType, (GLvoid *)data_in, mAllowCompression);
@@ -1100,11 +1065,6 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
 
             stop_glerror();
 
-            if(mFormatSwapBytes)
-            {
-                glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
-                stop_glerror();
-            }
 
         }
     }
@@ -1268,14 +1228,9 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
         }
 
 
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, data_width);
+        LLVkTex::setUnpackRowLength(data_width);
         stop_glerror();
 
-        if(mFormatSwapBytes)
-        {
-            glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
-            stop_glerror();
-        }
 
         const U8* sub_datap = datap + (y_pos * data_width + x_pos) * getComponents();
         // Update the GL texture
@@ -1299,13 +1254,8 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
         gGL.getTexUnit(0)->disable();
         stop_glerror();
 
-        if(mFormatSwapBytes)
-        {
-            glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
-            stop_glerror();
-        }
 
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        LLVkTex::setUnpackRowLength(0);
         stop_glerror();
         mGLTextureCreated = true;
     }
@@ -1346,7 +1296,7 @@ void LLImageGL::generateTextures(S32 numTextures, U32 *textures)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("iglgt - reup pool");
         // pool is emtpy, refill it
-        glGenTextures(pool_size, name_pool);
+        LLVkTex::create(pool_size, name_pool);
         name_count = pool_size;
     }
 
@@ -1359,7 +1309,7 @@ void LLImageGL::generateTextures(S32 numTextures, U32 *textures)
     else
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("iglgt - pool miss");
-        glGenTextures(numTextures, textures);
+        LLVkTex::create(numTextures, textures);
     }
 }
 
@@ -1378,7 +1328,7 @@ void LLImageGL::updateClass()
     if (!sFreeList[idx].empty())
     {
         free_tex_images((GLsizei) sFreeList[idx].size(), sFreeList[idx].data());
-        glDeleteTextures((GLsizei)sFreeList[idx].size(), sFreeList[idx].data());
+        LLVkTex::destroy((S32)sFreeList[idx].size(), sFreeList[idx].data());
         sFreeList[idx].resize(0);
     }
 }
