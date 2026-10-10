@@ -23,6 +23,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace LLVk
@@ -494,6 +495,10 @@ private:
     void noteBarrier(const Image& image, VkImageLayout from, VkImageLayout to);
     // C9: the depth-target use of each draw (write on / depth buffer sampled by the program) and what each change of use cost
     U32 mDepthUseCounts[4] = {};
+    struct UniformCopyStat { U64 mCopies = 0, mBytes = 0, mDirty = 0, mSame = 0; };
+    std::unordered_set<U64> mUniformSeen;       // LL_VK_PHASES: (program, content) hashes of the blocks copied in the frame being counted
+    U64 mUniformSeenFrame = ~0ull;
+    std::unordered_map<const Program*, UniformCopyStat> mUniformCopies;    // LL_VK_PHASES: loose uniform blocks copied into the ring, per program
     int mDepthUsePrev = -1;
     const Image* mDepthUseRoot = nullptr;
     std::unordered_map<std::string, U32> mDepthUseChanges;      // "from>to program" -> draws that changed the use

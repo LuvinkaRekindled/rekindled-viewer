@@ -89,7 +89,7 @@ bool bench_enabled()
 }
 
 const char* const PHASE_NAMES[] = { "all hooks", "uniform hooks", "draw hooks", "draw: target", "draw: state", "draw: textures", "draw: uniform blocks", "draw: vertex input", "draw: renderer apply+record", "draw: debug stats",
-                                     "apply: texture layouts", "apply: begin pass", "apply: pipeline", "apply: dynamic state", "apply: vertex input", "apply: uniforms", "apply: push textures", "apply: vkCmdDraw" };
+                                     "apply: texture layouts", "apply: begin pass", "apply: pipeline", "apply: dynamic state", "apply: vertex input", "apply: sampler slots + ray scene set", "apply: uniforms", "apply: push textures", "apply: vkCmdDraw" };
 
 // LL_VK_MIRROR_GLONLY=1 (with LL_VK_MIRROR_BENCH=1, without LL_VK_MIRROR): no Vulkan at all; only the GL side is timed, at the viewer's natural pace
 bool glonly_mode()
