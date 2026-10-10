@@ -11488,6 +11488,26 @@ static bool shadow_rigged_packets_enabled()
     return true;
 }
 
+// <FS> ray query shadows: a stable identity for a draw's model matrix. The top bit says the matrix is a region's own (static geometry of that region): every other
+// matrix belongs to an object that moves or is attached (an avatar's attachments, a moving linkset)
+static U32 rt_matrix_id(const LLMatrix4* m)
+{
+    if (!m)
+    {
+        return 0;
+    }
+    U32 id = (U32)((uintptr_t)m >> 4) & 0x7FFFFFFFu;
+    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    {
+        if (&region->mRenderMatrix == m)
+        {
+            id |= 0x80000000u;
+            break;
+        }
+    }
+    return id ? id : 1u;
+}
+
 // <FS> ray query shadows: which shadow pass is rendering (0-3 sun cascades, 4-5 spot / projector shadows, 6 anything else)
 static U32 shadow_pass_index()
 {
@@ -11637,7 +11657,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     }
                     matrix = it->second;
                 }
-                entries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, (U32)((uintptr_t)params->mModelMatrix >> 4) });
+                entries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, rt_matrix_id(params->mModelMatrix) });
             }
         }
         if (!entries.empty())
@@ -11835,7 +11855,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 e.mIndexBuffer = vb->getGLIndices();
                 e.mFirstIndex = params->mOffset;
                 e.mIndexCount = params->mCount;
-                e.mMatrixId = (U32)((uintptr_t)params->mModelMatrix >> 4);
+                e.mMatrixId = rt_matrix_id(params->mModelMatrix);
                 if (rigged)
                 {
                     if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
