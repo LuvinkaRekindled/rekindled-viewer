@@ -88,6 +88,7 @@ set(llrender_HEADER_FILES
     llvkrt.h
     llvkshader.h
     llvkstate.h
+    llvktex.h
     llglcommonfunc.h
     )
 

@@ -39,6 +39,7 @@
 #include "llglslshader.h"
 
 #include "llglheaders.h"
+#include "llvktex.h"
 
 //#pragma optimize("", off)
 
@@ -127,10 +128,10 @@ LLCubeMapArray::LLCubeMapArray(LLCubeMapArray& lhs, U32 width, U32 count) : mTex
 
             // Handle different resolutions by scaling the image
             LLPointer<LLImageRaw> src_image = new LLImageRaw(lhs.mWidth, lhs.mWidth, lhs.mImage->getComponents());
-            glGetTexImage(GL_TEXTURE_CUBE_MAP_ARRAY, 0, components, GL_UNSIGNED_BYTE, src_image->getData());
+            LLVkTex::getImage(mImage->getTexName(), GL_TEXTURE_CUBE_MAP_ARRAY, 0, components, GL_UNSIGNED_BYTE, src_image->getData());
 
             LLPointer<LLImageRaw> scaled_image = src_image->scaled(mWidth, mWidth);
-            glTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, 0, 0, 0, i, mWidth, mWidth, 1, components, GL_UNSIGNED_BYTE, scaled_image->getData());
+            LLVkTex::subImage3D(mImage->getTexName(), GL_TEXTURE_CUBE_MAP_ARRAY, 0, 0, 0, i, mWidth, mWidth, 1, components, GL_UNSIGNED_BYTE, scaled_image->getData());
         }
     }
 }
@@ -168,7 +169,7 @@ void LLCubeMapArray::allocate(U32 resolution, U32 components, U32 count, bool us
     U32 mip_resolution = resolution;
     while (mip_resolution >= 1)
     {
-        glTexImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, mip, format, mip_resolution, mip_resolution, count * 6, 0,
+        LLVkTex::image3D(texname, GL_TEXTURE_CUBE_MAP_ARRAY, mip, format, mip_resolution, mip_resolution, count * 6, 0,
             GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
         if (!use_mips)

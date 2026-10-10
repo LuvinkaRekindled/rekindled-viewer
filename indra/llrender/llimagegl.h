@@ -136,6 +136,9 @@ public:
     void setComponents(S32 ncomponents) { mComponents = (S8)ncomponents ;}
     void setAllowCompression(bool allow) { mAllowCompression = allow; }
 
+    // the texture is named: nothing is bound or read from the unit state
+    static void setManualImageFor(U32 texname, U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void *pixels, bool allow_compression = true);
+    // the texture currently bound for 'target' on the active unit (callers that bind with LLTexUnit first; they move to setManualImageFor over time)
     static void setManualImage(U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void *pixels, bool allow_compression = true);
 
     bool createGLTexture() ;

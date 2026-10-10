@@ -21,6 +21,7 @@
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
 #include "llvkstate.h"
+#include "llvktex.h"
 #include "llvkdlss.h"
 #include "llvkrt.h"
 
@@ -714,12 +715,26 @@ U32 target_class(GLenum target)
     }
 }
 
+// <FS> F1.2: a texture edit names its texture (LLVkTex): while a scope is open the edit functions below act on that texture and read the unpack state
+// from the record, not from the GL bound-texture / pixel-store emulation. thread_local: the worker replays one record at a time, inline mode runs on the caller.
+thread_local GLuint tlsEditTex = 0;
+thread_local const LLVkTex::PixelStore* tlsEditPS = nullptr;
+
 Tex* bound_texture(GLenum target)
 {
+    if (tlsEditTex)
+    {
+        auto it = sGL.mTextures.find(tlsEditTex);
+        return it == sGL.mTextures.end() ? nullptr : &it->second;
+    }
     const GLuint name = sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
     auto it = sGL.mTextures.find(name);
     return it == sGL.mTextures.end() ? nullptr : &it->second;
 }
+
+inline GLuint edit_unpack_buffer() { return tlsEditPS ? tlsEditPS->mUnpackBuffer : sCtx.mPixelUnpackBuffer; }
+inline GLint edit_unpack_alignment() { return tlsEditPS ? tlsEditPS->mAlignment : sCtx.mUnpackAlignment; }
+inline GLint edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength : sCtx.mUnpackRowLength; }
 
 //-----------------------------------------------------------------------------------------------------
 // textures
@@ -831,9 +846,9 @@ bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U3
 // source of client pixel data: either a pointer or an offset into the bound pixel unpack buffer
 const void* pixel_source(const void* pixels)
 {
-    if (sCtx.mPixelUnpackBuffer)
+    if (edit_unpack_buffer())
     {
-        auto it = sGL.mBuffers.find(sCtx.mPixelUnpackBuffer);
+        auto it = sGL.mBuffers.find(edit_unpack_buffer());
         if (it == sGL.mBuffers.end() || !it->second.mVk.mMapped)
         {
             return nullptr;
@@ -865,7 +880,7 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
     {
         // C4: the common upload (8-bit RGB or RGBA into an RGBA8 texture) is read from where the viewer left it and written straight into the staging buffer: one copy
         struct Fast { const U8* mSrc; U32 mW, mH, mComps, mRowBytes; } fast;
-        const U32 alignment = sCtx.mUnpackAlignment > 0 ? (U32)sCtx.mUnpackAlignment : 4, row_length = (U32)sCtx.mUnpackRowLength;
+        const U32 alignment = edit_unpack_alignment() > 0 ? (U32)edit_unpack_alignment() : 4, row_length = (U32)edit_unpack_row_length();
         fast.mSrc = (const U8*)src;
         fast.mW = w;
         fast.mH = h;
@@ -882,10 +897,10 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
         // A large conversion takes milliseconds; the viewer's texture thread and its main thread both feed this lock, so a big image
         // is converted without holding it. Nothing the conversion reads is shared: the pixels belong to the caller, who is waiting.
         const FormatMap fm = t.mFormat;
-        const U32 alignment = (U32)sCtx.mUnpackAlignment, row_length = (U32)sCtx.mUnpackRowLength;
+        const U32 alignment = (U32)edit_unpack_alignment(), row_length = (U32)edit_unpack_row_length();
         const VkImage handle = t.mImage.mImage;
-        const GLuint name = sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
-        const bool unlocked = (U64)w * h * d >= 16384 && !sCtx.mPixelUnpackBuffer && !LLVkAsync::gEnabled;      // (the worker does not take the lock)
+        const GLuint name = tlsEditTex ? tlsEditTex : sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
+        const bool unlocked = (U64)w * h * d >= 16384 && !edit_unpack_buffer() && !LLVkAsync::gEnabled;      // (the worker does not take the lock)
         unsigned depth_held = 0;
         if (unlocked)
         {
@@ -2313,6 +2328,94 @@ void on_glCopyTexImage2D(GLenum target, GLint level, GLenum internalformat, GLin
         return;
     }
     copy_to_texture(target, level, 0, 0, 0, x, y, width, height);
+}
+
+
+//-----------------------------------------------------------------------------------------------------
+// F1.2: texture edits that name their texture (LLVkTex). The bodies are the handlers above; the scope replaces "the texture bound on the active unit".
+//-----------------------------------------------------------------------------------------------------
+
+namespace
+{
+struct EditScope
+{
+    GLuint mPrev;
+    const LLVkTex::PixelStore* mPrevPS;
+    EditScope(GLuint id, GLenum, const char*, const LLVkTex::PixelStore* ps = nullptr) : mPrev(tlsEditTex), mPrevPS(tlsEditPS)
+    {
+        if (id)
+        {
+            sGL.mTextures[id];      // GL created the object on first bind
+        }
+        tlsEditTex = id;
+        tlsEditPS = ps ? ps : tlsEditPS;
+    }
+    ~EditScope() { tlsEditTex = mPrev; tlsEditPS = mPrevPS; }
+};
+}
+
+void tex_image2D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
+{
+    EditScope s(id, target, "image2D", &ps);
+    on_glTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
+}
+
+void tex_image3D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels)
+{
+    EditScope s(id, target, "image3D", &ps);
+    on_glTexImage3D(target, level, internalformat, width, height, depth, border, format, type, pixels);
+}
+
+void tex_subimage2D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
+{
+    EditScope s(id, target, "subimage2D", &ps);
+    on_glTexSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pixels);
+}
+
+void tex_subimage3D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void* pixels)
+{
+    EditScope s(id, target, "subimage3D", &ps);
+    on_glTexSubImage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, pixels);
+}
+
+void tex_compressed2D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
+{
+    EditScope s(id, target, "compressed2D", &ps);
+    on_glCompressedTexImage2D(target, level, internalformat, width, height, border, imageSize, data);
+}
+
+void tex_params(GLuint id, GLenum target, const LLVkAsync::TexParam* params, U32 count)
+{
+    EditScope s(id, target, "params");
+    for (U32 i = 0; i < count; ++i)
+    {
+        if (params[i].mIsFloat) on_glTexParameterf(target, params[i].mPname, params[i].mFloat);
+        else on_glTexParameteri(target, params[i].mPname, params[i].mInt);
+    }
+}
+
+void tex_swizzle(GLuint id, GLenum target, const GLint* rgba)
+{
+    EditScope s(id, target, "swizzle");
+    on_glTexParameteriv(target, GL_TEXTURE_SWIZZLE_RGBA, rgba);
+}
+
+void tex_mipmap(GLuint id, GLenum target)
+{
+    EditScope s(id, target, "mipmap");
+    on_glGenerateMipmap(target);
+}
+
+void tex_copy_sub(GLuint id, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    EditScope s(id, target, "copySub");
+    copy_to_texture(target, level, xoffset, yoffset, zoffset, x, y, width, height);
+}
+
+void tex_copy_image(GLuint id, GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border)
+{
+    EditScope s(id, target, "copyImage");
+    on_glCopyTexImage2D(target, level, internalformat, x, y, width, height, border);
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -5535,6 +5638,36 @@ bool own_glGetCompressedTexImage(GLenum target, GLint level, void* img)
     }
     return true;
 }
+
+int tex_level_parameter(unsigned id, unsigned target, int level, unsigned pname)
+{
+    EditScope s(id, target, "levelParameter");
+    GLint v = 0;
+    own_glGetTexLevelParameteriv(target, level, pname, &v);
+    return v;
+}
+
+void tex_get_image(unsigned id, unsigned target, int level, unsigned format, unsigned type, void* out)
+{
+    EditScope s(id, target, "getImage");
+    own_glGetTexImage(target, level, format, type, out);
+}
+
+void tex_get_compressed_image(unsigned id, unsigned target, int level, void* out)
+{
+    EditScope s(id, target, "getCompressedImage");
+    own_glGetCompressedTexImage(target, level, out);
+}
+
+LLVkTex::PixelStore inline_pixel_store()
+{
+    LLVkTex::PixelStore ps;
+    ps.mAlignment = sCtx.mUnpackAlignment;
+    ps.mRowLength = sCtx.mUnpackRowLength;
+    ps.mUnpackBuffer = sCtx.mPixelUnpackBuffer;
+    return ps;
+}
+
 
 void on_glReadPixels(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*) {}
 void on_glGetTexImage(GLenum, GLint, GLenum, GLenum, void*) {}

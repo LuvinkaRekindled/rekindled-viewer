@@ -102,7 +102,8 @@ namespace LLVkAsync
         CMD_UNIFORM_BATCH,                         // loose uniform writes that were pending when something other than a draw came first (a draw carries them inside its own record)
         CMD_BUFFER_RECYCLE,                        // a pooled buffer name changes hands (bufferRecycle)
         CMD_RT_SCENE,                              // the ray tracing scene of the frame is built from the casters named so far (LLVkMirror::rtScene)
-        CMD_STATE                                  // F1.1: the render state block (LLVkState::Block) changed since the last one written
+        CMD_STATE,                                 // F1.1: the render state block (LLVkState::Block) changed since the last one written
+        CMD_TEX_IMAGE, CMD_TEX_PARAMS_ID, CMD_TEX_OP   // F1.2: texture edits that name their texture (llvktex.h): image data, parameters, small operations
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 

@@ -44,6 +44,7 @@
 #include "llframetimer.h"
 #include "llvkasync.h"
 #include "llvkstate.h"
+#include "llvktex.h"
 #include <unordered_set>
 
 extern LL_COMMON_API bool on_main_thread();
@@ -206,8 +207,8 @@ void LLImageGL::checkTexSize(bool forced) const
         }
         stop_glerror() ;
         LLGLint x = 0, y = 0 ;
-        glGetTexLevelParameteriv(mTarget, 0, GL_TEXTURE_WIDTH, (GLint*)&x);
-        glGetTexLevelParameteriv(mTarget, 0, GL_TEXTURE_HEIGHT, (GLint*)&y) ;
+        x = LLVkTex::levelParameter(mTexName, mTarget, 0, GL_TEXTURE_WIDTH);
+        y = LLVkTex::levelParameter(mTexName, mTarget, 0, GL_TEXTURE_HEIGHT);
         stop_glerror() ;
         llcallstacks << "w: " << x << " h: " << y << llcallstacksendl ;
 
@@ -846,12 +847,13 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
     }
 
     gGL.getTexUnit(0)->bind(this, false, false, usename);
+    const U32 edit_name = usename ? (U32)usename : mTexName;
 
     if (data_in == nullptr)
     {
         S32 w = getWidth();
         S32 h = getHeight();
-        LLImageGL::setManualImage(mTarget, 0, mFormatInternal, w, h,
+        LLImageGL::setManualImageFor(edit_name, mTarget, 0, mFormatInternal, w, h,
             mFormatPrimary, mFormatType, (GLvoid*)data_in, mAllowCompression);
     }
     else if (mUseMipMaps)
@@ -876,7 +878,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                 if (is_compressed)
                 {
                     GLsizei tex_size = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
-                    glCompressedTexImage2D(mTarget, gl_level, mFormatPrimary, w, h, 0, tex_size, (GLvoid *)data_in);
+                    LLVkTex::compressedImage2D(edit_name, mTarget, gl_level, mFormatPrimary, w, h, 0, tex_size, (GLvoid *)data_in);
                     stop_glerror();
                 }
                 else
@@ -887,7 +889,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                         stop_glerror();
                     }
 
-                    LLImageGL::setManualImage(mTarget, gl_level, mFormatInternal, w, h, mFormatPrimary, GL_UNSIGNED_BYTE, (GLvoid*)data_in, mAllowCompression);
+                    LLImageGL::setManualImageFor(edit_name, mTarget, gl_level, mFormatInternal, w, h, mFormatPrimary, GL_UNSIGNED_BYTE, (GLvoid*)data_in, mAllowCompression);
                     if (gl_level == 0)
                     {
                         analyzeAlpha(data_in, w, h);
@@ -927,10 +929,10 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     //      (some rendering issues while core profile is enabled are acceptable at this point in time)
                     if (!LLRender::sGLCoreProfile)
                     {
-                        glTexParameteri(mTarget, GL_GENERATE_MIPMAP, GL_TRUE);
+                        LLVkTex::paramI(edit_name, mTarget, GL_GENERATE_MIPMAP, GL_TRUE);
                     }
 
-                    LLImageGL::setManualImage(mTarget, 0, mFormatInternal,
+                    LLImageGL::setManualImageFor(edit_name, mTarget, 0, mFormatInternal,
                                  w, h,
                                  mFormatPrimary, mFormatType,
                                  data_in, mAllowCompression);
@@ -948,7 +950,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     if (LLRender::sGLCoreProfile)
                     {
                         LL_PROFILE_GPU_ZONE("generate mip map");
-                        glGenerateMipmap(mTarget);
+                        LLVkTex::generateMipmap(edit_name, mTarget);
                     }
                     stop_glerror();
                 }
@@ -1034,7 +1036,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                             stop_glerror();
                         }
 
-                        LLImageGL::setManualImage(mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data, mAllowCompression);
+                        LLImageGL::setManualImageFor(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data, mAllowCompression);
                         if (m == 0)
                         {
                             analyzeAlpha(data_in, w, h);
@@ -1079,7 +1081,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         if (is_compressed)
         {
             GLsizei tex_size = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
-            glCompressedTexImage2D(mTarget, 0, mFormatPrimary, w, h, 0, tex_size, (GLvoid *)data_in);
+            LLVkTex::compressedImage2D(edit_name, mTarget, 0, mFormatPrimary, w, h, 0, tex_size, (GLvoid *)data_in);
             stop_glerror();
         }
         else
@@ -1090,7 +1092,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                 stop_glerror();
             }
 
-            LLImageGL::setManualImage(mTarget, 0, mFormatInternal, w, h,
+            LLImageGL::setManualImageFor(edit_name, mTarget, 0, mFormatInternal, w, h,
                          mFormatPrimary, mFormatType, (GLvoid *)data_in, mAllowCompression);
             analyzeAlpha(data_in, w, h);
 
@@ -1149,7 +1151,7 @@ bool should_stagger_image_set(bool compressed)
 
 // Equivalent to calling glSetSubImage2D(target, miplevel, x_offset, y_offset, width, height, pixformat, pixtype, src), assuming the total width of the image is data_width
 // However, instead there are multiple calls to glSetSubImage2D on smaller slices of the image
-void sub_image_lines(U32 target, S32 miplevel, S32 x_offset, S32 y_offset, S32 width, S32 height, U32 pixformat, U32 pixtype, const U8* src, S32 data_width)
+void sub_image_lines(U32 texname, U32 target, S32 miplevel, S32 x_offset, S32 y_offset, S32 width, S32 height, U32 pixformat, U32 pixtype, const U8* src, S32 data_width)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -1184,7 +1186,7 @@ void sub_image_lines(U32 target, S32 miplevel, S32 x_offset, S32 y_offset, S32 w
         {
             // If this keeps crashing, pass down data_size, looks like it is using
             // imageraw->getData(); for data, but goes way over allocated size limit
-            glTexSubImage2D(target, miplevel, x_offset, y_pos, width, batch_size, pixformat, pixtype, src);
+            LLVkTex::subImage2D(texname, target, miplevel, x_offset, y_pos, width, batch_size, pixformat, pixtype, src);
             src += line_width * batch_size;
         }
     }
@@ -1195,7 +1197,7 @@ void sub_image_lines(U32 target, S32 miplevel, S32 x_offset, S32 y_offset, S32 w
         {
             // If this keeps crashing, pass down data_size, looks like it is using
             // imageraw->getData(); for data, but goes way over allocated size limit
-            glTexSubImage2D(target, miplevel, x_offset, y_pos, width, 1, pixformat, pixtype, src);
+            LLVkTex::subImage2D(texname, target, miplevel, x_offset, y_pos, width, 1, pixformat, pixtype, src);
             src += line_width;
         }
     }
@@ -1288,11 +1290,11 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
             // setManualImage? Maybe because it only gets called with the
             // dimensions of the full image?  Or because the image is never
             // compressed?
-            glTexSubImage2D(mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap);
+            LLVkTex::subImage2D(tex_name, mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap);
         }
         else
         {
-            sub_image_lines(mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap, data_width);
+            sub_image_lines(tex_name, mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap, data_width);
         }
         gGL.getTexUnit(0)->disable();
         stop_glerror();
@@ -1321,7 +1323,7 @@ bool LLImageGL::setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y_
 {
     if (gGL.getTexUnit(0)->bind(this, false, true))
     {
-        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, fb_x, fb_y, x_pos, y_pos, width, height);
+        LLVkTex::copySubImage(mTexName, GL_TEXTURE_2D, 0, fb_x, fb_y, 0, x_pos, y_pos, width, height);
         mGLTextureCreated = true;
         stop_glerror();
         return true;
@@ -1398,6 +1400,12 @@ void LLImageGL::deleteTextures(S32 numTextures, const U32 *textures)
 // static
 void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void* pixels, bool allow_compression)
 {
+    setManualImageFor(LLVkTex::boundOnActive(target), target, miplevel, intformat, width, height, pixformat, pixtype, pixels, allow_compression);
+}
+
+// static
+void LLImageGL::setManualImageFor(U32 texname, U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void* pixels, bool allow_compression)
+{
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     if (LLRender::sGLCoreProfile)
     {
@@ -1407,7 +1415,7 @@ void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 widt
             if (pixformat == GL_ALPHA)
             { //GL_ALPHA is deprecated, convert to RGBA
                 const GLint mask[] = { GL_ZERO, GL_ZERO, GL_ZERO, GL_RED };
-                glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, mask);
+                LLVkTex::swizzle(texname, GL_TEXTURE_2D, mask);
                 pixformat = GL_RED;
                 intformat = GL_R8;
             }
@@ -1415,7 +1423,7 @@ void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 widt
             if (pixformat == GL_LUMINANCE)
             { //GL_LUMINANCE is deprecated, convert to GL_RGBA
                 const GLint mask[] = { GL_RED, GL_RED, GL_RED, GL_ONE };
-                glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, mask);
+                LLVkTex::swizzle(texname, GL_TEXTURE_2D, mask);
                 pixformat = GL_RED;
                 intformat = GL_R8;
             }
@@ -1423,7 +1431,7 @@ void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 widt
             if (pixformat == GL_LUMINANCE_ALPHA)
             { //GL_LUMINANCE_ALPHA is deprecated, convert to RGBA
                 const GLint mask[] = { GL_RED, GL_RED, GL_RED, GL_GREEN };
-                glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, mask);
+                LLVkTex::swizzle(texname, GL_TEXTURE_2D, mask);
                 pixformat = GL_RG;
                 intformat = GL_RG8;
             }
@@ -1551,21 +1559,21 @@ void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 widt
         if (!use_sub_image)
         {
             LL_PROFILE_ZONE_NAMED("glTexImage2D alloc + copy");
-            glTexImage2D(target, miplevel, intformat, width, height, 0, pixformat, pixtype, pixels);
+            LLVkTex::image2D(texname, target, miplevel, intformat, width, height, 0, pixformat, pixtype, pixels);
         }
         else
         {
             // break up calls to a manageable size for the GL command buffer
             {
                 LL_PROFILE_ZONE_NAMED("glTexImage2D alloc");
-                glTexImage2D(target, miplevel, intformat, width, height, 0, pixformat, pixtype, nullptr);
+                LLVkTex::image2D(texname, target, miplevel, intformat, width, height, 0, pixformat, pixtype, nullptr);
             }
 
             U8* src = (U8*)(pixels);
             if (src)
             {
                 LL_PROFILE_ZONE_NAMED("glTexImage2D copy");
-                sub_image_lines(target, miplevel, 0, 0, width, height, pixformat, pixtype, src, width);
+                sub_image_lines(texname, target, miplevel, 0, 0, width, height, pixformat, pixtype, src, width);
             }
         }
         alloc_tex_image(width, height, intformat, 1);
@@ -1761,8 +1769,8 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
         LLImageGL::generateTextures(1, &new_texname);
         {
             gGL.getTexUnit(0)->bind(this, false, false, new_texname);
-            glTexParameteri(LLTexUnit::getInternalType(mBindTarget), GL_TEXTURE_BASE_LEVEL, 0);
-            glTexParameteri(LLTexUnit::getInternalType(mBindTarget), GL_TEXTURE_MAX_LEVEL, mMaxDiscardLevel - discard_level);
+            LLVkTex::paramI(new_texname, LLTexUnit::getInternalType(mBindTarget), GL_TEXTURE_BASE_LEVEL, 0);
+            LLVkTex::paramI(new_texname, LLTexUnit::getInternalType(mBindTarget), GL_TEXTURE_MAX_LEVEL, mMaxDiscardLevel - discard_level);
         }
     }
 
@@ -1914,7 +1922,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     //checkTexSize() ;
 
     LLGLint glwidth = 0;
-    glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_WIDTH, (GLint*)&glwidth);
+    glwidth = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, GL_TEXTURE_WIDTH);
     if (glwidth == 0)
     {
         // No mip data smaller than current discard level
@@ -1944,7 +1952,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     LLGLint is_compressed = 0;
     if (compressed_ok)
     {
-        glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_COMPRESSED, (GLint*)&is_compressed);
+        is_compressed = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, GL_TEXTURE_COMPRESSED);
     }
 
     //-----------------------------------------------------------------------------------------------
@@ -1960,7 +1968,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     if (is_compressed)
     {
         LLGLint glbytes;
-        glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_COMPRESSED_IMAGE_SIZE, (GLint*)&glbytes);
+        glbytes = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, GL_TEXTURE_COMPRESSED_IMAGE_SIZE);
         if(!imageraw->allocateDataSize(width, height, ncomponents, glbytes))
         {
             constexpr S64 MAX_GL_BYTES = 2048 * 2048;
@@ -1977,7 +1985,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
             return false ;
         }
 
-        glGetCompressedTexImage(mTarget, gl_discard, (GLvoid*)(imageraw->getData()));
+        LLVkTex::getCompressedImage(mTexName, mTarget, gl_discard, (GLvoid*)(imageraw->getData()));
         //stop_glerror();
     }
     else
@@ -1999,7 +2007,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
             return false ;
         }
 
-        glGetTexImage(GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (GLvoid*)(imageraw->getData()));
+        LLVkTex::getImage(mTexName, GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (GLvoid*)(imageraw->getData()));
         //stop_glerror();
     }
 
@@ -2585,8 +2593,8 @@ bool LLImageGL::scaleDown(S32 desired_discard)
 #endif
 
             free_tex_image(mTexName);
-            glTexImage2D(mTarget, 0, mFormatInternal, desired_width, desired_height, 0, mFormatPrimary, mFormatType, nullptr);
-            glCopyTexSubImage2D(mTarget, 0, 0, 0, 0, 0, desired_width, desired_height);
+            LLVkTex::image2D(mTexName, mTarget, 0, mFormatInternal, desired_width, desired_height, 0, mFormatPrimary, mFormatType, nullptr);
+            LLVkTex::copySubImage(mTexName, mTarget, 0, 0, 0, 0, 0, 0, desired_width, desired_height);
             alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
 
             markTexOptionsDirty();
@@ -2595,7 +2603,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
             { // generate mipmaps if needed
                 LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("scaleDown - glGenerateMipmap");
                 gGL.getTexUnit(0)->bind(this);
-                glGenerateMipmap(mTarget);
+                LLVkTex::generateMipmap(mTexName, mTarget);
                 gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
             }
         }
@@ -2625,14 +2633,14 @@ bool LLImageGL::scaleDown(S32 desired_discard)
             sScratchPBOSize = (U32)size;
         }
 
-        glGetTexImage(mTarget, mip, mFormatPrimary, mFormatType, nullptr);
+        LLVkTex::getImage(mTexName, mTarget, mip, mFormatPrimary, mFormatType, nullptr);
 
         free_tex_image(mTexName);
 
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, sScratchPBO);
-        glTexImage2D(mTarget, 0, mFormatInternal, desired_width, desired_height, 0, mFormatPrimary, mFormatType, nullptr);
+        LLVkTex::image2D(mTexName, mTarget, 0, mFormatInternal, desired_width, desired_height, 0, mFormatPrimary, mFormatType, nullptr);
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
         alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
@@ -2640,7 +2648,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
         if (mHasMipMaps)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("scaleDown - glGenerateMipmap");
-            glGenerateMipmap(mTarget);
+            LLVkTex::generateMipmap(mTexName, mTarget);
         }
 
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
@@ -2694,7 +2702,7 @@ void LLImageGL::checkActiveThread()
             llassert(w > 0 && h > 0 && cur_mip_data);
             U8 test = cur_mip_data[w*h*mComponents-1];
             {
-                LLImageGL::setManualImage(mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data);
+                LLImageGL::setManualImageFor(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data);
                 stop_glerror();
             }
             if (prev_mip_data && prev_mip_data != rawdata)

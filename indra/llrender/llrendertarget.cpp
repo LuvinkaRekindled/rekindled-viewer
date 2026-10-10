@@ -34,6 +34,7 @@
 #if defined(LL_VULKAN)
 #include "llvkasync.h"
 #include "llvkstate.h"
+#include "llvktex.h"
 #endif
 
 // <FS> N4: attaching a texture to a framebuffer is one record on the queue's producer (bind, attach, bind the framebuffer that was current)
@@ -540,7 +541,7 @@ void LLRenderTarget::flush()
     {
         LL_PROFILE_GPU_ZONE("rt generate mipmaps");
         bindTexture(0, 0, LLTexUnit::TFO_TRILINEAR);
-        glGenerateMipmap(GL_TEXTURE_2D);
+        LLVkTex::generateMipmap(mTex[0], GL_TEXTURE_2D);
     }
 
     if (mPreviousRT)

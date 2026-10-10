@@ -30,6 +30,7 @@
 #include "llglslshader.h"
 #include "llsdserialize.h"
 #include "llrender.h"
+#include "llvktex.h"
 
 static LLStaticHashedString sRenderTexture("RenderTexture");
 static LLStaticHashedString sBrightness("brightness");
@@ -330,7 +331,7 @@ void LLPostProcess::doEffects(void)
 void LLPostProcess::copyFrameBuffer(U32 & texture, unsigned int width, unsigned int height)
 {
     gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture);
-    glCopyTexImage2D(GL_TEXTURE_RECTANGLE, 0, GL_RGBA, 0, 0, width, height, 0);
+    LLVkTex::copyImage2D(texture, GL_TEXTURE_RECTANGLE, 0, GL_RGBA, 0, 0, width, height, 0);
 }
 
 void LLPostProcess::drawOrthoQuad(unsigned int width, unsigned int height, QuadType type)
@@ -371,7 +372,7 @@ void LLPostProcess::createTexture(LLPointer<LLImageGL>& texture, unsigned int wi
     if(texture->createGLTexture())
     {
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture->getTexName());
-        glTexImage2D(GL_TEXTURE_RECTANGLE, 0, 4, width, height, 0,
+        LLVkTex::image2D(texture->getTexName(), GL_TEXTURE_RECTANGLE, 0, 4, width, height, 0,
             GL_RGBA, GL_UNSIGNED_BYTE, &data[0]);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
