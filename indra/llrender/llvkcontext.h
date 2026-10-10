@@ -19,6 +19,7 @@
 #include <map>
 #include <string>
 #include <functional>
+#include <mutex>
 #include <vector>
 
 #include <windows.h>
@@ -122,6 +123,26 @@ struct Buffer
     VkDeviceSize mSize = 0;
     VkDeviceAddress mAddress = 0;   // the address a shader reads the buffer by (0 when the device cannot)
     bool valid() const { return mBuffer != VK_NULL_HANDLE; }
+};
+
+// A range of one of the arena's large buffers (PLAN-stable-vertex-buffers.md). The range stays where it is until it is freed, so its address can be handed to
+// shaders and acceleration structure builds; it is addressed by buffer + offset in draws.
+struct ArenaRef
+{
+    VkBuffer mBuffer = VK_NULL_HANDLE;      // the block's buffer (shared by many ranges)
+    VkDeviceSize mOffset = 0;               // start of the range in that buffer
+    VkDeviceSize mSize = 0;
+    VkDeviceAddress mAddress = 0;           // device address of the first byte of the range (0 when the device cannot)
+    VmaVirtualAllocation mAlloc = VK_NULL_HANDLE;
+    U32 mBlock = ~0u;
+    bool valid() const { return mBuffer != VK_NULL_HANDLE; }
+};
+
+struct ArenaStats
+{
+    U32 mBlocks = 0, mAllocs = 0;
+    U64 mBlockBytes = 0, mUsedBytes = 0, mLargestFree = 0;
+    U64 mBlocksCreated = 0, mBlocksReleased = 0;
 };
 
 struct Image
@@ -230,6 +251,12 @@ public:
     enum class Memory { Device, Upload, UploadDevice, Readback };   // UploadDevice: CPU-written, GPU-read buffers (device-local host-visible memory when the GPU has it)
     bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory memory, Buffer& out);
     void destroyBuffer(Buffer& buffer);     // deferred
+    // --- buffer arena: vertex / index / acceleration-structure input data, suballocated from a few large device-local buffers ----
+    // The range never moves. arenaFree is deferred like destroyBuffer (the range is reusable once the GPU has finished every frame submitted so far).
+    // shared: the block is CONCURRENT between the graphics family and the async compute family (for a second queue later; nothing asks for it yet).
+    bool arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, bool shared, ArenaRef& out);
+    void arenaFree(ArenaRef& ref);
+    ArenaStats arenaStats();
     bool createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkFormat format, VkImageUsageFlags usage, Image& out);
     void destroyImage(Image& image);        // deferred
 
@@ -300,6 +327,25 @@ private:
     U64 mFrameNumber = 0;
     bool mInFrame = false;
     std::vector<std::function<void()>> mPendingDeferred;     // destroyed with the next frame slot that completes
+
+    struct ArenaBlock
+    {
+        VkBuffer mBuffer = VK_NULL_HANDLE;
+        VmaAllocation mAllocation = nullptr;
+        VmaVirtualBlock mVirtual = VK_NULL_HANDLE;
+        VkDeviceSize mSize = 0;
+        VkDeviceAddress mAddress = 0;
+        U32 mAllocs = 0;
+        bool mShared = false;
+        bool mDedicated = false;            // holds one big range: goes away with it
+    };
+    ArenaBlock* arenaNewBlock(VkDeviceSize min_size, bool shared, bool dedicated);
+    void arenaDestroyBlock(ArenaBlock* block);
+    void arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc);
+    void arenaShutdown();
+    std::mutex mArenaMutex;
+    std::vector<ArenaBlock*> mArenaBlocks;                   // stable addresses; ArenaRef::mBlock indexes it (a destroyed block leaves a null)
+    ArenaStats mArenaCounters;
 };
 
 // How the swapchain presents (setting FSVkPresentMode with the Vertical Sync preference; the environment variable LL_VK_PRESENT overrides both).

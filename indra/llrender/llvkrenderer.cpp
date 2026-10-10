@@ -1653,7 +1653,14 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
         deferred.swap(mDeferredCopies);
         for (DeferredCopy& d : deferred)
         {
-            updateBuffer(d.mDst, d.mDstOffset, (VkDeviceSize)d.mData.size(), d.mData.data());
+            if (d.mFillSize)
+            {
+                fillBuffer(d.mDst, d.mDstOffset, d.mFillSize, d.mFillValue);
+            }
+            else
+            {
+                updateBuffer(d.mDst, d.mDstOffset, (VkDeviceSize)d.mData.size(), d.mData.data());
+            }
         }
     }
     mRingPeak = std::max(mRingPeak, mRingUsed);
@@ -3278,6 +3285,27 @@ bool Renderer::updateBuffer(VkBuffer dst, VkDeviceSize offset, VkDeviceSize size
     return true;
 }
 
+bool Renderer::fillBuffer(VkBuffer dst, VkDeviceSize offset, VkDeviceSize size, U32 value)
+{
+    if (dst == VK_NULL_HANDLE || size == 0)
+    {
+        return false;
+    }
+    ++mModCount;
+    if (mCmd == VK_NULL_HANDLE)
+    {
+        DeferredCopy d;
+        d.mDst = dst;
+        d.mDstOffset = offset;
+        d.mFillSize = size;
+        d.mFillValue = value;
+        mDeferredCopies.push_back(std::move(d));
+        return true;
+    }
+    mPendingCopies.push_back({ dst, offset, VK_NULL_HANDLE, value, size });
+    return true;
+}
+
 bool Renderer::flushBufferUpdates()
 {
     if (mCmd == VK_NULL_HANDLE)
@@ -3302,6 +3330,11 @@ bool Renderer::flushBufferUpdates()
         vkCmdPipelineBarrier2(cmd, &dep);
         for (const BufferCopy& c : mPendingCopies)
         {
+            if (c.mSrc == VK_NULL_HANDLE)
+            {
+                vkCmdFillBuffer(cmd, c.mDst, c.mDstOffset, c.mSize, (U32)c.mSrcOffset);
+                continue;
+            }
             VkBufferCopy region = { c.mSrcOffset, c.mDstOffset, c.mSize };
             vkCmdCopyBuffer(cmd, c.mSrc, c.mDst, 1, &region);
         }

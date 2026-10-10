@@ -484,6 +484,12 @@ struct Buf
     // buffers (and uniform / pixel buffers) keep the host-visible path below.
     bool mDevicePath = false;
     bool mPending = false;              // device path: a write has not been recorded into the command stream yet
+    // Device path with the buffer arena (LL_VK_ARENA, default on): mVk is a view of mArena's range (mBuffer = the block's buffer, mAddress = the range's address,
+    // mSize = the data size; it owns nothing) and draws bind mVk.mBuffer at mArena.mOffset. Without the arena mArena is empty and mVk is a buffer of its own.
+    ArenaRef mArena;
+    // mEpoch changes when the name gets other storage (new range, deleted); mVersion on every write. Acceleration structures key on (name, epoch) and refit on version.
+    U64 mEpoch = 0;
+    U64 mVersion = 0;
     // The Vulkan buffer lives in write-combined video memory, which is very slow to read from the CPU. This copy in ordinary memory
     // is what a renamed buffer is refilled from when only part of it is rewritten.
     std::vector<U8> mShadow;
@@ -1556,7 +1562,7 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
                 binding = (U32)vi.mBindings.size();
                 VertexInput::Binding b;
                 b.mBuffer = bit->second.mVk.mBuffer;
-                b.mOffset = base;
+                b.mOffset = base + bit->second.mArena.mOffset;
                 b.mStride = (U32)stride;
                 vi.mBindings.push_back(b);
                 if (made_count < 16) made[made_count++] = { at.mBuffer, stride, base, binding };
@@ -1806,6 +1812,58 @@ void ensure_buffers_current(const std::vector<GLuint>& used, GLuint element)
     }
 }
 
+bool arena_enabled()
+{
+    static const bool on = []() { const char* e = getenv("LL_VK_ARENA"); return !(e && e[0] == '0'); }();
+    return on;
+}
+
+// LL_VK_ARENA_POISON=1: a range that is given up is filled with 0xDEADBEEF in command order, so a draw or packet that still reads it shows garbage (not a stale picture)
+bool arena_poison()
+{
+    static const bool on = []() { const char* e = getenv("LL_VK_ARENA_POISON"); return e && e[0] == '1'; }();
+    return on;
+}
+
+// gives the storage of a buffer back: its arena range (reusable once the GPU has finished the frames in flight) or its own Vulkan buffer
+void release_storage(Buf& b)
+{
+    Context& ctx = Context::instance();
+    if (b.mArena.valid())
+    {
+        if (arena_poison())
+        {
+            Renderer::instance().fillBuffer(b.mArena.mBuffer, b.mArena.mOffset, (b.mArena.mSize + 3) & ~(VkDeviceSize)3, 0xDEADBEEFu);
+        }
+        ctx.arenaFree(b.mArena);
+        b.mVk = Buffer();
+        ++b.mEpoch;
+    }
+    else if (b.mVk.valid())
+    {
+        ctx.destroyBuffer(b.mVk);
+        ++b.mEpoch;
+    }
+}
+
+// takes a range of the arena for a device-path buffer of 'size' bytes; true: b.mVk and b.mArena describe it
+bool acquire_arena_storage(Buf& b, U64 size)
+{
+    Context& ctx = Context::instance();
+    ArenaRef ref;
+    if (!ctx.arenaAlloc((VkDeviceSize)size, 16, false, ref))
+    {
+        return false;
+    }
+    b.mArena = ref;
+    b.mVk = Buffer();
+    b.mVk.mBuffer = ref.mBuffer;
+    b.mVk.mSize = (VkDeviceSize)size;
+    b.mVk.mAddress = ref.mAddress;
+    ++b.mEpoch;
+    return true;
+}
+
 U64 device_buffer_min_bytes()
 {
     static const U64 v = []() {
@@ -1858,7 +1916,7 @@ void note_flush(bool frame_end, size_t buffers)
 }
 
 // LL_VK_PHASES: bytes written per buffer name in the interval, to find who writes every frame
-struct WriterStat { U32 mWrites = 0; U64 mBytes = 0; };
+struct WriterStat { U32 mWrites = 0; U64 mBytes = 0; U32 mFrames = 0; U64 mLastFrame = ~0ull; };      // mFrames: in how many different frames it was written
 std::unordered_map<GLuint, WriterStat> sWriters;
 const bool sWriterStatsOn = getenv("LL_VK_PHASES") != nullptr;
 
@@ -1887,14 +1945,21 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
         WriterStat& w = sWriters[name];
         ++w.mWrites;
         w.mBytes += size;
+        const U64 wf = Context::instance().getFrameNumber();
+        if (w.mLastFrame != wf)
+        {
+            w.mLastFrame = wf;
+            ++w.mFrames;
+        }
     }
     if (b.mDevicePath)
     {
         ++sBufTraffic.mSubDev;
         sBufTraffic.mSubDevBytes += size;
+        ++b.mVersion;
         if (b.mVk.valid() && data && size && offset + size <= b.mVk.mSize)
         {
-            Renderer::instance().updateBuffer(b.mVk.mBuffer, offset, size, data);
+            Renderer::instance().updateBuffer(b.mVk.mBuffer, b.mArena.mOffset + offset, size, data);
             if (!b.mPending)
             {
                 b.mPending = true;
@@ -2324,7 +2389,7 @@ void on_glDeleteBuffers(GLsizei n, const GLuint* buffers)
         auto it = sGL.mBuffers.find(buffers[i]);
         if (it != sGL.mBuffers.end())
         {
-            ctx.destroyBuffer(it->second.mVk);
+            release_storage(it->second);
             buf_forget(it->first);
             sGL.mBuffers.erase(it);
             ++sPacketBufferGeneration;
@@ -2383,9 +2448,10 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
         // the same size again (the viewer re-specifies a buffer to rewrite it): keep the Vulkan buffer, queue the data
         b.mSize = (U64)size;
         ++sBufTraffic.mSpecDevSame;
+        ++b.mVersion;
         if (data)
         {
-            Renderer::instance().updateBuffer(b.mVk.mBuffer, 0, (VkDeviceSize)size, data);
+            Renderer::instance().updateBuffer(b.mVk.mBuffer, b.mArena.mOffset, (VkDeviceSize)size, data);
             if (!b.mPending)
             {
                 b.mPending = true;
@@ -2394,22 +2460,22 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
         }
         return;
     }
-    if (b.mVk.valid())
-    {
-        ctx.destroyBuffer(b.mVk);
-    }
+    release_storage(b);
     b.mSize = (U64)size;
     b.mLastUseFrame = ~0ull;
     b.mShadow.clear();
     b.mDevicePath = want_device;
+    ++b.mVersion;
     if (want_device)
     {
         ++sBufTraffic.mSpecDevNew;
         sBufTraffic.mSpecDevNewBytes += (U64)size;
-        if (ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                             Context::Memory::Device, b.mVk) && data)
+        const bool created = arena_enabled() ? acquire_arena_storage(b, (U64)size)
+            : ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                               Context::Memory::Device, b.mVk);
+        if (created && data)
         {
-            Renderer::instance().updateBuffer(b.mVk.mBuffer, 0, (VkDeviceSize)size, data);
+            Renderer::instance().updateBuffer(b.mVk.mBuffer, b.mArena.mOffset, (VkDeviceSize)size, data);
             if (!b.mPending)
             {
                 b.mPending = true;
@@ -2613,7 +2679,7 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
     r.setTopology(topology(mode));
-    r.setIndexBuffer(eit->second.mVk.mBuffer, 0, itype);
+    r.setIndexBuffer(eit->second.mVk.mBuffer, eit->second.mArena.mOffset, itype);
     if (r.drawIndexed((U32)count, (U32)((U64)indices / index_bytes), 0))
     {
         if (LLVkMirror::gPhaseTiming)
@@ -3597,6 +3663,12 @@ void after_frame()
                         }
                         LL_INFOS("VkPhases") << "GL buffers: " << dev_count << " in video memory (copies, " << (dev_bytes >> 20) << " MB), " << host_count << " host-visible ("
                                              << (host_bytes >> 20) << " MB), system-memory shadow copies " << (shadow_bytes >> 20) << " MB" << LL_ENDL;
+                        {
+                            const ArenaStats as = Context::instance().arenaStats();
+                            LL_INFOS("VkPhases") << "buffer arena (" << (arena_enabled() ? "on" : "off, LL_VK_ARENA=0") << "): " << as.mBlocks << " blocks, " << (as.mBlockBytes >> 20) << " MB reserved, "
+                                                 << as.mAllocs << " ranges, " << (as.mUsedBytes >> 20) << " MB in use, largest free range " << (as.mLargestFree >> 20) << " MB; blocks created "
+                                                 << as.mBlocksCreated << ", released " << as.mBlocksReleased << LL_ENDL;
+                        }
                         const BufTraffic& t = sBufTraffic;
                         LL_INFOS("VkPhases") << "buffer traffic per frame: glBufferData device same size " << (double)t.mSpecDevSame / frames << ", device new allocation "
                                              << (double)t.mSpecDevNew / frames << " (" << (double)t.mSpecDevNewBytes / frames / 1024 << " KB), host-visible " << (double)t.mSpecHost / frames
@@ -3621,6 +3693,31 @@ void after_frame()
                                 if (bit != sGL.mBuffers.end()) text += " size " + std::to_string(bit->second.mSize >> 10) + " KB";
                             }
                             LL_INFOS("VkPhases") << "buffers written most in the interval (" << sWriters.size() << " distinct): " << text << LL_ENDL;
+                            // who writes continuously: buffers written in at least half of the frames that wrote anything (the candidates for a per-frame stream path, as opposed to geometry that stays)
+                            U32 most_frames = 0;
+                            for (const auto& kv : sWriters) most_frames = std::max(most_frames, kv.second.mFrames);
+                            U32 cont_dev = 0, cont_host = 0, once_dev = 0, once_host = 0;
+                            U64 cont_dev_b = 0, cont_host_b = 0, once_dev_b = 0, once_host_b = 0;
+                            U32 cont_host_sizes[4] = {};
+                            for (const auto& kv : sWriters)
+                            {
+                                const auto bit = sGL.mBuffers.find(kv.first);
+                                if (bit == sGL.mBuffers.end()) continue;
+                                const bool dev = bit->second.mDevicePath, cont = kv.second.mFrames * 2 >= most_frames;
+                                U32& n = dev ? (cont ? cont_dev : once_dev) : (cont ? cont_host : once_host);
+                                U64& by = dev ? (cont ? cont_dev_b : once_dev_b) : (cont ? cont_host_b : once_host_b);
+                                ++n;
+                                by += kv.second.mBytes;
+                                if (!dev && cont)
+                                {
+                                    const U64 sz = bit->second.mSize;
+                                    ++cont_host_sizes[sz < 4096 ? 0 : sz < 16384 ? 1 : sz < 65536 ? 2 : 3];
+                                }
+                            }
+                            LL_INFOS("VkPhases") << "continuous writers (written in at least half of " << most_frames << " frames): device " << cont_dev << " buffers " << (cont_dev_b >> 10) << " KB, host-visible "
+                                                 << cont_host << " buffers " << (cont_host_b >> 10) << " KB (by size <4K " << cont_host_sizes[0] << ", <16K " << cont_host_sizes[1] << ", <64K " << cont_host_sizes[2]
+                                                 << ", larger " << cont_host_sizes[3] << "); occasional writers: device " << once_dev << " buffers " << (once_dev_b >> 10) << " KB, host-visible " << once_host
+                                                 << " buffers " << (once_host_b >> 10) << " KB" << LL_ENDL;
                             sWriters.clear();
                         }
                         sBufTraffic = BufTraffic();
