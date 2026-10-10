@@ -1035,14 +1035,19 @@ bool Renderer::createLayouts()
         const Capabilities& caps = ctx.getCaps();
         if (mSet2Layout && Rt::shadowMode() && caps.mRt.mEnabled && caps.mRt.mUsable)
         {
-            VkDescriptorSetLayoutBinding b3 = {};
-            b3.binding = 0;
-            b3.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-            b3.descriptorCount = 1;
-            b3.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            // binding 0: the acceleration structure; binding 1: the geometry records of the masked structures (a dynamic offset picks the region of the scene call)
+            VkDescriptorSetLayoutBinding b3[2] = {};
+            b3[0].binding = 0;
+            b3[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+            b3[0].descriptorCount = 1;
+            b3[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            b3[1].binding = 1;
+            b3[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+            b3[1].descriptorCount = 1;
+            b3[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
             VkDescriptorSetLayoutCreateInfo l3 = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-            l3.bindingCount = 1;
-            l3.pBindings = &b3;
+            l3.bindingCount = 2;
+            l3.pBindings = b3;
             if (!vk_ok(vkCreateDescriptorSetLayout(dev, &l3, nullptr, &mSet3Layout), "set 3 layout"))
             {
                 mSet3Layout = VK_NULL_HANDLE;
@@ -2704,10 +2709,16 @@ void Renderer::applyState()
     if (mProgram->mUsesRt && mSet3Layout)
     {
         const VkDescriptorSet rt_set = Rt::descriptorSet(mSlot);
-        if (rt_set != VK_NULL_HANDLE && rt_set != mRtBoundSet)
+        const U32 rt_offset = Rt::tableOffset();
+        if (!mProgram->mBindless)
         {
-            vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 3, 1, &rt_set, 0, nullptr);
+            bindlessFlush();            // the masked casters' textures are read through the frame's table (set 2) whatever the program does with its own samplers
+        }
+        if (rt_set != VK_NULL_HANDLE && (rt_set != mRtBoundSet || rt_offset != mRtBoundOffset))
+        {
+            vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 3, 1, &rt_set, 1, &rt_offset);
             mRtBoundSet = rt_set;
+            mRtBoundOffset = rt_offset;
         }
     }
     // 6. loose uniforms: copy this program's shadow into the ring when it changed (or on its first use this frame)
