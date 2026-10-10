@@ -40,6 +40,7 @@
 #include "llvkasync.h"
 #endif
 #include "glm/gtc/type_ptr.hpp"
+#include "llvkstate.h"
 
 thread_local LLRender gGL;
 
@@ -943,10 +944,9 @@ bool LLRender::init(bool needs_vertex_buffer)
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
     gGL.setAmbientLightColor(LLColor4::black);
 
-    glCullFace(GL_BACK);
+    LLVkState::setCullFace(GL_BACK);
 
     // necessary for reflection maps
-    glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
 #if LL_WINDOWS
     if (glGenVertexArrays == nullptr)
@@ -1479,10 +1479,7 @@ void LLRender::setColorMask(bool writeColorR, bool writeColorG, bool writeColorB
         mCurrColorMask[2] = writeColorB;
         mCurrColorMask[3] = writeAlpha;
 
-        glColorMask(writeColorR ? GL_TRUE : GL_FALSE,
-                    writeColorG ? GL_TRUE : GL_FALSE,
-                    writeColorB ? GL_TRUE : GL_FALSE,
-                    writeAlpha ? GL_TRUE : GL_FALSE);
+        LLVkState::setColorMask(writeColorR, writeColorG, writeColorB, writeAlpha);
     }
 }
 
@@ -1498,42 +1495,43 @@ void LLRender::setClearColor(F32 r, F32 g, F32 b, F32 a)
 
 void LLRender::setViewport(S32 x, S32 y, S32 width, S32 height)
 {
-    glViewport(x, y, width, height);
+    LLVkState::setViewport(x, y, width, height);
 }
 
 void LLRender::setCullFace(U32 gl_face)
 {
-    glCullFace(gl_face);
+    LLVkState::setCullFace(gl_face);
 }
 
 void LLRender::setPolygonOffset(F32 factor, F32 units)
 {
-    glPolygonOffset(factor, units);
+    LLVkState::setPolygonOffset(factor, units);
 }
 
 void LLRender::setPolygonMode(U32 gl_face, U32 gl_mode)
 {
-    glPolygonMode(gl_face, gl_mode);
+    (void)gl_face;
+    LLVkState::setPolygonMode(gl_mode);
 }
 
 void LLRender::setPointSize(F32 size)
 {
-    glPointSize(size);
+    (void)size;         // nothing reads a point size
 }
 
 void LLRender::setStencilFunc(U32 gl_func, S32 ref, U32 mask)
 {
-    glStencilFunc(gl_func, ref, mask);
+    LLVkState::setStencilFunc(gl_func, ref, mask);
 }
 
 void LLRender::setStencilOp(U32 gl_sfail, U32 gl_dpfail, U32 gl_dppass)
 {
-    glStencilOp(gl_sfail, gl_dpfail, gl_dppass);
+    LLVkState::setStencilOp(gl_sfail, gl_dpfail, gl_dppass);
 }
 
 void LLRender::setStencilMask(U32 mask)
 {
-    glStencilMask(mask);
+    LLVkState::setStencilMask(mask);
 }
 
 void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data)
@@ -1668,7 +1666,7 @@ void LLRender::deleteTextures(S32 count, const U32* ids)
 
 void LLRender::setScissor(S32 x, S32 y, S32 width, S32 height)
 {
-    glScissor(x, y, width, height);
+    LLVkState::setScissor(x, y, width, height);
 }
 
 void LLRender::getTexLevelParameteriv(U32 gl_target, S32 level, U32 gl_pname, S32* result)
@@ -1724,7 +1722,7 @@ void LLRender::blendFunc(eBlendFactor sfactor, eBlendFactor dfactor)
         mCurrBlendColorDFactor = dfactor;
         mCurrBlendAlphaDFactor = dfactor;
         flush();
-        glBlendFunc(sGLBlendFactor[sfactor], sGLBlendFactor[dfactor]);
+        LLVkState::setBlendFunc(sGLBlendFactor[sfactor], sGLBlendFactor[dfactor], sGLBlendFactor[sfactor], sGLBlendFactor[dfactor]);
     }
 }
 
@@ -1745,8 +1743,8 @@ void LLRender::blendFunc(eBlendFactor color_sfactor, eBlendFactor color_dfactor,
         mCurrBlendAlphaDFactor = alpha_dfactor;
         flush();
 
-        glBlendFuncSeparate(sGLBlendFactor[color_sfactor], sGLBlendFactor[color_dfactor],
-                           sGLBlendFactor[alpha_sfactor], sGLBlendFactor[alpha_dfactor]);
+        LLVkState::setBlendFunc(sGLBlendFactor[color_sfactor], sGLBlendFactor[color_dfactor],
+                                sGLBlendFactor[alpha_sfactor], sGLBlendFactor[alpha_dfactor]);
     }
 }
 
@@ -1797,7 +1795,7 @@ void LLRender::setLineWidth(F32 line_width)
             flush();
         }
         mLineWidth = line_width;
-        glLineWidth(line_width);
+        LLVkState::setLineWidth(line_width);
     }
 }
 // </FS>

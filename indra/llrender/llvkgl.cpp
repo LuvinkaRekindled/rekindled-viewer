@@ -4199,26 +4199,6 @@ void on_rt_scene(const LLVkMirror::RtSceneArgs& args)
 // hooks: state and clears
 //-----------------------------------------------------------------------------------------------------
 
-// <FS> F1.1: the state hooks no longer reach the worker through the queue (the producer writes the context and a block record carries it). These run only in
-// inline mode, where the producer is this thread; they write the same context.
-void on_glEnable(GLenum cap) { LLVkState::setEnable(cap, true); }
-void on_glDisable(GLenum cap) { LLVkState::setEnable(cap, false); }
-void on_glBlendFunc(GLenum sfactor, GLenum dfactor) { LLVkState::setBlendFunc(sfactor, dfactor, sfactor, dfactor); }
-void on_glBlendFuncSeparate(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha) { LLVkState::setBlendFunc(sfactorRGB, dfactorRGB, sfactorAlpha, dfactorAlpha); }
-void on_glDepthFunc(GLenum func) { LLVkState::setDepthFunc(func); }
-void on_glDepthMask(GLboolean flag) { LLVkState::setDepthMask(flag != GL_FALSE); }
-void on_glColorMask(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha) { LLVkState::setColorMask(red != GL_FALSE, green != GL_FALSE, blue != GL_FALSE, alpha != GL_FALSE); }
-void on_glCullFace(GLenum mode) { LLVkState::setCullFace(mode); }
-void on_glPolygonOffset(GLfloat factor, GLfloat units) { LLVkState::setPolygonOffset(factor, units); }
-void on_glPolygonMode(GLenum face, GLenum mode) { (void)face; LLVkState::setPolygonMode(mode); }
-void on_glLineWidth(GLfloat width) { LLVkState::setLineWidth(width); }
-void on_glPointSize(GLfloat size) { (void)size; }
-void on_glStencilFunc(GLenum func, GLint ref, GLuint mask) { LLVkState::setStencilFunc(func, ref, mask); }
-void on_glStencilOp(GLenum sfail, GLenum dpfail, GLenum dppass) { LLVkState::setStencilOp(sfail, dpfail, dppass); }
-void on_glStencilMask(GLuint mask) { LLVkState::setStencilMask(mask); }
-void on_glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { LLVkState::setViewport(x, y, width, height); }
-void on_glScissor(GLint x, GLint y, GLsizei width, GLsizei height) { LLVkState::setScissor(x, y, width, height); }
-
 void on_glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
 {
     sGL.mClearColor[0] = red; sGL.mClearColor[1] = green; sGL.mClearColor[2] = blue; sGL.mClearColor[3] = alpha;

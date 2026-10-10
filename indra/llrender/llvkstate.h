@@ -56,7 +56,7 @@ namespace LLVkState
     void setViewport(S32 x, S32 y, S32 w, S32 h);
     void setScissor(S32 x, S32 y, S32 w, S32 h);
     // a setter call arrived on a thread other than the main producer: it is not written to the context (the old path still sees it)
-    void noteOffThread();
+    void noteOffThread(const char* what);
 
     // makes the next takeChanged() write a block even if nothing changed (the receiver may have lost it)
     void forceEmit();
