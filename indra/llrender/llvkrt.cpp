@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -97,6 +98,8 @@ struct Blas
     U64 mVbVersion = ~0ull, mIbVersion = ~0ull;     // contents at the last build or refit
     std::vector<Range> mBuilt;                      // sorted: what the structure covers (the geometry index is the position in this list)
     std::unordered_map<U64, AlphaInfo> mAlpha;      // kind 1: the alpha test data of each range, as last drawn
+    std::vector<U64> mBad;                          // ranges that failed the data check, valid for the buffer versions below (checked again when the buffers are written)
+    U64 mBadVbVersion = ~0ull, mBadIbVersion = ~0ull;
     VkAccelerationStructureKHR mAs = VK_NULL_HANDLE;
     VkDeviceAddress mAddress = 0;
     ArenaRef mStorage;
@@ -121,7 +124,9 @@ struct Tlas
 struct Stats
 {
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
-    U64 mOverCap = 0, mExtraCalls = 0;
+    U64 mOverCap = 0, mExtraCalls = 0, mBadVertices = 0, mBadMatrices = 0, mChecked = 0;
+    F32 mMaxScale = 0.f;
+    Key mMaxScaleKey;
     U64 mWhyNew = 0, mWhyEpoch = 0, mWhyGrew = 0, mWhyIb = 0, mWhyRefitLimit = 0, mNewGroups = 0, mNewMasked = 0;      // why structures were built (and how many casters were new)
     double mCpuMs = 0, mCpuMsMax = 0;
 };
@@ -503,6 +508,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     static const U64 max_builds = env_u64("LL_VK_RT_BUILD_MAX", 256);
     static const U64 max_tris = env_u64("LL_VK_RT_BUILD_TRIS", 800000);
     static const bool alpha_on = env_u64("LL_VK_RT_ALPHA", 1) != 0;
+    static const bool check_on = env_u64("LL_VK_RT_CHECK", 1) != 0;
+    static const bool skip_bad = env_u64("LL_VK_RT_SKIPBAD", 1) != 0;
     static const U64 rebuild_after_refits = 64;
     ++sSceneCalls;
     static const U64 keep = env_u64("LL_VK_RT_KEEP_FRAMES", 8);
@@ -603,12 +610,20 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         // the ranges the structure has to cover: what it covers already plus what was drawn now
         std::vector<Range> want = b.mBuilt;
         bool grew = b.mAs == VK_NULL_HANDLE;
+        if (!b.mBad.empty() && (b.mBadVbVersion != vi.mVersion || b.mBadIbVersion != ii.mVersion))
+        {
+            b.mBad.clear();                     // the data was written: look at the ranges again
+        }
         for (size_t k = 0; k < g.mRanges.size(); ++k)
         {
             const Range& r = g.mRanges[k];
             if (((U64)r.mFirst + r.mCount) * 2 > ii.mSize)
             {
                 continue;                       // outside the data (a stale range)
+            }
+            if (!b.mBad.empty() && std::find(b.mBad.begin(), b.mBad.end(), r.id()) != b.mBad.end())
+            {
+                continue;                       // failed the data check for these buffer versions
             }
             if (g.mKey.mKind == 1)
             {
@@ -685,6 +700,103 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             prims += range.primitiveCount;
         }
         job.mPrims = (U32)prims;
+        // LL_VK_RT_CHECK (default on): the vertices the structure will be built over, when the CPU can see them (host-written buffers), must be finite and not absurd, and the
+        // indices must name vertices of the buffer. A range that fails is left out of the structure (LL_VK_RT_SKIPBAD=0 keeps it).
+        if (check_on && vi.mCpu && ii.mCpu)
+        {
+            ++sStats.mChecked;
+            const F32* pos = (const F32*)vi.mCpu;
+            const U16* idx = (const U16*)ii.mCpu;
+            const U64 verts = vi.mSize / 16;
+            std::vector<Range> kept;
+            kept.reserve(want.size());
+            for (const Range& r : want)
+            {
+                U32 out_of_range = 0, bad_coords = 0, first_bad_index = 0, max_index = 0;
+                F32 lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
+                for (U32 k = 0; k < r.mCount; ++k)
+                {
+                    const U32 v = idx[r.mFirst + k];
+                    max_index = std::max(max_index, v);
+                    if (v >= verts)
+                    {
+                        if (!out_of_range)
+                        {
+                            first_bad_index = v;
+                        }
+                        ++out_of_range;
+                        continue;
+                    }
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        const F32 c = pos[4 * (size_t)v + a];
+                        if (!(c > -1e5f && c < 1e5f))
+                        {
+                            ++bad_coords;
+                        }
+                        else
+                        {
+                            lo[a] = std::min(lo[a], c);
+                            hi[a] = std::max(hi[a], c);
+                        }
+                    }
+                }
+                if (out_of_range || bad_coords)
+                {
+                    ++sStats.mBadVertices;
+                    static U32 logged = 0;
+                    if (logged++ < 40)
+                    {
+                        LL_WARNS("VkRt") << "bad range in a structure to build: vb " << g.mKey.mVb << " (" << vi.mSize << " bytes, " << verts << " vertex slots) ib " << g.mKey.mIb << " ("
+                                         << ii.mSize << " bytes) kind " << g.mKey.mKind << ", range first " << r.mFirst << " count " << r.mCount << ": " << out_of_range << " indices out of range (first "
+                                         << first_bad_index << ", largest " << max_index << "), " << bad_coords << " bad coordinates, bounds of the good ones (" << lo[0] << "," << lo[1] << "," << lo[2]
+                                         << ")-(" << hi[0] << "," << hi[1] << "," << hi[2] << ")" << LL_ENDL;
+                    }
+                    if (skip_bad)
+                    {
+                        b.mBad.push_back(r.id());
+                        b.mBadVbVersion = vi.mVersion;
+                        b.mBadIbVersion = ii.mVersion;
+                        continue;
+                    }
+                }
+                kept.push_back(r);
+            }
+            if (kept.size() != want.size())
+            {
+                if (kept.empty())
+                {
+                    continue;
+                }
+                want = kept;
+                job.mUpdate = false;            // the geometry list changed: a refit cannot do that
+                job.mGeometries.clear();
+                job.mRanges.clear();
+                job.mCounts.clear();
+                prims = 0;
+                for (const Range& r : want)
+                {
+                    VkAccelerationStructureGeometryKHR geo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
+                    geo.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+                    geo.flags = g.mKey.mKind == 1 ? VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR : VK_GEOMETRY_OPAQUE_BIT_KHR;
+                    VkAccelerationStructureGeometryTrianglesDataKHR& t = geo.geometry.triangles;
+                    t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+                    t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+                    t.vertexData.deviceAddress = vi.mAddress;
+                    t.vertexStride = 16;
+                    t.maxVertex = max_vertex;
+                    t.indexType = VK_INDEX_TYPE_UINT16;
+                    t.indexData.deviceAddress = ii.mAddress + 2ull * r.mFirst;
+                    job.mGeometries.push_back(geo);
+                    VkAccelerationStructureBuildRangeInfoKHR range = {};
+                    range.primitiveCount = r.mCount / 3;
+                    job.mRanges.push_back(range);
+                    job.mCounts.push_back(range.primitiveCount);
+                    prims += range.primitiveCount;
+                }
+                job.mPrims = (U32)prims;
+            }
+        }
         job.mSet = std::move(want);
         job.mInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
         job.mInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
@@ -842,6 +954,37 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         }
         F32 m[16];
         mat_mul(view, g.mModel, m);
+        {
+            bool bad = false;
+            for (int k = 0; k < 16; ++k)
+            {
+                if (!(m[k] > -1e6f && m[k] < 1e6f))
+                {
+                    bad = true;
+                }
+            }
+            F32 scale = 0.f;
+            for (int c = 0; c < 3; ++c)
+            {
+                scale = std::max(scale, sqrtf(m[c * 4] * m[c * 4] + m[c * 4 + 1] * m[c * 4 + 1] + m[c * 4 + 2] * m[c * 4 + 2]));
+            }
+            if (bad)
+            {
+                ++sStats.mBadMatrices;
+                static U32 logged = 0;
+                if (logged++ < 40)
+                {
+                    LL_WARNS("VkRt") << "bad instance matrix: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " kind " << g.mKey.mKind << " matrix id " << g.mKey.mMatrixId << " model "
+                                     << g.mModel[0] << "," << g.mModel[5] << "," << g.mModel[10] << " translation " << g.mModel[12] << "," << g.mModel[13] << "," << g.mModel[14] << LL_ENDL;
+                }
+                continue;
+            }
+            if (scale > sStats.mMaxScale)
+            {
+                sStats.mMaxScale = scale;
+                sStats.mMaxScaleKey = g.mKey;
+            }
+        }
         VkAccelerationStructureInstanceKHR inst = {};
         for (int row = 0; row < 3; ++row)
         {
@@ -995,12 +1138,13 @@ std::string report(double frames)
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
              "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
-             "CPU %.3f ms/call (worst %.2f ms), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; casters new %.2f/frame, groups held %zu",
+             "CPU %.3f ms/call (worst %.2f ms), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
              shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / f, (double)s.mBuilds / f,
              (double)s.mPrimsBuilt / f, (double)s.mRefits / f, (double)s.mPrimsRefit / f, (double)s.mDeferred / f, (double)s.mNoData / f, (double)s.mAlphaStructs / f, (double)s.mTableFull / f,
              (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax,
              (double)sScratch.mSize / 1048576.0, (double)s.mWhyNew / f, (double)s.mWhyEpoch / f, (double)s.mWhyGrew / f, (double)s.mWhyIb / f, (double)s.mWhyRefitLimit / f,
-             (double)s.mNewGroups / f, sGroups.size());
+             (double)s.mNewGroups / f, sGroups.size(), (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
+             s.mMaxScaleKey.mMatrixId, s.mMaxScaleKey.mKind);
     return buf;
 }
 
