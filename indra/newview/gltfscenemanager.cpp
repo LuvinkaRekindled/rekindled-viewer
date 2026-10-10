@@ -771,8 +771,6 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
 
     if (channel > -1)
     {
-        gGL.activeTexture(GL_TEXTURE0 + channel);
-
         if (info.mIndex != INVALID_INDEX)
         {
             Texture& texture = asset.mTextures[info.mIndex];
@@ -781,33 +779,33 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
             if (tex)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gl bind texture");
-                gGL.bindTexture(GL_TEXTURE_2D, tex->getTexName());
+                gGL.bindTextureSlot(channel, GL_TEXTURE_2D, tex->getTexName());
 
                 if (channel != -1 && texture.mSampler != -1)
                 { // set sampler state
                     Sampler& sampler = asset.mSamplers[texture.mSampler];
-                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sampler.mWrapS);
-                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sampler.mWrapT);
-                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.mMagFilter);
+                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sampler.mWrapS);
+                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sampler.mWrapT);
+                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.mMagFilter);
 
                     // NOTE: do not set min filter.  Always respect client preference for min filter
                 }
                 else
                 {
                     // set default sampler state
-                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-                    gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 }
             }
             else
             {
-                gGL.bindTexture(GL_TEXTURE_2D, fallback->getTexName());
+                gGL.bindTextureSlot(channel, GL_TEXTURE_2D, fallback->getTexName());
             }
         }
         else
         {
-            gGL.bindTexture(GL_TEXTURE_2D, fallback->getTexName());
+            gGL.bindTextureSlot(channel, GL_TEXTURE_2D, fallback->getTexName());
         }
     }
 }

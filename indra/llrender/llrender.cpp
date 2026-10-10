@@ -126,11 +126,6 @@ static inline void ll_bindTexUnit(S32 unit_index, GLenum target, GLuint texture)
     LLVkTex::bindSlot(unit_index, target, texture);
 }
 
-static inline void ll_activeTexUnit(S32 unit_index)
-{
-    LLVkTex::noteActive(unit_index);
-}
-
 U32 LLTexUnit::getInternalType(eTextureType type)
 {
     return sGLTextureType[type];
@@ -143,7 +138,6 @@ void LLTexUnit::refreshState(void)
 
     gGL.flush();
 
-    ll_activeTexUnit(mIndex);
 
     if (mCurrTexType != TT_NONE)
     {
@@ -162,7 +156,6 @@ void LLTexUnit::activate(void)
     if ((S32)gGL.mCurrTextureUnitIndex != mIndex || gGL.mDirty)
     {
         gGL.flush();
-        ll_activeTexUnit(mIndex);
         gGL.mCurrTextureUnitIndex = mIndex;
     }
 }
@@ -197,7 +190,6 @@ void LLTexUnit::disable(void)
 
 void LLTexUnit::applyTexOptions(LLImageGL* gl_tex)
 {
-    ll_activeTexUnit(mIndex);
     gGL.mCurrTextureUnitIndex = mIndex;
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
@@ -212,7 +204,6 @@ void LLTexUnit::bindFast(LLTexture* texture)
 {
     LLImageGL* gl_tex = texture->getGLTexture();
     texture->setActive();
-    ll_activeTexUnit(mIndex);
     gGL.mCurrTextureUnitIndex = mIndex;
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
@@ -676,7 +667,7 @@ void LLTexUnit::debugTextureUnit(void)
 {
     if (mIndex < 0) return;
 
-    const GLint activeTexture = GL_TEXTURE0 + (GLint)LLVkTex::gSlots.mActive;
+    const GLint activeTexture = GL_TEXTURE0 + (GLint)gGL.mCurrTextureUnitIndex;
     if ((GL_TEXTURE0 + mIndex) != activeTexture)
     {
         U32 set_unit = (activeTexture - GL_TEXTURE0);
@@ -1574,29 +1565,29 @@ void LLRender::bindBufferBase(U32 gl_target, U32 index, U32 id)
     glBindBufferBase(gl_target, index, id);
 }
 
-void LLRender::copyTexSubImage2D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height)
+void LLRender::copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height)
 {
-    LLVkTex::copySubImage(LLVkTex::boundOnActive(gl_target), gl_target, level, xoffset, yoffset, 0, x, y, width, height);
+    LLVkTex::copySubImage(texture, gl_target, level, xoffset, yoffset, 0, x, y, width, height);
 }
 
-void LLRender::copyTexSubImage3D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height)
+void LLRender::copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height)
 {
-    LLVkTex::copySubImage(LLVkTex::boundOnActive(gl_target), gl_target, level, xoffset, yoffset, zoffset, x, y, width, height);
+    LLVkTex::copySubImage(texture, gl_target, level, xoffset, yoffset, zoffset, x, y, width, height);
 }
 
-void LLRender::generateMipmap(U32 gl_target)
+void LLRender::generateMipmap(U32 texture, U32 gl_target)
 {
-    LLVkTex::generateMipmap(LLVkTex::boundOnActive(gl_target), gl_target);
+    LLVkTex::generateMipmap(texture, gl_target);
 }
 
-void LLRender::texParameteri(U32 gl_target, U32 gl_pname, S32 param)
+void LLRender::texParameteri(U32 texture, U32 gl_target, U32 gl_pname, S32 param)
 {
-    LLVkTex::paramI(LLVkTex::boundOnActive(gl_target), gl_target, gl_pname, param);
+    LLVkTex::paramI(texture, gl_target, gl_pname, param);
 }
 
-void LLRender::texImage2D(U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data)
+void LLRender::texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data)
 {
-    LLVkTex::image2D(LLVkTex::boundOnActive(gl_target), gl_target, level, internal_format, width, height, border, gl_format, gl_type, data);
+    LLVkTex::image2D(texture, gl_target, level, internal_format, width, height, border, gl_format, gl_type, data);
 }
 
 void LLRender::bindFramebuffer(U32 gl_target, U32 id)
@@ -1614,14 +1605,9 @@ U32 LLRender::getError()
     return glGetError();
 }
 
-void LLRender::activeTexture(U32 gl_texture_unit_enum)
+void LLRender::bindTextureSlot(S32 unit, U32 gl_target, U32 id)
 {
-    LLVkTex::noteActive((S32)gl_texture_unit_enum - (S32)GL_TEXTURE0);
-}
-
-void LLRender::bindTexture(U32 gl_target, U32 id)
-{
-    LLVkTex::bindSlot((S32)LLVkTex::gSlots.mActive, gl_target, id);
+    LLVkTex::bindSlot(unit, gl_target, id);
 }
 
 void LLRender::deleteTextures(S32 count, const U32* ids)
@@ -1634,14 +1620,14 @@ void LLRender::setScissor(S32 x, S32 y, S32 width, S32 height)
     LLVkState::setScissor(x, y, width, height);
 }
 
-void LLRender::getTexLevelParameteriv(U32 gl_target, S32 level, U32 gl_pname, S32* result)
+void LLRender::getTexLevelParameteriv(U32 texture, U32 gl_target, S32 level, U32 gl_pname, S32* result)
 {
-    *result = LLVkTex::levelParameter(LLVkTex::boundOnActive(gl_target), gl_target, level, gl_pname);
+    *result = LLVkTex::levelParameter(texture, gl_target, level, gl_pname);
 }
 
-void LLRender::getTexImage(U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels)
+void LLRender::getTexImage(U32 texture, U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels)
 {
-    LLVkTex::getImage(LLVkTex::boundOnActive(gl_target), gl_target, level, gl_format, gl_type, pixels);
+    LLVkTex::getImage(texture, gl_target, level, gl_format, gl_type, pixels);
 }
 
 void LLRender::setSceneBlendType(eBlendType type)

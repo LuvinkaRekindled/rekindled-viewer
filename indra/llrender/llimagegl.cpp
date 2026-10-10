@@ -189,7 +189,7 @@ void LLImageGL::checkTexSize(bool forced) const
         }
 
         GLint texname;
-        texname = (GLint)LLVkTex::boundOnActive(GL_TEXTURE_2D);
+        texname = (GLint)mTexName;
         bool error = false;
         if (texname != mTexName)
         {
@@ -853,7 +853,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
     {
         S32 w = getWidth();
         S32 h = getHeight();
-        LLImageGL::setManualImageFor(edit_name, mTarget, 0, mFormatInternal, w, h,
+        LLImageGL::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h,
             mFormatPrimary, mFormatType, (GLvoid*)data_in, mAllowCompression);
     }
     else if (mUseMipMaps)
@@ -884,7 +884,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                 else
                 {
 
-                    LLImageGL::setManualImageFor(edit_name, mTarget, gl_level, mFormatInternal, w, h, mFormatPrimary, GL_UNSIGNED_BYTE, (GLvoid*)data_in, mAllowCompression);
+                    LLImageGL::setManualImage(edit_name, mTarget, gl_level, mFormatInternal, w, h, mFormatPrimary, GL_UNSIGNED_BYTE, (GLvoid*)data_in, mAllowCompression);
                     if (gl_level == 0)
                     {
                         analyzeAlpha(data_in, w, h);
@@ -917,7 +917,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                         LLVkTex::paramI(edit_name, mTarget, GL_GENERATE_MIPMAP, GL_TRUE);
                     }
 
-                    LLImageGL::setManualImageFor(edit_name, mTarget, 0, mFormatInternal,
+                    LLImageGL::setManualImage(edit_name, mTarget, 0, mFormatInternal,
                                  w, h,
                                  mFormatPrimary, mFormatType,
                                  data_in, mAllowCompression);
@@ -1011,7 +1011,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     (void)cur_mip_data;
                     {
 
-                        LLImageGL::setManualImageFor(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data, mAllowCompression);
+                        LLImageGL::setManualImage(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data, mAllowCompression);
                         if (m == 0)
                         {
                             analyzeAlpha(data_in, w, h);
@@ -1057,7 +1057,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         else
         {
 
-            LLImageGL::setManualImageFor(edit_name, mTarget, 0, mFormatInternal, w, h,
+            LLImageGL::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h,
                          mFormatPrimary, mFormatType, (GLvoid *)data_in, mAllowCompression);
             analyzeAlpha(data_in, w, h);
 
@@ -1348,13 +1348,8 @@ void LLImageGL::deleteTextures(S32 numTextures, const U32 *textures)
 }
 
 // static
-void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void* pixels, bool allow_compression)
-{
-    setManualImageFor(LLVkTex::boundOnActive(target), target, miplevel, intformat, width, height, pixformat, pixtype, pixels, allow_compression);
-}
-
 // static
-void LLImageGL::setManualImageFor(U32 texname, U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void* pixels, bool allow_compression)
+void LLImageGL::setManualImage(U32 texname, U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void* pixels, bool allow_compression)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     if (LLRender::sGLCoreProfile)
@@ -2652,7 +2647,7 @@ void LLImageGL::checkActiveThread()
             llassert(w > 0 && h > 0 && cur_mip_data);
             U8 test = cur_mip_data[w*h*mComponents-1];
             {
-                LLImageGL::setManualImageFor(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data);
+                LLImageGL::setManualImage(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data);
                 stop_glerror();
             }
             if (prev_mip_data && prev_mip_data != rawdata)

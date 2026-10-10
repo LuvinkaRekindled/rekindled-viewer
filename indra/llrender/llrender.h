@@ -488,21 +488,20 @@ public:
     void bindBuffer(U32 gl_target, U32 id);
     void bufferData(U32 gl_target, S64 size, const void* data, U32 gl_usage);
     void bindBufferBase(U32 gl_target, U32 index, U32 id);
-    void copyTexSubImage2D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height);
-    void copyTexSubImage3D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height);
-    void generateMipmap(U32 gl_target);
-    void texParameteri(U32 gl_target, U32 gl_pname, S32 param);
-    void texImage2D(U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data);
+    void copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height);
+    void copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height);
+    void generateMipmap(U32 texture, U32 gl_target);
+    void texParameteri(U32 texture, U32 gl_target, U32 gl_pname, S32 param);
+    void texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data);
     void bindFramebuffer(U32 gl_target, U32 id);
     U32 checkFramebufferStatus(U32 gl_target);
     U32 getError();
-    void activeTexture(U32 gl_texture_unit_enum);   // GL_TEXTURE0 + n
-    void bindTexture(U32 gl_target, U32 id);        // raw bind, bypasses the LLTexUnit cache (as the old direct call did)
+    void bindTextureSlot(S32 unit, U32 gl_target, U32 id);     // raw slot write, bypasses the LLTexUnit cache (as the old direct call did)
     void deleteTextures(S32 count, const U32* ids);
     F32 getLineWidth() const { return mLineWidth; }
     void setScissor(S32 x, S32 y, S32 width, S32 height);
-    void getTexLevelParameteriv(U32 gl_target, S32 level, U32 gl_pname, S32* result);
-    void getTexImage(U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels);
+    void getTexLevelParameteriv(U32 texture, U32 gl_target, S32 level, U32 gl_pname, S32* result);
+    void getTexImage(U32 texture, U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels);
     void setSceneBlendType(eBlendType type);
 
     // applies blend func to both color and alpha

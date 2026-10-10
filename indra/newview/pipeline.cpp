@@ -1168,8 +1168,8 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
                 gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
                 gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
 
-                gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
-                gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+                gGL.texParameteri(shadow_target->getDepth(), GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+                gGL.texParameteri(shadow_target->getDepth(), GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
             }
         }
     }
@@ -1185,8 +1185,8 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
                 gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
                 gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
 
-                gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
-                gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+                gGL.texParameteri(shadow_target->getDepth(), GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+                gGL.texParameteri(shadow_target->getDepth(), GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
             }
         }
     }
@@ -1521,7 +1521,7 @@ void LLPipeline::createGLBuffers()
         LLImageGL::generateTextures(1, &mNoiseMap);
 
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mNoiseMap);
-        LLImageGL::setManualImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGB16F, noiseRes, noiseRes, GL_RGB, GL_FLOAT, noise, false);
+        LLImageGL::setManualImage(mNoiseMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGB16F, noiseRes, noiseRes, GL_RGB, GL_FLOAT, noise, false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
 
@@ -1536,7 +1536,7 @@ void LLPipeline::createGLBuffers()
 
         LLImageGL::generateTextures(1, &mTrueNoiseMap);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mTrueNoiseMap);
-        LLImageGL::setManualImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGB16F, noiseRes, noiseRes, GL_RGB,GL_FLOAT, noise, false);
+        LLImageGL::setManualImage(mTrueNoiseMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGB16F, noiseRes, noiseRes, GL_RGB,GL_FLOAT, noise, false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
 
@@ -1552,7 +1552,7 @@ void LLPipeline::createGLBuffers()
 
         LLImageGL::generateTextures(1, &mSMAAAreaMap);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mSMAAAreaMap);
-        LLImageGL::setManualImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RG8, AREATEX_WIDTH, AREATEX_HEIGHT, GL_RG,
+        LLImageGL::setManualImage(mSMAAAreaMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RG8, AREATEX_WIDTH, AREATEX_HEIGHT, GL_RG,
             GL_UNSIGNED_BYTE, tempBuffer.data(), false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
@@ -1570,7 +1570,7 @@ void LLPipeline::createGLBuffers()
 
         LLImageGL::generateTextures(1, &mSMAASearchMap);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mSMAASearchMap);
-        LLImageGL::setManualImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_R8, SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT,
+        LLImageGL::setManualImage(mSMAASearchMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_R8, SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT,
             GL_RED, GL_UNSIGNED_BYTE, tempBuffer.data(), false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
@@ -1603,7 +1603,7 @@ void LLPipeline::createGLBuffers()
             };
             LLImageGL::generateTextures(1, &mSMAASampleMap);
             gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mSMAASampleMap);
-            LLImageGL::setManualImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGB, raw_image->getWidth(),
+            LLImageGL::setManualImage(mSMAASampleMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGB, raw_image->getWidth(),
                 raw_image->getHeight(), format, GL_UNSIGNED_BYTE, raw_image->getData(), false);
             stop_glerror();
             gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
@@ -1675,11 +1675,11 @@ void LLPipeline::createLUTBuffers()
 #endif
         LLImageGL::generateTextures(1, &mLightFunc);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mLightFunc);
-        LLImageGL::setManualImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, pix_format, lightResX, lightResY, GL_RED, GL_FLOAT, ls, false);
+        LLImageGL::setManualImage(mLightFunc, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, pix_format, lightResX, lightResY, GL_RED, GL_FLOAT, ls, false);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
-        gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        gGL.texParameteri(mLightFunc, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gGL.texParameteri(mLightFunc, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 
         delete [] ls;
     }
@@ -11501,7 +11501,7 @@ void LLPipeline::unbindDeferredShader(LLGLSLShader &shader)
     {
         if (shader.disableTexture(LLShaderMgr::DEFERRED_SHADOW0+i) > -1)
         {
-            gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+            gGL.texParameteri(LLTexUnit::sWhiteTexture, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);     // as before: the unit's texture is the white one once disabled
         }
     }
 
@@ -11509,7 +11509,7 @@ void LLPipeline::unbindDeferredShader(LLGLSLShader &shader)
     {
         if (shader.disableTexture(LLShaderMgr::DEFERRED_SHADOW0+i) > -1)
         {
-            gGL.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+            gGL.texParameteri(LLTexUnit::sWhiteTexture, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);     // as before: the unit's texture is the white one once disabled
         }
     }
 

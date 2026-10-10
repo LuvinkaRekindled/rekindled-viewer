@@ -228,7 +228,7 @@ void FSManipTranslateJoint::restoreGL()
                 }
             }
         }
-        LLImageGL::setManualImage(GL_TEXTURE_2D, mip, GL_RGBA, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE, d);
+        LLImageGL::setManualImage(sGridTex->getTexName(), GL_TEXTURE_2D, mip, GL_RGBA, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE, d);
         rez = rez >> 1;
         mip++;
     }

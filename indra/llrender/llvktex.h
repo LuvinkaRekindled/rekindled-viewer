@@ -7,9 +7,6 @@
  * (the id is the name the producer allocated: it is the handle), carries the unpack state it needs, and does not depend on any binding. The records are
  * independent of the texture slots, so they no longer force pending slot changes out as records of their own.
  *
- * The producer-side slot table below is only what the old-style helpers (LLRender::texParameteri and friends, which act on "the bound texture") need to find
- * their id; it is written by the same calls that write the slot records and goes away with those helpers.
- *
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
@@ -35,9 +32,6 @@ namespace LLVkTex
     enum TexKind : U32 { K_IMAGE2D, K_IMAGE3D, K_SUB2D, K_SUB3D, K_COMPRESSED2D };
     enum TexOpKind : U32 { OPK_MIPMAP, OPK_COPY_SUB, OPK_COPY_IMAGE, OPK_SWIZZLE };
     struct TexOp { U32 mKind; U32 mTex; U32 mTarget; S32 mLevel; S32 mX0, mY0, mZ0, mX, mY, mW, mH; U32 mFormat; S32 mBorder; S32 mRgba[4]; };
-
-    // LL_VK_TEX_VERIFY=1: an edit on the main thread that names a texture other than the one the caller bound on the active unit is logged (first 40)
-    void verifyBound(const char* what, U32 id, U32 target);
 
     // ---- handles: the producer allocates the id, the worker makes and destroys the texture in stream order ----
     void create(S32 count, U32* ids);
@@ -67,26 +61,6 @@ namespace LLVkTex
 
     // a texture slot (LLTexUnit): what a draw samples from the unit. Typed record on the main producer; applied directly in inline mode; other threads render nothing, so nothing.
     void bindSlot(S32 unit, U32 target, U32 id);
-
-    // ---- slot table for the helpers that act on 'the bound texture' (main thread) ----
-    inline U32 targetClass(U32 target)
-    {
-        switch (target)
-        {
-        case 0x0DE1: return 0;                                  // TEXTURE_2D
-        case 0x8513: case 0x8515: case 0x8516: case 0x8517: case 0x8518: case 0x8519: case 0x851A: return 1;     // cube map and its faces
-        case 0x9009: return 2;                                  // CUBE_MAP_ARRAY
-        case 0x8C1A: return 3;                                  // 2D_ARRAY
-        case 0x806F: return 4;                                  // 3D
-        case 0x9100: return 5;                                  // 2D_MULTISAMPLE
-        default: return 7;
-        }
-    }
-    struct Slots { U32 mBound[32][8] = {}; U32 mActive = 0; };
-    inline Slots gSlots;
-    inline void noteActive(S32 unit) { if ((U32)unit < 32) gSlots.mActive = (U32)unit; }
-    inline void noteBind(S32 unit, U32 target, U32 id) { if ((U32)unit < 32) gSlots.mBound[unit][targetClass(target)] = id; }
-    inline U32 boundOnActive(U32 target) { return gSlots.mBound[gSlots.mActive][targetClass(target)]; }
 }
 
 namespace LLVkGL
