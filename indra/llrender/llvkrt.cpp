@@ -187,6 +187,7 @@ struct DebugSwitches
     bool mCompare = false;          // compare the system-memory copy of host-written buffers with the mapped video memory (a few per call), log mismatches
     bool mDynCasters = false;       // include casters with a matrix of their own (avatar attachments, moving linksets): they go wrong in the ray scene so far (see PLAN-rt-shadows.md)
     bool mCallLog = false;          // one line per scene call into <work>/rt-calls.log (wall clock, frame, call, jobs, instances)
+    bool mPreflush = true;          // before the builds and the skinning: record the queued writes of video-memory buffers (they are only recorded when a draw reads the buffer, which a build does not)
     bool mAvatarLog = false;        // one line per avatar instance of every scene call into <work>/rt-avatars.log: how old its data is, why it was not refreshed
     bool mSkinProbe = false;        // about every 90 scene calls: run the skin jobs again on their own, read a few results back and log their bounding boxes
     bool mRigged = true;            // rigged opaque casters (avatar attachments) in the scene, skinned by the compute pass
@@ -248,6 +249,7 @@ void read_debug_switches()
                 else if (k == "rigged") d.mRigged = v != 0;
                 else if (k == "skinprobe") d.mSkinProbe = v != 0;
                 else if (k == "avlog") d.mAvatarLog = v != 0;
+                else if (k == "preflush") d.mPreflush = v != 0;
                 else if (k == "dyncasters") d.mDynCasters = v != 0;
                 else if (k == "compare") d.mCompare = v != 0;
                 else if (k == "maxvtx") d.mMaxVtx = (U32)v;
@@ -1032,6 +1034,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     const Capabilities& caps = ctx.getCaps();
     const VkDeviceSize align = std::max<VkDeviceSize>(caps.mRt.mScratchAlignment, 128);
     read_debug_switches();
+    if (sDbg.mPreflush)
+    {
+        LLVkGL::flushPendingBufferWrites();
+    }
     if (sDbg.mSingle)
     {
         const Tlas& t0 = sTlas[ctx.getFrameSlot()];

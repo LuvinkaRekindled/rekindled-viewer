@@ -2600,6 +2600,11 @@ void markBufferUsed(unsigned int name)
     }
 }
 
+void flushPendingBufferWrites()
+{
+    flush_buffer_updates();
+}
+
 void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data)
 {
     on_bufferSubData(buffer_for_target(target), offset, size, data);
