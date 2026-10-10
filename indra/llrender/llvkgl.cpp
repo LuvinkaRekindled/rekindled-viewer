@@ -2585,7 +2585,8 @@ bool getBufferInfo(unsigned int name, BufferInfo& out)
     out.mVersion = b.mVersion;
     out.mMoves = b.mMoves;
     out.mDevice = b.mDevicePath;
-    out.mCpu = b.mArena.valid() ? b.mArena.mMapped : nullptr;
+    // the system-memory copy (reading the mapped video memory from the CPU is very slow); only when it covers the whole buffer
+    out.mCpu = (!b.mShadow.empty() && b.mShadow.size() >= b.mSize) ? b.mShadow.data() : nullptr;
     return b.mVk.valid();
 }
 
