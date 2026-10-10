@@ -11488,6 +11488,17 @@ static bool shadow_rigged_packets_enabled()
     return true;
 }
 
+// <FS> ray query shadows: which shadow pass is rendering (0-3 sun cascades, 4-5 spot / projector shadows, 6 anything else)
+static U32 shadow_pass_index()
+{
+    const S32 id = (S32)LLViewerCamera::sCurCameraID;
+    if (id >= (S32)LLViewerCamera::CAMERA_SUN_SHADOW0 && id <= (S32)LLViewerCamera::CAMERA_SPOT_SHADOW1)
+    {
+        return (U32)(id - (S32)LLViewerCamera::CAMERA_SUN_SHADOW0);
+    }
+    return 6;
+}
+
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
 {
     LL_CPU_ZONE("renderShadow (all passes)");
@@ -11633,6 +11644,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             LLVkMirror::ShadowPacketsHeader header;
             header.mEntries = (U32)entries.size();
+            header.mPass = shadow_pass_index();
             header.mMatrices = (U32)(matrices.size() / 16);
             const glm::mat4 view_proj = gGL.getProjectionMatrix() * glm::make_mat4(gGLModelView);
             memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
@@ -11892,6 +11904,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             header.mKind = 1;
             header.mTargetWidth = (F32)target_width;
             header.mEntries = (U32)entries.size();
+            header.mPass = shadow_pass_index();
             header.mMatrices = (U32)(matrices.size() / 16);
             const glm::mat4 view_proj = gGL.getProjectionMatrix() * glm::make_mat4(gGLModelView);
             memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
