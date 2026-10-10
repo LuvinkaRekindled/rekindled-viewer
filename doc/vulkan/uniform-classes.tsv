@@ -1,145 +1,165 @@
 class	uniform	type	array	bytes	programs	families	measured_changes_per_frame
-per draw (instance)	modelview_projection_matrix	mat4	0	64	133	other:33,skinned:30,gbuffer:25	392
-per draw (instance)	modelview_matrix	mat4	0	64	111	skinned:42,gbuffer:36,other:11	277
-per draw (instance)	normal_matrix	mat3	0	48	76	gbuffer:34,skinned:24,alpha:8	159
-per draw (instance)	texture_matrix0	mat4	0	64	103	skinned:37,gbuffer:25,alpha:13	151
-per draw (instance)	texture_matrix1	mat4	0	64	3	skinned:1,gbuffer:1,other:1	
-per draw/light (measured >= 100 changes/frame, unclassified by name)	color	vec3	0	16	141	gbuffer:38,other:35,skinned:25	393
-per light draw	center	vec3	0	12	3	light:3	661
-per light draw	noiseSine	float	0	4	61	gbuffer:30,skinned:20,alpha:4	417
-per light draw	size	float	0	4	124	gbuffer:38,other:28,skinned:22	373
-per light draw	box_center	vec3	0	12	2	other:1,shadow:1	303
-per light draw	proj_mat	mat4	0	64	124	gbuffer:38,other:28,skinned:22	249
-per light draw	proj_origin	vec3	0	12	2	light:2	249
-per light draw	proj_p	vec3	0	12	124	gbuffer:38,other:28,skinned:22	249
-per light draw	falloff	float	0	4	3	light:3	235
-per light draw	box_size	vec3	0	12	2	other:1,shadow:1	183
-per light draw	proj_range	float	0	4	124	gbuffer:38,other:28,skinned:22	178
-per light draw	proj_near	float	0	4	2	light:2	177
-per light draw	proj_n	vec3	0	12	124	gbuffer:38,other:28,skinned:22	156
-per light draw	proj_focus	float	0	4	124	gbuffer:38,other:28,skinned:22	113
-per light draw	proj_ambiance	float	0	4	124	gbuffer:38,other:28,skinned:22	106
-per light draw	proj_lod	float	0	4	124	gbuffer:38,other:28,skinned:22	60
-per light draw	light	vec4	1	256	16	light:16	
-per light draw	light_col	vec4	1	256	16	light:16	
-per light draw	light_count	int	0	4	16	light:16	
-per light draw	lightnorm	vec3	0	12	142	gbuffer:42,other:31,skinned:24	
-per light draw	proj_ambient_lod	float	0	4	2	light:2	
-per light draw	proj_shadow_idx	int	0	4	2	light:2	
-per light draw	proj_shadow_res	vec2	0	8	83	gbuffer:30,skinned:20,light:19	
-per light draw	spot_shadow_bias	float	0	4	83	gbuffer:30,skinned:20,light:19	
-per light draw	spot_shadow_offset	float	0	4	83	gbuffer:30,skinned:20,light:19	
-per material	specular_color	vec4	0	16	32	gbuffer:16,skinned:16	435
-per material	env_intensity	float	0	4	32	gbuffer:16,skinned:16	94
-per material	minimum_alpha	float	0	4	50	skinned:17,alpha:13,gbuffer:8	89
-per material	metallicFactor	float	0	4	4	skinned:2,pbr:2	33
+per draw (instance)	modelview_projection_matrix	mat4	0	64	133	other:33,skinned:30,gbuffer:25	383
+per draw (instance)	modelview_matrix	mat4	0	64	111	skinned:42,gbuffer:36,other:11	285
+per draw (instance)	texture_matrix0	mat4	0	64	103	skinned:37,gbuffer:25,alpha:13	161
+per draw (instance)	normal_matrix	mat3	0	48	76	gbuffer:34,skinned:24,alpha:8	160
+per draw (instance)	texture_matrix1	mat4	0	64	3	skinned:1,gbuffer:1,other:1	0
+per draw/light (measured >= 100 changes/frame, unclassified by name)	color	vec3	0	16	141	gbuffer:38,other:35,skinned:25	402
+per light draw	center	vec3	0	12	3	light:3	659
+per light draw	noiseSine	float	0	4	61	gbuffer:30,skinned:20,alpha:4	410
+per light draw	size	float	0	4	124	gbuffer:38,other:28,skinned:22	378
+per light draw	box_center	vec3	0	12	2	other:1,shadow:1	324
+per light draw	proj_mat	mat4	0	64	124	gbuffer:38,other:28,skinned:22	245
+per light draw	proj_origin	vec3	0	12	2	light:2	245
+per light draw	proj_p	vec3	0	12	124	gbuffer:38,other:28,skinned:22	245
+per light draw	falloff	float	0	4	3	light:3	244
+per light draw	box_size	vec3	0	12	2	other:1,shadow:1	194
+per light draw	proj_range	float	0	4	124	gbuffer:38,other:28,skinned:22	173
+per light draw	proj_near	float	0	4	2	light:2	172
+per light draw	proj_n	vec3	0	12	124	gbuffer:38,other:28,skinned:22	148
+per light draw	proj_focus	float	0	4	124	gbuffer:38,other:28,skinned:22	112
+per light draw	proj_ambiance	float	0	4	124	gbuffer:38,other:28,skinned:22	100
+per light draw	proj_lod	float	0	4	124	gbuffer:38,other:28,skinned:22	58
+per light draw	proj_ambient_lod	float	0	4	2	light:2	4
+per light draw	proj_shadow_idx	int	0	4	2	light:2	2
+per light draw	lightnorm	vec3	0	12	142	gbuffer:42,other:31,skinned:24	1
+per light draw	light	vec4	1	256	16	light:16	0
+per light draw	light_col	vec4	1	256	16	light:16	0
+per light draw	light_count	int	0	4	16	light:16	0
+per light draw	proj_shadow_res	vec2	0	8	83	gbuffer:30,skinned:20,light:19	0
+per light draw	spot_shadow_bias	float	0	4	83	gbuffer:30,skinned:20,light:19	0
+per light draw	spot_shadow_offset	float	0	4	83	gbuffer:30,skinned:20,light:19	0
+per material	specular_color	vec4	0	16	32	gbuffer:16,skinned:16	386
+per material	minimum_alpha	float	0	4	50	skinned:17,alpha:13,gbuffer:8	107
+per material	env_intensity	float	0	4	32	gbuffer:16,skinned:16	96
+per material	metallicFactor	float	0	4	4	skinned:2,pbr:2	36
 per material	roughnessFactor	float	0	4	4	skinned:2,pbr:2	32
 per material	texture_base_color_transform	vec4	2	32	12	skinned:5,pbr:5,shadow:2	26
 per material	texture_emissive_transform	vec4	2	32	8	pbr:5,skinned:3	26
 per material	texture_metallic_roughness_transform	vec4	2	32	4	skinned:2,pbr:2	26
 per material	texture_normal_transform	vec4	2	32	4	skinned:2,pbr:2	26
-per material	emissiveColor	vec3	0	12	8	pbr:5,skinned:3	21
-per material	emissive_brightness	float	0	4	32	gbuffer:16,skinned:16	
+per material	emissiveColor	vec3	0	12	8	pbr:5,skinned:3	15
+per material	emissive_brightness	float	0	4	32	gbuffer:16,skinned:16	14
 per pass / per view	waterPlane	vec4	0	16	145	gbuffer:42,other:32,skinned:25	79
 per pass / per view	waterSign	float	0	4	125	gbuffer:38,other:29,skinned:22	76
-per pass / per view	shadow_matrix	mat4	6	384	83	gbuffer:30,skinned:20,light:19	60
-per pass / per view	shadow_clip	vec4	0	16	83	gbuffer:30,skinned:20,light:19	52
+per pass / per view	shadow_matrix	mat4	6	384	83	gbuffer:30,skinned:20,light:19	59
+per pass / per view	shadow_clip	vec4	0	16	83	gbuffer:30,skinned:20,light:19	48
 per pass / per view	moon_dir	vec3	0	12	111	gbuffer:34,skinned:25,light:23	44
 per pass / per view	sun_dir	vec3	0	12	111	gbuffer:34,skinned:25,light:23	44
-per pass / per view	inv_proj	mat4	0	64	125	gbuffer:39,other:28,skinned:22	41
-per pass / per view	projection_matrix	mat4	0	64	90	skinned:42,gbuffer:31,other:6	37
+per pass / per view	inv_proj	mat4	0	64	125	gbuffer:39,other:28,skinned:22	40
+per pass / per view	projection_matrix	mat4	0	64	90	skinned:42,gbuffer:31,other:6	36
 per pass / per view	env_mat	mat3	0	48	78	gbuffer:30,skinned:20,light:17	14
+per pass / per view	ll_packet_models	uvec2	0	8	16	gbuffer:13,shadow:3	13
+per pass / per view	ll_packet_table	uvec2	0	8	16	gbuffer:13,shadow:3	13
+per pass / per view	light_position	vec4	8	128	20	skinned:8,alpha:5,gbuffer:4	11
+per pass / per view	inv_modelview_delta	mat4	0	64	61	gbuffer:30,skinned:20,alpha:4	10
+per pass / per view	modelview_delta	mat4	0	64	61	gbuffer:30,skinned:20,alpha:4	10
+per pass / per view	shadow_bias	float	0	4	83	gbuffer:30,skinned:20,light:19	8
+per pass / per view	screen_res	vec2	0	8	135	gbuffer:41,other:34,skinned:22	7
+per pass / per view	shadow_res	vec2	0	8	83	gbuffer:30,skinned:20,light:19	7
+per pass / per view	blend_factor	float	0	4	4	light:2,water:1,sky:1	6
+per pass / per view	cube_snapshot	int	0	4	62	gbuffer:30,skinned:20,alpha:4	5
+per pass / per view	glowDelta	vec2	0	8	1	effects:1	4
+per pass / per view	ll_view_proj	mat4	0	64	3	shadow:3	4
+per pass / per view	blue_density	vec3	0	12	142	gbuffer:42,other:31,skinned:24	3
+per pass / per view	delta	vec2	0	8	1	light:1	2
+per pass / per view	near_clip	float	0	4	8	alpha:4,light:2,skinned:2	2
+per pass / per view	shadow_fade	float	0	4	2	light:2	2
+per pass / per view	ambient_color	vec3	0	16	144	gbuffer:42,other:32,skinned:25	1
+per pass / per view	blue_horizon	vec3	0	12	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	cloud_shadow	float	0	4	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	density_multiplier	float	0	4	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	direction	vec2	0	8	1	other:1	1
+per pass / per view	distance_multiplier	float	0	4	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	dt	float	0	4	2	other:2	1
+per pass / per view	eyeVec	vec3	0	12	2	water:2	1
+per pass / per view	glow	vec3	0	12	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	haze_density	float	0	4	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	haze_horizon	float	0	4	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	max_y	float	0	4	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	moonlight_color	vec3	0	12	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	noiseVec	vec2	0	8	2	other:2	1
+per pass / per view	origin	vec4	0	16	3	skinned:1,gbuffer:1,other:1	1
+per pass / per view	scene_light_strength	float	0	4	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	sunlight_color	vec3	0	12	142	gbuffer:42,other:31,skinned:24	1
+per pass / per view	time	float	0	4	3	water:2,sky:1	1
+per pass / per view	to_cur	mat4	0	64	1	other:1	1
+per pass / per view	to_prev	mat4	0	64	1	other:1	1
+per pass / per view	viewport	vec4	0	16	1	light:1	1
+per pass / per view	waterFogColor	vec4	0	16	83	gbuffer:34,skinned:23,alpha:8	1
+per pass / per view	waterFogDensity	float	0	4	83	gbuffer:34,skinned:23,alpha:8	1
+per pass / per view	waterHeight	float	0	4	2	water:2	1
 per pass / per view	POISSON3D_SAMPLES	vec3	128	2048	61	gbuffer:30,skinned:20,alpha:4	
 per pass / per view	SMAA_RT_METRICS	vec4	0	16	12	other:12	
-per pass / per view	above_water	int	0	4	1	water:1	
-per pass / per view	adaptiveStepMultiplier	float	0	4	61	gbuffer:30,skinned:20,alpha:4	
+per pass / per view	above_water	int	0	4	1	water:1	0
+per pass / per view	adaptiveStepMultiplier	float	0	4	61	gbuffer:30,skinned:20,alpha:4	0
 per pass / per view	alpha_scale	float	0	4	2	other:2	
 per pass / per view	ambiance	float	0	4	1	other:1	
-per pass / per view	ambient_color	vec3	0	16	144	gbuffer:42,other:32,skinned:25	
 per pass / per view	baseColorFactors	vec4	4	64	2	pbr:2	
-per pass / per view	blend_factor	float	0	4	4	light:2,water:1,sky:1	
-per pass / per view	blue_density	vec3	0	12	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	blue_horizon	vec3	0	12	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	blurMultiplier	float	0	4	1	water:1	
+per pass / per view	blurMultiplier	float	0	4	1	water:1	0
 per pass / per view	blur_constant	float	0	4	1	gbuffer:1	
 per pass / per view	blur_fidelity	float	0	4	1	gbuffer:1	
-per pass / per view	blur_size	float	0	4	2	light:1,gbuffer:1	
+per pass / per view	blur_size	float	0	4	2	light:1,gbuffer:1	0
 per pass / per view	border_color	vec3	0	12	1	other:1	
 per pass / per view	border_thickness	float	0	4	1	other:1	
-per pass / per view	bump_code	int	0	4	1	other:1	
-per pass / per view	camPosLocal	vec3	0	12	11	gbuffer:4,skinned:4,light:2	
-per pass / per view	cas_param_0	uvec4	0	16	2	other:2	
-per pass / per view	cas_param_1	uvec4	0	16	2	other:2	
-per pass / per view	classic_mode	int	0	4	144	gbuffer:42,other:31,skinned:25	
-per pass / per view	clipPlane	vec4	0	16	226	other:61,gbuffer:50,skinned:42	
+per pass / per view	bump_code	int	0	4	1	other:1	0
+per pass / per view	camPosLocal	vec3	0	12	11	gbuffer:4,skinned:4,light:2	0
+per pass / per view	cas_param_0	uvec4	0	16	2	other:2	0
+per pass / per view	cas_param_1	uvec4	0	16	2	other:2	0
+per pass / per view	classic_mode	int	0	4	144	gbuffer:42,other:31,skinned:25	0
+per pass / per view	clipPlane	vec4	0	16	226	other:61,gbuffer:50,skinned:42	0
 per pass / per view	clipSign	float	0	4	226	other:61,gbuffer:50,skinned:42	
 per pass / per view	clip_plane	vec4	0	16	1	other:1	
-per pass / per view	cloud_color	vec3	0	12	1	light:1	
-per pass / per view	cloud_pos_density1	vec3	0	12	1	light:1	
-per pass / per view	cloud_pos_density2	vec3	0	12	1	light:1	
-per pass / per view	cloud_scale	float	0	4	1	light:1	
-per pass / per view	cloud_shadow	float	0	4	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	cloud_variance	float	0	4	1	light:1	
-per pass / per view	cube_snapshot	int	0	4	62	gbuffer:30,skinned:20,alpha:4	
-per pass / per view	custom_alpha	float	0	4	1	sky:1	
+per pass / per view	cloud_color	vec3	0	12	1	light:1	0
+per pass / per view	cloud_pos_density1	vec3	0	12	1	light:1	0
+per pass / per view	cloud_pos_density2	vec3	0	12	1	light:1	0
+per pass / per view	cloud_scale	float	0	4	1	light:1	0
+per pass / per view	cloud_variance	float	0	4	1	light:1	0
+per pass / per view	custom_alpha	float	0	4	1	sky:1	0
 per pass / per view	debug_normal_draw_length	float	0	4	4	skinned:2,other:2	
-per pass / per view	delta	vec2	0	8	1	light:1	
-per pass / per view	density_multiplier	float	0	4	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	depthRejectBias	float	0	4	61	gbuffer:30,skinned:20,alpha:4	
+per pass / per view	depthRejectBias	float	0	4	61	gbuffer:30,skinned:20,alpha:4	0
 per pass / per view	depth_cutoff	float	0	4	1	gbuffer:1	
-per pass / per view	diffuse_luminance_scale	float	0	4	1	other:1	
-per pass / per view	direction	vec2	0	8	1	other:1	
-per pass / per view	dist_factor	float	0	4	1	light:1	
-per pass / per view	distanceBias	float	0	4	61	gbuffer:30,skinned:20,alpha:4	
-per pass / per view	distance_multiplier	float	0	4	142	gbuffer:42,other:31,skinned:24	
+per pass / per view	diffuse_luminance_scale	float	0	4	1	other:1	0
+per pass / per view	dist_factor	float	0	4	1	light:1	0
+per pass / per view	distanceBias	float	0	4	61	gbuffer:30,skinned:20,alpha:4	0
 per pass / per view	dither_scale	float	0	4	1	other:1	
 per pass / per view	dither_scale_s	float	0	4	1	other:1	
 per pass / per view	dither_scale_t	float	0	4	1	other:1	
 per pass / per view	dof_height	float	0	4	1	gbuffer:1	
 per pass / per view	dof_width	float	0	4	1	gbuffer:1	
-per pass / per view	droplet_radius	float	0	4	2	other:1,light:1	
-per pass / per view	dt	float	0	4	2	other:2	
-per pass / per view	dynamic_exposure_params	vec4	0	16	2	other:2	
-per pass / per view	dynamic_exposure_params2	vec4	0	16	2	other:2	
+per pass / per view	droplet_radius	float	0	4	2	other:1,light:1	0
+per pass / per view	dynamic_exposure_params	vec4	0	16	2	other:2	0
+per pass / per view	dynamic_exposure_params2	vec4	0	16	2	other:2	0
 per pass / per view	emissiveColors	vec3	4	64	2	pbr:2	
-per pass / per view	exposure	float	0	4	7	gbuffer:3,other:3,water:1	
-per pass / per view	eyeVec	vec3	0	12	2	water:2	
+per pass / per view	exposure	float	0	4	7	gbuffer:3,other:3,water:1	0
 per pass / per view	far_clip	float	0	4	2	light:2	
-per pass / per view	far_z	float	0	4	16	light:16	
+per pass / per view	far_z	float	0	4	16	light:16	0
 per pass / per view	fbScale	vec2	0	8	1	water:1	
 per pass / per view	focal_distance	float	0	4	1	gbuffer:1	
 per pass / per view	fogCol	vec4	0	16	1	water:1	
 per pass / per view	frame_rect	vec4	0	16	1	other:1	
-per pass / per view	fresnelOffset	float	0	4	1	water:1	
-per pass / per view	fresnelScale	float	0	4	1	water:1	
+per pass / per view	fresnelOffset	float	0	4	1	water:1	0
+per pass / per view	fresnelScale	float	0	4	1	water:1	0
 per pass / per view	gGravity	vec4	0	16	1	gbuffer:1	
 per pass / per view	gSinWaveParams	vec4	0	16	1	gbuffer:1	
 per pass / per view	gWindDir	vec4	0	16	1	gbuffer:1	
-per pass / per view	gamma	float	0	4	7	other:4,gbuffer:3	
-per pass / per view	glossySampleCount	float	0	4	61	gbuffer:30,skinned:20,alpha:4	
-per pass / per view	glow	vec3	0	12	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	glowDelta	vec2	0	8	1	effects:1	
-per pass / per view	glowStrength	float	0	4	1	effects:1	
-per pass / per view	haze_density	float	0	4	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	haze_horizon	float	0	4	142	gbuffer:42,other:31,skinned:24	
+per pass / per view	gamma	float	0	4	7	other:4,gbuffer:3	0
+per pass / per view	glossySampleCount	float	0	4	61	gbuffer:30,skinned:20,alpha:4	0
+per pass / per view	glowStrength	float	0	4	1	effects:1	0
 per pass / per view	hdri_split_screen	float	0	4	1	other:1	
-per pass / per view	ice_level	float	0	4	2	other:1,light:1	
-per pass / per view	inv_modelview_delta	mat4	0	64	61	gbuffer:30,skinned:20,alpha:4	
+per pass / per view	ice_level	float	0	4	2	other:1,light:1	0
 per pass / per view	is_mirror	float	0	4	8	gbuffer:4,skinned:4	
-per pass / per view	iterationCount	float	0	4	61	gbuffer:30,skinned:20,alpha:4	
+per pass / per view	iterationCount	float	0	4	61	gbuffer:30,skinned:20,alpha:4	0
 per pass / per view	kd	float	0	4	2	water:2	
-per pass / per view	kern	vec3	4	64	1	light:1	
-per pass / per view	kern_scale	float	0	4	1	light:1	
-per pass / per view	lightDir	vec3	0	12	2	water:2	
+per pass / per view	kern	vec3	4	64	1	light:1	0
+per pass / per view	kern_scale	float	0	4	1	light:1	0
+per pass / per view	lightDir	vec3	0	12	2	water:2	0
 per pass / per view	lightExp	float	0	4	1	water:1	
-per pass / per view	light_attenuation	vec3	8	128	18	skinned:8,gbuffer:4,alpha:4	
-per pass / per view	light_deferred_attenuation	vec2	8	128	2	skinned:1,pbr:1	
-per pass / per view	light_diffuse	vec3	8	128	20	skinned:8,alpha:5,gbuffer:4	
-per pass / per view	light_direction	vec3	8	128	18	skinned:8,gbuffer:4,alpha:4	
-per pass / per view	light_position	vec4	8	128	20	skinned:8,alpha:5,gbuffer:4	
-per pass / per view	ll_packet_models	uvec2	0	8	16	gbuffer:13,shadow:3	
-per pass / per view	ll_packet_table	uvec2	0	8	16	gbuffer:13,shadow:3	
-per pass / per view	ll_target_width	float	0	4	1	shadow:1	
+per pass / per view	light_attenuation	vec3	8	128	18	skinned:8,gbuffer:4,alpha:4	0
+per pass / per view	light_deferred_attenuation	vec2	8	128	2	skinned:1,pbr:1	0
+per pass / per view	light_diffuse	vec3	8	128	20	skinned:8,alpha:5,gbuffer:4	0
+per pass / per view	light_direction	vec3	8	128	18	skinned:8,gbuffer:4,alpha:4	0
+per pass / per view	ll_target_width	float	0	4	1	shadow:1	0
 per pass / per view	ll_ti_alpha_ramp	uint	0	4	2	pbr:1,gbuffer:1	
 per pass / per view	ll_ti_altDiffuseMap	uint	0	4	1	light:1	
 per pass / per view	ll_ti_brdfLut	uint	0	4	103	gbuffer:26,skinned:22,other:20	
@@ -206,41 +226,34 @@ per pass / per view	ll_ti_tex2	uint	0	4	27	skinned:11,alpha:8,gbuffer:4
 per pass / per view	ll_ti_tex3	uint	0	4	27	skinned:11,alpha:8,gbuffer:4	
 per pass / per view	ll_ti_texture0	uint	0	4	2	skinned:1,other:1	
 per pass / per view	ll_ti_texture1	uint	0	4	2	skinned:1,other:1	
-per pass / per view	ll_view_proj	mat4	0	64	3	shadow:3	
-per pass / per view	lumWeights	vec3	0	12	1	effects:1	
+per pass / per view	lumWeights	vec3	0	12	1	effects:1	0
 per pass / per view	magnification	float	0	4	1	gbuffer:1	
-per pass / per view	maxExtractAlpha	float	0	4	1	effects:1	
+per pass / per view	maxExtractAlpha	float	0	4	1	effects:1	0
 per pass / per view	max_cof	float	0	4	3	gbuffer:3	
-per pass / per view	max_probe_lod	float	0	4	63	gbuffer:30,skinned:20,other:5	
-per pass / per view	max_y	float	0	4	142	gbuffer:42,other:31,skinned:24	
+per pass / per view	max_probe_lod	float	0	4	63	gbuffer:30,skinned:20,other:5	0
 per pass / per view	metallicFactors	vec4	0	16	2	pbr:2	
-per pass / per view	minLuminance	float	0	4	1	effects:1	
+per pass / per view	minLuminance	float	0	4	1	effects:1	0
 per pass / per view	minimum_alphas	vec4	0	16	2	pbr:2	
-per pass / per view	mipLevel	float	0	4	3	other:2,gbuffer:1	
-per pass / per view	mirror_flag	float	0	4	226	other:61,gbuffer:50,skinned:42	
-per pass / per view	modelview_delta	mat4	0	64	61	gbuffer:30,skinned:20,alpha:4	
-per pass / per view	moisture_level	float	0	4	2	other:1,light:1	
-per pass / per view	moon_brightness	float	0	4	1	light:1	
-per pass / per view	moonlight_color	vec3	0	12	142	gbuffer:42,other:31,skinned:24	
+per pass / per view	mipLevel	float	0	4	3	other:2,gbuffer:1	0
+per pass / per view	mirror_flag	float	0	4	226	other:61,gbuffer:50,skinned:42	0
+per pass / per view	moisture_level	float	0	4	2	other:1,light:1	0
+per pass / per view	moon_brightness	float	0	4	1	light:1	0
 per pass / per view	morphFactor	vec4	0	16	8	gbuffer:4,skinned:4	
-per pass / per view	near_clip	float	0	4	8	alpha:4,light:2,skinned:2	
-per pass / per view	noiseVec	vec2	0	8	2	other:2	
-per pass / per view	normScale	vec3	0	12	1	water:1	
+per pass / per view	normScale	vec3	0	12	1	water:1	0
 per pass / per view	norm_cutoff	float	0	4	1	gbuffer:1	
-per pass / per view	norm_scale	float	0	4	1	other:1	
-per pass / per view	object_plane_s	vec4	0	16	1	gbuffer:1	
-per pass / per view	object_plane_t	vec4	0	16	1	gbuffer:1	
-per pass / per view	origin	vec4	0	16	3	skinned:1,gbuffer:1,other:1	
-per pass / per view	out_screen_res	vec2	0	8	2	other:2	
-per pass / per view	probe_strength	float	0	4	2	other:2	
-per pass / per view	rayStep	float	0	4	61	gbuffer:30,skinned:20,alpha:4	
+per pass / per view	norm_scale	float	0	4	1	other:1	0
+per pass / per view	object_plane_s	vec4	0	16	1	gbuffer:1	0
+per pass / per view	object_plane_t	vec4	0	16	1	gbuffer:1	0
+per pass / per view	out_screen_res	vec2	0	8	2	other:2	0
+per pass / per view	probe_strength	float	0	4	2	other:2	0
+per pass / per view	rayStep	float	0	4	61	gbuffer:30,skinned:20,alpha:4	0
 per pass / per view	rcp_frame_opt	vec4	0	16	4	other:4	
 per pass / per view	rcp_frame_opt2	vec4	0	16	4	other:4	
 per pass / per view	rcp_screen_res	vec2	0	8	4	other:4	
-per pass / per view	refScale	float	0	4	2	water:2	
+per pass / per view	refScale	float	0	4	2	water:2	0
 per pass / per view	region_scale	float	0	4	1	pbr:1	
-per pass / per view	render_res	vec2	0	8	1	other:1	
-per pass / per view	resScale	float	0	4	1	other:1	
+per pass / per view	render_res	vec2	0	8	1	other:1	0
+per pass / per view	resScale	float	0	4	1	other:1	0
 per pass / per view	res_scale	float	0	4	2	gbuffer:2	
 per pass / per view	rlvEffectMode	int	0	4	1	other:1	
 per pass / per view	rlvEffectParam1	vec4	0	16	1	other:1	
@@ -249,58 +262,45 @@ per pass / per view	rlvEffectParam3	bvec2	0	8	1	other:1
 per pass / per view	rlvEffectParam4	vec4	0	16	1	other:1	
 per pass / per view	rlvEffectParam5	vec2	0	8	1	other:1	
 per pass / per view	roughnessFactors	vec4	0	16	2	pbr:2	
-per pass / per view	scene_light_strength	float	0	4	142	gbuffer:42,other:31,skinned:24	
 per pass / per view	screenRes	vec2	0	8	1	water:1	
-per pass / per view	screen_res	vec2	0	8	135	gbuffer:41,other:34,skinned:22	
-per pass / per view	shadow_bias	float	0	4	83	gbuffer:30,skinned:20,light:19	
-per pass / per view	shadow_fade	float	0	4	2	light:2	
-per pass / per view	shadow_offset	float	0	4	83	gbuffer:30,skinned:20,light:19	
-per pass / per view	shadow_res	vec2	0	8	83	gbuffer:30,skinned:20,light:19	
-per pass / per view	shadow_target_width	float	0	4	10	shadow:6,skinned:4	
-per pass / per view	sky_ambient_scale	float	0	4	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	sky_hdr_scale	float	0	4	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	sky_sunlight_scale	float	0	4	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	sourceIdx	int	0	4	3	other:3	
-per pass / per view	specular	vec3	0	12	2	water:2	
-per pass / per view	ssao_effect_mat	mat3	0	48	1	gbuffer:1	
-per pass / per view	ssao_factor	float	0	4	1	sky:1	
-per pass / per view	ssao_factor_inv	float	0	4	1	sky:1	
-per pass / per view	ssao_irradiance_max	float	0	4	1	gbuffer:1	
-per pass / per view	ssao_irradiance_scale	float	0	4	1	gbuffer:1	
-per pass / per view	ssao_max_radius	float	0	4	1	sky:1	
-per pass / per view	ssao_radius	float	0	4	1	sky:1	
-per pass / per view	ssrTraceMode	float	0	4	61	gbuffer:30,skinned:20,alpha:4	
-per pass / per view	stepX	float	0	4	1	other:1	
-per pass / per view	stepY	float	0	4	1	other:1	
-per pass / per view	sun_moon_glow_factor	float	0	4	142	gbuffer:42,other:31,skinned:24	
-per pass / per view	sun_up_factor	int	0	4	144	gbuffer:42,other:31,skinned:25	
-per pass / per view	sun_wash	float	0	4	19	light:19	
-per pass / per view	sunlight_color	vec3	0	12	142	gbuffer:42,other:31,skinned:24	
+per pass / per view	shadow_offset	float	0	4	83	gbuffer:30,skinned:20,light:19	0
+per pass / per view	shadow_target_width	float	0	4	10	shadow:6,skinned:4	0
+per pass / per view	sky_ambient_scale	float	0	4	142	gbuffer:42,other:31,skinned:24	0
+per pass / per view	sky_hdr_scale	float	0	4	142	gbuffer:42,other:31,skinned:24	0
+per pass / per view	sky_sunlight_scale	float	0	4	142	gbuffer:42,other:31,skinned:24	0
+per pass / per view	sourceIdx	int	0	4	3	other:3	0
+per pass / per view	specular	vec3	0	12	2	water:2	0
+per pass / per view	ssao_effect_mat	mat3	0	48	1	gbuffer:1	0
+per pass / per view	ssao_factor	float	0	4	1	sky:1	0
+per pass / per view	ssao_factor_inv	float	0	4	1	sky:1	0
+per pass / per view	ssao_irradiance_max	float	0	4	1	gbuffer:1	0
+per pass / per view	ssao_irradiance_scale	float	0	4	1	gbuffer:1	0
+per pass / per view	ssao_max_radius	float	0	4	1	sky:1	0
+per pass / per view	ssao_radius	float	0	4	1	sky:1	0
+per pass / per view	ssrTraceMode	float	0	4	61	gbuffer:30,skinned:20,alpha:4	0
+per pass / per view	stepX	float	0	4	1	other:1	0
+per pass / per view	stepY	float	0	4	1	other:1	0
+per pass / per view	sun_moon_glow_factor	float	0	4	142	gbuffer:42,other:31,skinned:24	0
+per pass / per view	sun_up_factor	int	0	4	144	gbuffer:42,other:31,skinned:25	0
+per pass / per view	sun_wash	float	0	4	19	light:19	0
 per pass / per view	tan_pixel_angle	float	0	4	1	gbuffer:1	
 per pass / per view	tc_scale	vec2	0	8	4	other:4	
 per pass / per view	terrain_texture_transforms	vec4	5	80	2	pbr:2	
-per pass / per view	time	float	0	4	3	water:2,sky:1	
 per pass / per view	tint	float	0	4	2	other:2	
-per pass / per view	to_cur	mat4	0	64	1	other:1	
-per pass / per view	to_prev	mat4	0	64	1	other:1	
 per pass / per view	tolerance	float	0	4	1	other:1	
-per pass / per view	tonemap_mix	float	0	4	7	gbuffer:3,other:3,water:1	
-per pass / per view	tonemap_type	int	0	4	7	gbuffer:3,other:3,water:1	
+per pass / per view	tonemap_mix	float	0	4	7	gbuffer:3,other:3,water:1	0
+per pass / per view	tonemap_type	int	0	4	7	gbuffer:3,other:3,water:1	0
 per pass / per view	transparent_surface	bool	0	4	60	gbuffer:30,skinned:20,alpha:4	
-per pass / per view	u_width	int	0	4	2	other:2	
-per pass / per view	viewport	vec4	0	16	1	light:1	
+per pass / per view	u_width	int	0	4	2	other:2	0
 per pass / per view	vignette	vec3	0	12	1	other:1	
-per pass / per view	warmthAmount	float	0	4	1	effects:1	
-per pass / per view	warmthWeights	vec3	0	12	1	effects:1	
-per pass / per view	waterFogColor	vec4	0	16	83	gbuffer:34,skinned:23,alpha:8	
+per pass / per view	warmthAmount	float	0	4	1	effects:1	0
+per pass / per view	warmthWeights	vec3	0	12	1	effects:1	0
 per pass / per view	waterFogColorLinear	vec3	0	12	1	water:1	
-per pass / per view	waterFogDensity	float	0	4	83	gbuffer:34,skinned:23,alpha:8	
-per pass / per view	waterFogKS	float	0	4	83	gbuffer:34,skinned:23,alpha:8	
-per pass / per view	waterHeight	float	0	4	2	water:2	
-per pass / per view	waveDir1	vec2	0	8	2	water:2	
-per pass / per view	waveDir2	vec2	0	8	2	water:2	
+per pass / per view	waterFogKS	float	0	4	83	gbuffer:34,skinned:23,alpha:8	0
+per pass / per view	waveDir1	vec2	0	8	2	water:2	0
+per pass / per view	waveDir2	vec2	0	8	2	water:2	0
 per pass / per view	zFar	float	0	4	1	other:1	
 per pass / per view	zNear	float	0	4	1	other:1	
 per pass / per view	zfar	float	0	4	1	water:1	
 per pass / per view	znear	float	0	4	1	water:1	
-skin palette (per skinned mesh)	matrixPalette	mat3x4	110	5280	48	skinned:42,shadow:3,other:1	756
+skin palette (per skinned mesh)	matrixPalette	mat3x4	110	5280	48	skinned:42,shadow:3,other:1	668
