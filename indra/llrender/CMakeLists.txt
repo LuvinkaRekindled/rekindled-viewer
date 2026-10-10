@@ -42,6 +42,7 @@ set(llrender_SOURCE_FILES
     llvkrenderer.cpp
     llvkrt.cpp
     llvkshader.cpp
+    llvkstate.cpp
     llvkvma.cpp
     llglcommonfunc.cpp
     )
@@ -86,6 +87,7 @@ set(llrender_HEADER_FILES
     llvkrenderer.h
     llvkrt.h
     llvkshader.h
+    llvkstate.h
     llglcommonfunc.h
     )
 

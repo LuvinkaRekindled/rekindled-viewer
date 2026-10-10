@@ -20,6 +20,7 @@
 #include "llvkshader.h"
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
+#include "llvkstate.h"
 #include "llvkdlss.h"
 #include "llvkrt.h"
 
@@ -1272,9 +1273,111 @@ VkSampler texture_sampler(Renderer& r, Tex& t)
     return t.mVkSampler;
 }
 
+// <FS> F1.1 step 2: LL_VK_STATE_VERIFY=1 compares the state block the producer wrote (LLVkState) with what the GL-shaped state calls produced, at every draw
+namespace
+{
+bool sStateVerify = false;
+bool sStateVerifyInit = false;
+U64 sStateChecked = 0, sStateMismatch = 0, sStateNoBlock = 0;
+
+void state_verify(bool has_depth)
+{
+    if (!sStateVerifyInit)
+    {
+        sStateVerifyInit = true;
+        const char* v = getenv("LL_VK_STATE_VERIFY");
+        sStateVerify = v && v[0] == '1';
+    }
+    if (!sStateVerify)
+    {
+        return;
+    }
+    const LLVkState::Block* blk = LLVkState::received();
+    if (!blk)
+    {
+        ++sStateNoBlock;
+        return;
+    }
+    // what the old path computes from the GL values (the same code as sync_draw_state below, without the debug switches)
+    RasterState rs;
+    if (sGL.mCull)
+    {
+        rs.mCull = sGL.mCullFace == GL_FRONT ? VK_CULL_MODE_FRONT_BIT : (sGL.mCullFace == GL_FRONT_AND_BACK ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_BACK_BIT);
+    }
+    rs.mPolygonMode = sGL.mPolygonMode == GL_LINE ? VK_POLYGON_MODE_LINE : (sGL.mPolygonMode == GL_POINT ? VK_POLYGON_MODE_POINT : VK_POLYGON_MODE_FILL);
+    rs.mLineWidth = sGL.mLineWidth;
+    rs.mDepthBias = sGL.mPolyOffset;
+    rs.mDepthClamp = sGL.mDepthClamp;
+    rs.mBiasConstant = sGL.mOffsetUnits;
+    rs.mBiasSlope = sGL.mOffsetFactor;
+    rs.mFrontFace = VK_FRONT_FACE_CLOCKWISE;
+    DepthStencilState ds;
+    ds.mDepthTest = sGL.mDepthTest && has_depth;
+    ds.mDepthWrite = sGL.mDepthMask && sGL.mDepthTest && has_depth;
+    ds.mDepthOp = compare_op(sGL.mDepthFunc);
+    ds.mStencilTest = false;
+    BlendState bs;
+    bs.mEnable = sGL.mBlend;
+    bs.mSrcColor = blend_factor(sGL.mBlendSrcRGB);
+    bs.mDstColor = blend_factor(sGL.mBlendDstRGB);
+    bs.mSrcAlpha = blend_factor(sGL.mBlendSrcA);
+    bs.mDstAlpha = blend_factor(sGL.mBlendDstA);
+    bs.mWriteMask = (sGL.mColorMask[0] ? VK_COLOR_COMPONENT_R_BIT : 0) | (sGL.mColorMask[1] ? VK_COLOR_COMPONENT_G_BIT : 0)
+        | (sGL.mColorMask[2] ? VK_COLOR_COMPONENT_B_BIT : 0) | (sGL.mColorMask[3] ? VK_COLOR_COMPONENT_A_BIT : 0);
+
+    RasterState nrs;
+    DepthStencilState nds;
+    BlendState nbs;
+    LLVkState::toRenderer(*blk, has_depth, nrs, nds, nbs);
+    ++sStateChecked;
+    std::string why;
+    if (!(rs == nrs))
+    {
+        why += " raster(cull " + std::to_string(rs.mCull) + "/" + std::to_string(nrs.mCull) + " poly " + std::to_string(rs.mPolygonMode) + "/" + std::to_string(nrs.mPolygonMode)
+            + " line " + std::to_string(rs.mLineWidth) + "/" + std::to_string(nrs.mLineWidth) + " bias " + std::to_string(rs.mDepthBias) + "/" + std::to_string(nrs.mDepthBias)
+            + " clamp " + std::to_string(rs.mDepthClamp) + "/" + std::to_string(nrs.mDepthClamp) + " const " + std::to_string(rs.mBiasConstant) + "/" + std::to_string(nrs.mBiasConstant)
+            + " slope " + std::to_string(rs.mBiasSlope) + "/" + std::to_string(nrs.mBiasSlope) + ")";
+    }
+    if (!(ds == nds))
+    {
+        why += " depth(test " + std::to_string(ds.mDepthTest) + "/" + std::to_string(nds.mDepthTest) + " write " + std::to_string(ds.mDepthWrite) + "/" + std::to_string(nds.mDepthWrite)
+            + " op " + std::to_string(ds.mDepthOp) + "/" + std::to_string(nds.mDepthOp) + ")";
+    }
+    if (!(bs == nbs))
+    {
+        why += " blend(en " + std::to_string(bs.mEnable) + "/" + std::to_string(nbs.mEnable) + " src " + std::to_string(bs.mSrcColor) + "/" + std::to_string(nbs.mSrcColor)
+            + " dst " + std::to_string(bs.mDstColor) + "/" + std::to_string(nbs.mDstColor) + " srcA " + std::to_string(bs.mSrcAlpha) + "/" + std::to_string(nbs.mSrcAlpha)
+            + " dstA " + std::to_string(bs.mDstAlpha) + "/" + std::to_string(nbs.mDstAlpha) + " mask " + std::to_string(bs.mWriteMask) + "/" + std::to_string(nbs.mWriteMask) + ")";
+    }
+    if (sGL.mViewportSet != blk->mViewportSet || (sGL.mViewportSet && memcmp(sGL.mViewport, blk->mViewport, sizeof(sGL.mViewport)) != 0))
+    {
+        why += " viewport(" + std::to_string(sGL.mViewportSet) + " " + std::to_string(sGL.mViewport[0]) + "," + std::to_string(sGL.mViewport[1]) + "," + std::to_string(sGL.mViewport[2]) + "," + std::to_string(sGL.mViewport[3])
+            + " / " + std::to_string(blk->mViewportSet) + " " + std::to_string(blk->mViewport[0]) + "," + std::to_string(blk->mViewport[1]) + "," + std::to_string(blk->mViewport[2]) + "," + std::to_string(blk->mViewport[3]) + ")";
+    }
+    if (sGL.mScissorTest != blk->mScissorOn || (sGL.mScissorTest && memcmp(sGL.mScissor, blk->mScissor, sizeof(sGL.mScissor)) != 0))
+    {
+        why += " scissor(" + std::to_string(sGL.mScissorTest) + " " + std::to_string(sGL.mScissor[0]) + "," + std::to_string(sGL.mScissor[1]) + "," + std::to_string(sGL.mScissor[2]) + "," + std::to_string(sGL.mScissor[3])
+            + " / " + std::to_string(blk->mScissorOn) + " " + std::to_string(blk->mScissor[0]) + "," + std::to_string(blk->mScissor[1]) + "," + std::to_string(blk->mScissor[2]) + "," + std::to_string(blk->mScissor[3]) + ")";
+    }
+    if (!why.empty())
+    {
+        if (++sStateMismatch <= 30)
+        {
+            Program* p = Renderer::instance().getProgram();
+            LL_WARNS("VkState") << "STATE VERIFY mismatch #" << sStateMismatch << " program " << (p ? p->getName() : std::string("-")) << ":" << why << LL_ENDL;
+        }
+    }
+    if ((sStateChecked % 50000) == 0)
+    {
+        LL_INFOS("VkState") << "STATE VERIFY: " << sStateChecked << " draws checked, " << sStateMismatch << " mismatches, " << sStateNoBlock << " draws before the first block" << LL_ENDL;
+    }
+}
+} // anonymous namespace
+
 // translates the tracked GL state into renderer state for the next draw
 void sync_draw_state(Renderer& r, bool has_depth)
 {
+    state_verify(has_depth);
     // <FS> the whole translation below is a function of these GL state values: when none changed (and the renderer's state was not set by anything else) it is skipped
     struct DrawStateKey
     {
@@ -4297,6 +4400,33 @@ void on_glScissor(GLint x, GLint y, GLsizei width, GLsizei height)
 void on_glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
 {
     sGL.mClearColor[0] = red; sGL.mClearColor[1] = green; sGL.mClearColor[2] = blue; sGL.mClearColor[3] = alpha;
+}
+
+// F1.1: the queue starts between two frames; what the inline hooks set before that lives in sGL only
+void seed_state_context()
+{
+    LLVkState::reset();
+    LLVkState::setEnable(GL_BLEND, sGL.mBlend);
+    LLVkState::setEnable(GL_DEPTH_TEST, sGL.mDepthTest);
+    LLVkState::setEnable(GL_CULL_FACE, sGL.mCull);
+    LLVkState::setEnable(GL_SCISSOR_TEST, sGL.mScissorTest);
+    LLVkState::setEnable(GL_STENCIL_TEST, sGL.mStencilTest);
+    LLVkState::setEnable(GL_POLYGON_OFFSET_FILL, sGL.mPolyOffset);
+    LLVkState::setEnable(GL_DEPTH_CLAMP, sGL.mDepthClamp);
+    LLVkState::setBlendFunc(sGL.mBlendSrcRGB, sGL.mBlendDstRGB, sGL.mBlendSrcA, sGL.mBlendDstA);
+    LLVkState::setDepthFunc(sGL.mDepthFunc);
+    LLVkState::setDepthMask(sGL.mDepthMask);
+    LLVkState::setColorMask(sGL.mColorMask[0], sGL.mColorMask[1], sGL.mColorMask[2], sGL.mColorMask[3]);
+    LLVkState::setCullFace(sGL.mCullFace);
+    LLVkState::setPolygonOffset(sGL.mOffsetFactor, sGL.mOffsetUnits);
+    LLVkState::setPolygonMode(sGL.mPolygonMode);
+    LLVkState::setLineWidth(sGL.mLineWidth);
+    if (sGL.mViewportSet)
+    {
+        LLVkState::setViewport(sGL.mViewport[0], sGL.mViewport[1], sGL.mViewport[2], sGL.mViewport[3]);
+    }
+    LLVkState::setScissor(sGL.mScissor[0], sGL.mScissor[1], sGL.mScissor[2], sGL.mScissor[3]);
+    LLVkState::forceEmit();
 }
 
 void on_glClear(GLbitfield mask)

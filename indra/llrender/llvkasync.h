@@ -101,7 +101,8 @@ namespace LLVkAsync
         CMD_GPU_ZONE,                              // a named GPU timing zone begins or ends here in the command stream (FSGpuZoneTimers)
         CMD_UNIFORM_BATCH,                         // loose uniform writes that were pending when something other than a draw came first (a draw carries them inside its own record)
         CMD_BUFFER_RECYCLE,                        // a pooled buffer name changes hands (bufferRecycle)
-        CMD_RT_SCENE                               // the ray tracing scene of the frame is built from the casters named so far (LLVkMirror::rtScene)
+        CMD_RT_SCENE,                              // the ray tracing scene of the frame is built from the casters named so far (LLVkMirror::rtScene)
+        CMD_STATE                                  // F1.1: the render state block (LLVkState::Block) changed since the last one written
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 
