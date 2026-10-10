@@ -1193,8 +1193,8 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
 
     VkBufferCreateInfo bi = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
     bi.size = block->mSize;
-    // vertex / index reads, copies in, shaders reading by address (packets, skinning) and, once the device has it, acceleration structure builds reading the same ranges
-    bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    // vertex / index reads, copies in and out (a renamed range is copied from its old place), shaders reading by address (packets, skinning) and, once the device has it, acceleration structure builds reading the same ranges
+    bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     if (mCaps.mBufferDeviceAddress)
     {
         bi.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
