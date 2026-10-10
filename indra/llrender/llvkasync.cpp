@@ -379,7 +379,7 @@ inline bool texIndependent(U16 op)
     {
     case CMD_TEX_IMAGE: case CMD_TEX_PARAMS_ID: case CMD_TEX_OP: case CMD_UNIFORM_BLOCK:
     case CMD_CONST_ATTRIB: case CMD_CLEAR: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
-    case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
+    case OP_glBeginQuery: case OP_glEndQuery:
     case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
         return true;
     default:
@@ -1645,36 +1645,6 @@ void enq_glTexParameteriv(GLenum target, GLenum pname, const GLint* params)
     pushData(OP_glTexParameteriv, &a, sizeof(a), params, params ? n * 4 : 0);
 }
 
-void enq_glShaderSource(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length)
-{
-    std::vector<U8> blob;
-    for (GLsizei i = 0; i < count; ++i)
-    {
-        const GLchar* s = string ? string[i] : nullptr;
-        const U32 len = !s ? 0 : (length && length[i] >= 0) ? (U32)length[i] : (U32)strlen(s);
-        const size_t at = blob.size();
-        blob.resize(at + sizeof(U32) + len);
-        memcpy(blob.data() + at, &len, sizeof(len));
-        if (len)
-        {
-            memcpy(blob.data() + at + sizeof(len), s, len);
-        }
-    }
-    struct A { GLuint shader; GLsizei count; } a = { shader, count };
-    pushData(OP_glShaderSource, &a, sizeof(a), blob.data(), blob.size());
-}
-void enq_glBindAttribLocation(GLuint program, GLuint index, const GLchar* name)
-{
-    struct A { GLuint program; GLuint index; } a = { program, index };
-    const size_t n = name ? strlen(name) + 1 : 1;
-    pushData(OP_glBindAttribLocation, &a, sizeof(a), name ? name : "", n);
-}
-void enq_glProgramBinary(GLuint program, GLenum binaryFormat, const void* binary, GLsizei length)
-{
-    struct A { GLuint program; GLenum format; GLsizei length; } a = { program, binaryFormat, length };
-    pushData(OP_glProgramBinary, &a, sizeof(a), binary, binary ? (size_t)std::max(length, 0) : 0);
-}
-
 void enq_glBeginQuery(GLenum target, GLuint id)
 {
     // occlusion queries are the ones the viewer waits for; the others (timers) are answered as before
@@ -1825,42 +1795,6 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
     case OP_glTexImage2D: case OP_glTexImage3D: case OP_glTexSubImage2D: case OP_glTexSubImage3D: case OP_glCompressedTexImage2D:
         run_tex(op, r, flags);
         break;
-    case OP_glShaderSource:
-    {
-        const GLuint shader = r.get<GLuint>();
-        const GLsizei count = r.get<GLsizei>();
-        Blob b = read_blob(r, flags);
-        std::vector<const GLchar*> strings;
-        std::vector<GLint> lengths;
-        const U8* p = b.mData;
-        for (GLsizei i = 0; i < count; ++i)
-        {
-            U32 len;
-            memcpy(&len, p, sizeof(len));
-            p += sizeof(len);
-            strings.push_back((const GLchar*)p);
-            lengths.push_back((GLint)len);
-            p += len;
-        }
-        LLVkGL::on_glShaderSource(shader, count, strings.data(), lengths.data());
-        break;
-    }
-    case OP_glBindAttribLocation:
-    {
-        const GLuint program = r.get<GLuint>(), index = r.get<GLuint>();
-        Blob b = read_blob(r, flags);
-        LLVkGL::on_glBindAttribLocation(program, index, (const GLchar*)b.mData);
-        break;
-    }
-    case OP_glProgramBinary:
-    {
-        const GLuint program = r.get<GLuint>();
-        const GLenum format = r.get<GLenum>();
-        const GLsizei length = r.get<GLsizei>();
-        Blob b = read_blob(r, flags);
-        LLVkGL::on_glProgramBinary(program, format, b.mData, length);
-        break;
-    }
     case OP_glBeginQuery:
     {
         const GLenum t = r.get<GLenum>();

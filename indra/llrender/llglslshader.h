@@ -331,7 +331,13 @@ public:
     // <FS> Vulkan mirror: a Vulkan twin of this program, and the map from this program's GL uniform locations to
     // the twin's uniforms (>= 0: index into its uniform list) or samplers (< 0: ~index into its sampler list)
     LLVk::Program* mVkProgram = nullptr;
-    std::unordered_map<GLint, S32> mVkLocations;
+    LLVk::Program* mVkProgramPending = nullptr;     // built by link(); becomes mVkProgram once the viewer-side mapping is done (mirrorCreate)
+    std::vector<GLuint> mAttachedObjects;           // the shader objects (source texts) the program is built from
+    // a uniform location is the program's own uniform index (>= 0), or SAMPLER_LOCATION_BASE + the sampler index
+    static constexpr GLint SAMPLER_LOCATION_BASE = 0x40000000;
+    S32 vkTwinOf(GLint location) const;
+    struct ActiveUniform { std::string mName; std::string mType; GLint mSize; GLint mLocation; };
+    std::vector<ActiveUniform> mActiveUniforms;     // what the program reports as active: its loose uniforms, then its samplers
     void mirrorCreate();
     void mirrorDestroy();
     void mirrorBind();

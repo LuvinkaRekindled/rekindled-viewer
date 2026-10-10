@@ -370,10 +370,6 @@ public:
     virtual void initAttribsAndUniforms(void);
 
     bool attachShaderFeatures(LLGLSLShader * shader);
-    void dumpObjectLog(GLuint ret, bool warns = true, const std::string& filename = "");
-    void dumpShaderSource(U32 shader_code_count, GLchar** shader_code_text);
-    bool    linkProgramObject(GLuint obj, bool suppress_errors = false);
-    bool    validateProgramObject(GLuint obj);
     GLuint loadShaderFile(const std::string& filename, S32 & shader_level, GLenum type, std::map<std::string, std::string>* defines = NULL, S32 texture_index_channels = -1);
 
     // Implemented in the application to actually point to the shader directory.
@@ -386,8 +382,6 @@ public:
     void clearShaderCache();
     void persistShaderCacheMetadata();
 
-    bool loadCachedProgramBinary(LLGLSLShader* shader);
-    bool saveCachedProgramBinary(LLGLSLShader* shader);
 
 public:
     // Map of shader names to compiled
@@ -419,6 +413,7 @@ public:
         std::string mSource;
     };
     bool mRecordShaderSources = false;
+    GLuint mNextShaderObject = 0;       // a shader object is a recorded source text (mRecordedShaders) under a handle allocated here
     std::map<GLuint, RecordedShader> mRecordedShaders;
 
 protected:
