@@ -322,6 +322,8 @@ namespace LLVkGL
     void markBufferUsed(unsigned int name);
     // records the queued writes of video-memory buffers (GPU copies) into the command stream now: the ray scene reads buffers by address (builds, skinning, alpha test), nothing else would flush them first
     void flushPendingBufferWrites();
+    // counts the changes of where a watched buffer lives (the ray scene's alpha casters: their records hold the buffers' addresses): a new storage, a release, a rename
+    unsigned long long bufferTopologyVersion();
 }
 #endif
 

@@ -494,6 +494,7 @@ struct Buf
     U64 mEpoch = 0;
     U64 mVersion = 0;
     U64 mMoves = 0;
+    bool mRtWatched = false;            // the ray scene reads this buffer at trace time (alpha records): a change of its storage is counted (sBufferTopology)
     // The Vulkan buffer lives in write-combined video memory, which is very slow to read from the CPU. This copy in ordinary memory
     // is what a renamed buffer is refilled from when only part of it is rewritten.
     std::vector<U8> mShadow;
@@ -1768,6 +1769,7 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
 
 // ---- device-local buffers: writes become GPU copies, recorded when a draw is about to read the buffer ----
 std::vector<GLuint> sPendingBufs;       // the buffers whose Buf::mPending is set
+U64 sBufferTopology = 0;                // see Buf::mRtWatched
 
 struct BufTraffic;
 void note_flush(bool frame_end, size_t buffers);
@@ -1845,6 +1847,10 @@ void retire_range(ArenaRef& r)
 void release_storage(Buf& b)
 {
     Context& ctx = Context::instance();
+    if (b.mRtWatched)
+    {
+        ++sBufferTopology;
+    }
     if (b.mArena.valid())
     {
         retire_range(b.mArena);
@@ -1875,6 +1881,10 @@ bool acquire_arena_storage(Buf& b, U64 size, ArenaKind kind)
     b.mVk.mAddress = ref.mAddress;
     b.mVk.mMapped = ref.mMapped;
     ++b.mEpoch;
+    if (b.mRtWatched)
+    {
+        ++sBufferTopology;
+    }
     return true;
 }
 
@@ -2026,6 +2036,10 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
                 b.mVk.mAddress = fresh_range.mAddress;
                 b.mVk.mMapped = fresh_range.mMapped;
                 ++b.mMoves;
+                if (b.mRtWatched)
+                {
+                    ++sBufferTopology;
+                }
                 b.mLastUseFrame = ~0ull;
                 ++sRenameStats.mCount;
                 sRenameStats.mBytes += keep;
@@ -2603,6 +2617,11 @@ void markBufferUsed(unsigned int name)
 void flushPendingBufferWrites()
 {
     flush_buffer_updates();
+}
+
+unsigned long long bufferTopologyVersion()
+{
+    return sBufferTopology;
 }
 
 void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data)
@@ -3364,6 +3383,15 @@ static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf&
     c.mModel = model;
     c.mAlpha = alpha;
     c.mPass = pass;
+    if (kind == 1)
+    {
+        // the alpha test reads these buffers while the lighting runs: watched for moves, and in use this frame (a CPU rewrite of a host-written range has to rename it first)
+        const U64 frame_now = Context::instance().getFrameNumber();
+        Buf& vb_rw = const_cast<Buf&>(vbuf);
+        Buf& ib_rw = const_cast<Buf&>(ibuf);
+        vb_rw.mRtWatched = ib_rw.mRtWatched = true;
+        vb_rw.mLastUseFrame = ib_rw.mLastUseFrame = frame_now;
+    }
     buffer_info_of(vbuf, c.mVi);
     buffer_info_of(ibuf, c.mIi);
     Rt::noteCaster(c);

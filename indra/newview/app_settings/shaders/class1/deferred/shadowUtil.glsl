@@ -157,6 +157,16 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     return true;
 }
 
+// The scene's instances are in world space relative to an origin the scene call chose, so they do not depend on the camera: record 0 of the geometry table holds how a ray
+// moves from eye space into that space: a rotation (3 columns) and the camera's place in it (12 floats packed into the first 48 bytes of the record).
+void rtSceneFrame(out mat3 to_scene, out vec3 camera)
+{
+    LLRtGeom h = ll_rt_geoms.g[0];
+    to_scene = mat3(uintBitsToFloat(uvec3(h.positions.x, h.positions.y, h.indices.x)), uintBitsToFloat(uvec3(h.indices.y, h.texcoords.x, h.texcoords.y)),
+                    uintBitsToFloat(uvec3(h.colors.x, h.colors.y, h.slots.x)));
+    camera = uintBitsToFloat(uvec3(h.slots.y, h.flags, floatBitsToUint(h.cutoff)));
+}
+
 float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
 {
     if (dot(norm, light_dir) <= 0.0)
@@ -169,8 +179,11 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     }
     vec3 origin = pos + norm * (0.015 + 0.0006 * -pos.z);
     float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
+    mat3 to_scene;
+    vec3 camera;
+    rtSceneFrame(to_scene, camera);
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, origin, 0.005, light_dir, 2000.0);
+    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, to_scene * origin + camera, 0.005, to_scene * light_dir, 2000.0);
     while (rayQueryProceedEXT(rq))
     {
         if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
@@ -305,8 +318,11 @@ float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen)
     // x-ray of the skinned avatar structures (instance mask 4): a ray from the eye through this pixel; lit where the ray scene has a surface at the depth of the visible one,
     // dark elsewhere. Shows what of the avatars the ray scene really covers, in their current pose.
     float depth = length(pos);
+    mat3 x_to_scene;
+    vec3 x_camera;
+    rtSceneFrame(x_to_scene, x_camera);
     rayQueryEXT xq;
-    rayQueryInitializeEXT(xq, ll_rt_tlas, gl_RayFlagsOpaqueEXT, 0x04, vec3(0.0), 0.01, pos / depth, depth + 3.0);
+    rayQueryInitializeEXT(xq, ll_rt_tlas, gl_RayFlagsOpaqueEXT, 0x04, x_camera, 0.01, x_to_scene * (pos / depth), depth + 3.0);
     while (rayQueryProceedEXT(xq)) { }
     if (rayQueryGetIntersectionTypeEXT(xq, true) == gl_RayQueryCommittedIntersectionNoneEXT)
     {

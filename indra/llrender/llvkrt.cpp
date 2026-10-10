@@ -16,6 +16,7 @@
 #include <glslang/SPIRV/GlslangToSpv.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -110,6 +111,11 @@ struct Group
     bool mMoving = false;               // the matrix changed between the last two notes
     bool mDynamic = false;              // its vertex data was rewritten since the structure was last built or refitted (this call)
     float mDistance = 0.f;              // eye space distance of the object's origin (this call)
+    // the scene cache (sInstArray, sRecs): where this group's instance and alpha records are, and what they were made from
+    U32 mSlot = ~0u;                    // index of its instance in sInstArray (~0: none)
+    U32 mRecFirst = 0, mRecCount = 0;   // its rows in sRecs
+    bool mDirty = false;                // in sDirtyKeys: instance and records are made again at the next scene call
+    U64 mCacheVb = 0, mCacheIb = 0;     // the buffer addresses its records were made with
 };
 
 struct Job;
@@ -158,6 +164,7 @@ struct Stats
     U64 mWhyNew = 0, mWhyEpoch = 0, mWhyGrew = 0, mWhyIb = 0, mWhyRefitLimit = 0, mNewGroups = 0, mNewMasked = 0;      // why structures were built (and how many casters were new)
     double mCpuMs = 0, mCpuMsMax = 0;
     double mPhaseMs[6] = {};        // expire, order, scan (with sort), instances, recording, the rest
+    U64 mRefreshed = 0, mFullRebuilds = 0, mVerifies = 0, mVerifyGroups = 0, mVerifyMismatch = 0, mTopologyChecks = 0;      // the scene cache (see sInstArray)
 };
 
 // Switches that can be changed while the viewer runs: the file named by LL_VK_RT_DEBUG_FILE (default <work>/rt-debug.txt) is read again every half second (key=value lines:
@@ -187,6 +194,7 @@ struct DebugSwitches
     bool mCompare = false;          // compare the system-memory copy of host-written buffers with the mapped video memory (a few per call), log mismatches
     bool mDynCasters = false;       // include casters with a matrix of their own (avatar attachments, moving linksets): they go wrong in the ray scene so far (see PLAN-rt-shadows.md)
     bool mCallLog = false;          // one line per scene call into <work>/rt-calls.log (wall clock, frame, call, jobs, instances)
+    bool mVerify = false;           // every 120 scene calls: make the whole cached scene again from the groups and compare it with the one kept up to date (log line "scene cache check")
     U32 mSkinPeriodMax = 4;         // avatars farther than LL_VK_RT_SKIN_NEAR (8 m) are refreshed (skinned and refitted) every 2..this many viewer frames, by distance (1 = every frame for all)
     bool mPreflush = true;          // before the builds and the skinning: record the queued writes of video-memory buffers (they are only recorded when a draw reads the buffer, which a build does not)
     bool mAvatarLog = false;        // one line per avatar instance of every scene call into <work>/rt-avatars.log: how old its data is, why it was not refreshed
@@ -252,6 +260,7 @@ void read_debug_switches()
                 else if (k == "skinprobe") d.mSkinProbe = v != 0;
                 else if (k == "avlog") d.mAvatarLog = v != 0;
                 else if (k == "preflush") d.mPreflush = v != 0;
+                else if (k == "verify") d.mVerify = v != 0;
                 else if (k == "skinperiod") d.mSkinPeriodMax = (U32)std::max<long long>(1, v);
                 else if (k == "dyncasters") d.mDynCasters = v != 0;
                 else if (k == "compare") d.mCompare = v != 0;
@@ -323,6 +332,21 @@ std::unordered_map<Key, Group, KeyHash> sGroups;
 U64 sPassFrame[kPasses] = {};                           // per pass: the frame number + 1 of its latest note
 std::unordered_map<Key, Blas, KeyHash> sBlas;
 std::unordered_map<U32, Avatar> sAvatars;
+
+// The static part of the scene, kept from call to call: one instance per group (transform in world space relative to sOrigin, so it does not depend on the camera) in a contiguous
+// array, plus the alpha records of the masked groups (texture slots are filled in at every call), both made again only for groups that changed (sDirtyKeys).
+std::vector<VkAccelerationStructureInstanceKHR> sInstArray;
+std::vector<Group*> sInstGroup;                 // the group behind each instance (valid until the group is erased: drop_entry runs first)
+std::vector<GpuGeom> sRecs;                     // alpha records, a group's rows contiguous; a dropped group's rows stay as garbage until the next compaction
+std::vector<std::array<U32, 4>> sRecNames;      // the textures (GL names) of each row, all zero for garbage rows: the slots come from them
+U32 sRecGarbage = 0;
+std::vector<Key> sDirtyKeys;
+bool sForceFull = true;                         // make everything again at the next call
+float sOrigin[3] = {};
+bool sOriginValid = false;
+U64 sTopoSeen = 0;
+bool sAlphaOnSeen = true;
+U64 sVerifyCounter = 0;
 U64 sSceneCalls = 0;
 U64 sBlasStorageBytes = 0;
 U32 sLastInstances = 0;
@@ -332,6 +356,42 @@ U32 sSlotCacheName[2048] = {};
 U32 sSlotCacheSlot[2048] = {};
 U64 sSlotCacheTag = 0;
 Stats sStats;
+
+void mark_dirty(Group& g)
+{
+    if (!g.mDirty)
+    {
+        g.mDirty = true;
+        sDirtyKeys.push_back(g.mKey);
+    }
+}
+
+// takes the group's instance and records out of the cache
+void drop_entry(Group& g)
+{
+    if (g.mSlot != ~0u)
+    {
+        const U32 last = (U32)sInstArray.size() - 1;
+        if (g.mSlot != last)
+        {
+            sInstArray[g.mSlot] = sInstArray[last];
+            sInstGroup[g.mSlot] = sInstGroup[last];
+            sInstGroup[g.mSlot]->mSlot = g.mSlot;
+        }
+        sInstArray.pop_back();
+        sInstGroup.pop_back();
+        g.mSlot = ~0u;
+    }
+    if (g.mRecCount)
+    {
+        for (U32 k = 0; k < g.mRecCount; ++k)
+        {
+            sRecNames[g.mRecFirst + k] = { 0u, 0u, 0u, 0u };
+        }
+        sRecGarbage += g.mRecCount;
+        g.mRecCount = 0;
+    }
+}
 
 // column-major 4x4 product
 void mat_mul(const F32* a, const F32* b, F32* out)
@@ -852,6 +912,7 @@ void noteCaster(const Caster& c)
         it->second.mKey = key;
         it->second.mBlas = &sBlas[key];
         ++sStats.mNewGroups;
+        mark_dirty(it->second);
     }
     Group& g = it->second;
     const U32 pass = std::min<U32>(c.mPass, kPasses - 1);
@@ -870,6 +931,10 @@ void noteCaster(const Caster& c)
         memcpy(g.mPrevModel, g.mModel, sizeof(g.mModel));
         g.mMoving = diff > 1e-5f;
         memcpy(g.mModel, now_model, sizeof(g.mModel));
+        if (g.mMoving || (c.mKind == 1 && (g.mVi.mAddress != c.mVi.mAddress || g.mIi.mAddress != c.mIi.mAddress)))
+        {
+            mark_dirty(g);                      // the instance matrix, or the buffer addresses in the alpha records, changed
+        }
         g.mVi = c.mVi;
         g.mIi = c.mIi;
         g.mNotedTag = frame_tag;
@@ -885,6 +950,7 @@ void noteCaster(const Caster& c)
             {
                 g.mAlpha[k] = *c.mAlpha;                // the textures may have changed
                 g.mBlas->mAlpha[r.id()] = *c.mAlpha;
+                mark_dirty(g);
             }
             return;
         }
@@ -892,6 +958,7 @@ void noteCaster(const Caster& c)
     if (ranges.size() < 512)
     {
         ranges.push_back(r);
+        mark_dirty(g);
         g.mAlpha.push_back(c.mAlpha ? *c.mAlpha : AlphaInfo());
         if (c.mKind == 1)
         {
@@ -1086,6 +1153,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 drop_blas(it->second);
                 it = sBlas.erase(it);
                 ++sStats.mEvicted;
+                sForceFull = true;
             }
             else
             {
@@ -1126,7 +1194,15 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                     alive = true;           // cached (or not rendered at all): the shadow map it fed is still in use
                 }
             }
-            it = alive ? std::next(it) : sGroups.erase(it);
+            if (!alive)
+            {
+                drop_entry(it->second);
+                it = sGroups.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
         }
     }
 
@@ -1149,7 +1225,12 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     {
         Group& g = kv.second;
         // a region's own matrix is marked by the viewer (top bit of the id, pipeline.cpp rt_matrix_id); anything else is an object that moves or is attached
+        const bool was_skipped = g.mSkip;
         g.mSkip = (g.mKey.mKind == 1 && !alpha_on) || (!sDbg.mDynCasters && (g.mKey.mMatrixId & 0x80000000u) == 0 && g.mKey.mMatrixId != 0);
+        if (was_skipped != g.mSkip)
+        {
+            mark_dirty(g);
+        }
         if (g.mSkip)
         {
             continue;
@@ -1205,6 +1286,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             drop_blas(b);                       // the names hold something else now
             ++sStats.mWhyEpoch;
+            mark_dirty(g);                      // the cached instance points at the structure that is gone
         }
         if (b.mAs == VK_NULL_HANDLE)
         {
@@ -1544,6 +1626,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         job.mScratchOffset = (scratch_total + align - 1) / align * align;
         scratch_total = job.mScratchOffset + job.mScratchSize + sDbg.mPad;
         tris_budget = prims >= tris_budget ? 0 : tris_budget - prims;
+        if (!job.mUpdate)
+        {
+            mark_dirty(g);                      // a new structure: new address, maybe another geometry list
+        }
         jobs.push_back(std::move(job));
         if (jobs.back().mHasSkin)
         {
@@ -1858,110 +1944,62 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     U32 records = 0;
     sTableOffset = (U32)(call * kTableBytes);
 
-    std::vector<VkAccelerationStructureInstanceKHR> instances;
-    instances.reserve(sGroups.size());
-    for (auto& kv : sGroups)
+    // the camera in the scene's space, and the origin the instance transforms are relative to (a point on a 32 m grid near the camera, moved when the camera gets 48 m away: close to
+    // the camera the numbers stay small, and everything is made again only when it moves)
+    float cam[3];
+    for (int i = 0; i < 3; ++i)
     {
-        const Group& g = kv.second;
+        cam[i] = -(view[i * 4 + 0] * view[12] + view[i * 4 + 1] * view[13] + view[i * 4 + 2] * view[14]);
+    }
+    {
+        const float dx = cam[0] - sOrigin[0], dy = cam[1] - sOrigin[1], dz = cam[2] - sOrigin[2];
+        if (!sOriginValid || dx * dx + dy * dy + dz * dz > 48.f * 48.f)
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                sOrigin[i] = floorf(cam[i] / 32.f) * 32.f;
+            }
+            sOriginValid = true;
+            sForceFull = true;
+        }
+    }
+    if (sAlphaOnSeen != alpha_on)
+    {
+        sAlphaOnSeen = alpha_on;
+        sForceFull = true;
+    }
+    if (sRecs.size() > kMaxRecords - 4096 - 2048 || sRecGarbage * 2 > sRecs.size() + 64)
+    {
+        sForceFull = true;                      // compaction
+    }
+
+    // one group's instance and alpha records, made from what it is now
+    auto refresh_group = [&](Group& g)
+    {
+        g.mDirty = false;
         if (g.mSkip || (g.mKey.mKind == 1 && !alpha_on))
         {
-            continue;
+            drop_entry(g);
+            return;
         }
         const Blas& b = *g.mBlas;
         VkDeviceAddress address = b.mAddress;
         const Job* job = b.mJobCall == sSceneCalls ? b.mJob : nullptr;
         if (job && !job->mUpdate)
         {
-            address = job->mNewAddress;
+            address = job->mNewAddress;         // a structure that is being (re)built now is part of this frame's scene: its new address is used
         }
         if (!address)
         {
-            continue;
+            drop_entry(g);
+            return;
         }
-        if (instances.size() >= kInstanceCapacity || (sDbg.mMaxInstances && instances.size() >= sDbg.mMaxInstances))
+        if (g.mSlot == ~0u && sInstArray.size() + 512 >= kInstanceCapacity)
         {
             ++sStats.mOverCap;
-            break;
+            return;
         }
-        U32 custom_index = 0;
-        if (g.mKey.mKind == 1)
-        {
-            // one record per geometry, in the order of the structure's geometry list
-            const std::vector<Range>& set = job ? job->mSet : b.mBuilt;
-            if (g.mNotedTag == scan_tag)
-            {
-                vi = g.mVi;
-                ii = g.mIi;
-            }
-            else if (!LLVkGL::getBufferInfo(g.mKey.mVb, vi) || !LLVkGL::getBufferInfo(g.mKey.mIb, ii))
-            {
-                ++sStats.mNoData;
-                continue;
-            }
-            if (records + set.size() > kMaxRecords)
-            {
-                ++sStats.mTableFull;
-                continue;
-            }
-            custom_index = records;
-            LLVkGL::markBufferUsed(g.mKey.mVb);     // the alpha test reads positions, texcoords, colours and indices while the lighting runs
-            LLVkGL::markBufferUsed(g.mKey.mIb);
-            for (const Range& r : set)
-            {
-                GpuGeom& rec = table[records++];
-                memset(&rec, 0, sizeof(rec));
-                auto ait = b.mAlpha.find(r.id());
-                const AlphaInfo none;
-                const AlphaInfo& a = ait != b.mAlpha.end() ? ait->second : none;
-                const U64 pa = vi.mAddress, ia = ii.mAddress;
-                rec.mPositions[0] = (U32)pa;
-                rec.mPositions[1] = (U32)(pa >> 32);
-                rec.mIndices[0] = (U32)ia;
-                rec.mIndices[1] = (U32)(ia >> 32);
-                if (a.mFlags & 8u)
-                {
-                    const U64 t = pa + a.mTexcoordOffset;
-                    rec.mTexcoords[0] = (U32)t;
-                    rec.mTexcoords[1] = (U32)(t >> 32);
-                }
-                if (a.mFlags & 16u)
-                {
-                    const U64 c = pa + a.mColorOffset;
-                    rec.mColors[0] = (U32)c;
-                    rec.mColors[1] = (U32)(c >> 32);
-                }
-                U32 slot[4] = {};
-                for (U32 k = 0; k < 4; ++k)
-                {
-                    if (a.mTextures[k] && slot_of)
-                    {
-                        // many geometries share textures: a texture's slot is asked for once per frame
-                        const U32 name = a.mTextures[k];
-                        const U32 h = (name * 2654435761u) >> 21;
-                        if (sSlotCacheTag != frame_now + 1 || sSlotCacheName[h] != name)
-                        {
-                            if (sSlotCacheTag != frame_now + 1)
-                            {
-                                memset(sSlotCacheName, 0, sizeof(sSlotCacheName));
-                                sSlotCacheTag = frame_now + 1;
-                            }
-                            sSlotCacheName[h] = name;
-                            sSlotCacheSlot[h] = slot_of(name) & 0xFFFFu;
-                        }
-                        slot[k] = sSlotCacheSlot[h];
-                    }
-                }
-                rec.mSlots[0] = slot[0] | (slot[1] << 16);
-                rec.mSlots[1] = slot[2] | (slot[3] << 16);
-                rec.mFlags = a.mFlags;
-                rec.mCutoff = a.mCutoff;
-                rec.mFirst = r.mFirst;
-                memcpy(rec.mUv, a.mUv, sizeof(rec.mUv));
-            }
-            ++sStats.mAlphaStructs;
-        }
-        F32 m[16];
-        mat_mul(view, g.mModel, m);
+        const F32* m = g.mModel;
         {
             bool bad = false;
             for (int k = 0; k < 16; ++k)
@@ -1970,11 +2008,6 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 {
                     bad = true;
                 }
-            }
-            F32 scale = 0.f;
-            for (int c = 0; c < 3; ++c)
-            {
-                scale = std::max(scale, sqrtf(m[c * 4] * m[c * 4] + m[c * 4 + 1] * m[c * 4 + 1] + m[c * 4 + 2] * m[c * 4 + 2]));
             }
             if (bad)
             {
@@ -1985,7 +2018,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                     LL_WARNS("VkRt") << "bad instance matrix: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " kind " << g.mKey.mKind << " matrix id " << g.mKey.mMatrixId << " model "
                                      << g.mModel[0] << "," << g.mModel[5] << "," << g.mModel[10] << " translation " << g.mModel[12] << "," << g.mModel[13] << "," << g.mModel[14] << LL_ENDL;
                 }
-                continue;
+                drop_entry(g);
+                return;
             }
             // the determinant of the 3x3 part: zero scale (how objects are hidden) has no inverse
             const F32 det = m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2]) + m[8] * (m[1] * m[6] - m[5] * m[2]);
@@ -1998,13 +2032,102 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                     LL_WARNS("VkRt") << "singular instance matrix left out: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " kind " << g.mKey.mKind << " matrix id " << g.mKey.mMatrixId << " determinant " << det
                                      << " model diag " << g.mModel[0] << "," << g.mModel[5] << "," << g.mModel[10] << LL_ENDL;
                 }
-                continue;
+                drop_entry(g);
+                return;
+            }
+            F32 scale = 0.f;
+            for (int c = 0; c < 3; ++c)
+            {
+                scale = std::max(scale, sqrtf(m[c * 4] * m[c * 4] + m[c * 4 + 1] * m[c * 4 + 1] + m[c * 4 + 2] * m[c * 4 + 2]));
             }
             if (scale > sStats.mMaxScale)
             {
                 sStats.mMaxScale = scale;
                 sStats.mMaxScaleKey = g.mKey;
             }
+        }
+        // masked structures: one record per geometry, in the order of the structure's geometry list (the texture slots are put in at every call)
+        std::vector<GpuGeom> recs;
+        std::vector<std::array<U32, 4>> names;
+        if (g.mKey.mKind == 1)
+        {
+            const std::vector<Range>& set = job ? job->mSet : b.mBuilt;
+            LLVkGL::BufferInfo lvi, lii;
+            if (g.mNotedTag == scan_tag)
+            {
+                lvi = g.mVi;
+                lii = g.mIi;
+            }
+            else if (!LLVkGL::getBufferInfo(g.mKey.mVb, lvi) || !LLVkGL::getBufferInfo(g.mKey.mIb, lii))
+            {
+                ++sStats.mNoData;
+                drop_entry(g);
+                return;
+            }
+            if (!lvi.mAddress || !lii.mAddress)
+            {
+                ++sStats.mNoData;
+                drop_entry(g);
+                return;
+            }
+            if (sRecs.size() + set.size() > kMaxRecords - 4096)
+            {
+                ++sStats.mTableFull;
+                drop_entry(g);
+                return;
+            }
+            for (const Range& r : set)
+            {
+                GpuGeom rec;
+                memset(&rec, 0, sizeof(rec));
+                auto ait = b.mAlpha.find(r.id());
+                const AlphaInfo none;
+                const AlphaInfo& a = ait != b.mAlpha.end() ? ait->second : none;
+                const U64 pa = lvi.mAddress, ia = lii.mAddress;
+                rec.mPositions[0] = (U32)pa;
+                rec.mPositions[1] = (U32)(pa >> 32);
+                rec.mIndices[0] = (U32)ia;
+                rec.mIndices[1] = (U32)(ia >> 32);
+                if (a.mFlags & 8u)
+                {
+                    const U64 t = pa + a.mTexcoordOffset;
+                    rec.mTexcoords[0] = (U32)t;
+                    rec.mTexcoords[1] = (U32)(t >> 32);
+                }
+                if (a.mFlags & 16u)
+                {
+                    const U64 cc = pa + a.mColorOffset;
+                    rec.mColors[0] = (U32)cc;
+                    rec.mColors[1] = (U32)(cc >> 32);
+                }
+                rec.mFlags = a.mFlags;
+                rec.mCutoff = a.mCutoff;
+                rec.mFirst = r.mFirst;
+                memcpy(rec.mUv, a.mUv, sizeof(rec.mUv));
+                recs.push_back(rec);
+                names.push_back({ a.mTextures[0], a.mTextures[1], a.mTextures[2], a.mTextures[3] });
+            }
+            g.mCacheVb = lvi.mAddress;
+            g.mCacheIb = lii.mAddress;
+        }
+        // install: the old rows become garbage, the new ones go to the end
+        if (g.mRecCount)
+        {
+            for (U32 k = 0; k < g.mRecCount; ++k)
+            {
+                sRecNames[g.mRecFirst + k] = { 0u, 0u, 0u, 0u };
+            }
+            sRecGarbage += g.mRecCount;
+            g.mRecCount = 0;
+        }
+        U32 custom_index = 0;
+        if (!recs.empty())
+        {
+            g.mRecFirst = (U32)sRecs.size();
+            g.mRecCount = (U32)recs.size();
+            sRecs.insert(sRecs.end(), recs.begin(), recs.end());
+            sRecNames.insert(sRecNames.end(), names.begin(), names.end());
+            custom_index = 1 + g.mRecFirst;     // record 0 of the table is the header
         }
         VkAccelerationStructureInstanceKHR inst = {};
         for (int row = 0; row < 3; ++row)
@@ -2013,14 +2136,170 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             {
                 inst.transform.matrix[row][col] = m[col * 4 + row];
             }
+            inst.transform.matrix[row][3] -= sOrigin[row];
         }
         inst.instanceCustomIndex = custom_index;
         inst.mask = 1u << std::min<U32>(g.mKey.mKind, 7u);
         inst.instanceShaderBindingTableRecordOffset = 0;
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         inst.accelerationStructureReference = address;
-        instances.push_back(inst);
+        if (g.mSlot == ~0u)
+        {
+            g.mSlot = (U32)sInstArray.size();
+            sInstArray.push_back(inst);
+            sInstGroup.push_back(&g);
+        }
+        else
+        {
+            sInstArray[g.mSlot] = inst;
+        }
+        ++sStats.mRefreshed;
+    };
+    auto make_everything_again = [&]()
+    {
+        sForceFull = false;
+        sInstArray.clear();
+        sInstGroup.clear();
+        sRecs.clear();
+        sRecNames.clear();
+        sRecGarbage = 0;
+        sDirtyKeys.clear();
+        for (auto& kv : sGroups)
+        {
+            Group& g = kv.second;
+            g.mSlot = ~0u;
+            g.mRecCount = 0;
+            g.mDirty = false;
+        }
+        for (auto& kv : sGroups)
+        {
+            refresh_group(kv.second);
+        }
+        ++sStats.mFullRebuilds;
+    };
+    if (sForceFull)
+    {
+        make_everything_again();
     }
+    else
+    {
+        // a watched buffer (the alpha records hold its address) changed its storage since the last call: look at the records of the masked groups again
+        const U64 topology = LLVkGL::bufferTopologyVersion();
+        if (topology != sTopoSeen)
+        {
+            sTopoSeen = topology;
+            ++sStats.mTopologyChecks;
+            for (Group* gp : sInstGroup)
+            {
+                if (gp->mKey.mKind == 1 && !gp->mDirty)
+                {
+                    LLVkGL::BufferInfo tvi, tii;
+                    if (!LLVkGL::getBufferInfo(gp->mKey.mVb, tvi) || !LLVkGL::getBufferInfo(gp->mKey.mIb, tii) || tvi.mAddress != gp->mCacheVb || tii.mAddress != gp->mCacheIb)
+                    {
+                        mark_dirty(*gp);
+                    }
+                }
+            }
+        }
+        std::vector<Key> dirty;
+        dirty.swap(sDirtyKeys);
+        for (const Key& k : dirty)
+        {
+            auto git = sGroups.find(k);
+            if (git != sGroups.end())
+            {
+                refresh_group(git->second);
+            }
+        }
+    }
+    if (sDbg.mVerify && ++sVerifyCounter % 120 == 0)
+    {
+        // the check: what the incremental updates left, against a cache made again from scratch from the same groups (groups matched by their key)
+        struct Row { VkAccelerationStructureInstanceKHR mInst; std::vector<GpuGeom> mRecs; };
+        std::unordered_map<Key, Row, KeyHash> before;
+        for (Group* gp : sInstGroup)
+        {
+            Row row;
+            row.mInst = sInstArray[gp->mSlot];
+            for (U32 k = 0; k < gp->mRecCount; ++k)
+            {
+                row.mRecs.push_back(sRecs[gp->mRecFirst + k]);
+            }
+            before.emplace(gp->mKey, std::move(row));
+        }
+        make_everything_again();
+        U64 groups = 0, mismatched = 0;
+        for (Group* gp : sInstGroup)
+        {
+            ++groups;
+            auto it = before.find(gp->mKey);
+            const char* why = nullptr;
+            if (it == before.end())
+            {
+                why = "was missing";
+            }
+            else
+            {
+                // the position of a group's rows in the table (the custom index) is not part of what the cache has to keep: a layout made from scratch has no garbage
+                VkAccelerationStructureInstanceKHR a = it->second.mInst, b = sInstArray[gp->mSlot];
+                a.instanceCustomIndex = b.instanceCustomIndex = 0;
+                if (memcmp(a.transform.matrix, b.transform.matrix, sizeof(a.transform.matrix)) != 0)
+                {
+                    why = "instance transform differs";
+                }
+                else if (a.accelerationStructureReference != b.accelerationStructureReference)
+                {
+                    why = "structure address differs";
+                }
+                else if (a.mask != b.mask || a.flags != b.flags)
+                {
+                    why = "mask or flags differ";
+                }
+                else if (it->second.mRecs.size() != gp->mRecCount)
+                {
+                    why = "number of records differs";
+                }
+                else
+                {
+                    for (U32 k = 0; k < gp->mRecCount && !why; ++k)
+                    {
+                        const GpuGeom& ra = it->second.mRecs[k];
+                        const GpuGeom& rb = sRecs[gp->mRecFirst + k];
+                        if (memcmp(ra.mPositions, rb.mPositions, sizeof(ra.mPositions)) != 0 || memcmp(ra.mIndices, rb.mIndices, sizeof(ra.mIndices)) != 0)
+                        {
+                            why = "record buffer address differs";
+                        }
+                        else if (memcmp(ra.mTexcoords, rb.mTexcoords, sizeof(ra.mTexcoords)) != 0 || memcmp(ra.mColors, rb.mColors, sizeof(ra.mColors)) != 0)
+                        {
+                            why = "record texcoord or colour address differs";
+                        }
+                        else if (ra.mFlags != rb.mFlags || ra.mCutoff != rb.mCutoff || ra.mFirst != rb.mFirst || memcmp(ra.mUv, rb.mUv, sizeof(ra.mUv)) != 0)
+                        {
+                            why = "record flags, cutoff, first index or uv differ";
+                        }
+                    }
+                }
+            }
+            if (why)
+            {
+                ++mismatched;
+                static U32 logged_mismatch = 0;
+                if (logged_mismatch++ < 30)
+                {
+                    LL_WARNS("VkRt") << "scene cache check: group vb " << gp->mKey.mVb << " ib " << gp->mKey.mIb << " kind " << gp->mKey.mKind << " matrix id " << gp->mKey.mMatrixId << ": " << why << LL_ENDL;
+                }
+            }
+        }
+        const U64 missing_now = before.size() > groups ? before.size() - groups : 0;
+        mismatched += missing_now;
+        ++sStats.mVerifies;
+        sStats.mVerifyGroups += groups;
+        sStats.mVerifyMismatch += mismatched;
+        LL_INFOS("VkRt") << "scene cache check: " << groups << " groups made again from scratch, " << mismatched << " differed from the incrementally kept ones (" << missing_now << " of them missing now)" << LL_ENDL;
+    }
+    std::vector<VkAccelerationStructureInstanceKHR> instances;
+    instances.reserve(sInstArray.size() + 256);
+    instances.assign(sInstArray.begin(), sInstArray.end());
 
     auto slot_lookup = [&](U32 name) -> U32
     {
@@ -2038,6 +2317,37 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         }
         return sSlotCacheSlot[h];
     };
+    {
+        // the table: the header (how a ray moves from eye space into the scene's space), then the cached records with this frame's texture slots
+        const float header_words[12] = { view[0], view[4], view[8], view[1], view[5], view[9], view[2], view[6], view[10], cam[0] - sOrigin[0], cam[1] - sOrigin[1], cam[2] - sOrigin[2] };
+        memset(&table[0], 0, sizeof(GpuGeom));
+        memcpy(&table[0], header_words, sizeof(header_words));
+        const size_t n = sRecs.size();
+        if (n)
+        {
+            memcpy(table + 1, sRecs.data(), n * sizeof(GpuGeom));
+            for (size_t r = 0; r < n; ++r)
+            {
+                const std::array<U32, 4>& nm = sRecNames[r];
+                if (!(nm[0] | nm[1] | nm[2] | nm[3]))
+                {
+                    continue;
+                }
+                U32 slot[4] = {};
+                for (U32 k = 0; k < 4; ++k)
+                {
+                    if (nm[k] && slot_of)
+                    {
+                        slot[k] = slot_lookup(nm[k]);
+                    }
+                }
+                table[1 + r].mSlots[0] = slot[0] | (slot[1] << 16);
+                table[1 + r].mSlots[1] = slot[2] | (slot[3] << 16);
+            }
+        }
+        records = 1 + (U32)n;
+        sStats.mAlphaStructs += n - std::min<size_t>(n, sRecGarbage);
+    }
     auto avatar_skipped = [&](const Avatar& a, U32 id, const char* why)
     {
         if (sDbg.mAvatarLog && a.mSelf)
@@ -2183,8 +2493,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             for (int col = 0; col < 4; ++col)
             {
-                inst.transform.matrix[row][col] = view[col * 4 + row];      // the skinned vertices are in world space: the instance is just the view
+                inst.transform.matrix[row][col] = row == col ? 1.f : 0.f;       // the skinned vertices are in world space: the instance is just the move to the scene's origin
             }
+            inst.transform.matrix[row][3] = -sOrigin[row];
         }
         inst.instanceCustomIndex = custom_index;
         inst.mask = 1u | (any_alpha ? 2u : 0u) | 4u;        // opaque (bit 0) and masked (bit 1) casters, what the shadow rays trace; bit 2 marks avatars (mode 4 shows only these)
@@ -2216,6 +2527,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         }
         for (Job& j : jobs)
         {
+            auto owner = sGroups.find(j.mKey);
+            if (owner != sGroups.end())
+            {
+                mark_dirty(owner->second);      // its cached instance names the structure that is thrown away
+            }
             if (j.mNewAs != VK_NULL_HANDLE)
             {
                 VkAccelerationStructureKHR as = j.mNewAs;
@@ -2538,16 +2854,16 @@ std::string report(double frames)
     const Stats& s = sStats;
     const double scenes = std::max<double>(1.0, (double)s.mScenes);
     const double f = std::max(1.0, frames);
-    char buf[2400];
+    char buf[3000];
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
              "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
-             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; skin: %.1f jobs/frame, %.0f vertices/frame, avatars %.2f/frame (over budget %.2f, throttled by distance %.2f), failed %.3f, avatar instances %.2f/call of which showing an older pose %.2f (on average %.1f frames old, oldest %llu); casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
+             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; skin: %.1f jobs/frame, %.0f vertices/frame, avatars %.2f/frame (over budget %.2f, throttled by distance %.2f), failed %.3f, avatar instances %.2f/call of which showing an older pose %.2f (on average %.1f frames old, oldest %llu); casters new %.2f/frame, groups held %zu; scene cache: %zu instances, %zu record rows (%u garbage), refreshed %.1f groups/call, made again %.3f/call, buffer moves checked %.3f/call, check: %llu runs, %llu groups, %llu differed; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
              shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / f, (double)s.mBuilds / f,
              (double)s.mPrimsBuilt / f, (double)s.mRefits / f, (double)s.mPrimsRefit / f, (double)s.mDeferred / f, (double)s.mNoData / f, (double)s.mAlphaStructs / f, (double)s.mTableFull / f,
              (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax, s.mPhaseMs[0] / scenes, s.mPhaseMs[1] / scenes, s.mPhaseMs[2] / scenes, s.mPhaseMs[3] / scenes, s.mPhaseMs[4] / scenes,
              (double)sScratch.mSize / 1048576.0, (double)s.mWhyNew / f, (double)s.mWhyEpoch / f, (double)s.mWhyGrew / f, (double)s.mWhyIb / f, (double)s.mWhyRefitLimit / f,
-             (double)s.mSkinJobs / f, (double)s.mSkinVerts / f, (double)s.mAvatars / f, (double)s.mSkinOver / f, (double)s.mSkinThrottled / f, (double)s.mSkinFailed / f, (double)s.mAvatarInstances / scenes, (double)s.mAvatarStale / scenes, s.mAvatarStale ? (double)s.mAvatarStaleFrames / (double)s.mAvatarStale : 0.0, (unsigned long long)s.mAvatarStaleMax, (double)s.mNewGroups / f, sGroups.size(), (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
+             (double)s.mSkinJobs / f, (double)s.mSkinVerts / f, (double)s.mAvatars / f, (double)s.mSkinOver / f, (double)s.mSkinThrottled / f, (double)s.mSkinFailed / f, (double)s.mAvatarInstances / scenes, (double)s.mAvatarStale / scenes, s.mAvatarStale ? (double)s.mAvatarStaleFrames / (double)s.mAvatarStale : 0.0, (unsigned long long)s.mAvatarStaleMax, (double)s.mNewGroups / f, sGroups.size(), sInstArray.size(), sRecs.size(), sRecGarbage, (double)s.mRefreshed / scenes, (double)s.mFullRebuilds / scenes, (double)s.mTopologyChecks / scenes, (unsigned long long)s.mVerifies, (unsigned long long)s.mVerifyGroups, (unsigned long long)s.mVerifyMismatch, (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
              s.mMaxScaleKey.mMatrixId, s.mMaxScaleKey.mKind);
     return buf;
 }
