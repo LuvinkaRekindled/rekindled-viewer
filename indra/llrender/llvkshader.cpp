@@ -942,7 +942,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
     for (const StageWork& w : works)
     {
         std::ostringstream text;
-        text << "#version 450\n";
+        text << (w.mUsesRt ? "#version 460\n" : "#version 450\n");      // <FS> glslang has the ray query types from 460 on
         if (bindless)
         {
             text << "#extension GL_EXT_nonuniform_qualifier : enable\n";
