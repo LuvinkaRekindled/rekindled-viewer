@@ -87,6 +87,7 @@ struct Group
     F32 mModel[16] = {};
     std::vector<Range> mRanges;
     std::vector<AlphaInfo> mAlpha;      // kind 1: parallel to mRanges
+    U64 mSeen = 0;                      // frame number of the latest note
 };
 
 struct Blas
@@ -128,8 +129,9 @@ bool sFailed = false;
 VkDescriptorPool sPool = VK_NULL_HANDLE;
 Tlas sTlas[Context::FRAMES_IN_FLIGHT];
 Buffer sScratch;
-std::unordered_map<Key, Group, KeyHash> sGroups;        // casters of the latest frame that named any
-bool sGroupsConsumed = true;                            // a scene call has been made since the last note: the next note starts a new list
+// The casters of the shadow passes. Far cascades are rendered only every few frames (FSShadowFarCascadeInterval) and their shadow map is reused in between, so the casters a
+// frame names are not all there is: a group stays until nothing has named it for a few frames.
+std::unordered_map<Key, Group, KeyHash> sGroups;
 std::unordered_map<Key, Blas, KeyHash> sBlas;
 U64 sSceneCalls = 0;
 U64 sBlasStorageBytes = 0;
@@ -431,11 +433,6 @@ void noteCaster(const Caster& c)
     {
         return;
     }
-    if (sGroupsConsumed)
-    {
-        sGroups.clear();
-        sGroupsConsumed = false;
-    }
     ++sStats.mCasters;
     Key key;
     key.mVb = c.mVb;
@@ -447,14 +444,19 @@ void noteCaster(const Caster& c)
     {
         it = sGroups.emplace(key, Group()).first;
         it->second.mKey = key;
-        memcpy(it->second.mModel, c.mModel ? c.mModel : kIdentity, sizeof(it->second.mModel));
     }
+    it->second.mSeen = Context::instance().getFrameNumber();
+    memcpy(it->second.mModel, c.mModel ? c.mModel : kIdentity, sizeof(it->second.mModel));       // the matrix of the object now
     std::vector<Range>& ranges = it->second.mRanges;
     const Range r = { c.mFirst, c.mCount };
-    for (const Range& e : ranges)
+    for (size_t k = 0; k < ranges.size(); ++k)
     {
-        if (e == r)
+        if (ranges[k] == r)
         {
+            if (c.mAlpha)
+            {
+                it->second.mAlpha[k] = *c.mAlpha;       // the textures may have changed
+            }
             return;
         }
     }
@@ -495,9 +497,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     static const bool alpha_on = env_u64("LL_VK_RT_ALPHA", 1) != 0;
     static const U64 rebuild_after_refits = 64;
     ++sSceneCalls;
-    sGroupsConsumed = true;
+    static const U64 keep = env_u64("LL_VK_RT_KEEP_FRAMES", 8);
 
-    // forget structures that were not named for a while
+    // forget structures that were not named for a while, and casters nothing has named for a few frames
     if (sSceneCalls % 120 == 0)
     {
         for (auto it = sBlas.begin(); it != sBlas.end();)
@@ -512,6 +514,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             {
                 ++it;
             }
+        }
+    }
+
+    {
+        const U64 now = ctx.getFrameNumber();
+        for (auto it = sGroups.begin(); it != sGroups.end();)
+        {
+            it = now > it->second.mSeen + keep ? sGroups.erase(it) : std::next(it);
         }
     }
 
@@ -864,7 +874,6 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     {
         // no frame is being recorded: undo the new structures, the groups are named again when the passes run
         undo_jobs();
-        sGroupsConsumed = false;
         return;
     }
     for (Job& j : jobs)
