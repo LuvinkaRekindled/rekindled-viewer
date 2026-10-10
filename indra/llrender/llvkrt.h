@@ -64,6 +64,7 @@ struct SkinCaster
     U32 mPass = 0;
     F32 mAvatarPos[3] = {};             // where the avatar is (the probe of the skinned data compares with it)
     U32 mSelf = 0;                      // the viewer's own avatar
+    U32 mAvatarKind = 0;                // bit 1 animated object, 2 impostor, 4 own, 8 jelly doll, 16 invisible, 32 too slow
     U32 mKind = 0;                      // 0 = opaque, 1 = alpha masked (mAlpha)
     U32 mMode = 0;                      // how the vertices are skinned: 0 = weight4 array + palette, 1 = avatar body (one weight float per vertex, palette of 15 joints), 2 = rigid under mModel
     const AlphaInfo* mAlpha = nullptr;

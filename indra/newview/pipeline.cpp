@@ -10434,6 +10434,20 @@ LLVector4 pow4fsrgb(LLVector4 v, F32 f)
 // draws are not handled here (they do not move), nothing is drawn by these records. Same entries as render_skin_packets / render_alpha_packets build in renderShadow.
 static U32 rt_matrix_id(const LLMatrix4* m);
 
+// what kind of avatar a rigged draw belongs to, for the ray scene's statistics and limits: 1 animated object (control avatar), 2 impostor, 4 the viewer's own, 8 jelly doll, 16 invisible, 32 too slow
+static U32 rt_avatar_kind(LLVOAvatar* avatar)
+{
+    U32 kind = 0;
+    if (avatar->isControlAvatar()) kind |= 1;
+    if (avatar->isImpostor()) kind |= 2;
+    if (avatar->isSelf()) kind |= 4;
+    const LLVOAvatar::AvatarOverallAppearance appearance = avatar->getOverallAppearance();
+    if (appearance == LLVOAvatar::AOA_JELLYDOLL) kind |= 8;
+    if (appearance == LLVOAvatar::AOA_INVISIBLE) kind |= 16;
+    if (avatar->isTooSlow()) kind |= 32;
+    return kind;
+}
+
 static void rt_name_rigged_main_view()
 {
     static const U32 types[] = {
@@ -10476,6 +10490,13 @@ static void rt_name_rigged_main_view()
                 e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
                 e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
                 e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                {
+                    const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                    e.mAvatarPos[0] = avatar_position.mV[0];
+                    e.mAvatarPos[1] = avatar_position.mV[1];
+                    e.mAvatarPos[2] = avatar_position.mV[2];
+                    e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
+                }
                 if (params->mModelMatrix)
                 {
                     auto it = matrix_numbers.find(params->mModelMatrix);
@@ -10565,6 +10586,13 @@ static void rt_name_rigged_main_view()
                 e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
                 e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
                 e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                {
+                    const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                    e.mAvatarPos[0] = avatar_position.mV[0];
+                    e.mAvatarPos[1] = avatar_position.mV[1];
+                    e.mAvatarPos[2] = avatar_position.mV[2];
+                    e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
+                }
                 if (params->mModelMatrix)
                 {
                     auto it = matrix_numbers.find(params->mModelMatrix);
@@ -12009,6 +12037,13 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
                 e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
                 e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                {
+                    const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                    e.mAvatarPos[0] = avatar_position.mV[0];
+                    e.mAvatarPos[1] = avatar_position.mV[1];
+                    e.mAvatarPos[2] = avatar_position.mV[2];
+                    e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
+                }
                 if (params->mModelMatrix)
                 {
                     auto it = matrix_numbers.find(params->mModelMatrix);
@@ -12368,6 +12403,13 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
                     e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
                     e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                    {
+                        const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                        e.mAvatarPos[0] = avatar_position.mV[0];
+                        e.mAvatarPos[1] = avatar_position.mV[1];
+                        e.mAvatarPos[2] = avatar_position.mV[2];
+                        e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
+                    }
                 }
                 if (params->mModelMatrix)
                 {

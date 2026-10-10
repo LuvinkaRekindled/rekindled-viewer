@@ -108,7 +108,7 @@ namespace LLVkMirror
     struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId; };      // mMatrixId: stable identity of the model matrix (ray tracing instances)
     // kind 2: a rigged draw: the offset of its weight4 array in the vertex buffer, and its palette (offset in floats from the start of the palettes, joint count)
     // (ray tracing: the vertex range the draw uses, the avatar it belongs to and the identity of its skin, both stable from frame to frame)
-    struct ShadowSkinEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints, mVertexFirst, mVertexCount, mAvatarId, mSkinId; };
+    struct ShadowSkinEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints, mVertexFirst, mVertexCount, mAvatarId, mSkinId, mAvatarKind; F32 mAvatarPos[3]; };
     // kind 1: the same, with what the alpha test needs
     enum ShadowAlphaFlags : U32
     {
@@ -132,6 +132,8 @@ namespace LLVkMirror
         F32 mCutoff;                // alpha below this is discarded
         U32 mWeightOffset, mPaletteOffset, mJoints;     // rigged draws, as ShadowSkinEntry
         U32 mVertexFirst, mVertexCount, mAvatarId, mSkinId;     // rigged draws, as ShadowSkinEntry (ray tracing)
+        U32 mAvatarKind;            // rigged draws: what the avatar is (bit 1 animated object, 2 impostor, 4 the viewer's own, 8 jelly doll, 16 invisible, 32 too slow)
+        F32 mAvatarPos[3];          // rigged draws: where the avatar is (ray tracing ranks and limits avatars by distance)
         F32 mUv[6];                 // kind 5: the texture coordinate transform as the ray query applies it: u' = mUv[0] * u + mUv[2] * v + mUv[4], v' = mUv[1] * u + mUv[3] * v + mUv[5]
     };
     // kind 5 (ray tracing only, nothing is drawn): ShadowAlphaEntry entries (static draws) of casters that the old path draws, named to the ray scene; flags ALPHA_RAY_ONLY = opaque

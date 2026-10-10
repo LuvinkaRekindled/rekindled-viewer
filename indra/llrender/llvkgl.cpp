@@ -3386,6 +3386,8 @@ static void note_rt_skinned(U32 pass, const LLVkMirror::ShadowSkinEntry& e, cons
     c.mPalette = palette_address;
     c.mModel = model;
     c.mPass = pass;
+    memcpy(c.mAvatarPos, e.mAvatarPos, sizeof(c.mAvatarPos));
+    c.mAvatarKind = e.mAvatarKind;
     buffer_info_of(vbuf, c.mVi);
     buffer_info_of(ibuf, c.mIi);
     Rt::noteSkinned(c);
@@ -3414,6 +3416,8 @@ static void note_rt_skinned_alpha(U32 pass, const LLVkMirror::ShadowAlphaEntry& 
     c.mPalette = palette_address;
     c.mModel = model;
     c.mPass = pass;
+    memcpy(c.mAvatarPos, e.mAvatarPos, sizeof(c.mAvatarPos));
+    c.mAvatarKind = e.mAvatarKind;
     c.mKind = 1;
     c.mAlpha = &alpha;
     buffer_info_of(vbuf, c.mVi);

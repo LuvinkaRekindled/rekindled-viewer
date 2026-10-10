@@ -150,7 +150,7 @@ struct Tlas
 struct Stats
 {
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
-    U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0;
+    U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0, mSkinThrottled = 0;
     U64 mAvatarInstances = 0, mAvatarStale = 0, mAvatarStaleFrames = 0, mAvatarStaleMax = 0;
     U64 mOverCap = 0, mExtraCalls = 0, mBadVertices = 0, mBadMatrices = 0, mChecked = 0, mSingular = 0, mCompared = 0, mMismatched = 0;
     F32 mMaxScale = 0.f;
@@ -187,6 +187,7 @@ struct DebugSwitches
     bool mCompare = false;          // compare the system-memory copy of host-written buffers with the mapped video memory (a few per call), log mismatches
     bool mDynCasters = false;       // include casters with a matrix of their own (avatar attachments, moving linksets): they go wrong in the ray scene so far (see PLAN-rt-shadows.md)
     bool mCallLog = false;          // one line per scene call into D:/claude/rt-calls.log (wall clock, frame, call, jobs, instances)
+    U32 mSkinPeriodMax = 4;         // avatars farther than LL_VK_RT_SKIN_NEAR (8 m) are refreshed (skinned and refitted) every 2..this many viewer frames, by distance (1 = every frame for all)
     bool mPreflush = true;          // before the builds and the skinning: record the queued writes of video-memory buffers (they are only recorded when a draw reads the buffer, which a build does not)
     bool mAvatarLog = false;        // one line per avatar instance of every scene call into D:/claude/rt-avatars.log: how old its data is, why it was not refreshed
     bool mSkinProbe = false;        // about every 90 scene calls: run the skin jobs again on their own, read a few results back and log their bounding boxes
@@ -214,6 +215,7 @@ void read_debug_switches()
     d.mDynCasters = env_u64("LL_VK_RT_DYNAMIC", 0) != 0;
     d.mSkinTest = env_u64("LL_VK_RT_SKINTEST", 0) != 0;
     d.mRigged = env_u64("LL_VK_RT_RIGGED", 1) != 0;
+    d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_PERIOD_MAX", 4));
     if (FILE* f = fopen(path, "rb"))
     {
         char line[256];
@@ -250,6 +252,7 @@ void read_debug_switches()
                 else if (k == "skinprobe") d.mSkinProbe = v != 0;
                 else if (k == "avlog") d.mAvatarLog = v != 0;
                 else if (k == "preflush") d.mPreflush = v != 0;
+                else if (k == "skinperiod") d.mSkinPeriodMax = (U32)std::max<long long>(1, v);
                 else if (k == "dyncasters") d.mDynCasters = v != 0;
                 else if (k == "compare") d.mCompare = v != 0;
                 else if (k == "maxvtx") d.mMaxVtx = (U32)v;
@@ -298,8 +301,11 @@ struct Avatar
     F32 mPos[3] = {};                   // where the avatar is (named by its body meshes)
     bool mHasPos = false;
     bool mSelf = false;                 // the viewer's own avatar
+    U32 mAvatarKind = 0;                // as SkinCaster::mAvatarKind
     U64 mProcessedTag = 0;              // frame whose jobs were made
     U64 mOverTag = 0;                   // frame in which it was named but left alone (vertex budget, job tables full, no data)
+    U64 mLastVerts = 0, mLastTris = 0;  // what its structure was last made of (skinned vertices, triangles)
+    U64 mLastTag = 0;
     U64 mLastBuildTag = 0;              // frame of the latest build or refit
     bool mLastWasRefit = false;
     VkDeviceAddress mAddressNow = 0;    // the structure the scene uses (a new one when it is being built this call)
@@ -917,7 +923,14 @@ void noteSkinned(const SkinCaster& c)
     {
         memcpy(a.mPos, c.mAvatarPos, sizeof(a.mPos));
         a.mHasPos = true;
-        a.mSelf = c.mSelf != 0;
+    }
+    if (c.mSelf)
+    {
+        a.mSelf = true;
+    }
+    if (c.mAvatarKind)
+    {
+        a.mAvatarKind = c.mAvatarKind;
     }
     const U64 tag = Context::instance().getFrameNumber() + 1;
     if (a.mNotedTag != tag)
@@ -1551,7 +1564,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     static const U64 skin_refit_limit = env_u64("LL_VK_RT_SKIN_REFITS", 32);
     static const U64 skin_vertex_budget = env_u64("LL_VK_RT_SKIN_VERTS", 2000000);
     U64 skin_verts_left = skin_vertex_budget;
-    std::vector<std::pair<float, Avatar*>> av_order;
+    // Which avatars get a new pose this call. The viewer's own avatar always. Every other one is due after a number of viewer frames that grows with its distance (1 up to
+    // LL_VK_RT_SKIN_NEAR metres, then 2, 3 ... skinperiod): their shadows are small and need no new pose every frame. The due ones are served most overdue first (age divided by
+    // that number of frames), until the vertex budget is used up: when there is more due than the budget allows every avatar slows down alike, none is starved. In between an
+    // avatar's last structure stays in the scene.
+    struct AvatarTurn { double mUrgency; Avatar* mAvatar; };
+    std::vector<AvatarTurn> av_order;
+    static const float skin_near = (float)env_u64("LL_VK_RT_SKIN_NEAR", 8);
+    static const float skin_step = (float)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_STEP", 10));
     for (auto ait = sAvatars.begin(); ait != sAvatars.end();)
     {
         Avatar& a = ait->second;
@@ -1566,21 +1586,44 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             continue;
         }
-        float dist2 = a.mSelf ? -1.f : 0.f;       // the viewer's own avatar is refreshed first
+        float dist = 0.f;
         if (a.mHasPos && !a.mSelf)
         {
             const float ex = view[0] * a.mPos[0] + view[4] * a.mPos[1] + view[8] * a.mPos[2] + view[12];
             const float ey = view[1] * a.mPos[0] + view[5] * a.mPos[1] + view[9] * a.mPos[2] + view[13];
             const float ez = view[2] * a.mPos[0] + view[6] * a.mPos[1] + view[10] * a.mPos[2] + view[14];
-            dist2 = ex * ex + ey * ey + ez * ez;
+            dist = sqrtf(ex * ex + ey * ey + ez * ez);
         }
-        av_order.emplace_back(dist2, &a);
+        U64 period = 1;
+        if (dist > skin_near && sDbg.mSkinPeriodMax > 1)
+        {
+            period = std::min<U64>(sDbg.mSkinPeriodMax, 2 + (U64)((dist - skin_near) / skin_step));
+        }
+        const bool has_structure = a.mBlas->mAs != VK_NULL_HANDLE && !a.mSig.empty() && a.mLastBuildTag;
+        double urgency;
+        if (a.mSelf)
+        {
+            urgency = 1e12;
+        }
+        else if (!has_structure)
+        {
+            urgency = 1e9 - dist;                   // nothing to show yet: soon, the nearest first
+        }
+        else
+        {
+            urgency = (double)(av_tag - a.mLastBuildTag) / (2.0 * (double)period);        // frame slots: two per viewer frame
+        }
+        if (urgency < 1.0)
+        {
+            ++sStats.mSkinThrottled;                // not due yet
+            continue;
+        }
+        av_order.push_back({ urgency, &a });
     }
-    // nearest first: when the budget runs out it is the far avatars that keep their last pose
-    std::sort(av_order.begin(), av_order.end(), [](const std::pair<float, Avatar*>& l, const std::pair<float, Avatar*>& r) { return l.first < r.first; });
-    for (const auto& av_entry : av_order)
+    std::sort(av_order.begin(), av_order.end(), [](const AvatarTurn& l, const AvatarTurn& r) { return l.mUrgency > r.mUrgency; });
+    for (const AvatarTurn& av_entry : av_order)
     {
-        Avatar& a = *av_entry.second;
+        Avatar& a = *av_entry.mAvatar;
         for (SkinDraw& dead : a.mDraws)
         {
             if (!dead.mDead && av_tag > dead.mNotedTag + 60)
@@ -1776,6 +1819,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         job.mScratchOffset = (scratch_total + align - 1) / align * align;
         scratch_total = job.mScratchOffset + job.mScratchSize;
         skin_verts_left -= total_verts;
+        a.mLastVerts = total_verts;
+        a.mLastTris = prims;
+        a.mLastTag = av_tag;
         a.mSig = sig;
         a.mBuiltIdx.clear();
         for (SkinDraw* d : cur)
@@ -2209,6 +2255,67 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             ctx.createBuffer(8u << 20, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Readback, probe_buffer);
         }
+        {
+            // range check: how much of the skinned vertex spans do the draws' indices actually use (only draws whose index data the CPU has: host-written buffers), and who the volume belongs to
+            std::vector<char> seen(65536);
+            U64 draws = 0, draws_data = 0, span = 0, span_data = 0, referenced = 0, index_span = 0, tris = 0, tris_data = 0;
+            for (const SkinDraw* d : skin_job_draws)
+            {
+                if (!d)
+                {
+                    continue;
+                }
+                ++draws;
+                span += d->mVertexCount;
+                tris += d->mCount / 3;
+                if (d->mIi.mCpu && ((U64)d->mFirst + d->mCount) * 2 <= d->mIi.mSize)
+                {
+                    ++draws_data;
+                    span_data += d->mVertexCount;
+                    tris_data += d->mCount / 3;
+                    std::fill(seen.begin(), seen.end(), 0);
+                    const U16* idx = (const U16*)d->mIi.mCpu + d->mFirst;
+                    U32 lo = 0xFFFFu, hi = 0, distinct = 0;
+                    for (U32 k = 0; k < d->mCount; ++k)
+                    {
+                        const U32 v = idx[k];
+                        lo = std::min(lo, v);
+                        hi = std::max(hi, v);
+                        if (!seen[v])
+                        {
+                            seen[v] = 1;
+                            ++distinct;
+                        }
+                    }
+                    referenced += distinct;
+                    index_span += hi >= lo ? hi - lo + 1 : 0;
+                }
+            }
+            LL_INFOS("VkRt") << "skin range check: " << draws << " skinned draws, " << span << " vertices in their ranges, " << tris << " triangles; of them " << draws_data << " draws have index data on the CPU: "
+                             << span_data << " vertices in the ranges, " << index_span << " between the lowest and the highest index used, " << referenced << " really referenced, " << tris_data << " triangles" << LL_ENDL;
+            std::vector<std::pair<U64, const Avatar*>> big;
+            for (const auto& kv : sAvatars)
+            {
+                if (kv.second.mLastTag + 2 >= av_tag)
+                {
+                    big.emplace_back(kv.second.mLastVerts, &kv.second);
+                }
+            }
+            std::sort(big.begin(), big.end(), [](const std::pair<U64, const Avatar*>& l, const std::pair<U64, const Avatar*>& r) { return l.first > r.first; });
+            for (size_t k = 0; k < big.size() && k < 8; ++k)
+            {
+                const Avatar& a = *big[k].second;
+                float dist = -1.f;
+                if (a.mHasPos)
+                {
+                    const float ex = view[0] * a.mPos[0] + view[4] * a.mPos[1] + view[8] * a.mPos[2] + view[12];
+                    const float ey = view[1] * a.mPos[0] + view[5] * a.mPos[1] + view[9] * a.mPos[2] + view[13];
+                    const float ez = view[2] * a.mPos[0] + view[6] * a.mPos[1] + view[10] * a.mPos[2] + view[14];
+                    dist = sqrtf(ex * ex + ey * ey + ez * ez);
+                }
+                LL_INFOS("VkRt") << "skin range check: avatar " << a.mKey.mVb << (a.mSelf ? " (self)" : "") << " kind " << a.mAvatarKind << ((a.mAvatarKind & 1) ? " [animated object]" : "") << ((a.mAvatarKind & 2) ? " [impostor]" : "") << ((a.mAvatarKind & 8) ? " [jelly doll]" : "") << ((a.mAvatarKind & 16) ? " [invisible]" : "") << ((a.mAvatarKind & 32) ? " [too slow]" : "") << ": " << a.mLastVerts << " skinned vertices, " << a.mLastTris << " triangles, " << a.mDraws.size() << " draws, distance " << dist << " m" << LL_ENDL;
+            }
+        }
         struct Target { U32 mJob; VkDeviceSize mOffset, mBytes; };
         std::vector<Target> targets;
         VkDeviceSize used = 0;
@@ -2331,6 +2438,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             full_barrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                          VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
         }
+        ctx.gpuStamp(Context::stampTag("rt scene tlas"));
         vkCmdBuildAccelerationStructuresKHR(cmd, 1, &tinfo, tranges);
         full_barrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
@@ -2434,12 +2542,12 @@ std::string report(double frames)
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
              "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
-             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; skin: %.1f jobs/frame, %.0f vertices/frame, avatars %.2f/frame (over budget %.2f), failed %.3f, avatar instances %.2f/call of which showing an older pose %.2f (on average %.1f frames old, oldest %llu); casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
+             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; skin: %.1f jobs/frame, %.0f vertices/frame, avatars %.2f/frame (over budget %.2f, throttled by distance %.2f), failed %.3f, avatar instances %.2f/call of which showing an older pose %.2f (on average %.1f frames old, oldest %llu); casters new %.2f/frame, groups held %zu; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
              shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / f, (double)s.mBuilds / f,
              (double)s.mPrimsBuilt / f, (double)s.mRefits / f, (double)s.mPrimsRefit / f, (double)s.mDeferred / f, (double)s.mNoData / f, (double)s.mAlphaStructs / f, (double)s.mTableFull / f,
              (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax, s.mPhaseMs[0] / scenes, s.mPhaseMs[1] / scenes, s.mPhaseMs[2] / scenes, s.mPhaseMs[3] / scenes, s.mPhaseMs[4] / scenes,
              (double)sScratch.mSize / 1048576.0, (double)s.mWhyNew / f, (double)s.mWhyEpoch / f, (double)s.mWhyGrew / f, (double)s.mWhyIb / f, (double)s.mWhyRefitLimit / f,
-             (double)s.mSkinJobs / f, (double)s.mSkinVerts / f, (double)s.mAvatars / f, (double)s.mSkinOver / f, (double)s.mSkinFailed / f, (double)s.mAvatarInstances / scenes, (double)s.mAvatarStale / scenes, s.mAvatarStale ? (double)s.mAvatarStaleFrames / (double)s.mAvatarStale : 0.0, (unsigned long long)s.mAvatarStaleMax, (double)s.mNewGroups / f, sGroups.size(), (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
+             (double)s.mSkinJobs / f, (double)s.mSkinVerts / f, (double)s.mAvatars / f, (double)s.mSkinOver / f, (double)s.mSkinThrottled / f, (double)s.mSkinFailed / f, (double)s.mAvatarInstances / scenes, (double)s.mAvatarStale / scenes, s.mAvatarStale ? (double)s.mAvatarStaleFrames / (double)s.mAvatarStale : 0.0, (unsigned long long)s.mAvatarStaleMax, (double)s.mNewGroups / f, sGroups.size(), (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
              s.mMaxScaleKey.mMatrixId, s.mMaxScaleKey.mKind);
     return buf;
 }
