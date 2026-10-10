@@ -677,6 +677,12 @@ bool LLVkMirror::ensureReady()
 void LLVkMirror::stopAsync()
 {
     LLVkAsync::stop();
+    // Renderer::shutdown() is not reached on the normal exit path: stop the pipeline build threads and write the pipeline cache and the variant list here
+    LLVk::Program::stopPipelineThreads();
+    if (LLVk::Renderer::instance().isReady())
+    {
+        LLVk::Renderer::instance().savePipelineCache();
+    }
 }
 
 void LLVkMirror::shutdown()

@@ -3652,6 +3652,16 @@ void after_frame()
                         LL_INFOS("VkPhases") << "image barriers per frame: " << (double)(barriers - last_barriers) / frames << "; graphics pipelines built in this period: "
                                              << (built - last_built) << " (" << (double)(micros - last_micros) / 1000.0 << " ms in the driver in total, slowest "
                                              << (double)slowest / 1000.0 << " ms)" << LL_ENDL;
+                        {
+                            static U64 l_miss = 0, l_skip = 0, l_bg = 0, l_bgus = 0, l_pq = 0, l_pd = 0, l_pus = 0;
+                            const U64 miss = gSyncStats.mPipeMisses.load(), skip = gSyncStats.mPipeSkippedDraws.load(), bg = gSyncStats.mPipeBgDone.load(), bgus = gSyncStats.mPipeBgMicros.load();
+                            const U64 pq = gSyncStats.mPipePrewarmQueued.load(), pd = gSyncStats.mPipePrewarmDone.load(), pus = gSyncStats.mPipePrewarmMicros.load();
+                            const U64 bgmax = gSyncStats.mPipeBgMaxMicros.exchange(0);
+                            LL_INFOS("VkPhases") << "pipelines off the draw path in this period: misses queued " << (miss - l_miss) << ", draws dropped while one was building " << (skip - l_skip)
+                                                 << ", background builds done for a draw " << (bg - l_bg) << " (" << (double)(bgus - l_bgus) / 1000.0 << " ms of thread time, slowest " << (double)bgmax / 1000.0
+                                                 << " ms); pre-warm queued " << (pq - l_pq) << ", done " << (pd - l_pd) << " (" << (double)(pus - l_pus) / 1000.0 << " ms of thread time)" << LL_ENDL;
+                            l_miss = miss; l_skip = skip; l_bg = bg; l_bgus = bgus; l_pq = pq; l_pd = pd; l_pus = pus;
+                        }
                         last_barriers = barriers;
                         last_built = built;
                         last_micros = micros;
