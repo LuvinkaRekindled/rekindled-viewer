@@ -566,21 +566,7 @@ struct GLState
     std::unordered_map<GLuint, Vao> mVaos;
     F32 mConstAttrib[16][4];
 
-    // draw state
-    bool mDepthClamp = false;
-    bool mBlend = false, mDepthTest = false, mCull = false, mScissorTest = false, mStencilTest = false, mPolyOffset = false;
-    GLenum mBlendSrcRGB = GL_ONE, mBlendDstRGB = GL_ZERO, mBlendSrcA = GL_ONE, mBlendDstA = GL_ZERO;
-    GLenum mDepthFunc = GL_LESS;
-    bool mDepthMask = true;
-    bool mColorMask[4] = { true, true, true, true };
-    GLenum mCullFace = GL_BACK;
-    F32 mOffsetFactor = 0.f, mOffsetUnits = 0.f;
-    GLenum mPolygonMode = GL_FILL;
-    F32 mLineWidth = 1.f;
-    std::map<GLenum, bool> mOtherCaps;      // every other glEnable / glDisable capability the viewer has set
-    S32 mViewport[4] = { 0, 0, 0, 0 };
-    bool mViewportSet = false;
-    S32 mScissor[4] = { 0, 0, 0, 0 };
+    // draw state: the render state lives in LLVkState (F1.1); only the clear colour is still kept here
     F32 mClearColor[4] = { 0, 0, 0, 0 };
 
     GLState()
@@ -1034,6 +1020,8 @@ static inline void note_frame_target(GLuint texture)
     }
 }
 
+const LLVkState::Block* state_block();
+
 bool sync_target()
 {
     Renderer& r = Renderer::instance();
@@ -1057,7 +1045,8 @@ bool sync_target()
             if (size_log)
             {
                 // the scissor changes constantly (every UI element); only the viewport and the target size are worth a line
-                const S32 now[9] = { sGL.mViewport[0], sGL.mViewport[1], sGL.mViewport[2], sGL.mViewport[3], 0, 0, 0, 0, (S32)color->mExtent.width };
+                const LLVkState::Block* vb = state_block();
+                const S32 now[9] = { vb ? vb->mViewport[0] : 0, vb ? vb->mViewport[1] : 0, vb ? vb->mViewport[2] : 0, vb ? vb->mViewport[3] : 0, 0, 0, 0, 0, (S32)color->mExtent.width };
                 if (memcmp(now, last, sizeof(now)) != 0)
                 {
                     memcpy(last, now, sizeof(now));
@@ -1273,195 +1262,67 @@ VkSampler texture_sampler(Renderer& r, Tex& t)
     return t.mVkSampler;
 }
 
-// <FS> F1.1 step 2: LL_VK_STATE_VERIFY=1 compares the state block the producer wrote (LLVkState) with what the GL-shaped state calls produced, at every draw
-namespace
+// <FS> F1.1: the render state comes from the typed block the producer wrote (LLVkState), not from a replayed GL state machine
+const LLVkState::Block* state_block()
 {
-bool sStateVerify = false;
-bool sStateVerifyInit = false;
-U64 sStateChecked = 0, sStateMismatch = 0, sStateNoBlock = 0;
-
-void state_verify(bool has_depth)
-{
-    if (!sStateVerifyInit)
+    if (!LLVkAsync::gEnabled)
     {
-        sStateVerifyInit = true;
-        const char* v = getenv("LL_VK_STATE_VERIFY");
-        sStateVerify = v && v[0] == '1';
-    }
-    if (!sStateVerify)
-    {
-        return;
-    }
-    const LLVkState::Block* blk = LLVkState::received();
-    if (!blk)
-    {
-        ++sStateNoBlock;
-        return;
-    }
-    // what the old path computes from the GL values (the same code as sync_draw_state below, without the debug switches)
-    RasterState rs;
-    if (sGL.mCull)
-    {
-        rs.mCull = sGL.mCullFace == GL_FRONT ? VK_CULL_MODE_FRONT_BIT : (sGL.mCullFace == GL_FRONT_AND_BACK ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_BACK_BIT);
-    }
-    rs.mPolygonMode = sGL.mPolygonMode == GL_LINE ? VK_POLYGON_MODE_LINE : (sGL.mPolygonMode == GL_POINT ? VK_POLYGON_MODE_POINT : VK_POLYGON_MODE_FILL);
-    rs.mLineWidth = sGL.mLineWidth;
-    rs.mDepthBias = sGL.mPolyOffset;
-    rs.mDepthClamp = sGL.mDepthClamp;
-    rs.mBiasConstant = sGL.mOffsetUnits;
-    rs.mBiasSlope = sGL.mOffsetFactor;
-    rs.mFrontFace = VK_FRONT_FACE_CLOCKWISE;
-    DepthStencilState ds;
-    ds.mDepthTest = sGL.mDepthTest && has_depth;
-    ds.mDepthWrite = sGL.mDepthMask && sGL.mDepthTest && has_depth;
-    ds.mDepthOp = compare_op(sGL.mDepthFunc);
-    ds.mStencilTest = false;
-    BlendState bs;
-    bs.mEnable = sGL.mBlend;
-    bs.mSrcColor = blend_factor(sGL.mBlendSrcRGB);
-    bs.mDstColor = blend_factor(sGL.mBlendDstRGB);
-    bs.mSrcAlpha = blend_factor(sGL.mBlendSrcA);
-    bs.mDstAlpha = blend_factor(sGL.mBlendDstA);
-    bs.mWriteMask = (sGL.mColorMask[0] ? VK_COLOR_COMPONENT_R_BIT : 0) | (sGL.mColorMask[1] ? VK_COLOR_COMPONENT_G_BIT : 0)
-        | (sGL.mColorMask[2] ? VK_COLOR_COMPONENT_B_BIT : 0) | (sGL.mColorMask[3] ? VK_COLOR_COMPONENT_A_BIT : 0);
-
-    RasterState nrs;
-    DepthStencilState nds;
-    BlendState nbs;
-    LLVkState::toRenderer(*blk, has_depth, nrs, nds, nbs);
-    ++sStateChecked;
-    std::string why;
-    if (!(rs == nrs))
-    {
-        why += " raster(cull " + std::to_string(rs.mCull) + "/" + std::to_string(nrs.mCull) + " poly " + std::to_string(rs.mPolygonMode) + "/" + std::to_string(nrs.mPolygonMode)
-            + " line " + std::to_string(rs.mLineWidth) + "/" + std::to_string(nrs.mLineWidth) + " bias " + std::to_string(rs.mDepthBias) + "/" + std::to_string(nrs.mDepthBias)
-            + " clamp " + std::to_string(rs.mDepthClamp) + "/" + std::to_string(nrs.mDepthClamp) + " const " + std::to_string(rs.mBiasConstant) + "/" + std::to_string(nrs.mBiasConstant)
-            + " slope " + std::to_string(rs.mBiasSlope) + "/" + std::to_string(nrs.mBiasSlope) + ")";
-    }
-    if (!(ds == nds))
-    {
-        why += " depth(test " + std::to_string(ds.mDepthTest) + "/" + std::to_string(nds.mDepthTest) + " write " + std::to_string(ds.mDepthWrite) + "/" + std::to_string(nds.mDepthWrite)
-            + " op " + std::to_string(ds.mDepthOp) + "/" + std::to_string(nds.mDepthOp) + ")";
-    }
-    if (!(bs == nbs))
-    {
-        why += " blend(en " + std::to_string(bs.mEnable) + "/" + std::to_string(nbs.mEnable) + " src " + std::to_string(bs.mSrcColor) + "/" + std::to_string(nbs.mSrcColor)
-            + " dst " + std::to_string(bs.mDstColor) + "/" + std::to_string(nbs.mDstColor) + " srcA " + std::to_string(bs.mSrcAlpha) + "/" + std::to_string(nbs.mSrcAlpha)
-            + " dstA " + std::to_string(bs.mDstAlpha) + "/" + std::to_string(nbs.mDstAlpha) + " mask " + std::to_string(bs.mWriteMask) + "/" + std::to_string(nbs.mWriteMask) + ")";
-    }
-    if (sGL.mViewportSet != blk->mViewportSet || (sGL.mViewportSet && memcmp(sGL.mViewport, blk->mViewport, sizeof(sGL.mViewport)) != 0))
-    {
-        why += " viewport(" + std::to_string(sGL.mViewportSet) + " " + std::to_string(sGL.mViewport[0]) + "," + std::to_string(sGL.mViewport[1]) + "," + std::to_string(sGL.mViewport[2]) + "," + std::to_string(sGL.mViewport[3])
-            + " / " + std::to_string(blk->mViewportSet) + " " + std::to_string(blk->mViewport[0]) + "," + std::to_string(blk->mViewport[1]) + "," + std::to_string(blk->mViewport[2]) + "," + std::to_string(blk->mViewport[3]) + ")";
-    }
-    if (sGL.mScissorTest != blk->mScissorOn || (sGL.mScissorTest && memcmp(sGL.mScissor, blk->mScissor, sizeof(sGL.mScissor)) != 0))
-    {
-        why += " scissor(" + std::to_string(sGL.mScissorTest) + " " + std::to_string(sGL.mScissor[0]) + "," + std::to_string(sGL.mScissor[1]) + "," + std::to_string(sGL.mScissor[2]) + "," + std::to_string(sGL.mScissor[3])
-            + " / " + std::to_string(blk->mScissorOn) + " " + std::to_string(blk->mScissor[0]) + "," + std::to_string(blk->mScissor[1]) + "," + std::to_string(blk->mScissor[2]) + "," + std::to_string(blk->mScissor[3]) + ")";
-    }
-    if (!why.empty())
-    {
-        if (++sStateMismatch <= 30)
+        // inline mode (before the queue starts): the producer and this code are one thread; the GL hooks wrote the context directly
+        LLVkState::Block b;
+        if (LLVkState::takeChanged(b))
         {
-            Program* p = Renderer::instance().getProgram();
-            LL_WARNS("VkState") << "STATE VERIFY mismatch #" << sStateMismatch << " program " << (p ? p->getName() : std::string("-")) << ":" << why << LL_ENDL;
+            LLVkState::receive(b);
         }
     }
-    if ((sStateChecked % 50000) == 0)
-    {
-        LL_INFOS("VkState") << "STATE VERIFY: " << sStateChecked << " draws checked, " << sStateMismatch << " mismatches, " << sStateNoBlock << " draws before the first block" << LL_ENDL;
-    }
+    return LLVkState::received();
 }
-} // anonymous namespace
 
-// translates the tracked GL state into renderer state for the next draw
+// translates the state block into renderer state for the next draw
 void sync_draw_state(Renderer& r, bool has_depth)
 {
-    state_verify(has_depth);
-    // <FS> the whole translation below is a function of these GL state values: when none changed (and the renderer's state was not set by anything else) it is skipped
-    struct DrawStateKey
+    const LLVkState::Block* blk = state_block();
+    if (!blk)
     {
-        U32 mFlags;
-        GLenum mCullFace, mPolygonMode, mDepthFunc, mBlendSrcRGB, mBlendDstRGB, mBlendSrcA, mBlendDstA;
-        F32 mLineWidth, mOffsetUnits, mOffsetFactor;
-        S32 mViewport[4], mScissor[4];
-    };
-    static DrawStateKey last;
+        return;
+    }
+    // the translation is a function of the block, has_depth and the renderer's own state generation: when none changed it is skipped
+    static LLVkState::Block last;
     static U32 last_gen = 0;
+    static bool last_has_depth = false;
     static bool last_valid = false;
-    DrawStateKey key;
-    memset(&key, 0, sizeof(key));
-    key.mFlags = (sGL.mCull ? 1u : 0) | (sGL.mPolyOffset ? 2u : 0) | (sGL.mDepthClamp ? 4u : 0) | (sGL.mDepthTest ? 8u : 0) | (sGL.mDepthMask ? 16u : 0) | (sGL.mBlend ? 32u : 0)
-        | (sGL.mColorMask[0] ? 64u : 0) | (sGL.mColorMask[1] ? 128u : 0) | (sGL.mColorMask[2] ? 256u : 0) | (sGL.mColorMask[3] ? 512u : 0) | (sGL.mViewportSet ? 1024u : 0)
-        | (sGL.mScissorTest ? 2048u : 0) | (has_depth ? 4096u : 0);
-    key.mCullFace = sGL.mCullFace; key.mPolygonMode = sGL.mPolygonMode; key.mDepthFunc = sGL.mDepthFunc;
-    key.mBlendSrcRGB = sGL.mBlendSrcRGB; key.mBlendDstRGB = sGL.mBlendDstRGB; key.mBlendSrcA = sGL.mBlendSrcA; key.mBlendDstA = sGL.mBlendDstA;
-    key.mLineWidth = sGL.mLineWidth; key.mOffsetUnits = sGL.mOffsetUnits; key.mOffsetFactor = sGL.mOffsetFactor;
-    for (int i = 0; i < 4; ++i) { key.mViewport[i] = sGL.mViewport[i]; key.mScissor[i] = sGL.mScissor[i]; }
-    if (!sDbgMatch && last_valid && last_gen == r.stateGeneration() && memcmp(&key, &last, sizeof(key)) == 0)
+    if (!sDbgMatch && last_valid && last_gen == r.stateGeneration() && last_has_depth == has_depth && last == *blk)
     {
         return;
     }
     RasterState rs;
-    if (sGL.mCull)
-    {
-        rs.mCull = sGL.mCullFace == GL_FRONT ? VK_CULL_MODE_FRONT_BIT : (sGL.mCullFace == GL_FRONT_AND_BACK ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_BACK_BIT);
-    }
-    rs.mPolygonMode = sGL.mPolygonMode == GL_LINE ? VK_POLYGON_MODE_LINE : (sGL.mPolygonMode == GL_POINT ? VK_POLYGON_MODE_POINT : VK_POLYGON_MODE_FILL);
-    rs.mLineWidth = sGL.mLineWidth;
-    rs.mDepthBias = sGL.mPolyOffset;
-    rs.mDepthClamp = sGL.mDepthClamp;
-    rs.mBiasConstant = sGL.mOffsetUnits;
-    rs.mBiasSlope = sGL.mOffsetFactor;
-    // Vulkan's face-orientation area has the opposite sign of GL's for the same framebuffer coordinates (its y axis points down),
-    // and the mirror keeps GL's positive viewport, so GL's counter-clockwise front faces are clockwise here
-    rs.mFrontFace = VK_FRONT_FACE_CLOCKWISE;
-    if (sDbgMatch && sDbgNoCull)
-    {
-        rs.mCull = VK_CULL_MODE_NONE;
-    }
-    r.setRasterState(rs);
-
     DepthStencilState ds;
-    ds.mDepthTest = sGL.mDepthTest && has_depth;
-    // GL never writes depth while the depth test is disabled; Vulkan does when writes are enabled
-    ds.mDepthWrite = sGL.mDepthMask && sGL.mDepthTest && has_depth;
-    ds.mDepthOp = compare_op(sGL.mDepthFunc);
+    BlendState bs;
+    LLVkState::toRenderer(*blk, has_depth, rs, ds, bs);
     if (sDbgMatch)
     {
+        if (sDbgNoCull) rs.mCull = VK_CULL_MODE_NONE;
         if (sDbgNoDepthWrite) ds.mDepthWrite = false;
         if (sDbgNoDepthTest) ds.mDepthTest = false;
-    }
-    ds.mStencilTest = false;        // the mirror's depth images carry no stencil yet
-    r.setDepthStencilState(ds);
-
-    BlendState bs;
-    bs.mEnable = sGL.mBlend;
-    bs.mSrcColor = blend_factor(sGL.mBlendSrcRGB);
-    bs.mDstColor = blend_factor(sGL.mBlendDstRGB);
-    bs.mSrcAlpha = blend_factor(sGL.mBlendSrcA);
-    bs.mDstAlpha = blend_factor(sGL.mBlendDstA);
-    bs.mWriteMask = (sGL.mColorMask[0] ? VK_COLOR_COMPONENT_R_BIT : 0) | (sGL.mColorMask[1] ? VK_COLOR_COMPONENT_G_BIT : 0)
-        | (sGL.mColorMask[2] ? VK_COLOR_COMPONENT_B_BIT : 0) | (sGL.mColorMask[3] ? VK_COLOR_COMPONENT_A_BIT : 0);
-    if (sDbgMatch)
-    {
         if (sDbgNoBlend) bs.mEnable = false;
         if (sDbgFullMask) bs.mWriteMask = 0xF;
     }
+    r.setRasterState(rs);
+    r.setDepthStencilState(ds);
     r.setBlendState(bs);
 
-    if (sGL.mViewportSet)
+    if (blk->mViewportSet)
     {
-        r.setViewport(sGL.mViewport[0], sGL.mViewport[1], sGL.mViewport[2], sGL.mViewport[3]);
+        r.setViewport(blk->mViewport[0], blk->mViewport[1], blk->mViewport[2], blk->mViewport[3]);
     }
-    const bool scissor_on = sGL.mScissorTest && !(sDbgMatch && sDbgNoScissor);
+    const bool scissor_on = blk->mScissorOn && !(sDbgMatch && sDbgNoScissor);
     r.setScissorEnabled(scissor_on);
     if (scissor_on)
     {
-        r.setScissor(sGL.mScissor[0], sGL.mScissor[1], sGL.mScissor[2], sGL.mScissor[3]);
+        r.setScissor(blk->mScissor[0], blk->mScissor[1], blk->mScissor[2], blk->mScissor[3]);
     }
-    last = key;
+    last = *blk;
     last_gen = r.stateGeneration();
+    last_has_depth = has_depth;
     last_valid = true;
 }
 
@@ -4338,95 +4199,29 @@ void on_rt_scene(const LLVkMirror::RtSceneArgs& args)
 // hooks: state and clears
 //-----------------------------------------------------------------------------------------------------
 
-static void set_cap(GLenum cap, bool on)
-{
-    switch (cap)
-    {
-    case GL_BLEND: sGL.mBlend = on; break;
-    case GL_DEPTH_TEST: sGL.mDepthTest = on; break;
-    case GL_CULL_FACE: sGL.mCull = on; break;
-    case GL_SCISSOR_TEST: sGL.mScissorTest = on; break;
-    case GL_STENCIL_TEST: sGL.mStencilTest = on; break;
-    case GL_POLYGON_OFFSET_FILL: sGL.mPolyOffset = on; break;
-    case GL_DEPTH_CLAMP: sGL.mDepthClamp = on; break;
-    default: sGL.mOtherCaps[cap] = on; break;
-    }
-}
-
-void on_glEnable(GLenum cap) { set_cap(cap, true); }
-void on_glDisable(GLenum cap) { set_cap(cap, false); }
-
-void on_glBlendFunc(GLenum sfactor, GLenum dfactor)
-{
-    sGL.mBlendSrcRGB = sGL.mBlendSrcA = sfactor;
-    sGL.mBlendDstRGB = sGL.mBlendDstA = dfactor;
-}
-
-void on_glBlendFuncSeparate(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha)
-{
-    sGL.mBlendSrcRGB = sfactorRGB; sGL.mBlendDstRGB = dfactorRGB;
-    sGL.mBlendSrcA = sfactorAlpha; sGL.mBlendDstA = dfactorAlpha;
-}
-
-void on_glDepthFunc(GLenum func) { sGL.mDepthFunc = func; }
-void on_glDepthMask(GLboolean flag) { sGL.mDepthMask = flag != GL_FALSE; }
-
-void on_glColorMask(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha)
-{
-    sGL.mColorMask[0] = red != GL_FALSE; sGL.mColorMask[1] = green != GL_FALSE;
-    sGL.mColorMask[2] = blue != GL_FALSE; sGL.mColorMask[3] = alpha != GL_FALSE;
-}
-
-void on_glCullFace(GLenum mode) { sGL.mCullFace = mode; }
-void on_glPolygonOffset(GLfloat factor, GLfloat units) { sGL.mOffsetFactor = factor; sGL.mOffsetUnits = units; }
-void on_glPolygonMode(GLenum face, GLenum mode) { sGL.mPolygonMode = mode; }
-void on_glLineWidth(GLfloat width) { sGL.mLineWidth = width; }
+// <FS> F1.1: the state hooks no longer reach the worker through the queue (the producer writes the context and a block record carries it). These run only in
+// inline mode, where the producer is this thread; they write the same context.
+void on_glEnable(GLenum cap) { LLVkState::setEnable(cap, true); }
+void on_glDisable(GLenum cap) { LLVkState::setEnable(cap, false); }
+void on_glBlendFunc(GLenum sfactor, GLenum dfactor) { LLVkState::setBlendFunc(sfactor, dfactor, sfactor, dfactor); }
+void on_glBlendFuncSeparate(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha) { LLVkState::setBlendFunc(sfactorRGB, dfactorRGB, sfactorAlpha, dfactorAlpha); }
+void on_glDepthFunc(GLenum func) { LLVkState::setDepthFunc(func); }
+void on_glDepthMask(GLboolean flag) { LLVkState::setDepthMask(flag != GL_FALSE); }
+void on_glColorMask(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha) { LLVkState::setColorMask(red != GL_FALSE, green != GL_FALSE, blue != GL_FALSE, alpha != GL_FALSE); }
+void on_glCullFace(GLenum mode) { LLVkState::setCullFace(mode); }
+void on_glPolygonOffset(GLfloat factor, GLfloat units) { LLVkState::setPolygonOffset(factor, units); }
+void on_glPolygonMode(GLenum face, GLenum mode) { (void)face; LLVkState::setPolygonMode(mode); }
+void on_glLineWidth(GLfloat width) { LLVkState::setLineWidth(width); }
 void on_glPointSize(GLfloat size) { (void)size; }
-void on_glStencilFunc(GLenum, GLint, GLuint) {}
-void on_glStencilOp(GLenum, GLenum, GLenum) {}
-void on_glStencilMask(GLuint) {}
-
-void on_glViewport(GLint x, GLint y, GLsizei width, GLsizei height)
-{
-    sGL.mViewport[0] = x; sGL.mViewport[1] = y; sGL.mViewport[2] = width; sGL.mViewport[3] = height;
-    sGL.mViewportSet = true;
-}
-
-void on_glScissor(GLint x, GLint y, GLsizei width, GLsizei height)
-{
-    sGL.mScissor[0] = x; sGL.mScissor[1] = y; sGL.mScissor[2] = width; sGL.mScissor[3] = height;
-}
+void on_glStencilFunc(GLenum func, GLint ref, GLuint mask) { LLVkState::setStencilFunc(func, ref, mask); }
+void on_glStencilOp(GLenum sfail, GLenum dpfail, GLenum dppass) { LLVkState::setStencilOp(sfail, dpfail, dppass); }
+void on_glStencilMask(GLuint mask) { LLVkState::setStencilMask(mask); }
+void on_glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { LLVkState::setViewport(x, y, width, height); }
+void on_glScissor(GLint x, GLint y, GLsizei width, GLsizei height) { LLVkState::setScissor(x, y, width, height); }
 
 void on_glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
 {
     sGL.mClearColor[0] = red; sGL.mClearColor[1] = green; sGL.mClearColor[2] = blue; sGL.mClearColor[3] = alpha;
-}
-
-// F1.1: the queue starts between two frames; what the inline hooks set before that lives in sGL only
-void seed_state_context()
-{
-    LLVkState::reset();
-    LLVkState::setEnable(GL_BLEND, sGL.mBlend);
-    LLVkState::setEnable(GL_DEPTH_TEST, sGL.mDepthTest);
-    LLVkState::setEnable(GL_CULL_FACE, sGL.mCull);
-    LLVkState::setEnable(GL_SCISSOR_TEST, sGL.mScissorTest);
-    LLVkState::setEnable(GL_STENCIL_TEST, sGL.mStencilTest);
-    LLVkState::setEnable(GL_POLYGON_OFFSET_FILL, sGL.mPolyOffset);
-    LLVkState::setEnable(GL_DEPTH_CLAMP, sGL.mDepthClamp);
-    LLVkState::setBlendFunc(sGL.mBlendSrcRGB, sGL.mBlendDstRGB, sGL.mBlendSrcA, sGL.mBlendDstA);
-    LLVkState::setDepthFunc(sGL.mDepthFunc);
-    LLVkState::setDepthMask(sGL.mDepthMask);
-    LLVkState::setColorMask(sGL.mColorMask[0], sGL.mColorMask[1], sGL.mColorMask[2], sGL.mColorMask[3]);
-    LLVkState::setCullFace(sGL.mCullFace);
-    LLVkState::setPolygonOffset(sGL.mOffsetFactor, sGL.mOffsetUnits);
-    LLVkState::setPolygonMode(sGL.mPolygonMode);
-    LLVkState::setLineWidth(sGL.mLineWidth);
-    if (sGL.mViewportSet)
-    {
-        LLVkState::setViewport(sGL.mViewport[0], sGL.mViewport[1], sGL.mViewport[2], sGL.mViewport[3]);
-    }
-    LLVkState::setScissor(sGL.mScissor[0], sGL.mScissor[1], sGL.mScissor[2], sGL.mScissor[3]);
-    LLVkState::forceEmit();
 }
 
 void on_glClear(GLbitfield mask)
@@ -4438,11 +4233,15 @@ void on_glClear(GLbitfield mask)
     }
     if (sCtx.mDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
     {
-        sStats.mBackbufferEvents.push_back(std::string("CLEAR mask ") + std::to_string(mask) + " scissor " + (sGL.mScissorTest ? "on" : "off"));
+        const LLVkState::Block* cb = state_block();
+        sStats.mBackbufferEvents.push_back(std::string("CLEAR mask ") + std::to_string(mask) + " scissor " + (cb && cb->mScissorOn ? "on" : "off"));
     }
     U32 bits = 0;
-    if ((mask & GL_COLOR_BUFFER_BIT) && (sGL.mColorMask[0] || sGL.mColorMask[1] || sGL.mColorMask[2] || sGL.mColorMask[3])) bits |= CLEAR_COLOR;
-    if ((mask & GL_DEPTH_BUFFER_BIT) && sGL.mDepthMask) bits |= CLEAR_DEPTH;
+    const LLVkState::Block* blk = state_block();
+    const bool color_mask = !blk || blk->mBlend.mWriteMask != 0;
+    const bool depth_mask = !blk || blk->mDepthMask;
+    if ((mask & GL_COLOR_BUFFER_BIT) && color_mask) bits |= CLEAR_COLOR;
+    if ((mask & GL_DEPTH_BUFFER_BIT) && depth_mask) bits |= CLEAR_DEPTH;
     if (bits)
     {
         Renderer::instance().clear(bits, sGL.mClearColor, 1.f, 0);
@@ -4923,13 +4722,19 @@ bool emulate_integer(GLenum pname, GLint* out, U32& n)
     switch (pname)
     {
     case 0x0BA2:    // VIEWPORT
-        if (!sGL.mViewportSet) return false;
-        for (int i = 0; i < 4; ++i) out[i] = sGL.mViewport[i];
+    {
+        const LLVkState::Block* b = state_block();
+        if (!b || !b->mViewportSet) return false;
+        for (int i = 0; i < 4; ++i) out[i] = b->mViewport[i];
         n = 4; return true;
+    }
     case 0x0C10:    // SCISSOR_BOX
-        if (!sGL.mScissor[2] && !sGL.mScissor[3]) return false;
-        for (int i = 0; i < 4; ++i) out[i] = sGL.mScissor[i];
+    {
+        const LLVkState::Block* b = state_block();
+        if (!b || (!b->mScissor[2] && !b->mScissor[3])) return false;
+        for (int i = 0; i < 4; ++i) out[i] = b->mScissor[i];
         n = 4; return true;
+    }
     case 0x84E0: out[0] = (GLint)(0x84C0 + sCtx.mActiveUnit); return true;     // ACTIVE_TEXTURE
     case 0x8069: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][0]; return true;     // TEXTURE_BINDING_2D
     case 0x8514: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][1]; return true;     // TEXTURE_BINDING_CUBE_MAP
@@ -4945,12 +4750,7 @@ bool emulate_integer(GLenum pname, GLint* out, U32& n)
     case 0x88EF: out[0] = (GLint)sCtx.mPixelUnpackBuffer; return true;              // PIXEL_UNPACK_BUFFER_BINDING
     case 0x0CF5: out[0] = sCtx.mUnpackAlignment; return true;                       // UNPACK_ALIGNMENT
     case 0x0CF2: out[0] = sCtx.mUnpackRowLength; return true;                       // UNPACK_ROW_LENGTH
-    case 0x0B74: out[0] = (GLint)sGL.mDepthFunc; return true;                       // DEPTH_FUNC
-    case 0x0B45: out[0] = (GLint)sGL.mCullFace; return true;                        // CULL_FACE_MODE
-    case 0x80C9: out[0] = (GLint)sGL.mBlendSrcRGB; return true;                     // BLEND_SRC_RGB
-    case 0x80C8: out[0] = (GLint)sGL.mBlendDstRGB; return true;                     // BLEND_DST_RGB
-    case 0x80CB: out[0] = (GLint)sGL.mBlendSrcA; return true;                       // BLEND_SRC_ALPHA
-    case 0x80CA: out[0] = (GLint)sGL.mBlendDstA; return true;                       // BLEND_DST_ALPHA
+    // DEPTH_FUNC, CULL_FACE_MODE and the blend functions are not answered: the state is native Vulkan values now, and only gDebugGL's consistency checks asked
     default: return false;
     }
 }
@@ -4961,13 +4761,16 @@ bool emulate_float(GLenum pname, GLfloat* out, U32& n)
     switch (pname)
     {
     case 0x0BA2:
-        if (!sGL.mViewportSet) return false;
-        for (int i = 0; i < 4; ++i) out[i] = (GLfloat)sGL.mViewport[i];
+    {
+        const LLVkState::Block* b = state_block();
+        if (!b || !b->mViewportSet) return false;
+        for (int i = 0; i < 4; ++i) out[i] = (GLfloat)b->mViewport[i];
         n = 4; return true;
-    case 0x0B21: out[0] = sGL.mLineWidth; return true;                              // LINE_WIDTH
+    }
+    case 0x0B21: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mRaster.mLineWidth; return true; }       // LINE_WIDTH
     case 0x0C22: for (int i = 0; i < 4; ++i) out[i] = sGL.mClearColor[i]; n = 4; return true;      // COLOR_CLEAR_VALUE
-    case 0x8038: out[0] = sGL.mOffsetFactor; return true;                           // POLYGON_OFFSET_FACTOR
-    case 0x2A00: out[0] = sGL.mOffsetUnits; return true;                            // POLYGON_OFFSET_UNITS
+    case 0x8038: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mRaster.mBiasSlope; return true; }       // POLYGON_OFFSET_FACTOR
+    case 0x2A00: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mRaster.mBiasConstant; return true; }    // POLYGON_OFFSET_UNITS
     case 0x84FF: out[0] = Context::instance().getCaps().mMaxAnisotropy; return true;               // MAX_TEXTURE_MAX_ANISOTROPY
     case 0x846E: case 0x0B22:                                                                       // ALIASED_LINE_WIDTH_RANGE, SMOOTH_LINE_WIDTH_RANGE
         out[0] = Context::instance().getCaps().mLineWidthRange[0]; out[1] = Context::instance().getCaps().mLineWidthRange[1]; n = 2; return true;
@@ -4980,29 +4783,32 @@ bool emulate_boolean(GLenum pname, GLboolean* out, U32& n)
     n = 1;
     switch (pname)
     {
-    case 0x0B72: out[0] = sGL.mDepthMask ? 1 : 0; return true;                      // DEPTH_WRITEMASK
-    case 0x0C23: for (int i = 0; i < 4; ++i) out[i] = sGL.mColorMask[i] ? 1 : 0; n = 4; return true;       // COLOR_WRITEMASK
+    case 0x0B72: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mDepthMask ? 1 : 0; return true; }       // DEPTH_WRITEMASK
+    case 0x0C23:                                                                                                                       // COLOR_WRITEMASK
+    {
+        const LLVkState::Block* b = state_block();
+        if (!b) return false;
+        const U32 m = b->mBlend.mWriteMask;
+        out[0] = (m & VK_COLOR_COMPONENT_R_BIT) != 0; out[1] = (m & VK_COLOR_COMPONENT_G_BIT) != 0; out[2] = (m & VK_COLOR_COMPONENT_B_BIT) != 0; out[3] = (m & VK_COLOR_COMPONENT_A_BIT) != 0;
+        n = 4; return true;
+    }
     default: return false;
     }
 }
 
 bool emulate_enabled(GLenum cap, bool& value)
 {
+    const LLVkState::Block* b = state_block();
     switch (cap)
     {
-    case 0x0BE2: value = sGL.mBlend; return true;
-    case 0x0B71: value = sGL.mDepthTest; return true;
-    case 0x0B44: value = sGL.mCull; return true;
-    case 0x0C11: value = sGL.mScissorTest; return true;
-    case 0x0B90: value = sGL.mStencilTest; return true;
-    case 0x8037: value = sGL.mPolyOffset; return true;
-    case 0x864F: value = sGL.mDepthClamp; return true;
-    default:
-    {
-        auto it = sGL.mOtherCaps.find(cap);
-        value = it != sGL.mOtherCaps.end() ? it->second : (cap == 0x0BD0 || cap == 0x809D);      // DITHER and MULTISAMPLE start enabled, the rest disabled
-        return true;
-    }
+    case 0x0BE2: value = b && b->mBlend.mEnable; return true;
+    case 0x0B71: value = b && b->mDepth.mDepthTest; return true;
+    case 0x0B44: value = b && b->mRaster.mCull != VK_CULL_MODE_NONE; return true;
+    case 0x0C11: value = b && b->mScissorOn; return true;
+    case 0x0B90: value = b && b->mDepth.mStencilTest; return true;
+    case 0x8037: value = b && b->mRaster.mDepthBias; return true;
+    case 0x864F: value = b && b->mRaster.mDepthClamp; return true;
+    default: value = (cap == 0x0BD0 || cap == 0x809D); return true;      // the other capabilities do not change what a draw does: DITHER and MULTISAMPLE start enabled, the rest disabled
     }
 }
 

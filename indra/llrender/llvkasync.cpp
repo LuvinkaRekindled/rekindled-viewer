@@ -624,7 +624,8 @@ void push(unsigned short op, const void* args, unsigned size)
     {
         if (isStateOp(op))
         {
-            stateNote(op, args);
+            stateNote(op, args);        // F1.1: the state calls are not queued any more; the block record carries them
+            return;
         }
         else if (op == OP_glClear || op == OP_glDrawArrays || op == OP_glDrawRangeElements)
         {
@@ -648,7 +649,8 @@ void push(unsigned short op, const void* args, unsigned size)
     }
     if (isStateOp(op))
     {
-        LLVkState::noteOffThread();
+        LLVkState::noteOffThread();     // dropped: the worker's state comes from the main thread's blocks only
+        return;
     }
     std::vector<U8> payload((const U8*)args, (const U8*)args + size);
     sidePush(op, std::move(payload));
@@ -926,6 +928,10 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
 
 void syncCall(const std::function<void()>& fn)
 {
+    if (isMainThread())
+    {
+        stateEmit();        // the answer may read render state (glGet*, glIsEnabled): the worker needs the producer's latest block first
+    }
     std::atomic<int> done{ 0 };
     struct Args { const std::function<void()>* mFn; std::atomic<int>* mDone; } a = { &fn, &done };
     // inline when this thread is the one that replays commands (the worker, or the main thread in loopback mode) or nothing is replaying them (stopped)
@@ -2043,7 +2049,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             LLVkGL::on_glReadBuffer(0x0405);                             // GL_BACK
             LLVkGL::on_glDrawBuffer(0x0405);
         }
-        LLVkGL::on_glViewport(a[2], a[3], a[4], a[5]);
+        // the viewport is part of the state block (the producer sets it with this record)
         break;
     }
     case CMD_TEX_PARAMS:
@@ -2437,7 +2443,7 @@ bool start()
     gBeginsEnqueued.store(0);
     gBeginsDone.store(0);
     LLVkGL::register_main_context();
-    LLVkGL::seed_state_context();
+    LLVkState::forceEmit();         // the receiver gets the first block of this run whatever was written before
     LLVkMirror::gRendererTidCount = 0;
     LLVkMirror::gAsyncEpoch = LLVkMirror::gAsyncEpoch + 1;
     if (gMode == 2)
