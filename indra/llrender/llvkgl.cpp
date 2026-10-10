@@ -494,6 +494,7 @@ struct Buf
     U64 mEpoch = 0;
     U64 mVersion = 0;
     U64 mMoves = 0;
+    unsigned mRtName = 0;               // its GL name, for the list of changed watched buffers
     bool mRtWatched = false;            // the ray scene reads this buffer at trace time (alpha records): a change of its storage is counted (sBufferTopology)
     // The Vulkan buffer lives in write-combined video memory, which is very slow to read from the CPU. This copy in ordinary memory
     // is what a renamed buffer is refilled from when only part of it is rewritten.
@@ -1770,6 +1771,20 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
 // ---- device-local buffers: writes become GPU copies, recorded when a draw is about to read the buffer ----
 std::vector<GLuint> sPendingBufs;       // the buffers whose Buf::mPending is set
 U64 sBufferTopology = 0;                // see Buf::mRtWatched
+std::vector<unsigned> sTopologyNames;  // the names behind the count (cleared when taken; sTopologyOverflow: too many)
+bool sTopologyOverflow = false;
+void note_topology_change(const Buf& b)
+{
+    ++sBufferTopology;
+    if (sTopologyNames.size() < 4096)
+    {
+        sTopologyNames.push_back(b.mRtName);
+    }
+    else
+    {
+        sTopologyOverflow = true;
+    }
+}
 
 struct BufTraffic;
 void note_flush(bool frame_end, size_t buffers);
@@ -1849,7 +1864,7 @@ void release_storage(Buf& b)
     Context& ctx = Context::instance();
     if (b.mRtWatched)
     {
-        ++sBufferTopology;
+        note_topology_change(b);
     }
     if (b.mArena.valid())
     {
@@ -1883,7 +1898,7 @@ bool acquire_arena_storage(Buf& b, U64 size, ArenaKind kind)
     ++b.mEpoch;
     if (b.mRtWatched)
     {
-        ++sBufferTopology;
+        note_topology_change(b);
     }
     return true;
 }
@@ -2038,7 +2053,7 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
                 ++b.mMoves;
                 if (b.mRtWatched)
                 {
-                    ++sBufferTopology;
+                    note_topology_change(b);
                 }
                 b.mLastUseFrame = ~0ull;
                 ++sRenameStats.mCount;
@@ -2624,6 +2639,15 @@ unsigned long long bufferTopologyVersion()
     return sBufferTopology;
 }
 
+bool takeTopologyChanges(std::vector<unsigned>& names)
+{
+    names.swap(sTopologyNames);
+    sTopologyNames.clear();
+    const bool complete = !sTopologyOverflow;
+    sTopologyOverflow = false;
+    return complete;
+}
+
 void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data)
 {
     on_bufferSubData(buffer_for_target(target), offset, size, data);
@@ -2875,8 +2899,8 @@ static Buf* packet_buffer(GLuint name)
 
 static Tex* packet_texture(GLuint name)
 {
-    static Tex* cache_tex[1024];
-    static GLuint cache_name[1024];
+    static Tex* cache_tex[8192];
+    static GLuint cache_name[8192];
     static U64 cache_generation = ~0ull;
     if (cache_generation != sPacketTextureGeneration)
     {
@@ -2884,7 +2908,7 @@ static Tex* packet_texture(GLuint name)
         memset(cache_name, 0, sizeof(cache_name));
         cache_generation = sPacketTextureGeneration;
     }
-    const U32 slot = (name * 2654435761u) >> 22;
+    const U32 slot = (name * 2654435761u) >> 19;
     if (cache_name[slot] == name && cache_tex[slot])
     {
         return cache_tex[slot];
@@ -3390,6 +3414,8 @@ static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf&
         Buf& vb_rw = const_cast<Buf&>(vbuf);
         Buf& ib_rw = const_cast<Buf&>(ibuf);
         vb_rw.mRtWatched = ib_rw.mRtWatched = true;
+        vb_rw.mRtName = vb;
+        ib_rw.mRtName = ib;
         vb_rw.mLastUseFrame = ib_rw.mLastUseFrame = frame_now;
     }
     buffer_info_of(vbuf, c.mVi);
