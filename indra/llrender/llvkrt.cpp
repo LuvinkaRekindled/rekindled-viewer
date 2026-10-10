@@ -90,6 +90,7 @@ struct Group
     std::vector<Range> mRanges;
     std::vector<AlphaInfo> mAlpha;      // kind 1: parallel to mRanges
     U64 mPassSeen[kPasses] = {};        // per shadow pass: the frame number + 1 of the latest note (0 = never)
+    bool mSkip = false;                 // left out of this scene call (debug switch common_only)
 };
 
 struct Blas
@@ -130,6 +131,65 @@ struct Stats
     U64 mWhyNew = 0, mWhyEpoch = 0, mWhyGrew = 0, mWhyIb = 0, mWhyRefitLimit = 0, mNewGroups = 0, mNewMasked = 0;      // why structures were built (and how many casters were new)
     double mCpuMs = 0, mCpuMsMax = 0;
 };
+
+// Switches that can be changed while the viewer runs: the file named by LL_VK_RT_DEBUG_FILE (default <work>t-debug.txt) is read again every half second (key=value lines:
+// single, norefit, keep, common_only, alpha, check, skipbad). Used to bisect picture problems without restarts.
+struct DebugSwitches
+{
+    bool mSingle = false;           // only the first scene call of a frame builds; later calls keep that scene
+    bool mNoRefit = false;          // a structure whose vertices changed is rebuilt, not refitted
+    U64 mKeep = 8;                  // frames the casters of a cached pass are kept
+    bool mCommonOnly = false;       // only casters that use the most common matrix (the region's): no moving objects
+    bool mAlpha = true;             // alpha masked casters in the scene
+    bool mCheck = true;             // data checks on built ranges
+    bool mSkipBad = true;
+};
+DebugSwitches sDbg;
+std::chrono::steady_clock::time_point sDbgRead;
+
+void read_debug_switches()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - sDbgRead < std::chrono::milliseconds(500))
+    {
+        return;
+    }
+    sDbgRead = now;
+    static const char* path = []() { const char* e = getenv("LL_VK_RT_DEBUG_FILE"); return e && e[0] ? e : "<work>\rt-debug.txt"; }();
+    DebugSwitches d;
+    d.mKeep = env_u64("LL_VK_RT_KEEP_FRAMES", 8);
+    d.mAlpha = env_u64("LL_VK_RT_ALPHA", 1) != 0;
+    d.mCheck = env_u64("LL_VK_RT_CHECK", 1) != 0;
+    d.mSkipBad = env_u64("LL_VK_RT_SKIPBAD", 1) != 0;
+    if (FILE* f = fopen(path, "rb"))
+    {
+        char line[256];
+        while (fgets(line, sizeof(line), f))
+        {
+            char key[64];
+            long long v = 0;
+            if (sscanf(line, "%63[^=]=%lld", key, &v) == 2)
+            {
+                const std::string k = key;
+                if (k == "single") d.mSingle = v != 0;
+                else if (k == "norefit") d.mNoRefit = v != 0;
+                else if (k == "keep") d.mKeep = (U64)v;
+                else if (k == "common_only") d.mCommonOnly = v != 0;
+                else if (k == "alpha") d.mAlpha = v != 0;
+                else if (k == "check") d.mCheck = v != 0;
+                else if (k == "skipbad") d.mSkipBad = v != 0;
+            }
+        }
+        fclose(f);
+    }
+    if (d.mSingle != sDbg.mSingle || d.mNoRefit != sDbg.mNoRefit || d.mKeep != sDbg.mKeep || d.mCommonOnly != sDbg.mCommonOnly || d.mAlpha != sDbg.mAlpha || d.mCheck != sDbg.mCheck
+        || d.mSkipBad != sDbg.mSkipBad)
+    {
+        LL_INFOS("VkRt") << "debug switches: single " << d.mSingle << ", norefit " << d.mNoRefit << ", keep " << d.mKeep << ", common_only " << d.mCommonOnly << ", alpha " << d.mAlpha
+                         << ", check " << d.mCheck << ", skipbad " << d.mSkipBad << LL_ENDL;
+    }
+    sDbg = d;
+}
 
 bool sInit = false;
 bool sFailed = false;
@@ -505,14 +565,23 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     VkDevice dev = ctx.getDevice();
     const Capabilities& caps = ctx.getCaps();
     const VkDeviceSize align = std::max<VkDeviceSize>(caps.mRt.mScratchAlignment, 128);
+    read_debug_switches();
+    if (sDbg.mSingle)
+    {
+        const Tlas& t0 = sTlas[ctx.getFrameSlot()];
+        if (t0.mCallFrame == ctx.getFrameNumber() && t0.mCalls > 0)
+        {
+            return;                             // later scene calls of a frame keep the first one's scene (debug switch)
+        }
+    }
     static const U64 max_builds = env_u64("LL_VK_RT_BUILD_MAX", 256);
     static const U64 max_tris = env_u64("LL_VK_RT_BUILD_TRIS", 800000);
-    static const bool alpha_on = env_u64("LL_VK_RT_ALPHA", 1) != 0;
-    static const bool check_on = env_u64("LL_VK_RT_CHECK", 1) != 0;
-    static const bool skip_bad = env_u64("LL_VK_RT_SKIPBAD", 1) != 0;
+    const bool alpha_on = sDbg.mAlpha;
+    const bool check_on = sDbg.mCheck;
+    const bool skip_bad = sDbg.mSkipBad;
     static const U64 rebuild_after_refits = 64;
     ++sSceneCalls;
-    static const U64 keep = env_u64("LL_VK_RT_KEEP_FRAMES", 8);
+    const U64 keep = sDbg.mKeep;
 
     // forget structures that were not named for a while, and casters nothing has named for a few frames
     if (sSceneCalls % 120 == 0)
@@ -574,9 +643,25 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     // nearest first (the distance of the object's origin in eye space): while a scene loads the budget goes to what is around the camera
     std::vector<std::pair<float, Group*>> order;
     order.reserve(sGroups.size());
+    U32 common_id = 0;
+    if (sDbg.mCommonOnly)
+    {
+        std::unordered_map<U32, U32> counts;
+        U32 best = 0;
+        for (auto& kv : sGroups)
+        {
+            const U32 n = ++counts[kv.second.mKey.mMatrixId];
+            if (n > best)
+            {
+                best = n;
+                common_id = kv.second.mKey.mMatrixId;
+            }
+        }
+    }
     for (auto& kv : sGroups)
     {
         Group& g = kv.second;
+        g.mSkip = sDbg.mCommonOnly && g.mKey.mMatrixId != common_id;
         F32 m[16];
         mat_mul(view, g.mModel, m);
         order.emplace_back(m[12] * m[12] + m[13] * m[13] + m[14] * m[14], &g);
@@ -585,7 +670,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     for (const auto& entry : order)
     {
         Group& g = *entry.second;
-        if (g.mKey.mKind == 1 && !alpha_on)
+        if ((g.mKey.mKind == 1 && !alpha_on) || g.mSkip)
         {
             continue;
         }
@@ -672,7 +757,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         job.mBlas = &b;
         LLVkGL::markBufferUsed(g.mKey.mVb);         // the build reads them when the GPU gets here: a CPU rewrite in place before that would tear the data
         LLVkGL::markBufferUsed(g.mKey.mIb);
-        job.mUpdate = !grew && !ib_changed && b.mRefits < rebuild_after_refits && b.mAs != VK_NULL_HANDLE;
+        job.mUpdate = !grew && !ib_changed && b.mRefits < rebuild_after_refits && b.mAs != VK_NULL_HANDLE && !sDbg.mNoRefit;
         job.mVbVersion = vi.mVersion;
         job.mIbVersion = ii.mVersion;
         std::sort(want.begin(), want.end());
@@ -861,6 +946,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         tlas.mCallFrame = frame_now;
         tlas.mCalls = 0;
     }
+
     U32 call = tlas.mCalls++;
     if (call >= kCalls)
     {
@@ -881,7 +967,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     for (auto& kv : sGroups)
     {
         const Group& g = kv.second;
-        if (g.mKey.mKind == 1 && !alpha_on)
+        if ((g.mKey.mKind == 1 && !alpha_on) || g.mSkip)
         {
             continue;
         }
