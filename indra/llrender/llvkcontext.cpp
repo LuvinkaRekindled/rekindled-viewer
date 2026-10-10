@@ -776,6 +776,7 @@ void Context::shutdown()
         mImmediateFence = VK_NULL_HANDLE;
         mImmediatePool = VK_NULL_HANDLE;
         mImmediateCmd = VK_NULL_HANDLE;
+        arenaShutdown();
         if (mAllocator)
         {
             vmaDestroyAllocator(mAllocator);
@@ -1156,6 +1157,234 @@ void Context::destroyBuffer(Buffer& buffer)
     VmaAllocator alloc = mAllocator;
     destroyLater([=]() { vmaDestroyBuffer(alloc, b, a); });
     buffer = Buffer();
+}
+
+//-----------------------------------------------------------------------------------------------------
+// buffer arena
+//-----------------------------------------------------------------------------------------------------
+
+namespace
+{
+// regular blocks (a range bigger than a quarter of one gets a block of its own)
+VkDeviceSize arena_block_bytes()
+{
+    static const VkDeviceSize v = []() {
+        char b[16] = {};
+        const U32 mb = GetEnvironmentVariableA("LL_VK_ARENA_BLOCK_MB", b, sizeof(b)) > 0 ? (U32)atoi(b) : 256;
+        return (VkDeviceSize)std::max<U32>(mb, 16) * 1024 * 1024;
+    }();
+    return v;
+}
+}
+
+Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, bool shared, bool dedicated)
+{
+    ArenaBlock* block = new ArenaBlock();
+    block->mSize = dedicated ? (min_size + 255) / 256 * 256 : std::max(arena_block_bytes(), min_size);
+    block->mShared = shared;
+    block->mDedicated = dedicated;
+
+    VkBufferCreateInfo bi = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    bi.size = block->mSize;
+    // vertex / index reads, copies in, shaders reading by address (packets, skinning) and, once the device has it, acceleration structure builds reading the same ranges
+    bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    if (mCaps.mBufferDeviceAddress)
+    {
+        bi.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    }
+    if (mCaps.mRt.mEnabled)
+    {
+        bi.usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    }
+    const uint32_t families[2] = { mQueueFamily, (uint32_t)std::max<S32>(mCaps.mComputeFamily, 0) };
+    if (shared && mCaps.mComputeFamily >= 0)
+    {
+        bi.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        bi.queueFamilyIndexCount = 2;
+        bi.pQueueFamilyIndices = families;
+    }
+    else
+    {
+        bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
+    VmaAllocationCreateInfo ai = {};
+    ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+    ai.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+    if (!vk_ok(vmaCreateBuffer(mAllocator, &bi, &ai, &block->mBuffer, &block->mAllocation, nullptr), "arena block"))
+    {
+        delete block;
+        return nullptr;
+    }
+    VmaVirtualBlockCreateInfo vi = {};
+    vi.size = block->mSize;
+    if (vmaCreateVirtualBlock(&vi, &block->mVirtual) != VK_SUCCESS)
+    {
+        vmaDestroyBuffer(mAllocator, block->mBuffer, block->mAllocation);
+        delete block;
+        return nullptr;
+    }
+    if (mCaps.mBufferDeviceAddress)
+    {
+        VkBufferDeviceAddressInfo address_info = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+        address_info.buffer = block->mBuffer;
+        block->mAddress = vkGetBufferDeviceAddress(mDevice, &address_info);
+    }
+    bool placed = false;
+    for (ArenaBlock*& slot : mArenaBlocks)
+    {
+        if (!slot) { slot = block; placed = true; break; }
+    }
+    if (!placed)
+    {
+        mArenaBlocks.push_back(block);
+    }
+    ++mArenaCounters.mBlocksCreated;
+    LL_INFOS("Vulkan") << "buffer arena: new " << (dedicated ? "dedicated " : "") << (shared ? "shared " : "") << "block of " << (block->mSize >> 20) << " MB ("
+                       << (U32)std::count_if(mArenaBlocks.begin(), mArenaBlocks.end(), [](ArenaBlock* b) { return b != nullptr; }) << " blocks now)" << LL_ENDL;
+    return block;
+}
+
+void Context::arenaDestroyBlock(ArenaBlock* block)
+{
+    for (ArenaBlock*& slot : mArenaBlocks)
+    {
+        if (slot == block) slot = nullptr;
+    }
+    vmaDestroyVirtualBlock(block->mVirtual);
+    vmaDestroyBuffer(mAllocator, block->mBuffer, block->mAllocation);
+    ++mArenaCounters.mBlocksReleased;
+    delete block;
+}
+
+bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, bool shared, ArenaRef& out)
+{
+    out = ArenaRef();
+    if (size == 0 || mAllocator == nullptr)
+    {
+        return false;
+    }
+    alignment = std::max<VkDeviceSize>(alignment, 4);
+    shared = shared && mCaps.mComputeFamily >= 0;
+    std::lock_guard<std::mutex> lock(mArenaMutex);
+    const bool dedicated = size > arena_block_bytes() / 4;
+    auto place = [&](ArenaBlock* b) {
+        VmaVirtualAllocationCreateInfo ci = {};
+        ci.size = size;
+        ci.alignment = alignment;
+        VmaVirtualAllocation alloc = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0;
+        if (vmaVirtualAllocate(b->mVirtual, &ci, &alloc, &offset) != VK_SUCCESS)
+        {
+            return false;
+        }
+        ++b->mAllocs;
+        out.mBuffer = b->mBuffer;
+        out.mOffset = offset;
+        out.mSize = size;
+        out.mAddress = b->mAddress ? b->mAddress + offset : 0;
+        out.mAlloc = alloc;
+        for (size_t i = 0; i < mArenaBlocks.size(); ++i)
+        {
+            if (mArenaBlocks[i] == b) { out.mBlock = (U32)i; break; }
+        }
+        return true;
+    };
+    if (!dedicated)
+    {
+        for (ArenaBlock* b : mArenaBlocks)
+        {
+            if (b && !b->mDedicated && b->mShared == shared && place(b))
+            {
+                return true;
+            }
+        }
+    }
+    ArenaBlock* fresh = arenaNewBlock(size + alignment, shared, dedicated);
+    if (!fresh || !place(fresh))
+    {
+        LL_WARNS("Vulkan") << "buffer arena: no room for " << size << " bytes" << LL_ENDL;
+        return false;
+    }
+    return true;
+}
+
+void Context::arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc)
+{
+    std::lock_guard<std::mutex> lock(mArenaMutex);
+    vmaVirtualFree(block->mVirtual, alloc);
+    if (--block->mAllocs != 0)
+    {
+        return;
+    }
+    // an empty block goes when it is a block of its own, or when another empty one of its kind is already waiting for the next allocation
+    bool release = block->mDedicated;
+    for (ArenaBlock* b : mArenaBlocks)
+    {
+        if (b && b != block && !b->mDedicated && b->mShared == block->mShared && b->mAllocs == 0)
+        {
+            release = true;
+            break;
+        }
+    }
+    if (release)
+    {
+        arenaDestroyBlock(block);
+    }
+}
+
+void Context::arenaFree(ArenaRef& ref)
+{
+    if (!ref.valid())
+    {
+        return;
+    }
+    ArenaBlock* block = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mArenaMutex);
+        block = ref.mBlock < mArenaBlocks.size() ? mArenaBlocks[ref.mBlock] : nullptr;
+    }
+    const VmaVirtualAllocation alloc = ref.mAlloc;
+    ref = ArenaRef();
+    if (block)
+    {
+        destroyLater([this, block, alloc]() { arenaFreeNow(block, alloc); });
+    }
+}
+
+ArenaStats Context::arenaStats()
+{
+    std::lock_guard<std::mutex> lock(mArenaMutex);
+    ArenaStats s = mArenaCounters;
+    s.mBlocks = 0;
+    s.mAllocs = 0;
+    s.mBlockBytes = s.mUsedBytes = s.mLargestFree = 0;
+    for (ArenaBlock* b : mArenaBlocks)
+    {
+        if (!b) continue;
+        VmaDetailedStatistics st = {};
+        vmaCalculateVirtualBlockStatistics(b->mVirtual, &st);
+        ++s.mBlocks;
+        s.mAllocs += (U32)st.statistics.allocationCount;
+        s.mBlockBytes += b->mSize;
+        s.mUsedBytes += st.statistics.allocationBytes;
+        s.mLargestFree = std::max<U64>(s.mLargestFree, st.unusedRangeSizeMax);
+    }
+    return s;
+}
+
+void Context::arenaShutdown()
+{
+    std::lock_guard<std::mutex> lock(mArenaMutex);
+    for (ArenaBlock* b : mArenaBlocks)
+    {
+        if (b)
+        {
+            vmaDestroyVirtualBlock(b->mVirtual);
+            vmaDestroyBuffer(mAllocator, b->mBuffer, b->mAllocation);
+            delete b;
+        }
+    }
+    mArenaBlocks.clear();
 }
 
 bool Context::createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkFormat format, VkImageUsageFlags usage, Image& out)

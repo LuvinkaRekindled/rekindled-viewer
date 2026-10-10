@@ -351,6 +351,8 @@ public:
     // starts) and becomes a GPU copy of just the changed bytes when flushBufferUpdates() records it: before a draw that reads the buffer, and
     // at the end of the frame. Copies are ordered against the draws recorded before them by barriers, as GL promises.
     bool updateBuffer(VkBuffer dst, VkDeviceSize offset, VkDeviceSize size, const void* data);
+    // the same, filling with a 32-bit value (LL_VK_ARENA_POISON: freed arena ranges show garbage instead of a stale picture); offset and size multiples of 4
+    bool fillBuffer(VkBuffer dst, VkDeviceSize offset, VkDeviceSize size, U32 value);
     // records every pending copy (ends the current render pass if there is something to record); false while no frame is being recorded
     bool flushBufferUpdates();
     // texture uploads since the last call: how many, how many bytes, how many ended a render pass that was in progress
@@ -491,8 +493,8 @@ private:
     int mDepthUsePrev = -1;
     const Image* mDepthUseRoot = nullptr;
     std::unordered_map<std::string, U32> mDepthUseChanges;      // "from>to program" -> draws that changed the use
-    struct BufferCopy { VkBuffer mDst; VkDeviceSize mDstOffset; VkBuffer mSrc; VkDeviceSize mSrcOffset; VkDeviceSize mSize; };
-    struct DeferredCopy { VkBuffer mDst; VkDeviceSize mDstOffset; std::vector<U8> mData; };
+    struct BufferCopy { VkBuffer mDst; VkDeviceSize mDstOffset; VkBuffer mSrc; VkDeviceSize mSrcOffset; VkDeviceSize mSize; };      // mSrc null: a fill, the value is mSrcOffset
+    struct DeferredCopy { VkBuffer mDst; VkDeviceSize mDstOffset; std::vector<U8> mData; VkDeviceSize mFillSize = 0; U32 mFillValue = 0; };      // mFillSize: a fill, no data
     std::vector<BufferCopy> mPendingCopies;         // in staging memory, to be recorded
     std::vector<DeferredCopy> mDeferredCopies;      // written outside a frame: staged when the next frame begins
 public:
