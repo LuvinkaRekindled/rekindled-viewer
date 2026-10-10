@@ -320,6 +320,15 @@ struct SyncStats
     std::atomic<U64> mPipelinesBuilt{ 0 };
     std::atomic<U64> mPipelineBuildMicros{ 0 };
     std::atomic<U64> mPipelineBuildMaxMicros{ 0 };
+    // C8: pipelines the worker never waits for (see Program::getPipeline)
+    std::atomic<U64> mPipeMisses{ 0 };              // lookups the driver could only answer by compiling: queued for the background threads
+    std::atomic<U64> mPipeSkippedDraws{ 0 };        // draws dropped because their pipeline was still being built
+    std::atomic<U64> mPipeBgDone{ 0 };              // background builds finished for a draw that asked (not pre-warm)
+    std::atomic<U64> mPipeBgMicros{ 0 };
+    std::atomic<U64> mPipeBgMaxMicros{ 0 };
+    std::atomic<U64> mPipePrewarmQueued{ 0 };       // builds queued at program creation from the variants recorded in earlier sessions
+    std::atomic<U64> mPipePrewarmDone{ 0 };
+    std::atomic<U64> mPipePrewarmMicros{ 0 };
     // GPU time of each frame's command buffer (first to last command; harvested a few frames later) and how long the thread that records the frames
     // is blocked on the GPU (the frame fence), on the swapchain (acquire) and in present
     std::atomic<U64> mGpuFrames{ 0 };

@@ -18,6 +18,8 @@
 #include "llvkshader.h"
 
 #include <array>
+#include <atomic>
+#include <set>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -71,10 +73,33 @@ public:
     U32 getUniformSize() const { return (U32)mShadow.size(); }
     void clearDirty() { mDirty = false; }
 
+    // The pipeline for a draw into these target formats, or VK_NULL_HANDLE when it is not ready: the driver could only build it by compiling, so the build
+    // runs on a background thread and the draw is dropped until it is done (LL_VK_PIPELINE_ASYNC=0 builds it right here, the old behaviour).
     VkPipeline getPipeline(const PipelineKey& key);
+    // takes the pipelines the background threads have finished (called before a lookup and once per frame)
+    static void drainCompletedPipelines();
+    // stops the background threads (queued builds are dropped)
+    static void stopPipelineThreads();
 
 private:
     friend class Renderer;
+    VkResult createPipelineObject(const PipelineKey& key, VkPipelineCreateFlags flags, VkPipeline& out) const;
+    void requestBuild(const PipelineKey& key, bool prewarm);
+    void prewarm();
+    std::set<PipelineKey> mPending;     // being built in the background (worker thread only)
+    std::set<PipelineKey> mFailed;      // creation failed: not retried
+    std::map<PipelineKey, U32> mSkips;  // draws dropped per pending key, for the log line when it completes
+    // queued or running background builds; destroy() waits for them. (Copying a program, which only the probe's scene reset does, starts a fresh count.)
+    struct JobCount
+    {
+        std::atomic<int> mN{ 0 };
+        JobCount() = default;
+        JobCount(const JobCount&) {}
+        JobCount& operator=(const JobCount&) { return *this; }
+        int fetch_add(int v, std::memory_order o) { return mN.fetch_add(v, o); }
+        int fetch_sub(int v, std::memory_order o) { return mN.fetch_sub(v, o); }
+        int load(std::memory_order o) const { return mN.load(o); }
+    } mJobs;
     std::string mName;
     ProgramInfo mInfo;
     bool mValid = false;

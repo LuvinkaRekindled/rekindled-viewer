@@ -19,6 +19,11 @@
 #if defined(LL_VULKAN)
 
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <functional>
+#include <mutex>
+#include <thread>
 #include <cstring>
 #include <cstdlib>
 #include "lldir.h"
@@ -136,6 +141,207 @@ bool SamplerDesc::operator<(const SamplerDesc& o) const
     if (mMaxLod != o.mMaxLod) return mMaxLod < o.mMaxLod;
     return mLodBias < o.mLodBias;
 }
+
+//-----------------------------------------------------------------------------------------------------
+// C8: pipeline creation off the draw path
+//-----------------------------------------------------------------------------------------------------
+
+namespace
+{
+bool pipeline_async()
+{
+    static const bool on = []() {
+        const char* v = getenv("LL_VK_PIPELINE_ASYNC");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+// a few low-priority threads that build pipelines; a build that is still queued when the pool stops is called with cancelled = true
+class PipelinePool
+{
+public:
+    void post(std::function<void(bool)> fn, bool urgent)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (mStopped)
+        {
+            fn(true);
+            return;
+        }
+        if (mThreads.empty())
+        {
+            const char* v = getenv("LL_VK_PIPELINE_THREADS");
+            const unsigned n = v ? (unsigned)std::max(1, atoi(v)) : 2u;
+            for (unsigned i = 0; i < n; ++i)
+            {
+                mThreads.emplace_back([this]() { loop(); });
+            }
+        }
+        if (urgent)
+        {
+            mQueue.push_front(std::move(fn));       // a draw is waiting for this one: ahead of the pre-warm builds
+        }
+        else
+        {
+            mQueue.push_back(std::move(fn));
+        }
+        mCv.notify_one();
+    }
+    void stop()
+    {
+        std::deque<std::function<void(bool)>> dropped;
+        std::vector<std::thread> threads;
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            mStopped = true;
+            dropped.swap(mQueue);
+            threads.swap(mThreads);
+            mCv.notify_all();
+        }
+        for (auto& fn : dropped) fn(true);
+        for (auto& t : threads) t.join();
+    }
+private:
+    void loop()
+    {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        for (;;)
+        {
+            std::function<void(bool)> fn;
+            {
+                std::unique_lock<std::mutex> lock(mMutex);
+                mCv.wait(lock, [this]() { return mStopped || !mQueue.empty(); });
+                if (mQueue.empty())
+                {
+                    return;
+                }
+                fn = std::move(mQueue.front());
+                mQueue.pop_front();
+            }
+            fn(false);
+        }
+    }
+    std::mutex mMutex;
+    std::condition_variable mCv;
+    std::deque<std::function<void(bool)>> mQueue;
+    std::vector<std::thread> mThreads;
+    bool mStopped = false;
+};
+PipelinePool gPipePool;
+
+// results of background builds, taken by the worker thread
+struct PipeDone
+{
+    Program* mProgram;
+    PipelineKey mKey;
+    VkPipeline mPipeline;
+    U64 mMicros;
+    bool mPrewarm;
+};
+std::mutex gPipeDoneMutex;
+std::vector<PipeDone> gPipeDone;
+std::atomic<bool> gPipeHasDone{ false };
+std::set<Program*> gLivePrograms;               // guarded by gPipeDoneMutex
+
+// The pipeline variants (target formats and topology) each program was used with in earlier sessions, <cache>/vk_pipeline_variants.txt: when a program is created
+// they are built in the background from the driver's cache, so a warm start has no misses and a cold one compiles them before the first draw asks.
+std::mutex gVariantMutex;
+std::map<std::string, std::set<PipelineKey>> gVariants;
+bool gVariantsDirty = false;
+
+std::string variants_path()
+{
+    const std::string cache = pipeline_cache_path();
+    return cache.empty() ? std::string() : cache.substr(0, cache.find_last_of("/\\") + 1) + "vk_pipeline_variants.txt";
+}
+
+void load_variants()
+{
+    const std::string path = variants_path();
+    FILE* f = path.empty() ? nullptr : fopen(path.c_str(), "rb");
+    if (!f)
+    {
+        return;
+    }
+    char line[1024];
+    U32 loaded = 0;
+    std::lock_guard<std::mutex> lock(gVariantMutex);
+    while (fgets(line, sizeof(line), f))
+    {
+        // name \t topology \t color count \t formats (space separated) \t depth format
+        std::string text(line);
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+        std::vector<std::string> parts;
+        for (size_t p = 0;;)
+        {
+            const size_t t = text.find('\t', p);
+            parts.push_back(text.substr(p, t == std::string::npos ? std::string::npos : t - p));
+            if (t == std::string::npos) break;
+            p = t + 1;
+        }
+        if (parts.size() < 5)
+        {
+            continue;
+        }
+        PipelineKey key;
+        key.mTopology = (VkPrimitiveTopology)atoi(parts[1].c_str());
+        key.mColorCount = (U32)atoi(parts[2].c_str());
+        if (key.mColorCount > 8)
+        {
+            continue;
+        }
+        const char* c = parts[3].c_str();
+        for (U32 i = 0; i < key.mColorCount; ++i)
+        {
+            char* end = nullptr;
+            key.mColor[i] = (VkFormat)strtol(c, &end, 10);
+            c = end;
+        }
+        key.mDepth = (VkFormat)atoi(parts[4].c_str());
+        gVariants[parts[0]].insert(key);
+        ++loaded;
+    }
+    fclose(f);
+    LL_INFOS("Vulkan") << "pipeline variants recorded by earlier sessions: " << loaded << " for " << gVariants.size() << " programs" << LL_ENDL;
+}
+
+void save_variants()
+{
+    const std::string path = variants_path();
+    std::lock_guard<std::mutex> lock(gVariantMutex);
+    if (path.empty() || !gVariantsDirty)
+    {
+        return;
+    }
+    const std::string tmp = path + ".tmp";
+    if (FILE* f = fopen(tmp.c_str(), "wb"))
+    {
+        for (const auto& kv : gVariants)
+        {
+            for (const PipelineKey& k : kv.second)
+            {
+                fprintf(f, "%s\t%d\t%u\t", kv.first.c_str(), (int)k.mTopology, k.mColorCount);
+                for (U32 i = 0; i < k.mColorCount; ++i) fprintf(f, "%s%d", i ? " " : "", (int)k.mColor[i]);
+                fprintf(f, "\t%d\n", (int)k.mDepth);
+            }
+        }
+        fclose(f);
+        remove(path.c_str());
+        rename(tmp.c_str(), path.c_str());
+        gVariantsDirty = false;
+    }
+}
+
+void note_variant(const std::string& name, const PipelineKey& key)
+{
+    std::lock_guard<std::mutex> lock(gVariantMutex);
+    if (gVariants[name].insert(key).second)
+    {
+        gVariantsDirty = true;
+    }
+}
+} // anonymous namespace
 
 //-----------------------------------------------------------------------------------------------------
 // Program
@@ -285,11 +491,43 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
 
     mValid = true;
     mDirty = true;
+    {
+        std::lock_guard<std::mutex> lock(gPipeDoneMutex);
+        gLivePrograms.insert(this);
+    }
+    prewarm();
     return true;
 }
 
 void Program::destroy()
 {
+    // background builds read this program's shader modules: wait for them, then drop what they delivered
+    while (mJobs.load(std::memory_order_acquire) > 0)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    {
+        std::lock_guard<std::mutex> lock(gPipeDoneMutex);
+        gLivePrograms.erase(this);
+        for (size_t i = 0; i < gPipeDone.size();)
+        {
+            if (gPipeDone[i].mProgram == this)
+            {
+                if (gPipeDone[i].mPipeline && Context::instance().getDevice() != VK_NULL_HANDLE)
+                {
+                    vkDestroyPipeline(Context::instance().getDevice(), gPipeDone[i].mPipeline, nullptr);     // never bound: nothing in flight uses it
+                }
+                gPipeDone.erase(gPipeDone.begin() + (std::ptrdiff_t)i);
+            }
+            else
+            {
+                ++i;
+            }
+        }
+    }
+    mPending.clear();
+    mFailed.clear();
+    mSkips.clear();
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
     if (dev != VK_NULL_HANDLE)
@@ -408,21 +646,8 @@ S32 Program::getSamplerBinding(const std::string& name) const
     return it == mSamplerIndex.end() ? -1 : (S32)it->second;
 }
 
-VkPipeline Program::getPipeline(const PipelineKey& key)
+VkResult Program::createPipelineObject(const PipelineKey& key, VkPipelineCreateFlags flags, VkPipeline& out) const
 {
-    if (mLastPipeline && mLastKey.mTopology == key.mTopology && mLastKey.mColorCount == key.mColorCount && mLastKey.mDepth == key.mDepth
-        && memcmp(mLastKey.mColor, key.mColor, sizeof(VkFormat) * key.mColorCount) == 0)
-    {
-        return mLastPipeline;
-    }
-    auto it = mPipelines.find(key);
-    if (it != mPipelines.end())
-    {
-        mLastKey = key;
-        mLastPipeline = it->second;
-        return it->second;
-    }
-
     Renderer& r = Renderer::instance();
     Context& ctx = Context::instance();
 
@@ -500,11 +725,181 @@ VkPipeline Program::getPipeline(const PipelineKey& key)
     gi.pDynamicState = &dyn;
     gi.layout = r.mPipelineLayout;
 
+    gi.flags = flags;
+    return vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &out);
+}
+
+void Program::requestBuild(const PipelineKey& key, bool prewarm)
+{
+    mPending.insert(key);
+    mJobs.fetch_add(1, std::memory_order_acq_rel);
+    if (prewarm)
+    {
+        gSyncStats.mPipePrewarmQueued.fetch_add(1, std::memory_order_relaxed);
+    }
+    else
+    {
+        gSyncStats.mPipeMisses.fetch_add(1, std::memory_order_relaxed);
+    }
+    Program* self = this;
+    gPipePool.post([self, key, prewarm](bool cancelled) {
+        if (!cancelled)
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            VkPipeline p = VK_NULL_HANDLE;
+            const VkResult res = self->createPipelineObject(key, 0, p);
+            const U64 micros = (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
+            {
+                std::lock_guard<std::mutex> lock(gPipeDoneMutex);
+                gPipeDone.push_back({ self, key, res == VK_SUCCESS ? p : VK_NULL_HANDLE, micros, prewarm });
+            }
+            gPipeHasDone.store(true, std::memory_order_release);
+        }
+        self->mJobs.fetch_sub(1, std::memory_order_acq_rel);
+    }, !prewarm);
+}
+
+void Program::prewarm()
+{
+    if (!pipeline_async() || Renderer::instance().mPipelineLayout == VK_NULL_HANDLE)
+    {
+        return;
+    }
+    std::vector<PipelineKey> keys;
+    {
+        std::lock_guard<std::mutex> lock(gVariantMutex);
+        auto it = gVariants.find(mName);
+        if (it != gVariants.end())
+        {
+            keys.assign(it->second.begin(), it->second.end());
+        }
+    }
+    for (const PipelineKey& k : keys)
+    {
+        if (!mPipelines.count(k) && !mPending.count(k))
+        {
+            requestBuild(k, true);
+        }
+    }
+}
+
+void Program::drainCompletedPipelines()
+{
+    if (!gPipeHasDone.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    std::vector<PipeDone> done;
+    {
+        std::lock_guard<std::mutex> lock(gPipeDoneMutex);
+        done.swap(gPipeDone);
+        gPipeHasDone.store(false, std::memory_order_release);
+    }
+    for (PipeDone& d : done)
+    {
+        bool live;
+        {
+            std::lock_guard<std::mutex> lock(gPipeDoneMutex);
+            live = gLivePrograms.count(d.mProgram) != 0;
+        }
+        if (!live)
+        {
+            if (d.mPipeline) vkDestroyPipeline(Context::instance().getDevice(), d.mPipeline, nullptr);
+            continue;
+        }
+        Program& p = *d.mProgram;
+        p.mPending.erase(d.mKey);
+        U32 skipped = 0;
+        auto sk = p.mSkips.find(d.mKey);
+        if (sk != p.mSkips.end())
+        {
+            skipped = sk->second;
+            p.mSkips.erase(sk);
+        }
+        if (!d.mPipeline)
+        {
+            p.mFailed.insert(d.mKey);
+            LL_WARNS("Vulkan") << "pipeline creation failed in the background for program " << p.mName << LL_ENDL;
+            continue;
+        }
+        p.mPipelines[d.mKey] = d.mPipeline;
+        Renderer::instance().mPipelinesSinceSave++;
+        if (d.mPrewarm)
+        {
+            gSyncStats.mPipePrewarmDone.fetch_add(1, std::memory_order_relaxed);
+            gSyncStats.mPipePrewarmMicros.fetch_add(d.mMicros, std::memory_order_relaxed);
+        }
+        else
+        {
+            gSyncStats.mPipeBgDone.fetch_add(1, std::memory_order_relaxed);
+            gSyncStats.mPipeBgMicros.fetch_add(d.mMicros, std::memory_order_relaxed);
+            U64 prev = gSyncStats.mPipeBgMaxMicros.load(std::memory_order_relaxed);
+            while (d.mMicros > prev && !gSyncStats.mPipeBgMaxMicros.compare_exchange_weak(prev, d.mMicros, std::memory_order_relaxed)) {}
+            note_variant(p.mName, d.mKey);
+            LL_INFOS("VkPipeline") << "pipeline built in the background: " << p.mName << " (" << d.mKey.mColorCount << " colour targets) took " << (double)d.mMicros / 1000.0
+                                   << " ms; draws dropped meanwhile: " << skipped << LL_ENDL;
+        }
+    }
+}
+
+void Program::stopPipelineThreads()
+{
+    gPipePool.stop();
+}
+
+VkPipeline Program::getPipeline(const PipelineKey& key)
+{
+    if (mLastPipeline && mLastKey.mTopology == key.mTopology && mLastKey.mColorCount == key.mColorCount && mLastKey.mDepth == key.mDepth
+        && memcmp(mLastKey.mColor, key.mColor, sizeof(VkFormat) * key.mColorCount) == 0)
+    {
+        return mLastPipeline;
+    }
+    auto it = mPipelines.find(key);
+    if (it == mPipelines.end() && pipeline_async())
+    {
+        drainCompletedPipelines();
+        it = mPipelines.find(key);
+    }
+    if (it != mPipelines.end())
+    {
+        mLastKey = key;
+        mLastPipeline = it->second;
+        return it->second;
+    }
+
+    const bool async = pipeline_async();
+    if (async)
+    {
+        if (mFailed.count(key))
+        {
+            return VK_NULL_HANDLE;
+        }
+        if (mPending.count(key))
+        {
+            ++mSkips[key];
+            gSyncStats.mPipeSkippedDraws.fetch_add(1, std::memory_order_relaxed);
+            return VK_NULL_HANDLE;
+        }
+    }
+
     VkPipeline pipeline = VK_NULL_HANDLE;
     const auto build_start = std::chrono::steady_clock::now();
-    if (!vk_ok(vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &pipeline), "vkCreateGraphicsPipelines"))
+    // The driver builds from its cache without compiling when it can (the flag makes it say so instead of compiling when it cannot)
+    const VkResult res = createPipelineObject(key, async ? VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT : 0, pipeline);
+    if (async && res == VK_PIPELINE_COMPILE_REQUIRED)
+    {
+        requestBuild(key, false);
+        ++mSkips[key];
+        gSyncStats.mPipeSkippedDraws.fetch_add(1, std::memory_order_relaxed);
+        return VK_NULL_HANDLE;
+    }
+    if (!vk_ok(res, "vkCreateGraphicsPipelines"))
     {
         LL_WARNS("Vulkan") << "pipeline creation failed for program " << mName << LL_ENDL;
+        if (async)
+        {
+            mFailed.insert(key);
+        }
         return VK_NULL_HANDLE;
     }
     {
@@ -513,8 +908,9 @@ VkPipeline Program::getPipeline(const PipelineKey& key)
         gSyncStats.mPipelineBuildMicros.fetch_add(micros, std::memory_order_relaxed);
         U64 prev = gSyncStats.mPipelineBuildMaxMicros.load(std::memory_order_relaxed);
         while (micros > prev && !gSyncStats.mPipelineBuildMaxMicros.compare_exchange_weak(prev, micros, std::memory_order_relaxed)) {}
-        r.mPipelinesSinceSave++;
+        Renderer::instance().mPipelinesSinceSave++;
     }
+    note_variant(mName, key);
     mPipelines[key] = pipeline;
     mLastKey = key;
     mLastPipeline = pipeline;
@@ -771,6 +1167,10 @@ bool Renderer::init()
         return false;
     }
     LL_INFOS("Vulkan") << "pipeline cache: " << cache_data.size() / 1024 << " KB loaded from disk" << LL_ENDL;
+    if (pipeline_async())
+    {
+        load_variants();
+    }
 
     // 1x1 white texture: what an unbound texture unit samples
     if (!ctx.createImage2D(1, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, mWhite))
@@ -1099,6 +1499,7 @@ void Renderer::shutdown()
         return;
     }
     VkDevice dev = ctx.getDevice();
+    Program::stopPipelineThreads();
     if (dev != VK_NULL_HANDLE)
     {
         ctx.waitIdle();
@@ -1191,6 +1592,7 @@ void Renderer::savePipelineCache()
             mPipelinesSinceSave = 0;
         }
     }
+    save_variants();
 }
 
 VkSampler Renderer::getSampler(const SamplerDesc& wanted)
@@ -1234,6 +1636,7 @@ VkSampler Renderer::getSampler(const SamplerDesc& wanted)
 void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
 {
     mZoneStack.clear();         // GPU zones do not span command buffers
+    Program::drainCompletedPipelines();
     if (mPipelinesSinceSave > 0 && ++mPipelineCacheLastSaveFrame >= 18000)
     {
         mPipelineCacheLastSaveFrame = 0;
@@ -2024,6 +2427,11 @@ void Renderer::applyState()
     }
     key.mDepth = mDepthTarget ? mDepthTarget->mFormat : VK_FORMAT_UNDEFINED;
     VkPipeline pipeline = mProgram->getPipeline(key);
+    if (pipeline == VK_NULL_HANDLE)
+    {
+        mDrawBlocked = true;        // being built in the background (or failed): the draw is dropped, the next one asks again
+        return;
+    }
     if (pipeline != mBoundPipeline)
     {
         vkCmdBindPipeline(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
