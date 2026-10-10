@@ -372,29 +372,8 @@ void LLGLSLShader::unloadInternal()
     mTexture.clear();
     mUniform.clear();
 
-    if (mProgramObject)
-    {
-        GLuint obj[1024];
-        GLsizei count = 0;
-        glGetAttachedShaders(mProgramObject, 1024, &count, obj);
-
-        for (GLsizei i = 0; i < count; i++)
-        {
-            glDetachShader(mProgramObject, obj[i]);
-        }
-
-        for (GLsizei i = 0; i < count; i++)
-        {
-            if (glIsShader(obj[i]))
-            {
-                glDeleteShader(obj[i]);
-            }
-        }
-
-        glDeleteProgram(mProgramObject);
-
-        mProgramObject = 0;
-    }
+    mAttachedObjects.clear();
+    mProgramObject = 0;
 
     if (mTimerQuery)
     {
@@ -408,58 +387,53 @@ void LLGLSLShader::unloadInternal()
         mSamplesQuery = 0;
     }
 
-    //hack to make apple not complain
-    glGetError();
-
     stop_glerror();
 }
 
 #if defined(LL_VULKAN)
 void LLGLSLShader::mirrorDestroy()
 {
-    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    if (!mVkProgram && !mVkProgramPending && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
     if (LLVkAsync::gEnabled)
     {
-        // the worker destroys it after everything queued for it so far
+        // the worker destroys them after everything queued for them so far
         if (mVkProgram)
         {
             LLVkAsync::programDestroy(mVkProgram);
             mVkProgram = nullptr;
         }
-        mVkLocations.clear();
-        return;
-    }
-    std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
-    if (mVkProgram)
-    {
-        mVkProgram->destroy();
-        delete mVkProgram;
-        mVkProgram = nullptr;
-    }
-    mVkLocations.clear();
-}
-
-void LLGLSLShader::mirrorBind()
-{
-    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
-    if (LLVkAsync::gEnabled)
-    {
-        if (mVkProgram)
+        if (mVkProgramPending)
         {
-            LLVkAsync::programBind(mVkProgram);
+            LLVkAsync::programDestroy(mVkProgramPending);
+            mVkProgramPending = nullptr;
         }
         return;
     }
     std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
-    if (mVkProgram && LLVkMirror::isReady())
+    for (LLVk::Program** p : { &mVkProgram, &mVkProgramPending })
     {
-        LLVk::Renderer::instance().setProgram(mVkProgram);
+        if (*p)
+        {
+            (*p)->destroy();
+            delete *p;
+            *p = nullptr;
+        }
     }
+}
+
+// the program's own uniform index behind a location (a sampler is returned as ~index), -1 when unknown
+S32 LLGLSLShader::vkTwinOf(GLint location) const
+{
+    if (location < 0)
+    {
+        return -1;
+    }
+    return location >= SAMPLER_LOCATION_BASE ? ~(S32)(location - SAMPLER_LOCATION_BASE) : (S32)location;
 }
 
 void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<double> values)
 {
-    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    if (!mVkProgram) return;
     const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
     std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
@@ -467,24 +441,20 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
     {
         mirror_lock.lock();
     }
-    if (!mVkProgram)
+    const S32 twin = vkTwinOf(location);
+    if (twin == -1)
     {
         return;
     }
-    auto it = mVkLocations.find(location);
-    if (it == mVkLocations.end())
-    {
-        return;
-    }
-    if (it->second < 0)
+    if (twin < 0)
     {
         // a sampler: the integer is the texture unit it now reads
         if (async)
         {
-            LLVkAsync::samplerUnit(mVkProgram, (unsigned)(~it->second), (unsigned)(S32)*values.begin());
+            LLVkAsync::samplerUnit(mVkProgram, (unsigned)(~twin), (unsigned)(S32)*values.begin());
             return;
         }
-        mVkProgram->setSamplerUnit((size_t)(~it->second), (U32)(S32)*values.begin());
+        mVkProgram->setSamplerUnit((size_t)(~twin), (U32)(S32)*values.begin());
         return;
     }
     F32 f[4] = {};
@@ -501,22 +471,22 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
     }
     if (async)
     {
-        LLVkAsync::uniformScalar(mVkProgram, (unsigned)it->second, kind, n, f, i);
+        LLVkAsync::uniformScalar(mVkProgram, (unsigned)twin, kind, n, f, i);
         return;
     }
     if (kind == 0)
     {
-        mVkProgram->setFloatsAt((size_t)it->second, f, n, 1);
+        mVkProgram->setFloatsAt((size_t)twin, f, n, 1);
     }
     else
     {
-        mVkProgram->setFloatsAt((size_t)it->second, reinterpret_cast<const F32*>(i), n, 1);
+        mVkProgram->setFloatsAt((size_t)twin, reinterpret_cast<const F32*>(i), n, 1);
     }
 }
 
 void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data)
 {
-    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    if (!mVkProgram || !data) return;
     const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
     std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
@@ -524,27 +494,23 @@ void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 co
     {
         mirror_lock.lock();
     }
-    if (!mVkProgram || !data)
-    {
-        return;
-    }
-    auto it = mVkLocations.find(location);
-    if (it == mVkLocations.end() || it->second < 0)
+    const S32 twin = vkTwinOf(location);
+    if (twin < 0)
     {
         return;     // unknown, or a sampler array (units are fixed at link time)
     }
     (void)kind;     // floats and ints are copied bit for bit
     if (async)
     {
-        LLVkAsync::uniformVector(mVkProgram, (unsigned)it->second, components, count, data);
+        LLVkAsync::uniformVector(mVkProgram, (unsigned)twin, components, count, data);
         return;
     }
-    mVkProgram->setFloatsAt((size_t)it->second, reinterpret_cast<const F32*>(data), components, count);
+    mVkProgram->setFloatsAt((size_t)twin, reinterpret_cast<const F32*>(data), components, count);
 }
 
 void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean transpose, U32 count, const GLfloat* data)
 {
-    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    if (!mVkProgram || !data) return;
     const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
     std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
@@ -552,18 +518,14 @@ void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean
     {
         mirror_lock.lock();
     }
-    if (!mVkProgram || !data)
-    {
-        return;
-    }
-    auto it = mVkLocations.find(location);
-    if (it == mVkLocations.end() || it->second < 0)
+    const S32 twin = vkTwinOf(location);
+    if (twin < 0)
     {
         return;
     }
     if (transpose)
     {
-        // GL transposes the matrices on upload; the Vulkan side wants them column-major
+        // the viewer hands the matrices over row-major; the program wants them column-major
         std::vector<F32> tmp((size_t)count * columns * rows);
         for (U32 m = 0; m < count; ++m)
         {
@@ -577,113 +539,33 @@ void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean
         }
         if (async)
         {
-            LLVkAsync::uniformMatrix(mVkProgram, (unsigned)it->second, columns, rows, count, tmp.data());
+            LLVkAsync::uniformMatrix(mVkProgram, (unsigned)twin, columns, rows, count, tmp.data());
             return;
         }
-        mVkProgram->setMatricesAt((size_t)it->second, tmp.data(), columns, rows, count);
+        mVkProgram->setMatricesAt((size_t)twin, tmp.data(), columns, rows, count);
         return;
     }
     if (async)
     {
-        LLVkAsync::uniformMatrix(mVkProgram, (unsigned)it->second, columns, rows, count, data);
+        LLVkAsync::uniformMatrix(mVkProgram, (unsigned)twin, columns, rows, count, data);
         return;
     }
-    mVkProgram->setMatricesAt((size_t)it->second, data, columns, rows, count);
+    mVkProgram->setMatricesAt((size_t)twin, data, columns, rows, count);
 }
 
-// Builds the Vulkan twin of this (already linked) GL program. Called at the end of createShader().
-namespace LLVkGL { const LLVk::ProgramInfo* own_program_info(GLuint program); }
-
+// the program has been built (link()) and the viewer-side mapping is done: it becomes the one draws use, and its samplers get their texture units
 void LLGLSLShader::mirrorCreate()
 {
-    if (!mVkProgram && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
-    static thread_local bool on_worker_call = false;
-    if (LLVkAsync::gEnabled && !on_worker_call)
-    {
-        LLVkAsync::syncCall([this]() { on_worker_call = true; mirrorCreate(); on_worker_call = false; });
-        return;
-    }
-    std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
-    mirrorDestroy();
-    if (!LLVkMirror::ensureReady())
+    if (!mVkProgramPending)
     {
         return;
     }
-
+    mVkProgram = mVkProgramPending;
+    mVkProgramPending = nullptr;
     LLShaderMgr* mgr = LLShaderMgr::instance();
-    LLVk::ProgramInfo info;
-    // while the mirror owns the resources glLinkProgram has compiled the program already
-    const LLVk::ProgramInfo* compiled = LLVkGL::gOwn ? LLVkGL::own_program_info(mProgramObject) : nullptr;
-    GLuint objects[1024];
-    GLsizei count = 0;
-    if (!compiled)
-    {
-        glGetAttachedShaders(mProgramObject, 1024, &count, objects);
-    }
-    std::vector<LLVk::StageSource> stages;
-    for (GLsizei i = 0; i < count; ++i)
-    {
-        auto it = mgr->mRecordedShaders.find(objects[i]);
-        if (it == mgr->mRecordedShaders.end())
-        {
-            continue;
-        }
-        LLVk::StageSource s;
-        s.mName = it->second.mFile;
-        s.mSource = it->second.mSource;
-        switch (it->second.mType)
-        {
-        case GL_VERTEX_SHADER: s.mStage = LLVk::StageSource::Vertex; break;
-        case GL_FRAGMENT_SHADER: s.mStage = LLVk::StageSource::Fragment; break;
-        case GL_GEOMETRY_SHADER: s.mStage = LLVk::StageSource::Geometry; break;
-        default: continue;
-        }
-        stages.push_back(std::move(s));
-    }
-
-    LLVk::ShaderEnv env;
-    env.mAttributeNames = mgr->mReservedAttribs;
-    env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
-    env.mBindless = LLVk::bindlessShaders();
-    const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
-    if (compiled)
-    {
-        info = *compiled;
-    }
-    if (!compiled && !LLVk::compileProgram(mName, stages, env, info, dump ? dump : ""))
-    {
-        LL_WARNS("VkMirror") << "program " << mName << " does not compile for Vulkan: " << info.mError.substr(0, 600) << LL_ENDL;
-        return;
-    }
-
-    LLVk::Program* program = new LLVk::Program;
-    if (!program->create(mName, info))
-    {
-        delete program;
-        return;
-    }
-    mVkProgram = program;
-
-    // GL uniform location -> twin uniform / sampler
     const LLVk::ProgramInfo& pi = mVkProgram->getInfo();
-    for (size_t u = 0; u < pi.mUniforms.size(); ++u)
-    {
-        GLint loc = glGetUniformLocation(mProgramObject, pi.mUniforms[u].mName.c_str());
-        if (loc >= 0)
-        {
-            mVkLocations[loc] = (S32)u;
-        }
-    }
-    for (size_t s = 0; s < pi.mSamplers.size(); ++s)
-    {
-        GLint loc = glGetUniformLocation(mProgramObject, pi.mSamplers[s].mName.c_str());
-        if (loc >= 0)
-        {
-            mVkLocations[loc] = ~(S32)s;
-        }
-    }
 
-    // texture units: the viewer's reserved samplers got their GL channel in mTexture, "texN" are fixed
+    // texture units: the viewer's reserved samplers got their channel in mTexture, "texN" are fixed
     for (U32 r = 0; r < mTexture.size(); ++r)
     {
         if (mTexture[r] >= 0)
@@ -706,73 +588,10 @@ void LLGLSLShader::mirrorCreate()
 }
 #else
 void LLGLSLShader::mirrorDestroy() {}
-void LLGLSLShader::mirrorBind() {}
 void LLGLSLShader::mirrorCreate() {}
 void LLGLSLShader::mirrorScalar(GLint, int, std::initializer_list<double>) {}
 void LLGLSLShader::mirrorVector(GLint, int, U32, U32, const void*) {}
 void LLGLSLShader::mirrorMatrix(GLint, U32, U32, GLboolean, U32, const GLfloat*) {}
-#endif
-
-#if defined(LL_VULKAN)
-
-
-// <FS> compiles an already linked GL program a second time through the Vulkan shader path and logs the result
-static void vulkan_check_program(const std::string& name, GLuint program)
-{
-    LLShaderMgr* mgr = LLShaderMgr::instance();
-    GLuint objects[1024];
-    GLsizei count = 0;
-    glGetAttachedShaders(program, 1024, &count, objects);
-
-    std::vector<LLVk::StageSource> stages;
-    for (GLsizei i = 0; i < count; ++i)
-    {
-        auto it = mgr->mRecordedShaders.find(objects[i]);
-        if (it == mgr->mRecordedShaders.end())
-        {
-            continue;
-        }
-        LLVk::StageSource s;
-        s.mName = it->second.mFile;
-        s.mSource = it->second.mSource;
-        switch (it->second.mType)
-        {
-        case GL_VERTEX_SHADER: s.mStage = LLVk::StageSource::Vertex; break;
-        case GL_FRAGMENT_SHADER: s.mStage = LLVk::StageSource::Fragment; break;
-        case GL_GEOMETRY_SHADER: s.mStage = LLVk::StageSource::Geometry; break;
-        default: continue;
-        }
-        stages.push_back(std::move(s));
-    }
-
-    LLVk::ShaderEnv env;
-    env.mAttributeNames = mgr->mReservedAttribs;
-    env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
-    env.mBindless = LLVk::bindlessShaders();
-
-    const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
-    LLVk::ProgramInfo info;
-    if (LLVk::compileProgram(name, stages, env, info, dump ? dump : ""))
-    {
-        U32 spv_bytes = 0;
-        for (const auto& v : info.mSpirv)
-        {
-            spv_bytes += (U32)(v.size() * 4);
-        }
-        LLVk::registerCompiledProgram(name, info);
-        LL_INFOS("VkShaderCheck") << "OK " << name << " stages=" << stages.size() << " uniforms=" << info.mUniforms.size()
-                                  << " block=" << info.mBlockSize << "B samplers=" << info.mSamplers.size() << " spirv=" << spv_bytes << "B" << LL_ENDL;
-    }
-    else
-    {
-        std::string err = info.mError;
-        if (err.size() > 1200)
-        {
-            err.resize(1200);
-        }
-        LL_WARNS("VkShaderCheck") << "FAIL " << name << ": " << err << LL_ENDL;
-    }
-}
 #endif
 
 bool LLGLSLShader::createShader()
@@ -802,19 +621,13 @@ bool LLGLSLShader::createShader()
 
     mShaderHash = hash();
 
-    // Create program
-    mProgramObject = glCreateProgram();
-    if (mProgramObject == 0)
-    {
-        // Shouldn't happen if shader related extensions, like ARB_vertex_shader, exist.
-        LL_SHADER_LOADING_WARNS() << "Failed to create handle for shader: " << mName << LL_ENDL;
-        unloadInternal();
-        return false;
-    }
+    // a program is a handle of our own: the shader objects attached to it are compiled together when it is linked
+    static GLuint sNextProgramObject = 0;
+    mProgramObject = ++sNextProgramObject;
 
     bool success = true;
 
-    mUsingBinaryProgram =  LLShaderMgr::instance()->loadCachedProgramBinary(this);
+    mUsingBinaryProgram = false;
 
     if (!mUsingBinaryProgram)
     {
@@ -909,15 +722,49 @@ bool LLGLSLShader::createShader()
     }
 
 #if defined(LL_VULKAN)
-    if (success && LLShaderMgr::instance()->mRecordShaderSources)
+    if (success)
     {
-        if (LLVkMirror::isRequested())
+        mirrorCreate();
+    }
+#endif
+
+#if defined(LL_VULKAN)
+    if (success)
+    {
+        // LL_VK_PROGRAM_MAP=<tag>: appends what the viewer sees of this program (which reserved uniform / attribute exists, the program's own uniform index behind it and the
+        // texture channel) to run-logs/program-map-<tag>.txt, to compare two builds of the program front end
+        static const char* map_tag = getenv("LL_VK_PROGRAM_MAP");
+        if (map_tag && mVkProgram)
         {
-            mirrorCreate();
-        }
-        else
-        {
-            vulkan_check_program(mName, mProgramObject);
+            static FILE* map_file = nullptr;
+            if (!map_file)
+            {
+                map_file = fopen((std::string("<work>/run-logs/program-map-") + map_tag + ".txt").c_str(), "w");
+            }
+            if (map_file)
+            {
+                fprintf(map_file, "%s | channels %d | attrmask %x | total %d\n", mName.c_str(), (int)mActiveTextureChannels, (unsigned)mAttributeMask, (int)mTotalUniformSize);
+                for (size_t i = 0; i < mUniform.size(); ++i)
+                {
+                    if (mUniform[i] != -1)
+                    {
+                        fprintf(map_file, "  u %zu %s twin %d tex %d\n", i, LLShaderMgr::instance()->mReservedUniforms[i].c_str(), vkTwinOf(mUniform[i]), (int)mTexture[i]);
+                    }
+                }
+                for (size_t i = 0; i < mAttribute.size(); ++i)
+                {
+#if LL_RELEASE_WITH_DEBUG_INFO
+                    const GLint loc = mAttribute[i].loc;
+#else
+                    const GLint loc = mAttribute[i];
+#endif
+                    if (loc != -1)
+                    {
+                        fprintf(map_file, "  a %zu %s loc %d\n", i, LLShaderMgr::instance()->mReservedAttribs[i].c_str(), (int)loc);
+                    }
+                }
+                fflush(map_file);
+            }
         }
     }
 #endif
@@ -964,8 +811,7 @@ bool LLGLSLShader::attachVertexObject(std::string object_path)
 {
     if (LLShaderMgr::instance()->mVertexShaderObjects.count(object_path) > 0)
     {
-        stop_glerror();
-        glAttachShader(mProgramObject, LLShaderMgr::instance()->mVertexShaderObjects[object_path]);
+        mAttachedObjects.push_back(LLShaderMgr::instance()->mVertexShaderObjects[object_path]);
 #if DEBUG_SHADER_INCLUDES
         dumpAttachObject("attachVertexObject", mProgramObject, object_path);
 #endif // DEBUG_SHADER_INCLUDES
@@ -986,8 +832,7 @@ bool LLGLSLShader::attachFragmentObject(std::string object_path)
 
     if (LLShaderMgr::instance()->mFragmentShaderObjects.count(object_path) > 0)
     {
-        stop_glerror();
-        glAttachShader(mProgramObject, LLShaderMgr::instance()->mFragmentShaderObjects[object_path]);
+        mAttachedObjects.push_back(LLShaderMgr::instance()->mFragmentShaderObjects[object_path]);
 #if DEBUG_SHADER_INCLUDES
         dumpAttachObject("attachFragmentObject", mProgramObject, object_path);
 #endif // DEBUG_SHADER_INCLUDES
@@ -1008,8 +853,7 @@ void LLGLSLShader::attachObject(GLuint object)
 
     if (object != 0)
     {
-        stop_glerror();
-        glAttachShader(mProgramObject, object);
+        mAttachedObjects.push_back(object);
 #if DEBUG_SHADER_INCLUDES
         std::string object_path("???");
         dumpAttachObject("attachObject", mProgramObject, object_path);
@@ -1040,13 +884,6 @@ bool LLGLSLShader::mapAttributes()
     bool res = true;
     if (!mUsingBinaryProgram)
     {
-        //before linking, make sure reserved attributes always have consistent locations
-        for (U32 i = 0; i < LLShaderMgr::instance()->mReservedAttribs.size(); i++)
-        {
-            const char* name = LLShaderMgr::instance()->mReservedAttribs[i].c_str();
-            glBindAttribLocation(mProgramObject, i, (const GLchar*)name);
-        }
-
         //link the program
         res = link();
     }
@@ -1063,11 +900,20 @@ bool LLGLSLShader::mapAttributes()
 
         mAttributeMask = 0;
 
-        //read back reserved channels first
+        //read back reserved channels first (the program's attribute locations are the viewer's reserved indices)
+        const LLVk::ProgramInfo& pinfo = mVkProgramPending->getInfo();
         for (U32 i = 0; i < LLShaderMgr::instance()->mReservedAttribs.size(); i++)
         {
             const char* name = LLShaderMgr::instance()->mReservedAttribs[i].c_str();
-            S32 index = glGetAttribLocation(mProgramObject, (const GLchar*)name);
+            S32 index = -1;
+            for (size_t a = 0; a < pinfo.mAttributes.size() && a < pinfo.mAttributeLocations.size(); ++a)
+            {
+                if (pinfo.mAttributes[a] == name)
+                {
+                    index = (S32)pinfo.mAttributeLocations[a];
+                    break;
+                }
+            }
             if (index != -1)
             {
 #if LL_RELEASE_WITH_DEBUG_INFO
@@ -1086,6 +932,25 @@ bool LLGLSLShader::mapAttributes()
     return false;
 }
 
+// the GL enum of a GLSL type name (what the mapping below tests for samplers)
+static GLenum glsl_type_enum(const std::string& t)
+{
+    static const std::unordered_map<std::string, GLenum> map = {
+        { "float", 0x1406 }, { "vec2", 0x8B50 }, { "vec3", 0x8B51 }, { "vec4", 0x8B52 },
+        { "int", 0x1404 }, { "ivec2", 0x8B53 }, { "ivec3", 0x8B54 }, { "ivec4", 0x8B55 },
+        { "bool", 0x8B56 }, { "bvec2", 0x8B57 }, { "bvec3", 0x8B58 }, { "bvec4", 0x8B59 },
+        { "mat2", 0x8B5A }, { "mat3", 0x8B5B }, { "mat4", 0x8B5C },
+        { "mat2x3", 0x8B65 }, { "mat2x4", 0x8B66 }, { "mat3x2", 0x8B67 }, { "mat3x4", 0x8B68 }, { "mat4x2", 0x8B69 }, { "mat4x3", 0x8B6A },
+        { "uint", 0x1405 }, { "uvec2", 0x8DC6 }, { "uvec3", 0x8DC7 }, { "uvec4", 0x8DC8 },
+        { "sampler1D", 0x8B5D }, { "sampler2D", 0x8B5E }, { "sampler3D", 0x8B5F }, { "samplerCube", 0x8B60 },
+        { "sampler1DShadow", 0x8B61 }, { "sampler2DShadow", 0x8B62 }, { "sampler2DRect", 0x8B63 }, { "sampler2DRectShadow", 0x8B64 },
+        { "sampler2DArray", 0x8DC1 }, { "sampler2DArrayShadow", 0x8DC4 }, { "samplerCubeShadow", 0x8DC5 },
+        { "samplerCubeArray", 0x900C }, { "sampler2DMS", 0x9108 },
+    };
+    auto it = map.find(t);
+    return it == map.end() ? 0x1406 : it->second;
+}
+
 void LLGLSLShader::mapUniform(GLint index)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -1095,14 +960,17 @@ void LLGLSLShader::mapUniform(GLint index)
         return;
     }
 
-    GLenum type;
-    GLsizei length;
-    GLint size = -1;
+    if (index < 0 || index >= (GLint)mActiveUniforms.size())
+    {
+        return;
+    }
+    const ActiveUniform& active = mActiveUniforms[index];
+    const GLenum type = glsl_type_enum(active.mType);
+    GLint size = active.mSize;
     char name[1024];        /* Flawfinder: ignore */
-    name[0] = 0;
+    strncpy(name, active.mName.c_str(), sizeof(name) - 1);
+    name[sizeof(name) - 1] = 0;
 
-
-    glGetActiveUniform(mProgramObject, index, 1024, &length, &size, &type, (GLchar*)name);
     if (size > 0)
     {
         switch (type)
@@ -1110,10 +978,6 @@ void LLGLSLShader::mapUniform(GLint index)
         case GL_FLOAT_VEC2: size *= 2; break;
         case GL_FLOAT_VEC3: size *= 3; break;
         case GL_FLOAT_VEC4: size *= 4; break;
-        case GL_DOUBLE: size *= 2; break;
-        case GL_DOUBLE_VEC2: size *= 2; break;
-        case GL_DOUBLE_VEC3: size *= 6; break;
-        case GL_DOUBLE_VEC4: size *= 8; break;
         case GL_INT_VEC2: size *= 2; break;
         case GL_INT_VEC3: size *= 3; break;
         case GL_INT_VEC4: size *= 4; break;
@@ -1132,20 +996,11 @@ void LLGLSLShader::mapUniform(GLint index)
         case GL_FLOAT_MAT3x4: size *= 12; break;
         case GL_FLOAT_MAT4x2: size *= 8; break;
         case GL_FLOAT_MAT4x3: size *= 12; break;
-        case GL_DOUBLE_MAT2: size *= 8; break;
-        case GL_DOUBLE_MAT3: size *= 18; break;
-        case GL_DOUBLE_MAT4: size *= 32; break;
-        case GL_DOUBLE_MAT2x3: size *= 12; break;
-        case GL_DOUBLE_MAT2x4: size *= 16; break;
-        case GL_DOUBLE_MAT3x2: size *= 12; break;
-        case GL_DOUBLE_MAT3x4: size *= 24; break;
-        case GL_DOUBLE_MAT4x2: size *= 16; break;
-        case GL_DOUBLE_MAT4x3: size *= 24; break;
         }
         mTotalUniformSize += size;
     }
 
-    S32 location = glGetUniformLocation(mProgramObject, name);
+    S32 location = active.mLocation;
     if (location != -1)
     {
         //chop off "[0]" so we can always access the first element
@@ -1211,7 +1066,6 @@ GLint LLGLSLShader::mapUniformTextureChannel(GLint location, GLenum type, GLint 
         GLint ret = mActiveTextureChannels;
         if (size == 1)
         {
-            glUniform1i(location, mActiveTextureChannels);
             mirrorScalar(location, 1, {(double)(mActiveTextureChannels)});
             mActiveTextureChannels++;
         }
@@ -1225,7 +1079,6 @@ GLint LLGLSLShader::mapUniformTextureChannel(GLint location, GLenum type, GLint 
             {
                 channel[i] = mActiveTextureChannels++;
             }
-            glUniform1iv(location, size, channel);
             mirrorVector(location, 1, 1, size, channel);
         }
 
@@ -1252,9 +1105,32 @@ bool LLGLSLShader::mapUniforms()
 
     bind();
 
-    //get the number of active uniforms
-    GLint activeCount;
-    glGetProgramiv(mProgramObject, GL_ACTIVE_UNIFORMS, &activeCount);
+    // what the program reports as active: its loose uniforms (arrays by their first element), then its samplers
+    mActiveUniforms.clear();
+    {
+        const LLVk::ProgramInfo& pinfo = mVkProgramPending->getInfo();
+        for (size_t u = 0; u < pinfo.mUniforms.size(); ++u)
+        {
+            const LLVk::LooseUniform& lu = pinfo.mUniforms[u];
+            mActiveUniforms.push_back({ lu.mArraySize ? lu.mName + "[0]" : lu.mName, lu.mType, lu.mArraySize ? (GLint)lu.mArraySize : 1, (GLint)u });
+        }
+        for (size_t sm = 0; sm < pinfo.mSamplers.size(); ++sm)
+        {
+            mActiveUniforms.push_back({ pinfo.mSamplers[sm].mName, pinfo.mSamplers[sm].mType, 1, SAMPLER_LOCATION_BASE + (GLint)sm });
+        }
+    }
+    const GLint activeCount = (GLint)mActiveUniforms.size();
+    auto location_of = [this](const char* name) -> S32
+    {
+        for (const ActiveUniform& a : mActiveUniforms)
+        {
+            if (a.mName == name)
+            {
+                return a.mLocation;
+            }
+        }
+        return -1;
+    };
 
     //........................................................................................................................................
     //........................................................................................
@@ -1281,61 +1157,54 @@ bool LLGLSLShader::mapUniforms()
     */
 
 
-    S32 diffuseMap = glGetUniformLocation(mProgramObject, "diffuseMap");
-    S32 specularMap = glGetUniformLocation(mProgramObject, "specularMap");
-    S32 bumpMap = glGetUniformLocation(mProgramObject, "bumpMap");
-    S32 altDiffuseMap = glGetUniformLocation(mProgramObject, "altDiffuseMap");
-    S32 environmentMap = glGetUniformLocation(mProgramObject, "environmentMap");
-    S32 reflectionMap = glGetUniformLocation(mProgramObject, "reflectionMap");
+    S32 diffuseMap = location_of("diffuseMap");
+    S32 specularMap = location_of("specularMap");
+    S32 bumpMap = location_of("bumpMap");
+    S32 altDiffuseMap = location_of("altDiffuseMap");
+    S32 environmentMap = location_of("environmentMap");
+    S32 reflectionMap = location_of("reflectionMap");
 
     std::set<S32> skip_index;
 
     if (-1 != diffuseMap && (-1 != specularMap || -1 != bumpMap || -1 != environmentMap || -1 != altDiffuseMap))
     {
-        GLenum type;
-        GLsizei length;
-        GLint size = -1;
-        char name[1024];
-
         diffuseMap = altDiffuseMap = specularMap = bumpMap = environmentMap = -1;
 
         for (S32 i = 0; i < activeCount; i++)
         {
-            name[0] = '\0';
+            const std::string& name = mActiveUniforms[i].mName;
 
-            glGetActiveUniform(mProgramObject, i, 1024, &length, &size, &type, (GLchar*)name);
-
-            if (-1 == diffuseMap && std::string(name) == "diffuseMap")
+            if (-1 == diffuseMap && name == "diffuseMap")
             {
                 diffuseMap = i;
                 continue;
             }
 
-            if (-1 == specularMap && std::string(name) == "specularMap")
+            if (-1 == specularMap && name == "specularMap")
             {
                 specularMap = i;
                 continue;
             }
 
-            if (-1 == bumpMap && std::string(name) == "bumpMap")
+            if (-1 == bumpMap && name == "bumpMap")
             {
                 bumpMap = i;
                 continue;
             }
 
-            if (-1 == environmentMap && std::string(name) == "environmentMap")
+            if (-1 == environmentMap && name == "environmentMap")
             {
                 environmentMap = i;
                 continue;
             }
 
-            if (-1 == reflectionMap && std::string(name) == "reflectionMap")
+            if (-1 == reflectionMap && name == "reflectionMap")
             {
                 reflectionMap = i;
                 continue;
             }
 
-            if (-1 == altDiffuseMap && std::string(name) == "altDiffuseMap")
+            if (-1 == altDiffuseMap && name == "altDiffuseMap")
             {
                 altDiffuseMap = i;
                 continue;
@@ -1386,26 +1255,7 @@ bool LLGLSLShader::mapUniforms()
     }
     //........................................................................................................................................
 
-    // Set up block binding, in a way supported by Apple (rather than binding = 1 in .glsl).
-    // See slide 35 and more of https://docs.huihoo.com/apple/wwdc/2011/session_420__advances_in_opengl_for_mac_os_x_lion.pdf
-    const char* ubo_names[] =
-    {
-        "ReflectionProbes", // UB_REFLECTION_PROBES
-        "GLTFJoints",       // UB_GLTF_JOINTS
-        "GLTFNodes",        // UB_GLTF_NODES
-        "GLTFMaterials",    // UB_GLTF_MATERIALS
-    };
-
-    llassert(LL_ARRAY_SIZE(ubo_names) == NUM_UNIFORM_BLOCKS);
-
-    for (U32 i = 0; i < NUM_UNIFORM_BLOCKS; ++i)
-    {
-        GLuint UBOBlockIndex = glGetUniformBlockIndex(mProgramObject, ubo_names[i]);
-        if (UBOBlockIndex != GL_INVALID_INDEX)
-        {
-            glUniformBlockBinding(mProgramObject, UBOBlockIndex, i);
-        }
-    }
+    // (the named uniform blocks are bound by index when the program is compiled)
 
     unbind();
 
@@ -1418,19 +1268,81 @@ bool LLGLSLShader::link(bool suppress_errors)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
-    bool success = LLShaderMgr::instance()->linkProgramObject(mProgramObject, suppress_errors);
-
-    if (!success && !suppress_errors)
+    // the attached shader objects are compiled together into one program (the build runs on the render thread, which owns Vulkan)
+    LLShaderMgr* mgr = LLShaderMgr::instance();
+    std::vector<LLVk::StageSource> stages;
+    for (GLuint object : mAttachedObjects)
     {
-        LLShaderMgr::instance()->dumpObjectLog(mProgramObject, !success, mName);
+        auto it = mgr->mRecordedShaders.find(object);
+        if (it == mgr->mRecordedShaders.end())
+        {
+            continue;
+        }
+        LLVk::StageSource s;
+        s.mName = it->second.mFile;
+        s.mSource = it->second.mSource;
+        switch (it->second.mType)
+        {
+        case GL_VERTEX_SHADER: s.mStage = LLVk::StageSource::Vertex; break;
+        case GL_FRAGMENT_SHADER: s.mStage = LLVk::StageSource::Fragment; break;
+        case GL_GEOMETRY_SHADER: s.mStage = LLVk::StageSource::Geometry; break;
+        default: continue;
+        }
+        stages.push_back(std::move(s));
+    }
+    LLVk::ShaderEnv env;
+    env.mAttributeNames = mgr->mReservedAttribs;
+    env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
+    env.mBindless = LLVk::bindlessShaders();
+    const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
+
+    LLVk::Program* program = nullptr;
+    std::string error;
+    auto build = [&]()
+    {
+        std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
+        if (!LLVkMirror::ensureReady())
+        {
+            error = "the Vulkan side is not ready";
+            return;
+        }
+        LLVk::ProgramInfo info;
+        if (!LLVk::compileProgram(mName, stages, env, info, dump ? dump : ""))
+        {
+            error = info.mError;
+            return;
+        }
+        std::unique_ptr<LLVk::Program> made(new LLVk::Program);
+        if (!made->create(mName, info))
+        {
+            error = "the program could not be created";
+            return;
+        }
+        program = made.release();
+    };
+    if (stages.empty())
+    {
+        error = "no shader objects attached";
+    }
+    else if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::syncCall(build);
+    }
+    else
+    {
+        build();
     }
 
-    if (success)
+    if (!program)
     {
-        LLShaderMgr::instance()->saveCachedProgramBinary(this);
+        if (!suppress_errors)
+        {
+            LL_SHADER_LOADING_WARNS() << "GLSL Linker Error: program " << mName << " does not compile for Vulkan: " << error.substr(0, 600) << LL_ENDL;
+        }
+        return false;
     }
-
-    return success;
+    mVkProgramPending = program;
+    return true;
 }
 
 void LLGLSLShader::bind()
@@ -1498,7 +1410,6 @@ void LLGLSLShader::unbind(void)
         sCurBoundShaderPtr->readProfileQuery();
     }
 
-    glUseProgram(0);
     sCurBoundShader = 0;
     sCurBoundShaderPtr = NULL;
 #if defined(LL_VULKAN)
@@ -1708,7 +1619,6 @@ void LLGLSLShader::uniform1i(U32 index, GLint x)
             const auto& iter = mValue.find(mUniform[index]);
             if (iter == mValue.end() || iter->second.mV[0] != x)
             {
-                glUniform1i(mUniform[index], x);
                 mirrorScalar(mUniform[index], 1, {(double)(x)});
                 mValue[mUniform[index]] = LLVector4((F32)x, 0.f, 0.f, 0.f);
             }
@@ -1718,13 +1628,11 @@ void LLGLSLShader::uniform1i(U32 index, GLint x)
 
 void LLGLSLShader::uniform1fAt(S32 location, F32 v)
 {
-    glUniform1f(location, v);
     if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorScalar(location, 0, {(double)(v)});
 }
 
 void LLGLSLShader::uniform4fvAt(S32 location, S32 count, const F32* v)
 {
-    glUniform4fv(location, count, v);
     if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorVector(location, 0, 4, count, v);
 }
 
@@ -1747,7 +1655,6 @@ void LLGLSLShader::uniform1f(U32 index, GLfloat x)
             const auto& iter = mValue.find(mUniform[index]);
             if (iter == mValue.end() || iter->second.mV[0] != x)
             {
-                glUniform1f(mUniform[index], x);
                 mirrorScalar(mUniform[index], 0, {(double)(x)});
                 mValue[mUniform[index]] = LLVector4(x, 0.f, 0.f, 0.f);
             }
@@ -1762,7 +1669,6 @@ void LLGLSLShader::fastUniform1f(U32 index, GLfloat x)
     llassert(mProgramObject);
     llassert(mUniform.size() <= index);
     llassert(mUniform[index] >= 0);
-    glUniform1f(mUniform[index], x);
     mirrorScalar(mUniform[index], 0, {(double)(x)});
 }
 
@@ -1786,7 +1692,6 @@ void LLGLSLShader::uniform2f(U32 index, GLfloat x, GLfloat y)
             LLVector4 vec(x, y, 0.f, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec))
             {
-                glUniform2f(mUniform[index], x, y);
                 mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y)});
                 mValue[mUniform[index]] = vec;
             }
@@ -1814,7 +1719,6 @@ void LLGLSLShader::uniform3f(U32 index, GLfloat x, GLfloat y, GLfloat z)
             LLVector4 vec(x, y, z, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec))
             {
-                glUniform3f(mUniform[index], x, y, z);
                 mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y), (double)(z)});
                 mValue[mUniform[index]] = vec;
             }
@@ -1842,7 +1746,6 @@ void LLGLSLShader::uniform4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat
             LLVector4 vec(x, y, z, w);
             if (iter == mValue.end() || shouldChange(iter->second, vec))
             {
-                glUniform4f(mUniform[index], x, y, z, w);
                 mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y), (double)(z), (double)(w)});
                 mValue[mUniform[index]] = vec;
             }
@@ -1870,7 +1773,6 @@ void LLGLSLShader::uniform1iv(U32 index, U32 count, const GLint* v)
             LLVector4 vec((F32)v[0], 0.f, 0.f, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform1iv(mUniform[index], count, v);
                 mirrorVector(mUniform[index], 1, 1, count, v);
                 mValue[mUniform[index]] = vec;
             }
@@ -1898,7 +1800,6 @@ void LLGLSLShader::uniform4iv(U32 index, U32 count, const GLint* v)
             LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform4iv(mUniform[index], count, v); // <FS:Beq/>  Apparent copy/paste error.
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1926,7 +1827,6 @@ void LLGLSLShader::uniform1fv(U32 index, U32 count, const GLfloat* v)
             LLVector4 vec(v[0], 0.f, 0.f, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform1fv(mUniform[index], count, v);
                 mirrorVector(mUniform[index], 0, 1, count, v);
                 mValue[mUniform[index]] = vec;
             }
@@ -1954,7 +1854,6 @@ void LLGLSLShader::uniform2fv(U32 index, U32 count, const GLfloat* v)
             LLVector4 vec(v[0], v[1], 0.f, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform2fv(mUniform[index], count, v);
                 mirrorVector(mUniform[index], 0, 2, count, v);
                 mValue[mUniform[index]] = vec;
             }
@@ -1982,7 +1881,6 @@ void LLGLSLShader::uniform3fv(U32 index, U32 count, const GLfloat* v)
             LLVector4 vec(v[0], v[1], v[2], 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform3fv(mUniform[index], count, v);
                 mirrorVector(mUniform[index], 0, 3, count, v);
                 mValue[mUniform[index]] = vec;
             }
@@ -2011,7 +1909,6 @@ void LLGLSLShader::uniform4fv(U32 index, U32 count, const GLfloat* v)
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-                glUniform4fv(mUniform[index], count, v);
                 mirrorVector(mUniform[index], 0, 4, count, v);
                 mValue[mUniform[index]] = vec;
             }
@@ -2040,7 +1937,6 @@ void LLGLSLShader::uniform4uiv(U32 index, U32 count, const GLuint* v)
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-                glUniform4uiv(mUniform[index], count, v);
                 mirrorVector(mUniform[index], 1, 4, count, v);
                 mValue[mUniform[index]] = vec;
             }
@@ -2064,7 +1960,6 @@ void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, c
 
         if (mUniform[index] >= 0)
         {
-            glUniformMatrix2fv(mUniform[index], count, transpose, v);
             mirrorMatrix(mUniform[index], 2, 2, transpose, count, v);
         }
     }
@@ -2086,7 +1981,6 @@ void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, c
 
         if (mUniform[index] >= 0)
         {
-            glUniformMatrix3fv(mUniform[index], count, transpose, v);
             mirrorMatrix(mUniform[index], 3, 3, transpose, count, v);
         }
     }
@@ -2108,7 +2002,6 @@ void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose,
 
         if (mUniform[index] >= 0)
         {
-            glUniformMatrix3x4fv(mUniform[index], count, transpose, v);
             mirrorMatrix(mUniform[index], 3, 4, transpose, count, v);
         }
     }
@@ -2130,7 +2023,6 @@ void LLGLSLShader::uniformMatrix4fv(U32 index, U32 count, GLboolean transpose, c
 
         if (mUniform[index] >= 0)
         {
-            glUniformMatrix4fv(mUniform[index], count, transpose, v);
             mirrorMatrix(mUniform[index], 4, 4, transpose, count, v);
         }
     }
@@ -2146,15 +2038,6 @@ GLint LLGLSLShader::getUniformLocation(const LLStaticHashedString& uniform)
         LLStaticStringTable<GLint>::iterator iter = mUniformMap.find(uniform);
         if (iter != mUniformMap.end())
         {
-            if (gDebugGL)
-            {
-                stop_glerror();
-                if (iter->second != glGetUniformLocation(mProgramObject, uniform.String().c_str()))
-                {
-                    LL_ERRS() << "Uniform does not match." << LL_ENDL;
-                }
-                stop_glerror();
-            }
             ret = iter->second;
         }
     }
@@ -2205,7 +2088,6 @@ void LLGLSLShader::uniform1i(const LLStaticHashedString& uniform, GLint v)
         LLVector4 vec((F32)v, 0.f, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform1i(location, v);
             mirrorScalar(location, 1, {(double)(v)});
             mValue[location] = vec;
         }
@@ -2224,7 +2106,6 @@ void LLGLSLShader::uniform1iv(const LLStaticHashedString& uniform, U32 count, co
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-            glUniform1iv(location, count, v);
             mirrorVector(location, 1, 1, count, v);
             mValue[location] = vec;
         }
@@ -2243,7 +2124,6 @@ void LLGLSLShader::uniform4iv(const LLStaticHashedString& uniform, U32 count, co
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-            glUniform4iv(location, count, v);
             mirrorVector(location, 1, 4, count, v);
             mValue[location] = vec;
         }
@@ -2261,7 +2141,6 @@ void LLGLSLShader::uniform2i(const LLStaticHashedString& uniform, GLint i, GLint
         LLVector4 vec((F32)i, (F32)j, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform2i(location, i, j);
             mirrorScalar(location, 1, {(double)(i), (double)(j)});
             mValue[location] = vec;
         }
@@ -2280,7 +2159,6 @@ void LLGLSLShader::uniform1f(const LLStaticHashedString& uniform, GLfloat v)
         LLVector4 vec(v, 0.f, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform1f(location, v);
             mirrorScalar(location, 0, {(double)(v)});
             mValue[location] = vec;
         }
@@ -2298,7 +2176,6 @@ void LLGLSLShader::uniform2f(const LLStaticHashedString& uniform, GLfloat x, GLf
         LLVector4 vec(x, y, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform2f(location, x, y);
             mirrorScalar(location, 0, {(double)(x), (double)(y)});
             mValue[location] = vec;
         }
@@ -2317,7 +2194,6 @@ void LLGLSLShader::uniform3f(const LLStaticHashedString& uniform, GLfloat x, GLf
         LLVector4 vec(x, y, z, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform3f(location, x, y, z);
             mirrorScalar(location, 0, {(double)(x), (double)(y), (double)(z)});
             mValue[location] = vec;
         }
@@ -2335,7 +2211,6 @@ void LLGLSLShader::uniform4f(const LLStaticHashedString& uniform, GLfloat x, GLf
         LLVector4 vec(x, y, z, w);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform4f(location, x, y, z, w);
             mirrorScalar(location, 0, {(double)(x), (double)(y), (double)(z), (double)(w)});
             mValue[location] = vec;
         }
@@ -2353,7 +2228,6 @@ void LLGLSLShader::uniform1fv(const LLStaticHashedString& uniform, U32 count, co
         LLVector4 vec(v[0], 0.f, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
-            glUniform1fv(location, count, v);
             mirrorVector(location, 0, 1, count, v);
             mValue[location] = vec;
         }
@@ -2371,7 +2245,6 @@ void LLGLSLShader::uniform2fv(const LLStaticHashedString& uniform, U32 count, co
         LLVector4 vec(v[0], v[1], 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
-            glUniform2fv(location, count, v);
             mirrorVector(location, 0, 2, count, v);
             mValue[location] = vec;
         }
@@ -2389,7 +2262,6 @@ void LLGLSLShader::uniform3fv(const LLStaticHashedString& uniform, U32 count, co
         LLVector4 vec(v[0], v[1], v[2], 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
-            glUniform3fv(location, count, v);
             mirrorVector(location, 0, 3, count, v);
             mValue[location] = vec;
         }
@@ -2408,7 +2280,6 @@ void LLGLSLShader::uniform4fv(const LLStaticHashedString& uniform, U32 count, co
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-            glUniform4fv(location, count, v);
             mirrorVector(location, 0, 4, count, v);
             mValue[location] = vec;
         }
@@ -2427,7 +2298,6 @@ void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, c
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-            glUniform4uiv(location, count, v);
             mirrorVector(location, 1, 4, count, v);
             mValue[location] = vec;
         }
@@ -2442,7 +2312,6 @@ void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 cou
     if (location >= 0)
     {
         stop_glerror();
-        glUniformMatrix4fv(location, count, transpose, v);
         mirrorMatrix(location, 4, 4, transpose, count, v);
         stop_glerror();
     }

@@ -2,15 +2,5 @@
         case LLVkAsync::OP_glTexParameteri: { const LLVkAsync::A_glTexParameteri* a = (const LLVkAsync::A_glTexParameteri*)p; LLVkGL::on_glTexParameteri(a->target, a->pname, a->param); break; }
         case LLVkAsync::OP_glTexParameterf: { const LLVkAsync::A_glTexParameterf* a = (const LLVkAsync::A_glTexParameterf*)p; LLVkGL::on_glTexParameterf(a->target, a->pname, a->param); break; }
         case LLVkAsync::OP_glGenerateMipmap: { const LLVkAsync::A_glGenerateMipmap* a = (const LLVkAsync::A_glGenerateMipmap*)p; LLVkGL::on_glGenerateMipmap(a->target); break; }
-        case LLVkAsync::OP_glCompileShader: { const LLVkAsync::A_glCompileShader* a = (const LLVkAsync::A_glCompileShader*)p; LLVkGL::on_glCompileShader(a->shader); break; }
-        case LLVkAsync::OP_glDeleteShader: { const LLVkAsync::A_glDeleteShader* a = (const LLVkAsync::A_glDeleteShader*)p; LLVkGL::on_glDeleteShader(a->shader); break; }
-        case LLVkAsync::OP_glAttachShader: { const LLVkAsync::A_glAttachShader* a = (const LLVkAsync::A_glAttachShader*)p; LLVkGL::on_glAttachShader(a->program, a->shader); break; }
-        case LLVkAsync::OP_glDetachShader: { const LLVkAsync::A_glDetachShader* a = (const LLVkAsync::A_glDetachShader*)p; LLVkGL::on_glDetachShader(a->program, a->shader); break; }
-        case LLVkAsync::OP_glDeleteProgram: { const LLVkAsync::A_glDeleteProgram* a = (const LLVkAsync::A_glDeleteProgram*)p; LLVkGL::on_glDeleteProgram(a->program); break; }
-        case LLVkAsync::OP_glLinkProgram: { const LLVkAsync::A_glLinkProgram* a = (const LLVkAsync::A_glLinkProgram*)p; LLVkGL::on_glLinkProgram(a->program); break; }
-        case LLVkAsync::OP_glValidateProgram: { const LLVkAsync::A_glValidateProgram* a = (const LLVkAsync::A_glValidateProgram*)p; LLVkGL::on_glValidateProgram(a->program); break; }
-        case LLVkAsync::OP_glUniformBlockBinding: { const LLVkAsync::A_glUniformBlockBinding* a = (const LLVkAsync::A_glUniformBlockBinding*)p; LLVkGL::on_glUniformBlockBinding(a->program, a->uniformBlockIndex, a->uniformBlockBinding); break; }
-        case LLVkAsync::OP_glUseProgram: { const LLVkAsync::A_glUseProgram* a = (const LLVkAsync::A_glUseProgram*)p; LLVkGL::on_glUseProgram(a->program); break; }
-        case LLVkAsync::OP_glProgramParameteri: { const LLVkAsync::A_glProgramParameteri* a = (const LLVkAsync::A_glProgramParameteri*)p; LLVkGL::on_glProgramParameteri(a->program, a->pname, a->value); break; }
         case LLVkAsync::OP_glWaitSync: { const LLVkAsync::A_glWaitSync* a = (const LLVkAsync::A_glWaitSync*)p; LLVkGL::on_glWaitSync(a->sync, a->flags, a->timeout); break; }
         case LLVkAsync::OP_glDeleteSync: { const LLVkAsync::A_glDeleteSync* a = (const LLVkAsync::A_glDeleteSync*)p; LLVkGL::on_glDeleteSync(a->sync); break; }

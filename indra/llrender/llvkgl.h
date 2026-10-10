@@ -74,47 +74,6 @@ namespace LLVkGL
     bool own_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, void* pixels);
     void on_glGetCompressedTexImage(GLenum target, GLint level, void* img);
     bool own_glGetCompressedTexImage(GLenum target, GLint level, void* img);
-    void on_glCreateShader(GLenum type, GLuint result);
-    bool own_glCreateShader(GLenum type, GLuint& out);
-    void on_glShaderSource(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length);
-    void on_glCompileShader(GLuint shader);
-    void on_glGetShaderiv(GLuint shader, GLenum pname, GLint* params);
-    bool own_glGetShaderiv(GLuint shader, GLenum pname, GLint* params);
-    void on_glGetShaderInfoLog(GLuint shader, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
-    bool own_glGetShaderInfoLog(GLuint shader, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
-    void on_glDeleteShader(GLuint shader);
-    void on_glIsShader(GLuint shader, GLboolean result);
-    bool own_glIsShader(GLuint shader, GLboolean& out);
-    void on_glCreateProgram(GLuint result);
-    bool own_glCreateProgram(GLuint& out);
-    void on_glAttachShader(GLuint program, GLuint shader);
-    void on_glDetachShader(GLuint program, GLuint shader);
-    void on_glDeleteProgram(GLuint program);
-    void on_glIsProgram(GLuint program, GLboolean result);
-    bool own_glIsProgram(GLuint program, GLboolean& out);
-    void on_glBindAttribLocation(GLuint program, GLuint index, const GLchar* name);
-    void on_glLinkProgram(GLuint program);
-    void on_glValidateProgram(GLuint program);
-    void on_glGetProgramiv(GLuint program, GLenum pname, GLint* params);
-    bool own_glGetProgramiv(GLuint program, GLenum pname, GLint* params);
-    void on_glGetProgramInfoLog(GLuint program, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
-    bool own_glGetProgramInfoLog(GLuint program, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
-    void on_glGetAttachedShaders(GLuint program, GLsizei maxCount, GLsizei* count, GLuint* shaders);
-    bool own_glGetAttachedShaders(GLuint program, GLsizei maxCount, GLsizei* count, GLuint* shaders);
-    void on_glGetActiveUniform(GLuint program, GLuint index, GLsizei bufSize, GLsizei* length, GLint* size, GLenum* type, GLchar* name);
-    bool own_glGetActiveUniform(GLuint program, GLuint index, GLsizei bufSize, GLsizei* length, GLint* size, GLenum* type, GLchar* name);
-    void on_glGetActiveUniformsiv(GLuint program, GLsizei uniformCount, const GLuint* uniformIndices, GLenum pname, GLint* params);
-    bool own_glGetActiveUniformsiv(GLuint program, GLsizei uniformCount, const GLuint* uniformIndices, GLenum pname, GLint* params);
-    void on_glGetUniformLocation(GLuint program, const GLchar* name, GLint result);
-    bool own_glGetUniformLocation(GLuint program, const GLchar* name, GLint& out);
-    void on_glGetAttribLocation(GLuint program, const GLchar* name, GLint result);
-    bool own_glGetAttribLocation(GLuint program, const GLchar* name, GLint& out);
-    void on_glGetUniformBlockIndex(GLuint program, const GLchar* uniformBlockName, GLuint result);
-    bool own_glGetUniformBlockIndex(GLuint program, const GLchar* uniformBlockName, GLuint& out);
-    void on_glUniformBlockBinding(GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding);
-    void on_glUseProgram(GLuint program);
-    void on_glProgramParameteri(GLuint program, GLenum pname, GLint value);
-    void on_glProgramBinary(GLuint program, GLenum binaryFormat, const void* binary, GLsizei length);
     bool own_glFenceSync(GLenum condition, GLbitfield flags, GLsync& out);
     bool own_glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout, GLenum& out);
     void on_glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout);
@@ -124,7 +83,7 @@ namespace LLVkGL
 namespace LLVkGL
 {
     // LL_VK_PHASES: calls and CPU time of every sink hook (the time includes waiting for the lock)
-    constexpr int HOOK_COUNT = 63;
+    constexpr int HOOK_COUNT = 36;
     extern long long gHookStatTicks[2 * HOOK_COUNT];     // the second half: calls made by other threads
     extern long long gHookStatCalls[2 * HOOK_COUNT];
     const char* hook_name(int i);       // name of GL operation i (LLVkAsync::Op order), for the per-operation statistics of the worker
@@ -173,33 +132,6 @@ namespace LLVkAsync
         OP_glReadPixels,
         OP_glGetTexImage,
         OP_glGetCompressedTexImage,
-        OP_glCreateShader,
-        OP_glShaderSource,
-        OP_glCompileShader,
-        OP_glGetShaderiv,
-        OP_glGetShaderInfoLog,
-        OP_glDeleteShader,
-        OP_glIsShader,
-        OP_glCreateProgram,
-        OP_glAttachShader,
-        OP_glDetachShader,
-        OP_glDeleteProgram,
-        OP_glIsProgram,
-        OP_glBindAttribLocation,
-        OP_glLinkProgram,
-        OP_glValidateProgram,
-        OP_glGetProgramiv,
-        OP_glGetProgramInfoLog,
-        OP_glGetAttachedShaders,
-        OP_glGetActiveUniform,
-        OP_glGetActiveUniformsiv,
-        OP_glGetUniformLocation,
-        OP_glGetAttribLocation,
-        OP_glGetUniformBlockIndex,
-        OP_glUniformBlockBinding,
-        OP_glUseProgram,
-        OP_glProgramParameteri,
-        OP_glProgramBinary,
         OP_glFenceSync,
         OP_glClientWaitSync,
         OP_glWaitSync,
@@ -230,29 +162,6 @@ namespace LLVkAsync
     void enq_glBeginQuery(GLenum target, GLuint id);       // written by hand in llvkasync.cpp
     void enq_glEndQuery(GLenum target);       // written by hand in llvkasync.cpp
     void enq_glQueryCounter(GLuint id, GLenum target);       // written by hand in llvkasync.cpp
-    void enq_glShaderSource(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length);       // written by hand in llvkasync.cpp
-    struct A_glCompileShader { GLuint shader; };
-    inline void enq_glCompileShader(GLuint shader) { A_glCompileShader a = { shader }; LLVkAsync::push(OP_glCompileShader, &a, sizeof(a)); }
-    struct A_glDeleteShader { GLuint shader; };
-    inline void enq_glDeleteShader(GLuint shader) { A_glDeleteShader a = { shader }; LLVkAsync::push(OP_glDeleteShader, &a, sizeof(a)); }
-    struct A_glAttachShader { GLuint program; GLuint shader; };
-    inline void enq_glAttachShader(GLuint program, GLuint shader) { A_glAttachShader a = { program, shader }; LLVkAsync::push(OP_glAttachShader, &a, sizeof(a)); }
-    struct A_glDetachShader { GLuint program; GLuint shader; };
-    inline void enq_glDetachShader(GLuint program, GLuint shader) { A_glDetachShader a = { program, shader }; LLVkAsync::push(OP_glDetachShader, &a, sizeof(a)); }
-    struct A_glDeleteProgram { GLuint program; };
-    inline void enq_glDeleteProgram(GLuint program) { A_glDeleteProgram a = { program }; LLVkAsync::push(OP_glDeleteProgram, &a, sizeof(a)); }
-    void enq_glBindAttribLocation(GLuint program, GLuint index, const GLchar* name);       // written by hand in llvkasync.cpp
-    struct A_glLinkProgram { GLuint program; };
-    inline void enq_glLinkProgram(GLuint program) { A_glLinkProgram a = { program }; LLVkAsync::push(OP_glLinkProgram, &a, sizeof(a)); }
-    struct A_glValidateProgram { GLuint program; };
-    inline void enq_glValidateProgram(GLuint program) { A_glValidateProgram a = { program }; LLVkAsync::push(OP_glValidateProgram, &a, sizeof(a)); }
-    struct A_glUniformBlockBinding { GLuint program; GLuint uniformBlockIndex; GLuint uniformBlockBinding; };
-    inline void enq_glUniformBlockBinding(GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding) { A_glUniformBlockBinding a = { program, uniformBlockIndex, uniformBlockBinding }; LLVkAsync::push(OP_glUniformBlockBinding, &a, sizeof(a)); }
-    struct A_glUseProgram { GLuint program; };
-    inline void enq_glUseProgram(GLuint program) { A_glUseProgram a = { program }; LLVkAsync::push(OP_glUseProgram, &a, sizeof(a)); }
-    struct A_glProgramParameteri { GLuint program; GLenum pname; GLint value; };
-    inline void enq_glProgramParameteri(GLuint program, GLenum pname, GLint value) { A_glProgramParameteri a = { program, pname, value }; LLVkAsync::push(OP_glProgramParameteri, &a, sizeof(a)); }
-    void enq_glProgramBinary(GLuint program, GLenum binaryFormat, const void* binary, GLsizei length);       // written by hand in llvkasync.cpp
     struct A_glWaitSync { GLsync sync; GLbitfield flags; GLuint64 timeout; };
     inline void enq_glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) { A_glWaitSync a = { sync, flags, timeout }; LLVkAsync::push(OP_glWaitSync, &a, sizeof(a)); }
     struct A_glDeleteSync { GLsync sync; };
@@ -323,67 +232,13 @@ static inline void ll_vk_glGetTexImage(GLenum target, GLint level, GLenum format
 #define glGetTexImage ll_vk_glGetTexImage
 static inline void ll_vk_glGetCompressedTexImage(GLenum target, GLint level, void* img) { if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetCompressedTexImage(target, level, img); }); return; } { LLVkGL::HookStat s_(31); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetCompressedTexImage(target, level, img); } }
 #define glGetCompressedTexImage ll_vk_glGetCompressedTexImage
-static inline GLuint ll_vk_glCreateShader(GLenum type) { if (LLVkAsync::gEnabled) { GLuint o_ = GLuint(); LLVkAsync::syncCall([&]() { LLVkGL::own_glCreateShader(type, o_); }); return o_; } { LLVkGL::HookStat s_(32); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLuint o_ = GLuint(); LLVkGL::own_glCreateShader(type, o_); return o_; } }
-#define glCreateShader ll_vk_glCreateShader
-static inline void ll_vk_glShaderSource(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glShaderSource(shader, count, string, length); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(33); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glShaderSource(shader, count, string, length); }
-#define glShaderSource ll_vk_glShaderSource
-static inline void ll_vk_glCompileShader(GLuint shader) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glCompileShader(shader); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(34); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glCompileShader(shader); }
-#define glCompileShader ll_vk_glCompileShader
-static inline void ll_vk_glGetShaderiv(GLuint shader, GLenum pname, GLint* params) { if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetShaderiv(shader, pname, params); }); return; } { LLVkGL::HookStat s_(35); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetShaderiv(shader, pname, params); } }
-#define glGetShaderiv ll_vk_glGetShaderiv
-static inline void ll_vk_glGetShaderInfoLog(GLuint shader, GLsizei bufSize, GLsizei* length, GLchar* infoLog) { if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetShaderInfoLog(shader, bufSize, length, infoLog); }); return; } { LLVkGL::HookStat s_(36); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetShaderInfoLog(shader, bufSize, length, infoLog); } }
-#define glGetShaderInfoLog ll_vk_glGetShaderInfoLog
-static inline void ll_vk_glDeleteShader(GLuint shader) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glDeleteShader(shader); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(37); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glDeleteShader(shader); }
-#define glDeleteShader ll_vk_glDeleteShader
-static inline GLboolean ll_vk_glIsShader(GLuint shader) { if (LLVkAsync::gEnabled) { GLboolean o_ = GLboolean(); LLVkAsync::syncCall([&]() { LLVkGL::own_glIsShader(shader, o_); }); return o_; } { LLVkGL::HookStat s_(38); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLboolean o_ = GLboolean(); LLVkGL::own_glIsShader(shader, o_); return o_; } }
-#define glIsShader ll_vk_glIsShader
-static inline GLuint ll_vk_glCreateProgram() { if (LLVkAsync::gEnabled) { GLuint o_ = GLuint(); LLVkAsync::syncCall([&]() { LLVkGL::own_glCreateProgram(o_); }); return o_; } { LLVkGL::HookStat s_(39); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLuint o_ = GLuint(); LLVkGL::own_glCreateProgram(o_); return o_; } }
-#define glCreateProgram ll_vk_glCreateProgram
-static inline void ll_vk_glAttachShader(GLuint program, GLuint shader) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glAttachShader(program, shader); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(40); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glAttachShader(program, shader); }
-#define glAttachShader ll_vk_glAttachShader
-static inline void ll_vk_glDetachShader(GLuint program, GLuint shader) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glDetachShader(program, shader); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(41); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glDetachShader(program, shader); }
-#define glDetachShader ll_vk_glDetachShader
-static inline void ll_vk_glDeleteProgram(GLuint program) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glDeleteProgram(program); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(42); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glDeleteProgram(program); }
-#define glDeleteProgram ll_vk_glDeleteProgram
-static inline GLboolean ll_vk_glIsProgram(GLuint program) { if (LLVkAsync::gEnabled) { GLboolean o_ = GLboolean(); LLVkAsync::syncCall([&]() { LLVkGL::own_glIsProgram(program, o_); }); return o_; } { LLVkGL::HookStat s_(43); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLboolean o_ = GLboolean(); LLVkGL::own_glIsProgram(program, o_); return o_; } }
-#define glIsProgram ll_vk_glIsProgram
-static inline void ll_vk_glBindAttribLocation(GLuint program, GLuint index, const GLchar* name) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glBindAttribLocation(program, index, name); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(44); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glBindAttribLocation(program, index, name); }
-#define glBindAttribLocation ll_vk_glBindAttribLocation
-static inline void ll_vk_glLinkProgram(GLuint program) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glLinkProgram(program); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(45); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glLinkProgram(program); }
-#define glLinkProgram ll_vk_glLinkProgram
-static inline void ll_vk_glValidateProgram(GLuint program) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glValidateProgram(program); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(46); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glValidateProgram(program); }
-#define glValidateProgram ll_vk_glValidateProgram
-static inline void ll_vk_glGetProgramiv(GLuint program, GLenum pname, GLint* params) { if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetProgramiv(program, pname, params); }); return; } { LLVkGL::HookStat s_(47); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetProgramiv(program, pname, params); } }
-#define glGetProgramiv ll_vk_glGetProgramiv
-static inline void ll_vk_glGetProgramInfoLog(GLuint program, GLsizei bufSize, GLsizei* length, GLchar* infoLog) { if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetProgramInfoLog(program, bufSize, length, infoLog); }); return; } { LLVkGL::HookStat s_(48); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetProgramInfoLog(program, bufSize, length, infoLog); } }
-#define glGetProgramInfoLog ll_vk_glGetProgramInfoLog
-static inline void ll_vk_glGetAttachedShaders(GLuint program, GLsizei maxCount, GLsizei* count, GLuint* shaders) { if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetAttachedShaders(program, maxCount, count, shaders); }); return; } { LLVkGL::HookStat s_(49); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetAttachedShaders(program, maxCount, count, shaders); } }
-#define glGetAttachedShaders ll_vk_glGetAttachedShaders
-static inline void ll_vk_glGetActiveUniform(GLuint program, GLuint index, GLsizei bufSize, GLsizei* length, GLint* size, GLenum* type, GLchar* name) { if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetActiveUniform(program, index, bufSize, length, size, type, name); }); return; } { LLVkGL::HookStat s_(50); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetActiveUniform(program, index, bufSize, length, size, type, name); } }
-#define glGetActiveUniform ll_vk_glGetActiveUniform
-static inline void ll_vk_glGetActiveUniformsiv(GLuint program, GLsizei uniformCount, const GLuint* uniformIndices, GLenum pname, GLint* params) { if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetActiveUniformsiv(program, uniformCount, uniformIndices, pname, params); }); return; } { LLVkGL::HookStat s_(51); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetActiveUniformsiv(program, uniformCount, uniformIndices, pname, params); } }
-#define glGetActiveUniformsiv ll_vk_glGetActiveUniformsiv
-static inline GLint ll_vk_glGetUniformLocation(GLuint program, const GLchar* name) { if (LLVkAsync::gEnabled) { GLint o_ = GLint(); LLVkAsync::syncCall([&]() { LLVkGL::own_glGetUniformLocation(program, name, o_); }); return o_; } { LLVkGL::HookStat s_(52); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLint o_ = GLint(); LLVkGL::own_glGetUniformLocation(program, name, o_); return o_; } }
-#define glGetUniformLocation ll_vk_glGetUniformLocation
-static inline GLint ll_vk_glGetAttribLocation(GLuint program, const GLchar* name) { if (LLVkAsync::gEnabled) { GLint o_ = GLint(); LLVkAsync::syncCall([&]() { LLVkGL::own_glGetAttribLocation(program, name, o_); }); return o_; } { LLVkGL::HookStat s_(53); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLint o_ = GLint(); LLVkGL::own_glGetAttribLocation(program, name, o_); return o_; } }
-#define glGetAttribLocation ll_vk_glGetAttribLocation
-static inline GLuint ll_vk_glGetUniformBlockIndex(GLuint program, const GLchar* uniformBlockName) { if (LLVkAsync::gEnabled) { GLuint o_ = GLuint(); LLVkAsync::syncCall([&]() { LLVkGL::own_glGetUniformBlockIndex(program, uniformBlockName, o_); }); return o_; } { LLVkGL::HookStat s_(54); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLuint o_ = GLuint(); LLVkGL::own_glGetUniformBlockIndex(program, uniformBlockName, o_); return o_; } }
-#define glGetUniformBlockIndex ll_vk_glGetUniformBlockIndex
-static inline void ll_vk_glUniformBlockBinding(GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glUniformBlockBinding(program, uniformBlockIndex, uniformBlockBinding); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(55); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glUniformBlockBinding(program, uniformBlockIndex, uniformBlockBinding); }
-#define glUniformBlockBinding ll_vk_glUniformBlockBinding
-static inline void ll_vk_glUseProgram(GLuint program) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glUseProgram(program); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(56); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glUseProgram(program); }
-#define glUseProgram ll_vk_glUseProgram
-static inline void ll_vk_glProgramParameteri(GLuint program, GLenum pname, GLint value) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glProgramParameteri(program, pname, value); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(57); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glProgramParameteri(program, pname, value); }
-#define glProgramParameteri ll_vk_glProgramParameteri
-static inline void ll_vk_glProgramBinary(GLuint program, GLenum binaryFormat, const void* binary, GLsizei length) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glProgramBinary(program, binaryFormat, binary, length); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(58); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glProgramBinary(program, binaryFormat, binary, length); }
-#define glProgramBinary ll_vk_glProgramBinary
-static inline GLsync ll_vk_glFenceSync(GLenum condition, GLbitfield flags) { if (LLVkAsync::gEnabled) { GLsync o_ = GLsync(); LLVkAsync::syncCall([&]() { LLVkGL::own_glFenceSync(condition, flags, o_); }); return o_; } { LLVkGL::HookStat s_(59); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLsync o_ = GLsync(); LLVkGL::own_glFenceSync(condition, flags, o_); return o_; } }
+static inline GLsync ll_vk_glFenceSync(GLenum condition, GLbitfield flags) { if (LLVkAsync::gEnabled) { GLsync o_ = GLsync(); LLVkAsync::syncCall([&]() { LLVkGL::own_glFenceSync(condition, flags, o_); }); return o_; } { LLVkGL::HookStat s_(32); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLsync o_ = GLsync(); LLVkGL::own_glFenceSync(condition, flags, o_); return o_; } }
 #define glFenceSync ll_vk_glFenceSync
-static inline GLenum ll_vk_glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) { if (LLVkAsync::gEnabled) { GLenum o_ = GLenum(); LLVkAsync::syncCall([&]() { LLVkGL::own_glClientWaitSync(sync, flags, timeout, o_); }); return o_; } { LLVkGL::HookStat s_(60); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLenum o_ = GLenum(); LLVkGL::own_glClientWaitSync(sync, flags, timeout, o_); return o_; } }
+static inline GLenum ll_vk_glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) { if (LLVkAsync::gEnabled) { GLenum o_ = GLenum(); LLVkAsync::syncCall([&]() { LLVkGL::own_glClientWaitSync(sync, flags, timeout, o_); }); return o_; } { LLVkGL::HookStat s_(33); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLenum o_ = GLenum(); LLVkGL::own_glClientWaitSync(sync, flags, timeout, o_); return o_; } }
 #define glClientWaitSync ll_vk_glClientWaitSync
-static inline void ll_vk_glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glWaitSync(sync, flags, timeout); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(61); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glWaitSync(sync, flags, timeout); }
+static inline void ll_vk_glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glWaitSync(sync, flags, timeout); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(34); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glWaitSync(sync, flags, timeout); }
 #define glWaitSync ll_vk_glWaitSync
-static inline void ll_vk_glDeleteSync(GLsync sync) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glDeleteSync(sync); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(62); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glDeleteSync(sync); }
+static inline void ll_vk_glDeleteSync(GLsync sync) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glDeleteSync(sync); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(35); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glDeleteSync(sync); }
 #define glDeleteSync ll_vk_glDeleteSync
 static inline GLenum ll_vk_glGetError() { return GLenum(0); }
 #define glGetError ll_vk_glGetError
