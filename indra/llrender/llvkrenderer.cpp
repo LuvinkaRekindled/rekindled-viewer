@@ -575,9 +575,9 @@ void Program::destroy()
 // LL_VK_PHASES: per uniform name, how often it is written and how often the value really changes (classifies uniforms as per pass, per material or per draw)
 struct UniformChangeStat { U64 mWrites = 0, mChanges = 0, mBytes = 0; U32 mSize = 0; };
 static std::unordered_map<std::string, UniformChangeStat> gUniformChangeStats;
-static void note_uniform_write(const LooseUniform& u, bool changed, U32 bytes)
+static void note_uniform_write(const std::string& program, const LooseUniform& u, bool changed, U32 bytes)
 {
-    UniformChangeStat& s = gUniformChangeStats[u.mName];
+    UniformChangeStat& s = gUniformChangeStats[program + "|" + u.mName];
     ++s.mWrites;
     if (changed) { ++s.mChanges; s.mBytes += bytes; }
     s.mSize = std::max<U32>(s.mSize, bytes);
@@ -614,7 +614,7 @@ void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components,
     {
         mDirty = true;      // the viewer re-sends the same values before most draws: only real changes cost an upload
     }
-    if (LLVkMirror::gPhaseTiming) note_uniform_write(u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
+    if (LLVkMirror::gPhaseTiming) note_uniform_write(mName, u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
 }
 
 bool Program::setInts(const std::string& name, const S32* data, U32 components, U32 count)
@@ -657,7 +657,7 @@ void Program::setMatricesAt(size_t uniform_index, const F32* data, U32 columns, 
     {
         mDirty = true;
     }
-    if (LLVkMirror::gPhaseTiming) note_uniform_write(u, changed, count * columns * 16);
+    if (LLVkMirror::gPhaseTiming) note_uniform_write(mName, u, changed, count * columns * 16);
 }
 
 S32 Program::findSampler(const std::string& name) const
@@ -2110,6 +2110,18 @@ std::string Renderer::takeBarrierReport(size_t frames)
             out += buf;
         }
         out += " | all distinct uniforms written: " + std::to_string(gUniformChangeStats.size());
+        {
+            // every name, appended to a file that keeps growing across sessions (the union over the scenes visited: doc/vulkan/uniform-classes.tsv is merged from it)
+            static FILE* all = fopen("D:/claude/run-logs/uniform-stats-all.tsv", "ab");
+            if (all)
+            {
+                for (const auto& kv : gUniformChangeStats)
+                {
+                    fprintf(all, "%s\t%.1f\t%.1f\t%u\t%zu\n", kv.first.c_str(), (double)kv.second.mChanges / f, (double)kv.second.mWrites / f, kv.second.mSize, (size_t)frames);
+                }
+                fflush(all);
+            }
+        }
         gUniformChangeStats.clear();
     }
     mBarrierStats.clear();
