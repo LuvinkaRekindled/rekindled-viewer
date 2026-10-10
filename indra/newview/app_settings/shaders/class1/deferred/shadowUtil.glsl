@@ -97,11 +97,9 @@ float pcfSpotShadow(sampler2DShadow shadowMap, vec4 stc, float bias_scale, vec2 
 // <FS> Ray query sun shadow (LL_VK_RT_SHADOWS): one ray from the surface towards the sun against the frame's scene (llvkrt.cpp), in eye space like everything here.
 // Opaque casters commit their hit at once; alpha masked ones (instance mask 2) hand each candidate triangle to rtAlphaHit, which repeats the test of shadowAlphaPullF.glsl
 // with the texture of the geometry record (set 3 binding 1) read through the frame's bindless table. Rigged avatars are not in the scene yet (PLAN-rt-shadows.md stage C).
-bool rtAlphaHit(inout rayQueryEXT rq, vec2 pos_screen, float lod)
+bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
 {
-    LLRtGeom g = ll_rt_geoms.g[uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false))];
-    uint prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false));
-    vec2 bary = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+    LLRtGeom g = ll_rt_geoms.g[record];
     vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
     LLRtIndices ib = LLRtIndices(g.indices);
     uint ix[3];
@@ -162,7 +160,8 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     {
         if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
         {
-            if (rtAlphaHit(rq, pos_screen, lod))
+            uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
+            if (rtAlphaHit(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), pos_screen, lod))
             {
                 rayQueryConfirmIntersectionEXT(rq);
             }
