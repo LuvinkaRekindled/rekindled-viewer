@@ -48,6 +48,7 @@ namespace LLVkAsync
 {
 
 bool gEnabled = false;
+bool gTexOneCopy = false;   // C4: opt-in (LL_VK_TEXONECOPY=1), the measured gain was nil
 static int gMode = 1;
 
 namespace
@@ -168,6 +169,13 @@ inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
                                   "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
+
+// C4: texture upload costs on the main thread, and what was handed over without a copy
+std::atomic<unsigned long long> gTexMainCalls{ 0 }, gTexMainTicks{ 0 }, gTexHandedCalls{ 0 }, gTexHandedBytes{ 0 }, gTexCopiedBytes{ 0 }, gHoldWaits{ 0 }, gHoldWaitTicks{ 0 };
+std::atomic<unsigned long long> gTexWorkerCalls{ 0 }, gTexWorkerConvertUs{ 0 }, gTexWorkerFillUs{ 0 }, gTexWorkerTotalUs{ 0 };
+thread_local PixelHold tlsHoldData = {};
+thread_local bool tlsHoldSet = false;
+
 double ticks_to_ms(long long t) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)t * 1000.0 / (double)f.QuadPart; }
 long long now_ticks() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 void note_gap(std::vector<float>& gaps, long long& last)
@@ -871,6 +879,54 @@ void syncCall(const std::function<void()>& fn)
     }
 }
 
+void setPixelHold(const PixelHold* hold)
+{
+    if (hold && gEnabled && gTexOneCopy && isMainThread())
+    {
+        tlsHoldData = *hold;
+        tlsHoldSet = true;
+    }
+    else
+    {
+        tlsHoldSet = false;
+    }
+}
+
+void waitForPixelHolds()
+{
+    LARGE_INTEGER t0, t1;
+    QueryPerformanceCounter(&t0);
+    syncCall([]() {});
+    QueryPerformanceCounter(&t1);
+    gHoldWaits.fetch_add(1, std::memory_order_relaxed);
+    gHoldWaitTicks.fetch_add((unsigned long long)(t1.QuadPart - t0.QuadPart), std::memory_order_relaxed);
+}
+
+void noteTexWorker(unsigned long long convert_us, unsigned long long fill_us, unsigned long long total_us, unsigned calls)
+{
+    gTexWorkerCalls.fetch_add(calls, std::memory_order_relaxed);
+    gTexWorkerConvertUs.fetch_add(convert_us, std::memory_order_relaxed);
+    gTexWorkerFillUs.fetch_add(fill_us, std::memory_order_relaxed);
+    gTexWorkerTotalUs.fetch_add(total_us, std::memory_order_relaxed);
+}
+
+std::string texUploadReport(size_t frames)
+{
+    LARGE_INTEGER qf;
+    QueryPerformanceFrequency(&qf);
+    const double f = (double)std::max<size_t>(1, frames);
+    const double ms_per_tick = 1000.0 / (double)qf.QuadPart;
+    const unsigned long long calls = gTexMainCalls.exchange(0), ticks = gTexMainTicks.exchange(0), handed = gTexHandedCalls.exchange(0), handed_bytes = gTexHandedBytes.exchange(0),
+                             copied = gTexCopiedBytes.exchange(0), waits = gHoldWaits.exchange(0), wait_ticks = gHoldWaitTicks.exchange(0);
+    const unsigned long long wcalls = gTexWorkerCalls.exchange(0), wconv = gTexWorkerConvertUs.exchange(0), wfill = gTexWorkerFillUs.exchange(0), wtotal = gTexWorkerTotalUs.exchange(0);
+    char buf[600];
+    snprintf(buf, sizeof(buf), "one-copy path %s | main thread: %.1f upload calls/frame take %.3f ms/frame; %.1f/frame handed over without a copy (%.0f KB/frame), %.0f KB/frame copied into the queue; "
+             "%llu waits for held pixels (%.2f ms in total) | worker: %.1f uploads/frame: convert into a vector %.3f ms/frame, fill staging %.3f ms/frame, the whole upload call %.3f ms/frame",
+             gTexOneCopy ? "on" : "off", (double)calls / f, (double)ticks * ms_per_tick / f, (double)handed / f, (double)handed_bytes / f / 1024.0, (double)copied / f / 1024.0,
+             waits, (double)wait_ticks * ms_per_tick, (double)wcalls / f, (double)wconv / 1000.0 / f, (double)wfill / 1000.0 / f, (double)wtotal / 1000.0 / f);
+    return buf;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // frame boundaries
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -1269,8 +1325,27 @@ struct TexArgs
     GLint mX, mY, mZ;
     GLenum mFormat, mType;
     GLint mBorder; GLsizei mImageSize;
-    U64 mOffset;                // the pixels pointer when the data comes from a bound pixel unpack buffer
-    U32 mMode;                  // 0 no data, 1 data follows, 2 offset into the unpack buffer
+    U64 mOffset;                // the pixels pointer when the data comes from a bound pixel unpack buffer (mode 2) or from a held image (mode 3)
+    U32 mMode;                  // 0 no data, 1 data follows, 2 offset into the unpack buffer, 3 pixels in a held image (no copy)
+    const void* mOwner;         // mode 3: what keeps the pixels alive; the worker calls mUnref on it after reading them
+    void (*mUnref)(const void*);
+};
+
+struct TexMainLap
+{
+    LARGE_INTEGER mT0;
+    bool mMain;
+    TexMainLap() : mMain(isMainThread()) { if (mMain) QueryPerformanceCounter(&mT0); }
+    ~TexMainLap()
+    {
+        if (mMain)
+        {
+            LARGE_INTEGER t1;
+            QueryPerformanceCounter(&t1);
+            gTexMainTicks.fetch_add((unsigned long long)(t1.QuadPart - mT0.QuadPart), std::memory_order_relaxed);
+            gTexMainCalls.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
 };
 
 void push_tex(unsigned short op, TexArgs& a, const void* pixels, size_t bytes)
@@ -1286,9 +1361,23 @@ void push_tex(unsigned short op, TexArgs& a, const void* pixels, size_t bytes)
         a.mOffset = (U64)(uintptr_t)pixels;
         push(op, &a, sizeof(a));
     }
+    else if (gTexOneCopy && tlsHoldSet && bytes && isMainThread() && (const U8*)pixels >= (const U8*)tlsHoldData.mBase
+             && (const U8*)pixels + bytes <= (const U8*)tlsHoldData.mBase + tlsHoldData.mSize)
+    {
+        // the caller keeps these pixels alive and unchanged: queue a reference, the worker reads them where they are
+        a.mMode = 3;
+        a.mOffset = (U64)(uintptr_t)pixels;
+        a.mOwner = tlsHoldData.mOwner;
+        a.mUnref = tlsHoldData.mUnref;
+        tlsHoldData.mRef(tlsHoldData.mOwner);
+        gTexHandedCalls.fetch_add(1, std::memory_order_relaxed);
+        gTexHandedBytes.fetch_add(bytes, std::memory_order_relaxed);
+        push(op, &a, sizeof(a));
+    }
     else
     {
         a.mMode = 1;
+        gTexCopiedBytes.fetch_add(bytes, std::memory_order_relaxed);
         pushData(op, &a, sizeof(a), pixels, bytes);
     }
 }
@@ -1297,27 +1386,32 @@ void push_tex(unsigned short op, TexArgs& a, const void* pixels, size_t bytes)
 
 void enq_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
 {
-    TexArgs a = { target, level, internalformat, width, height, 1, 0, 0, 0, format, type, border, 0, 0, 0 };
+    TexMainLap lap;
+    TexArgs a = { target, level, internalformat, width, height, 1, 0, 0, 0, format, type, border, 0, 0, 0, nullptr, nullptr };
     push_tex(OP_glTexImage2D, a, pixels, pixel_bytes(format, type, width, height, 1, tlsPixelStore));
 }
 void enq_glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels)
 {
-    TexArgs a = { target, level, internalformat, width, height, depth, 0, 0, 0, format, type, border, 0, 0, 0 };
+    TexMainLap lap;
+    TexArgs a = { target, level, internalformat, width, height, depth, 0, 0, 0, format, type, border, 0, 0, 0, nullptr, nullptr };
     push_tex(OP_glTexImage3D, a, pixels, pixel_bytes(format, type, width, height, depth, tlsPixelStore));
 }
 void enq_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
 {
-    TexArgs a = { target, level, 0, width, height, 1, xoffset, yoffset, 0, format, type, 0, 0, 0, 0 };
+    TexMainLap lap;
+    TexArgs a = { target, level, 0, width, height, 1, xoffset, yoffset, 0, format, type, 0, 0, 0, 0, nullptr, nullptr };
     push_tex(OP_glTexSubImage2D, a, pixels, pixel_bytes(format, type, width, height, 1, tlsPixelStore));
 }
 void enq_glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void* pixels)
 {
-    TexArgs a = { target, level, 0, width, height, depth, xoffset, yoffset, zoffset, format, type, 0, 0, 0, 0 };
+    TexMainLap lap;
+    TexArgs a = { target, level, 0, width, height, depth, xoffset, yoffset, zoffset, format, type, 0, 0, 0, 0, nullptr, nullptr };
     push_tex(OP_glTexSubImage3D, a, pixels, pixel_bytes(format, type, width, height, depth, tlsPixelStore));
 }
 void enq_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
 {
-    TexArgs a = { target, level, (GLint)internalformat, width, height, 1, 0, 0, 0, 0, 0, border, imageSize, 0, 0 };
+    TexMainLap lap;
+    TexArgs a = { target, level, (GLint)internalformat, width, height, 1, 0, 0, 0, 0, 0, border, imageSize, 0, 0, nullptr, nullptr };
     push_tex(OP_glCompressedTexImage2D, a, data, (size_t)std::max(imageSize, 0));
 }
 
@@ -1481,10 +1575,11 @@ void run_tex(unsigned short op, Reader& r, U8 flags)
         blob = read_blob(r, flags);
         pixels = blob.mData;
     }
-    else if (a.mMode == 2)
+    else if (a.mMode == 2 || a.mMode == 3)
     {
         pixels = (const void*)(uintptr_t)a.mOffset;
     }
+    struct Release { const TexArgs& mA; ~Release() { if (mA.mMode == 3 && mA.mUnref) mA.mUnref(mA.mOwner); } } release = { a };      // the held pixels are let go once the upload has read them
     switch (op)
     {
     case OP_glTexImage2D: LLVkGL::on_glTexImage2D(a.mTarget, a.mLevel, a.mInternalFormat, a.mWidth, a.mHeight, a.mBorder, a.mFormat, a.mType, pixels); break;
@@ -2231,6 +2326,7 @@ bool start()
     }
     gMainTid = __readgsdword(0x48);
     { const char* ty = getenv("LL_VK_TYPED"); gTyped = !(ty && ty[0] == '0'); }
+    { const char* t1 = getenv("LL_VK_TEXONECOPY"); gTexOneCopy = t1 && t1[0] == '1'; }
     { const char* co = getenv("LL_VK_COALESCE"); gCoalesce = !(co && co[0] == '0'); gFoldElement = gCoalesce && !(co && co[0] == '1'); }
     if (!gRing)
     {

@@ -68,6 +68,20 @@ namespace LLVkAsync
     void gpuZone(const char* name, bool begin);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
+    // ---- texture pixels without a copy (C4) ----
+    // LL_VK_TEXONECOPY=1 turns the one-copy upload path on (off by default: no measured gain, see PLAN-cleanup-before-rt.md C4)
+    extern bool gTexOneCopy;
+    // Decoded pixels the caller keeps alive and unchanged: while a hold is set on the main thread, a texture upload whose pixels lie inside [mBase, mBase+mSize)
+    // is queued as a reference (mRef is called now, mUnref by the worker once the pixels are in the staging buffer) instead of a copy of the bytes.
+    struct PixelHold { const void* mBase; size_t mSize; const void* mOwner; void (*mRef)(const void*); void (*mUnref)(const void*); };
+    void setPixelHold(const PixelHold* hold);       // null clears; only the main producer thread uses it, other threads copy as before
+    // waits until the worker has played everything queued so far (what an image does before it is changed while a hold on it may still be queued)
+    void waitForPixelHolds();
+    // main-thread cost of the texture uploads and what was handed over, and the worker's side, since the last call (frames: the period's frame count)
+    std::string texUploadReport(size_t frames);
+    // the worker adds what it spent on uploads (microseconds): converting into a vector (old path), filling the staging buffer, the whole call; calls: uploads counted by this call
+    void noteTexWorker(unsigned long long convert_us, unsigned long long fill_us, unsigned long long total_us, unsigned calls);
+
     // commands that are not GL calls (the GL calls are numbered by the generated enum in llvkgl.h)
     enum Cmd : unsigned short
     {

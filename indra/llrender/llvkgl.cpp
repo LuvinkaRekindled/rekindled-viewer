@@ -251,6 +251,41 @@ U16 float_to_half(F32 v)
     return (U16)(sign | (exp << 10) | (mant >> 13));
 }
 
+// 8-bit RGB / RGBA client rows into an RGBA8 or RGBA8 sRGB texture: nothing to decide per texel
+bool is_rgba8_fast(const FormatMap& fm, GLenum format, GLenum type)
+{
+    const U32 comps = format_components(format);
+    return !fm.mDepth && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R8G8B8A8_SRGB) && type == GL_UNSIGNED_BYTE
+        && ((comps == 4 && format != 0x80E1) || (comps == 3 && format != 0x80E0));
+}
+
+// writes the texels front to back and never reads them back, so 'out' may be write-combined staging memory
+void convert_rgba8_rows(const U8* fbase, U32 width, U32 height, U32 depth, U32 comps, U32 src_row_bytes, U8* out)
+{
+    for (U32 z = 0; z < depth; ++z)
+    {
+        for (U32 y = 0; y < height; ++y)
+        {
+            const U8* row = fbase + ((size_t)z * height + y) * src_row_bytes;
+            U8* dst = out + (((size_t)z * height + y) * width) * 4;
+            if (comps == 4)
+            {
+                memcpy(dst, row, (size_t)width * 4);
+            }
+            else
+            {
+                for (U32 x = 0; x < width; ++x)
+                {
+                    dst[x * 4 + 0] = row[x * 3 + 0];
+                    dst[x * 4 + 1] = row[x * 3 + 1];
+                    dst[x * 4 + 2] = row[x * 3 + 2];
+                    dst[x * 4 + 3] = 255;
+                }
+            }
+        }
+    }
+}
+
 // Converts GL client pixel data into the tightly packed texels of the Vulkan format. Returns false if the
 // combination is not handled.
 bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void* src, U32 width, U32 height, U32 depth,
@@ -269,33 +304,10 @@ bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void*
     const U32 dst_texel = fm.mTexelBytes;
 
     // the common case, an 8-bit RGBA or RGB image into an RGBA8 texture: rows are copied or widened without any per-texel decisions
-    if (!fm.mDepth && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R8G8B8A8_SRGB) && type == GL_UNSIGNED_BYTE
-        && ((comps == 4 && format != 0x80E1) || (comps == 3 && format != 0x80E0)))
+    if (is_rgba8_fast(fm, format, type))
     {
         out.resize((size_t)width * height * depth * 4);
-        const U8* fbase = (const U8*)src;
-        for (U32 z = 0; z < depth; ++z)
-        {
-            for (U32 y = 0; y < height; ++y)
-            {
-                const U8* row = fbase + ((size_t)z * height + y) * src_row_bytes;
-                U8* dst = out.data() + (((size_t)z * height + y) * width) * 4;
-                if (comps == 4)
-                {
-                    memcpy(dst, row, (size_t)width * 4);
-                }
-                else
-                {
-                    for (U32 x = 0; x < width; ++x)
-                    {
-                        dst[x * 4 + 0] = row[x * 3 + 0];
-                        dst[x * 4 + 1] = row[x * 3 + 1];
-                        dst[x * 4 + 2] = row[x * 3 + 2];
-                        dst[x * 4 + 3] = 255;
-                    }
-                }
-            }
-        }
+        convert_rgba8_rows((const U8*)src, width, height, depth, comps, src_row_bytes, out.data());
         return true;
     }
 
@@ -849,6 +861,23 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
     {
         return;     // nothing to upload (allocation only)
     }
+    if (LLVkAsync::gTexOneCopy && LLVkAsync::gEnabled && d == 1 && t.mTarget != GL_TEXTURE_2D_ARRAY && t.mTarget != GL_TEXTURE_CUBE_MAP_ARRAY && t.mTarget != GL_TEXTURE_3D
+        && is_rgba8_fast(t.mFormat, format, type) && w && h)
+    {
+        // C4: the common upload (8-bit RGB or RGBA into an RGBA8 texture) is read from where the viewer left it and written straight into the staging buffer: one copy
+        struct Fast { const U8* mSrc; U32 mW, mH, mComps, mRowBytes; } fast;
+        const U32 alignment = sCtx.mUnpackAlignment > 0 ? (U32)sCtx.mUnpackAlignment : 4, row_length = (U32)sCtx.mUnpackRowLength;
+        fast.mSrc = (const U8*)src;
+        fast.mW = w;
+        fast.mH = h;
+        fast.mComps = format_components(format);
+        fast.mRowBytes = ((row_length ? row_length : w) * fast.mComps + alignment - 1) / alignment * alignment;
+        U32 layer = 0;
+        if (target >= 0x8515 && target <= 0x851A) layer = target - 0x8515;       // cube face
+        Renderer::instance().uploadTextureDirect(t.mImage, (U32)level, layer, (U32)x, (U32)y, w, h, 1, (VkDeviceSize)w * h * 4,
+                                                 [](void* p, U8* dst, VkDeviceSize) { const Fast* f = (const Fast*)p; convert_rgba8_rows(f->mSrc, f->mW, f->mH, 1, f->mComps, f->mRowBytes, dst); }, &fast);
+        return;
+    }
     static thread_local std::vector<U8> texels;       // reused between uploads of one thread
     {
         // A large conversion takes milliseconds; the viewer's texture thread and its main thread both feed this lock, so a big image
@@ -863,7 +892,9 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
         {
             depth_held = LLVkGL::gMutex.releaseAll();
         }
+        const auto t_conv = std::chrono::steady_clock::now();
         const bool converted = convert_pixels(fm, format, type, src, w, h, d, alignment, row_length, texels);
+        LLVkAsync::noteTexWorker((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_conv).count(), 0, 0, 0);
         if (unlocked)
         {
             LLVkGL::gMutex.reacquire(depth_held);
@@ -3606,6 +3637,7 @@ void after_frame()
                                              << ", result reads sent to the worker " << (double)q[6] / frames << LL_ENDL;
                     }
                     const Renderer::UploadStats up = Renderer::instance().takeUploadStats();
+                    LL_INFOS("VkPhases") << "texture upload costs per frame: " << LLVkAsync::texUploadReport((size_t)frames) << LL_ENDL;
                     LL_INFOS("VkPhases") << "texture uploads per frame: " << (double)up.mCount / frames << " uploads, " << (double)up.mBytes / frames / 1024.0 << " KB, "
                                          << (double)up.mPassSplits / frames << " ended a render pass in progress" << LL_ENDL;
                     {

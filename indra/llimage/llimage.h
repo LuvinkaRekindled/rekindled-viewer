@@ -33,6 +33,8 @@
 #include "lltrace.h"
 #include "lluuid.h"
 
+#include <atomic>
+
 constexpr S32 MIN_IMAGE_MIP =  2; // 4x4, only used for expand/contract power of 2
 constexpr S32 MAX_IMAGE_MIP = 12; // 4096x4096
 
@@ -178,14 +180,44 @@ private:
 private:
     mutable LLSharedMutex mDataMutex;
 
+    // <FS> native-vk: the render thread reads the pixels of an image that was handed over to it (see LLImageGL::PixelHandover) after the call that
+    // handed them over has returned. Whatever takes the exclusive data lock (every call that reallocates, resizes or writes the pixels) first waits
+    // until the render thread has let go. Shared locks (readers) do not wait.
+    mutable std::atomic<S32> mPixelHolds{ 0 };
+    static void (*sPixelHoldWait)(const LLImageBase*);
+
 public:
+    void addPixelHold() const { mPixelHolds.fetch_add(1, std::memory_order_acq_rel); }
+    void releasePixelHold() const { mPixelHolds.fetch_sub(1, std::memory_order_acq_rel); }
+    static void setPixelHoldWait(void (*fn)(const LLImageBase*)) { sPixelHoldWait = fn; }
+    void waitForPixelHolds() const
+    {
+        if (mPixelHolds.load(std::memory_order_acquire) > 0 && sPixelHoldWait)
+        {
+            sPixelHoldWait(this);
+        }
+    }
+
     template<bool SHARED>
     class DataLock : public LLSharedMutexLockTemplate<SHARED>
     {
     public:
         DataLock(const LLImageBase* image)
-        : LLSharedMutexLockTemplate<SHARED>(image ? &image->mDataMutex : nullptr)
+        : LLSharedMutexLockTemplate<SHARED>(prepare(image))
         {
+        }
+    private:
+        static LLSharedMutex* prepare(const LLImageBase* image)
+        {
+            if (!image)
+            {
+                return nullptr;
+            }
+            if (!SHARED)
+            {
+                image->waitForPixelHolds();
+            }
+            return &image->mDataMutex;
         }
     };
 public:

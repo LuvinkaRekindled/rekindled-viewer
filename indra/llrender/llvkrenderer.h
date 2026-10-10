@@ -352,6 +352,9 @@ public:
     // starting at 'layer' with 'depth' slices). Recorded into the current frame, or submitted immediately when
     // no frame is active. The image ends in SHADER_READ_ONLY_OPTIMAL.
     bool uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, const void* data, VkDeviceSize bytes);
+    // the same, but the caller writes the tightly packed texels straight into the staging memory (one copy from the source to the GPU-visible buffer):
+    // fill(ctx, dst) must write exactly the region's bytes, sequentially (the memory is write-combined: no reads from dst)
+    bool uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, VkDeviceSize bytes, void (*fill)(void* ctx, U8* dst, VkDeviceSize bytes), void* ctx);
     // fills mips 1..n from mip 0 with linear blits (the image must have been created with mips > 1)
     bool generateMipmaps(Image& image);
 
