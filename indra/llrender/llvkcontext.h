@@ -85,6 +85,13 @@ struct Capabilities
     U32 mMaxVaryingVectors = 15;
     U32 mRecommendedMaxVertices = 0, mRecommendedMaxIndices = 0;    // GL_MAX_ELEMENTS_*: Vulkan has no such hint (only a hard index limit), see pickDevice
     F32 mMemoryBandwidthGBps = 0.f; // measured device-local copy throughput (read + write), 0 = not measured
+    // C7: what the device offers beyond the one queue the renderer uses (family 0, queue 0). Nothing is created on these yet; see PLAN-cleanup-before-rt.md, C7.
+    bool mTimelineSemaphore = false;        // Vulkan 1.2 core feature, on the device already (every supported feature of the chain is enabled)
+    U32 mGraphicsQueues = 0;                // queues in the renderer's family (graphics + compute + transfer)
+    S32 mComputeFamily = -1;                // a family that can compute but not draw: the async compute engine (-1 = none)
+    U32 mComputeQueues = 0;
+    S32 mTransferFamily = -1;               // a family that can only copy (-1 = none)
+    U32 mTransferQueues = 0;
 
     // C6: ray tracing. mExt* = the device offers the extension, the rest = the device says the feature works. Nothing here is switched on at device creation
     // unless ray tracing was asked for (LL_VK_RT=1): mEnabled tells whether the extensions and features are on the device that was created.
