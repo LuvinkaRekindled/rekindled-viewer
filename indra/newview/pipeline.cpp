@@ -11729,6 +11729,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 e.mFirstIndex = params->mOffset;
                 e.mIndexCount = params->mCount;
                 e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                e.mVertexFirst = params->mStart;
+                e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
+                e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
+                e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
                 if (params->mModelMatrix)
                 {
                     auto it = matrix_numbers.find(params->mModelMatrix);
@@ -11747,6 +11751,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             LLVkMirror::ShadowPacketsHeader header;
             header.mKind = 2;
+            header.mPass = shadow_pass_index();
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
             header.mPaletteFloats = (U32)palettes.size();
@@ -11863,6 +11868,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                         continue;       // the skin is not loaded yet: not drawn, as before
                     }
                     e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                    e.mVertexFirst = params->mStart;
+                    e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
+                    e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
+                    e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
                 }
                 if (params->mModelMatrix)
                 {

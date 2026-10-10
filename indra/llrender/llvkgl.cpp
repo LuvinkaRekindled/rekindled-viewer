@@ -3364,6 +3364,109 @@ static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf&
     Rt::noteCaster(c);
 }
 
+// a rigged caster draw for the ray scene: skinned on the GPU into a copy of its vertices (Rt::noteSkinned)
+static void note_rt_skinned(U32 pass, const LLVkMirror::ShadowSkinEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
+{
+    Rt::SkinCaster c;
+    c.mAvatarId = e.mAvatarId;
+    c.mSkinId = e.mSkinId;
+    c.mVb = e.mVertexBuffer;
+    c.mIb = e.mIndexBuffer;
+    c.mFirst = e.mFirstIndex;
+    c.mCount = e.mIndexCount;
+    c.mVertexFirst = e.mVertexFirst;
+    c.mVertexCount = e.mVertexCount;
+    c.mWeightOffset = e.mWeightOffset;
+    c.mJoints = e.mJoints;
+    c.mPalette = palette_address;
+    c.mModel = model;
+    c.mPass = pass;
+    buffer_info_of(vbuf, c.mVi);
+    buffer_info_of(ibuf, c.mIi);
+    Rt::noteSkinned(c);
+}
+
+// the same for a rigged alpha masked draw: the structure of its avatar gets a geometry with the alpha test
+static void note_rt_skinned_alpha(U32 pass, const LLVkMirror::ShadowAlphaEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
+{
+    Rt::AlphaInfo alpha;
+    alpha.mFlags = e.mFlags & 31u;
+    alpha.mTexcoordOffset = e.mTexcoordOffset;
+    alpha.mColorOffset = e.mColorOffset;
+    memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
+    alpha.mCutoff = e.mCutoff;
+    Rt::SkinCaster c;
+    c.mAvatarId = e.mAvatarId;
+    c.mSkinId = e.mSkinId;
+    c.mVb = e.mVertexBuffer;
+    c.mIb = e.mIndexBuffer;
+    c.mFirst = e.mFirstIndex;
+    c.mCount = e.mIndexCount;
+    c.mVertexFirst = e.mVertexFirst;
+    c.mVertexCount = e.mVertexCount;
+    c.mWeightOffset = e.mWeightOffset;
+    c.mJoints = e.mJoints;
+    c.mPalette = palette_address;
+    c.mModel = model;
+    c.mPass = pass;
+    c.mKind = 1;
+    c.mAlpha = &alpha;
+    buffer_info_of(vbuf, c.mVi);
+    buffer_info_of(ibuf, c.mIi);
+    Rt::noteSkinned(c);
+}
+
+// the worker side of a record of the body meshes of avatars (kind 4): nothing is drawn, the ray scene skins them on the GPU
+static void on_body_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!Rt::active() || h.mEntries == 0)
+    {
+        return;
+    }
+    const LLVkMirror::ShadowBodyEntry* entries = (const LLVkMirror::ShadowBodyEntry*)blob;
+    const F32* palette_source = (const F32*)(blob + sizeof(LLVkMirror::ShadowBodyEntry) * h.mEntries);
+    Renderer& r = Renderer::instance();
+    Renderer::ScratchAlloc palettes;
+    if (h.mPaletteFloats)
+    {
+        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);       // the memory of the frame: the scene call of this frame reads it
+        if (!palettes.mPtr || !palettes.mAddress)
+        {
+            return;
+        }
+        memcpy(palettes.mPtr, palette_source, 4 * (size_t)h.mPaletteFloats);
+    }
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const LLVkMirror::ShadowBodyEntry& e = entries[i];
+        Buf* vb = packet_buffer(e.mVertexBuffer);
+        Buf* ib = packet_buffer(e.mIndexBuffer);
+        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+        {
+            continue;
+        }
+        Rt::SkinCaster c;
+        c.mAvatarId = e.mAvatarId;
+        c.mSkinId = e.mMeshId;
+        c.mVb = e.mVertexBuffer;
+        c.mIb = e.mIndexBuffer;
+        c.mFirst = e.mFirstIndex;
+        c.mCount = e.mIndexCount;
+        c.mVertexFirst = e.mVertexFirst;
+        c.mVertexCount = e.mVertexCount;
+        c.mWeightOffset = e.mWeightOffset;
+        c.mJoints = e.mJoints;
+        c.mMode = e.mMode;
+        memcpy(c.mAvatarPos, e.mAvatarPos, sizeof(c.mAvatarPos));
+        c.mPalette = e.mMode == 1 ? (U64)palettes.mAddress : 0;
+        c.mModel = e.mMode == 2 ? e.mModel : nullptr;
+        c.mPass = h.mPass;
+        buffer_info_of(*vb, c.mVi);
+        buffer_info_of(*ib, c.mIi);
+        Rt::noteSkinned(c);
+    }
+}
+
 // the worker side of a record of alpha masked casters (shadowAlphaPullV.glsl / shadowAlphaPullF.glsl): the entries also name their textures
 static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -3460,6 +3563,10 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
             g.mWeights[1] = (U32)(wa >> 32);
             g.mPalette[0] = (U32)pal;
             g.mPalette[1] = (U32)(pal >> 32);
+            if (Rt::active())
+            {
+                note_rt_skinned_alpha(h.mPass, e, *vb, *ib, pal, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+            }
             g.mCount = e.mJoints;       // the shader's joint count (the draw's index count is in the indirect command)
         }
         U32 slot[4] = {};
@@ -3740,6 +3847,10 @@ static void on_shadow_skin_packets(const LLVkMirror::ShadowPacketsHeader& h, con
         g.mFirst = e.mFirstIndex;
         g.mJoints = e.mJoints;
         g.mModel = e.mMatrix;
+        if (Rt::active())
+        {
+            note_rt_skinned(h.mPass, e, *vb, *ib, pal, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+        }
         counts[i] = e.mIndexCount;
         vb->mLastUseFrame = frame_now;
         ib->mLastUseFrame = frame_now;
@@ -3812,6 +3923,11 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     if (h.mKind == 3)
     {
         on_geometry_packets(h, blob);
+        return;
+    }
+    if (h.mKind == 4)
+    {
+        on_body_packets(h, blob);
         return;
     }
     struct PacketGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };

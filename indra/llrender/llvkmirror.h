@@ -107,7 +107,8 @@ namespace LLVkMirror
     };
     struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId; };      // mMatrixId: stable identity of the model matrix (ray tracing instances)
     // kind 2: a rigged draw: the offset of its weight4 array in the vertex buffer, and its palette (offset in floats from the start of the palettes, joint count)
-    struct ShadowSkinEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints; };
+    // (ray tracing: the vertex range the draw uses, the avatar it belongs to and the identity of its skin, both stable from frame to frame)
+    struct ShadowSkinEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints, mVertexFirst, mVertexCount, mAvatarId, mSkinId; };
     // kind 1: the same, with what the alpha test needs
     enum ShadowAlphaFlags : U32
     {
@@ -128,7 +129,11 @@ namespace LLVkMirror
         U32 mTextures[4];           // GL names of the textures the vertices' texture index picks from, 0 = none (white)
         F32 mCutoff;                // alpha below this is discarded
         U32 mWeightOffset, mPaletteOffset, mJoints;     // rigged draws, as ShadowSkinEntry
+        U32 mVertexFirst, mVertexCount, mAvatarId, mSkinId;     // rigged draws, as ShadowSkinEntry (ray tracing)
     };
+    // kind 4 (ray tracing only, nothing is drawn): one mesh of an avatar's own body, as the old path draws it. mMode 1: skinned by the palette (15 joints, 12 floats each, after
+    // the entries; one weight float per vertex at mWeightOffset picks joint i and i + 1), 2: rigid under mModel (column-major, the joint's world matrix)
+    struct ShadowBodyEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mVertexFirst, mVertexCount, mAvatarId, mMeshId, mWeightOffset, mJoints, mMode; F32 mAvatarPos[3]; F32 mModel[16]; };
     // kind 3: a draw of a deferred geometry pass (the colour passes). The matrices after the entries are 44 floats each: modelview, modelview * projection, and the normal
     // matrix as three vec4 columns (the viewer computes them, once per model matrix). Matrix 0 is the view alone.
     enum GeoFlags : U32
