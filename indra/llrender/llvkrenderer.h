@@ -110,6 +110,7 @@ private:
     std::vector<U8> mSamplerClass;      // 0 2D, 1 cube, 2 cube array, 3 2D array, 4 3D, 5 multisample (index into the GL per-unit texture bindings)
     std::vector<U8> mShadow;
     bool mBindless = false;             // <FS> samplers are table slots written into mShadow (see ProgramInfo::mBindless)
+    bool mUsesRt = false;               // <FS> traces rays against the frame's scene: the draw binds set 3 (ProgramInfo::mUsesRt)
     std::vector<U8> mSamplerTable;      // per sampler: the bindless table it reads (0 2D, 1 cube, 2 cube array, 3 2D shadow)
     std::vector<U32> mSlotOffset;       // per sampler: byte offset of its slot in mShadow
     bool mDirty = true;
@@ -461,6 +462,8 @@ private:
     U32 mBindlessCapacity = 0;
     U32 mBindlessEpoch = 1;
     bool mBindlessBound = false;
+    VkDescriptorSetLayout mSet3Layout = VK_NULL_HANDLE;     // <FS> set 3: the ray tracing scene (an acceleration structure), only when ray query shadows are on (llvkrt.cpp)
+    VkDescriptorSet mRtBoundSet = VK_NULL_HANDLE;           // what set 3 holds in the command buffer now
     VkDescriptorPool mUboPool[Context::FRAMES_IN_FLIGHT] = {};
     std::map<std::array<U64, 8>, VkDescriptorSet> mUboSets[Context::FRAMES_IN_FLIGHT];
     VkBuffer mUbo[4] = {};

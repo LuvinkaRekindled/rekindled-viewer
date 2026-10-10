@@ -118,7 +118,11 @@ struct FeatureChain
 // ray tracing is switched on at device creation only on request (LL_VK_RT=1): until the renderer uses it, nothing about the device should differ from a build without it
 bool rayTracingRequested()
 {
-    static const bool on = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_RT", b, sizeof(b)) > 0 && b[0] != '0'; }();
+    // LL_VK_RT_SHADOWS (ray query sun shadows) needs the device features as well
+    static const bool on = []() {
+        char b[8] = {}, c[8] = {};
+        return (GetEnvironmentVariableA("LL_VK_RT", b, sizeof(b)) > 0 && b[0] != '0') || (GetEnvironmentVariableA("LL_VK_RT_SHADOWS", c, sizeof(c)) > 0 && c[0] != '0');
+    }();
     return on;
 }
 
@@ -1179,11 +1183,12 @@ VkDeviceSize arena_block_bytes()
 
 Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kind, bool dedicated)
 {
-    const bool shared = kind == ArenaKind::Shared, host = kind == ArenaKind::Host;
+    const bool shared = kind == ArenaKind::Shared, host = kind == ArenaKind::Host, accel = kind == ArenaKind::Accel;
     ArenaBlock* block = new ArenaBlock();
-    block->mSize = dedicated ? (min_size + 255) / 256 * 256 : std::max(arena_block_bytes(), min_size);
+    block->mSize = dedicated ? (min_size + 255) / 256 * 256 : std::max(accel ? std::min<VkDeviceSize>(arena_block_bytes(), 128ull << 20) : arena_block_bytes(), min_size);
     block->mShared = shared;
     block->mHost = host;
+    block->mAccel = accel;
     block->mDedicated = dedicated;
 
     VkBufferCreateInfo bi = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
@@ -1197,6 +1202,10 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
     if (mCaps.mRt.mEnabled)
     {
         bi.usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+        if (accel)
+        {
+            bi.usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
+        }
     }
     const uint32_t families[2] = { mQueueFamily, (uint32_t)std::max<S32>(mCaps.mComputeFamily, 0) };
     if (shared && mCaps.mComputeFamily >= 0)
@@ -1256,7 +1265,7 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
         vmaGetAllocationMemoryProperties(mAllocator, block->mAllocation, &flags);
         LL_INFOS("Vulkan") << "buffer arena: host-written block lives in " << ((flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ? "device-local (video) memory" : "host memory") << LL_ENDL;
     }
-    LL_INFOS("Vulkan") << "buffer arena: new " << (dedicated ? "dedicated " : "") << (shared ? "shared " : "") << (host ? "host-written " : "") << "block of " << (block->mSize >> 20) << " MB ("
+    LL_INFOS("Vulkan") << "buffer arena: new " << (dedicated ? "dedicated " : "") << (shared ? "shared " : "") << (host ? "host-written " : "") << (accel ? "acceleration structure " : "") << "block of " << (block->mSize >> 20) << " MB ("
                        << (U32)std::count_if(mArenaBlocks.begin(), mArenaBlocks.end(), [](ArenaBlock* b) { return b != nullptr; }) << " blocks now)" << LL_ENDL;
     return block;
 }
@@ -1285,7 +1294,7 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
     {
         kind = ArenaKind::Device;
     }
-    const bool shared = kind == ArenaKind::Shared, host = kind == ArenaKind::Host;
+    const bool shared = kind == ArenaKind::Shared, host = kind == ArenaKind::Host, accel = kind == ArenaKind::Accel;
     std::lock_guard<std::mutex> lock(mArenaMutex);
     const bool dedicated = size > arena_block_bytes() / 4;
     auto place = [&](ArenaBlock* b) {
@@ -1315,7 +1324,7 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
     {
         for (ArenaBlock* b : mArenaBlocks)
         {
-            if (b && !b->mDedicated && b->mShared == shared && b->mHost == host && place(b))
+            if (b && !b->mDedicated && b->mShared == shared && b->mHost == host && b->mAccel == accel && place(b))
             {
                 return true;
             }
@@ -1342,7 +1351,7 @@ void Context::arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc)
     bool release = block->mDedicated;
     for (ArenaBlock* b : mArenaBlocks)
     {
-        if (b && b != block && !b->mDedicated && b->mShared == block->mShared && b->mHost == block->mHost && b->mAllocs == 0)
+        if (b && b != block && !b->mDedicated && b->mShared == block->mShared && b->mHost == block->mHost && b->mAccel == block->mAccel && b->mAllocs == 0)
         {
             release = true;
             break;
@@ -1382,7 +1391,7 @@ ArenaStats Context::arenaStats()
     s.mBlockBytes = s.mUsedBytes = s.mLargestFree = 0;
     for (ArenaBlock* b : mArenaBlocks)
     {
-        if (!b) continue;
+        if (!b || b->mAccel) continue;      // acceleration structure storage has its own report (Rt)
         VmaDetailedStatistics st = {};
         vmaCalculateVirtualBlockStatistics(b->mVirtual, &st);
         if (b->mHost)

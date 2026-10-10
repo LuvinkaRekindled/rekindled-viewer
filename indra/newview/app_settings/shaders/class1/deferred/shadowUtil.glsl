@@ -93,7 +93,34 @@ float pcfSpotShadow(sampler2DShadow shadowMap, vec4 stc, float bias_scale, vec2 
 #endif
 }
 
+#if defined(SUN_SHADOW) && defined(LL_RT_SHADOWS)
+// <FS> Ray query sun shadow (LL_VK_RT_SHADOWS): one ray from the surface towards the sun against the frame's scene (llvkrt.cpp), in eye space like everything here.
+// Opaque casters only so far (alpha masked casters and rigged avatars are not in the scene yet: PLAN-rt-shadows.md stages B and C).
+float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir)
+{
+    if (dot(norm, light_dir) <= 0.0)
+    {
+        return 0.0;                         // facing away from the light
+    }
+    if (-pos.z > shadow_clip.w)
+    {
+        return 1.0;                         // beyond the shadow range: lit, as with the cascades
+    }
+    vec3 origin = pos + norm * (0.015 + 0.0006 * -pos.z);
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01, origin, 0.005, light_dir, 2000.0);
+    while (rayQueryProceedEXT(rq))
+    {
+    }
+    return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
+}
+#endif
+
+#if defined(SUN_SHADOW) && defined(LL_RT_SHADOWS)
+float sampleCascadeShadow(vec3 pos, vec3 norm, vec2 pos_screen)
+#else
 float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen)
+#endif
 {
 #if defined(SUN_SHADOW)
     float shadow = 0.0f;
@@ -193,6 +220,24 @@ float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen)
     return 1.0;
 #endif
 }
+
+#if defined(SUN_SHADOW) && defined(LL_RT_SHADOWS)
+float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen)
+{
+    vec3 light_dir = normalize((sun_up_factor == 1) ? sun_dir : moon_dir);
+    float rt = rtSunShadow(pos, norm, light_dir);
+#if LL_RT_SHADOWS == 1
+    return rt;
+#elif LL_RT_SHADOWS == 2
+    // split screen: the cascades on the left half, the rays on the right
+    return (pos_screen.x * 2.0 < screen_res.x) ? sampleCascadeShadow(pos, norm, pos_screen) : rt;
+#else
+    // disagreement map: white where the two do not agree about lit and shadowed, black elsewhere
+    float cascade = sampleCascadeShadow(pos, norm, pos_screen);
+    return abs(cascade - rt) > 0.5 ? 1.0 : 0.0;
+#endif
+}
+#endif
 
 float sampleSpotShadow(vec3 pos, vec3 norm, int index, vec2 pos_screen)
 {

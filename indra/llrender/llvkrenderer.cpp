@@ -15,6 +15,7 @@
 #include "llvkasync.h"
 #include "llvkdlss.h"
 #include "llvkmirror.h"
+#include "llvkrt.h"
 
 #if defined(LL_VULKAN)
 
@@ -376,6 +377,7 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         mUniformIndex[mInfo.mUniforms[i].mName] = i;
     }
     mBindless = info.mBindless;
+    mUsesRt = info.mUsesRt;
     for (const SamplerInfo& s : mInfo.mSamplers)
     {
         if (mBindless)
@@ -1028,9 +1030,28 @@ bool Renderer::createLayouts()
         }
     }
 
-    VkDescriptorSetLayout layouts[3] = { mSet0Layout, mSet1Layout, mSet2Layout };
+    // <FS> set 3: the ray tracing scene (ray query shadows, LL_VK_RT_SHADOWS); without it the layout is what it was
+    {
+        const Capabilities& caps = ctx.getCaps();
+        if (mSet2Layout && Rt::shadowMode() && caps.mRt.mEnabled && caps.mRt.mUsable)
+        {
+            VkDescriptorSetLayoutBinding b3 = {};
+            b3.binding = 0;
+            b3.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+            b3.descriptorCount = 1;
+            b3.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            VkDescriptorSetLayoutCreateInfo l3 = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+            l3.bindingCount = 1;
+            l3.pBindings = &b3;
+            if (!vk_ok(vkCreateDescriptorSetLayout(dev, &l3, nullptr, &mSet3Layout), "set 3 layout"))
+            {
+                mSet3Layout = VK_NULL_HANDLE;
+            }
+        }
+    }
+    VkDescriptorSetLayout layouts[4] = { mSet0Layout, mSet1Layout, mSet2Layout, mSet3Layout };
     VkPipelineLayoutCreateInfo pl = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-    pl.setLayoutCount = mSet2Layout ? 3 : 2;
+    pl.setLayoutCount = mSet3Layout ? 4 : mSet2Layout ? 3 : 2;
     pl.pSetLayouts = layouts;
     return vk_ok(vkCreatePipelineLayout(dev, &pl, nullptr, &mPipelineLayout), "pipeline layout");
 }
@@ -1108,6 +1129,12 @@ bool Renderer::init()
             w[b].pBufferInfo = b == 0 ? &ring : &dummy;
         }
         vkUpdateDescriptorSets(dev, 5, w, 0, nullptr);
+    }
+
+    // <FS> the ray tracing scene (an empty structure per frame slot until the viewer asks for one)
+    if (mSet3Layout && !Rt::init(mSet3Layout))
+    {
+        LL_WARNS("Vulkan") << "ray query shadows: the scene could not be made; programs that trace will have no set 3" << LL_ENDL;
     }
 
     // descriptor sets for the combinations of named uniform blocks bound during a frame (reset every frame)
@@ -1503,6 +1530,7 @@ void Renderer::shutdown()
     if (dev != VK_NULL_HANDLE)
     {
         ctx.waitIdle();
+        Rt::shutdown();
         tracyShutdown();
         destroyQueryPools();
         for (auto& kv : mSamplers) vkDestroySampler(dev, kv.second, nullptr);
@@ -1520,6 +1548,7 @@ void Renderer::shutdown()
         if (mSet1Layout) vkDestroyDescriptorSetLayout(dev, mSet1Layout, nullptr);
         if (mBindlessPool) vkDestroyDescriptorPool(dev, mBindlessPool, nullptr);
         if (mSet2Layout) vkDestroyDescriptorSetLayout(dev, mSet2Layout, nullptr);
+        if (mSet3Layout) vkDestroyDescriptorSetLayout(dev, mSet3Layout, nullptr);
         for (Buffer& b : mRing)
         {
             if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
@@ -1554,6 +1583,8 @@ void Renderer::shutdown()
     mSet0Layout = VK_NULL_HANDLE;
     mSet1Layout = VK_NULL_HANDLE;
     mSet2Layout = VK_NULL_HANDLE;
+    mSet3Layout = VK_NULL_HANDLE;
+    mRtBoundSet = VK_NULL_HANDLE;
     mBindlessPool = VK_NULL_HANDLE;
     for (BindlessTable& t : mBindlessTbl) { t.mMap.clear(); t.mInfos.clear(); t.mWritten = 0; }
     mProgram = nullptr;
@@ -1685,6 +1716,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
         for (BindlessTable& t : mBindlessTbl) { t.mMap.clear(); t.mInfos.clear(); t.mWritten = 0; }
         mBindlessBound = false;
     }
+    mRtBoundSet = VK_NULL_HANDLE;
     mAppliedDynamicOffset = 0xFFFFFFFF;
     mAppliedSet0 = VK_NULL_HANDLE;
     mAppliedVertexInputValid = false;
@@ -2668,6 +2700,16 @@ void Renderer::applyState()
         }
         bindlessFlush();
     }
+    // 5c. <FS> programs that trace rays: the frame slot's ray tracing scene is set 3
+    if (mProgram->mUsesRt && mSet3Layout)
+    {
+        const VkDescriptorSet rt_set = Rt::descriptorSet(mSlot);
+        if (rt_set != VK_NULL_HANDLE && rt_set != mRtBoundSet)
+        {
+            vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 3, 1, &rt_set, 0, nullptr);
+            mRtBoundSet = rt_set;
+        }
+    }
     // 6. loose uniforms: copy this program's shadow into the ring when it changed (or on its first use this frame)
     if (mProgram->mDirty || mProgram->mRingFrame != Context::instance().getFrameNumber())
     {
@@ -2991,6 +3033,7 @@ bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>
     mVertexInputDirty = true;
     mAppliedVertexInputValid = false;
     mSet0Bound = false;
+    mRtBoundSet = VK_NULL_HANDLE;
     mAppliedDynamicOffset = 0xFFFFFFFF;
     mAppliedSet0 = VK_NULL_HANDLE;
     for (S32& v : mAppliedViewport) v = -1;

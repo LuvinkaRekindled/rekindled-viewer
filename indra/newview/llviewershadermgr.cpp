@@ -834,6 +834,12 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     {
         attribs["SUN_SHADOW"] = "1";
 
+        // <FS> ray query sun shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md): 1 replace the cascades, 2 split screen, 3 disagreement map
+        if (const U32 rt_mode = LLVkMirror::rtShadowMode())
+        {
+            attribs["LL_RT_SHADOWS"] = std::to_string(rt_mode);
+        }
+
         if (shadow_detail >= 2)
         {
             attribs["SPOT_SHADOW"] = "1";

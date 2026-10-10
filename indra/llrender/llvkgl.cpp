@@ -21,6 +21,7 @@
 #include "llvkcontext.h"
 #include "llvkrenderer.h"
 #include "llvkdlss.h"
+#include "llvkrt.h"
 
 #include <chrono>
 #include "llvkgl_hooks.inc"      // generated: storage and names for the per-hook statistics
@@ -3316,6 +3317,20 @@ std::string probe_report(double frames)
 
 } // anonymous namespace
 
+// ray query shadows: a caster draw of a shadow pass, for the scene the lighting traces (llvkrt.cpp)
+static void note_rt_caster(U32 vb, U32 ib, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model)
+{
+    Rt::Caster c;
+    c.mVb = vb;
+    c.mIb = ib;
+    c.mFirst = first;
+    c.mCount = count;
+    c.mMatrixId = matrix_id;
+    c.mKind = kind;
+    c.mModel = model;
+    Rt::noteCaster(c);
+}
+
 // the worker side of a record of alpha masked casters (shadowAlphaPullV.glsl / shadowAlphaPullF.glsl): the entries also name their textures
 static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -3368,6 +3383,10 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
+        }
+        if (Rt::active() && !(e.mFlags & LLVkMirror::ALPHA_RIGGED))
+        {
+            note_rt_caster(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         g.mPositions[0] = (U32)pa;
@@ -3825,6 +3844,10 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
         }
+        if (Rt::active())
+        {
+            note_rt_caster(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+        }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         g.mPositions[0] = (U32)pa;
         g.mPositions[1] = (U32)(pa >> 32);
@@ -3887,6 +3910,17 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     }
     sDraws += h.mEntries;
     sDrawsTotal += h.mEntries;
+}
+
+// <FS> Ray query shadows: the viewer asks for the frame's scene before the lighting that samples the sun shadow (LLVkMirror::rtScene)
+void on_rt_scene(const LLVkMirror::RtSceneArgs& args)
+{
+    if (!Rt::active())
+    {
+        return;
+    }
+    flush_buffer_updates();         // the structures are built over the vertex data: writes that are still pending are recorded first
+    Rt::buildScene(args.mView);
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -4215,6 +4249,11 @@ void after_frame()
                         {
                             LL_INFOS("VkPhases") << probe_report(std::max(1.0, (double)frames)) << LL_ENDL;
                             sProbeStats = ProbeStats();
+                        }
+                        if (Rt::active())
+                        {
+                            LL_INFOS("VkPhases") << Rt::report(std::max(1.0, (double)frames)) << LL_ENDL;
+                            Rt::resetStats();
                         }
                         const BufTraffic& t = sBufTraffic;
                         LL_INFOS("VkPhases") << "buffer traffic per frame: glBufferData device same size " << (double)t.mSpecDevSame / frames << ", device new allocation "
