@@ -13,6 +13,7 @@
 #include "llvkmirror.h"
 #include "llvkzones.h"
 #include "llvkrenderer.h"
+#include "llvkstate.h"
 
 #include <windows.h>
 #include <synchapi.h>
@@ -168,7 +169,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
 // C4: texture upload costs on the main thread, and what was handed over without a copy
@@ -575,10 +576,60 @@ void sidePush(U16 op, std::vector<U8>&& payload)
 
 } // anonymous namespace
 
+// <FS> F1.1 (dual-write): the state setters that pass through here also write the producer's state context (llvkstate), and a state block record is written
+// before anything that reads draw state (draws, clears, shadow packets) when the context changed since the last one. The old GL-shaped calls stay in the stream;
+// the worker verifies the block against them (LL_VK_STATE_VERIFY=1).
+inline bool isStateOp(U16 op)
+{
+    return op >= OP_glEnable && op <= OP_glScissor;      // the generated numbering keeps the state calls together (glEnable ... glScissor)
+}
+
+void stateNote(U16 op, const void* args)
+{
+    switch (op)
+    {
+    case OP_glEnable: LLVkState::setEnable(((const A_glEnable*)args)->cap, true); break;
+    case OP_glDisable: LLVkState::setEnable(((const A_glDisable*)args)->cap, false); break;
+    case OP_glBlendFunc: { const A_glBlendFunc* a = (const A_glBlendFunc*)args; LLVkState::setBlendFunc(a->sfactor, a->dfactor, a->sfactor, a->dfactor); break; }
+    case OP_glBlendFuncSeparate: { const A_glBlendFuncSeparate* a = (const A_glBlendFuncSeparate*)args; LLVkState::setBlendFunc(a->sfactorRGB, a->dfactorRGB, a->sfactorAlpha, a->dfactorAlpha); break; }
+    case OP_glDepthFunc: LLVkState::setDepthFunc(((const A_glDepthFunc*)args)->func); break;
+    case OP_glDepthMask: LLVkState::setDepthMask(((const A_glDepthMask*)args)->flag != 0); break;
+    case OP_glColorMask: { const A_glColorMask* a = (const A_glColorMask*)args; LLVkState::setColorMask(a->red != 0, a->green != 0, a->blue != 0, a->alpha != 0); break; }
+    case OP_glCullFace: LLVkState::setCullFace(((const A_glCullFace*)args)->mode); break;
+    case OP_glPolygonOffset: { const A_glPolygonOffset* a = (const A_glPolygonOffset*)args; LLVkState::setPolygonOffset(a->factor, a->units); break; }
+    case OP_glPolygonMode: LLVkState::setPolygonMode(((const A_glPolygonMode*)args)->mode); break;
+    case OP_glLineWidth: LLVkState::setLineWidth(((const A_glLineWidth*)args)->width); break;
+    case OP_glStencilFunc: { const A_glStencilFunc* a = (const A_glStencilFunc*)args; LLVkState::setStencilFunc(a->func, a->ref, a->mask); break; }
+    case OP_glStencilOp: { const A_glStencilOp* a = (const A_glStencilOp*)args; LLVkState::setStencilOp(a->sfail, a->dpfail, a->dppass); break; }
+    case OP_glStencilMask: LLVkState::setStencilMask(((const A_glStencilMask*)args)->mask); break;
+    case OP_glViewport: { const A_glViewport* a = (const A_glViewport*)args; LLVkState::setViewport(a->x, a->y, a->width, a->height); break; }
+    case OP_glScissor: { const A_glScissor* a = (const A_glScissor*)args; LLVkState::setScissor(a->x, a->y, a->width, a->height); break; }
+    default: break;         // glPointSize: nothing reads it
+    }
+}
+
+// main thread only
+inline void stateEmit()
+{
+    LLVkState::Block b;
+    if (LLVkState::takeChanged(b))
+    {
+        rawPush(CMD_STATE, &b, sizeof(b));
+    }
+}
+
 void push(unsigned short op, const void* args, unsigned size)
 {
     if (isMainThread())
     {
+        if (isStateOp(op))
+        {
+            stateNote(op, args);
+        }
+        else if (op == OP_glClear || op == OP_glDrawArrays || op == OP_glDrawRangeElements)
+        {
+            stateEmit();
+        }
         const bool timed = gOpStats && ((++gMainPushOps & 15) == 0);
         const unsigned long long t0 = timed ? __rdtsc() : 0;
         if (gOpStats)
@@ -594,6 +645,10 @@ void push(unsigned short op, const void* args, unsigned size)
             gMainPushTicks += (__rdtsc() - t0) * 16;
         }
         return;
+    }
+    if (isStateOp(op))
+    {
+        LLVkState::noteOffThread();
     }
     std::vector<U8> payload((const U8*)args, (const U8*)args + size);
     sidePush(op, std::move(payload));
@@ -651,6 +706,10 @@ void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh)
 {
     MainLap lap;
     coFlushAll(opStatSlot(CMD_TARGET_STATE));
+    if (isMainThread())
+    {
+        LLVkState::setViewport(vx, vy, vw, vh);
+    }
     const S32 a[6] = { (S32)fbo, draw_buffers, vx, vy, vw, vh };
     rawPush(CMD_TARGET_STATE, a, sizeof(a));
 }
@@ -717,6 +776,7 @@ void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const 
 {
     MainLap lap;
     coFlushRun();
+    stateEmit();
     if (!gPendMask && gPendUni.empty())
     {
         const A_glDrawRangeElements a = { mode, start, end, count, type, indices };
@@ -748,6 +808,7 @@ void drawArrays(U32 mode, S32 first, S32 count)
 {
     MainLap lap;
     coFlushRun();
+    stateEmit();
     if (!gPendMask && gPendUni.empty())
     {
         const A_glDrawArrays a = { mode, first, count };
@@ -812,6 +873,10 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         if (gOpStats)
         {
             ++gMainOpCalls[opStatSlot(op)];
+        }
+        if (op == CMD_SHADOW_PACKETS)
+        {
+            stateEmit();
         }
         if (texIndependent(op))
         {
@@ -1943,6 +2008,13 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         }
         break;
     }
+    case CMD_STATE:
+    {
+        LLVkState::Block b;
+        memcpy(&b, payload, sizeof(b));
+        LLVkState::receive(b);
+        break;
+    }
     case CMD_FBO_ATTACH:
     {
         const U32* a = (const U32*)payload;
@@ -2365,6 +2437,7 @@ bool start()
     gBeginsEnqueued.store(0);
     gBeginsDone.store(0);
     LLVkGL::register_main_context();
+    LLVkGL::seed_state_context();
     LLVkMirror::gRendererTidCount = 0;
     LLVkMirror::gAsyncEpoch = LLVkMirror::gAsyncEpoch + 1;
     if (gMode == 2)
