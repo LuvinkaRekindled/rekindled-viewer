@@ -59,6 +59,8 @@
 
 #include <unordered_set>
 
+extern bool gCubeSnapshot;
+
 #if !LL_DARWIN && !LL_LINUX
 extern PFNGLWEIGHTPOINTERARBPROC glWeightPointerARB;
 extern PFNGLWEIGHTFVARBPROC glWeightfvARB;
@@ -318,7 +320,9 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
 
     U32 triangle_count = 0;
 
-    if (LLDrawPoolAvatar::sShadowPass == LLDrawPoolAvatar::SHADOW_PASS_AVATAR_OPAQUE && LLVkMirror::rtShadowMode())
+    // the ray scene wants the avatars every frame: named by the shadow passes (which the far sun cascades run only every few frames) and by the main view
+    if (LLVkMirror::rtShadowMode()
+        && (LLDrawPoolAvatar::sShadowPass == LLDrawPoolAvatar::SHADOW_PASS_AVATAR_OPAQUE || (LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)))
     {
         noteRayShadow();
     }

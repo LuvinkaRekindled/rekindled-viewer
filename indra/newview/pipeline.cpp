@@ -10429,6 +10429,211 @@ LLVector4 pow4fsrgb(LLVector4 v, F32 f)
     return v;
 }
 
+// <FS> Ray tracing: the rigged draws (attachments with their own skin) of the MAIN view named to the ray scene every frame. The shadow passes name them too, but the far sun cascades
+// run only every few frames while the camera is still, and the ray scene does not need the shadow maps: an avatar covered only by those cascades would show an old pose. Static
+// draws are not handled here (they do not move), nothing is drawn by these records. Same entries as render_skin_packets / render_alpha_packets build in renderShadow.
+static U32 rt_matrix_id(const LLMatrix4* m);
+
+static void rt_name_rigged_main_view()
+{
+    static const U32 types[] = {
+        LLRenderPass::PASS_SIMPLE, LLRenderPass::PASS_FULLBRIGHT, LLRenderPass::PASS_SHINY, LLRenderPass::PASS_BUMP, LLRenderPass::PASS_FULLBRIGHT_SHINY, LLRenderPass::PASS_MATERIAL,
+        LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE, LLRenderPass::PASS_SPECMAP, LLRenderPass::PASS_SPECMAP_EMISSIVE, LLRenderPass::PASS_NORMMAP, LLRenderPass::PASS_NORMMAP_EMISSIVE,
+        LLRenderPass::PASS_NORMSPEC, LLRenderPass::PASS_NORMSPEC_EMISSIVE
+    };
+    {
+        std::vector<LLVkMirror::ShadowSkinEntry> entries;
+        std::vector<F32> matrices(16, 0.f);
+        matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;
+        std::unordered_map<const void*, U32> matrix_numbers;
+        std::vector<F32> palettes;
+        std::unordered_map<const F32*, U32> palette_offsets;
+        for (U32 type : types)
+        {
+            auto* begin = gPipeline.beginRenderMap(type + 1);       // the rigged variant of a pass type is the next number
+            auto* end = gPipeline.endRenderMap(type + 1);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                if (!params->mCount || !params->mAvatar || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+                    || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || params->mSkinInfo.isNull())
+                {
+                    continue;
+                }
+                LLVkMirror::ShadowSkinEntry e = {};
+                if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                {
+                    continue;
+                }
+                e.mVertexBuffer = vb->getGLBuffer();
+                e.mIndexBuffer = vb->getGLIndices();
+                e.mFirstIndex = params->mOffset;
+                e.mIndexCount = params->mCount;
+                e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                e.mVertexFirst = params->mStart;
+                e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
+                e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
+                e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                if (params->mModelMatrix)
+                {
+                    auto it = matrix_numbers.find(params->mModelMatrix);
+                    if (it == matrix_numbers.end())
+                    {
+                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                        matrices.insert(matrices.end(), m, m + 16);
+                    }
+                    e.mMatrix = it->second;
+                }
+                entries.push_back(e);
+            }
+        }
+        if (!entries.empty())
+        {
+            LLVkMirror::ShadowPacketsHeader header;
+            header.mKind = 6;
+            header.mEntries = (U32)entries.size();
+            header.mMatrices = (U32)(matrices.size() / 16);
+            header.mPaletteFloats = (U32)palettes.size();
+            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
+            memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
+            LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+        }
+    }
+    // the rigged alpha casters
+    {
+        enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_MATERIAL };
+        struct Source { U32 type; int kind; };
+        static const Source sources[] = {
+            { LLRenderPass::PASS_ALPHA_MASK, KIND_MASK },
+            { LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, KIND_FULLBRIGHT },
+            { LLRenderPass::PASS_ALPHA, KIND_ALPHA },
+            { LLRenderPass::PASS_NORMSPEC_MASK, KIND_MATERIAL },
+            { LLRenderPass::PASS_MATERIAL_ALPHA_MASK, KIND_MATERIAL },
+            { LLRenderPass::PASS_SPECMAP_MASK, KIND_MATERIAL },
+            { LLRenderPass::PASS_NORMMAP_MASK, KIND_MATERIAL },
+        };
+        std::vector<LLVkMirror::ShadowAlphaEntry> entries;
+        std::vector<F32> matrices(16, 0.f);
+        matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;
+        std::unordered_map<const void*, U32> matrix_numbers;
+        std::unordered_map<const LLViewerTexture*, U32> texture_names;
+        std::vector<F32> palettes;
+        std::unordered_map<const F32*, U32> palette_offsets;
+        auto texture_name = [&](LLViewerTexture* tex) -> U32
+        {
+            auto found = texture_names.find(tex);
+            if (found != texture_names.end())
+            {
+                return found->second;
+            }
+            const U32 name = gGL.getTexUnit(0)->prepareFast(tex);
+            texture_names.emplace(tex, name);
+            return name;
+        };
+        for (const Source& source : sources)
+        {
+            const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
+            const U32 type = source.kind != KIND_ALPHA ? source.type + 1 : source.type;       // PASS_ALPHA holds both
+            auto* begin = gPipeline.beginRenderMap(type);
+            auto* end = gPipeline.endRenderMap(type);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || !shadow_alpha_packet_ok(*params, batch, true))
+                {
+                    continue;
+                }
+                const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                LLVkMirror::ShadowAlphaEntry e = {};
+                e.mVertexBuffer = vb->getGLBuffer();
+                e.mIndexBuffer = vb->getGLIndices();
+                e.mFirstIndex = params->mOffset;
+                e.mIndexCount = params->mCount;
+                e.mMatrixId = rt_matrix_id(params->mModelMatrix);
+                if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                {
+                    continue;
+                }
+                e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                e.mVertexFirst = params->mStart;
+                e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
+                e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
+                e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                if (params->mModelMatrix)
+                {
+                    auto it = matrix_numbers.find(params->mModelMatrix);
+                    if (it == matrix_numbers.end())
+                    {
+                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                        matrices.insert(matrices.end(), m, m + 16);
+                    }
+                    e.mMatrix = it->second;
+                }
+                U32 flags = LLVkMirror::ALPHA_RIGGED;
+                if (source.kind == KIND_FULLBRIGHT)
+                {
+                    flags |= LLVkMirror::ALPHA_FULLBRIGHT;
+                }
+                if (source.kind == KIND_MATERIAL)
+                {
+                    flags |= LLVkMirror::ALPHA_TREE;
+                }
+                if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+                {
+                    flags |= LLVkMirror::ALPHA_HAS_TEXCOORD;
+                    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+                }
+                if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+                {
+                    flags |= LLVkMirror::ALPHA_HAS_COLOR;
+                    e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+                }
+                if (batch && params->mTextureList.size() > 1)
+                {
+                    for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
+                    {
+                        if (params->mTextureList[t].notNull())
+                        {
+                            e.mTextures[t] = texture_name(params->mTextureList[t].get());
+                        }
+                    }
+                }
+                else
+                {
+                    flags |= LLVkMirror::ALPHA_NO_INDEX;
+                    if (params->mTexture.notNull())
+                    {
+                        e.mTextures[0] = texture_name(params->mTexture.get());
+                    }
+                }
+                e.mFlags = flags;
+                e.mCutoff = source.kind == KIND_ALPHA ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
+                entries.push_back(e);
+            }
+        }
+        if (!entries.empty())
+        {
+            LLVkMirror::ShadowPacketsHeader header;
+            header.mKind = 7;
+            header.mEntries = (U32)entries.size();
+            header.mMatrices = (U32)(matrices.size() / 16);
+            header.mPaletteFloats = (U32)palettes.size();
+            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
+            memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
+            LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+        }
+    }
+}
+
 void LLPipeline::renderDeferredLighting()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -10474,6 +10679,10 @@ void LLPipeline::renderDeferredLighting()
         // <FS> ray query shadows: the casters the shadow passes named become this frame's scene (acceleration structures), traced by the lighting below
         if (RenderShadowDetail > 0 && LLVkMirror::rtShadowMode())
         {
+            if (!gCubeSnapshot)
+            {
+                rt_name_rigged_main_view();         // the avatars of the main view, whatever the shadow passes did this frame
+            }
             LLVkMirror::RtSceneArgs scene;
             memcpy(scene.mView, glm::value_ptr(mat), sizeof(scene.mView));
             LLVkMirror::rtScene(scene);
