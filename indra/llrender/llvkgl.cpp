@@ -487,9 +487,12 @@ struct Buf
     // Device path with the buffer arena (LL_VK_ARENA, default on): mVk is a view of mArena's range (mBuffer = the block's buffer, mAddress = the range's address,
     // mSize = the data size; it owns nothing) and draws bind mVk.mBuffer at mArena.mOffset. Without the arena mArena is empty and mVk is a buffer of its own.
     ArenaRef mArena;
-    // mEpoch changes when the name gets other storage (new range, deleted); mVersion on every write. Acceleration structures key on (name, epoch) and refit on version.
+    // mEpoch changes when the name gets other contents altogether (re-specified with another size, deleted, recycled by the vertex buffer pool); mVersion on every write;
+    // mMoves when the same contents were copied to another range (a rename of a host-written range). A built acceleration structure keeps its own copy of the triangles, so it
+    // is keyed on (name, epoch) and refitted on version; the address only matters when something reads the buffer (builds, shaders), and is looked up then.
     U64 mEpoch = 0;
     U64 mVersion = 0;
+    U64 mMoves = 0;
     // The Vulkan buffer lives in write-combined video memory, which is very slow to read from the CPU. This copy in ordinary memory
     // is what a renamed buffer is refilled from when only part of it is rewritten.
     std::vector<U8> mShadow;
@@ -2021,7 +2024,7 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
                 b.mVk.mSize = (VkDeviceSize)b.mSize;
                 b.mVk.mAddress = fresh_range.mAddress;
                 b.mVk.mMapped = fresh_range.mMapped;
-                ++b.mEpoch;
+                ++b.mMoves;
                 b.mLastUseFrame = ~0ull;
                 ++sRenameStats.mCount;
                 sRenameStats.mBytes += keep;
@@ -2579,6 +2582,7 @@ bool getBufferInfo(unsigned int name, BufferInfo& out)
     out.mSize = b.mSize;
     out.mEpoch = b.mEpoch;
     out.mVersion = b.mVersion;
+    out.mMoves = b.mMoves;
     out.mDevice = b.mDevicePath;
     return b.mVk.valid();
 }
