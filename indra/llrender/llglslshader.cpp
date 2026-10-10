@@ -39,6 +39,7 @@
 #include "llvkshader.h"
 #include "llvkrenderer.h"
 #include "llvkasync.h"
+#include "llvkbuf.h"
 #include "llvkmirror.h"
 #endif
 
@@ -1446,29 +1447,14 @@ void LLGLSLShader::bind()
         {
             sCurBoundShaderPtr->readProfileQuery();
         }
-#if defined(LL_VULKAN)
-        if (LLVkAsync::mainProducer())
-        {
-            // <FS> N4: one record for the buffer unbinds, the program bind and the attribute array switches
-            LLVertexBuffer::forgetBoundBuffers();
-            sCurBoundShader = mProgramObject;
-            sCurBoundShaderPtr = this;
-            U32 enable = 0, disable = 0;
-            LLVertexBuffer::arrayMaskChange(mAttributeMask, enable, disable);
-            LLVkAsync::shaderBind(mVkProgram, enable, disable);
-            placeProfileQuery();
-        }
-        else
-#endif
-        {
-            LLVertexBuffer::unbind();
-            glUseProgram(mProgramObject);
-            sCurBoundShader = mProgramObject;
-            sCurBoundShaderPtr = this;
-            mirrorBind();
-            placeProfileQuery();
-            LLVertexBuffer::setupClientArrays(mAttributeMask);
-        }
+        // <FS> one record for the buffer unbinds, the program bind and the attribute array switches
+        LLVertexBuffer::forgetBoundBuffers();
+        sCurBoundShader = mProgramObject;
+        sCurBoundShaderPtr = this;
+        U32 enable = 0, disable = 0;
+        LLVertexBuffer::arrayMaskChange(mAttributeMask, enable, disable);
+        LLVkAsync::shaderBind(mVkProgram, enable, disable);
+        placeProfileQuery();
     }
 
     if (mUniformsDirty)
@@ -2467,7 +2453,7 @@ void LLGLSLShader::vertexAttrib4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GL
 {
     if (mAttribute[index] > 0)
     {
-        glVertexAttrib4f(mAttribute[index], x, y, z, w);
+        LLVkBuf::setConstantAttribute(mAttribute[index], x, y, z, w);
     }
 }
 
@@ -2475,7 +2461,7 @@ void LLGLSLShader::vertexAttrib4fv(U32 index, GLfloat* v)
 {
     if (mAttribute[index] > 0)
     {
-        glVertexAttrib4fv(mAttribute[index], v);
+        LLVkBuf::setConstantAttribute(mAttribute[index], v[0], v[1], v[2], v[3]);
     }
 }
 

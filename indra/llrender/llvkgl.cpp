@@ -516,11 +516,13 @@ struct VaoAttrib
     U64 mOffset = 0;
 };
 
-struct Vao
+struct VertexInputState
 {
     VaoAttrib mAttrib[16];
+    GLuint mArrayBuffer = 0;        // the buffer the next attribute pointers refer to
     GLuint mElementBuffer = 0;
 };
+VertexInputState sVin;
 
 struct FboAttachment
 {
@@ -542,9 +544,7 @@ struct Fbo
 struct PerContext
 {
     GLuint mDrawFbo = 0, mReadFbo = 0;
-    GLuint mArrayBuffer = 0;
     GLuint mPixelUnpackBuffer = 0;
-    GLuint mVao = 0;
     GLint mUnpackAlignment = 4;
     GLint mUnpackRowLength = 0;
     GLint mPackAlignment = 4;
@@ -565,7 +565,6 @@ struct GLState
     std::unordered_map<GLuint, Tex> mTextures;
     std::unordered_map<GLuint, Fbo> mFbos;
     std::unordered_map<GLuint, Buf> mBuffers;
-    std::unordered_map<GLuint, Vao> mVaos;
     F32 mConstAttrib[16][4];
 
     // draw state: the render state lives in LLVkState (F1.1); only the clear colour is still kept here
@@ -696,11 +695,6 @@ int sDbgMode = 0;                       // debug shader mode from D:\claude\vk-d
 std::string sDbgFilter;                 // programs whose name contains this get the mode
 std::string sDbgSampler;                // sampler shown by mode 2
 bool sHasDepth = false;             // does the current render target have a depth attachment
-
-Vao& current_vao()
-{
-    return sGL.mVaos[sCtx.mVao];
-}
 
 U32 target_class(GLenum target)
 {
@@ -1491,7 +1485,7 @@ U32 attrib_type_bytes(GLenum type)
 // Builds the vertex input for the current VAO and the program's attributes.
 bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vector<GLuint>& used_buffers)
 {
-    Vao& vao = current_vao();
+    const VertexInputState& vao = sVin;
     const ProgramInfo& info = program.getInfo();
     // bindings made so far: buffer, stride, byte offset of the binding inside the buffer
     struct BindingKey { GLuint mBuffer; GLsizei mStride; U64 mBase; U32 mBinding; };
@@ -1509,7 +1503,7 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
         {
             continue;
         }
-        VaoAttrib& at = vao.mAttrib[loc];
+        const VaoAttrib& at = vao.mAttrib[loc];
         auto bit = sGL.mBuffers.end();
         bool from_buffer = false;
         if (at.mEnabled && at.mBuffer)
@@ -2538,42 +2532,16 @@ void on_glDeleteBuffers(GLsizei n, const GLuint* buffers)
             sGL.mBuffers.erase(it);
             ++sPacketBufferGeneration;
         }
-        if (sCtx.mArrayBuffer == buffers[i]) sCtx.mArrayBuffer = 0;
+        if (sVin.mArrayBuffer == buffers[i]) sVin.mArrayBuffer = 0;
+        if (sVin.mElementBuffer == buffers[i]) sVin.mElementBuffer = 0;
         if (sCtx.mPixelUnpackBuffer == buffers[i]) sCtx.mPixelUnpackBuffer = 0;
         if (sCtx.mPixelPackBuffer == buffers[i]) sCtx.mPixelPackBuffer = 0;
     }
 }
 
-void on_glBindBuffer(GLenum target, GLuint buffer)
-{
-    if (buffer)
-    {
-        sGL.mBuffers[buffer];
-    }
-    if (target == GL_ARRAY_BUFFER) sCtx.mArrayBuffer = buffer;
-    else if (target == GL_ELEMENT_ARRAY_BUFFER) current_vao().mElementBuffer = buffer;
-    else if (target == GL_PIXEL_UNPACK_BUFFER) sCtx.mPixelUnpackBuffer = buffer;
-    else if (target == 0x88EB) sCtx.mPixelPackBuffer = buffer;      // PIXEL_PACK_BUFFER
-}
-
-static GLuint buffer_for_target(GLenum target)
-{
-    if (target == GL_ARRAY_BUFFER) return sCtx.mArrayBuffer;
-    if (target == GL_ELEMENT_ARRAY_BUFFER) return current_vao().mElementBuffer;
-    if (target == GL_PIXEL_UNPACK_BUFFER) return sCtx.mPixelUnpackBuffer;
-    if (target == 0x88EB) return sCtx.mPixelPackBuffer;
-    return 0;
-}
-
 void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data, GLenum usage);
 void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data);
 
-void on_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum usage)
-{
-    on_bufferData(buffer_for_target(target), target, size, data, usage);
-}
-
-// <FS> N1b/N4: the buffer is named by the record, not by what is bound (LLVertexBuffer's typed uploads)
 void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data, GLenum usage)
 {
     auto it = sGL.mBuffers.find(name);
@@ -2707,11 +2675,6 @@ bool takeTopologyChanges(std::vector<unsigned>& names)
     return complete;
 }
 
-void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data)
-{
-    on_bufferSubData(buffer_for_target(target), offset, size, data);
-}
-
 void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data)
 {
     auto it = sGL.mBuffers.find(name);
@@ -2734,69 +2697,62 @@ void uniform_block_bind(unsigned index, unsigned buffer)
     }
 }
 
-void on_glGenVertexArrays(GLsizei n, GLuint* arrays)
+void vertex_input_apply(bool bind_array, unsigned array_buffer, bool bind_elem, unsigned elem_buffer, const LLVkAsync::VertexAttrib* attribs, unsigned count)
 {
-    for (GLsizei i = 0; i < n; ++i)
+    if (bind_array)
     {
-        sGL.mVaos[arrays[i]];
+        sVin.mArrayBuffer = array_buffer;
+        if (array_buffer)
+        {
+            sGL.mBuffers[array_buffer];
+        }
+    }
+    for (unsigned i = 0; i < count; ++i)
+    {
+        const LLVkAsync::VertexAttrib& e = attribs[i];
+        if (e.mIndex >= 16)
+        {
+            continue;
+        }
+        VaoAttrib& a = sVin.mAttrib[e.mIndex];
+        a.mBuffer = sVin.mArrayBuffer;
+        a.mSize = e.mSize;
+        a.mType = e.mType;
+        a.mNormalized = e.mKind == 0 && e.mNormalized != 0;
+        a.mInteger = e.mKind == 1;
+        a.mStride = e.mStride;
+        a.mOffset = (U64)e.mPointer;
+    }
+    if (bind_elem)
+    {
+        sVin.mElementBuffer = elem_buffer;
+        if (elem_buffer)
+        {
+            sGL.mBuffers[elem_buffer];
+        }
     }
 }
 
-void on_glBindVertexArray(GLuint array)
+void shader_bind(void* program, unsigned enable_mask, unsigned disable_mask)
 {
-    sCtx.mVao = array;
-    sGL.mVaos[array];
-}
-
-void on_glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer)
-{
-    if (index >= 16) return;
-    VaoAttrib& a = current_vao().mAttrib[index];
-    a.mBuffer = sCtx.mArrayBuffer;
-    a.mSize = size;
-    a.mType = type;
-    a.mNormalized = normalized != GL_FALSE;
-    a.mInteger = false;
-    a.mStride = stride;
-    a.mOffset = (U64)pointer;
-}
-
-void on_glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer)
-{
-    if (index >= 16) return;
-    VaoAttrib& a = current_vao().mAttrib[index];
-    a.mBuffer = sCtx.mArrayBuffer;
-    a.mSize = size;
-    a.mType = type;
-    a.mNormalized = false;
-    a.mInteger = true;
-    a.mStride = stride;
-    a.mOffset = (U64)pointer;
-}
-
-void on_glEnableVertexAttribArray(GLuint index)
-{
-    if (index < 16) current_vao().mAttrib[index].mEnabled = true;
-}
-
-void on_glDisableVertexAttribArray(GLuint index)
-{
-    if (index < 16) current_vao().mAttrib[index].mEnabled = false;
-}
-
-void on_glVertexAttrib4f(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
-{
-    if (index < 16)
+    sVin.mArrayBuffer = 0;
+    sVin.mElementBuffer = 0;
+    if (program && LLVkMirror::isReady())
     {
-        sGL.mConstAttrib[index][0] = x; sGL.mConstAttrib[index][1] = y; sGL.mConstAttrib[index][2] = z; sGL.mConstAttrib[index][3] = w;
+        Renderer::instance().setProgram((Program*)program);
+    }
+    for (unsigned i = 0; i < 16; ++i)
+    {
+        if (enable_mask & (1u << i)) sVin.mAttrib[i].mEnabled = true;
+        if (disable_mask & (1u << i)) sVin.mAttrib[i].mEnabled = false;
     }
 }
 
-void on_glVertexAttrib4fv(GLuint index, const GLfloat* v)
+void constant_attribute(unsigned location, float x, float y, float z, float w)
 {
-    if (v)
+    if (location < 16)
     {
-        on_glVertexAttrib4f(index, v[0], v[1], v[2], v[3]);
+        sGL.mConstAttrib[location][0] = x; sGL.mConstAttrib[location][1] = y; sGL.mConstAttrib[location][2] = z; sGL.mConstAttrib[location][3] = w;
     }
 }
 
@@ -2810,7 +2766,7 @@ bool probe_on();
 void probe_note(GLuint vb_name, GLuint ib_name, const Buf& vb, const Buf& ib, U32 first, U32 count, U32 max_vertex);
 }
 
-void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
+void draw_arrays(unsigned mode, int first, int count)
 {
     HookTimer hook_timer;
     LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
@@ -2855,7 +2811,7 @@ void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
     ++sDrawsTotal;
 }
 
-void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices)
+void draw_elements(unsigned mode, unsigned start, unsigned end, int count, unsigned type, const void* indices)
 {
     HookTimer hook_timer;
     LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
@@ -2870,7 +2826,7 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     {
         return;
     }
-    Vao& vao = current_vao();
+    const VertexInputState& vao = sVin;
     auto eit = sGL.mBuffers.find(vao.mElementBuffer);
     if (eit == sGL.mBuffers.end() || !eit->second.mVk.valid())
     {
@@ -4809,10 +4765,6 @@ bool emulate_integer(GLenum pname, GLint* out, U32& n)
     }
     case 0x8CA6: out[0] = (GLint)sCtx.mDrawFbo; return true;                        // DRAW_FRAMEBUFFER_BINDING / FRAMEBUFFER_BINDING
     case 0x8CAA: out[0] = (GLint)sCtx.mReadFbo; return true;                        // READ_FRAMEBUFFER_BINDING
-    case 0x8894: out[0] = (GLint)sCtx.mArrayBuffer; return true;                    // ARRAY_BUFFER_BINDING
-    case 0x8895: out[0] = (GLint)current_vao().mElementBuffer; return true;         // ELEMENT_ARRAY_BUFFER_BINDING
-    case 0x85B5: out[0] = (GLint)sCtx.mVao; return true;                            // VERTEX_ARRAY_BINDING
-    case 0x88EF: out[0] = (GLint)sCtx.mPixelUnpackBuffer; return true;              // PIXEL_UNPACK_BUFFER_BINDING
     case 0x0CF5: out[0] = sCtx.mUnpackAlignment; return true;                       // UNPACK_ALIGNMENT
     case 0x0CF2: out[0] = sCtx.mUnpackRowLength; return true;                       // UNPACK_ROW_LENGTH
     // DEPTH_FUNC, CULL_FACE_MODE and the blend functions are not answered: the state is native Vulkan values now, and only gDebugGL's consistency checks asked

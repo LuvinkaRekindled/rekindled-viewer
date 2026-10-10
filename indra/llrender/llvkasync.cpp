@@ -171,7 +171,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
 // C4: texture upload costs on the main thread, and what was handed over without a copy
@@ -260,32 +260,15 @@ inline void mainCommit(size_t payload_bytes)
 // and written as one record each: BIND_TEXTURE_UNIT (the unit and the bind) and ARRAY_RUN (the buffer bind and its attribute pointers).
 // Nothing is dropped and nothing is reordered: whatever else is queued first writes out what is held, and the worker plays a merged record
 // by calling the same functions in the same order.
-bool gCoalesce = true;
 bool gTyped = true;                           // LL_VK_TYPED=0: typed records (LLVertexBuffer::setBuffer) off, the separate calls are queued as before
-bool gFoldElement = true;                    // LL_VK_COALESCE=2 (default): the index buffer bind joins the run; 1: runs without it; 0: off
 unsigned long long gMainRecords = 0;        // records actually written by the main thread
 
 struct BindTexUnitArgs { GLenum mUnit; GLenum mTarget; GLuint mTexture; U32 mPad; };
-struct BufArgs { GLenum target; GLuint buffer; };
 struct RunHeader { GLenum mTarget; GLuint mBuffer; U32 mCount; U32 mFlags; GLuint mElem; U32 mPad; };   // flags: bit 0 array buffer bind, bit 1 index buffer bind (played after the pointers)
 struct RunEntry { U32 mKind; GLuint mIndex; GLint mSize; GLenum mType; GLsizei mStride; U32 mNormalized; const void* mPointer; };   // kind 0: glVertexAttribPointer, 1: glVertexAttribIPointer
 static_assert(sizeof(RunEntry) == 32, "run entry");
-constexpr U32 MAX_RUN = 16;
 constexpr GLenum GL_ARRAY_BUFFER_ENUM = 0x8892;
 constexpr GLenum GL_ELEMENT_ARRAY_BUFFER_ENUM = 0x8893;
-
-struct Coalesce
-{
-    bool mRunOpen = false;
-    bool mRunHasBind = false;
-    bool mRunHasElem = false;
-    GLuint mElemBuffer = 0;
-    GLenum mBindTarget = 0;
-    GLuint mBindBuffer = 0;
-    U32 mCount = 0;
-    RunEntry mEntries[MAX_RUN];
-};
-Coalesce gCo;
 
 inline void rawPush(U16 op, const void* args, unsigned size)
 {
@@ -296,36 +279,6 @@ inline void rawPush(U16 op, const void* args, unsigned size)
     }
     mainCommit(size);
     ++gMainRecords;
-}
-
-void coFlushRun()
-{
-    if (!gCo.mRunOpen)
-    {
-        return;
-    }
-    gCo.mRunOpen = false;
-    if (gCo.mCount == 0 && !gCo.mRunHasElem)
-    {
-        if (gCo.mRunHasBind)
-        {
-            BufArgs a = { gCo.mBindTarget, gCo.mBindBuffer };
-            rawPush(OP_glBindBuffer, &a, sizeof(a));
-        }
-        return;
-    }
-    const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * gCo.mCount);
-    U8* p = mainReserve(payload, CMD_ARRAY_RUN, 0);
-    const RunHeader h = { gCo.mBindTarget, gCo.mBindBuffer, gCo.mCount, (gCo.mRunHasBind ? 1u : 0u) | (gCo.mRunHasElem ? 2u : 0u), gCo.mElemBuffer, 0 };
-    memcpy(p, &h, sizeof(h));
-    if (gCo.mCount)
-    {
-        memcpy(p + sizeof(h), gCo.mEntries, sizeof(RunEntry) * gCo.mCount);
-    }
-    mainCommit(payload);
-    ++gMainRecords;
-    gCo.mCount = 0;
-    gCo.mRunHasElem = false;
 }
 
 // <FS> draw-record plan step 1: texture binds of LLTexUnit do not write a record each. The producer keeps the slot table (unit -> target, name) and the last
@@ -412,20 +365,10 @@ inline void uniAppend(U32 op, const void* args, size_t asz, const void* data, si
     }
 }
 
-// held glActiveTexture and the open array run (what the coalescer holds), not the pending texture slots
-inline void coFlushHeld()
-{
-    if (gCo.mRunOpen)
-    {
-        coFlushRun();
-    }
-}
-
 inline void coFlushAll(int why = 0)
 {
     flushPendingTex(why);
     flushPendingUni(why);
-    coFlushHeld();
 }
 
 // operations that cannot read or change texture state: they do not force the pending slots out
@@ -435,91 +378,11 @@ inline bool texIndependent(U16 op)
     {
     case CMD_TEX_IMAGE: case CMD_TEX_PARAMS_ID: case CMD_TEX_OP: case CMD_UNIFORM_BLOCK:
     case OP_glClear: case OP_glClearColor:
-    case OP_glBufferData: case OP_glBufferSubData: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
+    case CMD_CONST_ATTRIB: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
     case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
     case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
         return true;
     default:
-        return false;
-    }
-}
-
-// true: the call was held or merged; false: it has to be written as it is (what was held has been written first)
-bool coPush(U16 op, const void* args)
-{
-    if (gPendMask && !texIndependent(op))
-    {
-        flushPendingTex(opStatSlot(op));
-    }
-    switch (op)
-    {
-    case OP_glBindBuffer:
-    {
-        const BufArgs* a = (const BufArgs*)args;
-        if (a->target == GL_ELEMENT_ARRAY_BUFFER_ENUM && gFoldElement)
-        {
-            if (gCo.mRunOpen && gCo.mRunHasElem)
-            {
-                coFlushRun();           // one index buffer bind per run: the next one starts a run of its own
-            }
-            if (!gCo.mRunOpen)
-            {
-                gCo.mRunOpen = true;
-                gCo.mRunHasBind = false;
-                gCo.mCount = 0;
-            }
-            gCo.mRunHasElem = true;
-            gCo.mElemBuffer = a->buffer;
-            return true;
-        }
-        if (a->target != GL_ARRAY_BUFFER_ENUM)
-        {
-            coFlushAll();
-            return false;
-        }
-        coFlushRun();
-        gCo.mRunOpen = true;
-        gCo.mRunHasBind = true;
-        gCo.mBindTarget = a->target;
-        gCo.mBindBuffer = a->buffer;
-        gCo.mCount = 0;
-        return true;
-    }
-    case OP_glVertexAttribPointer:
-    case OP_glVertexAttribIPointer:
-    {
-        if (!gCo.mRunOpen)
-        {
-            gCo.mRunOpen = true;
-            gCo.mRunHasBind = false;
-            gCo.mCount = 0;
-        }
-        RunEntry& e = gCo.mEntries[gCo.mCount++];
-        if (op == OP_glVertexAttribPointer)
-        {
-            const A_glVertexAttribPointer* a = (const A_glVertexAttribPointer*)args;
-            e = { 0, a->index, a->size, a->type, a->stride, (U32)a->normalized, a->pointer };
-        }
-        else
-        {
-            const A_glVertexAttribIPointer* a = (const A_glVertexAttribIPointer*)args;
-            e = { 1, a->index, a->size, a->type, a->stride, 0, a->pointer };
-        }
-        if (gCo.mCount == MAX_RUN)
-        {
-            coFlushRun();
-        }
-        return true;
-    }
-    default:
-        if (texIndependent(op))
-        {
-            coFlushRun();       // the held active unit and the pending slots stay where they are
-        }
-        else
-        {
-            coFlushAll(opStatSlot(op));
-        }
         return false;
     }
 }
@@ -557,7 +420,7 @@ void push(unsigned short op, const void* args, unsigned size)
 {
     if (isMainThread())
     {
-        if (op == OP_glClear || op == OP_glDrawArrays || op == OP_glDrawRangeElements)
+        if (op == OP_glClear)
         {
             stateEmit();
         }
@@ -567,10 +430,11 @@ void push(unsigned short op, const void* args, unsigned size)
         {
             ++gMainOpCalls[opStatSlot(op)];
         }
-        if (!(gCoalesce && coPush(op, args)))
+        if (!texIndependent(op))
         {
-            rawPush(op, args, size);
+            coFlushAll(opStatSlot(op));     // what can read texture state or uniforms writes the pending slots and uniform writes out first
         }
+        rawPush(op, args, size);
         if (timed)
         {
             gMainPushTicks += (__rdtsc() - t0) * 16;
@@ -617,8 +481,17 @@ void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh)
 
 void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
 {
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
+        LLVkGL::shader_bind(program, enable_mask, disable_mask);
+        return;
+    }
+    if (!isMainThread())
+    {
+        return;
+    }
     MainLap lap;
-    coFlushRun();
     struct A { void* mProgram; U32 mEnable; U32 mDisable; } a = { program, enable_mask, disable_mask };
     rawPush(CMD_SHADER_BIND, &a, sizeof(a));
 }
@@ -643,6 +516,12 @@ namespace
 
 void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage)
 {
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
+        LLVkGL::on_bufferData(name, target, (GLsizeiptr)size, data, usage);
+        return;
+    }
     MainLap lap;
     const NamedBufArgs a = { name, target, usage, 0, 0, size };
     pushData(CMD_BUFFER_DATA, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
@@ -650,6 +529,12 @@ void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage)
 
 void bufferSubData(U32 name, S64 offset, S64 size, const void* data)
 {
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::on_bufferSubData(name, (GLintptr)offset, (GLsizeiptr)size, data);
+        return;
+    }
     MainLap lap;
     const NamedBufArgs a = { name, 0, 0, 0, offset, size };
     pushData(CMD_BUFFER_SUBDATA, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
@@ -657,6 +542,12 @@ void bufferSubData(U32 name, S64 offset, S64 size, const void* data)
 
 void bufferRecycle(U32 name)
 {
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::on_bufferRecycle(name);
+        return;
+    }
     MainLap lap;
     const NamedBufArgs a = { name, 0, 0, 0, 0, 0 };
     pushData(CMD_BUFFER_RECYCLE, &a, sizeof(a), nullptr, 0);
@@ -668,22 +559,16 @@ namespace
     struct DrawHeader { U32 mKind; U32 mMode; U32 mStart; U32 mEnd; S32 mCount; U32 mType; const void* mIndices; U32 mMask; U32 mActive; U32 mCountTex; U32 mUniBytes; };
 }
 
-void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
+// the draw and the texture slots / uniform writes that changed since the last one, as one record
+static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
 {
     MainLap lap;
-    coFlushRun();
     stateEmit();
-    if (!gPendMask && gPendUni.empty())
-    {
-        const A_glDrawRangeElements a = { mode, start, end, count, type, indices };
-        rawPush(OP_glDrawRangeElements, &a, sizeof(a));
-        return;
-    }
     const U32 n = (U32)__popcnt(gPendMask);
     const U32 uni = (U32)gPendUni.size();
     const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n + uni);
     U8* p = mainReserve(payload, CMD_DRAW, 0);
-    const DrawHeader h = { 0, mode, start, end, count, type, indices, gPendMask, gLatestActive, n, uni };
+    const DrawHeader h = { kind, mode, start, end, count, type, indices, gPendMask, gLatestActive, n, uni };
     memcpy(p, &h, sizeof(h));
     pendTexWrite(p + sizeof(h));
     if (uni)
@@ -696,38 +581,34 @@ void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const 
     gPendUni.clear();
 }
 
-void drawArrays(U32 mode, S32 first, S32 count)
+void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
 {
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts): the draw is made here
-        LLVkGL::on_glDrawArrays(mode, first, count);
+        LLVkGL::draw_elements(mode, start, end, count, type, indices);
         return;
     }
-    MainLap lap;
-    coFlushRun();
-    stateEmit();
-    if (!gPendMask && gPendUni.empty())
+    if (!isMainThread())
     {
-        const A_glDrawArrays a = { mode, first, count };
-        rawPush(OP_glDrawArrays, &a, sizeof(a));
+        return;     // draws are the main thread's
+    }
+    writeDraw(0, mode, start, end, count, type, indices);
+}
+
+void drawArrays(U32 mode, S32 first, S32 count)
+{
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::draw_arrays(mode, first, count);
         return;
     }
-    const U32 n = (U32)__popcnt(gPendMask);
-    const U32 uni = (U32)gPendUni.size();
-    const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n + uni);
-    U8* p = mainReserve(payload, CMD_DRAW, 0);
-    const DrawHeader h = { 1, mode, (U32)first, 0, count, 0, nullptr, gPendMask, gLatestActive, n, uni };
-    memcpy(p, &h, sizeof(h));
-    pendTexWrite(p + sizeof(h));
-    if (uni)
+    if (!isMainThread())
     {
-        memcpy(p + sizeof(h) + sizeof(PendTex) * n, gPendUni.data(), uni);
+        return;
     }
-    mainCommit(payload);
-    ++gMainRecords;
-    gPendMask = 0;
-    gPendUni.clear();
+    writeDraw(1, mode, (U32)first, 0, count, 0, nullptr);
 }
 
 void gpuZone(const char* name, bool begin)
@@ -742,10 +623,19 @@ void gpuZone(const char* name, bool begin)
 
 void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count)
 {
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
+        LLVkGL::vertex_input_apply(bind_array, array_buffer, bind_elem, elem_buffer, attribs, count);
+        return;
+    }
+    if (!isMainThread())
+    {
+        return;
+    }
     MainLap lap;
     static_assert(sizeof(VertexAttrib) == sizeof(RunEntry), "typed attribute record matches the run entry");
-    coFlushRun();       // an open run goes first; the array state does not depend on texture state, so the pending slots and the held unit stay
-    const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * count);
+    const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * count);       // the array state does not depend on texture state: the pending slots stay
     U8* p = mainReserve(payload, CMD_ARRAY_RUN, 0);
     const RunHeader h = { GL_ARRAY_BUFFER_ENUM, array_buffer, count, (bind_array ? 1u : 0u) | (bind_elem ? 2u : 0u), elem_buffer, 0 };
     memcpy(p, &h, sizeof(h));
@@ -772,11 +662,7 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         {
             stateEmit();
         }
-        if (texIndependent(op))
-        {
-            coFlushRun();       // uniforms and buffer data cannot read texture state: the pending slots stay for the draw
-        }
-        else
+        if (!texIndependent(op))
         {
             coFlushAll(opStatSlot(op));
         }
@@ -940,7 +826,7 @@ std::string opStatsReport(size_t frames)
         gMainPushOps = 0;
         gMainPushTicks = 0;
         gMainRecords = 0;
-        snprintf(buf, sizeof(buf), "MAIN THREAD writing the queue (coalescing %s): %.0f calls/frame -> %.0f records/frame, %.2f ms/frame (%.0f ns per call) | ", gCoalesce ? "on" : "off",
+        snprintf(buf, sizeof(buf), "MAIN THREAD writing the queue: %.0f calls/frame -> %.0f records/frame, %.2f ms/frame (%.0f ns per call) | ",
                  (double)push_ops / (double)frames, (double)records / (double)frames,
                  (double)push_ticks * ms_per_tick / (double)frames, push_ops ? (double)push_ticks * ms_per_tick * 1e6 / (double)push_ops : 0.0);
         out = buf;
@@ -1650,6 +1536,18 @@ void setData(U32 id, U32 target, S64 size, const void* data, U32 usage)
     LLVkAsync::bufferData(id, target, size, data, usage);
 }
 
+void setConstantAttribute(U32 location, F32 x, F32 y, F32 z, F32 w)
+{
+    if (!LLVkAsync::gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::constant_attribute(location, x, y, z, w);
+        return;
+    }
+    struct { U32 mLocation; F32 mV[4]; } rec = { location, { x, y, z, w } };
+    LLVkAsync::push(LLVkAsync::CMD_CONST_ATTRIB, &rec, sizeof(rec));
+}
+
 void bindUniformBlock(U32 binding, U32 id)
 {
     const U32 a[2] = { binding, id };
@@ -1661,25 +1559,6 @@ void bindUniformBlock(U32 binding, U32 id)
 namespace LLVkAsync
 {
 
-void enq_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum usage)
-{
-    struct A { GLenum target; GLenum usage; S64 size; } a = { target, usage, (S64)size };
-    pushData(OP_glBufferData, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
-}
-void enq_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data)
-{
-    struct A { GLenum target; GLenum pad; S64 offset; S64 size; } a = { target, 0, (S64)offset, (S64)size };
-    pushData(OP_glBufferSubData, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
-}
-void enq_glBindBuffer(GLenum target, GLuint buffer)
-{
-    if (target == 0x88EC)       // PIXEL_UNPACK_BUFFER
-    {
-        tlsPixelStore.mUnpackBuffer = buffer;
-    }
-    struct A { GLenum target; GLuint buffer; } a = { target, buffer };
-    push(OP_glBindBuffer, &a, sizeof(a));
-}
 void enq_glPixelStorei(GLenum pname, GLint param)
 {
     if (pname == 0x0CF5) tlsPixelStore.mUnpackAlignment = param;        // UNPACK_ALIGNMENT
@@ -1702,11 +1581,6 @@ void enq_glTexParameteriv(GLenum target, GLenum pname, const GLint* params)
     struct A { GLenum target; GLenum pname; } a = { target, pname };
     const size_t n = (pname == 0x1004 || pname == 0x8E46) ? 4 : 1;      // BORDER_COLOR, SWIZZLE_RGBA
     pushData(OP_glTexParameteriv, &a, sizeof(a), params, params ? n * 4 : 0);
-}
-void enq_glVertexAttrib4fv(GLuint index, const GLfloat* v)
-{
-    struct A { GLuint index; } a = { index };
-    pushData(OP_glVertexAttrib4fv, &a, sizeof(a), v, v ? 16 : 0);
 }
 
 void enq_glShaderSource(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length)
@@ -1843,7 +1717,7 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
     switch (op)
     {
 #include "llvkgl_async_dispatch.inc"
-    case OP_glGenTextures: case OP_glGenFramebuffers: case OP_glGenBuffers: case OP_glGenVertexArrays: case OP_glGenQueries:
+    case OP_glGenTextures: case OP_glGenFramebuffers: case OP_glGenBuffers: case OP_glGenQueries:
     {
         const S32 n = r.get<S32>();
         Blob b = read_blob(r, flags);
@@ -1854,7 +1728,6 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
         case OP_glGenTextures: LLVkGL::on_glGenTextures(n, ids.data()); break;
         case OP_glGenFramebuffers: LLVkGL::on_glGenFramebuffers(n, ids.data()); break;
         case OP_glGenBuffers: LLVkGL::on_glGenBuffers(n, ids.data()); break;
-        case OP_glGenVertexArrays: LLVkGL::on_glGenVertexArrays(n, ids.data()); break;
         default: LLVkGL::on_glGenQueries(n, ids.data()); break;
         }
         break;
@@ -1885,37 +1758,6 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
         const GLenum target = r.get<GLenum>(), pname = r.get<GLenum>();
         Blob b = read_blob(r, flags);
         LLVkGL::on_glTexParameteriv(target, pname, (const GLint*)b.mData);
-        break;
-    }
-    case OP_glVertexAttrib4fv:
-    {
-        const GLuint index = r.get<GLuint>();
-        Blob b = read_blob(r, flags);
-        LLVkGL::on_glVertexAttrib4fv(index, (const GLfloat*)b.mData);
-        break;
-    }
-    case OP_glBufferData:
-    {
-        const GLenum target = r.get<GLenum>(), usage = r.get<GLenum>();
-        const S64 size = r.get<S64>();
-        Blob b = read_blob(r, flags);
-        LLVkGL::on_glBufferData(target, (GLsizeiptr)size, b.mData, usage);
-        break;
-    }
-    case OP_glBufferSubData:
-    {
-        const GLenum target = r.get<GLenum>();
-        r.get<GLenum>();
-        const S64 offset = r.get<S64>(), size = r.get<S64>();
-        Blob b = read_blob(r, flags);
-        LLVkGL::on_glBufferSubData(target, (GLintptr)offset, (GLsizeiptr)size, b.mData);
-        break;
-    }
-    case OP_glBindBuffer:
-    {
-        const GLenum target = r.get<GLenum>();
-        const GLuint buffer = r.get<GLuint>();
-        LLVkGL::on_glBindBuffer(target, buffer);
         break;
     }
     case OP_glPixelStorei:
@@ -2099,25 +1941,14 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         const RunHeader* h = (const RunHeader*)payload;
         const RunEntry* e = (const RunEntry*)(payload + sizeof(RunHeader));
-        if (h->mFlags & 1)
-        {
-            LLVkGL::on_glBindBuffer(h->mTarget, h->mBuffer);
-        }
-        for (U32 i = 0; i < h->mCount; ++i)
-        {
-            if (e[i].mKind == 0)
-            {
-                LLVkGL::on_glVertexAttribPointer(e[i].mIndex, e[i].mSize, e[i].mType, (GLboolean)e[i].mNormalized, e[i].mStride, e[i].mPointer);
-            }
-            else
-            {
-                LLVkGL::on_glVertexAttribIPointer(e[i].mIndex, e[i].mSize, e[i].mType, e[i].mStride, e[i].mPointer);
-            }
-        }
-        if (h->mFlags & 2)
-        {
-            LLVkGL::on_glBindBuffer(0x8893, h->mElem);
-        }
+        LLVkGL::vertex_input_apply((h->mFlags & 1) != 0, h->mBuffer, (h->mFlags & 2) != 0, h->mElem, (const VertexAttrib*)e, h->mCount);
+        break;
+    }
+    case CMD_CONST_ATTRIB:
+    {
+        struct R { U32 mLocation; F32 mV[4]; };
+        const R* a = (const R*)payload;
+        LLVkGL::constant_attribute(a->mLocation, a->mV[0], a->mV[1], a->mV[2], a->mV[3]);
         break;
     }
     case CMD_BUFFER_DATA:
@@ -2217,11 +2048,11 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         }
         if (h->mKind == 0)
         {
-            LLVkGL::on_glDrawRangeElements(h->mMode, h->mStart, h->mEnd, h->mCount, h->mType, h->mIndices);
+            LLVkGL::draw_elements(h->mMode, h->mStart, h->mEnd, h->mCount, h->mType, h->mIndices);
         }
         else
         {
-            LLVkGL::on_glDrawArrays(h->mMode, (GLint)h->mStart, h->mCount);
+            LLVkGL::draw_arrays(h->mMode, (GLint)h->mStart, h->mCount);
         }
         break;
     }
@@ -2271,17 +2102,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         struct A { void* mProgram; U32 mEnable; U32 mDisable; };
         const A* a = (const A*)payload;
-        LLVkGL::on_glBindBuffer(0x8892, 0);
-        LLVkGL::on_glBindBuffer(0x8893, 0);
-        if (a->mProgram && LLVkMirror::isReady())
-        {
-            LLVk::Renderer::instance().setProgram((LLVk::Program*)a->mProgram);
-        }
-        for (U32 i = 0; i < 32; ++i)
-        {
-            if (a->mEnable & (1u << i)) LLVkGL::on_glEnableVertexAttribArray(i);
-            if (a->mDisable & (1u << i)) LLVkGL::on_glDisableVertexAttribArray(i);
-        }
+        LLVkGL::shader_bind(a->mProgram, a->mEnable, a->mDisable);
         break;
     }
     case CMD_PROGRAM_BIND:
@@ -2631,7 +2452,6 @@ bool start()
     gMainTid = __readgsdword(0x48);
     { const char* ty = getenv("LL_VK_TYPED"); gTyped = !(ty && ty[0] == '0'); }
     { const char* t1 = getenv("LL_VK_TEXONECOPY"); gTexOneCopy = t1 && t1[0] == '1'; }
-    { const char* co = getenv("LL_VK_COALESCE"); gCoalesce = !(co && co[0] == '0'); gFoldElement = gCoalesce && !(co && co[0] == '1'); }
     if (!gRing)
     {
         gRing = (U8*)VirtualAlloc(nullptr, RING_BYTES, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);

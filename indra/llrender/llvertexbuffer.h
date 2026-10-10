@@ -103,7 +103,6 @@ public:
 
     static void initClass(LLWindow* window);
     static void cleanupClass();
-    static void setupClientArrays(U32 data_mask);
     static void drawArrays(U32 mode, const std::vector<LLVector3>& pos);
     static void drawElements(U32 mode, const LLVector4a* pos, const LLVector2* tc, U32 num_indices, const U16* indicesp);
 

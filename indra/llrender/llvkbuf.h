@@ -14,6 +14,7 @@
 #if defined(LL_VULKAN)
 
 #include "linden_common.h"
+#include "llvkasync.h"
 
 namespace LLVkBuf
 {
@@ -24,11 +25,20 @@ namespace LLVkBuf
     void setData(U32 id, U32 target, S64 size, const void* data, U32 usage);
     // makes a buffer the contents of a numbered uniform block (what the shaders' named blocks read)
     void bindUniformBlock(U32 binding, U32 id);
+    // a vertex attribute that has no array (the shader reads this constant); the worker keeps one value per location
+    void setConstantAttribute(U32 location, F32 x, F32 y, F32 z, F32 w);
 }
 
 namespace LLVkGL
 {
     void uniform_block_bind(unsigned binding, unsigned buffer);
+    // the vertex input state the draws read: which buffer holds the vertices and the indices, and where each attribute of the shader comes from
+    void vertex_input_apply(bool bind_array, unsigned array_buffer, bool bind_elem, unsigned elem_buffer, const LLVkAsync::VertexAttrib* attribs, unsigned count);
+    // binds the program and switches the attribute arrays (bit masks of locations); the vertex and index buffers are unbound
+    void shader_bind(void* program, unsigned enable_mask, unsigned disable_mask);
+    void draw_arrays(unsigned mode, int first, int count);
+    void draw_elements(unsigned mode, unsigned start, unsigned end, int count, unsigned type, const void* indices);
+    void constant_attribute(unsigned location, float x, float y, float z, float w);
 }
 
 #endif // LL_VULKAN
