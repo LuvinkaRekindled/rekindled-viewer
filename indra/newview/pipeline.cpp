@@ -8322,6 +8322,30 @@ static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, boo
     return !(p.mTexture.notNull() && p.mTextureMatrix);
 }
 
+// <FS> why shadow_alpha_packet_ok said no (for the statistics, and for the ray scene, which takes the texture matrix draws): 1 glTF material, 2 buffer layout, 3 rigged without weights
+// or skin, 4 more than four textures, 5 texture matrix
+static int shadow_alpha_fallback_reason(const LLDrawInfo& p, bool batch_textures, bool rigged)
+{
+    const LLVertexBuffer* vb = p.mVertexBuffer.get();
+    if (p.mGLTFMaterial)
+    {
+        return 1;
+    }
+    if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+    {
+        return 2;
+    }
+    if (rigged && (!vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || p.mSkinInfo.isNull()))
+    {
+        return 3;
+    }
+    if (batch_textures && p.mTextureList.size() > 4)
+    {
+        return 4;
+    }
+    return 5;
+}
+
 // <FS> The palette of a rigged draw, added once to the palettes of a packet record: its offset (in floats) and joint count. False when the old path would not draw it
 // either (no avatar, skin not loaded yet). The palette is what uploadMatrixPalette() sends as matrixPalette: 12 floats per joint.
 static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints)
@@ -11787,6 +11811,217 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         gGLLastMatrix = NULL;
     };
 
+    // <FS> Ray tracing only: casters the shadow passes draw the old way (glTF materials: opaque, alpha mask, alpha blend; textured draws with a texture matrix) are named to the ray
+    // scene (kind 5 record, static draws only: nothing is drawn by it). The alpha test is the one of the old shadow shaders: glTF mask = base colour alpha x vertex alpha against
+    // the material's cutoff, blend and legacy = the dithered test; the texture coordinates go through the same transform (texture animation matrix, then the glTF transform).
+    auto render_rt_extra_packets = [this]()
+    {
+        if (!LLVkMirror::rtShadowMode())
+        {
+            return;
+        }
+        std::vector<LLVkMirror::ShadowAlphaEntry> entries;
+        std::vector<F32> matrices(16, 0.f);
+        matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
+        std::unordered_map<const void*, U32> matrix_numbers;
+        std::unordered_map<const LLViewerTexture*, U32> texture_names;
+        auto texture_name = [&](LLViewerTexture* tex) -> U32
+        {
+            auto found = texture_names.find(tex);
+            if (found != texture_names.end())
+            {
+                return found->second;
+            }
+            const U32 name = gGL.getTexUnit(0)->prepareFast(tex);
+            texture_names.emplace(tex, name);
+            return name;
+        };
+        // the transform of one texture coordinate: the texture animation matrix of the draw, then (glTF) the KHR transform in its left-handed coordinates; as textureUtilV.glsl
+        auto uv_transform = [](const LLMatrix4* anim, const LLGLTFMaterial::TextureTransform* khr, F32* out)
+        {
+            auto eval = [&](F32 u, F32 v, F32& ou, F32& ov)
+            {
+                F32 x = u, y = v;
+                if (anim)
+                {
+                    x = anim->mMatrix[0][0] * u + anim->mMatrix[1][0] * v + anim->mMatrix[3][0];
+                    y = anim->mMatrix[0][1] * u + anim->mMatrix[1][1] * v + anim->mMatrix[3][1];
+                }
+                if (khr)
+                {
+                    y = 1.f - y;
+                    const F32 sx = khr->mScale.mV[VX] * x, sy = khr->mScale.mV[VY] * y;
+                    const F32 c = cosf(khr->mRotation), s = sinf(khr->mRotation);
+                    x = c * sx + s * sy + khr->mOffset.mV[VX];
+                    y = -s * sx + c * sy + khr->mOffset.mV[VY];
+                    y = 1.f - y;
+                }
+                ou = x;
+                ov = y;
+            };
+            F32 o0x, o0y, o1x, o1y, o2x, o2y;
+            eval(0.f, 0.f, o0x, o0y);
+            eval(1.f, 0.f, o1x, o1y);
+            eval(0.f, 1.f, o2x, o2y);
+            out[0] = o1x - o0x;
+            out[1] = o1y - o0y;
+            out[2] = o2x - o0x;
+            out[3] = o2y - o0y;
+            out[4] = o0x;
+            out[5] = o0y;
+        };
+        auto add = [&](LLDrawInfo* params, U32 flags, F32 cutoff, LLViewerTexture* tex, const LLMatrix4* anim, const LLGLTFMaterial::TextureTransform* khr)
+        {
+            const LLVertexBuffer* vb = params->mVertexBuffer.get();
+            if (!params->mCount || params->mAvatar || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+                || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+            {
+                return false;
+            }
+            LLVkMirror::ShadowAlphaEntry e = {};
+            e.mVertexBuffer = vb->getGLBuffer();
+            e.mIndexBuffer = vb->getGLIndices();
+            e.mFirstIndex = params->mOffset;
+            e.mIndexCount = params->mCount;
+            e.mMatrixId = rt_matrix_id(params->mModelMatrix);
+            if (params->mModelMatrix)
+            {
+                auto it = matrix_numbers.find(params->mModelMatrix);
+                if (it == matrix_numbers.end())
+                {
+                    it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                    const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                    matrices.insert(matrices.end(), m, m + 16);
+                }
+                e.mMatrix = it->second;
+            }
+            if (!(flags & LLVkMirror::ALPHA_RAY_ONLY))
+            {
+                if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+                {
+                    flags |= LLVkMirror::ALPHA_HAS_TEXCOORD;
+                    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+                }
+                if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+                {
+                    flags |= LLVkMirror::ALPHA_HAS_COLOR;
+                    e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+                }
+                flags |= LLVkMirror::ALPHA_NO_INDEX;
+                if (tex)
+                {
+                    e.mTextures[0] = texture_name(tex);
+                }
+            }
+            e.mFlags = flags;
+            e.mCutoff = cutoff;
+            uv_transform(anim, khr, e.mUv);
+            entries.push_back(e);
+            return true;
+        };
+        // glTF opaque and alpha mask passes
+        for (U32 type : { (U32)LLRenderPass::PASS_GLTF_PBR, (U32)LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK })
+        {
+            auto* begin = beginRenderMap(type);
+            auto* end = endRenderMap(type);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                LLFetchedGLTFMaterial* mat = params->mGLTFMaterial.get();
+                if (!mat)
+                {
+                    continue;
+                }
+                if (type == LLRenderPass::PASS_GLTF_PBR)
+                {
+                    if (add(params, LLVkMirror::ALPHA_RAY_ONLY, 0.f, nullptr, nullptr, nullptr))
+                    {
+                        ++gShadowDrawStats.mRtOpaque;
+                    }
+                }
+                else
+                {
+                    LLViewerTexture* tex = params->mTexture.notNull() ? params->mTexture.get() : mat->mBaseColorTexture.get();
+                    if (add(params, LLVkMirror::ALPHA_HARD, mat->mAlphaCutoff, tex, params->mTextureMatrix, &mat->mTextureTransform[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR]))
+                    {
+                        ++gShadowDrawStats.mRtMask;
+                    }
+                }
+            }
+        }
+        // glTF alpha blend draws live in the alpha pass
+        {
+            auto* begin = beginRenderMap(LLRenderPass::PASS_ALPHA);
+            auto* end = endRenderMap(LLRenderPass::PASS_ALPHA);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                LLFetchedGLTFMaterial* mat = params->mGLTFMaterial.get();
+                if (!mat)
+                {
+                    continue;
+                }
+                LLViewerTexture* tex = params->mTexture.notNull() ? params->mTexture.get() : mat->mBaseColorTexture.get();
+                if (add(params, 0u, ALPHA_BLEND_CUTOFF, tex, params->mTextureMatrix, &mat->mTextureTransform[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR]))
+                {
+                    ++gShadowDrawStats.mRtBlend;
+                }
+            }
+        }
+        // legacy alpha casters with a texture matrix (texture animation): the packets path leaves these to the old path
+        {
+            struct Source { U32 type; U32 flags; F32 cutoff; bool blend; };
+            const Source sources[] = {
+                { LLRenderPass::PASS_ALPHA_MASK, 0u, -1.f, false },
+                { LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, LLVkMirror::ALPHA_FULLBRIGHT, -1.f, false },
+                { LLRenderPass::PASS_ALPHA, 0u, ALPHA_BLEND_CUTOFF, true },
+                { LLRenderPass::PASS_GRASS, LLVkMirror::ALPHA_TREE, ALPHA_BLEND_CUTOFF, false },
+                { LLRenderPass::PASS_NORMSPEC_MASK, LLVkMirror::ALPHA_TREE, -1.f, false },
+                { LLRenderPass::PASS_MATERIAL_ALPHA_MASK, LLVkMirror::ALPHA_TREE, -1.f, false },
+                { LLRenderPass::PASS_SPECMAP_MASK, LLVkMirror::ALPHA_TREE, -1.f, false },
+                { LLRenderPass::PASS_NORMMAP_MASK, LLVkMirror::ALPHA_TREE, -1.f, false },
+            };
+            for (const Source& source : sources)
+            {
+                auto* begin = beginRenderMap(source.type);
+                auto* end = endRenderMap(source.type);
+                for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+                {
+                    LLDrawInfo* params = *i;
+                    LLCullResult::increment_iterator(i, end);
+                    if (params->mAvatar || params->mGLTFMaterial || !params->mCount || params->mTexture.isNull() || !params->mTextureMatrix || shadow_alpha_packet_ok(*params, source.blend, false))
+                    {
+                        continue;
+                    }
+                    if (shadow_alpha_fallback_reason(*params, source.blend, false) != 5)
+                    {
+                        continue;
+                    }
+                    const F32 cutoff = source.cutoff >= 0.f ? source.cutoff : params->mAlphaMaskCutoff;
+                    if (add(params, source.flags, cutoff, params->mTexture.get(), params->mTextureMatrix, nullptr))
+                    {
+                        ++gShadowDrawStats.mRtTextureMatrix;
+                    }
+                }
+            }
+        }
+        if (!entries.empty())
+        {
+            LLVkMirror::ShadowPacketsHeader header;
+            header.mKind = 5;
+            header.mEntries = (U32)entries.size();
+            header.mPass = shadow_pass_index();
+            header.mMatrices = (U32)(matrices.size() / 16);
+            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
+            memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+            LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+            ++gShadowDrawStats.mRtRecords;
+        }
+    };
+
     // <FS> Render packets with textures: the static alpha masked casters of a shadow pass (masked, fullbright masked, blended, grass, the materials' masks) leave
     // as one record. Every entry names its texture(s) by GL name; the worker gives them slots in a bindless table and the fragment shader does the alpha test.
     auto render_alpha_packets = [this](S32 sun_up, U32 target_width, bool rigged)
@@ -11844,10 +12079,19 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 }
                 if (source.kind == KIND_ALPHA && params->mGLTFMaterial)
                 {
+                    ++gShadowDrawStats.mFbGLTF;
                     continue;       // left to renderAlphaObjects
                 }
                 if (!shadow_alpha_packet_ok(*params, batch, rigged))
                 {
+                    switch (shadow_alpha_fallback_reason(*params, batch, rigged))
+                    {
+                    case 1: ++gShadowDrawStats.mFbGLTF; break;
+                    case 2: ++gShadowDrawStats.mFbLayout; break;
+                    case 3: ++gShadowDrawStats.mFbRigged; break;
+                    case 4: ++gShadowDrawStats.mFbManyTextures; break;
+                    default: ++gShadowDrawStats.mFbTextureMatrix; break;
+                    }
                     if (source.kind != KIND_ALPHA)
                     {
                         fallback[source.kind].push_back(params);
@@ -12163,6 +12407,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
     }
 
+    render_rt_extra_packets();       // <FS> ray tracing only: what the old path drew above, named to the ray scene
+
     gDeferredShadowCubeProgram.bind();
     gGLLastMatrix = NULL;
     gGL.loadMatrix(gGLModelView);
@@ -12219,6 +12465,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 LL_INFOS("ShadowDraws") << "shadow alpha packets per frame: " << st.mAlphaRecords / frames << " records, " << st.mAlphaEntries / frames << " draws in them, "
                     << st.mAlphaFallback / frames << " draws left to the old path, " << st.mAlphaTextures / frames << " textures bound" << LL_ENDL;
             }
+            LL_INFOS("ShadowDraws") << "alpha casters left to the old path per frame, by reason: glTF material " << st.mFbGLTF / frames << ", buffer layout " << st.mFbLayout / frames << ", rigged without weights or skin "
+                << st.mFbRigged / frames << ", more than 4 textures " << st.mFbManyTextures / frames << ", texture matrix " << st.mFbTextureMatrix / frames << "; named to the ray scene instead: glTF opaque "
+                << st.mRtOpaque / frames << ", glTF mask " << st.mRtMask / frames << ", glTF blend " << st.mRtBlend / frames << ", texture matrix " << st.mRtTextureMatrix / frames << " (" << st.mRtRecords / frames << " records)" << LL_ENDL;
+            st.mFbGLTF = st.mFbLayout = st.mFbRigged = st.mFbManyTextures = st.mFbTextureMatrix = st.mRtOpaque = st.mRtMask = st.mRtBlend = st.mRtTextureMatrix = st.mRtRecords = 0;
             st.mPacketEntries = st.mPacketFallback = st.mPacketRecords = 0;
             st.mAlphaEntries = st.mAlphaFallback = st.mAlphaRecords = st.mAlphaTextures = 0;
             st.mTablePasses = st.mTableEntries = st.mTableMax = st.mBadNames = st.mWideIndices = st.mPositionNotFirst = st.mNoPosition = st.mBadRange = st.mBadIndexRange = st.mNullMatrix = st.mDistinctPairs = 0;

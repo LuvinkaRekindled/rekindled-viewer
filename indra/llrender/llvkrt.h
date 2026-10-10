@@ -27,13 +27,14 @@ U32 shadowMode();
 // A shadow caster draw as the shadow passes name it. mKind 0 = opaque casters, 1 = alpha masked or blended. mModel: 16 floats column-major (null = identity),
 // mMatrixId: stable identity of the matrix (the object it belongs to), the same value for the same object on every frame.
 // what the alpha test of a masked caster needs (the fields of ShadowAlphaEntry): flags 1 = fullbright (the vertex colour's alpha does not count), 2 = tree style (no vertex alpha,
-// no dithering), 4 = one texture (no index in position.w), 8 = texcoords present, 16 = colours present
+// no dithering), 4 = one texture (no index in position.w), 8 = texcoords present, 16 = colours present, 64 = a plain cut at the cutoff (glTF alpha mask)
 struct AlphaInfo
 {
     U32 mFlags = 0;
     U32 mTexcoordOffset = 0, mColorOffset = 0;      // byte offsets of the arrays in the vertex buffer
     U32 mTextures[4] = {};                          // GL names of the textures the vertices' texture index picks from, 0 = none (white)
     F32 mCutoff = 0.f;
+    F32 mUv[6] = { 1.f, 0.f, 0.f, 1.f, 0.f, 0.f };   // texture coordinate transform: u' = mUv[0] * u + mUv[2] * v + mUv[4], v' = mUv[1] * u + mUv[3] * v + mUv[5]
 };
 
 struct Caster

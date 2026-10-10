@@ -114,11 +114,22 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     {
         LLRtTexcoords tc = LLRtTexcoords(g.texcoords);
         uv = tc.t[ix[0]] * w.x + tc.t[ix[1]] * w.y + tc.t[ix[2]] * w.z;
+        uv = g.uv0 * uv.x + g.uv1 * uv.y + g.uv2;          // the texture animation / glTF transform of the draw
     }
     uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(LLRtPositions(g.positions).v[ix[0]].w) & 3u);
     uint pair = (tex_index < 2u) ? g.slots.x : g.slots.y;
     uint slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
     float alpha = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod).a;
+    if ((g.flags & 64u) != 0u)
+    {
+        // glTF alpha mask: texture alpha times vertex alpha against the material's cutoff, no dithering (pbrShadowAlphaMaskF.glsl)
+        if ((g.flags & 16u) != 0u)
+        {
+            LLRtColors col = LLRtColors(g.colors);
+            alpha *= (float(col.c[ix[0]] >> 24) * w.x + float(col.c[ix[1]] >> 24) * w.y + float(col.c[ix[2]] >> 24) * w.z) * (1.0 / 255.0);
+        }
+        return alpha >= g.cutoff;
+    }
     if (alpha < g.cutoff)
     {
         return false;

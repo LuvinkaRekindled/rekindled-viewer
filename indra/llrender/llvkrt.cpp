@@ -56,8 +56,9 @@ struct GpuGeom
     F32 mCutoff;
     U32 mFirst;             // first index of the range
     U32 mPad;
+    F32 mUv[6];             // texture coordinate transform (uv' = uv0 * u + uv1 * v + uv2)
 };
-static_assert(sizeof(GpuGeom) == 56, "geometry record");
+static_assert(sizeof(GpuGeom) == 80, "geometry record");
 constexpr U32 kMaxRecords = (U32)(kTableBytes / sizeof(GpuGeom));
 constexpr U32 kMaxSkinJobs = 2048;                          // compute skinning jobs per scene call
 constexpr U32 kSkinChunkVerts = 128;                        // vertices per workgroup (one chunk table entry)
@@ -1872,6 +1873,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 rec.mFlags = a.mFlags;
                 rec.mCutoff = a.mCutoff;
                 rec.mFirst = r.mFirst;
+                memcpy(rec.mUv, a.mUv, sizeof(rec.mUv));
             }
             ++sStats.mAlphaStructs;
         }
@@ -2046,6 +2048,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 rec.mFlags = d.mAlpha.mFlags;
                 rec.mCutoff = d.mAlpha.mCutoff;
                 rec.mFirst = d.mFirst;
+                memcpy(rec.mUv, d.mAlpha.mUv, sizeof(rec.mUv));
             }
             ++sStats.mAlphaStructs;
         }

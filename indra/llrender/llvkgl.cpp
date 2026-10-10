@@ -3416,6 +3416,41 @@ static void note_rt_skinned_alpha(U32 pass, const LLVkMirror::ShadowAlphaEntry& 
     Rt::noteSkinned(c);
 }
 
+// the worker side of a record of casters the old path draws (kind 5): nothing is drawn, the ray scene gets them (opaque, or with the alpha test and the texture transform)
+static void on_rt_only_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!Rt::active() || h.mEntries == 0)
+    {
+        return;
+    }
+    const LLVkMirror::ShadowAlphaEntry* entries = (const LLVkMirror::ShadowAlphaEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowAlphaEntry) * h.mEntries);
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const LLVkMirror::ShadowAlphaEntry& e = entries[i];
+        Buf* vb = packet_buffer(e.mVertexBuffer);
+        Buf* ib = packet_buffer(e.mIndexBuffer);
+        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+        {
+            continue;
+        }
+        const F32* model = e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr;
+        if (e.mFlags & LLVkMirror::ALPHA_RAY_ONLY)
+        {
+            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, model);
+            continue;
+        }
+        Rt::AlphaInfo alpha;
+        alpha.mFlags = e.mFlags & (31u | 64u);
+        alpha.mTexcoordOffset = e.mTexcoordOffset;
+        alpha.mColorOffset = e.mColorOffset;
+        memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
+        alpha.mCutoff = e.mCutoff;
+        memcpy(alpha.mUv, e.mUv, sizeof(alpha.mUv));
+        note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, model, &alpha);
+    }
+}
+
 // the worker side of a record of the body meshes of avatars (kind 4): nothing is drawn, the ray scene skins them on the GPU
 static void on_body_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -3928,6 +3963,11 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     if (h.mKind == 4)
     {
         on_body_packets(h, blob);
+        return;
+    }
+    if (h.mKind == 5)
+    {
+        on_rt_only_packets(h, blob);
         return;
     }
     struct PacketGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
