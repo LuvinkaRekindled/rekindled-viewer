@@ -620,6 +620,7 @@ void LLImage::setLastError(const std::string& message)
 
 // <FS:ND> Report amount of failed buffer allocations
 U32 LLImageBase::sAllocationErrors;
+void (*LLImageBase::sPixelHoldWait)(const LLImageBase*) = nullptr;
 
 LLImageBase::LLImageBase()
 :   mData(NULL),

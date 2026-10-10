@@ -42,6 +42,7 @@
 #include "llrender.h"
 #include "llwindow.h"
 #include "llframetimer.h"
+#include "llvkasync.h"
 #include <unordered_set>
 
 extern LL_COMMON_API bool on_main_thread();
@@ -784,6 +785,34 @@ void LLImageGL::setExplicitFormat( LLGLint internal_format, LLGLenum primary_for
 }
 
 //----------------------------------------------------------------------------
+
+// <FS> native-vk (C4): see the declaration in llimagegl.h
+LLImageGL::PixelHandover::PixelHandover(const LLImageRaw* raw)
+:   mActive(false)
+{
+    if (!raw || raw->isBufferInvalid() || !raw->getData() || raw->getDataSize() <= 0)
+    {
+        return;
+    }
+    static const bool hook_set = []() {
+        LLImageBase::setPixelHoldWait([](const LLImageBase*) { LLVkAsync::waitForPixelHolds(); });
+        return true;
+    }();
+    (void)hook_set;
+    LLVkAsync::PixelHold hold = { raw->getData(), (size_t)raw->getDataSize(), raw,
+                                  [](const void* o) { LLImageRaw* i = const_cast<LLImageRaw*>((const LLImageRaw*)o); i->ref(); i->addPixelHold(); },
+                                  [](const void* o) { LLImageRaw* i = const_cast<LLImageRaw*>((const LLImageRaw*)o); i->releasePixelHold(); i->unref(); } };
+    LLVkAsync::setPixelHold(&hold);
+    mActive = true;
+}
+
+LLImageGL::PixelHandover::~PixelHandover()
+{
+    if (mActive)
+    {
+        LLVkAsync::setPixelHold(nullptr);
+    }
+}
 
 void LLImageGL::setImage(const LLImageRaw* imageraw)
 {

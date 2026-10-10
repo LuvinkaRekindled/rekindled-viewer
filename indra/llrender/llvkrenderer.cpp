@@ -12,6 +12,7 @@
 #define TRACY_VK_USE_SYMBOL_TABLE
 #include <tracy/TracyVulkan.hpp>
 #endif
+#include "llvkasync.h"
 #include "llvkdlss.h"
 #include "llvkmirror.h"
 
@@ -2544,6 +2545,13 @@ bool Renderer::createTexture(const TextureDesc& d, Image& out)
 
 bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, const void* data, VkDeviceSize bytes)
 {
+    struct Src { const void* mData; } src = { data };
+    return uploadTextureDirect(image, mip, layer, x, y, width, height, depth, bytes, [](void* ctx, U8* dst, VkDeviceSize n) { memcpy(dst, ((const Src*)ctx)->mData, (size_t)n); }, &src);
+}
+
+bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, VkDeviceSize bytes, void (*fill)(void* ctx, U8* dst, VkDeviceSize bytes), void* fill_ctx)
+{
+    const auto t_start = std::chrono::steady_clock::now();
     LLVkMirror::noteRendererThread();
     ++mModCount;
     Context& ctx = Context::instance();
@@ -2577,7 +2585,9 @@ bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32
         }
         stage = { own.mBuffer, 0, own.mMapped };
     }
-    memcpy(stage.mPtr, data, (size_t)expected);
+    const auto t_fill = std::chrono::steady_clock::now();
+    fill(fill_ctx, (U8*)stage.mPtr, expected);
+    const U64 fill_us = (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_fill).count();
 
     ++mUploadStats.mCount;
     mUploadStats.mBytes += expected;
@@ -2602,6 +2612,7 @@ bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32
         ctx.waitIdle();     // the immediate path already waited; this just makes the free unconditional
         vmaDestroyBuffer(ctx.getAllocator(), own.mBuffer, own.mAllocation);
     }
+    LLVkAsync::noteTexWorker(0, fill_us, (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_start).count(), 1);
     return true;
 }
 

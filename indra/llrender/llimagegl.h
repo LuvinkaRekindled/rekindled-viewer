@@ -65,6 +65,18 @@ class LLImageGL : public LLRefCount
     friend class LLTexUnit;
 public:
 
+    // <FS> native-vk (C4): while this object lives, texture uploads made on this thread from pixels inside 'raw' are not copied into the render
+    // queue: the render thread keeps a reference on 'raw' and reads the pixels where they are, after the call has returned. The image must not be
+    // written through getData() until it is released (calls that reallocate or write it wait for the render thread by themselves, see LLImageBase).
+    class PixelHandover
+    {
+    public:
+        explicit PixelHandover(const LLImageRaw* raw);
+        ~PixelHandover();
+    private:
+        bool mActive;
+    };
+
     // call once per frame
     static void updateClass();
 

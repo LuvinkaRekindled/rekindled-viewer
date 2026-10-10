@@ -1627,6 +1627,8 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
         return false;
     }
 
+    LLImageGL::PixelHandover handover(mRawImage);       // <FS> native-vk (C4): the decoded pixels go to the render thread without a copy
+
     bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
 
     return res;
