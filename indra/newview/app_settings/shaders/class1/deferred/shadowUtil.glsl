@@ -285,6 +285,10 @@ float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen)
     return rt;
 #elif LL_RT_SHADOWS == 2
     // split screen: the cascades on the left half, the rays on the right
+    if (abs(pos_screen.x * 2.0 - screen_res.x) < 4.0)
+    {
+        return 0.0;                         // a dark line where the halves meet
+    }
     return (pos_screen.x * 2.0 < screen_res.x) ? sampleCascadeShadow(pos, norm, pos_screen) : rt;
 #else
     // disagreement map: white where the two do not agree about lit and shadowed, black elsewhere

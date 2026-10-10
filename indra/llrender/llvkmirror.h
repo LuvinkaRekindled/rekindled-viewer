@@ -300,6 +300,7 @@ namespace LLVkGL
         unsigned long long mVersion = 0;     // changes on every write
         unsigned long long mMoves = 0;       // changes when the same contents move to another range (the address changed, nothing else)
         bool mDevice = false;                // video memory written by GPU copies (false: written by the CPU)
+        const void* mMapped = nullptr;       // the mapped video memory range itself (slow to read from the CPU; debugging only)
         const void* mCpu = nullptr;          // the CPU's pointer to the data when it lives in host-written memory (valid until the buffer is written or freed), else null
     };
     bool getBufferInfo(unsigned int name, BufferInfo& out);
