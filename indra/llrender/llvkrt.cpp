@@ -718,7 +718,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         mat_mul(view, g.mModel, m);
         g.mDistance = sqrtf(m[12] * m[12] + m[13] * m[13] + m[14] * m[14]);
         // a region's matrix is shared by hundreds of groups (every spatial group of the region, and the neighbours have theirs); a moving object's own matrix by a few
-        const bool region = g.mKey.mMatrixId == common_id || id_counts[g.mKey.mMatrixId] >= 12;
+        // the viewer marks a region's own matrix with the top bit of the id (pipeline.cpp rt_matrix_id); anything else is an object that moves or is attached
+        const bool region = (g.mKey.mMatrixId & 0x80000000u) != 0;
         const bool null_matrix = g.mKey.mMatrixId == 0;
         g.mSkip = false;
         if (!sDbg.mDynCasters && !region && !null_matrix) g.mSkip = true;
