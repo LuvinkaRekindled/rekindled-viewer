@@ -335,16 +335,17 @@ bool LLGLManager::initGLNoGL()
 {
     LL_INFOS("RenderInit") << "Initializing without OpenGL (LL_VK_NOGL): the renderer is Vulkan only" << LL_ENDL;
 
-    std::string vendor, renderer, version;
-    U32 vram_mb = 0;
-    if (!LLVkMirror::describeDevice(vendor, renderer, version, vram_mb))
+    LLVkMirror::DeviceInfo dev;
+    if (!LLVkMirror::describeDevice(dev))
     {
         LL_WARNS("RenderInit") << "Vulkan could not be started: there is no OpenGL to fall back on" << LL_ENDL;
         return false;
     }
+    const std::string& vendor = dev.mVendor;
+    const std::string& renderer = dev.mRenderer;
     sNoGLVendor = vendor;
     sNoGLRenderer = renderer;
-    sNoGLVersion = version;
+    sNoGLVersion = dev.mVersion;
     sNoGLGlsl = "4.60";
     sNoGLExtensions = "GL_EXT_texture_filter_anisotropic GL_ARB_texture_cube_map_array GL_ARB_buffer_storage GL_ARB_multi_draw_indirect";
 
@@ -385,43 +386,40 @@ bool LLGLManager::initGLNoGL()
     mHasNVXGpuMemoryInfo = false;
     mHasATIMemInfo = false;
     mHasAMDAssociations = false;
-    glGetIntegerv(GL_MAX_ELEMENTS_VERTICES, (GLint*)&mGLMaxVertexRange);
-    glGetIntegerv(GL_MAX_ELEMENTS_INDICES, (GLint*)&mGLMaxIndexRange);
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, (GLint*)&mGLMaxTextureSize);
-    if (mGLMaxTextureSize <= 0)
-    {
-        mGLMaxTextureSize = 16384;
-    }
-    mVRAM = (S32)vram_mb;
+    // the limits come straight from the device (C6); nothing here asks a GL context any more
+    mGLMaxVertexRange = dev.mMaxVertexRange;
+    mGLMaxIndexRange = dev.mMaxIndexRange;
+    mGLMaxTextureSize = dev.mMaxTextureSize > 0 ? dev.mMaxTextureSize : 16384;
+    mVRAM = (S32)dev.mVramMb;
     mInited = true;
 
-    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &mNumTextureImageUnits);
-    glGetIntegerv(GL_MAX_COLOR_TEXTURE_SAMPLES, &mMaxColorTextureSamples);
-    glGetIntegerv(GL_MAX_DEPTH_TEXTURE_SAMPLES, &mMaxDepthTextureSamples);
-    glGetIntegerv(GL_MAX_INTEGER_SAMPLES, &mMaxIntegerSamples);
-    glGetIntegerv(GL_MAX_SAMPLE_MASK_WORDS, &mMaxSampleMaskWords);
-    glGetIntegerv(GL_MAX_SAMPLES, &mMaxSamples);
-    glGetIntegerv(GL_MAX_VARYING_VECTORS, &mMaxVaryingVectors);
-    glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &mMaxUniformBlockSize);
-    mMaxUniformBlockSize = llclamp(mMaxUniformBlockSize, 16384, 65536);
-    if (mNumTextureImageUnits <= 0)
-    {
-        mNumTextureImageUnits = 32;
-    }
-    if (mMaxVaryingVectors <= 0)
-    {
-        mMaxVaryingVectors = 31;
-    }
-    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &mMaxAnisotropy);
-    if (mMaxAnisotropy < 1.f)
-    {
-        mMaxAnisotropy = 16.f;
-    }
+    mNumTextureImageUnits = dev.mTextureImageUnits > 0 ? dev.mTextureImageUnits : 32;
+    mMaxColorTextureSamples = dev.mMaxColorTextureSamples;
+    mMaxDepthTextureSamples = dev.mMaxDepthTextureSamples;
+    mMaxIntegerSamples = dev.mMaxIntegerSamples;
+    mMaxSampleMaskWords = dev.mMaxSampleMaskWords;
+    mMaxSamples = dev.mMaxSamples;
+    mMaxVaryingVectors = dev.mMaxVaryingVectors > 0 ? dev.mMaxVaryingVectors : 31;
+    mMaxUniformBlockSize = llclamp(dev.mMaxUniformBlockSize, 16384, 65536);
+    mMaxAnisotropy = dev.mMaxAnisotropy >= 1.f ? dev.mMaxAnisotropy : 16.f;
+
+    mMemoryBandwidthGBps = dev.mMemoryBandwidthGBps;
+    mHasAccelStructure = dev.mAccelStruct;
+    mHasRayQuery = dev.mRayQuery;
+    mHasRayTracingPipeline = dev.mRayTracingPipeline;
+    mHasRayTracing = dev.mRayTracingUsable;
+    mRayTracingEnabled = dev.mRayTracingEnabled;
+    mHasRayReconstruction = dev.mRayReconstruction;
 
     LL_INFOS("RenderInit") << "GL_VENDOR:     " << sNoGLVendor << LL_ENDL;
     LL_INFOS("RenderInit") << "GL_RENDERER:   " << sNoGLRenderer << LL_ENDL;
     LL_INFOS("RenderInit") << "GL_VERSION:    " << sNoGLVersion << " (reported to the viewer)" << LL_ENDL;
     LL_INFOS("RenderInit") << "VRAM:          " << mVRAM << " MB" << LL_ENDL;
+    LL_INFOS("RenderInit") << "limits:        texture " << mGLMaxTextureSize << ", units " << mNumTextureImageUnits << ", samples " << mMaxSamples << " (color texture " << mMaxColorTextureSamples
+        << ", depth texture " << mMaxDepthTextureSamples << ", integer " << mMaxIntegerSamples << "), sample mask words " << mMaxSampleMaskWords << ", varying vectors " << mMaxVaryingVectors
+        << ", uniform block " << mMaxUniformBlockSize << ", draw range vertices " << mGLMaxVertexRange << " indices " << mGLMaxIndexRange << ", anisotropy " << mMaxAnisotropy << LL_ENDL;
+    LL_INFOS("RenderInit") << "capabilities:  memory bandwidth " << mMemoryBandwidthGBps << " GB/s, ray tracing " << (mHasRayTracing ? "yes" : "no") << " (acceleration structure " << mHasAccelStructure
+        << ", ray query " << mHasRayQuery << ", pipeline " << mHasRayTracingPipeline << ", enabled " << mRayTracingEnabled << "), DLSS ray reconstruction " << mHasRayReconstruction << LL_ENDL;
 
     initGLStates();
     return true;

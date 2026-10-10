@@ -12,10 +12,12 @@
 #if defined(LL_DLSS)
 #include "nvsdk_ngx_vk.h"
 #include "nvsdk_ngx_helpers_vk.h"
+#include "nvsdk_ngx_defs_dlssd.h"
 #endif
 
 #include <atomic>
 #include <cmath>
+#include <deque>
 #include <string>
 
 namespace LLVkDlss
@@ -83,6 +85,7 @@ bool init(VkInstance, VkPhysicalDevice, VkDevice)
     return false;
 }
 bool ready() { return false; }
+bool rayReconstructionAvailable() { return false; }
 void shutdown() {}
 bool evaluate(VkCommandBuffer, const Params&) { return false; }
 VkImageLayout inputLayout(const LLVk::Image&) { return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; }
@@ -94,6 +97,7 @@ namespace
 {
 
 bool gReady = false;
+bool gRayReconstruction = false;    // NGX reports the ray reconstruction feature as available
 VkDevice gDevice = VK_NULL_HANDLE;
 NVSDK_NGX_Parameter* gParams = nullptr;
 NVSDK_NGX_Handle* gFeature = nullptr;
@@ -115,11 +119,11 @@ std::wstring data_path()
     return gDataPath;
 }
 
-NVSDK_NGX_FeatureDiscoveryInfo discovery_info()
+NVSDK_NGX_FeatureDiscoveryInfo discovery_info(NVSDK_NGX_Feature feature = NVSDK_NGX_Feature_SuperSampling)
 {
     NVSDK_NGX_FeatureDiscoveryInfo info = {};
     info.SDKVersion = NVSDK_NGX_Version_API;
-    info.FeatureID = NVSDK_NGX_Feature_SuperSampling;
+    info.FeatureID = feature;
     info.Identifier.IdentifierType = NVSDK_NGX_Application_Identifier_Type_Project_Id;
     info.Identifier.v.ProjectDesc.ProjectId = PROJECT_ID;
     info.Identifier.v.ProjectDesc.EngineType = NVSDK_NGX_ENGINE_TYPE_CUSTOM;
@@ -177,7 +181,10 @@ void add_all(std::vector<const char*>& out, uint32_t count, VkExtensionPropertie
         }
         if (!have && exists)
         {
-            out.push_back(name);
+            // NGX owns the strings and may reuse the memory on the next query (C6 asks twice: super resolution and ray reconstruction): keep our own copy
+            static std::deque<std::string> sNames;
+            sNames.push_back(name);
+            out.push_back(sNames.back().c_str());
             LL_INFOS("VkDlss") << "enabling extension " << name << " for DLSS" << LL_ENDL;
         }
         else if (!exists)
@@ -207,17 +214,21 @@ void addInstanceExtensions(std::vector<const char*>& out)
 
 void addDeviceExtensions(VkInstance instance, VkPhysicalDevice device, std::vector<const char*>& out)
 {
-    NVSDK_NGX_FeatureDiscoveryInfo info = discovery_info();
-    uint32_t count = 0;
-    VkExtensionProperties* props = nullptr;
-    if (ok(NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(instance, device, &info, &count, &props), "NGX device extension query"))
+    std::vector<VkExtensionProperties> available;
+    uint32_t n = 0;
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &n, nullptr);
+    available.resize(n);
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &n, available.data());
+    // C6: super resolution first, then ray reconstruction (its extensions are enabled too so that the capability query in init() can say yes)
+    for (NVSDK_NGX_Feature feature : { NVSDK_NGX_Feature_SuperSampling, NVSDK_NGX_Feature_RayReconstruction })
     {
-        std::vector<VkExtensionProperties> available;
-        uint32_t n = 0;
-        vkEnumerateDeviceExtensionProperties(device, nullptr, &n, nullptr);
-        available.resize(n);
-        vkEnumerateDeviceExtensionProperties(device, nullptr, &n, available.data());
-        add_all(out, count, props, &available);
+        NVSDK_NGX_FeatureDiscoveryInfo info = discovery_info(feature);
+        uint32_t count = 0;
+        VkExtensionProperties* props = nullptr;
+        if (ok(NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(instance, device, &info, &count, &props), feature == NVSDK_NGX_Feature_SuperSampling ? "NGX device extension query" : "NGX ray reconstruction extension query"))
+        {
+            add_all(out, count, props, &available);
+        }
     }
 }
 
@@ -266,6 +277,19 @@ bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
         gParams = nullptr;
         return false;
     }
+    // C6: ray reconstruction (a separate NGX feature with its own DLL, nvngx_dlssd.dll); nothing uses it yet, the answer goes into the capabilities
+    {
+        int rr = 0, rr_needs_driver = 0;
+        NVSDK_NGX_Parameter_GetI(gParams, NVSDK_NGX_Parameter_SuperSamplingDenoising_Available, &rr);
+        NVSDK_NGX_Parameter_GetI(gParams, NVSDK_NGX_Parameter_SuperSamplingDenoising_NeedsUpdatedDriver, &rr_needs_driver);
+        NVSDK_NGX_FeatureDiscoveryInfo rr_info = discovery_info(NVSDK_NGX_Feature_RayReconstruction);
+        NVSDK_NGX_FeatureRequirement rr_req = {};
+        const bool rr_req_ok = NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_GetFeatureRequirements(instance, physical, &rr_info, &rr_req));
+        gRayReconstruction = rr != 0;
+        LL_INFOS("VkDlss") << "ray reconstruction: " << (gRayReconstruction ? "available" : "not available") << (rr_needs_driver ? " (needs a newer driver)" : "")
+                           << (rr_req_ok ? (rr_req.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported ? ", hardware and system supported" : ", not supported by the system: reasons 0x") : ", requirement query failed")
+                           << (rr_req_ok && rr_req.FeatureSupported != NVSDK_NGX_FeatureSupportResult_Supported ? std::to_string((U32)rr_req.FeatureSupported) : std::string()) << LL_ENDL;
+    }
     // the capability object is owned by NGX; evaluation needs one of our own
     gParams = nullptr;
     if (!ok(NVSDK_NGX_VULKAN_AllocateParameters(&gParams), "NGX parameter allocation"))
@@ -281,6 +305,11 @@ bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
 bool ready()
 {
     return gReady;
+}
+
+bool rayReconstructionAvailable()
+{
+    return gReady && gRayReconstruction;
 }
 
 void shutdown()

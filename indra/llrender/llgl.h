@@ -93,6 +93,15 @@ public:
     S32 mMaxUniformBlockSize = 0;
     S32 mMaxVaryingVectors = 0;
 
+    // C6: measured by the Vulkan device at start-up (GB/s, device-local copy read + write; 0 = not measured), and what it can do for ray tracing
+    F32 mMemoryBandwidthGBps = 0.f;
+    bool mHasAccelStructure = false;
+    bool mHasRayQuery = false;
+    bool mHasRayTracingPipeline = false;
+    bool mHasRayTracing = false;            // acceleration structures + ray query + device addresses: the ray tracing steps can be built on this device
+    bool mRayTracingEnabled = false;        // ... and switched on at device creation (LL_VK_RT=1)
+    bool mHasRayReconstruction = false;     // DLSS ray reconstruction can run here
+
     // GL 4.x capabilities
     bool mHasCubeMapArray = false;
     bool mHasDebugOutput = false;

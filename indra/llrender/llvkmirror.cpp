@@ -13,7 +13,7 @@ bool LLVkMirror::isRequested() { return false; }
 bool LLVkMirror::isReady() { return false; }
 bool LLVkMirror::ensureReady() { return false; }
 void LLVkMirror::setMainWindow(void*) {}
-bool LLVkMirror::describeDevice(std::string&, std::string&, std::string&, U32&) { return false; }
+bool LLVkMirror::describeDevice(DeviceInfo&) { return false; }
 bool LLVkMirror::inFrame() { return false; }
 void LLVkMirror::beginFrame(S32, S32) {}
 void LLVkMirror::endFrame() {}
@@ -605,13 +605,16 @@ void LLVkMirror::setMainWindow(void* hwnd)
     sMainWindowHandle = hwnd;
 }
 
-bool LLVkMirror::describeDevice(std::string& vendor, std::string& renderer, std::string& version, U32& vram_mb)
+bool LLVkMirror::describeDevice(DeviceInfo& out)
 {
     if (!ensureReady())
     {
         return false;
     }
     const LLVk::Capabilities& caps = LLVk::Context::instance().getCaps();
+    std::string& vendor = out.mVendor;
+    std::string& renderer = out.mRenderer;
+    std::string& version = out.mVersion;
     switch (caps.mVendorId)
     {
     case 0x10DE: vendor = "NVIDIA Corporation"; break;
@@ -636,7 +639,28 @@ bool LLVkMirror::describeDevice(std::string& vendor, std::string& renderer, std:
         snprintf(buf, sizeof(buf), "4.6.0 Vulkan %u.%u", VK_API_VERSION_MAJOR(caps.mApiVersion), VK_API_VERSION_MINOR(caps.mApiVersion));
     }
     version = buf;
-    vram_mb = (U32)(LLVk::Context::instance().deviceLocalBytes() / (1024 * 1024));
+    out.mVramMb = (U32)(LLVk::Context::instance().deviceLocalBytes() / (1024 * 1024));
+
+    // limits: what the GL queries used to be answered with (see emulate_limit in llvkgl.cpp, which reads the same capabilities)
+    out.mMaxTextureSize = (S32)caps.mMaxImageDim2D;
+    out.mTextureImageUnits = (S32)std::min<U32>(caps.mMaxSampledImagesPerStage, 32u);     // not the descriptor limit (a million): display() loops over every unit
+    out.mMaxSamples = (S32)caps.mMaxSampleCount;
+    out.mMaxColorTextureSamples = (S32)caps.mMaxColorTextureSamples;
+    out.mMaxDepthTextureSamples = (S32)caps.mMaxDepthTextureSamples;
+    out.mMaxIntegerSamples = (S32)caps.mMaxIntegerSamples;
+    out.mMaxSampleMaskWords = (S32)caps.mMaxSampleMaskWords;
+    out.mMaxVaryingVectors = (S32)caps.mMaxVaryingVectors;
+    out.mMaxUniformBlockSize = (S32)caps.mMaxUniformRange;
+    out.mMaxVertexRange = (S32)caps.mRecommendedMaxVertices;
+    out.mMaxIndexRange = (S32)caps.mRecommendedMaxIndices;
+    out.mMaxAnisotropy = caps.mMaxAnisotropy;
+    out.mMemoryBandwidthGBps = caps.mMemoryBandwidthGBps;
+    out.mAccelStruct = caps.mRt.mAccelStruct;
+    out.mRayQuery = caps.mRt.mRayQuery;
+    out.mRayTracingPipeline = caps.mRt.mPipeline;
+    out.mRayTracingUsable = caps.mRt.mUsable;
+    out.mRayTracingEnabled = caps.mRt.mEnabled;
+    out.mRayReconstruction = LLVkDlss::rayReconstructionAvailable();
     return true;
 }
 
