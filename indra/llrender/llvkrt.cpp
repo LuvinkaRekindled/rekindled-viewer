@@ -655,6 +655,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         Job job;
         job.mKey = g.mKey;
         job.mBlas = &b;
+        LLVkGL::markBufferUsed(g.mKey.mVb);         // the build reads them when the GPU gets here: a CPU rewrite in place before that would tear the data
+        LLVkGL::markBufferUsed(g.mKey.mIb);
         job.mUpdate = !grew && !ib_changed && b.mRefits < rebuild_after_refits && b.mAs != VK_NULL_HANDLE;
         job.mVbVersion = vi.mVersion;
         job.mIbVersion = ii.mVersion;
@@ -796,6 +798,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 continue;
             }
             custom_index = records;
+            LLVkGL::markBufferUsed(g.mKey.mVb);     // the alpha test reads positions, texcoords, colours and indices while the lighting runs
+            LLVkGL::markBufferUsed(g.mKey.mIb);
             for (const Range& r : set)
             {
                 GpuGeom& rec = table[records++];
