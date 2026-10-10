@@ -181,6 +181,13 @@ LL_VK_DEVICE_FN(vkCmdEndQuery)
 LL_VK_DEVICE_FN(vkCmdWriteTimestamp2)
 LL_VK_DEVICE_FN(vkCmdCopyQueryPoolResults)
 
+// acceleration structures (VK_KHR_acceleration_structure; null unless the device was created with LL_VK_RT=1)
+LL_VK_DEVICE_FN(vkCreateAccelerationStructureKHR)
+LL_VK_DEVICE_FN(vkDestroyAccelerationStructureKHR)
+LL_VK_DEVICE_FN(vkGetAccelerationStructureBuildSizesKHR)
+LL_VK_DEVICE_FN(vkCmdBuildAccelerationStructuresKHR)
+LL_VK_DEVICE_FN(vkGetAccelerationStructureDeviceAddressKHR)
+
 #undef LL_VK_GLOBAL_FN
 #undef LL_VK_INSTANCE_FN
 #undef LL_VK_DEVICE_FN

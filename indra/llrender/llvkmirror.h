@@ -278,4 +278,20 @@ namespace LLVkMirror
 #endif
 }
 
+#if defined(LL_VULKAN)
+namespace LLVkGL
+{
+    // Arena phase 3: where a GL buffer name lives. The address stays valid while epoch is unchanged; version moves on every write. Worker thread only (it owns the buffer table).
+    struct BufferInfo
+    {
+        unsigned long long mAddress = 0;     // device address of the first byte (0: no storage, or not in the arena)
+        unsigned long long mSize = 0;        // bytes of data (the viewer's pool may make the buffer up to 12.5% larger than its content)
+        unsigned long long mEpoch = 0;       // changes when the name gets other storage or another owner (new range, deleted, recycled by the vertex buffer pool)
+        unsigned long long mVersion = 0;     // changes on every write
+        bool mDevice = false;                // video memory written by GPU copies (false: written by the CPU)
+    };
+    bool getBufferInfo(unsigned int name, BufferInfo& out);
+}
+#endif
+
 #endif // LL_LLVKMIRROR_H

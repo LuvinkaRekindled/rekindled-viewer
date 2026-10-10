@@ -445,6 +445,7 @@ public:
         mAllocated += size;
 
         auto& pool = type == GL_ELEMENT_ARRAY_BUFFER ? mIBOPool : mVBOPool;
+        bool recycled = false;
 
         Pool::iterator iter = pool.find(size);
         if (iter == pool.end())
@@ -481,6 +482,7 @@ public:
         {
             mHits++;
             llassert(mReserved >= size); // assert if accounting gets messed up
+            recycled = true;
             mReserved -= size;
 
             std::list<Entry>& entries = iter->second;
@@ -494,6 +496,12 @@ public:
                 pool.erase(iter);
             }
         }
+#if defined(LL_VULKAN)
+        if (recycled && LLVkAsync::mainProducer())
+        {
+            LLVkAsync::bufferRecycle(name);     // <FS> the name comes back without glBufferData: whatever was built over its old contents is stale
+        }
+#endif
 
         clean();
     }
@@ -529,7 +537,12 @@ public:
         {
             iter->second.push_front({ data, name, std::chrono::steady_clock::now() });
         }
-
+#if defined(LL_VULKAN)
+        if (LLVkAsync::mainProducer())
+        {
+            LLVkAsync::bufferRecycle(name);     // <FS> back in the pool: nothing may keep building over it
+        }
+#endif
     }
 
     // clean periodically (clean gets called for every alloc/free)
