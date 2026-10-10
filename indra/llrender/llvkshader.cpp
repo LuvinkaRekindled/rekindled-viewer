@@ -859,6 +859,13 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
             uniform_index[u.mName] = uniforms.size();
             uniforms.push_back(u);
         }
+        for (const StageWork& w : works)
+        {
+            if (w.mUsesRt)
+            {
+                used[0] = true;         // the ray query alpha test reads the 2D table (ll_rt_tex)
+            }
+        }
         for (int t = 0; t < 4; ++t)
         {
             if (used[t])
@@ -953,13 +960,29 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         }
         if (w.mUsesRt)
         {
-            // <FS> ray queries against the frame's scene (llvkrt.cpp): set 3, binding 0
-            text << "#extension GL_EXT_ray_query : require\n";
+            // <FS> ray queries against the frame's scene (llvkrt.cpp)
+            text << "#extension GL_EXT_ray_query : require\n#extension GL_EXT_buffer_reference : require\n#extension GL_EXT_buffer_reference_uvec2 : require\n"
+                    "#extension GL_EXT_nonuniform_qualifier : enable\n";
         }
         text << bool_defines.str() << block.str() << bindless_decl.str();
         if (w.mUsesRt)
         {
-            text << "layout(set = 3, binding = 0) uniform accelerationStructureEXT ll_rt_tlas;\n";
+            // set 3: the scene (binding 0) and the geometry records of its alpha masked structures (binding 1, GpuGeom in llvkrt.cpp); the frame's 2D table as ll_rt_tex
+            text << "layout(set = 3, binding = 0) uniform accelerationStructureEXT ll_rt_tlas;\n"
+                    "layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer LLRtPositions { vec4 v[]; };\n"
+                    "layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer LLRtTexcoords { vec2 t[]; };\n"
+                    "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer LLRtColors { uint c[]; };\n"
+                    "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer LLRtIndices { uint w[]; };\n"
+                    "struct LLRtGeom { uvec2 positions; uvec2 indices; uvec2 texcoords; uvec2 colors; uvec2 slots; uint flags; float cutoff; uint first; uint pad; };\n"
+                    "layout(std430, set = 3, binding = 1) readonly buffer LLRtGeoms { LLRtGeom g[]; } ll_rt_geoms;\n";
+            if (bindless)
+            {
+                text << "#define ll_rt_tex ll_vk_tbl0\n";
+            }
+            else
+            {
+                text << "layout(set = 2, binding = 0) uniform sampler2D ll_rt_tex[];\n";
+            }
         }
 
         bool have_main = false;

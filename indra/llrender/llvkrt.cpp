@@ -33,11 +33,34 @@ U64 env_u64(const char* name, U64 fallback)
     return e && e[0] ? (U64)atoll(e) : fallback;
 }
 
+// Several scene calls can happen within one frame (the main view, probes, snapshots). The top-level structure is rebuilt in place by each (the barrier before the build orders it
+// after the earlier lighting), but what the build and the shaders read from memory the CPU writes has to be separate per call: the instances and the geometry table.
+constexpr U32 kCalls = 6;
+constexpr U32 kInstanceCapacity = 32768;                    // per call
+constexpr VkDeviceSize kTableBytes = 2u << 20;              // per call: the geometry records of the alpha masked structures
+
+// one geometry (index range) of an alpha masked structure as the ray query shader reads it (llvkshader.cpp declares the same struct, LLRtGeom)
+struct GpuGeom
+{
+    U32 mPositions[2];
+    U32 mIndices[2];
+    U32 mTexcoords[2];
+    U32 mColors[2];
+    U32 mSlots[2];          // four 16 bit texture slots
+    U32 mFlags;
+    F32 mCutoff;
+    U32 mFirst;             // first index of the range
+    U32 mPad;
+};
+static_assert(sizeof(GpuGeom) == 56, "geometry record");
+constexpr U32 kMaxRecords = (U32)(kTableBytes / sizeof(GpuGeom));
+
 struct Range
 {
     U32 mFirst = 0, mCount = 0;
     bool operator<(const Range& o) const { return mFirst != o.mFirst ? mFirst < o.mFirst : mCount < o.mCount; }
     bool operator==(const Range& o) const { return mFirst == o.mFirst && mCount == o.mCount; }
+    U64 id() const { return ((U64)mFirst << 32) | mCount; }
 };
 
 struct Key
@@ -63,13 +86,15 @@ struct Group
     Key mKey;
     F32 mModel[16] = {};
     std::vector<Range> mRanges;
+    std::vector<AlphaInfo> mAlpha;      // kind 1: parallel to mRanges
 };
 
 struct Blas
 {
     U64 mVbEpoch = 0, mIbEpoch = 0;
     U64 mVbVersion = ~0ull, mIbVersion = ~0ull;     // contents at the last build or refit
-    std::vector<Range> mBuilt;                      // sorted: what the structure covers
+    std::vector<Range> mBuilt;                      // sorted: what the structure covers (the geometry index is the position in this list)
+    std::unordered_map<U64, AlphaInfo> mAlpha;      // kind 1: the alpha test data of each range, as last drawn
     VkAccelerationStructureKHR mAs = VK_NULL_HANDLE;
     VkDeviceAddress mAddress = 0;
     ArenaRef mStorage;
@@ -83,14 +108,18 @@ struct Tlas
 {
     VkAccelerationStructureKHR mAs = VK_NULL_HANDLE;
     Buffer mStorage;
-    Buffer mInstances;
+    Buffer mInstances;                              // kCalls regions of mCapacity instances
+    Buffer mTable;                                  // kCalls regions of kTableBytes
     U32 mCapacity = 0;
     VkDescriptorSet mSet = VK_NULL_HANDLE;
+    U64 mCallFrame = ~0ull;                         // frame number of the calls counted in mCalls
+    U32 mCalls = 0;
 };
 
 struct Stats
 {
-    U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaSkipped = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
+    U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
+    U64 mOverCap = 0, mExtraCalls = 0;
     double mCpuMs = 0, mCpuMsMax = 0;
 };
 
@@ -106,6 +135,7 @@ U64 sSceneCalls = 0;
 U64 sBlasStorageBytes = 0;
 U32 sLastInstances = 0;
 U32 sLastBuilt = 0;
+U32 sTableOffset = 0;
 Stats sStats;
 
 // column-major 4x4 product
@@ -165,29 +195,24 @@ void tlas_sizes(U32 capacity, VkAccelerationStructureBuildSizesInfoKHR& sizes)
     vkGetAccelerationStructureBuildSizesKHR(Context::instance().getDevice(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &info, &capacity, &sizes);
 }
 
-// a top-level structure (and its instance buffer) for up to `capacity` instances; the set is written to point at it
+// a top-level structure for up to `capacity` instances, the instance and table memory of its frame slot, and the set pointing at them (made once at start-up: a set that
+// recorded commands refer to must not be rewritten)
 bool make_tlas(Tlas& t, U32 capacity)
 {
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
-    if (t.mAs != VK_NULL_HANDLE)
-    {
-        VkAccelerationStructureKHR old = t.mAs;
-        ctx.destroyLater([=]() { vkDestroyAccelerationStructureKHR(dev, old, nullptr); });
-        ctx.destroyBuffer(t.mStorage);
-        ctx.destroyBuffer(t.mInstances);
-        t.mAs = VK_NULL_HANDLE;
-        t.mCapacity = 0;
-    }
     VkAccelerationStructureBuildSizesInfoKHR sizes;
     tlas_sizes(capacity, sizes);
     if (!ctx.createBuffer(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, Context::Memory::Device, t.mStorage)
-        || !ctx.createBuffer(64ull * capacity, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, Context::Memory::UploadDevice, t.mInstances))
+        || !ctx.createBuffer(64ull * capacity * kCalls, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, Context::Memory::UploadDevice, t.mInstances)
+        || !ctx.createBuffer(kTableBytes * kCalls, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, t.mTable))
     {
         ctx.destroyBuffer(t.mStorage);
         ctx.destroyBuffer(t.mInstances);
+        ctx.destroyBuffer(t.mTable);
         return false;
     }
+    memset(t.mTable.mMapped, 0, (size_t)(kTableBytes * kCalls));
     VkAccelerationStructureCreateInfoKHR ci = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
     ci.buffer = t.mStorage.mBuffer;
     ci.size = sizes.accelerationStructureSize;
@@ -197,19 +222,28 @@ bool make_tlas(Tlas& t, U32 capacity)
         t.mAs = VK_NULL_HANDLE;
         ctx.destroyBuffer(t.mStorage);
         ctx.destroyBuffer(t.mInstances);
+        ctx.destroyBuffer(t.mTable);
         return false;
     }
     t.mCapacity = capacity;
     VkWriteDescriptorSetAccelerationStructureKHR as_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR };
     as_write.accelerationStructureCount = 1;
     as_write.pAccelerationStructures = &t.mAs;
-    VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-    w.pNext = &as_write;
-    w.dstSet = t.mSet;
-    w.dstBinding = 0;
-    w.descriptorCount = 1;
-    w.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    vkUpdateDescriptorSets(dev, 1, &w, 0, nullptr);
+    VkDescriptorBufferInfo table = { t.mTable.mBuffer, 0, kTableBytes };
+    VkWriteDescriptorSet w[2] = {};
+    w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w[0].pNext = &as_write;
+    w[0].dstSet = t.mSet;
+    w[0].dstBinding = 0;
+    w[0].descriptorCount = 1;
+    w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w[1].dstSet = t.mSet;
+    w[1].dstBinding = 1;
+    w[1].descriptorCount = 1;
+    w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+    w[1].pBufferInfo = &table;
+    vkUpdateDescriptorSets(dev, 2, w, 0, nullptr);
     return true;
 }
 
@@ -283,11 +317,11 @@ bool init(VkDescriptorSetLayout set_layout)
     }
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
-    VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, Context::frameCount() };
+    VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, Context::frameCount() }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, Context::frameCount() } };
     VkDescriptorPoolCreateInfo pi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pi.maxSets = Context::frameCount();
-    pi.poolSizeCount = 1;
-    pi.pPoolSizes = &ps;
+    pi.poolSizeCount = 2;
+    pi.pPoolSizes = ps;
     if (vkCreateDescriptorPool(dev, &pi, nullptr, &sPool) != VK_SUCCESS)
     {
         sFailed = true;
@@ -307,13 +341,12 @@ bool init(VkDescriptorSetLayout set_layout)
         sFailed = true;
         return false;
     }
-    const U32 initial_capacity = 1024;
     VkAccelerationStructureBuildSizesInfoKHR sizes;
-    tlas_sizes(initial_capacity, sizes);
+    tlas_sizes(kInstanceCapacity, sizes);
     for (U32 i = 0; i < Context::frameCount(); ++i)
     {
         sTlas[i].mSet = sets[i];
-        if (!make_tlas(sTlas[i], initial_capacity))
+        if (!make_tlas(sTlas[i], kInstanceCapacity))
         {
             sFailed = true;
             return false;
@@ -357,7 +390,8 @@ bool init(VkDescriptorSetLayout set_layout)
         return false;
     }
     sInit = true;
-    LL_INFOS("VkRt") << "ray tracing scene ready: mode " << shadowMode() << ", " << Context::frameCount() << " frame slots, instance capacity " << initial_capacity << LL_ENDL;
+    LL_INFOS("VkRt") << "ray tracing scene ready: mode " << shadowMode() << ", " << Context::frameCount() << " frame slots, " << kCalls << " scene calls per frame, instance capacity "
+                     << kInstanceCapacity << ", geometry table " << (kTableBytes >> 10) << " KB per call" << LL_ENDL;
     return true;
 }
 
@@ -427,6 +461,7 @@ void noteCaster(const Caster& c)
     if (ranges.size() < 512)
     {
         ranges.push_back(r);
+        it->second.mAlpha.push_back(c.mAlpha ? *c.mAlpha : AlphaInfo());
     }
 }
 
@@ -435,7 +470,12 @@ VkDescriptorSet descriptorSet(U32 frame_slot)
     return frame_slot < Context::FRAMES_IN_FLIGHT ? sTlas[frame_slot].mSet : VK_NULL_HANDLE;
 }
 
-void buildScene(const F32* view)
+U32 tableOffset()
+{
+    return sTableOffset;
+}
+
+void buildScene(const F32* view, TextureSlotFn slot_of)
 {
     if (!sInit || sFailed)
     {
@@ -452,12 +492,12 @@ void buildScene(const F32* view)
     const VkDeviceSize align = std::max<VkDeviceSize>(caps.mRt.mScratchAlignment, 128);
     static const U64 max_builds = env_u64("LL_VK_RT_BUILD_MAX", 256);
     static const U64 max_tris = env_u64("LL_VK_RT_BUILD_TRIS", 800000);
-    static const bool alpha_as_opaque = env_u64("LL_VK_RT_ALPHA_OPAQUE", 0) != 0;
+    static const bool alpha_on = env_u64("LL_VK_RT_ALPHA", 1) != 0;
     static const U64 rebuild_after_refits = 64;
     ++sSceneCalls;
     sGroupsConsumed = true;
 
-    // forget structures that were not named for a while, or whose buffers hold something else
+    // forget structures that were not named for a while
     if (sSceneCalls % 120 == 0)
     {
         for (auto it = sBlas.begin(); it != sBlas.end();)
@@ -495,9 +535,8 @@ void buildScene(const F32* view)
     for (const auto& entry : order)
     {
         Group& g = *entry.second;
-        if (g.mKey.mKind == 1 && !alpha_as_opaque)
+        if (g.mKey.mKind == 1 && !alpha_on)
         {
-            ++sStats.mAlphaSkipped;
             continue;
         }
         if (!LLVkGL::getBufferInfo(g.mKey.mVb, vi) || !LLVkGL::getBufferInfo(g.mKey.mIb, ii) || !vi.mAddress || !ii.mAddress || vi.mSize < 16 || ii.mSize < 6)
@@ -510,6 +549,7 @@ void buildScene(const F32* view)
         if (b.mAs != VK_NULL_HANDLE && (b.mVbEpoch != vi.mEpoch || b.mIbEpoch != ii.mEpoch))
         {
             drop_blas(b);                       // the names hold something else now
+            b.mAlpha.clear();
         }
         if (b.mAs == VK_NULL_HANDLE)
         {
@@ -519,11 +559,16 @@ void buildScene(const F32* view)
         // the ranges the structure has to cover: what it covers already plus what was drawn now
         std::vector<Range> want = b.mBuilt;
         bool grew = b.mAs == VK_NULL_HANDLE;
-        for (const Range& r : g.mRanges)
+        for (size_t k = 0; k < g.mRanges.size(); ++k)
         {
+            const Range& r = g.mRanges[k];
             if (((U64)r.mFirst + r.mCount) * 2 > ii.mSize)
             {
                 continue;                       // outside the data (a stale range)
+            }
+            if (g.mKey.mKind == 1)
+            {
+                b.mAlpha[r.id()] = g.mAlpha[k];     // the textures and cutoff as drawn now
             }
             if (std::find(want.begin(), want.end(), r) == want.end())
             {
@@ -559,7 +604,8 @@ void buildScene(const F32* view)
         {
             VkAccelerationStructureGeometryKHR geo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
             geo.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-            geo.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+            // opaque casters commit their hit at once; masked ones hand every candidate triangle to the shader's alpha test
+            geo.flags = g.mKey.mKind == 1 ? VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR : VK_GEOMETRY_OPAQUE_BIT_KHR;
             VkAccelerationStructureGeometryTrianglesDataKHR& t = geo.geometry.triangles;
             t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
             t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
@@ -623,8 +669,25 @@ void buildScene(const F32* view)
         jobs.push_back(std::move(job));
     }
 
-    // ---- 2. instances ---------------------------------------------------------------------------------------
+    // ---- 2. instances and the geometry table of the masked structures --------------------------------------
     // a structure that is being (re)built now is part of this frame's scene: its new address is used
+    Tlas& tlas = sTlas[ctx.getFrameSlot()];
+    const U64 frame_now = ctx.getFrameNumber();
+    if (tlas.mCallFrame != frame_now)
+    {
+        tlas.mCallFrame = frame_now;
+        tlas.mCalls = 0;
+    }
+    U32 call = tlas.mCalls++;
+    if (call >= kCalls)
+    {
+        call = kCalls - 1;                      // more scene calls in one frame than regions: the last region is shared (earlier traces of the frame may see its later content)
+        ++sStats.mExtraCalls;
+    }
+    GpuGeom* table = (GpuGeom*)((U8*)tlas.mTable.mMapped + (size_t)call * kTableBytes);
+    U32 records = 0;
+    sTableOffset = (U32)(call * kTableBytes);
+
     std::vector<VkAccelerationStructureInstanceKHR> instances;
     instances.reserve(sGroups.size());
     std::unordered_map<Key, const Job*, KeyHash> job_of;
@@ -635,7 +698,7 @@ void buildScene(const F32* view)
     for (auto& kv : sGroups)
     {
         const Group& g = kv.second;
-        if (g.mKey.mKind == 1 && !alpha_as_opaque)
+        if (g.mKey.mKind == 1 && !alpha_on)
         {
             continue;
         }
@@ -644,15 +707,73 @@ void buildScene(const F32* view)
         {
             continue;
         }
-        VkDeviceAddress address = bit->second.mAddress;
+        const Blas& b = bit->second;
+        VkDeviceAddress address = b.mAddress;
         auto jit = job_of.find(g.mKey);
-        if (jit != job_of.end() && !jit->second->mUpdate)
+        const Job* job = jit != job_of.end() ? jit->second : nullptr;
+        if (job && !job->mUpdate)
         {
-            address = jit->second->mNewAddress;
+            address = job->mNewAddress;
         }
         if (!address)
         {
             continue;
+        }
+        if (instances.size() >= kInstanceCapacity)
+        {
+            ++sStats.mOverCap;
+            break;
+        }
+        U32 custom_index = 0;
+        if (g.mKey.mKind == 1)
+        {
+            // one record per geometry, in the order of the structure's geometry list
+            const std::vector<Range>& set = job ? job->mSet : b.mBuilt;
+            if (records + set.size() > kMaxRecords || !LLVkGL::getBufferInfo(g.mKey.mVb, vi) || !LLVkGL::getBufferInfo(g.mKey.mIb, ii))
+            {
+                ++sStats.mTableFull;
+                continue;
+            }
+            custom_index = records;
+            for (const Range& r : set)
+            {
+                GpuGeom& rec = table[records++];
+                memset(&rec, 0, sizeof(rec));
+                auto ait = b.mAlpha.find(r.id());
+                const AlphaInfo none;
+                const AlphaInfo& a = ait != b.mAlpha.end() ? ait->second : none;
+                const U64 pa = vi.mAddress, ia = ii.mAddress;
+                rec.mPositions[0] = (U32)pa;
+                rec.mPositions[1] = (U32)(pa >> 32);
+                rec.mIndices[0] = (U32)ia;
+                rec.mIndices[1] = (U32)(ia >> 32);
+                if (a.mFlags & 8u)
+                {
+                    const U64 t = pa + a.mTexcoordOffset;
+                    rec.mTexcoords[0] = (U32)t;
+                    rec.mTexcoords[1] = (U32)(t >> 32);
+                }
+                if (a.mFlags & 16u)
+                {
+                    const U64 c = pa + a.mColorOffset;
+                    rec.mColors[0] = (U32)c;
+                    rec.mColors[1] = (U32)(c >> 32);
+                }
+                U32 slot[4] = {};
+                for (U32 k = 0; k < 4; ++k)
+                {
+                    if (a.mTextures[k] && slot_of)
+                    {
+                        slot[k] = slot_of(a.mTextures[k]) & 0xFFFFu;
+                    }
+                }
+                rec.mSlots[0] = slot[0] | (slot[1] << 16);
+                rec.mSlots[1] = slot[2] | (slot[3] << 16);
+                rec.mFlags = a.mFlags;
+                rec.mCutoff = a.mCutoff;
+                rec.mFirst = r.mFirst;
+            }
+            ++sStats.mAlphaStructs;
         }
         F32 m[16];
         mat_mul(view, g.mModel, m);
@@ -664,12 +785,8 @@ void buildScene(const F32* view)
                 inst.transform.matrix[row][col] = m[col * 4 + row];
             }
         }
-        inst.instanceCustomIndex = 0;
+        inst.instanceCustomIndex = custom_index;
         inst.mask = 1u << std::min<U32>(g.mKey.mKind, 7u);
-        if (g.mKey.mKind == 1 && alpha_as_opaque)
-        {
-            inst.mask = 1;
-        }
         inst.instanceShaderBindingTableRecordOffset = 0;
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         inst.accelerationStructureReference = address;
@@ -677,14 +794,10 @@ void buildScene(const F32* view)
     }
 
     // ---- 3. record: builds, then the top-level structure -----------------------------------------------------
-    Tlas& tlas = sTlas[ctx.getFrameSlot()];
-    U32 capacity = tlas.mCapacity;
-    while (capacity < instances.size())
-    {
-        capacity *= 2;
-    }
-    if (capacity != tlas.mCapacity && !make_tlas(tlas, capacity))
-    {
+    VkAccelerationStructureBuildSizesInfoKHR tlas_size;
+    tlas_sizes(tlas.mCapacity, tlas_size);
+    const VkDeviceSize scratch_needed = std::max(scratch_total, tlas_size.buildScratchSize) + 2 * align;
+    auto undo_jobs = [&]() {
         for (Job& j : jobs)
         {
             if (j.mNewAs != VK_NULL_HANDLE)
@@ -695,20 +808,17 @@ void buildScene(const F32* view)
                 ctx.arenaFree(j.mNewStorage);
             }
         }
-        ++sStats.mFailed;
-        return;
-    }
-    VkAccelerationStructureBuildSizesInfoKHR tlas_size;
-    tlas_sizes(tlas.mCapacity, tlas_size);
-    const VkDeviceSize scratch_needed = std::max(scratch_total, tlas_size.buildScratchSize) + 2 * align;
+    };
     if (!ensure_scratch(scratch_needed))
     {
+        undo_jobs();
         ++sStats.mFailed;
         return;
     }
+    const VkDeviceSize instance_offset = (VkDeviceSize)call * 64ull * tlas.mCapacity;
     if (!instances.empty())
     {
-        memcpy(tlas.mInstances.mMapped, instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
+        memcpy((U8*)tlas.mInstances.mMapped + instance_offset, instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
     }
     const VkDeviceAddress scratch_base = (sScratch.mAddress + align - 1) / align * align;
     std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
@@ -722,7 +832,7 @@ void buildScene(const F32* view)
     VkAccelerationStructureGeometryKHR tgeo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
     tgeo.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
     tgeo.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    tgeo.geometry.instances.data.deviceAddress = tlas.mInstances.mAddress;
+    tgeo.geometry.instances.data.deviceAddress = tlas.mInstances.mAddress + instance_offset;
     VkAccelerationStructureBuildGeometryInfoKHR tinfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
     tinfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
     tinfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
@@ -753,16 +863,7 @@ void buildScene(const F32* view)
     if (!recorded)
     {
         // no frame is being recorded: undo the new structures, the groups are named again when the passes run
-        for (Job& j : jobs)
-        {
-            if (j.mNewAs != VK_NULL_HANDLE)
-            {
-                VkAccelerationStructureKHR as = j.mNewAs;
-                ctx.destroyLater([=]() { vkDestroyAccelerationStructureKHR(dev, as, nullptr); });
-                sBlasStorageBytes -= std::min<U64>(sBlasStorageBytes, j.mNewStorage.mSize);
-                ctx.arenaFree(j.mNewStorage);
-            }
-        }
+        undo_jobs();
         sGroupsConsumed = false;
         return;
     }
@@ -777,7 +878,9 @@ void buildScene(const F32* view)
         }
         else
         {
+            std::unordered_map<U64, AlphaInfo> keep = std::move(b.mAlpha);
             drop_blas(b);                       // the structure that is replaced (a new one was made)
+            b.mAlpha = std::move(keep);
             b.mAs = j.mNewAs;
             b.mAddress = j.mNewAddress;
             b.mStorage = j.mNewStorage;
@@ -823,14 +926,16 @@ std::string report(double frames)
     }
     const Stats& s = sStats;
     const double scenes = std::max<double>(1.0, (double)s.mScenes);
-    char buf[900];
+    const double f = std::max(1.0, frames);
+    char buf[1000];
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
-             "deferred %.2f, no data %.2f, alpha casters skipped %.1f, failed %.3f, evicted %.3f, scene calls %.2f/frame, CPU %.3f ms/call (worst %.2f ms), scratch %.1f MB",
-             shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / std::max(1.0, frames),
-             (double)s.mBuilds / std::max(1.0, frames), (double)s.mPrimsBuilt / std::max(1.0, frames), (double)s.mRefits / std::max(1.0, frames), (double)s.mPrimsRefit / std::max(1.0, frames),
-             (double)s.mDeferred / std::max(1.0, frames), (double)s.mNoData / std::max(1.0, frames), (double)s.mAlphaSkipped / std::max(1.0, frames), (double)s.mFailed / std::max(1.0, frames),
-             (double)s.mEvicted / std::max(1.0, frames), (double)s.mScenes / std::max(1.0, frames), s.mCpuMs / scenes, s.mCpuMsMax, (double)sScratch.mSize / 1048576.0);
+             "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
+             "CPU %.3f ms/call (worst %.2f ms), scratch %.1f MB",
+             shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / f, (double)s.mBuilds / f,
+             (double)s.mPrimsBuilt / f, (double)s.mRefits / f, (double)s.mPrimsRefit / f, (double)s.mDeferred / f, (double)s.mNoData / f, (double)s.mAlphaStructs / f, (double)s.mTableFull / f,
+             (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax,
+             (double)sScratch.mSize / 1048576.0);
     return buf;
 }
 

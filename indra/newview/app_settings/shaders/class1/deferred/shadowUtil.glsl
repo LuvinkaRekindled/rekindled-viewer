@@ -95,8 +95,56 @@ float pcfSpotShadow(sampler2DShadow shadowMap, vec4 stc, float bias_scale, vec2 
 
 #if defined(SUN_SHADOW) && defined(LL_RT_SHADOWS)
 // <FS> Ray query sun shadow (LL_VK_RT_SHADOWS): one ray from the surface towards the sun against the frame's scene (llvkrt.cpp), in eye space like everything here.
-// Opaque casters only so far (alpha masked casters and rigged avatars are not in the scene yet: PLAN-rt-shadows.md stages B and C).
-float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir)
+// Opaque casters commit their hit at once; alpha masked ones (instance mask 2) hand each candidate triangle to rtAlphaHit, which repeats the test of shadowAlphaPullF.glsl
+// with the texture of the geometry record (set 3 binding 1) read through the frame's bindless table. Rigged avatars are not in the scene yet (PLAN-rt-shadows.md stage C).
+bool rtAlphaHit(inout rayQueryEXT rq, vec2 pos_screen, float lod)
+{
+    LLRtGeom g = ll_rt_geoms.g[uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false))];
+    uint prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false));
+    vec2 bary = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+    vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
+    LLRtIndices ib = LLRtIndices(g.indices);
+    uint ix[3];
+    for (uint k = 0u; k < 3u; ++k)
+    {
+        uint i = g.first + prim * 3u + k;
+        uint word = ib.w[i >> 1];
+        ix[k] = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+    }
+    vec2 uv = vec2(0.0);
+    if ((g.flags & 8u) != 0u)
+    {
+        LLRtTexcoords tc = LLRtTexcoords(g.texcoords);
+        uv = tc.t[ix[0]] * w.x + tc.t[ix[1]] * w.y + tc.t[ix[2]] * w.z;
+    }
+    uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(LLRtPositions(g.positions).v[ix[0]].w) & 3u);
+    uint pair = (tex_index < 2u) ? g.slots.x : g.slots.y;
+    uint slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
+    float alpha = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod).a;
+    if (alpha < g.cutoff)
+    {
+        return false;
+    }
+    if ((g.flags & 2u) == 0u)
+    {
+        if ((g.flags & 1u) == 0u && (g.flags & 16u) != 0u)
+        {
+            LLRtColors col = LLRtColors(g.colors);
+            alpha *= (float(col.c[ix[0]] >> 24) * w.x + float(col.c[ix[1]] >> 24) * w.y + float(col.c[ix[2]] >> 24) * w.z) * (1.0 / 255.0);
+        }
+        if (alpha < 0.05)
+        {
+            return false;                   // totally transparent
+        }
+        if (alpha < 0.88 && fract(0.5 * floor(pos_screen.x)) < 0.25)
+        {
+            return false;                   // semi-transparent: dithered like the shadow maps
+        }
+    }
+    return true;
+}
+
+float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
 {
     if (dot(norm, light_dir) <= 0.0)
     {
@@ -107,10 +155,18 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir)
         return 1.0;                         // beyond the shadow range: lit, as with the cascades
     }
     vec3 origin = pos + norm * (0.015 + 0.0006 * -pos.z);
+    float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01, origin, 0.005, light_dir, 2000.0);
+    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, origin, 0.005, light_dir, 2000.0);
     while (rayQueryProceedEXT(rq))
     {
+        if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
+        {
+            if (rtAlphaHit(rq, pos_screen, lod))
+            {
+                rayQueryConfirmIntersectionEXT(rq);
+            }
+        }
     }
     return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
 }
@@ -225,7 +281,7 @@ float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen)
 float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen)
 {
     vec3 light_dir = normalize((sun_up_factor == 1) ? sun_dir : moon_dir);
-    float rt = rtSunShadow(pos, norm, light_dir);
+    float rt = rtSunShadow(pos, norm, light_dir, pos_screen);
 #if LL_RT_SHADOWS == 1
     return rt;
 #elif LL_RT_SHADOWS == 2

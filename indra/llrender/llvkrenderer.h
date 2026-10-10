@@ -464,6 +464,7 @@ private:
     bool mBindlessBound = false;
     VkDescriptorSetLayout mSet3Layout = VK_NULL_HANDLE;     // <FS> set 3: the ray tracing scene (an acceleration structure), only when ray query shadows are on (llvkrt.cpp)
     VkDescriptorSet mRtBoundSet = VK_NULL_HANDLE;           // what set 3 holds in the command buffer now
+    U32 mRtBoundOffset = 0;                                 // ... and the dynamic offset of its geometry table
     VkDescriptorPool mUboPool[Context::FRAMES_IN_FLIGHT] = {};
     std::map<std::array<U64, 8>, VkDescriptorSet> mUboSets[Context::FRAMES_IN_FLIGHT];
     VkBuffer mUbo[4] = {};

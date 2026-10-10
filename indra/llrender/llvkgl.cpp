@@ -3318,7 +3318,7 @@ std::string probe_report(double frames)
 } // anonymous namespace
 
 // ray query shadows: a caster draw of a shadow pass, for the scene the lighting traces (llvkrt.cpp)
-static void note_rt_caster(U32 vb, U32 ib, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model)
+static void note_rt_caster(U32 vb, U32 ib, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha = nullptr)
 {
     Rt::Caster c;
     c.mVb = vb;
@@ -3328,6 +3328,7 @@ static void note_rt_caster(U32 vb, U32 ib, U32 first, U32 count, U32 matrix_id, 
     c.mMatrixId = matrix_id;
     c.mKind = kind;
     c.mModel = model;
+    c.mAlpha = alpha;
     Rt::noteCaster(c);
 }
 
@@ -3386,7 +3387,13 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
         }
         if (Rt::active() && !(e.mFlags & LLVkMirror::ALPHA_RIGGED))
         {
-            note_rt_caster(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+            Rt::AlphaInfo alpha;
+            alpha.mFlags = e.mFlags & 31u;      // fullbright, tree, one texture, texcoords, colours: the bits mean the same in the ray query shader
+            alpha.mTexcoordOffset = e.mTexcoordOffset;
+            alpha.mColorOffset = e.mColorOffset;
+            memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
+            alpha.mCutoff = e.mCutoff;
+            note_rt_caster(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr, &alpha);
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         g.mPositions[0] = (U32)pa;
@@ -3920,7 +3927,7 @@ void on_rt_scene(const LLVkMirror::RtSceneArgs& args)
         return;
     }
     flush_buffer_updates();         // the structures are built over the vertex data: writes that are still pending are recorded first
-    Rt::buildScene(args.mView);
+    Rt::buildScene(args.mView, [](U32 name) { return packet_texture_slot(Renderer::instance(), name); });
 }
 
 //-----------------------------------------------------------------------------------------------------
