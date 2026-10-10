@@ -555,6 +555,17 @@ void Program::destroy()
     mValid = false;
 }
 
+// LL_VK_PHASES: per uniform name, how often it is written and how often the value really changes (classifies uniforms as per pass, per material or per draw)
+struct UniformChangeStat { U64 mWrites = 0, mChanges = 0, mBytes = 0; U32 mSize = 0; };
+static std::unordered_map<std::string, UniformChangeStat> gUniformChangeStats;
+static void note_uniform_write(const LooseUniform& u, bool changed, U32 bytes)
+{
+    UniformChangeStat& s = gUniformChangeStats[u.mName];
+    ++s.mWrites;
+    if (changed) { ++s.mChanges; s.mBytes += bytes; }
+    s.mSize = std::max<U32>(s.mSize, bytes);
+}
+
 bool Program::setFloats(const std::string& name, const F32* data, U32 components, U32 count)
 {
     auto it = mUniformIndex.find(name);
@@ -586,6 +597,7 @@ void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components,
     {
         mDirty = true;      // the viewer re-sends the same values before most draws: only real changes cost an upload
     }
+    if (LLVkMirror::gPhaseTiming) note_uniform_write(u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
 }
 
 bool Program::setInts(const std::string& name, const S32* data, U32 components, U32 count)
@@ -628,6 +640,7 @@ void Program::setMatricesAt(size_t uniform_index, const F32* data, U32 columns, 
     {
         mDirty = true;
     }
+    if (LLVkMirror::gPhaseTiming) note_uniform_write(u, changed, count * columns * 16);
 }
 
 S32 Program::findSampler(const std::string& name) const
@@ -2066,6 +2079,21 @@ std::string Renderer::takeBarrierReport(size_t frames)
             out += buf;
         }
         mUniformCopies.clear();
+    }
+    {
+        // uniforms by how often their value really changes (per frame): about the number of draws = per draw, a few per pass = per pass
+        std::vector<std::pair<U64, std::string>> by_changes;
+        for (const auto& kv : gUniformChangeStats) by_changes.push_back({ kv.second.mChanges, kv.first });
+        std::sort(by_changes.rbegin(), by_changes.rend());
+        out += " | uniform value changes per frame (writes, bytes):";
+        for (size_t i = 0; i < by_changes.size() && i < 40; ++i)
+        {
+            const UniformChangeStat& us = gUniformChangeStats[by_changes[i].second];
+            snprintf(buf, sizeof(buf), " [%s: %.0f of %.0f writes, %u B]", by_changes[i].second.c_str(), (double)us.mChanges / f, (double)us.mWrites / f, us.mSize);
+            out += buf;
+        }
+        out += " | all distinct uniforms written: " + std::to_string(gUniformChangeStats.size());
+        gUniformChangeStats.clear();
     }
     mBarrierStats.clear();
     mBarrierPerImage.clear();
