@@ -2588,6 +2588,15 @@ bool getBufferInfo(unsigned int name, BufferInfo& out)
     return b.mVk.valid();
 }
 
+void markBufferUsed(unsigned int name)
+{
+    auto it = sGL.mBuffers.find(name);
+    if (it != sGL.mBuffers.end())
+    {
+        it->second.mLastUseFrame = Context::instance().getFrameNumber();
+    }
+}
+
 void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data)
 {
     on_bufferSubData(buffer_for_target(target), offset, size, data);

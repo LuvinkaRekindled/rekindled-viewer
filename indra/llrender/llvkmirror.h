@@ -302,6 +302,8 @@ namespace LLVkGL
         bool mDevice = false;                // video memory written by GPU copies (false: written by the CPU)
     };
     bool getBufferInfo(unsigned int name, BufferInfo& out);
+    // the GPU reads this buffer in the current frame (an acceleration structure build, a ray query shader): a CPU rewrite of a host-written range has to rename it first
+    void markBufferUsed(unsigned int name);
 }
 #endif
 
