@@ -121,3 +121,7 @@ The TLAS is in world space relative to a 32 m grid origin (`sOrigin`), so instan
 Verify tool: debug switch `verify=1` rebuilds everything from scratch every ~2 s and compares per group (transform, structure address, mask/flags, record count, record fields). The group's position in the table (custom index) is deliberately not compared. Result on a fresh login: 0 differences in every check, including the load-in (an earlier run reported thousands only because the custom index was compared).
 
 Remaining worker CPU (per call, 2.5 ms): instances 0.87, expire 0.85 (sweep-based), order 0.49 (O(N) stale scan), scan+sort 0.12, record 0.24. Next: event-driven stale scan and expiry.
+
+## Worker CPU stage II (committed after a1ca14d0)
+
+Per scene call, measured on the plaza (10-11k groups, verify=1 on): 2.57 -> 1.40 ms. Expire 0.85 -> 0.08 (note stamps in contiguous `sSeenRows`), order 0.49 -> ~0.25 (candidates = `sPending` unbuilt groups + `sNotedList` groups noted this frame; `mSkip` recomputed only when the alpha/dyncasters switches change), buffer move check 0.26 -> 0.00 (`LLVkGL::takeTopologyChanges` lists the changed watched buffers, `sNameGroups` maps GL names to masked groups). verify=1 checks both the cache and the candidate lists against full walks: 0 differences in 46 + 15 checks. What is left: table fill 0.42 ms (1441 texture slot lookups per call, real work), record 0.27, scan+sort 0.13, dirty groups 0.05 (about 140 groups per call are flagged "moved" and 40 for alpha info changes: not yet explained, cheap).
