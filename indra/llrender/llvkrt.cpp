@@ -199,7 +199,7 @@ struct DebugSwitches
     S32 mSkipBuf = 0;               // 0 all, 1 leave out groups with a buffer in video memory (device path, not checkable by the CPU), 2 leave out groups with only host-written buffers
     U32 mMaxVtx = 0;                // 0 = the buffer size / 16 - 1; otherwise this value is the maxVertex of every geometry (65535: any 16 bit index)
     bool mCompare = false;          // compare the system-memory copy of host-written buffers with the mapped video memory (a few per call), log mismatches
-    bool mDynCasters = false;       // include casters with a matrix of their own (avatar attachments, moving linksets): they go wrong in the ray scene so far (see PLAN-rt-shadows.md)
+    bool mDynCasters = true;        // include casters with a matrix of their own (avatar attachments, moving linksets); they flashed before the preflush, fine since (see PLAN-rt-shadows.md)
     bool mCallLog = false;          // one line per scene call into <work>/rt-calls.log (wall clock, frame, call, jobs, instances)
     bool mVerify = false;           // every 120 scene calls: make the whole cached scene again from the groups and compare it with the one kept up to date (log line "scene cache check")
     U32 mSkinPeriodMax = 4;         // avatars farther than LL_VK_RT_SKIN_NEAR (8 m) are refreshed (skinned and refitted) every 2..this many viewer frames, by distance (1 = every frame for all)
@@ -227,7 +227,7 @@ void read_debug_switches()
     d.mAlpha = env_u64("LL_VK_RT_ALPHA", 1) != 0;
     d.mCheck = env_u64("LL_VK_RT_CHECK", 0) != 0;
     d.mSkipBad = env_u64("LL_VK_RT_SKIPBAD", 1) != 0;
-    d.mDynCasters = env_u64("LL_VK_RT_DYNAMIC", 0) != 0;
+    d.mDynCasters = env_u64("LL_VK_RT_DYNAMIC", 1) != 0;
     d.mSkinTest = env_u64("LL_VK_RT_SKINTEST", 0) != 0;
     d.mRigged = env_u64("LL_VK_RT_RIGGED", 1) != 0;
     d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_PERIOD_MAX", 4));
