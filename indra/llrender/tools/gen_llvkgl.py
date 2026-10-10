@@ -10,8 +10,6 @@ FUNCS = [
     # textures
     ('void', 'glGenTextures', 'GLsizei n, GLuint* textures'),
     ('void', 'glDeleteTextures', 'GLsizei n, const GLuint* textures'),
-    ('void', 'glBindTexture', 'GLenum target, GLuint texture'),
-    ('void', 'glActiveTexture', 'GLenum texture'),
     ('void', 'glTexImage2D', 'GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels'),
     ('void', 'glTexImage3D', 'GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels'),
     ('void', 'glTexSubImage2D', 'GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels'),

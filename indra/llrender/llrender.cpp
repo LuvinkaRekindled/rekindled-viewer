@@ -120,32 +120,15 @@ LLTexUnit::LLTexUnit(S32 index)
 }
 
 //static
-// <FS> N1b: a texture bind on the queue's producer is one typed record that carries the unit (the separate glActiveTexture before it is not queued).
-// Anywhere else it is the plain glBindTexture on the unit the caller activated.
+// <FS> F1.2: a texture bind is a slot write (the typed record carries the unit); the active unit is only the producer's own bookkeeping for the helpers that act on 'the bound texture'
 static inline void ll_bindTexUnit(S32 unit_index, GLenum target, GLuint texture)
 {
-#if defined(LL_VULKAN)
-    LLVkTex::noteBind(unit_index, target, texture);
-    if (LLVkAsync::mainProducer())
-    {
-        LLVkAsync::bindTextureUnit(GL_TEXTURE0 + unit_index, target, texture);
-        return;
-    }
-#endif
-    glBindTexture(target, texture);
+    LLVkTex::bindSlot(unit_index, target, texture);
 }
 
 static inline void ll_activeTexUnit(S32 unit_index)
 {
-#if defined(LL_VULKAN)
     LLVkTex::noteActive(unit_index);
-    if (LLVkAsync::mainProducer())
-    {
-        LLVkAsync::activeTextureUnit(GL_TEXTURE0 + unit_index);
-        return;
-    }
-#endif
-    glActiveTexture(GL_TEXTURE0 + unit_index);
 }
 
 U32 LLTexUnit::getInternalType(eTextureType type)
@@ -693,8 +676,7 @@ void LLTexUnit::debugTextureUnit(void)
 {
     if (mIndex < 0) return;
 
-    GLint activeTexture;
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+    const GLint activeTexture = GL_TEXTURE0 + (GLint)LLVkTex::gSlots.mActive;
     if ((GL_TEXTURE0 + mIndex) != activeTexture)
     {
         U32 set_unit = (activeTexture - GL_TEXTURE0);
@@ -1635,13 +1617,11 @@ U32 LLRender::getError()
 void LLRender::activeTexture(U32 gl_texture_unit_enum)
 {
     LLVkTex::noteActive((S32)gl_texture_unit_enum - (S32)GL_TEXTURE0);
-    glActiveTexture(gl_texture_unit_enum);
 }
 
 void LLRender::bindTexture(U32 gl_target, U32 id)
 {
-    LLVkTex::noteBind(LLVkTex::gSlots.mActive, gl_target, id);
-    glBindTexture(gl_target, id);
+    LLVkTex::bindSlot((S32)LLVkTex::gSlots.mActive, gl_target, id);
 }
 
 void LLRender::deleteTextures(S32 count, const U32* ids)

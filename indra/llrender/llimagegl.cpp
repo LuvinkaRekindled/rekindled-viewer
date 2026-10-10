@@ -189,7 +189,7 @@ void LLImageGL::checkTexSize(bool forced) const
         }
 
         GLint texname;
-        glGetIntegerv(GL_TEXTURE_BINDING_2D, &texname);
+        texname = (GLint)LLVkTex::boundOnActive(GL_TEXTURE_2D);
         bool error = false;
         if (texname != mTexName)
         {

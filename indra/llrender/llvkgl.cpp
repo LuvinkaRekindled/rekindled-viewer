@@ -540,8 +540,6 @@ struct Fbo
 // state that belongs to one GL context (the viewer has a texture worker thread with its own, sharing objects)
 struct PerContext
 {
-    GLuint mBound[32][8] = {};                  // texture per unit and target class
-    U32 mActiveUnit = 0;
     GLuint mDrawFbo = 0, mReadFbo = 0;
     GLuint mArrayBuffer = 0;
     GLuint mUniformBuffer = 0;
@@ -557,6 +555,9 @@ thread_local PerContext sCtxTls;
 thread_local PerContext* sCtxOverride = nullptr;      // set on the async worker: the context of the thread whose call is being replayed
 inline PerContext& current_ctx() { return sCtxOverride ? *sCtxOverride : sCtxTls; }
 #define sCtx (current_ctx())
+
+// F1.2: the texture slots a draw samples from (unit, target class): written by the typed slot records only
+GLuint sSlots[32][8] = {};
 
 struct GLState
 {
@@ -727,9 +728,7 @@ Tex* bound_texture(GLenum target)
         auto it = sGL.mTextures.find(tlsEditTex);
         return it == sGL.mTextures.end() ? nullptr : &it->second;
     }
-    const GLuint name = sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
-    auto it = sGL.mTextures.find(name);
-    return it == sGL.mTextures.end() ? nullptr : &it->second;
+    return nullptr;         // every texture edit names its texture (LLVkTex)
 }
 
 inline GLuint edit_unpack_buffer() { return tlsEditPS ? tlsEditPS->mUnpackBuffer : sCtx.mPixelUnpackBuffer; }
@@ -899,7 +898,7 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
         const FormatMap fm = t.mFormat;
         const U32 alignment = (U32)edit_unpack_alignment(), row_length = (U32)edit_unpack_row_length();
         const VkImage handle = t.mImage.mImage;
-        const GLuint name = tlsEditTex ? tlsEditTex : sCtx.mBound[sCtx.mActiveUnit][target_class(target)];
+        const GLuint name = tlsEditTex;
         const bool unlocked = (U64)w * h * d >= 16384 && !edit_unpack_buffer() && !LLVkAsync::gEnabled;      // (the worker does not take the lock)
         unsigned depth_held = 0;
         if (unlocked)
@@ -1353,7 +1352,7 @@ void sync_textures(Renderer& r, Program& program)
             continue;
         }
         const U32 cls = program.getSamplerClass(k);
-        Tex* tex = tex_ptr(sCtx.mBound[unit][cls]);
+        Tex* tex = tex_ptr(sSlots[unit][cls]);
         if (sStatsEnabled)
         {
             const std::string& type = info.mSamplers[k].mType;
@@ -1362,7 +1361,7 @@ void sync_textures(Renderer& r, Program& program)
             for (const char* w : watch) if (program.getName().find(w) != std::string::npos) wanted = true;
             if (wanted)
             {
-                std::string what = "unit " + std::to_string(unit) + " tex " + std::to_string(sCtx.mBound[unit][cls]) + " ";
+                std::string what = "unit " + std::to_string(unit) + " tex " + std::to_string(sSlots[unit][cls]) + " ";
                 if (!tex) what += "UNBOUND";
                 else if (!tex->mImage.valid()) what += "NO IMAGE";
                 else
@@ -1384,7 +1383,7 @@ void sync_textures(Renderer& r, Program& program)
             r.setTexture(unit, &tex->mImage, texture_sampler(r, *tex));
             if (sStatsEnabled)
             {
-                const GLuint tname = sCtx.mBound[unit][cls];
+                const GLuint tname = sSlots[unit][cls];
                 ++sFrameSampled[tname];
                 if (std::find(sCurTargets.begin(), sCurTargets.end(), tname) != sCurTargets.end())
                 {
@@ -1695,7 +1694,7 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
                 const std::string& ty = gi.mSamplers[k].mType;
                 const bool cube = ty.find("Cube") != std::string::npos, arr = ty.find("Array") != std::string::npos;
                 const U32 want = ty.find("CubeArray") != std::string::npos ? 2 : cube ? 1 : arr ? 3 : ty.find("3D") != std::string::npos ? 4 : 0;
-                bound = sCtx.mBound[unit][want];
+                bound = sSlots[unit][want];
                 break;
             }
             if (bound && sFrameTargets.count(bound)) key += std::to_string(bound) + " ";
@@ -1726,7 +1725,7 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
                 if (ty.find("CubeArray") != std::string::npos) cls = 2;
                 else if (ty.find("Cube") != std::string::npos) cls = 1;
                 else if (ty.find("2DArray") != std::string::npos) cls = 3;
-                e += " [" + pi.mSamplers[k].mName + "=" + std::to_string(sCtx.mBound[unit][cls]) + "]";
+                e += " [" + pi.mSamplers[k].mName + "=" + std::to_string(sSlots[unit][cls]) + "]";
             }
         }
         sStats.mBackbufferEvents.push_back(e);
@@ -2103,7 +2102,7 @@ void on_glDeleteTextures(GLsizei n, const GLuint* textures)
             ++sTargetEpoch;
             ++sPacketTextureGeneration;
         }
-        for (auto& unit : sCtx.mBound)
+        for (auto& unit : sSlots)
         {
             for (auto& b : unit)
             {
@@ -2118,20 +2117,15 @@ void on_glDeleteTextures(GLsizei n, const GLuint* textures)
     }
 }
 
-void on_glBindTexture(GLenum target, GLuint texture)
+void slot_bind(unsigned unit, unsigned target, unsigned name)
 {
-    sCtx.mBound[sCtx.mActiveUnit][target_class(target)] = texture;
-    if (texture)
+    if (unit < 32)
     {
-        sGL.mTextures[texture];     // GL allows binding a name that was never generated
-    }
-}
-
-void on_glActiveTexture(GLenum texture)
-{
-    if (texture >= GL_TEXTURE0 && texture < GL_TEXTURE0 + 32)
-    {
-        sCtx.mActiveUnit = texture - GL_TEXTURE0;
+        sSlots[unit][target_class(target)] = name;
+        if (name)
+        {
+            sGL.mTextures[name];     // a name that was never generated is still a texture (the first edit makes it)
+        }
     }
 }
 
@@ -4818,12 +4812,6 @@ bool emulate_integer(GLenum pname, GLint* out, U32& n)
         for (int i = 0; i < 4; ++i) out[i] = b->mScissor[i];
         n = 4; return true;
     }
-    case 0x84E0: out[0] = (GLint)(0x84C0 + sCtx.mActiveUnit); return true;     // ACTIVE_TEXTURE
-    case 0x8069: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][0]; return true;     // TEXTURE_BINDING_2D
-    case 0x8514: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][1]; return true;     // TEXTURE_BINDING_CUBE_MAP
-    case 0x900A: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][2]; return true;     // TEXTURE_BINDING_CUBE_MAP_ARRAY
-    case 0x8C1D: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][3]; return true;     // TEXTURE_BINDING_2D_ARRAY
-    case 0x806A: out[0] = (GLint)sCtx.mBound[sCtx.mActiveUnit][4]; return true;     // TEXTURE_BINDING_3D
     case 0x8CA6: out[0] = (GLint)sCtx.mDrawFbo; return true;                        // DRAW_FRAMEBUFFER_BINDING / FRAMEBUFFER_BINDING
     case 0x8CAA: out[0] = (GLint)sCtx.mReadFbo; return true;                        // READ_FRAMEBUFFER_BINDING
     case 0x8894: out[0] = (GLint)sCtx.mArrayBuffer; return true;                    // ARRAY_BUFFER_BINDING

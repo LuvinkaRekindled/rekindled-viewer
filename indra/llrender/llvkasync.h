@@ -57,11 +57,8 @@ namespace LLVkAsync
     void bufferRecycle(U32 name);
     // LLGLSLShader::bind(): unbinds the vertex and index buffers, binds the program (null: unchanged) and enables / disables vertex attribute arrays (bit masks of attribute locations)
     void shaderBind(void* program, U32 enable_mask, U32 disable_mask);
-    // the unit a following texture bind or texture call uses (LLTexUnit::activate): held until the next record, replaces a glActiveTexture call
-    void activeTextureUnit(U32 unit);
-    // texture parameters (wrap, filter, anisotropy) of the texture bound on the active unit, written as one record (played as glTexParameteri / glTexParameterf in order)
+    // one texture parameter (wrap, filter, anisotropy ...), see LLVkTex::params
     struct TexParam { U32 mPname; U32 mIsFloat; S32 mInt; F32 mFloat; };
-    void texParameters(U32 target, const TexParam* params, U32 count);
     // render targets (LLRenderTarget): attach a texture to a framebuffer by name (then bind restore_fbo again), and make a framebuffer current with its draw buffers and viewport
     void framebufferAttach(U32 fbo, U32 attachment, U32 textarget, U32 texture, U32 restore_fbo);
     // draw_buffers: the number of colour attachments to draw to (0: none, -1: the back buffer)
