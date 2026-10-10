@@ -1029,6 +1029,14 @@ void LLVertexBuffer::initClass(LLWindow* window)
 }
 
 //static
+void LLVertexBuffer::drawNoAttributes(U32 mode, U32 first, U32 count)
+{
+    ++sDrawCalls;
+    gGL.syncMatrices();
+    LLVkAsync::drawArrays(sGLMode[mode], first, count);
+}
+
+//static
 void LLVertexBuffer::arrayMaskChange(U32 data_mask, U32& enable, U32& disable)
 {
     const U32 valid = (1u << TYPE_MAX) - 1;

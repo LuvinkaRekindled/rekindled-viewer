@@ -15,6 +15,7 @@
 #include "llvkrenderer.h"
 #include "llvkstate.h"
 #include "llvktex.h"
+#include "llvkbuf.h"
 
 #include <windows.h>
 #include <synchapi.h>
@@ -170,7 +171,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
 // C4: texture upload costs on the main thread, and what was handed over without a copy
@@ -432,10 +433,10 @@ inline bool texIndependent(U16 op)
 {
     switch (op)
     {
-    case CMD_TEX_IMAGE: case CMD_TEX_PARAMS_ID: case CMD_TEX_OP:
+    case CMD_TEX_IMAGE: case CMD_TEX_PARAMS_ID: case CMD_TEX_OP: case CMD_UNIFORM_BLOCK:
     case OP_glClear: case OP_glClearColor:
     case OP_glBufferData: case OP_glBufferSubData: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
-    case OP_glBindBufferBase: case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
+    case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
     case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
         return true;
     default:
@@ -697,6 +698,12 @@ void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const 
 
 void drawArrays(U32 mode, S32 first, S32 count)
 {
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts): the draw is made here
+        LLVkGL::on_glDrawArrays(mode, first, count);
+        return;
+    }
     MainLap lap;
     coFlushRun();
     stateEmit();
@@ -1624,6 +1631,33 @@ void getCompressedImage(U32 id, U32 target, S32 level, void* out)
 
 }
 
+// ---- F1.3: buffers named by id (llvkbuf.h) ----
+namespace LLVkBuf
+{
+
+void create(S32 count, U32* ids)
+{
+    glGenBuffers(count, ids);
+}
+
+void destroy(S32 count, const U32* ids)
+{
+    glDeleteBuffers(count, ids);
+}
+
+void setData(U32 id, U32 target, S64 size, const void* data, U32 usage)
+{
+    LLVkAsync::bufferData(id, target, size, data, usage);
+}
+
+void bindUniformBlock(U32 binding, U32 id)
+{
+    const U32 a[2] = { binding, id };
+    LLVkAsync::push(LLVkAsync::CMD_UNIFORM_BLOCK, a, sizeof(a));
+}
+
+}
+
 namespace LLVkAsync
 {
 
@@ -2229,6 +2263,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         // the viewport is part of the state block (the producer sets it with this record)
         break;
     }
+    case CMD_UNIFORM_BLOCK: { const U32* a = (const U32*)payload; LLVkGL::uniform_block_bind(a[0], a[1]); break; }
     case CMD_TEX_IMAGE: runImage(r, flags); break;
     case CMD_TEX_PARAMS_ID: runParams(r, flags); break;
     case CMD_TEX_OP: runOp(r); break;

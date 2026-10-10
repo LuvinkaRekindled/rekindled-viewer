@@ -22,6 +22,7 @@
 #include "llvkrenderer.h"
 #include "llvkstate.h"
 #include "llvktex.h"
+#include "llvkbuf.h"
 #include "llvkdlss.h"
 #include "llvkrt.h"
 
@@ -542,7 +543,6 @@ struct PerContext
 {
     GLuint mDrawFbo = 0, mReadFbo = 0;
     GLuint mArrayBuffer = 0;
-    GLuint mUniformBuffer = 0;
     GLuint mPixelUnpackBuffer = 0;
     GLuint mVao = 0;
     GLint mUnpackAlignment = 4;
@@ -2554,7 +2554,6 @@ void on_glBindBuffer(GLenum target, GLuint buffer)
     else if (target == GL_ELEMENT_ARRAY_BUFFER) current_vao().mElementBuffer = buffer;
     else if (target == GL_PIXEL_UNPACK_BUFFER) sCtx.mPixelUnpackBuffer = buffer;
     else if (target == 0x88EB) sCtx.mPixelPackBuffer = buffer;      // PIXEL_PACK_BUFFER
-    else if (target == GL_UNIFORM_BUFFER) sCtx.mUniformBuffer = buffer;
 }
 
 static GLuint buffer_for_target(GLenum target)
@@ -2563,7 +2562,6 @@ static GLuint buffer_for_target(GLenum target)
     if (target == GL_ELEMENT_ARRAY_BUFFER) return current_vao().mElementBuffer;
     if (target == GL_PIXEL_UNPACK_BUFFER) return sCtx.mPixelUnpackBuffer;
     if (target == 0x88EB) return sCtx.mPixelPackBuffer;
-    if (target == GL_UNIFORM_BUFFER) return sCtx.mUniformBuffer;
     return 0;
 }
 
@@ -2723,19 +2721,16 @@ void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void*
     }
 }
 
-void on_glBindBufferBase(GLenum target, GLuint index, GLuint buffer)
+// F1.3: a buffer becomes the contents of a numbered uniform block
+void uniform_block_bind(unsigned index, unsigned buffer)
 {
-    if (target == GL_UNIFORM_BUFFER)
+    if (buffer)
     {
-        sCtx.mUniformBuffer = buffer;
-        if (buffer)
-        {
-            sGL.mBuffers[buffer];
-        }
-        if (index < 4)
-        {
-            sUboBinding[index] = buffer;
-        }
+        sGL.mBuffers[buffer];
+    }
+    if (index < 4)
+    {
+        sUboBinding[index] = buffer;
     }
 }
 
@@ -4817,7 +4812,6 @@ bool emulate_integer(GLenum pname, GLint* out, U32& n)
     case 0x8894: out[0] = (GLint)sCtx.mArrayBuffer; return true;                    // ARRAY_BUFFER_BINDING
     case 0x8895: out[0] = (GLint)current_vao().mElementBuffer; return true;         // ELEMENT_ARRAY_BUFFER_BINDING
     case 0x85B5: out[0] = (GLint)sCtx.mVao; return true;                            // VERTEX_ARRAY_BINDING
-    case 0x8A28: out[0] = (GLint)sCtx.mUniformBuffer; return true;                  // UNIFORM_BUFFER_BINDING
     case 0x88EF: out[0] = (GLint)sCtx.mPixelUnpackBuffer; return true;              // PIXEL_UNPACK_BUFFER_BINDING
     case 0x0CF5: out[0] = sCtx.mUnpackAlignment; return true;                       // UNPACK_ALIGNMENT
     case 0x0CF2: out[0] = sCtx.mUnpackRowLength; return true;                       // UNPACK_ROW_LENGTH

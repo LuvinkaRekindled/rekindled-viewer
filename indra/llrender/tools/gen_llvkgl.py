@@ -37,7 +37,6 @@ FUNCS = [
     ('void', 'glBindBuffer', 'GLenum target, GLuint buffer'),
     ('void', 'glBufferData', 'GLenum target, GLsizeiptr size, const void* data, GLenum usage'),
     ('void', 'glBufferSubData', 'GLenum target, GLintptr offset, GLsizeiptr size, const void* data'),
-    ('void', 'glBindBufferBase', 'GLenum target, GLuint index, GLuint buffer'),
     ('void', 'glGenVertexArrays', 'GLsizei n, GLuint* arrays'),
     ('void', 'glBindVertexArray', 'GLuint array'),
     ('void', 'glVertexAttribPointer', 'GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer'),
