@@ -117,7 +117,9 @@ namespace LLVkMirror
         ALPHA_NO_INDEX = 4,         // one texture, mTextures[0]: the vertices carry no texture index
         ALPHA_HAS_TEXCOORD = 8,     // mTexcoordOffset is valid
         ALPHA_HAS_COLOR = 16,       // mColorOffset is valid
-        ALPHA_RIGGED = 32           // mWeightOffset, mPaletteOffset and mJoints are valid
+        ALPHA_RIGGED = 32,          // mWeightOffset, mPaletteOffset and mJoints are valid
+        ALPHA_HARD = 64,            // ray tracing: a plain cut at mCutoff on texture alpha times vertex alpha (glTF alpha mask): no dithering
+        ALPHA_RAY_ONLY = 128        // ray tracing: an opaque caster (no alpha test); kind 5 records only
     };
     struct ShadowAlphaEntry
     {
@@ -130,7 +132,10 @@ namespace LLVkMirror
         F32 mCutoff;                // alpha below this is discarded
         U32 mWeightOffset, mPaletteOffset, mJoints;     // rigged draws, as ShadowSkinEntry
         U32 mVertexFirst, mVertexCount, mAvatarId, mSkinId;     // rigged draws, as ShadowSkinEntry (ray tracing)
+        F32 mUv[6];                 // kind 5: the texture coordinate transform as the ray query applies it: u' = mUv[0] * u + mUv[2] * v + mUv[4], v' = mUv[1] * u + mUv[3] * v + mUv[5]
     };
+    // kind 5 (ray tracing only, nothing is drawn): ShadowAlphaEntry entries (static draws) of casters that the old path draws, named to the ray scene; flags ALPHA_RAY_ONLY = opaque
+
     // kind 4 (ray tracing only, nothing is drawn): one mesh of an avatar's own body, as the old path draws it. mMode 1: skinned by the palette (15 joints, 12 floats each, after
     // the entries; one weight float per vertex at mWeightOffset picks joint i and i + 1), 2: rigid under mModel (column-major, the joint's world matrix)
     struct ShadowBodyEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mVertexFirst, mVertexCount, mAvatarId, mMeshId, mWeightOffset, mJoints, mMode; F32 mAvatarPos[3]; F32 mModel[16]; };

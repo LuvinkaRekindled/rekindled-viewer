@@ -973,7 +973,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                     "layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer LLRtTexcoords { vec2 t[]; };\n"
                     "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer LLRtColors { uint c[]; };\n"
                     "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer LLRtIndices { uint w[]; };\n"
-                    "struct LLRtGeom { uvec2 positions; uvec2 indices; uvec2 texcoords; uvec2 colors; uvec2 slots; uint flags; float cutoff; uint first; uint pad; };\n"
+                    "struct LLRtGeom { uvec2 positions; uvec2 indices; uvec2 texcoords; uvec2 colors; uvec2 slots; uint flags; float cutoff; uint first; uint pad; vec2 uv0; vec2 uv1; vec2 uv2; };\n"
                     "layout(std430, set = 3, binding = 1) readonly buffer LLRtGeoms { LLRtGeom g[]; } ll_rt_geoms;\n";
             if (bindless)
             {
