@@ -685,7 +685,13 @@ void main()
         pos = vec3(dot(mix(ja.c0, jb.c0, x), ps), dot(mix(ja.c1, jb.c1, x), ps), dot(mix(ja.c2, jb.c2, x), ps));
     }
     vec4 p4 = vec4(pos, 1.0);
-    OutVec4(job.dst).v[v] = vec4(dot(job.m0, p4), dot(job.m1, p4), dot(job.m2, p4), source.w);       // w: the texture index of masked draws
+    vec3 world = vec3(dot(job.m0, p4), dot(job.m1, p4), dot(job.m2, p4));
+    // garbage from a half-loaded avatar (joint matrices not set yet, NaN weights) would give the structure a bounding box that covers the world and every ray a very long walk: such a vertex collapses onto the object's origin (a degenerate triangle, no bounds)
+    if (!(abs(world.x) < 1.0e6 && abs(world.y) < 1.0e6 && abs(world.z) < 1.0e6))
+    {
+        world = vec3(job.m0.w, job.m1.w, job.m2.w);
+    }
+    OutVec4(job.dst).v[v] = vec4(world, source.w);       // w: the texture index of masked draws
 }
 )GLSL";
 
