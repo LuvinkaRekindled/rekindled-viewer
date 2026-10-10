@@ -286,8 +286,9 @@ namespace LLVkGL
     {
         unsigned long long mAddress = 0;     // device address of the first byte (0: no storage, or not in the arena)
         unsigned long long mSize = 0;        // bytes of data (the viewer's pool may make the buffer up to 12.5% larger than its content)
-        unsigned long long mEpoch = 0;       // changes when the name gets other storage or another owner (new range, deleted, recycled by the vertex buffer pool)
+        unsigned long long mEpoch = 0;       // changes when the name gets other contents or another owner (re-specified, deleted, recycled by the vertex buffer pool)
         unsigned long long mVersion = 0;     // changes on every write
+        unsigned long long mMoves = 0;       // changes when the same contents move to another range (the address changed, nothing else)
         bool mDevice = false;                // video memory written by GPU copies (false: written by the CPU)
     };
     bool getBufferInfo(unsigned int name, BufferInfo& out);
