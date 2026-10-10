@@ -33,8 +33,17 @@ Observations that drive the design:
 - Many uniforms are written far more often than they change (env_mat 14 of 417, texture_*_transform 26 of 188, projection_matrix 37 of 37 but modelview_projection 392 of 649): the front end must keep the compare-before-write, per class, on the producer side.
 - `color` (393) and `size`/`center` are shared names between different program families (UI, particles, lights): the class is per (program family, uniform), not per name alone; the table must be keyed by program family.
 
-## 3. To do for F0
-- Class table for every uniform of every program (static pass over the shader sources with the family key), merged with the measured frequencies above; unknown = pass class.
-- The per-draw values read by the three pull shaders (shadow kinds 0-2, geometry kind 3) and by the alpha shaders (simple, fullbright, material variants, PBR, rigged): list them with their source in the viewer code, to define `Materials[]` and the draw record.
-- The GL-name readers outside `llrender`.
-- Re-run the measurement in a second scene (sim with many particles/UI, a busy avatar crowd) to catch uniforms the plaza never sets.
+## 3. GL names read outside `llrender` (static count, 2026-10-10)
+`getTexName()`, `getGLBuffer()`, `getGLIndices()`, `getGLTexture()`, `getFBO*()` and `mTexName` are read in only 13 files outside `llrender`, about 55 uses: pipeline.cpp 17, llviewertexturelist.cpp 7, lldrawpool.cpp 5 (the packet builders), llviewermedia.cpp 4, llfloaterimagepreview.cpp 4, lldrawpoolbump.cpp 4, llviewerjointmesh.cpp 3, gltfscenemanager.cpp 3, llviewertexture.cpp 2, llviewerdisplay.cpp 2, llterrainpaintmap.cpp 2, llmaniptranslate.cpp 2, fsmaniptranslatejoint.cpp 2. Inside `llrender`: llrendertarget.cpp 38, llimagegl.cpp 34 (+7 in the header), llrender.cpp 11, llvertexbuffer.* 9, llpostprocess.cpp 5. These become ids (`TextureId`, `BufferId`, `TargetId`): a mechanical change, small outside `llrender`.
+
+## 4. Per-draw values that already exist as records (the seeds of the entry and material layouts)
+The pull shaders already read their per-draw data from records by buffer address; these are the layouts the scene `Entries[]`/`Materials[]` start from (all in `shaders/class1/deferred`):
+- **GeoPacket, 128 B** (`diffusePullV.glsl`, `materialPullV.glsl`; G-buffer): vertex, normal, texcoord0, color, index, tangent, texcoord1, texcoord2 buffer addresses; first index; model matrix index; flags (one texture); normal/specular map slots (16+16 bit); four diffuse texture slots (16 bit); specular color (vec4), environment intensity, alpha cutoff, brightness. **GeoMatrix, 176 B:** modelview, modelview-projection, normal matrix (3 rows).
+- **ShadowPacket, 24 B** (`shadowPullV.glsl`): position and index buffer addresses, first index, count, model index. **AlphaPacket** (`shadowAlphaPullV.glsl`): positions, indices, texcoords, colors addresses, first, joint count, model, flags, four texture slots, cutoff, skin weights and palette addresses. **SkinPacket** (`shadowSkinPullV.glsl`): positions, indices, weights, palette addresses.
+- Not yet records (per-draw state of the alpha pass, set today as uniforms/GL state): shader variant (simple, fullbright, material variants by mask, PBR, rigged), blend function pair per draw (becomes dynamic blend state, already dynamic in the executor), minimum alpha, specular color, environment intensity, emissive brightness, texture matrix, glTF material parameters and texture transforms, emissive second draw.
+So S0's `Materials[]` = the material half of GeoPacket (specular, env, cutoff, brightness, map and texture slots) plus the alpha-only fields above; the entry = the address half plus first/count/model/flags.
+
+## 5. Still to do for F0
+- Class table for every uniform of every program (static pass over the shader sources with the program-family key), merged with the measured frequencies above; unknown = pass class.
+- Re-run the uniform measurement in a second scene (many particles, UI-heavy, a busy crowd) to catch uniforms the plaza never sets.
+- The 18 pass-through hooks that never reached the worker.
