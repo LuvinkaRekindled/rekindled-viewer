@@ -13,6 +13,7 @@
 #include "llvkstate.h"
 
 #include <cstring>
+#include <intrin.h>
 
 using namespace LLVk;
 
@@ -144,7 +145,24 @@ namespace
 struct InitContext { InitContext() { reset(); } } gInitContext;     // the context starts from the GL defaults before the first call
 }
 
-#define CTX_CALL() ++gCtx.mCalls
+// the setters belong to the thread that first calls one (the main thread: the viewer starts drawing there); a call from another thread is dropped and counted
+U32 gOwner = 0;
+inline bool ownThread(const char* what)
+{
+    const U32 tid = __readgsdword(0x48);
+    if (!gOwner)
+    {
+        gOwner = tid;
+    }
+    if (tid != gOwner)
+    {
+        noteOffThread(what);
+        return false;
+    }
+    return true;
+}
+
+#define CTX_CALL() if (!ownThread(__func__)) return; ++gCtx.mCalls
 
 void setEnable(U32 cap, bool on)
 {
@@ -310,11 +328,11 @@ void toRenderer(const Block& b, bool has_depth, RasterState& rs, DepthStencilSta
     bs = b.mBlend;
 }
 
-void noteOffThread()
+void noteOffThread(const char* what)
 {
-    if (gCtx.mOffThread++ == 0)
+    if (gCtx.mOffThread++ < 5)
     {
-        LL_WARNS("VkState") << "a render state call came from a thread other than the main producer: dropped" << LL_ENDL;
+        LL_WARNS("VkState") << what << " came from thread " << __readgsdword(0x48) << " (owner " << gOwner << "), not the main producer: dropped" << LL_ENDL;
     }
 }
 

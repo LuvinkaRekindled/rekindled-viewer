@@ -51,24 +51,7 @@ FUNCS = [
     # draws
     ('void', 'glDrawArrays', 'GLenum mode, GLint first, GLsizei count'),
     ('void', 'glDrawRangeElements', 'GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices'),
-    # state
-    ('void', 'glEnable', 'GLenum cap'),
-    ('void', 'glDisable', 'GLenum cap'),
-    ('void', 'glBlendFunc', 'GLenum sfactor, GLenum dfactor'),
-    ('void', 'glBlendFuncSeparate', 'GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha'),
-    ('void', 'glDepthFunc', 'GLenum func'),
-    ('void', 'glDepthMask', 'GLboolean flag'),
-    ('void', 'glColorMask', 'GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha'),
-    ('void', 'glCullFace', 'GLenum mode'),
-    ('void', 'glPolygonOffset', 'GLfloat factor, GLfloat units'),
-    ('void', 'glPolygonMode', 'GLenum face, GLenum mode'),
-    ('void', 'glLineWidth', 'GLfloat width'),
-    ('void', 'glPointSize', 'GLfloat size'),
-    ('void', 'glStencilFunc', 'GLenum func, GLint ref, GLuint mask'),
-    ('void', 'glStencilOp', 'GLenum sfail, GLenum dpfail, GLenum dppass'),
-    ('void', 'glStencilMask', 'GLuint mask'),
-    ('void', 'glViewport', 'GLint x, GLint y, GLsizei width, GLsizei height'),
-    ('void', 'glScissor', 'GLint x, GLint y, GLsizei width, GLsizei height'),
+    # state: the render state is not GL-shaped any more (llvkstate.h); only clears are still calls
     ('void', 'glClear', 'GLbitfield mask'),
     ('void', 'glClearColor', 'GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha'),
     # calls that return data or state: the hook checks (and later will supply) the answer

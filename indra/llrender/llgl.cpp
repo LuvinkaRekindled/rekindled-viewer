@@ -328,6 +328,7 @@ void LLGLManager::shutdownGL()
 #if defined(LL_VULKAN)
 #undef LL_VK_NO_INTERCEPT
 #include "llvkgl.h"
+#include "llvkstate.h"
 #endif
 
 // <FS> LL_VK_NOGL start-up: what initGL and initExtensions work out from a GL context, worked out from the Vulkan device instead
@@ -560,7 +561,6 @@ void LLGLState::initClass()
 
     //make sure multisample defaults to disabled
     sStateMap[GL_MULTISAMPLE] = GL_FALSE;
-    glDisable(GL_MULTISAMPLE);
 }
 
 //static
@@ -662,13 +662,13 @@ void LLGLState::setEnabled(S32 enabled)
     else if (enabled == ENABLED_STATE && sStateMap[mState] != GL_TRUE)
     {
         gGL.flush();
-        glEnable(mState);
+        LLVkState::setEnable(mState, true);
         sStateMap[mState] = GL_TRUE;
     }
     else if (enabled == DISABLED_STATE && sStateMap[mState] != GL_FALSE)
     {
         gGL.flush();
-        glDisable(mState);
+        LLVkState::setEnable(mState, false);
         sStateMap[mState] = GL_FALSE;
     }
     mIsEnabled = enabled;
@@ -699,12 +699,12 @@ LLGLState::~LLGLState()
             gGL.flush();
             if (mWasEnabled)
             {
-                glEnable(mState);
+                LLVkState::setEnable(mState, true);
                 sStateMap[mState] = GL_TRUE;
             }
             else
             {
-                glDisable(mState);
+                LLVkState::setEnable(mState, false);
                 sStateMap[mState] = GL_FALSE;
             }
         }
@@ -924,20 +924,19 @@ LLGLDepthTest::LLGLDepthTest(GLboolean depth_enabled, GLboolean write_enabled, G
     if (depth_enabled != sDepthEnabled)
     {
         gGL.flush();
-        if (depth_enabled) glEnable(GL_DEPTH_TEST);
-        else glDisable(GL_DEPTH_TEST);
+        LLVkState::setEnable(GL_DEPTH_TEST, depth_enabled != 0);
         sDepthEnabled = depth_enabled;
     }
     if (depth_func != sDepthFunc)
     {
         gGL.flush();
-        glDepthFunc(depth_func);
+        LLVkState::setDepthFunc(depth_func);
         sDepthFunc = depth_func;
     }
     if (write_enabled != sWriteEnabled)
     {
         gGL.flush();
-        glDepthMask(write_enabled);
+        LLVkState::setDepthMask(write_enabled != 0);
         sWriteEnabled = write_enabled;
     }
 }
@@ -949,20 +948,19 @@ LLGLDepthTest::~LLGLDepthTest()
     if (sDepthEnabled != mPrevDepthEnabled )
     {
         gGL.flush();
-        if (mPrevDepthEnabled) glEnable(GL_DEPTH_TEST);
-        else glDisable(GL_DEPTH_TEST);
+        LLVkState::setEnable(GL_DEPTH_TEST, mPrevDepthEnabled != 0);
         sDepthEnabled = mPrevDepthEnabled;
     }
     if (sDepthFunc != mPrevDepthFunc)
     {
         gGL.flush();
-        glDepthFunc(mPrevDepthFunc);
+        LLVkState::setDepthFunc(mPrevDepthFunc);
         sDepthFunc = mPrevDepthFunc;
     }
     if (sWriteEnabled != mPrevWriteEnabled )
     {
         gGL.flush();
-        glDepthMask(mPrevWriteEnabled);
+        LLVkState::setDepthMask(mPrevWriteEnabled != 0);
         sWriteEnabled = mPrevWriteEnabled;
     }
 }

@@ -445,9 +445,7 @@ inline bool texIndependent(U16 op)
 {
     switch (op)
     {
-    case OP_glBlendFunc: case OP_glBlendFuncSeparate: case OP_glEnable: case OP_glDisable: case OP_glDepthFunc: case OP_glDepthMask:
-    case OP_glCullFace: case OP_glScissor: case OP_glColorMask: case OP_glViewport: case OP_glPolygonMode: case OP_glPolygonOffset:
-    case OP_glStencilFunc: case OP_glStencilOp: case OP_glStencilMask: case OP_glLineWidth: case OP_glClear: case OP_glClearColor:
+    case OP_glClear: case OP_glClearColor:
     case OP_glBufferData: case OP_glBufferSubData: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
     case OP_glBindBufferBase: case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
     case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
@@ -576,38 +574,8 @@ void sidePush(U16 op, std::vector<U8>&& payload)
 
 } // anonymous namespace
 
-// <FS> F1.1 (dual-write): the state setters that pass through here also write the producer's state context (llvkstate), and a state block record is written
-// before anything that reads draw state (draws, clears, shadow packets) when the context changed since the last one. The old GL-shaped calls stay in the stream;
-// the worker verifies the block against them (LL_VK_STATE_VERIFY=1).
-inline bool isStateOp(U16 op)
-{
-    return op >= OP_glEnable && op <= OP_glScissor;      // the generated numbering keeps the state calls together (glEnable ... glScissor)
-}
-
-void stateNote(U16 op, const void* args)
-{
-    switch (op)
-    {
-    case OP_glEnable: LLVkState::setEnable(((const A_glEnable*)args)->cap, true); break;
-    case OP_glDisable: LLVkState::setEnable(((const A_glDisable*)args)->cap, false); break;
-    case OP_glBlendFunc: { const A_glBlendFunc* a = (const A_glBlendFunc*)args; LLVkState::setBlendFunc(a->sfactor, a->dfactor, a->sfactor, a->dfactor); break; }
-    case OP_glBlendFuncSeparate: { const A_glBlendFuncSeparate* a = (const A_glBlendFuncSeparate*)args; LLVkState::setBlendFunc(a->sfactorRGB, a->dfactorRGB, a->sfactorAlpha, a->dfactorAlpha); break; }
-    case OP_glDepthFunc: LLVkState::setDepthFunc(((const A_glDepthFunc*)args)->func); break;
-    case OP_glDepthMask: LLVkState::setDepthMask(((const A_glDepthMask*)args)->flag != 0); break;
-    case OP_glColorMask: { const A_glColorMask* a = (const A_glColorMask*)args; LLVkState::setColorMask(a->red != 0, a->green != 0, a->blue != 0, a->alpha != 0); break; }
-    case OP_glCullFace: LLVkState::setCullFace(((const A_glCullFace*)args)->mode); break;
-    case OP_glPolygonOffset: { const A_glPolygonOffset* a = (const A_glPolygonOffset*)args; LLVkState::setPolygonOffset(a->factor, a->units); break; }
-    case OP_glPolygonMode: LLVkState::setPolygonMode(((const A_glPolygonMode*)args)->mode); break;
-    case OP_glLineWidth: LLVkState::setLineWidth(((const A_glLineWidth*)args)->width); break;
-    case OP_glStencilFunc: { const A_glStencilFunc* a = (const A_glStencilFunc*)args; LLVkState::setStencilFunc(a->func, a->ref, a->mask); break; }
-    case OP_glStencilOp: { const A_glStencilOp* a = (const A_glStencilOp*)args; LLVkState::setStencilOp(a->sfail, a->dpfail, a->dppass); break; }
-    case OP_glStencilMask: LLVkState::setStencilMask(((const A_glStencilMask*)args)->mask); break;
-    case OP_glViewport: { const A_glViewport* a = (const A_glViewport*)args; LLVkState::setViewport(a->x, a->y, a->width, a->height); break; }
-    case OP_glScissor: { const A_glScissor* a = (const A_glScissor*)args; LLVkState::setScissor(a->x, a->y, a->width, a->height); break; }
-    default: break;         // glPointSize: nothing reads it
-    }
-}
-
+// <FS> F1.1: a state block record is written before anything that reads draw state (draws, clears, shadow packets, synchronous answers) when the producer's
+// context (llvkstate: written directly by the viewer's state setters) changed since the last one.
 // main thread only
 inline void stateEmit()
 {
@@ -622,12 +590,7 @@ void push(unsigned short op, const void* args, unsigned size)
 {
     if (isMainThread())
     {
-        if (isStateOp(op))
-        {
-            stateNote(op, args);        // F1.1: the state calls are not queued any more; the block record carries them
-            return;
-        }
-        else if (op == OP_glClear || op == OP_glDrawArrays || op == OP_glDrawRangeElements)
+        if (op == OP_glClear || op == OP_glDrawArrays || op == OP_glDrawRangeElements)
         {
             stateEmit();
         }
@@ -645,11 +608,6 @@ void push(unsigned short op, const void* args, unsigned size)
         {
             gMainPushTicks += (__rdtsc() - t0) * 16;
         }
-        return;
-    }
-    if (isStateOp(op))
-    {
-        LLVkState::noteOffThread();     // dropped: the worker's state comes from the main thread's blocks only
         return;
     }
     std::vector<U8> payload((const U8*)args, (const U8*)args + size);

@@ -43,6 +43,7 @@
 #include "llwindow.h"
 #include "llframetimer.h"
 #include "llvkasync.h"
+#include "llvkstate.h"
 #include <unordered_set>
 
 extern LL_COMMON_API bool on_main_thread();
@@ -2570,7 +2571,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
 
     if (gGLManager.mDownScaleMethod == 0)
     { // use an FBO to downscale the texture
-        glViewport(0, 0, desired_width, desired_height);
+        LLVkState::setViewport(0, 0, desired_width, desired_height);
 
         // draw a full screen triangle
         if (gGL.getTexUnit(0)->bind(this, true, true))
