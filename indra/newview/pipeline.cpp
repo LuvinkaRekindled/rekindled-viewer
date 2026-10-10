@@ -11742,6 +11742,15 @@ static U32 rt_matrix_id(const LLMatrix4* m)
 }
 
 // <FS> ray query shadows: which shadow pass is rendering (0-3 sun cascades, 4-5 spot / projector shadows, 6 anything else)
+// <FS> Ray tracing: in the modes that trace the sun shadow with rays only (1, and the debug views 4 and 5) the sun cascades' shadow maps are never read. Their passes still run on the
+// CPU (the cull and the caster lists are what the ray scene is made from) but draw nothing: note-only records, no target, no old path draws. LL_VK_RT_KEEP_CASCADES=1 draws them anyway.
+static bool rt_sun_cascades_unused()
+{
+    static const bool keep = []() { const char* e = getenv("LL_VK_RT_KEEP_CASCADES"); return e && e[0] == '1'; }();
+    const U32 mode = LLVkMirror::rtShadowMode();
+    return !keep && (mode == 1 || mode == 4 || mode == 5);
+}
+
 static U32 shadow_pass_index()
 {
     const S32 id = (S32)LLViewerCamera::sCurCameraID;
@@ -11788,6 +11797,9 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         LLRenderPass::PASS_NORMSPEC,
         LLRenderPass::PASS_NORMSPEC_EMISSIVE
     };
+
+    // <FS> a sun cascade pass in a ray-only mode: names the casters, draws nothing (see rt_sun_cascades_unused)
+    const bool rt_skip = rt_sun_cascades_unused() && shadow_pass_index() < 4;
 
     LLGLEnable cull(GL_CULL_FACE);
 
@@ -11852,7 +11864,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
 
     // <FS> Render packets: every draw of the static, untextured types becomes one entry of a record (buffer names, index range, model matrix number)
-    auto render_shadow_packets = [this](const U32* list, size_t count)
+    auto render_shadow_packets = [this, rt_skip](const U32* list, size_t count)
     {
         std::vector<LLVkMirror::ShadowPacketEntry> entries;
         std::vector<F32> matrices(16, 0.f);
@@ -11893,6 +11905,37 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 entries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, rt_matrix_id(params->mModelMatrix) });
             }
         }
+        if (rt_skip)
+        {
+            // ray tracing only: the same casters as a note-only record (opaque entries of the alpha entry layout), no draws, no old path fallback
+            if (!entries.empty())
+            {
+                std::vector<LLVkMirror::ShadowAlphaEntry> named(entries.size());
+                for (size_t k = 0; k < entries.size(); ++k)
+                {
+                    LLVkMirror::ShadowAlphaEntry a = {};
+                    a.mVertexBuffer = entries[k].mVertexBuffer;
+                    a.mIndexBuffer = entries[k].mIndexBuffer;
+                    a.mFirstIndex = entries[k].mFirstIndex;
+                    a.mIndexCount = entries[k].mIndexCount;
+                    a.mMatrix = entries[k].mMatrix;
+                    a.mMatrixId = entries[k].mMatrixId;
+                    a.mFlags = LLVkMirror::ALPHA_RAY_ONLY;
+                    named[k] = a;
+                }
+                LLVkMirror::ShadowPacketsHeader header;
+                header.mKind = 5;
+                header.mEntries = (U32)named.size();
+                header.mPass = shadow_pass_index();
+                header.mMatrices = (U32)(matrices.size() / 16);
+                std::vector<U8> blob(named.size() * sizeof(named[0]) + matrices.size() * sizeof(F32));
+                memcpy(blob.data(), named.data(), named.size() * sizeof(named[0]));
+                memcpy(blob.data() + named.size() * sizeof(named[0]), matrices.data(), matrices.size() * sizeof(F32));
+                LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+                ++gShadowDrawStats.mRtRecords;
+            }
+            return;
+        }
         if (!entries.empty())
         {
             LLVkMirror::ShadowPacketsHeader header;
@@ -11924,7 +11967,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     };
 
     // <FS> Render packets for the rigged untextured casters: one entry per draw, with the weight4 array and the draw's matrix palette (sent with the record, once per distinct palette)
-    auto render_skin_packets = [this](const U32* list, size_t count)
+    auto render_skin_packets = [this, rt_skip](const U32* list, size_t count)
     {
         std::vector<LLVkMirror::ShadowSkinEntry> entries;
         std::vector<F32> matrices(16, 0.f);
@@ -11983,7 +12026,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         if (!entries.empty())
         {
             LLVkMirror::ShadowPacketsHeader header;
-            header.mKind = 2;
+            header.mKind = rt_skip ? 6 : 2;       // 6: the same record, only named to the ray scene
             header.mPass = shadow_pass_index();
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
@@ -11999,7 +12042,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             gShadowDrawStats.mSkinPalettes += palette_offsets.size();
             ++gShadowDrawStats.mSkinRecords;
         }
-        if (!fallback.empty())
+        if (!fallback.empty() && !rt_skip)
         {
             gShadowDrawStats.mSkinFallback += fallback.size();
             gDeferredShadowProgram.bind(true);
@@ -12233,7 +12276,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     // <FS> Render packets with textures: the static alpha masked casters of a shadow pass (masked, fullbright masked, blended, grass, the materials' masks) leave
     // as one record. Every entry names its texture(s) by GL name; the worker gives them slots in a bindless table and the fragment shader does the alpha test.
-    auto render_alpha_packets = [this](S32 sun_up, U32 target_width, bool rigged)
+    auto render_alpha_packets = [this, rt_skip](S32 sun_up, U32 target_width, bool rigged)
     {
         enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_GRASS, KIND_MATERIAL };
         struct Source { U32 type; int kind; };
@@ -12381,9 +12424,20 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
         if (!entries.empty())
         {
-            gDeferredShadowAlphaPullProgram.bind();
+            if (!rt_skip)
+            {
+                gDeferredShadowAlphaPullProgram.bind();
+            }
+            else if (!rigged)
+            {
+                for (LLVkMirror::ShadowAlphaEntry& named : entries)
+                {
+                    named.mUv[0] = 1.f;       // identity texture coordinate transform (the old path's matrix-free entries)
+                    named.mUv[3] = 1.f;
+                }
+            }
             LLVkMirror::ShadowPacketsHeader header;
-            header.mKind = 1;
+            header.mKind = rt_skip ? (rigged ? 7 : 5) : 1;       // 5 and 7: the same record, only named to the ray scene
             header.mTargetWidth = (F32)target_width;
             header.mEntries = (U32)entries.size();
             header.mPass = shadow_pass_index();
@@ -12434,12 +12488,26 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             gGL.loadMatrix(gGLModelView);
             gGLLastMatrix = NULL;
         };
-        run_fallbacks(fallback[KIND_MASK], gDeferredShadowAlphaMaskProgram, mAlphaMaskPool, true, true, false);
-        run_fallbacks(fallback[KIND_FULLBRIGHT], gDeferredShadowFullbrightAlphaMaskProgram, mFullbrightAlphaMaskPool, true, true, false);
-        run_fallbacks(fallback[KIND_GRASS], gDeferredTreeShadowProgram, mSimplePool, false, false, true);
-        run_fallbacks(fallback[KIND_MATERIAL], gDeferredTreeShadowProgram, mAlphaMaskPool, false, false, false);
+        if (!rt_skip)
+        {
+            run_fallbacks(fallback[KIND_MASK], gDeferredShadowAlphaMaskProgram, mAlphaMaskPool, true, true, false);
+            run_fallbacks(fallback[KIND_FULLBRIGHT], gDeferredShadowFullbrightAlphaMaskProgram, mFullbrightAlphaMaskPool, true, true, false);
+            run_fallbacks(fallback[KIND_GRASS], gDeferredTreeShadowProgram, mSimplePool, false, false, true);
+            run_fallbacks(fallback[KIND_MATERIAL], gDeferredTreeShadowProgram, mAlphaMaskPool, false, false, false);
+        }
     };
 
+    if (rt_skip)
+    {
+        // <FS> ray tracing only: the casters of this cascade named to the ray scene, nothing drawn
+        render_shadow_packets(types, sizeof(types) / sizeof(types[0]));
+        render_skin_packets(types, sizeof(types) / sizeof(types[0]));
+        render_alpha_packets(0, 1, false);
+        render_alpha_packets(0, 1, true);
+        render_rt_extra_packets();
+    }
+    else
+    {
     LLVertexBuffer::unbind();
     for (int j = 0; j < 2; ++j) // 0 -- static, 1 -- rigged
     {
@@ -12617,6 +12685,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     }
 
     render_rt_extra_packets();       // <FS> ray tracing only: what the old path drew above, named to the ray scene
+    }
 
     gDeferredShadowCubeProgram.bind();
     gGLLastMatrix = NULL;
@@ -13218,9 +13287,13 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 set_last_projection(prep.mLastProj);
             }
 
-            mRT->shadow[j].bindTarget();
-            mRT->shadow[j].getViewport(gGLViewport);
-            mRT->shadow[j].clear();
+            const bool cascade_unused = rt_sun_cascades_unused();       // <FS> ray tracing only mode: the shadow map is never read, nothing is drawn into it
+            if (!cascade_unused)
+            {
+                mRT->shadow[j].bindTarget();
+                mRT->shadow[j].getViewport(gGLViewport);
+                mRT->shadow[j].clear();
+            }
 
             {
                 // <FS> arm the cascade avatar cull for this pass
@@ -13248,7 +13321,10 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 sShadowCascadeCull.mActive = false;
             }
 
-            mRT->shadow[j].flush();
+            if (!cascade_unused)
+            {
+                mRT->shadow[j].flush();
+            }
 
             if (!gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_SHADOW_FRUSTA) && !gCubeSnapshot)
             {
@@ -13341,12 +13417,15 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     mShadowCamera[j+4] = shadow_cam;
                 }
 
-                mRT->shadow[j].bindTarget();
+                if (!rt_sun_cascades_unused())
                 {
-                    LLGLDepthTest depth(GL_TRUE);
-                    mRT->shadow[j].clear();
+                    mRT->shadow[j].bindTarget();
+                    {
+                        LLGLDepthTest depth(GL_TRUE);
+                        mRT->shadow[j].clear();
+                    }
+                    mRT->shadow[j].flush();
                 }
-                mRT->shadow[j].flush();
 
                 mShadowError.mV[j] = 0.f;
                 mShadowFOV.mV[j] = 0.f;
