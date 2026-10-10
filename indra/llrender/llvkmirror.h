@@ -318,6 +318,8 @@ namespace LLVkGL
     bool getBufferInfo(unsigned int name, BufferInfo& out);
     // the GPU reads this buffer in the current frame (an acceleration structure build, a ray query shader): a CPU rewrite of a host-written range has to rename it first
     void markBufferUsed(unsigned int name);
+    // records the queued writes of video-memory buffers (GPU copies) into the command stream now: the ray scene reads buffers by address (builds, skinning, alpha test), nothing else would flush them first
+    void flushPendingBufferWrites();
 }
 #endif
 
