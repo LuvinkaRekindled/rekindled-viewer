@@ -248,7 +248,7 @@ namespace LLVkMirror
 
     // CPU phase timers of the translation layer (benchmark mode only; PhaseTimer costs one branch when off)
     enum Phase { PH_ALL_HOOKS, PH_UNIFORM, PH_DRAW, PH_D_TARGET, PH_D_STATE, PH_D_TEX, PH_D_UBO, PH_D_VERTEX, PH_D_APPLY, PH_D_STATS,
-                 PH_A_TEX, PH_A_PASS, PH_A_PIPE, PH_A_DYN, PH_A_VI, PH_A_UNI, PH_A_PUSH, PH_A_CMD, PH_COUNT };
+                 PH_A_TEX, PH_A_PASS, PH_A_PIPE, PH_A_DYN, PH_A_VI, PH_A_SAMP, PH_A_UNI, PH_A_PUSH, PH_A_CMD, PH_COUNT };
     extern long long gPhaseTicks[PH_COUNT];
     extern bool gPhaseTiming;
     extern unsigned long gMainThreadId;

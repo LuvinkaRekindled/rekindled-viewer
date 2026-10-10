@@ -1077,7 +1077,10 @@ bool Renderer::init()
     // uniform rings (one per frame in flight) and a stand-in for named uniform blocks nobody has bound
     for (U32 i = 0; i < Context::frameCount(); ++i)
     {
-        if (!ctx.createBuffer(RING_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, Context::Memory::UploadDevice, mRing[i]))
+        // LL_VK_RING_MEM=host (write-combined system memory) or cached (CPU-cached system memory) puts the uniform ring there instead of video memory behind the BAR
+        static const char* const ring_mem = getenv("LL_VK_RING_MEM");
+        const Context::Memory ring_memory = ring_mem && strcmp(ring_mem, "host") == 0 ? Context::Memory::Upload : (ring_mem && strcmp(ring_mem, "cached") == 0 ? Context::Memory::Readback : Context::Memory::UploadDevice);
+        if (!ctx.createBuffer(RING_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, ring_memory, mRing[i]))
         {
             return false;
         }
@@ -2041,6 +2044,29 @@ std::string Renderer::takeBarrierReport(size_t frames)
         for (U32& c : mDepthUseCounts) c = 0;
         mDepthUseChanges.clear();
     }
+    {
+        // the loose uniform blocks copied into the ring: a draw whose program has a changed value (or the first use in a frame) copies the whole block
+        U64 copies = 0, bytes = 0, dirty = 0, same = 0;
+        std::vector<std::pair<U64, const Program*>> by_bytes;
+        for (const auto& kv : mUniformCopies)
+        {
+            copies += kv.second.mCopies;
+            bytes += kv.second.mBytes;
+            dirty += kv.second.mDirty;
+            same += kv.second.mSame;
+            by_bytes.push_back({ kv.second.mBytes, kv.first });
+        }
+        std::sort(by_bytes.rbegin(), by_bytes.rend());
+        snprintf(buf, sizeof(buf), " | uniform ring copies per frame %.0f (%.0f because a value changed, %.0f identical to an earlier copy of the frame), %.0f KB per frame; most bytes:", (double)copies / f, (double)dirty / f, (double)same / f, (double)bytes / 1024.0 / f);
+        out += buf;
+        for (size_t i = 0; i < by_bytes.size() && i < 8; ++i)
+        {
+            const UniformCopyStat& us = mUniformCopies[by_bytes[i].second];
+            snprintf(buf, sizeof(buf), " [%s: %.0f copies of %.1f KB]", by_bytes[i].second->mName.c_str(), (double)us.mCopies / f, us.mCopies ? (double)us.mBytes / 1024.0 / (double)us.mCopies : 0.0);
+            out += buf;
+        }
+        mUniformCopies.clear();
+    }
     mBarrierStats.clear();
     mBarrierPerImage.clear();
     return out;
@@ -2721,6 +2747,7 @@ void Renderer::applyState()
             mRtBoundOffset = rt_offset;
         }
     }
+    LLVkMirror::phaseLap(LLVkMirror::PH_A_SAMP, lap_t);
     // 6. loose uniforms: copy this program's shadow into the ring when it changed (or on its first use this frame)
     if (mProgram->mDirty || mProgram->mRingFrame != Context::instance().getFrameNumber())
     {
@@ -2734,6 +2761,29 @@ void Renderer::applyState()
         }
         mProgram->mRingOffset = ring_offset;
         mDiagChanged = true;
+        if (LLVkMirror::gPhaseTiming)
+        {
+            UniformCopyStat& us = mUniformCopies[mProgram];
+            ++us.mCopies;
+            us.mBytes += mProgram->mShadow.size();
+            if (mProgram->mDirty) ++us.mDirty;
+            {
+                // would the block be the same as one already copied in this frame for this program?
+                const U64* w = (const U64*)mProgram->mShadow.data();
+                U64 h = 1469598103934665603ull ^ (U64)(size_t)mProgram;
+                for (size_t k = 0; k < mProgram->mShadow.size() / 8; ++k)
+                {
+                    h = (h ^ w[k]) * 1099511628211ull;
+                    h ^= h >> 29;
+                }
+                if (mUniformSeenFrame != Context::instance().getFrameNumber())
+                {
+                    mUniformSeenFrame = Context::instance().getFrameNumber();
+                    mUniformSeen.clear();
+                }
+                if (!mUniformSeen.insert(h).second) ++us.mSame;
+            }
+        }
         memcpy((U8*)mRing[mSlot].mMapped + mProgram->mRingOffset, mProgram->mShadow.data(), mProgram->mShadow.size());
         mProgram->mRingFrame = Context::instance().getFrameNumber();
         mProgram->mDirty = false;
