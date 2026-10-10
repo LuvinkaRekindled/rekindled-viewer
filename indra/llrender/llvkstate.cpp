@@ -30,7 +30,6 @@ struct Context
     bool mTakenValid = false;
     bool mCullOn = false;
     VkCullModeFlags mCullFace = VK_CULL_MODE_BACK_BIT;
-    bool mDepthMask = true;
     // counters
     U64 mCalls = 0, mOffThread = 0, mBlocks = 0, mUnknownFactor = 0;
 };
@@ -99,14 +98,14 @@ void recomputeCull()
 void recomputeDepthWrite()
 {
     // GL never writes depth while the depth test is disabled; Vulkan does when writes are enabled
-    gCtx.mBlock.mDepth.mDepthWrite = gCtx.mDepthMask && gCtx.mBlock.mDepth.mDepthTest;
+    gCtx.mBlock.mDepth.mDepthWrite = gCtx.mBlock.mDepthMask && gCtx.mBlock.mDepth.mDepthTest;
 }
 
 } // anonymous namespace
 
 bool Block::operator==(const Block& o) const
 {
-    return mRaster == o.mRaster && mDepth == o.mDepth && mBlend == o.mBlend && mViewportSet == o.mViewportSet && mScissorOn == o.mScissorOn
+    return mDepthMask == o.mDepthMask && mRaster == o.mRaster && mDepth == o.mDepth && mBlend == o.mBlend && mViewportSet == o.mViewportSet && mScissorOn == o.mScissorOn
         && memcmp(mViewport, o.mViewport, sizeof(mViewport)) == 0 && memcmp(mScissor, o.mScissor, sizeof(mScissor)) == 0;
 }
 
@@ -128,6 +127,7 @@ void reset()
     b.mRaster.mFrontFace = VK_FRONT_FACE_CLOCKWISE;
     b.mDepth.mDepthTest = false;
     b.mDepth.mDepthWrite = false;           // mask true and test false
+    b.mDepthMask = true;
     b.mDepth.mDepthOp = VK_COMPARE_OP_LESS;
     b.mBlend.mEnable = false;
     b.mBlend.mSrcColor = b.mBlend.mSrcAlpha = VK_BLEND_FACTOR_ONE;
@@ -182,7 +182,7 @@ void setDepthFunc(U32 func)
 void setDepthMask(bool flag)
 {
     CTX_CALL();
-    gCtx.mDepthMask = flag;
+    gCtx.mBlock.mDepthMask = flag;
     recomputeDepthWrite();
 }
 
@@ -312,7 +312,10 @@ void toRenderer(const Block& b, bool has_depth, RasterState& rs, DepthStencilSta
 
 void noteOffThread()
 {
-    ++gCtx.mOffThread;
+    if (gCtx.mOffThread++ == 0)
+    {
+        LL_WARNS("VkState") << "a render state call came from a thread other than the main producer: dropped" << LL_ENDL;
+    }
 }
 
 std::string statsReport()

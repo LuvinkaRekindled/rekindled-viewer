@@ -32,6 +32,7 @@ namespace LLVkState
         LLVk::BlendState mBlend;            // mWriteMask is the colour write mask
         S32 mViewport[4];
         S32 mScissor[4];
+        bool mDepthMask;                    // the depth write mask as the viewer set it (mDepth.mDepthWrite is mask AND test); clears and glGet answers read it
         bool mViewportSet;                  // a viewport was ever set (the worker keeps the target's own until then)
         bool mScissorOn;
         bool operator==(const Block& o) const;
@@ -73,12 +74,6 @@ namespace LLVkState
 
     // counters since the last call (for the phases log): blocks written, calls made, calls ignored because they came from another thread
     std::string statsReport();
-}
-
-namespace LLVkGL
-{
-    // copies the old state machine's values into the context: GL calls made before the queue started (inline mode) set them there only
-    void seed_state_context();
 }
 
 #endif // LL_VULKAN
