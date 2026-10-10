@@ -41,6 +41,7 @@
 #endif
 #include "glm/gtc/type_ptr.hpp"
 #include "llvkstate.h"
+#include "llvktex.h"
 
 thread_local LLRender gGL;
 
@@ -124,6 +125,7 @@ LLTexUnit::LLTexUnit(S32 index)
 static inline void ll_bindTexUnit(S32 unit_index, GLenum target, GLuint texture)
 {
 #if defined(LL_VULKAN)
+    LLVkTex::noteBind(unit_index, target, texture);
     if (LLVkAsync::mainProducer())
     {
         LLVkAsync::bindTextureUnit(GL_TEXTURE0 + unit_index, target, texture);
@@ -136,6 +138,7 @@ static inline void ll_bindTexUnit(S32 unit_index, GLenum target, GLuint texture)
 static inline void ll_activeTexUnit(S32 unit_index)
 {
 #if defined(LL_VULKAN)
+    LLVkTex::noteActive(unit_index);
     if (LLVkAsync::mainProducer())
     {
         LLVkAsync::activeTextureUnit(GL_TEXTURE0 + unit_index);
@@ -523,42 +526,22 @@ void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
     setTextureAddressModeFast(mode, mCurrTexType);
 }
 
-// <FS> N4: the sampler parameters of one texture are written as one record on the queue's producer (the plain glTexParameter calls anywhere else)
+// <FS> F1.2: the sampler parameters of one texture are written as one record that names the texture
 struct TexParams
 {
     GLenum mTarget;
-#if defined(LL_VULKAN)
-    bool mTyped;
+    U32 mId;
     LLVkAsync::TexParam mE[8];
     U32 mN = 0;
-    explicit TexParams(GLenum target) : mTarget(target), mTyped(LLVkAsync::mainProducer()) {}
-    void i(GLenum pname, GLint v)
-    {
-        if (mTyped) mE[mN++] = { (U32)pname, 0, (S32)v, 0.f };
-        else glTexParameteri(mTarget, pname, v);
-    }
-    void f(GLenum pname, GLfloat v)
-    {
-        if (mTyped) mE[mN++] = { (U32)pname, 1, 0, v };
-        else glTexParameterf(mTarget, pname, v);
-    }
-    ~TexParams()
-    {
-        if (mTyped && mN)
-        {
-            LLVkAsync::texParameters(mTarget, mE, mN);
-        }
-    }
-#else
-    explicit TexParams(GLenum target) : mTarget(target) {}
-    void i(GLenum pname, GLint v) { glTexParameteri(mTarget, pname, v); }
-    void f(GLenum pname, GLfloat v) { glTexParameterf(mTarget, pname, v); }
-#endif
+    TexParams(GLenum target, U32 id) : mTarget(target), mId(id) {}
+    void i(GLenum pname, GLint v) { mE[mN++] = { (U32)pname, 0, (S32)v, 0.f }; }
+    void f(GLenum pname, GLfloat v) { mE[mN++] = { (U32)pname, 1, 0, v }; }
+    ~TexParams() { LLVkTex::params(mId, mTarget, mE, mN); }
 };
 
 void LLTexUnit::setTextureAddressModeFast(eTextureAddressMode mode, eTextureType tex_type)
 {
-    TexParams p(sGLTextureType[tex_type]);
+    TexParams p(sGLTextureType[tex_type], mCurrTexture);
     p.i(GL_TEXTURE_WRAP_S, sGLAddressMode[mode]);
     p.i(GL_TEXTURE_WRAP_T, sGLAddressMode[mode]);
     if (tex_type == TT_CUBE_MAP || tex_type == TT_CUBE_MAP_ARRAY || tex_type == TT_TEXTURE_3D)
@@ -578,7 +561,7 @@ void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions optio
 
 void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions option, eTextureType tex_type)
 {
-    TexParams p(sGLTextureType[tex_type]);
+    TexParams p(sGLTextureType[tex_type], mCurrTexture);
     if (option == TFO_POINT)
     {
         p.i(GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -1611,27 +1594,27 @@ void LLRender::bindBufferBase(U32 gl_target, U32 index, U32 id)
 
 void LLRender::copyTexSubImage2D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height)
 {
-    glCopyTexSubImage2D(gl_target, level, xoffset, yoffset, x, y, width, height);
+    LLVkTex::copySubImage(LLVkTex::boundOnActive(gl_target), gl_target, level, xoffset, yoffset, 0, x, y, width, height);
 }
 
 void LLRender::copyTexSubImage3D(U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height)
 {
-    glCopyTexSubImage3D(gl_target, level, xoffset, yoffset, zoffset, x, y, width, height);
+    LLVkTex::copySubImage(LLVkTex::boundOnActive(gl_target), gl_target, level, xoffset, yoffset, zoffset, x, y, width, height);
 }
 
 void LLRender::generateMipmap(U32 gl_target)
 {
-    glGenerateMipmap(gl_target);
+    LLVkTex::generateMipmap(LLVkTex::boundOnActive(gl_target), gl_target);
 }
 
 void LLRender::texParameteri(U32 gl_target, U32 gl_pname, S32 param)
 {
-    glTexParameteri(gl_target, gl_pname, param);
+    LLVkTex::paramI(LLVkTex::boundOnActive(gl_target), gl_target, gl_pname, param);
 }
 
 void LLRender::texImage2D(U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data)
 {
-    glTexImage2D(gl_target, level, internal_format, width, height, border, gl_format, gl_type, data);
+    LLVkTex::image2D(LLVkTex::boundOnActive(gl_target), gl_target, level, internal_format, width, height, border, gl_format, gl_type, data);
 }
 
 void LLRender::bindFramebuffer(U32 gl_target, U32 id)
@@ -1651,11 +1634,13 @@ U32 LLRender::getError()
 
 void LLRender::activeTexture(U32 gl_texture_unit_enum)
 {
+    LLVkTex::noteActive((S32)gl_texture_unit_enum - (S32)GL_TEXTURE0);
     glActiveTexture(gl_texture_unit_enum);
 }
 
 void LLRender::bindTexture(U32 gl_target, U32 id)
 {
+    LLVkTex::noteBind(LLVkTex::gSlots.mActive, gl_target, id);
     glBindTexture(gl_target, id);
 }
 
@@ -1671,12 +1656,12 @@ void LLRender::setScissor(S32 x, S32 y, S32 width, S32 height)
 
 void LLRender::getTexLevelParameteriv(U32 gl_target, S32 level, U32 gl_pname, S32* result)
 {
-    glGetTexLevelParameteriv(gl_target, level, gl_pname, (GLint*)result);
+    *result = LLVkTex::levelParameter(LLVkTex::boundOnActive(gl_target), gl_target, level, gl_pname);
 }
 
 void LLRender::getTexImage(U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels)
 {
-    glGetTexImage(gl_target, level, gl_format, gl_type, pixels);
+    LLVkTex::getImage(LLVkTex::boundOnActive(gl_target), gl_target, level, gl_format, gl_type, pixels);
 }
 
 void LLRender::setSceneBlendType(eBlendType type)
