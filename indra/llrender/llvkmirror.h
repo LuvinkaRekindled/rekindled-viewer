@@ -300,6 +300,7 @@ namespace LLVkGL
         unsigned long long mVersion = 0;     // changes on every write
         unsigned long long mMoves = 0;       // changes when the same contents move to another range (the address changed, nothing else)
         bool mDevice = false;                // video memory written by GPU copies (false: written by the CPU)
+        const void* mCpu = nullptr;          // the CPU's pointer to the data when it lives in host-written memory (valid until the buffer is written or freed), else null
     };
     bool getBufferInfo(unsigned int name, BufferInfo& out);
     // the GPU reads this buffer in the current frame (an acceleration structure build, a ray query shader): a CPU rewrite of a host-written range has to rename it first

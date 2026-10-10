@@ -2585,6 +2585,7 @@ bool getBufferInfo(unsigned int name, BufferInfo& out)
     out.mVersion = b.mVersion;
     out.mMoves = b.mMoves;
     out.mDevice = b.mDevicePath;
+    out.mCpu = b.mArena.valid() ? b.mArena.mMapped : nullptr;
     return b.mVk.valid();
 }
 
