@@ -16,6 +16,7 @@
 #if defined(LL_VULKAN)
 #include <mutex>
 #include <atomic>
+#include <vector>
 #include <intrin.h>
 namespace LLVk { struct Image; }
 #endif
@@ -324,6 +325,8 @@ namespace LLVkGL
     void flushPendingBufferWrites();
     // counts the changes of where a watched buffer lives (the ray scene's alpha casters: their records hold the buffers' addresses): a new storage, a release, a rename
     unsigned long long bufferTopologyVersion();
+    // the names of the watched buffers whose storage changed since the last call (what bufferTopologyVersion counts); false: too many to list, look at all of them
+    bool takeTopologyChanges(std::vector<unsigned>& names);
 }
 #endif
 
