@@ -100,6 +100,10 @@ float pcfSpotShadow(sampler2DShadow shadowMap, vec4 stc, float bias_scale, vec2 
 bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
 {
     LLRtGeom g = ll_rt_geoms.g[record];
+    if ((g.flags & 256u) != 0u)
+    {
+        return false;                       // a record the scene could not vouch for this frame: nothing is read
+    }
     vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
     LLRtIndices ib = LLRtIndices(g.indices);
     uint ix[3];

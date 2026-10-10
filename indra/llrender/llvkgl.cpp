@@ -3493,6 +3493,7 @@ static void on_body_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* 
         c.mJoints = e.mJoints;
         c.mMode = e.mMode;
         memcpy(c.mAvatarPos, e.mAvatarPos, sizeof(c.mAvatarPos));
+        c.mSelf = e.mSelf;
         c.mPalette = e.mMode == 1 ? (U64)palettes.mAddress : 0;
         c.mModel = e.mMode == 2 ? e.mModel : nullptr;
         c.mPass = h.mPass;
