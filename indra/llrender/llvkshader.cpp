@@ -555,6 +555,7 @@ struct StageWork
     StageSource::Stage mStage;
     std::string mName;
     SplitResult mSplit;
+    bool mUsesRt = false;       // the (preprocessed) source mentions ll_rt_tlas: the stage gets the ray query extension and the set 3 declaration
 };
 
 } // anonymous namespace
@@ -665,6 +666,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                 gDebugSamplers[program_name] = sampler_names;
             }
         }
+        w.mUsesRt = preprocessed.find("ll_rt_tlas") != std::string::npos;
         w.mSplit = split_items(preprocessed);
         works.push_back(std::move(w));
     }
@@ -949,7 +951,16 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         {
             text << ext << "\n";
         }
+        if (w.mUsesRt)
+        {
+            // <FS> ray queries against the frame's scene (llvkrt.cpp): set 3, binding 0
+            text << "#extension GL_EXT_ray_query : require\n";
+        }
         text << bool_defines.str() << block.str() << bindless_decl.str();
+        if (w.mUsesRt)
+        {
+            text << "layout(set = 3, binding = 0) uniform accelerationStructureEXT ll_rt_tlas;\n";
+        }
 
         bool have_main = false;
         for (const Item& item : w.mSplit.mItems)
@@ -1210,6 +1221,10 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         out.mSamplers.push_back({ s.mName, s.mType, s.mBinding, s.mIndexUniform });
     }
     out.mBindless = bindless;
+    for (const StageWork& w : works)
+    {
+        out.mUsesRt = out.mUsesRt || w.mUsesRt;
+    }
     out.mAttributes.assign(attributes.begin(), attributes.end());
     for (const std::string& a : out.mAttributes)
     {
@@ -1232,7 +1247,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
 namespace
 {
 constexpr U32 kCacheMagic = 0x43535056;     // "VPSC"
-constexpr U32 kCacheVersion = 2;
+constexpr U32 kCacheVersion = 3;
 
 struct Hasher
 {
@@ -1360,6 +1375,7 @@ bool spirv_cache_load(const std::string& path, ProgramInfo& out)
         info.mSamplers.push_back(std::move(sm));
     }
     info.mBindless = r.u32() != 0;
+    info.mUsesRt = r.u32() != 0;
     info.mAttributes = r.strs();
     info.mAttributeLocations = r.u32s();
     info.mAttributeTypes = r.strs();
@@ -1383,6 +1399,7 @@ void spirv_cache_store(const std::string& path, const ProgramInfo& info)
     w.u32((U32)info.mSamplers.size());
     for (const SamplerInfo& sm : info.mSamplers) { w.str(sm.mName); w.str(sm.mType); w.u32(sm.mBinding); w.u32((U32)sm.mIndexUniform); }
     w.u32(info.mBindless ? 1u : 0u);
+    w.u32(info.mUsesRt ? 1u : 0u);
     w.strs(info.mAttributes);
     w.u32s(info.mAttributeLocations);
     w.strs(info.mAttributeTypes);

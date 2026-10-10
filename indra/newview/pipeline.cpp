@@ -10447,6 +10447,14 @@ void LLPipeline::renderDeferredLighting()
 
         setupHWLights();  // to set mSun/MoonDir;
 
+        // <FS> ray query shadows: the casters the shadow passes named become this frame's scene (acceleration structures), traced by the lighting below
+        if (RenderShadowDetail > 0 && LLVkMirror::rtShadowMode())
+        {
+            LLVkMirror::RtSceneArgs scene;
+            memcpy(scene.mView, glm::value_ptr(mat), sizeof(scene.mView));
+            LLVkMirror::rtScene(scene);
+        }
+
         glm::vec4 tc(mSunDir);
         tc = mat * tc;
         mTransformedSunDir.set(tc);
@@ -11618,7 +11626,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     }
                     matrix = it->second;
                 }
-                entries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, 0 });
+                entries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, (U32)((uintptr_t)params->mModelMatrix >> 4) });
             }
         }
         if (!entries.empty())
@@ -11815,6 +11823,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 e.mIndexBuffer = vb->getGLIndices();
                 e.mFirstIndex = params->mOffset;
                 e.mIndexCount = params->mCount;
+                e.mMatrixId = (U32)((uintptr_t)params->mModelMatrix >> 4);
                 if (rigged)
                 {
                     if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))

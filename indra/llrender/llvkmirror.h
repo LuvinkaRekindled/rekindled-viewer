@@ -104,7 +104,7 @@ namespace LLVkMirror
         F32 mTargetWidth = 0.f;     // kind 1: the width of the shadow target (the dithering of semi-transparent casters)
         U32 mPaletteFloats = 0;     // floats of joint matrix palettes (12 per joint) after the model matrices; the rigged entries point into them
     };
-    struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mPad; };
+    struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId; };      // mMatrixId: stable identity of the model matrix (ray tracing instances)
     // kind 2: a rigged draw: the offset of its weight4 array in the vertex buffer, and its palette (offset in floats from the start of the palettes, joint count)
     struct ShadowSkinEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints; };
     // kind 1: the same, with what the alpha test needs
@@ -120,6 +120,7 @@ namespace LLVkMirror
     struct ShadowAlphaEntry
     {
         U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix;
+        U32 mMatrixId;              // stable identity of the model matrix (ray tracing instances)
         U32 mFlags;                 // ShadowAlphaFlags
         U32 mTexcoordOffset;        // byte offset of the texcoord0 array in the vertex buffer
         U32 mColorOffset;           // byte offset of the colour array
@@ -144,6 +145,13 @@ namespace LLVkMirror
         F32 mEnvIntensity, mCutoff, mBrightness, mPad;
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
     };
+    // ---- ray query shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md) ----
+    // 0 = off (or the device cannot), 1 = ray query shadows replace the cascades, 2 = split screen, 3 = disagreement map. Fixed for the run; the shader programs are compiled for it.
+    U32 rtShadowMode();
+    // Builds the scene the shadow passes of this frame named (their casters) for the camera view: bottom-level structures as the budget allows, then the top-level structure in
+    // eye space. Call before the lighting that samples the sun shadow. view: the camera's view matrix, column-major.
+    struct RtSceneArgs { F32 mView[16] = {}; };
+    void rtScene(const RtSceneArgs& args);
     // the device can read buffers by address and the mirror is running
     bool shadowPacketsAvailable();
     // ... and the device can index sampled images at run time (the textured kind)
@@ -167,6 +175,7 @@ namespace LLVkMirror
     void snapshotBoundaryImpl(S32 mode);
     void upscaleImpl(const UpscaleArgs& args);
     void shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob);
+    void rtSceneImpl(const RtSceneArgs& args);
     // the lock every mirror entry point takes (the viewer calls GL from more than one thread)
     class Mutex;
     Mutex& lock();

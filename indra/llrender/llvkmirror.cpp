@@ -26,6 +26,8 @@ bool LLVkMirror::shadowPacketsAvailable() { return false; }
 bool LLVkMirror::shadowAlphaPacketsAvailable() { return false; }
 void LLVkMirror::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
 void LLVkMirror::upscale(const UpscaleArgs&) {}
+U32 LLVkMirror::rtShadowMode() { return 0; }
+void LLVkMirror::rtScene(const RtSceneArgs&) {}
 void LLVkMirror::presentFrame() {}
 void LLVkMirror::shutdown() {}
 void LLVkMirror::stopAsync() {}
@@ -38,6 +40,7 @@ void LLVkMirror::stopAsync() {}
 #include "llvkdlss.h"
 #include "llvkrenderer.h"
 #include "llvkasync.h"
+#include "llvkrt.h"
 #include "llwindow.h"
 
 #include <cstdlib>
@@ -1275,6 +1278,30 @@ void LLVkMirror::upscaleImpl(const UpscaleArgs& args)
 namespace LLVkGL
 {
     void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& header, const U8* blob);
+    void on_rt_scene(const LLVkMirror::RtSceneArgs& args);
+}
+
+U32 LLVkMirror::rtShadowMode()
+{
+    // known once the device exists (the shaders are compiled after that); the scene is built only when the device was created with ray queries
+    const LLVk::Capabilities& caps = LLVk::Context::instance().getCaps();
+    return sMirror.mReady && caps.mRt.mEnabled && caps.mRt.mUsable ? LLVk::Rt::shadowMode() : 0;
+}
+
+void LLVkMirror::rtScene(const RtSceneArgs& args)
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::push(LLVkAsync::CMD_RT_SCENE, &args, sizeof(args));
+        return;
+    }
+    rtSceneImpl(args);
+}
+
+void LLVkMirror::rtSceneImpl(const RtSceneArgs& args)
+{
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    LLVkGL::on_rt_scene(args);
 }
 
 bool LLVkMirror::shadowPacketsAvailable()

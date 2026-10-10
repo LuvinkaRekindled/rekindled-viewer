@@ -40,6 +40,7 @@ set(llrender_SOURCE_FILES
     llvkgl.cpp
     llvkprobe.cpp
     llvkrenderer.cpp
+    llvkrt.cpp
     llvkshader.cpp
     llvkvma.cpp
     llglcommonfunc.cpp
@@ -83,6 +84,7 @@ set(llrender_HEADER_FILES
     llvkgl.h
     llvkprobe.h
     llvkrenderer.h
+    llvkrt.h
     llvkshader.h
     llglcommonfunc.h
     )

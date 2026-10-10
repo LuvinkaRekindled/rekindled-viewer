@@ -141,7 +141,8 @@ struct ArenaRef
 
 // Device: video memory, written by GPU copies. Shared: the same, CONCURRENT between the graphics and the async compute family (a second queue later; nothing asks yet).
 // Host: CPU-written memory the GPU reads (video memory behind resizable BAR when there is room), mapped, written with memcpy; for the many small buffers.
-enum class ArenaKind { Device, Shared, Host };
+// Accel: device blocks whose buffers can hold acceleration structures (the storage of BLAS / TLAS, ranges aligned to 256 bytes); not counted in the vertex/index statistics.
+enum class ArenaKind { Device, Shared, Host, Accel };
 
 struct ArenaStats
 {
@@ -345,6 +346,7 @@ private:
         U32 mAllocs = 0;
         bool mShared = false;
         bool mHost = false;
+        bool mAccel = false;
         bool mDedicated = false;            // holds one big range: goes away with it
     };
     ArenaBlock* arenaNewBlock(VkDeviceSize min_size, ArenaKind kind, bool dedicated);

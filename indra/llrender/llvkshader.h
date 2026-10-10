@@ -70,6 +70,7 @@ struct ProgramInfo
     U32 mBlockSize = 0;
     std::vector<SamplerInfo> mSamplers;
     bool mBindless = false;                     // the samplers are read through the bindless tables: the draw writes their slots into the loose uniform block
+    bool mUsesRt = false;                       // traces rays against the frame's scene (set 3, binding 0: ll_rt_tlas): the draw binds the ray tracing descriptor set
     std::vector<std::string> mAttributes;       // vertex inputs the program declares
     std::vector<U32> mAttributeLocations;       // their locations (index in the viewer's reserved attribute list)
     std::vector<std::string> mAttributeTypes;   // their GLSL types ("vec4", "int", ...)
