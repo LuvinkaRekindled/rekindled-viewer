@@ -3318,7 +3318,7 @@ std::string probe_report(double frames)
 } // anonymous namespace
 
 // ray query shadows: a caster draw of a shadow pass, for the scene the lighting traces (llvkrt.cpp)
-static void note_rt_caster(U32 vb, U32 ib, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha = nullptr)
+static void note_rt_caster(U32 pass, U32 vb, U32 ib, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha = nullptr)
 {
     Rt::Caster c;
     c.mVb = vb;
@@ -3329,6 +3329,7 @@ static void note_rt_caster(U32 vb, U32 ib, U32 first, U32 count, U32 matrix_id, 
     c.mKind = kind;
     c.mModel = model;
     c.mAlpha = alpha;
+    c.mPass = pass;
     Rt::noteCaster(c);
 }
 
@@ -3393,7 +3394,7 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
             alpha.mColorOffset = e.mColorOffset;
             memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
             alpha.mCutoff = e.mCutoff;
-            note_rt_caster(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr, &alpha);
+            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr, &alpha);
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         g.mPositions[0] = (U32)pa;
@@ -3853,7 +3854,7 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
         }
         if (Rt::active())
         {
-            note_rt_caster(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         g.mPositions[0] = (U32)pa;

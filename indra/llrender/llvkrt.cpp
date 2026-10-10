@@ -54,6 +54,7 @@ struct GpuGeom
 };
 static_assert(sizeof(GpuGeom) == 56, "geometry record");
 constexpr U32 kMaxRecords = (U32)(kTableBytes / sizeof(GpuGeom));
+constexpr U32 kPasses = 8;                                  // shadow passes tracked: 0-3 sun cascades, 4-5 spot shadows, 6 other
 
 struct Range
 {
@@ -87,7 +88,7 @@ struct Group
     F32 mModel[16] = {};
     std::vector<Range> mRanges;
     std::vector<AlphaInfo> mAlpha;      // kind 1: parallel to mRanges
-    U64 mSeen = 0;                      // frame number of the latest note
+    U64 mPassSeen[kPasses] = {};        // per shadow pass: the frame number + 1 of the latest note (0 = never)
 };
 
 struct Blas
@@ -131,8 +132,10 @@ VkDescriptorPool sPool = VK_NULL_HANDLE;
 Tlas sTlas[Context::FRAMES_IN_FLIGHT];
 Buffer sScratch;
 // The casters of the shadow passes. Far cascades are rendered only every few frames (FSShadowFarCascadeInterval) and their shadow map is reused in between, so the casters a
-// frame names are not all there is: a group stays until nothing has named it for a few frames.
+// frame names are not all there is. A pass that rendered this frame contributes exactly the casters it named (a moving object must not leave copies of its earlier positions);
+// the casters of a pass that did not render stay, as its cached shadow map stays, until it renders again or for a few frames at most.
 std::unordered_map<Key, Group, KeyHash> sGroups;
+U64 sPassFrame[kPasses] = {};                           // per pass: the frame number + 1 of its latest note
 std::unordered_map<Key, Blas, KeyHash> sBlas;
 U64 sSceneCalls = 0;
 U64 sBlasStorageBytes = 0;
@@ -447,7 +450,10 @@ void noteCaster(const Caster& c)
         it->second.mKey = key;
         ++sStats.mNewGroups;
     }
-    it->second.mSeen = Context::instance().getFrameNumber();
+    const U32 pass = std::min<U32>(c.mPass, kPasses - 1);
+    const U64 frame_tag = Context::instance().getFrameNumber() + 1;
+    it->second.mPassSeen[pass] = frame_tag;
+    sPassFrame[pass] = frame_tag;
     memcpy(it->second.mModel, c.mModel ? c.mModel : kIdentity, sizeof(it->second.mModel));       // the matrix of the object now
     std::vector<Range>& ranges = it->second.mRanges;
     const Range r = { c.mFirst, c.mCount };
@@ -520,10 +526,35 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     }
 
     {
-        const U64 now = ctx.getFrameNumber();
+        const U64 tag = ctx.getFrameNumber() + 1;
         for (auto it = sGroups.begin(); it != sGroups.end();)
         {
-            it = now > it->second.mSeen + keep ? sGroups.erase(it) : std::next(it);
+            bool alive = false;
+            for (U32 p = 0; p < kPasses; ++p)
+            {
+                U64& seen = it->second.mPassSeen[p];
+                if (!seen)
+                {
+                    continue;
+                }
+                if (sPassFrame[p] == tag)
+                {
+                    // the pass rendered this frame: its casters are the ones it named
+                    if (seen == tag)
+                    {
+                        alive = true;
+                    }
+                    else
+                    {
+                        seen = 0;
+                    }
+                }
+                else if (tag <= seen + keep)
+                {
+                    alive = true;           // cached (or not rendered at all): the shadow map it fed is still in use
+                }
+            }
+            it = alive ? std::next(it) : sGroups.erase(it);
         }
     }
 

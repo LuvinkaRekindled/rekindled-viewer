@@ -43,6 +43,7 @@ struct Caster
     U32 mKind = 0;
     const F32* mModel = nullptr;
     const AlphaInfo* mAlpha = nullptr;   // kind 1
+    U32 mPass = 0;                       // shadow pass (0-3 sun cascades, 4-5 spot, 6 other)
 };
 
 // the slot of a texture (by GL name) in this frame's bindless table

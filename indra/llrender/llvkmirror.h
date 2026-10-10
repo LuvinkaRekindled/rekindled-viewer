@@ -103,6 +103,7 @@ namespace LLVkMirror
         U32 mKind = 0;              // 0 = untextured casters (ShadowPacketEntry), 1 = alpha masked casters (ShadowAlphaEntry), 2 = rigged untextured casters (ShadowSkinEntry)
         F32 mTargetWidth = 0.f;     // kind 1: the width of the shadow target (the dithering of semi-transparent casters)
         U32 mPaletteFloats = 0;     // floats of joint matrix palettes (12 per joint) after the model matrices; the rigged entries point into them
+        U32 mPass = 0;              // the shadow pass: 0-3 sun cascades, 4-5 spot shadows, 6 other (ray tracing keeps the casters of a cached cascade)
     };
     struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId; };      // mMatrixId: stable identity of the model matrix (ray tracing instances)
     // kind 2: a rigged draw: the offset of its weight4 array in the vertex buffer, and its palette (offset in floats from the start of the palettes, joint count)
