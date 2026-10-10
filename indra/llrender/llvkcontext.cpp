@@ -1177,11 +1177,13 @@ VkDeviceSize arena_block_bytes()
 }
 }
 
-Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, bool shared, bool dedicated)
+Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kind, bool dedicated)
 {
+    const bool shared = kind == ArenaKind::Shared, host = kind == ArenaKind::Host;
     ArenaBlock* block = new ArenaBlock();
     block->mSize = dedicated ? (min_size + 255) / 256 * 256 : std::max(arena_block_bytes(), min_size);
     block->mShared = shared;
+    block->mHost = host;
     block->mDedicated = dedicated;
 
     VkBufferCreateInfo bi = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
@@ -1210,11 +1212,20 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, bool shared, 
     VmaAllocationCreateInfo ai = {};
     ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
     ai.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
-    if (!vk_ok(vmaCreateBuffer(mAllocator, &bi, &ai, &block->mBuffer, &block->mAllocation, nullptr), "arena block"))
+    if (host)
+    {
+        // as Memory::UploadDevice: written by the CPU, read by the GPU every frame; video memory the CPU can map (resizable BAR) when there is room
+        ai.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        ai.preferredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    }
+    VmaAllocationInfo block_info = {};
+    if (!vk_ok(vmaCreateBuffer(mAllocator, &bi, &ai, &block->mBuffer, &block->mAllocation, &block_info), "arena block"))
     {
         delete block;
         return nullptr;
     }
+    block->mMapped = block_info.pMappedData;
     VmaVirtualBlockCreateInfo vi = {};
     vi.size = block->mSize;
     if (vmaCreateVirtualBlock(&vi, &block->mVirtual) != VK_SUCCESS)
@@ -1239,7 +1250,13 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, bool shared, 
         mArenaBlocks.push_back(block);
     }
     ++mArenaCounters.mBlocksCreated;
-    LL_INFOS("Vulkan") << "buffer arena: new " << (dedicated ? "dedicated " : "") << (shared ? "shared " : "") << "block of " << (block->mSize >> 20) << " MB ("
+    if (host)
+    {
+        VkMemoryPropertyFlags flags = 0;
+        vmaGetAllocationMemoryProperties(mAllocator, block->mAllocation, &flags);
+        LL_INFOS("Vulkan") << "buffer arena: host-written block lives in " << ((flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ? "device-local (video) memory" : "host memory") << LL_ENDL;
+    }
+    LL_INFOS("Vulkan") << "buffer arena: new " << (dedicated ? "dedicated " : "") << (shared ? "shared " : "") << (host ? "host-written " : "") << "block of " << (block->mSize >> 20) << " MB ("
                        << (U32)std::count_if(mArenaBlocks.begin(), mArenaBlocks.end(), [](ArenaBlock* b) { return b != nullptr; }) << " blocks now)" << LL_ENDL;
     return block;
 }
@@ -1256,7 +1273,7 @@ void Context::arenaDestroyBlock(ArenaBlock* block)
     delete block;
 }
 
-bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, bool shared, ArenaRef& out)
+bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind kind, ArenaRef& out)
 {
     out = ArenaRef();
     if (size == 0 || mAllocator == nullptr)
@@ -1264,7 +1281,11 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, bool shared,
         return false;
     }
     alignment = std::max<VkDeviceSize>(alignment, 4);
-    shared = shared && mCaps.mComputeFamily >= 0;
+    if (kind == ArenaKind::Shared && mCaps.mComputeFamily < 0)
+    {
+        kind = ArenaKind::Device;
+    }
+    const bool shared = kind == ArenaKind::Shared, host = kind == ArenaKind::Host;
     std::lock_guard<std::mutex> lock(mArenaMutex);
     const bool dedicated = size > arena_block_bytes() / 4;
     auto place = [&](ArenaBlock* b) {
@@ -1282,6 +1303,7 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, bool shared,
         out.mOffset = offset;
         out.mSize = size;
         out.mAddress = b->mAddress ? b->mAddress + offset : 0;
+        out.mMapped = b->mMapped ? (U8*)b->mMapped + offset : nullptr;
         out.mAlloc = alloc;
         for (size_t i = 0; i < mArenaBlocks.size(); ++i)
         {
@@ -1293,13 +1315,13 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, bool shared,
     {
         for (ArenaBlock* b : mArenaBlocks)
         {
-            if (b && !b->mDedicated && b->mShared == shared && place(b))
+            if (b && !b->mDedicated && b->mShared == shared && b->mHost == host && place(b))
             {
                 return true;
             }
         }
     }
-    ArenaBlock* fresh = arenaNewBlock(size + alignment, shared, dedicated);
+    ArenaBlock* fresh = arenaNewBlock(size + alignment, kind, dedicated);
     if (!fresh || !place(fresh))
     {
         LL_WARNS("Vulkan") << "buffer arena: no room for " << size << " bytes" << LL_ENDL;
@@ -1320,7 +1342,7 @@ void Context::arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc)
     bool release = block->mDedicated;
     for (ArenaBlock* b : mArenaBlocks)
     {
-        if (b && b != block && !b->mDedicated && b->mShared == block->mShared && b->mAllocs == 0)
+        if (b && b != block && !b->mDedicated && b->mShared == block->mShared && b->mHost == block->mHost && b->mAllocs == 0)
         {
             release = true;
             break;
@@ -1355,14 +1377,22 @@ ArenaStats Context::arenaStats()
 {
     std::lock_guard<std::mutex> lock(mArenaMutex);
     ArenaStats s = mArenaCounters;
-    s.mBlocks = 0;
-    s.mAllocs = 0;
+    s.mBlocks = s.mAllocs = s.mHostBlocks = s.mHostAllocs = 0;
+    s.mHostBlockBytes = s.mHostUsedBytes = 0;
     s.mBlockBytes = s.mUsedBytes = s.mLargestFree = 0;
     for (ArenaBlock* b : mArenaBlocks)
     {
         if (!b) continue;
         VmaDetailedStatistics st = {};
         vmaCalculateVirtualBlockStatistics(b->mVirtual, &st);
+        if (b->mHost)
+        {
+            ++s.mHostBlocks;
+            s.mHostAllocs += (U32)st.statistics.allocationCount;
+            s.mHostBlockBytes += b->mSize;
+            s.mHostUsedBytes += st.statistics.allocationBytes;
+            continue;
+        }
         ++s.mBlocks;
         s.mAllocs += (U32)st.statistics.allocationCount;
         s.mBlockBytes += b->mSize;

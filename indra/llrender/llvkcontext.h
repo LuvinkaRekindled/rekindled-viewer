@@ -133,14 +133,21 @@ struct ArenaRef
     VkDeviceSize mOffset = 0;               // start of the range in that buffer
     VkDeviceSize mSize = 0;
     VkDeviceAddress mAddress = 0;           // device address of the first byte of the range (0 when the device cannot)
+    void* mMapped = nullptr;                // the CPU's pointer to the first byte (Host kind only)
     VmaVirtualAllocation mAlloc = VK_NULL_HANDLE;
     U32 mBlock = ~0u;
     bool valid() const { return mBuffer != VK_NULL_HANDLE; }
 };
 
+// Device: video memory, written by GPU copies. Shared: the same, CONCURRENT between the graphics and the async compute family (a second queue later; nothing asks yet).
+// Host: CPU-written memory the GPU reads (video memory behind resizable BAR when there is room), mapped, written with memcpy; for the many small buffers.
+enum class ArenaKind { Device, Shared, Host };
+
 struct ArenaStats
 {
     U32 mBlocks = 0, mAllocs = 0;
+    U32 mHostBlocks = 0, mHostAllocs = 0;
+    U64 mHostBlockBytes = 0, mHostUsedBytes = 0;
     U64 mBlockBytes = 0, mUsedBytes = 0, mLargestFree = 0;
     U64 mBlocksCreated = 0, mBlocksReleased = 0;
 };
@@ -253,8 +260,7 @@ public:
     void destroyBuffer(Buffer& buffer);     // deferred
     // --- buffer arena: vertex / index / acceleration-structure input data, suballocated from a few large device-local buffers ----
     // The range never moves. arenaFree is deferred like destroyBuffer (the range is reusable once the GPU has finished every frame submitted so far).
-    // shared: the block is CONCURRENT between the graphics family and the async compute family (for a second queue later; nothing asks for it yet).
-    bool arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, bool shared, ArenaRef& out);
+    bool arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind kind, ArenaRef& out);
     void arenaFree(ArenaRef& ref);
     ArenaStats arenaStats();
     bool createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkFormat format, VkImageUsageFlags usage, Image& out);
@@ -335,11 +341,13 @@ private:
         VmaVirtualBlock mVirtual = VK_NULL_HANDLE;
         VkDeviceSize mSize = 0;
         VkDeviceAddress mAddress = 0;
+        void* mMapped = nullptr;
         U32 mAllocs = 0;
         bool mShared = false;
+        bool mHost = false;
         bool mDedicated = false;            // holds one big range: goes away with it
     };
-    ArenaBlock* arenaNewBlock(VkDeviceSize min_size, bool shared, bool dedicated);
+    ArenaBlock* arenaNewBlock(VkDeviceSize min_size, ArenaKind kind, bool dedicated);
     void arenaDestroyBlock(ArenaBlock* block);
     void arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc);
     void arenaShutdown();

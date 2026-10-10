@@ -33,6 +33,7 @@ namespace LLVkGL
     void register_main_context();
     void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data, GLenum usage);
     void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data);
+    void on_bufferRecycle(GLuint name);
 }
 
 namespace LLVkMirror
@@ -167,7 +168,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
 // C4: texture upload costs on the main thread, and what was handed over without a copy
@@ -446,7 +447,7 @@ inline bool texIndependent(U16 op)
     case OP_glBlendFunc: case OP_glBlendFuncSeparate: case OP_glEnable: case OP_glDisable: case OP_glDepthFunc: case OP_glDepthMask:
     case OP_glCullFace: case OP_glScissor: case OP_glColorMask: case OP_glViewport: case OP_glPolygonMode: case OP_glPolygonOffset:
     case OP_glStencilFunc: case OP_glStencilOp: case OP_glStencilMask: case OP_glLineWidth: case OP_glClear: case OP_glClearColor:
-    case OP_glBufferData: case OP_glBufferSubData: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_GPU_ZONE:
+    case OP_glBufferData: case OP_glBufferSubData: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
     case OP_glBindBufferBase: case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
     case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
         return true;
@@ -697,6 +698,13 @@ void bufferSubData(U32 name, S64 offset, S64 size, const void* data)
     MainLap lap;
     const NamedBufArgs a = { name, 0, 0, 0, offset, size };
     pushData(CMD_BUFFER_SUBDATA, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
+}
+
+void bufferRecycle(U32 name)
+{
+    MainLap lap;
+    const NamedBufArgs a = { name, 0, 0, 0, 0, 0 };
+    pushData(CMD_BUFFER_RECYCLE, &a, sizeof(a), nullptr, 0);
 }
 
 // a draw record: the draw and the texture slots that changed since the last one (CMD_DRAW), or the plain draw call record when none changed
@@ -1838,6 +1846,13 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         const NamedBufArgs a = r.get<NamedBufArgs>();
         Blob b = read_blob(r, flags);
         LLVkGL::on_bufferSubData(a.mName, (GLintptr)a.mOffset, (GLsizeiptr)a.mSize, b.mData);
+        break;
+    }
+    case CMD_BUFFER_RECYCLE:
+    {
+        const NamedBufArgs a = r.get<NamedBufArgs>();
+        Blob b = read_blob(r, flags);
+        LLVkGL::on_bufferRecycle(a.mName);
         break;
     }
     case CMD_SHADOW_PACKETS:

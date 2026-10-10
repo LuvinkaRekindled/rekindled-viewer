@@ -1825,17 +1825,25 @@ bool arena_poison()
     return on;
 }
 
-// gives the storage of a buffer back: its arena range (reusable once the GPU has finished the frames in flight) or its own Vulkan buffer
+// gives an arena range back (reusable once the GPU has finished the frames in flight)
+void retire_range(ArenaRef& r)
+{
+    if (arena_poison())
+    {
+        Renderer::instance().fillBuffer(r.mBuffer, r.mOffset, (r.mSize + 3) & ~(VkDeviceSize)3, 0xDEADBEEFu);
+        // the fill must be recorded before the range can be handed out again (a host range is rewritten by the CPU): name 0 makes the frame-end flush run
+        sPendingBufs.push_back(0);
+    }
+    Context::instance().arenaFree(r);
+}
+
+// gives the storage of a buffer back: its arena range or its own Vulkan buffer
 void release_storage(Buf& b)
 {
     Context& ctx = Context::instance();
     if (b.mArena.valid())
     {
-        if (arena_poison())
-        {
-            Renderer::instance().fillBuffer(b.mArena.mBuffer, b.mArena.mOffset, (b.mArena.mSize + 3) & ~(VkDeviceSize)3, 0xDEADBEEFu);
-        }
-        ctx.arenaFree(b.mArena);
+        retire_range(b.mArena);
         b.mVk = Buffer();
         ++b.mEpoch;
     }
@@ -1847,11 +1855,12 @@ void release_storage(Buf& b)
 }
 
 // takes a range of the arena for a device-path buffer of 'size' bytes; true: b.mVk and b.mArena describe it
-bool acquire_arena_storage(Buf& b, U64 size)
+// kind Host: CPU-written memory (b.mVk.mMapped points at the range), for the small buffers
+bool acquire_arena_storage(Buf& b, U64 size, ArenaKind kind)
 {
     Context& ctx = Context::instance();
     ArenaRef ref;
-    if (!ctx.arenaAlloc((VkDeviceSize)size, 16, false, ref))
+    if (!ctx.arenaAlloc((VkDeviceSize)size, 16, kind, ref))
     {
         return false;
     }
@@ -1860,8 +1869,16 @@ bool acquire_arena_storage(Buf& b, U64 size)
     b.mVk.mBuffer = ref.mBuffer;
     b.mVk.mSize = (VkDeviceSize)size;
     b.mVk.mAddress = ref.mAddress;
+    b.mVk.mMapped = ref.mMapped;
     ++b.mEpoch;
     return true;
+}
+
+// small vertex / index buffers (not uniform or pixel buffers) are ranges of host-written arena blocks; LL_VK_ARENA_HOST=0 gives each its own VkBuffer again
+bool arena_host_enabled()
+{
+    static const bool on = []() { const char* e = getenv("LL_VK_ARENA_HOST"); return arena_enabled() && !(e && e[0] == '0'); }();
+    return on;
 }
 
 U64 device_buffer_min_bytes()
@@ -1970,6 +1987,7 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
     }
     ++sBufTraffic.mSubHost;
     sBufTraffic.mSubHostBytes += size;
+    ++b.mVersion;
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
     const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1;
@@ -1977,7 +1995,39 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
     {
         const auto t0 = std::chrono::steady_clock::now();
         Buffer fresh;
-        if (ctx.createBuffer(b.mSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        ArenaRef fresh_range;
+        if (b.mArena.valid())
+        {
+            // a new range of the arena instead of a new VkBuffer; the old range goes back once the frames in flight are done
+            if (ctx.arenaAlloc(b.mSize, 16, ArenaKind::Host, fresh_range))
+            {
+                const size_t keep = (size_t)std::min<U64>(b.mSize, b.mVk.mSize);
+                if (!whole)
+                {
+                    if (b.mShadow.size() >= keep)
+                    {
+                        memcpy(fresh_range.mMapped, b.mShadow.data(), keep);
+                    }
+                    else
+                    {
+                        memcpy(fresh_range.mMapped, b.mVk.mMapped, keep);
+                        ++sRenameStats.mShadowlessCopies;
+                    }
+                }
+                retire_range(b.mArena);
+                b.mArena = fresh_range;
+                b.mVk = Buffer();
+                b.mVk.mBuffer = fresh_range.mBuffer;
+                b.mVk.mSize = (VkDeviceSize)b.mSize;
+                b.mVk.mAddress = fresh_range.mAddress;
+                b.mVk.mMapped = fresh_range.mMapped;
+                ++b.mEpoch;
+                b.mLastUseFrame = ~0ull;
+                ++sRenameStats.mCount;
+                sRenameStats.mBytes += keep;
+            }
+        }
+        else if (ctx.createBuffer(b.mSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                              Context::Memory::UploadDevice, fresh))
         {
             const size_t keep = (size_t)std::min<U64>(b.mSize, b.mVk.mSize);
@@ -2470,7 +2520,7 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
     {
         ++sBufTraffic.mSpecDevNew;
         sBufTraffic.mSpecDevNewBytes += (U64)size;
-        const bool created = arena_enabled() ? acquire_arena_storage(b, (U64)size)
+        const bool created = arena_enabled() ? acquire_arena_storage(b, (U64)size, ArenaKind::Device)
             : ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                Context::Memory::Device, b.mVk);
         if (created && data)
@@ -2484,8 +2534,11 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
         }
         return;
     }
-    if (size == 0 || !ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                       Context::Memory::UploadDevice, b.mVk))
+    const bool geometry = target == GL_ARRAY_BUFFER || target == GL_ELEMENT_ARRAY_BUFFER;
+    const bool stored = size != 0 && (geometry && arena_host_enabled() ? acquire_arena_storage(b, (U64)size, ArenaKind::Host)
+        : ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                           Context::Memory::UploadDevice, b.mVk));
+    if (!stored)
     {
         return;
     }
@@ -2501,6 +2554,33 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
     {
         memset(b.mVk.mMapped, 0, (size_t)size);
     }
+}
+
+// the vertex buffer pool hands the name to another owner (or takes it back) without glBufferData: what was known about its contents is stale
+void on_bufferRecycle(GLuint name)
+{
+    auto it = sGL.mBuffers.find(name);
+    if (it != sGL.mBuffers.end())
+    {
+        ++it->second.mEpoch;
+    }
+}
+
+bool getBufferInfo(unsigned int name, BufferInfo& out)
+{
+    out = BufferInfo();
+    auto it = sGL.mBuffers.find(name);
+    if (it == sGL.mBuffers.end())
+    {
+        return false;
+    }
+    const Buf& b = it->second;
+    out.mAddress = b.mArena.valid() ? (unsigned long long)b.mVk.mAddress : 0;
+    out.mSize = b.mSize;
+    out.mEpoch = b.mEpoch;
+    out.mVersion = b.mVersion;
+    out.mDevice = b.mDevicePath;
+    return b.mVk.valid();
 }
 
 void on_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data)
@@ -2603,6 +2683,12 @@ void on_glVertexAttrib4fv(GLuint index, const GLfloat* v)
 // hooks: draws
 //-----------------------------------------------------------------------------------------------------
 
+namespace
+{
+bool probe_on();
+void probe_note(GLuint vb_name, GLuint ib_name, const Buf& vb, const Buf& ib, U32 first, U32 count, U32 max_vertex);
+}
+
 void on_glDrawArrays(GLenum mode, GLint first, GLsizei count)
 {
     HookTimer hook_timer;
@@ -2675,6 +2761,21 @@ void on_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count
     const VkIndexType itype = type == GL_UNSIGNED_INT ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     const U32 index_bytes = type == GL_UNSIGNED_INT ? 4 : 2;
     Renderer& r = Renderer::instance();
+    if (probe_on() && type == GL_UNSIGNED_SHORT)
+    {
+        // BLAS probe: positions are attribute 0 (vec4 array at the start of the vertex buffer); rigged draws (weights, joints enabled) and the UI are left out
+        const VaoAttrib& pos = vao.mAttrib[0];
+        auto vit = sGL.mBuffers.find(pos.mBuffer);
+        if (pos.mEnabled && pos.mBuffer && vit != sGL.mBuffers.end() && pos.mType == GL_FLOAT && pos.mSize >= 3 && pos.mOffset == 0 && (pos.mStride == 16 || (pos.mStride == 0 && pos.mSize == 4))
+            && !vao.mAttrib[10].mEnabled && !vao.mAttrib[12].mEnabled)
+        {
+            const std::string& program_name = r.getProgram()->getName();
+            if (program_name.find("UI") == std::string::npos && program_name.find("HUD") == std::string::npos)
+            {
+                probe_note(pos.mBuffer, vao.mElementBuffer, vit->second, eit->second, (U32)((U64)indices / 2), (U32)count, (U32)end);
+            }
+        }
+    }
     ensure_buffers_current(used, vao.mElementBuffer);
     LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
@@ -2782,6 +2883,434 @@ static U32 packet_texture_slot(Renderer& r, GLuint name)
     t->mBindlessSlot = slot;
     return slot;
 }
+
+//-----------------------------------------------------------------------------------------------------
+// Arena phase 3: BLAS probe (LL_VK_BLAS_PROBE=1, needs LL_VK_RT=1 and the arena). One bottom-level acceleration structure per (vertex buffer, index buffer) pair, one geometry per
+// distinct drawn index range, built or refitted at the end of the frame the buffer was drawn in. Nothing traces: the probe only measures what per-buffer structures cost
+// (count, memory, build and refit rates, GPU time of the block, CPU time) while walking around and during a teleport. The positions are the vec4 array at the start of the
+// vertex buffer (stride 16), the indices 16 bit.
+//-----------------------------------------------------------------------------------------------------
+namespace
+{
+
+bool probe_on()
+{
+    static const bool on = []() { const char* e = getenv("LL_VK_BLAS_PROBE"); return e && e[0] == '1'; }();
+    return on;
+}
+
+U64 probe_env(const char* name, U64 fallback)
+{
+    const char* e = getenv(name);
+    return e ? (U64)atoll(e) : fallback;
+}
+
+struct ProbeGeom
+{
+    U32 mFirst, mCount, mMaxVertex;
+    bool operator<(const ProbeGeom& o) const { return mFirst != o.mFirst ? mFirst < o.mFirst : mCount < o.mCount; }
+    bool operator==(const ProbeGeom& o) const { return mFirst == o.mFirst && mCount == o.mCount && mMaxVertex == o.mMaxVertex; }
+};
+
+struct ProbeBlas
+{
+    GLuint mVb = 0, mIb = 0;
+    U64 mVbEpoch = 0, mIbEpoch = 0;                 // the storage the geometry list and the structure belong to
+    U64 mGeomVersion = ~0ull;                       // vertex buffer version the geometry list was collected under (a rewrite starts the list over)
+    U64 mVbVersion = ~0ull, mIbVersion = ~0ull;     // contents at the last build
+    std::vector<ProbeGeom> mGeoms;                  // drawn ranges, this version of the contents
+    std::vector<ProbeGeom> mBuilt;                  // what the structure was built over (sorted)
+    VkAccelerationStructureKHR mAs = VK_NULL_HANDLE;
+    Buffer mStorage;
+    U64 mPrims = 0;
+    bool mQueued = false;
+};
+
+struct ProbeStats
+{
+    U64 mBuilds = 0, mRefits = 0, mGeomChanged = 0, mEvicted = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mOverBudget = 0, mRuns = 0, mFailed = 0;
+    U64 mBuildBytes = 0;
+    double mCpuMs = 0, mCpuMsMax = 0;
+};
+
+std::unordered_map<U64, ProbeBlas> sProbe;
+std::vector<U64> sProbeTouched;         // pairs drawn since the last run
+ProbeStats sProbeStats;
+Buffer sProbeScratch;
+U64 sProbeStorageBytes = 0;             // live structure storage
+U64 sProbeRunCount = 0;
+
+void probe_drop(ProbeBlas& p)
+{
+    if (p.mAs != VK_NULL_HANDLE)
+    {
+        Context& ctx = Context::instance();
+        VkDevice dev = ctx.getDevice();
+        VkAccelerationStructureKHR as = p.mAs;
+        ctx.destroyLater([=]() { vkDestroyAccelerationStructureKHR(dev, as, nullptr); });     // before its storage: deferred calls run in order
+        sProbeStorageBytes -= std::min<U64>(sProbeStorageBytes, p.mStorage.mSize);
+        ctx.destroyBuffer(p.mStorage);
+    }
+    p.mAs = VK_NULL_HANDLE;
+    p.mStorage = Buffer();
+    p.mBuilt.clear();
+    p.mVbVersion = p.mIbVersion = ~0ull;
+    p.mPrims = 0;
+}
+
+// one drawn index range of a vertex / index buffer pair (called by the packet handlers for the opaque colour passes)
+void probe_note(GLuint vb_name, GLuint ib_name, const Buf& vb, const Buf& ib, U32 first, U32 count, U32 max_vertex)
+{
+    if (!vb.mArena.valid() || !ib.mArena.valid() || count < 3)
+    {
+        return;
+    }
+    const U64 key = ((U64)vb_name << 32) | ib_name;
+    ProbeBlas& p = sProbe[key];
+    if (p.mVb == 0)
+    {
+        p.mVb = vb_name;
+        p.mIb = ib_name;
+        p.mVbEpoch = vb.mEpoch;
+        p.mIbEpoch = ib.mEpoch;
+    }
+    else if (p.mVbEpoch != vb.mEpoch || p.mIbEpoch != ib.mEpoch)
+    {
+        probe_drop(p);                  // the name holds something else now
+        p.mGeoms.clear();
+        p.mVbEpoch = vb.mEpoch;
+        p.mIbEpoch = ib.mEpoch;
+        p.mGeomVersion = ~0ull;
+        ++sProbeStats.mEvicted;
+    }
+    if (p.mGeomVersion != vb.mVersion)
+    {
+        p.mGeoms.clear();               // rewritten: the old ranges may not mean anything any more
+        p.mGeomVersion = vb.mVersion;
+    }
+    bool found = false;
+    for (const ProbeGeom& g : p.mGeoms)
+    {
+        if (g.mFirst == first && g.mCount == count)
+        {
+            found = true;
+            break;
+        }
+    }
+    if (!found && p.mGeoms.size() < 256)
+    {
+        p.mGeoms.push_back({ first, count, max_vertex });
+    }
+    if (!p.mQueued)
+    {
+        p.mQueued = true;
+        sProbeTouched.push_back(key);
+    }
+}
+
+struct ProbeJob
+{
+    ProbeBlas* mBlas = nullptr;
+    bool mUpdate = false;
+    std::vector<ProbeGeom> mSet;
+    std::vector<VkAccelerationStructureGeometryKHR> mGeometries;
+    std::vector<VkAccelerationStructureBuildRangeInfoKHR> mRanges;
+    std::vector<U32> mCounts;
+    VkAccelerationStructureBuildGeometryInfoKHR mInfo = {};
+    VkDeviceSize mScratchSize = 0, mScratchOffset = 0;
+    VkAccelerationStructureKHR mNewAs = VK_NULL_HANDLE;
+    Buffer mNewStorage;
+    U64 mPrims = 0;
+    U64 mVbVersion = 0, mIbVersion = 0;
+};
+
+// builds and refits what the frame drew, outside any render pass (the frame end)
+void probe_run()
+{
+    if (!probe_on() || sProbeTouched.empty())
+    {
+        return;
+    }
+    Context& ctx = Context::instance();
+    const Capabilities& caps = ctx.getCaps();
+    if (!caps.mRt.mEnabled || !caps.mRt.mUsable || !vkCmdBuildAccelerationStructuresKHR || !vkCreateAccelerationStructureKHR)
+    {
+        static bool said = false;
+        if (!said)
+        {
+            said = true;
+            LL_WARNS("VkGL") << "LL_VK_BLAS_PROBE: the device has no ray tracing enabled (LL_VK_RT=1)" << LL_ENDL;
+        }
+        for (U64 k : sProbeTouched) sProbe[k].mQueued = false;
+        sProbeTouched.clear();
+        return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    VkDevice dev = ctx.getDevice();
+    static const U64 max_jobs = probe_env("LL_VK_BLAS_PROBE_MAX_BUILDS", 64);
+    static const U64 max_storage = probe_env("LL_VK_BLAS_PROBE_MB", 2048) << 20;
+    const VkDeviceSize align = std::max<VkDeviceSize>(caps.mRt.mScratchAlignment, 128);
+    const U64 frame_now = ctx.getFrameNumber();
+
+    // forget structures over names that are gone or hold something else (now and then: a name that is drawn again is checked when it is noted)
+    if (++sProbeRunCount % 300 == 0)
+    {
+        for (auto it = sProbe.begin(); it != sProbe.end();)
+        {
+            auto vit = sGL.mBuffers.find(it->second.mVb);
+            auto iit = sGL.mBuffers.find(it->second.mIb);
+            if (vit == sGL.mBuffers.end() || iit == sGL.mBuffers.end() || vit->second.mEpoch != it->second.mVbEpoch || iit->second.mEpoch != it->second.mIbEpoch)
+            {
+                probe_drop(it->second);
+                if (it->second.mQueued)
+                {
+                    ++it;           // still in the touched list; the next sweep takes it
+                    continue;
+                }
+                it = sProbe.erase(it);
+                ++sProbeStats.mEvicted;
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+
+    std::vector<ProbeJob> jobs;
+    jobs.reserve((size_t)max_jobs);
+    U64 scratch_total = 0;
+    for (U64 key : sProbeTouched)
+    {
+        auto pit = sProbe.find(key);
+        if (pit == sProbe.end())
+        {
+            continue;
+        }
+        ProbeBlas& p = pit->second;
+        p.mQueued = false;
+        auto vit = sGL.mBuffers.find(p.mVb);
+        auto iit = sGL.mBuffers.find(p.mIb);
+        if (vit == sGL.mBuffers.end() || iit == sGL.mBuffers.end() || vit->second.mEpoch != p.mVbEpoch || iit->second.mEpoch != p.mIbEpoch
+            || !vit->second.mVk.mAddress || !iit->second.mVk.mAddress || p.mGeoms.empty())
+        {
+            continue;
+        }
+        Buf& vb = vit->second;
+        Buf& ib = iit->second;
+        std::vector<ProbeGeom> set = p.mGeoms;
+        std::sort(set.begin(), set.end());
+        const bool same_set = p.mAs != VK_NULL_HANDLE && set == p.mBuilt;
+        if (same_set && p.mVbVersion == vb.mVersion && p.mIbVersion == ib.mVersion)
+        {
+            continue;               // nothing changed
+        }
+        if (jobs.size() >= max_jobs)
+        {
+            ++sProbeStats.mDeferred;
+            continue;
+        }
+        ProbeJob job;
+        job.mBlas = &p;
+        job.mUpdate = same_set;
+        job.mVbVersion = vb.mVersion;
+        job.mIbVersion = ib.mVersion;
+        for (const ProbeGeom& g : set)
+        {
+            if (((U64)g.mFirst + g.mCount) * 2 > ib.mVk.mSize || vb.mVk.mSize < 16)
+            {
+                continue;           // outside the data (a stale range): not part of the structure
+            }
+            const U32 max_vertex = std::min<U32>(g.mMaxVertex, (U32)((vb.mVk.mSize - 12) / 16));
+            VkAccelerationStructureGeometryKHR geo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
+            geo.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            geo.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+            VkAccelerationStructureGeometryTrianglesDataKHR& t = geo.geometry.triangles;
+            t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+            t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+            t.vertexData.deviceAddress = vb.mVk.mAddress;
+            t.vertexStride = 16;
+            t.maxVertex = max_vertex;
+            t.indexType = VK_INDEX_TYPE_UINT16;
+            t.indexData.deviceAddress = ib.mVk.mAddress + 2ull * g.mFirst;
+            job.mGeometries.push_back(geo);
+            VkAccelerationStructureBuildRangeInfoKHR range = {};
+            range.primitiveCount = g.mCount / 3;
+            job.mRanges.push_back(range);
+            job.mCounts.push_back(range.primitiveCount);
+            job.mPrims += range.primitiveCount;
+            job.mSet.push_back(g);
+        }
+        if (job.mGeometries.empty())
+        {
+            continue;
+        }
+        job.mInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        job.mInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        job.mInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        job.mInfo.mode = job.mUpdate ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        job.mInfo.geometryCount = (U32)job.mGeometries.size();
+        job.mInfo.pGeometries = job.mGeometries.data();
+        VkAccelerationStructureBuildSizesInfoKHR sizes = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+        vkGetAccelerationStructureBuildSizesKHR(dev, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &job.mInfo, job.mCounts.data(), &sizes);
+        if (job.mUpdate)
+        {
+            job.mInfo.srcAccelerationStructure = p.mAs;
+            job.mInfo.dstAccelerationStructure = p.mAs;
+            job.mScratchSize = sizes.updateScratchSize;
+        }
+        else
+        {
+            if (sProbeStorageBytes + sizes.accelerationStructureSize > max_storage)
+            {
+                ++sProbeStats.mOverBudget;
+                continue;
+            }
+            if (!ctx.createBuffer(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, Context::Memory::Device, job.mNewStorage))
+            {
+                ++sProbeStats.mFailed;
+                continue;
+            }
+            VkAccelerationStructureCreateInfoKHR ci = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
+            ci.buffer = job.mNewStorage.mBuffer;
+            ci.size = sizes.accelerationStructureSize;
+            ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            if (vkCreateAccelerationStructureKHR(dev, &ci, nullptr, &job.mNewAs) != VK_SUCCESS)
+            {
+                ctx.destroyBuffer(job.mNewStorage);
+                ++sProbeStats.mFailed;
+                continue;
+            }
+            sProbeStorageBytes += job.mNewStorage.mSize;
+            job.mInfo.dstAccelerationStructure = job.mNewAs;
+            job.mScratchSize = sizes.buildScratchSize;
+        }
+        job.mScratchOffset = (scratch_total + align - 1) / align * align;
+        scratch_total = job.mScratchOffset + job.mScratchSize;
+        vb.mLastUseFrame = frame_now;       // the GPU reads these buffers this frame: a CPU rewrite of a host-written range must rename first
+        ib.mLastUseFrame = frame_now;
+        jobs.push_back(std::move(job));
+    }
+    sProbeTouched.clear();
+    if (jobs.empty())
+    {
+        return;
+    }
+
+    auto undo_jobs = [&]() {
+        for (ProbeJob& j : jobs)
+        {
+            if (j.mNewAs != VK_NULL_HANDLE)
+            {
+                VkAccelerationStructureKHR as = j.mNewAs;
+                ctx.destroyLater([=]() { vkDestroyAccelerationStructureKHR(dev, as, nullptr); });
+                sProbeStorageBytes -= std::min<U64>(sProbeStorageBytes, j.mNewStorage.mSize);
+                ctx.destroyBuffer(j.mNewStorage);
+            }
+        }
+    };
+
+    // one scratch buffer for all builds of the frame (the barrier at the start of the block orders it after the previous frame's builds)
+    if (!sProbeScratch.valid() || sProbeScratch.mSize < scratch_total + align)
+    {
+        ctx.destroyBuffer(sProbeScratch);
+        if (!ctx.createBuffer((scratch_total + align) * 3 / 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Device, sProbeScratch))
+        {
+            undo_jobs();
+            ++sProbeStats.mFailed;
+            return;
+        }
+    }
+    const VkDeviceAddress scratch_base = (sProbeScratch.mAddress + align - 1) / align * align;
+    std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
+    std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> ranges;
+    for (ProbeJob& j : jobs)
+    {
+        j.mInfo.scratchData.deviceAddress = scratch_base + j.mScratchOffset;
+        infos.push_back(j.mInfo);
+        ranges.push_back(j.mRanges.data());
+    }
+    const bool recorded = Renderer::instance().recordExternal({}, [&](VkCommandBuffer cmd) {
+        ctx.gpuStamp(Context::stampTag("blas probe"));
+        VkMemoryBarrier2 before = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        before.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        before.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        before.dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+        before.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        VkDependencyInfo dep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &before;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        vkCmdBuildAccelerationStructuresKHR(cmd, (U32)infos.size(), infos.data(), ranges.data());
+        VkMemoryBarrier2 after = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        after.srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+        after.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        after.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        after.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        dep.pMemoryBarriers = &after;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    });
+    if (!recorded)
+    {
+        undo_jobs();            // no frame is being recorded; the ranges are noted again when they are drawn
+        return;
+    }
+    for (ProbeJob& j : jobs)
+    {
+        ProbeBlas& p = *j.mBlas;
+        if (j.mUpdate)
+        {
+            ++sProbeStats.mRefits;
+            sProbeStats.mPrimsRefit += j.mPrims;
+        }
+        else
+        {
+            if (p.mAs != VK_NULL_HANDLE)
+            {
+                ++sProbeStats.mGeomChanged;
+                probe_drop(p);
+            }
+            p.mAs = j.mNewAs;
+            p.mStorage = j.mNewStorage;
+            ++sProbeStats.mBuilds;
+            sProbeStats.mPrimsBuilt += j.mPrims;
+            sProbeStats.mBuildBytes += j.mNewStorage.mSize;
+        }
+        p.mBuilt = j.mSet;
+        p.mVbVersion = j.mVbVersion;
+        p.mIbVersion = j.mIbVersion;
+        p.mPrims = j.mPrims;
+    }
+    ++sProbeStats.mRuns;
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    sProbeStats.mCpuMs += ms;
+    sProbeStats.mCpuMsMax = std::max(sProbeStats.mCpuMsMax, ms);
+}
+
+std::string probe_report(double frames)
+{
+    U32 live = 0;
+    U64 prims = 0;
+    for (const auto& kv : sProbe)
+    {
+        if (kv.second.mAs != VK_NULL_HANDLE)
+        {
+            ++live;
+            prims += kv.second.mPrims;
+        }
+    }
+    const ProbeStats& s = sProbeStats;
+    char buf[900];
+    snprintf(buf, sizeof(buf),
+             "blas probe: %u live structures over %zu buffer pairs (%.0f MB storage, %.1f MB scratch, %.2f M triangles); per frame: %.2f builds (%.0f tri), %.2f refits (%.0f tri), geometry-set rebuilds %.3f, "
+             "evicted %.3f, deferred by the per-frame cap %.3f, over the memory cap %.3f, failed %.3f; blocks recorded %.2f/frame, CPU %.3f ms/frame (worst block %.2f ms)",
+             live, sProbe.size(), (double)sProbeStorageBytes / 1048576.0, (double)sProbeScratch.mSize / 1048576.0, (double)prims / 1e6,
+             (double)s.mBuilds / frames, (double)s.mPrimsBuilt / frames, (double)s.mRefits / frames, (double)s.mPrimsRefit / frames, (double)s.mGeomChanged / frames,
+             (double)s.mEvicted / frames, (double)s.mDeferred / frames, (double)s.mOverBudget / frames, (double)s.mFailed / frames, (double)s.mRuns / frames, s.mCpuMs / frames, s.mCpuMsMax);
+    return buf;
+}
+
+} // anonymous namespace
 
 // the worker side of a record of alpha masked casters (shadowAlphaPullV.glsl / shadowAlphaPullF.glsl): the entries also name their textures
 static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
@@ -3012,6 +3541,13 @@ static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;
+        if (probe_on())
+        {
+            // positions are the vec4 array at the start of the vertex buffer, the normals (or the next array) follow it
+            const U32 next = e.mNormalOffset ? e.mNormalOffset : e.mTexcoordOffset;
+            const U32 verts = next ? next / 16 : (U32)(vb->mVk.mSize / 16);
+            probe_note(e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, verts ? verts - 1 : 0);
+        }
         U32 slot[4] = {};
         for (U32 t = 0; t < 4; ++t)
         {
@@ -3495,6 +4031,7 @@ void before_end_frame()
 {
     std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
     flush_buffer_updates(true);
+    probe_run();
 }
 
 void after_frame()
@@ -3666,8 +4203,14 @@ void after_frame()
                         {
                             const ArenaStats as = Context::instance().arenaStats();
                             LL_INFOS("VkPhases") << "buffer arena (" << (arena_enabled() ? "on" : "off, LL_VK_ARENA=0") << "): " << as.mBlocks << " blocks, " << (as.mBlockBytes >> 20) << " MB reserved, "
-                                                 << as.mAllocs << " ranges, " << (as.mUsedBytes >> 20) << " MB in use, largest free range " << (as.mLargestFree >> 20) << " MB; blocks created "
-                                                 << as.mBlocksCreated << ", released " << as.mBlocksReleased << LL_ENDL;
+                                                 << as.mAllocs << " ranges, " << (as.mUsedBytes >> 20) << " MB in use, largest free range " << (as.mLargestFree >> 20) << " MB; host-written (small buffers): "
+                                                 << as.mHostBlocks << " blocks, " << (as.mHostBlockBytes >> 20) << " MB reserved, " << as.mHostAllocs << " ranges, " << (as.mHostUsedBytes >> 20)
+                                                 << " MB in use; blocks created " << as.mBlocksCreated << ", released " << as.mBlocksReleased << LL_ENDL;
+                        }
+                        if (probe_on())
+                        {
+                            LL_INFOS("VkPhases") << probe_report(std::max(1.0, (double)frames)) << LL_ENDL;
+                            sProbeStats = ProbeStats();
                         }
                         const BufTraffic& t = sBufTraffic;
                         LL_INFOS("VkPhases") << "buffer traffic per frame: glBufferData device same size " << (double)t.mSpecDevSame / frames << ", device new allocation "

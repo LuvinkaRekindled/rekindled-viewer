@@ -53,6 +53,8 @@ namespace LLVkAsync
     // buffer storage by name (LLVertexBuffer): (re)specify a buffer / write a range of it, without binding it first. target only says vertex or index.
     void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage);
     void bufferSubData(U32 name, S64 offset, S64 size, const void* data);
+    // the vertex buffer pool gives a buffer name to another owner (or takes it back): what the name held is not what it will hold; the arena's epoch moves on
+    void bufferRecycle(U32 name);
     // LLGLSLShader::bind(): unbinds the vertex and index buffers, binds the program (null: unchanged) and enables / disables vertex attribute arrays (bit masks of attribute locations)
     void shaderBind(void* program, U32 enable_mask, U32 disable_mask);
     // the unit a following texture bind or texture call uses (LLTexUnit::activate): held until the next record, replaces a glActiveTexture call
@@ -97,7 +99,8 @@ namespace LLVkAsync
         CMD_FBO_ATTACH, CMD_TARGET_STATE,          // render target commands (framebufferAttach, targetState)
         CMD_TEX_SLOTS, CMD_DRAW,                   // texture slots that changed since the last draw, alone or folded into the draw record
         CMD_GPU_ZONE,                              // a named GPU timing zone begins or ends here in the command stream (FSGpuZoneTimers)
-        CMD_UNIFORM_BATCH                          // loose uniform writes that were pending when something other than a draw came first (a draw carries them inside its own record)
+        CMD_UNIFORM_BATCH,                         // loose uniform writes that were pending when something other than a draw came first (a draw carries them inside its own record)
+        CMD_BUFFER_RECYCLE                         // a pooled buffer name changes hands (bufferRecycle)
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 
