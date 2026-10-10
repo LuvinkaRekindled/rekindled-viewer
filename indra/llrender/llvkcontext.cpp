@@ -906,14 +906,33 @@ VkCommandBuffer Context::beginFrame(bool wait)
                 // the time from one pass's stamp to the next is that pass's; the first stretch (uploads, copies) and the last pass run to the frame's own start and end
                 U64 last = start;
                 U32 last_tag = 0;
+                const bool slow = micros > 150000;          // a frame the GPU needed more than 150 ms for: say which passes took it
+                std::vector<std::pair<U64, U32>> frame_passes;
                 for (U32 i = 0; i < n; ++i)
                 {
                     const U64 stamp = r[(2 + i) * 2];
-                    mPassStats.mMicros[last_tag] += to_micros(last, stamp);
+                    const U64 part = to_micros(last, stamp);
+                    mPassStats.mMicros[last_tag] += part;
+                    if (slow) frame_passes.push_back({ part, last_tag });
                     last = stamp;
                     last_tag = f.mStampTags[i];
                 }
                 mPassStats.mMicros[last_tag] += to_micros(last, end);
+                if (slow)
+                {
+                    frame_passes.push_back({ to_micros(last, end), last_tag });
+                    std::sort(frame_passes.rbegin(), frame_passes.rend());
+                    static U32 logged_slow = 0;
+                    if (logged_slow++ < 20)
+                    {
+                        std::string text;
+                        for (size_t k = 0; k < frame_passes.size() && k < 6; ++k)
+                        {
+                            text += "[" + stampTagName(frame_passes[k].second) + "] " + std::to_string((double)frame_passes[k].first / 1000.0) + " ms | ";
+                        }
+                        LL_WARNS("VkPhases") << "slow GPU frame (" << (f.mOffscreen ? "off-screen" : "presented") << "): " << (double)micros / 1000.0 << " ms; longest passes: " << text << LL_ENDL;
+                    }
+                }
             }
         }
     }
