@@ -132,7 +132,7 @@ struct Stats
     double mCpuMs = 0, mCpuMsMax = 0;
 };
 
-// Switches that can be changed while the viewer runs: the file named by LL_VK_RT_DEBUG_FILE (default <work>t-debug.txt) is read again every half second (key=value lines:
+// Switches that can be changed while the viewer runs: the file named by LL_VK_RT_DEBUG_FILE (default <work>/rt-debug.txt) is read again every half second (key=value lines:
 // single, norefit, keep, common_only, alpha, check, skipbad). Used to bisect picture problems without restarts.
 struct DebugSwitches
 {
@@ -155,7 +155,7 @@ void read_debug_switches()
         return;
     }
     sDbgRead = now;
-    static const char* path = []() { const char* e = getenv("LL_VK_RT_DEBUG_FILE"); return e && e[0] ? e : "<work>\rt-debug.txt"; }();
+    static const char* path = []() { const char* e = getenv("LL_VK_RT_DEBUG_FILE"); return e && e[0] ? e : "<work>/rt-debug.txt"; }();
     DebugSwitches d;
     d.mKeep = env_u64("LL_VK_RT_KEEP_FRAMES", 8);
     d.mAlpha = env_u64("LL_VK_RT_ALPHA", 1) != 0;
