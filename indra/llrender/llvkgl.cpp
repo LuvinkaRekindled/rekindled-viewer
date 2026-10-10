@@ -23,6 +23,7 @@
 #include "llvkstate.h"
 #include "llvktex.h"
 #include "llvkbuf.h"
+#include "llvktarget.h"
 #include "llvkdlss.h"
 #include "llvkrt.h"
 
@@ -543,7 +544,6 @@ struct Fbo
 // state that belongs to one GL context (the viewer has a texture worker thread with its own, sharing objects)
 struct PerContext
 {
-    GLuint mDrawFbo = 0, mReadFbo = 0;
     GLuint mPixelUnpackBuffer = 0;
     GLint mUnpackAlignment = 4;
     GLint mUnpackRowLength = 0;
@@ -558,6 +558,8 @@ inline PerContext& current_ctx() { return sCtxOverride ? *sCtxOverride : sCtxTls
 
 // F1.2: the texture slots a draw samples from (unit, target class): written by the typed slot records only
 GLuint sSlots[32][8] = {};
+// F1.4: the render target draws go to (0: the back buffer): set by the typed target state record only
+GLuint sDrawFbo = 0;
 
 struct GLState
 {
@@ -568,7 +570,6 @@ struct GLState
     F32 mConstAttrib[16][4];
 
     // draw state: the render state lives in LLVkState (F1.1); only the clear colour is still kept here
-    F32 mClearColor[4] = { 0, 0, 0, 0 };
 
     GLState()
     {
@@ -1000,20 +1001,25 @@ Image* attachment_image(const FboAttachment& a)
     return a.mTexture ? texture_view(a.mTexture, a.mLevel, a.mLayer) : nullptr;
 }
 
-// the color image reads (copies, readbacks) come from
-Image* read_image()
+// the color image reads (copies, readbacks) come from: colour attachment 0 of a render target (0: the back buffer)
+Image* read_image(GLuint fbo)
 {
-    if (sCtx.mReadFbo == 0)
+    if (fbo == 0)
     {
         return LLVkMirror::backbufferColor();
     }
-    auto it = sGL.mFbos.find(sCtx.mReadFbo);
+    auto it = sGL.mFbos.find(fbo);
     if (it == sGL.mFbos.end())
     {
         return nullptr;
     }
     const U32 index = it->second.mReadBuffer >= GL_COLOR_ATTACHMENT0 ? it->second.mReadBuffer - GL_COLOR_ATTACHMENT0 : 0;
     return index < 8 ? attachment_image(it->second.mColor[index]) : nullptr;
+}
+
+Image* read_image()
+{
+    return read_image(sDrawFbo);        // readbacks (glReadPixels) read the target that was last made current
 }
 
 // makes the renderer's render target match the GL draw framebuffer. Returns false if there is nothing to draw to.
@@ -1033,12 +1039,12 @@ const LLVkState::Block* state_block();
 bool sync_target()
 {
     Renderer& r = Renderer::instance();
-    if (sCtx.mDrawFbo == 0)
+    if (sDrawFbo == 0)
     {
         sCurTargets.clear();
         sTargetNamesOwner = nullptr;
     }
-    if (sCtx.mDrawFbo == 0)
+    if (sDrawFbo == 0)
     {
         Image* color = LLVkMirror::backbufferColor();
         Image* depth = LLVkMirror::backbufferDepth();
@@ -1074,7 +1080,7 @@ bool sync_target()
     struct TargetCache { U64 mEpoch = 0; GLuint mFbo = ~0u; U64 mFrame = ~0ull; Image* mColors[8] = {}; U32 mCount = 0; Image* mDepth = nullptr; bool mOk = false; std::vector<GLuint> mNames; };
     static TargetCache cache;
     const U64 frame_now = Context::instance().getFrameNumber();
-    if (cache.mEpoch == sTargetEpoch && cache.mFbo == sCtx.mDrawFbo && cache.mFrame == frame_now && !sDbgMatch && cache.mOk)
+    if (cache.mEpoch == sTargetEpoch && cache.mFbo == sDrawFbo && cache.mFrame == frame_now && !sDbgMatch && cache.mOk)
     {
         if (sTargetNamesOwner != &cache)
         {
@@ -1092,7 +1098,7 @@ bool sync_target()
     }
     sTargetNamesOwner = nullptr;
     sCurTargets.clear();
-    auto it = sGL.mFbos.find(sCtx.mDrawFbo);
+    auto it = sGL.mFbos.find(sDrawFbo);
     if (it == sGL.mFbos.end())
     {
         return false;
@@ -1138,7 +1144,7 @@ bool sync_target()
         sCurTargetH = colors[0]->mExtent.height;
     }
     cache.mEpoch = sTargetEpoch;
-    cache.mFbo = sCtx.mDrawFbo;
+    cache.mFbo = sDrawFbo;
     cache.mFrame = frame_now;
     memcpy(cache.mColors, colors, sizeof(colors));
     cache.mCount = count;
@@ -1674,7 +1680,7 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
     {
         LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_STATS);
         std::string key = program->getName() + " -> ";
-        if (sCtx.mDrawFbo == 0) key += "SCREEN";
+        if (sDrawFbo == 0) key += "SCREEN";
         for (GLuint tname : sCurTargets) key += std::to_string(tname) + " ";
         key += "<- ";
         const ProgramInfo& gi = program->getInfo();
@@ -1704,7 +1710,7 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
             ++git->second;
         }
     }
-    if (sStatsEnabled && sCtx.mDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
+    if (sStatsEnabled && sDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
     {
         std::string e = program->getName();
         if (e != "UI Shader" && e.compare(0, 3, "HUD") != 0)
@@ -2279,10 +2285,10 @@ void on_glGenerateMipmap(GLenum target)
     }
 }
 
-static void copy_to_texture(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height)
+static void copy_to_texture(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source_fbo)
 {
     Tex* t = bound_texture(target);
-    Image* src = read_image();
+    Image* src = read_image(source_fbo);
     if (!t || !t->mImage.valid() || !src || !LLVkMirror::inFrame())
     {
         return;
@@ -2294,17 +2300,9 @@ static void copy_to_texture(GLenum target, GLint level, GLint xoffset, GLint yof
     ++sCopies;
 }
 
-void on_glCopyTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height)
-{
-    copy_to_texture(target, level, xoffset, yoffset, 0, x, y, width, height);
-}
 
-void on_glCopyTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height)
-{
-    copy_to_texture(target, level, xoffset, yoffset, zoffset, x, y, width, height);
-}
 
-void on_glCopyTexImage2D(GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border)
+void copy_image_2d(GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source_fbo)
 {
     Tex* t = bound_texture(target);
     if (!t || width <= 0 || height <= 0)
@@ -2315,9 +2313,8 @@ void on_glCopyTexImage2D(GLenum target, GLint level, GLenum internalformat, GLin
     {
         return;
     }
-    copy_to_texture(target, level, 0, 0, 0, x, y, width, height);
+    copy_to_texture(target, level, 0, 0, 0, x, y, width, height, source_fbo);
 }
-
 
 //-----------------------------------------------------------------------------------------------------
 // F1.2: texture edits that name their texture (LLVkTex). The bodies are the handlers above; the scope replaces "the texture bound on the active unit".
@@ -2394,16 +2391,16 @@ void tex_mipmap(GLuint id, GLenum target)
     on_glGenerateMipmap(target);
 }
 
-void tex_copy_sub(GLuint id, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height)
+void tex_copy_sub(GLuint id, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source)
 {
     EditScope s(id, target, "copySub");
-    copy_to_texture(target, level, xoffset, yoffset, zoffset, x, y, width, height);
+    copy_to_texture(target, level, xoffset, yoffset, zoffset, x, y, width, height, source);
 }
 
-void tex_copy_image(GLuint id, GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border)
+void tex_copy_image(GLuint id, GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border, GLuint source)
 {
     EditScope s(id, target, "copyImage");
-    on_glCopyTexImage2D(target, level, internalformat, x, y, width, height, border);
+    copy_image_2d(target, level, internalformat, x, y, width, height, source);
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -2424,25 +2421,12 @@ void on_glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers)
     {
         sGL.mFbos.erase(framebuffers[i]);
         ++sTargetEpoch;
-        if (sCtx.mDrawFbo == framebuffers[i]) sCtx.mDrawFbo = 0;
-        if (sCtx.mReadFbo == framebuffers[i]) sCtx.mReadFbo = 0;
+        if (sDrawFbo == framebuffers[i]) sDrawFbo = 0;
     }
 }
 
-void on_glBindFramebuffer(GLenum target, GLuint framebuffer)
+void target_attach(unsigned fbo_name, unsigned slot, unsigned texture)
 {
-    if (target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER) sCtx.mDrawFbo = framebuffer;
-    ++sTargetEpoch;
-    if (target == GL_FRAMEBUFFER || target == GL_READ_FRAMEBUFFER) sCtx.mReadFbo = framebuffer;
-    if (framebuffer)
-    {
-        sGL.mFbos[framebuffer];
-    }
-}
-
-void on_glFramebufferTexture2D(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level)
-{
-    const GLuint fbo_name = target == GL_READ_FRAMEBUFFER ? sCtx.mReadFbo : sCtx.mDrawFbo;
     if (!fbo_name)
     {
         return;
@@ -2451,57 +2435,40 @@ void on_glFramebufferTexture2D(GLenum target, GLenum attachment, GLenum textarge
     Fbo& fbo = sGL.mFbos[fbo_name];
     FboAttachment a;
     a.mTexture = texture;
-    a.mLevel = level;
-    a.mLayer = (textarget >= 0x8515 && textarget <= 0x851A) ? textarget - 0x8515 : 0;
-    if (attachment >= GL_COLOR_ATTACHMENT0 && attachment < GL_COLOR_ATTACHMENT0 + 8)
+    a.mLevel = 0;
+    a.mLayer = 0;
+    if (slot < 8)
     {
-        fbo.mColor[attachment - GL_COLOR_ATTACHMENT0] = a;
+        fbo.mColor[slot] = a;
     }
-    else if (attachment == GL_DEPTH_ATTACHMENT || attachment == 0x821A)
+    else if (slot == LLVkTarget::DEPTH_SLOT)
     {
         fbo.mDepth = a;
     }
 }
 
-void on_glDrawBuffers(GLsizei n, const GLenum* bufs)
+void target_state(unsigned fbo_name, int draw_buffers)
 {
-    if (sCtx.mDrawFbo == 0)
+    sDrawFbo = fbo_name;
+    ++sTargetEpoch;
+    if (!fbo_name)
     {
         return;
     }
-    ++sTargetEpoch;
-    Fbo& fbo = sGL.mFbos[sCtx.mDrawFbo];
-    fbo.mDrawCount = (U32)std::min<GLsizei>(n, 8);
-    for (U32 i = 0; i < fbo.mDrawCount; ++i)
+    Fbo& fbo = sGL.mFbos[fbo_name];
+    if (draw_buffers > 0)
     {
-        fbo.mDrawBuffers[i] = bufs[i];
+        fbo.mDrawCount = (U32)std::min(draw_buffers, 4);
+        for (U32 i = 0; i < fbo.mDrawCount; ++i)
+        {
+            fbo.mDrawBuffers[i] = GL_COLOR_ATTACHMENT0 + i;
+        }
+        fbo.mReadBuffer = GL_COLOR_ATTACHMENT0;
     }
-}
-
-void on_glDrawBuffer(GLenum buf)
-{
-    if (sCtx.mDrawFbo == 0)
+    else if (draw_buffers == 0)
     {
-        return;
-    }
-    ++sTargetEpoch;
-    Fbo& fbo = sGL.mFbos[sCtx.mDrawFbo];
-    if (buf >= GL_COLOR_ATTACHMENT0 && buf < GL_COLOR_ATTACHMENT0 + 8)
-    {
-        fbo.mDrawCount = 1;
-        fbo.mDrawBuffers[0] = buf;
-    }
-    else
-    {
-        fbo.mDrawCount = 0;     // GL_NONE: depth only
-    }
-}
-
-void on_glReadBuffer(GLenum src)
-{
-    if (sCtx.mReadFbo)
-    {
-        sGL.mFbos[sCtx.mReadFbo].mReadBuffer = src;
+        fbo.mDrawCount = 0;         // depth only
+        fbo.mReadBuffer = 0;
     }
 }
 
@@ -4247,32 +4214,23 @@ void on_rt_scene(const LLVkMirror::RtSceneArgs& args)
 // hooks: state and clears
 //-----------------------------------------------------------------------------------------------------
 
-void on_glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
-{
-    sGL.mClearColor[0] = red; sGL.mClearColor[1] = green; sGL.mClearColor[2] = blue; sGL.mClearColor[3] = alpha;
-}
-
-void on_glClear(GLbitfield mask)
+// F1.4: clears the current target (the colour and depth write masks and the scissor of the state block apply, like a GL clear)
+void clear_target(bool color, bool depth, const float* rgba)
 {
     HookTimer hook_timer;
     if (!LLVkMirror::inFrame() || !sync_target())
     {
         return;
     }
-    if (sCtx.mDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
-    {
-        const LLVkState::Block* cb = state_block();
-        sStats.mBackbufferEvents.push_back(std::string("CLEAR mask ") + std::to_string(mask) + " scissor " + (cb && cb->mScissorOn ? "on" : "off"));
-    }
     U32 bits = 0;
     const LLVkState::Block* blk = state_block();
     const bool color_mask = !blk || blk->mBlend.mWriteMask != 0;
     const bool depth_mask = !blk || blk->mDepthMask;
-    if ((mask & GL_COLOR_BUFFER_BIT) && color_mask) bits |= CLEAR_COLOR;
-    if ((mask & GL_DEPTH_BUFFER_BIT) && depth_mask) bits |= CLEAR_DEPTH;
+    if (color && color_mask) bits |= CLEAR_COLOR;
+    if (depth && depth_mask) bits |= CLEAR_DEPTH;
     if (bits)
     {
-        Renderer::instance().clear(bits, sGL.mClearColor, 1.f, 0);
+        Renderer::instance().clear(bits, rgba, 1.f, 0);
     }
 }
 
@@ -4763,8 +4721,6 @@ bool emulate_integer(GLenum pname, GLint* out, U32& n)
         for (int i = 0; i < 4; ++i) out[i] = b->mScissor[i];
         n = 4; return true;
     }
-    case 0x8CA6: out[0] = (GLint)sCtx.mDrawFbo; return true;                        // DRAW_FRAMEBUFFER_BINDING / FRAMEBUFFER_BINDING
-    case 0x8CAA: out[0] = (GLint)sCtx.mReadFbo; return true;                        // READ_FRAMEBUFFER_BINDING
     case 0x0CF5: out[0] = sCtx.mUnpackAlignment; return true;                       // UNPACK_ALIGNMENT
     case 0x0CF2: out[0] = sCtx.mUnpackRowLength; return true;                       // UNPACK_ROW_LENGTH
     // DEPTH_FUNC, CULL_FACE_MODE and the blend functions are not answered: the state is native Vulkan values now, and only gDebugGL's consistency checks asked
@@ -4785,7 +4741,6 @@ bool emulate_float(GLenum pname, GLfloat* out, U32& n)
         n = 4; return true;
     }
     case 0x0B21: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mRaster.mLineWidth; return true; }       // LINE_WIDTH
-    case 0x0C22: for (int i = 0; i < 4; ++i) out[i] = sGL.mClearColor[i]; n = 4; return true;      // COLOR_CLEAR_VALUE
     case 0x8038: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mRaster.mBiasSlope; return true; }       // POLYGON_OFFSET_FACTOR
     case 0x2A00: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mRaster.mBiasConstant; return true; }    // POLYGON_OFFSET_UNITS
     case 0x84FF: out[0] = Context::instance().getCaps().mMaxAnisotropy; return true;               // MAX_TEXTURE_MAX_ANISOTROPY
@@ -5374,24 +5329,6 @@ bool own_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLin
         case 0x86A0: params[0] = (GLint)Renderer::compressedMipBytes(t->mImage, (U32)level); break;     // TEXTURE_COMPRESSED_IMAGE_SIZE
         default: break;
         }
-    }
-    return true;
-}
-
-bool own_glCheckFramebufferStatus(GLenum target, GLenum& out)
-{
-    const GLuint name = target == GL_READ_FRAMEBUFFER ? sCtx.mReadFbo : sCtx.mDrawFbo;
-    out = 0x8CD5;       // FRAMEBUFFER_COMPLETE
-    if (name)
-    {
-        auto it = sGL.mFbos.find(name);
-        bool any = false;
-        if (it != sGL.mFbos.end())
-        {
-            for (const FboAttachment& a : it->second.mColor) any |= a.mTexture != 0;
-            any |= it->second.mDepth.mTexture != 0;
-        }
-        if (!any) out = 0x8CD7;     // INCOMPLETE_MISSING_ATTACHMENT
     }
     return true;
 }

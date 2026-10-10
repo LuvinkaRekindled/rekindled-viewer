@@ -46,6 +46,7 @@
 #include "llvkstate.h"
 #include "llvktex.h"
 #include "llvertexbuffer.h"
+#include "llrendertarget.h"
 #include <unordered_set>
 
 extern LL_COMMON_API bool on_main_thread();
@@ -1261,7 +1262,7 @@ bool LLImageGL::setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y_
 {
     if (gGL.getTexUnit(0)->bind(this, false, true))
     {
-        LLVkTex::copySubImage(mTexName, GL_TEXTURE_2D, 0, fb_x, fb_y, 0, x_pos, y_pos, width, height);
+        LLVkTex::copySubImage(mTexName, GL_TEXTURE_2D, 0, fb_x, fb_y, 0, x_pos, y_pos, width, height, LLRenderTarget::sCurFBO);
         mGLTextureCreated = true;
         stop_glerror();
         return true;
@@ -2526,7 +2527,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
 
             free_tex_image(mTexName);
             LLVkTex::image2D(mTexName, mTarget, 0, mFormatInternal, desired_width, desired_height, 0, mFormatPrimary, mFormatType, nullptr);
-            LLVkTex::copySubImage(mTexName, mTarget, 0, 0, 0, 0, 0, 0, desired_width, desired_height);
+            LLVkTex::copySubImage(mTexName, mTarget, 0, 0, 0, 0, 0, 0, desired_width, desired_height, LLRenderTarget::sCurFBO);
             alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
 
             markTexOptionsDirty();

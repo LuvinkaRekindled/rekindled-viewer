@@ -1,0 +1,40 @@
+/**
+ * @file llvktarget.h
+ * @brief F1.4: render targets named by their id, clears and the read source of copies.
+ *
+ * A render target is a handle (the id the producer allocates) with attached textures; the target a draw goes to is set by one record that also carries the number of
+ * colour attachments (LLVkAsync::targetState). Clears and copies name what they act on instead of reading "the bound framebuffer" / "the clear colour" state.
+ *
+ * Compiled only with -DUSE_VULKAN=ON.
+ */
+
+#ifndef LL_LLVKTARGET_H
+#define LL_LLVKTARGET_H
+
+#if defined(LL_VULKAN)
+
+#include "linden_common.h"
+
+namespace LLVkTarget
+{
+    constexpr U32 DEPTH_SLOT = 8;       // attach() slot of the depth attachment; slots 0-7 are the colour attachments
+
+    void create(U32* id);
+    void destroy(U32 id);
+    // attaches a texture (mip level 0) to a slot of the target; texture 0 detaches
+    void attach(U32 target, U32 slot, U32 texture);
+    // clears the current target's colour and/or depth attachment (honouring the current colour / depth write masks and scissor, like a GL clear)
+    void clear(bool color, bool depth, const F32* rgba);
+}
+
+namespace LLVkGL
+{
+    void target_attach(unsigned fbo, unsigned slot, unsigned texture);
+    // makes 'fbo' the target draws go to (0: the back buffer); draw_buffers: colour attachments written (0: none, -1: the back buffer)
+    void target_state(unsigned fbo, int draw_buffers);
+    void clear_target(bool color, bool depth, const float* rgba);
+}
+
+#endif // LL_VULKAN
+
+#endif // LL_LLVKTARGET_H

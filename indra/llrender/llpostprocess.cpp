@@ -31,6 +31,7 @@
 #include "llsdserialize.h"
 #include "llrender.h"
 #include "llvktex.h"
+#include "llrendertarget.h"
 
 static LLStaticHashedString sRenderTexture("RenderTexture");
 static LLStaticHashedString sBrightness("brightness");
@@ -307,8 +308,8 @@ void LLPostProcess::doEffects(void)
     }
 
     /// Clear the frame buffer.
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    gGL.setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    gGL.clearBuffers(GL_COLOR_BUFFER_BIT);
 
     /// Change to an orthogonal view
     viewOrthogonal(screenW, screenH);
@@ -331,7 +332,7 @@ void LLPostProcess::doEffects(void)
 void LLPostProcess::copyFrameBuffer(U32 & texture, unsigned int width, unsigned int height)
 {
     gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture);
-    LLVkTex::copyImage2D(texture, GL_TEXTURE_RECTANGLE, 0, GL_RGBA, 0, 0, width, height, 0);
+    LLVkTex::copyImage2D(texture, GL_TEXTURE_RECTANGLE, 0, GL_RGBA, 0, 0, width, height, 0, LLRenderTarget::sCurFBO);
 }
 
 void LLPostProcess::drawOrthoQuad(unsigned int width, unsigned int height, QuadType type)

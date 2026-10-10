@@ -311,16 +311,9 @@ void LLSceneMonitor::capture()
 
         LLRenderTarget& cur_target = getCaptureTarget();
 
-        U32 old_FBO = LLRenderTarget::sCurFBO;
-
         gGL.getTexUnit(0)->bind(&cur_target);
-        gGL.bindFramebuffer(GL_READ_FRAMEBUFFER, 0); //point to the main frame buffer.
-
-        gGL.copyTexSubImage2D(cur_target.getTexture(), GL_TEXTURE_2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight()); //copy the content
-
-        gGL.bindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-        gGL.bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-        gGL.bindFramebuffer(GL_FRAMEBUFFER, old_FBO);
+        // copy the content of the main frame buffer (source 0) into the capture target's texture
+        gGL.copyTexSubImage2D(cur_target.getTexture(), GL_TEXTURE_2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight(), 0);
 
         mDiffState = NEED_DIFF;
     }

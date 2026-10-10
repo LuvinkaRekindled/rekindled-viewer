@@ -16,6 +16,7 @@
 #include "llvkstate.h"
 #include "llvktex.h"
 #include "llvkbuf.h"
+#include "llvktarget.h"
 
 #include <windows.h>
 #include <synchapi.h>
@@ -171,7 +172,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
 // C4: texture upload costs on the main thread, and what was handed over without a copy
@@ -377,8 +378,7 @@ inline bool texIndependent(U16 op)
     switch (op)
     {
     case CMD_TEX_IMAGE: case CMD_TEX_PARAMS_ID: case CMD_TEX_OP: case CMD_UNIFORM_BLOCK:
-    case OP_glClear: case OP_glClearColor:
-    case CMD_CONST_ATTRIB: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
+    case CMD_CONST_ATTRIB: case CMD_CLEAR: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
     case OP_glBeginQuery: case OP_glEndQuery: case OP_glUseProgram:
     case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
         return true;
@@ -420,10 +420,6 @@ void push(unsigned short op, const void* args, unsigned size)
 {
     if (isMainThread())
     {
-        if (op == OP_glClear)
-        {
-            stateEmit();
-        }
         const bool timed = gOpStats && ((++gMainPushOps & 15) == 0);
         const unsigned long long t0 = timed ? __rdtsc() : 0;
         if (gOpStats)
@@ -459,24 +455,59 @@ bool mainProducer()
     return gEnabled && gTyped && isMainThread();
 }
 
-void framebufferAttach(U32 fbo, U32 attachment, U32 textarget, U32 texture, U32 restore_fbo)
+void framebufferAttach(U32 fbo, U32 slot, U32 texture)
 {
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
+        LLVkGL::target_attach(fbo, slot, texture);
+        return;
+    }
+    if (!isMainThread())
+    {
+        return;
+    }
     MainLap lap;
     coFlushAll(opStatSlot(CMD_FBO_ATTACH));
-    const U32 a[5] = { fbo, attachment, textarget, texture, restore_fbo };
+    const U32 a[3] = { fbo, slot, texture };
     rawPush(CMD_FBO_ATTACH, a, sizeof(a));
 }
 
 void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh)
 {
+    // the viewport is part of the render state context; the record carries the target and its colour attachment count
+    LLVkState::setViewport(vx, vy, vw, vh);
+    targetDrawBuffers(fbo, draw_buffers);
+}
+
+void targetDrawBuffers(U32 fbo, S32 draw_buffers)
+{
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::target_state(fbo, draw_buffers);
+        return;
+    }
+    if (!isMainThread())
+    {
+        return;
+    }
     MainLap lap;
     coFlushAll(opStatSlot(CMD_TARGET_STATE));
-    if (isMainThread())
-    {
-        LLVkState::setViewport(vx, vy, vw, vh);
-    }
-    const S32 a[6] = { (S32)fbo, draw_buffers, vx, vy, vw, vh };
+    const S32 a[2] = { (S32)fbo, draw_buffers };
     rawPush(CMD_TARGET_STATE, a, sizeof(a));
+}
+
+void clearTarget(bool color, bool depth, const F32* rgba)
+{
+    if (!isMainThread())
+    {
+        return;
+    }
+    MainLap lap;
+    stateEmit();        // the clear honours the colour / depth write masks and the scissor
+    struct R { U32 mFlags; F32 mColor[4]; } rec = { (color ? 1u : 0u) | (depth ? 2u : 0u), { rgba[0], rgba[1], rgba[2], rgba[3] } };
+    rawPush(CMD_CLEAR, &rec, sizeof(rec));
 }
 
 void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
@@ -1453,31 +1484,31 @@ void generateMipmap(U32 id, U32 target)
     pushOp(op);
 }
 
-void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height)
+void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source)
 {
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_copy_sub(id, target, level, xoffset, yoffset, zoffset, x, y, width, height);
+        LLVkGL::tex_copy_sub(id, target, level, xoffset, yoffset, zoffset, x, y, width, height, source);
         return;
     }
     TexOp op = {};
     op.mKind = OPK_COPY_SUB; op.mTex = id; op.mTarget = target; op.mLevel = level;
-    op.mX0 = xoffset; op.mY0 = yoffset; op.mZ0 = zoffset; op.mX = x; op.mY = y; op.mW = width; op.mH = height;
+    op.mX0 = xoffset; op.mY0 = yoffset; op.mZ0 = zoffset; op.mX = x; op.mY = y; op.mW = width; op.mH = height; op.mSource = source;
     pushOp(op);
 }
 
-void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border)
+void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border, U32 source)
 {
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_copy_image(id, target, level, internal_format, x, y, width, height, border);
+        LLVkGL::tex_copy_image(id, target, level, internal_format, x, y, width, height, border, source);
         return;
     }
     TexOp op = {};
     op.mKind = OPK_COPY_IMAGE; op.mTex = id; op.mTarget = target; op.mLevel = level; op.mFormat = internal_format;
-    op.mX = x; op.mY = y; op.mW = width; op.mH = height; op.mBorder = border;
+    op.mX = x; op.mY = y; op.mW = width; op.mH = height; op.mBorder = border; op.mSource = source;
     pushOp(op);
 }
 
@@ -1513,6 +1544,38 @@ void getCompressedImage(U32 id, U32 target, S32 level, void* out)
         return;
     }
     LLVkAsync::syncCall([&]() { LLVkGL::tex_get_compressed_image(id, target, level, out); });
+}
+
+}
+
+// ---- F1.4: render targets named by id (llvktarget.h) ----
+namespace LLVkTarget
+{
+
+void create(U32* id)
+{
+    glGenFramebuffers(1, id);
+}
+
+void destroy(U32 id)
+{
+    glDeleteFramebuffers(1, &id);
+}
+
+void attach(U32 target, U32 slot, U32 texture)
+{
+    LLVkAsync::framebufferAttach(target, slot, texture);
+}
+
+void clear(bool color, bool depth, const F32* rgba)
+{
+    if (!LLVkAsync::gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::clear_target(color, depth, rgba);
+        return;
+    }
+    LLVkAsync::clearTarget(color, depth, rgba);
 }
 
 }
@@ -1575,7 +1638,6 @@ void enq_glDeleteTextures(GLsizei n, const GLuint* textures) { enq_ids(OP_glDele
 void enq_glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers) { enq_ids(OP_glDeleteFramebuffers, n, framebuffers); }
 void enq_glDeleteBuffers(GLsizei n, const GLuint* buffers) { enq_ids(OP_glDeleteBuffers, n, buffers); }
 void enq_glDeleteQueries(GLsizei n, const GLuint* ids) { enq_ids(OP_glDeleteQueries, n, ids); }
-void enq_glDrawBuffers(GLsizei n, const GLenum* bufs) { pushData(OP_glDrawBuffers, &n, sizeof(n), bufs, (size_t)std::max(n, 0) * 4); }
 void enq_glTexParameteriv(GLenum target, GLenum pname, const GLint* params)
 {
     struct A { GLenum target; GLenum pname; } a = { target, pname };
@@ -1746,13 +1808,6 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
         }
         break;
     }
-    case OP_glDrawBuffers:
-    {
-        const S32 n = r.get<S32>();
-        Blob b = read_blob(r, flags);
-        LLVkGL::on_glDrawBuffers(n, (const GLenum*)b.mData);
-        break;
-    }
     case OP_glTexParameteriv:
     {
         const GLenum target = r.get<GLenum>(), pname = r.get<GLenum>();
@@ -1912,8 +1967,8 @@ void runOp(Reader& r)
     switch (o.mKind)
     {
     case OPK_MIPMAP: LLVkGL::tex_mipmap(o.mTex, o.mTarget); break;
-    case OPK_COPY_SUB: LLVkGL::tex_copy_sub(o.mTex, o.mTarget, o.mLevel, o.mX0, o.mY0, o.mZ0, o.mX, o.mY, o.mW, o.mH); break;
-    case OPK_COPY_IMAGE: LLVkGL::tex_copy_image(o.mTex, o.mTarget, o.mLevel, o.mFormat, o.mX, o.mY, o.mW, o.mH, o.mBorder); break;
+    case OPK_COPY_SUB: LLVkGL::tex_copy_sub(o.mTex, o.mTarget, o.mLevel, o.mX0, o.mY0, o.mZ0, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
+    case OPK_COPY_IMAGE: LLVkGL::tex_copy_image(o.mTex, o.mTarget, o.mLevel, o.mFormat, o.mX, o.mY, o.mW, o.mH, o.mBorder, o.mSource); break;
     default: LLVkGL::tex_swizzle(o.mTex, o.mTarget, o.mRgba); break;
     }
 }
@@ -2066,32 +2121,20 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     case CMD_FBO_ATTACH:
     {
         const U32* a = (const U32*)payload;
-        LLVkGL::on_glBindFramebuffer(0x8D40, a[0]);                     // GL_FRAMEBUFFER
-        LLVkGL::on_glFramebufferTexture2D(0x8D40, a[1], a[2], a[3], 0);
-        LLVkGL::on_glBindFramebuffer(0x8D40, a[4]);
+        LLVkGL::target_attach(a[0], a[1], a[2]);
         break;
     }
     case CMD_TARGET_STATE:
     {
         const S32* a = (const S32*)payload;
-        LLVkGL::on_glBindFramebuffer(0x8D40, (GLuint)a[0]);
-        if (a[1] > 0)
-        {
-            const GLenum bufs[4] = { 0x8CE0, 0x8CE1, 0x8CE2, 0x8CE3 };     // GL_COLOR_ATTACHMENT0..3
-            LLVkGL::on_glDrawBuffers(std::min(a[1], 4), bufs);
-            LLVkGL::on_glReadBuffer(0x8CE0);
-        }
-        else if (a[1] == 0)
-        {
-            LLVkGL::on_glDrawBuffer(0);                                  // GL_NONE
-            LLVkGL::on_glReadBuffer(0);
-        }
-        else
-        {
-            LLVkGL::on_glReadBuffer(0x0405);                             // GL_BACK
-            LLVkGL::on_glDrawBuffer(0x0405);
-        }
-        // the viewport is part of the state block (the producer sets it with this record)
+        LLVkGL::target_state((unsigned)a[0], a[1]);
+        break;
+    }
+    case CMD_CLEAR:
+    {
+        struct R { U32 mFlags; F32 mColor[4]; };
+        const R* a = (const R*)payload;
+        LLVkGL::clear_target((a->mFlags & 1) != 0, (a->mFlags & 2) != 0, a->mColor);
         break;
     }
     case CMD_UNIFORM_BLOCK: { const U32* a = (const U32*)payload; LLVkGL::uniform_block_bind(a[0], a[1]); break; }

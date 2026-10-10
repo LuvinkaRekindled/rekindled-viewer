@@ -31,7 +31,7 @@ namespace LLVkTex
     // the records (llvkasync.cpp writes and reads them)
     enum TexKind : U32 { K_IMAGE2D, K_IMAGE3D, K_SUB2D, K_SUB3D, K_COMPRESSED2D };
     enum TexOpKind : U32 { OPK_MIPMAP, OPK_COPY_SUB, OPK_COPY_IMAGE, OPK_SWIZZLE };
-    struct TexOp { U32 mKind; U32 mTex; U32 mTarget; S32 mLevel; S32 mX0, mY0, mZ0, mX, mY, mW, mH; U32 mFormat; S32 mBorder; S32 mRgba[4]; };
+    struct TexOp { U32 mKind; U32 mTex; U32 mTarget; S32 mLevel; S32 mX0, mY0, mZ0, mX, mY, mW, mH; U32 mFormat; S32 mBorder; S32 mRgba[4]; U32 mSource; };
 
     // ---- handles: the producer allocates the id, the worker makes and destroys the texture in stream order ----
     void create(S32 count, U32* ids);
@@ -51,9 +51,9 @@ namespace LLVkTex
     inline void paramI(U32 id, U32 target, U32 pname, S32 v) { LLVkAsync::TexParam p = { pname, 0, v, 0.f }; params(id, target, &p, 1); }
     void swizzle(U32 id, U32 target, const S32* rgba);
     void generateMipmap(U32 id, U32 target);
-    // copies from the current read target (a render target or the back buffer) into the texture
-    void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height);
-    void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border);
+    // copies from a render target (source: its id, 0 = the back buffer; colour attachment 0) into the texture
+    void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source);
+    void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border, U32 source);
     // answers (the caller waits for the worker)
     S32 levelParameter(U32 id, U32 target, S32 level, U32 pname);
     void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out);
@@ -74,8 +74,8 @@ namespace LLVkGL
     void tex_params(unsigned id, unsigned target, const LLVkAsync::TexParam* params, unsigned count);
     void tex_swizzle(unsigned id, unsigned target, const int* rgba);
     void tex_mipmap(unsigned id, unsigned target);
-    void tex_copy_sub(unsigned id, unsigned target, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height);
-    void tex_copy_image(unsigned id, unsigned target, int level, unsigned internalformat, int x, int y, int width, int height, int border);
+    void tex_copy_sub(unsigned id, unsigned target, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source);
+    void tex_copy_image(unsigned id, unsigned target, int level, unsigned internalformat, int x, int y, int width, int height, int border, unsigned source);
     int tex_level_parameter(unsigned id, unsigned target, int level, unsigned pname);
     void tex_get_image(unsigned id, unsigned target, int level, unsigned format, unsigned type, void* out);
     void tex_get_compressed_image(unsigned id, unsigned target, int level, void* out);
