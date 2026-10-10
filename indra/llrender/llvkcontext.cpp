@@ -480,6 +480,25 @@ bool Context::pickDevice()
             mCaps.mLineWidthRange[1] = props.limits.lineWidthRange[1];
             mCaps.mMaxViewport[0] = props.limits.maxViewportDimensions[0];
             mCaps.mMaxViewport[1] = props.limits.maxViewportDimensions[1];
+            mCaps.mTimelineSemaphore = chain.f12.timelineSemaphore != VK_FALSE;
+            mCaps.mGraphicsQueues = families[(U32)family].queueCount;
+            for (U32 i = 0; i < qcount; ++i)
+            {
+                const VkQueueFlags f = families[i].queueFlags;
+                if (!(f & VK_QUEUE_GRAPHICS_BIT) && (f & VK_QUEUE_COMPUTE_BIT) && mCaps.mComputeFamily < 0)
+                {
+                    mCaps.mComputeFamily = (S32)i;
+                    mCaps.mComputeQueues = families[i].queueCount;
+                }
+                // a transfer-only family: not a graphics / compute one, not video decode or optical flow
+                if ((f & VK_QUEUE_TRANSFER_BIT) && !(f & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_VIDEO_DECODE_BIT_KHR | VK_QUEUE_OPTICAL_FLOW_BIT_NV)) && mCaps.mTransferFamily < 0)
+                {
+                    mCaps.mTransferFamily = (S32)i;
+                    mCaps.mTransferQueues = families[i].queueCount;
+                }
+            }
+            LL_INFOS("Vulkan") << "queues: renderer family " << family << " has " << mCaps.mGraphicsQueues << "; async compute family " << mCaps.mComputeFamily << " (" << mCaps.mComputeQueues
+                << " queues); transfer-only family " << mCaps.mTransferFamily << " (" << mCaps.mTransferQueues << "); timeline semaphores " << mCaps.mTimelineSemaphore << LL_ENDL;
             mCaps.mMaxSampleCount = max_sample_count(props.limits.framebufferColorSampleCounts);
             // C6: the limits a GL driver reports that have no one-to-one Vulkan limit
             mCaps.mMaxColorTextureSamples = max_sample_count(props.limits.sampledImageColorSampleCounts);
