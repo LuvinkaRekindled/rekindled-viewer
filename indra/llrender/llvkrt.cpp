@@ -90,7 +90,11 @@ struct Group
     std::vector<Range> mRanges;
     std::vector<AlphaInfo> mAlpha;      // kind 1: parallel to mRanges
     U64 mPassSeen[kPasses] = {};        // per shadow pass: the frame number + 1 of the latest note (0 = never)
-    bool mSkip = false;                 // left out of this scene call (debug switch common_only)
+    bool mSkip = false;                 // left out of this scene call (debug switches)
+    F32 mPrevModel[16] = {};            // the matrix of the note before
+    bool mMoving = false;               // the matrix changed between the last two notes
+    bool mDynamic = false;              // its vertex data was rewritten since the structure was last built or refitted (this call)
+    float mDistance = 0.f;              // eye space distance of the object's origin (this call)
 };
 
 struct Blas
@@ -143,6 +147,12 @@ struct DebugSwitches
     bool mAlpha = true;             // alpha masked casters in the scene
     bool mCheck = true;             // data checks on built ranges
     bool mSkipBad = true;
+    S32 mOnly = 0;                  // 0 all, 1 region matrix only, 2 region + null matrix, 3 region + non-null other matrices
+    S32 mMoving = 0;                // 0 all, 1 leave out moving casters, 2 moving casters only
+    S32 mDynamic = 0;               // 0 all, 1 leave out buffers rewritten since the build, 2 only those
+    S32 mKind = 0;                  // 0 both, 1 opaque only, 2 masked only
+    F32 mMinDist = 0.f, mMaxDist = 0.f;     // non-region casters only: eye space distance range (max 0 = no limit)
+    bool mDump = false;             // log the non-region groups once per call while set (the first 80)
 };
 DebugSwitches sDbg;
 std::chrono::steady_clock::time_point sDbgRead;
@@ -178,15 +188,24 @@ void read_debug_switches()
                 else if (k == "alpha") d.mAlpha = v != 0;
                 else if (k == "check") d.mCheck = v != 0;
                 else if (k == "skipbad") d.mSkipBad = v != 0;
+                else if (k == "only") d.mOnly = (S32)v;
+                else if (k == "moving") d.mMoving = (S32)v;
+                else if (k == "dynamic") d.mDynamic = (S32)v;
+                else if (k == "kind") d.mKind = (S32)v;
+                else if (k == "min_dist") d.mMinDist = (F32)v;
+                else if (k == "max_dist") d.mMaxDist = (F32)v;
+                else if (k == "dump") d.mDump = v != 0;
             }
         }
         fclose(f);
     }
     if (d.mSingle != sDbg.mSingle || d.mNoRefit != sDbg.mNoRefit || d.mKeep != sDbg.mKeep || d.mCommonOnly != sDbg.mCommonOnly || d.mAlpha != sDbg.mAlpha || d.mCheck != sDbg.mCheck
-        || d.mSkipBad != sDbg.mSkipBad)
+        || d.mSkipBad != sDbg.mSkipBad || d.mOnly != sDbg.mOnly || d.mMoving != sDbg.mMoving || d.mDynamic != sDbg.mDynamic || d.mKind != sDbg.mKind || d.mMinDist != sDbg.mMinDist
+        || d.mMaxDist != sDbg.mMaxDist)
     {
         LL_INFOS("VkRt") << "debug switches: single " << d.mSingle << ", norefit " << d.mNoRefit << ", keep " << d.mKeep << ", common_only " << d.mCommonOnly << ", alpha " << d.mAlpha
-                         << ", check " << d.mCheck << ", skipbad " << d.mSkipBad << LL_ENDL;
+                         << ", check " << d.mCheck << ", skipbad " << d.mSkipBad << ", only " << d.mOnly << ", moving " << d.mMoving << ", dynamic " << d.mDynamic << ", kind " << d.mKind
+                         << ", dist " << d.mMinDist << ".." << d.mMaxDist << ", dump " << d.mDump << LL_ENDL;
     }
     sDbg = d;
 }
@@ -519,7 +538,17 @@ void noteCaster(const Caster& c)
     const U64 frame_tag = Context::instance().getFrameNumber() + 1;
     it->second.mPassSeen[pass] = frame_tag;
     sPassFrame[pass] = frame_tag;
-    memcpy(it->second.mModel, c.mModel ? c.mModel : kIdentity, sizeof(it->second.mModel));       // the matrix of the object now
+    {
+        const F32* now_model = c.mModel ? c.mModel : kIdentity;
+        F32 diff = 0.f;
+        for (int k = 0; k < 16; ++k)
+        {
+            diff = std::max(diff, fabsf(now_model[k] - it->second.mModel[k]));
+        }
+        memcpy(it->second.mPrevModel, it->second.mModel, sizeof(it->second.mModel));
+        it->second.mMoving = diff > 1e-5f;
+        memcpy(it->second.mModel, now_model, sizeof(it->second.mModel));       // the matrix of the object now
+    }
     std::vector<Range>& ranges = it->second.mRanges;
     const Range r = { c.mFirst, c.mCount };
     for (size_t k = 0; k < ranges.size(); ++k)
@@ -644,7 +673,6 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     std::vector<std::pair<float, Group*>> order;
     order.reserve(sGroups.size());
     U32 common_id = 0;
-    if (sDbg.mCommonOnly)
     {
         std::unordered_map<U32, U32> counts;
         U32 best = 0;
@@ -658,12 +686,33 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             }
         }
     }
+    const S32 only_mode = sDbg.mCommonOnly ? 1 : sDbg.mOnly;
+    U32 dumped = 0;
     for (auto& kv : sGroups)
     {
         Group& g = kv.second;
-        g.mSkip = sDbg.mCommonOnly && g.mKey.mMatrixId != common_id;
         F32 m[16];
         mat_mul(view, g.mModel, m);
+        g.mDistance = sqrtf(m[12] * m[12] + m[13] * m[13] + m[14] * m[14]);
+        const bool region = g.mKey.mMatrixId == common_id;
+        const bool null_matrix = g.mKey.mMatrixId == 0;
+        g.mSkip = false;
+        if (only_mode == 1 && !region) g.mSkip = true;
+        if (only_mode == 2 && !region && !null_matrix) g.mSkip = true;
+        if (only_mode == 3 && !region && null_matrix) g.mSkip = true;
+        if (sDbg.mMoving == 1 && g.mMoving) g.mSkip = true;
+        if (sDbg.mMoving == 2 && !g.mMoving) g.mSkip = true;
+        if (sDbg.mKind == 1 && g.mKey.mKind != 0) g.mSkip = true;
+        if (sDbg.mKind == 2 && g.mKey.mKind != 1) g.mSkip = true;
+        if (!region && (g.mDistance < sDbg.mMinDist || (sDbg.mMaxDist > 0.f && g.mDistance > sDbg.mMaxDist))) g.mSkip = true;
+        if (sDbg.mDump && !region && dumped < 80)
+        {
+            ++dumped;
+            auto bi = sBlas.find(g.mKey);
+            LL_INFOS("VkRt") << "non-region group: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " kind " << g.mKey.mKind << " matrix id " << g.mKey.mMatrixId << " ranges " << g.mRanges.size()
+                             << " dist " << g.mDistance << " moving " << g.mMoving << " model diag " << g.mModel[0] << "," << g.mModel[5] << "," << g.mModel[10] << " pos " << g.mModel[12] << ","
+                             << g.mModel[13] << "," << g.mModel[14] << " prims " << (bi != sBlas.end() ? bi->second.mPrims : 0) << " refits " << (bi != sBlas.end() ? bi->second.mRefits : 0) << LL_ENDL;
+        }
         order.emplace_back(m[12] * m[12] + m[13] * m[13] + m[14] * m[14], &g);
     }
     std::sort(order.begin(), order.end(), [](const std::pair<float, Group*>& a, const std::pair<float, Group*>& b) { return a.first < b.first; });
@@ -681,6 +730,12 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         }
         Blas& b = sBlas[g.mKey];
         b.mLastSeen = sSceneCalls;
+        g.mDynamic = b.mAs != VK_NULL_HANDLE && (b.mVbVersion != vi.mVersion || b.mIbVersion != ii.mVersion);
+        if ((sDbg.mDynamic == 1 && g.mDynamic) || (sDbg.mDynamic == 2 && !g.mDynamic))
+        {
+            g.mSkip = true;
+            continue;
+        }
         if (b.mAs != VK_NULL_HANDLE && (b.mVbEpoch != vi.mEpoch || b.mIbEpoch != ii.mEpoch))
         {
             drop_blas(b);                       // the names hold something else now
