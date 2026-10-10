@@ -1394,15 +1394,11 @@ namespace
 
 PixelStore currentPS()
 {
-    if (LLVkAsync::gEnabled)
-    {
-        PixelStore ps;
-        ps.mAlignment = tlsPixelStore.mUnpackAlignment;
-        ps.mRowLength = tlsPixelStore.mUnpackRowLength;
-        ps.mUnpackBuffer = tlsPixelStore.mUnpackBuffer;
-        return ps;
-    }
-    return LLVkGL::inline_pixel_store();
+    PixelStore ps;
+    ps.mAlignment = tlsPixelStore.mUnpackAlignment;
+    ps.mRowLength = tlsPixelStore.mUnpackRowLength;
+    ps.mUnpackBuffer = LLVkAsync::gEnabled ? tlsPixelStore.mUnpackBuffer : LLVkGL::inline_pixel_store().mUnpackBuffer;     // the buffer binding is still a GL call (buffers family)
+    return ps;
 }
 
 void pushImage(TexKind kind, TexArgs a, const void* pixels, size_t bytes)
@@ -1415,6 +1411,26 @@ void pushImage(TexKind kind, TexArgs a, const void* pixels, size_t bytes)
 }
 
 inline std::lock_guard<LLVkMirror::Mutex> inlineLock() { return std::lock_guard<LLVkMirror::Mutex>(LLVkGL::gMutex); }
+}
+
+void create(S32 count, U32* ids)
+{
+    glGenTextures(count, ids);
+}
+
+void destroy(S32 count, const U32* ids)
+{
+    glDeleteTextures(count, ids);
+}
+
+void setUnpackAlignment(S32 alignment)
+{
+    tlsPixelStore.mUnpackAlignment = alignment;
+}
+
+void setUnpackRowLength(S32 row_length)
+{
+    tlsPixelStore.mUnpackRowLength = row_length;
 }
 
 void bindSlot(S32 unit, U32 target, U32 id)

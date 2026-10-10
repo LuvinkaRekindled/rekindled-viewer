@@ -39,6 +39,13 @@ namespace LLVkTex
     // LL_VK_TEX_VERIFY=1: an edit on the main thread that names a texture other than the one the caller bound on the active unit is logged (first 40)
     void verifyBound(const char* what, U32 id, U32 target);
 
+    // ---- handles: the producer allocates the id, the worker makes and destroys the texture in stream order ----
+    void create(S32 count, U32* ids);
+    void destroy(S32 count, const U32* ids);
+    // the unpack state the next uploads of this thread carry (producer-side only: no record)
+    void setUnpackAlignment(S32 alignment);
+    void setUnpackRowLength(S32 row_length);
+
     // ---- producer (any thread; the calling thread's pixel-store state applies) ----
     void image2D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 format, U32 type, const void* pixels);
     void image3D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 depth, S32 border, U32 format, U32 type, const void* pixels);

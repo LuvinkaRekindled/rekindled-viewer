@@ -904,7 +904,7 @@ LLRender::~LLRender()
 bool LLRender::init(bool needs_vertex_buffer)
 {
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    LLVkTex::setUnpackAlignment(1);
 
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
     gGL.setAmbientLightColor(LLColor4::black);
@@ -1626,7 +1626,7 @@ void LLRender::bindTexture(U32 gl_target, U32 id)
 
 void LLRender::deleteTextures(S32 count, const U32* ids)
 {
-    glDeleteTextures(count, ids);
+    LLVkTex::destroy(count, ids);
 }
 
 void LLRender::setScissor(S32 x, S32 y, S32 width, S32 height)
