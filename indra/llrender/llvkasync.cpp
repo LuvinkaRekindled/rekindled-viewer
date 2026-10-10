@@ -1435,7 +1435,6 @@ void setUnpackRowLength(S32 row_length)
 
 void bindSlot(S32 unit, U32 target, U32 id)
 {
-    noteBind(unit, target, id);
     if (LLVkAsync::gEnabled)
     {
         if (isMainThread())
@@ -1448,25 +1447,8 @@ void bindSlot(S32 unit, U32 target, U32 id)
     LLVkGL::slot_bind((unsigned)unit, target, id);
 }
 
-void verifyBound(const char* what, U32 id, U32 target)
-{
-    static const bool on = getenv("LL_VK_TEX_VERIFY") != nullptr;
-    static U32 reported = 0;
-    if (!on || !isMainThread())
-    {
-        return;
-    }
-    const U32 bound = boundOnActive(target);
-    if (bound && bound != id && reported < 40)
-    {
-        ++reported;
-        LL_WARNS("VkTex") << "TEX VERIFY #" << reported << " " << what << " names texture " << id << ", the caller had " << bound << " bound on unit " << gSlots.mActive << LL_ENDL;
-    }
-}
-
 void image2D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 format, U32 type, const void* pixels)
 {
-    verifyBound("image2D", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1480,7 +1462,6 @@ void image2D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 
 
 void image3D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 depth, S32 border, U32 format, U32 type, const void* pixels)
 {
-    verifyBound("image3D", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1494,7 +1475,6 @@ void image3D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 
 
 void subImage2D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, const void* pixels)
 {
-    verifyBound("subImage2D", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1508,7 +1488,6 @@ void subImage2D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 heig
 
 void subImage3D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, U32 format, U32 type, const void* pixels)
 {
-    verifyBound("subImage3D", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1522,7 +1501,6 @@ void subImage3D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S
 
 void compressedImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 width, S32 height, S32 border, S32 image_size, const void* data)
 {
-    verifyBound("compressedImage2D", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1536,7 +1514,6 @@ void compressedImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 w
 
 void params(U32 id, U32 target, const LLVkAsync::TexParam* p, U32 count)
 {
-    verifyBound("params", id, target);
     if (!count)
     {
         return;
@@ -1558,7 +1535,6 @@ static void pushOp(const TexOp& op)
 
 void swizzle(U32 id, U32 target, const S32* rgba)
 {
-    verifyBound("swizzle", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1573,7 +1549,6 @@ void swizzle(U32 id, U32 target, const S32* rgba)
 
 void generateMipmap(U32 id, U32 target)
 {
-    verifyBound("generateMipmap", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1587,7 +1562,6 @@ void generateMipmap(U32 id, U32 target)
 
 void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height)
 {
-    verifyBound("copySubImage", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1602,7 +1576,6 @@ void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 z
 
 void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border)
 {
-    verifyBound("copyImage2D", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1617,7 +1590,6 @@ void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 
 
 S32 levelParameter(U32 id, U32 target, S32 level, U32 pname)
 {
-    verifyBound("levelParameter", id, target);
     S32 v = 0;
     if (!LLVkAsync::gEnabled)
     {
@@ -1630,7 +1602,6 @@ S32 levelParameter(U32 id, U32 target, S32 level, U32 pname)
 
 void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out)
 {
-    verifyBound("getImage", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1642,7 +1613,6 @@ void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out)
 
 void getCompressedImage(U32 id, U32 target, S32 level, void* out)
 {
-    verifyBound("getCompressedImage", id, target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();

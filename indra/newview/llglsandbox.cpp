@@ -971,6 +971,8 @@ public:
         LLImageGL::deleteTextures(static_cast<S32>(source.size()), &source[0]);
     }
 
+    U32 name(U32 index) const { return source[index]; }
+
     bool bind(U32 index)
     {
         if (texUnit) // should always be there with dummy (-1), but just in case
@@ -1122,7 +1124,7 @@ F32 gpu_benchmark()
             delete[] pixels;
             return -1.f;
         }
-        LLImageGL::setManualImage(GL_TEXTURE_2D, 0, GL_RGBA, res,res,GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        LLImageGL::setManualImage(texHolder.name(i), GL_TEXTURE_2D, 0, GL_RGBA, res,res,GL_RGBA, GL_UNSIGNED_BYTE, pixels);
         // disable mipmaps and use point filtering to cause cache misses
         gGL.getTexUnit(0)->setHasMipMaps(false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);

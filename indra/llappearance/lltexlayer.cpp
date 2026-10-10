@@ -1479,9 +1479,9 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         if (!textureW || !textureH)
                         {
                             LLGLint glTemp{};
-                            gGL.getTexLevelParameteriv(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_WIDTH, (S32*)&glTemp);
+                            gGL.getTexLevelParameteriv(0, GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, (S32*)&glTemp);     // no texture is bound on this path
                             textureW = glTemp;
-                            gGL.getTexLevelParameteriv(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_HEIGHT, (S32*)&glTemp);
+                            gGL.getTexLevelParameteriv(0, GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, (S32*)&glTemp);
                             textureH = glTemp;
                         }
                         // </FS>ND>
@@ -1507,7 +1507,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         return;
                     }
 
-                    gGL.getTexImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGBA, GL_UNSIGNED_BYTE, temp);
+                    gGL.getTexImage(bound_target ? bound_target->getTexture(0) : 0, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGBA, GL_UNSIGNED_BYTE, temp);
                     GLenum error = gGL.getError();
                     if (error != GL_NO_ERROR)
                     {

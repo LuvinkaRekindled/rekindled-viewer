@@ -316,7 +316,7 @@ void LLSceneMonitor::capture()
         gGL.getTexUnit(0)->bind(&cur_target);
         gGL.bindFramebuffer(GL_READ_FRAMEBUFFER, 0); //point to the main frame buffer.
 
-        gGL.copyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight()); //copy the content
+        gGL.copyTexSubImage2D(cur_target.getTexture(), GL_TEXTURE_2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight()); //copy the content
 
         gGL.bindFramebuffer(GL_READ_FRAMEBUFFER, 0);
         gGL.bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
