@@ -712,6 +712,7 @@ struct LLGeometryBuild
     bool mHasMaterials = false;
     LLGeometryPassInfo mInfo;
     LLCullResult* mCull = nullptr;
+    unsigned mEpoch = 0;                // LLBuilderGuard::sEpoch when it was started
     F32 mView[16];                      // the matrices it was built for: the consumer checks them against the ones it has now
     F32 mProj[16];
     std::vector<LLVkMirror::GeoEntry> mEntries;
@@ -909,6 +910,7 @@ static void fill_geometry_build(LLGeometryBuild& b, U32 type, const LLGeometryPa
         b.mInfo = *materials;
     }
     b.mCull = cull;
+    b.mEpoch = LLBuilderGuard::sEpoch.load();
     memcpy(b.mView, gGLModelView, sizeof(b.mView));
     memcpy(b.mProj, glm::value_ptr(gGL.getProjectionMatrix()), sizeof(b.mProj));
 }
@@ -921,6 +923,11 @@ void LLRenderPass::kickGeometryBuild(U32 type, const LLGeometryPassInfo* materia
     {
         return;
     }
+    auto existing = sGeometryBuilds.find(geometry_build_key(type, materials));
+    if (existing != sGeometryBuilds.end() && existing->second->mCull == cull)
+    {
+        return;         // started earlier in the frame for this cull result (the early sort)
+    }
     std::shared_ptr<LLGeometryBuild> build = std::make_shared<LLGeometryBuild>();
     fill_geometry_build(*build, type, materials, cull);
     LLGeometryBuild* raw = build.get();
@@ -929,16 +936,21 @@ void LLRenderPass::kickGeometryBuild(U32 type, const LLGeometryPassInfo* materia
 }
 
 // static
-void LLRenderPass::finishGeometryBuilds()
+void LLRenderPass::finishGeometryBuilds(LLCullResult* cull)
 {
-    for (auto& entry : sGeometryBuilds)
+    for (auto it = sGeometryBuilds.begin(); it != sGeometryBuilds.end(); )
     {
-        if (entry.second->mJob)
+        if (cull && it->second->mCull != cull)
         {
-            entry.second->mJob->wait();        // they read the cull result, which is cleared at the start of the next frame
+            ++it;       // another view's (an impostor drawn in between): its own pass takes it
+            continue;
         }
+        if (it->second->mJob)
+        {
+            it->second->mJob->wait();        // they read the cull result, which is cleared at the start of the next frame
+        }
+        it = sGeometryBuilds.erase(it);
     }
-    sGeometryBuilds.clear();
 }
 
 // static
@@ -959,7 +971,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             LL_CPU_ZONE("packets: wait for the geometry builder");
             build->mJob->wait();
         }
-        if (build->mCull != cull || memcmp(build->mView, gGLModelView, sizeof(build->mView)) != 0
+        if (build->mCull != cull || build->mEpoch != LLBuilderGuard::sEpoch.load() || memcmp(build->mView, gGLModelView, sizeof(build->mView)) != 0
             || memcmp(build->mProj, glm::value_ptr(gGL.getProjectionMatrix()), sizeof(build->mProj)) != 0)
         {
             static bool said = false;

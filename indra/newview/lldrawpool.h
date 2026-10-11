@@ -130,6 +130,8 @@ public:
 };
 
 // <FS> what a materials pass adds to a geometry record: which maps its draws carry
+class LLCullResult;
+
 struct LLGeometryPassInfo
 {
     bool mNormalMap = false;
@@ -398,7 +400,7 @@ public:
     static void pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials = nullptr);
     // the builds of the geometry records start on the async pool at the top of renderGeomDeferred (the main thread draws its own things meanwhile), pushGeometryPackets takes them
     static void kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials = nullptr);
-    static void finishGeometryBuilds();
+    static void finishGeometryBuilds(LLCullResult* cull = nullptr);     // those of this cull result (all when null)
     void pushUntexturedBatch(LLDrawInfo& params);
     void pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_textures = false);
     static bool uploadMatrixPalette(LLDrawInfo& params);
