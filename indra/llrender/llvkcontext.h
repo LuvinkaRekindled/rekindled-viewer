@@ -281,6 +281,8 @@ public:
     void waitIdle();
     // "heap 0 (device) 3200/15000 MB; heap 1 (host) ..." : usage and budget of every memory heap, for the benchmark log
     std::string memoryBudgetText();
+    // video memory as the OS sees this process: what it uses and what it may use before the driver starts moving allocations to system memory (VK_EXT_memory_budget); the largest device-local heap
+    bool videoMemory(U64& usage_bytes, U64& budget_bytes);
     // size of the device-local memory heaps in bytes (the GPU's video memory)
     U64 deviceLocalBytes() const;
     size_t pendingDestroys() const;      // resources queued for destruction that no frame has released yet

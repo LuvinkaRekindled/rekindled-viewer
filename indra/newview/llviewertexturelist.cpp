@@ -66,6 +66,7 @@
 #include "llviewerwindow.h"
 #include "llwindow.h"
 #include "llprogressview.h"
+#include "llvkmirror.h"
 
 ////////////////////////////////////////////////////////////////////////////
 
@@ -867,7 +868,15 @@ void LLViewerTextureList::logSummary()
     LL_INFOS("VkTex") << "texture list: " << total << " images, " << with_gl << " with a GL texture, " << no_data << " with no data yet (" << fetching << " being fetched), " << missing
         << " refused by the server (missing), " << mCreateTextureList.size() << " decoded and waiting to become GL textures, " << mDownScaleQueue.size() << " to downscale; discard bias "
         << LLViewerTexture::sDesiredDiscardBias << "; the viewer counts " << LLImageGL::getTextureBytesAllocated() / (1024 * 1024) << " MB of textures and "
-        << LLVertexBuffer::getBytesAllocated() / (1024 * 1024) << " MB of vertex buffers against a free budget of " << LLViewerTexture::sFreeVRAMMegabytes << " MB" << LL_ENDL;
+        << LLVertexBuffer::getBytesAllocated() / (1024 * 1024) << " MB of vertex buffers against a free budget of " << LLViewerTexture::sFreeVRAMMegabytes << " MB";
+    {
+        U64 vk_used = 0, vk_budget = 0;
+        if (LLVkMirror::videoMemory(vk_used, vk_budget))
+        {
+            LL_CONT << "; the OS sees " << vk_used / (1024 * 1024) << " MB of video memory in use of a budget of " << vk_budget / (1024 * 1024) << " MB";
+        }
+    }
+    LL_CONT << LL_ENDL;
     extern U32 gEarlySortResorts;
     LL_INFOS("VkTex") << LLRenderPass::geometryBuildStats() << "; the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
 }

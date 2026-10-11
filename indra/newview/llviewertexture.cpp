@@ -63,6 +63,7 @@
 #include "lltexturecache.h"
 #include "llviewerwindow.h"
 #include "llwindow.h"
+#include "llvkmirror.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
 ///////////////////////////////////////////////////////////////////////////////
 
 // statics
@@ -539,7 +540,21 @@ void LLViewerTexture::updateClass()
     // Viewer can 'overshoot' target when scene changes, if viewer goes over budget it
     // can negatively impact performance, so leave 20% of a breathing room for
     // 'bias' calculation to kick in.
-    F32 target = llmax(llmin(budget - 512.f, budget * 0.8f), MIN_VRAM_BUDGET);
+    // <FS> With the Vulkan renderer the budget logic gets the real numbers. The estimate above counts GL bytes (RGB stored as RGBA, mips and padding are missed, ray tracing structures,
+    // render targets and the driver's own memory are not counted at all) and doubles them to make up for it; what the process really uses and what the OS lets it use before the driver
+    // moves allocations to system memory are known exactly (VK_EXT_memory_budget). The target keeps 10% of that budget (at least 768 MB) free for the bias calculation to work in.
+    F32 target;
+    U64 vk_used_bytes = 0, vk_budget_bytes = 0;
+    if (!max_vram_budget_enabled && LLVkMirror::videoMemory(vk_used_bytes, vk_budget_bytes))
+    {
+        used = (F32)(vk_used_bytes / (1024 * 1024));
+        budget = (F32)(vk_budget_bytes / (1024 * 1024));
+        target = llmax(llmin(budget - 768.f, budget * 0.9f), MIN_VRAM_BUDGET);
+    }
+    else
+    {
+        target = llmax(llmin(budget - 512.f, budget * 0.8f), MIN_VRAM_BUDGET);
+    }
     sFreeVRAMMegabytes = llmax(target - used, 0.f);
 
     F32 over_pct = (used - target) / target;
