@@ -2947,7 +2947,7 @@ void Renderer::applyState()
     if (mProgram->mUsesRt && mSet3Layout)
     {
         const VkDescriptorSet rt_set = Rt::descriptorSet(mSlot);
-        const U32 rt_offset = Rt::tableOffset();
+        const U32 rt_offset = Rt::tableOffset(mSlot);
         if (!mProgram->mBindless)
         {
             bindlessFlush();            // the masked casters' textures are read through the frame's table (set 2) whatever the program does with its own samplers
