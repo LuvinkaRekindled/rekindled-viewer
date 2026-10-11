@@ -400,6 +400,7 @@ void rebuild_sampling_view(Tex& t)
     VkDevice dev = ctx.getDevice();
     ctx.destroyLater([=]() { vkDestroyImageView(dev, old, nullptr); });
     t.mImage.mView = fresh;
+    t.mImage.mViewId = 0;       // a different view: the bindless table must not take it for the old one
 }
 
 struct Buf
@@ -2810,14 +2811,9 @@ static U32 packet_texture_slot(Renderer& r, U32 name)
         r.ensureLayout(t->mImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         r.setBarrierCause(prev_cause);
     }
-    const U32 epoch = r.bindlessEpoch();
-    if (t->mBindlessEpoch == epoch && t->mBindlessView == t->mImage.mView)
-    {
-        return t->mBindlessSlot;
-    }
-    const U32 slot = r.bindlessSlot(&t->mImage, texture_sampler(r, *t));
-    t->mBindlessEpoch = epoch;
-    t->mBindlessView = t->mImage.mView;
+    // the slot this texture held last time is tried first: slots stay with their texture from frame to frame (the table keeps them), the table only checks that the slot still holds this
+    // view and sampler and that this frame's set has it written
+    const U32 slot = r.bindlessSlotIn(0, &t->mImage, texture_sampler(r, *t), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, t->mBindlessSlot);
     t->mBindlessSlot = slot;
     return slot;
 }
@@ -4209,8 +4205,8 @@ void after_frame()
         {
             frames = 0;
             const Renderer::TexStats ts = Renderer::instance().takeTexStats();
-            LL_INFOS("VkTex") << "textures: " << resource_summary() << " | " << Context::instance().memoryBudgetText() << "| bindless slots used at most " << ts.mBindlessPeak << " of "
-                << Renderer::instance().bindlessCapacity() << " in a frame, refused " << ts.mBindlessRefused << " | texture images that could not be allocated " << ts.mAllocFailed << " ("
+            LL_INFOS("VkTex") << "textures: " << resource_summary() << " | " << Context::instance().memoryBudgetText() << "| bindless slots in use at most " << ts.mBindlessPeak << " of "
+                << Renderer::instance().bindlessCapacity() << ", " << ts.mBindlessWrites / 1800.0 << " descriptors written per frame, refused " << ts.mBindlessRefused << " | texture images that could not be allocated " << ts.mAllocFailed << " ("
                 << ts.mAllocFailedBytes / (1024 * 1024) << " MB, last " << ts.mAllocFailedLast[0] << "x" << ts.mAllocFailedLast[1] << ")" << LL_ENDL;
         }
     }
