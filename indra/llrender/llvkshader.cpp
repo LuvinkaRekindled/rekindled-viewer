@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_map>
 #include <sstream>
 
 #pragma warning(push, 0)
@@ -527,7 +528,10 @@ struct UniformEntry
     U32 mArraySize = 0;
     U32 mOffset = 0;
     U32 mSize = 0;
+    U8 mClass = UC_PASS;
 };
+
+const char* const kClassBlockNames[UC_COUNT] = { "LLLooseUniforms", "LLLooseDraw", "LLLooseMaterial", "LLLooseLight", "LLLooseSkin" };
 
 struct SamplerEntry
 {
@@ -559,6 +563,33 @@ struct StageWork
 };
 
 } // anonymous namespace
+
+//-----------------------------------------------------------------------------------------------------
+// uniform classes
+//-----------------------------------------------------------------------------------------------------
+// The class of a loose uniform: how often its value changes (doc/vulkan/uniform-classes.tsv, measured on the plaza). Everything not listed changes about once per pass.
+UniformClass uniformClassOf(const std::string& name)
+{
+    static const std::unordered_map<std::string, UniformClass> table = []()
+    {
+        std::unordered_map<std::string, UniformClass> t;
+        for (const char* n : { "modelview_projection_matrix", "modelview_matrix", "texture_matrix0", "normal_matrix", "texture_matrix1" }) t[n] = UC_DRAW;
+        for (const char* n : { "specular_color", "minimum_alpha", "env_intensity", "metallicFactor", "roughnessFactor", "texture_base_color_transform", "texture_emissive_transform",
+                               "texture_metallic_roughness_transform", "texture_normal_transform", "emissiveColor", "emissive_brightness", "color" }) t[n] = UC_MATERIAL;
+        for (const char* n : { "center", "noiseSine", "size", "box_center", "proj_mat", "proj_origin", "proj_p", "falloff", "box_size", "proj_range", "proj_near", "proj_n", "proj_focus",
+                               "proj_ambiance", "proj_lod", "proj_ambient_lod", "proj_shadow_idx", "lightnorm", "light", "light_col", "light_count", "proj_shadow_res",
+                               "spot_shadow_bias", "spot_shadow_offset" }) t[n] = UC_LIGHT;
+        t["matrixPalette"] = UC_SKIN;
+        return t;
+    }();
+    if (name.compare(0, 6, "ll_ti_") == 0)
+    {
+        return UC_DRAW;         // the texture slots of a bindless program change with every draw
+    }
+    auto it = table.find(name);
+    return it == table.end() ? UC_PASS : it->second;
+}
+
 
 //-----------------------------------------------------------------------------------------------------
 // compileProgram
@@ -879,8 +910,9 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         }
     }
 
-    // std140 layout of the loose uniform block
-    U32 offset = 0;
+    // std140 layout of the loose uniform blocks: one block per class, each with its own offsets
+    U32 class_offset[UC_COUNT] = {};
+    bool class_used[UC_COUNT] = {};
     for (UniformEntry& u : uniforms)
     {
         const TypeInfo ti = type_info(u.mType);
@@ -888,6 +920,9 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         {
             return fail("uniform '" + u.mName + "' has unsupported type '" + u.mType + "'");
         }
+        u.mClass = uniformClassOf(u.mName);
+        class_used[u.mClass] = true;
+        U32& offset = class_offset[u.mClass];
         if (u.mArraySize > 0)
         {
             const U32 stride = align_up(ti.mSize, 16);
@@ -903,15 +938,27 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         }
         offset += u.mSize;
     }
-    const U32 block_size = align_up(std::max<U32>(offset, 16), 16);
+    U32 block_sizes[UC_COUNT] = {};
+    for (U32 k = 0; k < UC_COUNT; ++k)
+    {
+        block_sizes[k] = class_used[k] ? align_up(std::max<U32>(class_offset[k], 16), 16) : 0;
+    }
 
     std::ostringstream block;
     std::ostringstream bool_defines;
-    if (!uniforms.empty())
+    for (U32 k = 0; k < UC_COUNT; ++k)
     {
-        block << "layout(std140, set = 0, binding = 0) uniform LLLooseUniforms\n{\n";
+        if (!class_used[k])
+        {
+            continue;
+        }
+        block << "layout(std140, set = 0, binding = " << UC_BINDING[k] << ") uniform " << kClassBlockNames[k] << "\n{\n";
         for (const UniformEntry& u : uniforms)
         {
+            if (u.mClass != k)
+            {
+                continue;
+            }
             const TypeInfo ti = type_info(u.mType);
             if (ti.mBool)
             {
@@ -1166,29 +1213,39 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
     {
         program.buildReflection(EShReflectionAllBlockVariables);
         std::map<std::string, int> reflected;   // member name -> byte offset
-        int reflected_block_size = -1;
+        int reflected_block_size[UC_COUNT];
+        for (U32 k = 0; k < UC_COUNT; ++k)
+        {
+            reflected_block_size[k] = -1;
+        }
         for (int bi = 0; bi < program.getNumUniformBlocks(); ++bi)
         {
-            if (program.getUniformBlock(bi).name == "LLLooseUniforms")
+            for (U32 k = 0; k < UC_COUNT; ++k)
             {
-                reflected_block_size = program.getUniformBlock(bi).size;
+                if (program.getUniformBlock(bi).name == kClassBlockNames[k])
+                {
+                    reflected_block_size[k] = program.getUniformBlock(bi).size;
+                }
             }
         }
         for (int ui = 0; ui < program.getNumUniformVariables(); ++ui)
         {
             const glslang::TObjectReflection& r = program.getUniform(ui);
-            const std::string prefix = "LLLooseUniforms.";
-            if (r.name.compare(0, prefix.size(), prefix) == 0)
+            for (U32 k = 0; k < UC_COUNT; ++k)
             {
-                std::string member = r.name.substr(prefix.size());
-                const size_t br = member.find('[');
-                if (br != std::string::npos)
+                const std::string prefix = std::string(kClassBlockNames[k]) + ".";
+                if (r.name.compare(0, prefix.size(), prefix) == 0)
                 {
-                    member.resize(br);
-                }
-                if (!reflected.count(member))
-                {
-                    reflected[member] = r.offset;
+                    std::string member = r.name.substr(prefix.size());
+                    const size_t br = member.find('[');
+                    if (br != std::string::npos)
+                    {
+                        member.resize(br);
+                    }
+                    if (!reflected.count(member))
+                    {
+                        reflected[member] = r.offset;
+                    }
                 }
             }
         }
@@ -1202,9 +1259,12 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                             + ", glslang " + std::to_string(it->second));
             }
         }
-        if (reflected_block_size >= 0 && (U32)reflected_block_size > block_size)
+        for (U32 k = 0; k < UC_COUNT; ++k)
         {
-            return fail("loose uniform block size mismatch: computed " + std::to_string(block_size) + ", glslang " + std::to_string(reflected_block_size));
+            if (reflected_block_size[k] >= 0 && (U32)reflected_block_size[k] > block_sizes[k])
+            {
+                return fail(std::string("loose uniform block size mismatch (") + kClassBlockNames[k] + "): computed " + std::to_string(block_sizes[k]) + ", glslang " + std::to_string(reflected_block_size[k]));
+            }
         }
     }
 
@@ -1234,11 +1294,15 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         lu.mType = u.mType;
         lu.mArraySize = u.mArraySize;
         lu.mOffset = u.mOffset;
+        lu.mClass = u.mClass;
         lu.mSize = u.mSize;
         lu.mInit = u.mInit;
         out.mUniforms.push_back(lu);
     }
-    out.mBlockSize = uniforms.empty() ? 0 : block_size;
+    for (U32 k = 0; k < UC_COUNT; ++k)
+    {
+        out.mBlockSizes[k] = block_sizes[k];
+    }
     for (const SamplerEntry& s : samplers)
     {
         out.mSamplers.push_back({ s.mName, s.mType, s.mBinding, s.mIndexUniform });
@@ -1270,7 +1334,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
 namespace
 {
 constexpr U32 kCacheMagic = 0x43535056;     // "VPSC"
-constexpr U32 kCacheVersion = 3;
+constexpr U32 kCacheVersion = 4;
 
 struct Hasher
 {
@@ -1386,10 +1450,10 @@ bool spirv_cache_load(const std::string& path, ProgramInfo& out)
     for (U32 i = 0; r.mOk && i < nu; ++i)
     {
         LooseUniform u;
-        u.mName = r.str(); u.mType = r.str(); u.mArraySize = r.u32(); u.mOffset = r.u32(); u.mSize = r.u32(); u.mInit = r.str();
+        u.mName = r.str(); u.mType = r.str(); u.mArraySize = r.u32(); u.mOffset = r.u32(); u.mSize = r.u32(); u.mInit = r.str(); u.mClass = (U8)r.u32();
         info.mUniforms.push_back(std::move(u));
     }
-    info.mBlockSize = r.u32();
+    for (U32 k = 0; k < UC_COUNT; ++k) info.mBlockSizes[k] = r.u32();
     const U32 ns = r.u32();
     for (U32 i = 0; r.mOk && i < ns; ++i)
     {
@@ -1416,9 +1480,9 @@ void spirv_cache_store(const std::string& path, const ProgramInfo& info)
     w.u32((U32)info.mUniforms.size());
     for (const LooseUniform& u : info.mUniforms)
     {
-        w.str(u.mName); w.str(u.mType); w.u32(u.mArraySize); w.u32(u.mOffset); w.u32(u.mSize); w.str(u.mInit);
+        w.str(u.mName); w.str(u.mType); w.u32(u.mArraySize); w.u32(u.mOffset); w.u32(u.mSize); w.str(u.mInit); w.u32(u.mClass);
     }
-    w.u32(info.mBlockSize);
+    for (U32 k = 0; k < UC_COUNT; ++k) w.u32(info.mBlockSizes[k]);
     w.u32((U32)info.mSamplers.size());
     for (const SamplerInfo& sm : info.mSamplers) { w.str(sm.mName); w.str(sm.mType); w.u32(sm.mBinding); w.u32((U32)sm.mIndexUniform); }
     w.u32(info.mBindless ? 1u : 0u);

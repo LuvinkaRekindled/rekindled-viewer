@@ -69,10 +69,6 @@ public:
     U32 getSamplerClass(size_t sampler_index) const { return sampler_index < mSamplerClass.size() ? mSamplerClass[sampler_index] : 0; }
 
     S32 getSamplerBinding(const std::string& name) const;
-    bool isDirty() const { return mDirty; }
-    const U8* getUniformData() const { return mShadow.data(); }
-    U32 getUniformSize() const { return (U32)mShadow.size(); }
-    void clearDirty() { mDirty = false; }
 
     // The pipeline for a draw into these target formats, or VK_NULL_HANDLE when it is not ready: the driver could only build it by compiling, so the build
     // runs on a background thread and the draw is dropped until it is done (LL_VK_PIPELINE_ASYNC=0 builds it right here, the old behaviour).
@@ -109,14 +105,14 @@ private:
     std::unordered_map<std::string, U32> mSamplerIndex;
     std::vector<U32> mSamplerUnits;
     std::vector<U8> mSamplerClass;      // 0 2D, 1 cube, 2 cube array, 3 2D array, 4 3D, 5 multisample (index into the GL per-unit texture bindings)
-    std::vector<U8> mShadow;
+    std::vector<U8> mShadow[UC_COUNT];   // the loose uniform block of each class (F2.3): written by the setters, copied to the uniform ring when its class changed
     bool mBindless = false;             // <FS> samplers are table slots written into mShadow (see ProgramInfo::mBindless)
     bool mUsesRt = false;               // <FS> traces rays against the frame's scene: the draw binds set 3 (ProgramInfo::mUsesRt)
     std::vector<U8> mSamplerTable;      // per sampler: the bindless table it reads (0 2D, 1 cube, 2 cube array, 3 2D shadow)
     std::vector<U32> mSlotOffset;       // per sampler: byte offset of its slot in mShadow
-    bool mDirty = true;
-    U32 mRingOffset = 0;                // where this program's block was last written in the uniform ring
-    U64 mRingFrame = ~0ull;             // frame number that offset belongs to
+    bool mDirty[UC_COUNT] = { true, true, true, true, true };
+    U32 mRingOffset[UC_COUNT] = {};     // where each class's block was last written in the uniform ring (0 for a class the program does not have)
+    U64 mRingFrame[UC_COUNT] = { ~0ull, ~0ull, ~0ull, ~0ull, ~0ull };     // frame number that offset belongs to
     std::map<PipelineKey, VkPipeline> mPipelines;
     PipelineKey mLastKey;               // the key of the last lookup, answered without searching the map
     VkPipeline mLastPipeline = VK_NULL_HANDLE;
@@ -579,7 +575,7 @@ private:
     bool mVertexInputDirty = true;
     S32 mAppliedViewport[4] = { -1, -1, -1, -1 };
     S32 mAppliedScissor[4] = { -1, -1, -1, -1 };
-    U32 mAppliedDynamicOffset = 0xFFFFFFFF;
+    U32 mAppliedDynamicOffset[UC_COUNT] = { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
     bool mSet0Bound = false;
 
     // queries (one pool of each kind per frame in flight)

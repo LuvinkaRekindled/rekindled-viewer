@@ -7,7 +7,8 @@
  * that, so each program (the set of stage objects the viewer links together) is preprocessed with glslang,
  * rewritten, linked with glslang and emitted as SPIR-V:
  *
- *   set 0, binding 0        one std140 block holding every loose uniform of the program (laid out here)
+ *   set 0, binding 0        the std140 block of the loose uniforms of the 'pass' class; the other classes (draw, material, light, skin) have blocks of their own at
+ *                           bindings 5-8 (UC_BINDING), each copied to the uniform ring only when one of its values changed (F2.3)
  *   set 0, binding 1 + n    the viewer's named uniform blocks (n = index in the viewer's block list)
  *   set 1, binding k        samplers, in order of first appearance (push descriptors)
  *   vertex inputs           location = index of the attribute in the viewer's reserved attribute list
@@ -46,12 +47,18 @@ struct ShaderEnv
     bool mBindless = false;                         // <FS> samplers become indices into the bindless tables (set 2) when every sampler of the program allows it
 };
 
+// How often a loose uniform changes (doc/vulkan/uniform-classes.tsv): each class is a block of its own, copied independently
+enum UniformClass : U8 { UC_PASS = 0, UC_DRAW, UC_MATERIAL, UC_LIGHT, UC_SKIN, UC_COUNT };
+constexpr U32 UC_BINDING[UC_COUNT] = { 0, 5, 6, 7, 8 };         // set 0 binding of each class's block (dynamic uniform buffers, in this order)
+UniformClass uniformClassOf(const std::string& name);
+
 struct LooseUniform
 {
     std::string mName;
     std::string mType;          // GLSL type name
     U32 mArraySize = 0;         // 0: not an array
-    U32 mOffset = 0;            // byte offset in the std140 block
+    U32 mOffset = 0;            // byte offset in the std140 block of its class
+    U8 mClass = UC_PASS;        // UniformClass
     U32 mSize = 0;              // bytes occupied (arrays include their padding)
     std::string mInit;          // initializer text from the shader, if any
 };
@@ -67,7 +74,7 @@ struct SamplerInfo
 struct ProgramInfo
 {
     std::vector<LooseUniform> mUniforms;
-    U32 mBlockSize = 0;
+    U32 mBlockSizes[UC_COUNT] = {};             // bytes of each class's block (0: the program has no uniform of that class)
     std::vector<SamplerInfo> mSamplers;
     bool mBindless = false;                     // the samplers are read through the bindless tables: the draw writes their slots into the loose uniform block
     bool mUsesRt = false;                       // traces rays against the frame's scene (set 3, binding 0: ll_rt_tlas): the draw binds the ray tracing descriptor set
