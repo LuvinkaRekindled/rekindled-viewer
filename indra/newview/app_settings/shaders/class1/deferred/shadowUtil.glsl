@@ -99,6 +99,12 @@ float pcfSpotShadow(sampler2DShadow shadowMap, vec4 stc, float bias_scale, vec2 
 // with the texture of the geometry record (set 3 binding 1) read through the frame's bindless table. Rigged avatars are not in the scene yet (PLAN-rt-shadows.md stage C).
 bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
 {
+    // record 0 (the header) carries the number of records this frame's table holds: a geometry that points past them (a structure that does not match its records) would make this
+    // function follow addresses from memory that is not a record, and a GPU fault loses the device for good. Such a hit is not a hit.
+    if (record == 0u || record >= ll_rt_geoms.g[0].first)
+    {
+        return false;
+    }
     LLRtGeom g = ll_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u)
     {
@@ -184,8 +190,16 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     rtSceneFrame(to_scene, camera);
     rayQueryEXT rq;
     rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, to_scene * origin + camera, 0.005, to_scene * light_dir, 2000.0);
+    // a ray is given a limited number of masked candidates: a structure that is not what it should be (garbage geometry spread over the scene) must cost a frame some shadows, not
+    // a GPU job that outlasts the 2 seconds the driver allows (VK_ERROR_DEVICE_LOST: the viewer cannot go on). The ray stops with what it has found: no hit, lit.
+    uint candidates = 0u;
     while (rayQueryProceedEXT(rq))
     {
+        if (++candidates > 96u)
+        {
+            rayQueryTerminateEXT(rq);
+            break;
+        }
         if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
         {
             uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
@@ -323,7 +337,15 @@ float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen)
     rtSceneFrame(x_to_scene, x_camera);
     rayQueryEXT xq;
     rayQueryInitializeEXT(xq, ll_rt_tlas, gl_RayFlagsOpaqueEXT, 0x04, x_camera, 0.01, x_to_scene * (pos / depth), depth + 3.0);
-    while (rayQueryProceedEXT(xq)) { }
+    uint x_steps = 0u;
+    while (rayQueryProceedEXT(xq))
+    {
+        if (++x_steps > 96u)
+        {
+            rayQueryTerminateEXT(xq);
+            break;
+        }
+    }
     if (rayQueryGetIntersectionTypeEXT(xq, true) == gl_RayQueryCommittedIntersectionNoneEXT)
     {
         return 0.0;
