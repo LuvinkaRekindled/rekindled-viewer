@@ -958,8 +958,8 @@ VkPipeline Program::getPipeline(const PipelineKey& key)
 
 Renderer& Renderer::instance()
 {
-    static Renderer sRenderer;
-    return sRenderer;
+    static Renderer* sRenderer = new Renderer;      // never destroyed (see sGL in llvkgl.cpp): late releases at process exit still reach it
+    return *sRenderer;
 }
 
 bool Renderer::createLayouts()

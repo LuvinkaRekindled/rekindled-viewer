@@ -1401,6 +1401,7 @@ void LLPipeline::releaseGLBuffers()
 
     mHeroProbeManager.cleanup(); // release hero probes
 
+    releaseShadowBuffers(); // <FS> the sun and spot shadow targets: nothing else released them at shutdown, they were left to the destructor of gPipeline when the process exits
     releaseScreenBuffers();
 
     gBumpImageList.destroyGL();

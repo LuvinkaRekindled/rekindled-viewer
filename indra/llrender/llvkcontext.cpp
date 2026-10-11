@@ -247,8 +247,8 @@ void Context::setObjectName(VkObjectType type, U64 handle, const std::string& na
 
 Context& Context::instance()
 {
-    static Context sContext;
-    return sContext;
+    static Context* sContext = new Context;         // never destroyed (see sGL in llvkgl.cpp): late releases at process exit still reach it
+    return *sContext;
 }
 
 bool Context::loadLoader()

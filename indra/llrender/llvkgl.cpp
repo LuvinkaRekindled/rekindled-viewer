@@ -495,7 +495,9 @@ struct GLState
     }
 };
 
-GLState sGL;
+// never destroyed: the viewer's own statics (gPipeline's render targets, the textures of the image lists) release their GL objects when the process exits, after this file's statics would
+// be gone, and every one of those calls lands here (the shutdown of the mirror itself is LLVkMirror::shutdown). A destroyed map under that call was the crash at exit.
+GLState& sGL = *new GLState;
 
 // <FS> flat lookup of the entries of sGL.mTextures / mBuffers by GL name (the names are small integers from the viewer's name pools). A hash lookup for every sampler of
 // every draw cost more than the rest of the draw's bookkeeping. The pointers are to the nodes of the maps (stable until erased); erasing forgets them.
