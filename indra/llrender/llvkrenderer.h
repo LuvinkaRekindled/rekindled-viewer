@@ -468,10 +468,11 @@ private:
         U32 mActiveCount = 0;
         VkDescriptorImageInfo mStandIn = {};            // slot 0
         std::vector<VkDescriptorImageInfo> mShadow[Context::FRAMES_IN_FLIGHT];      // what each frame's set holds by slot (a null view: nothing written yet)
+        std::vector<U64> mShadowId[Context::FRAMES_IN_FLIGHT];                      // ... and the identity (Image::mViewId) of the view it holds: handles can be reused by a later view
         std::vector<U32> mDirty;                        // slots to write into this frame's set at the next flush
-        std::vector<U64> mQueuedStamp;                  // by slot: the frame the slot was last queued in (not twice in a frame)
+        std::vector<U8> mQueued;                        // by slot: 1 while the slot is in mDirty
     };
-    void bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want);
+    void bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want, U64 want_id);
     void bindlessSweep(U64 min_idle_frames);
     BindlessTable mBindlessTbl[BINDLESS_TABLES];
     U32 mBindlessCap[BINDLESS_TABLES] = {};         // slots per table: the 2D table is the big one
