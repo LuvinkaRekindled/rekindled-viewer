@@ -136,8 +136,6 @@ struct Bench
     ULONGLONG mLastThreadTime = 0;
     U32 mNextSlot = 0;
     U32 mCurSlot = 0;
-    GLuint mGlQ[4][4] = {};
-    U32 mGlMask[4] = {};
     U32 mIter = 0;
     double mGlA = 0, mGlB = 0, mVkA = 0, mVkB = 0, mHook = 0, mWall = 0, mGlCpu = 0, mDispCpu = 0;
     U32 mGlN = 0, mVkAN = 0, mVkBN = 0, mWallN = 0, mDispN = 0;
@@ -154,7 +152,6 @@ void bench_init()
     }
     sBench.mInit = true;
     LLVkMirror::gPhaseTiming = !glonly_mode();
-    glGenQueries(16, &sBench.mGlQ[0][0]);
     if (glonly_mode())
     {
         LL_INFOS("VkBench") << "benchmark mode on, OpenGL only: no Vulkan work; GL GPU time and CPU time are measured at the viewer's natural pace" << LL_ENDL;
@@ -168,18 +165,6 @@ void bench_init()
     qi.queryCount = Bench::PHASE_QUERIES;
     LLVk::vkCreateQueryPool(ctx.getDevice(), &qi, nullptr, &sBench.mPhasePool);
     LL_INFOS("VkBench") << "benchmark mode on: GL and Vulkan GPU times are measured with the two APIs serialised" << LL_ENDL;
-}
-
-void bench_gl_stamp(U32 k)
-{
-    if (!sBench.mInit)
-    {
-        return;
-    }
-    const U32 s = sBench.mIter % 4;
-    glQueryCounter(sBench.mGlQ[s][k], GL_TIMESTAMP);
-    glFlush();
-    sBench.mGlMask[s] |= 1u << k;
 }
 
 void bench_log()
@@ -283,31 +268,11 @@ void bench_begin_iteration()
         sBench.mGlCpu += (double)LLVkGL::gGlTicks * 1000.0 / (double)freq.QuadPart;
         LLVkGL::gGlTicks = 0;
     }
-    if (sBench.mIter >= 2)      // results of the iteration before last are certainly available
-    {
-        const U32 s = (sBench.mIter - 2) % 4;
-        if (sBench.mGlMask[s] == 15)
-        {
-            GLint available = 0;
-            glGetQueryObjectiv(sBench.mGlQ[s][3], GL_QUERY_RESULT_AVAILABLE, &available);
-            if (available)
-            {
-                GLuint64 t[4];
-                for (U32 k = 0; k < 4; ++k) glGetQueryObjectui64v(sBench.mGlQ[s][k], GL_QUERY_RESULT, &t[k]);
-                sBench.mGlA += (double)(t[1] - t[0]) / 1.0e6;
-                sBench.mGlB += (double)(t[3] - t[2]) / 1.0e6;
-                ++sBench.mGlN;
-                sBench.mGlMask[s] = 0;
-            }
-        }
-    }
     ++sBench.mIter;
-    sBench.mGlMask[sBench.mIter % 4] = 0;
     if (sBench.mIter % 150 == 0)
     {
         bench_log();
     }
-    bench_gl_stamp(0);
 }
 
 void bench_vk_begin(VkCommandBuffer cmd, bool offscreen)
@@ -1025,8 +990,6 @@ void LLVkMirror::presentFrameImpl()
     if (glonly_mode())
     {
         bench_mark_present();
-        bench_gl_stamp(1);
-        bench_gl_stamp(2);
         return;
     }
     if (!sMirror.mReady || !sMirror.mInFrame || sMirror.mOffscreen)
@@ -1034,7 +997,6 @@ void LLVkMirror::presentFrameImpl()
         return;
     }
     bench_mark_present();
-    bench_gl_stamp(1);
     const bool held = sMirror.mHold;
     sMirror.mHold = false;
     endFrameImpl();
@@ -1094,11 +1056,6 @@ void LLVkMirror::endFrameImpl()
     std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
     if (glonly_mode())
     {
-        const U32 s = sBench.mIter % 4;
-        if (!sMirror.mHold && (sBench.mGlMask[s] & 4) && !(sBench.mGlMask[s] & 8))
-        {
-            bench_gl_stamp(3);
-        }
         return;
     }
     if (!sMirror.mReady || !sMirror.mInFrame || sMirror.mHold)
@@ -1117,7 +1074,6 @@ void LLVkMirror::endFrameImpl()
     {
         sMirror.mOffscreen = false;
         renderer.endFrame();
-        bench_gl_stamp(3);
         bench_vk_end(ctx.getCommandBuffer());
         ctx.endFrame(VK_NULL_HANDLE, VK_NULL_HANDLE);
         bench_vk_collect(true);
@@ -1161,7 +1117,6 @@ void LLVkMirror::endFrameImpl()
         }
     }
     bench_vk_collect(false);
-    bench_gl_stamp(2);
     ++sMirror.mFrames;
     LLVkGL::after_frame();
 }

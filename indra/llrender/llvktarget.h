@@ -25,6 +25,8 @@ namespace LLVkTarget
     void attach(U32 target, U32 slot, U32 texture);
     // clears the current target's colour and/or depth attachment (honouring the current colour / depth write masks and scissor, like a GL clear)
     void clear(bool color, bool depth, const F32* rgba);
+    // reads a rectangle of colour attachment 0 of 'target' (0: the back buffer) into dst, rows tightly packed (GL format / type pairs as for texture uploads); returns when the data is there
+    void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, void* dst);
 }
 
 namespace LLVkGL
@@ -33,6 +35,7 @@ namespace LLVkGL
     // makes 'fbo' the target draws go to (0: the back buffer); draw_buffers: colour attachments written (0: none, -1: the back buffer)
     void target_state(unsigned fbo, int draw_buffers);
     void clear_target(bool color, bool depth, const float* rgba);
+    void read_pixels(unsigned fbo, int x, int y, int width, int height, unsigned format, unsigned type, void* dst);
 }
 
 #endif // LL_VULKAN

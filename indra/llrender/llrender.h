@@ -474,14 +474,14 @@ public:
     void setStencilOp(U32 gl_sfail, U32 gl_dpfail, U32 gl_dppass);
     void setStencilMask(U32 mask);
     void readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data);
+    // queries (llvkquery.h): occlusion counts and GPU timers around draws; the kinds are the ones LLVkQuery::Kind names
+    enum QueryKind { QUERY_ANY_SAMPLES = 0, QUERY_SAMPLES_PASSED = 1, QUERY_TIME_ELAPSED = 2, QUERY_PRIMITIVES_GENERATED = 3 };
     void genQueries(S32 count, U32* ids);
     void deleteQueries(S32 count, const U32* ids);
-    void beginQuery(U32 gl_target, U32 id);
-    void endQuery(U32 gl_target);
-    void queryTimestamp(U32 id);
-    void getQueryObjectiv(U32 id, U32 gl_pname, S32* result);
-    void getQueryObjectuiv(U32 id, U32 gl_pname, U32* result);
-    void getQueryObjectui64v(U32 id, U32 gl_pname, U64* result);
+    void beginQuery(QueryKind kind, U32 id);
+    void endQuery(QueryKind kind);
+    bool queryReady(U32 id);
+    U64 queryResult(U32 id);
     void genBuffers(S32 count, U32* ids);
     void deleteBuffers(S32 count, const U32* ids);
     void bufferData(U32 buffer, U32 gl_target, S64 size, const void* data, U32 gl_usage);     // names the buffer: nothing is bound

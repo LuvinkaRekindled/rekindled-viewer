@@ -17,6 +17,7 @@
 #include "llvktex.h"
 #include "llvkbuf.h"
 #include "llvktarget.h"
+#include "llvkquery.h"
 
 #include <windows.h>
 #include <synchapi.h>
@@ -172,7 +173,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd" };
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
 // C4: texture upload costs on the main thread, and what was handed over without a copy
@@ -379,7 +380,7 @@ inline bool texIndependent(U16 op)
     {
     case CMD_TEX_IMAGE: case CMD_TEX_PARAMS_ID: case CMD_TEX_OP: case CMD_UNIFORM_BLOCK:
     case CMD_CONST_ATTRIB: case CMD_CLEAR: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
-    case OP_glBeginQuery: case OP_glEndQuery:
+    case CMD_QUERY_BEGIN: case CMD_QUERY_END:
     case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
         return true;
     default:
@@ -1578,6 +1579,86 @@ void clear(bool color, bool depth, const F32* rgba)
     LLVkAsync::clearTarget(color, depth, rgba);
 }
 
+void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, void* dst)
+{
+    if (!LLVkAsync::gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::read_pixels(target, x, y, width, height, format, type, dst);
+        return;
+    }
+    LLVkAsync::syncCall([&]() { LLVkGL::read_pixels(target, x, y, width, height, format, type, dst); });
+}
+
+}
+
+// ---- F1.6: queries by id (llvkquery.h) ----
+namespace LLVkQuery
+{
+
+void create(S32 count, U32* ids)
+{
+    glGenQueries(count, ids);
+}
+
+void destroy(S32 count, const U32* ids)
+{
+    glDeleteQueries(count, ids);
+}
+
+void begin(Kind kind, U32 id)
+{
+    if (!LLVkAsync::gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::query_begin(kind, id);
+        return;
+    }
+    LLVkAsync::queryBeginCmd(kind, id);
+}
+
+void end(Kind kind)
+{
+    if (!LLVkAsync::gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::query_end(kind);
+        return;
+    }
+    LLVkAsync::queryEndCmd(kind);
+}
+
+namespace
+{
+// 0x8867: result available, 0x8866: the result
+U64 query_read(U32 id, bool want_result)
+{
+    U64 value = 0;
+    if (LLVkAsync::gEnabled)
+    {
+        if (LLVkAsync::query_get(2, id, want_result ? 0x8866 : 0x8867, &value))
+        {
+            return value;
+        }
+        LLVkAsync::syncCall([&]() { LLVkGL::query_value(id, want_result, value); });
+        return value;
+    }
+    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    LLVkGL::query_value(id, want_result, value);
+    return value;
+}
+}
+
+bool ready(U32 id)
+{
+    return query_read(id, false) != 0;
+}
+
+U64 result(U32 id)
+{
+    return query_read(id, true);
+}
+
 }
 
 // ---- F1.3: buffers named by id (llvkbuf.h) ----
@@ -1622,14 +1703,6 @@ void bindUniformBlock(U32 binding, U32 id)
 namespace LLVkAsync
 {
 
-void enq_glPixelStorei(GLenum pname, GLint param)
-{
-    if (pname == 0x0CF5) tlsPixelStore.mUnpackAlignment = param;        // UNPACK_ALIGNMENT
-    else if (pname == 0x0CF2) tlsPixelStore.mUnpackRowLength = param;   // UNPACK_ROW_LENGTH
-    struct A { GLenum pname; GLint param; } a = { pname, param };
-    push(OP_glPixelStorei, &a, sizeof(a));
-}
-
 static void enq_ids(unsigned short op, GLsizei n, const GLuint* ids)
 {
     pushData(op, &n, sizeof(n), ids, (size_t)std::max(n, 0) * 4);
@@ -1645,24 +1718,18 @@ void enq_glTexParameteriv(GLenum target, GLenum pname, const GLint* params)
     pushData(OP_glTexParameteriv, &a, sizeof(a), params, params ? n * 4 : 0);
 }
 
-void enq_glBeginQuery(GLenum target, GLuint id)
+void queryBeginCmd(U32 kind, U32 id)
 {
-    // occlusion queries are the ones the viewer waits for; the others (timers) are answered as before
-    const bool occlusion = target == 0x8914 || target == 0x8C2F || target == 0x8D6A;
+    // occlusion queries are the ones the viewer waits for; the others (timers) are answered through the worker
+    const bool occlusion = kind <= LLVkQuery::SAMPLES_PASSED;
     queryMarkSync(id, !occlusion);
-    struct A { GLenum target; GLuint id; U64 gen; } a = { target, id, occlusion ? queryBegin(id) : 0 };
-    push(OP_glBeginQuery, &a, sizeof(a));
+    struct A { U32 mKind; U32 mId; U64 mGen; } a = { kind, id, occlusion ? queryBegin(id) : 0 };
+    push(CMD_QUERY_BEGIN, &a, sizeof(a));
 }
-void enq_glEndQuery(GLenum target)
+
+void queryEndCmd(U32 kind)
 {
-    struct A { GLenum target; } a = { target };
-    push(OP_glEndQuery, &a, sizeof(a));
-}
-void enq_glQueryCounter(GLuint id, GLenum target)
-{
-    queryMarkSync(id, true);
-    struct A { GLuint id; GLenum target; } a = { id, target };
-    push(OP_glQueryCounter, &a, sizeof(a));
+    push(CMD_QUERY_END, &kind, sizeof(kind));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -1785,27 +1852,9 @@ void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
         LLVkGL::on_glTexParameteriv(target, pname, (const GLint*)b.mData);
         break;
     }
-    case OP_glPixelStorei:
-    {
-        const GLenum pname = r.get<GLenum>();
-        const GLint param = r.get<GLint>();
-        LLVkGL::on_glPixelStorei(pname, param);
-        break;
-    }
     case OP_glTexImage2D: case OP_glTexImage3D: case OP_glTexSubImage2D: case OP_glTexSubImage3D: case OP_glCompressedTexImage2D:
         run_tex(op, r, flags);
         break;
-    case OP_glBeginQuery:
-    {
-        const GLenum t = r.get<GLenum>();
-        const GLuint id = r.get<GLuint>();
-        const U64 gen = r.get<U64>();
-        setWorkerQueryGen(id, gen);
-        LLVkGL::on_glBeginQuery(t, id);
-        break;
-    }
-    case OP_glEndQuery: { const GLenum t = r.get<GLenum>(); LLVkGL::on_glEndQuery(t); break; }
-    case OP_glQueryCounter: { const GLuint id = r.get<GLuint>(); const GLenum t = r.get<GLenum>(); LLVkGL::on_glQueryCounter(id, t); break; }
     default:
         LL_WARNS("VkAsync") << "unknown GL command " << op << LL_ENDL;
         break;
@@ -2072,6 +2121,15 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         break;
     }
     case CMD_UNIFORM_BLOCK: { const U32* a = (const U32*)payload; LLVkGL::uniform_block_bind(a[0], a[1]); break; }
+    case CMD_QUERY_BEGIN:
+    {
+        struct A { U32 mKind; U32 mId; U64 mGen; };
+        const A* a = (const A*)payload;
+        setWorkerQueryGen(a->mId, a->mGen);
+        LLVkGL::query_begin(a->mKind, a->mId);
+        break;
+    }
+    case CMD_QUERY_END: LLVkGL::query_end(*(const U32*)payload); break;
     case CMD_TEX_IMAGE: runImage(r, flags); break;
     case CMD_TEX_PARAMS_ID: runParams(r, flags); break;
     case CMD_TEX_OP: runOp(r); break;

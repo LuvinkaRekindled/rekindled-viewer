@@ -24,6 +24,7 @@
 #include "llvktex.h"
 #include "llvkbuf.h"
 #include "llvktarget.h"
+#include "llvkquery.h"
 #include "llvkdlss.h"
 #include "llvkrt.h"
 
@@ -547,8 +548,6 @@ struct PerContext
     GLuint mPixelUnpackBuffer = 0;
     GLint mUnpackAlignment = 4;
     GLint mUnpackRowLength = 0;
-    GLint mPackAlignment = 4;
-    GLint mPackRowLength = 0;
     GLuint mPixelPackBuffer = 0;
 };
 thread_local PerContext sCtxTls;
@@ -2129,13 +2128,6 @@ void slot_bind(unsigned unit, unsigned target, unsigned name)
     }
 }
 
-void on_glPixelStorei(GLenum pname, GLint param)
-{
-    if (pname == GL_UNPACK_ALIGNMENT) sCtx.mUnpackAlignment = param;
-    else if (pname == GL_UNPACK_ROW_LENGTH) sCtx.mUnpackRowLength = param;
-    else if (pname == 0x0D05) sCtx.mPackAlignment = param;          // PACK_ALIGNMENT
-    else if (pname == 0x0D02) sCtx.mPackRowLength = param;          // PACK_ROW_LENGTH
-}
 
 void on_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
 {
@@ -4790,14 +4782,14 @@ struct QueryRec
 {
     GLuint mName = 0;                   // the GL name the query was begun under
     U64 mGen = 0;                       // the async generation of that begin (0 in inline mode)
-    GLenum mTarget = 0;
+    U32 mKind = 0;                      // LLVkQuery::Kind
     bool mOcc = false, mTime = false;
     bool mVkHave = false, mHaveStart = false, mHaveEnd = false;
     U64 mVkValue = 0, mTsStart = 0, mTsEnd = 0;
 };
 std::map<U64, QueryRec> sQueries;               // by serial, oldest first
 std::unordered_map<GLuint, U64> sQueryLatest;   // GL query name -> serial of its latest begin
-std::map<GLenum, U64> sQueryActive;             // target -> serial of the query in progress
+std::map<U32, U64> sQueryActive;                 // kind -> serial of the query in progress
 U64 sQuerySerial = 0;
 
 bool queries_on()
@@ -4838,7 +4830,7 @@ void drain_query_results()
         {
             // hand the result to the main thread, which polls without waiting for this thread
             U64 v = rec.mVkValue;
-            if (rec.mOcc && rec.mTarget != 0x8914) v = v ? 1 : 0;
+            if (rec.mOcc && rec.mKind != LLVkQuery::SAMPLES_PASSED) v = v ? 1 : 0;
             LLVkAsync::queryPublish(rec.mName, rec.mGen, v);
         }
     }
@@ -4868,7 +4860,7 @@ void on_glDeleteQueries(GLsizei n, const GLuint* ids)
     for (GLsizei i = 0; i < n; ++i) sQueryLatest.erase(ids[i]);
 }
 
-void on_glBeginQuery(GLenum target, GLuint id)
+void query_begin(unsigned kind, unsigned id)
 {
     if (!queries_on() || !LLVkMirror::inFrame() || !Renderer::instance().isReady())
     {
@@ -4879,34 +4871,34 @@ void on_glBeginQuery(GLenum target, GLuint id)
     QueryRec rec;
     rec.mName = id;
     rec.mGen = LLVkAsync::gEnabled ? LLVkAsync::workerQueryGen(id) : 0;
-    rec.mTarget = target;
+    rec.mKind = kind;
     const U64 serial = ++sQuerySerial;
     bool ok = false;
-    if (target == 0x8914 || target == 0x8C2F || target == 0x8D6A)       // SAMPLES_PASSED, ANY_SAMPLES_PASSED(_CONSERVATIVE)
+    if (kind == LLVkQuery::ANY_SAMPLES || kind == LLVkQuery::SAMPLES_PASSED)
     {
         rec.mOcc = true;
         ok = r.queryBegin(serial);
     }
-    else if (target == 0x88BF)                                           // TIME_ELAPSED
+    else if (kind == LLVkQuery::TIME_ELAPSED)
     {
         rec.mTime = true;
         ok = r.queryTimestamp(serial, false);
     }
     if (!ok)
     {
-        sQueryActive.erase(target);
+        sQueryActive.erase(kind);
         if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
         return;
     }
     sQueries[serial] = rec;
     sQueryLatest[id] = serial;
-    sQueryActive[target] = serial;
+    sQueryActive[kind] = serial;
 }
 
-void on_glEndQuery(GLenum target)
+void query_end(unsigned kind)
 {
     if (!queries_on()) return;
-    auto act = sQueryActive.find(target);
+    auto act = sQueryActive.find(kind);
     if (act == sQueryActive.end() || !Renderer::instance().isReady())
     {
         return;
@@ -4920,36 +4912,11 @@ void on_glEndQuery(GLenum target)
     sQueryActive.erase(act);
 }
 
-void on_glQueryCounter(GLuint id, GLenum target)
-{
-    (void)id; (void)target;
-}
 
 
 
 
 // the running totals, for the log
-
-
-// ---- sync objects and which threads feed the mirror ----
-namespace
-{
-struct SyncRec { U64 mFrame = 0; bool mInFrame = false; U64 mFlush = 0; };
-std::unordered_map<GLsync, SyncRec> sSyncs;
-}
-
-
-
-void on_glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout)
-{
-    (void)sync; (void)flags; (void)timeout;      // server-side waits have no meaning here: the mirror owns the fences
-}
-
-void on_glDeleteSync(GLsync sync)
-{
-    sSyncs.erase(sync);
-}
-
 
 
 //-----------------------------------------------------------------------------------------------------
@@ -5066,7 +5033,7 @@ void set_worker_context(int id)
 namespace
 {
 
-U32 pack_alignment() { return sCtx.mPackAlignment > 0 ? (U32)sCtx.mPackAlignment : 4u; }
+U32 pack_alignment() { return 1; }        // readbacks hand back tightly packed rows
 
 // the questions the mirror could not answer and left to OpenGL (logged once each)
 void note_fallback(const char* fn, GLenum pname)
@@ -5231,7 +5198,7 @@ bool own_query_value(GLuint id, GLenum pname, U64& value)
     if (it != sQueries.end() && it->second.mVkHave)
     {
         value = it->second.mVkValue;
-        if (it->second.mOcc && it->second.mTarget != 0x8914) value = value ? 1 : 0;      // ANY_SAMPLES_PASSED is a boolean
+        if (it->second.mOcc && it->second.mKind != LLVkQuery::SAMPLES_PASSED) value = value ? 1 : 0;      // ANY_SAMPLES is a boolean
         LLVkAsync::queryResultTally(value != 0);
         sQueries.erase(it);
         sQueryLatest.erase(lat);
@@ -5333,94 +5300,28 @@ bool own_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLin
     return true;
 }
 
-bool own_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params)
+bool query_value(unsigned id, bool want_result, unsigned long long& value)
 {
-    U64 v = 0;
-    if (!params || !own_query_value(id, pname, v)) return false;
-    params[0] = (GLint)v;
-    return true;
+    return own_query_value(id, want_result ? 0x8866 : 0x8867, value);
 }
 
-bool own_glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* params)
-{
-    U64 v = 0;
-    if (!params || !own_query_value(id, pname, v)) return false;
-    params[0] = (GLuint)v;
-    return true;
-}
-
-bool own_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params)
-{
-    U64 v = 0;
-    if (!params || !own_query_value(id, pname, v)) return false;
-    params[0] = v;
-    return true;
-}
-
-bool own_glFenceSync(GLenum condition, GLbitfield flags, GLsync& out)
-{
-    static U64 counter = 1;
-    out = (GLsync)(uintptr_t)(++counter << 4);
-    SyncRec rec;
-    rec.mFrame = Context::instance().getFrameNumber();
-    rec.mInFrame = LLVkMirror::inFrame();
-    rec.mFlush = Renderer::instance().flushCount();
-    sSyncs[out] = rec;
-    return true;
-}
-
-bool own_glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout, GLenum& out)
-{
-    auto it = sSyncs.find(sync);
-    if (it == sSyncs.end())
-    {
-        out = 0x911A;       // ALREADY_SIGNALED
-        return true;
-    }
-    Context& ctx = Context::instance();
-    Renderer& r = Renderer::instance();
-    const SyncRec& rec = it->second;
-    const bool done = !rec.mInFrame || ctx.frameFinished(rec.mFrame) || r.flushCount() != rec.mFlush;
-    if (done)
-    {
-        out = 0x911A;
-        return true;
-    }
-    if (timeout == 0)
-    {
-        out = 0x911B;       // TIMEOUT_EXPIRED
-        return true;
-    }
-    // a blocking wait: finish what has been recorded so far (the frame goes on afterwards), or wait for the earlier frames
-    if (rec.mFrame == ctx.getFrameNumber() && LLVkMirror::inFrame())
-    {
-        r.flushAndRestart();
-    }
-    else
-    {
-        ctx.waitIdle();
-    }
-    out = 0x911C;           // CONDITION_SATISFIED
-    return true;
-}
-
-bool own_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels)
+void read_pixels(unsigned fbo, int x, int y, int width, int height, unsigned format, unsigned type, void* pixels)
 {
     U8* dst = pack_destination(pixels);
-    Image* img = read_image();
+    Image* img = read_image(fbo);
     std::vector<U8> texels;
     VkFormat fmt = VK_FORMAT_UNDEFINED;
     std::vector<float> rgba;
     if (width <= 0 || height <= 0)
     {
-        return true;
+        return;
     }
     if (!dst)
     {
-        return true;
+        return;
     }
     if (!img || !img->valid() || !fetch_rect_cached(*img, x, y, width, height, texels, fmt) || !decode_vk_texels(fmt, texels, (size_t)width * height, rgba)
-        || !encode_to_gl(rgba, width, height, format, type, dst, sCtx.mPackRowLength))
+        || !encode_to_gl(rgba, width, height, format, type, dst, 0))
     {
         static U32 reported = 0;
         if (reported++ < 5)
@@ -5435,7 +5336,7 @@ bool own_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum fo
             memset(dst, 0, stride * (size_t)height);
         }
     }
-    return true;
+    return;
 }
 
 bool own_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, void* pixels)
@@ -5540,9 +5441,6 @@ LLVkTex::PixelStore inline_pixel_store()
 }
 
 
-void on_glReadPixels(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*) {}
-void on_glGetTexImage(GLenum, GLint, GLenum, GLenum, void*) {}
-void on_glGetCompressedTexImage(GLenum, GLint, void*) {}
 
 
 void on_upscale(const LLVkMirror::UpscaleArgs& a)
