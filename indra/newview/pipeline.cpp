@@ -4583,6 +4583,103 @@ static void verify_shadow_static(const char* what, const LLPipeline::ShadowStati
     }
 }
 
+static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints);
+static U32 rt_avatar_kind(LLVOAvatar* avatar);
+
+struct LLPipeline::ShadowSkinBuild
+{
+    std::vector<LLVkMirror::ShadowSkinEntry> mEntries;
+    std::vector<F32> mMatrices;
+    std::vector<F32> mPalettes;
+    std::vector<LLDrawInfo*> mFallback;
+    size_t mPaletteCount = 0;
+};
+
+static void build_shadow_skin(LLCullResult& result, const U32* list, size_t count, LLPipeline::ShadowSkinBuild& out)
+{
+    out = LLPipeline::ShadowSkinBuild();
+    std::vector<LLVkMirror::ShadowSkinEntry>& entries = out.mEntries;
+    std::vector<F32>& matrices = out.mMatrices;
+    std::vector<F32>& palettes = out.mPalettes;
+    std::vector<LLDrawInfo*>& fallback = out.mFallback;
+    matrices.assign(16, 0.f);
+    matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
+                std::unordered_map<const void*, U32> matrix_numbers;
+        std::unordered_map<const F32*, U32> palette_offsets;
+        for (size_t t = 0; t < count; ++t)
+        {
+            auto begin = result.beginRenderMap(list[t] + 1);      // the rigged variant of a pass type is the next number
+            auto end = result.endRenderMap(list[t] + 1);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                if (!params->mCount || !params->mAvatar)
+                {
+                    continue;       // nothing to draw, or no palette: the old path draws nothing either
+                }
+                const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+                    || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || params->mSkinInfo.isNull())
+                {
+                    fallback.push_back(params);
+                    continue;
+                }
+                LLVkMirror::ShadowSkinEntry e = {};
+                if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                {
+                    continue;       // the skin is not loaded yet: not drawn, as before
+                }
+                e.mVertexBuffer = vb->getGLBuffer();
+                e.mIndexBuffer = vb->getGLIndices();
+                e.mFirstIndex = params->mOffset;
+                e.mIndexCount = params->mCount;
+                e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                e.mVertexFirst = params->mStart;
+                e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
+                e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
+                e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                {
+                    const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                    e.mAvatarPos[0] = avatar_position.mV[0];
+                    e.mAvatarPos[1] = avatar_position.mV[1];
+                    e.mAvatarPos[2] = avatar_position.mV[2];
+                    e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
+                }
+                if (params->mModelMatrix)
+                {
+                    auto it = matrix_numbers.find(params->mModelMatrix);
+                    if (it == matrix_numbers.end())
+                    {
+                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                        matrices.insert(matrices.end(), m, m + 16);
+                    }
+                    e.mMatrix = it->second;
+                }
+                entries.push_back(e);
+            }
+        }
+    out.mPaletteCount = palette_offsets.size();
+}
+
+static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPipeline::ShadowSkinBuild& b)
+{
+    static std::atomic<U32> checked{0}, bad{0};
+    ++checked;
+    const bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mPalettes == b.mPalettes && a.mFallback == b.mFallback && a.mPaletteCount == b.mPaletteCount
+        && (a.mEntries.empty() || memcmp(a.mEntries.data(), b.mEntries.data(), a.mEntries.size() * sizeof(a.mEntries[0])) == 0);
+    if (!same && bad++ < 8)
+    {
+        LL_WARNS("VkBuilder") << "builder verify: the rigged packets built in the job differ from the ones built now (" << a.mEntries.size() << " / " << b.mEntries.size()
+            << " entries, " << a.mPalettes.size() << " / " << b.mPalettes.size() << " palette floats)" << LL_ENDL;
+    }
+    if (checked % 600 == 1)
+    {
+        LL_INFOS("VkBuilder") << "builder verify: " << checked << " rigged builds compared, " << bad << " differed" << LL_ENDL;
+    }
+}
+
 // worker: the render map of the cascade (the loop in postSort)
 void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
 {
@@ -4656,6 +4753,8 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
     // the packets of the untextured static casters: built here, beside the other cascades; renderShadow records them
     prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
     build_shadow_static(result, kShadowStaticTypes, kShadowStaticTypeCount, *prep.mStaticBuild);
+    prep.mSkinBuild = std::make_shared<ShadowSkinBuild>();
+    build_shadow_skin(result, kShadowStaticTypes, kShadowStaticTypeCount, *prep.mSkinBuild);
 }
 
 // main thread, right before the cascade is drawn: the pools and the sky, which every cascade fills for itself
@@ -12050,70 +12149,27 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     };
 
     // <FS> Render packets for the rigged untextured casters: one entry per draw, with the weight4 array and the draw's matrix palette (sent with the record, once per distinct palette)
-    auto render_skin_packets = [this, rt_skip](const U32* list, size_t count)
+    auto render_skin_packets = [this, rt_skip, prepared, &result](const U32* list, size_t count)
     {
         LL_CPU_ZONE("packets: shadow rigged (build + record)");
-        std::vector<LLVkMirror::ShadowSkinEntry> entries;
-        std::vector<F32> matrices(16, 0.f);
-        matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
-        std::unordered_map<const void*, U32> matrix_numbers;
-        std::vector<F32> palettes;
-        std::unordered_map<const F32*, U32> palette_offsets;
-        std::vector<LLDrawInfo*> fallback;
-        for (size_t t = 0; t < count; ++t)
+        // as the static packets: built by the cascade's preparation job when there was one
+        ShadowSkinBuild built;
+        const ShadowSkinBuild* source = prepared ? prepared->mSkinBuild.get() : nullptr;
+        if (!source)
         {
-            auto* begin = beginRenderMap(list[t] + 1);      // the rigged variant of a pass type is the next number
-            auto* end = endRenderMap(list[t] + 1);
-            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-            {
-                LLDrawInfo* params = *i;
-                LLCullResult::increment_iterator(i, end);
-                if (!params->mCount || !params->mAvatar)
-                {
-                    continue;       // nothing to draw, or no palette: the old path draws nothing either
-                }
-                const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
-                    || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || params->mSkinInfo.isNull())
-                {
-                    fallback.push_back(params);
-                    continue;
-                }
-                LLVkMirror::ShadowSkinEntry e = {};
-                if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
-                {
-                    continue;       // the skin is not loaded yet: not drawn, as before
-                }
-                e.mVertexBuffer = vb->getGLBuffer();
-                e.mIndexBuffer = vb->getGLIndices();
-                e.mFirstIndex = params->mOffset;
-                e.mIndexCount = params->mCount;
-                e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-                e.mVertexFirst = params->mStart;
-                e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
-                e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
-                e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
-                {
-                    const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
-                    e.mAvatarPos[0] = avatar_position.mV[0];
-                    e.mAvatarPos[1] = avatar_position.mV[1];
-                    e.mAvatarPos[2] = avatar_position.mV[2];
-                    e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
-                }
-                if (params->mModelMatrix)
-                {
-                    auto it = matrix_numbers.find(params->mModelMatrix);
-                    if (it == matrix_numbers.end())
-                    {
-                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
-                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
-                        matrices.insert(matrices.end(), m, m + 16);
-                    }
-                    e.mMatrix = it->second;
-                }
-                entries.push_back(e);
-            }
+            build_shadow_skin(result, list, count, built);
+            source = &built;
         }
+        else if (builder_verify())
+        {
+            build_shadow_skin(result, list, count, built);
+            verify_shadow_skin(*source, built);
+        }
+        const std::vector<LLVkMirror::ShadowSkinEntry>& entries = source->mEntries;
+        const std::vector<F32>& matrices = source->mMatrices;
+        const std::vector<F32>& palettes = source->mPalettes;
+        const std::vector<LLDrawInfo*>& fallback = source->mFallback;
+        const size_t palette_count = source->mPaletteCount;
         if (!entries.empty())
         {
             LLVkMirror::ShadowPacketsHeader header;
@@ -12130,7 +12186,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
             LLVkMirror::shadowPackets(header, blob.data(), blob.size());
             gShadowDrawStats.mSkinEntries += entries.size();
-            gShadowDrawStats.mSkinPalettes += palette_offsets.size();
+            gShadowDrawStats.mSkinPalettes += palette_count;
             ++gShadowDrawStats.mSkinRecords;
         }
         if (!fallback.empty() && !rt_skip)

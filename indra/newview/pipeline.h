@@ -304,6 +304,7 @@ public:
     // threads (each with its own camera id and cull result); everything that touches shared or GL state (geometry rebuilds,
     // the draw pools) stays on the main thread. See generateSunShadow.
     struct ShadowStaticBuild;
+    struct ShadowSkinBuild;
     struct ShadowCascadePrep
     {
         S32 mIndex = 0;                         // cascade number
@@ -320,6 +321,7 @@ public:
         F32 mCullMargin = 0.f;
         std::vector<LLDrawable*> mDeferred;     // drawables of visible groups the workers left for the main thread (not volumes)
         std::shared_ptr<ShadowStaticBuild> mStaticBuild;    // the untextured static casters' packet entries, built by the render map job
+        std::shared_ptr<ShadowSkinBuild> mSkinBuild;        // the same for the rigged ones (their palettes included)
     };
     void shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions);
     void shadowPrepRenderMap(ShadowCascadePrep& prep);

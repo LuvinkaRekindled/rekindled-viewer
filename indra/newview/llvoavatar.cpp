@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include <mutex>
 #include "llgpuzonetimer.h"
 #include <chrono>
 
@@ -11639,6 +11640,11 @@ LLViewerTexture* LLVOAvatar::getBakedTexture(const U8 te)
 
 const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(const LLMeshSkinInfo* skin)
 {
+    // <FS> the packet builders of the shadow cascades run on pool threads and ask for palettes at the same time: the lazy cache (and the lazy joint matrices and joint numbers it fills in) is one at a time.
+    // The entry returned is not written again in this frame, so the callers read it without the lock.
+    static std::mutex palette_mutex;
+    std::lock_guard<std::mutex> palette_lock(palette_mutex);
+
     U64 hash = skin->mHash;
     MatrixPaletteCache& entry = mMatrixPaletteCache[hash];
 
