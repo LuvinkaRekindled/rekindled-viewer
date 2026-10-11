@@ -1770,7 +1770,11 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
             t.mDirty.clear();
         }
         mBindlessBound = false;
-        if (Context::instance().getFrameNumber() % 60 == 0)
+        if (!sBindlessPersistent.load(std::memory_order_relaxed))
+        {
+            bindlessSweep(0);           // switched off: nothing survives the frame (what the old per-frame table did)
+        }
+        else if (Context::instance().getFrameNumber() % 60 == 0)
         {
             bindlessSweep(360);
         }

@@ -30,6 +30,7 @@
 #include <sys/stat.h>
 
 #include "llviewertexturelist.h"
+#include "lldrawpool.h"
 
 #include "llagent.h"
 #include "llgl.h" // fot gathering stats from GL
@@ -867,6 +868,8 @@ void LLViewerTextureList::logSummary()
         << " refused by the server (missing), " << mCreateTextureList.size() << " decoded and waiting to become GL textures, " << mDownScaleQueue.size() << " to downscale; discard bias "
         << LLViewerTexture::sDesiredDiscardBias << "; the viewer counts " << LLImageGL::getTextureBytesAllocated() / (1024 * 1024) << " MB of textures and "
         << LLVertexBuffer::getBytesAllocated() / (1024 * 1024) << " MB of vertex buffers against a free budget of " << LLViewerTexture::sFreeVRAMMegabytes << " MB" << LL_ENDL;
+    extern U32 gEarlySortResorts;
+    LL_INFOS("VkTex") << LLRenderPass::geometryBuildStats() << "; the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
 }
 
 void LLViewerTextureList::updateImages(F32 max_time)

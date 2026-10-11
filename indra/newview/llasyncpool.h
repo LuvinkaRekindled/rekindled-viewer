@@ -114,6 +114,9 @@ public:
 
     typedef std::shared_ptr<Job> JobPtr;
 
+    // when set, jobs are not handed to the workers: each runs on the thread that waits for it (a live switch, see FSAsyncBuilders)
+    static inline std::atomic<bool> sRunInline{false};
+
     explicit LLAsyncPool(unsigned num_workers)
     {
         for (unsigned i = 0; i < num_workers; ++i)
@@ -148,12 +151,12 @@ public:
             }
             mPending.push_back(job);
             mPendingCount.fetch_add(1, std::memory_order_relaxed);
-            if (!mThreads.empty())
+            if (!mThreads.empty() && !sRunInline.load(std::memory_order_relaxed))
             {
                 mQueue.push_back(job);
             }
         }
-        if (!mThreads.empty())
+        if (!mThreads.empty() && !sRunInline.load(std::memory_order_relaxed))
         {
             mWake.notify_one();
         }

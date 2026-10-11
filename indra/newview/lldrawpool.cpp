@@ -895,6 +895,17 @@ static bool geometry_build_verify()
 }
 
 // the builds of this frame's deferred geometry passes (kickGeometryBuild .. finishGeometryBuilds), by pass type and the maps its program samples
+// what became of the geometry builds (main thread only), logged with the texture list line
+static U32 sGeoUsed = 0, sGeoInline = 0, sGeoRejectCull = 0, sGeoRejectEpoch = 0, sGeoRejectMatrix = 0;
+std::string LLRenderPass::geometryBuildStats()
+{
+    char buffer[220];
+    snprintf(buffer, sizeof(buffer), "geometry builds: %u taken from the pool, %u built on the spot (never started), rejected and rebuilt: %u other cull result, %u geometry changed, %u matrices changed",
+             sGeoUsed, sGeoInline, sGeoRejectCull, sGeoRejectEpoch, sGeoRejectMatrix);
+    sGeoUsed = sGeoInline = sGeoRejectCull = sGeoRejectEpoch = sGeoRejectMatrix = 0;
+    return buffer;
+}
+
 // keyed by the cull result as well as the pass: an impostor drawn in the middle of a frame is a second renderGeomDeferred with a cull result of its own and asks for the same passes, and
 // must not touch the main view's builds, which are still running on the async pool
 static std::map<std::pair<const void*, U32>, std::shared_ptr<LLGeometryBuild>> sGeometryBuilds;
@@ -974,9 +985,12 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             LL_CPU_ZONE("packets: wait for the geometry builder");
             build->mJob->wait();
         }
-        if (build->mCull != cull || build->mEpoch != LLBuilderGuard::sEpoch.load() || memcmp(build->mView, gGLModelView, sizeof(build->mView)) != 0
-            || memcmp(build->mProj, glm::value_ptr(gGL.getProjectionMatrix()), sizeof(build->mProj)) != 0)
+        const bool bad_cull = build->mCull != cull;
+        const bool bad_epoch = build->mEpoch != LLBuilderGuard::sEpoch.load();
+        const bool bad_matrix = memcmp(build->mView, gGLModelView, sizeof(build->mView)) != 0 || memcmp(build->mProj, glm::value_ptr(gGL.getProjectionMatrix()), sizeof(build->mProj)) != 0;
+        if (bad_cull || bad_epoch || bad_matrix)
         {
+            if (bad_cull) { ++sGeoRejectCull; } else if (bad_epoch) { ++sGeoRejectEpoch; } else { ++sGeoRejectMatrix; }
             static bool said = false;
             if (!said)
             {
@@ -986,11 +1000,16 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             build.reset();
         }
     }
+    if (build)
+    {
+        ++sGeoUsed;
+    }
     if (!build)
     {
         build = std::make_shared<LLGeometryBuild>();
         fill_geometry_build(*build, type, materials, cull);
         build_geometry(*build);
+        ++sGeoInline;
     }
     else if (geometry_build_verify())
     {
