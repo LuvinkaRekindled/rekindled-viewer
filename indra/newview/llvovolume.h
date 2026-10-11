@@ -471,6 +471,7 @@ private:
     S32         mLOD;
     bool        mLODChanged;
     bool        mSculptChanged;
+    bool        mSculptDeferred;        // <FS> the map of the sculpt could not be read back yet (the render worker is far behind): rebuilt again in a later frame
     bool        mColorChanged;
     F32         mSpotLightPriority;
     LLMatrix4   mRelativeXform;

@@ -565,6 +565,7 @@ U32 sUboBinding[4] = {};             // GL buffer bound to each named uniform bl
 std::map<U32, U32> sFrameSampled;    // textures read by draws this frame, with use counts
 std::map<U32, U32> sFrameSampledLast;
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
+U64 sOutOfRangeDraws = 0;           // indexed draws left out because their index or vertex range was not inside their buffers (since the start)
 U64 sDrawsTotal = 0;
 std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
 std::map<std::string, long long> sPhaseProgramTicks; // LL_VK_PHASES: the thread's time from the previous draw to this one (the state calls in between included), by program
@@ -2715,6 +2716,51 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
             }
         }
     }
+    {
+        // A draw reads the index range and the vertices up to `end` from the buffers it names; a range that is not inside them (a name that was recycled or deleted since the draw was recorded, a
+        // record from before a buffer changed) would read memory that belongs to something else, and a bad index there is a page fault: the device is lost. Left out and reported instead.
+        static const bool check_on = getenv("LL_VK_DRAW_RANGE_CHECK") == nullptr || atoi(getenv("LL_VK_DRAW_RANGE_CHECK")) != 0;
+        if (check_on)
+        {
+            const U64 index_end = (U64)indices + (U64)count * index_bytes;
+            const char* why = nullptr;
+            if (index_end > eit->second.mSize)
+            {
+                why = "index range outside the index buffer";
+            }
+            for (int a = 0; !why && a < 16; ++a)
+            {
+                const VaoAttrib& at = vao.mAttrib[a];
+                if (!at.mEnabled || !at.mBuffer)
+                {
+                    continue;
+                }
+                auto vit = sGL.mBuffers.find(at.mBuffer);
+                if (vit == sGL.mBuffers.end() || !vit->second.mVk.valid())
+                {
+                    continue;                   // (prepare_draw decides what a missing buffer means)
+                }
+                const U64 element = (U64)std::max<S32>(at.mSize, 1) * LLVkFormat::typeBytes(at.mType);
+                const U64 stride = at.mStride ? (U64)at.mStride : element;
+                if (at.mOffset + (U64)end * stride + element > vit->second.mSize)
+                {
+                    why = "vertex range outside a vertex buffer";
+                }
+            }
+            if (why)
+            {
+                static U32 logged = 0;
+                if (logged++ < 30)
+                {
+                    LL_WARNS("Vulkan") << "draw left out: " << why << " (program " << Renderer::instance().getProgram()->getName() << ", " << count << " indices at byte " << (U64)indices << " of a buffer of "
+                                       << eit->second.mSize << " bytes, highest vertex " << end << ")" << LL_ENDL;
+                }
+                ++sDrawsSkipped;
+                ++sOutOfRangeDraws;
+                return;
+            }
+        }
+    }
     ensure_buffers_current(used, vao.mElementBuffer);
     LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
@@ -4246,7 +4292,8 @@ void after_frame()
                     {
                         const Renderer::DrawDiag dd = Renderer::instance().takeDrawDiag();
                         LL_INFOS("VkPhases") << "indexed draws per frame: " << (double)dd.mDraws / frames << ", of which changed nothing but the draw command: " << (double)dd.mUnchanged / frames
-                                             << ", of which also continued the previous index range (mergeable): " << (double)dd.mMergeable / frames << LL_ENDL;
+                                             << ", of which also continued the previous index range (mergeable): " << (double)dd.mMergeable / frames
+                                             << "; draws left out for a range outside their buffers (since the start): " << sOutOfRangeDraws << LL_ENDL;
                     }
                     {
                         std::vector<std::pair<U32, std::string>> by_count;

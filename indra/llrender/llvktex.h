@@ -55,6 +55,8 @@ namespace LLVkTex
     // copies from a render target (source: its id, 0 = the back buffer; colour attachment 0) into the texture
     void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source);
     void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border, U32 source);
+    // false: a read back now would make the main thread wait for a worker that is far behind (or too many were made this frame): ask again in a later frame. Counts the read back when it says yes.
+    bool readbackAffordable();
     // answers (the caller waits for the worker)
     S32 levelParameter(U32 id, U32 target, S32 level, U32 pname);
     void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out);

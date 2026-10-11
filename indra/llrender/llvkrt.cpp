@@ -159,6 +159,7 @@ struct Tlas
 
 struct Stats
 {
+    U64 mDeadRefs = 0;                   // instances left out because they named a structure that was given up
     U64 mCeilingHeld = 0;                // new structures held back by the acceleration structure memory ceiling
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
     U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0, mSkinThrottled = 0;
@@ -372,6 +373,24 @@ U64 sVerifyScanCounter = 0;
 U64 sSceneCalls = 0;
 U64 sBlasStorageBytes = 0;
 U32 sLastInstances = 0;
+
+// Flight recorder: what the latest scene calls handed to the GPU, printed when a frame is stuck (the driver resets the device after 2 s and nothing can be asked of it afterwards).
+// The hangs seen so far were in the top-level structure build: what it is given (a count, transforms, references to bottom-level structures) is what this keeps.
+struct SceneRecord
+{
+    U64 mFrame = 0, mCall = 0, mSceneCall = 0;
+    U32 mInstances = 0, mCapacity = 0, mJobs = 0, mSkinChunks = 0, mRecords = 0;
+    U32 mBadTransforms = 0;             // instances with a NaN or infinite value in their transform
+    U32 mZeroRefs = 0;                  // instances that refer to no structure
+    U32 mUnknownRefs = 0;               // instances that refer to a structure this scene does not know (checked on the stuck frame only)
+    float mMaxTranslation = 0.f, mMaxScale = 0.f;
+    float mOrigin[3] = {}, mCamera[3] = {};
+    U64 mScratchNeeded = 0, mInstanceOffset = 0;
+    std::vector<U64> mRefs;             // the structure addresses of the instances (the latest call only is kept in full)
+    std::vector<U64> mWho;              // where each instance came from: the Group pointer (compared, never followed), or bit 63 + the avatar id
+};
+SceneRecord sRecent[6];
+U32 sRecentNext = 0;
 U32 sLastBuilt = 0;
 U32 sTableOffset = 0;
 U32 sSlotCacheName[16384] = {};
@@ -466,8 +485,17 @@ bool device_ready()
     return caps.mRt.mEnabled && caps.mRt.mUsable && vkCmdBuildAccelerationStructuresKHR && vkCreateAccelerationStructureKHR && vkGetAccelerationStructureDeviceAddressKHR;
 }
 
+// Structures given up lately (address -> the scene call that gave it up). The GPU must never be handed an instance that refers to one: the top-level build reads the structure it refers to, and a
+// destroyed one (its storage is given back after the frames in flight, then reused) is memory that belongs to something else. The instance lists are kept up to date when a structure goes,
+// this is the check that nothing slipped through: such an instance is left out of the scene and reported. An address that is made again is taken out.
+std::unordered_map<U64, U64> sDeadRecent;
+
 void drop_blas(Blas& b)
 {
+    if (b.mAddress)
+    {
+        sDeadRecent[b.mAddress] = sSceneCalls;
+    }
     if (b.mAs != VK_NULL_HANDLE)
     {
         Context& ctx = Context::instance();
@@ -827,6 +855,90 @@ bool active()
     return sInit && !sFailed;
 }
 
+// the flight recorder's report (Context::setHangReporter): the latest scene calls, oldest first; the newest one is also checked against the structures that exist now
+void report_recent_scene_calls()
+{
+    std::unordered_set<U64> known;
+    for (const auto& kv : sBlas)
+    {
+        if (kv.second.mAddress)
+        {
+            known.insert(kv.second.mAddress);
+        }
+    }
+    for (const auto& kv : sAvatars)
+    {
+        if (kv.second.mAddressNow)
+        {
+            known.insert(kv.second.mAddressNow);
+        }
+    }
+    LL_WARNS("VkRt") << "ray scene flight recorder (oldest first; " << known.size() << " structures exist now):" << LL_ENDL;
+    for (U32 k = 0; k < 6; ++k)
+    {
+        const U32 index = (sRecentNext + k) % 6;
+        SceneRecord& r = sRecent[index];
+        if (!r.mSceneCall)
+        {
+            continue;
+        }
+        if (k == 5)
+        {
+            U32 shown = 0;
+            for (size_t i = 0; i < r.mRefs.size(); ++i)
+            {
+                const U64 ref = r.mRefs[i];
+                if (!ref || known.find(ref) != known.end())
+                {
+                    continue;
+                }
+                ++r.mUnknownRefs;
+                if (shown++ >= 10)
+                {
+                    continue;
+                }
+                // where it came from, without following a pointer that may be gone: groups are found by comparing the pointer with the ones that exist
+                const U64 who = i < r.mWho.size() ? r.mWho[i] : 0;
+                std::string text = "avatar " + std::to_string((unsigned long long)(who & 0xFFFFFFFFull));
+                if (!(who >> 63))
+                {
+                    text = "a group that no longer exists";
+                    for (const auto& kv : sGroups)
+                    {
+                        if ((U64)(uintptr_t)&kv.second == who)
+                        {
+                            const Group& g = kv.second;
+                            auto in_map = sBlas.find(g.mKey);
+                            char b[40] = "";
+                            if (in_map != sBlas.end())
+                            {
+                                snprintf(b, sizeof(b), "0x%llx", (unsigned long long)in_map->second.mAddress);
+                            }
+                            text = "group vb " + std::to_string(g.mKey.mVb) + " ib " + std::to_string(g.mKey.mIb) + " kind " + std::to_string(g.mKey.mKind) + " matrix " + std::to_string(g.mKey.mMatrixId);
+                            if (in_map == sBlas.end())
+                            {
+                                text += ", its key is NOT in the structure registry";
+                            }
+                            else
+                            {
+                                text += std::string(g.mBlas == &in_map->second ? ", registry entry is its own" : ", its pointer is NOT the registry entry") + ", the registry entry's structure is now " + b;
+                            }
+                            break;
+                        }
+                    }
+                }
+                char addr[24];
+                snprintf(addr, sizeof(addr), "0x%llx", (unsigned long long)ref);
+                LL_WARNS("VkRt") << "  unknown structure in the newest scene call: instance " << i << " refers to " << addr << ", from " << text << LL_ENDL;
+            }
+        }
+        LL_WARNS("VkRt") << "  scene call " << r.mSceneCall << " frame " << r.mFrame << " slot call " << r.mCall << ": " << r.mInstances << " instances of " << r.mCapacity << ", " << r.mJobs
+                         << " structure builds, " << r.mSkinChunks << " skin chunks, " << r.mRecords << " records, scratch " << (r.mScratchNeeded >> 20) << " MB, instance buffer offset " << r.mInstanceOffset
+                         << "; transforms with NaN/Inf " << r.mBadTransforms << ", references 0: " << r.mZeroRefs << ", unknown (newest only): " << r.mUnknownRefs << "; largest translation " << r.mMaxTranslation
+                         << " scale " << r.mMaxScale << "; origin (" << r.mOrigin[0] << "," << r.mOrigin[1] << "," << r.mOrigin[2] << ") camera (" << r.mCamera[0] << "," << r.mCamera[1] << "," << r.mCamera[2] << ")" << LL_ENDL;
+    }
+}
+
 bool init(VkDescriptorSetLayout set_layout)
 {
     if (sInit)
@@ -912,6 +1024,7 @@ bool init(VkDescriptorSetLayout set_layout)
         return false;
     }
     sInit = true;
+    Context::instance().setHangReporter(report_recent_scene_calls);
     LL_INFOS("VkRt") << "ray tracing scene ready: mode " << shadowMode() << ", " << Context::frameCount() << " frame slots, " << kCalls << " scene calls per frame, instance capacity "
                      << kInstanceCapacity << ", geometry table " << (kTableBytes >> 10) << " KB per call" << LL_ENDL;
     return true;
@@ -1245,6 +1358,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     auto t_lap = t0;
 
     // forget structures that were not named for a while, and casters nothing has named for a few frames
+    for (auto dead = sDeadRecent.begin(); dead != sDeadRecent.end();)
+    {
+        dead = (sSceneCalls - dead->second > 24) ? sDeadRecent.erase(dead) : std::next(dead);
+    }
     const bool as_pressure = sBlasStorageBytes >= as_ceiling / 10 * 9;
     if (sSceneCalls % (as_pressure ? 30 : 120) == 0)
     {
@@ -1826,6 +1943,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             VkAccelerationStructureDeviceAddressInfoKHR ai = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR };
             ai.accelerationStructure = job.mNewAs;
             job.mNewAddress = vkGetAccelerationStructureDeviceAddressKHR(dev, &ai);
+            sDeadRecent.erase(job.mNewAddress);
             job.mInfo.dstAccelerationStructure = job.mNewAs;
             job.mScratchSize = sizes.buildScratchSize;
             sBlasStorageBytes += job.mNewStorage.mSize;
@@ -2114,6 +2232,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             VkAccelerationStructureDeviceAddressInfoKHR ai = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR };
             ai.accelerationStructure = job.mNewAs;
             job.mNewAddress = vkGetAccelerationStructureDeviceAddressKHR(dev, &ai);
+            sDeadRecent.erase(job.mNewAddress);
             job.mInfo.dstAccelerationStructure = job.mNewAs;
             job.mScratchSize = sizes.buildScratchSize;
             sBlasStorageBytes += job.mNewStorage.mSize;
@@ -2545,6 +2664,12 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     std::vector<VkAccelerationStructureInstanceKHR> instances;
     instances.reserve(sInstArray.size() + 256);
     instances.assign(sInstArray.begin(), sInstArray.end());
+    std::vector<U64> who;                       // where each instance came from (flight recorder)
+    who.reserve(sInstArray.size() + 256);
+    for (size_t i = 0; i < sInstArray.size(); ++i)
+    {
+        who.push_back(i < sInstGroup.size() ? (U64)(uintptr_t)sInstGroup[i] : 0ull);
+    }
     sub_lap(2);
 
     auto slot_lookup = [&](U32 name) -> U32
@@ -2755,6 +2880,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         inst.accelerationStructureReference = a.mAddressNow;
         instances.push_back(inst);
+        who.push_back((1ull << 63) | (U64)kv.first);
     }
 
     table[0].mFirst = records;      // the header says how many records the table holds: the shader leaves a record index past it alone
@@ -2802,10 +2928,89 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         ++sStats.mFailed;
         return;
     }
+    if (!sDeadRecent.empty())
+    {
+        // no instance may name a structure that was given up lately (see sDeadRecent)
+        size_t kept = 0;
+        U32 removed = 0;
+        for (size_t i = 0; i < instances.size(); ++i)
+        {
+            auto dead = sDeadRecent.find(instances[i].accelerationStructureReference);
+            if (dead != sDeadRecent.end())
+            {
+                static U32 logged = 0;
+                if (logged++ < 30)
+                {
+                    LL_WARNS("VkRt") << "instance " << i << " of " << instances.size() << " names the structure 0x" << std::hex << (unsigned long long)instances[i].accelerationStructureReference << std::dec
+                                     << " that was given up " << (sSceneCalls - dead->second) << " scene calls ago: left out of the scene" << LL_ENDL;
+                }
+                ++removed;
+                continue;
+            }
+            who[kept] = who[i];
+            instances[kept++] = instances[i];
+        }
+        if (removed)
+        {
+            instances.resize(kept);
+            who.resize(kept);
+            sStats.mDeadRefs += removed;
+        }
+    }
     const VkDeviceSize instance_offset = (VkDeviceSize)call * 64ull * tlas.mCapacity;
     if (!instances.empty())
     {
         memcpy((U8*)tlas.mInstances.mMapped + instance_offset, instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
+    }
+    {
+        // flight recorder (see sRecent): a pass over the instances, a few microseconds per thousand
+        SceneRecord& r = sRecent[sRecentNext++ % 6];
+        r.mFrame = frame_now;
+        r.mCall = call;
+        r.mSceneCall = sSceneCalls;
+        r.mInstances = (U32)instances.size();
+        r.mCapacity = tlas.mCapacity;
+        r.mJobs = (U32)jobs.size();
+        r.mSkinChunks = (U32)skin_chunks.size();
+        r.mRecords = records;
+        r.mBadTransforms = r.mZeroRefs = r.mUnknownRefs = 0;
+        r.mMaxTranslation = r.mMaxScale = 0.f;
+        r.mScratchNeeded = scratch_needed;
+        r.mInstanceOffset = instance_offset;
+        for (int i = 0; i < 3; ++i)
+        {
+            r.mOrigin[i] = sOrigin[i];
+            r.mCamera[i] = cam[i];
+        }
+        r.mWho = who;
+        r.mRefs.clear();
+        r.mRefs.reserve(instances.size());
+        for (const VkAccelerationStructureInstanceKHR& inst : instances)
+        {
+            bool bad = false;
+            for (int row = 0; row < 3; ++row)
+            {
+                for (int col = 0; col < 4; ++col)
+                {
+                    const float v = inst.transform.matrix[row][col];
+                    if (!std::isfinite(v))
+                    {
+                        bad = true;
+                    }
+                    else if (col == 3)
+                    {
+                        r.mMaxTranslation = std::max(r.mMaxTranslation, fabsf(v));
+                    }
+                    else
+                    {
+                        r.mMaxScale = std::max(r.mMaxScale, fabsf(v));
+                    }
+                }
+            }
+            r.mBadTransforms += bad ? 1u : 0u;
+            r.mZeroRefs += inst.accelerationStructureReference == 0 ? 1u : 0u;
+            r.mRefs.push_back(inst.accelerationStructureReference);
+        }
     }
     VkDeviceAddress skin_jobs_address = 0, skin_chunks_address = 0;
     if (!skin_chunks.empty())
@@ -3133,7 +3338,7 @@ std::string report(double frames)
     }
     {
         const size_t used = strlen(buf);
-        snprintf(buf + used, sizeof(buf) - used, ", structure memory ceiling %llu MB (new structures held back by it: %.2f/frame)", (unsigned long long)env_u64("LL_VK_RT_MAX_MB", 1536), (double)s.mCeilingHeld / f);
+        snprintf(buf + used, sizeof(buf) - used, ", structure memory ceiling %llu MB (new structures held back by it: %.2f/frame), instances left out for naming a dead structure: %llu", (unsigned long long)env_u64("LL_VK_RT_MAX_MB", 1536), (double)s.mCeilingHeld / f, (unsigned long long)s.mDeadRefs);
     }
     return buf;
 }

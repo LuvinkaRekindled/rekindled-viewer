@@ -37,6 +37,8 @@ namespace LLVkAsync
     void pushData(unsigned short op, const void* args, unsigned size, const void* data, size_t data_size);
     // runs fn on the worker after everything queued before it, and waits for it to finish
     void syncCall(const std::function<void()>& fn);
+    // bytes the worker has yet to replay (what the main thread has written and the worker has not taken): a syncCall waits for all of it
+    unsigned long long backlogBytes();
 
     // ---- typed records (N1b): state the viewer knows as a whole is written as one record instead of a run of GL-shaped calls ----
     // true on the thread that writes the queue while the worker runs
