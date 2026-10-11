@@ -2719,7 +2719,7 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
     {
         // A draw reads the index range and the vertices up to `end` from the buffers it names; a range that is not inside them (a name that was recycled or deleted since the draw was recorded, a
         // record from before a buffer changed) would read memory that belongs to something else, and a bad index there is a page fault: the device is lost. Left out and reported instead.
-        static const bool check_on = getenv("LL_VK_DRAW_RANGE_CHECK") == nullptr || atoi(getenv("LL_VK_DRAW_RANGE_CHECK")) != 0;
+        static const bool check_on = getenv("LL_VK_DRAW_RANGE_CHECK") ? atoi(getenv("LL_VK_DRAW_RANGE_CHECK")) != 0 : (getenv("LL_VK_DIAG") && atoi(getenv("LL_VK_DIAG")) != 0);       // (on with LL_VK_DIAG)
         if (check_on)
         {
             const U64 index_end = (U64)indices + (U64)count * index_bytes;

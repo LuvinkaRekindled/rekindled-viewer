@@ -486,6 +486,14 @@ void mat_mul(const F32* a, const F32* b, F32* out)
 
 const F32 kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 
+// LL_VK_DIAG=1 turns on the diagnostics that cost CPU time on the worker: the flight recorder (with the instance sources), the instance filter, the draw ring, the draw range check, the
+// stall logger. Off by default: the launcher run-viewer-clean-rtshadows-diag.bat sets it together with the timers (LL_VK_PHASES, LL_VK_OPSTATS).
+bool diag_on()
+{
+    static const bool on = []() { const char* e = getenv("LL_VK_DIAG"); return e && e[0] && atoi(e) != 0; }();
+    return on;
+}
+
 bool device_ready()
 {
     const Capabilities& caps = Context::instance().getCaps();
@@ -1046,7 +1054,10 @@ bool init(VkDescriptorSetLayout set_layout)
         return false;
     }
     sInit = true;
-    Context::instance().setHangReporter(report_recent_scene_calls);
+    if (diag_on())
+    {
+        Context::instance().setHangReporter(report_recent_scene_calls);
+    }
     LL_INFOS("VkRt") << "ray tracing scene ready: mode " << shadowMode() << ", " << Context::frameCount() << " frame slots, " << kCalls << " scene calls per frame, instance capacity "
                      << kInstanceCapacity << ", geometry table " << (kTableBytes >> 10) << " KB per call" << LL_ENDL;
     return true;
@@ -2705,10 +2716,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     instances.reserve(sInstArray.size() + 256);
     instances.assign(sInstArray.begin(), sInstArray.end());
     std::vector<U64> who;                       // where each instance came from (flight recorder)
-    who.reserve(sInstArray.size() + 256);
-    for (size_t i = 0; i < sInstArray.size(); ++i)
+    if (diag_on())
     {
-        who.push_back(i < sInstGroup.size() ? (U64)(uintptr_t)sInstGroup[i] : 0ull);
+        who.reserve(sInstArray.size() + 256);
+        for (size_t i = 0; i < sInstArray.size(); ++i)
+        {
+            who.push_back(i < sInstGroup.size() ? (U64)(uintptr_t)sInstGroup[i] : 0ull);
+        }
     }
     sub_lap(2);
 
@@ -2920,7 +2934,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         inst.accelerationStructureReference = a.mAddressNow;
         instances.push_back(inst);
-        who.push_back((1ull << 63) | (U64)kv.first);
+        if (diag_on())
+        {
+            who.push_back((1ull << 63) | (U64)kv.first);
+        }
     }
 
     table[0].mFirst = records;      // the header says how many records the table holds: the shader leaves a record index past it alone
@@ -2968,7 +2985,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         ++sStats.mFailed;
         return;
     }
-    if (!sDeadRecent.empty())
+    if (diag_on() && !sDeadRecent.empty())
     {
         // no instance may name a structure that was given up lately (see sDeadRecent)
         size_t kept = 0;
@@ -3002,6 +3019,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     {
         memcpy((U8*)tlas.mInstances.mMapped + instance_offset, instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
     }
+    if (diag_on())
     {
         // flight recorder (see sRecent): a pass over the instances, a few microseconds per thousand
         SceneRecord& r = sRecent[sRecentNext++ % 6];

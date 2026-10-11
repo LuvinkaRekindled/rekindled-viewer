@@ -7304,6 +7304,11 @@ void stall_watch_thread()
 
 void stall_watch_note(std::string_view state)
 {
+    static const bool on = []() { const char* e = getenv("LL_VK_DIAG"); return e && e[0] && atoi(e) != 0; }();       // off unless LL_VK_DIAG=1 (run-viewer-clean-rtshadows-diag.bat)
+    if (!on)
+    {
+        return;
+    }
     const U64 now = stall_now_us();
 #if LL_WINDOWS
     static std::once_flag started;
