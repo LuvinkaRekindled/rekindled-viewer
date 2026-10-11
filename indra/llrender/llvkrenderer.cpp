@@ -2200,14 +2200,15 @@ void Renderer::beginRenderingIfNeeded()
     mDrawStampCount = 0;
     if (LLVkMirror::gPhaseTiming)
     {
-        // LL_VK_DRAW_STAMPS: 0 none, 1 (default) the passes of avatar impostors (a small target (under 100000 texels), four colour attachments and depth), 2 every pass
+        // LL_VK_DRAW_STAMPS: 0 none, 1 (default) the passes of avatar impostors (four colour attachments and depth, up to 1024 per side, not the 343x343 probe faces), 2 every pass
         static const U64 draw_stamp_mode = []() { const char* e = getenv("LL_VK_DRAW_STAMPS"); return e && e[0] ? (U64)atoi(e) : 1ull; }();
         const Image* ref = mColorCount ? mColorTargets[0] : mDepthTarget;
         if (ref && draw_stamp_mode)
         {
             const U32 w = ref->mExtent.width, h = ref->mExtent.height;
-            // (the reflection probe faces are 343x343 with the same attachments: told apart by size; an impostor target can be square, 64x64 hung a frame once)
-            mDrawStamps = draw_stamp_mode >= 2 || (mColorCount == 4 && mDepthTarget && (U64)w * h < 100000 && w <= 512 && h <= 512);
+            // (the reflection probe faces are 343x343 with the same attachments: told apart by that size. An impostor target can be any size from a few texels to 512x512, square or not: hangs and
+            // faults have been in 128x256, 64x64 and 512x512)
+            mDrawStamps = draw_stamp_mode >= 2 || (mColorCount == 4 && mDepthTarget && w <= 1024 && h <= 1024 && !(w == 343 && h == 343));
         }
         mPassTag = Context::stampTag(describeTarget());
         mBeginTag = mZoneStack.empty() ? mPassTag : mZoneStack.back();
