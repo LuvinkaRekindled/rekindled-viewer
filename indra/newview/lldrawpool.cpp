@@ -59,6 +59,7 @@
 #include "glm/glm.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include <chrono>
+#include <map>
 
 S32 LLDrawPool::sNumDrawPools = 0;
 
@@ -894,7 +895,9 @@ static bool geometry_build_verify()
 }
 
 // the builds of this frame's deferred geometry passes (kickGeometryBuild .. finishGeometryBuilds), by pass type and the maps its program samples
-static std::unordered_map<U32, std::shared_ptr<LLGeometryBuild>> sGeometryBuilds;
+// keyed by the cull result as well as the pass: an impostor drawn in the middle of a frame is a second renderGeomDeferred with a cull result of its own and asks for the same passes, and
+// must not touch the main view's builds, which are still running on the async pool
+static std::map<std::pair<const void*, U32>, std::shared_ptr<LLGeometryBuild>> sGeometryBuilds;
 
 static U32 geometry_build_key(U32 type, const LLGeometryPassInfo* materials)
 {
@@ -923,16 +926,16 @@ void LLRenderPass::kickGeometryBuild(U32 type, const LLGeometryPassInfo* materia
     {
         return;
     }
-    auto existing = sGeometryBuilds.find(geometry_build_key(type, materials));
-    if (existing != sGeometryBuilds.end() && existing->second->mCull == cull)
+    const std::pair<const void*, U32> key((const void*)cull, geometry_build_key(type, materials));
+    if (sGeometryBuilds.find(key) != sGeometryBuilds.end())
     {
         return;         // started earlier in the frame for this cull result (the early sort)
     }
     std::shared_ptr<LLGeometryBuild> build = std::make_shared<LLGeometryBuild>();
     fill_geometry_build(*build, type, materials, cull);
-    LLGeometryBuild* raw = build.get();
-    build->mJob = LLAsyncPool::shared().submit([raw]() { build_geometry(*raw); });
-    sGeometryBuilds[geometry_build_key(type, materials)] = build;
+    // the job keeps the build alive itself (it is written by the pool thread until the job is done, whatever happens to the registry); the job lets go of it when it has run
+    build->mJob = LLAsyncPool::shared().submit([build]() { build_geometry(*build); });
+    sGeometryBuilds[key] = build;
 }
 
 // static
@@ -940,7 +943,7 @@ void LLRenderPass::finishGeometryBuilds(LLCullResult* cull)
 {
     for (auto it = sGeometryBuilds.begin(); it != sGeometryBuilds.end(); )
     {
-        if (cull && it->second->mCull != cull)
+        if (cull && it->first.first != (const void*)cull)
         {
             ++it;       // another view's (an impostor drawn in between): its own pass takes it
             continue;
@@ -962,7 +965,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
 
     // the build started for this pass at the top of the frame, if it is still the right one (same cull result, same matrices: anything else is built here, now)
     std::shared_ptr<LLGeometryBuild> build;
-    auto found = sGeometryBuilds.find(geometry_build_key(type, materials));
+    auto found = sGeometryBuilds.find(std::make_pair((const void*)cull, geometry_build_key(type, materials)));
     if (found != sGeometryBuilds.end())
     {
         build = found->second;

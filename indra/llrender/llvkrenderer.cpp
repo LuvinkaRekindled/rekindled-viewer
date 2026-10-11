@@ -1635,8 +1635,9 @@ void Renderer::shutdown()
     mBindlessPool = VK_NULL_HANDLE;
     for (BindlessTable& t : mBindlessTbl)
     {
-        t.mMap.clear(); t.mSlots.clear(); t.mFree.clear(); t.mDirty.clear(); t.mQueuedStamp.clear(); t.mActiveCount = 0;
+        t.mMap.clear(); t.mSlots.clear(); t.mFree.clear(); t.mDirty.clear(); t.mQueued.clear(); t.mActiveCount = 0;
         for (auto& sh : t.mShadow) sh.clear();
+        for (auto& sh : t.mShadowId) sh.clear();
     }
     mProgram = nullptr;
     mReady = false;
@@ -1763,7 +1764,11 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     if (mSet2Layout)
     {
         // the table is persistent: what the last frames queued but never flushed is not needed (no draw used it), and slots nobody used for a long while are given back
-        for (BindlessTable& t : mBindlessTbl) { t.mDirty.clear(); }
+        for (BindlessTable& t : mBindlessTbl)
+        {
+            for (U32 slot : t.mDirty) { t.mQueued[slot] = 0; }
+            t.mDirty.clear();
+        }
         mBindlessBound = false;
         if (Context::instance().getFrameNumber() % 60 == 0)
         {
@@ -2329,34 +2334,38 @@ void Renderer::bindlessStart()
         if (tbl.mShadow[mSlot].empty())
         {
             tbl.mShadow[mSlot].resize(1);       // nothing written yet: the stand-in goes in with the first flush of this set
+            tbl.mShadowId[mSlot].assign(1, ~0ull);
         }
-        bindlessQueue(tbl, 0, tbl.mStandIn);
+        bindlessQueue(tbl, 0, tbl.mStandIn, 0);
     }
 }
 
-// the slot is wanted in this frame's set with this content: queue a write unless the set already holds it
-void Renderer::bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want)
+// the slot is wanted in this frame's set with this content: queue a write unless the set already holds exactly it. "Exactly" means the same view OBJECT (its id), not the same handle
+// value: a destroyed view's handle can be given to the next view, and a set entry that still describes the old object would show the old image's memory.
+void Renderer::bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want, U64 want_id)
 {
     std::vector<VkDescriptorImageInfo>& sh = tbl.mShadow[mSlot];
+    std::vector<U64>& ids = tbl.mShadowId[mSlot];
     if (sh.size() <= slot)
     {
-        sh.resize(std::max<size_t>((size_t)slot + 1, sh.size() + sh.size() / 2 + 64));
+        const size_t n = std::max<size_t>((size_t)slot + 1, sh.size() + sh.size() / 2 + 64);
+        sh.resize(n);
+        ids.resize(n, ~0ull);
     }
     const VkDescriptorImageInfo& have = sh[slot];
-    if (have.imageView == want.imageView && have.sampler == want.sampler && have.imageLayout == want.imageLayout)
+    if (ids[slot] == want_id && have.imageView == want.imageView && have.sampler == want.sampler && have.imageLayout == want.imageLayout)
     {
         return;
     }
-    if (tbl.mQueuedStamp.size() <= slot)
+    if (tbl.mQueued.size() <= slot)
     {
-        tbl.mQueuedStamp.resize(std::max<size_t>((size_t)slot + 1, tbl.mQueuedStamp.size() + tbl.mQueuedStamp.size() / 2 + 64), 0);
+        tbl.mQueued.resize(std::max<size_t>((size_t)slot + 1, tbl.mQueued.size() + tbl.mQueued.size() / 2 + 64), 0);
     }
-    const U64 frame = Context::instance().getFrameNumber() + 1;       // (+1: frame 0 must not look like "never queued")
-    if (tbl.mQueuedStamp[slot] == frame)
+    if (tbl.mQueued[slot])
     {
         return;
     }
-    tbl.mQueuedStamp[slot] = frame;
+    tbl.mQueued[slot] = 1;
     tbl.mDirty.push_back(slot);
 }
 
@@ -2451,7 +2460,7 @@ U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImage
     BindlessSlot& s = tbl.mSlots[slot];
     s.mInfo.imageView = image->mView;           // (the same key, the same view; kept in step in case the handle was ever replaced under the id)
     s.mLastUsed = Context::instance().getFrameNumber();
-    bindlessQueue(tbl, slot, s.mInfo);
+    bindlessQueue(tbl, slot, s.mInfo, s.mKey.mViewId);
     return slot;
 }
 
@@ -2474,10 +2483,13 @@ void Renderer::bindlessFlush()
         }
         std::sort(tbl.mDirty.begin(), tbl.mDirty.end());
         std::vector<VkDescriptorImageInfo>& sh = tbl.mShadow[mSlot];
+        std::vector<U64>& ids = tbl.mShadowId[mSlot];
         for (size_t i = 0; i < tbl.mDirty.size(); ++i)
         {
             const U32 slot = tbl.mDirty[i];
             sh[slot] = slot == 0 ? tbl.mStandIn : tbl.mSlots[slot].mInfo;
+            ids[slot] = slot == 0 ? 0 : tbl.mSlots[slot].mKey.mViewId;
+            tbl.mQueued[slot] = 0;
         }
         // contiguous runs of slots are one write
         for (size_t i = 0; i < tbl.mDirty.size(); )
