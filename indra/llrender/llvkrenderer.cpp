@@ -371,7 +371,10 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         }
     }
 
-    mShadow.assign(std::max<U32>(info.mBlockSize, 16), 0);
+    for (U32 k = 0; k < UC_COUNT; ++k)
+    {
+        mShadow[k].assign(info.mBlockSizes[k], 0);
+    }
     for (size_t i = 0; i < mInfo.mUniforms.size(); ++i)
     {
         mUniformIndex[mInfo.mUniforms[i].mName] = i;
@@ -382,7 +385,7 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
     {
         if (mBindless)
         {
-            const bool ok = s.mIndexUniform >= 0 && (size_t)s.mIndexUniform < mInfo.mUniforms.size();
+            const bool ok = s.mIndexUniform >= 0 && (size_t)s.mIndexUniform < mInfo.mUniforms.size() && mInfo.mUniforms[s.mIndexUniform].mClass == UC_DRAW;
             mSlotOffset.push_back(ok ? mInfo.mUniforms[s.mIndexUniform].mOffset : 0);
             mSamplerTable.push_back(s.mType == "samplerCube" ? 1 : s.mType == "samplerCubeArray" ? 2 : s.mType == "sampler2DShadow" ? 3 : 0);
             if (!ok)
@@ -466,9 +469,9 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
             for (U32 e = 0; e < elements && (size_t)(e + 1) * comps <= values.size(); ++e)
             {
                 const U32 offset = u.mOffset + e * stride;
-                if (offset + comps * 4 <= mShadow.size())
+                if (offset + comps * 4 <= mShadow[u.mClass].size())
                 {
-                    memcpy(&mShadow[offset], &values[(size_t)e * comps], comps * 4);
+                    memcpy(&mShadow[u.mClass][offset], &values[(size_t)e * comps], comps * 4);
                 }
             }
             continue;
@@ -482,12 +485,12 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         if (u.mType == "float")
         {
             const F32 f = (F32)v;
-            memcpy(&mShadow[u.mOffset], &f, 4);
+            memcpy(&mShadow[u.mClass][u.mOffset], &f, 4);
         }
         else if (u.mType == "int" || u.mType == "uint" || u.mType == "bool")
         {
             const S32 i = (S32)v;
-            memcpy(&mShadow[u.mOffset], &i, 4);
+            memcpy(&mShadow[u.mClass][u.mOffset], &i, 4);
         }
     }
 
@@ -496,7 +499,7 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         static FILE* dump = getenv("LL_VK_UNIFORM_DUMP") ? fopen("<work>/run-logs/program-uniforms.txt", "wb") : nullptr;
         if (dump)
         {
-            fprintf(dump, "PROGRAM\t%s\tbindless=%d\tblock=%zu\n", mName.c_str(), mBindless ? 1 : 0, mShadow.size());
+            fprintf(dump, "PROGRAM\t%s\tbindless=%d\tblock=%zu\n", mName.c_str(), mBindless ? 1 : 0, mShadow[0].size() + mShadow[1].size() + mShadow[2].size() + mShadow[3].size() + mShadow[4].size());
             for (const LooseUniform& u : mInfo.mUniforms)
             {
                 fprintf(dump, "U\t%s\t%s\t%u\t%u\n", u.mName.c_str(), u.mType.c_str(), u.mArraySize, u.mSize);
@@ -509,7 +512,7 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         }
     }
     mValid = true;
-    mDirty = true;
+    for (bool& d : mDirty) d = true;
     {
         std::lock_guard<std::mutex> lock(gPipeDoneMutex);
         gLivePrograms.insert(this);
@@ -568,7 +571,7 @@ void Program::destroy()
     mUniformIndex.clear();
     mSamplerIndex.clear();
     mSamplerUnits.clear();
-    mShadow.clear();
+    for (auto& sh : mShadow) sh.clear();
     mValid = false;
 }
 
@@ -603,7 +606,7 @@ void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components,
     bool changed = false;
     for (U32 i = 0; i < count; ++i)
     {
-        U8* dst = &mShadow[u.mOffset + i * stride];
+        U8* dst = &mShadow[u.mClass][u.mOffset + i * stride];
         if (memcmp(dst, data + i * components, components * 4) != 0)
         {
             memcpy(dst, data + i * components, components * 4);
@@ -612,7 +615,7 @@ void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components,
     }
     if (changed)
     {
-        mDirty = true;      // the viewer re-sends the same values before most draws: only real changes cost an upload
+        mDirty[u.mClass] = true;      // the viewer re-sends the same values before most draws: only real changes cost an upload
     }
     if (LLVkMirror::gPhaseTiming) note_uniform_write(mName, u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
 }
@@ -644,7 +647,7 @@ void Program::setMatricesAt(size_t uniform_index, const F32* data, U32 columns, 
     {
         for (U32 c = 0; c < columns; ++c)
         {
-            U8* dst = &mShadow[u.mOffset + m * stride + c * 16];
+            U8* dst = &mShadow[u.mClass][u.mOffset + m * stride + c * 16];
             const F32* src = data + (m * columns + c) * rows;
             if (memcmp(dst, src, rows * 4) != 0)
             {
@@ -655,7 +658,7 @@ void Program::setMatricesAt(size_t uniform_index, const F32* data, U32 columns, 
     }
     if (changed)
     {
-        mDirty = true;
+        mDirty[u.mClass] = true;
     }
     if (LLVkMirror::gPhaseTiming) note_uniform_write(mName, u, changed, count * columns * 16);
 }
@@ -964,21 +967,17 @@ bool Renderer::createLayouts()
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
 
-    // set 0: binding 0 = loose uniforms (dynamic offset into the ring), bindings 1..4 = the named uniform blocks
-    VkDescriptorSetLayoutBinding b0[5] = {};
-    b0[0].binding = 0;
-    b0[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    b0[0].descriptorCount = 1;
-    b0[0].stageFlags = all_graphics_stages();
-    for (U32 i = 1; i < 5; ++i)
+    // set 0: bindings 0 and 5..8 = the loose uniform blocks of the classes (dynamic offsets into the ring), bindings 1..4 = the named uniform blocks
+    VkDescriptorSetLayoutBinding b0[9] = {};
+    for (U32 i = 0; i < 9; ++i)
     {
         b0[i].binding = i;
-        b0[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        b0[i].descriptorType = (i == 0 || i >= 5) ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         b0[i].descriptorCount = 1;
         b0[i].stageFlags = all_graphics_stages();
     }
     VkDescriptorSetLayoutCreateInfo l0 = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    l0.bindingCount = 5;
+    l0.bindingCount = 9;
     l0.pBindings = b0;
     if (!vk_ok(vkCreateDescriptorSetLayout(dev, &l0, nullptr, &mSet0Layout), "set 0 layout"))
     {
@@ -1131,7 +1130,7 @@ bool Renderer::init()
     // descriptor sets for set 0
     VkDescriptorPoolSize sizes[2] = {};
     sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    sizes[0].descriptorCount = Context::frameCount();
+    sizes[0].descriptorCount = UC_COUNT * Context::frameCount();
     sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     sizes[1].descriptorCount = 4 * Context::frameCount();
     VkDescriptorPoolCreateInfo pi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -1156,17 +1155,18 @@ bool Renderer::init()
     {
         VkDescriptorBufferInfo ring = { mRing[i].mBuffer, 0, MAX_UNIFORM_RANGE };
         VkDescriptorBufferInfo dummy = { mDummyUbo.mBuffer, 0, DUMMY_UBO_BYTES };
-        VkWriteDescriptorSet w[5] = {};
-        for (U32 b = 0; b < 5; ++b)
+        VkWriteDescriptorSet w[9] = {};
+        for (U32 b = 0; b < 9; ++b)
         {
+            const bool dynamic = b == 0 || b >= 5;
             w[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             w[b].dstSet = mSet0[i];
             w[b].dstBinding = b;
             w[b].descriptorCount = 1;
-            w[b].descriptorType = b == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            w[b].pBufferInfo = b == 0 ? &ring : &dummy;
+            w[b].descriptorType = dynamic ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            w[b].pBufferInfo = dynamic ? &ring : &dummy;
         }
-        vkUpdateDescriptorSets(dev, 5, w, 0, nullptr);
+        vkUpdateDescriptorSets(dev, 9, w, 0, nullptr);
     }
 
     // <FS> the ray tracing scene (an empty structure per frame slot until the viewer asks for one)
@@ -1180,7 +1180,7 @@ bool Renderer::init()
     {
         VkDescriptorPoolSize usizes[2] = {};
         usizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-        usizes[0].descriptorCount = UBO_SET_POOL;
+        usizes[0].descriptorCount = UC_COUNT * UBO_SET_POOL;
         usizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         usizes[1].descriptorCount = 4 * UBO_SET_POOL;
         VkDescriptorPoolCreateInfo upi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -1755,7 +1755,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
         mBindlessBound = false;
     }
     mRtBoundSet = VK_NULL_HANDLE;
-    mAppliedDynamicOffset = 0xFFFFFFFF;
+    for (U32& o : mAppliedDynamicOffset) o = 0xFFFFFFFF;
     mAppliedSet0 = VK_NULL_HANDLE;
     mAppliedVertexInputValid = false;
     memset(mPushed, 0, sizeof(mPushed));
@@ -1770,7 +1770,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mDepthTarget = nullptr;
     if (mProgram)
     {
-        mProgram->mDirty = true;     // uniforms must be re-uploaded into this frame's ring
+        for (bool& d : mProgram->mDirty) d = true;     // uniforms must be re-uploaded into this frame's ring
     }
 }
 
@@ -2779,11 +2779,11 @@ void Renderer::applyState()
                 slot = bindlessSlotIn(table, img, sampler, layout);
                 cached = { img->mView, sampler, layout, table, mBindlessEpoch, slot };
             }
-            U32* dst = (U32*)(mProgram->mShadow.data() + mProgram->mSlotOffset[k]);
+            U32* dst = (U32*)(mProgram->mShadow[UC_DRAW].data() + mProgram->mSlotOffset[k]);
             if (*dst != slot)
             {
                 *dst = slot;
-                mProgram->mDirty = true;
+                mProgram->mDirty[UC_DRAW] = true;
             }
         }
         bindlessFlush();
@@ -2805,45 +2805,51 @@ void Renderer::applyState()
         }
     }
     LLVkMirror::phaseLap(LLVkMirror::PH_A_SAMP, lap_t);
-    // 6. loose uniforms: copy this program's shadow into the ring when it changed (or on its first use this frame)
-    if (mProgram->mDirty || mProgram->mRingFrame != Context::instance().getFrameNumber())
+    // 6. loose uniforms, class by class: copy a class's shadow into the ring when it changed (or on its first use this frame)
+    const U64 frame_number = Context::instance().getFrameNumber();
+    for (U32 k = 0; k < UC_COUNT; ++k)
     {
+        std::vector<U8>& shadow = mProgram->mShadow[k];
+        if (shadow.empty() || (!mProgram->mDirty[k] && mProgram->mRingFrame[k] == frame_number))
+        {
+            continue;
+        }
         LLVkMirror::gLastLap = 302;
-        const U32 ring_offset = allocUniform((U32)mProgram->mShadow.size());
+        const U32 ring_offset = allocUniform((U32)shadow.size());
         LLVkMirror::gLastLap = 303;
         if (ring_offset == 0xFFFFFFFFu)
         {
             mDrawBlocked = true;
             return;
         }
-        mProgram->mRingOffset = ring_offset;
+        mProgram->mRingOffset[k] = ring_offset;
         mDiagChanged = true;
         if (LLVkMirror::gPhaseTiming)
         {
             UniformCopyStat& us = mUniformCopies[mProgram];
             ++us.mCopies;
-            us.mBytes += mProgram->mShadow.size();
-            if (mProgram->mDirty) ++us.mDirty;
+            us.mBytes += shadow.size();
+            if (mProgram->mDirty[k]) ++us.mDirty;
             {
-                // would the block be the same as one already copied in this frame for this program?
-                const U64* w = (const U64*)mProgram->mShadow.data();
-                U64 h = 1469598103934665603ull ^ (U64)(size_t)mProgram;
-                for (size_t k = 0; k < mProgram->mShadow.size() / 8; ++k)
+                // would the block be the same as one already copied in this frame for this program and class?
+                const U64* w = (const U64*)shadow.data();
+                U64 h = 1469598103934665603ull ^ (U64)(size_t)mProgram ^ ((U64)k << 56);
+                for (size_t m = 0; m < shadow.size() / 8; ++m)
                 {
-                    h = (h ^ w[k]) * 1099511628211ull;
+                    h = (h ^ w[m]) * 1099511628211ull;
                     h ^= h >> 29;
                 }
-                if (mUniformSeenFrame != Context::instance().getFrameNumber())
+                if (mUniformSeenFrame != frame_number)
                 {
-                    mUniformSeenFrame = Context::instance().getFrameNumber();
+                    mUniformSeenFrame = frame_number;
                     mUniformSeen.clear();
                 }
                 if (!mUniformSeen.insert(h).second) ++us.mSame;
             }
         }
-        memcpy((U8*)mRing[mSlot].mMapped + mProgram->mRingOffset, mProgram->mShadow.data(), mProgram->mShadow.size());
-        mProgram->mRingFrame = Context::instance().getFrameNumber();
-        mProgram->mDirty = false;
+        memcpy((U8*)mRing[mSlot].mMapped + ring_offset, shadow.data(), shadow.size());
+        mProgram->mRingFrame[k] = frame_number;
+        mProgram->mDirty[k] = false;
     }
     LLVkMirror::gLastLap = 304;
     VkDescriptorSet set0 = mSet0[mSlot];
@@ -2852,11 +2858,19 @@ void Renderer::applyState()
         set0 = uboSet();
     }
     LLVkMirror::gLastLap = 305;
-    if (!mSet0Bound || mAppliedDynamicOffset != mProgram->mRingOffset || mAppliedSet0 != set0)
+    bool offsets_changed = !mSet0Bound || mAppliedSet0 != set0;
+    for (U32 k = 0; k < UC_COUNT; ++k)
+    {
+        offsets_changed = offsets_changed || mAppliedDynamicOffset[k] != mProgram->mRingOffset[k];
+    }
+    if (offsets_changed)
     {
         mDiagChanged = true;
-        vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 0, 1, &set0, 1, &mProgram->mRingOffset);
-        mAppliedDynamicOffset = mProgram->mRingOffset;
+        vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 0, 1, &set0, UC_COUNT, mProgram->mRingOffset);       // the dynamic bindings 0, 5, 6, 7, 8 in this order
+        for (U32 k = 0; k < UC_COUNT; ++k)
+        {
+            mAppliedDynamicOffset[k] = mProgram->mRingOffset[k];
+        }
         mAppliedSet0 = set0;
         mSet0Bound = true;
     }
@@ -2949,12 +2963,16 @@ VkDescriptorSet Renderer::uboSet()
     {
         return mSet0[mSlot];
     }
-    VkDescriptorBufferInfo infos[5];
-    infos[0] = { mRing[mSlot].mBuffer, 0, MAX_UNIFORM_RANGE };
-    VkWriteDescriptorSet w[5] = {};
-    for (U32 b = 0; b < 5; ++b)
+    VkDescriptorBufferInfo infos[9];
+    VkWriteDescriptorSet w[9] = {};
+    for (U32 b = 0; b < 9; ++b)
     {
-        if (b > 0)
+        const bool dynamic = b == 0 || b >= 5;
+        if (dynamic)
+        {
+            infos[b] = { mRing[mSlot].mBuffer, 0, MAX_UNIFORM_RANGE };
+        }
+        else
         {
             infos[b] = mUbo[b - 1] ? VkDescriptorBufferInfo{ mUbo[b - 1], 0, mUboRange[b - 1] } : VkDescriptorBufferInfo{ mDummyUbo.mBuffer, 0, DUMMY_UBO_BYTES };
         }
@@ -2962,10 +2980,10 @@ VkDescriptorSet Renderer::uboSet()
         w[b].dstSet = set;
         w[b].dstBinding = b;
         w[b].descriptorCount = 1;
-        w[b].descriptorType = b == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        w[b].descriptorType = dynamic ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         w[b].pBufferInfo = &infos[b];
     }
-    vkUpdateDescriptorSets(ctx.getDevice(), 5, w, 0, nullptr);
+    vkUpdateDescriptorSets(ctx.getDevice(), 9, w, 0, nullptr);
     sets[key] = set;
     mLastUboSet = set;
     mUboKeyDirty = false;
@@ -3152,7 +3170,7 @@ bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>
     mAppliedVertexInputValid = false;
     mSet0Bound = false;
     mRtBoundSet = VK_NULL_HANDLE;
-    mAppliedDynamicOffset = 0xFFFFFFFF;
+    for (U32& o : mAppliedDynamicOffset) o = 0xFFFFFFFF;
     mAppliedSet0 = VK_NULL_HANDLE;
     for (S32& v : mAppliedViewport) v = -1;
     for (S32& v : mAppliedScissor) v = -1;
