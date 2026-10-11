@@ -105,6 +105,34 @@ void LLDrawPoolMaterials::endDeferredPass(S32 pass)
 // <FS> the index in gDeferredMaterialProgram[] of the program of each of the 12 deferred passes (the same table as in beginDeferredPass)
 static const U32 sMaterialPassShader[] = { 0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15 };
 
+// <FS> the geometry records of the deferred passes start building (on the async pool) before the pools draw: the same passes, programs and map flags renderDeferred() will ask for
+void LLDrawPoolMaterials::kickGeometryBuilds()
+{
+    static const U32 type_list[] =
+    {
+        LLRenderPass::PASS_MATERIAL, LLRenderPass::PASS_MATERIAL_ALPHA_MASK, LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE, LLRenderPass::PASS_SPECMAP, LLRenderPass::PASS_SPECMAP_MASK,
+        LLRenderPass::PASS_SPECMAP_EMISSIVE, LLRenderPass::PASS_NORMMAP, LLRenderPass::PASS_NORMMAP_MASK, LLRenderPass::PASS_NORMMAP_EMISSIVE, LLRenderPass::PASS_NORMSPEC,
+        LLRenderPass::PASS_NORMSPEC_MASK, LLRenderPass::PASS_NORMSPEC_EMISSIVE,
+    };
+    if (!deferredPacketsEnabled())
+    {
+        return;
+    }
+    kickGeometryBuild(LLRenderPass::PASS_SIMPLE);
+    for (U32 pass = 0; pass < sizeof(type_list) / sizeof(type_list[0]); ++pass)
+    {
+        const U32 idx = sMaterialPassShader[pass];
+        if (gDeferredMaterialPullProgram[idx].mProgramObject == 0)
+        {
+            continue;
+        }
+        LLGeometryPassInfo info;
+        info.mNormalMap = (idx & 0x8) != 0;
+        info.mSpecularMap = (idx & 0x4) != 0;
+        kickGeometryBuild(type_list[pass], &info);
+    }
+}
+
 void LLDrawPoolMaterials::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;

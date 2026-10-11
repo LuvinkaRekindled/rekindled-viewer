@@ -27,6 +27,7 @@
 #ifndef LL_PIPELINE_H
 #define LL_PIPELINE_H
 
+#include "llasyncpool.h"
 #include "llcamera.h"
 #include "llerror.h"
 #include "lldrawpool.h"
@@ -322,15 +323,19 @@ public:
         std::vector<LLDrawable*> mDeferred;     // drawables of visible groups the workers left for the main thread (not volumes)
         std::shared_ptr<ShadowStaticBuild> mStaticBuild;    // the untextured static casters' packet entries, built by the render map job
         std::shared_ptr<ShadowSkinBuild> mSkinBuild;        // the same for the rigged ones (their palettes included)
+        LLAsyncPool::JobPtr mStaticJob;                     // the builders run on the async pool while the main thread draws the cascades before this one; renderShadow waits for them
+        LLAsyncPool::JobPtr mSkinJob;
     };
     void shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions);
     void shadowPrepRenderMap(ShadowCascadePrep& prep);
     void shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps);
+    void shadowPrepSubmitBuilds(ShadowCascadePrep& prep);
     void shadowPrepFinish(ShadowCascadePrep& prep);
     static void shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& reference);
     static thread_local bool sParallelPrep; // true while a worker thread prepares a cascade: no shared statistics, bridges are locked
 
     void forAllVisibleDrawables(void (*func)(LLDrawable*));
+    LLCullResult* getCull() const;        // <FS> the cull result this thread is working with (what beginRenderMap() reads)
 
     void renderObjects(U32 type, bool texture = true, bool batch_texture = false, bool rigged = false);
     void renderGLTFObjects(U32 type, bool texture = true, bool rigged = false);
