@@ -1297,6 +1297,7 @@ bool Renderer::init()
 
     mReady = true;
     tracyInit();
+    Context::instance().setDrawDescriber([](U64 serial) { return Renderer::instance().describeDraw(serial); });
     LL_INFOS("Vulkan") << "Vulkan renderer ready" << LL_ENDL;
     return true;
 }
@@ -3170,6 +3171,78 @@ U32 Renderer::drawTag(const char* what, U32 count, U32 first, S32 vertex_offset)
     return Context::drawStampTag(text);
 }
 
+// One record per draw in the ring (see DrawRec) and one checkpoint before it. Costs a few tens of nanoseconds a draw; LL_VK_DRAW_RING=0 turns it off.
+void Renderer::noteDraw(U8 kind, U32 count, U32 first, S32 vertex_offset)
+{
+    static const bool on = getenv("LL_VK_DRAW_RING") == nullptr || atoi(getenv("LL_VK_DRAW_RING")) != 0;
+    if (!on || !Context::instance().getCaps().mCheckpoints)
+    {
+        return;
+    }
+    constexpr size_t RING = 16384;
+    if (mDrawRing.empty())
+    {
+        mDrawRing.resize(RING);
+    }
+    const U64 serial = ++mDrawSerial;
+    DrawRec& r = mDrawRing[serial & (RING - 1)];
+    r.mSerial = serial;
+    r.mPassTag = mPassTag;
+    if (mProgram)
+    {
+        if (mProgram->mNameTag == ~0u)
+        {
+            mProgram->mNameTag = Context::drawStampTag(mProgram->getName());
+        }
+        r.mNameTag = mProgram->mNameTag;
+    }
+    r.mKind = kind;
+    r.mCount = count;
+    r.mFirst = first;
+    r.mVertexOffset = vertex_offset;
+    r.mIndexBuffer = (U64)(uintptr_t)mIndexBuffer;
+    r.mIndexOffset = (U64)mIndexOffset;
+    r.mSlotCount = 0;
+    if (mProgram)
+    {
+        const std::vector<U8>& draw_class = mProgram->mShadow[UC_DRAW];
+        for (size_t k = 0; k < mProgram->mSlotOffset.size() && r.mSlotCount < 12; ++k)
+        {
+            const U32 offset = mProgram->mSlotOffset[k];
+            if (offset + sizeof(U32) <= draw_class.size())
+            {
+                U32 slot = 0;
+                memcpy(&slot, draw_class.data() + offset, sizeof(U32));
+                r.mSlots[r.mSlotCount++] = (U16)slot;
+            }
+        }
+    }
+    Context::instance().serialCheckpoint(serial);
+}
+
+std::string Renderer::describeDraw(U64 serial) const
+{
+    constexpr size_t RING = 16384;
+    char text[96];
+    snprintf(text, sizeof(text), "draw #%llu", (unsigned long long)serial);
+    if (mDrawRing.empty() || mDrawRing[serial & (RING - 1)].mSerial != serial)
+    {
+        return std::string(text) + " (no longer in the ring)";
+    }
+    const DrawRec& r = mDrawRing[serial & (RING - 1)];
+    std::string out = text;
+    out += std::string(" in pass [") + Context::stampTagName(r.mPassTag) + "], program [" + Context::stampTagName(r.mNameTag) + "], " + (r.mKind == 0 ? "indices " : (r.mKind == 1 ? "vertices " : "packet draws "))
+         + std::to_string(r.mCount) + " from " + std::to_string(r.mFirst) + ", vertex offset " + std::to_string(r.mVertexOffset);
+    char buf[80];
+    snprintf(buf, sizeof(buf), ", index buffer %llx+%llu, texture slots", (unsigned long long)r.mIndexBuffer, (unsigned long long)r.mIndexOffset);
+    out += buf;
+    for (U32 k = 0; k < r.mSlotCount; ++k)
+    {
+        out += " " + std::to_string(r.mSlots[k]);
+    }
+    return out;
+}
+
 bool Renderer::draw(U32 vertex_count, U32 first_vertex)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget))
@@ -3185,6 +3258,7 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
     }
     long long cmd_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
     startPendingQuery();
+    noteDraw(1, vertex_count, first_vertex, 0);
     const U32 stamp_tag = mDrawStamps ? drawTag("vertices", vertex_count, first_vertex, 0) : 0u;
     if (stamp_tag)
     {
@@ -3217,6 +3291,7 @@ bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirec
         return false;
     }
     startPendingQuery();
+    noteDraw(2, draws, 0, 0);
     if (indirect != VK_NULL_HANDLE)
     {
         // the arguments (vertex count, one instance, first vertex 0, first instance = the draw number) are in the buffer: one command for the whole record
@@ -3285,6 +3360,7 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         mBoundIndexType = mIndexType;
     }
     startPendingQuery();
+    noteDraw(0, index_count, first_index, vertex_offset);
     const U32 stamp_tag = mDrawStamps ? drawTag("indices", index_count, first_index, vertex_offset) : 0u;
     if (stamp_tag)
     {

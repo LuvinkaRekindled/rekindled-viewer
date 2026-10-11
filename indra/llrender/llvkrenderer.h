@@ -98,6 +98,7 @@ private:
         int load(std::memory_order o) const { return mN.load(o); }
     } mJobs;
     std::string mName;
+    U32 mNameTag = ~0u;                 // the name as a draw stamp tag (set at its first draw, see Renderer::noteDraw)
     ProgramInfo mInfo;
     bool mValid = false;
     VkShaderModule mModules[3] = {};
@@ -437,7 +438,24 @@ private:
     bool mBeginSplit = false;
     bool mDrawStamps = false;           // this pass stamps every draw (LL_VK_DRAW_STAMPS: avatar impostors by default), see stampDraw
     U32 mDrawStampCount = 0;            // draws stamped in this pass
-    U32 drawTag(const char* what, U32 count, U32 first, S32 vertex_offset);      // the description of the draw about to be made (a stamp tag), see drawTag
+    U32 drawTag(const char* what, U32 count, U32 first, S32 vertex_offset);
+    // The draw ring: the last 16384 draws of the worker, whatever the pass, as plain records (no strings), each also a checkpoint in the command buffer (Context::serialCheckpoint, set BEFORE
+    // the draw). After a device loss the checkpoints say which draws had completed and which had started; describeDraw turns a serial number back into the draw.
+    struct DrawRec
+    {
+        U64 mSerial = 0;
+        U64 mIndexBuffer = 0, mIndexOffset = 0;
+        U32 mPassTag = 0, mNameTag = 0, mCount = 0, mFirst = 0;
+        S32 mVertexOffset = 0;
+        U8 mKind = 0, mSlotCount = 0;
+        U16 mSlots[12] = {};
+    };
+    std::vector<DrawRec> mDrawRing;
+    U64 mDrawSerial = 0;
+    void noteDraw(U8 kind, U32 count, U32 first, S32 vertex_offset);
+public:
+    std::string describeDraw(U64 serial) const;
+private:      // the description of the draw about to be made (a stamp tag), see drawTag
 public:
     bool detailPass() const { return mDrawStamps; }     // this pass is checked and stamped draw by draw (impostor-sized targets)
 private:

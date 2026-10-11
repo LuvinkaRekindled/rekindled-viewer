@@ -225,7 +225,11 @@ public:
     static U32 drawStampTag(const std::string& text);   // the same for a draw description, with STAMP_DRAW set (looked up by hash; a full table gives a generic tag)
     static std::string stampTagName(U32 tag);
     void gpuStamp(U32 tag);
-    void drawCheckpoint(U32 tag);       // a checkpoint (no timestamp) set BEFORE a draw: after a device loss the latest one that was started names the draw the GPU was in
+    void drawCheckpoint(U32 tag);
+    void serialCheckpoint(U64 serial);  // a checkpoint named by a draw's serial number (bit 62 set): see Renderer::noteDraw
+    void setDrawDescriber(std::function<std::string(U64)> fn) { mDrawDescriber = std::move(fn); }
+    std::function<std::string(U64)> mDrawDescriber;
+    void reportCheckpoints(const char* when);       // asks the driver for the checkpoints and logs them (also at the watchdog mark: the driver may answer before it resets the device)       // a checkpoint (no timestamp) set BEFORE a draw: after a device loss the latest one that was started names the draw the GPU was in
     void reportDeviceLost();            // logs the last checkpoints (pass names) the GPU reached, when the driver keeps them
     // called (once per hang) when a frame has been stuck for a second and when the device is lost: whatever a subsystem keeps to explain its latest work (the ray scene's last scene calls)
     void setHangReporter(std::function<void()> fn) { mHangReporter = std::move(fn); }
