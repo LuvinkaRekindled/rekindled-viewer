@@ -27,7 +27,6 @@
 // This file sets some global GL parameters, and implements some
 // useful functions for GL operations.
 
-#define LL_VK_NO_INTERCEPT    // <FS> the GL function pointers are defined and loaded in this file
 #include "linden_common.h"
 #include "llvkmirror.h"
 #include <atomic>
@@ -324,9 +323,7 @@ void LLGLManager::shutdownGL()
     }
 }
 
-// <FS> from here on the GL calls in this file are mirrored to Vulkan (see llvkgl.h)
 #if defined(LL_VULKAN)
-#undef LL_VK_NO_INTERCEPT
 #include "llvkgl.h"
 #include "llvkstate.h"
 #endif

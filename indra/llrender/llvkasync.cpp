@@ -9,7 +9,7 @@
 
 #include "llvkasync.h"
 #include "llglheaders.h"
-#include "llvkgl.h"             // the generated GL command numbers and enq_ declarations (with the intercepting macros)
+#include "llvkgl.h"
 #include "llvkmirror.h"
 #include "llvkzones.h"
 #include "llvkrenderer.h"
@@ -162,8 +162,7 @@ long long gLastBeginTick = 0, gLastPresentTick = 0;
 long long gMainWaitTicks = 0, gWorkerIdleTicks = 0;
 
 // LL_VK_PHASES: the worker's time per operation, in processor time-stamp ticks (a cheap read; converted with a ratio measured against the performance counter)
-static_assert(OP_GL_COUNT == LLVkGL::HOOK_COUNT, "the worker statistics name an operation by its place in the hook table");
-constexpr int OP_STAT_SLOTS = OP_GL_COUNT + 40;
+constexpr int OP_STAT_SLOTS = 56;
 bool gOpStats = false;
 bool gOpStatsPeriodic = false;      // LL_VK_OPSTATS without LL_VK_PHASES: the worker logs the numbers itself every 600 presented frames
 unsigned gOpStatsFrames = 0;
@@ -171,9 +170,10 @@ unsigned long long gOpStatTicks[OP_STAT_SLOTS] = {};
 unsigned long long gOpStatCalls[OP_STAT_SLOTS] = {};
 unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
-inline int opStatSlot(unsigned op) { return op < (unsigned)OP_GL_COUNT ? (int)op : std::min((int)(OP_GL_COUNT + (op - CMD_BASE)), OP_STAT_SLOTS - 1); }
+inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy" };
+const char* slotName(int slot) { return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
 // C4: texture upload costs on the main thread, and what was handed over without a copy
@@ -879,7 +879,7 @@ std::string opStatsReport(size_t frames)
         for (size_t k = 0; k < mc.size() && k < 16; ++k)
         {
             const int slot = mc[k].second;
-            const char* name = slot < OP_GL_COUNT ? LLVkGL::hook_name(slot) : (slot - OP_GL_COUNT < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot - OP_GL_COUNT] : "cmd?");
+            const char* name = slotName(slot);
             snprintf(buf, sizeof(buf), "%s %.0f, ", name, (double)mc[k].first / (double)frames);
             out += buf;
         }
@@ -901,7 +901,7 @@ std::string opStatsReport(size_t frames)
         for (size_t k = 0; k < fw.size() && k < 8; ++k)
         {
             const int slot = fw[k].second;
-            const char* name = slot == 0 ? "other" : (slot < OP_GL_COUNT ? LLVkGL::hook_name(slot) : (slot - OP_GL_COUNT < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot - OP_GL_COUNT] : "cmd?"));
+            const char* name = slot == 0 ? "other" : slotName(slot);
             snprintf(buf, sizeof(buf), "%s %.0f, ", name, (double)fw[k].first / (double)frames);
             out += buf;
         }
@@ -930,7 +930,7 @@ std::string opStatsReport(size_t frames)
     for (size_t k = 0; k < rows.size() && k < 22; ++k)
     {
         const Row& r = rows[k];
-        const char* name = r.mSlot < OP_GL_COUNT ? LLVkGL::hook_name(r.mSlot) : (r.mSlot - OP_GL_COUNT < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[r.mSlot - OP_GL_COUNT] : "cmd?");
+        const char* name = slotName(r.mSlot);
         snprintf(buf, sizeof(buf), "%s %.0f calls %.2f ms %.0f ns | ", name, (double)r.mCalls / (double)frames, (double)r.mTicks * ms_per_tick / (double)frames,
                  (double)r.mTicks * ms_per_tick * 1e6 / (double)r.mCalls);
         out += buf;
@@ -1036,10 +1036,29 @@ void uniformMatrix(void* program, unsigned uniform_index, unsigned columns, unsi
 // names and queries
 // ---------------------------------------------------------------------------------------------------------------------------------
 
-void gen_enq(unsigned short op, int kind, S32 n, unsigned* out)
+void resourceCreate(U32 kind, S32 n, U32* ids)
 {
-    LLVkGL::own_gen(kind, n, out);
-    pushData(op, &n, sizeof(n), out, (size_t)std::max<S32>(n, 0) * 4);
+    LLVkGL::own_gen((int)kind, n, ids);
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
+        LLVkGL::resource_create(kind, n, ids);
+        return;
+    }
+    const U32 a[2] = { kind, (U32)std::max<S32>(n, 0) };
+    pushData(CMD_RESOURCE_CREATE, a, sizeof(a), ids, (size_t)std::max<S32>(n, 0) * 4);
+}
+
+void resourceDestroy(U32 kind, S32 n, const U32* ids)
+{
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::resource_destroy(kind, n, ids);
+        return;
+    }
+    const U32 a[2] = { kind, (U32)std::max<S32>(n, 0) };
+    pushData(CMD_RESOURCE_DESTROY, a, sizeof(a), ids, (size_t)std::max<S32>(n, 0) * 4);
 }
 
 void queryResultTally(bool nonzero) { gQValue[nonzero ? 1 : 0].fetch_add(1, std::memory_order_relaxed); }
@@ -1275,37 +1294,6 @@ void push_tex(unsigned short op, TexArgs& a, const void* pixels, size_t bytes)
 
 } // anonymous namespace
 
-void enq_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
-{
-    TexMainLap lap;
-    TexArgs a = { target, level, internalformat, width, height, 1, 0, 0, 0, format, type, border, 0, 0, 0, nullptr, nullptr };
-    push_tex(OP_glTexImage2D, a, pixels, pixel_bytes(format, type, width, height, 1, tlsPixelStore));
-}
-void enq_glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels)
-{
-    TexMainLap lap;
-    TexArgs a = { target, level, internalformat, width, height, depth, 0, 0, 0, format, type, border, 0, 0, 0, nullptr, nullptr };
-    push_tex(OP_glTexImage3D, a, pixels, pixel_bytes(format, type, width, height, depth, tlsPixelStore));
-}
-void enq_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
-{
-    TexMainLap lap;
-    TexArgs a = { target, level, 0, width, height, 1, xoffset, yoffset, 0, format, type, 0, 0, 0, 0, nullptr, nullptr };
-    push_tex(OP_glTexSubImage2D, a, pixels, pixel_bytes(format, type, width, height, 1, tlsPixelStore));
-}
-void enq_glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void* pixels)
-{
-    TexMainLap lap;
-    TexArgs a = { target, level, 0, width, height, depth, xoffset, yoffset, zoffset, format, type, 0, 0, 0, 0, nullptr, nullptr };
-    push_tex(OP_glTexSubImage3D, a, pixels, pixel_bytes(format, type, width, height, depth, tlsPixelStore));
-}
-void enq_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
-{
-    TexMainLap lap;
-    TexArgs a = { target, level, (GLint)internalformat, width, height, 1, 0, 0, 0, 0, 0, border, imageSize, 0, 0, nullptr, nullptr };
-    push_tex(OP_glCompressedTexImage2D, a, data, (size_t)std::max(imageSize, 0));
-}
-
 
 // ---- F1.2: texture edits that name their texture (llvktex.h) ----
 } // namespace LLVkAsync (reopened below)
@@ -1340,12 +1328,12 @@ inline std::lock_guard<LLVkMirror::Mutex> inlineLock() { return std::lock_guard<
 
 void create(S32 count, U32* ids)
 {
-    glGenTextures(count, ids);
+    LLVkAsync::resourceCreate(LLVkAsync::RES_TEXTURE, count, ids);
 }
 
 void destroy(S32 count, const U32* ids)
 {
-    glDeleteTextures(count, ids);
+    LLVkAsync::resourceDestroy(LLVkAsync::RES_TEXTURE, count, ids);
 }
 
 void setUnpackAlignment(S32 alignment)
@@ -1555,12 +1543,12 @@ namespace LLVkTarget
 
 void create(U32* id)
 {
-    glGenFramebuffers(1, id);
+    LLVkAsync::resourceCreate(LLVkAsync::RES_TARGET, 1, id);
 }
 
 void destroy(U32 id)
 {
-    glDeleteFramebuffers(1, &id);
+    LLVkAsync::resourceDestroy(LLVkAsync::RES_TARGET, 1, &id);
 }
 
 void attach(U32 target, U32 slot, U32 texture)
@@ -1598,12 +1586,12 @@ namespace LLVkQuery
 
 void create(S32 count, U32* ids)
 {
-    glGenQueries(count, ids);
+    LLVkAsync::resourceCreate(LLVkAsync::RES_QUERY, count, ids);
 }
 
 void destroy(S32 count, const U32* ids)
 {
-    glDeleteQueries(count, ids);
+    LLVkAsync::resourceDestroy(LLVkAsync::RES_QUERY, count, ids);
 }
 
 void begin(Kind kind, U32 id)
@@ -1667,12 +1655,12 @@ namespace LLVkBuf
 
 void create(S32 count, U32* ids)
 {
-    glGenBuffers(count, ids);
+    LLVkAsync::resourceCreate(LLVkAsync::RES_BUFFER, count, ids);
 }
 
 void destroy(S32 count, const U32* ids)
 {
-    glDeleteBuffers(count, ids);
+    LLVkAsync::resourceDestroy(LLVkAsync::RES_BUFFER, count, ids);
 }
 
 void setData(U32 id, U32 target, S64 size, const void* data, U32 usage)
@@ -1702,21 +1690,6 @@ void bindUniformBlock(U32 binding, U32 id)
 
 namespace LLVkAsync
 {
-
-static void enq_ids(unsigned short op, GLsizei n, const GLuint* ids)
-{
-    pushData(op, &n, sizeof(n), ids, (size_t)std::max(n, 0) * 4);
-}
-void enq_glDeleteTextures(GLsizei n, const GLuint* textures) { enq_ids(OP_glDeleteTextures, n, textures); }
-void enq_glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers) { enq_ids(OP_glDeleteFramebuffers, n, framebuffers); }
-void enq_glDeleteBuffers(GLsizei n, const GLuint* buffers) { enq_ids(OP_glDeleteBuffers, n, buffers); }
-void enq_glDeleteQueries(GLsizei n, const GLuint* ids) { enq_ids(OP_glDeleteQueries, n, ids); }
-void enq_glTexParameteriv(GLenum target, GLenum pname, const GLint* params)
-{
-    struct A { GLenum target; GLenum pname; } a = { target, pname };
-    const size_t n = (pname == 0x1004 || pname == 0x8E46) ? 4 : 1;      // BORDER_COLOR, SWIZZLE_RGBA
-    pushData(OP_glTexParameteriv, &a, sizeof(a), params, params ? n * 4 : 0);
-}
 
 void queryBeginCmd(U32 kind, U32 id)
 {
@@ -1782,83 +1755,6 @@ Blob read_blob(Reader& r, U8 flags)
         b.mData = r.bytes(b.mSize);
     }
     return std::move(b);
-}
-
-void run_tex(unsigned short op, Reader& r, U8 flags)
-{
-    const TexArgs a = r.get<TexArgs>();
-    Blob blob;
-    const void* pixels = nullptr;
-    if (a.mMode == 1)
-    {
-        blob = read_blob(r, flags);
-        pixels = blob.mData;
-    }
-    else if (a.mMode == 2 || a.mMode == 3)
-    {
-        pixels = (const void*)(uintptr_t)a.mOffset;
-    }
-    struct Release { const TexArgs& mA; ~Release() { if (mA.mMode == 3 && mA.mUnref) mA.mUnref(mA.mOwner); } } release = { a };      // the held pixels are let go once the upload has read them
-    switch (op)
-    {
-    case OP_glTexImage2D: LLVkGL::on_glTexImage2D(a.mTarget, a.mLevel, a.mInternalFormat, a.mWidth, a.mHeight, a.mBorder, a.mFormat, a.mType, pixels); break;
-    case OP_glTexImage3D: LLVkGL::on_glTexImage3D(a.mTarget, a.mLevel, a.mInternalFormat, a.mWidth, a.mHeight, a.mDepth, a.mBorder, a.mFormat, a.mType, pixels); break;
-    case OP_glTexSubImage2D: LLVkGL::on_glTexSubImage2D(a.mTarget, a.mLevel, a.mX, a.mY, a.mWidth, a.mHeight, a.mFormat, a.mType, pixels); break;
-    case OP_glTexSubImage3D: LLVkGL::on_glTexSubImage3D(a.mTarget, a.mLevel, a.mX, a.mY, a.mZ, a.mWidth, a.mHeight, a.mDepth, a.mFormat, a.mType, pixels); break;
-    default: LLVkGL::on_glCompressedTexImage2D(a.mTarget, a.mLevel, (GLenum)a.mInternalFormat, a.mWidth, a.mHeight, a.mBorder, a.mImageSize, pixels); break;
-    }
-}
-
-void dispatch_gl(unsigned short op, U8 flags, const U8* payload)
-{
-    const U8* p = payload;       // the generated cases read their arguments from here
-    Reader r{ payload };
-    switch (op)
-    {
-#include "llvkgl_async_dispatch.inc"
-    case OP_glGenTextures: case OP_glGenFramebuffers: case OP_glGenBuffers: case OP_glGenQueries:
-    {
-        const S32 n = r.get<S32>();
-        Blob b = read_blob(r, flags);
-        std::vector<GLuint> ids((size_t)std::max<S32>(n, 0));
-        if (b.mData) memcpy(ids.data(), b.mData, ids.size() * 4);
-        switch (op)
-        {
-        case OP_glGenTextures: LLVkGL::on_glGenTextures(n, ids.data()); break;
-        case OP_glGenFramebuffers: LLVkGL::on_glGenFramebuffers(n, ids.data()); break;
-        case OP_glGenBuffers: LLVkGL::on_glGenBuffers(n, ids.data()); break;
-        default: LLVkGL::on_glGenQueries(n, ids.data()); break;
-        }
-        break;
-    }
-    case OP_glDeleteTextures: case OP_glDeleteFramebuffers: case OP_glDeleteBuffers: case OP_glDeleteQueries:
-    {
-        const S32 n = r.get<S32>();
-        Blob b = read_blob(r, flags);
-        const GLuint* ids = (const GLuint*)b.mData;
-        switch (op)
-        {
-        case OP_glDeleteTextures: LLVkGL::on_glDeleteTextures(n, ids); break;
-        case OP_glDeleteFramebuffers: LLVkGL::on_glDeleteFramebuffers(n, ids); break;
-        case OP_glDeleteBuffers: LLVkGL::on_glDeleteBuffers(n, ids); break;
-        default: LLVkGL::on_glDeleteQueries(n, ids); break;
-        }
-        break;
-    }
-    case OP_glTexParameteriv:
-    {
-        const GLenum target = r.get<GLenum>(), pname = r.get<GLenum>();
-        Blob b = read_blob(r, flags);
-        LLVkGL::on_glTexParameteriv(target, pname, (const GLint*)b.mData);
-        break;
-    }
-    case OP_glTexImage2D: case OP_glTexImage3D: case OP_glTexSubImage2D: case OP_glTexSubImage3D: case OP_glCompressedTexImage2D:
-        run_tex(op, r, flags);
-        break;
-    default:
-        LL_WARNS("VkAsync") << "unknown GL command " << op << LL_ENDL;
-        break;
-    }
 }
 
 // plays the entries of a batch of loose uniform writes (see uniAppend) with the same calls the separate records make
@@ -2130,6 +2026,15 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         break;
     }
     case CMD_QUERY_END: LLVkGL::query_end(*(const U32*)payload); break;
+    case CMD_RESOURCE_CREATE: case CMD_RESOURCE_DESTROY:
+    {
+        const U32 kind = r.get<U32>();
+        const U32 n = r.get<U32>();
+        Blob b = read_blob(r, flags);
+        if (op == CMD_RESOURCE_CREATE) LLVkGL::resource_create(kind, (int)n, (const unsigned*)b.mData);
+        else LLVkGL::resource_destroy(kind, (int)n, (const unsigned*)b.mData);
+        break;
+    }
     case CMD_TEX_IMAGE: runImage(r, flags); break;
     case CMD_TEX_PARAMS_ID: runParams(r, flags); break;
     case CMD_TEX_OP: runOp(r); break;
@@ -2228,14 +2133,7 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
     gCurrentCtx = ctx;
     LLVkGL::set_worker_context(ctx);
     const unsigned long long t0 = gOpStats ? __rdtsc() : 0;
-    if (op < OP_GL_COUNT)
-    {
-        dispatch_gl(op, flags, payload);
-    }
-    else
-    {
-        dispatch_cmd(op, flags, payload);
-    }
+    dispatch_cmd(op, flags, payload);
     if (gOpStats)
     {
         const int slot = opStatSlot(op);

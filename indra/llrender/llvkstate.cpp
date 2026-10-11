@@ -5,7 +5,6 @@
 
 #include "linden_common.h"
 
-#define LL_VK_NO_INTERCEPT      // GL constants only; this file never calls GL
 #include "llglheaders.h"
 
 #if defined(LL_VULKAN)
