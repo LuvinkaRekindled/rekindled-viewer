@@ -306,9 +306,11 @@ public:
     bool bindlessAvailable() const { return mSet2Layout != VK_NULL_HANDLE; }
     U32 bindlessCapacity() const { return mBindlessCap[0]; }       // the 2D table (the others hold far fewer images)
     void gpuZone(const char* name, bool begin);       // a GPU timing zone begins / ends at this point of the command stream
-    U32 bindlessEpoch() const { return mBindlessEpoch; }         // changes every frame: a slot number from an earlier epoch means nothing
     U32 bindlessSlot(Image* image, VkSampler sampler);
-    U32 bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout);     // table 0 2D, 1 cube, 2 cube array, 3 2D shadow
+    // The persistent table: a slot belongs to an (image view, sampler, layout) for as long as something keeps using it (it is freed after a few hundred idle frames), so slot numbers
+    // mean the same thing from frame to frame. `hint` is the slot the caller got last time for the same thing: checked first, no lookup. Every frame's set has its own copy of the
+    // table; a descriptor is written into the set of the frame that uses it, once (until the slot changes hands).
+    U32 bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout, U32 hint = 0);     // table 0 2D, 1 cube, 2 cube array, 3 2D shadow
     void bindlessFlush();           // writes the slots taken since the last call into the frame's set and binds it
 
     VkSampler getSampler(const SamplerDesc& desc);
@@ -437,33 +439,48 @@ private:
     // <FS> bindless table (set 2)
     struct BindlessKey
     {
-        VkImageView mView;
-        VkSampler mSampler;
-        VkImageLayout mLayout;
-        bool operator==(const BindlessKey& o) const { return mView == o.mView && mSampler == o.mSampler && mLayout == o.mLayout; }
+        U64 mViewId = 0;                // Image::mViewId
+        VkSampler mSampler = VK_NULL_HANDLE;
+        VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bool operator==(const BindlessKey& o) const { return mViewId == o.mViewId && mSampler == o.mSampler && mLayout == o.mLayout; }
     };
     struct BindlessKeyHash
     {
-        size_t operator()(const BindlessKey& k) const { return (size_t)(((U64)k.mView * 0x9E3779B97F4A7C15ull) ^ (((U64)k.mSampler * 0xC2B2AE3D27D4EB4Full) >> 7) ^ ((U64)k.mLayout * 0x165667B19E3779F9ull)); }
+        size_t operator()(const BindlessKey& k) const { return (size_t)((k.mViewId * 0x9E3779B97F4A7C15ull) ^ (((U64)k.mSampler * 0xC2B2AE3D27D4EB4Full) >> 7) ^ ((U64)k.mLayout * 0x165667B19E3779F9ull)); }
     };
     void bindlessStart();
     VkDescriptorSetLayout mSet2Layout = VK_NULL_HANDLE;
     VkDescriptorPool mBindlessPool = VK_NULL_HANDLE;
     VkDescriptorSet mBindlessSet[Context::FRAMES_IN_FLIGHT] = {};
     static constexpr U32 BINDLESS_TABLES = 4;               // set 2 bindings: 2D, cube, cube array, 2D shadow
+    struct BindlessSlot
+    {
+        BindlessKey mKey;
+        VkDescriptorImageInfo mInfo = {};               // what the slot holds
+        U64 mLastUsed = 0;                              // frame number
+        bool mActive = false;
+    };
     struct BindlessTable
     {
         std::unordered_map<BindlessKey, U32, BindlessKeyHash> mMap;
-        std::vector<VkDescriptorImageInfo> mInfos;          // by slot: what the slot holds this frame
-        U32 mWritten = 0;                                   // slots of mInfos already written into the frame's set
+        std::vector<BindlessSlot> mSlots;               // by slot; slot 0 is the stand-in and never handed out
+        std::vector<U32> mFree;                         // slots that can be handed out again
+        U32 mActiveCount = 0;
+        VkDescriptorImageInfo mStandIn = {};            // slot 0
+        std::vector<VkDescriptorImageInfo> mShadow[Context::FRAMES_IN_FLIGHT];      // what each frame's set holds by slot (a null view: nothing written yet)
+        std::vector<U32> mDirty;                        // slots to write into this frame's set at the next flush
+        std::vector<U64> mQueuedStamp;                  // by slot: the frame the slot was last queued in (not twice in a frame)
     };
+    void bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want);
+    void bindlessSweep(U64 min_idle_frames);
     BindlessTable mBindlessTbl[BINDLESS_TABLES];
     U32 mBindlessCap[BINDLESS_TABLES] = {};         // slots per table: the 2D table is the big one
 public:
     // <FS> what the textures cost and where they fail (logged every 1800 frames by LLVkGL::after_frame; reset by each read)
     struct TexStats
     {
-        U32 mBindlessPeak = 0;          // most slots one table held in a frame
+        U32 mBindlessPeak = 0;          // most slots one table had in use
+        U64 mBindlessWrites = 0;        // descriptors written into the frames' sets
         U32 mBindlessRefused = 0;       // slots asked for when the table was full (those draws got the white image)
         U32 mAllocFailed = 0;           // vmaCreateImage failures
         U64 mAllocFailedBytes = 0;      // the base level size of those textures, four bytes a texel
@@ -472,9 +489,9 @@ public:
     TexStats takeTexStats();
 private:
     std::atomic<U32> mStatBindlessPeak{0}, mStatBindlessRefused{0}, mStatAllocFailed{0};
+    std::atomic<U64> mStatBindlessWrites{0};
     std::atomic<U64> mStatAllocFailedBytes{0};
     std::atomic<U32> mStatAllocW{0}, mStatAllocH{0};
-    U32 mBindlessEpoch = 1;
     bool mBindlessBound = false;
     VkDescriptorSetLayout mSet3Layout = VK_NULL_HANDLE;     // <FS> set 3: the ray tracing scene (an acceleration structure), only when ray query shadows are on (llvkrt.cpp)
     VkDescriptorSet mRtBoundSet = VK_NULL_HANDLE;           // what set 3 holds in the command buffer now

@@ -172,8 +172,12 @@ struct Image
     // GL textures that are allocated without data (render targets) read as zero in practice; Vulkan images start undefined.
     // Set on such images: the renderer clears them the first time they leave the undefined layout.
     bool mZeroOnFirstUse = false;
+    // <FS> the identity of mView for the bindless table: a Vulkan may hand a destroyed view's handle to the next view, so the table is keyed by this number, never reused. Zero until the
+    // table first needs it; whoever replaces mView sets it back to zero.
+    U64 mViewId = 0;
     bool valid() const { return mImage != VK_NULL_HANDLE; }
 };
+inline U64 nextViewId() { static std::atomic<U64> sNext{1}; return sNext.fetch_add(1); }
 
 // the aspect an image of this format is viewed and transitioned with
 VkImageAspectFlags aspectForFormat(VkFormat format);

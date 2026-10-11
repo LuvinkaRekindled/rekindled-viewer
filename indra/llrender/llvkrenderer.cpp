@@ -1633,7 +1633,11 @@ void Renderer::shutdown()
     mSet3Layout = VK_NULL_HANDLE;
     mRtBoundSet = VK_NULL_HANDLE;
     mBindlessPool = VK_NULL_HANDLE;
-    for (BindlessTable& t : mBindlessTbl) { t.mMap.clear(); t.mInfos.clear(); t.mWritten = 0; }
+    for (BindlessTable& t : mBindlessTbl)
+    {
+        t.mMap.clear(); t.mSlots.clear(); t.mFree.clear(); t.mDirty.clear(); t.mQueuedStamp.clear(); t.mActiveCount = 0;
+        for (auto& sh : t.mShadow) sh.clear();
+    }
     mProgram = nullptr;
     mReady = false;
 }
@@ -1758,10 +1762,13 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mSet0Bound = false;
     if (mSet2Layout)
     {
-        // the table starts over: this frame's slots are handed out again from 1
-        ++mBindlessEpoch;
-        for (BindlessTable& t : mBindlessTbl) { t.mMap.clear(); t.mInfos.clear(); t.mWritten = 0; }
+        // the table is persistent: what the last frames queued but never flushed is not needed (no draw used it), and slots nobody used for a long while are given back
+        for (BindlessTable& t : mBindlessTbl) { t.mDirty.clear(); }
         mBindlessBound = false;
+        if (Context::instance().getFrameNumber() % 60 == 0)
+        {
+            bindlessSweep(360);
+        }
     }
     mRtBoundSet = VK_NULL_HANDLE;
     for (U32& o : mAppliedDynamicOffset) o = 0xFFFFFFFF;
@@ -2310,23 +2317,76 @@ void Renderer::bindlessStart()
 {
     for (U32 t = 0; t < BINDLESS_TABLES; ++t)
     {
-        if (mBindlessTbl[t].mInfos.empty())
+        BindlessTable& tbl = mBindlessTbl[t];
+        if (tbl.mSlots.empty())
         {
+            tbl.mSlots.resize(1);       // slot 0: the stand-in
             const Image* stand_in = &mWhite;
             if (t == 1 && mFallback[1].valid()) stand_in = &mFallback[1];
             if (t == 2 && mFallback[2].valid()) stand_in = &mFallback[2];
-            VkDescriptorImageInfo white = { getSampler(SamplerDesc()), stand_in->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-            mBindlessTbl[t].mInfos.push_back(white);
+            tbl.mStandIn = { getSampler(SamplerDesc()), stand_in->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        }
+        if (tbl.mShadow[mSlot].empty())
+        {
+            tbl.mShadow[mSlot].resize(1);       // nothing written yet: the stand-in goes in with the first flush of this set
+        }
+        bindlessQueue(tbl, 0, tbl.mStandIn);
+    }
+}
+
+// the slot is wanted in this frame's set with this content: queue a write unless the set already holds it
+void Renderer::bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want)
+{
+    std::vector<VkDescriptorImageInfo>& sh = tbl.mShadow[mSlot];
+    if (sh.size() <= slot)
+    {
+        sh.resize(std::max<size_t>((size_t)slot + 1, sh.size() + sh.size() / 2 + 64));
+    }
+    const VkDescriptorImageInfo& have = sh[slot];
+    if (have.imageView == want.imageView && have.sampler == want.sampler && have.imageLayout == want.imageLayout)
+    {
+        return;
+    }
+    if (tbl.mQueuedStamp.size() <= slot)
+    {
+        tbl.mQueuedStamp.resize(std::max<size_t>((size_t)slot + 1, tbl.mQueuedStamp.size() + tbl.mQueuedStamp.size() / 2 + 64), 0);
+    }
+    const U64 frame = Context::instance().getFrameNumber() + 1;       // (+1: frame 0 must not look like "never queued")
+    if (tbl.mQueuedStamp[slot] == frame)
+    {
+        return;
+    }
+    tbl.mQueuedStamp[slot] = frame;
+    tbl.mDirty.push_back(slot);
+}
+
+// gives back the slots nothing has used for min_idle_frames frames (the texture is gone, or has not been drawn for a long while). The frames in flight keep their own sets, which still hold
+// the old descriptors (the views they name are destroyed only after those frames), so reusing the slot only ever changes the set of a frame that is just starting.
+void Renderer::bindlessSweep(U64 min_idle_frames)
+{
+    const U64 frame = Context::instance().getFrameNumber();
+    for (BindlessTable& tbl : mBindlessTbl)
+    {
+        for (U32 slot = 1; slot < (U32)tbl.mSlots.size(); ++slot)
+        {
+            BindlessSlot& s = tbl.mSlots[slot];
+            if (s.mActive && s.mLastUsed + min_idle_frames < frame)
+            {
+                tbl.mMap.erase(s.mKey);
+                s.mActive = false;
+                tbl.mFree.push_back(slot);
+                --tbl.mActiveCount;
+            }
         }
     }
 }
 
 U32 Renderer::bindlessSlot(Image* image, VkSampler sampler)
 {
-    return bindlessSlotIn(0, image, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    return bindlessSlotIn(0, image, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0);
 }
 
-U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout)
+U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout, U32 hint)
 {
     if (!mSet2Layout || table >= BINDLESS_TABLES || !image || !image->valid() || !sampler)
     {
@@ -2334,26 +2394,64 @@ U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImage
     }
     bindlessStart();
     BindlessTable& tbl = mBindlessTbl[table];
-    const BindlessKey key = { image->mView, sampler, layout };
-    auto it = tbl.mMap.find(key);
-    if (it != tbl.mMap.end())
+    if (!image->mViewId)
     {
-        return it->second;
+        image->mViewId = nextViewId();
     }
-    if (tbl.mInfos.size() >= mBindlessCap[table])
+    BindlessKey key;
+    key.mViewId = image->mViewId;
+    key.mSampler = sampler;
+    key.mLayout = layout;
+    U32 slot = 0;
+    if (hint && hint < tbl.mSlots.size() && tbl.mSlots[hint].mActive && tbl.mSlots[hint].mKey == key)
     {
-        LL_WARNS_ONCE("Vulkan") << "bindless table " << table << " full: the textures after the first " << mBindlessCap[table] << " of a frame are drawn white" << LL_ENDL;
-        ++mStatBindlessRefused;
-        return 0;
+        slot = hint;
     }
-    const U32 slot = (U32)tbl.mInfos.size();
-    if (slot + 1 > mStatBindlessPeak.load(std::memory_order_relaxed))
+    else
     {
-        mStatBindlessPeak.store(slot + 1, std::memory_order_relaxed);
+        auto it = tbl.mMap.find(key);
+        if (it != tbl.mMap.end())
+        {
+            slot = it->second;
+        }
+        else
+        {
+            if (tbl.mFree.empty() && tbl.mSlots.size() >= mBindlessCap[table])
+            {
+                bindlessSweep(60);          // full: give back what has been idle for a second
+            }
+            if (!tbl.mFree.empty())
+            {
+                slot = tbl.mFree.back();
+                tbl.mFree.pop_back();
+            }
+            else if (tbl.mSlots.size() < mBindlessCap[table])
+            {
+                slot = (U32)tbl.mSlots.size();
+                tbl.mSlots.emplace_back();
+            }
+            else
+            {
+                LL_WARNS_ONCE("Vulkan") << "bindless table " << table << " full: " << mBindlessCap[table] << " slots in use, the textures that need a new one are drawn white" << LL_ENDL;
+                ++mStatBindlessRefused;
+                return 0;
+            }
+            BindlessSlot& s = tbl.mSlots[slot];
+            s.mKey = key;
+            s.mInfo = { sampler, image->mView, layout };
+            s.mActive = true;
+            tbl.mMap.emplace(key, slot);
+            ++tbl.mActiveCount;
+            if (tbl.mActiveCount > mStatBindlessPeak.load(std::memory_order_relaxed))
+            {
+                mStatBindlessPeak.store(tbl.mActiveCount, std::memory_order_relaxed);
+            }
+        }
     }
-    VkDescriptorImageInfo info = { sampler, image->mView, layout };
-    tbl.mInfos.push_back(info);
-    tbl.mMap.emplace(key, slot);
+    BindlessSlot& s = tbl.mSlots[slot];
+    s.mInfo.imageView = image->mView;           // (the same key, the same view; kept in step in case the handle was ever replaced under the id)
+    s.mLastUsed = Context::instance().getFrameNumber();
+    bindlessQueue(tbl, slot, s.mInfo);
     return slot;
 }
 
@@ -2364,28 +2462,48 @@ void Renderer::bindlessFlush()
         return;
     }
     bindlessStart();
-    VkWriteDescriptorSet writes[BINDLESS_TABLES];
-    U32 n = 0;
+    static thread_local std::vector<VkWriteDescriptorSet> writes;
+    writes.clear();
+    U64 written = 0;
     for (U32 t = 0; t < BINDLESS_TABLES; ++t)
     {
         BindlessTable& tbl = mBindlessTbl[t];
-        if (tbl.mWritten < tbl.mInfos.size())
+        if (tbl.mDirty.empty())
         {
-            // the slots taken since the last flush are contiguous: one write per table
-            writes[n] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-            writes[n].dstSet = mBindlessSet[mSlot];
-            writes[n].dstBinding = t;
-            writes[n].dstArrayElement = tbl.mWritten;
-            writes[n].descriptorCount = (U32)tbl.mInfos.size() - tbl.mWritten;
-            writes[n].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[n].pImageInfo = tbl.mInfos.data() + tbl.mWritten;
-            tbl.mWritten = (U32)tbl.mInfos.size();
-            ++n;
+            continue;
         }
+        std::sort(tbl.mDirty.begin(), tbl.mDirty.end());
+        std::vector<VkDescriptorImageInfo>& sh = tbl.mShadow[mSlot];
+        for (size_t i = 0; i < tbl.mDirty.size(); ++i)
+        {
+            const U32 slot = tbl.mDirty[i];
+            sh[slot] = slot == 0 ? tbl.mStandIn : tbl.mSlots[slot].mInfo;
+        }
+        // contiguous runs of slots are one write
+        for (size_t i = 0; i < tbl.mDirty.size(); )
+        {
+            size_t j = i + 1;
+            while (j < tbl.mDirty.size() && tbl.mDirty[j] == tbl.mDirty[j - 1] + 1)
+            {
+                ++j;
+            }
+            VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+            w.dstSet = mBindlessSet[mSlot];
+            w.dstBinding = t;
+            w.dstArrayElement = tbl.mDirty[i];
+            w.descriptorCount = (U32)(j - i);
+            w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w.pImageInfo = &sh[tbl.mDirty[i]];
+            writes.push_back(w);
+            written += j - i;
+            i = j;
+        }
+        tbl.mDirty.clear();
     }
-    if (n)
+    if (!writes.empty())
     {
-        vkUpdateDescriptorSets(Context::instance().getDevice(), n, writes, 0, nullptr);
+        vkUpdateDescriptorSets(Context::instance().getDevice(), (U32)writes.size(), writes.data(), 0, nullptr);
+        mStatBindlessWrites += written;
     }
     if (!mBindlessBound)
     {
@@ -2783,16 +2901,8 @@ void Renderer::applyState()
             const VkImageLayout layout = is_depth_target ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             const U32 table = mProgram->mSamplerTable[k];
             UnitSlot& cached = mUnitSlot[unit];
-            U32 slot;
-            if (cached.mEpoch == mBindlessEpoch && cached.mView == img->mView && cached.mSampler == sampler && cached.mLayout == layout && cached.mTable == table)
-            {
-                slot = cached.mSlot;
-            }
-            else
-            {
-                slot = bindlessSlotIn(table, img, sampler, layout);
-                cached = { img->mView, sampler, layout, table, mBindlessEpoch, slot };
-            }
+            const U32 slot = bindlessSlotIn(table, img, sampler, layout, cached.mTable == table ? cached.mSlot : 0);       // (the table checks the slot is still this image's)
+            cached = { img->mView, sampler, layout, table, 0, slot };
             U32* dst = (U32*)(mProgram->mShadow[UC_DRAW].data() + mProgram->mSlotOffset[k]);
             if (*dst != slot)
             {
@@ -3206,6 +3316,7 @@ Renderer::TexStats Renderer::takeTexStats()
 {
     TexStats s;
     s.mBindlessPeak = mStatBindlessPeak.exchange(0);
+    s.mBindlessWrites = mStatBindlessWrites.exchange(0);
     s.mBindlessRefused = mStatBindlessRefused.exchange(0);
     s.mAllocFailed = mStatAllocFailed.exchange(0);
     s.mAllocFailedBytes = mStatAllocFailedBytes.exchange(0);
