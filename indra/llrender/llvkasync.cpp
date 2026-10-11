@@ -18,6 +18,7 @@
 #include "llvkbuf.h"
 #include "llvktarget.h"
 #include "llvkquery.h"
+#include "llvkformat.h"
 
 #include <windows.h>
 #include <synchapi.h>
@@ -1198,24 +1199,9 @@ bool query_get(int kind, unsigned id, unsigned pname, void* params)
 namespace
 {
 
-size_t pixel_bytes(GLenum format, GLenum type, GLsizei w, GLsizei h, GLsizei d, const PixelStoreShadow& ps)
+size_t pixel_bytes(LLVkFormat::Transfer tr, GLsizei w, GLsizei h, GLsizei d, const PixelStoreShadow& ps)
 {
-    unsigned comps = 0, tb = 0;
-    switch (format)
-    {
-    case 0x1908: case 0x80E1: comps = 4; break;                     // RGBA, BGRA
-    case 0x1907: case 0x80E0: comps = 3; break;                     // RGB, BGR
-    case 0x190A: case 0x8227: comps = 2; break;                     // LUMINANCE_ALPHA, RG
-    case 0x1906: case 0x1909: case 0x1903: case 0x1902: comps = 1; break;   // ALPHA, LUMINANCE, RED, DEPTH_COMPONENT
-    default: break;
-    }
-    switch (type)
-    {
-    case 0x1401: case 0x1400: tb = 1; break;
-    case 0x1403: case 0x1402: case 0x140B: tb = 2; break;
-    case 0x1405: case 0x1404: case 0x1406: tb = 4; break;
-    default: break;
-    }
+    const unsigned comps = LLVkFormat::compCount(tr.mComps), tb = LLVkFormat::typeBytes(tr.mType);
     if (!comps || !tb || w <= 0 || h <= 0 || d <= 0)
     {
         return 0;       // the worker's conversion refuses these without reading anything
@@ -1228,11 +1214,11 @@ size_t pixel_bytes(GLenum format, GLenum type, GLsizei w, GLsizei h, GLsizei d, 
 
 struct TexArgs
 {
-    GLenum mTarget; GLint mLevel; GLint mInternalFormat;
-    GLsizei mWidth, mHeight, mDepth;
-    GLint mX, mY, mZ;
-    GLenum mFormat, mType;
-    GLint mBorder; GLsizei mImageSize;
+    LLVkFormat::Target mTarget; LLVkFormat::Transfer mTransfer; U8 mStore; U8 mPad8[3];
+    S32 mLevel;
+    S32 mWidth, mHeight, mDepth;
+    S32 mX, mY, mZ;
+    S32 mImageSize;
     U64 mOffset;                // the pixels pointer when the data comes from a bound pixel unpack buffer (mode 2) or from a held image (mode 3)
     U32 mMode;                  // 0 no data, 1 data follows, 2 offset into the unpack buffer, 3 pixels in a held image (no copy)
     const void* mOwner;         // mode 3: what keeps the pixels alive; the worker calls mUnref on it after reading them
@@ -1348,97 +1334,130 @@ void setUnpackRowLength(S32 row_length)
 
 void bindSlot(S32 unit, U32 target, U32 id)
 {
+    const U32 dim = LLVkFormat::target(target).mDim;
     if (LLVkAsync::gEnabled)
     {
         if (isMainThread())
         {
-            LLVkAsync::bindTextureUnit(TEX_UNIT_BASE + (U32)unit, target, id);
+            LLVkAsync::bindTextureUnit(TEX_UNIT_BASE + (U32)unit, dim, id);
         }
         return;
     }
     auto lock = inlineLock();
-    LLVkGL::slot_bind((unsigned)unit, target, id);
+    LLVkGL::slot_bind((unsigned)unit, dim, id);
 }
 
 void image2D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 format, U32 type, const void* pixels)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
+    const LLVkFormat::Store st = LLVkFormat::store(internal_format);
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_image2D(id, currentPS(), target, level, internal_format, width, height, border, format, type, pixels);
+        LLVkGL::tex_image2D(id, currentPS(), tg, level, st, width, height, tr, pixels);
         return;
     }
     TexMainLap lap;
-    TexArgs a = { target, level, internal_format, width, height, 1, 0, 0, 0, format, type, border, 0, 0, 0, nullptr, nullptr, id };
-    pushImage(K_IMAGE2D, a, pixels, pixel_bytes(format, type, width, height, 1, tlsPixelStore));
+    TexArgs a = {};
+    a.mTarget = tg; a.mTransfer = tr; a.mStore = st; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = 1; a.mTex = id;
+    pushImage(K_IMAGE2D, a, pixels, pixel_bytes(tr, width, height, 1, tlsPixelStore));
 }
 
 void image3D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 depth, S32 border, U32 format, U32 type, const void* pixels)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
+    const LLVkFormat::Store st = LLVkFormat::store(internal_format);
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_image3D(id, currentPS(), target, level, internal_format, width, height, depth, border, format, type, pixels);
+        LLVkGL::tex_image3D(id, currentPS(), tg, level, st, width, height, depth, tr, pixels);
         return;
     }
     TexMainLap lap;
-    TexArgs a = { target, level, internal_format, width, height, depth, 0, 0, 0, format, type, border, 0, 0, 0, nullptr, nullptr, id };
-    pushImage(K_IMAGE3D, a, pixels, pixel_bytes(format, type, width, height, depth, tlsPixelStore));
+    TexArgs a = {};
+    a.mTarget = tg; a.mTransfer = tr; a.mStore = st; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = depth; a.mTex = id;
+    pushImage(K_IMAGE3D, a, pixels, pixel_bytes(tr, width, height, depth, tlsPixelStore));
 }
 
 void subImage2D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, const void* pixels)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_subimage2D(id, currentPS(), target, level, x, y, width, height, format, type, pixels);
+        LLVkGL::tex_subimage2D(id, currentPS(), tg, level, x, y, width, height, tr, pixels);
         return;
     }
     TexMainLap lap;
-    TexArgs a = { target, level, 0, width, height, 1, x, y, 0, format, type, 0, 0, 0, 0, nullptr, nullptr, id };
-    pushImage(K_SUB2D, a, pixels, pixel_bytes(format, type, width, height, 1, tlsPixelStore));
+    TexArgs a = {};
+    a.mTarget = tg; a.mTransfer = tr; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = 1; a.mX = x; a.mY = y; a.mTex = id;
+    pushImage(K_SUB2D, a, pixels, pixel_bytes(tr, width, height, 1, tlsPixelStore));
 }
 
 void subImage3D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, U32 format, U32 type, const void* pixels)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_subimage3D(id, currentPS(), target, level, x, y, z, width, height, depth, format, type, pixels);
+        LLVkGL::tex_subimage3D(id, currentPS(), tg, level, x, y, z, width, height, depth, tr, pixels);
         return;
     }
     TexMainLap lap;
-    TexArgs a = { target, level, 0, width, height, depth, x, y, z, format, type, 0, 0, 0, 0, nullptr, nullptr, id };
-    pushImage(K_SUB3D, a, pixels, pixel_bytes(format, type, width, height, depth, tlsPixelStore));
+    TexArgs a = {};
+    a.mTarget = tg; a.mTransfer = tr; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = depth; a.mX = x; a.mY = y; a.mZ = z; a.mTex = id;
+    pushImage(K_SUB3D, a, pixels, pixel_bytes(tr, width, height, depth, tlsPixelStore));
 }
 
 void compressedImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 width, S32 height, S32 border, S32 image_size, const void* data)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
+    const LLVkFormat::Store st = LLVkFormat::store((S32)internal_format);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_compressed2D(id, currentPS(), target, level, internal_format, width, height, border, image_size, data);
+        LLVkGL::tex_compressed2D(id, currentPS(), tg, level, st, width, height, image_size, data);
         return;
     }
     TexMainLap lap;
-    TexArgs a = { target, level, (S32)internal_format, width, height, 1, 0, 0, 0, 0, 0, border, image_size, 0, 0, nullptr, nullptr, id };
+    TexArgs a = {};
+    a.mTarget = tg; a.mStore = st; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = 1; a.mImageSize = image_size; a.mTex = id;
     pushImage(K_COMPRESSED2D, a, data, (size_t)std::max(image_size, 0));
 }
 
 void params(U32 id, U32 target, const LLVkAsync::TexParam* p, U32 count)
 {
-    if (!count)
+    (void)target;           // a setting acts on the named texture: its dimensionality does not matter
+    constexpr U32 CHUNK = 16;
+    for (U32 base = 0; base < count; base += CHUNK)
     {
-        return;
+        LLVkFormat::Setting st[CHUNK];
+        U32 n = 0;
+        for (U32 i = base; i < count && n < CHUNK; ++i)
+        {
+            const LLVkFormat::Setting s = LLVkFormat::setting(p[i].mPname, p[i].mIsFloat != 0, p[i].mInt, p[i].mFloat);
+            if (s.mParam != LLVkFormat::P_NONE && s.mParam != LLVkFormat::P_GENERATE_MIPMAP)
+            {
+                st[n++] = s;
+            }
+        }
+        if (!n)
+        {
+            continue;
+        }
+        if (!LLVkAsync::gEnabled)
+        {
+            auto lock = inlineLock();
+            LLVkGL::tex_params(id, st, n);
+            continue;
+        }
+        const U32 head[2] = { id, n };
+        pushData(CMD_TEX_PARAMS_ID, head, sizeof(head), st, sizeof(LLVkFormat::Setting) * n);
     }
-    if (!LLVkAsync::gEnabled)
-    {
-        auto lock = inlineLock();
-        LLVkGL::tex_params(id, target, p, count);
-        return;
-    }
-    const U32 head[3] = { id, target, count };
-    pushData(CMD_TEX_PARAMS_ID, head, sizeof(head), p, sizeof(LLVkAsync::TexParam) * count);
 }
 
 static void pushOp(const TexOp& op)
@@ -1448,91 +1467,109 @@ static void pushOp(const TexOp& op)
 
 void swizzle(U32 id, U32 target, const S32* rgba)
 {
+    (void)target;
+    LLVkFormat::Swizzle swz[4];
+    for (U32 i = 0; i < 4; ++i)
+    {
+        swz[i] = LLVkFormat::swizzle(rgba[i]);
+    }
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_swizzle(id, target, rgba);
+        LLVkGL::tex_swizzle(id, swz);
         return;
     }
     TexOp op = {};
-    op.mKind = OPK_SWIZZLE; op.mTex = id; op.mTarget = target;
-    memcpy(op.mRgba, rgba, sizeof(op.mRgba));
+    op.mKind = OPK_SWIZZLE; op.mTex = id;
+    for (U32 i = 0; i < 4; ++i)
+    {
+        op.mSwz[i] = swz[i];
+    }
     pushOp(op);
 }
 
 void generateMipmap(U32 id, U32 target)
 {
+    (void)target;
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_mipmap(id, target);
+        LLVkGL::tex_mipmap(id);
         return;
     }
     TexOp op = {};
-    op.mKind = OPK_MIPMAP; op.mTex = id; op.mTarget = target;
+    op.mKind = OPK_MIPMAP; op.mTex = id;
     pushOp(op);
 }
 
 void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_copy_sub(id, target, level, xoffset, yoffset, zoffset, x, y, width, height, source);
+        LLVkGL::tex_copy_sub(id, tg, level, xoffset, yoffset, zoffset, x, y, width, height, source);
         return;
     }
     TexOp op = {};
-    op.mKind = OPK_COPY_SUB; op.mTex = id; op.mTarget = target; op.mLevel = level;
+    op.mKind = OPK_COPY_SUB; op.mTex = id; op.mTarget = tg; op.mLevel = level;
     op.mX0 = xoffset; op.mY0 = yoffset; op.mZ0 = zoffset; op.mX = x; op.mY = y; op.mW = width; op.mH = height; op.mSource = source;
     pushOp(op);
 }
 
 void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border, U32 source)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
+    const LLVkFormat::Store st = LLVkFormat::store((S32)internal_format);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_copy_image(id, target, level, internal_format, x, y, width, height, border, source);
+        LLVkGL::tex_copy_image(id, tg, level, st, x, y, width, height, source);
         return;
     }
     TexOp op = {};
-    op.mKind = OPK_COPY_IMAGE; op.mTex = id; op.mTarget = target; op.mLevel = level; op.mFormat = internal_format;
-    op.mX = x; op.mY = y; op.mW = width; op.mH = height; op.mBorder = border; op.mSource = source;
+    op.mKind = OPK_COPY_IMAGE; op.mTex = id; op.mTarget = tg; op.mLevel = level; op.mStore = st;
+    op.mX = x; op.mY = y; op.mW = width; op.mH = height; op.mSource = source;
     pushOp(op);
 }
 
 S32 levelParameter(U32 id, U32 target, S32 level, U32 pname)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
+    const LLVkFormat::Level q = LLVkFormat::level(pname);
     S32 v = 0;
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        return LLVkGL::tex_level_parameter(id, target, level, pname);
+        return LLVkGL::tex_level_parameter(id, tg, level, q);
     }
-    LLVkAsync::syncCall([&]() { v = LLVkGL::tex_level_parameter(id, target, level, pname); });
+    LLVkAsync::syncCall([&]() { v = LLVkGL::tex_level_parameter(id, tg, level, q); });
     return v;
 }
 
 void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_get_image(id, target, level, format, type, out);
+        LLVkGL::tex_get_image(id, tg, level, tr, out);
         return;
     }
-    LLVkAsync::syncCall([&]() { LLVkGL::tex_get_image(id, target, level, format, type, out); });
+    LLVkAsync::syncCall([&]() { LLVkGL::tex_get_image(id, tg, level, tr, out); });
 }
 
 void getCompressedImage(U32 id, U32 target, S32 level, void* out)
 {
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_get_compressed_image(id, target, level, out);
+        LLVkGL::tex_get_compressed_image(id, tg, level, out);
         return;
     }
-    LLVkAsync::syncCall([&]() { LLVkGL::tex_get_compressed_image(id, target, level, out); });
+    LLVkAsync::syncCall([&]() { LLVkGL::tex_get_compressed_image(id, tg, level, out); });
 }
 
 }
@@ -1569,13 +1606,14 @@ void clear(bool color, bool depth, const F32* rgba)
 
 void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, void* dst)
 {
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
-        LLVkGL::read_pixels(target, x, y, width, height, format, type, dst);
+        LLVkGL::read_pixels(target, x, y, width, height, tr, dst);
         return;
     }
-    LLVkAsync::syncCall([&]() { LLVkGL::read_pixels(target, x, y, width, height, format, type, dst); });
+    LLVkAsync::syncCall([&]() { LLVkGL::read_pixels(target, x, y, width, height, tr, dst); });
 }
 
 }
@@ -1823,21 +1861,22 @@ void runImage(Reader& r, U8 flags)
     struct Release { const TexArgs& mA; ~Release() { if (mA.mMode == 3 && mA.mUnref) mA.mUnref(mA.mOwner); } } release = { a };
     PixelStore ps;
     ps.mAlignment = a.mAlignment; ps.mRowLength = a.mRowLength; ps.mUnpackBuffer = a.mUnpackBuffer;
+    const LLVkFormat::Store st = (LLVkFormat::Store)a.mStore;
     switch (a.mKind)
     {
-    case K_IMAGE2D: LLVkGL::tex_image2D(a.mTex, ps, a.mTarget, a.mLevel, a.mInternalFormat, a.mWidth, a.mHeight, a.mBorder, a.mFormat, a.mType, pixels); break;
-    case K_IMAGE3D: LLVkGL::tex_image3D(a.mTex, ps, a.mTarget, a.mLevel, a.mInternalFormat, a.mWidth, a.mHeight, a.mDepth, a.mBorder, a.mFormat, a.mType, pixels); break;
-    case K_SUB2D: LLVkGL::tex_subimage2D(a.mTex, ps, a.mTarget, a.mLevel, a.mX, a.mY, a.mWidth, a.mHeight, a.mFormat, a.mType, pixels); break;
-    case K_SUB3D: LLVkGL::tex_subimage3D(a.mTex, ps, a.mTarget, a.mLevel, a.mX, a.mY, a.mZ, a.mWidth, a.mHeight, a.mDepth, a.mFormat, a.mType, pixels); break;
-    default: LLVkGL::tex_compressed2D(a.mTex, ps, a.mTarget, a.mLevel, (U32)a.mInternalFormat, a.mWidth, a.mHeight, a.mBorder, a.mImageSize, pixels); break;
+    case K_IMAGE2D: LLVkGL::tex_image2D(a.mTex, ps, a.mTarget, a.mLevel, st, a.mWidth, a.mHeight, a.mTransfer, pixels); break;
+    case K_IMAGE3D: LLVkGL::tex_image3D(a.mTex, ps, a.mTarget, a.mLevel, st, a.mWidth, a.mHeight, a.mDepth, a.mTransfer, pixels); break;
+    case K_SUB2D: LLVkGL::tex_subimage2D(a.mTex, ps, a.mTarget, a.mLevel, a.mX, a.mY, a.mWidth, a.mHeight, a.mTransfer, pixels); break;
+    case K_SUB3D: LLVkGL::tex_subimage3D(a.mTex, ps, a.mTarget, a.mLevel, a.mX, a.mY, a.mZ, a.mWidth, a.mHeight, a.mDepth, a.mTransfer, pixels); break;
+    default: LLVkGL::tex_compressed2D(a.mTex, ps, a.mTarget, a.mLevel, st, a.mWidth, a.mHeight, a.mImageSize, pixels); break;
     }
 }
 
 void runParams(Reader& r, U8 flags)
 {
-    const U32 id = r.get<U32>(), target = r.get<U32>(), count = r.get<U32>();
+    const U32 id = r.get<U32>(), count = r.get<U32>();
     Blob b = read_blob(r, flags);
-    LLVkGL::tex_params(id, target, (const LLVkAsync::TexParam*)b.mData, count);
+    LLVkGL::tex_params(id, (const LLVkFormat::Setting*)b.mData, count);
 }
 
 void runOp(Reader& r)
@@ -1845,10 +1884,19 @@ void runOp(Reader& r)
     const TexOp o = r.get<TexOp>();
     switch (o.mKind)
     {
-    case OPK_MIPMAP: LLVkGL::tex_mipmap(o.mTex, o.mTarget); break;
+    case OPK_MIPMAP: LLVkGL::tex_mipmap(o.mTex); break;
     case OPK_COPY_SUB: LLVkGL::tex_copy_sub(o.mTex, o.mTarget, o.mLevel, o.mX0, o.mY0, o.mZ0, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
-    case OPK_COPY_IMAGE: LLVkGL::tex_copy_image(o.mTex, o.mTarget, o.mLevel, o.mFormat, o.mX, o.mY, o.mW, o.mH, o.mBorder, o.mSource); break;
-    default: LLVkGL::tex_swizzle(o.mTex, o.mTarget, o.mRgba); break;
+    case OPK_COPY_IMAGE: LLVkGL::tex_copy_image(o.mTex, o.mTarget, o.mLevel, (LLVkFormat::Store)o.mStore, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
+    default:
+    {
+        LLVkFormat::Swizzle swz[4];
+        for (U32 i = 0; i < 4; ++i)
+        {
+            swz[i] = (LLVkFormat::Swizzle)o.mSwz[i];
+        }
+        LLVkGL::tex_swizzle(o.mTex, swz);
+        break;
+    }
     }
 }
 
