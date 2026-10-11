@@ -37,9 +37,9 @@ namespace LLVkGL
 {
     void set_worker_context(int id);
     void register_main_context();
-    void on_bufferData(GLuint name, unsigned kind, GLsizeiptr size, const void* data);
-    void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data);
-    void on_bufferRecycle(GLuint name);
+    void on_bufferData(U32 name, unsigned kind, S64 size, const void* data);
+    void on_bufferSubData(U32 name, S64 offset, S64 size, const void* data);
+    void on_bufferRecycle(U32 name);
 }
 
 namespace LLVkMirror
@@ -266,11 +266,10 @@ inline void mainCommit(size_t payload_bytes)
 bool gTyped = true;                           // LL_VK_TYPED=0: typed records (LLVertexBuffer::setBuffer) off, the separate calls are queued as before
 unsigned long long gMainRecords = 0;        // records actually written by the main thread
 
-struct BindTexUnitArgs { GLenum mUnit; GLenum mTarget; GLuint mTexture; U32 mPad; };
-struct RunHeader { U32 mReserved; GLuint mBuffer; U32 mCount; U32 mFlags; GLuint mElem; U32 mPad; };   // flags: bit 0 array buffer bind, bit 1 index buffer bind (played after the pointers)
-struct RunEntry { U32 mKind; GLuint mIndex; GLint mSize; GLenum mType; GLsizei mStride; U32 mNormalized; const void* mPointer; };   // kind 0: glVertexAttribPointer, 1: glVertexAttribIPointer
+struct BindTexUnitArgs { U32 mUnit; U32 mTarget; U32 mTexture; U32 mPad; };
+struct RunHeader { U32 mReserved; U32 mBuffer; U32 mCount; U32 mFlags; U32 mElem; U32 mPad; };   // flags: bit 0 array buffer bind, bit 1 index buffer bind (played after the pointers)
+struct RunEntry { U32 mKind; U32 mIndex; S32 mSize; U32 mType; S32 mStride; U32 mNormalized; const void* mPointer; };   // kind 0: glVertexAttribPointer, 1: glVertexAttribIPointer
 static_assert(sizeof(RunEntry) == 32, "run entry");
-constexpr GLenum GL_ELEMENT_ARRAY_BUFFER_ENUM = 0x8893;
 
 inline void rawPush(U16 op, const void* args, unsigned size)
 {
@@ -553,7 +552,7 @@ void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage)
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
-        LLVkGL::on_bufferData(name, kind, (GLsizeiptr)size, data);
+        LLVkGL::on_bufferData(name, kind, (S64)size, data);
         return;
     }
     MainLap lap;
@@ -566,7 +565,7 @@ void bufferSubData(U32 name, S64 offset, S64 size, const void* data)
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
-        LLVkGL::on_bufferSubData(name, (GLintptr)offset, (GLsizeiptr)size, data);
+        LLVkGL::on_bufferSubData(name, (S64)offset, (S64)size, data);
         return;
     }
     MainLap lap;
@@ -1181,9 +1180,9 @@ bool query_get(int kind, unsigned id, unsigned pname, void* params)
             queryResultTally(true);
             switch (kind)
             {
-            case 0: *(GLint*)params = 1; break;
-            case 1: *(GLuint*)params = 1; break;
-            default: *(GLuint64*)params = 1; break;
+            case 0: *(S32*)params = 1; break;
+            case 1: *(U32*)params = 1; break;
+            default: *(U64*)params = 1; break;
             }
             return true;
         }
@@ -1197,9 +1196,9 @@ bool query_get(int kind, unsigned id, unsigned pname, void* params)
     }
     switch (kind)
     {
-    case 0: *(GLint*)params = (GLint)value; break;
-    case 1: *(GLuint*)params = (GLuint)value; break;
-    default: *(GLuint64*)params = value; break;
+    case 0: *(S32*)params = (S32)value; break;
+    case 1: *(U32*)params = (U32)value; break;
+    default: *(U64*)params = value; break;
     }
     return true;
 }
@@ -1211,7 +1210,7 @@ bool query_get(int kind, unsigned id, unsigned pname, void* params)
 namespace
 {
 
-size_t pixel_bytes(LLVkFormat::Transfer tr, GLsizei w, GLsizei h, GLsizei d, const PixelStoreShadow& ps)
+size_t pixel_bytes(LLVkFormat::Transfer tr, S32 w, S32 h, S32 d, const PixelStoreShadow& ps)
 {
     const unsigned comps = LLVkFormat::compCount(tr.mComps), tb = LLVkFormat::typeBytes(tr.mType);
     if (!comps || !tb || w <= 0 || h <= 0 || d <= 0)
@@ -1949,14 +1948,14 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         const NamedBufArgs a = r.get<NamedBufArgs>();
         Blob b = read_blob(r, flags);
-        LLVkGL::on_bufferData(a.mName, a.mTarget, (GLsizeiptr)a.mSize, b.mData);
+        LLVkGL::on_bufferData(a.mName, a.mTarget, (S64)a.mSize, b.mData);
         break;
     }
     case CMD_BUFFER_SUBDATA:
     {
         const NamedBufArgs a = r.get<NamedBufArgs>();
         Blob b = read_blob(r, flags);
-        LLVkGL::on_bufferSubData(a.mName, (GLintptr)a.mOffset, (GLsizeiptr)a.mSize, b.mData);
+        LLVkGL::on_bufferSubData(a.mName, (S64)a.mOffset, (S64)a.mSize, b.mData);
         break;
     }
     case CMD_BUFFER_RECYCLE:
@@ -2046,7 +2045,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         }
         else
         {
-            LLVkGL::draw_arrays(h->mMode, (GLint)h->mStart, h->mCount);
+            LLVkGL::draw_arrays(h->mMode, (S32)h->mStart, h->mCount);
         }
         break;
     }

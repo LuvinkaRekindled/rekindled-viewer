@@ -29,7 +29,7 @@ namespace LLVkGL
     extern bool gOwn;
 
     // names for the resources the producer creates: handed out on the calling thread, created on the worker (LLVkAsync::resourceCreate)
-    void own_gen(int kind, GLsizei n, GLuint* out);
+    void own_gen(int kind, S32 n, U32* out);
     // the worker side of the lifetime records: kind is an LLVkAsync::ResourceKind
     void resource_create(unsigned kind, int n, const unsigned* ids);
     void resource_destroy(unsigned kind, int n, const unsigned* ids);

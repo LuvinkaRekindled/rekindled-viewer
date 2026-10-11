@@ -45,54 +45,6 @@
 #include <algorithm>
 #include <string>
 
-// constants that older GL headers may not define
-#ifndef GL_READ_FRAMEBUFFER_BINDING
-#define GL_READ_FRAMEBUFFER_BINDING 0x8CAA
-#endif
-#ifndef GL_BGR
-#define GL_BGR 0x80E0
-#endif
-#ifndef GL_PACK_ROW_LENGTH
-#define GL_PACK_ROW_LENGTH 0x0D02
-#endif
-#ifndef GL_PACK_ALIGNMENT
-#define GL_PACK_ALIGNMENT 0x0D05
-#endif
-#ifndef GL_HALF_FLOAT
-#define GL_HALF_FLOAT 0x140B
-#endif
-#ifndef GL_TEXTURE_BINDING_2D
-#define GL_TEXTURE_BINDING_2D 0x8069
-#endif
-#ifndef GL_TEXTURE_CUBE_MAP_ARRAY
-#define GL_TEXTURE_CUBE_MAP_ARRAY 0x9009
-#endif
-#ifndef GL_TEXTURE_2D_ARRAY
-#define GL_TEXTURE_2D_ARRAY 0x8C1A
-#endif
-#ifndef GL_PIXEL_UNPACK_BUFFER
-#define GL_PIXEL_UNPACK_BUFFER 0x88EC
-#endif
-#ifndef GL_UNIFORM_BUFFER
-#define GL_UNIFORM_BUFFER 0x8A11
-#endif
-#ifndef GL_COMPARE_REF_TO_TEXTURE
-#define GL_COMPARE_REF_TO_TEXTURE 0x884E
-#endif
-#ifndef GL_TEXTURE_MAX_ANISOTROPY
-#define GL_TEXTURE_MAX_ANISOTROPY 0x84FE
-#endif
-#ifndef GL_TEXTURE_SWIZZLE_R
-#define GL_TEXTURE_SWIZZLE_R 0x8E42
-#define GL_TEXTURE_SWIZZLE_G 0x8E43
-#define GL_TEXTURE_SWIZZLE_B 0x8E44
-#define GL_TEXTURE_SWIZZLE_A 0x8E45
-#define GL_TEXTURE_SWIZZLE_RGBA 0x8E46
-#endif
-#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
-#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
-#endif
-
 namespace LLVkGL
 {
 
@@ -478,27 +430,27 @@ struct Buf
 struct VaoAttrib
 {
     bool mEnabled = false;
-    GLuint mBuffer = 0;
-    GLint mSize = 4;
+    U32 mBuffer = 0;
+    S32 mSize = 4;
     U8 mType = LLVkFormat::T_F32;       // LLVkFormat::PType
     bool mNormalized = false;
     bool mInteger = false;
-    GLsizei mStride = 0;
+    S32 mStride = 0;
     U64 mOffset = 0;
 };
 
 struct VertexInputState
 {
     VaoAttrib mAttrib[16];
-    GLuint mArrayBuffer = 0;        // the buffer the next attribute pointers refer to
-    GLuint mElementBuffer = 0;
+    U32 mArrayBuffer = 0;        // the buffer the next attribute pointers refer to
+    U32 mElementBuffer = 0;
 };
 VertexInputState sVin;
 
 struct FboAttachment
 {
-    GLuint mTexture = 0;
-    GLint mLevel = 0;
+    U32 mTexture = 0;
+    S32 mLevel = 0;
     U32 mLayer = 0;
 };
 
@@ -512,10 +464,10 @@ struct Fbo
 // state that belongs to one GL context (the viewer has a texture worker thread with its own, sharing objects)
 struct PerContext
 {
-    GLuint mPixelUnpackBuffer = 0;
-    GLint mUnpackAlignment = 4;
-    GLint mUnpackRowLength = 0;
-    GLuint mPixelPackBuffer = 0;
+    U32 mPixelUnpackBuffer = 0;
+    S32 mUnpackAlignment = 4;
+    S32 mUnpackRowLength = 0;
+    U32 mPixelPackBuffer = 0;
 };
 thread_local PerContext sCtxTls;
 thread_local PerContext* sCtxOverride = nullptr;      // set on the async worker: the context of the thread whose call is being replayed
@@ -523,16 +475,16 @@ inline PerContext& current_ctx() { return sCtxOverride ? *sCtxOverride : sCtxTls
 #define sCtx (current_ctx())
 
 // F1.2: the texture slots a draw samples from (unit, target class): written by the typed slot records only
-GLuint sSlots[32][8] = {};
+U32 sSlots[32][8] = {};
 // F1.4: the render target draws go to (0: the back buffer): set by the typed target state record only
-GLuint sDrawFbo = 0;
+U32 sDrawFbo = 0;
 
 struct GLState
 {
     // objects (shared between contexts)
-    std::unordered_map<GLuint, Tex> mTextures;
-    std::unordered_map<GLuint, Fbo> mFbos;
-    std::unordered_map<GLuint, Buf> mBuffers;
+    std::unordered_map<U32, Tex> mTextures;
+    std::unordered_map<U32, Fbo> mFbos;
+    std::unordered_map<U32, Buf> mBuffers;
     F32 mConstAttrib[16][4];
 
     // draw state: the render state lives in LLVkState (F1.1); only the clear colour is still kept here
@@ -550,7 +502,7 @@ GLState sGL;
 std::vector<Tex*> sTexFlat;
 std::vector<Buf*> sBufFlat;
 
-inline Tex* tex_ptr(GLuint name)
+inline Tex* tex_ptr(U32 name)
 {
     if (name < sTexFlat.size())
     {
@@ -574,9 +526,9 @@ inline Tex* tex_ptr(GLuint name)
     }
     return &it->second;
 }
-inline void tex_forget(GLuint name) { if (name < sTexFlat.size()) sTexFlat[name] = nullptr; }
+inline void tex_forget(U32 name) { if (name < sTexFlat.size()) sTexFlat[name] = nullptr; }
 
-inline Buf* buf_ptr(GLuint name)
+inline Buf* buf_ptr(U32 name)
 {
     if (name < sBufFlat.size())
     {
@@ -600,15 +552,15 @@ inline Buf* buf_ptr(GLuint name)
     }
     return &it->second;
 }
-inline void buf_forget(GLuint name) { if (name < sBufFlat.size()) sBufFlat[name] = nullptr; }
+inline void buf_forget(U32 name) { if (name < sBufFlat.size()) sBufFlat[name] = nullptr; }
 
 // <FS> what sync_target() resolved for the current draw framebuffer, valid until something that can change it happens (bumps sTargetEpoch)
 U64 sTargetEpoch = 1;
 const void* sTargetNamesOwner = nullptr;      // whose list of attachment names sCurTargets holds
-std::set<GLuint> sFrameTargets;         // textures rendered into during the current frame (for the debug dump)
-GLuint sUboBinding[4] = {};             // GL buffer bound to each named uniform block binding point
-std::map<GLuint, U32> sFrameSampled;    // textures read by draws this frame, with use counts
-std::map<GLuint, U32> sFrameSampledLast;
+std::set<U32> sFrameTargets;         // textures rendered into during the current frame (for the debug dump)
+U32 sUboBinding[4] = {};             // GL buffer bound to each named uniform block binding point
+std::map<U32, U32> sFrameSampled;    // textures read by draws this frame, with use counts
+std::map<U32, U32> sFrameSampledLast;
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
 U64 sDrawsTotal = 0;
 std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
@@ -649,8 +601,8 @@ struct DrawStats
 };
 DrawStats sStats, sStatsLast;
 bool sVerifySnapshotPending = false;   // a snapshot render is being mirrored: report on it when its off-screen frame ends
-std::vector<GLuint> sCurTargets;        // textures attached to the current draw framebuffer
-GLuint sRecentFrameTargets[16] = {};    // cheap filter in front of sFrameTargets: ids inserted recently this frame
+std::vector<U32> sCurTargets;        // textures attached to the current draw framebuffer
+U32 sRecentFrameTargets[16] = {};    // cheap filter in front of sFrameTargets: ids inserted recently this frame
 U32 sCurTargetW = 1, sCurTargetH = 1;   // size of the first colour target of the current draw framebuffer
 // the per-draw statistics / pass graph are only gathered when asked for (they cost string work on every draw)
 const bool sStatsEnabled = getenv("LL_VK_STATS") != nullptr || getenv("LL_VK_DEBUG_SHADERS") != nullptr || getenv("LL_VK_VALIDATION") != nullptr;
@@ -664,7 +616,7 @@ bool sHasDepth = false;             // does the current render target have a dep
 
 // <FS> F1.2: a texture edit names its texture (LLVkTex): while a scope is open the edit functions below act on that texture and read the unpack state
 // from the record, not from the GL bound-texture / pixel-store emulation. thread_local: the worker replays one record at a time, inline mode runs on the caller.
-thread_local GLuint tlsEditTex = 0;
+thread_local U32 tlsEditTex = 0;
 thread_local const LLVkTex::PixelStore* tlsEditPS = nullptr;
 
 Tex* edit_texture()
@@ -677,9 +629,9 @@ Tex* edit_texture()
     return nullptr;         // every texture edit names its texture (LLVkTex)
 }
 
-inline GLuint edit_unpack_buffer() { return tlsEditPS ? tlsEditPS->mUnpackBuffer : sCtx.mPixelUnpackBuffer; }
-inline GLint edit_unpack_alignment() { return tlsEditPS ? tlsEditPS->mAlignment : sCtx.mUnpackAlignment; }
-inline GLint edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength : sCtx.mUnpackRowLength; }
+inline U32 edit_unpack_buffer() { return tlsEditPS ? tlsEditPS->mUnpackBuffer : sCtx.mPixelUnpackBuffer; }
+inline S32 edit_unpack_alignment() { return tlsEditPS ? tlsEditPS->mAlignment : sCtx.mUnpackAlignment; }
+inline S32 edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength : sCtx.mUnpackRowLength; }
 
 //-----------------------------------------------------------------------------------------------------
 // textures
@@ -796,9 +748,9 @@ const void* pixel_source(const void* pixels)
     return pixels;
 }
 
-void upload_converted(Tex& t, LLVkFormat::Target tg, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels);
+void upload_converted(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels);
 
-void upload_level(Tex& t, LLVkFormat::Target tg, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, LLVkFormat::Transfer tr, const void* pixels)
+void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, LLVkFormat::Transfer tr, const void* pixels)
 {
     using namespace LLVkFormat;
     if (!t.mImage.valid() || level < 0 || (U32)level >= t.mLevels)
@@ -837,7 +789,7 @@ void upload_level(Tex& t, LLVkFormat::Target tg, GLint level, GLint x, GLint y, 
         const FormatMap fm = t.mFormat;
         const U32 alignment = (U32)edit_unpack_alignment(), row_length = (U32)edit_unpack_row_length();
         const VkImage handle = t.mImage.mImage;
-        const GLuint name = tlsEditTex;
+        const U32 name = tlsEditTex;
         const bool unlocked = (U64)w * h * d >= 16384 && !edit_unpack_buffer() && !LLVkAsync::gEnabled;      // (the worker does not take the lock)
         unsigned depth_held = 0;
         if (unlocked)
@@ -866,7 +818,7 @@ void upload_level(Tex& t, LLVkFormat::Target tg, GLint level, GLint x, GLint y, 
     upload_converted(t, tg, level, x, y, z, w, h, d, true, texels);
 }
 
-void upload_converted(Tex& t, LLVkFormat::Target tg, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels)
+void upload_converted(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels)
 {
     using namespace LLVkFormat;
     if (!converted || !t.mImage.valid())
@@ -897,7 +849,7 @@ void upload_converted(Tex& t, LLVkFormat::Target tg, GLint level, GLint x, GLint
 }
 
 // view of one level / layer of a texture, usable as a render target
-Image* texture_view(GLuint name, GLint level, U32 layer)
+Image* texture_view(U32 name, S32 level, U32 layer)
 {
     Tex* tp = tex_ptr(name);
     if (!tp || !tp->mImage.valid())
@@ -947,7 +899,7 @@ Image* attachment_image(const FboAttachment& a)
 }
 
 // the color image reads (copies, readbacks) come from: colour attachment 0 of a render target (0: the back buffer)
-Image* read_image(GLuint fbo)
+Image* read_image(U32 fbo)
 {
     if (fbo == 0)
     {
@@ -968,9 +920,9 @@ Image* read_image()
 
 // makes the renderer's render target match the GL draw framebuffer. Returns false if there is nothing to draw to.
 // remembers that a texture was rendered into this frame; the same few textures come back on every draw, so look in a small cache first
-static inline void note_frame_target(GLuint texture)
+static inline void note_frame_target(U32 texture)
 {
-    GLuint& slot = sRecentFrameTargets[texture & 15];
+    U32& slot = sRecentFrameTargets[texture & 15];
     if (slot != texture)
     {
         slot = texture;
@@ -1021,7 +973,7 @@ bool sync_target()
         return true;
     }
     // the framebuffer's attachments were resolved for an earlier draw and nothing that could change them has happened since (and the frame did not turn over)
-    struct TargetCache { U64 mEpoch = 0; GLuint mFbo = ~0u; U64 mFrame = ~0ull; Image* mColors[8] = {}; U32 mCount = 0; Image* mDepth = nullptr; bool mOk = false; std::vector<GLuint> mNames; };
+    struct TargetCache { U64 mEpoch = 0; U32 mFbo = ~0u; U64 mFrame = ~0ull; Image* mColors[8] = {}; U32 mCount = 0; Image* mDepth = nullptr; bool mOk = false; std::vector<U32> mNames; };
     static TargetCache cache;
     const U64 frame_now = Context::instance().getFrameNumber();
     if (cache.mEpoch == sTargetEpoch && cache.mFbo == sDrawFbo && cache.mFrame == frame_now && !sDbgMatch && cache.mOk)
@@ -1288,7 +1240,7 @@ void sync_textures(Renderer& r, Program& program)
             r.setTexture(unit, &tex->mImage, texture_sampler(r, *tex));
             if (sStatsEnabled)
             {
-                const GLuint tname = sSlots[unit][cls];
+                const U32 tname = sSlots[unit][cls];
                 ++sFrameSampled[tname];
                 if (std::find(sCurTargets.begin(), sCurTargets.end(), tname) != sCurTargets.end())
                 {
@@ -1308,7 +1260,7 @@ void sync_textures(Renderer& r, Program& program)
 //-----------------------------------------------------------------------------------------------------
 
 // numeric_class: 'f' float, 'i' signed integer, 'u' unsigned integer (what the vertex shader declares)
-VkFormat vertex_format(GLint size, U8 type, bool normalized, bool integer, char numeric_class)
+VkFormat vertex_format(S32 size, U8 type, bool normalized, bool integer, char numeric_class)
 {
     const U32 n = (U32)std::max(1, std::min(size, 4));
     if (numeric_class == 'i' || numeric_class == 'u')
@@ -1394,16 +1346,16 @@ U32 attrib_type_bytes(U8 type)
 }
 
 // Builds the vertex input for the current VAO and the program's attributes.
-bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vector<GLuint>& used_buffers)
+bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vector<U32>& used_buffers)
 {
     const VertexInputState& vao = sVin;
     const ProgramInfo& info = program.getInfo();
     // bindings made so far: buffer, stride, byte offset of the binding inside the buffer
-    struct BindingKey { GLuint mBuffer; GLsizei mStride; U64 mBase; U32 mBinding; };
+    struct BindingKey { U32 mBuffer; S32 mStride; U64 mBase; U32 mBinding; };
     BindingKey made[16];
     U32 made_count = 0;
     // <FS> the attributes of a draw mostly come from one buffer: it is looked up once, and marked as used right here (mark_used used to look every buffer up again)
-    GLuint last_name = 0;
+    U32 last_name = 0;
     auto last_it = sGL.mBuffers.end();
     const U64 frame_now = Context::instance().getFrameNumber();
 
@@ -1431,7 +1383,7 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
         {
             bit->second.mLastUseFrame = frame_now;
             const U32 tb = attrib_type_bytes(at.mType);
-            const GLsizei stride = at.mStride ? at.mStride : (GLsizei)(tb * (U32)at.mSize);
+            const S32 stride = at.mStride ? at.mStride : (S32)(tb * (U32)at.mSize);
             // Vulkan limits attribute offsets to a couple of KB. An offset at least as large as the stride is the
             // start of a separate array inside the buffer: it becomes the binding's offset instead.
             const bool separate_array = at.mOffset >= (U64)stride;
@@ -1502,7 +1454,7 @@ namespace
 {
 
 // hands the bound named uniform blocks to the renderer
-void sync_uniform_blocks(Renderer& r, std::vector<GLuint>& used_buffers)
+void sync_uniform_blocks(Renderer& r, std::vector<U32>& used_buffers)
 {
     for (U32 i = 0; i < 4; ++i)
     {
@@ -1521,7 +1473,7 @@ void sync_uniform_blocks(Renderer& r, std::vector<GLuint>& used_buffers)
 }
 
 // common work before a draw; returns false if the draw cannot be mirrored
-bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
+bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
 {
     LLVkMirror::gLastLap = 200;
     if (!LLVkMirror::inFrame())
@@ -1586,14 +1538,14 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
         LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_STATS);
         std::string key = program->getName() + " -> ";
         if (sDrawFbo == 0) key += "SCREEN";
-        for (GLuint tname : sCurTargets) key += std::to_string(tname) + " ";
+        for (U32 tname : sCurTargets) key += std::to_string(tname) + " ";
         key += "<- ";
         const ProgramInfo& gi = program->getInfo();
         for (size_t k = 0; k < gi.mSamplers.size(); ++k)
         {
             const U32 unit = program->getSamplerUnit(k);
             if (unit >= 32) continue;
-            GLuint bound = 0;
+            U32 bound = 0;
             for (U32 c = 0; c < 8 && !bound; ++c)
             {
                 const std::string& ty = gi.mSamplers[k].mType;
@@ -1652,7 +1604,7 @@ bool prepare_draw(VertexInput& vi, std::vector<GLuint>& used_buffers)
 }
 
 // ---- device-local buffers: writes become GPU copies, recorded when a draw is about to read the buffer ----
-std::vector<GLuint> sPendingBufs;       // the buffers whose Buf::mPending is set
+std::vector<U32> sPendingBufs;       // the buffers whose Buf::mPending is set
 U64 sBufferTopology = 0;                // see Buf::mRtWatched
 std::vector<unsigned> sTopologyNames;  // the names behind the count (cleared when taken; sTopologyOverflow: too many)
 bool sTopologyOverflow = false;
@@ -1684,7 +1636,7 @@ void flush_buffer_updates(bool frame_end)
         return;                         // no frame is being recorded: the writes stay queued
     }
     note_flush(frame_end, pending);
-    for (GLuint n : sPendingBufs)
+    for (U32 n : sPendingBufs)
     {
         auto it = sGL.mBuffers.find(n);
         if (it != sGL.mBuffers.end()) it->second.mPending = false;
@@ -1693,14 +1645,14 @@ void flush_buffer_updates(bool frame_end)
 }
 
 // called before a draw is recorded: if it reads a buffer with an unrecorded write, record the writes first
-void ensure_buffers_current(const std::vector<GLuint>& used, GLuint element)
+void ensure_buffers_current(const std::vector<U32>& used, U32 element)
 {
     if (sPendingBufs.empty())
     {
         return;
     }
     bool stale = false;
-    for (GLuint n : used)
+    for (U32 n : used)
     {
         auto it = sGL.mBuffers.find(n);
         if (it != sGL.mBuffers.end() && it->second.mPending) { stale = true; break; }
@@ -1804,7 +1756,7 @@ U64 device_buffer_min_bytes()
 
 // <FS> the vertex and uniform buffers of a draw are marked as they are found (build_vertex_input, sync_uniform_blocks); only the element buffer is left, and only
 // when the draw has one (glDrawArrays passes 0: it used to look up buffer 0 for nothing)
-void mark_used(const std::vector<GLuint>& buffers, GLuint element)
+void mark_used(const std::vector<U32>& buffers, U32 element)
 {
     (void)buffers;
     if (element)
@@ -1846,7 +1798,7 @@ void note_flush(bool frame_end, size_t buffers)
 
 // LL_VK_PHASES: bytes written per buffer name in the interval, to find who writes every frame
 struct WriterStat { U32 mWrites = 0; U64 mBytes = 0; U32 mFrames = 0; U64 mLastFrame = ~0ull; };      // mFrames: in how many different frames it was written
-std::unordered_map<GLuint, WriterStat> sWriters;
+std::unordered_map<U32, WriterStat> sWriters;
 const bool sWriterStatsOn = getenv("LL_VK_PHASES") != nullptr;
 
 void report_renames()
@@ -1867,7 +1819,7 @@ void report_renames()
     sRenameStats = RenameStats();
 }
 
-void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, bool whole)
+void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool whole)
 {
     if (sWriterStatsOn)
     {
@@ -1984,9 +1936,9 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
 // hooks: textures
 //-----------------------------------------------------------------------------------------------------
 
-void create_textures(GLsizei n, GLuint* textures)
+void create_textures(S32 n, U32* textures)
 {
-    for (GLsizei i = 0; i < n; ++i)
+    for (S32 i = 0; i < n; ++i)
     {
         sGL.mTextures[textures[i]];
     }
@@ -1994,9 +1946,9 @@ void create_textures(GLsizei n, GLuint* textures)
 
 static U64 sPacketTextureGeneration = 0;     // <FS> bumped when a texture entry goes: the packet records' lookup cache starts over
 
-void destroy_textures(GLsizei n, const GLuint* textures)
+void destroy_textures(S32 n, const U32* textures)
 {
-    for (GLsizei i = 0; i < n; ++i)
+    for (S32 i = 0; i < n; ++i)
     {
         auto it = sGL.mTextures.find(textures[i]);
         if (it != sGL.mTextures.end())
@@ -2035,7 +1987,7 @@ void slot_bind(unsigned unit, unsigned dim, unsigned name)
 }
 
 
-void edit_image2D(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLsizei width, GLsizei height, LLVkFormat::Transfer tr, const void* pixels)
+void edit_image2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels)
 {
     Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0)
@@ -2053,7 +2005,7 @@ void edit_image2D(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLsi
     upload_level(*t, tg, level, 0, 0, 0, (U32)width, (U32)height, 1, tr, pixels);
 }
 
-void edit_image3D(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLsizei width, GLsizei height, GLsizei depth, LLVkFormat::Transfer tr, const void* pixels)
+void edit_image3D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 width, S32 height, S32 depth, LLVkFormat::Transfer tr, const void* pixels)
 {
     Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0 || depth <= 0)
@@ -2071,7 +2023,7 @@ void edit_image3D(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLsi
     upload_level(*t, tg, level, 0, 0, 0, (U32)width, (U32)height, (U32)depth, tr, pixels);
 }
 
-void edit_subimage2D(LLVkFormat::Target tg, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, LLVkFormat::Transfer tr, const void* pixels)
+void edit_subimage2D(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels)
 {
     Tex* t = edit_texture();
     if (t)
@@ -2080,7 +2032,7 @@ void edit_subimage2D(LLVkFormat::Target tg, GLint level, GLint xoffset, GLint yo
     }
 }
 
-void edit_subimage3D(LLVkFormat::Target tg, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, LLVkFormat::Transfer tr, const void* pixels)
+void edit_subimage3D(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 width, S32 height, S32 depth, LLVkFormat::Transfer tr, const void* pixels)
 {
     Tex* t = edit_texture();
     if (t)
@@ -2089,7 +2041,7 @@ void edit_subimage3D(LLVkFormat::Target tg, GLint level, GLint xoffset, GLint yo
     }
 }
 
-void edit_compressed2D(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLsizei width, GLsizei height, GLsizei imageSize, const void* data)
+void edit_compressed2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 width, S32 height, S32 imageSize, const void* data)
 {
     Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0)
@@ -2150,7 +2102,7 @@ void edit_mipmap()
     }
 }
 
-static void copy_to_texture(LLVkFormat::Target tg, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source_fbo)
+static void copy_to_texture(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
 {
     Tex* t = edit_texture();
     Image* src = read_image(source_fbo);
@@ -2167,7 +2119,7 @@ static void copy_to_texture(LLVkFormat::Target tg, GLint level, GLint xoffset, G
 
 
 
-void copy_image_2d(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source_fbo)
+void copy_image_2d(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
 {
     Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0)
@@ -2189,9 +2141,9 @@ namespace
 {
 struct EditScope
 {
-    GLuint mPrev;
+    U32 mPrev;
     const LLVkTex::PixelStore* mPrevPS;
-    EditScope(GLuint id, const LLVkTex::PixelStore* ps = nullptr) : mPrev(tlsEditTex), mPrevPS(tlsEditPS)
+    EditScope(U32 id, const LLVkTex::PixelStore* ps = nullptr) : mPrev(tlsEditTex), mPrevPS(tlsEditPS)
     {
         if (id)
         {
@@ -2280,17 +2232,17 @@ void tex_copy_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::S
 // hooks: framebuffers
 //-----------------------------------------------------------------------------------------------------
 
-void create_targets(GLsizei n, GLuint* framebuffers)
+void create_targets(S32 n, U32* framebuffers)
 {
-    for (GLsizei i = 0; i < n; ++i)
+    for (S32 i = 0; i < n; ++i)
     {
         sGL.mFbos[framebuffers[i]];
     }
 }
 
-void destroy_targets(GLsizei n, const GLuint* framebuffers)
+void destroy_targets(S32 n, const U32* framebuffers)
 {
-    for (GLsizei i = 0; i < n; ++i)
+    for (S32 i = 0; i < n; ++i)
     {
         sGL.mFbos.erase(framebuffers[i]);
         ++sTargetEpoch;
@@ -2343,9 +2295,9 @@ void target_state(unsigned fbo_name, int draw_buffers)
 // hooks: buffers and vertex arrays
 //-----------------------------------------------------------------------------------------------------
 
-void create_buffers(GLsizei n, GLuint* buffers)
+void create_buffers(S32 n, U32* buffers)
 {
-    for (GLsizei i = 0; i < n; ++i)
+    for (S32 i = 0; i < n; ++i)
     {
         sGL.mBuffers[buffers[i]];
     }
@@ -2353,10 +2305,10 @@ void create_buffers(GLsizei n, GLuint* buffers)
 
 static U64 sPacketBufferGeneration = 0;      // <FS> bumped when a buffer entry goes: the packet records' lookup cache starts over
 
-void destroy_buffers(GLsizei n, const GLuint* buffers)
+void destroy_buffers(S32 n, const U32* buffers)
 {
     Context& ctx = Context::instance();
-    for (GLsizei i = 0; i < n; ++i)
+    for (S32 i = 0; i < n; ++i)
     {
         auto it = sGL.mBuffers.find(buffers[i]);
         if (it != sGL.mBuffers.end())
@@ -2373,10 +2325,10 @@ void destroy_buffers(GLsizei n, const GLuint* buffers)
     }
 }
 
-void on_bufferData(GLuint name, unsigned kind, GLsizeiptr size, const void* data);
-void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data);
+void on_bufferData(U32 name, unsigned kind, S64 size, const void* data);
+void on_bufferSubData(U32 name, S64 offset, S64 size, const void* data);
 
-void on_bufferData(GLuint name, unsigned kind, GLsizeiptr size, const void* data)
+void on_bufferData(U32 name, unsigned kind, S64 size, const void* data)
 {
     auto it = sGL.mBuffers.find(name);
     if (it == sGL.mBuffers.end() || size < 0)
@@ -2451,7 +2403,7 @@ void on_bufferData(GLuint name, unsigned kind, GLsizeiptr size, const void* data
 }
 
 // the vertex buffer pool hands the name to another owner (or takes it back) without glBufferData: what was known about its contents is stale
-void on_bufferRecycle(GLuint name)
+void on_bufferRecycle(U32 name)
 {
     auto it = sGL.mBuffers.find(name);
     if (it != sGL.mBuffers.end())
@@ -2509,7 +2461,7 @@ bool takeTopologyChanges(std::vector<unsigned>& names)
     return complete;
 }
 
-void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data)
+void on_bufferSubData(U32 name, S64 offset, S64 size, const void* data)
 {
     auto it = sGL.mBuffers.find(name);
     if (it != sGL.mBuffers.end() && data && size > 0 && offset >= 0)
@@ -2597,7 +2549,7 @@ void constant_attribute(unsigned location, float x, float y, float z, float w)
 namespace
 {
 bool probe_on();
-void probe_note(GLuint vb_name, GLuint ib_name, const Buf& vb, const Buf& ib, U32 first, U32 count, U32 max_vertex);
+void probe_note(U32 vb_name, U32 ib_name, const Buf& vb, const Buf& ib, U32 first, U32 count, U32 max_vertex);
 }
 
 void draw_arrays(unsigned topo, int first, int count)
@@ -2605,9 +2557,9 @@ void draw_arrays(unsigned topo, int first, int count)
     HookTimer hook_timer;
     LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
     static thread_local VertexInput vi_cache;
-    static thread_local std::vector<GLuint> used_cache;
+    static thread_local std::vector<U32> used_cache;
     VertexInput& vi = vi_cache;
-    std::vector<GLuint>& used = used_cache;
+    std::vector<U32>& used = used_cache;
     vi.mBindings.clear();
     vi.mAttributes.clear();
     used.clear();
@@ -2650,9 +2602,9 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
     HookTimer hook_timer;
     LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
     static thread_local VertexInput vi_cache;
-    static thread_local std::vector<GLuint> used_cache;
+    static thread_local std::vector<U32> used_cache;
     VertexInput& vi = vi_cache;
-    std::vector<GLuint>& used = used_cache;
+    std::vector<U32>& used = used_cache;
     vi.mBindings.clear();
     vi.mAttributes.clear();
     used.clear();
@@ -2717,10 +2669,10 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
 
 // <FS> Render packets with textures. The buffers and textures of the draws, found through direct-mapped caches of the entries of sGL.mBuffers and sGL.mTextures
 // (their nodes keep their place until erased, and erasing starts the cache over).
-static Buf* packet_buffer(GLuint name)
+static Buf* packet_buffer(U32 name)
 {
     static Buf* cache_buf[1024];
-    static GLuint cache_name[1024];
+    static U32 cache_name[1024];
     static U64 cache_generation = ~0ull;
     if (cache_generation != sPacketBufferGeneration)
     {
@@ -2743,10 +2695,10 @@ static Buf* packet_buffer(GLuint name)
     return &it->second;
 }
 
-static Tex* packet_texture(GLuint name)
+static Tex* packet_texture(U32 name)
 {
     static Tex* cache_tex[8192];
-    static GLuint cache_name[8192];
+    static U32 cache_name[8192];
     static U64 cache_generation = ~0ull;
     if (cache_generation != sPacketTextureGeneration)
     {
@@ -2770,7 +2722,7 @@ static Tex* packet_texture(GLuint name)
 }
 
 // the slot of a texture in the frame's bindless table; 0 (white) for one that has no usable image, which is what the bound-texture path samples then too
-static U32 packet_texture_slot(Renderer& r, GLuint name)
+static U32 packet_texture_slot(Renderer& r, U32 name)
 {
     Tex* t = packet_texture(name);
     if (!t || !t->mImage.valid() || t->mImage.mViewType != VK_IMAGE_VIEW_TYPE_2D)
@@ -2825,7 +2777,7 @@ struct ProbeGeom
 
 struct ProbeBlas
 {
-    GLuint mVb = 0, mIb = 0;
+    U32 mVb = 0, mIb = 0;
     U64 mVbEpoch = 0, mIbEpoch = 0;                 // the storage the geometry list and the structure belong to
     U64 mGeomVersion = ~0ull;                       // vertex buffer version the geometry list was collected under (a rewrite starts the list over)
     U64 mVbVersion = ~0ull, mIbVersion = ~0ull;     // contents at the last build
@@ -2870,7 +2822,7 @@ void probe_drop(ProbeBlas& p)
 }
 
 // one drawn index range of a vertex / index buffer pair (called by the packet handlers for the opaque colour passes)
-void probe_note(GLuint vb_name, GLuint ib_name, const Buf& vb, const Buf& ib, U32 first, U32 count, U32 max_vertex)
+void probe_note(U32 vb_name, U32 ib_name, const Buf& vb, const Buf& ib, U32 first, U32 count, U32 max_vertex)
 {
     if (!vb.mArena.valid() || !ib.mArena.valid() || count < 3)
     {
@@ -3462,7 +3414,7 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
     struct AlphaGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mFirst, mCount, mModel, mFlags; U32 mSlots[2]; F32 mCutoff; U32 mPad; U32 mWeights[2]; U32 mPalette[2]; };
     static_assert(sizeof(AlphaGpu) == 80, "alpha packet entry");
     static thread_local VertexInput vi_cache;
-    static thread_local std::vector<GLuint> used_cache, packet_used;
+    static thread_local std::vector<U32> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
     VertexInput& vi = vi_cache;
     vi.mBindings.clear();
@@ -3640,7 +3592,7 @@ static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
     };
     static_assert(sizeof(GeoGpu) == 128, "geometry packet entry");
     static thread_local VertexInput vi_cache;
-    static thread_local std::vector<GLuint> used_cache, packet_used;
+    static thread_local std::vector<U32> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
     VertexInput& vi = vi_cache;
     vi.mBindings.clear();
@@ -3784,7 +3736,7 @@ static void on_shadow_skin_packets(const LLVkMirror::ShadowPacketsHeader& h, con
     struct SkinGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mWeights[2]; U32 mPalette[2]; U32 mFirst, mJoints, mModel, mPad; };
     static_assert(sizeof(SkinGpu) == 48, "skin packet entry");
     static thread_local VertexInput vi_cache;
-    static thread_local std::vector<GLuint> used_cache, packet_used;
+    static thread_local std::vector<U32> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
     VertexInput& vi = vi_cache;
     vi.mBindings.clear();
@@ -3932,7 +3884,7 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     struct PacketGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
     static_assert(sizeof(PacketGpu) == 32, "packet entry");
     static thread_local VertexInput vi_cache;
-    static thread_local std::vector<GLuint> used_cache, packet_used;
+    static thread_local std::vector<U32> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
     VertexInput& vi = vi_cache;
     vi.mBindings.clear();
@@ -3960,7 +3912,7 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     PacketGpu* out = (PacketGpu*)table.mPtr;
     // the buffers of the draws: a direct-mapped cache of the entries of sGL.mBuffers (their nodes keep their place until erased, and erasing starts the cache over)
     static Buf* cache_buf[1024];
-    static GLuint cache_name[1024];
+    static U32 cache_name[1024];
     static U64 cache_generation = ~0ull;
     if (cache_generation != sPacketBufferGeneration)
     {
@@ -3968,7 +3920,7 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
         memset(cache_name, 0, sizeof(cache_name));
         cache_generation = sPacketBufferGeneration;
     }
-    auto lookup = [&](GLuint name) -> Buf*
+    auto lookup = [&](U32 name) -> Buf*
     {
         const U32 slot = (name * 2654435761u) >> 22;
         if (cache_name[slot] == name && cache_buf[slot])
@@ -3984,7 +3936,7 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
         cache_buf[slot] = &it->second;
         return &it->second;
     };
-    GLuint last_vb = 0, last_ib = 0;
+    U32 last_vb = 0, last_ib = 0;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         const LLVkMirror::ShadowPacketEntry& e = entries[i];
@@ -4301,7 +4253,7 @@ void after_frame()
                         LL_INFOS("VkPhases") << "buffer flushes per frame: by a draw " << (double)t.mFlushDraw / frames << ", at frame end " << (double)t.mFlushFrameEnd / frames
                                              << "; buffers with pending writes per flush " << ((t.mFlushDraw + t.mFlushFrameEnd) ? (double)t.mFlushBuffers / (t.mFlushDraw + t.mFlushFrameEnd) : 0.0) << LL_ENDL;
                         {
-                            std::vector<std::pair<GLuint, WriterStat>> top(sWriters.begin(), sWriters.end());
+                            std::vector<std::pair<U32, WriterStat>> top(sWriters.begin(), sWriters.end());
                             const size_t n = std::min<size_t>(top.size(), 6);
                             std::partial_sort(top.begin(), top.begin() + n, top.end(), [](const auto& a, const auto& b) { return a.second.mBytes > b.second.mBytes; });
                             std::string text;
@@ -4485,7 +4437,7 @@ namespace
 // ---- queries ----
 struct QueryRec
 {
-    GLuint mName = 0;                   // the GL name the query was begun under
+    U32 mName = 0;                   // the GL name the query was begun under
     U64 mGen = 0;                       // the async generation of that begin (0 in inline mode)
     U32 mKind = 0;                      // LLVkQuery::Kind
     bool mOcc = false, mTime = false;
@@ -4493,7 +4445,7 @@ struct QueryRec
     U64 mVkValue = 0, mTsStart = 0, mTsEnd = 0;
 };
 std::map<U64, QueryRec> sQueries;               // by serial, oldest first
-std::unordered_map<GLuint, U64> sQueryLatest;   // GL query name -> serial of its latest begin
+std::unordered_map<U32, U64> sQueryLatest;   // GL query name -> serial of its latest begin
 std::map<U32, U64> sQueryActive;                 // kind -> serial of the query in progress
 U64 sQuerySerial = 0;
 
@@ -4554,15 +4506,15 @@ void drain_query_results()
 
 
 
-void create_queries(GLsizei n, GLuint* ids)
+void create_queries(S32 n, U32* ids)
 {
     (void)n; (void)ids;
 }
 
-void destroy_queries(GLsizei n, const GLuint* ids)
+void destroy_queries(S32 n, const U32* ids)
 {
     if (!queries_on() || !ids) return;
-    for (GLsizei i = 0; i < n; ++i) sQueryLatest.erase(ids[i]);
+    for (S32 i = 0; i < n; ++i) sQueryLatest.erase(ids[i]);
 }
 
 void query_begin(unsigned kind, unsigned id)
@@ -4711,10 +4663,10 @@ VerifyCounters sVerify;
 // in Vulkan, and the calls that return something are answered here.
 //-----------------------------------------------------------------------------------------------------
 
-void own_gen(int kind, GLsizei n, GLuint* out)
+void own_gen(int kind, S32 n, U32* out)
 {
-    static std::atomic<GLuint> next[5] = { 1, 1, 1, 1, 1 };       // textures, framebuffers, buffers, vertex arrays, queries; 0 is never a name
-    for (GLsizei i = 0; i < n; ++i)
+    static std::atomic<U32> next[5] = { 1, 1, 1, 1, 1 };       // textures, framebuffers, buffers, vertex arrays, queries; 0 is never a name
+    for (S32 i = 0; i < n; ++i)
     {
         out[i] = next[kind].fetch_add(1);
     }
@@ -4722,7 +4674,7 @@ void own_gen(int kind, GLsizei n, GLuint* out)
 
 void resource_create(unsigned kind, int n, const unsigned* ids)
 {
-    GLuint* names = const_cast<GLuint*>(ids);
+    U32* names = const_cast<U32*>(ids);
     switch (kind)
     {
     case LLVkAsync::RES_TEXTURE: create_textures(n, names); break;
@@ -4891,7 +4843,7 @@ bool fetch_rect_cached(Image& view, S32 x, S32 y, S32 w, S32 h, std::vector<U8>&
 }
 
 // ---- query answers ----
-bool own_query_value(GLuint id, bool want_result, U64& value)
+bool own_query_value(U32 id, bool want_result, U64& value)
 {
     drain_query_results();
     auto lat = sQueryLatest.find(id);
@@ -5077,7 +5029,7 @@ void on_upscale(const LLVkMirror::UpscaleArgs& a)
     {
         return;
     }
-    auto find = [](GLuint name) -> Tex* {
+    auto find = [](U32 name) -> Tex* {
         auto it = sGL.mTextures.find(name);
         return it != sGL.mTextures.end() && it->second.mImage.valid() ? &it->second : nullptr;
     };
