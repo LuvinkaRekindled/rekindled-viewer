@@ -34,7 +34,11 @@ bool vk_ok(VkResult r, const char* what)
     {
         if (r == VK_ERROR_DEVICE_LOST)
         {
-            gDeviceLost = true;
+            if (!gDeviceLost)
+            {
+                gDeviceLost = true;
+                Context::instance().reportDeviceLost();
+            }
         }
         LL_WARNS("Vulkan") << what << " failed: VkResult " << (S32)r << LL_ENDL;
         return false;
@@ -460,6 +464,7 @@ bool Context::pickDevice()
             mCaps.mVendorId = props.vendorID;
             mCaps.mDiscrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
             mCaps.mMemoryBudget = has_extension(exts, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+            mCaps.mCheckpoints = has_extension(exts, VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
             mCaps.mWideLines = chain.f2.features.wideLines != VK_FALSE;
             mCaps.mDepthClamp = chain.f2.features.depthClamp != VK_FALSE && chain.eds3.extendedDynamicState3DepthClampEnable != VK_FALSE;
             mCaps.mAnisotropy = chain.f2.features.samplerAnisotropy != VK_FALSE;
@@ -634,6 +639,10 @@ bool Context::createDevice()
         if (rt.mExtPipeline) device_extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
         if (rt.mExtPositionFetch) device_extensions.push_back(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME);
         if (rt.mExtMaintenance1) device_extensions.push_back(VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME);
+    }
+    if (mCaps.mCheckpoints)
+    {
+        device_extensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
     }
     if (LLVkDlss::requested())
     {
@@ -853,6 +862,29 @@ std::string Context::stampTagName(U32 tag)
     return tag < names.size() ? names[tag] : "?";
 }
 
+void Context::reportDeviceLost()
+{
+    if (!mCaps.mCheckpoints || !vkGetQueueCheckpointData2NV)
+    {
+        LL_WARNS("Vulkan") << "device lost; this driver keeps no checkpoints" << LL_ENDL;
+        return;
+    }
+    U32 count = 0;
+    vkGetQueueCheckpointData2NV(mQueue, &count, nullptr);
+    std::vector<VkCheckpointData2NV> data(count, VkCheckpointData2NV{ VK_STRUCTURE_TYPE_CHECKPOINT_DATA_2_NV });
+    if (count)
+    {
+        vkGetQueueCheckpointData2NV(mQueue, &count, data.data());
+    }
+    // each entry: the latest checkpoint the GPU got to in the given pipeline stage(s); the marker is the pass tag + 1 (see gpuStamp)
+    LL_WARNS("Vulkan") << "device lost: " << count << " GPU checkpoints (the last pass reached, per pipeline stage):" << LL_ENDL;
+    for (U32 i = 0; i < count; ++i)
+    {
+        const U32 tag = (U32)(uintptr_t)data[i].pCheckpointMarker;
+        LL_WARNS("Vulkan") << "  stage 0x" << std::hex << (unsigned long long)data[i].stage << std::dec << ": " << (tag ? stampTagName(tag - 1) : std::string("(none)")) << LL_ENDL;
+    }
+}
+
 void Context::gpuStamp(U32 tag)
 {
     if (!mInFrame)
@@ -860,6 +892,10 @@ void Context::gpuStamp(U32 tag)
         return;
     }
     Frame& f = mFrames[mFrameSlot];
+    if (mCaps.mCheckpoints && vkCmdSetCheckpointNV)
+    {
+        vkCmdSetCheckpointNV(f.mCmd, (const void*)(uintptr_t)(tag + 1));
+    }
     const U32 n = (U32)f.mStampTags.size();
     if (!f.mTsPool || n >= MAX_GPU_STAMPS)
     {
@@ -879,7 +915,47 @@ VkCommandBuffer Context::beginFrame(bool wait)
         return VK_NULL_HANDLE;
     }
     const auto wait_start = std::chrono::steady_clock::now();
-    vkWaitForFences(mDevice, 1, &f.mFence, VK_TRUE, UINT64_MAX);
+    {
+        // The wait is where a GPU job that does not end shows itself (the driver resets the device after about 2 s: VK_ERROR_DEVICE_LOST, and everything the GPU knew is gone). While the frame
+        // is stuck, the timestamps its passes already wrote say which pass the GPU is in: logged at 1 s and at 1.7 s, before the reset takes the evidence.
+        int reports = 0;
+        for (;;)
+        {
+            const VkResult wr = vkWaitForFences(mDevice, 1, &f.mFence, VK_TRUE, 250ull * 1000 * 1000);
+            if (wr == VK_SUCCESS)
+            {
+                break;
+            }
+            if (wr != VK_TIMEOUT)
+            {
+                vk_ok(wr, "vkWaitForFences");      // device lost: logged once, with the checkpoints when the driver has them
+                break;
+            }
+            const double waited_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wait_start).count();
+            if ((reports == 0 && waited_ms >= 1000.0) || (reports == 1 && waited_ms >= 1700.0))
+            {
+                ++reports;
+                const U32 n = (U32)f.mStampTags.size();
+                std::string where = "no per-pass stamps (LL_VK_PHASES is off)";
+                if (f.mTsPool && f.mTsPending && n)
+                {
+                    std::vector<U64> r((size_t)(2 + n) * 2);        // per query: the value and its availability
+                    vkGetQueryPoolResults(mDevice, f.mTsPool, 0, 2 + n, r.size() * sizeof(U64), r.data(), 16, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+                    int last = -1;
+                    for (U32 i = 0; i < n; ++i)
+                    {
+                        if (r[(2 + i) * 2 + 1] != 0)
+                        {
+                            last = (int)i;
+                        }
+                    }
+                    where = std::to_string(last + 1) + " of " + std::to_string(n) + " pass stamps reached; the GPU is inside [" + (last >= 0 ? stampTagName(f.mStampTags[last]) : std::string("the work before the first pass"))
+                            + "]" + (last + 1 < (int)n ? ", which ends at [" + stampTagName(f.mStampTags[last + 1]) + "]" : std::string(", the last pass of the frame"));
+                }
+                LL_WARNS("VkPhases") << "GPU frame (slot " << mFrameSlot << ") still running after " << (S32)waited_ms << " ms: " << where << LL_ENDL;
+            }
+        }
+    }
     gSyncStats.mFenceWaitMicros.fetch_add((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - wait_start).count(), std::memory_order_relaxed);
     vkResetFences(mDevice, 1, &f.mFence);
 

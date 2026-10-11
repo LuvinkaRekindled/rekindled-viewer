@@ -60,6 +60,7 @@ struct Capabilities
     U32 mVendorId = 0;
     bool mDiscrete = false;
     bool mMemoryBudget = false;     // VK_EXT_memory_budget available
+    bool mCheckpoints = false;      // VK_NV_device_diagnostic_checkpoints available (enabled on the device when it is)
     bool mWideLines = false;
     bool mDepthClamp = false;       // dynamic depth clamp (the shadow passes need it)
     bool mAnisotropy = false;
@@ -220,6 +221,7 @@ public:
     static U32 stampTag(const std::string& name);       // the number standing for a pass description (0 is "start of frame")
     static std::string stampTagName(U32 tag);
     void gpuStamp(U32 tag);
+    void reportDeviceLost();            // logs the last checkpoints (pass names) the GPU reached, when the driver keeps them
     struct GpuPassStats
     {
         std::map<U32, U64> mMicros;                     // by tag

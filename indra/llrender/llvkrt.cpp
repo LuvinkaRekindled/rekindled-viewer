@@ -62,10 +62,11 @@ struct GpuGeom
 };
 static_assert(sizeof(GpuGeom) == 80, "geometry record");
 constexpr U32 kMaxRecords = (U32)(kTableBytes / sizeof(GpuGeom));
+constexpr F32 kSkinReach = 300.f;                            // metres from the avatar's position: skinned vertices farther away are garbage and are left out
 constexpr U32 kMaxSkinJobs = 2048;                          // compute skinning jobs per scene call
 constexpr U32 kSkinChunkVerts = 128;                        // vertices per workgroup (one chunk table entry)
 constexpr U32 kMaxSkinChunks = 131072;
-constexpr VkDeviceSize kSkinJobBytes = 96ull * kMaxSkinJobs;
+constexpr VkDeviceSize kSkinJobBytes = 112ull * kMaxSkinJobs;
 constexpr VkDeviceSize kSkinBytes = kSkinJobBytes + 8ull * kMaxSkinChunks;
 constexpr U32 kPasses = 8;                                  // shadow passes tracked: 0-3 sun cascades, 4-5 spot shadows, 6 other
 
@@ -614,8 +615,9 @@ struct SkinJob
     U32 mDst[2];
     U32 mFirst, mCount, mMode, mJoints;
     F32 mModel[12];                 // three rows of four
+    F32 mGuard[4];                  // centre (xyz) and radius of the volume the skinned vertices must lie in (radius 0: no limit)
 };
-static_assert(sizeof(SkinJob) == 96, "skin job");
+static_assert(sizeof(SkinJob) == 112, "skin job");
 
 struct SkinChunk
 {
@@ -631,7 +633,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer InF
 layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer OutVec4 { vec4 v[]; };
 struct Joint { vec4 c0; vec4 c1; vec4 c2; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Palette { Joint j[]; };
-struct Job { uvec2 src; uvec2 weights; uvec2 palette; uvec2 dst; uint first; uint count; uint mode; uint joints; vec4 m0; vec4 m1; vec4 m2; };
+struct Job { uvec2 src; uvec2 weights; uvec2 palette; uvec2 dst; uint first; uint count; uint mode; uint joints; vec4 m0; vec4 m1; vec4 m2; vec4 guard; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Jobs { Job j[]; };
 struct Chunk { uint job; uint offset; };
 layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer Chunks { Chunk c[]; };
@@ -686,10 +688,19 @@ void main()
     }
     vec4 p4 = vec4(pos, 1.0);
     vec3 world = vec3(dot(job.m0, p4), dot(job.m1, p4), dot(job.m2, p4));
-    // garbage from a half-loaded avatar (joint matrices not set yet, NaN weights) would give the structure a bounding box that covers the world and every ray a very long walk: such a vertex collapses onto the object's origin (a degenerate triangle, no bounds)
-    if (!(abs(world.x) < 1.0e6 && abs(world.y) < 1.0e6 && abs(world.z) < 1.0e6))
+    // garbage from a half-loaded or hidden avatar (joint matrices not set or stale, NaN weights) would give the structure a bounding box that covers the world and every ray a very long walk
+    // (a lighting pass of 2 M rays through hundreds of thousands of world-sized triangles outlasts the 2 s the driver allows a GPU job: VK_ERROR_DEVICE_LOST). A vertex outside the
+    // volume the job may reach (a sphere round the avatar when it is known, else the plausible coordinates) becomes NaN: a triangle with a NaN vertex is inactive, it is left out of
+    // the structure, no spike to an arbitrary point remains
+    bool bad = !(abs(world.x) < 1.0e5 && abs(world.y) < 1.0e5 && abs(world.z) < 1.0e5);
+    if (!bad && job.guard.w > 0.0)
     {
-        world = vec3(job.m0.w, job.m1.w, job.m2.w);
+        vec3 d = world - job.guard.xyz;
+        bad = !(dot(d, d) <= job.guard.w * job.guard.w);
+    }
+    if (bad)
+    {
+        world = vec3(uintBitsToFloat(0x7fc00000u));
     }
     OutVec4(job.dst).v[v] = vec4(world, source.w);       // w: the texture index of masked draws
 }
@@ -2018,6 +2029,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                         sj.mModel[row * 4 + col] = m[col * 4 + row];
                     }
                 }
+                // an avatar's skinned vertices stay within kSkinReach of where it stands (the whole of a rigged attachment, however large, is a few tens of metres)
+                if (a.mHasPos)
+                {
+                    sj.mGuard[0] = a.mPos[0];
+                    sj.mGuard[1] = a.mPos[1];
+                    sj.mGuard[2] = a.mPos[2];
+                    sj.mGuard[3] = kSkinReach;
+                }
                 skin_jobs.push_back(sj);
                 skin_job_draws.push_back(d);
                 for (U32 off = 0; off < d->mVertexCount; off += kSkinChunkVerts)
@@ -2723,6 +2742,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         instances.push_back(inst);
     }
 
+    table[0].mFirst = records;      // the header says how many records the table holds: the shader leaves a record index past it alone
     sub_lap(4);
     lap(3, t_lap);
     // ---- 3. record: builds, then the top-level structure -----------------------------------------------------
