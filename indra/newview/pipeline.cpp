@@ -10718,6 +10718,7 @@ void LLPipeline::renderDeferredLighting()
             deferred_light_target->bindTarget();
             {  // paint shadow/SSAO light map (direct lighting lightmap)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - sun shadow");
+                LL_CPU_ZONE("lighting: sun shadow");
 
                 LLGLSLShader& sun_shader = gCubeSnapshot ? gDeferredSunProbeProgram : gDeferredSunProgram;
                 bindDeferredShader(sun_shader, deferred_light_target);
@@ -10745,6 +10746,7 @@ void LLPipeline::renderDeferredLighting()
         {
             // soften direct lighting lightmap
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - soften shadow");
+            LL_CPU_ZONE("lighting: soften shadow");
             LL_PROFILE_GPU_ZONE("soften shadow");
             // blur lightmap
             screen_target->bindTarget();
@@ -10813,6 +10815,7 @@ void LLPipeline::renderDeferredLighting()
             LLGLSLShader &soften_shader = gDeferredSoftenProgram;
 
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - atmospherics");
+            LL_CPU_ZONE("lighting: atmospherics");
             LL_PROFILE_GPU_ZONE("atmospherics");
             bindDeferredShader(soften_shader);
 
@@ -10868,6 +10871,7 @@ void LLPipeline::renderDeferredLighting()
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - local lights");
+                LL_CPU_ZONE("lighting: local lights (boxes)");
                 LL_PROFILE_GPU_ZONE("local lights");
                 bindDeferredShader(gDeferredLightProgram);
 
@@ -10986,6 +10990,7 @@ void LLPipeline::renderDeferredLighting()
             if (!spot_lights.empty())
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - projectors");
+                LL_CPU_ZONE("lighting: projectors");
                 LL_PROFILE_GPU_ZONE("projectors");
                 LLGLDepthTest depth(GL_TRUE, GL_FALSE);
                 bindDeferredShader(gDeferredSpotLightProgram);
@@ -11028,6 +11033,7 @@ void LLPipeline::renderDeferredLighting()
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - fullscreen lights");
+                LL_CPU_ZONE("lighting: fullscreen lights");
                 LLGLDepthTest depth(GL_FALSE);
                 LL_PROFILE_GPU_ZONE("fullscreen lights");
 
@@ -11141,7 +11147,7 @@ void LLPipeline::renderDeferredLighting()
                           LLPipeline::RENDER_TYPE_WATEREXCLUSION,
                           END_RENDER_TYPES);
 
-        renderGeomPostDeferred(*LLViewerCamera::getInstance());
+        { LL_CPU_ZONE("lighting: post-deferred geometry"); renderGeomPostDeferred(*LLViewerCamera::getInstance()); }
         popRenderTypeMask();
     }
 
