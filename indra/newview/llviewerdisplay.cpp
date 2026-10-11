@@ -30,6 +30,9 @@
 #include "llvksubstream.h"
 #include "lldrawpoolmaterials.h"
 #include <chrono>
+#include <functional>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 #include <memory>
 
@@ -2112,13 +2115,99 @@ static bool ui_thread_run_guarded(void (*fn)(void*), void* arg)
 }
 #endif
 
+namespace LLTrace { void set_frame_recording_override(PeriodicRecording* recording); }      // lltracerecording.cpp (not in the header: it is included everywhere)
+
+// <FS> One persistent thread for the UI draw: the statistics (LLTrace) of the widgets are tied to the thread that started them (a stat graph or the status bar creates a recording while it
+// draws and keeps it from frame to frame), so the thread that draws the UI is always the same one, with a recorder of its own that reports to the master's like any LLThread's.
+class UiDrawThread
+{
+public:
+    static UiDrawThread& instance()
+    {
+        static UiDrawThread* thread = new UiDrawThread;       // never destroyed: it ends with the process
+        return *thread;
+    }
+
+    // runs the job on the thread and returns when it is done (false: it raised an exception)
+    bool run(const std::function<void()>& job)
+    {
+        std::unique_lock<std::mutex> lock(mMutex);
+        mJob = &job;
+        mOk = true;
+        mDone = false;
+        mWake.notify_one();
+        mFinished.wait(lock, [this] { return mDone; });
+        return mOk;
+    }
+
+private:
+    UiDrawThread() : mThread([this] { loop(); }) { mThread.detach(); }
+
+    static void call(void* arg)
+    {
+        (*static_cast<const std::function<void()>*>(arg))();
+    }
+
+    void loop()
+    {
+        LLTrace::ThreadRecorder recorder(*LLTrace::get_master_thread_recorder());
+        std::unique_lock<std::mutex> lock(mMutex);
+        for (;;)
+        {
+            mWake.wait(lock, [this] { return mJob != nullptr; });
+            const std::function<void()>* job = mJob;
+            lock.unlock();
+#if LL_WINDOWS
+            const bool ok = ui_thread_run_guarded(&UiDrawThread::call, const_cast<std::function<void()>*>(job));
+#else
+            (*job)();
+            const bool ok = true;
+#endif
+            recorder.pushToParent();
+            lock.lock();
+            mOk = ok;
+            mJob = nullptr;
+            mDone = true;
+            mFinished.notify_one();
+        }
+    }
+
+    std::mutex mMutex;
+    std::condition_variable mWake, mFinished;
+    const std::function<void()>* mJob = nullptr;
+    bool mDone = false;
+    bool mOk = true;
+    std::thread mThread;
+};
+
 // <FS> The widgets of the UI recorded as a sub-stream (F3, see doc/vulkan/F2-start.md, "the UI draw as a builder"). LL_VK_UI_SUBSTREAM=1: on this thread, spliced at once (the stream must
 // come out the same). =2: on a helper thread while this one waits (the thread gets the state of this one's gGL, hands it back when it is done): shows what a second thread needs
 // without racing anything.
+namespace LLVkState { void setScissorTraceFrame(U32 frame); }       // llvkstate.cpp
+
 static void draw_widgets()
 {
     static const char* mode_env = getenv("LL_VK_UI_SUBSTREAM");
-    static const int mode = mode_env ? atoi(mode_env) : 0;
+    static const bool alternate = mode_env && mode_env[0] == 'a';       // "alt": 60 frames on the main stream, 60 as a sub-stream (the same session, so the UI is the same)
+    const int mode = alternate ? (int)((LLFrameTimer::getFrameCount() / 60) % 2) : (mode_env ? atoi(mode_env) : 0);
+    static bool trace_set = false;
+    if (!trace_set)
+    {
+        trace_set = true;
+        // LL_VK_SCISSOR_TRACE=rel: a frame in the odd 60-frame block (the sub-stream one) about ten seconds from now, and the one 60 frames later (the main one)
+        U32 block = LLFrameTimer::getFrameCount() / 60 + 10;
+        if ((block % 2) == 0)
+        {
+            ++block;
+        }
+        LLVkState::setScissorTraceFrame(block * 60 + 5);
+    }
+    static int last_logged = -2;
+    if (mode_env && last_logged != mode)
+    {
+        last_logged = mode;
+        LL_INFOS("UiThread") << "frame " << LLFrameTimer::getFrameCount() << ": UI draw mode " << mode << " (LL_VK_UI_SUBSTREAM=" << mode_env << ", sub-streams usable: " << LLVkSubStream::usable() << ")" << LL_ENDL;
+    }
     if (mode == 0 || !LLVkSubStream::usable())
     {
         gViewerWindow->draw();
@@ -2135,47 +2224,29 @@ static void draw_widgets()
     }
     std::unique_ptr<LLRender> state_after;
     const LLRender* state_before = &gGL;
-    LLTrace::ThreadRecorder* main_trace_recorder = LLTrace::get_thread_recorder();
+    LLTrace::PeriodicRecording* main_frame_recording = &LLTrace::get_frame_recording();
     static U32 traced = 0;
     const bool trace = traced < 3;
-    if (trace) { LL_INFOS("UiThread") << "frame " << traced << ": starting the helper thread" << LL_ENDL; }
-    auto body = [&]()
+    if (trace) { LL_INFOS("UiThread") << "frame " << traced << ": handing the widget draw to the UI thread" << LL_ENDL; }
+    const bool ok = UiDrawThread::instance().run([&]()
     {
-        // The statistics (LLTrace) are tied to the thread that started them: the stat graphs and the status bar create recordings while they draw and keep them from frame to frame, so
-        // a helper thread of one frame must not own them. While the main thread waits, the helper works as the main thread's stand-in and uses its recorder. (A UI thread that
-        // draws while the main thread works has to be one persistent thread that owns them from its first draw.)
-        LLTrace::set_thread_recorder(main_trace_recorder);
-        if (trace) { LL_INFOS("UiThread") << "helper: copying gGL" << LL_ENDL; }
+        if (trace) { LL_INFOS("UiThread") << "ui thread: copying gGL" << LL_ENDL; }
+        LLTrace::set_frame_recording_override(main_frame_recording);       // the status bar and the stat graphs read the frame statistics, which only the main thread's recording has
         gGL = *state_before;                    // what the main thread's gGL believes and holds (matrix stacks, texture units, the immediate buffer)
-        if (trace) { LL_INFOS("UiThread") << "helper: begin" << LL_ENDL; }
         sub.begin();
-        if (trace) { LL_INFOS("UiThread") << "helper: draw" << LL_ENDL; }
         gViewerWindow->draw();
-        if (trace) { LL_INFOS("UiThread") << "helper: end" << LL_ENDL; }
         sub.end();
         state_after.reset(new LLRender(gGL));   // and what it believes now
-        LLTrace::set_thread_recorder(nullptr);
-        if (trace) { LL_INFOS("UiThread") << "helper: done" << LL_ENDL; }
-    };
-    bool helper_ok = true;
-    std::thread helper([&]()
-    {
-#if LL_WINDOWS
-        auto thunk = [](void* arg) { (*static_cast<decltype(body)*>(arg))(); };
-        helper_ok = ui_thread_run_guarded(thunk, &body);
-#else
-        body();
-#endif
+        LLTrace::set_frame_recording_override(nullptr);
+        if (trace) { LL_INFOS("UiThread") << "ui thread: done" << LL_ENDL; }
     });
-    helper.join();
-    if (!helper_ok)
+    if (!ok)
     {
-        LL_ERRS("UiThread") << "the widget draw on the helper thread raised an exception (see the lines above)" << LL_ENDL;
+        LL_ERRS("UiThread") << "the widget draw on the UI thread raised an exception (see the lines above)" << LL_ENDL;
     }
-    if (trace) { LL_INFOS("UiThread") << "joined; taking the state back and splicing" << LL_ENDL; }
+    if (trace) { LL_INFOS("UiThread") << "back on the main thread: taking the state back and splicing" << LL_ENDL; }
     gGL = *state_after;
     sub.splice();
-    if (trace) { LL_INFOS("UiThread") << "spliced" << LL_ENDL; }
     ++traced;
 }
 
