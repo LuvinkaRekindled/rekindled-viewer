@@ -92,7 +92,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of);
 // the set to bind as set 3 for the frame slot (always valid once active())
 VkDescriptorSet descriptorSet(U32 frame_slot);
 // the dynamic offset into the set's geometry table (binding 1) that belongs to the latest scene call of the frame
-U32 tableOffset();
+U32 tableOffset(U32 frame_slot);
 
 // one log line: structures, memory, builds, refits, time
 std::string report(double frames);

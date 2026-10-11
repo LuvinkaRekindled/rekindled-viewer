@@ -156,6 +156,7 @@ struct Tlas
     VkDescriptorSet mSet = VK_NULL_HANDLE;
     U64 mCallFrame = ~0ull;                         // frame number of the calls counted in mCalls
     U32 mCalls = 0;
+    U64 mBuiltFrame = ~0ull;                        // frame number in whose command buffer its latest build was recorded
 };
 
 struct Stats
@@ -335,6 +336,11 @@ bool sInit = false;
 bool sFailed = false;
 VkDescriptorPool sPool = VK_NULL_HANDLE;
 Tlas sTlas[Context::FRAMES_IN_FLIGHT];
+// A scene that is always empty and always consistent (an empty top-level structure, a table whose header says there is one record). A pass recorded BEFORE a frame's scene call (the avatar
+// impostors are drawn first) would trace against the frame slot's structure from three command buffers ago, which is rebuilt later in the same command buffer, together with the table
+// that the CPU has already rewritten for this frame: a ray that hits a masked geometry of the old structure then reads a record that belongs to something else (its buffer addresses
+// are followed by the shader), and the GPU faults or hangs. Such a pass is given this scene: no occluders, everything lit.
+Tlas sNullTlas;
 Buffer sScratch;
 // The casters of the shadow passes. Far cascades are rendered only every few frames (FSShadowFarCascadeInterval) and their shadow map is reused in between, so the casters a
 // frame names are not all there is. A pass that rendered this frame contributes exactly the casters it named (a moving object must not leave copies of its earlier positions);
@@ -952,9 +958,9 @@ bool init(VkDescriptorSetLayout set_layout)
     }
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
-    VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, Context::frameCount() }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, Context::frameCount() } };
+    VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, Context::frameCount() + 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, Context::frameCount() + 1 } };
     VkDescriptorPoolCreateInfo pi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-    pi.maxSets = Context::frameCount();
+    pi.maxSets = Context::frameCount() + 1;
     pi.poolSizeCount = 2;
     pi.pPoolSizes = ps;
     if (vkCreateDescriptorPool(dev, &pi, nullptr, &sPool) != VK_SUCCESS)
@@ -962,12 +968,12 @@ bool init(VkDescriptorSetLayout set_layout)
         sFailed = true;
         return false;
     }
-    VkDescriptorSetLayout layouts[Context::FRAMES_IN_FLIGHT];
+    VkDescriptorSetLayout layouts[Context::FRAMES_IN_FLIGHT + 1];
     for (auto& l : layouts) l = set_layout;
-    VkDescriptorSet sets[Context::FRAMES_IN_FLIGHT] = {};
+    VkDescriptorSet sets[Context::FRAMES_IN_FLIGHT + 1] = {};
     VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
     ai.descriptorPool = sPool;
-    ai.descriptorSetCount = Context::frameCount();
+    ai.descriptorSetCount = Context::frameCount() + 1;
     ai.pSetLayouts = layouts;
     if (vkAllocateDescriptorSets(dev, &ai, sets) != VK_SUCCESS)
     {
@@ -987,6 +993,20 @@ bool init(VkDescriptorSetLayout set_layout)
             return false;
         }
     }
+    sNullTlas.mSet = sets[Context::frameCount()];
+    if (!make_tlas(sNullTlas, 16))
+    {
+        sFailed = true;
+        return false;
+    }
+    {
+        // its table: record 0 is the header (identity rotation, the camera at the origin, one record in the table), the rest is zero
+        float header[12] = { 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f };
+        GpuGeom* null_table = (GpuGeom*)sNullTlas.mTable.mMapped;
+        memset(null_table, 0, sizeof(GpuGeom));
+        memcpy(null_table, header, sizeof(header));
+        null_table[0].mFirst = 1;
+    }
     // an empty structure in every slot, so a draw before the first scene call has something valid to trace against
     Buffer scratch;
     if (!ctx.createBuffer(sizes.buildScratchSize + 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Device, scratch))
@@ -997,19 +1017,20 @@ bool init(VkDescriptorSetLayout set_layout)
     const VkDeviceSize align = std::max<VkDeviceSize>(ctx.getCaps().mRt.mScratchAlignment, 128);
     const VkDeviceAddress scratch_address = (scratch.mAddress + align - 1) / align * align;
     const bool ok = ctx.immediateSubmit([&](VkCommandBuffer cmd) {
-        for (U32 i = 0; i < Context::frameCount(); ++i)
+        for (U32 i = 0; i <= Context::frameCount(); ++i)
         {
+            Tlas& built = i < Context::frameCount() ? sTlas[i] : sNullTlas;       // (the last one is the null scene)
             VkAccelerationStructureGeometryKHR geo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
             geo.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
             geo.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-            geo.geometry.instances.data.deviceAddress = sTlas[i].mInstances.mAddress;
+            geo.geometry.instances.data.deviceAddress = built.mInstances.mAddress;
             VkAccelerationStructureBuildGeometryInfoKHR info = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
             info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
             info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
             info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
             info.geometryCount = 1;
             info.pGeometries = &geo;
-            info.dstAccelerationStructure = sTlas[i].mAs;
+            info.dstAccelerationStructure = built.mAs;
             info.scratchData.deviceAddress = scratch_address;
             VkAccelerationStructureBuildRangeInfoKHR range = {};
             const VkAccelerationStructureBuildRangeInfoKHR* ranges[1] = { &range };
@@ -1066,6 +1087,11 @@ void shutdown()
         }
         t = Tlas();
     }
+    if (sNullTlas.mAs != VK_NULL_HANDLE)
+    {
+        vkDestroyAccelerationStructureKHR(dev, sNullTlas.mAs, nullptr);
+    }
+    sNullTlas = Tlas();
     if (sPool)
     {
         vkDestroyDescriptorPool(dev, sPool, nullptr);
@@ -1297,14 +1323,24 @@ void noteSkinned(const SkinCaster& c)
     }
 }
 
-VkDescriptorSet descriptorSet(U32 frame_slot)
+// true when the frame slot's structure and table are the ones of THIS command buffer (its scene call has been recorded): otherwise the null scene is the consistent one
+static bool scene_current(U32 frame_slot)
 {
-    return frame_slot < Context::FRAMES_IN_FLIGHT ? sTlas[frame_slot].mSet : VK_NULL_HANDLE;
+    return sNullTlas.mSet == VK_NULL_HANDLE || sTlas[frame_slot].mBuiltFrame == Context::instance().getFrameNumber();
 }
 
-U32 tableOffset()
+VkDescriptorSet descriptorSet(U32 frame_slot)
 {
-    return sTableOffset;
+    if (frame_slot >= Context::FRAMES_IN_FLIGHT)
+    {
+        return VK_NULL_HANDLE;
+    }
+    return scene_current(frame_slot) ? sTlas[frame_slot].mSet : sNullTlas.mSet;
+}
+
+U32 tableOffset(U32 frame_slot)
+{
+    return frame_slot < Context::FRAMES_IN_FLIGHT && !scene_current(frame_slot) ? 0u : sTableOffset;
 }
 
 void buildScene(const F32* view, TextureSlotFn slot_of)
@@ -3229,6 +3265,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         undo_jobs();
         return;
     }
+    tlas.mBuiltFrame = frame_now;       // (this slot's structure and table belong to this command buffer from here on)
     for (Job& j : jobs)
     {
         Blas& b = *j.mBlas;
