@@ -306,6 +306,7 @@ public:
     // the draw pools) stays on the main thread. See generateSunShadow.
     struct ShadowStaticBuild;
     struct ShadowSkinBuild;
+    struct ShadowAlphaBuild;
     struct ShadowCascadePrep
     {
         S32 mIndex = 0;                         // cascade number
@@ -325,6 +326,8 @@ public:
         std::shared_ptr<ShadowSkinBuild> mSkinBuild;        // the same for the rigged ones (their palettes included)
         LLAsyncPool::JobPtr mStaticJob;                     // the builders run on the async pool while the main thread draws the cascades before this one; renderShadow waits for them
         LLAsyncPool::JobPtr mSkinJob;
+        std::shared_ptr<ShadowAlphaBuild> mAlphaBuild[2];   // the casters with a texture, static and rigged
+        LLAsyncPool::JobPtr mAlphaJob[2];
     };
     void shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions);
     void shadowPrepRenderMap(ShadowCascadePrep& prep);

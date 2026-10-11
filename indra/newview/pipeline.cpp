@@ -4672,12 +4672,60 @@ static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPip
 {
     static std::atomic<U32> checked{0}, bad{0};
     ++checked;
-    const bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mPalettes == b.mPalettes && a.mFallback == b.mFallback && a.mPaletteCount == b.mPaletteCount
+    // palettes are compared as bytes: a palette with a NaN in it (see the count below) is equal to itself in memory but not by ==
+    const bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mPalettes.size() == b.mPalettes.size()
+        && (a.mPalettes.empty() || memcmp(a.mPalettes.data(), b.mPalettes.data(), a.mPalettes.size() * sizeof(F32)) == 0) && a.mFallback == b.mFallback && a.mPaletteCount == b.mPaletteCount
         && (a.mEntries.empty() || memcmp(a.mEntries.data(), b.mEntries.data(), a.mEntries.size() * sizeof(a.mEntries[0])) == 0);
+    {
+        static std::atomic<U32> nonfinite_builds{0};
+        size_t nonfinite = 0;
+        for (F32 f : a.mPalettes)
+        {
+            if (!std::isfinite(f)) { ++nonfinite; }
+        }
+        if (nonfinite && nonfinite_builds++ < 4)
+        {
+            LL_WARNS("VkBuilder") << "a rigged shadow build has " << nonfinite << " palette floats that are not finite (of " << a.mPalettes.size() << ")" << LL_ENDL;
+        }
+    }
     if (!same && bad++ < 8)
     {
+        std::string detail;
+        if (a.mPalettes.size() == b.mPalettes.size())
+        {
+            size_t n = 0, first = 0;
+            for (size_t k = 0; k < a.mPalettes.size(); ++k)
+            {
+                if (memcmp(&a.mPalettes[k], &b.mPalettes[k], sizeof(F32)) != 0)
+                {
+                    if (!n) { first = k; }
+                    ++n;
+                }
+            }
+            if (n) { detail += llformat(" palette floats differing %u, first %u (%g vs %g)", (U32)n, (U32)first, a.mPalettes[first], b.mPalettes[first]); }
+        }
+        if (a.mEntries.size() == b.mEntries.size())
+        {
+            size_t n = 0, first_entry = 0, first_byte = 0;
+            for (size_t k = 0; k < a.mEntries.size(); ++k)
+            {
+                const U8* pa = (const U8*)&a.mEntries[k];
+                const U8* pb = (const U8*)&b.mEntries[k];
+                for (size_t m = 0; m < sizeof(a.mEntries[0]); ++m)
+                {
+                    if (pa[m] != pb[m])
+                    {
+                        if (!n) { first_entry = k; first_byte = m; }
+                        ++n;
+                    }
+                }
+            }
+            if (n) { detail += llformat(" entry bytes differing %u, first in entry %u at byte %u", (U32)n, (U32)first_entry, (U32)first_byte); }
+        }
+        if (a.mMatrices != b.mMatrices) { detail += " matrices differ"; }
+        if (a.mFallback != b.mFallback) { detail += " fallbacks differ"; }
         LL_WARNS("VkBuilder") << "builder verify: the rigged packets built in the job differ from the ones built now (" << a.mEntries.size() << " / " << b.mEntries.size()
-            << " entries, " << a.mPalettes.size() << " / " << b.mPalettes.size() << " palette floats)" << LL_ENDL;
+            << " entries, " << a.mPalettes.size() << " / " << b.mPalettes.size() << " palette floats):" << detail << LL_ENDL;
     }
     if (checked % 600 == 1)
     {
@@ -4754,19 +4802,6 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             }
         }
     }
-}
-
-// main thread, after the render maps of the cascades are built: the packets of the untextured casters of each cascade are built by the async pool while the main thread goes on
-// (the first cascade's are waited for first, the others build while the main thread draws the ones before them)
-void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
-{
-    LLCullResult* result = prep.mResult;
-    prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
-    prep.mSkinBuild = std::make_shared<ShadowSkinBuild>();
-    std::shared_ptr<ShadowStaticBuild> static_build = prep.mStaticBuild;
-    std::shared_ptr<ShadowSkinBuild> skin_build = prep.mSkinBuild;
-    prep.mStaticJob = LLAsyncPool::shared().submit([result, static_build]() { build_shadow_static(*result, kShadowStaticTypes, kShadowStaticTypeCount, *static_build); });
-    prep.mSkinJob = LLAsyncPool::shared().submit([result, skin_build]() { build_shadow_skin(*result, kShadowStaticTypes, kShadowStaticTypeCount, *skin_build); });
 }
 
 // main thread, right before the cascade is drawn: the pools and the sky, which every cascade fills for itself
@@ -8551,6 +8586,252 @@ static int shadow_alpha_fallback_reason(const LLDrawInfo& p, bool batch_textures
     }
     return 5;
 }
+
+// <FS> the packets of the casters with a texture (alpha masked, blended, grass, the materials' masks) of one cascade, static or rigged: a pure builder like the others. The textures the entries
+// name are listed in order of first use and the entries carry their number plus one until finish_shadow_alpha() (main thread) has prepared them and put the names in; the statistics of the
+// draws it left to the old path are counted here and added by the main thread too.
+enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_GRASS, KIND_MATERIAL };
+struct ShadowAlphaSource { U32 type; int kind; };
+static const ShadowAlphaSource sources[] = {
+    { LLRenderPass::PASS_ALPHA_MASK, KIND_MASK },
+    { LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, KIND_FULLBRIGHT },
+    { LLRenderPass::PASS_ALPHA, KIND_ALPHA },
+    { LLRenderPass::PASS_GRASS, KIND_GRASS },
+    { LLRenderPass::PASS_NORMSPEC_MASK, KIND_MATERIAL },
+    { LLRenderPass::PASS_MATERIAL_ALPHA_MASK, KIND_MATERIAL },
+    { LLRenderPass::PASS_SPECMAP_MASK, KIND_MATERIAL },
+    { LLRenderPass::PASS_NORMMAP_MASK, KIND_MATERIAL },
+};
+
+struct LLPipeline::ShadowAlphaBuild
+{
+    std::vector<LLVkMirror::ShadowAlphaEntry> mEntries;
+    std::vector<F32> mMatrices;
+    std::vector<F32> mPalettes;
+    std::vector<LLDrawInfo*> mFallback[KIND_MATERIAL + 1];
+    std::vector<LLViewerTexture*> mTextures;
+    U32 mFbGLTF = 0, mFbLayout = 0, mFbRigged = 0, mFbManyTextures = 0, mFbTextureMatrix = 0;
+    bool mFinished = false;
+};
+
+static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::ShadowAlphaBuild& out)
+{
+    out = LLPipeline::ShadowAlphaBuild();
+    std::vector<LLVkMirror::ShadowAlphaEntry>& entries = out.mEntries;
+    std::vector<F32>& matrices = out.mMatrices;
+    std::vector<F32>& palettes = out.mPalettes;
+    std::vector<LLDrawInfo*>* fallback = out.mFallback;
+    matrices.assign(16, 0.f);
+    matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
+    std::unordered_map<const void*, U32> matrix_numbers;
+    std::unordered_map<const F32*, U32> palette_offsets;
+    std::unordered_map<const LLViewerTexture*, U32> texture_numbers;
+    auto texture_ref = [&](LLViewerTexture* tex) -> U32
+    {
+        auto found = texture_numbers.find(tex);
+        if (found != texture_numbers.end())
+        {
+            return found->second;
+        }
+        out.mTextures.push_back(tex);
+        const U32 number = (U32)out.mTextures.size();
+        texture_numbers.emplace(tex, number);
+        return number;
+    };
+        for (const ShadowAlphaSource& source : sources)
+        {
+            if (rigged && source.kind == KIND_GRASS)
+            {
+                continue;       // grass is only drawn in the static pass
+            }
+            const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
+            const U32 type = (rigged && source.kind != KIND_ALPHA) ? source.type + 1 : source.type;       // the rigged variant of a pass type is the next number (PASS_ALPHA holds both)
+            auto begin = result.beginRenderMap(type);
+            auto end = result.endRenderMap(type);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                if (!params->mCount || rigged != (params->mAvatar != nullptr))
+                {
+                    continue;       // nothing to draw (the old path returns), or a draw of the other loop (no avatar: the old rigged path draws nothing)
+                }
+                if (source.kind == KIND_ALPHA && params->mGLTFMaterial)
+                {
+                    ++out.mFbGLTF;
+                    continue;       // left to renderAlphaObjects
+                }
+                if (!shadow_alpha_packet_ok(*params, batch, rigged))
+                {
+                    switch (shadow_alpha_fallback_reason(*params, batch, rigged))
+                    {
+                    case 1: ++out.mFbGLTF; break;
+                    case 2: ++out.mFbLayout; break;
+                    case 3: ++out.mFbRigged; break;
+                    case 4: ++out.mFbManyTextures; break;
+                    default: ++out.mFbTextureMatrix; break;
+                    }
+                    if (source.kind != KIND_ALPHA)
+                    {
+                        fallback[source.kind].push_back(params);
+                    }
+                    continue;
+                }
+                const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                LLVkMirror::ShadowAlphaEntry e = {};
+                e.mVertexBuffer = vb->getGLBuffer();
+                e.mIndexBuffer = vb->getGLIndices();
+                e.mFirstIndex = params->mOffset;
+                e.mIndexCount = params->mCount;
+                e.mMatrixId = rt_matrix_id(params->mModelMatrix);
+                if (rigged)
+                {
+                    if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                    {
+                        continue;       // the skin is not loaded yet: not drawn, as before
+                    }
+                    e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                    e.mVertexFirst = params->mStart;
+                    e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
+                    e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
+                    e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                    {
+                        const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                        e.mAvatarPos[0] = avatar_position.mV[0];
+                        e.mAvatarPos[1] = avatar_position.mV[1];
+                        e.mAvatarPos[2] = avatar_position.mV[2];
+                        e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
+                    }
+                }
+                if (params->mModelMatrix)
+                {
+                    auto it = matrix_numbers.find(params->mModelMatrix);
+                    if (it == matrix_numbers.end())
+                    {
+                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                        matrices.insert(matrices.end(), m, m + 16);
+                    }
+                    e.mMatrix = it->second;
+                }
+                U32 flags = rigged ? (U32)LLVkMirror::ALPHA_RIGGED : 0u;
+                if (source.kind == KIND_FULLBRIGHT)
+                {
+                    flags |= LLVkMirror::ALPHA_FULLBRIGHT;
+                }
+                if (source.kind == KIND_GRASS || source.kind == KIND_MATERIAL)
+                {
+                    flags |= LLVkMirror::ALPHA_TREE;
+                }
+                if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+                {
+                    flags |= LLVkMirror::ALPHA_HAS_TEXCOORD;
+                    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+                }
+                if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+                {
+                    flags |= LLVkMirror::ALPHA_HAS_COLOR;
+                    e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+                }
+                if (batch && params->mTextureList.size() > 1)
+                {
+                    for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
+                    {
+                        if (params->mTextureList[t].notNull())
+                        {
+                            e.mTextures[t] = texture_ref(params->mTextureList[t].get());
+                        }
+                    }
+                }
+                else
+                {
+                    flags |= LLVkMirror::ALPHA_NO_INDEX;
+                    if (params->mTexture.notNull())
+                    {
+                        e.mTextures[0] = texture_ref(params->mTexture.get());
+                    }
+                }
+                e.mFlags = flags;
+                e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
+                entries.push_back(e);
+            }
+        }
+}
+
+static void finish_shadow_alpha(LLPipeline::ShadowAlphaBuild& b)
+{
+    if (b.mFinished)
+    {
+        return;
+    }
+    std::vector<U32> names(b.mTextures.size());
+    for (size_t k = 0; k < b.mTextures.size(); ++k)
+    {
+        names[k] = gGL.getTexUnit(0)->prepareFast(b.mTextures[k]);
+        ++gShadowDrawStats.mAlphaTextures;
+    }
+    for (LLVkMirror::ShadowAlphaEntry& e : b.mEntries)
+    {
+        for (U32& t : e.mTextures)
+        {
+            t = t ? names[t - 1] : 0u;
+        }
+    }
+    gShadowDrawStats.mFbGLTF += b.mFbGLTF;
+    gShadowDrawStats.mFbLayout += b.mFbLayout;
+    gShadowDrawStats.mFbRigged += b.mFbRigged;
+    gShadowDrawStats.mFbManyTextures += b.mFbManyTextures;
+    gShadowDrawStats.mFbTextureMatrix += b.mFbTextureMatrix;
+    b.mFinished = true;
+}
+
+static void verify_shadow_alpha(const LLPipeline::ShadowAlphaBuild& a, const LLPipeline::ShadowAlphaBuild& b)
+{
+    static std::atomic<U32> checked{0}, bad{0};
+    ++checked;
+    bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mPalettes == b.mPalettes && a.mTextures == b.mTextures
+        && (a.mEntries.empty() || memcmp(a.mEntries.data(), b.mEntries.data(), a.mEntries.size() * sizeof(a.mEntries[0])) == 0)
+        && a.mFbGLTF == b.mFbGLTF && a.mFbLayout == b.mFbLayout && a.mFbRigged == b.mFbRigged && a.mFbManyTextures == b.mFbManyTextures && a.mFbTextureMatrix == b.mFbTextureMatrix;
+    for (int k = 0; k <= KIND_MATERIAL && same; ++k)
+    {
+        same = a.mFallback[k] == b.mFallback[k];
+    }
+    if (!same && bad++ < 8)
+    {
+        LL_WARNS("VkBuilder") << "builder verify: the alpha packets built in the job differ from the ones built now (" << a.mEntries.size() << " / " << b.mEntries.size() << " entries, "
+            << a.mTextures.size() << " / " << b.mTextures.size() << " textures)" << LL_ENDL;
+    }
+    if (checked % 600 == 1)
+    {
+        LL_INFOS("VkBuilder") << "builder verify: " << checked << " alpha builds compared, " << bad << " differed" << LL_ENDL;
+    }
+}
+
+// main thread, after the render maps of the cascades are built: the packets of the casters of each cascade are built by the async pool while the main thread goes on
+// (the first cascade's are waited for first, the others build while the main thread draws the ones before them)
+static bool shadow_packets_enabled();
+static bool shadow_kind_on(int kind);
+void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
+{
+    LLCullResult* result = prep.mResult;
+    LLAsyncPool& pool = LLAsyncPool::shared();
+    prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
+    prep.mSkinBuild = std::make_shared<ShadowSkinBuild>();
+    std::shared_ptr<ShadowStaticBuild> static_build = prep.mStaticBuild;
+    std::shared_ptr<ShadowSkinBuild> skin_build = prep.mSkinBuild;
+    prep.mStaticJob = pool.submit([result, static_build]() { build_shadow_static(*result, kShadowStaticTypes, kShadowStaticTypeCount, *static_build); });
+    prep.mSkinJob = pool.submit([result, skin_build]() { build_shadow_skin(*result, kShadowStaticTypes, kShadowStaticTypeCount, *skin_build); });
+    if (LLVkMirror::rtShadowMode() || (shadow_packets_enabled() && shadow_kind_on(1) && LLVkMirror::shadowAlphaPacketsAvailable()))
+    {
+        for (int slot = 0; slot < 2; ++slot)
+        {
+            std::shared_ptr<ShadowAlphaBuild> alpha_build = std::make_shared<ShadowAlphaBuild>();
+            prep.mAlphaBuild[slot] = alpha_build;
+            prep.mAlphaJob[slot] = pool.submit([result, alpha_build, slot]() { build_shadow_alpha(*result, slot == 1, *alpha_build); });
+        }
+    }
+}
+
 
 // <FS> The palette of a rigged draw, added once to the palettes of a packet record: its offset (in floats) and joint count. False when the old path would not draw it
 // either (no avatar, skin not loaded yet). The palette is what uploadMatrixPalette() sends as matrixPalette: 12 floats per joint.
@@ -12453,160 +12734,36 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     // <FS> Render packets with textures: the static alpha masked casters of a shadow pass (masked, fullbright masked, blended, grass, the materials' masks) leave
     // as one record. Every entry names its texture(s) by GL name; the worker gives them slots in a bindless table and the fragment shader does the alpha test.
-    auto render_alpha_packets = [this, rt_skip](S32 sun_up, U32 target_width, bool rigged)
+    auto render_alpha_packets = [this, rt_skip, prepared, &result](S32 sun_up, U32 target_width, bool rigged)
     {
         LL_CPU_ZONE("packets: shadow alpha (build + record)");
-        enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_GRASS, KIND_MATERIAL };
-        struct Source { U32 type; int kind; };
-        static const Source sources[] = {
-            { LLRenderPass::PASS_ALPHA_MASK, KIND_MASK },
-            { LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, KIND_FULLBRIGHT },
-            { LLRenderPass::PASS_ALPHA, KIND_ALPHA },
-            { LLRenderPass::PASS_GRASS, KIND_GRASS },
-            { LLRenderPass::PASS_NORMSPEC_MASK, KIND_MATERIAL },
-            { LLRenderPass::PASS_MATERIAL_ALPHA_MASK, KIND_MATERIAL },
-            { LLRenderPass::PASS_SPECMAP_MASK, KIND_MATERIAL },
-            { LLRenderPass::PASS_NORMMAP_MASK, KIND_MATERIAL },
-        };
-        std::vector<LLVkMirror::ShadowAlphaEntry> entries;
-        std::vector<F32> matrices(16, 0.f);
-        matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
-        std::unordered_map<const void*, U32> matrix_numbers;
-        std::unordered_map<const LLViewerTexture*, U32> texture_names;
-        std::vector<LLDrawInfo*> fallback[KIND_MATERIAL + 1];
-        std::vector<F32> palettes;
-        std::unordered_map<const F32*, U32> palette_offsets;
-        // what the old path does for a texture at its bind: marks it in use, regenerates a deleted one and applies its filtering and wrap options (the worker reads those)
-        auto texture_name = [&](LLViewerTexture* tex) -> U32
+        // the entries come from the cascade's builder job when there was one, else they are built here
+        std::shared_ptr<ShadowAlphaBuild> build_owned;
+        const int slot = rigged ? 1 : 0;
+        if (prepared && prepared->mAlphaJob[slot])
         {
-            auto found = texture_names.find(tex);
-            if (found != texture_names.end())
             {
-                return found->second;
+                LL_CPU_ZONE("packets: wait for the alpha builder");
+                prepared->mAlphaJob[slot]->wait();
             }
-            const U32 name = gGL.getTexUnit(0)->prepareFast(tex);
-            texture_names.emplace(tex, name);
-            ++gShadowDrawStats.mAlphaTextures;
-            return name;
-        };
-        for (const Source& source : sources)
-        {
-            if (rigged && source.kind == KIND_GRASS)
+            build_owned = prepared->mAlphaBuild[slot];
+            if (builder_verify())
             {
-                continue;       // grass is only drawn in the static pass
-            }
-            const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
-            const U32 type = (rigged && source.kind != KIND_ALPHA) ? source.type + 1 : source.type;       // the rigged variant of a pass type is the next number (PASS_ALPHA holds both)
-            auto* begin = beginRenderMap(type);
-            auto* end = endRenderMap(type);
-            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-            {
-                LLDrawInfo* params = *i;
-                LLCullResult::increment_iterator(i, end);
-                if (!params->mCount || rigged != (params->mAvatar != nullptr))
-                {
-                    continue;       // nothing to draw (the old path returns), or a draw of the other loop (no avatar: the old rigged path draws nothing)
-                }
-                if (source.kind == KIND_ALPHA && params->mGLTFMaterial)
-                {
-                    ++gShadowDrawStats.mFbGLTF;
-                    continue;       // left to renderAlphaObjects
-                }
-                if (!shadow_alpha_packet_ok(*params, batch, rigged))
-                {
-                    switch (shadow_alpha_fallback_reason(*params, batch, rigged))
-                    {
-                    case 1: ++gShadowDrawStats.mFbGLTF; break;
-                    case 2: ++gShadowDrawStats.mFbLayout; break;
-                    case 3: ++gShadowDrawStats.mFbRigged; break;
-                    case 4: ++gShadowDrawStats.mFbManyTextures; break;
-                    default: ++gShadowDrawStats.mFbTextureMatrix; break;
-                    }
-                    if (source.kind != KIND_ALPHA)
-                    {
-                        fallback[source.kind].push_back(params);
-                    }
-                    continue;
-                }
-                const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                LLVkMirror::ShadowAlphaEntry e = {};
-                e.mVertexBuffer = vb->getGLBuffer();
-                e.mIndexBuffer = vb->getGLIndices();
-                e.mFirstIndex = params->mOffset;
-                e.mIndexCount = params->mCount;
-                e.mMatrixId = rt_matrix_id(params->mModelMatrix);
-                if (rigged)
-                {
-                    if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
-                    {
-                        continue;       // the skin is not loaded yet: not drawn, as before
-                    }
-                    e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-                    e.mVertexFirst = params->mStart;
-                    e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
-                    e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
-                    e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
-                    {
-                        const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
-                        e.mAvatarPos[0] = avatar_position.mV[0];
-                        e.mAvatarPos[1] = avatar_position.mV[1];
-                        e.mAvatarPos[2] = avatar_position.mV[2];
-                        e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
-                    }
-                }
-                if (params->mModelMatrix)
-                {
-                    auto it = matrix_numbers.find(params->mModelMatrix);
-                    if (it == matrix_numbers.end())
-                    {
-                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
-                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
-                        matrices.insert(matrices.end(), m, m + 16);
-                    }
-                    e.mMatrix = it->second;
-                }
-                U32 flags = rigged ? (U32)LLVkMirror::ALPHA_RIGGED : 0u;
-                if (source.kind == KIND_FULLBRIGHT)
-                {
-                    flags |= LLVkMirror::ALPHA_FULLBRIGHT;
-                }
-                if (source.kind == KIND_GRASS || source.kind == KIND_MATERIAL)
-                {
-                    flags |= LLVkMirror::ALPHA_TREE;
-                }
-                if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
-                {
-                    flags |= LLVkMirror::ALPHA_HAS_TEXCOORD;
-                    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
-                }
-                if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
-                {
-                    flags |= LLVkMirror::ALPHA_HAS_COLOR;
-                    e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
-                }
-                if (batch && params->mTextureList.size() > 1)
-                {
-                    for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
-                    {
-                        if (params->mTextureList[t].notNull())
-                        {
-                            e.mTextures[t] = texture_name(params->mTextureList[t].get());
-                        }
-                    }
-                }
-                else
-                {
-                    flags |= LLVkMirror::ALPHA_NO_INDEX;
-                    if (params->mTexture.notNull())
-                    {
-                        e.mTextures[0] = texture_name(params->mTexture.get());
-                    }
-                }
-                e.mFlags = flags;
-                e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
-                entries.push_back(e);
+                ShadowAlphaBuild again;
+                build_shadow_alpha(result, rigged, again);
+                verify_shadow_alpha(*build_owned, again);
             }
         }
+        else
+        {
+            build_owned = std::make_shared<ShadowAlphaBuild>();
+            build_shadow_alpha(result, rigged, *build_owned);
+        }
+        finish_shadow_alpha(*build_owned);
+        std::vector<LLVkMirror::ShadowAlphaEntry>& entries = build_owned->mEntries;
+        std::vector<F32>& matrices = build_owned->mMatrices;
+        std::vector<F32>& palettes = build_owned->mPalettes;
+        std::vector<LLDrawInfo*>* fallback = build_owned->mFallback;
         if (!entries.empty())
         {
             if (!rt_skip)
@@ -14080,6 +14237,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 // a cascade that was not drawn still has its builders in flight: they read the cull result, which must not change under them
                 if (prep.mStaticJob) { prep.mStaticJob->wait(); }
                 if (prep.mSkinJob) { prep.mSkinJob->wait(); }
+                for (LLAsyncPool::JobPtr& job : prep.mAlphaJob) { if (job) { job->wait(); } }
             }
         }
 
