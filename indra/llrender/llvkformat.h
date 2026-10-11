@@ -39,6 +39,13 @@ namespace LLVkFormat
     U32 compCount(U8 comps);
     U32 typeBytes(U8 type);
 
+    // ---- geometry: draw modes, vertex attribute / index component types (the PType values), buffer kinds ----
+    enum Topology : U8 { TOP_POINTS = 0, TOP_LINES, TOP_LINE_STRIP, TOP_TRIANGLES, TOP_TRIANGLE_STRIP, TOP_TRIANGLE_FAN, TOP_OTHER };
+    Topology topology(U32 gl_mode);
+    PType componentType(U32 gl_type);           // T_NONE for a type that is not a component type
+    enum BufKind : U8 { BK_VERTEX = 0, BK_INDEX, BK_UNIFORM, BK_OTHER };
+    BufKind bufKind(U32 gl_target);
+
     // ---- how a texture stores its texels (the internal formats the viewer uses; one entry per distinct treatment) ----
     enum Store : U8
     {

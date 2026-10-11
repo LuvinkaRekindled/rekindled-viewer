@@ -480,7 +480,7 @@ struct VaoAttrib
     bool mEnabled = false;
     GLuint mBuffer = 0;
     GLint mSize = 4;
-    GLenum mType = GL_FLOAT;
+    U8 mType = LLVkFormat::T_F32;       // LLVkFormat::PType
     bool mNormalized = false;
     bool mInteger = false;
     GLsizei mStride = 0;
@@ -506,9 +506,7 @@ struct Fbo
 {
     FboAttachment mColor[8];
     FboAttachment mDepth;
-    GLenum mDrawBuffers[8] = { GL_COLOR_ATTACHMENT0, 0, 0, 0, 0, 0, 0, 0 };
     U32 mDrawCount = 1;
-    GLenum mReadBuffer = GL_COLOR_ATTACHMENT0;
 };
 
 // state that belongs to one GL context (the viewer has a texture worker thread with its own, sharing objects)
@@ -960,8 +958,7 @@ Image* read_image(GLuint fbo)
     {
         return nullptr;
     }
-    const U32 index = it->second.mReadBuffer >= GL_COLOR_ATTACHMENT0 ? it->second.mReadBuffer - GL_COLOR_ATTACHMENT0 : 0;
-    return index < 8 ? attachment_image(it->second.mColor[index]) : nullptr;
+    return attachment_image(it->second.mColor[0]);         // reads come from colour attachment 0
 }
 
 Image* read_image()
@@ -1055,19 +1052,14 @@ bool sync_target()
     U32 count = 0;
     for (U32 i = 0; i < fbo.mDrawCount && i < 8; ++i)
     {
-        const GLenum buf = fbo.mDrawBuffers[i];
-        if (buf < GL_COLOR_ATTACHMENT0 || buf >= GL_COLOR_ATTACHMENT0 + 8)
-        {
-            break;
-        }
-        Image* img = attachment_image(fbo.mColor[buf - GL_COLOR_ATTACHMENT0]);
+        Image* img = attachment_image(fbo.mColor[i]);
         if (!img)
         {
             break;
         }
         colors[count++] = img;
-        note_frame_target(fbo.mColor[buf - GL_COLOR_ATTACHMENT0].mTexture);
-        sCurTargets.push_back(fbo.mColor[buf - GL_COLOR_ATTACHMENT0].mTexture);
+        note_frame_target(fbo.mColor[i].mTexture);
+        sCurTargets.push_back(fbo.mColor[i].mTexture);
     }
     if (fbo.mDepth.mTexture)
     {
@@ -1106,51 +1098,17 @@ bool sync_target()
 // state translation
 //-----------------------------------------------------------------------------------------------------
 
-VkCompareOp compare_op(GLenum f)
+VkPrimitiveTopology topology(LLVkFormat::Topology t)
 {
-    switch (f)
+    switch (t)
     {
-    case GL_NEVER: return VK_COMPARE_OP_NEVER;
-    case GL_LESS: return VK_COMPARE_OP_LESS;
-    case GL_EQUAL: return VK_COMPARE_OP_EQUAL;
-    case GL_LEQUAL: return VK_COMPARE_OP_LESS_OR_EQUAL;
-    case GL_GREATER: return VK_COMPARE_OP_GREATER;
-    case GL_NOTEQUAL: return VK_COMPARE_OP_NOT_EQUAL;
-    case GL_GEQUAL: return VK_COMPARE_OP_GREATER_OR_EQUAL;
-    default: return VK_COMPARE_OP_ALWAYS;
-    }
-}
-
-VkBlendFactor blend_factor(GLenum f)
-{
-    switch (f)
-    {
-    case GL_ZERO: return VK_BLEND_FACTOR_ZERO;
-    case GL_ONE: return VK_BLEND_FACTOR_ONE;
-    case GL_SRC_COLOR: return VK_BLEND_FACTOR_SRC_COLOR;
-    case GL_ONE_MINUS_SRC_COLOR: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-    case GL_SRC_ALPHA: return VK_BLEND_FACTOR_SRC_ALPHA;
-    case GL_ONE_MINUS_SRC_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    case GL_DST_ALPHA: return VK_BLEND_FACTOR_DST_ALPHA;
-    case GL_ONE_MINUS_DST_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
-    case GL_DST_COLOR: return VK_BLEND_FACTOR_DST_COLOR;
-    case GL_ONE_MINUS_DST_COLOR: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
-    case GL_SRC_ALPHA_SATURATE: return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
-    default: warn_once("blend factor", f); return VK_BLEND_FACTOR_ONE;
-    }
-}
-
-VkPrimitiveTopology topology(GLenum mode)
-{
-    switch (mode)
-    {
-    case GL_POINTS: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-    case GL_LINES: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    case GL_LINE_STRIP: return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
-    case GL_TRIANGLES: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    case GL_TRIANGLE_STRIP: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    case GL_TRIANGLE_FAN: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
-    default: warn_once("primitive mode", mode); return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    case LLVkFormat::TOP_POINTS: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    case LLVkFormat::TOP_LINES: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    case LLVkFormat::TOP_LINE_STRIP: return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+    case LLVkFormat::TOP_TRIANGLES: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    case LLVkFormat::TOP_TRIANGLE_STRIP: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    case LLVkFormat::TOP_TRIANGLE_FAN: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+    default: warn_once("primitive mode", t); return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     }
 }
 
@@ -1350,7 +1308,7 @@ void sync_textures(Renderer& r, Program& program)
 //-----------------------------------------------------------------------------------------------------
 
 // numeric_class: 'f' float, 'i' signed integer, 'u' unsigned integer (what the vertex shader declares)
-VkFormat vertex_format(GLint size, GLenum type, bool normalized, bool integer, char numeric_class)
+VkFormat vertex_format(GLint size, U8 type, bool normalized, bool integer, char numeric_class)
 {
     const U32 n = (U32)std::max(1, std::min(size, 4));
     if (numeric_class == 'i' || numeric_class == 'u')
@@ -1365,56 +1323,56 @@ VkFormat vertex_format(GLint size, GLenum type, bool normalized, bool integer, c
         const VkFormat b32u[4] = { VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT, VK_FORMAT_R32G32B32A32_UINT };
         switch (type)
         {
-        case GL_BYTE: case GL_UNSIGNED_BYTE: return sign ? b8s[n - 1] : b8u[n - 1];
-        case GL_SHORT: case GL_UNSIGNED_SHORT: return sign ? b16s[n - 1] : b16u[n - 1];
+        case LLVkFormat::T_S8: case LLVkFormat::T_U8: return sign ? b8s[n - 1] : b8u[n - 1];
+        case LLVkFormat::T_S16: case LLVkFormat::T_U16: return sign ? b16s[n - 1] : b16u[n - 1];
         default: return sign ? b32s[n - 1] : b32u[n - 1];
         }
     }
     switch (type)
     {
-    case GL_FLOAT:
+    case LLVkFormat::T_F32:
     {
         const VkFormat f[4] = { VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT };
         return f[n - 1];
     }
-    case 0x140B:
+    case LLVkFormat::T_F16:
     {
         const VkFormat f[4] = { VK_FORMAT_R16_SFLOAT, VK_FORMAT_R16G16_SFLOAT, VK_FORMAT_R16G16B16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT };
         return f[n - 1];
     }
-    case GL_UNSIGNED_BYTE:
+    case LLVkFormat::T_U8:
     {
         const VkFormat un[4] = { VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM, VK_FORMAT_R8G8B8_UNORM, VK_FORMAT_R8G8B8A8_UNORM };
         const VkFormat ui[4] = { VK_FORMAT_R8_UINT, VK_FORMAT_R8G8_UINT, VK_FORMAT_R8G8B8_UINT, VK_FORMAT_R8G8B8A8_UINT };
         const VkFormat us[4] = { VK_FORMAT_R8_USCALED, VK_FORMAT_R8G8_USCALED, VK_FORMAT_R8G8B8_USCALED, VK_FORMAT_R8G8B8A8_USCALED };
         return integer ? ui[n - 1] : (normalized ? un[n - 1] : us[n - 1]);
     }
-    case GL_BYTE:
+    case LLVkFormat::T_S8:
     {
         const VkFormat sn[4] = { VK_FORMAT_R8_SNORM, VK_FORMAT_R8G8_SNORM, VK_FORMAT_R8G8B8_SNORM, VK_FORMAT_R8G8B8A8_SNORM };
         const VkFormat si[4] = { VK_FORMAT_R8_SINT, VK_FORMAT_R8G8_SINT, VK_FORMAT_R8G8B8_SINT, VK_FORMAT_R8G8B8A8_SINT };
         return integer ? si[n - 1] : sn[n - 1];
     }
-    case GL_UNSIGNED_SHORT:
+    case LLVkFormat::T_U16:
     {
         const VkFormat un[4] = { VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16_UNORM, VK_FORMAT_R16G16B16A16_UNORM };
         const VkFormat ui[4] = { VK_FORMAT_R16_UINT, VK_FORMAT_R16G16_UINT, VK_FORMAT_R16G16B16_UINT, VK_FORMAT_R16G16B16A16_UINT };
         const VkFormat us[4] = { VK_FORMAT_R16_USCALED, VK_FORMAT_R16G16_USCALED, VK_FORMAT_R16G16B16_USCALED, VK_FORMAT_R16G16B16A16_USCALED };
         return integer ? ui[n - 1] : (normalized ? un[n - 1] : us[n - 1]);
     }
-    case GL_SHORT:
+    case LLVkFormat::T_S16:
     {
         const VkFormat sn[4] = { VK_FORMAT_R16_SNORM, VK_FORMAT_R16G16_SNORM, VK_FORMAT_R16G16B16_SNORM, VK_FORMAT_R16G16B16A16_SNORM };
         const VkFormat si[4] = { VK_FORMAT_R16_SINT, VK_FORMAT_R16G16_SINT, VK_FORMAT_R16G16B16_SINT, VK_FORMAT_R16G16B16A16_SINT };
         const VkFormat ss[4] = { VK_FORMAT_R16_SSCALED, VK_FORMAT_R16G16_SSCALED, VK_FORMAT_R16G16B16_SSCALED, VK_FORMAT_R16G16B16A16_SSCALED };
         return integer ? si[n - 1] : (normalized ? sn[n - 1] : ss[n - 1]);
     }
-    case GL_UNSIGNED_INT:
+    case LLVkFormat::T_U32:
     {
         const VkFormat ui[4] = { VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT, VK_FORMAT_R32G32B32A32_UINT };
         return ui[n - 1];
     }
-    case GL_INT:
+    case LLVkFormat::T_S32:
     {
         const VkFormat si[4] = { VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT, VK_FORMAT_R32G32B32_SINT, VK_FORMAT_R32G32B32A32_SINT };
         return si[n - 1];
@@ -1425,12 +1383,12 @@ VkFormat vertex_format(GLint size, GLenum type, bool normalized, bool integer, c
     }
 }
 
-U32 attrib_type_bytes(GLenum type)
+U32 attrib_type_bytes(U8 type)
 {
     switch (type)
     {
-    case GL_BYTE: case GL_UNSIGNED_BYTE: return 1;
-    case GL_SHORT: case GL_UNSIGNED_SHORT: case 0x140B: return 2;
+    case LLVkFormat::T_S8: case LLVkFormat::T_U8: return 1;
+    case LLVkFormat::T_S16: case LLVkFormat::T_U16: case LLVkFormat::T_F16: return 2;
     default: return 4;
     }
 }
@@ -2374,16 +2332,10 @@ void target_state(unsigned fbo_name, int draw_buffers)
     if (draw_buffers > 0)
     {
         fbo.mDrawCount = (U32)std::min(draw_buffers, 4);
-        for (U32 i = 0; i < fbo.mDrawCount; ++i)
-        {
-            fbo.mDrawBuffers[i] = GL_COLOR_ATTACHMENT0 + i;
-        }
-        fbo.mReadBuffer = GL_COLOR_ATTACHMENT0;
     }
     else if (draw_buffers == 0)
     {
         fbo.mDrawCount = 0;         // depth only
-        fbo.mReadBuffer = 0;
     }
 }
 
@@ -2421,10 +2373,10 @@ void destroy_buffers(GLsizei n, const GLuint* buffers)
     }
 }
 
-void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data, GLenum usage);
+void on_bufferData(GLuint name, unsigned kind, GLsizeiptr size, const void* data);
 void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data);
 
-void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data, GLenum usage)
+void on_bufferData(GLuint name, unsigned kind, GLsizeiptr size, const void* data)
 {
     auto it = sGL.mBuffers.find(name);
     if (it == sGL.mBuffers.end() || size < 0)
@@ -2434,7 +2386,7 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
     Buf& b = it->second;
     Context& ctx = Context::instance();
     // large vertex / index buffers take the device path (GPU copies, no CPU access, no shadow copy)
-    const bool want_device = (target == GL_ARRAY_BUFFER || target == GL_ELEMENT_ARRAY_BUFFER) && (U64)size >= device_buffer_min_bytes() && !getenv("LL_VK_NO_DEVICE_BUFFERS");
+    const bool want_device = (kind == LLVkFormat::BK_VERTEX || kind == LLVkFormat::BK_INDEX) && (U64)size >= device_buffer_min_bytes() && !getenv("LL_VK_NO_DEVICE_BUFFERS");
     if (want_device && b.mDevicePath && b.mVk.valid() && b.mVk.mSize == (VkDeviceSize)size)
     {
         // the same size again (the viewer re-specifies a buffer to rewrite it): keep the Vulkan buffer, queue the data
@@ -2476,7 +2428,7 @@ void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data
         }
         return;
     }
-    const bool geometry = target == GL_ARRAY_BUFFER || target == GL_ELEMENT_ARRAY_BUFFER;
+    const bool geometry = kind == LLVkFormat::BK_VERTEX || kind == LLVkFormat::BK_INDEX;
     const bool stored = size != 0 && (geometry && arena_host_enabled() ? acquire_arena_storage(b, (U64)size, ArenaKind::Host)
         : ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                            Context::Memory::UploadDevice, b.mVk));
@@ -2648,7 +2600,7 @@ bool probe_on();
 void probe_note(GLuint vb_name, GLuint ib_name, const Buf& vb, const Buf& ib, U32 first, U32 count, U32 max_vertex);
 }
 
-void draw_arrays(unsigned mode, int first, int count)
+void draw_arrays(unsigned topo, int first, int count)
 {
     HookTimer hook_timer;
     LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
@@ -2668,7 +2620,7 @@ void draw_arrays(unsigned mode, int first, int count)
     LLVkMirror::gLastLap = 210;
     LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
-    r.setTopology(topology(mode));
+    r.setTopology(topology((LLVkFormat::Topology)topo));
     LLVkMirror::gLastLap = 211;
     if (r.draw((U32)count, (U32)first))
     {
@@ -2693,7 +2645,7 @@ void draw_arrays(unsigned mode, int first, int count)
     ++sDrawsTotal;
 }
 
-void draw_elements(unsigned mode, unsigned start, unsigned end, int count, unsigned type, const void* indices)
+void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsigned type, const void* indices)
 {
     HookTimer hook_timer;
     LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
@@ -2717,15 +2669,15 @@ void draw_elements(unsigned mode, unsigned start, unsigned end, int count, unsig
         ++sStats.mSkippedPerProgram[Renderer::instance().getProgram()->getName() + " (no index buffer)"];
         return;
     }
-    const VkIndexType itype = type == GL_UNSIGNED_INT ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-    const U32 index_bytes = type == GL_UNSIGNED_INT ? 4 : 2;
+    const VkIndexType itype = type == LLVkFormat::T_U32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+    const U32 index_bytes = type == LLVkFormat::T_U32 ? 4 : 2;
     Renderer& r = Renderer::instance();
-    if (probe_on() && type == GL_UNSIGNED_SHORT)
+    if (probe_on() && type == LLVkFormat::T_U16)
     {
         // BLAS probe: positions are attribute 0 (vec4 array at the start of the vertex buffer); rigged draws (weights, joints enabled) and the UI are left out
         const VaoAttrib& pos = vao.mAttrib[0];
         auto vit = sGL.mBuffers.find(pos.mBuffer);
-        if (pos.mEnabled && pos.mBuffer && vit != sGL.mBuffers.end() && pos.mType == GL_FLOAT && pos.mSize >= 3 && pos.mOffset == 0 && (pos.mStride == 16 || (pos.mStride == 0 && pos.mSize == 4))
+        if (pos.mEnabled && pos.mBuffer && vit != sGL.mBuffers.end() && pos.mType == LLVkFormat::T_F32 && pos.mSize >= 3 && pos.mOffset == 0 && (pos.mStride == 16 || (pos.mStride == 0 && pos.mSize == 4))
             && !vao.mAttrib[10].mEnabled && !vao.mAttrib[12].mEnabled)
         {
             const std::string& program_name = r.getProgram()->getName();
@@ -2738,7 +2690,7 @@ void draw_elements(unsigned mode, unsigned start, unsigned end, int count, unsig
     ensure_buffers_current(used, vao.mElementBuffer);
     LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
     r.setVertexInput(vi);
-    r.setTopology(topology(mode));
+    r.setTopology(topology((LLVkFormat::Topology)topo));
     r.setIndexBuffer(eit->second.mVk.mBuffer, eit->second.mArena.mOffset, itype);
     if (r.drawIndexed((U32)count, (U32)((U64)indices / index_bytes), 0))
     {
@@ -3642,7 +3594,7 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
     }
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
-    r.setTopology(topology(GL_TRIANGLES));
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
 
     Renderer::ScratchAlloc commands;
@@ -3794,7 +3746,7 @@ static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
     }
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
-    r.setTopology(topology(GL_TRIANGLES));
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
 
     Renderer::ScratchAlloc commands;
@@ -3912,7 +3864,7 @@ static void on_shadow_skin_packets(const LLVkMirror::ShadowPacketsHeader& h, con
     }
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
-    r.setTopology(topology(GL_TRIANGLES));
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
 
     Renderer::ScratchAlloc commands;
     const auto& caps = Context::instance().getCaps();
@@ -4082,7 +4034,7 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     }
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
-    r.setTopology(topology(GL_TRIANGLES));
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
 
     // one indirect command for the record when the device allows the first instance in indirect draws (the draw number is the first instance)
     Renderer::ScratchAlloc commands;
@@ -4939,19 +4891,15 @@ bool fetch_rect_cached(Image& view, S32 x, S32 y, S32 w, S32 h, std::vector<U8>&
 }
 
 // ---- query answers ----
-bool own_query_value(GLuint id, GLenum pname, U64& value)
+bool own_query_value(GLuint id, bool want_result, U64& value)
 {
     drain_query_results();
     auto lat = sQueryLatest.find(id);
     auto it = lat == sQueryLatest.end() ? sQueries.end() : sQueries.find(lat->second);
-    if (pname == 0x8867)         // QUERY_RESULT_AVAILABLE
+    if (!want_result)
     {
         value = (it == sQueries.end() || it->second.mVkHave) ? 1 : 0;
         return true;
-    }
-    if (pname != 0x8866)         // QUERY_RESULT
-    {
-        return false;
     }
     if (it == sQueries.end())
     {
@@ -5002,7 +4950,7 @@ int tex_level_parameter(unsigned id, LLVkFormat::Target tg, int level, LLVkForma
 
 bool query_value(unsigned id, bool want_result, unsigned long long& value)
 {
-    return own_query_value(id, want_result ? 0x8866 : 0x8867, value);
+    return own_query_value(id, want_result, value);
 }
 
 void read_pixels(unsigned fbo, int x, int y, int width, int height, LLVkFormat::Transfer tr, void* pixels)

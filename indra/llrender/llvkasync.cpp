@@ -37,7 +37,7 @@ namespace LLVkGL
 {
     void set_worker_context(int id);
     void register_main_context();
-    void on_bufferData(GLuint name, GLenum target, GLsizeiptr size, const void* data, GLenum usage);
+    void on_bufferData(GLuint name, unsigned kind, GLsizeiptr size, const void* data);
     void on_bufferSubData(GLuint name, GLintptr offset, GLsizeiptr size, const void* data);
     void on_bufferRecycle(GLuint name);
 }
@@ -267,10 +267,9 @@ bool gTyped = true;                           // LL_VK_TYPED=0: typed records (L
 unsigned long long gMainRecords = 0;        // records actually written by the main thread
 
 struct BindTexUnitArgs { GLenum mUnit; GLenum mTarget; GLuint mTexture; U32 mPad; };
-struct RunHeader { GLenum mTarget; GLuint mBuffer; U32 mCount; U32 mFlags; GLuint mElem; U32 mPad; };   // flags: bit 0 array buffer bind, bit 1 index buffer bind (played after the pointers)
+struct RunHeader { U32 mReserved; GLuint mBuffer; U32 mCount; U32 mFlags; GLuint mElem; U32 mPad; };   // flags: bit 0 array buffer bind, bit 1 index buffer bind (played after the pointers)
 struct RunEntry { U32 mKind; GLuint mIndex; GLint mSize; GLenum mType; GLsizei mStride; U32 mNormalized; const void* mPointer; };   // kind 0: glVertexAttribPointer, 1: glVertexAttribIPointer
 static_assert(sizeof(RunEntry) == 32, "run entry");
-constexpr GLenum GL_ARRAY_BUFFER_ENUM = 0x8892;
 constexpr GLenum GL_ELEMENT_ARRAY_BUFFER_ENUM = 0x8893;
 
 inline void rawPush(U16 op, const void* args, unsigned size)
@@ -549,14 +548,16 @@ namespace
 
 void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage)
 {
+    (void)usage;            // the storage the worker picks does not depend on the GL usage hint
+    const U32 kind = LLVkFormat::bufKind(target);
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
-        LLVkGL::on_bufferData(name, target, (GLsizeiptr)size, data, usage);
+        LLVkGL::on_bufferData(name, kind, (GLsizeiptr)size, data);
         return;
     }
     MainLap lap;
-    const NamedBufArgs a = { name, target, usage, 0, 0, size };
+    const NamedBufArgs a = { name, kind, 0, 0, 0, size };
     pushData(CMD_BUFFER_DATA, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
 }
 
@@ -614,8 +615,9 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
     gPendUni.clear();
 }
 
-void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
+void drawRangeElements(U32 gl_mode, U32 start, U32 end, S32 count, U32 gl_type, const void* indices)
 {
+    const U32 mode = LLVkFormat::topology(gl_mode), type = LLVkFormat::componentType(gl_type);
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts): the draw is made here
@@ -629,8 +631,9 @@ void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const 
     writeDraw(0, mode, start, end, count, type, indices);
 }
 
-void drawArrays(U32 mode, S32 first, S32 count)
+void drawArrays(U32 gl_mode, S32 first, S32 count)
 {
+    const U32 mode = LLVkFormat::topology(gl_mode);
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
@@ -654,8 +657,17 @@ void gpuZone(const char* name, bool begin)
     pushData(CMD_GPU_ZONE, head, sizeof(head), text, len + 1);
 }
 
-void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count)
+void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* given, U32 count)
 {
+    // the component types are LLVkFormat::PType from here on
+    VertexAttrib typed[16];
+    count = std::min<U32>(count, 16);
+    for (U32 i = 0; i < count; ++i)
+    {
+        typed[i] = given[i];
+        typed[i].mType = LLVkFormat::componentType(given[i].mType);
+    }
+    const VertexAttrib* attribs = typed;
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
@@ -670,7 +682,7 @@ void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_b
     static_assert(sizeof(VertexAttrib) == sizeof(RunEntry), "typed attribute record matches the run entry");
     const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * count);       // the array state does not depend on texture state: the pending slots stay
     U8* p = mainReserve(payload, CMD_ARRAY_RUN, 0);
-    const RunHeader h = { GL_ARRAY_BUFFER_ENUM, array_buffer, count, (bind_array ? 1u : 0u) | (bind_elem ? 2u : 0u), elem_buffer, 0 };
+    const RunHeader h = { 0, array_buffer, count, (bind_array ? 1u : 0u) | (bind_elem ? 2u : 0u), elem_buffer, 0 };
     memcpy(p, &h, sizeof(h));
     if (count)
     {
@@ -1937,7 +1949,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         const NamedBufArgs a = r.get<NamedBufArgs>();
         Blob b = read_blob(r, flags);
-        LLVkGL::on_bufferData(a.mName, a.mTarget, (GLsizeiptr)a.mSize, b.mData, a.mUsage);
+        LLVkGL::on_bufferData(a.mName, a.mTarget, (GLsizeiptr)a.mSize, b.mData);
         break;
     }
     case CMD_BUFFER_SUBDATA:

@@ -65,6 +65,47 @@ Transfer transfer(U32 gl_format, U32 gl_type)
     return t;
 }
 
+Topology topology(U32 gl)
+{
+    switch (gl)
+    {
+    case 0x0000: return TOP_POINTS;
+    case 0x0001: return TOP_LINES;
+    case 0x0003: return TOP_LINE_STRIP;
+    case 0x0004: return TOP_TRIANGLES;
+    case 0x0005: return TOP_TRIANGLE_STRIP;
+    case 0x0006: return TOP_TRIANGLE_FAN;
+    default: return TOP_OTHER;
+    }
+}
+
+PType componentType(U32 gl)
+{
+    switch (gl)
+    {
+    case 0x1401: return T_U8;
+    case 0x1400: return T_S8;
+    case 0x1403: return T_U16;
+    case 0x1402: return T_S16;
+    case 0x1405: return T_U32;
+    case 0x1404: return T_S32;
+    case 0x1406: return T_F32;
+    case 0x140B: return T_F16;
+    default: return T_NONE;
+    }
+}
+
+BufKind bufKind(U32 gl)
+{
+    switch (gl)
+    {
+    case 0x8892: return BK_VERTEX;      // ARRAY_BUFFER
+    case 0x8893: return BK_INDEX;       // ELEMENT_ARRAY_BUFFER
+    case 0x8A11: return BK_UNIFORM;     // UNIFORM_BUFFER
+    default: return BK_OTHER;
+    }
+}
+
 U32 compCount(U8 c)
 {
     switch (c)
