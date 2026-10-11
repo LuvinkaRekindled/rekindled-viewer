@@ -14,6 +14,7 @@
 #if defined(LL_VULKAN)
 
 #include "linden_common.h"
+#include "llvkformat.h"
 
 namespace LLVkTarget
 {
@@ -35,7 +36,7 @@ namespace LLVkGL
     // makes 'fbo' the target draws go to (0: the back buffer); draw_buffers: colour attachments written (0: none, -1: the back buffer)
     void target_state(unsigned fbo, int draw_buffers);
     void clear_target(bool color, bool depth, const float* rgba);
-    void read_pixels(unsigned fbo, int x, int y, int width, int height, unsigned format, unsigned type, void* dst);
+    void read_pixels(unsigned fbo, int x, int y, int width, int height, LLVkFormat::Transfer tr, void* dst);
 }
 
 #endif // LL_VULKAN

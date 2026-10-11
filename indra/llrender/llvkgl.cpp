@@ -24,6 +24,7 @@
 #include "llvkbuf.h"
 #include "llvktarget.h"
 #include "llvkquery.h"
+#include "llvkformat.h"
 #include "llvkdlss.h"
 #include "llvkrt.h"
 
@@ -155,66 +156,38 @@ const VkComponentMapping SWZ_ALPHA = { VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_S
 const VkComponentMapping SWZ_LUM = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE };
 const VkComponentMapping SWZ_LUM_ALPHA = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G };
 
-bool map_internal_format(GLint f, FormatMap& m)
+bool store_info(LLVkFormat::Store st, FormatMap& m)
 {
+    using namespace LLVkFormat;
     m = FormatMap();
-    switch ((GLenum)f)
+    switch (st)
     {
-    case GL_RGBA: case GL_RGBA8: case 4: m.mVk = VK_FORMAT_R8G8B8A8_UNORM; return true;
-    case GL_RGB: case GL_RGB8: case 3: m.mVk = VK_FORMAT_R8G8B8A8_UNORM; return true;
-    case 0x8C43: case 0x8C42: m.mVk = VK_FORMAT_R8G8B8A8_SRGB; return true;        // SRGB8_ALPHA8, SRGB_ALPHA
-    case 0x8C41: case 0x8C40: m.mVk = VK_FORMAT_R8G8B8A8_SRGB; return true;        // SRGB8, SRGB
-    case GL_ALPHA: case GL_ALPHA8: m.mVk = VK_FORMAT_R8_UNORM; m.mTexelBytes = 1; m.mSwizzle = SWZ_ALPHA; return true;
-    case GL_LUMINANCE: case GL_LUMINANCE8: case 1: m.mVk = VK_FORMAT_R8_UNORM; m.mTexelBytes = 1; m.mSwizzle = SWZ_LUM; return true;
-    case GL_LUMINANCE_ALPHA: case GL_LUMINANCE8_ALPHA8: case 2: m.mVk = VK_FORMAT_R8G8_UNORM; m.mTexelBytes = 2; m.mSwizzle = SWZ_LUM_ALPHA; return true;
-    case 0x822F: m.mVk = VK_FORMAT_R16G16_SFLOAT; m.mTexelBytes = 4; return true;  // RG16F
-    case 0x8230: m.mVk = VK_FORMAT_R32G32_SFLOAT; m.mTexelBytes = 8; return true;  // RG32F
-    case 0x822C: m.mVk = VK_FORMAT_R16G16_UNORM; m.mTexelBytes = 4; return true;   // RG16
-    case 0x8229: m.mVk = VK_FORMAT_R8_UNORM; m.mTexelBytes = 1; return true;       // R8
-    case 0x822B: m.mVk = VK_FORMAT_R8G8_UNORM; m.mTexelBytes = 2; return true;     // RG8
-    case 0x822E: m.mVk = VK_FORMAT_R32_SFLOAT; m.mTexelBytes = 4; return true;     // R32F
-    case 0x822D: m.mVk = VK_FORMAT_R16_SFLOAT; m.mTexelBytes = 2; return true;     // R16F
-    case 0x881A: case 0x881B: m.mVk = VK_FORMAT_R16G16B16A16_SFLOAT; m.mTexelBytes = 8; return true;   // RGBA16F, RGB16F
-    case 0x8814: case 0x8815: m.mVk = VK_FORMAT_R32G32B32A32_SFLOAT; m.mTexelBytes = 16; return true;  // RGBA32F, RGB32F
-    case 0x805B: m.mVk = VK_FORMAT_R16G16B16A16_UNORM; m.mTexelBytes = 8; return true;                 // RGBA16
-    case 0x8C3A: m.mVk = VK_FORMAT_B10G11R11_UFLOAT_PACK32; return true;           // R11F_G11F_B10F
-    case 0x8059: m.mVk = VK_FORMAT_A2B10G10R10_UNORM_PACK32; return true;          // RGB10_A2
-    case GL_DEPTH_COMPONENT: case GL_DEPTH_COMPONENT16: case GL_DEPTH_COMPONENT24: case GL_DEPTH_COMPONENT32:
-    case 0x8CAC: case 0x88F0:                                                       // DEPTH_COMPONENT32F, DEPTH24_STENCIL8
-        m.mVk = VK_FORMAT_D32_SFLOAT; m.mTexelBytes = 4; m.mDepth = true; return true;
-    case 0x83F0: m.mVk = VK_FORMAT_BC1_RGB_UNORM_BLOCK; m.mTexelBytes = 8; m.mCompressed = true; return true;
-    case 0x83F1: m.mVk = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; m.mTexelBytes = 8; m.mCompressed = true; return true;
-    case 0x83F2: m.mVk = VK_FORMAT_BC2_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
-    case 0x83F3: m.mVk = VK_FORMAT_BC3_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
-    case 0x8E8C: m.mVk = VK_FORMAT_BC7_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
-    // generic compressed formats: the driver chooses; the mirror stores plain RGBA8
-    case 0x84EE: case 0x84ED: m.mVk = VK_FORMAT_R8G8B8A8_UNORM; return true;
-    default:
-        warn_once("internal format", (U32)f);
-        return false;
-    }
-}
-
-U32 type_bytes(GLenum type)
-{
-    switch (type)
-    {
-    case GL_UNSIGNED_BYTE: case GL_BYTE: return 1;
-    case GL_UNSIGNED_SHORT: case GL_SHORT: case 0x140B: return 2;
-    case GL_UNSIGNED_INT: case GL_INT: case GL_FLOAT: return 4;
-    default: return 0;
-    }
-}
-
-U32 format_components(GLenum f)
-{
-    switch (f)
-    {
-    case GL_RGBA: case 0x80E1: return 4;            // RGBA, BGRA
-    case GL_RGB: case 0x80E0: return 3;             // RGB, BGR
-    case GL_LUMINANCE_ALPHA: case 0x8227: return 2; // LUMINANCE_ALPHA, RG
-    case GL_ALPHA: case GL_LUMINANCE: case 0x1903: case GL_DEPTH_COMPONENT: return 1;   // RED
-    default: return 0;
+    case S_RGBA8: case S_RGB8: m.mVk = VK_FORMAT_R8G8B8A8_UNORM; return true;
+    case S_SRGBA8: case S_SRGB8: m.mVk = VK_FORMAT_R8G8B8A8_SRGB; return true;
+    case S_ALPHA8: m.mVk = VK_FORMAT_R8_UNORM; m.mTexelBytes = 1; m.mSwizzle = SWZ_ALPHA; return true;
+    case S_LUM8: m.mVk = VK_FORMAT_R8_UNORM; m.mTexelBytes = 1; m.mSwizzle = SWZ_LUM; return true;
+    case S_LUM_ALPHA8: m.mVk = VK_FORMAT_R8G8_UNORM; m.mTexelBytes = 2; m.mSwizzle = SWZ_LUM_ALPHA; return true;
+    case S_RG16F: m.mVk = VK_FORMAT_R16G16_SFLOAT; m.mTexelBytes = 4; return true;
+    case S_RG32F: m.mVk = VK_FORMAT_R32G32_SFLOAT; m.mTexelBytes = 8; return true;
+    case S_RG16: m.mVk = VK_FORMAT_R16G16_UNORM; m.mTexelBytes = 4; return true;
+    case S_R8: m.mVk = VK_FORMAT_R8_UNORM; m.mTexelBytes = 1; return true;
+    case S_RG8: m.mVk = VK_FORMAT_R8G8_UNORM; m.mTexelBytes = 2; return true;
+    case S_R32F: m.mVk = VK_FORMAT_R32_SFLOAT; m.mTexelBytes = 4; return true;
+    case S_R16F: m.mVk = VK_FORMAT_R16_SFLOAT; m.mTexelBytes = 2; return true;
+    case S_RGBA16F: m.mVk = VK_FORMAT_R16G16B16A16_SFLOAT; m.mTexelBytes = 8; return true;
+    case S_RGBA32F: m.mVk = VK_FORMAT_R32G32B32A32_SFLOAT; m.mTexelBytes = 16; return true;
+    case S_RGBA16: m.mVk = VK_FORMAT_R16G16B16A16_UNORM; m.mTexelBytes = 8; return true;
+    case S_R11G11B10F: m.mVk = VK_FORMAT_B10G11R11_UFLOAT_PACK32; return true;
+    case S_RGB10A2: m.mVk = VK_FORMAT_A2B10G10R10_UNORM_PACK32; return true;
+    case S_DEPTH: m.mVk = VK_FORMAT_D32_SFLOAT; m.mTexelBytes = 4; m.mDepth = true; return true;
+    case S_BC1_RGB: m.mVk = VK_FORMAT_BC1_RGB_UNORM_BLOCK; m.mTexelBytes = 8; m.mCompressed = true; return true;
+    case S_BC1_RGBA: m.mVk = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; m.mTexelBytes = 8; m.mCompressed = true; return true;
+    case S_BC2: m.mVk = VK_FORMAT_BC2_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
+    case S_BC3: m.mVk = VK_FORMAT_BC3_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
+    case S_BC7: m.mVk = VK_FORMAT_BC7_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
+    // generic compressed formats: the driver chose; the mirror stores plain RGBA8
+    case S_GENERIC_COMPRESSED: m.mVk = VK_FORMAT_R8G8B8A8_UNORM; return true;
+    default: return false;
     }
 }
 
@@ -252,11 +225,12 @@ U16 float_to_half(F32 v)
 }
 
 // 8-bit RGB / RGBA client rows into an RGBA8 or RGBA8 sRGB texture: nothing to decide per texel
-bool is_rgba8_fast(const FormatMap& fm, GLenum format, GLenum type)
+bool is_rgba8_fast(const FormatMap& fm, LLVkFormat::Transfer tr)
 {
-    const U32 comps = format_components(format);
-    return !fm.mDepth && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R8G8B8A8_SRGB) && type == GL_UNSIGNED_BYTE
-        && ((comps == 4 && format != 0x80E1) || (comps == 3 && format != 0x80E0));
+    using namespace LLVkFormat;
+    const U32 comps = compCount(tr.mComps);
+    return !fm.mDepth && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R8G8B8A8_SRGB) && tr.mType == T_U8
+        && ((comps == 4 && tr.mComps != C_BGRA) || (comps == 3 && tr.mComps != C_BGR));
 }
 
 // writes the texels front to back and never reads them back, so 'out' may be write-combined staging memory
@@ -288,14 +262,15 @@ void convert_rgba8_rows(const U8* fbase, U32 width, U32 height, U32 depth, U32 c
 
 // Converts GL client pixel data into the tightly packed texels of the Vulkan format. Returns false if the
 // combination is not handled.
-bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void* src, U32 width, U32 height, U32 depth,
+bool convert_pixels(const FormatMap& fm, LLVkFormat::Transfer tr, const void* src, U32 width, U32 height, U32 depth,
                     U32 alignment, U32 row_length, std::vector<U8>& out)
 {
-    const U32 comps = format_components(format);
-    const U32 tb = type_bytes(type);
+    using namespace LLVkFormat;
+    const U32 comps = compCount(tr.mComps);
+    const U32 tb = typeBytes(tr.mType);
     if (!comps || !tb)
     {
-        warn_once("pixel format/type", (format << 16) | type);
+        warn_once("pixel format/type", ((U32)tr.mComps << 8) | tr.mType);
         return false;
     }
     const U32 src_row_texels = row_length ? row_length : width;
@@ -304,7 +279,7 @@ bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void*
     const U32 dst_texel = fm.mTexelBytes;
 
     // the common case, an 8-bit RGBA or RGB image into an RGBA8 texture: rows are copied or widened without any per-texel decisions
-    if (is_rgba8_fast(fm, format, type))
+    if (is_rgba8_fast(fm, tr))
     {
         out.resize((size_t)width * height * depth * 4);
         convert_rgba8_rows((const U8*)src, width, height, depth, comps, src_row_bytes, out.data());
@@ -327,19 +302,19 @@ bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void*
                 if (fm.mDepth)
                 {
                     F32 v = 0.f;
-                    if (type == GL_FLOAT) memcpy(&v, p, 4);
-                    else if (type == GL_UNSIGNED_INT) { U32 u; memcpy(&u, p, 4); v = (F32)((double)u / 4294967295.0); }
-                    else if (type == GL_UNSIGNED_SHORT) { U16 u; memcpy(&u, p, 2); v = (F32)u / 65535.f; }
+                    if (tr.mType == T_F32) memcpy(&v, p, 4);
+                    else if (tr.mType == T_U32) { U32 u; memcpy(&u, p, 4); v = (F32)((double)u / 4294967295.0); }
+                    else if (tr.mType == T_U16) { U16 u; memcpy(&u, p, 2); v = (F32)u / 65535.f; }
                     memcpy(d, &v, 4);
                     continue;
                 }
                 if (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R8G8B8A8_SRGB)
                 {
-                    if (type != GL_UNSIGNED_BYTE) { warn_once("rgba8 source type", type); return false; }
+                    if (tr.mType != T_U8) { warn_once("rgba8 source type", tr.mType); return false; }
                     switch (comps)
                     {
-                    case 4: d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = p[3]; if (format == 0x80E1) std::swap(d[0], d[2]); break;
-                    case 3: d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = 255; if (format == 0x80E0) std::swap(d[0], d[2]); break;
+                    case 4: d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = p[3]; if (tr.mComps == C_BGRA) std::swap(d[0], d[2]); break;
+                    case 3: d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = 255; if (tr.mComps == C_BGR) std::swap(d[0], d[2]); break;
                     case 2: d[0] = p[0]; d[1] = p[0]; d[2] = p[0]; d[3] = p[1]; break;
                     default: d[0] = d[1] = d[2] = p[0]; d[3] = 255; break;
                     }
@@ -357,10 +332,10 @@ bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void*
                     U16 h[4] = { 0, 0, 0, 0x3C00 };
                     for (U32 c = 0; c < comps && c < 4; ++c)
                     {
-                        if (type == GL_FLOAT) { F32 v; memcpy(&v, p + c * 4, 4); h[c] = float_to_half(v); }
-                        else if (type == 0x140B) memcpy(&h[c], p + c * 2, 2);
-                        else if (type == GL_UNSIGNED_BYTE) h[c] = float_to_half(p[c] / 255.f);
-                        else { warn_once("rgba16f source type", type); return false; }
+                        if (tr.mType == T_F32) { F32 v; memcpy(&v, p + c * 4, 4); h[c] = float_to_half(v); }
+                        else if (tr.mType == T_F16) memcpy(&h[c], p + c * 2, 2);
+                        else if (tr.mType == T_U8) h[c] = float_to_half(p[c] / 255.f);
+                        else { warn_once("rgba16f source type", tr.mType); return false; }
                     }
                     memcpy(d, h, 8);
                 }
@@ -369,18 +344,18 @@ bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void*
                     F32 v[4] = { 0, 0, 0, 1 };
                     for (U32 c = 0; c < comps && c < 4; ++c)
                     {
-                        if (type == GL_FLOAT) memcpy(&v[c], p + c * 4, 4);
-                        else if (type == 0x140B) { U16 h; memcpy(&h, p + c * 2, 2); v[c] = half_to_float(h); }
-                        else if (type == GL_UNSIGNED_BYTE) v[c] = p[c] / 255.f;
-                        else { warn_once("rgba32f source type", type); return false; }
+                        if (tr.mType == T_F32) memcpy(&v[c], p + c * 4, 4);
+                        else if (tr.mType == T_F16) { U16 h; memcpy(&h, p + c * 2, 2); v[c] = half_to_float(h); }
+                        else if (tr.mType == T_U8) v[c] = p[c] / 255.f;
+                        else { warn_once("rgba32f source type", tr.mType); return false; }
                     }
                     memcpy(d, v, 16);
                 }
                 else if (fm.mVk == VK_FORMAT_R32_SFLOAT || fm.mVk == VK_FORMAT_R16_SFLOAT)
                 {
                     F32 v = 0.f;
-                    if (type == GL_FLOAT) memcpy(&v, p, 4);
-                    else if (type == GL_UNSIGNED_BYTE) v = p[0] / 255.f;
+                    if (tr.mType == T_F32) memcpy(&v, p, 4);
+                    else if (tr.mType == T_U8) v = p[0] / 255.f;
                     if (fm.mVk == VK_FORMAT_R32_SFLOAT) memcpy(d, &v, 4);
                     else { U16 h = float_to_half(v); memcpy(d, &h, 2); }
                 }
@@ -400,14 +375,14 @@ bool convert_pixels(const FormatMap& fm, GLenum format, GLenum type, const void*
 
 struct SamplerParams
 {
-    GLenum mMinFilter = GL_NEAREST_MIPMAP_LINEAR;
-    GLenum mMagFilter = GL_LINEAR;
-    GLenum mWrapS = GL_REPEAT;
-    GLenum mWrapT = GL_REPEAT;
-    GLenum mWrapR = GL_REPEAT;
+    LLVkFormat::Filter mMin = LLVkFormat::F_NEAREST_MIP_LINEAR;
+    LLVkFormat::Filter mMag = LLVkFormat::F_LINEAR;
+    LLVkFormat::Wrap mWrapS = LLVkFormat::W_REPEAT;
+    LLVkFormat::Wrap mWrapT = LLVkFormat::W_REPEAT;
+    LLVkFormat::Wrap mWrapR = LLVkFormat::W_REPEAT;
     F32 mAnisotropy = 1.f;
     bool mCompare = false;
-    GLenum mCompareFunc = GL_LEQUAL;
+    LLVkFormat::Compare mCompareFunc = LLVkFormat::CMP_LEQUAL;
     S32 mBaseLevel = 0;
     S32 mMaxLevel = 1000;
 };
@@ -415,14 +390,14 @@ struct SamplerParams
 struct Tex
 {
     Image mImage;
-    GLenum mTarget = 0;                 // GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP, ...
+    U8 mDim = LLVkFormat::DIM_OTHER;    // LLVkFormat::Dim
     U32 mWidth = 0, mHeight = 0, mDepth = 0;
     U32 mLevels = 0;
-    GLint mInternalFormat = 0;
+    U8 mStore = LLVkFormat::S_NONE;     // LLVkFormat::Store
     FormatMap mFormat;
     SamplerParams mSampler;
     U32 mValidLevels = 0;               // contiguous mip levels from 0 that hold data (the rest would sample as black)
-    GLenum mSwizzle[4] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };      // GL_TEXTURE_SWIZZLE_R..A
+    LLVkFormat::Swizzle mSwizzle[4] = { LLVkFormat::SW_R, LLVkFormat::SW_G, LLVkFormat::SW_B, LLVkFormat::SW_A };
     bool mSwizzleSet = false;
     std::map<std::pair<U32, U32>, std::unique_ptr<Image>> mViews;     // (level, layer) -> render-target view
     VkSampler mVkSampler = VK_NULL_HANDLE;      // cached sampler for the parameters hashed in mSamplerSig
@@ -432,15 +407,15 @@ struct Tex
     VkImageView mBindlessView = VK_NULL_HANDLE;
 };
 
-VkComponentSwizzle swizzle_component(GLenum s)
+VkComponentSwizzle swizzle_component(LLVkFormat::Swizzle s)
 {
     switch (s)
     {
-    case GL_RED: return VK_COMPONENT_SWIZZLE_R;
-    case GL_GREEN: return VK_COMPONENT_SWIZZLE_G;
-    case GL_BLUE: return VK_COMPONENT_SWIZZLE_B;
-    case GL_ALPHA: return VK_COMPONENT_SWIZZLE_A;
-    case GL_ZERO: return VK_COMPONENT_SWIZZLE_ZERO;
+    case LLVkFormat::SW_R: return VK_COMPONENT_SWIZZLE_R;
+    case LLVkFormat::SW_G: return VK_COMPONENT_SWIZZLE_G;
+    case LLVkFormat::SW_B: return VK_COMPONENT_SWIZZLE_B;
+    case LLVkFormat::SW_A: return VK_COMPONENT_SWIZZLE_A;
+    case LLVkFormat::SW_ZERO: return VK_COMPONENT_SWIZZLE_ZERO;
     default: return VK_COMPONENT_SWIZZLE_ONE;
     }
 }
@@ -689,26 +664,12 @@ std::string sDbgFilter;                 // programs whose name contains this get
 std::string sDbgSampler;                // sampler shown by mode 2
 bool sHasDepth = false;             // does the current render target have a depth attachment
 
-U32 target_class(GLenum target)
-{
-    switch (target)
-    {
-    case GL_TEXTURE_2D: return 0;
-    case GL_TEXTURE_CUBE_MAP: case 0x8515: case 0x8516: case 0x8517: case 0x8518: case 0x8519: case 0x851A: return 1;
-    case GL_TEXTURE_CUBE_MAP_ARRAY: return 2;
-    case GL_TEXTURE_2D_ARRAY: return 3;
-    case GL_TEXTURE_3D: return 4;
-    case 0x9100: return 5;      // TEXTURE_2D_MULTISAMPLE
-    default: return 7;
-    }
-}
-
 // <FS> F1.2: a texture edit names its texture (LLVkTex): while a scope is open the edit functions below act on that texture and read the unpack state
 // from the record, not from the GL bound-texture / pixel-store emulation. thread_local: the worker replays one record at a time, inline mode runs on the caller.
 thread_local GLuint tlsEditTex = 0;
 thread_local const LLVkTex::PixelStore* tlsEditPS = nullptr;
 
-Tex* bound_texture(GLenum target)
+Tex* edit_texture()
 {
     if (tlsEditTex)
     {
@@ -741,37 +702,30 @@ void destroy_tex_images(Tex& t)
 }
 
 // (re)creates the Vulkan image for a texture whose level 0 was just specified
-bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U32 depth)
+bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U32 h, U32 depth)
 {
+    using namespace LLVkFormat;
     FormatMap fm;
-    if (!map_internal_format(internal_format, fm))
+    if (!store_info(st, fm))
     {
         if (sVerifySnapshotPending)
         {
-            LL_INFOS("VkVerify") << "snapshot: texture " << (S32)w << "x" << (S32)h << " with GL internal format " << internal_format << " has no Vulkan format; it will not exist in Vulkan" << LL_ENDL;
+            LL_INFOS("VkVerify") << "snapshot: texture " << (S32)w << "x" << (S32)h << " with storage format " << (S32)st << " has no Vulkan format; it will not exist in Vulkan" << LL_ENDL;
         }
         return false;
     }
-    const U32 cls = target_class(target);
     TexType type = TexType::Tex2D;
     U32 d = 1;
-    switch (cls)
+    switch (tg.mDim)
     {
-    case 1: type = TexType::Cube; break;
-    case 2: type = TexType::CubeArray; d = std::max<U32>(1, depth / 6); break;
-    case 3: type = TexType::Tex2DArray; d = std::max<U32>(1, depth); break;
-    case 4: type = TexType::Tex3D; d = std::max<U32>(1, depth); break;
+    case DIM_CUBE: type = TexType::Cube; break;
+    case DIM_CUBE_ARRAY: type = TexType::CubeArray; d = std::max<U32>(1, depth / 6); break;
+    case DIM_2D_ARRAY: type = TexType::Tex2DArray; d = std::max<U32>(1, depth); break;
+    case DIM_3D: type = TexType::Tex3D; d = std::max<U32>(1, depth); break;
     default: break;
     }
-    const U32 gl_target_class = cls;
-    GLenum canonical = GL_TEXTURE_2D;
-    if (gl_target_class == 1) canonical = GL_TEXTURE_CUBE_MAP;
-    else if (gl_target_class == 2) canonical = GL_TEXTURE_CUBE_MAP_ARRAY;
-    else if (gl_target_class == 3) canonical = GL_TEXTURE_2D_ARRAY;
-    else if (gl_target_class == 4) canonical = GL_TEXTURE_3D;
 
-    if (t.mImage.valid() && t.mTarget == canonical && t.mWidth == w && t.mHeight == h && t.mDepth == depth
-        && t.mInternalFormat == internal_format)
+    if (t.mImage.valid() && t.mDim == tg.mDim && t.mWidth == w && t.mHeight == h && t.mDepth == depth && t.mStore == st)
     {
         return true;        // same specification again: keep the image and just upload into it
     }
@@ -780,7 +734,7 @@ bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U3
     {
         if (sVerifySnapshotPending)
         {
-            LL_INFOS("VkVerify") << "snapshot: texture re-specified from " << t.mWidth << "x" << t.mHeight << " fmt " << t.mInternalFormat << " to " << w << "x" << h << " fmt " << internal_format
+            LL_INFOS("VkVerify") << "snapshot: texture re-specified from " << t.mWidth << "x" << t.mHeight << " fmt " << (S32)t.mStore << " to " << w << "x" << h << " fmt " << (S32)st
                                  << ", Vulkan image recreated (anything drawn into it so far is lost)" << LL_ENDL;
         }
         destroy_tex_images(t);
@@ -791,7 +745,7 @@ bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U3
     td.mWidth = w;
     td.mHeight = h;
     td.mDepth = d;
-    td.mMips = cls == 4 ? mipLevelCount(std::max(w, h), depth) : mipLevelCount(w, h);
+    td.mMips = tg.mDim == DIM_3D ? mipLevelCount(std::max(w, h), depth) : mipLevelCount(w, h);
     td.mFormat = fm.mVk;
     td.mSwizzle = t.mSwizzleSet ? swizzle_mapping(t) : fm.mSwizzle;
     if (fm.mDepth)
@@ -818,13 +772,13 @@ bool ensure_image(Tex& t, GLenum target, GLint internal_format, U32 w, U32 h, U3
             break;
         }
     }
-    t.mTarget = canonical;
+    t.mDim = tg.mDim;
     t.mWidth = w;
     t.mHeight = h;
     t.mDepth = depth;
     t.mValidLevels = 0;
     t.mLevels = td.mMips;
-    t.mInternalFormat = internal_format;
+    t.mStore = st;
     t.mFormat = fm;
     return true;
 }
@@ -844,10 +798,11 @@ const void* pixel_source(const void* pixels)
     return pixels;
 }
 
-void upload_converted(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels);
+void upload_converted(Tex& t, LLVkFormat::Target tg, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels);
 
-void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, GLenum format, GLenum type, const void* pixels)
+void upload_level(Tex& t, LLVkFormat::Target tg, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, LLVkFormat::Transfer tr, const void* pixels)
 {
+    using namespace LLVkFormat;
     if (!t.mImage.valid() || level < 0 || (U32)level >= t.mLevels)
     {
         return;
@@ -861,8 +816,8 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
     {
         return;     // nothing to upload (allocation only)
     }
-    if (LLVkAsync::gTexOneCopy && LLVkAsync::gEnabled && d == 1 && t.mTarget != GL_TEXTURE_2D_ARRAY && t.mTarget != GL_TEXTURE_CUBE_MAP_ARRAY && t.mTarget != GL_TEXTURE_3D
-        && is_rgba8_fast(t.mFormat, format, type) && w && h)
+    if (LLVkAsync::gTexOneCopy && LLVkAsync::gEnabled && d == 1 && t.mDim != DIM_2D_ARRAY && t.mDim != DIM_CUBE_ARRAY && t.mDim != DIM_3D
+        && is_rgba8_fast(t.mFormat, tr) && w && h)
     {
         // C4: the common upload (8-bit RGB or RGBA into an RGBA8 texture) is read from where the viewer left it and written straight into the staging buffer: one copy
         struct Fast { const U8* mSrc; U32 mW, mH, mComps, mRowBytes; } fast;
@@ -870,10 +825,9 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
         fast.mSrc = (const U8*)src;
         fast.mW = w;
         fast.mH = h;
-        fast.mComps = format_components(format);
+        fast.mComps = compCount(tr.mComps);
         fast.mRowBytes = ((row_length ? row_length : w) * fast.mComps + alignment - 1) / alignment * alignment;
-        U32 layer = 0;
-        if (target >= 0x8515 && target <= 0x851A) layer = target - 0x8515;       // cube face
+        const U32 layer = tg.mFace >= 0 ? (U32)tg.mFace : 0;       // cube face
         Renderer::instance().uploadTextureDirect(t.mImage, (U32)level, layer, (U32)x, (U32)y, w, h, 1, (VkDeviceSize)w * h * 4,
                                                  [](void* p, U8* dst, VkDeviceSize) { const Fast* f = (const Fast*)p; convert_rgba8_rows(f->mSrc, f->mW, f->mH, 1, f->mComps, f->mRowBytes, dst); }, &fast);
         return;
@@ -893,7 +847,7 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
             depth_held = LLVkGL::gMutex.releaseAll();
         }
         const auto t_conv = std::chrono::steady_clock::now();
-        const bool converted = convert_pixels(fm, format, type, src, w, h, d, alignment, row_length, texels);
+        const bool converted = convert_pixels(fm, tr, src, w, h, d, alignment, row_length, texels);
         LLVkAsync::noteTexWorker((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_conv).count(), 0, 0, 0);
         if (unlocked)
         {
@@ -904,33 +858,34 @@ void upload_level(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z,
             {
                 return;
             }
-            return upload_converted(it->second, target, level, x, y, z, w, h, d, converted, texels);
+            return upload_converted(it->second, tg, level, x, y, z, w, h, d, converted, texels);
         }
         if (!converted)
         {
             return;
         }
     }
-    upload_converted(t, target, level, x, y, z, w, h, d, true, texels);
+    upload_converted(t, tg, level, x, y, z, w, h, d, true, texels);
 }
 
-void upload_converted(Tex& t, GLenum target, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels)
+void upload_converted(Tex& t, LLVkFormat::Target tg, GLint level, GLint x, GLint y, GLint z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels)
 {
+    using namespace LLVkFormat;
     if (!converted || !t.mImage.valid())
     {
         return;
     }
     U32 layer = 0;
-    if (target >= 0x8515 && target <= 0x851A)
+    if (tg.mFace >= 0)
     {
-        layer = target - 0x8515;            // cube face
+        layer = (U32)tg.mFace;              // cube face
     }
-    else if (t.mTarget == GL_TEXTURE_2D_ARRAY || t.mTarget == GL_TEXTURE_CUBE_MAP_ARRAY || t.mTarget == GL_TEXTURE_3D)
+    else if (t.mDim == DIM_2D_ARRAY || t.mDim == DIM_CUBE_ARRAY || t.mDim == DIM_3D)
     {
         layer = (U32)z;
     }
-    const U32 slices = t.mTarget == GL_TEXTURE_3D ? d : 1;
-    if (t.mTarget == GL_TEXTURE_2D_ARRAY || t.mTarget == GL_TEXTURE_CUBE_MAP_ARRAY)
+    const U32 slices = t.mDim == DIM_3D ? d : 1;
+    if (t.mDim == DIM_2D_ARRAY || t.mDim == DIM_CUBE_ARRAY)
     {
         // several layers at once: upload one layer at a time
         const size_t layer_bytes = (size_t)w * h * t.mFormat.mTexelBytes;
@@ -1199,13 +1154,13 @@ VkPrimitiveTopology topology(GLenum mode)
     }
 }
 
-VkSamplerAddressMode wrap_mode(GLenum w)
+VkSamplerAddressMode wrap_mode(LLVkFormat::Wrap w)
 {
     switch (w)
     {
-    case GL_CLAMP_TO_EDGE: case GL_CLAMP: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    case 0x8370: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-    case 0x812D: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    case LLVkFormat::W_CLAMP_EDGE: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    case LLVkFormat::W_MIRRORED_REPEAT: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    case LLVkFormat::W_CLAMP_BORDER: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     default: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
     }
 }
@@ -1214,15 +1169,15 @@ SamplerDesc sampler_for(const Tex& t)
 {
     const SamplerParams& sp = t.mSampler;
     SamplerDesc d;
-    d.mMag = sp.mMagFilter == GL_NEAREST ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+    d.mMag = sp.mMag == LLVkFormat::F_NEAREST ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
     bool mipmapped = true;
-    switch (sp.mMinFilter)
+    switch (sp.mMin)
     {
-    case GL_NEAREST: d.mMin = VK_FILTER_NEAREST; mipmapped = false; break;
-    case GL_LINEAR: d.mMin = VK_FILTER_LINEAR; mipmapped = false; break;
-    case GL_NEAREST_MIPMAP_NEAREST: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
-    case GL_LINEAR_MIPMAP_NEAREST: d.mMin = VK_FILTER_LINEAR; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
-    case GL_NEAREST_MIPMAP_LINEAR: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_LINEAR; break;
+    case LLVkFormat::F_NEAREST: d.mMin = VK_FILTER_NEAREST; mipmapped = false; break;
+    case LLVkFormat::F_LINEAR: d.mMin = VK_FILTER_LINEAR; mipmapped = false; break;
+    case LLVkFormat::F_NEAREST_MIP_NEAREST: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
+    case LLVkFormat::F_LINEAR_MIP_NEAREST: d.mMin = VK_FILTER_LINEAR; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
+    case LLVkFormat::F_NEAREST_MIP_LINEAR: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_LINEAR; break;
     default: d.mMin = VK_FILTER_LINEAR; d.mMip = VK_SAMPLER_MIPMAP_MODE_LINEAR; break;
     }
     d.mAddressU = wrap_mode(sp.mWrapS);
@@ -1230,7 +1185,7 @@ SamplerDesc sampler_for(const Tex& t)
     d.mAddressW = wrap_mode(sp.mWrapR);
     d.mAnisotropy = sp.mAnisotropy;
     d.mCompare = sp.mCompare;
-    d.mCompareOp = compare_op(sp.mCompareFunc);
+    d.mCompareOp = (VkCompareOp)sp.mCompareFunc;        // LLVkFormat::Compare has the order of VkCompareOp
     const F32 last = (F32)std::max<S32>(0, (S32)std::min(t.mLevels, std::max<U32>(1, t.mValidLevels)) - 1);
     d.mMinLod = (F32)std::max(0, sp.mBaseLevel);
     d.mMaxLod = mipmapped ? std::min(last, (F32)sp.mMaxLevel) : d.mMinLod + 0.25f;
@@ -1249,7 +1204,7 @@ VkSampler texture_sampler(Renderer& r, Tex& t)
     const SamplerParams& sp = t.mSampler;
     U64 h = 1469598103934665603ull;
     auto mix = [&h](U64 v) { h = (h ^ v) * 1099511628211ull; };
-    mix(sp.mMinFilter); mix(sp.mMagFilter); mix(sp.mWrapS); mix(sp.mWrapT); mix(sp.mWrapR); mix(sp.mCompare ? 1 : 0); mix(sp.mCompareFunc);
+    mix(sp.mMin); mix(sp.mMag); mix(sp.mWrapS); mix(sp.mWrapT); mix(sp.mWrapR); mix(sp.mCompare ? 1 : 0); mix(sp.mCompareFunc);
     mix((U64)(S64)sp.mBaseLevel); mix((U64)(S64)sp.mMaxLevel);
     U32 aniso_bits;
     memcpy(&aniso_bits, &sp.mAnisotropy, 4);
@@ -1365,7 +1320,7 @@ void sync_textures(Renderer& r, Program& program)
                     const SamplerDesc sd = sampler_for(tx);
                     what += std::string(" mag ") + (sd.mMag == VK_FILTER_LINEAR ? "lin" : "nearest") + " min " + (sd.mMin == VK_FILTER_LINEAR ? "lin" : "nearest")
                           + " mip " + (sd.mMip == VK_SAMPLER_MIPMAP_MODE_LINEAR ? "lin" : "nearest") + " lod " + std::to_string(sd.mMinLod) + ".." + std::to_string(sd.mMaxLod)
-                          + " wrap " + std::to_string((S32)sd.mAddressU) + "," + std::to_string((S32)sd.mAddressV) + " glminfilter " + std::to_string(tx.mSampler.mMinFilter);
+                          + " wrap " + std::to_string((S32)sd.mAddressU) + "," + std::to_string((S32)sd.mAddressV) + " glminfilter " + std::to_string((S32)tx.mSampler.mMin);
                 }
                 sStats.mSamplerInfo[program.getName() + " :: " + info.mSamplers[k].mName + " (" + type + ")"] = what;
             }
@@ -2109,11 +2064,11 @@ void destroy_textures(GLsizei n, const GLuint* textures)
     }
 }
 
-void slot_bind(unsigned unit, unsigned target, unsigned name)
+void slot_bind(unsigned unit, unsigned dim, unsigned name)
 {
-    if (unit < 32)
+    if (unit < 32 && dim < 8)
     {
-        sSlots[unit][target_class(target)] = name;
+        sSlots[unit][dim] = name;
         if (name)
         {
             sGL.mTextures[name];     // a name that was never generated is still a texture (the first edit makes it)
@@ -2122,14 +2077,14 @@ void slot_bind(unsigned unit, unsigned target, unsigned name)
 }
 
 
-void edit_image2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
+void edit_image2D(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLsizei width, GLsizei height, LLVkFormat::Transfer tr, const void* pixels)
 {
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0)
     {
         return;
     }
-    if (level == 0 && !ensure_image(*t, target, internalformat, (U32)width, (U32)height, target_class(target) == 1 ? 6 : 1))
+    if (level == 0 && !ensure_image(*t, tg, st, (U32)width, (U32)height, tg.mDim == LLVkFormat::DIM_CUBE ? 6 : 1))
     {
         return;
     }
@@ -2137,17 +2092,17 @@ void edit_image2D(GLenum target, GLint level, GLint internalformat, GLsizei widt
     {
         t->mImage.mZeroOnFirstUse = true;       // allocation only: GL would hand back zeros
     }
-    upload_level(*t, target, level, 0, 0, 0, (U32)width, (U32)height, 1, format, type, pixels);
+    upload_level(*t, tg, level, 0, 0, 0, (U32)width, (U32)height, 1, tr, pixels);
 }
 
-void edit_image3D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels)
+void edit_image3D(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLsizei width, GLsizei height, GLsizei depth, LLVkFormat::Transfer tr, const void* pixels)
 {
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0 || depth <= 0)
     {
         return;
     }
-    if (level == 0 && !ensure_image(*t, target, internalformat, (U32)width, (U32)height, (U32)depth))
+    if (level == 0 && !ensure_image(*t, tg, st, (U32)width, (U32)height, (U32)depth))
     {
         return;
     }
@@ -2155,35 +2110,35 @@ void edit_image3D(GLenum target, GLint level, GLint internalformat, GLsizei widt
     {
         t->mImage.mZeroOnFirstUse = true;
     }
-    upload_level(*t, target, level, 0, 0, 0, (U32)width, (U32)height, (U32)depth, format, type, pixels);
+    upload_level(*t, tg, level, 0, 0, 0, (U32)width, (U32)height, (U32)depth, tr, pixels);
 }
 
-void edit_subimage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
+void edit_subimage2D(LLVkFormat::Target tg, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, LLVkFormat::Transfer tr, const void* pixels)
 {
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     if (t)
     {
-        upload_level(*t, target, level, xoffset, yoffset, 0, (U32)width, (U32)height, 1, format, type, pixels);
+        upload_level(*t, tg, level, xoffset, yoffset, 0, (U32)width, (U32)height, 1, tr, pixels);
     }
 }
 
-void edit_subimage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void* pixels)
+void edit_subimage3D(LLVkFormat::Target tg, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, LLVkFormat::Transfer tr, const void* pixels)
 {
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     if (t)
     {
-        upload_level(*t, target, level, xoffset, yoffset, zoffset, (U32)width, (U32)height, (U32)depth, format, type, pixels);
+        upload_level(*t, tg, level, xoffset, yoffset, zoffset, (U32)width, (U32)height, (U32)depth, tr, pixels);
     }
 }
 
-void edit_compressed2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
+void edit_compressed2D(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLsizei width, GLsizei height, GLsizei imageSize, const void* data)
 {
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0)
     {
         return;
     }
-    if (level == 0 && !ensure_image(*t, target, (GLint)internalformat, (U32)width, (U32)height, target_class(target) == 1 ? 6 : 1))
+    if (level == 0 && !ensure_image(*t, tg, st, (U32)width, (U32)height, tg.mDim == LLVkFormat::DIM_CUBE ? 6 : 1))
     {
         return;
     }
@@ -2192,32 +2147,34 @@ void edit_compressed2D(GLenum target, GLint level, GLenum internalformat, GLsize
     {
         return;
     }
-    U32 layer = 0;
-    if (target >= 0x8515 && target <= 0x851A) layer = target - 0x8515;
+    const U32 layer = tg.mFace >= 0 ? (U32)tg.mFace : 0;
     Renderer::instance().uploadTexture(t->mImage, (U32)level, layer, 0, 0, (U32)width, (U32)height, 1, src, (VkDeviceSize)imageSize);
 }
 
-void edit_param_i(GLenum target, GLenum pname, GLint param)
+// one sampler / level / swizzle setting of the texture being edited
+void edit_setting(const LLVkFormat::Setting& st)
 {
-    Tex* t = bound_texture(target);
+    using namespace LLVkFormat;
+    Tex* t = edit_texture();
     if (!t)
     {
         return;
     }
     SamplerParams& sp = t->mSampler;
-    switch (pname)
+    switch (st.mParam)
     {
-    case GL_TEXTURE_MIN_FILTER: sp.mMinFilter = (GLenum)param; break;
-    case GL_TEXTURE_MAG_FILTER: sp.mMagFilter = (GLenum)param; break;
-    case GL_TEXTURE_WRAP_S: sp.mWrapS = (GLenum)param; break;
-    case GL_TEXTURE_WRAP_T: sp.mWrapT = (GLenum)param; break;
-    case GL_TEXTURE_WRAP_R: sp.mWrapR = (GLenum)param; break;
-    case GL_TEXTURE_COMPARE_MODE: sp.mCompare = (GLenum)param == GL_COMPARE_REF_TO_TEXTURE; break;
-    case GL_TEXTURE_COMPARE_FUNC: sp.mCompareFunc = (GLenum)param; break;
-    case GL_TEXTURE_BASE_LEVEL: sp.mBaseLevel = param; break;
-    case GL_TEXTURE_MAX_LEVEL: sp.mMaxLevel = param; break;
-    case GL_TEXTURE_SWIZZLE_R: case GL_TEXTURE_SWIZZLE_G: case GL_TEXTURE_SWIZZLE_B: case GL_TEXTURE_SWIZZLE_A:
-        t->mSwizzle[pname - GL_TEXTURE_SWIZZLE_R] = (GLenum)param;
+    case P_MIN_FILTER: sp.mMin = (Filter)st.mValue; break;
+    case P_MAG_FILTER: sp.mMag = (Filter)st.mValue; break;
+    case P_WRAP_S: sp.mWrapS = (Wrap)st.mValue; break;
+    case P_WRAP_T: sp.mWrapT = (Wrap)st.mValue; break;
+    case P_WRAP_R: sp.mWrapR = (Wrap)st.mValue; break;
+    case P_COMPARE_MODE: sp.mCompare = st.mValue != 0; break;
+    case P_COMPARE_FUNC: sp.mCompareFunc = (Compare)st.mValue; break;
+    case P_ANISOTROPY: sp.mAnisotropy = st.mFloat; break;
+    case P_BASE_LEVEL: sp.mBaseLevel = st.mInt; break;
+    case P_MAX_LEVEL: sp.mMaxLevel = st.mInt; break;
+    case P_SWIZZLE_R: case P_SWIZZLE_G: case P_SWIZZLE_B: case P_SWIZZLE_A:
+        t->mSwizzle[st.mParam - P_SWIZZLE_R] = (Swizzle)st.mValue;
         t->mSwizzleSet = true;
         rebuild_sampling_view(*t);
         break;
@@ -2225,44 +2182,9 @@ void edit_param_i(GLenum target, GLenum pname, GLint param)
     }
 }
 
-void edit_param_f(GLenum target, GLenum pname, GLfloat param)
+void edit_mipmap()
 {
-    if (pname == GL_TEXTURE_MAX_ANISOTROPY || pname == GL_TEXTURE_MAX_ANISOTROPY_EXT)
-    {
-        if (Tex* t = bound_texture(target))
-        {
-            t->mSampler.mAnisotropy = param;
-        }
-        return;
-    }
-    edit_param_i(target, pname, (GLint)param);
-}
-
-void edit_param_iv(GLenum target, GLenum pname, const GLint* params)
-{
-    if (!params)
-    {
-        return;
-    }
-    if (pname == GL_TEXTURE_SWIZZLE_RGBA)
-    {
-        if (Tex* tex = bound_texture(target))
-        {
-            for (U32 i = 0; i < 4; ++i)
-            {
-                tex->mSwizzle[i] = (GLenum)params[i];
-            }
-            tex->mSwizzleSet = true;
-            rebuild_sampling_view(*tex);
-        }
-        return;
-    }
-    edit_param_i(target, pname, params[0]);
-}
-
-void edit_mipmap(GLenum target)
-{
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     if (t && t->mImage.valid())
     {
         Renderer::instance().generateMipmaps(t->mImage);
@@ -2270,39 +2192,39 @@ void edit_mipmap(GLenum target)
     }
 }
 
-static void copy_to_texture(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source_fbo)
+static void copy_to_texture(LLVkFormat::Target tg, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source_fbo)
 {
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     Image* src = read_image(source_fbo);
     if (!t || !t->mImage.valid() || !src || !LLVkMirror::inFrame())
     {
         return;
     }
     U32 layer = 0;
-    if (target >= 0x8515 && target <= 0x851A) layer = target - 0x8515;
-    else if (t->mTarget == GL_TEXTURE_2D_ARRAY || t->mTarget == GL_TEXTURE_CUBE_MAP_ARRAY) layer = (U32)zoffset;
+    if (tg.mFace >= 0) layer = (U32)tg.mFace;
+    else if (t->mDim == LLVkFormat::DIM_2D_ARRAY || t->mDim == LLVkFormat::DIM_CUBE_ARRAY) layer = (U32)zoffset;
     Renderer::instance().copyRegion(*src, x, y, t->mImage, (U32)level, layer, xoffset, yoffset, width, height);
     ++sCopies;
 }
 
 
 
-void copy_image_2d(GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source_fbo)
+void copy_image_2d(LLVkFormat::Target tg, GLint level, LLVkFormat::Store st, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source_fbo)
 {
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0)
     {
         return;
     }
-    if (level == 0 && !ensure_image(*t, target, (GLint)internalformat, (U32)width, (U32)height, 1))
+    if (level == 0 && !ensure_image(*t, tg, st, (U32)width, (U32)height, 1))
     {
         return;
     }
-    copy_to_texture(target, level, 0, 0, 0, x, y, width, height, source_fbo);
+    copy_to_texture(tg, level, 0, 0, 0, x, y, width, height, source_fbo);
 }
 
 //-----------------------------------------------------------------------------------------------------
-// F1.2: texture edits that name their texture (LLVkTex). The bodies are the handlers above; the scope replaces "the texture bound on the active unit".
+// F1.2: texture edits that name their texture (LLVkTex). The scope replaces "the texture bound on the active unit".
 //-----------------------------------------------------------------------------------------------------
 
 namespace
@@ -2311,11 +2233,11 @@ struct EditScope
 {
     GLuint mPrev;
     const LLVkTex::PixelStore* mPrevPS;
-    EditScope(GLuint id, GLenum, const char*, const LLVkTex::PixelStore* ps = nullptr) : mPrev(tlsEditTex), mPrevPS(tlsEditPS)
+    EditScope(GLuint id, const LLVkTex::PixelStore* ps = nullptr) : mPrev(tlsEditTex), mPrevPS(tlsEditPS)
     {
         if (id)
         {
-            sGL.mTextures[id];      // GL created the object on first bind
+            sGL.mTextures[id];      // the object is made on first use
         }
         tlsEditTex = id;
         tlsEditPS = ps ? ps : tlsEditPS;
@@ -2324,68 +2246,76 @@ struct EditScope
 };
 }
 
-void tex_image2D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
+void tex_image2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, LLVkFormat::Transfer tr, const void* pixels)
 {
-    EditScope s(id, target, "image2D", &ps);
-    edit_image2D(target, level, internalformat, width, height, border, format, type, pixels);
+    EditScope s(id, &ps);
+    edit_image2D(tg, level, st, width, height, tr, pixels);
 }
 
-void tex_image3D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels)
+void tex_image3D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, int depth, LLVkFormat::Transfer tr, const void* pixels)
 {
-    EditScope s(id, target, "image3D", &ps);
-    edit_image3D(target, level, internalformat, width, height, depth, border, format, type, pixels);
+    EditScope s(id, &ps);
+    edit_image3D(tg, level, st, width, height, depth, tr, pixels);
 }
 
-void tex_subimage2D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
+void tex_subimage2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int width, int height, LLVkFormat::Transfer tr, const void* pixels)
 {
-    EditScope s(id, target, "subimage2D", &ps);
-    edit_subimage2D(target, level, xoffset, yoffset, width, height, format, type, pixels);
+    EditScope s(id, &ps);
+    edit_subimage2D(tg, level, xoffset, yoffset, width, height, tr, pixels);
 }
 
-void tex_subimage3D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void* pixels)
+void tex_subimage3D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, LLVkFormat::Transfer tr, const void* pixels)
 {
-    EditScope s(id, target, "subimage3D", &ps);
-    edit_subimage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, pixels);
+    EditScope s(id, &ps);
+    edit_subimage3D(tg, level, xoffset, yoffset, zoffset, width, height, depth, tr, pixels);
 }
 
-void tex_compressed2D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
+void tex_compressed2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, int imageSize, const void* data)
 {
-    EditScope s(id, target, "compressed2D", &ps);
-    edit_compressed2D(target, level, internalformat, width, height, border, imageSize, data);
+    EditScope s(id, &ps);
+    edit_compressed2D(tg, level, st, width, height, imageSize, data);
 }
 
-void tex_params(GLuint id, GLenum target, const LLVkAsync::TexParam* params, U32 count)
+void tex_params(unsigned id, const LLVkFormat::Setting* settings, unsigned count)
 {
-    EditScope s(id, target, "params");
-    for (U32 i = 0; i < count; ++i)
+    EditScope s(id);
+    for (unsigned i = 0; i < count; ++i)
     {
-        if (params[i].mIsFloat) edit_param_f(target, params[i].mPname, params[i].mFloat);
-        else edit_param_i(target, params[i].mPname, params[i].mInt);
+        edit_setting(settings[i]);
     }
 }
 
-void tex_swizzle(GLuint id, GLenum target, const GLint* rgba)
+void tex_swizzle(unsigned id, const LLVkFormat::Swizzle* rgba)
 {
-    EditScope s(id, target, "swizzle");
-    edit_param_iv(target, GL_TEXTURE_SWIZZLE_RGBA, rgba);
+    EditScope s(id);
+    Tex* t = edit_texture();
+    if (t)
+    {
+        for (U32 i = 0; i < 4; ++i)
+        {
+            t->mSwizzle[i] = rgba[i];
+        }
+        t->mSwizzleSet = true;
+        rebuild_sampling_view(*t);
+    }
 }
 
-void tex_mipmap(GLuint id, GLenum target)
+void tex_mipmap(unsigned id)
 {
-    EditScope s(id, target, "mipmap");
-    edit_mipmap(target);
+    EditScope s(id);
+    edit_mipmap();
 }
 
-void tex_copy_sub(GLuint id, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source)
+void tex_copy_sub(unsigned id, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source)
 {
-    EditScope s(id, target, "copySub");
-    copy_to_texture(target, level, xoffset, yoffset, zoffset, x, y, width, height, source);
+    EditScope s(id);
+    copy_to_texture(tg, level, xoffset, yoffset, zoffset, x, y, width, height, source);
 }
 
-void tex_copy_image(GLuint id, GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border, GLuint source)
+void tex_copy_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int x, int y, int width, int height, unsigned source)
 {
-    EditScope s(id, target, "copyImage");
-    copy_image_2d(target, level, internalformat, x, y, width, height, source);
+    EditScope s(id);
+    copy_image_2d(tg, level, st, x, y, width, height, source);
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -4788,27 +4718,28 @@ bool decode_vk_texels(VkFormat f, const std::vector<U8>& texels, size_t pixels, 
 }
 
 // the channels (indices into RGBA) a GL pixel format stores, in order
-bool gl_channels(GLenum format, std::vector<int>& ch)
+bool gl_channels(U8 comps, std::vector<int>& ch)
 {
-    switch (format)
+    switch (comps)
     {
-    case GL_RGBA: ch = { 0, 1, 2, 3 }; return true;
-    case GL_BGRA: ch = { 2, 1, 0, 3 }; return true;
-    case GL_RGB: ch = { 0, 1, 2 }; return true;
-    case GL_BGR: ch = { 2, 1, 0 }; return true;
-    case GL_RG: ch = { 0, 1 }; return true;
-    case GL_RED: case GL_DEPTH_COMPONENT: ch = { 0 }; return true;
+    case LLVkFormat::C_RGBA: ch = { 0, 1, 2, 3 }; return true;
+    case LLVkFormat::C_BGRA: ch = { 2, 1, 0, 3 }; return true;
+    case LLVkFormat::C_RGB: ch = { 0, 1, 2 }; return true;
+    case LLVkFormat::C_BGR: ch = { 2, 1, 0 }; return true;
+    case LLVkFormat::C_RG: ch = { 0, 1 }; return true;
+    case LLVkFormat::C_R: case LLVkFormat::C_DEPTH: ch = { 0 }; return true;
     default: return false;
     }
 }
 
-U32 gl_type_bytes(GLenum type)
+// the component types a readback can write
+U32 gl_type_bytes(U8 type)
 {
     switch (type)
     {
-    case GL_UNSIGNED_BYTE: return 1;
-    case GL_HALF_FLOAT: return 2;
-    case GL_FLOAT: return 4;
+    case LLVkFormat::T_U8: return 1;
+    case LLVkFormat::T_F16: return 2;
+    case LLVkFormat::T_F32: return 4;
     default: return 0;
     }
 }
@@ -4911,11 +4842,11 @@ U16 float_to_half_bits(float f)
 }
 
 // writes decoded RGBA floats (w x h, row 0 first) into GL's pixel layout
-bool encode_to_gl(const std::vector<float>& rgba, S32 w, S32 h, GLenum format, GLenum type, U8* dst, S32 row_length = 0)
+bool encode_to_gl(const std::vector<float>& rgba, S32 w, S32 h, LLVkFormat::Transfer tr, U8* dst, S32 row_length = 0)
 {
     std::vector<int> ch;
-    const U32 tb = gl_type_bytes(type);
-    if (!dst || !gl_channels(format, ch) || !tb)
+    const U32 tb = gl_type_bytes(tr.mType);
+    if (!dst || !gl_channels(tr.mComps, ch) || !tb)
     {
         return false;
     }
@@ -4932,11 +4863,11 @@ bool encode_to_gl(const std::vector<float>& rgba, S32 w, S32 h, GLenum format, G
             {
                 const float v = rgba[((size_t)y * w + x) * 4 + ch[c]];
                 U8* p = row + (size_t)x * pixel_bytes + c * tb;
-                if (type == GL_UNSIGNED_BYTE)
+                if (tr.mType == LLVkFormat::T_U8)
                 {
                     *p = (U8)std::lround(std::min(1.f, std::max(0.f, v)) * 255.f);
                 }
-                else if (type == GL_HALF_FLOAT)
+                else if (tr.mType == LLVkFormat::T_F16)
                 {
                     const U16 hb = float_to_half_bits(v);
                     memcpy(p, &hb, 2);
@@ -5049,28 +4980,24 @@ bool own_query_value(GLuint id, GLenum pname, U64& value)
 
 } // anonymous namespace
 
-bool own_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint* params)
+int tex_level_parameter(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Level q)
 {
-    if (!params)
-    {
-        return true;
-    }
-    Tex* t = bound_texture(target);
-    params[0] = 0;
+    EditScope s(id);
+    Tex* t = edit_texture();
+    int v = 0;
     if (t && t->mImage.valid() && level >= 0 && (U32)level < std::max<U32>(1, t->mLevels))
     {
-        switch (pname)
+        switch (q)
         {
-        case 0x1000: params[0] = (GLint)std::max<U32>(1, t->mWidth >> level); break;
-        case 0x1001: params[0] = (GLint)std::max<U32>(1, t->mHeight >> level); break;
-        case 0x8071: params[0] = (GLint)(t->mTarget == GL_TEXTURE_3D ? std::max<U32>(1, t->mDepth >> level) : std::max<U32>(1, t->mDepth)); break;
-        case 0x1003: params[0] = t->mInternalFormat; break;
-        case 0x86A1: params[0] = formatInfo(t->mImage.mFormat).mCompressed ? 1 : 0; break;
-        case 0x86A0: params[0] = (GLint)Renderer::compressedMipBytes(t->mImage, (U32)level); break;     // TEXTURE_COMPRESSED_IMAGE_SIZE
+        case LLVkFormat::LQ_WIDTH: v = (int)std::max<U32>(1, t->mWidth >> level); break;
+        case LLVkFormat::LQ_HEIGHT: v = (int)std::max<U32>(1, t->mHeight >> level); break;
+        case LLVkFormat::LQ_DEPTH: v = (int)(t->mDim == LLVkFormat::DIM_3D ? std::max<U32>(1, t->mDepth >> level) : std::max<U32>(1, t->mDepth)); break;
+        case LLVkFormat::LQ_COMPRESSED: v = formatInfo(t->mImage.mFormat).mCompressed ? 1 : 0; break;
+        case LLVkFormat::LQ_COMPRESSED_SIZE: v = (int)Renderer::compressedMipBytes(t->mImage, (U32)level); break;
         default: break;
         }
     }
-    return true;
+    return v;
 }
 
 bool query_value(unsigned id, bool want_result, unsigned long long& value)
@@ -5078,7 +5005,7 @@ bool query_value(unsigned id, bool want_result, unsigned long long& value)
     return own_query_value(id, want_result ? 0x8866 : 0x8867, value);
 }
 
-void read_pixels(unsigned fbo, int x, int y, int width, int height, unsigned format, unsigned type, void* pixels)
+void read_pixels(unsigned fbo, int x, int y, int width, int height, LLVkFormat::Transfer tr, void* pixels)
 {
     U8* dst = pack_destination(pixels);
     Image* img = read_image(fbo);
@@ -5094,49 +5021,50 @@ void read_pixels(unsigned fbo, int x, int y, int width, int height, unsigned for
         return;
     }
     if (!img || !img->valid() || !fetch_rect_cached(*img, x, y, width, height, texels, fmt) || !decode_vk_texels(fmt, texels, (size_t)width * height, rgba)
-        || !encode_to_gl(rgba, width, height, format, type, dst, 0))
+        || !encode_to_gl(rgba, width, height, tr, dst, 0))
     {
         static U32 reported = 0;
         if (reported++ < 5)
         {
-            LL_WARNS("VkGL") << "glReadPixels could not be answered from Vulkan (" << width << "x" << height << " format 0x" << std::hex << format << " type 0x" << type << std::dec << ")" << LL_ENDL;
+            LL_WARNS("VkGL") << "a readback could not be answered from Vulkan (" << width << "x" << height << " components " << (S32)tr.mComps << " type " << (S32)tr.mType << ")" << LL_ENDL;
         }
         // GL would have written something; hand back zeros so the caller does not read garbage
         std::vector<int> ch;
-        if (gl_channels(format, ch) && gl_type_bytes(type))
+        if (gl_channels(tr.mComps, ch) && gl_type_bytes(tr.mType))
         {
-            const size_t stride = (((size_t)width * ch.size() * gl_type_bytes(type) + pack_alignment() - 1) / pack_alignment()) * pack_alignment();
+            const size_t stride = (((size_t)width * ch.size() * gl_type_bytes(tr.mType) + pack_alignment() - 1) / pack_alignment()) * pack_alignment();
             memset(dst, 0, stride * (size_t)height);
         }
     }
     return;
 }
 
-bool own_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, void* pixels)
+void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Transfer tr, void* pixels)
 {
+    EditScope s(id);
     U8* dst = pack_destination(pixels);
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     if (!dst || !t || !t->mImage.valid() || level < 0 || (U32)level >= t->mImage.mMipLevels)
     {
-        return true;
+        return;
     }
     Renderer& r = Renderer::instance();
     if (LLVkMirror::inFrame() && !r.flushAndRestart())
     {
-        return true;
+        return;
     }
     const S32 w = (S32)std::max<U32>(1, t->mImage.mExtent.width >> level), h = (S32)std::max<U32>(1, t->mImage.mExtent.height >> level);
     std::vector<int> ch;
-    if (!gl_channels(format, ch) || !gl_type_bytes(type))
+    if (!gl_channels(tr.mComps, ch) || !gl_type_bytes(tr.mType))
     {
-        return true;
+        return;
     }
-    const size_t stride = (((size_t)w * ch.size() * gl_type_bytes(type) + pack_alignment() - 1) / pack_alignment()) * pack_alignment();
+    const size_t stride = (((size_t)w * ch.size() * gl_type_bytes(tr.mType) + pack_alignment() - 1) / pack_alignment()) * pack_alignment();
     // 2D: one image; cube map face: that face; arrays and cube maps: every layer one after the other
     U32 first_layer = 0, layers = 1;
-    if (target >= 0x8515 && target <= 0x851A) first_layer = target - 0x8515;
-    else if (target_class(target) == 2 || target_class(target) == 3) layers = t->mImage.mLayers;
-    else if (target_class(target) == 1) layers = 6;
+    if (tg.mFace >= 0) first_layer = (U32)tg.mFace;
+    else if (tg.mDim == LLVkFormat::DIM_CUBE_ARRAY || tg.mDim == LLVkFormat::DIM_2D_ARRAY) layers = t->mImage.mLayers;
+    else if (tg.mDim == LLVkFormat::DIM_CUBE) layers = 6;
     for (U32 l = 0; l < layers; ++l)
     {
         std::vector<U8> texels;
@@ -5145,18 +5073,18 @@ bool own_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, v
         {
             continue;
         }
-        encode_to_gl(rgba, w, h, format, type, dst + (size_t)l * stride * h, 0);
+        encode_to_gl(rgba, w, h, tr, dst + (size_t)l * stride * h, 0);
     }
-    return true;
 }
 
-bool own_glGetCompressedTexImage(GLenum target, GLint level, void* img)
+void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, void* img)
 {
+    EditScope s(id);
     U8* dst = pack_destination(img);
-    Tex* t = bound_texture(target);
+    Tex* t = edit_texture();
     if (!dst || !t || !t->mImage.valid() || level < 0 || (U32)level >= t->mImage.mMipLevels)
     {
-        return true;
+        return;
     }
     Renderer& r = Renderer::instance();
     std::vector<U8> blocks;
@@ -5167,41 +5095,19 @@ bool own_glGetCompressedTexImage(GLenum target, GLint level, void* img)
         if (!said)
         {
             said = true;
-            LL_WARNS("VkGL") << "glGetCompressedTexImage on a texture the mirror stores uncompressed (generic compressed format)" << LL_ENDL;
+            LL_WARNS("VkGL") << "a compressed readback on a texture the mirror stores uncompressed (generic compressed format)" << LL_ENDL;
         }
-        return true;
+        return;
     }
     if (LLVkMirror::inFrame() && !r.flushAndRestart())
     {
-        return true;
+        return;
     }
-    U32 layer = 0;
-    if (target >= 0x8515 && target <= 0x851A) layer = target - 0x8515;
+    const U32 layer = tg.mFace >= 0 ? (U32)tg.mFace : 0;
     if (r.readbackCompressedMip(t->mImage, (U32)level, layer, blocks))
     {
         memcpy(dst, blocks.data(), blocks.size());
     }
-    return true;
-}
-
-int tex_level_parameter(unsigned id, unsigned target, int level, unsigned pname)
-{
-    EditScope s(id, target, "levelParameter");
-    GLint v = 0;
-    own_glGetTexLevelParameteriv(target, level, pname, &v);
-    return v;
-}
-
-void tex_get_image(unsigned id, unsigned target, int level, unsigned format, unsigned type, void* out)
-{
-    EditScope s(id, target, "getImage");
-    own_glGetTexImage(target, level, format, type, out);
-}
-
-void tex_get_compressed_image(unsigned id, unsigned target, int level, void* out)
-{
-    EditScope s(id, target, "getCompressedImage");
-    own_glGetCompressedTexImage(target, level, out);
 }
 
 LLVkTex::PixelStore inline_pixel_store()

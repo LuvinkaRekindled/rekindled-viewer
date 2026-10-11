@@ -17,6 +17,7 @@
 
 #include "linden_common.h"
 #include "llvkasync.h"
+#include "llvkformat.h"
 
 namespace LLVkTex
 {
@@ -31,7 +32,7 @@ namespace LLVkTex
     // the records (llvkasync.cpp writes and reads them)
     enum TexKind : U32 { K_IMAGE2D, K_IMAGE3D, K_SUB2D, K_SUB3D, K_COMPRESSED2D };
     enum TexOpKind : U32 { OPK_MIPMAP, OPK_COPY_SUB, OPK_COPY_IMAGE, OPK_SWIZZLE };
-    struct TexOp { U32 mKind; U32 mTex; U32 mTarget; S32 mLevel; S32 mX0, mY0, mZ0, mX, mY, mW, mH; U32 mFormat; S32 mBorder; S32 mRgba[4]; U32 mSource; };
+    struct TexOp { U32 mKind; U32 mTex; LLVkFormat::Target mTarget; U8 mStore; U8 mSwz[4]; U8 mPad8; S32 mLevel; S32 mX0, mY0, mZ0, mX, mY, mW, mH; U32 mSource; };
 
     // ---- handles: the producer allocates the id, the worker makes and destroys the texture in stream order ----
     void create(S32 count, U32* ids);
@@ -65,21 +66,22 @@ namespace LLVkTex
 
 namespace LLVkGL
 {
-    // worker side (or the calling thread in inline mode): the same handlers the GL calls reached, acting on the named texture
-    void tex_image2D(unsigned id, const LLVkTex::PixelStore& ps, unsigned target, int level, int internalformat, int width, int height, int border, unsigned format, unsigned type, const void* pixels);
-    void tex_image3D(unsigned id, const LLVkTex::PixelStore& ps, unsigned target, int level, int internalformat, int width, int height, int depth, int border, unsigned format, unsigned type, const void* pixels);
-    void tex_subimage2D(unsigned id, const LLVkTex::PixelStore& ps, unsigned target, int level, int xoffset, int yoffset, int width, int height, unsigned format, unsigned type, const void* pixels);
-    void tex_subimage3D(unsigned id, const LLVkTex::PixelStore& ps, unsigned target, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, unsigned format, unsigned type, const void* pixels);
-    void tex_compressed2D(unsigned id, const LLVkTex::PixelStore& ps, unsigned target, int level, unsigned internalformat, int width, int height, int border, int imageSize, const void* data);
-    void tex_params(unsigned id, unsigned target, const LLVkAsync::TexParam* params, unsigned count);
-    void tex_swizzle(unsigned id, unsigned target, const int* rgba);
-    void tex_mipmap(unsigned id, unsigned target);
-    void tex_copy_sub(unsigned id, unsigned target, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source);
-    void tex_copy_image(unsigned id, unsigned target, int level, unsigned internalformat, int x, int y, int width, int height, int border, unsigned source);
-    int tex_level_parameter(unsigned id, unsigned target, int level, unsigned pname);
-    void tex_get_image(unsigned id, unsigned target, int level, unsigned format, unsigned type, void* out);
-    void tex_get_compressed_image(unsigned id, unsigned target, int level, void* out);
-    void slot_bind(unsigned unit, unsigned target, unsigned name);
+    // worker side (or the calling thread in inline mode): the typed handlers, acting on the named texture
+    void tex_image2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, LLVkFormat::Transfer tr, const void* pixels);
+    void tex_image3D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, int depth, LLVkFormat::Transfer tr, const void* pixels);
+    void tex_subimage2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int width, int height, LLVkFormat::Transfer tr, const void* pixels);
+    void tex_subimage3D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, LLVkFormat::Transfer tr, const void* pixels);
+    void tex_compressed2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, int imageSize, const void* data);
+    void tex_params(unsigned id, const LLVkFormat::Setting* settings, unsigned count);
+    void tex_swizzle(unsigned id, const LLVkFormat::Swizzle* rgba);
+    void tex_mipmap(unsigned id);
+    void tex_copy_sub(unsigned id, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source);
+    void tex_copy_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int x, int y, int width, int height, unsigned source);
+    int tex_level_parameter(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Level q);
+    void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Transfer tr, void* out);
+    void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, void* out);
+    // dim: the LLVkFormat::Dim of the slot
+    void slot_bind(unsigned unit, unsigned dim, unsigned name);
     // the calling thread's unpack state in inline mode (before the queue starts)
     LLVkTex::PixelStore inline_pixel_store();
 }

@@ -38,6 +38,7 @@ set(llrender_SOURCE_FILES
     llvkasync.cpp
     llvkmirror.cpp
     llvkgl.cpp
+    llvkformat.cpp
     llvkprobe.cpp
     llvkrenderer.cpp
     llvkrt.cpp
@@ -89,6 +90,7 @@ set(llrender_HEADER_FILES
     llvkshader.h
     llvkstate.h
     llvktex.h
+    llvkformat.h
     llglcommonfunc.h
     )
 
