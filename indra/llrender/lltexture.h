@@ -62,6 +62,7 @@ public:
     virtual bool       bindDefaultImage(const S32 stage = 0);
     virtual bool       bindDebugImage(const S32 stage = 0);
     virtual void       forceImmediateUpdate();
+    virtual U32        getDefaultImageName() const;       // <FS> the GL name of the image drawn in place of this texture while it has no data of its own (0: none)
     virtual void       setActive();
     virtual S32        getWidth(S32 discard_level = -1) const;
     virtual S32        getHeight(S32 discard_level = -1) const;

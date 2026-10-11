@@ -154,6 +154,7 @@ public:
 
 private:
     F32  updateImagesCreateTextures(F32 max_time);
+    void logSummary();      // <FS> the state of the texture system, one line in the log (every 1800 frames, see updateImages)
     F32  updateImagesFetchTextures(F32 max_time);
     void updateImagesUpdateStats();
     F32  updateImagesLoadingFastCache(F32 max_time);

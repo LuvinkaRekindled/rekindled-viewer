@@ -260,6 +260,10 @@ GLuint LLTexUnit::prepareFast(LLTexture* texture)
         {
             name = updated->getTexName();
         }
+        if (!name)
+        {
+            name = texture->getDefaultImageName();      // no data yet (still loading, or the server refused it): the default image, as bindFast() binds
+        }
     }
     return name;
 }

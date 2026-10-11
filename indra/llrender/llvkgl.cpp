@@ -699,7 +699,8 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     td.mDepth = d;
     // a plain 2D texture starts with its base level only: the rest of the chain is allocated when something needs it (grow_levels). Most of the viewer's textures get it at once
     // (they are mipmapped right after the upload), but the UI images, the glyph pages and most render targets never do and would carry a third more memory for nothing.
-    td.mMips = tg.mDim == DIM_2D ? 1 : (tg.mDim == DIM_3D ? mipLevelCount(std::max(w, h), depth) : mipLevelCount(w, h));
+    static const bool full_chain = getenv("LL_VK_FULL_MIPS") != nullptr;       // LL_VK_FULL_MIPS=1: every texture owns its whole chain from the start, as before (to compare)
+    td.mMips = (tg.mDim == DIM_2D && !full_chain) ? 1 : (tg.mDim == DIM_3D ? mipLevelCount(std::max(w, h), depth) : mipLevelCount(w, h));
     td.mFormat = fm.mVk;
     td.mSwizzle = t.mSwizzleSet ? swizzle_mapping(t) : fm.mSwizzle;
     if (fm.mDepth)

@@ -35,6 +35,7 @@ void LLTexture::setKnownDrawSize(S32 width, S32 height) { llassert(false); }
 bool LLTexture::bindDefaultImage(const S32 stage) { llassert(false); return false; }
 bool LLTexture::bindDebugImage(const S32 stage) { llassert(false); return false; }
 void LLTexture::forceImmediateUpdate() { llassert(false); }
+U32  LLTexture::getDefaultImageName() const { return 0; }
 void LLTexture::setActive() { llassert(false);  }
 S32  LLTexture::getWidth(S32 discard_level) const { llassert(false); return 0; }
 S32  LLTexture::getHeight(S32 discard_level) const { llassert(false); return 0; }
