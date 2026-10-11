@@ -4488,6 +4488,101 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
     LLViewerCamera::sCurCameraID = saved_camera_id;
 }
 
+static U32 rt_matrix_id(const LLMatrix4* m);
+
+// List of render pass types that use the prim volume as the shadow, ignoring textures.
+static const U32 kShadowStaticTypes[] = {
+    LLRenderPass::PASS_SIMPLE,
+    LLRenderPass::PASS_FULLBRIGHT,
+    LLRenderPass::PASS_SHINY,
+    LLRenderPass::PASS_BUMP,
+    LLRenderPass::PASS_FULLBRIGHT_SHINY,
+    LLRenderPass::PASS_MATERIAL,
+    LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE,
+    LLRenderPass::PASS_SPECMAP,
+    LLRenderPass::PASS_SPECMAP_EMISSIVE,
+    LLRenderPass::PASS_NORMMAP,
+    LLRenderPass::PASS_NORMMAP_EMISSIVE,
+    LLRenderPass::PASS_NORMSPEC,
+    LLRenderPass::PASS_NORMSPEC_EMISSIVE
+};
+static const size_t kShadowStaticTypeCount = sizeof(kShadowStaticTypes) / sizeof(kShadowStaticTypes[0]);
+
+// <FS> Pure packet builders (see doc/vulkan/F2-start.md, "safe parallel recording"): a builder reads a cull result and what the draws point at, writes only its own output, and
+// touches nothing shared, so it can run on any thread while the main thread does something else. Whatever has to change in shared state is the main thread's job, after the join.
+struct LLPipeline::ShadowStaticBuild
+{
+    std::vector<LLVkMirror::ShadowPacketEntry> mEntries;
+    std::vector<F32> mMatrices;                 // matrix 0 is the identity: "no model matrix"
+    std::vector<LLDrawInfo*> mFallback;         // draws the packet layout cannot take: drawn the old way, by the main thread
+};
+
+static bool builder_verify()
+{
+    static const bool on = getenv("LL_VK_BUILDER_VERIFY") != nullptr;
+    return on;
+}
+
+static void build_shadow_static(LLCullResult& result, const U32* list, size_t count, LLPipeline::ShadowStaticBuild& out)
+{
+    out.mEntries.clear();
+    out.mFallback.clear();
+    out.mMatrices.assign(16, 0.f);
+    out.mMatrices[0] = out.mMatrices[5] = out.mMatrices[10] = out.mMatrices[15] = 1.f;
+    std::unordered_map<const void*, U32> matrix_numbers;
+    for (size_t t = 0; t < count; ++t)
+    {
+        auto begin = result.beginRenderMap(list[t]);
+        auto end = result.endRenderMap(list[t]);
+        for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+        {
+            LLDrawInfo* params = *i;
+            LLCullResult::increment_iterator(i, end);
+            if (!params->mCount)
+            {
+                continue;
+            }
+            const LLVertexBuffer* vb = params->mVertexBuffer.get();
+            if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+                || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+            {
+                out.mFallback.push_back(params);        // a layout the shader does not read: drawn the old way
+                continue;
+            }
+            U32 matrix = 0;
+            if (params->mModelMatrix)
+            {
+                auto it = matrix_numbers.find(params->mModelMatrix);
+                if (it == matrix_numbers.end())
+                {
+                    it = matrix_numbers.emplace(params->mModelMatrix, (U32)(out.mMatrices.size() / 16)).first;
+                    const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                    out.mMatrices.insert(out.mMatrices.end(), m, m + 16);
+                }
+                matrix = it->second;
+            }
+            out.mEntries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, rt_matrix_id(params->mModelMatrix) });
+        }
+    }
+}
+
+static void verify_shadow_static(const char* what, const LLPipeline::ShadowStaticBuild& a, const LLPipeline::ShadowStaticBuild& b)
+{
+    static std::atomic<U32> checked{0}, bad{0};
+    ++checked;
+    const bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mFallback == b.mFallback
+        && (a.mEntries.empty() || memcmp(a.mEntries.data(), b.mEntries.data(), a.mEntries.size() * sizeof(a.mEntries[0])) == 0);
+    if (!same && bad++ < 8)
+    {
+        LL_WARNS("VkBuilder") << "builder verify: the " << what << " packets built in the job differ from the ones built now (" << a.mEntries.size() << " / " << b.mEntries.size()
+            << " entries, " << a.mFallback.size() << " / " << b.mFallback.size() << " fallbacks)" << LL_ENDL;
+    }
+    if (checked % 600 == 1)
+    {
+        LL_INFOS("VkBuilder") << "builder verify: " << checked << " builds compared, " << bad << " differed" << LL_ENDL;
+    }
+}
+
 // worker: the render map of the cascade (the loop in postSort)
 void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
 {
@@ -4557,6 +4652,10 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             }
         }
     }
+
+    // the packets of the untextured static casters: built here, beside the other cascades; renderShadow records them
+    prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
+    build_shadow_static(result, kShadowStaticTypes, kShadowStaticTypeCount, *prep.mStaticBuild);
 }
 
 // main thread, right before the cascade is drawn: the pools and the sky, which every cascade fills for itself
@@ -11802,23 +11901,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     U32 saved_occlusion = sUseOcclusion;
     sUseOcclusion = 0;
 
-    // List of render pass types that use the prim volume as the shadow,
-    // ignoring textures.
-    static const U32 types[] = {
-        LLRenderPass::PASS_SIMPLE,
-        LLRenderPass::PASS_FULLBRIGHT,
-        LLRenderPass::PASS_SHINY,
-        LLRenderPass::PASS_BUMP,
-        LLRenderPass::PASS_FULLBRIGHT_SHINY,
-        LLRenderPass::PASS_MATERIAL,
-        LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE,
-        LLRenderPass::PASS_SPECMAP,
-        LLRenderPass::PASS_SPECMAP_EMISSIVE,
-        LLRenderPass::PASS_NORMMAP,
-        LLRenderPass::PASS_NORMMAP_EMISSIVE,
-        LLRenderPass::PASS_NORMSPEC,
-        LLRenderPass::PASS_NORMSPEC_EMISSIVE
-    };
+    const U32* types = kShadowStaticTypes;
 
     // <FS> a sun cascade pass in a ray-only mode: names the casters, draws nothing (see rt_sun_cascades_unused)
     const bool rt_skip = rt_sun_cascades_unused() && shadow_pass_index() < 4;
@@ -11886,48 +11969,25 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
 
     // <FS> Render packets: every draw of the static, untextured types becomes one entry of a record (buffer names, index range, model matrix number)
-    auto render_shadow_packets = [this, rt_skip](const U32* list, size_t count)
+    auto render_shadow_packets = [this, rt_skip, prepared, &result](const U32* list, size_t count)
     {
         LL_CPU_ZONE("packets: shadow static (build + record)");
-        std::vector<LLVkMirror::ShadowPacketEntry> entries;
-        std::vector<F32> matrices(16, 0.f);
-        matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
-        std::unordered_map<const void*, U32> matrix_numbers;
-        std::vector<LLDrawInfo*> fallback;
-        for (size_t t = 0; t < count; ++t)
+        // the entries come from the cascade's preparation job when there was one (built beside the other cascades, off this thread), else they are built here
+        ShadowStaticBuild built;
+        const ShadowStaticBuild* source = prepared ? prepared->mStaticBuild.get() : nullptr;
+        if (!source)
         {
-            auto* begin = beginRenderMap(list[t]);
-            auto* end = endRenderMap(list[t]);
-            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-            {
-                LLDrawInfo* params = *i;
-                LLCullResult::increment_iterator(i, end);
-                if (!params->mCount)
-                {
-                    continue;
-                }
-                const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
-                    || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
-                {
-                    fallback.push_back(params);     // a layout the shader does not read: drawn the old way
-                    continue;
-                }
-                U32 matrix = 0;
-                if (params->mModelMatrix)
-                {
-                    auto it = matrix_numbers.find(params->mModelMatrix);
-                    if (it == matrix_numbers.end())
-                    {
-                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
-                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
-                        matrices.insert(matrices.end(), m, m + 16);
-                    }
-                    matrix = it->second;
-                }
-                entries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, rt_matrix_id(params->mModelMatrix) });
-            }
+            build_shadow_static(result, list, count, built);
+            source = &built;
         }
+        else if (builder_verify())
+        {
+            build_shadow_static(result, list, count, built);
+            verify_shadow_static("static", *source, built);
+        }
+        const std::vector<LLVkMirror::ShadowPacketEntry>& entries = source->mEntries;
+        const std::vector<F32>& matrices = source->mMatrices;
+        const std::vector<LLDrawInfo*>& fallback = source->mFallback;
         if (rt_skip)
         {
             // ray tracing only: the same casters as a note-only record (opaque entries of the alpha entry layout), no draws, no old path fallback
@@ -12539,8 +12599,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     if (rt_skip)
     {
         // <FS> ray tracing only: the casters of this cascade named to the ray scene, nothing drawn
-        render_shadow_packets(types, sizeof(types) / sizeof(types[0]));
-        render_skin_packets(types, sizeof(types) / sizeof(types[0]));
+        render_shadow_packets(types, kShadowStaticTypeCount);
+        render_skin_packets(types, kShadowStaticTypeCount);
         render_alpha_packets(0, 1, false);
         render_alpha_packets(0, 1, true);
         render_rt_extra_packets();
@@ -12587,15 +12647,15 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
         if (packets)
         {
-            render_shadow_packets(types, sizeof(types) / sizeof(types[0]));
+            render_shadow_packets(types, kShadowStaticTypeCount);
         }
         else if (skin_packets)
         {
-            render_skin_packets(types, sizeof(types) / sizeof(types[0]));
+            render_skin_packets(types, kShadowStaticTypeCount);
         }
         else
         {
-            for (U32 type : types)
+            for (U32 type : kShadowStaticTypes)
             {
                 renderObjects(type, false, false, rigged);
             }
