@@ -29,6 +29,7 @@
 #include "lldrawpool.h"
 #include "llrender.h"
 #include "llfasttimer.h"
+#include "llgpuzonetimer.h"
 #include "llviewercontrol.h"
 
 #include "lldrawable.h"
@@ -703,6 +704,7 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
 // static
 void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials)
 {
+    LL_CPU_ZONE("packets: geometry (build + record)");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     std::vector<LLVkMirror::GeoEntry> entries;
     std::vector<F32> matrices;
