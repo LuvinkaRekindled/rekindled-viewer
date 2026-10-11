@@ -67,6 +67,7 @@
 #include "llworld.h"
 #include "llselectmgr.h"
 #include "pipeline.h"
+#include "llvkmirror.h"     // <FS> LLVkMirror::readbackAffordable (sculpt maps)
 #include "llsdutil.h"
 #include "llmatrix4a.h"
 #include "llmediaentry.h"
@@ -244,6 +245,7 @@ LLVOVolume::LLVOVolume(const LLUUID &id, const LLPCode pcode, LLViewerRegion *re
     mNumFaces = 0;
     mLODChanged = false;
     mSculptChanged = false;
+    mSculptDeferred = false;
     mColorChanged = false;
     mSpotLightPriority = 0.f;
 
@@ -1088,6 +1090,14 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
         {
             mSculptTexture->setForSculpt() ;
 
+            if (mSculptDeferred)
+            {
+                // <FS> the read back that sculpt() had to leave for later (see there)
+                mSculptDeferred = false;
+                gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_VOLUME);
+                mSculptChanged = true;
+            }
+
             S32 texture_discard = mSculptTexture->getRawImageLevel(); //try to match the texture
             S32 current_discard = getVolume() ? getVolume()->getSculptLevel() : -2 ;
 
@@ -1573,6 +1583,13 @@ void LLVOVolume::sculpt()
         if (!raw_image || raw_image->getWidth() < mSculptTexture->getWidth() || raw_image->getHeight() < mSculptTexture->getHeight())
         {
             // last resort, read back from GL
+            // <FS> A read back waits for the render worker to replay everything queued before it: in a burst (a plaza of sculpts, a flood of texture uploads) that was 15 s of frozen main thread.
+            // When the worker is far behind the sculpt is left as it is and tried again in a later frame (updateTextures sees mSculptDeferred).
+            if (!LLVkMirror::readbackAffordable())
+            {
+                mSculptDeferred = true;
+                return;
+            }
             mSculptTexture->readbackRawImage();
             raw_image = mSculptTexture->getRawImage();
             discard_level = mSculptTexture->getRawImageLevel();

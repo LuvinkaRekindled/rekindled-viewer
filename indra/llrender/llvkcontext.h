@@ -226,6 +226,9 @@ public:
     static std::string stampTagName(U32 tag);
     void gpuStamp(U32 tag);
     void reportDeviceLost();            // logs the last checkpoints (pass names) the GPU reached, when the driver keeps them
+    // called (once per hang) when a frame has been stuck for a second and when the device is lost: whatever a subsystem keeps to explain its latest work (the ray scene's last scene calls)
+    void setHangReporter(std::function<void()> fn) { mHangReporter = std::move(fn); }
+    std::function<void()> mHangReporter;
     struct GpuPassStats
     {
         std::map<U32, U64> mMicros;                     // by tag

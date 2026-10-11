@@ -1029,6 +1029,10 @@ VkCommandBuffer Context::beginFrame(bool wait)
                     }
                 }
                 LL_WARNS("VkPhases") << "GPU frame (slot " << mFrameSlot << ") still running after " << (S32)waited_ms << " ms: " << where << LL_ENDL;
+                if (reports == 1 && mHangReporter)
+                {
+                    mHangReporter();        // (the first report of the hang only: the driver resets the device soon)
+                }
             }
         }
     }

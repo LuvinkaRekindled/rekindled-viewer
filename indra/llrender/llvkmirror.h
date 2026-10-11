@@ -30,6 +30,8 @@ namespace LLVkMirror
     bool isReady();
     // video memory as the OS sees this process (what it uses, what it may use before the driver pages allocations out), for the viewer's texture budget; false when no Vulkan device
     bool videoMemory(U64& usage_bytes, U64& budget_bytes);
+    // false: reading a texture back now would make the main thread wait for a render worker that is far behind (or too many were made this frame): ask again in a later frame. True without the worker.
+    bool readbackAffordable();
 
     // initialises Vulkan lazily on first use; returns isReady()
     bool ensureReady();

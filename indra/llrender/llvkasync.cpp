@@ -18,6 +18,7 @@
 #include "llvkbuf.h"
 #include "llvktarget.h"
 #include "llvkquery.h"
+#include "llframetimer.h"
 #include "llvkformat.h"
 
 #include <windows.h>
@@ -813,6 +814,13 @@ void syncCall(const std::function<void()>& fn)
     }
 }
 
+unsigned long long backlogBytes()
+{
+    const U64 tail = gTail.load(std::memory_order_acquire);
+    const U64 head = gHead.load(std::memory_order_acquire);
+    return tail > head ? tail - head : 0;
+}
+
 void setPixelHold(const PixelHold* hold)
 {
     if (hold && gEnabled && gTexOneCopy && isMainThread())
@@ -1575,6 +1583,32 @@ void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 
     op.mKind = OPK_COPY_IMAGE; op.mTex = id; op.mTarget = tg; op.mLevel = level; op.mStore = st;
     op.mX = x; op.mY = y; op.mW = width; op.mH = height; op.mSource = source;
     pushOp(op);
+}
+
+// A read back of a texture is a round trip: the main thread waits until the worker has replayed everything queued before it (and then for the copy). With the worker far behind (a burst of
+// texture uploads) one sculpted prim asking for its map cost seconds, and a plaza of them 15 s. The caller asks first and tries again in a later frame when the answer is no: not when
+// the worker has more than LL_VK_READBACK_BACKLOG_KB (default 4096) queued, and not more than LL_VK_READBACKS_PER_FRAME (default 4) a frame. Main thread only.
+bool readbackAffordable()
+{
+    if (!LLVkAsync::gEnabled)
+    {
+        return true;
+    }
+    static const U64 limit_bytes = [](){ const char* e = getenv("LL_VK_READBACK_BACKLOG_KB"); return (U64)(e && e[0] ? atoi(e) : 4096) * 1024; }();
+    static const U32 per_frame = [](){ const char* e = getenv("LL_VK_READBACKS_PER_FRAME"); return (U32)(e && e[0] ? atoi(e) : 4); }();
+    static U32 frame = ~0u, used = 0;
+    const U32 now = (U32)LLFrameTimer::getFrameCount();
+    if (frame != now)
+    {
+        frame = now;
+        used = 0;
+    }
+    if (used >= per_frame || LLVkAsync::backlogBytes() > limit_bytes)
+    {
+        return false;
+    }
+    ++used;
+    return true;
 }
 
 S32 levelParameter(U32 id, U32 target, S32 level, U32 pname)

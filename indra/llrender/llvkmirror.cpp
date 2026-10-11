@@ -12,6 +12,7 @@
 bool LLVkMirror::isRequested() { return false; }
 bool LLVkMirror::isReady() { return false; }
 bool LLVkMirror::videoMemory(U64&, U64&) { return false; }
+bool LLVkMirror::readbackAffordable() { return true; }
 bool LLVkMirror::ensureReady() { return false; }
 void LLVkMirror::setMainWindow(void*) {}
 bool LLVkMirror::describeDevice(DeviceInfo&) { return false; }
@@ -42,6 +43,7 @@ void LLVkMirror::stopAsync() {}
 #include "llvkdlss.h"
 #include "llvkrenderer.h"
 #include "llvkasync.h"
+#include "llvktex.h"
 #include "llvkrt.h"
 #include "llwindow.h"
 
@@ -552,6 +554,11 @@ LLVkMirror::Mutex& LLVkMirror::lock()
 bool LLVkMirror::isReady()
 {
     return sMirror.mReady;
+}
+
+bool LLVkMirror::readbackAffordable()
+{
+    return LLVkTex::readbackAffordable();
 }
 
 bool LLVkMirror::videoMemory(U64& usage_bytes, U64& budget_bytes)
