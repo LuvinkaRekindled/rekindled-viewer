@@ -1770,41 +1770,8 @@ void LLImageGL::syncToMainThread(LLGLuint new_tex_name)
     LL_PROFILE_ZONE_SCOPED;
     llassert(!on_main_thread());
 
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("cglt - sync");
-        if (gGLManager.mIsNVIDIA)
-        {
-            // wait for texture upload to finish before notifying main thread
-            // upload is complete
-            auto sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-            glFlush();
-            glClientWaitSync(sync, 0, GL_TIMEOUT_IGNORED);
-            glDeleteSync(sync);
-        }
-        else
-        {
-            // post a sync to the main thread (will execute before tex name swap lambda below)
-            // glFlush calls here are partly superstitious and partly backed by observation
-            // on AMD hardware
-            glFlush();
-            auto sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-            glFlush();
-            LL::WorkQueue::postMaybe(
-                mMainQueue,
-                [=]()
-                {
-                    LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("cglt - wait sync");
-                    {
-                        LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("glWaitSync");
-                        glWaitSync(sync, 0, GL_TIMEOUT_IGNORED);
-                    }
-                    {
-                        LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("glDeleteSync");
-                        glDeleteSync(sync);
-                    }
-                });
-        }
-    }
+    // The uploads this thread issued are in the command stream before the main thread is told about the new name (below), and the stream is
+    // replayed in order: nothing has to wait for them (no fences).
 
     ref();
     LL::WorkQueue::postMaybe(

@@ -17,25 +17,8 @@
 #include "llvkzones.h"
 #include "llviewercontrol.h"
 
-#ifndef GL_TIMESTAMP
-#define GL_TIMESTAMP 0x8E28
-#endif
-#ifndef GL_QUERY_RESULT
-#define GL_QUERY_RESULT 0x8866
-#endif
-#ifndef GL_QUERY_RESULT_AVAILABLE
-#define GL_QUERY_RESULT_AVAILABLE 0x8867
-#endif
-
 namespace
 {
-    struct Zone
-    {
-        const char* mName;
-        GLuint mStart;
-        GLuint mEnd;
-    };
-
     struct Aggregate
     {
         double mTotalNs = 0.0;
@@ -45,11 +28,6 @@ namespace
     bool sHooked = false;
     std::thread::id sMainThread;
 
-    std::vector<Zone> sCurrent;            // zones recorded this frame
-    std::vector<U32> sOpen;                // indices into sCurrent of zones that have begun but not ended
-    std::deque<std::vector<Zone>> sPending; // finished frames whose queries may still be in flight
-    std::vector<GLuint> sFreeQueries;
-
     std::unordered_map<std::string, double> sCounters;   // summed since the last summary
     U64 sCounterFrames = 0;
 
@@ -58,29 +36,6 @@ namespace
     U64 sMeasuredFrames = 0;
     F64 sLastLog = 0.0;
 
-    GLuint acquireQuery()
-    {
-        if (!sFreeQueries.empty())
-        {
-            GLuint q = sFreeQueries.back();
-            sFreeQueries.pop_back();
-            return q;
-        }
-        GLuint q = 0;
-        gGL.genQueries(1, &q);
-        return q;
-    }
-
-    void releaseFrame(std::vector<Zone>& frame)
-    {
-        for (const Zone& z : frame)
-        {
-            sFreeQueries.push_back(z.mStart);
-            sFreeQueries.push_back(z.mEnd);
-        }
-        frame.clear();
-    }
-
     bool isMainThread()
     {
         return std::this_thread::get_id() == sMainThread;
@@ -88,43 +43,21 @@ namespace
 
     // Hooks. Zones begun on other threads (shared-context image threads) are ignored, and since
     // the thread never changes between begin and end the two stay balanced.
+    // <FS> native-vk: a zone is a record in the command stream; the Vulkan worker stamps the GPU timeline there
     void zoneBegin(const char* name)
     {
-        if (!isMainThread())
+        if (isMainThread() && LLVkZones::available())
         {
-            return;
-        }
-        if (LLVkZones::available())
-        {
-            // <FS> native-vk: the zone is a record in the command stream; the Vulkan worker stamps the GPU timeline there (the GL timestamp queries below do not exist)
             LLVkZones::zone(name, true);
-            return;
         }
-        Zone z{ name, acquireQuery(), 0 };
-        gGL.queryTimestamp(z.mStart);
-        sOpen.push_back((U32)sCurrent.size());
-        sCurrent.push_back(z);
     }
 
     void zoneEnd()
     {
-        if (!isMainThread())
-        {
-            return;
-        }
-        if (LLVkZones::available())
+        if (isMainThread() && LLVkZones::available())
         {
             LLVkZones::zone(nullptr, false);
-            return;
         }
-        if (sOpen.empty())
-        {
-            return;
-        }
-        Zone& z = sCurrent[sOpen.back()];
-        sOpen.pop_back();
-        z.mEnd = acquireQuery();
-        gGL.queryTimestamp(z.mEnd);
     }
 
     void uninstall()
@@ -133,82 +66,11 @@ namespace
         LLGpuZoneHooks::sEnd = nullptr;
         sHooked = false;
 
-        // Zones that were open lose their end hook, so throw away the partial frame.
-        for (Zone& z : sCurrent)
-        {
-            sFreeQueries.push_back(z.mStart);
-            if (z.mEnd)
-            {
-                sFreeQueries.push_back(z.mEnd);
-            }
-        }
-        sCurrent.clear();
-        sOpen.clear();
-        for (auto& frame : sPending)
-        {
-            releaseFrame(frame);
-        }
-        sPending.clear();
         sAggregates.clear();
         sSpanNs = 0.0;
         sMeasuredFrames = 0;
         sCounters.clear();
         sCounterFrames = 0;
-    }
-
-    // true if every end query of the frame has a result
-    bool frameReady(const std::vector<Zone>& frame)
-    {
-        for (const Zone& z : frame)
-        {
-            GLint available = 0;
-            gGL.getQueryObjectiv(z.mEnd, GL_QUERY_RESULT_AVAILABLE, &available);
-            if (!available)
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    void harvest(std::vector<Zone>& frame)
-    {
-        double first_start = 0.0;
-        double last_end = 0.0;
-        bool have_range = false;
-
-        for (const Zone& z : frame)
-        {
-            GLuint64 t0 = 0;
-            GLuint64 t1 = 0;
-            gGL.getQueryObjectui64v(z.mStart, GL_QUERY_RESULT, &t0);
-            gGL.getQueryObjectui64v(z.mEnd, GL_QUERY_RESULT, &t1);
-            if (t1 < t0)
-            {
-                continue;
-            }
-
-            Aggregate& agg = sAggregates[z.mName];
-            agg.mTotalNs += (double)(t1 - t0);
-            agg.mCalls++;
-
-            if (!have_range || (double)t0 < first_start)
-            {
-                first_start = (double)t0;
-            }
-            if (!have_range || (double)t1 > last_end)
-            {
-                last_end = (double)t1;
-            }
-            have_range = true;
-        }
-
-        if (have_range)
-        {
-            sSpanNs += last_end - first_start;
-            sMeasuredFrames++;
-        }
-        releaseFrame(frame);
     }
 
     void writeCounters()
@@ -286,55 +148,6 @@ void LLGpuZoneTimer::onFrameEnd()
     }
 
     ++sCounterFrames;
-
-    // Hand the zones that have finished to the pending list; their queries resolve on the GPU later.
-    // Zones that enclose the whole frame (such as "Frame" in the main loop) are still open here and
-    // stay in place until they end, which puts them in the next batch.
-    {
-        std::vector<Zone> finished;
-        std::vector<Zone> still_open;
-        std::vector<int> remap(sCurrent.size(), -1);
-        for (size_t i = 0; i < sCurrent.size(); ++i)
-        {
-            if (sCurrent[i].mEnd != 0)
-            {
-                finished.push_back(sCurrent[i]);
-            }
-            else
-            {
-                remap[i] = (int)still_open.size();
-                still_open.push_back(sCurrent[i]);
-            }
-        }
-        std::vector<U32> open_indices;
-        for (U32 idx : sOpen)
-        {
-            if (remap[idx] >= 0)
-            {
-                open_indices.push_back((U32)remap[idx]);
-            }
-        }
-        sCurrent = std::move(still_open);
-        sOpen = std::move(open_indices);
-
-        if (!finished.empty())
-        {
-            sPending.push_back(std::move(finished));
-        }
-    }
-
-    while (!sPending.empty() && frameReady(sPending.front()))
-    {
-        harvest(sPending.front());
-        sPending.pop_front();
-    }
-
-    // never let unfinished frames pile up
-    while (sPending.size() > 8)
-    {
-        releaseFrame(sPending.front());
-        sPending.pop_front();
-    }
 
     const F64 now = LLTimer::getElapsedSeconds();
     if (now - sLastLog >= 10.0)

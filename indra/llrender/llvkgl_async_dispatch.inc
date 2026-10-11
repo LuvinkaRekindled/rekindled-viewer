@@ -2,5 +2,3 @@
         case LLVkAsync::OP_glTexParameteri: { const LLVkAsync::A_glTexParameteri* a = (const LLVkAsync::A_glTexParameteri*)p; LLVkGL::on_glTexParameteri(a->target, a->pname, a->param); break; }
         case LLVkAsync::OP_glTexParameterf: { const LLVkAsync::A_glTexParameterf* a = (const LLVkAsync::A_glTexParameterf*)p; LLVkGL::on_glTexParameterf(a->target, a->pname, a->param); break; }
         case LLVkAsync::OP_glGenerateMipmap: { const LLVkAsync::A_glGenerateMipmap* a = (const LLVkAsync::A_glGenerateMipmap*)p; LLVkGL::on_glGenerateMipmap(a->target); break; }
-        case LLVkAsync::OP_glWaitSync: { const LLVkAsync::A_glWaitSync* a = (const LLVkAsync::A_glWaitSync*)p; LLVkGL::on_glWaitSync(a->sync, a->flags, a->timeout); break; }
-        case LLVkAsync::OP_glDeleteSync: { const LLVkAsync::A_glDeleteSync* a = (const LLVkAsync::A_glDeleteSync*)p; LLVkGL::on_glDeleteSync(a->sync); break; }

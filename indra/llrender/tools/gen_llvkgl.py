@@ -19,7 +19,6 @@ FUNCS = [
     ('void', 'glTexParameterf', 'GLenum target, GLenum pname, GLfloat param'),
     ('void', 'glTexParameteriv', 'GLenum target, GLenum pname, const GLint* params'),
     ('void', 'glGenerateMipmap', 'GLenum target'),
-    ('void', 'glPixelStorei', 'GLenum pname, GLint param'),
     # framebuffers and renderbuffers
     ('void', 'glGenFramebuffers', 'GLsizei n, GLuint* framebuffers'),
     ('void', 'glDeleteFramebuffers', 'GLsizei n, const GLuint* framebuffers'),
@@ -33,26 +32,10 @@ FUNCS = [
     ('void', 'glGetFloatv', 'GLenum pname, GLfloat* params'),
     ('void', 'glGetBooleanv', 'GLenum pname, GLboolean* params'),
     ('GLboolean', 'glIsEnabled', 'GLenum cap'),
-    ('void', 'glGetTexLevelParameteriv', 'GLenum target, GLint level, GLenum pname, GLint* params'),
     # queries
     ('void', 'glGenQueries', 'GLsizei n, GLuint* ids'),
     ('void', 'glDeleteQueries', 'GLsizei n, const GLuint* ids'),
-    ('void', 'glBeginQuery', 'GLenum target, GLuint id'),
-    ('void', 'glEndQuery', 'GLenum target'),
-    ('void', 'glQueryCounter', 'GLuint id, GLenum target'),
-    ('void', 'glGetQueryObjectiv', 'GLuint id, GLenum pname, GLint* params'),
-    ('void', 'glGetQueryObjectuiv', 'GLuint id, GLenum pname, GLuint* params'),
-    ('void', 'glGetQueryObjectui64v', 'GLuint id, GLenum pname, GLuint64* params'),
-    # readbacks (answered from the Vulkan images when the mirror owns the resources)
-    ('void', 'glReadPixels', 'GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels'),
-    ('void', 'glGetTexImage', 'GLenum target, GLint level, GLenum format, GLenum type, void* pixels'),
-    ('void', 'glGetCompressedTexImage', 'GLenum target, GLint level, void* img'),
     # shader and program objects (answered by the mirror when it owns the resources)
-    # sync objects
-    ('GLsync', 'glFenceSync', 'GLenum condition, GLbitfield flags'),
-    ('GLenum', 'glClientWaitSync', 'GLsync sync, GLbitfield flags, GLuint64 timeout'),
-    ('void', 'glWaitSync', 'GLsync sync, GLbitfield flags, GLuint64 timeout'),
-    ('void', 'glDeleteSync', 'GLsync sync'),
 ]
 
 # (return type, name, parameters, value returned with LL_VK_NOGL: the viewer has no OpenGL context and these are not made)

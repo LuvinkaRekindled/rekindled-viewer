@@ -430,7 +430,6 @@ LLPipeline::LLPipeline() :
     mRenderDebugFeatureMask(0),
     mRenderDebugMask(0),
     mOldRenderDebugMask(0),
-    mMeshDirtyQueryObject(0),
     mGroupQ1Locked(false),
     mResetVertexBuffers(false),
     mLastRebuildPool(NULL),
@@ -802,11 +801,6 @@ void LLPipeline::destroyGL()
 
     releaseGLBuffers();
 
-    if (mMeshDirtyQueryObject)
-    {
-        gGL.deleteQueries(1, &mMeshDirtyQueryObject);
-        mMeshDirtyQueryObject = 0;
-    }
 }
 
 void LLPipeline::requestResizeScreenTexture()
@@ -3976,12 +3970,6 @@ void LLPipeline::postSort(LLCamera &camera)
     { //place a query around potential transform feedback code for synchronization
         mTransformFeedbackPrimitives = 0;
 
-        if (!mMeshDirtyQueryObject)
-        {
-            gGL.genQueries(1, &mMeshDirtyQueryObject);
-        }
-
-        gGL.beginQuery(GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN, mMeshDirtyQueryObject);
     }*/
 
     {
@@ -3998,7 +3986,6 @@ void LLPipeline::postSort(LLCamera &camera)
 
     /*if (use_transform_feedback)
     {
-        gGL.endQuery(GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN);
     }*/
 
     mMeshDirtyGroup.clear();

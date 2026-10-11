@@ -378,13 +378,10 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
     { // query was previously issued, check it and only issue a new query
         // if previous query is available
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rmdo - glGetQueryObject");
-        GLuint result = 0;
-        gGL.getQueryObjectuiv(mOcclusionQuery, GL_QUERY_RESULT_AVAILABLE, &result);
-
-        if (result > 0)
+        if (gGL.queryReady(mOcclusionQuery))
         {
             do_query = true;
-            gGL.getQueryObjectuiv(mOcclusionQuery, GL_QUERY_RESULT, &result);
+            const U64 result = gGL.queryResult(mOcclusionQuery);
             mOccluded = result == 0;
             mOcclusionPendingFrames = 0;
         }
@@ -397,7 +394,7 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
     if (do_query)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rmdo - push query");
-        gGL.beginQuery(GL_ANY_SAMPLES_PASSED, mOcclusionQuery);
+        gGL.beginQuery(LLRender::QUERY_ANY_SAMPLES, mOcclusionQuery);
 
         LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
 
@@ -406,7 +403,7 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
 
         gPipeline.mCubeVB->drawRange(LLRender::TRIANGLE_FAN, 0, 7, 8, get_box_fan_indices(LLViewerCamera::getInstance(), mOrigin));
 
-        gGL.endQuery(GL_ANY_SAMPLES_PASSED);
+        gGL.endQuery(LLRender::QUERY_ANY_SAMPLES);
     }
 #endif
 }

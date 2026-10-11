@@ -42,6 +42,7 @@
 #include "glm/gtc/type_ptr.hpp"
 #include "llvkstate.h"
 #include "llvktex.h"
+#include "llvkquery.h"
 #include "llvkbuf.h"
 #include "llvktarget.h"
 
@@ -896,7 +897,6 @@ LLRender::~LLRender()
 
 bool LLRender::init(bool needs_vertex_buffer)
 {
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
     LLVkTex::setUnpackAlignment(1);
 
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
@@ -1481,47 +1481,37 @@ void LLRender::setStencilMask(U32 mask)
 
 void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data)
 {
-    glReadPixels(x, y, width, height, gl_format, gl_type, data);
+    LLVkTarget::readPixels(LLRenderTarget::sCurFBO, x, y, width, height, gl_format, gl_type, data);
 }
 
 void LLRender::genQueries(S32 count, U32* ids)
 {
-    glGenQueries(count, ids);
+    LLVkQuery::create(count, ids);
 }
 
 void LLRender::deleteQueries(S32 count, const U32* ids)
 {
-    glDeleteQueries(count, ids);
+    LLVkQuery::destroy(count, ids);
 }
 
-void LLRender::beginQuery(U32 gl_target, U32 id)
+void LLRender::beginQuery(QueryKind kind, U32 id)
 {
-    glBeginQuery(gl_target, id);
+    LLVkQuery::begin((LLVkQuery::Kind)kind, id);
 }
 
-void LLRender::endQuery(U32 gl_target)
+void LLRender::endQuery(QueryKind kind)
 {
-    glEndQuery(gl_target);
+    LLVkQuery::end((LLVkQuery::Kind)kind);
 }
 
-void LLRender::queryTimestamp(U32 id)
+bool LLRender::queryReady(U32 id)
 {
-    glQueryCounter(id, GL_TIMESTAMP);
+    return LLVkQuery::ready(id);
 }
 
-void LLRender::getQueryObjectiv(U32 id, U32 gl_pname, S32* result)
+U64 LLRender::queryResult(U32 id)
 {
-    glGetQueryObjectiv(id, gl_pname, result);
-}
-
-void LLRender::getQueryObjectuiv(U32 id, U32 gl_pname, U32* result)
-{
-    glGetQueryObjectuiv(id, gl_pname, result);
-}
-
-void LLRender::getQueryObjectui64v(U32 id, U32 gl_pname, U64* result)
-{
-    glGetQueryObjectui64v(id, gl_pname, (GLuint64*)result);
+    return LLVkQuery::result(id);
 }
 
 void LLRender::genBuffers(S32 count, U32* ids)

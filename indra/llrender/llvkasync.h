@@ -61,6 +61,9 @@ namespace LLVkAsync
     struct TexParam { U32 mPname; U32 mIsFloat; S32 mInt; F32 mFloat; };
     // render targets (LLRenderTarget): attach a texture to a framebuffer by name (then bind restore_fbo again), and make a framebuffer current with its draw buffers and viewport
     void framebufferAttach(U32 fbo, U32 slot, U32 texture);
+    // a query begins / ends in the command stream (llvkquery.h; kind is an LLVkQuery::Kind)
+    void queryBeginCmd(U32 kind, U32 id);
+    void queryEndCmd(U32 kind);
     // clears the current target (the state block is written first): colour and/or depth with the given colour
     void clearTarget(bool color, bool depth, const F32* rgba);
     // draw_buffers: the number of colour attachments to draw to (0: none, -1: the back buffer)
@@ -107,7 +110,8 @@ namespace LLVkAsync
         CMD_TEX_IMAGE, CMD_TEX_PARAMS_ID, CMD_TEX_OP,  // F1.2: texture edits that name their texture (llvktex.h): image data, parameters, small operations
         CMD_UNIFORM_BLOCK,                         // F1.3: a buffer becomes the contents of a numbered uniform block (llvkbuf.h)
         CMD_CONST_ATTRIB,                          // F1.3: the constant value of a vertex attribute that has no array
-        CMD_CLEAR                                  // F1.4: clear the current target (llvktarget.h)
+        CMD_CLEAR,                                 // F1.4: clear the current target (llvktarget.h)
+        CMD_QUERY_BEGIN, CMD_QUERY_END             // F1.6: a query kind begins / ends here in the stream (llvkquery.h)
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 
