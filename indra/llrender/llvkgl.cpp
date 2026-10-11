@@ -2747,6 +2747,39 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
                     why = "vertex range outside a vertex buffer";
                 }
             }
+            if (!why && Renderer::instance().detailPass() && eit->second.mShadow.size() >= index_end && index_bytes == 2)
+            {
+                // the index VALUES: what the caller says is the highest vertex is not what the data holds when the buffer was recycled or is not yet written. An impostor pass is small (a few hundred
+                // draws): the indices of the draw are read from the system-memory copy and the largest one is held against what every enabled vertex buffer can supply.
+                const U16* idx = (const U16*)(eit->second.mShadow.data() + (U64)indices);
+                U32 largest = 0;
+                for (S32 i = 0; i < count; ++i)
+                {
+                    largest = std::max<U32>(largest, idx[i]);
+                }
+                for (int a = 0; !why && a < 16; ++a)
+                {
+                    const VaoAttrib& at = vao.mAttrib[a];
+                    auto vit = at.mEnabled && at.mBuffer ? sGL.mBuffers.find(at.mBuffer) : sGL.mBuffers.end();
+                    if (vit == sGL.mBuffers.end() || !vit->second.mVk.valid())
+                    {
+                        continue;
+                    }
+                    const U64 element = (U64)std::max<S32>(at.mSize, 1) * LLVkFormat::typeBytes(at.mType);
+                    const U64 stride = at.mStride ? (U64)at.mStride : element;
+                    const U64 capacity = vit->second.mSize > at.mOffset + element ? (vit->second.mSize - at.mOffset - element) / stride + 1 : 0;
+                    if ((U64)largest >= capacity)
+                    {
+                        why = "an index value past the end of a vertex buffer";
+                        static U32 logged_values = 0;
+                        if (logged_values++ < 30)
+                        {
+                            LL_WARNS("Vulkan") << "impostor draw: largest index " << largest << " but attribute " << a << " (buffer " << at.mBuffer << ") holds " << capacity << " vertices (program "
+                                               << Renderer::instance().getProgram()->getName() << ", " << count << " indices)" << LL_ENDL;
+                        }
+                    }
+                }
+            }
             if (why)
             {
                 static U32 logged = 0;

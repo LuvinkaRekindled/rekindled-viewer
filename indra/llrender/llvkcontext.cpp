@@ -935,7 +935,55 @@ void Context::reportDeviceLost()
     for (U32 i = 0; i < count; ++i)
     {
         const U32 tag = (U32)(uintptr_t)data[i].pCheckpointMarker;
-        LL_WARNS("Vulkan") << "  stage 0x" << std::hex << (unsigned long long)data[i].stage << std::dec << ": " << (tag ? stampTagName(tag - 1) : std::string("(none)")) << LL_ENDL;
+        const unsigned long long stage = (unsigned long long)data[i].stage;
+        LL_WARNS("Vulkan") << "  stage 0x" << std::hex << stage << std::dec << (stage & 0x1 ? " (top of pipe: the latest STARTED)" : (stage & 0x2000 ? " (bottom of pipe: the latest COMPLETED)" : "")) << ": "
+                           << (tag ? stampTagName(tag - 1) : std::string("(none)")) << LL_ENDL;
+    }
+    // The whole pass the markers are in, from the host's list of what was recorded: every draw with its description, the one the GPU had started and the last one it completed marked.
+    U32 started = 0, completed = 0;
+    for (U32 i = 0; i < count; ++i)
+    {
+        const U32 tag = (U32)(uintptr_t)data[i].pCheckpointMarker;
+        if (data[i].stage & 0x1) started = tag;
+        if (data[i].stage & 0x2000) completed = tag;
+    }
+    U32 passes_shown = 0;
+    for (U32 slot = 0; slot < frameCount() && passes_shown < 2; ++slot)
+    {
+        const Frame& f = mFrames[slot];
+        const size_t n = f.mStampTags.size();
+        for (size_t i = 0; i < n && passes_shown < 2; ++i)
+        {
+            if (!(f.mStampTags[i] & STAMP_DRAW) || (started && (f.mStampTags[i] & ~STAMP_DRAW) + 1 != started))
+            {
+                continue;
+            }
+            size_t first = i, last = i;
+            while (first > 0 && (f.mStampTags[first - 1] & STAMP_DRAW))
+            {
+                --first;
+            }
+            while (last + 1 < n && (f.mStampTags[last + 1] & STAMP_DRAW))
+            {
+                ++last;
+            }
+            const std::string pass = first > 0 ? stampTagName(f.mStampTags[first - 1]) : std::string("(before the first pass)");
+            LL_WARNS("Vulkan") << "pass [" << pass << "] in frame slot " << slot << ": " << (last - first + 1) << " draws stamped; the one the GPU had STARTED is number " << (i - first + 1) << ":" << LL_ENDL;
+            for (size_t k = first; k <= last && k < first + 120; ++k)
+            {
+                LL_WARNS("Vulkan") << "    " << (k == i ? "STARTED   -> " : (completed && (f.mStampTags[k] & ~STAMP_DRAW) + 1 == completed ? "completed  -> " : "              ")) << stampTagName(f.mStampTags[k]) << LL_ENDL;
+            }
+            ++passes_shown;
+            break;
+        }
+    }
+}
+
+void Context::drawCheckpoint(U32 tag)
+{
+    if (mInFrame && mCaps.mCheckpoints && vkCmdSetCheckpointNV)
+    {
+        vkCmdSetCheckpointNV(mFrames[mFrameSlot].mCmd, (const void*)(uintptr_t)((tag & ~STAMP_DRAW) + 1));
     }
 }
 
