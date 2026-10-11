@@ -918,9 +918,14 @@ std::string Context::stampTagName(U32 tag)
 
 void Context::reportDeviceLost()
 {
+    reportCheckpoints("device lost");
+}
+
+void Context::reportCheckpoints(const char* when)
+{
     if (!mCaps.mCheckpoints || !vkGetQueueCheckpointData2NV)
     {
-        LL_WARNS("Vulkan") << "device lost; this driver keeps no checkpoints" << LL_ENDL;
+        LL_WARNS("Vulkan") << when << ": this driver keeps no checkpoints" << LL_ENDL;
         return;
     }
     U32 count = 0;
@@ -931,13 +936,33 @@ void Context::reportDeviceLost()
         vkGetQueueCheckpointData2NV(mQueue, &count, data.data());
     }
     // each entry: the latest checkpoint the GPU got to in the given pipeline stage(s); the marker is the pass tag + 1 (see gpuStamp)
-    LL_WARNS("Vulkan") << "device lost: " << count << " GPU checkpoints (the last pass reached, per pipeline stage):" << LL_ENDL;
+    LL_WARNS("Vulkan") << when << ": " << count << " GPU checkpoints (the last pass reached, per pipeline stage):" << LL_ENDL;
+    U64 started_serial = 0, completed_serial = 0;
     for (U32 i = 0; i < count; ++i)
     {
-        const U32 tag = (U32)(uintptr_t)data[i].pCheckpointMarker;
+        const U64 marker = (U64)(uintptr_t)data[i].pCheckpointMarker;
         const unsigned long long stage = (unsigned long long)data[i].stage;
+        const bool serial = (marker >> 62) == 1;
+        const U64 number = marker & ((1ull << 62) - 1);
+        const U32 tag = (U32)marker;
+        if (serial)
+        {
+            if (stage & 0x1) started_serial = number;
+            if (stage & 0x2000) completed_serial = number;
+        }
         LL_WARNS("Vulkan") << "  stage 0x" << std::hex << stage << std::dec << (stage & 0x1 ? " (top of pipe: the latest STARTED)" : (stage & 0x2000 ? " (bottom of pipe: the latest COMPLETED)" : "")) << ": "
-                           << (tag ? stampTagName(tag - 1) : std::string("(none)")) << LL_ENDL;
+                           << (serial ? (mDrawDescriber ? mDrawDescriber(number) : std::string("draw ") + std::to_string(number)) : (tag ? stampTagName(tag - 1) : std::string("(none)"))) << LL_ENDL;
+    }
+    if (mDrawDescriber && (completed_serial || started_serial))
+    {
+        // Markers are set BEFORE their draws and a marker completes when everything before it has: the draw named by the last COMPLETED marker is the first one that did not finish, and with a
+        // fault it is the one the fault is in. The draws after it (up to the last started) are shown for context.
+        const U64 culprit = completed_serial ? completed_serial : started_serial;
+        LL_WARNS("Vulkan") << "THE FAULT IS MOST LIKELY IN: " << mDrawDescriber(culprit) << LL_ENDL;
+        for (U64 s = culprit > 6 ? culprit - 6 : 1; s <= std::max(culprit, started_serial) && s < culprit + 10; ++s)
+        {
+            LL_WARNS("Vulkan") << "    " << (s == culprit ? ">>> " : "    ") << mDrawDescriber(s) << LL_ENDL;
+        }
     }
     // The whole pass the markers are in, from the host's list of what was recorded: every draw with its description, the one the GPU had started and the last one it completed marked.
     U32 started = 0, completed = 0;
@@ -976,6 +1001,14 @@ void Context::reportDeviceLost()
             ++passes_shown;
             break;
         }
+    }
+}
+
+void Context::serialCheckpoint(U64 serial)
+{
+    if (mInFrame && mCaps.mCheckpoints && vkCmdSetCheckpointNV)
+    {
+        vkCmdSetCheckpointNV(mFrames[mFrameSlot].mCmd, (const void*)(uintptr_t)((1ull << 62) | serial));
     }
 }
 
@@ -1077,9 +1110,13 @@ VkCommandBuffer Context::beginFrame(bool wait)
                     }
                 }
                 LL_WARNS("VkPhases") << "GPU frame (slot " << mFrameSlot << ") still running after " << (S32)waited_ms << " ms: " << where << LL_ENDL;
-                if (reports == 1 && mHangReporter)
+                if (reports == 1)
                 {
-                    mHangReporter();        // (the first report of the hang only: the driver resets the device soon)
+                    if (mHangReporter)
+                    {
+                        mHangReporter();    // (the first report of the hang only: the driver resets the device soon)
+                    }
+                    reportCheckpoints("frame stuck");       // the driver may answer now, before it resets the device
                 }
             }
         }
