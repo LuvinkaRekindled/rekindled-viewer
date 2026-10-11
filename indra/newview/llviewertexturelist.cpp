@@ -837,9 +837,49 @@ void LLViewerTextureList::deleteImage(LLViewerFetchedTexture *image)
 ///////////////////////////////////////////////////////////////////////////////
 
 
+// <FS> Where the textures are: how many have data, how many wait for it (being fetched, waiting to be created as GL textures), how many the server refused, what the viewer thinks they cost
+// and the discard bias it works against. Next to the VkTex line of the Vulkan layer (the video memory the device really holds): a face that stays on the placeholder in a busy region shows up
+// here as a long queue or a count of refused textures.
+void LLViewerTextureList::logSummary()
+{
+    U32 total = 0, with_gl = 0, no_data = 0, fetching = 0, missing = 0;
+    for (const LLPointer<LLViewerFetchedTexture>& image : mImageList)
+    {
+        ++total;
+        if (image->hasGLTexture())
+        {
+            ++with_gl;
+        }
+        if (image->isMissingAsset())
+        {
+            ++missing;
+        }
+        else if (image->getDiscardLevel() < 0)
+        {
+            ++no_data;
+            if (image->isFetching())
+            {
+                ++fetching;
+            }
+        }
+    }
+    LL_INFOS("VkTex") << "texture list: " << total << " images, " << with_gl << " with a GL texture, " << no_data << " with no data yet (" << fetching << " being fetched), " << missing
+        << " refused by the server (missing), " << mCreateTextureList.size() << " decoded and waiting to become GL textures, " << mDownScaleQueue.size() << " to downscale; discard bias "
+        << LLViewerTexture::sDesiredDiscardBias << "; the viewer counts " << LLImageGL::getTextureBytesAllocated() / (1024 * 1024) << " MB of textures and "
+        << LLVertexBuffer::getBytesAllocated() / (1024 * 1024) << " MB of vertex buffers against a free budget of " << LLViewerTexture::sFreeVRAMMegabytes << " MB" << LL_ENDL;
+}
+
 void LLViewerTextureList::updateImages(F32 max_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    {
+        static U32 calls = 0;
+        if (++calls >= 1800)
+        {
+            calls = 0;
+            logSummary();
+        }
+    }
     static bool cleared = false;
     if(gTeleportDisplay)
     {

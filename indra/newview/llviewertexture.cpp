@@ -874,6 +874,24 @@ bool LLViewerTexture::bindDefaultImage(S32 stage)
     return res;
 }
 
+// <FS> the name bindDefaultImage() would bind: the render packets name their textures by GL name and drew 0 (plain white) for a texture without data, where the old path drew this grey
+//virtual
+U32 LLViewerTexture::getDefaultImageName() const
+{
+    if (LLViewerFetchedTexture::sDefaultImagep.notNull() && (this != LLViewerFetchedTexture::sDefaultImagep.get()))
+    {
+        if (const U32 name = LLViewerFetchedTexture::sDefaultImagep->getTexName())
+        {
+            return name;
+        }
+    }
+    if (LLViewerTexture::sNullImagep.notNull() && (this != LLViewerTexture::sNullImagep.get()))
+    {
+        return LLViewerTexture::sNullImagep->getTexName();
+    }
+    return 0;
+}
+
 //virtual
 bool LLViewerTexture::isMissingAsset()const
 {

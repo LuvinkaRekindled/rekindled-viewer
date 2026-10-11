@@ -134,6 +134,7 @@ public:
     /*virtual*/ bool bindDefaultImage(const S32 stage = 0) ;
     /*virtual*/ bool bindDebugImage(const S32 stage = 0) ;
     /*virtual*/ void forceImmediateUpdate() ;
+    /*virtual*/ U32 getDefaultImageName() const override;
     /*virtual*/ bool isActiveFetching();
 
     /*virtual*/ const LLUUID& getID() const { return mID; }
