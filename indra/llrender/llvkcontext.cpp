@@ -209,6 +209,33 @@ U64 Context::deviceLocalBytes() const
     return total;
 }
 
+bool Context::videoMemory(U64& usage_bytes, U64& budget_bytes)
+{
+    if (!mAllocator)
+    {
+        return false;
+    }
+    const VkPhysicalDeviceMemoryProperties* props = nullptr;
+    vmaGetMemoryProperties(mAllocator, &props);
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS] = {};
+    vmaGetHeapBudgets(mAllocator, budgets);
+    int best = -1;
+    for (U32 i = 0; props && i < props->memoryHeapCount; ++i)
+    {
+        if ((props->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && (best < 0 || props->memoryHeaps[i].size > props->memoryHeaps[best].size))
+        {
+            best = (int)i;
+        }
+    }
+    if (best < 0 || budgets[best].budget == 0)
+    {
+        return false;
+    }
+    usage_bytes = budgets[best].usage;
+    budget_bytes = budgets[best].budget;
+    return true;
+}
+
 std::string Context::memoryBudgetText()
 {
     if (!mAllocator)

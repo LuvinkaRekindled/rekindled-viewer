@@ -11,6 +11,7 @@
 
 bool LLVkMirror::isRequested() { return false; }
 bool LLVkMirror::isReady() { return false; }
+bool LLVkMirror::videoMemory(U64&, U64&) { return false; }
 bool LLVkMirror::ensureReady() { return false; }
 void LLVkMirror::setMainWindow(void*) {}
 bool LLVkMirror::describeDevice(DeviceInfo&) { return false; }
@@ -551,6 +552,11 @@ LLVkMirror::Mutex& LLVkMirror::lock()
 bool LLVkMirror::isReady()
 {
     return sMirror.mReady;
+}
+
+bool LLVkMirror::videoMemory(U64& usage_bytes, U64& budget_bytes)
+{
+    return sMirror.mReady && !sMirror.mFailed && LLVk::Context::instance().videoMemory(usage_bytes, budget_bytes);
 }
 
 LLVk::Image* LLVkMirror::backbufferColor()

@@ -171,6 +171,9 @@
 #include <boost/regex.hpp>
 #include <boost/throw_exception.hpp>
 #include <chrono>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 #if LL_WINDOWS
 #   include <share.h> // For _SH_DENYWR in processMarkerFiles
@@ -840,8 +843,11 @@ LLAppViewer::LLAppViewer()
     setDebugFileNames(logdir);
 }
 
+namespace { std::atomic<bool> gStallWatchStop{ false }; }
+
 LLAppViewer::~LLAppViewer()
 {
+    gStallWatchStop = true;
     delete mSettingsLocationList;
 
     destroyMainloopTimeout();
@@ -7177,9 +7183,157 @@ void LLAppViewer::pauseMainloopTimeout()
     }
 }
 
+// <FS> Main thread stall watch. The main loop names the part of the frame it is in through pingMainloopTimeout (Main:Display, Main:Idle, ...). A part that lasts 300 ms or more is logged when it
+// ends (which part, how long, what came next), and a small thread looks at the main thread once the part has lasted 400 ms (again at 1 s): it suspends it for a moment and logs the call
+// stack as module+offset addresses, which <work>esolve-addr.ps1 turns into functions and lines with the build's .pdb. Costs one clock read per ping.
+namespace
+{
+constexpr U64 STALL_LOG_US = 300000, STALL_SAMPLE_US = 400000, STALL_SAMPLE2_US = 1000000;
+char gStallState[56] = "start";
+std::atomic<U64> gStallStartUs{ 0 };                    // when the part the main thread is in began (0: nothing yet)
+std::atomic<U64> gStallSerial{ 0 };                     // counts the parts, so the watcher knows a sample belongs to the same one
+#if LL_WINDOWS
+HANDLE gStallMainThread = nullptr;
+#endif
+
+U64 stall_now_us()
+{
+    return (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+#if LL_WINDOWS
+// the stack of another thread without allocating anything while it is suspended (it could hold the heap lock): return addresses by unwinding the x64 frames
+int stall_capture_stack(HANDLE thread, DWORD64* pcs, int max_frames)
+{
+    CONTEXT ctx = {};
+    ctx.ContextFlags = CONTEXT_FULL;
+    int n = 0;
+    if (SuspendThread(thread) == (DWORD)-1)
+    {
+        return 0;
+    }
+    if (GetThreadContext(thread, &ctx))
+    {
+        __try
+        {
+            while (n < max_frames && ctx.Rip)
+            {
+                pcs[n++] = ctx.Rip;
+                DWORD64 image_base = 0;
+                PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(ctx.Rip, &image_base, nullptr);
+                if (!entry)
+                {
+                    ctx.Rip = *(DWORD64*)ctx.Rsp;       // a leaf: the return address is on top of the stack
+                    ctx.Rsp += 8;
+                }
+                else
+                {
+                    PVOID handler_data = nullptr;
+                    DWORD64 establisher = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, ctx.Rip, entry, &ctx, &handler_data, &establisher, nullptr);
+                }
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+    }
+    ResumeThread(thread);
+    return n;
+}
+
+std::string stall_describe(DWORD64 pc)
+{
+    HMODULE module = nullptr;
+    char name[MAX_PATH] = "?";
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)pc, &module) && module)
+    {
+        GetModuleFileNameA(module, name, MAX_PATH);
+        const char* base = strrchr(name, '\\');
+        char buf[MAX_PATH + 24];
+        snprintf(buf, sizeof(buf), "%s+0x%llx", base ? base + 1 : name, (unsigned long long)(pc - (DWORD64)module));
+        return buf;
+    }
+    char buf[40];
+    snprintf(buf, sizeof(buf), "0x%llx", (unsigned long long)pc);
+    return buf;
+}
+
+void stall_watch_thread()
+{
+    U64 sampled_serial = 0, sampled2_serial = 0;
+    while (!gStallWatchStop.load())
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const U64 start = gStallStartUs.load();
+        const U64 serial = gStallSerial.load();
+        if (!start || !gStallMainThread)
+        {
+            continue;
+        }
+        const U64 lasted = stall_now_us() - start;
+        const bool second = lasted >= STALL_SAMPLE2_US && sampled2_serial != serial;
+        const bool first = lasted >= STALL_SAMPLE_US && sampled_serial != serial;
+        if (!first && !second)
+        {
+            continue;
+        }
+        char state[sizeof(gStallState)];
+        memcpy(state, gStallState, sizeof(state));
+        state[sizeof(state) - 1] = 0;
+        DWORD64 pcs[28];
+        const int n = stall_capture_stack(gStallMainThread, pcs, 28);
+        if (serial != gStallSerial.load())
+        {
+            continue;                                   // the part ended while it was being looked at: the stack is of something else
+        }
+        sampled_serial = serial;
+        if (second)
+        {
+            sampled2_serial = serial;
+        }
+        std::string text;
+        for (int i = 0; i < n; ++i)
+        {
+            text += (i ? " < " : "") + stall_describe(pcs[i]);
+        }
+        LL_WARNS("Stall") << "main thread stall: still in [" << state << "] after " << (lasted / 1000) << " ms; stack (innermost first): " << text << LL_ENDL;
+    }
+}
+#endif
+
+void stall_watch_note(std::string_view state)
+{
+    const U64 now = stall_now_us();
+#if LL_WINDOWS
+    static std::once_flag started;
+    std::call_once(started, []()
+    {
+        // the first ping is the main thread's
+        DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &gStallMainThread, THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0);
+        if (gStallMainThread)
+        {
+            std::thread(stall_watch_thread).detach();
+        }
+    });
+#endif
+    const U64 start = gStallStartUs.load();
+    if (start && now - start >= STALL_LOG_US)
+    {
+        LL_WARNS("Stall") << "main thread: [" << gStallState << "] lasted " << ((now - start) / 1000) << " ms (then: " << state << ")" << LL_ENDL;
+    }
+    const size_t len = std::min<size_t>(state.size(), sizeof(gStallState) - 1);
+    memcpy(gStallState, state.data(), len);
+    gStallState[len] = 0;
+    gStallSerial.fetch_add(1);
+    gStallStartUs.store(now);
+}
+}
+
 void LLAppViewer::pingMainloopTimeout(std::string_view state)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_APP;
+    stall_watch_note(state);
 
     if (mMainloopTimeout)
     {

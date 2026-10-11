@@ -28,6 +28,8 @@ namespace LLVkMirror
 
     // true once Vulkan is initialised and the mirror has not been switched off
     bool isReady();
+    // video memory as the OS sees this process (what it uses, what it may use before the driver pages allocations out), for the viewer's texture budget; false when no Vulkan device
+    bool videoMemory(U64& usage_bytes, U64& budget_bytes);
 
     // initialises Vulkan lazily on first use; returns isReady()
     bool ensureReady();

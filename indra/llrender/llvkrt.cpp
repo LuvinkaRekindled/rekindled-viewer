@@ -159,6 +159,7 @@ struct Tlas
 
 struct Stats
 {
+    U64 mCeilingHeld = 0;                // new structures held back by the acceleration structure memory ceiling
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
     U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0, mSkinThrottled = 0;
     U64 mAvatarInstances = 0, mAvatarStale = 0, mAvatarStaleFrames = 0, mAvatarStaleMax = 0;
@@ -1220,7 +1221,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             return;                             // later scene calls of a frame keep the first one's scene (debug switch)
         }
     }
-    static const U64 max_builds_default = env_u64("LL_VK_RT_BUILD_MAX", 256);
+    // Builds per scene call. A structure costs the GPU about 0.18 ms to build whatever its size (a plaza of small objects is a burst of 100 k of them), so on arrival somewhere new the old
+    // limit of 256 per call put 33 ms of builds into every frame for two minutes. The nearest structures are built first, the rest follow over the next seconds.
+    static const U64 max_builds_default = env_u64("LL_VK_RT_BUILD_MAX", 32);
+    // Ceiling for the memory of the structures (LL_VK_RT_MAX_MB, default 1.5 GB: the steady state of a busy place is about 1 GB). Over it no NEW structure is started, and structures that nothing has
+    // named for a short while are given back at once (see below), so that the scene cannot push video memory past the budget the OS grants (over it the driver moves allocations to system memory).
+    static const U64 as_ceiling_mb = env_u64("LL_VK_RT_MAX_MB", 1536);
+    const U64 as_ceiling = as_ceiling_mb << 20;
     const U64 max_builds = sDbg.mBuildMax ? sDbg.mBuildMax : max_builds_default;
     static const U64 max_tris = env_u64("LL_VK_RT_BUILD_TRIS", 800000);
     const bool alpha_on = sDbg.mAlpha;
@@ -1238,11 +1245,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     auto t_lap = t0;
 
     // forget structures that were not named for a while, and casters nothing has named for a few frames
-    if (sSceneCalls % 120 == 0)
+    const bool as_pressure = sBlasStorageBytes >= as_ceiling / 10 * 9;
+    if (sSceneCalls % (as_pressure ? 30 : 120) == 0)
     {
+        const U64 unseen_limit = as_pressure ? 150 : 900;       // calls: about 1.5 s under pressure, about 9 s otherwise
         for (auto it = sBlas.begin(); it != sBlas.end();)
         {
-            if (sSceneCalls - it->second.mLastSeen > 900)
+            if (sSceneCalls - it->second.mLastSeen > unseen_limit)
             {
                 drop_blas(it->second);
                 it = sBlas.erase(it);
@@ -1523,6 +1532,12 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         if (jobs.size() >= max_builds || tris_budget == 0)
         {
             ++sStats.mDeferred;
+            continue;
+        }
+        if (fresh && sBlasStorageBytes >= as_ceiling)
+        {
+            ++sStats.mDeferred;
+            ++sStats.mCeilingHeld;
             continue;
         }
         if (fresh)
@@ -1946,7 +1961,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             a.mOverTag = av_tag;
             continue;
         }
-        if (jobs.size() >= max_builds || skin_jobs.size() + cur.size() > kMaxSkinJobs || skin_chunks.size() + chunks_needed > kMaxSkinChunks)
+        if (jobs.size() >= max_builds + 16 || skin_jobs.size() + cur.size() > kMaxSkinJobs || skin_chunks.size() + chunks_needed > kMaxSkinChunks)       // (avatars have 16 builds of their own beyond the groups' limit)
         {
             ++sStats.mDeferred;
             a.mOverTag = av_tag;
@@ -3115,6 +3130,10 @@ std::string report(double frames)
     {
         const size_t used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, ", candidate scan check: %llu runs, %llu wrong", (unsigned long long)s.mScanChecks, (unsigned long long)s.mScanMismatch);
+    }
+    {
+        const size_t used = strlen(buf);
+        snprintf(buf + used, sizeof(buf) - used, ", structure memory ceiling %llu MB (new structures held back by it: %.2f/frame)", (unsigned long long)env_u64("LL_VK_RT_MAX_MB", 1536), (double)s.mCeilingHeld / f);
     }
     return buf;
 }
