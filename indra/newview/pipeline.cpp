@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#include "llvksubstream.h"
 #include "pipeline.h"
 #include "llgpuzonetimer.h"
 
@@ -13301,7 +13302,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         static LLCullResult result[4];
 
         // draw one cascade: its target, the shadow pass, and the bookkeeping that follows it
-        auto render_cascade = [&](ShadowCascadePrep& prep, bool prepared)
+        auto render_cascade_body = [&](ShadowCascadePrep& prep, bool prepared)
         {
             const S32 j = prep.mIndex;
             LLCamera& shadow_cam = prep.mCamera;
@@ -13376,6 +13377,24 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 cr.mCameraView = camera.getView();
                 cr.mSplitNear = dist[j];
                 cr.mSplitFar = dist[j + 1];
+            }
+        };
+
+        // <FS> F3 test: LL_VK_SUBSTREAM_TEST records each cascade into a sub-stream on this thread and splices it at once (the stream must come out the same)
+        auto render_cascade = [&](ShadowCascadePrep& prep, bool prepared)
+        {
+            static const bool sub_test = getenv("LL_VK_SUBSTREAM_TEST") != nullptr;
+            if (sub_test && LLVkSubStream::usable())
+            {
+                LLVkSubStream sub;
+                sub.begin();
+                render_cascade_body(prep, prepared);
+                sub.end();
+                sub.splice();
+            }
+            else
+            {
+                render_cascade_body(prep, prepared);
             }
         };
 

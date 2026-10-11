@@ -82,6 +82,7 @@ set(llrender_HEADER_FILES
     llvkfunctions.inl
     llvkasync.h
     llvkzones.h
+    llvksubstream.h
     llvkmirror.h
     llvkgl.h
     llvkprobe.h

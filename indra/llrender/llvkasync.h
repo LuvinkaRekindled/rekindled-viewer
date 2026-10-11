@@ -41,6 +41,26 @@ namespace LLVkAsync
     // ---- typed records (N1b): state the viewer knows as a whole is written as one record instead of a run of GL-shaped calls ----
     // true on the thread that writes the queue while the worker runs
     bool mainProducer();
+
+    // F3: records written by another thread. Between begin() and end() the typed records and the state setters of the calling thread go to a private buffer (its own render state
+    // context, pending texture slots and uniform writes) instead of the queue; the main thread splices the buffer into the queue, in order, where the work would have run.
+    // A sub-stream starts from the render state the main producer had when it was made, and writes whatever it sets (nothing is assumed about what the worker holds besides
+    // that); after the splice the main producer announces its own state again.
+    class SubStream
+    {
+    public:
+        SubStream();                // on the main thread: takes the render state the sub-stream starts from
+        ~SubStream();
+        void begin();               // on the thread that produces
+        void end();                 // on the same thread: the pending slots and uniform writes go into the buffer
+        void splice();              // on the main thread: appends the buffer to the queue, then resets it
+        U32 records() const;
+    private:
+        SubStream(const SubStream&) = delete;
+        SubStream& operator=(const SubStream&) = delete;
+        struct Impl;
+        Impl* mImpl;
+    };
     // one vertex attribute: kind 0 is glVertexAttribPointer, kind 1 glVertexAttribIPointer (same layout the coalesced run uses)
     struct VertexAttrib { U32 mKind; U32 mIndex; S32 mSize; U32 mType; S32 mStride; U32 mNormalized; const void* mPointer; };
     // the vertex array state of LLVertexBuffer::setBuffer(): optional array buffer bind, the attribute pointers, optional index buffer bind (played in that order).

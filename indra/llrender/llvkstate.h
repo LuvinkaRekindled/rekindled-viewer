@@ -61,6 +61,18 @@ namespace LLVkState
     // makes the next takeChanged() write a block even if nothing changed (the receiver may have lost it)
     void forceEmit();
 
+    // F3: another producer thread (a sub-stream, llvkasync.h) has a context of its own: it starts from 'seed', and the setters of the thread that binds it write it
+    struct Context;
+    Context* cloneContext();                          // a copy of the calling thread's context: its block and the inputs the block is derived from (cull on/off and face)
+    Context* cloneContext(const Context* from);
+    void destroyContext(Context* ctx);
+    void bindContext(Context* ctx);       // the calling thread (nullptr: unbind)
+    const Block& blockOf(const Context* ctx);
+    std::string describeDifference(const Block& a, const Block& b);      // which fields differ (empty when none)
+    // after work ran in a sub-stream that started from 'seed' and ended in 'final': what that work changed (the fields where final differs from seed) becomes the state of the calling
+    // thread's context, as if the work had run in line; everything else stays as it is. The next block written is a whole one.
+    void adoptChanges(const Context* seed, const Context* final);
+
     // the context's block, and whether it differs from the last block taken (then 'out' is set and the last-taken block is updated)
     bool takeChanged(Block& out);
     const Block& current();

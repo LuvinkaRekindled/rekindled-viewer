@@ -26,6 +26,7 @@
 #include <atomic>
 #include <deque>
 #include <mutex>
+#include <set>
 #include <algorithm>
 #include <intrin.h>
 #include <vector>
@@ -99,6 +100,12 @@ std::atomic<int> gSideCount{ 0 };
 std::atomic<int> gNextCtx{ 1 };
 
 inline bool isMainThread() { return __readgsdword(0x48) == gMainTid; }
+
+// F3: the records of a thread inside a sub-stream go to this buffer instead of the queue
+struct SubBuf { std::vector<U8> mBuf; size_t mCur = 0; };
+thread_local SubBuf* tlsBuf = nullptr;
+// does this thread write records: the main producer, or a thread inside a sub-stream
+inline bool produces() { return tlsBuf != nullptr || isMainThread(); }
 
 int producerCtx()
 {
@@ -213,6 +220,15 @@ inline size_t alignUp(size_t n) { return (n + 7) & ~(size_t)7; }
 U8* mainReserve(size_t payload_bytes, U16 op, U8 flags)
 {
     const size_t total = alignUp(sizeof(RecHeader) + payload_bytes);
+    if (tlsBuf)
+    {
+        SubBuf& b = *tlsBuf;
+        b.mCur = b.mBuf.size();
+        b.mBuf.resize(b.mCur + total);
+        RecHeader sh = { (U32)total, op, 0, flags };
+        memcpy(b.mBuf.data() + b.mCur, &sh, sizeof(sh));
+        return b.mBuf.data() + b.mCur + sizeof(RecHeader);
+    }
     U64 tail = gTail.load(std::memory_order_relaxed);
     for (;;)
     {
@@ -245,6 +261,10 @@ U8* mainReserve(size_t payload_bytes, U16 op, U8 flags)
 
 inline void mainCommit(size_t payload_bytes)
 {
+    if (tlsBuf)
+    {
+        return;             // the record is in the sub-stream buffer already
+    }
     const size_t total = alignUp(sizeof(RecHeader) + payload_bytes);
     gTail.store(gTail.load(std::memory_order_relaxed) + total, std::memory_order_release);
     if (gMode == 2)
@@ -264,7 +284,8 @@ inline void mainCommit(size_t payload_bytes)
 // Nothing is dropped and nothing is reordered: whatever else is queued first writes out what is held, and the worker plays a merged record
 // by calling the same functions in the same order.
 bool gTyped = true;                           // LL_VK_TYPED=0: typed records (LLVertexBuffer::setBuffer) off, the separate calls are queued as before
-unsigned long long gMainRecords = 0;        // records actually written by the main thread
+unsigned long long gMainRecords = 0;        // records actually written by the main thread (a sub-stream's are counted when it is spliced)
+inline void noteRecord() { if (!tlsBuf) { ++gMainRecords; } }
 
 struct BindTexUnitArgs { U32 mUnit; U32 mTarget; U32 mTexture; U32 mPad; };
 struct RunHeader { U32 mReserved; U32 mBuffer; U32 mCount; U32 mFlags; U32 mElem; U32 mPad; };   // flags: bit 0 array buffer bind, bit 1 index buffer bind (played after the pointers)
@@ -279,7 +300,7 @@ inline void rawPush(U16 op, const void* args, unsigned size)
         memcpy(p, args, size);
     }
     mainCommit(size);
-    ++gMainRecords;
+    noteRecord();
 }
 
 // <FS> draw-record plan step 1: texture binds of LLTexUnit do not write a record each. The producer keeps the slot table (unit -> target, name) and the last
@@ -287,18 +308,26 @@ inline void rawPush(U16 op, const void* args, unsigned size)
 struct PendTex { U32 mTarget; U32 mName; };
 inline U32 lowBit(U32 m) { unsigned long i; _BitScanForward(&i, m); return (U32)i; }
 constexpr U32 TEX_UNIT_BASE = 0x84C0;       // GL_TEXTURE0
-PendTex gPendTex[32];
-U32 gPendMask = 0;
-U32 gLatestActive = TEX_UNIT_BASE;          // the active unit as the producer sees it (the worker's after everything queued)
+// the pending texture slots, active unit and uniform writes of one producer (the main thread's, or a sub-stream's)
+struct Pend
+{
+    PendTex mTex[32];
+    U32 mMask = 0;
+    U32 mActive = TEX_UNIT_BASE;          // the active unit as the producer sees it (the worker's after everything queued)
+    std::vector<U8> mUni;
+};
+Pend gMainPend;
+thread_local Pend* tlsPend = nullptr;
+inline Pend& pend() { return tlsPend ? *tlsPend : gMainPend; }
 
 // the entries of the pending slots in unit order, appended to p; returns the bytes
 U32 pendTexWrite(U8* p)
 {
     U32 n = 0;
-    for (U32 m = gPendMask; m; m &= m - 1)
+    for (U32 m = pend().mMask; m; m &= m - 1)
     {
         const U32 u = lowBit(m);
-        memcpy(p + n * sizeof(PendTex), &gPendTex[u], sizeof(PendTex));
+        memcpy(p + n * sizeof(PendTex), &pend().mTex[u], sizeof(PendTex));
         ++n;
     }
     return n * (U32)sizeof(PendTex);
@@ -308,59 +337,61 @@ unsigned long long gTexFlushWhy[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: what 
 
 void flushPendingTex(int why = 0)
 {
-    if (!gPendMask)
+    if (!pend().mMask)
     {
         return;
     }
-    ++gTexFlushWhy[why];
-    const U32 count = (U32)__popcnt(gPendMask);
+    if (!tlsBuf)
+    {
+        ++gTexFlushWhy[why];
+    }
+    const U32 count = (U32)__popcnt(pend().mMask);
     const U32 payload = (U32)(sizeof(U32) * 3 + sizeof(PendTex) * count);
     U8* p = mainReserve(payload, CMD_TEX_SLOTS, 0);
-    const U32 head[3] = { gPendMask, gLatestActive, count };
+    const U32 head[3] = { pend().mMask, pend().mActive, count };
     memcpy(p, head, sizeof(head));
     pendTexWrite(p + sizeof(head));
     mainCommit(payload);
-    ++gMainRecords;
-    gPendMask = 0;
+    noteRecord();
+    pend().mMask = 0;
 }
 
 // <FS> draw-record plan: loose uniform writes (scalar, vector, matrix) of the main thread are not records of their own either. They pile up here as
 // {op, payload bytes, payload} entries (the argument struct and the values, padded to 8) and are written inside the next draw record. Anything that can
 // need them earlier flushes them first (every operation that is not independent of them goes through coFlushAll).
 struct UniformScalarArgs { void* mProgram; unsigned mIndex; int mKind; unsigned mN; float mF[4]; int mI[4]; };
-std::vector<U8> gPendUni;
 
 void flushPendingUni(int why = 0)
 {
     (void)why;
-    if (gPendUni.empty())
+    if (pend().mUni.empty())
     {
         return;
     }
-    const U32 bytes = (U32)gPendUni.size();
+    const U32 bytes = (U32)pend().mUni.size();
     const U32 payload = (U32)(sizeof(U32) * 2 + bytes);
     U8* p = mainReserve(payload, CMD_UNIFORM_BATCH, 0);
     const U32 head[2] = { bytes, 0 };
     memcpy(p, head, sizeof(head));
-    memcpy(p + sizeof(head), gPendUni.data(), bytes);
+    memcpy(p + sizeof(head), pend().mUni.data(), bytes);
     mainCommit(payload);
-    ++gMainRecords;
-    gPendUni.clear();
+    noteRecord();
+    pend().mUni.clear();
 }
 
 inline void uniAppend(U32 op, const void* args, size_t asz, const void* data, size_t dsz)
 {
     const size_t payload = (asz + dsz + 7) & ~(size_t)7;
-    const size_t off = gPendUni.size();
-    gPendUni.resize(off + 8 + payload);
+    const size_t off = pend().mUni.size();
+    pend().mUni.resize(off + 8 + payload);
     const U32 head[2] = { op, (U32)payload };
-    memcpy(&gPendUni[off], head, 8);
-    memcpy(&gPendUni[off + 8], args, asz);
+    memcpy(&pend().mUni[off], head, 8);
+    memcpy(&pend().mUni[off + 8], args, asz);
     if (dsz)
     {
-        memcpy(&gPendUni[off + 8 + asz], data, dsz);
+        memcpy(&pend().mUni[off + 8 + asz], data, dsz);
     }
-    if (gPendUni.size() > (1u << 20))
+    if (pend().mUni.size() > (1u << 20))
     {
         flushPendingUni();      // bounded: a long run of uniform writes with no draw in between
     }
@@ -418,11 +449,12 @@ inline void stateEmit()
 
 void push(unsigned short op, const void* args, unsigned size)
 {
-    if (isMainThread())
+    if (produces())
     {
-        const bool timed = gOpStats && ((++gMainPushOps & 15) == 0);
+        const bool stats = gOpStats && !tlsBuf;
+        const bool timed = stats && ((++gMainPushOps & 15) == 0);
         const unsigned long long t0 = timed ? __rdtsc() : 0;
-        if (gOpStats)
+        if (stats)
         {
             ++gMainOpCalls[opStatSlot(op)];
         }
@@ -446,13 +478,13 @@ struct MainLap
 {
     const bool mTimed;
     const unsigned long long mT0;
-    MainLap() : mTimed(gOpStats && ((++gMainPushOps & 15) == 0)), mT0(mTimed ? __rdtsc() : 0) {}
+    MainLap() : mTimed(gOpStats && !tlsBuf && ((++gMainPushOps & 15) == 0)), mT0(mTimed ? __rdtsc() : 0) {}
     ~MainLap() { if (mTimed) { gMainPushTicks += (__rdtsc() - mT0) * 16; } }
 };
 
 bool mainProducer()
 {
-    return gEnabled && gTyped && isMainThread();
+    return gEnabled && gTyped && produces();
 }
 
 void framebufferAttach(U32 fbo, U32 slot, U32 texture)
@@ -463,7 +495,7 @@ void framebufferAttach(U32 fbo, U32 slot, U32 texture)
         LLVkGL::target_attach(fbo, slot, texture);
         return;
     }
-    if (!isMainThread())
+    if (!produces())
     {
         return;
     }
@@ -488,7 +520,7 @@ void targetDrawBuffers(U32 fbo, S32 draw_buffers)
         LLVkGL::target_state(fbo, draw_buffers);
         return;
     }
-    if (!isMainThread())
+    if (!produces())
     {
         return;
     }
@@ -500,7 +532,7 @@ void targetDrawBuffers(U32 fbo, S32 draw_buffers)
 
 void clearTarget(bool color, bool depth, const F32* rgba)
 {
-    if (!isMainThread())
+    if (!produces())
     {
         return;
     }
@@ -518,7 +550,7 @@ void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
         LLVkGL::shader_bind(program, enable_mask, disable_mask);
         return;
     }
-    if (!isMainThread())
+    if (!produces())
     {
         return;
     }
@@ -536,8 +568,8 @@ void bindTextureUnit(U32 unit, U32 target, U32 texture)
         return;
     }
     // the slot table is the record: nothing is written here, what changed goes out with the next draw (or when something that can read texture state comes first)
-    gPendTex[u] = { target, texture };
-    gPendMask |= 1u << u;
+    pend().mTex[u] = { target, texture };
+    pend().mMask |= 1u << u;
 }
 
 namespace
@@ -597,21 +629,21 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
 {
     MainLap lap;
     stateEmit();
-    const U32 n = (U32)__popcnt(gPendMask);
-    const U32 uni = (U32)gPendUni.size();
+    const U32 n = (U32)__popcnt(pend().mMask);
+    const U32 uni = (U32)pend().mUni.size();
     const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n + uni);
     U8* p = mainReserve(payload, CMD_DRAW, 0);
-    const DrawHeader h = { kind, mode, start, end, count, type, indices, gPendMask, gLatestActive, n, uni };
+    const DrawHeader h = { kind, mode, start, end, count, type, indices, pend().mMask, pend().mActive, n, uni };
     memcpy(p, &h, sizeof(h));
     pendTexWrite(p + sizeof(h));
     if (uni)
     {
-        memcpy(p + sizeof(h) + sizeof(PendTex) * n, gPendUni.data(), uni);
+        memcpy(p + sizeof(h) + sizeof(PendTex) * n, pend().mUni.data(), uni);
     }
     mainCommit(payload);
-    ++gMainRecords;
-    gPendMask = 0;
-    gPendUni.clear();
+    noteRecord();
+    pend().mMask = 0;
+    pend().mUni.clear();
 }
 
 void drawRangeElements(U32 gl_mode, U32 start, U32 end, S32 count, U32 gl_type, const void* indices)
@@ -623,9 +655,9 @@ void drawRangeElements(U32 gl_mode, U32 start, U32 end, S32 count, U32 gl_type, 
         LLVkGL::draw_elements(mode, start, end, count, type, indices);
         return;
     }
-    if (!isMainThread())
+    if (!produces())
     {
-        return;     // draws are the main thread's
+        return;     // draws are the producers'
     }
     writeDraw(0, mode, start, end, count, type, indices);
 }
@@ -639,7 +671,7 @@ void drawArrays(U32 gl_mode, S32 first, S32 count)
         LLVkGL::draw_arrays(mode, first, count);
         return;
     }
-    if (!isMainThread())
+    if (!produces())
     {
         return;
     }
@@ -673,7 +705,7 @@ void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_b
         LLVkGL::vertex_input_apply(bind_array, array_buffer, bind_elem, elem_buffer, attribs, count);
         return;
     }
-    if (!isMainThread())
+    if (!produces())
     {
         return;
     }
@@ -688,17 +720,18 @@ void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_b
         memcpy(p + sizeof(h), attribs, sizeof(RunEntry) * count);
     }
     mainCommit(payload);
-    ++gMainRecords;
+    noteRecord();
 }
 
 void pushData(unsigned short op, const void* args, unsigned size, const void* data, size_t data_size)
 {
-    if (isMainThread())
+    if (produces())
     {
-        const bool timed = gOpStats && ((++gMainPushOps & 15) == 0);
+        const bool stats = gOpStats && !tlsBuf;
+        const bool timed = stats && ((++gMainPushOps & 15) == 0);
         const unsigned long long t0 = timed ? __rdtsc() : 0;
         struct Lap { const bool mTimed; const unsigned long long mT0; ~Lap() { if (mTimed) { gMainPushTicks += (__rdtsc() - mT0) * 16; } } } lap = { timed, t0 };
-        if (gOpStats)
+        if (stats)
         {
             ++gMainOpCalls[opStatSlot(op)];
         }
@@ -710,7 +743,7 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         {
             coFlushAll(opStatSlot(op));
         }
-        ++gMainRecords;
+        noteRecord();
         const bool heap = data_size > MAX_INLINE;
         const size_t payload = size + sizeof(U64) + (heap ? sizeof(U64) : data_size);
         U8* p = mainReserve(payload, op, heap ? 1 : 0);
@@ -1348,7 +1381,7 @@ void bindSlot(S32 unit, U32 target, U32 id)
     const U32 dim = LLVkFormat::target(target).mDim;
     if (LLVkAsync::gEnabled)
     {
-        if (isMainThread())
+        if (produces())
         {
             LLVkAsync::bindTextureUnit(TEX_UNIT_BASE + (U32)unit, dim, id);
         }
@@ -2520,6 +2553,103 @@ void stop()
     LL_INFOS("VkAsync") << "the Vulkan mirror thread stopped" << LL_ENDL;
 }
 
+// ---- F3: sub-streams ----
+struct SubStream::Impl
+{
+    SubBuf mBuf;
+    Pend mPend;
+    LLVkState::Context* mState = nullptr;
+    LLVkState::Context* mSeed = nullptr;            // the main producer's render state when the sub-stream was made
+    std::string mLeft;                              // what the work left changed in the render state
+};
+
+SubStream::SubStream() : mImpl(new Impl)
+{
+    mImpl->mSeed = LLVkState::cloneContext();       // the main producer's state now: where the sub-stream's work starts from
+}
+
+SubStream::~SubStream()
+{
+    if (mImpl->mState)
+    {
+        LLVkState::destroyContext(mImpl->mState);
+    }
+    if (mImpl->mSeed)
+    {
+        LLVkState::destroyContext(mImpl->mSeed);
+    }
+    delete mImpl;
+}
+
+void SubStream::begin()
+{
+    Impl& s = *mImpl;
+    if (s.mState)
+    {
+        LLVkState::destroyContext(s.mState);
+    }
+    s.mState = LLVkState::cloneContext(s.mSeed);
+    s.mBuf.mBuf.clear();
+    s.mBuf.mCur = 0;
+    s.mPend = Pend();
+    tlsBuf = &s.mBuf;
+    tlsPend = &s.mPend;
+    LLVkState::bindContext(s.mState);
+}
+
+void SubStream::end()
+{
+    coFlushAll();                                   // the pending slots and uniform writes of the producer are records too
+    mImpl->mLeft = LLVkState::describeDifference(LLVkState::blockOf(mImpl->mState), LLVkState::blockOf(mImpl->mSeed));
+    tlsBuf = nullptr;
+    tlsPend = nullptr;
+    LLVkState::bindContext(nullptr);
+}
+
+void SubStream::splice()
+{
+    Impl& s = *mImpl;
+    coFlushAll();                                   // the main producer's own pending writes come first: they would have been folded into the next draw
+    const U8* base = s.mBuf.mBuf.data();
+    const size_t n = s.mBuf.mBuf.size();
+    for (size_t off = 0; off < n; )
+    {
+        RecHeader h;
+        memcpy(&h, base + off, sizeof(h));
+        const size_t payload = h.mSize - sizeof(RecHeader);
+        U8* w = mainReserve(payload, h.mOp, h.mFlags);
+        memcpy(w, base + off + sizeof(RecHeader), payload);
+        mainCommit(payload);
+        ++gMainRecords;
+        off += h.mSize;
+    }
+    s.mBuf.mBuf.clear();
+    s.mBuf.mCur = 0;
+    if (!s.mLeft.empty())
+    {
+        static std::set<std::string> said;
+        if (said.insert(s.mLeft).second)
+        {
+            LL_INFOS("VkSub") << "a sub-stream left the render state changed: " << s.mLeft << "(the main producer takes it over)" << LL_ENDL;
+        }
+    }
+    LLVkState::adoptChanges(s.mSeed, s.mState);     // what the work changed in the render state is the state the main producer goes on with
+    LLVkState::forceEmit();                         // what the worker holds is the sub-stream's last state, not what the main producer last wrote
+}
+
+U32 SubStream::records() const
+{
+    U32 count = 0;
+    const U8* base = mImpl->mBuf.mBuf.data();
+    for (size_t off = 0; off < mImpl->mBuf.mBuf.size(); ++count)
+    {
+        RecHeader h;
+        memcpy(&h, base + off, sizeof(h));
+        off += h.mSize;
+    }
+    return count;
+}
+
 } // namespace LLVkAsync
 
 bool LLVkZones::available()
@@ -2531,5 +2661,19 @@ void LLVkZones::zone(const char* name, bool begin)
 {
     LLVkAsync::gpuZone(name, begin);
 }
+
+#include "llvksubstream.h"
+
+bool LLVkSubStream::usable()
+{
+    return LLVkAsync::gEnabled && LLVkAsync::mainProducer();
+}
+
+LLVkSubStream::LLVkSubStream() : mImpl(new LLVkAsync::SubStream()) {}
+LLVkSubStream::~LLVkSubStream() { delete (LLVkAsync::SubStream*)mImpl; }
+void LLVkSubStream::begin() { ((LLVkAsync::SubStream*)mImpl)->begin(); }
+void LLVkSubStream::end() { ((LLVkAsync::SubStream*)mImpl)->end(); }
+void LLVkSubStream::splice() { ((LLVkAsync::SubStream*)mImpl)->splice(); }
+unsigned LLVkSubStream::records() const { return ((LLVkAsync::SubStream*)mImpl)->records(); }
 
 #endif // LL_VULKAN
