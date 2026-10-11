@@ -501,7 +501,7 @@ static void update_tp_display(bool minimized)
 }
 
 // Paint the display!
-static U32 sEarlySortResorts = 0;     // <FS> frames in which the early sort had to be redone (see LLBuilderGuard)
+U32 gEarlySortResorts = 0;     // <FS> frames in which the early sort had to be redone (see LLBuilderGuard); logged with the texture list line
 
 void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 {
@@ -523,7 +523,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             if ((sModeFrames[0] + sModeFrames[1]) % 1200 == 0 && sModeFrames[0] && sModeFrames[1])
             {
                 LL_INFOS("VkBuilder") << "early sort A/B: frame interval with early sort " << sModeMs[1] / sModeFrames[1] << " ms over " << sModeFrames[1] << " frames, without "
-                    << sModeMs[0] / sModeFrames[0] << " ms over " << sModeFrames[0] << " frames; early sort redone in " << sEarlySortResorts << " frames" << LL_ENDL;
+                    << sModeMs[0] / sModeFrames[0] << " ms over " << sModeFrames[0] << " frames; early sort redone in " << gEarlySortResorts << " frames" << LL_ENDL;
             }
         }
         sLastDisplay = now;
@@ -991,8 +991,13 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         // themselves, are filled again after them (refillPools). LL_VK_EARLY_SORT=0 puts it back where it was.
         static const char* early_env = getenv("LL_VK_EARLY_SORT");
         static const bool early_alternate = early_env && early_env[0] == 'a';
-        static const bool early_sort_enabled = !(early_env && early_env[0] == '0');
-        const bool early_sort = early_sort_enabled && !for_snapshot && gFrameCount > 1 && (!early_alternate || ((gFrameCount / 60) % 2) == 1);
+        static const bool early_env_enabled = !(early_env && early_env[0] == '0');
+        static LLCachedControl<bool> early_sort_setting(gSavedSettings, "FSEarlySort", true);        // live: Debug Settings
+        static LLCachedControl<bool> async_builders_setting(gSavedSettings, "FSAsyncBuilders", true);
+        LLAsyncPool::sRunInline = !async_builders_setting;
+        static LLCachedControl<bool> bindless_persistent_setting(gSavedSettings, "FSBindlessPersistent", true);
+        LLVkMirror::setBindlessPersistent(bindless_persistent_setting);
+        const bool early_sort = early_env_enabled && early_sort_setting && !for_snapshot && gFrameCount > 1 && (!early_alternate || ((gFrameCount / 60) % 2) == 1);
         sFrameMode = early_sort ? 1 : 0;
         unsigned early_epoch = 0;
         if (early_sort)
@@ -1115,9 +1120,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             {
                 // a group of the main view was rebuilt after its render map was made (by the shadow preparation or an impostor): the map may point to freed draw infos. Sort again, as the
                 // frame would have without the early sort; the builds started for the old map are dropped.
-                if (++sEarlySortResorts <= 5)
+                if (++gEarlySortResorts <= 5)
                 {
-                    LL_INFOS("VkBuilder") << "early sort: a group of the main view changed after the sort (" << sEarlySortResorts << " frames so far): sorting again" << LL_ENDL;
+                    LL_INFOS("VkBuilder") << "early sort: a group of the main view changed after the sort (" << gEarlySortResorts << " frames so far): sorting again" << LL_ENDL;
                 }
                 LLRenderPass::finishGeometryBuilds();
                 LLBuilderGuard::sMainMapLive = false;

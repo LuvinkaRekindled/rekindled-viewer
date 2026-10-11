@@ -304,6 +304,7 @@ public:
     // <FS> bindless sampled images (set 2) for the render packets with textures: one slot per distinct (image view, sampler) pair a frame uses, handed out on first
     // use; slot 0 is the white image. The caller makes sure the image is in the sampling layout.
     bool bindlessAvailable() const { return mSet2Layout != VK_NULL_HANDLE; }
+    static inline std::atomic<bool> sBindlessPersistent{true};      // FSBindlessPersistent
     U32 bindlessCapacity() const { return mBindlessCap[0]; }       // the 2D table (the others hold far fewer images)
     void gpuZone(const char* name, bool begin);       // a GPU timing zone begins / ends at this point of the command stream
     U32 bindlessSlot(Image* image, VkSampler sampler);

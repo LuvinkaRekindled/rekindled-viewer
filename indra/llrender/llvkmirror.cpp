@@ -30,6 +30,7 @@ U32 LLVkMirror::rtShadowMode() { return 0; }
 void LLVkMirror::rtScene(const RtSceneArgs&) {}
 void LLVkMirror::presentFrame() {}
 void LLVkMirror::shutdown() {}
+void LLVkMirror::setBindlessPersistent(bool) {}
 void LLVkMirror::stopAsync() {}
 
 #else // LL_VULKAN
@@ -674,6 +675,11 @@ void LLVkMirror::stopAsync()
     {
         LLVk::Renderer::instance().savePipelineCache();
     }
+}
+
+void LLVkMirror::setBindlessPersistent(bool on)
+{
+    LLVk::Renderer::sBindlessPersistent = on;
 }
 
 void LLVkMirror::shutdown()
