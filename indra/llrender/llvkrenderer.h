@@ -304,6 +304,7 @@ public:
     // <FS> bindless sampled images (set 2) for the render packets with textures: one slot per distinct (image view, sampler) pair a frame uses, handed out on first
     // use; slot 0 is the white image. The caller makes sure the image is in the sampling layout.
     bool bindlessAvailable() const { return mSet2Layout != VK_NULL_HANDLE; }
+    U32 bindlessCapacity() const { return mBindlessCap[0]; }       // the 2D table (the others hold far fewer images)
     void gpuZone(const char* name, bool begin);       // a GPU timing zone begins / ends at this point of the command stream
     U32 bindlessEpoch() const { return mBindlessEpoch; }         // changes every frame: a slot number from an earlier epoch means nothing
     U32 bindlessSlot(Image* image, VkSampler sampler);
@@ -386,6 +387,7 @@ public:
     bool uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, VkDeviceSize bytes, void (*fill)(void* ctx, U8* dst, VkDeviceSize bytes), void* ctx);
     // fills mips 1..n from mip 0 with linear blits (the image must have been created with mips > 1)
     bool generateMipmaps(Image& image);
+    bool copyBaseLevel(Image& src, Image& dst);       // <FS> level 0 of src (the same size) into level 0 of dst: a texture that grows its mip chain moves its data
 
     U32 getDrawCount() const { return mDrawCount; }
 
@@ -456,7 +458,22 @@ private:
         U32 mWritten = 0;                                   // slots of mInfos already written into the frame's set
     };
     BindlessTable mBindlessTbl[BINDLESS_TABLES];
-    U32 mBindlessCapacity = 0;
+    U32 mBindlessCap[BINDLESS_TABLES] = {};         // slots per table: the 2D table is the big one
+public:
+    // <FS> what the textures cost and where they fail (logged every 1800 frames by LLVkGL::after_frame; reset by each read)
+    struct TexStats
+    {
+        U32 mBindlessPeak = 0;          // most slots one table held in a frame
+        U32 mBindlessRefused = 0;       // slots asked for when the table was full (those draws got the white image)
+        U32 mAllocFailed = 0;           // vmaCreateImage failures
+        U64 mAllocFailedBytes = 0;      // the base level size of those textures, four bytes a texel
+        U32 mAllocFailedLast[2] = {};   // width and height of the last failure
+    };
+    TexStats takeTexStats();
+private:
+    std::atomic<U32> mStatBindlessPeak{0}, mStatBindlessRefused{0}, mStatAllocFailed{0};
+    std::atomic<U64> mStatAllocFailedBytes{0};
+    std::atomic<U32> mStatAllocW{0}, mStatAllocH{0};
     U32 mBindlessEpoch = 1;
     bool mBindlessBound = false;
     VkDescriptorSetLayout mSet3Layout = VK_NULL_HANDLE;     // <FS> set 3: the ray tracing scene (an acceleration structure), only when ray query shadows are on (llvkrt.cpp)

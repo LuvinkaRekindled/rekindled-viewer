@@ -119,3 +119,15 @@ Found by reading / crash stacks (tools: the SEH stack log in draw_widgets, `<wor
 - Frame numbers: `LLFrameTimer::getFrameCount()` counts the login-screen frames; the world starts at 13000-16000 and varies per run.
 
 Open: mode 2 ran frames and then died with a heap corruption (exception c0000374) after about two minutes; the source is not found (the `LLRender` copy has no owning raw pointers, the recorders are accounted for). Not worth more until the concurrent design needs it: the whole widget draw is about 0.9 ms of a 16.5 ms frame.
+
+## Textures: memory and missing textures (2026-10-11)
+
+Reported: more video memory after teleporting to object-heavy sims; textures missing on one face while a neighbour with the same texture is fine.
+
+Found by reading, then confirmed by the new log line (tag VkTex, every 1800 frames: textures and render targets in MB, mip levels that hold no data, device heap use against its budget, bindless slots used / refused, texture images that could not be allocated):
+- **Bindless table (the likely cause of the missing textures):** 8192 slots per frame in the 2D table, one per distinct (image view, sampler). The plaza alone used 5600 at its peak, so a heavy sim reaches the limit; a texture that is new to the frame after that drew WHITE while the same texture that already had a slot was fine. Now 65536 slots in the 2D table and 2048 in each of the cube, cube array and shadow tables (sized against the device's update-after-bind limits, which count all tables together); the table logs its refusals.
+- **Texture memory:** every 2D texture and render target was created with a full mip chain, used or not. The plaza showed 237 MB of mip levels that never receive data, and the 2D render targets carried the same third on top (408 -> 305 MB). A 2D texture now starts with its base level (`grow_levels` in llvkgl.cpp allocates the chain, copying level 0, when something uploads or renders into a level above 0, copies into one, queries it, or calls glGenerateMipmap); arrays, cubes and 3D keep the chain from the start. Result: unused mip levels 0 MB, device heap in use 7.8 -> 7.4 GB in the same scene.
+- **White for the first frame of a texture:** `LLTexUnit::prepareFast` and `bindFast` read the texture's GL name, asked for an immediate update when it was 0, and went on with the 0 they had read: the face was white for the frame the texture appeared in (and, in a packet record, for the whole record: the name is cached per record). Both re-read the name after the update.
+- A texture image that cannot be allocated (`vmaCreateImage` failing) is logged with the sizes and the heap budget, and counted.
+
+Not found yet: whether the budget logic of the viewer (it counts texture bytes the GL way and uses `gGLManager.mVRAM / 2`) lets the textures use more than the device can hold after several teleports; the VkTex log line shows it (heap usage against the budget, failed allocations).
