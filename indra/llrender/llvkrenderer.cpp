@@ -3145,12 +3145,28 @@ VkDescriptorSet Renderer::uboSet()
 
 // One GPU timestamp after a draw, described well enough to find the draw again: when a frame hangs the watchdog (Context::beginFrame) names the first draw whose stamp never
 // completed. The program, what was drawn, and the buffers (handle and offset: the arena buffers are shared, the offset tells which range).
-void Renderer::stampDraw(const char* what, U32 count, U32 first, S32 vertex_offset)
+U32 Renderer::drawTag(const char* what, U32 count, U32 first, S32 vertex_offset)
 {
-    char text[400];
-    snprintf(text, sizeof(text), "draw %u: %s, %s %u from %u, vertex offset %d, vertex buffer %llx+%llu, index buffer %llx+%llu", ++mDrawStampCount, mProgram ? mProgram->getName().c_str() : "(no program)", what, count, first,
-             vertex_offset, (unsigned long long)(uintptr_t)mVertexBuffer, (unsigned long long)mVertexOffset, (unsigned long long)(uintptr_t)mIndexBuffer, (unsigned long long)mIndexOffset);
-    Context::instance().gpuStamp(Context::drawStampTag(text));
+    char text[560];
+    int n = snprintf(text, sizeof(text), "draw %u: %s, %s %u from %u, vertex offset %d, vertex buffer %llx+%llu, index buffer %llx+%llu", ++mDrawStampCount, mProgram ? mProgram->getName().c_str() : "(no program)", what, count, first,
+                     vertex_offset, (unsigned long long)(uintptr_t)mVertexBuffer, (unsigned long long)mVertexOffset, (unsigned long long)(uintptr_t)mIndexBuffer, (unsigned long long)mIndexOffset);
+    if (mProgram && n > 0 && n < (int)sizeof(text) - 80)
+    {
+        // the bindless texture slots this draw samples (0 is the stand-in): a stale or recycled slot is one more way a draw can read memory that is not its own
+        n += snprintf(text + n, sizeof(text) - n, ", texture slots");
+        const std::vector<U8>& draw_class = mProgram->mShadow[UC_DRAW];
+        for (size_t k = 0; k < mProgram->mSlotOffset.size() && k < 16 && n < (int)sizeof(text) - 12; ++k)
+        {
+            const U32 offset = mProgram->mSlotOffset[k];
+            if (offset + sizeof(U32) <= draw_class.size())
+            {
+                U32 slot = 0;
+                memcpy(&slot, draw_class.data() + offset, sizeof(U32));
+                n += snprintf(text + n, sizeof(text) - n, " %u", slot);
+            }
+        }
+    }
+    return Context::drawStampTag(text);
 }
 
 bool Renderer::draw(U32 vertex_count, U32 first_vertex)
@@ -3168,10 +3184,15 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
     }
     long long cmd_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
     startPendingQuery();
-    vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
-    if (mDrawStamps)
+    const U32 stamp_tag = mDrawStamps ? drawTag("vertices", vertex_count, first_vertex, 0) : 0u;
+    if (stamp_tag)
     {
-        stampDraw("vertices", vertex_count, first_vertex, 0);
+        Context::instance().drawCheckpoint(stamp_tag);       // (before the draw: a lost device names the draw the GPU had started)
+    }
+    vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
+    if (stamp_tag)
+    {
+        Context::instance().gpuStamp(stamp_tag);
     }
     LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
     ++mDrawCount;
@@ -3219,7 +3240,7 @@ bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirec
     }
     if (mDrawStamps)
     {
-        stampDraw("packet draws", draws, 0, 0);
+        Context::instance().gpuStamp(drawTag("packet draws", draws, 0, 0));
     }
     ++mModCount;
     return true;
@@ -3263,10 +3284,15 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         mBoundIndexType = mIndexType;
     }
     startPendingQuery();
-    vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
-    if (mDrawStamps)
+    const U32 stamp_tag = mDrawStamps ? drawTag("indices", index_count, first_index, vertex_offset) : 0u;
+    if (stamp_tag)
     {
-        stampDraw("indices", index_count, first_index, vertex_offset);
+        Context::instance().drawCheckpoint(stamp_tag);       // (before the draw: a lost device names the draw the GPU had started)
+    }
+    vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
+    if (stamp_tag)
+    {
+        Context::instance().gpuStamp(stamp_tag);
     }
     LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
     ++mDrawCount;
