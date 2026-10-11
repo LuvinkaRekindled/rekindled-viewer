@@ -106,3 +106,16 @@ Why it was not a plain move:
 Results (plaza): 4200 frames checked, 0 stale draw infos in the render map; all builds byte-identical; the sort was redone in 12 of 3600 early-sort frames (startup mostly). In-run A/B (alternating 60 frames, so scene drift cancels): steady-state frame interval 16.15 / 16.59 / 16.23 ms with the early sort vs 16.66 / 17.11 / 16.93 without in one run; 16.51 vs 16.95 in another: about 0.4 - 0.6 ms (3%) faster. (Back-to-back runs of different launches said the opposite, 17.3 / 19.4 vs 16.4 / 16.6: that was scene drift, the same setting varies by 2 ms between launches. Use the `alt` mode for any A/B.) Screenshots in both orders look the same.
 
 Not checked: teleport, region crossing, snapshots (the early sort is off for `for_snapshot` and the first frame), avatar impostor churn beyond the plaza.
+
+## F3: the UI widget draw as a sub-stream / on a UI thread (2026-10-11, not finished)
+
+`LL_VK_UI_SUBSTREAM` (rt-defer-start: `RT_UI_SUBSTREAM`): 0 normal, 1 the widgets (`LLViewerWindow::draw`) recorded into a sub-stream on the main thread and spliced at once, 2 recorded on one persistent UI thread (`UiDrawThread`) while the main thread waits, `alt` alternates 1/0 every 60 frames. Mode 2 hands the UI thread a copy of the main thread's `gGL` (matrix stacks, texture units, immediate buffer) and takes the copy back, so the producer-side beliefs end as if main had drawn.
+
+Found by reading / crash stacks (tools: the SEH stack log in draw_widgets, `<work>\tools\dumpstack.exe dump.dmp exe-dir` for a minidump):
+- **Sub-stream state bug (fixed, 5c43754d):** `LLVkState::takeChanged()` read the main producer's context (`gCtx`), every setter wrote the current one (`C()`): a sub-stream's draws emitted the MAIN state block. Visible as the minimap drawn unclipped in the People panel and a stray bar above the bottom toolbar. One word; it would have hit every sub-stream use.
+- **LLTrace is thread-affine:** a stat graph / the status bar creates a `PeriodicRecording` while drawing and keeps it; it is activated in the thread's recorder, so the drawing thread must be one persistent thread with its own `ThreadRecorder` (a child of the master, `pushToParent()` after each draw), never a throwaway one.
+- **`LLTrace::get_frame_recording()` is `static thread_local`** and only the main loop advances it: on another thread it is empty and `getPeriodMedianPerSec` indexes `buf[-1]` (status bar FPS). Mode 2 points the UI thread at the main thread's (`set_frame_recording_override`); that is only valid while main waits. A UI thread that draws concurrently needs a published snapshot of the frame statistics.
+- `LLRender::flush` draws through a shared vertex-buffer cache (`sVBCache`, hash of the vertex data): needs a per-thread cache or a lock for a concurrent UI thread.
+- Frame numbers: `LLFrameTimer::getFrameCount()` counts the login-screen frames; the world starts at 13000-16000 and varies per run.
+
+Open: mode 2 ran frames and then died with a heap corruption (exception c0000374) after about two minutes; the source is not found (the `LLRender` copy has no owning raw pointers, the recorders are accounted for). Not worth more until the concurrent design needs it: the whole widget draw is about 0.9 ms of a 16.5 ms frame.
