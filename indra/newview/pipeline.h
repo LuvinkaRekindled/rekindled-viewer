@@ -281,6 +281,7 @@ public:
 
     // Populate given LLCullResult with results of a frustum cull of the entire scene against the given LLCamera
     void updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments = false);
+    void dropOcclusionMarks(LLCullResult& result);      // <FS> before a cull result is thrown away without doOcclusion() having run for it
     void createObjects(F32 max_dtime);
     void createObject(LLViewerObject* vobj);
     void processPartitionQ();

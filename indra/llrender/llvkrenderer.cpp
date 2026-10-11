@@ -1458,10 +1458,12 @@ void Renderer::harvestQueries(U32 slot)
             if (data[(size_t)i * 2 + 1])
             {
                 mQueryResults.push_back({ mOccSerial[slot][i], 0, data[(size_t)i * 2] });
+                ++(data[(size_t)i * 2] ? mOccPassed : mOccNone);
             }
             else if (!mOccBegun[slot][i])
             {
                 mQueryResults.push_back({ mOccSerial[slot][i], 0, 0 });        // no draw happened inside it: nothing passed
+                ++mOccNeverDrawn;
             }
         }
         vkResetQueryPool(dev, mOccPool[slot], 0, n);
