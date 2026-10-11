@@ -63,6 +63,7 @@ struct GpuGeom
 static_assert(sizeof(GpuGeom) == 80, "geometry record");
 constexpr U32 kMaxRecords = (U32)(kTableBytes / sizeof(GpuGeom));
 constexpr F32 kSkinReach = 300.f;                            // metres from the avatar's position: skinned vertices farther away are garbage and are left out
+constexpr size_t kAvatarBuilds = 16;                        // structure builds of avatars per scene call beyond the groups' limit (the jobs list is reserved for both)
 constexpr U32 kMaxSkinJobs = 2048;                          // compute skinning jobs per scene call
 constexpr U32 kSkinChunkVerts = 128;                        // vertices per workgroup (one chunk table entry)
 constexpr U32 kMaxSkinChunks = 131072;
@@ -1453,8 +1454,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
 
     lap(0, t_lap);
     // ---- 1. what is stale -----------------------------------------------------------------------------------
+    // The structures keep pointers into this list (Blas::mJob): it must NEVER reallocate while the call runs. Groups stop at max_builds, avatars at max_builds + kAvatarBuilds, and both also
+    // check the capacity before they add one. (The avatars' extra 16 once went past the old reserve of max_builds: every pointer dangled, the instances of the groups got their structure
+    // address from freed memory, and the top-level build read junk references and hung the GPU.)
     std::vector<Job> jobs;
-    jobs.reserve((size_t)max_builds);
+    jobs.reserve((size_t)max_builds + kAvatarBuilds + 8);
     std::vector<SkinJob> skin_jobs;
     std::vector<SkinChunk> skin_chunks;
     std::vector<SkinDraw*> skin_job_draws;      // the draw behind each job (null for the skin test copies), for the probe
@@ -1646,7 +1650,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         {
             continue;                           // up to date
         }
-        if (jobs.size() >= max_builds || tris_budget == 0)
+        if (jobs.size() >= max_builds || jobs.size() >= jobs.capacity() || tris_budget == 0)
         {
             ++sStats.mDeferred;
             continue;
@@ -2079,7 +2083,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             a.mOverTag = av_tag;
             continue;
         }
-        if (jobs.size() >= max_builds + 16 || skin_jobs.size() + cur.size() > kMaxSkinJobs || skin_chunks.size() + chunks_needed > kMaxSkinChunks)       // (avatars have 16 builds of their own beyond the groups' limit)
+        if (jobs.size() >= max_builds + kAvatarBuilds || jobs.size() >= jobs.capacity() || skin_jobs.size() + cur.size() > kMaxSkinJobs || skin_chunks.size() + chunks_needed > kMaxSkinChunks)       // (avatars have 16 builds of their own beyond the groups' limit)
         {
             ++sStats.mDeferred;
             a.mOverTag = av_tag;
