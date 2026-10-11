@@ -9,7 +9,6 @@
 
 #include "linden_common.h"
 
-#define LL_VK_NO_INTERCEPT      // this file talks about GL types and constants only; it never calls GL
 #include "llglheaders.h"
 
 #if defined(LL_VULKAN)
@@ -29,12 +28,7 @@
 #include "llvkrt.h"
 
 #include <chrono>
-#include "llvkgl_hooks.inc"      // generated: storage and names for the per-hook statistics
-
-namespace LLVkGL
-{
-const char* hook_name(int i) { return (i >= 0 && i < HOOK_COUNT) ? kHookNames[i] : "?"; }
-}
+#include "llvkgl.h"
 #include "llvkasync.h"
 #include <map>
 #include <mutex>
@@ -2077,7 +2071,7 @@ void write_buffer(GLuint name, Buf& b, U64 offset, U64 size, const void* data, b
 // hooks: textures
 //-----------------------------------------------------------------------------------------------------
 
-void on_glGenTextures(GLsizei n, GLuint* textures)
+void create_textures(GLsizei n, GLuint* textures)
 {
     for (GLsizei i = 0; i < n; ++i)
     {
@@ -2087,7 +2081,7 @@ void on_glGenTextures(GLsizei n, GLuint* textures)
 
 static U64 sPacketTextureGeneration = 0;     // <FS> bumped when a texture entry goes: the packet records' lookup cache starts over
 
-void on_glDeleteTextures(GLsizei n, const GLuint* textures)
+void destroy_textures(GLsizei n, const GLuint* textures)
 {
     for (GLsizei i = 0; i < n; ++i)
     {
@@ -2128,7 +2122,7 @@ void slot_bind(unsigned unit, unsigned target, unsigned name)
 }
 
 
-void on_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
+void edit_image2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
 {
     Tex* t = bound_texture(target);
     if (!t || width <= 0 || height <= 0)
@@ -2146,7 +2140,7 @@ void on_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei w
     upload_level(*t, target, level, 0, 0, 0, (U32)width, (U32)height, 1, format, type, pixels);
 }
 
-void on_glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels)
+void edit_image3D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels)
 {
     Tex* t = bound_texture(target);
     if (!t || width <= 0 || height <= 0 || depth <= 0)
@@ -2164,7 +2158,7 @@ void on_glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei w
     upload_level(*t, target, level, 0, 0, 0, (U32)width, (U32)height, (U32)depth, format, type, pixels);
 }
 
-void on_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
+void edit_subimage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
 {
     Tex* t = bound_texture(target);
     if (t)
@@ -2173,7 +2167,7 @@ void on_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset
     }
 }
 
-void on_glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void* pixels)
+void edit_subimage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void* pixels)
 {
     Tex* t = bound_texture(target);
     if (t)
@@ -2182,7 +2176,7 @@ void on_glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset
     }
 }
 
-void on_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
+void edit_compressed2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
 {
     Tex* t = bound_texture(target);
     if (!t || width <= 0 || height <= 0)
@@ -2203,7 +2197,7 @@ void on_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat
     Renderer::instance().uploadTexture(t->mImage, (U32)level, layer, 0, 0, (U32)width, (U32)height, 1, src, (VkDeviceSize)imageSize);
 }
 
-void on_glTexParameteri(GLenum target, GLenum pname, GLint param)
+void edit_param_i(GLenum target, GLenum pname, GLint param)
 {
     Tex* t = bound_texture(target);
     if (!t)
@@ -2231,7 +2225,7 @@ void on_glTexParameteri(GLenum target, GLenum pname, GLint param)
     }
 }
 
-void on_glTexParameterf(GLenum target, GLenum pname, GLfloat param)
+void edit_param_f(GLenum target, GLenum pname, GLfloat param)
 {
     if (pname == GL_TEXTURE_MAX_ANISOTROPY || pname == GL_TEXTURE_MAX_ANISOTROPY_EXT)
     {
@@ -2241,10 +2235,10 @@ void on_glTexParameterf(GLenum target, GLenum pname, GLfloat param)
         }
         return;
     }
-    on_glTexParameteri(target, pname, (GLint)param);
+    edit_param_i(target, pname, (GLint)param);
 }
 
-void on_glTexParameteriv(GLenum target, GLenum pname, const GLint* params)
+void edit_param_iv(GLenum target, GLenum pname, const GLint* params)
 {
     if (!params)
     {
@@ -2263,10 +2257,10 @@ void on_glTexParameteriv(GLenum target, GLenum pname, const GLint* params)
         }
         return;
     }
-    on_glTexParameteri(target, pname, params[0]);
+    edit_param_i(target, pname, params[0]);
 }
 
-void on_glGenerateMipmap(GLenum target)
+void edit_mipmap(GLenum target)
 {
     Tex* t = bound_texture(target);
     if (t && t->mImage.valid())
@@ -2333,31 +2327,31 @@ struct EditScope
 void tex_image2D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels)
 {
     EditScope s(id, target, "image2D", &ps);
-    on_glTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
+    edit_image2D(target, level, internalformat, width, height, border, format, type, pixels);
 }
 
 void tex_image3D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels)
 {
     EditScope s(id, target, "image3D", &ps);
-    on_glTexImage3D(target, level, internalformat, width, height, depth, border, format, type, pixels);
+    edit_image3D(target, level, internalformat, width, height, depth, border, format, type, pixels);
 }
 
 void tex_subimage2D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels)
 {
     EditScope s(id, target, "subimage2D", &ps);
-    on_glTexSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pixels);
+    edit_subimage2D(target, level, xoffset, yoffset, width, height, format, type, pixels);
 }
 
 void tex_subimage3D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void* pixels)
 {
     EditScope s(id, target, "subimage3D", &ps);
-    on_glTexSubImage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, pixels);
+    edit_subimage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, pixels);
 }
 
 void tex_compressed2D(GLuint id, const LLVkTex::PixelStore& ps, GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data)
 {
     EditScope s(id, target, "compressed2D", &ps);
-    on_glCompressedTexImage2D(target, level, internalformat, width, height, border, imageSize, data);
+    edit_compressed2D(target, level, internalformat, width, height, border, imageSize, data);
 }
 
 void tex_params(GLuint id, GLenum target, const LLVkAsync::TexParam* params, U32 count)
@@ -2365,21 +2359,21 @@ void tex_params(GLuint id, GLenum target, const LLVkAsync::TexParam* params, U32
     EditScope s(id, target, "params");
     for (U32 i = 0; i < count; ++i)
     {
-        if (params[i].mIsFloat) on_glTexParameterf(target, params[i].mPname, params[i].mFloat);
-        else on_glTexParameteri(target, params[i].mPname, params[i].mInt);
+        if (params[i].mIsFloat) edit_param_f(target, params[i].mPname, params[i].mFloat);
+        else edit_param_i(target, params[i].mPname, params[i].mInt);
     }
 }
 
 void tex_swizzle(GLuint id, GLenum target, const GLint* rgba)
 {
     EditScope s(id, target, "swizzle");
-    on_glTexParameteriv(target, GL_TEXTURE_SWIZZLE_RGBA, rgba);
+    edit_param_iv(target, GL_TEXTURE_SWIZZLE_RGBA, rgba);
 }
 
 void tex_mipmap(GLuint id, GLenum target)
 {
     EditScope s(id, target, "mipmap");
-    on_glGenerateMipmap(target);
+    edit_mipmap(target);
 }
 
 void tex_copy_sub(GLuint id, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height, GLuint source)
@@ -2398,7 +2392,7 @@ void tex_copy_image(GLuint id, GLenum target, GLint level, GLenum internalformat
 // hooks: framebuffers
 //-----------------------------------------------------------------------------------------------------
 
-void on_glGenFramebuffers(GLsizei n, GLuint* framebuffers)
+void create_targets(GLsizei n, GLuint* framebuffers)
 {
     for (GLsizei i = 0; i < n; ++i)
     {
@@ -2406,7 +2400,7 @@ void on_glGenFramebuffers(GLsizei n, GLuint* framebuffers)
     }
 }
 
-void on_glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers)
+void destroy_targets(GLsizei n, const GLuint* framebuffers)
 {
     for (GLsizei i = 0; i < n; ++i)
     {
@@ -2467,7 +2461,7 @@ void target_state(unsigned fbo_name, int draw_buffers)
 // hooks: buffers and vertex arrays
 //-----------------------------------------------------------------------------------------------------
 
-void on_glGenBuffers(GLsizei n, GLuint* buffers)
+void create_buffers(GLsizei n, GLuint* buffers)
 {
     for (GLsizei i = 0; i < n; ++i)
     {
@@ -2477,7 +2471,7 @@ void on_glGenBuffers(GLsizei n, GLuint* buffers)
 
 static U64 sPacketBufferGeneration = 0;      // <FS> bumped when a buffer entry goes: the packet records' lookup cache starts over
 
-void on_glDeleteBuffers(GLsizei n, const GLuint* buffers)
+void destroy_buffers(GLsizei n, const GLuint* buffers)
 {
     Context& ctx = Context::instance();
     for (GLsizei i = 0; i < n; ++i)
@@ -4323,45 +4317,6 @@ void after_frame()
                 LL_INFOS("VkPhases") << frames << " frames, " << wall_ms / frames << " ms/frame wall, " << (sDrawsTotal - draws_at_start) / frames
                                      << " draws/frame; CPU ms/frame by phase: " << text << LL_ENDL;
                 {
-                    // the sink hooks, most expensive first, for the main thread and for all other threads (time includes waiting for the lock;
-                    // the draw hooks contain the draw phases above)
-                    for (int part = 0; part < 2; ++part)
-                    {
-                        std::vector<std::pair<long long, int>> order;
-                        for (int i = part * HOOK_COUNT; i < (part + 1) * HOOK_COUNT; ++i)
-                        {
-                            if (gHookStatCalls[i]) order.push_back({ gHookStatTicks[i], i });
-                        }
-                        std::sort(order.rbegin(), order.rend());
-                        std::string top;
-                        for (size_t k = 0; k < order.size() && k < (part ? 8u : 14u); ++k)
-                        {
-                            const int i = order[k].second;
-                            const double ms = (double)gHookStatTicks[i] * 1000.0 / (double)freq.QuadPart;
-                            char buf[160];
-                            snprintf(buf, sizeof(buf), "%s %.1f calls %.2f ms %.0f ns/call | ", kHookNames[i - part * HOOK_COUNT], (double)gHookStatCalls[i] / frames, ms / frames, ms * 1e6 / (double)gHookStatCalls[i]);
-                            top += buf;
-                        }
-                        LL_INFOS("VkPhases") << (part ? "hooks on OTHER threads per frame (time shown per viewer frame): " : "hooks on the MAIN thread per frame, most CPU time first: ") << top << LL_ENDL;
-                    }
-                    {
-                        // the hooks that hand a value back to the viewer: each would be a wait if the work were queued for another thread
-                        std::string answers;
-                        for (int i = 0; i < HOOK_COUNT; ++i)
-                        {
-                            const char* n = kHookNames[i];
-                            const bool value = strncmp(n, "glGet", 5) == 0 || strncmp(n, "glIs", 4) == 0 || strncmp(n, "glCheck", 7) == 0 || strncmp(n, "glFence", 7) == 0
-                                               || strncmp(n, "glClientWait", 12) == 0 || strncmp(n, "glReadPixels", 12) == 0 || strncmp(n, "glCreate", 8) == 0;
-                            if (value && gHookStatCalls[i])
-                            {
-                                char buf[120];
-                                snprintf(buf, sizeof(buf), "%s %.1f calls | ", n, (double)gHookStatCalls[i] / frames);
-                                answers += buf;
-                            }
-                        }
-                        LL_INFOS("VkPhases") << "value-returning hooks per frame (main thread): " << answers << LL_ENDL;
-                    }
-                    for (int i = 0; i < 2 * HOOK_COUNT; ++i) { gHookStatTicks[i] = 0; gHookStatCalls[i] = 0; }
                     {
                         const Renderer::DrawDiag dd = Renderer::instance().takeDrawDiag();
                         LL_INFOS("VkPhases") << "indexed draws per frame: " << (double)dd.mDraws / frames << ", of which changed nothing but the draw command: " << (double)dd.mUnchanged / frames
@@ -4717,12 +4672,12 @@ void drain_query_results()
 
 
 
-void on_glGenQueries(GLsizei n, GLuint* ids)
+void create_queries(GLsizei n, GLuint* ids)
 {
     (void)n; (void)ids;
 }
 
-void on_glDeleteQueries(GLsizei n, const GLuint* ids)
+void destroy_queries(GLsizei n, const GLuint* ids)
 {
     if (!queries_on() || !ids) return;
     for (GLsizei i = 0; i < n; ++i) sQueryLatest.erase(ids[i]);
@@ -4879,6 +4834,31 @@ void own_gen(int kind, GLsizei n, GLuint* out)
     for (GLsizei i = 0; i < n; ++i)
     {
         out[i] = next[kind].fetch_add(1);
+    }
+}
+
+void resource_create(unsigned kind, int n, const unsigned* ids)
+{
+    GLuint* names = const_cast<GLuint*>(ids);
+    switch (kind)
+    {
+    case LLVkAsync::RES_TEXTURE: create_textures(n, names); break;
+    case LLVkAsync::RES_TARGET: create_targets(n, names); break;
+    case LLVkAsync::RES_BUFFER: create_buffers(n, names); break;
+    case LLVkAsync::RES_QUERY: create_queries(n, names); break;
+    default: break;
+    }
+}
+
+void resource_destroy(unsigned kind, int n, const unsigned* ids)
+{
+    switch (kind)
+    {
+    case LLVkAsync::RES_TEXTURE: destroy_textures(n, ids); break;
+    case LLVkAsync::RES_TARGET: destroy_targets(n, ids); break;
+    case LLVkAsync::RES_BUFFER: destroy_buffers(n, ids); break;
+    case LLVkAsync::RES_QUERY: destroy_queries(n, ids); break;
+    default: break;
     }
 }
 

@@ -88,7 +88,7 @@ namespace LLVkAsync
     // the worker adds what it spent on uploads (microseconds): converting into a vector (old path), filling the staging buffer, the whole call; calls: uploads counted by this call
     void noteTexWorker(unsigned long long convert_us, unsigned long long fill_us, unsigned long long total_us, unsigned calls);
 
-    // commands that are not GL calls (the GL calls are numbered by the generated enum in llvkgl.h)
+    // the records of the command stream
     enum Cmd : unsigned short
     {
         CMD_BASE = 1000,
@@ -111,7 +111,8 @@ namespace LLVkAsync
         CMD_UNIFORM_BLOCK,                         // F1.3: a buffer becomes the contents of a numbered uniform block (llvkbuf.h)
         CMD_CONST_ATTRIB,                          // F1.3: the constant value of a vertex attribute that has no array
         CMD_CLEAR,                                 // F1.4: clear the current target (llvktarget.h)
-        CMD_QUERY_BEGIN, CMD_QUERY_END             // F1.6: a query kind begins / ends here in the stream (llvkquery.h)
+        CMD_QUERY_BEGIN, CMD_QUERY_END,            // F1.6: a query kind begins / ends here in the stream (llvkquery.h)
+        CMD_RESOURCE_CREATE, CMD_RESOURCE_DESTROY  // F2.1: names of textures / targets / buffers / queries come into being or go (resourceCreate / resourceDestroy)
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 
@@ -122,8 +123,10 @@ namespace LLVkAsync
     void frameHold(bool hold);
     void snapshotBoundary(S32 mode);
 
-    // names for glGen*: handed out on the calling thread, created on the worker
-    void gen_enq(unsigned short op, int kind, S32 n, unsigned* out);
+    // resource lifetime: the names are handed out on the calling thread (resourceCreate) and the worker makes / releases the objects in stream order
+    enum ResourceKind : U32 { RES_TEXTURE = 0, RES_TARGET = 1, RES_BUFFER = 2, RES_QUERY = 4 };
+    void resourceCreate(U32 kind, S32 n, U32* ids);
+    void resourceDestroy(U32 kind, S32 n, const U32* ids);
     // occlusion query results published by the worker; false: ask the worker (sync call)
     bool query_get(int kind, unsigned id, unsigned pname, void* params);
 

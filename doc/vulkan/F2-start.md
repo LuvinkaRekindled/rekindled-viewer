@@ -1,0 +1,9 @@
+# F2 executor: status and steps
+
+F2 turns the worker (`llvkgl.cpp`, `llvkasync.cpp`) from "the GL mirror" into the executor of the typed records. Measured on the plaza before F2 (F1.6 build): the worker is the bottleneck (24.4 ms busy of 24.8 ms per frame); 7816 draws at 2.3 us = 17.8 ms, of which renderer apply+record 12 ms (uniforms 3.5, sampler slots + ray scene set 1.5, texture layouts 0.7, pipeline 0.5, vertex input 0.4), shadow packets 2.3, rt scene 2.1, present 0.5. The stream is typed already (about 16k records/frame); what is left of "GL" in the worker is its tables keyed by GL names with GL enums in them, and the GL-named handlers.
+
+## F2.1 done: no hook layer (2026-10-10)
+- Resource lifetime is two typed records: `CMD_RESOURCE_CREATE/DESTROY` (`LLVkAsync::resourceCreate/resourceDestroy(kind, n, ids)`, kinds texture / target / buffer / query; the names are handed out on the producing thread, the objects made / released in stream order; inline mode before the queue starts runs them under the lock). `LLVkTex/LLVkTarget/LLVkBuf/LLVkQuery::create/destroy` call them.
+- The 9 GL texture-edit hooks and their encoders are gone; the worker's handlers keep their bodies as plain functions (`edit_image2D/3D`, `edit_subimage2D/3D`, `edit_compressed2D`, `edit_param_i/f/iv`, `edit_mipmap`; `create_*/destroy_*` for the lifetime), reached only from the typed `tex_*` entry points and `resource_create/destroy`.
+- Deleted: `gen_llvkgl.py`, `llvkgl_hooks.inc`, `llvkgl_async_dispatch.inc`, the generated `llvkgl.h` (now a short hand-written header), `dispatch_gl`, `run_tex`, the `OP_gl*` numbering (command numbers are `CMD_*` only), the per-hook statistics, the `LL_VK_NO_INTERCEPT` markers.
+- Plaza: same picture, 15.7k records/frame (scene dependent), main thread queue cost 0.81 ms/frame.
