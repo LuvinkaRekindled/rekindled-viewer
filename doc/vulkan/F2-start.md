@@ -131,3 +131,11 @@ Found by reading, then confirmed by the new log line (tag VkTex, every 1800 fram
 - A texture image that cannot be allocated (`vmaCreateImage` failing) is logged with the sizes and the heap budget, and counted.
 
 Not found yet: whether the budget logic of the viewer (it counts texture bytes the GL way and uses `gGLManager.mVRAM / 2`) lets the textures use more than the device can hold after several teleports; the VkTex log line shows it (heap usage against the budget, failed allocations).
+
+## Crash at exit (2026-10-11): the Vulkan layer's statics
+
+Intermittent (2 of about 25 shutdowns, dumps firestorm-bin.exe.*.dmp in %LOCALAPPDATA%\CrashDumps): an access violation in `std::vector<unsigned>::assign` (identical-code folding: the symbol is a stand-in) under `~LLPipeline` -> `LLRenderTarget::~LLRenderTarget` -> `LLRenderTarget::release` -> `LLVkGL::target_attach`. Read from the dump with <work>\tools\dumpstack.exe (stack scan).
+
+Cause: the shadow render targets (`mRT->shadow[]`, `mSpotShadow[]`) were never released at shutdown (`releaseShadowBuffers()` existed and nothing called it), so `gPipeline`'s destructor released them when the process exited, by which time the layer's statics (`sGL`, and the function-local `Renderer` and `Context` singletons) had been destroyed; the calls landed in destroyed maps. Undefined behaviour: it only crashes when the freed memory has been reused, hence intermittent.
+
+Changes: `LLPipeline::releaseGLBuffers()` now calls `releaseShadowBuffers()`; `sGL`, `Renderer::instance()` and `Context::instance()` are never destroyed (neither class has a destructor that does more than free memory; `LLVkMirror::shutdown()` is the real teardown). NOT verified by runs on purpose: a crash at exit that is still there will produce a new dump; check %LOCALAPPDATA%\CrashDumps for firestorm-bin.exe dumps after viewer closes.
