@@ -68,6 +68,7 @@ struct Capabilities
     bool mMultiDrawIndirect = false;
     bool mBufferDeviceAddress = false;  // shaders can read buffers by address (render packets)
     bool mDrawIndirectFirstInstance = false;    // indirect draws may use a first instance (render packets: the draw number)
+    U32 mBindlessSmall = 2048;      // slots of each of the cube, cube array and shadow tables
     U32 mBindlessSlots = 0;         // sampled images a shader can index at run time (set 2, render packets with textures); 0 = the device cannot
     F32 mMaxAnisotropy = 1.f;
     F32 mTimestampPeriodNs = 1.f;   // nanoseconds per timestamp tick

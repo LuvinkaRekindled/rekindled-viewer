@@ -569,10 +569,13 @@ bool Context::pickDevice()
                 && chain.f12.shaderSampledImageArrayNonUniformIndexing && mCaps.mBufferDeviceAddress)
             {
                 auto room = [](U32 limit, U32 reserve) -> U32 { return limit > reserve ? limit - reserve : 0; };
-                const U32 n = std::min<U32>({ 8192u,
-                    room(p12.maxPerStageDescriptorUpdateAfterBindSamplers, 96), room(p12.maxPerStageDescriptorUpdateAfterBindSampledImages, 96),
-                    room(p12.maxPerStageUpdateAfterBindResources, 160), room(p12.maxDescriptorSetUpdateAfterBindSamplers, 96),
-                    room(p12.maxDescriptorSetUpdateAfterBindSampledImages, 96) });
+                // the limits count every table of the set together: the 2D table gets what is left after the three small ones
+                const U32 others = 3 * mCaps.mBindlessSmall;
+                auto left = [&](U32 limit, U32 reserve) -> U32 { const U32 r = room(limit, reserve); return r > others ? r - others : 0; };
+                const U32 n = std::min<U32>({ 65536u,
+                    left(p12.maxPerStageDescriptorUpdateAfterBindSamplers, 96), left(p12.maxPerStageDescriptorUpdateAfterBindSampledImages, 96),
+                    left(p12.maxPerStageUpdateAfterBindResources, 160), left(p12.maxDescriptorSetUpdateAfterBindSamplers, 96),
+                    left(p12.maxDescriptorSetUpdateAfterBindSampledImages, 96) });
                 mCaps.mBindlessSlots = n >= 1024 ? n : 0;
             }
             LL_INFOS("Vulkan") << "descriptor indexing: runtime arrays " << (chain.f12.runtimeDescriptorArray ? 1 : 0) << ", partially bound "

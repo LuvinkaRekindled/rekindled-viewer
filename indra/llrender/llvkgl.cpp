@@ -695,7 +695,9 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     td.mWidth = w;
     td.mHeight = h;
     td.mDepth = d;
-    td.mMips = tg.mDim == DIM_3D ? mipLevelCount(std::max(w, h), depth) : mipLevelCount(w, h);
+    // a plain 2D texture starts with its base level only: the rest of the chain is allocated when something needs it (grow_levels). Most of the viewer's textures get it at once
+    // (they are mipmapped right after the upload), but the UI images, the glyph pages and most render targets never do and would carry a third more memory for nothing.
+    td.mMips = tg.mDim == DIM_2D ? 1 : (tg.mDim == DIM_3D ? mipLevelCount(std::max(w, h), depth) : mipLevelCount(w, h));
     td.mFormat = fm.mVk;
     td.mSwizzle = t.mSwizzleSet ? swizzle_mapping(t) : fm.mSwizzle;
     if (fm.mDepth)
@@ -733,6 +735,60 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     return true;
 }
 
+// The rest of the mip chain of a 2D texture that started with its base level only: a new image with every level, level 0 copied over, the old image released. Called when something
+// uploads or renders into a level above 0, or generates the chain. Arrays, cubes and 3D textures own their chain from the start.
+bool grow_levels(Tex& t)
+{
+    using namespace LLVkFormat;
+    if (!t.mImage.valid() || t.mDim != DIM_2D)
+    {
+        return t.mImage.valid();
+    }
+    const U32 full = mipLevelCount(t.mWidth, t.mHeight);
+    if (t.mLevels >= full)
+    {
+        return true;
+    }
+    TextureDesc td;
+    td.mType = TexType::Tex2D;
+    td.mWidth = t.mWidth;
+    td.mHeight = t.mHeight;
+    td.mDepth = 1;
+    td.mMips = full;
+    td.mFormat = t.mFormat.mVk;
+    td.mSwizzle = t.mSwizzleSet ? swizzle_mapping(t) : t.mFormat.mSwizzle;
+    if (t.mFormat.mDepth)
+    {
+        td.mUsage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    }
+    else if (!t.mFormat.mCompressed)
+    {
+        td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        if (LLVkDlss::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+        {
+            td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
+        }
+    }
+    Image fresh;
+    if (!Renderer::instance().createTexture(td, fresh))
+    {
+        return false;
+    }
+    Renderer::instance().copyBaseLevel(t.mImage, fresh);
+    destroy_tex_images(t);
+    t.mImage = fresh;
+    t.mLevels = full;
+    for (auto& kv : sGL.mTextures)
+    {
+        if (&kv.second == &t)
+        {
+            Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(kv.first));
+            break;
+        }
+    }
+    return true;
+}
+
 // source of client pixel data: either a pointer or an offset into the bound pixel unpack buffer
 const void* pixel_source(const void* pixels)
 {
@@ -753,6 +809,10 @@ void upload_converted(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S3
 void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, LLVkFormat::Transfer tr, const void* pixels)
 {
     using namespace LLVkFormat;
+    if (t.mImage.valid() && level > 0 && (U32)level >= t.mLevels)
+    {
+        grow_levels(t);
+    }
     if (!t.mImage.valid() || level < 0 || (U32)level >= t.mLevels)
     {
         return;
@@ -857,6 +917,10 @@ Image* texture_view(U32 name, S32 level, U32 layer)
         return nullptr;
     }
     Tex& t = *tp;
+    if (level > 0 && !grow_levels(t))
+    {
+        return nullptr;
+    }
     auto key = std::make_pair((U32)level, layer);
     auto vit = t.mViews.find(key);
     if (vit != t.mViews.end())
@@ -2053,6 +2117,10 @@ void edit_compressed2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S
         return;
     }
     const void* src = pixel_source(data);
+    if (src && t->mImage.valid() && level > 0 && (U32)level >= t->mLevels)
+    {
+        grow_levels(*t);
+    }
     if (!src || !t->mImage.valid() || level < 0 || (U32)level >= t->mLevels)
     {
         return;
@@ -2095,7 +2163,7 @@ void edit_setting(const LLVkFormat::Setting& st)
 void edit_mipmap()
 {
     Tex* t = edit_texture();
-    if (t && t->mImage.valid())
+    if (t && t->mImage.valid() && grow_levels(*t))
     {
         Renderer::instance().generateMipmaps(t->mImage);
         t->mValidLevels = t->mLevels;
@@ -2107,6 +2175,10 @@ static void copy_to_texture(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 y
     Tex* t = edit_texture();
     Image* src = read_image(source_fbo);
     if (!t || !t->mImage.valid() || !src || !LLVkMirror::inFrame())
+    {
+        return;
+    }
+    if (level > 0 && !grow_levels(*t))
     {
         return;
     }
@@ -4066,7 +4138,7 @@ namespace
 std::string resource_summary()
 {
     std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
-    U64 tex_bytes = 0, rt_bytes = 0, buf_bytes = 0;
+    U64 tex_bytes = 0, rt_bytes = 0, buf_bytes = 0, unused_mip_bytes = 0;
     U32 tex_count = 0, rt_count = 0, views = 0, buf_count = 0;
     for (auto& kv : sGL.mTextures)
     {
@@ -4082,6 +4154,12 @@ std::string resource_summary()
         }
         const bool target = (t.mImage.mAspect != VK_IMAGE_ASPECT_COLOR_BIT) || !t.mViews.empty() || sFrameTargets.count(kv.first);
         if (target) { rt_bytes += bytes; ++rt_count; } else { tex_bytes += bytes; ++tex_count; }
+        // the mip levels above the ones that ever received data (a texture the viewer uses without mips still owns the whole chain)
+        for (U32 m = std::max<U32>(1, t.mValidLevels); m < t.mImage.mMipLevels; ++m)
+        {
+            const U64 w = std::max<U32>(1, t.mImage.mExtent.width >> m), h = std::max<U32>(1, t.mImage.mExtent.height >> m);
+            unused_mip_bytes += ((w + fi.mBlockWidth - 1) / fi.mBlockWidth) * ((h + fi.mBlockHeight - 1) / fi.mBlockHeight) * fi.mBytesPerBlock * std::max<U32>(1, t.mImage.mLayers) * std::max<U32>(1, t.mImage.mExtent.depth);
+        }
     }
     for (auto& kv : sGL.mBuffers)
     {
@@ -4089,7 +4167,7 @@ std::string resource_summary()
     }
     return "mirrored textures " + std::to_string(tex_count) + " (" + std::to_string(tex_bytes / (1024 * 1024)) + " MB), render targets " + std::to_string(rt_count) + " ("
         + std::to_string(rt_bytes / (1024 * 1024)) + " MB, " + std::to_string(views) + " extra views), buffers " + std::to_string(buf_count) + " (" + std::to_string(buf_bytes / (1024 * 1024))
-        + " MB), GL texture objects " + std::to_string(sGL.mTextures.size()) + ", pending destroys " + std::to_string(Context::instance().pendingDestroys());
+        + " MB), mip levels that hold no data " + std::to_string(unused_mip_bytes / (1024 * 1024)) + " MB, GL texture objects " + std::to_string(sGL.mTextures.size()) + ", pending destroys " + std::to_string(Context::instance().pendingDestroys());
 }
 
 // milliseconds of hook CPU time since the last call
@@ -4120,6 +4198,18 @@ void after_frame()
     if (LLVkAsync::gEnabled)
     {
         drain_query_results();
+    }
+    {
+        // <FS> the video memory and what the textures take of it, every 1800 frames (about 30 seconds): after a teleport this shows where the memory went and whether a texture was refused
+        static U32 frames = 0;
+        if (++frames >= 1800)
+        {
+            frames = 0;
+            const Renderer::TexStats ts = Renderer::instance().takeTexStats();
+            LL_INFOS("VkTex") << "textures: " << resource_summary() << " | " << Context::instance().memoryBudgetText() << "| bindless slots used at most " << ts.mBindlessPeak << " of "
+                << Renderer::instance().bindlessCapacity() << " in a frame, refused " << ts.mBindlessRefused << " | texture images that could not be allocated " << ts.mAllocFailed << " ("
+                << ts.mAllocFailedBytes / (1024 * 1024) << " MB, last " << ts.mAllocFailedLast[0] << "x" << ts.mAllocFailedLast[1] << ")" << LL_ENDL;
+        }
     }
     {
         // LL_VK_PHASES=1: where the main thread's time goes inside the translation layer, averaged over 600 frames
@@ -4885,7 +4975,7 @@ int tex_level_parameter(unsigned id, LLVkFormat::Target tg, int level, LLVkForma
     EditScope s(id);
     Tex* t = edit_texture();
     int v = 0;
-    if (t && t->mImage.valid() && level >= 0 && (U32)level < std::max<U32>(1, t->mLevels))
+    if (t && t->mImage.valid() && level >= 0 && (U32)level < std::max<U32>(1, t->mDim == LLVkFormat::DIM_2D ? mipLevelCount(t->mWidth, t->mHeight) : t->mLevels))
     {
         switch (q)
         {

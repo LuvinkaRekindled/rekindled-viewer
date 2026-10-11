@@ -1005,13 +1005,20 @@ bool Renderer::createLayouts()
     // <FS> set 2: a table of sampled images that shaders index at run time, written as a frame needs them (render packets with textures). Not needed to run.
     if (const U32 slots = ctx.getCaps().mBindlessSlots)
     {
+        // the 2D table is the one a scene fills (a heavy sim names thousands of textures in a frame); cubes, cube arrays and shadow maps are a handful
+        U32 cap[BINDLESS_TABLES];
+        cap[0] = slots;
+        for (U32 t = 1; t < BINDLESS_TABLES; ++t)
+        {
+            cap[t] = ctx.getCaps().mBindlessSmall;
+        }
         VkDescriptorSetLayoutBinding b2[BINDLESS_TABLES] = {};
         VkDescriptorBindingFlags binding_flags[BINDLESS_TABLES];
         for (U32 t = 0; t < BINDLESS_TABLES; ++t)
         {
             b2[t].binding = t;      // 0: 2D (render packets and bindless programs), 1: cube, 2: cube array, 3: 2D shadow
             b2[t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            b2[t].descriptorCount = slots;
+            b2[t].descriptorCount = cap[t];
             b2[t].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
             binding_flags[t] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
         }
@@ -1026,7 +1033,9 @@ bool Renderer::createLayouts()
         bool ok = vk_ok(vkCreateDescriptorSetLayout(dev, &l2, nullptr, &mSet2Layout), "set 2 layout");
         if (ok)
         {
-            VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, slots * BINDLESS_TABLES * Context::frameCount() };
+            U32 total = 0;
+            for (U32 t = 0; t < BINDLESS_TABLES; ++t) total += cap[t];
+            VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, total * Context::frameCount() };
             VkDescriptorPoolCreateInfo bi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
             bi.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
             bi.maxSets = Context::frameCount();
@@ -1046,8 +1055,8 @@ bool Renderer::createLayouts()
         }
         if (ok)
         {
-            mBindlessCapacity = slots;
-            LL_INFOS("Vulkan") << "bindless sampled image tables: " << BINDLESS_TABLES << " x " << slots << " slots per frame (2D, cube, cube array, 2D shadow)" << LL_ENDL;
+            for (U32 t = 0; t < BINDLESS_TABLES; ++t) mBindlessCap[t] = cap[t];
+            LL_INFOS("Vulkan") << "bindless sampled image tables: " << cap[0] << " 2D slots and " << cap[1] << " each for cube, cube array and 2D shadow, per frame" << LL_ENDL;
         }
         else
         {
@@ -2331,12 +2340,17 @@ U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImage
     {
         return it->second;
     }
-    if (tbl.mInfos.size() >= mBindlessCapacity)
+    if (tbl.mInfos.size() >= mBindlessCap[table])
     {
-        LL_WARNS_ONCE("Vulkan") << "bindless table full: the textures after the first " << mBindlessCapacity << " of a frame are drawn white" << LL_ENDL;
+        LL_WARNS_ONCE("Vulkan") << "bindless table " << table << " full: the textures after the first " << mBindlessCap[table] << " of a frame are drawn white" << LL_ENDL;
+        ++mStatBindlessRefused;
         return 0;
     }
     const U32 slot = (U32)tbl.mInfos.size();
+    if (slot + 1 > mStatBindlessPeak.load(std::memory_order_relaxed))
+    {
+        mStatBindlessPeak.store(slot + 1, std::memory_order_relaxed);
+    }
     VkDescriptorImageInfo info = { sampler, image->mView, layout };
     tbl.mInfos.push_back(info);
     tbl.mMap.emplace(key, slot);
@@ -3188,6 +3202,18 @@ void Renderer::withCommandBuffer(const std::function<void(VkCommandBuffer)>& rec
     Context::instance().immediateSubmit(record);
 }
 
+Renderer::TexStats Renderer::takeTexStats()
+{
+    TexStats s;
+    s.mBindlessPeak = mStatBindlessPeak.exchange(0);
+    s.mBindlessRefused = mStatBindlessRefused.exchange(0);
+    s.mAllocFailed = mStatAllocFailed.exchange(0);
+    s.mAllocFailedBytes = mStatAllocFailedBytes.exchange(0);
+    s.mAllocFailedLast[0] = mStatAllocW.load();
+    s.mAllocFailedLast[1] = mStatAllocH.load();
+    return s;
+}
+
 bool Renderer::createTexture(const TextureDesc& d, Image& out)
 {
     ++mModCount;
@@ -3243,6 +3269,16 @@ bool Renderer::createTexture(const TextureDesc& d, Image& out)
     out = Image();
     if (!vk_ok(vmaCreateImage(ctx.getAllocator(), &ii, &ai, &out.mImage, &out.mAllocation, nullptr), "vmaCreateImage (texture)"))
     {
+        // a texture without an image is drawn as the white stand-in: say so, with the memory the device has left
+        ++mStatAllocFailed;
+        mStatAllocFailedBytes += (U64)d.mWidth * d.mHeight * 4;
+        mStatAllocW = d.mWidth;
+        mStatAllocH = d.mHeight;
+        static U32 said = 0;
+        if (said++ < 20)
+        {
+            LL_WARNS("VkTex") << "no memory for a texture of " << d.mWidth << "x" << d.mHeight << " (" << d.mMips << " levels, format " << (S32)d.mFormat << "): " << ctx.memoryBudgetText() << LL_ENDL;
+        }
         out = Image();
         return false;
     }
@@ -3350,6 +3386,26 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
         vmaDestroyBuffer(ctx.getAllocator(), own.mBuffer, own.mAllocation);
     }
     LLVkAsync::noteTexWorker(0, fill_us, (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_start).count(), 1);
+    return true;
+}
+
+bool Renderer::copyBaseLevel(Image& src, Image& dst)
+{
+    ++mModCount;
+    if (!src.valid() || !dst.valid() || src.mExtent.width != dst.mExtent.width || src.mExtent.height != dst.mExtent.height)
+    {
+        return false;
+    }
+    withCommandBuffer([&](VkCommandBuffer cmd) {
+        transition(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkImageCopy region = {};
+        region.srcSubresource = { src.mAspect, 0, 0, std::min<U32>(src.mLayers, dst.mLayers) };
+        region.dstSubresource = { dst.mAspect, 0, 0, std::min<U32>(src.mLayers, dst.mLayers) };
+        region.extent = { src.mExtent.width, src.mExtent.height, 1 };
+        vkCmdCopyImage(cmd, src.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        transition(cmd, dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    });
     return true;
 }
 

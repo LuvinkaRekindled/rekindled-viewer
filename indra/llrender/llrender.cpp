@@ -217,7 +217,17 @@ void LLTexUnit::bindFast(LLTexture* texture)
         //if deleted, will re-generate it immediately
         texture->forceImmediateUpdate();
         gl_tex->forceUpdateBindStats();
-        texture->bindDefaultImage(mIndex);
+        // <FS> the update may just have made the texture: bind that one (the name read before it was 0, which drew the face white for the frame the texture appeared in)
+        if (LLImageGL* updated = texture->getGLTexture())
+        {
+            gl_tex = updated;
+            mCurrTexture = gl_tex->getTexName();
+            mCurrTexType = gl_tex->getTarget();
+        }
+        if (!mCurrTexture)
+        {
+            texture->bindDefaultImage(mIndex);
+        }
     }
     ll_bindTexUnit(mIndex, sGLTextureType[gl_tex->getTarget()], mCurrTexture);
     mHasMipMaps = gl_tex->mHasMipMaps;
@@ -239,12 +249,17 @@ GLuint LLTexUnit::prepareFast(LLTexture* texture)
         return gl_tex->getTexName();
     }
     texture->setActive();
-    const GLuint name = gl_tex->getTexName();
+    GLuint name = gl_tex->getTexName();
     if (!name)
     {
         //if deleted, will re-generate it immediately
         texture->forceImmediateUpdate();
         gl_tex->forceUpdateBindStats();
+        // <FS> the update may just have made the texture: its name now, not the 0 read before (the face was drawn white for the frame it appeared in)
+        if (LLImageGL* updated = texture->getGLTexture())
+        {
+            name = updated->getTexName();
+        }
     }
     return name;
 }
