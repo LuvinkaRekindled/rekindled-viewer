@@ -2676,6 +2676,20 @@ bool LLPipeline::isWaterClip()
     return (gPipeline.mHeroProbeManager.isMirrorPass()) ? false : (!sRenderTransparentWater || gCubeSnapshot) && !sRenderingHUDs;
 }
 
+// <FS> The occlusion groups of a cull result were flagged ACTIVE_OCCLUSION by markOccluder(); doOcclusion() clears the flag when it queries them. A result thrown away before that (the early
+// sort redoes the cull of a frame) leaves the flag on: markOccluder() skips a flagged group, so it would never be queried again and would stay occluded. Called with the result of this frame.
+void LLPipeline::dropOcclusionMarks(LLCullResult& result)
+{
+    for (LLCullResult::sg_iterator iter = result.beginOcclusionGroups(); iter != result.endOcclusionGroups(); ++iter)
+    {
+        LLSpatialGroup* group = *iter;
+        if (!group->isDead())
+        {
+            group->clearOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
+        }
+    }
+}
+
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_CULL);

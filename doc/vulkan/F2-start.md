@@ -164,3 +164,15 @@ Note found while checking the memory numbers: the viewer's own VRAM estimate (`L
 ### Live switches for finding what drops an object (2026-10-11)
 All on by default (Debug Settings, live, not saved between runs): `FSEarlySort` (the main view's sort before the shadow passes), `FSAsyncBuilders` (draw packets built on the async pool's threads; off: each build runs on the main thread when it is needed), `FSBindlessPersistent` (S0, slots kept between frames; off: every slot not used this frame is given back at once, as the old per-frame table did), `FSDeferredPackets` (existing: the static deferred geometry as packet records). Turn one off at the moment something is missing and see whether it comes back; the cause is among the ones that bring it back.
 The 30-second `VkTex` log also gets, from the texture list line: how many geometry builds were taken from the pool, built on the spot, or rejected and rebuilt (other cull result / geometry changed / matrices changed), and how many frames the early sort was redone since the start.
+
+## Occlusion: groups that stayed hidden (2026-10-11)
+
+Symptom: chunks of geometry (a bridge piece, a wall) missing in heavy sims until a teleport; `UseOcclusion` FALSE brought them back, the four work switches did not.
+
+Cause: `markOccluder()` puts an occluded group in the cull result's occlusion list and sets `ACTIVE_OCCLUSION`; the flag is cleared only by the `doOcclusion()` loop, and `markOccluder()` skips a flagged group. The early sort redoes `updateCull` when a main-view group was rebuilt after the sort (1484 redos in one session): the redo clears the list but not the flags, so those groups were never queried again and stayed occluded. Stock never culls twice in a frame, so it only showed there rarely (any frame that marks groups but skips `doOcclusion`).
+
+Fix: `LLPipeline::dropOcclusionMarks(result)` clears the flag of the groups in the list before the redo. A sturdier option if stuck groups still appear: stamp each group with the frame it was marked in and ignore an older flag.
+
+Counters (log, `VkTex`, every 1800 frames): occlusion queries with samples / with none / whose box draw never reached the GPU. After the fix the last is 0, so no draws were being dropped; the "never drawn counts as hidden" path in `harvestQueries` is left as it is.
+
+Result: four heavy sims without anything missing; 135 fps at the beach spot.

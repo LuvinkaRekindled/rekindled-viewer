@@ -403,6 +403,9 @@ public:
     // writes a timestamp now; 'end' tells the harvest which half of an elapsed-time query it is
     bool queryTimestamp(U64 serial, bool end);
     void takeQueryResults(std::vector<QueryResult>& out);
+    // <FS> what became of the occlusion queries since the last call: results with samples, results with none, queries whose draw never reached the GPU (reported as none)
+    struct OccStats { U64 mPassed = 0, mNone = 0, mNeverDrawn = 0; };
+    OccStats takeOccStats() { OccStats s; s.mPassed = mOccPassed.exchange(0); s.mNone = mOccNone.exchange(0); s.mNeverDrawn = mOccNeverDrawn.exchange(0); return s; }
 
 private:
     friend class Program;
@@ -627,6 +630,7 @@ private:
     S32 mOccPending = -1;           // allocated, starts with the next draw
     S32 mOccActive = -1;            // begun inside the current pass
     std::vector<QueryResult> mQueryResults;
+    std::atomic<U64> mOccPassed{0}, mOccNone{0}, mOccNeverDrawn{0};
     bool createQueryPools();
     void destroyQueryPools();
     void harvestQueries(U32 slot);

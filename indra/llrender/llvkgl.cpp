@@ -4208,6 +4208,9 @@ void after_frame()
             LL_INFOS("VkTex") << "textures: " << resource_summary() << " | " << Context::instance().memoryBudgetText() << "| bindless slots in use at most " << ts.mBindlessPeak << " of "
                 << Renderer::instance().bindlessCapacity() << ", " << ts.mBindlessWrites / 1800.0 << " descriptors written per frame, refused " << ts.mBindlessRefused << " | texture images that could not be allocated " << ts.mAllocFailed << " ("
                 << ts.mAllocFailedBytes / (1024 * 1024) << " MB, last " << ts.mAllocFailedLast[0] << "x" << ts.mAllocFailedLast[1] << ")" << LL_ENDL;
+            const Renderer::OccStats os = Renderer::instance().takeOccStats();
+            LL_INFOS("VkTex") << "occlusion queries in this period: " << os.mPassed << " with samples, " << os.mNone << " with none (the box was hidden), " << os.mNeverDrawn
+                << " whose box draw never reached the GPU (counted as hidden)" << LL_ENDL;
         }
     }
     {
