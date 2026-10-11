@@ -11888,6 +11888,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // <FS> Render packets: every draw of the static, untextured types becomes one entry of a record (buffer names, index range, model matrix number)
     auto render_shadow_packets = [this, rt_skip](const U32* list, size_t count)
     {
+        LL_CPU_ZONE("packets: shadow static (build + record)");
         std::vector<LLVkMirror::ShadowPacketEntry> entries;
         std::vector<F32> matrices(16, 0.f);
         matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
@@ -11991,6 +11992,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // <FS> Render packets for the rigged untextured casters: one entry per draw, with the weight4 array and the draw's matrix palette (sent with the record, once per distinct palette)
     auto render_skin_packets = [this, rt_skip](const U32* list, size_t count)
     {
+        LL_CPU_ZONE("packets: shadow rigged (build + record)");
         std::vector<LLVkMirror::ShadowSkinEntry> entries;
         std::vector<F32> matrices(16, 0.f);
         matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
@@ -12307,6 +12309,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // as one record. Every entry names its texture(s) by GL name; the worker gives them slots in a bindless table and the fragment shader does the alpha test.
     auto render_alpha_packets = [this, rt_skip](S32 sun_up, U32 target_width, bool rigged)
     {
+        LL_CPU_ZONE("packets: shadow alpha (build + record)");
         enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_GRASS, KIND_MATERIAL };
         struct Source { U32 type; int kind; };
         static const Source sources[] = {
