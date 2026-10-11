@@ -919,8 +919,20 @@ void ExtendablePeriodicRecording::handleSplitTo(ExtendablePeriodicRecording& oth
     mPotentialRecording.splitTo(other.mPotentialRecording);
 }
 
+// <FS> the frame recording is per thread (only the main loop advances it). A thread that draws the UI for the main thread while that waits reads the main thread's.
+static thread_local PeriodicRecording* sFrameRecordingOverride = nullptr;
+
+void set_frame_recording_override(PeriodicRecording* recording)
+{
+    sFrameRecordingOverride = recording;
+}
+
 PeriodicRecording& get_frame_recording()
 {
+    if (sFrameRecordingOverride)
+    {
+        return *sFrameRecordingOverride;
+    }
     static thread_local PeriodicRecording sRecording(200, PeriodicRecording::STARTED);
     return sRecording;
 }

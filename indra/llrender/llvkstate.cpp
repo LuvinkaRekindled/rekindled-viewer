@@ -10,7 +10,9 @@
 #if defined(LL_VULKAN)
 
 #include "llvkstate.h"
+#include "llframetimer.h"
 
+#include <atomic>
 #include <cstring>
 #include <intrin.h>
 
@@ -168,6 +170,7 @@ inline bool ownThread(const char* what)
 }
 
 #define CTX_CALL() if (!ownThread(__func__)) return; ++C().mCalls
+static bool scissor_trace_now();
 
 void setEnable(U32 cap, bool on)
 {
@@ -178,7 +181,13 @@ void setEnable(U32 cap, bool on)
     case GL_BLEND: b.mBlend.mEnable = on; break;
     case GL_DEPTH_TEST: b.mDepth.mDepthTest = on; recomputeDepthWrite(); break;
     case GL_CULL_FACE: C().mCullOn = on; recomputeCull(); break;
-    case GL_SCISSOR_TEST: b.mScissorOn = on; break;
+    case GL_SCISSOR_TEST:
+        b.mScissorOn = on;
+        if (scissor_trace_now())
+        {
+            LL_INFOS("ScissorTrace") << "frame " << LLFrameTimer::getFrameCount() << " scissor test " << (on ? "on" : "off") << (tlsCtx ? " [sub-stream]" : " [main]") << LL_ENDL;
+        }
+        break;
     case GL_STENCIL_TEST: b.mDepth.mStencilTest = on; break;
     case GL_POLYGON_OFFSET_FILL: b.mRaster.mDepthBias = on; break;
     case GL_DEPTH_CLAMP: b.mRaster.mDepthClamp = on; break;
@@ -274,11 +283,40 @@ void setViewport(S32 x, S32 y, S32 w, S32 h)
     b.mViewportSet = true;
 }
 
+// LL_VK_SCISSOR_TRACE=<frame>: the scissor calls of that frame and the next, with the context they went to (a debugging aid for the sub-stream)
+static std::atomic<U32> gScissorTraceFirst{0};
+
+void setScissorTraceFrame(U32 frame)       // the viewer sets it relative to the first world frame (LL_VK_SCISSOR_TRACE=rel)
+{
+    gScissorTraceFirst = frame;
+}
+
+static bool scissor_trace_now()
+{
+    static const char* e = getenv("LL_VK_SCISSOR_TRACE");
+    if (!e)
+    {
+        return false;
+    }
+    static const bool relative = (e[0] == 'r');
+    const U32 first = relative ? gScissorTraceFirst.load() : (U32)atoi(e);
+    if (!first)
+    {
+        return false;
+    }
+    const U32 frame = LLFrameTimer::getFrameCount();
+    return frame == first || frame == first + 1 || frame == first + 60 || frame == first + 61;
+}
+
 void setScissor(S32 x, S32 y, S32 w, S32 h)
 {
     CTX_CALL();
     Block& b = C().mBlock;
     b.mScissor[0] = x; b.mScissor[1] = y; b.mScissor[2] = w; b.mScissor[3] = h;
+    if (scissor_trace_now())
+    {
+        LL_INFOS("ScissorTrace") << "frame " << LLFrameTimer::getFrameCount() << " rect " << x << "," << y << "," << w << "," << h << (tlsCtx ? " [sub-stream]" : " [main]") << LL_ENDL;
+    }
 }
 
 void forceEmit()
@@ -364,7 +402,7 @@ void bindContext(Context* ctx)
 
 bool takeChanged(Block& out)
 {
-    Context& c = gCtx;
+    Context& c = C();           // the context of the thread that is writing the record: a sub-stream's own, not the main producer's
     if (c.mTakenValid && c.mBlock == c.mTaken)
     {
         return false;
