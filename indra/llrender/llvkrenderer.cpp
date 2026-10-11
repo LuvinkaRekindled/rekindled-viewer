@@ -3174,7 +3174,7 @@ U32 Renderer::drawTag(const char* what, U32 count, U32 first, S32 vertex_offset)
 // One record per draw in the ring (see DrawRec) and one checkpoint before it. Costs a few tens of nanoseconds a draw; LL_VK_DRAW_RING=0 turns it off.
 void Renderer::noteDraw(U8 kind, U32 count, U32 first, S32 vertex_offset)
 {
-    static const bool on = getenv("LL_VK_DRAW_RING") == nullptr || atoi(getenv("LL_VK_DRAW_RING")) != 0;
+    static const bool on = getenv("LL_VK_DRAW_RING") ? atoi(getenv("LL_VK_DRAW_RING")) != 0 : (getenv("LL_VK_DIAG") && atoi(getenv("LL_VK_DIAG")) != 0);       // (on with LL_VK_DIAG)
     if (!on || !Context::instance().getCaps().mCheckpoints)
     {
         return;
