@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <unordered_map>
 
 namespace LLVk
 {
@@ -856,9 +857,35 @@ U32 Context::stampTag(const std::string& name)
     return (U32)names.size() - 1;
 }
 
+U32 Context::drawStampTag(const std::string& text)
+{
+    static std::unordered_map<std::string, U32> index;
+    static U32 full_tag = 0;
+    auto& names = stamp_names();
+    auto found = index.find(text);
+    if (found != index.end())
+    {
+        return found->second;
+    }
+    if (names.size() >= 200000)
+    {
+        if (!full_tag)
+        {
+            names.push_back("draw (the table of draw descriptions is full)");
+            full_tag = ((U32)names.size() - 1) | STAMP_DRAW;
+        }
+        return full_tag;
+    }
+    names.push_back(text);
+    const U32 tag = ((U32)names.size() - 1) | STAMP_DRAW;
+    index.emplace(text, tag);
+    return tag;
+}
+
 std::string Context::stampTagName(U32 tag)
 {
     auto& names = stamp_names();
+    tag &= ~STAMP_DRAW;
     return tag < names.size() ? names[tag] : "?";
 }
 
@@ -892,9 +919,13 @@ void Context::gpuStamp(U32 tag)
         return;
     }
     Frame& f = mFrames[mFrameSlot];
+    if ((tag & STAMP_DRAW) && f.mStampTags.size() + 512 >= MAX_GPU_STAMPS)
+    {
+        return;         // draw stamps leave room for the passes' own
+    }
     if (mCaps.mCheckpoints && vkCmdSetCheckpointNV)
     {
-        vkCmdSetCheckpointNV(f.mCmd, (const void*)(uintptr_t)(tag + 1));
+        vkCmdSetCheckpointNV(f.mCmd, (const void*)(uintptr_t)((tag & ~STAMP_DRAW) + 1));
     }
     const U32 n = (U32)f.mStampTags.size();
     if (!f.mTsPool || n >= MAX_GPU_STAMPS)
@@ -949,8 +980,26 @@ VkCommandBuffer Context::beginFrame(bool wait)
                             last = (int)i;
                         }
                     }
-                    where = std::to_string(last + 1) + " of " + std::to_string(n) + " pass stamps reached; the GPU is inside [" + (last >= 0 ? stampTagName(f.mStampTags[last]) : std::string("the work before the first pass"))
-                            + "]" + (last + 1 < (int)n ? ", which ends at [" + stampTagName(f.mStampTags[last + 1]) + "]" : std::string(", the last pass of the frame"));
+                    int pass_i = last;
+                    while (pass_i >= 0 && (f.mStampTags[pass_i] & STAMP_DRAW))
+                    {
+                        --pass_i;
+                    }
+                    const std::string pass = pass_i >= 0 ? stampTagName(f.mStampTags[pass_i]) : std::string("the work before the first pass");
+                    where = std::to_string(last + 1) + " of " + std::to_string(n) + " stamps reached; the GPU is inside [" + pass + "]";
+                    if (last + 1 < (int)n && (f.mStampTags[last + 1] & STAMP_DRAW))
+                    {
+                        // a draw stamp is written after the draw it names: the first one that never completed is the draw the GPU is stuck in
+                        where += ", STUCK IN THE DRAW: [" + stampTagName(f.mStampTags[last + 1]) + "]";
+                        if (last >= 0 && (f.mStampTags[last] & STAMP_DRAW))
+                        {
+                            where += "; the draw before it finished: [" + stampTagName(f.mStampTags[last]) + "]";
+                        }
+                    }
+                    else
+                    {
+                        where += last + 1 < (int)n ? ", which ends at [" + stampTagName(f.mStampTags[last + 1]) + "]" : std::string(", the last pass of the frame");
+                    }
                 }
                 LL_WARNS("VkPhases") << "GPU frame (slot " << mFrameSlot << ") still running after " << (S32)waited_ms << " ms: " << where << LL_ENDL;
             }
@@ -994,7 +1043,10 @@ VkCommandBuffer Context::beginFrame(bool wait)
                     mPassStats.mMicros[last_tag] += part;
                     if (slow) frame_passes.push_back({ part, last_tag });
                     last = stamp;
-                    last_tag = f.mStampTags[i];
+                    if (!(f.mStampTags[i] & STAMP_DRAW))
+                    {
+                        last_tag = f.mStampTags[i];             // (a draw stamp ends a draw of the pass: the time stays the pass's)
+                    }
                 }
                 mPassStats.mMicros[last_tag] += to_micros(last, end);
                 if (slow)

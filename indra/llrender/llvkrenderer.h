@@ -435,6 +435,9 @@ private:
     U32 mPassTag = 0;
     U32 mBeginTag = 0;
     bool mBeginSplit = false;
+    bool mDrawStamps = false;           // this pass stamps every draw (LL_VK_DRAW_STAMPS: avatar impostors by default), see stampDraw
+    U32 mDrawStampCount = 0;            // draws stamped in this pass
+    void stampDraw(const char* what, U32 count, U32 first, S32 vertex_offset);
     VkDescriptorSetLayout mSet0Layout = VK_NULL_HANDLE;
     VkDescriptorSetLayout mSet1Layout = VK_NULL_HANDLE;
     VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;

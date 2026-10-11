@@ -217,8 +217,12 @@ public:
 
     // ---- LL_VK_PHASES: GPU time by render pass ----
     // A timestamp is written when each render pass begins; the time up to the next one is charged to that pass's tag. Read back when the frame slot is reused.
-    static const U32 MAX_GPU_STAMPS = 1024;
+    static const U32 MAX_GPU_STAMPS = 4096;
+    // A stamp tag with this bit is a DRAW stamp (LL_VK_DRAW_STAMPS, small passes such as avatar impostors): written after the draw it describes, it does not change which pass the time belongs to.
+    // When a frame hangs, the first draw stamp that never completed names the draw the GPU is stuck in.
+    static const U32 STAMP_DRAW = 0x80000000u;
     static U32 stampTag(const std::string& name);       // the number standing for a pass description (0 is "start of frame")
+    static U32 drawStampTag(const std::string& text);   // the same for a draw description, with STAMP_DRAW set (looked up by hash; a full table gives a generic tag)
     static std::string stampTagName(U32 tag);
     void gpuStamp(U32 tag);
     void reportDeviceLost();            // logs the last checkpoints (pass names) the GPU reached, when the driver keeps them

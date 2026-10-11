@@ -2196,8 +2196,18 @@ void Renderer::beginRenderingIfNeeded()
         return;
     }
     mInBegin = true;
+    mDrawStamps = false;
+    mDrawStampCount = 0;
     if (LLVkMirror::gPhaseTiming)
     {
+        // LL_VK_DRAW_STAMPS: 0 none, 1 (default) the passes of avatar impostors (a small target that is not square, four colour attachments and depth), 2 every pass
+        static const U64 draw_stamp_mode = []() { const char* e = getenv("LL_VK_DRAW_STAMPS"); return e && e[0] ? (U64)atoi(e) : 1ull; }();
+        const Image* ref = mColorCount ? mColorTargets[0] : mDepthTarget;
+        if (ref && draw_stamp_mode)
+        {
+            const U32 w = ref->mExtent.width, h = ref->mExtent.height;
+            mDrawStamps = draw_stamp_mode >= 2 || (mColorCount == 4 && mDepthTarget && w != h && w <= 1024 && h <= 1024);
+        }
         mPassTag = Context::stampTag(describeTarget());
         mBeginTag = mZoneStack.empty() ? mPassTag : mZoneStack.back();
         // a pass that starts with a clear: the layout changes, the begin and the clear get their own entry, so that they are not counted as the first draws' time
@@ -3132,6 +3142,16 @@ VkDescriptorSet Renderer::uboSet()
     return set;
 }
 
+// One GPU timestamp after a draw, described well enough to find the draw again: when a frame hangs the watchdog (Context::beginFrame) names the first draw whose stamp never
+// completed. The program, what was drawn, and the buffers (handle and offset: the arena buffers are shared, the offset tells which range).
+void Renderer::stampDraw(const char* what, U32 count, U32 first, S32 vertex_offset)
+{
+    char text[400];
+    snprintf(text, sizeof(text), "draw %u: %s, %s %u from %u, vertex offset %d, vertex buffer %llx+%llu, index buffer %llx+%llu", ++mDrawStampCount, mProgram ? mProgram->getName().c_str() : "(no program)", what, count, first,
+             vertex_offset, (unsigned long long)(uintptr_t)mVertexBuffer, (unsigned long long)mVertexOffset, (unsigned long long)(uintptr_t)mIndexBuffer, (unsigned long long)mIndexOffset);
+    Context::instance().gpuStamp(Context::drawStampTag(text));
+}
+
 bool Renderer::draw(U32 vertex_count, U32 first_vertex)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget))
@@ -3148,6 +3168,10 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
     long long cmd_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
     startPendingQuery();
     vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
+    if (mDrawStamps)
+    {
+        stampDraw("vertices", vertex_count, first_vertex, 0);
+    }
     LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
     ++mDrawCount;
     ++mModCount;
@@ -3192,6 +3216,10 @@ bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirec
             }
         }
     }
+    if (mDrawStamps)
+    {
+        stampDraw("packet draws", draws, 0, 0);
+    }
     ++mModCount;
     return true;
 }
@@ -3235,6 +3263,10 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
     }
     startPendingQuery();
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
+    if (mDrawStamps)
+    {
+        stampDraw("indices", index_count, first_index, vertex_offset);
+    }
     LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
     ++mDrawCount;
     ++mModCount;
