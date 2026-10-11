@@ -24,6 +24,7 @@
 #ifndef LL_LLASYNCPOOL_H
 #define LL_LLASYNCPOOL_H
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -139,15 +140,44 @@ public:
     JobPtr submit(std::function<void()> fn)
     {
         JobPtr job = std::make_shared<Job>(std::move(fn));
-        if (!mThreads.empty())
         {
+            std::lock_guard<std::mutex> lock(mMutex);
+            if (mPending.size() > 256)
             {
-                std::lock_guard<std::mutex> lock(mMutex);
+                mPending.erase(std::remove_if(mPending.begin(), mPending.end(), [](const JobPtr& j) { return j->done(); }), mPending.end());
+            }
+            mPending.push_back(job);
+            mPendingCount.fetch_add(1, std::memory_order_relaxed);
+            if (!mThreads.empty())
+            {
                 mQueue.push_back(job);
             }
+        }
+        if (!mThreads.empty())
+        {
             mWake.notify_one();
         }
         return job;
+    }
+
+    // true while a job may still be reading (submitted and not yet seen done by a quiesce or a wait)
+    bool anyPending() const { return mPendingCount.load(std::memory_order_acquire) > 0; }
+
+    // everything submitted so far is done when this returns (jobs nobody started run here). Called by code that is about to change what builders read.
+    void quiesce()
+    {
+        std::vector<JobPtr> jobs;
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            jobs = mPending;
+        }
+        for (const JobPtr& job : jobs)
+        {
+            job->wait();
+        }
+        std::lock_guard<std::mutex> lock(mMutex);
+        mPending.erase(std::remove_if(mPending.begin(), mPending.end(), [](const JobPtr& j) { return j->done(); }), mPending.end());
+        mPendingCount.store((int)mPending.size(), std::memory_order_release);
     }
 
     // the pool the builders share: LL_VK_BUILDER_THREADS workers (default 2; 0 = every job runs at its wait(), on the thread that waits)
@@ -189,7 +219,34 @@ private:
     std::mutex mMutex;
     std::condition_variable mWake;
     std::deque<JobPtr> mQueue;
+    std::vector<JobPtr> mPending;
+    std::atomic<int> mPendingCount{0};
     bool mStop = false;
+};
+
+// What a pure builder reads (a group's draw infos, its vertex buffers) must not change under it. The few places that change them call beforeMutation() first: it waits for
+// every builder in flight, and when the render map of the main view is live (made by the early sort and not yet drawn) it counts a change of what that map points to, so the
+// frame can sort again instead of drawing from a map with freed entries.
+struct LLBuilderGuard
+{
+    static inline std::atomic<bool> sMainMapLive{false};
+    static inline std::atomic<unsigned> sEpoch{0};
+    static inline std::atomic<unsigned> sQuiesces{0};
+
+    // 'in_main_map': the thing about to change is part of the main view's render map
+    static void beforeMutation(bool in_main_map)
+    {
+        LLAsyncPool& pool = LLAsyncPool::shared();
+        if (pool.anyPending())
+        {
+            pool.quiesce();
+            ++sQuiesces;
+        }
+        if (in_main_map && sMainMapLive.load(std::memory_order_acquire))
+        {
+            ++sEpoch;
+        }
+    }
 };
 
 #endif // LL_LLASYNCPOOL_H

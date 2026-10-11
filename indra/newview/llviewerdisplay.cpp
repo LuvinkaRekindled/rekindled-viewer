@@ -25,6 +25,8 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llasyncpool.h"
+#include "lldrawpoolmaterials.h"
 #include <chrono>
 
 #include "llviewerdisplay.h"
@@ -492,11 +494,33 @@ static void update_tp_display(bool minimized)
 }
 
 // Paint the display!
+static U32 sEarlySortResorts = 0;     // <FS> frames in which the early sort had to be redone (see LLBuilderGuard)
+
 void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 {
     // <FS> per-zone GPU timing in the log (only does anything while FSGpuZoneTimers is on).
     // Done first, before any zone of this frame opens, so the previous frame is complete.
     LLGpuZoneTimer::onFrameEnd();
+
+    // <FS> A/B of the early sort inside one run (LL_VK_EARLY_SORT=alt: 60 frames on, 60 off): the interval between two display() calls, summed per mode of the frame it ended
+    static int sFrameMode = -1;
+    static std::chrono::steady_clock::time_point sLastDisplay;
+    static double sModeMs[2] = {0, 0};
+    static U32 sModeFrames[2] = {0, 0};
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (sFrameMode >= 0)
+        {
+            sModeMs[sFrameMode] += std::chrono::duration<double, std::milli>(now - sLastDisplay).count();
+            ++sModeFrames[sFrameMode];
+            if ((sModeFrames[0] + sModeFrames[1]) % 1200 == 0 && sModeFrames[0] && sModeFrames[1])
+            {
+                LL_INFOS("VkBuilder") << "early sort A/B: frame interval with early sort " << sModeMs[1] / sModeFrames[1] << " ms over " << sModeFrames[1] << " frames, without "
+                    << sModeMs[0] / sModeFrames[0] << " ms over " << sModeFrames[0] << " frames; early sort redone in " << sEarlySortResorts << " frames" << LL_ENDL;
+            }
+        }
+        sLastDisplay = now;
+    }
 
     // <FS> Vulkan mirror frame (does nothing unless LL_VK_MIRROR is set)
     if (gViewerWindow)
@@ -947,11 +971,34 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         static LLCullResult result;
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
         LLPipeline::sUnderWaterRender = LLViewerCamera::getInstance()->cameraUnderWater();
+        LLRenderPass::finishGeometryBuilds();       // <FS> builds of the last frame that nobody took must be done before the cull result is cleared
+        LLBuilderGuard::sMainMapLive = false;
         {
             LL_CPU_ZONE("display: updateCull");
             gPipeline.updateCull(*LLViewerCamera::getInstance(), result);
         }
         stop_glerror();
+
+        // <FS> The sort of the main view runs before the shadow passes (and the impostors): what it builds (the render map, the rebuilt groups) does not depend on them, and the packet
+        // builders of the deferred passes can start on the async pool while the main thread draws the shadows. The pool face lists, which the shadow passes reset and refill for
+        // themselves, are filled again after them (refillPools). LL_VK_EARLY_SORT=0 puts it back where it was.
+        static const char* early_env = getenv("LL_VK_EARLY_SORT");
+        static const bool early_alternate = early_env && early_env[0] == 'a';
+        static const bool early_sort_enabled = !(early_env && early_env[0] == '0');
+        const bool early_sort = early_sort_enabled && !for_snapshot && gFrameCount > 1 && (!early_alternate || ((gFrameCount / 60) % 2) == 1);
+        sFrameMode = early_sort ? 1 : 0;
+        unsigned early_epoch = 0;
+        if (early_sort)
+        {
+            LL_CPU_ZONE("display: stateSort (early)");
+            gPipeline.stateSort(camera, result, true);
+            early_epoch = LLBuilderGuard::sEpoch.load();
+            LLBuilderGuard::sMainMapLive = true;        // from here a change to a group of the main view is noticed (see LLBuilderGuard)
+            {
+                LL_CPU_ZONE("display: start geometry builds (early)");
+                LLDrawPoolMaterials::kickGeometryBuilds();
+            }
+        }
 
         LLGLState::checkStates();
 
@@ -1053,6 +1100,26 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("display - 4")
             LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
+            if (early_sort && LLBuilderGuard::sEpoch.load() == early_epoch)
+            {
+                gPipeline.refillPools(result);
+            }
+            else if (early_sort)
+            {
+                // a group of the main view was rebuilt after its render map was made (by the shadow preparation or an impostor): the map may point to freed draw infos. Sort again, as the
+                // frame would have without the early sort; the builds started for the old map are dropped.
+                if (++sEarlySortResorts <= 5)
+                {
+                    LL_INFOS("VkBuilder") << "early sort: a group of the main view changed after the sort (" << sEarlySortResorts << " frames so far): sorting again" << LL_ENDL;
+                }
+                LLRenderPass::finishGeometryBuilds();
+                LLBuilderGuard::sMainMapLive = false;
+                LL_CPU_ZONE("display: cull + stateSort (again)");
+                LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
+                gPipeline.updateCull(camera, result);       // the sort pushes into the cull result as well (bridges, drawables): it starts from a clean one
+                gPipeline.stateSort(camera, result);
+            }
+            else
             {
                 LL_CPU_ZONE("display: stateSort");
                 gPipeline.stateSort(camera, result); // <FS:Ansariel> Factor out calls to getInstance
@@ -1194,6 +1261,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 LL_CPU_ZONE("display: renderGeomDeferred");
                 gPipeline.renderGeomDeferred(*LLViewerCamera::getInstance(), true);
             }
+            LLBuilderGuard::sMainMapLive = false;
         }
 
         {

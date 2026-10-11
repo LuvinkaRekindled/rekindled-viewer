@@ -295,7 +295,11 @@ public:
     static F32 calcPixelArea(LLVector3 center, LLVector3 size, LLCamera& camera);
     static F32 calcPixelArea(const LLVector4a& center, const LLVector4a& size, LLCamera &camera);
 
-    void stateSort(LLCamera& camera, LLCullResult& result);
+    // <FS> defer_pools: the sort for the main view run BEFORE the shadow passes. It does everything except the pool face lists (which the shadow passes reset and fill for themselves):
+    // the drawables that would be queued in a pool are remembered, and refillPools() queues them after the shadows, in the same order
+    void stateSort(LLCamera& camera, LLCullResult& result, bool defer_pools = false);
+    void refillPools(LLCullResult& result);
+    void checkRenderMapLive(LLCullResult& result);     // LL_VK_BUILDER_VERIFY: every draw info in the render map is still one of its group's
     void stateSort(LLSpatialGroup* group, LLCamera& camera);
     void stateSort(LLSpatialBridge* bridge, LLCamera& camera, bool fov_changed = false);
     void stateSort(LLDrawable* drawablep, LLCamera& camera);
@@ -338,6 +342,8 @@ public:
     static thread_local bool sParallelPrep; // true while a worker thread prepares a cascade: no shared statistics, bridges are locked
 
     void forAllVisibleDrawables(void (*func)(LLDrawable*));
+    std::vector<LLDrawable*> mDeferredPoolFill;      // <FS> see stateSort(..., defer_pools)
+    bool mDeferPoolFill = false;
     LLCullResult* getCull() const;        // <FS> the cull result this thread is working with (what beginRenderMap() reads)
 
     void renderObjects(U32 type, bool texture = true, bool batch_texture = false, bool rigged = false);

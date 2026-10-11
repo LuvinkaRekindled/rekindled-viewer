@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include <unordered_set>
 
 #include "llvksubstream.h"
 #include "pipeline.h"
@@ -3329,12 +3330,18 @@ void LLPipeline::markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags f
     }
 }
 
-void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
+void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_pools)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("stateSort");
 
-    if (hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
+    mDeferPoolFill = defer_pools;
+    if (defer_pools)
+    {
+        mDeferredPoolFill.clear();
+    }
+
+    if (!defer_pools && hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
                       LLPipeline::RENDER_TYPE_CONTROL_AV,
                       LLPipeline::RENDER_TYPE_TERRAIN,
                       LLPipeline::RENDER_TYPE_TREE,
@@ -3459,6 +3466,96 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
     }
 
     { LL_CPU_ZONE("stateSort: postSort"); postSort(camera); }
+    mDeferPoolFill = false;
+}
+
+// <FS> after the shadow passes (which reset the pool face lists and fill them with their own): the lists of the main view, as the sort that ran before them would have made them
+void LLPipeline::refillPools(LLCullResult& result)
+{
+    LL_CPU_ZONE("refill pools");
+    grabReferences(result);        // the shadow passes and the impostors left sCull pointing at their own results
+    if (hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
+                      LLPipeline::RENDER_TYPE_CONTROL_AV,
+                      LLPipeline::RENDER_TYPE_TERRAIN,
+                      LLPipeline::RENDER_TYPE_TREE,
+                      LLPipeline::RENDER_TYPE_SKY,
+                      LLPipeline::RENDER_TYPE_VOIDWATER,
+                      LLPipeline::RENDER_TYPE_WATER,
+                      LLPipeline::END_RENDER_TYPES))
+    {
+        gPipeline.resetDrawOrders();
+    }
+    for (LLDrawable* drawablep : mDeferredPoolFill)
+    {
+        if (drawablep->isDead())
+        {
+            continue;
+        }
+        for (LLDrawable::face_list_t::iterator iter = drawablep->mFaces.begin(); iter != drawablep->mFaces.end(); iter++)
+        {
+            LLFace* facep = *iter;
+            if (facep->hasGeometry())
+            {
+                if (facep->getPool())
+                {
+                    facep->getPool()->enqueue(facep);
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+    }
+    mDeferredPoolFill.clear();
+}
+
+// <FS> a check for the early sort: the render map of a view holds pointers to draw infos that belong to groups; a group that is rebuilt after the map was made frees them. Every entry
+// of the map must still be one of the draw infos its group holds now.
+void LLPipeline::checkRenderMapLive(LLCullResult& result)
+{
+    std::unordered_set<const LLDrawInfo*> live;
+    for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
+    {
+        LLSpatialGroup* group = *i;
+        if (group->isDead())
+        {
+            continue;
+        }
+        for (auto& entry : group->mDrawMap)
+        {
+            for (LLDrawInfo* info : entry.second)
+            {
+                live.insert(info);
+            }
+        }
+    }
+    size_t stale = 0, total = 0;
+    for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
+    {
+        for (LLCullResult::drawinfo_iterator it = result.beginRenderMap(type); it != result.endRenderMap(type); ++it)
+        {
+            ++total;
+            if (!live.count(*it))
+            {
+                ++stale;
+            }
+        }
+    }
+    static U32 frames = 0, bad_frames = 0;
+    ++frames;
+    if (stale)
+    {
+        ++bad_frames;
+        if (bad_frames <= 8)
+        {
+            LL_WARNS("VkBuilder") << "early sort: " << stale << " of " << total << " draw infos in the render map are no longer held by their group" << LL_ENDL;
+        }
+    }
+    if (frames % 600 == 1)
+    {
+        LL_INFOS("VkBuilder") << "early sort check: " << frames << " frames, " << bad_frames << " with stale draw infos in the render map" << LL_ENDL;
+    }
 }
 
 void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
@@ -3566,6 +3663,11 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
 
     if (!drawablep->getVOVolume())
     {
+        if (mDeferPoolFill)
+        {
+            mDeferredPoolFill.push_back(drawablep);     // queued by refillPools(), after the shadow passes
+        }
+        else
         for (LLDrawable::face_list_t::iterator iter = drawablep->mFaces.begin();
                 iter != drawablep->mFaces.end(); iter++)
         {
@@ -5194,10 +5296,15 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             }
         }
 
+        if (&camera == LLViewerCamera::getInstance() && builder_verify() && sCull)
+        {
+            checkRenderMapLive(*sCull);
+        }
+
         // <FS> the geometry records of the passes below start building now, on the async pool; pushGeometryPackets() takes each when its pass draws
         {
             LL_CPU_ZONE("deferred: start geometry builds");
-            LLDrawPoolMaterials::kickGeometryBuilds();
+            LLDrawPoolMaterials::kickGeometryBuilds();       // (nothing when the early sort already started them for this cull result)
         }
 
         LLVertexBuffer::unbind();
@@ -5286,7 +5393,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
         gGL.setColorMask(true, false);
 
-        LLRenderPass::finishGeometryBuilds();       // <FS> builds no pass asked for (a hidden pool) must not run on into the next frame's cull
+        LLRenderPass::finishGeometryBuilds(getCull());       // <FS> builds no pass asked for (a hidden pool) must not run on into the next frame's cull
 
     } // Tracy ZoneScoped
 

@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llgpuzonetimer.h"
+#include "llasyncpool.h"
 
 #include "llspatialpartition.h"
 
@@ -139,6 +140,11 @@ LLSpatialGroup::~LLSpatialGroup()
 
 void LLSpatialGroup::clearDrawMap()
 {
+    // <FS> the draw infos go: builders on the async pool may be reading them, and the main view's render map may point to them
+    if (!mDrawMap.empty())
+    {
+        LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
+    }
     mDrawMap.clear();
 }
 
@@ -345,6 +351,11 @@ void LLSpatialGroup::rebuildMesh()
 {
     if (!isDead())
     {
+        if (hasState(MESH_DIRTY))
+        {
+            // <FS> the vertex buffers of the group are repacked (their GL buffers may change)
+            LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
+        }
         getSpatialPartition()->rebuildMesh(this);
     }
 }
