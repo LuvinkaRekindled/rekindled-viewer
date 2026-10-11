@@ -2413,6 +2413,11 @@ void LLPipeline::grabReferences(LLCullResult& result)
     sCull = &result;
 }
 
+LLCullResult* LLPipeline::getCull() const
+{
+    return sCull;
+}
+
 void LLPipeline::clearReferences()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -4749,12 +4754,19 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             }
         }
     }
+}
 
-    // the packets of the untextured static casters: built here, beside the other cascades; renderShadow records them
+// main thread, after the render maps of the cascades are built: the packets of the untextured casters of each cascade are built by the async pool while the main thread goes on
+// (the first cascade's are waited for first, the others build while the main thread draws the ones before them)
+void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
+{
+    LLCullResult* result = prep.mResult;
     prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
-    build_shadow_static(result, kShadowStaticTypes, kShadowStaticTypeCount, *prep.mStaticBuild);
     prep.mSkinBuild = std::make_shared<ShadowSkinBuild>();
-    build_shadow_skin(result, kShadowStaticTypes, kShadowStaticTypeCount, *prep.mSkinBuild);
+    std::shared_ptr<ShadowStaticBuild> static_build = prep.mStaticBuild;
+    std::shared_ptr<ShadowSkinBuild> skin_build = prep.mSkinBuild;
+    prep.mStaticJob = LLAsyncPool::shared().submit([result, static_build]() { build_shadow_static(*result, kShadowStaticTypes, kShadowStaticTypeCount, *static_build); });
+    prep.mSkinJob = LLAsyncPool::shared().submit([result, skin_build]() { build_shadow_skin(*result, kShadowStaticTypes, kShadowStaticTypeCount, *skin_build); });
 }
 
 // main thread, right before the cascade is drawn: the pools and the sky, which every cascade fills for itself
@@ -5147,6 +5159,12 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             }
         }
 
+        // <FS> the geometry records of the passes below start building now, on the async pool; pushGeometryPackets() takes each when its pass draws
+        {
+            LL_CPU_ZONE("deferred: start geometry builds");
+            LLDrawPoolMaterials::kickGeometryBuilds();
+        }
+
         LLVertexBuffer::unbind();
 
         LLGLState::checkStates();
@@ -5232,6 +5250,8 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         gGL.loadMatrix(gGLModelView);
 
         gGL.setColorMask(true, false);
+
+        LLRenderPass::finishGeometryBuilds();       // <FS> builds no pass asked for (a hidden pool) must not run on into the next frame's cull
 
     } // Tracy ZoneScoped
 
@@ -12073,6 +12093,11 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         LL_CPU_ZONE("packets: shadow static (build + record)");
         // the entries come from the cascade's preparation job when there was one (built beside the other cascades, off this thread), else they are built here
         ShadowStaticBuild built;
+        if (prepared && prepared->mStaticJob)
+        {
+            LL_CPU_ZONE("packets: wait for the static builder");
+            prepared->mStaticJob->wait();
+        }
         const ShadowStaticBuild* source = prepared ? prepared->mStaticBuild.get() : nullptr;
         if (!source)
         {
@@ -12154,6 +12179,11 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         LL_CPU_ZONE("packets: shadow rigged (build + record)");
         // as the static packets: built by the cascade's preparation job when there was one
         ShadowSkinBuild built;
+        if (prepared && prepared->mSkinJob)
+        {
+            LL_CPU_ZONE("packets: wait for the rigged builder");
+            prepared->mSkinJob->wait();
+        }
         const ShadowSkinBuild* source = prepared ? prepared->mSkinBuild.get() : nullptr;
         if (!source)
         {
@@ -14031,6 +14061,11 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(pending.size(), map_job); }
             lap.mark(PH_RENDER_MAP);
 
+            for (ShadowCascadePrep& prep : pending)
+            {
+                shadowPrepSubmitBuilds(prep);
+            }
+
             sUseOcclusion = saved_occlusion;
             LLPipeline::sShadowRender = saved_shadow_render;
 
@@ -14039,6 +14074,12 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             for (ShadowCascadePrep& prep : pending)
             {
                 render_cascade(prep, true);
+            }
+            for (ShadowCascadePrep& prep : pending)
+            {
+                // a cascade that was not drawn still has its builders in flight: they read the cull result, which must not change under them
+                if (prep.mStaticJob) { prep.mStaticJob->wait(); }
+                if (prep.mSkinJob) { prep.mSkinJob->wait(); }
             }
         }
 

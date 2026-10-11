@@ -55,6 +55,7 @@
 #include "llvoavatar.h"
 #include "llviewershadermgr.h"
 #include "llvkmirror.h"
+#include "llasyncpool.h"
 #include "glm/glm.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include <chrono>
@@ -701,17 +702,39 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
     return !(p.mTexture.notNull() && p.mTextureMatrix);
 }
 
-// static
-void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials)
+// <FS> A geometry packet build (see doc/vulkan/F2-start.md, "how parallel recording is made safe"): a pure function of a cull result, the camera matrices and what the draws point at. It can
+// run on the async pool while the main thread does other work. What it must not do itself is left in the output for the main thread: the textures the entries name (marking a texture in
+// use, regenerating a deleted one, its sampler options) are listed in mTextures in order of first use, and the entries carry the number in that list plus one (0 = none) until
+// finishGeometryBuild() puts the names in.
+struct LLGeometryBuild
 {
-    LL_CPU_ZONE("packets: geometry (build + record)");
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    std::vector<LLVkMirror::GeoEntry> entries;
-    std::vector<F32> matrices;
+    U32 mType = 0;
+    bool mHasMaterials = false;
+    LLGeometryPassInfo mInfo;
+    LLCullResult* mCull = nullptr;
+    F32 mView[16];                      // the matrices it was built for: the consumer checks them against the ones it has now
+    F32 mProj[16];
+    std::vector<LLVkMirror::GeoEntry> mEntries;
+    std::vector<F32> mMatrices;
+    std::vector<LLViewerTexture*> mTextures;
+    std::vector<LLDrawInfo*> mFallback;
+    LLAsyncPool::JobPtr mJob;
+    bool mFinished = false;
+};
+
+static void build_geometry(LLGeometryBuild& out)
+{
+    const LLGeometryPassInfo* materials = out.mHasMaterials ? &out.mInfo : nullptr;
+    const glm::mat4 view = glm::make_mat4(out.mView);
+    const glm::mat4 proj = glm::make_mat4(out.mProj);
+    std::vector<LLVkMirror::GeoEntry>& entries = out.mEntries;
+    std::vector<F32>& matrices = out.mMatrices;
     std::unordered_map<const void*, U32> matrix_numbers;
-    std::unordered_map<const LLViewerTexture*, U32> texture_names;
-    const glm::mat4 view = glm::make_mat4(gGLModelView);
-    const glm::mat4 proj = gGL.getProjectionMatrix();
+    std::unordered_map<const LLViewerTexture*, U32> texture_numbers;
+    entries.clear();
+    matrices.clear();
+    out.mTextures.clear();
+    out.mFallback.clear();
 
     // the matrices the shader would get from LLRender::syncMatrices() for this model matrix: modelview, modelview * projection, normal matrix (inverse transpose)
     auto add_matrix = [&](const LLMatrix4* model) -> U32
@@ -739,22 +762,22 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
     };
     add_matrix(nullptr);        // matrix 0: no model matrix
 
-    // what the old path does for a texture at its bind: marks it in use, regenerates a deleted one and applies its filtering and wrap options (the worker reads those)
-    auto texture_name = [&](LLViewerTexture* tex) -> U32
+    // the number (plus one) of a texture in the list the main thread names later
+    auto texture_ref = [&](LLViewerTexture* tex) -> U32
     {
-        auto found = texture_names.find(tex);
-        if (found != texture_names.end())
+        auto found = texture_numbers.find(tex);
+        if (found != texture_numbers.end())
         {
             return found->second;
         }
-        const U32 name = gGL.getTexUnit(0)->prepareFast(tex);
-        texture_names.emplace(tex, name);
-        ++gGeometryPacketStats.mTextures;
-        return name;
+        out.mTextures.push_back(tex);
+        const U32 number = (U32)out.mTextures.size();
+        texture_numbers.emplace(tex, number);
+        return number;
     };
 
-    auto* begin = gPipeline.beginRenderMap(type);
-    auto* end = gPipeline.endRenderMap(type);
+    auto begin = out.mCull->beginRenderMap(out.mType);
+    auto end = out.mCull->endRenderMap(out.mType);
     for (LLCullResult::drawinfo_iterator i = begin; i != end; )
     {
         LLDrawInfo* params = *i;
@@ -765,7 +788,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         }
         if (!geometry_packet_ok(*params, materials == nullptr, materials))
         {
-            fallback.push_back(params);
+            out.mFallback.push_back(params);
             continue;
         }
         const LLVertexBuffer* vb = params->mVertexBuffer.get();
@@ -804,7 +827,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             {
                 if (params->mTextureList[t].notNull())
                 {
-                    e.mTextures[t] = texture_name(params->mTextureList[t].get());
+                    e.mTextures[t] = texture_ref(params->mTextureList[t].get());
                 }
             }
         }
@@ -813,18 +836,18 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             e.mFlags |= LLVkMirror::GEO_ONE_TEXTURE;
             if (params->mTexture.notNull())
             {
-                e.mTextures[0] = texture_name(params->mTexture.get());
+                e.mTextures[0] = texture_ref(params->mTexture.get());
             }
             if (materials)
             {
                 // the values the materials loop sets as uniforms before a draw
                 if (materials->mNormalMap)
                 {
-                    e.mNormalMap = texture_name(params->mNormalMap.get());
+                    e.mNormalMap = texture_ref(params->mNormalMap.get());
                 }
                 if (materials->mSpecularMap)
                 {
-                    e.mSpecularMap = texture_name(params->mSpecularMap.get());
+                    e.mSpecularMap = texture_ref(params->mSpecularMap.get());
                 }
                 memcpy(e.mSpecular, params->mSpecColor.mV, sizeof(e.mSpecular));
                 e.mEnvIntensity = params->mEnvIntensity;
@@ -834,6 +857,150 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         }
         entries.push_back(e);
     }
+}
+
+// main thread: what the old path does for a texture at its bind (marks it in use, regenerates a deleted one, applies its filtering and wrap options: the worker reads those),
+// in the order the old loop met them, and the names go into the entries
+static void finish_geometry_build(LLGeometryBuild& b)
+{
+    if (b.mFinished)
+    {
+        return;
+    }
+    std::vector<U32> names(b.mTextures.size());
+    for (size_t k = 0; k < b.mTextures.size(); ++k)
+    {
+        names[k] = gGL.getTexUnit(0)->prepareFast(b.mTextures[k]);
+        ++gGeometryPacketStats.mTextures;
+    }
+    auto name_of = [&names](U32 number) -> U32 { return number ? names[number - 1] : 0u; };
+    for (LLVkMirror::GeoEntry& e : b.mEntries)
+    {
+        for (U32& t : e.mTextures)
+        {
+            t = name_of(t);
+        }
+        e.mNormalMap = name_of(e.mNormalMap);
+        e.mSpecularMap = name_of(e.mSpecularMap);
+    }
+    b.mFinished = true;
+}
+
+static bool geometry_build_verify()
+{
+    static const bool on = getenv("LL_VK_BUILDER_VERIFY") != nullptr;
+    return on;
+}
+
+// the builds of this frame's deferred geometry passes (kickGeometryBuild .. finishGeometryBuilds), by pass type and the maps its program samples
+static std::unordered_map<U32, std::shared_ptr<LLGeometryBuild>> sGeometryBuilds;
+
+static U32 geometry_build_key(U32 type, const LLGeometryPassInfo* materials)
+{
+    return (type << 3) | (materials ? 1u : 0u) | ((materials && materials->mNormalMap) ? 2u : 0u) | ((materials && materials->mSpecularMap) ? 4u : 0u);
+}
+
+static void fill_geometry_build(LLGeometryBuild& b, U32 type, const LLGeometryPassInfo* materials, LLCullResult* cull)
+{
+    b.mType = type;
+    b.mHasMaterials = materials != nullptr;
+    if (materials)
+    {
+        b.mInfo = *materials;
+    }
+    b.mCull = cull;
+    memcpy(b.mView, gGLModelView, sizeof(b.mView));
+    memcpy(b.mProj, glm::value_ptr(gGL.getProjectionMatrix()), sizeof(b.mProj));
+}
+
+// static
+void LLRenderPass::kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials)
+{
+    LLCullResult* cull = gPipeline.getCull();
+    if (!cull)
+    {
+        return;
+    }
+    std::shared_ptr<LLGeometryBuild> build = std::make_shared<LLGeometryBuild>();
+    fill_geometry_build(*build, type, materials, cull);
+    LLGeometryBuild* raw = build.get();
+    build->mJob = LLAsyncPool::shared().submit([raw]() { build_geometry(*raw); });
+    sGeometryBuilds[geometry_build_key(type, materials)] = build;
+}
+
+// static
+void LLRenderPass::finishGeometryBuilds()
+{
+    for (auto& entry : sGeometryBuilds)
+    {
+        if (entry.second->mJob)
+        {
+            entry.second->mJob->wait();        // they read the cull result, which is cleared at the start of the next frame
+        }
+    }
+    sGeometryBuilds.clear();
+}
+
+// static
+void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials)
+{
+    LL_CPU_ZONE("packets: geometry (build + record)");
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
+    LLCullResult* cull = gPipeline.getCull();
+
+    // the build started for this pass at the top of the frame, if it is still the right one (same cull result, same matrices: anything else is built here, now)
+    std::shared_ptr<LLGeometryBuild> build;
+    auto found = sGeometryBuilds.find(geometry_build_key(type, materials));
+    if (found != sGeometryBuilds.end())
+    {
+        build = found->second;
+        sGeometryBuilds.erase(found);
+        {
+            LL_CPU_ZONE("packets: wait for the geometry builder");
+            build->mJob->wait();
+        }
+        if (build->mCull != cull || memcmp(build->mView, gGLModelView, sizeof(build->mView)) != 0
+            || memcmp(build->mProj, glm::value_ptr(gGL.getProjectionMatrix()), sizeof(build->mProj)) != 0)
+        {
+            static bool said = false;
+            if (!said)
+            {
+                said = true;
+                LL_INFOS("VkBuilder") << "a geometry build was made for other matrices or another cull result: built again" << LL_ENDL;
+            }
+            build.reset();
+        }
+    }
+    if (!build)
+    {
+        build = std::make_shared<LLGeometryBuild>();
+        fill_geometry_build(*build, type, materials, cull);
+        build_geometry(*build);
+    }
+    else if (geometry_build_verify())
+    {
+        LLGeometryBuild again;
+        fill_geometry_build(again, type, materials, cull);
+        build_geometry(again);
+        static std::atomic<U32> checked{0}, bad{0};
+        ++checked;
+        const bool same = again.mEntries.size() == build->mEntries.size() && again.mMatrices == build->mMatrices && again.mTextures == build->mTextures && again.mFallback == build->mFallback
+            && (again.mEntries.empty() || memcmp(again.mEntries.data(), build->mEntries.data(), again.mEntries.size() * sizeof(again.mEntries[0])) == 0);
+        if (!same && bad++ < 8)
+        {
+            LL_WARNS("VkBuilder") << "builder verify: the geometry packets of pass " << type << " built on the pool differ from the ones built now (" << build->mEntries.size() << " / "
+                << again.mEntries.size() << " entries, " << build->mTextures.size() << " / " << again.mTextures.size() << " textures)" << LL_ENDL;
+        }
+        if (checked % 600 == 1)
+        {
+            LL_INFOS("VkBuilder") << "builder verify: " << checked << " geometry builds compared, " << bad << " differed" << LL_ENDL;
+        }
+    }
+
+    finish_geometry_build(*build);
+    fallback.insert(fallback.end(), build->mFallback.begin(), build->mFallback.end());
+    const std::vector<LLVkMirror::GeoEntry>& entries = build->mEntries;
+    const std::vector<F32>& matrices = build->mMatrices;
     if (!entries.empty())
     {
         LLVkMirror::ShadowPacketsHeader header;
