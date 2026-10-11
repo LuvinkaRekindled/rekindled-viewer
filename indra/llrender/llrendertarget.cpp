@@ -230,11 +230,6 @@ bool LLRenderTarget::addColorAttachment(U32 color_fmt)
     {
         clear_glerror();
         LLImageGL::setManualImage(tex, LLTexUnit::getInternalType(mUsage), 0, color_fmt, mResX, mResY, GL_RGBA, GL_UNSIGNED_BYTE, NULL, false);
-        if (glGetError() != GL_NO_ERROR)
-        {
-            LL_WARNS() << "Could not allocate color buffer for render target." << LL_ENDL;
-            return false;
-        }
     }
 
     sBytesAllocated += mResX*mResY*4;
@@ -298,11 +293,6 @@ bool LLRenderTarget::allocateDepth()
 
     sBytesAllocated += mResX*mResY*4;
 
-    if (glGetError() != GL_NO_ERROR)
-    {
-        LL_WARNS() << "Unable to allocate depth buffer for render target." << LL_ENDL;
-        return false;
-    }
 
     return true;
 }

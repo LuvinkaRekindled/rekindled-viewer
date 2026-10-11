@@ -54,10 +54,6 @@ namespace LLVkGL
     void on_glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers);
     void on_glGenBuffers(GLsizei n, GLuint* buffers);
     void on_glDeleteBuffers(GLsizei n, const GLuint* buffers);
-    bool own_glGetIntegerv(GLenum pname, GLint* params);
-    bool own_glGetFloatv(GLenum pname, GLfloat* params);
-    bool own_glGetBooleanv(GLenum pname, GLboolean* params);
-    bool own_glIsEnabled(GLenum cap, GLboolean& out);
     void on_glGenQueries(GLsizei n, GLuint* ids);
     void on_glDeleteQueries(GLsizei n, const GLuint* ids);
 }
@@ -65,7 +61,7 @@ namespace LLVkGL
 namespace LLVkGL
 {
     // LL_VK_PHASES: calls and CPU time of every sink hook (the time includes waiting for the lock)
-    constexpr int HOOK_COUNT = 21;
+    constexpr int HOOK_COUNT = 17;
     extern long long gHookStatTicks[2 * HOOK_COUNT];     // the second half: calls made by other threads
     extern long long gHookStatCalls[2 * HOOK_COUNT];
     const char* hook_name(int i);       // name of GL operation i (LLVkAsync::Op order), for the per-operation statistics of the worker
@@ -97,10 +93,6 @@ namespace LLVkAsync
         OP_glDeleteFramebuffers,
         OP_glGenBuffers,
         OP_glDeleteBuffers,
-        OP_glGetIntegerv,
-        OP_glGetFloatv,
-        OP_glGetBooleanv,
-        OP_glIsEnabled,
         OP_glGenQueries,
         OP_glDeleteQueries,
         OP_GL_COUNT
@@ -157,54 +149,10 @@ static inline void ll_vk_glGenBuffers(GLsizei n, GLuint* buffers) { if (LLVkAsyn
 #define glGenBuffers ll_vk_glGenBuffers
 static inline void ll_vk_glDeleteBuffers(GLsizei n, const GLuint* buffers) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glDeleteBuffers(n, buffers); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(14); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glDeleteBuffers(n, buffers); }
 #define glDeleteBuffers ll_vk_glDeleteBuffers
-static inline void ll_vk_glGetIntegerv(GLenum pname, GLint* params) { if (params) *params = 0; if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetIntegerv(pname, params); }); return; } { LLVkGL::HookStat s_(15); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetIntegerv(pname, params); } }
-#define glGetIntegerv ll_vk_glGetIntegerv
-static inline void ll_vk_glGetFloatv(GLenum pname, GLfloat* params) { if (params) *params = 0; if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetFloatv(pname, params); }); return; } { LLVkGL::HookStat s_(16); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetFloatv(pname, params); } }
-#define glGetFloatv ll_vk_glGetFloatv
-static inline void ll_vk_glGetBooleanv(GLenum pname, GLboolean* params) { if (params) *params = 0; if (LLVkAsync::gEnabled) { LLVkAsync::syncCall([&]() { LLVkGL::own_glGetBooleanv(pname, params); }); return; } { LLVkGL::HookStat s_(17); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_glGetBooleanv(pname, params); } }
-#define glGetBooleanv ll_vk_glGetBooleanv
-static inline GLboolean ll_vk_glIsEnabled(GLenum cap) { if (LLVkAsync::gEnabled) { GLboolean o_ = GLboolean(); LLVkAsync::syncCall([&]() { LLVkGL::own_glIsEnabled(cap, o_); }); return o_; } { LLVkGL::HookStat s_(18); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); GLboolean o_ = GLboolean(); LLVkGL::own_glIsEnabled(cap, o_); return o_; } }
-#define glIsEnabled ll_vk_glIsEnabled
 static inline void ll_vk_glGenQueries(GLsizei n, GLuint* ids) { if (LLVkAsync::gEnabled) { LLVkAsync::gen_enq(LLVkAsync::OP_glGenQueries, 4, n, ids); return; } std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::own_gen(4, n, ids); LLVkGL::on_glGenQueries(n, ids); }
 #define glGenQueries ll_vk_glGenQueries
-static inline void ll_vk_glDeleteQueries(GLsizei n, const GLuint* ids) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glDeleteQueries(n, ids); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(20); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glDeleteQueries(n, ids); }
+static inline void ll_vk_glDeleteQueries(GLsizei n, const GLuint* ids) { if (LLVkAsync::gEnabled) { LLVkAsync::enq_glDeleteQueries(n, ids); return; } LLVkMirror::PhaseTimer p_(LLVkMirror::PH_ALL_HOOKS); LLVkGL::HookStat s_(16); std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex); LLVkGL::on_glDeleteQueries(n, ids); }
 #define glDeleteQueries ll_vk_glDeleteQueries
-static inline GLenum ll_vk_glGetError() { return GLenum(0); }
-#define glGetError ll_vk_glGetError
-static inline const GLubyte* ll_vk_glGetString(GLenum name) { return ll_nogl_string(name); }
-#define glGetString ll_vk_glGetString
-static inline const GLubyte* ll_vk_glGetStringi(GLenum name, GLuint index) { return (const GLubyte*)""; }
-#define glGetStringi ll_vk_glGetStringi
-static inline void ll_vk_glFlush() { (void)0; }
-#define glFlush ll_vk_glFlush
-static inline void ll_vk_glFinish() { (void)0; }
-#define glFinish ll_vk_glFinish
-static inline void ll_vk_glHint(GLenum target, GLenum mode) { (void)0; }
-#define glHint ll_vk_glHint
-static inline void ll_vk_glGetBufferParameteriv(GLenum target, GLenum pname, GLint* params) { (void)0; }
-#define glGetBufferParameteriv ll_vk_glGetBufferParameteriv
-static inline void ll_vk_glObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar* label) { (void)0; }
-#define glObjectLabel ll_vk_glObjectLabel
-static inline void ll_vk_glClientActiveTexture(GLenum texture) { (void)0; }
-#define glClientActiveTexture ll_vk_glClientActiveTexture
-static inline void ll_vk_glGetUniformiv(GLuint program, GLint location, GLint* params) { (void)0; }
-#define glGetUniformiv ll_vk_glGetUniformiv
-static inline void ll_vk_glGetUniformfv(GLuint program, GLint location, GLfloat* params) { (void)0; }
-#define glGetUniformfv ll_vk_glGetUniformfv
-static inline GLboolean ll_vk_glAreTexturesResident(GLsizei n, const GLuint* textures, GLboolean* residences) { return GLboolean(GL_TRUE); }
-#define glAreTexturesResident ll_vk_glAreTexturesResident
-static inline void ll_vk_glPushAttrib(GLbitfield mask) { (void)0; }
-#define glPushAttrib ll_vk_glPushAttrib
-static inline void ll_vk_glPopAttrib() { (void)0; }
-#define glPopAttrib ll_vk_glPopAttrib
-static inline void ll_vk_glPushClientAttrib(GLbitfield mask) { (void)0; }
-#define glPushClientAttrib ll_vk_glPushClientAttrib
-static inline void ll_vk_glPopClientAttrib() { (void)0; }
-#define glPopClientAttrib ll_vk_glPopClientAttrib
-static inline void ll_vk_glDebugMessageCallback(GLDEBUGPROC callback, const void* userParam) { (void)0; }
-#define glDebugMessageCallback ll_vk_glDebugMessageCallback
-static inline void ll_vk_glGetProgramBinary(GLuint program, GLsizei bufSize, GLsizei* length, GLenum* binaryFormat, void* binary) { (void)0; }
-#define glGetProgramBinary ll_vk_glGetProgramBinary
 #define glUniform1f(...) ((void)0)
 #define glUniform2f(...) ((void)0)
 #define glUniform3f(...) ((void)0)

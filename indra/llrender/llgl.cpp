@@ -433,112 +433,21 @@ void rotate_quat(LLQuaternion& rotation)
     gGL.rotatef(angle_radians * RAD_TO_DEG, x, y, z);
 }
 
+// <FS> native-vk: there is no OpenGL error state; these stay as the viewer's error-check points
 void flush_glerror()
 {
-    glGetError();
 }
 
-//this function outputs gl error to the log file, does not crash the code.
 void log_glerror()
 {
-    if (LL_UNLIKELY(!gGLManager.mInited))
-    {
-        return ;
-    }
-    //  Create or update texture to be used with this data
-    GLenum error;
-    error = glGetError();
-    while (LL_UNLIKELY(error))
-    {
-        GLubyte const * gl_error_msg = nullptr;      // no glu: the error codes below are logged as numbers
-        if (NULL != gl_error_msg)
-        {
-            LL_WARNS() << "GL Error: " << error << " GL Error String: " << gl_error_msg << LL_ENDL ;
-        }
-        else
-        {
-            // gluErrorString returns NULL for some extensions' error codes.
-            // you'll probably have to grep for the number in glext.h.
-            LL_WARNS() << "GL Error: UNKNOWN 0x" << std::hex << error << std::dec << LL_ENDL;
-        }
-        error = glGetError();
-    }
-}
-
-void do_assert_glerror()
-{
-    //  Create or update texture to be used with this data
-    GLenum error;
-    error = glGetError();
-    bool quit = false;
-    if (LL_UNLIKELY(error))
-    {
-        quit = true;
-        GLubyte const * gl_error_msg = nullptr;      // no glu: the error codes below are logged as numbers
-        if (NULL != gl_error_msg)
-        {
-            LL_WARNS("RenderState") << "GL Error:" << error<< LL_ENDL;
-            LL_WARNS("RenderState") << "GL Error String:" << gl_error_msg << LL_ENDL;
-
-            if (gDebugSession)
-            {
-                gFailLog << "GL Error:" << gl_error_msg << std::endl;
-            }
-        }
-        else
-        {
-            // gluErrorString returns NULL for some extensions' error codes.
-            // you'll probably have to grep for the number in glext.h.
-            LL_WARNS("RenderState") << "GL Error: UNKNOWN 0x" << std::hex << error << std::dec << LL_ENDL;
-
-            if (gDebugSession)
-            {
-                gFailLog << "GL Error: UNKNOWN 0x" << std::hex << error << std::dec << std::endl;
-            }
-        }
-    }
-
-    if (quit)
-    {
-        if (gDebugSession)
-        {
-            ll_fail("assert_glerror failed");
-        }
-        else
-        {
-            LL_ERRS() << "One or more unhandled GL errors." << LL_ENDL;
-        }
-    }
 }
 
 void assert_glerror()
 {
-/*  if (!gGLActive)
-    {
-        //LL_WARNS() << "GL used while not active!" << LL_ENDL;
-
-        if (gDebugSession)
-        {
-            //ll_fail("GL used while not active");
-        }
-    }
-*/
-
-    if (!gDebugGL)
-    {
-        //funny looking if for branch prediction -- gDebugGL is almost always false and assert_glerror is called often
-    }
-    else
-    {
-        do_assert_glerror();
-    }
 }
-
 
 void clear_glerror()
 {
-    glGetError();
-    glGetError();
 }
 
 ///////////////////////////////////////////////////////////////
@@ -575,13 +484,10 @@ void LLGLState::restoreGL()
 void LLGLState::resetTextureStates()
 {
     gGL.flush();
-    GLint maxTextureUnits;
-
-    glGetIntegerv(GL_MAX_TEXTURE_UNITS_ARB, &maxTextureUnits);
+    const GLint maxTextureUnits = (GLint)LL_NUM_TEXTURE_LAYERS;
     for (S32 j = maxTextureUnits-1; j >=0; j--)
     {
         gGL.getTexUnit(j)->activate();
-        glClientActiveTexture(GL_TEXTURE0+j);
         j == 0 ? gGL.getTexUnit(j)->enable(LLTexUnit::TT_TEXTURE) : gGL.getTexUnit(j)->disable();
     }
 }
@@ -598,41 +504,7 @@ void LLGLState::dumpStates()
 
 void LLGLState::checkStates(GLboolean writeAlpha)
 {
-    if (!gDebugGL)
-    {
-        return;
-    }
-
-    GLint srcRGB, dstRGB, srcAlpha, dstAlpha;
-    glGetIntegerv(GL_BLEND_SRC_RGB, &srcRGB);
-    glGetIntegerv(GL_BLEND_DST_RGB, &dstRGB);
-    glGetIntegerv(GL_BLEND_SRC_ALPHA, &srcAlpha);
-    glGetIntegerv(GL_BLEND_DST_ALPHA, &dstAlpha);
-    llassert_always(srcRGB == GL_SRC_ALPHA);
-    llassert_always(srcAlpha == GL_SRC_ALPHA);
-    llassert_always(dstRGB == GL_ONE_MINUS_SRC_ALPHA);
-    llassert_always(dstAlpha == GL_ONE_MINUS_SRC_ALPHA);
-
-    // disable for now until usage is consistent
-    //GLboolean colorMask[4];
-    //glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
-    //llassert_always(colorMask[0]);
-    //llassert_always(colorMask[1]);
-    //llassert_always(colorMask[2]);
-    // llassert_always(colorMask[3] == writeAlpha);
-
-    for (std::unordered_map<LLGLenum, LLGLboolean>::iterator iter = sStateMap.begin();
-         iter != sStateMap.end(); ++iter)
-    {
-        LLGLenum state = iter->first;
-        LLGLboolean cur_state = iter->second;
-        LLGLboolean gl_state = glIsEnabled(state);
-        if(cur_state != gl_state)
-        {
-            dumpStates();
-            LL_GL_ERRS << llformat("LLGLState error. State: 0x%04x",state) << LL_ENDL;
-        }
-    }
+    // the viewer's own state is the only state (llvkstate.h): nothing to compare it with
 }
 
 ///////////////////////////////////////////////////////////////////////
@@ -679,21 +551,6 @@ LLGLState::~LLGLState()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     if (mState)
     {
-        if (gDebugGL)
-        {
-            if (!gDebugSession)
-            {
-                llassert_always(sStateMap[mState] == glIsEnabled(mState));
-            }
-            else
-            {
-                if (sStateMap[mState] != glIsEnabled(mState))
-                {
-                    ll_fail("GL enabled state does not match expected");
-                }
-            }
-        }
-
         if (mIsEnabled != mWasEnabled)
         {
             gGL.flush();
@@ -967,28 +824,7 @@ LLGLDepthTest::~LLGLDepthTest()
 
 void LLGLDepthTest::checkState()
 {
-    if (gDebugGL)
-    {
-        GLint func = 0;
-        GLboolean mask = GL_FALSE;
-
-        glGetIntegerv(GL_DEPTH_FUNC, &func);
-        glGetBooleanv(GL_DEPTH_WRITEMASK, &mask);
-
-        if (glIsEnabled(GL_DEPTH_TEST) != sDepthEnabled ||
-            sWriteEnabled != mask ||
-            sDepthFunc != func)
-        {
-            if (gDebugSession)
-            {
-                gFailLog << "Unexpected depth testing state." << std::endl;
-            }
-            else
-            {
-                LL_GL_ERRS << "Unexpected depth testing state." << LL_ENDL;
-            }
-        }
-    }
+    // the viewer's own state is the only state: nothing to compare it with
 }
 
 LLGLSquashToFarClip::LLGLSquashToFarClip()

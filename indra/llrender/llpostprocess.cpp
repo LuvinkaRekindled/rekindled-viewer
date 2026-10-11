@@ -289,8 +289,6 @@ void LLPostProcess::createBloomShader(void)
 void LLPostProcess::doEffects(void)
 {
     /// Save GL State
-    glPushAttrib(GL_ALL_ATTRIB_BITS);
-    glPushClientAttrib(GL_ALL_ATTRIB_BITS);
 
     /// Copy the screen buffer to the render texture
     {
@@ -315,8 +313,6 @@ void LLPostProcess::doEffects(void)
     viewPerspective();
 
     /// Reset GL State
-    glPopClientAttrib();
-    glPopAttrib();
     checkError();
 }
 
@@ -392,28 +388,5 @@ void LLPostProcess::createNoiseTexture(LLPointer<LLImageGL>& texture)
 
 bool LLPostProcess::checkError(void)
 {
-    GLenum glErr;
-    bool    retCode = false;
-
-    glErr = glGetError();
-    while (glErr != GL_NO_ERROR)
-    {
-        // shaderErrorLog << (const char *) gluErrorString(glErr) << std::endl;
-        char const * err_str_raw = nullptr;      // no glu: the code is reported as a number
-
-        if(err_str_raw == NULL)
-        {
-            std::ostringstream err_builder;
-            err_builder << "unknown error number " << glErr;
-            mShaderErrorString = err_builder.str();
-        }
-        else
-        {
-            mShaderErrorString = err_str_raw;
-        }
-
-        retCode = true;
-        glErr = glGetError();
-    }
-    return retCode;
+    return false;        // there are no GL errors
 }

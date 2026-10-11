@@ -307,7 +307,6 @@ void bench_vk_end(VkCommandBuffer cmd)
     {
         LLVk::vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, sBench.mPhasePool, sBench.mPhaseUsed);
     }
-    glFinish();
 }
 
 // after the frame was submitted: wait for it and read its GPU time

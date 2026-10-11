@@ -43,6 +43,7 @@
 #include "llvkstate.h"
 #include "llvktex.h"
 #include "llvkquery.h"
+#include "llvkcontext.h"
 #include "llvkbuf.h"
 #include "llvktarget.h"
 
@@ -912,13 +913,8 @@ bool LLRender::init(bool needs_vertex_buffer)
     }
 
     // <FS:Ansariel> Don't ignore OpenGL max line width
-    GLfloat range[2];
-    glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range);
-    stop_glerror();
-    mMaxLineWidthAliased = range[1];
-    glGetFloatv(GL_SMOOTH_LINE_WIDTH_RANGE, range);
-    stop_glerror();
-    mMaxLineWidthSmooth = range[1];
+    mMaxLineWidthAliased = LLVk::Context::instance().getCaps().mLineWidthRange[1];
+    mMaxLineWidthSmooth = mMaxLineWidthAliased;
     // </FS:Ansariel>
 
     return true;
@@ -1561,7 +1557,7 @@ void LLRender::texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_fo
 
 U32 LLRender::getError()
 {
-    return glGetError();
+    return 0;       // there are no GL errors
 }
 
 void LLRender::bindTextureSlot(S32 unit, U32 gl_target, U32 id)
@@ -1696,7 +1692,7 @@ void LLRender::setLineWidth(F32 line_width)
 {
     if (line_width > 1.f)
     {
-        line_width = llmin(line_width, glIsEnabled(GL_LINE_SMOOTH) ? mMaxLineWidthSmooth : mMaxLineWidthAliased);
+        line_width = llmin(line_width, mMaxLineWidthAliased);
     }
     if (mLineWidth != line_width || mDirty)
     {
@@ -1725,10 +1721,6 @@ bool LLRender::verifyTexUnitActive(U32 unitToVerify)
 
 void LLRender::clearErrors()
 {
-    while (glGetError())
-    {
-        //loop until no more error flags left
-    }
 }
 
 void LLRender::beginList(std::list<LLVertexBufferData> *list)
