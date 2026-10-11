@@ -668,7 +668,6 @@ void note_draw_time(const std::string& program_name)
     }
     sPhaseLastDrawTick = now.QuadPart;
 }
-std::map<std::pair<int, GLenum>, U64> sGetterCounts;    // LL_VK_PHASES: state getter calls by function and parameter
 // draw outcomes of the current frame, by reason (and by program for the skipped ones)
 struct DrawStats
 {
@@ -4361,19 +4360,6 @@ void after_frame()
                             }
                         }
                         LL_INFOS("VkPhases") << "value-returning hooks per frame (main thread): " << answers << LL_ENDL;
-                        static const char* const fn_names[] = { "glGetIntegerv", "glGetFloatv", "glGetBooleanv", "glIsEnabled", "glGetTexLevelParameteriv" };
-                        std::vector<std::pair<U64, std::pair<int, GLenum>>> order;
-                        for (const auto& kv : sGetterCounts) order.push_back({ kv.second, kv.first });
-                        std::sort(order.rbegin(), order.rend());
-                        std::string getters;
-                        for (size_t k = 0; k < order.size() && k < 12; ++k)
-                        {
-                            char buf[120];
-                            snprintf(buf, sizeof(buf), "%s(0x%X) %.1f | ", fn_names[order[k].second.first], order[k].second.second, (double)order[k].first / frames);
-                            getters += buf;
-                        }
-                        LL_INFOS("VkPhases") << "state getters per frame by parameter: " << getters << LL_ENDL;
-                        sGetterCounts.clear();
                     }
                     for (int i = 0; i < 2 * HOOK_COUNT; ++i) { gHookStatTicks[i] = 0; gHookStatCalls[i] = 0; }
                     {
@@ -4659,124 +4645,6 @@ void after_frame()
 namespace
 {
 
-// device limits: the Vulkan device must offer at least what OpenGL reports (the viewer sizes things from these)
-bool emulate_limit(GLenum pname, GLint* out, U32& n)
-{
-    const Capabilities& caps = Context::instance().getCaps();
-    n = 1;
-    switch (pname)
-    {
-    case 0x0D33: out[0] = (GLint)caps.mMaxImageDim2D; return true;                  // MAX_TEXTURE_SIZE
-    case 0x84E8: out[0] = (GLint)caps.mMaxImageDim2D; return true;                  // MAX_RENDERBUFFER_SIZE
-    case 0x851C: out[0] = (GLint)caps.mMaxImageDimCube; return true;                // MAX_CUBE_MAP_TEXTURE_SIZE
-    case 0x8073: out[0] = (GLint)caps.mMaxImageDim3D; return true;                  // MAX_3D_TEXTURE_SIZE
-    case 0x88FF: out[0] = (GLint)caps.mMaxArrayLayers; return true;                 // MAX_ARRAY_TEXTURE_LAYERS
-    case 0x8CDF: out[0] = (GLint)caps.mMaxColorAttachments; return true;           // MAX_COLOR_ATTACHMENTS
-    case 0x8824: out[0] = (GLint)caps.mMaxColorAttachments; return true;           // MAX_DRAW_BUFFERS
-    case 0x8869: out[0] = (GLint)caps.mMaxVertexAttribs; return true;               // MAX_VERTEX_ATTRIBS
-    case 0x8A30: out[0] = (GLint)caps.mMaxUniformRange; return true;                // MAX_UNIFORM_BLOCK_SIZE
-    case 0x8872: case 0x8B4C: case 0x8B4D:                                          // MAX_TEXTURE_IMAGE_UNITS, MAX_VERTEX_TEXTURE_IMAGE_UNITS, MAX_COMBINED_TEXTURE_IMAGE_UNITS
-        // <FS> what a GL driver reports (32 per stage, 192 combined), not the descriptor limit of the device (a million): the viewer loops over this many texture units
-        // (display() unbinds every one of them each frame: 2.6 ms for a million).
-        out[0] = (GLint)std::min<U32>((U32)caps.mMaxSampledImagesPerStage, pname == 0x8B4D ? 192u : 32u); return true;
-    case 0x8D57: out[0] = (GLint)caps.mMaxSampleCount; return true;                 // MAX_SAMPLES
-    // C6: the limits that used to read as 0 (nothing answered them)
-    case 0x80E8: out[0] = (GLint)caps.mRecommendedMaxVertices; return true;         // MAX_ELEMENTS_VERTICES
-    case 0x80E9: out[0] = (GLint)caps.mRecommendedMaxIndices; return true;          // MAX_ELEMENTS_INDICES
-    case 0x910E: out[0] = (GLint)caps.mMaxColorTextureSamples; return true;         // MAX_COLOR_TEXTURE_SAMPLES
-    case 0x910F: out[0] = (GLint)caps.mMaxDepthTextureSamples; return true;         // MAX_DEPTH_TEXTURE_SAMPLES
-    case 0x9110: out[0] = (GLint)caps.mMaxIntegerSamples; return true;              // MAX_INTEGER_SAMPLES
-    case 0x8E59: out[0] = (GLint)caps.mMaxSampleMaskWords; return true;             // MAX_SAMPLE_MASK_WORDS
-    case 0x8DFC: out[0] = (GLint)caps.mMaxVaryingVectors; return true;              // MAX_VARYING_VECTORS
-    case 0x0D3A: out[0] = (GLint)caps.mMaxViewport[0]; out[1] = (GLint)caps.mMaxViewport[1]; n = 2; return true;     // MAX_VIEWPORT_DIMS
-    default: return false;
-    }
-}
-
-// the value the mirror's tracked GL state holds. False if the mirror does not track this one.
-bool emulate_integer(GLenum pname, GLint* out, U32& n)
-{
-    n = 1;
-    switch (pname)
-    {
-    case 0x0BA2:    // VIEWPORT
-    {
-        const LLVkState::Block* b = state_block();
-        if (!b || !b->mViewportSet) return false;
-        for (int i = 0; i < 4; ++i) out[i] = b->mViewport[i];
-        n = 4; return true;
-    }
-    case 0x0C10:    // SCISSOR_BOX
-    {
-        const LLVkState::Block* b = state_block();
-        if (!b || (!b->mScissor[2] && !b->mScissor[3])) return false;
-        for (int i = 0; i < 4; ++i) out[i] = b->mScissor[i];
-        n = 4; return true;
-    }
-    case 0x0CF5: out[0] = sCtx.mUnpackAlignment; return true;                       // UNPACK_ALIGNMENT
-    case 0x0CF2: out[0] = sCtx.mUnpackRowLength; return true;                       // UNPACK_ROW_LENGTH
-    // DEPTH_FUNC, CULL_FACE_MODE and the blend functions are not answered: the state is native Vulkan values now, and only gDebugGL's consistency checks asked
-    default: return false;
-    }
-}
-
-bool emulate_float(GLenum pname, GLfloat* out, U32& n)
-{
-    n = 1;
-    switch (pname)
-    {
-    case 0x0BA2:
-    {
-        const LLVkState::Block* b = state_block();
-        if (!b || !b->mViewportSet) return false;
-        for (int i = 0; i < 4; ++i) out[i] = (GLfloat)b->mViewport[i];
-        n = 4; return true;
-    }
-    case 0x0B21: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mRaster.mLineWidth; return true; }       // LINE_WIDTH
-    case 0x8038: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mRaster.mBiasSlope; return true; }       // POLYGON_OFFSET_FACTOR
-    case 0x2A00: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mRaster.mBiasConstant; return true; }    // POLYGON_OFFSET_UNITS
-    case 0x84FF: out[0] = Context::instance().getCaps().mMaxAnisotropy; return true;               // MAX_TEXTURE_MAX_ANISOTROPY
-    case 0x846E: case 0x0B22:                                                                       // ALIASED_LINE_WIDTH_RANGE, SMOOTH_LINE_WIDTH_RANGE
-        out[0] = Context::instance().getCaps().mLineWidthRange[0]; out[1] = Context::instance().getCaps().mLineWidthRange[1]; n = 2; return true;
-    default: return false;
-    }
-}
-
-bool emulate_boolean(GLenum pname, GLboolean* out, U32& n)
-{
-    n = 1;
-    switch (pname)
-    {
-    case 0x0B72: { const LLVkState::Block* b = state_block(); if (!b) return false; out[0] = b->mDepthMask ? 1 : 0; return true; }       // DEPTH_WRITEMASK
-    case 0x0C23:                                                                                                                       // COLOR_WRITEMASK
-    {
-        const LLVkState::Block* b = state_block();
-        if (!b) return false;
-        const U32 m = b->mBlend.mWriteMask;
-        out[0] = (m & VK_COLOR_COMPONENT_R_BIT) != 0; out[1] = (m & VK_COLOR_COMPONENT_G_BIT) != 0; out[2] = (m & VK_COLOR_COMPONENT_B_BIT) != 0; out[3] = (m & VK_COLOR_COMPONENT_A_BIT) != 0;
-        n = 4; return true;
-    }
-    default: return false;
-    }
-}
-
-bool emulate_enabled(GLenum cap, bool& value)
-{
-    const LLVkState::Block* b = state_block();
-    switch (cap)
-    {
-    case 0x0BE2: value = b && b->mBlend.mEnable; return true;
-    case 0x0B71: value = b && b->mDepth.mDepthTest; return true;
-    case 0x0B44: value = b && b->mRaster.mCull != VK_CULL_MODE_NONE; return true;
-    case 0x0C11: value = b && b->mScissorOn; return true;
-    case 0x0B90: value = b && b->mDepth.mStencilTest; return true;
-    case 0x8037: value = b && b->mRaster.mDepthBias; return true;
-    case 0x864F: value = b && b->mRaster.mDepthClamp; return true;
-    default: value = (cap == 0x0BD0 || cap == 0x809D); return true;      // the other capabilities do not change what a draw does: DITHER and MULTISAMPLE start enabled, the rest disabled
-    }
-}
-
-
 // ---- queries ----
 struct QueryRec
 {
@@ -5035,16 +4903,6 @@ namespace
 
 U32 pack_alignment() { return 1; }        // readbacks hand back tightly packed rows
 
-// the questions the mirror could not answer and left to OpenGL (logged once each)
-void note_fallback(const char* fn, GLenum pname)
-{
-    static std::set<std::pair<std::string, GLenum>> seen;
-    if (seen.insert({ fn, pname }).second)
-    {
-        LL_INFOS("VkOwn") << "not answered by the mirror, OpenGL answers (and its state is stale): " << fn << "(0x" << std::hex << pname << std::dec << ")" << LL_ENDL;
-    }
-}
-
 // where a pack operation writes: the bound pixel pack buffer (the pointer is then an offset) or client memory
 U8* pack_destination(void* pixels)
 {
@@ -5211,73 +5069,8 @@ bool own_query_value(GLuint id, GLenum pname, U64& value)
 
 } // anonymous namespace
 
-// LL_VK_PHASES: which state getters the viewer asks for, by function and parameter name
-void phase_getter(int fn, GLenum pname)
-{
-    if (LLVkMirror::gPhaseTiming && LLVkMirror::onMainThread())
-    {
-        ++sGetterCounts[{ fn, pname }];
-    }
-}
-
-bool own_glGetIntegerv(GLenum pname, GLint* params)
-{
-    phase_getter(0, pname);
-    GLint emu[4] = {};
-    U32 n = 1;
-    if (!params || !(emulate_integer(pname, emu, n) || emulate_limit(pname, emu, n)))
-    {
-        note_fallback("glGetIntegerv", pname);
-        return false;
-    }
-    for (U32 i = 0; i < n; ++i) params[i] = emu[i];
-    return true;
-}
-
-bool own_glGetFloatv(GLenum pname, GLfloat* params)
-{
-    phase_getter(1, pname);
-    GLfloat emu[4] = {};
-    U32 n = 1;
-    if (!params || !emulate_float(pname, emu, n))
-    {
-        note_fallback("glGetFloatv", pname);
-        return false;
-    }
-    for (U32 i = 0; i < n; ++i) params[i] = emu[i];
-    return true;
-}
-
-bool own_glGetBooleanv(GLenum pname, GLboolean* params)
-{
-    phase_getter(2, pname);
-    GLboolean emu[4] = {};
-    U32 n = 1;
-    if (!params || !emulate_boolean(pname, emu, n))
-    {
-        note_fallback("glGetBooleanv", pname);
-        return false;
-    }
-    for (U32 i = 0; i < n; ++i) params[i] = emu[i];
-    return true;
-}
-
-bool own_glIsEnabled(GLenum cap, GLboolean& out)
-{
-    phase_getter(3, cap);
-    bool v = false;
-    if (!emulate_enabled(cap, v))
-    {
-        note_fallback("glIsEnabled", cap);
-        return false;
-    }
-    out = v ? GL_TRUE : GL_FALSE;
-    return true;
-}
-
 bool own_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint* params)
 {
-    phase_getter(4, pname);
     if (!params)
     {
         return true;

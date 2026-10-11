@@ -27,11 +27,6 @@ FUNCS = [
     ('void', 'glDeleteBuffers', 'GLsizei n, const GLuint* buffers'),
     # draws
     # state: the render state is not GL-shaped any more (llvkstate.h); only clears are still calls
-    # calls that return data or state: the hook checks (and later will supply) the answer
-    ('void', 'glGetIntegerv', 'GLenum pname, GLint* params'),
-    ('void', 'glGetFloatv', 'GLenum pname, GLfloat* params'),
-    ('void', 'glGetBooleanv', 'GLenum pname, GLboolean* params'),
-    ('GLboolean', 'glIsEnabled', 'GLenum cap'),
     # queries
     ('void', 'glGenQueries', 'GLsizei n, GLuint* ids'),
     ('void', 'glDeleteQueries', 'GLsizei n, const GLuint* ids'),
@@ -40,24 +35,6 @@ FUNCS = [
 
 # (return type, name, parameters, value returned with LL_VK_NOGL: the viewer has no OpenGL context and these are not made)
 PASS = [
-    ('GLenum', 'glGetError', '', 'GLenum(0)'),
-    ('const GLubyte*', 'glGetString', 'GLenum name', 'll_nogl_string(name)'),
-    ('const GLubyte*', 'glGetStringi', 'GLenum name, GLuint index', '(const GLubyte*)""'),
-    ('void', 'glFlush', '', ''),
-    ('void', 'glFinish', '', ''),
-    ('void', 'glHint', 'GLenum target, GLenum mode', ''),
-    ('void', 'glGetBufferParameteriv', 'GLenum target, GLenum pname, GLint* params', ''),
-    ('void', 'glObjectLabel', 'GLenum identifier, GLuint name, GLsizei length, const GLchar* label', ''),
-    ('void', 'glClientActiveTexture', 'GLenum texture', ''),
-    ('void', 'glGetUniformiv', 'GLuint program, GLint location, GLint* params', ''),
-    ('void', 'glGetUniformfv', 'GLuint program, GLint location, GLfloat* params', ''),
-    ('GLboolean', 'glAreTexturesResident', 'GLsizei n, const GLuint* textures, GLboolean* residences', 'GLboolean(GL_TRUE)'),
-    ('void', 'glPushAttrib', 'GLbitfield mask', ''),
-    ('void', 'glPopAttrib', '', ''),
-    ('void', 'glPushClientAttrib', 'GLbitfield mask', ''),
-    ('void', 'glPopClientAttrib', '', ''),
-    ('void', 'glDebugMessageCallback', 'GLDEBUGPROC callback, const void* userParam', ''),
-    ('void', 'glGetProgramBinary', 'GLuint program, GLsizei bufSize, GLsizei* length, GLenum* binaryFormat, void* binary', ''),
 ]
 
 def arg_names(params):

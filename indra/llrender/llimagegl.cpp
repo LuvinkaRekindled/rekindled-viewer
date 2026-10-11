@@ -181,13 +181,6 @@ void LLImageGL::checkTexSize(bool forced) const
 {
     if ((forced || gDebugGL) && mTarget == GL_TEXTURE_2D)
     {
-        {
-            //check viewport
-            GLint vp[4] ;
-            glGetIntegerv(GL_VIEWPORT, vp) ;
-            llcallstacks << "viewport: " << vp[0] << " : " << vp[1] << " : " << vp[2] << " : " << vp[3] << llcallstacksendl ;
-        }
-
         GLint texname;
         texname = (GLint)mTexName;
         bool error = false;
@@ -1856,14 +1849,6 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
         is_compressed = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, GL_TEXTURE_COMPRESSED);
     }
 
-    //-----------------------------------------------------------------------------------------------
-    GLenum error ;
-    while((error = glGetError()) != GL_NO_ERROR)
-    {
-        LL_WARNS() << "GL Error happens before reading back texture. Error code: " << error << LL_ENDL ;
-    }
-    //-----------------------------------------------------------------------------------------------
-
     LLImageDataLock lock(imageraw);
 
     if (is_compressed)
@@ -1911,21 +1896,6 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
         LLVkTex::getImage(mTexName, GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (GLvoid*)(imageraw->getData()));
         //stop_glerror();
     }
-
-    //-----------------------------------------------------------------------------------------------
-    if((error = glGetError()) != GL_NO_ERROR)
-    {
-        LL_WARNS() << "GL Error happens after reading back texture. Error code: " << error << LL_ENDL ;
-        imageraw->deleteData() ;
-
-        while((error = glGetError()) != GL_NO_ERROR)
-        {
-            LL_WARNS() << "GL Error happens after reading back texture. Error code: " << error << LL_ENDL ;
-        }
-
-        return false ;
-    }
-    //-----------------------------------------------------------------------------------------------
 
     return true ;
 }
@@ -2001,7 +1971,7 @@ bool LLImageGL::getIsResident(bool test_now)
     {
         if (mTexName != 0)
         {
-            glAreTexturesResident(1, (GLuint*)&mTexName, &mIsResident);
+            mIsResident = true;     // every texture the viewer has is resident
         }
         else
         {
@@ -2485,12 +2455,6 @@ bool LLImageGL::scaleDown(S32 desired_discard)
         if (gGL.getTexUnit(0)->bind(this, true, true))
         {
             LLVertexBuffer::drawNoAttributes(LLRender::TRIANGLES, 0, 3);
-
-#if LL_DARWIN
-            // On mac OS, flush before freeing, otherwise the texture may be
-            // freed before Metal's 'lazy' evaluation/restoration behavior triggers.
-            glFlush();
-#endif
 
             free_tex_image(mTexName);
             LLVkTex::image2D(mTexName, mTarget, 0, mFormatInternal, desired_width, desired_height, 0, mFormatPrimary, mFormatType, nullptr);
