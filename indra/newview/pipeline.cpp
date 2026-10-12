@@ -12004,6 +12004,7 @@ static U32 rt_avatar_kind(LLVOAvatar* avatar)
 
 static void rt_name_rigged_main_view()
 {
+    LLViewerJointMesh::noteRecentBodyMeshes();      // the body meshes drawn after the lighting (hair, skirt, eyelashes) would be named a frame late otherwise
     if (rt_materials_on())
     {
         // debug aid: which pass types hold the viewer's own avatar's rigged draws (about once in 600 frames), to see what the naming below leaves out
