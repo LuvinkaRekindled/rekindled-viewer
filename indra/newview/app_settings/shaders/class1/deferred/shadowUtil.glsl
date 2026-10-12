@@ -173,23 +173,20 @@ void rtSceneFrame(out mat3 to_scene, out vec3 camera)
     camera = uintBitsToFloat(uvec3(h.slots.y, h.flags, floatBitsToUint(h.cutoff)));
 }
 
-float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
+// Soft shadows: the sun is a disc, not a point. Each pixel traces rt_sun_samples rays towards random points of the sun's disc (tangent of its angular radius: rt_sun_radius), so a
+// shadow edge is as soft as the distance between the caster and the receiver makes it (hard where they touch). One or two rays per pixel are noisy: the sun lightmap's bilateral blur
+// (blurLightF.glsl) smooths them. Both uniforms are set by the sun lightmap pass only; every other shader that samples the sun shadow (alpha, water) leaves them 0 and gets one hard ray.
+uniform float rt_sun_radius;
+uniform int rt_sun_samples;
+uniform float rt_noise_frame;
+
+float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
 {
-    if (dot(norm, light_dir) <= 0.0)
-    {
-        return 0.0;                         // facing away from the light
-    }
-    if (-pos.z > shadow_clip.w)
-    {
-        return 1.0;                         // beyond the shadow range: lit, as with the cascades
-    }
-    vec3 origin = pos + norm * (0.015 + 0.0006 * -pos.z);
-    float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
     mat3 to_scene;
     vec3 camera;
     rtSceneFrame(to_scene, camera);
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, to_scene * origin + camera, 0.005, to_scene * light_dir, 2000.0);
+    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, to_scene * origin + camera, 0.005, to_scene * dir, 2000.0);
     // a ray is given a limited number of masked candidates: a structure that is not what it should be (garbage geometry spread over the scene) must cost a frame some shadows, not
     // a GPU job that outlasts the 2 seconds the driver allows (VK_ERROR_DEVICE_LOST: the viewer cannot go on). The ray stops with what it has found: no hit, lit.
     uint candidates = 0u;
@@ -210,6 +207,39 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
         }
     }
     return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
+}
+
+float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
+{
+    if (dot(norm, light_dir) <= 0.0)
+    {
+        return 0.0;                         // facing away from the light
+    }
+    if (-pos.z > shadow_clip.w)
+    {
+        return 1.0;                         // beyond the shadow range: lit, as with the cascades
+    }
+    vec3 origin = pos + norm * (0.015 + 0.0006 * -pos.z);
+    float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
+    int samples = (rt_sun_radius > 0.0) ? clamp(rt_sun_samples, 1, 16) : 1;
+    if (samples == 1 && rt_sun_radius <= 0.0)
+    {
+        return rtSunRay(origin, light_dir, pos_screen, lod);
+    }
+    // a frame of tangents for the sun's disc, a per pixel rotation (interleaved gradient noise, shifted by the frame when it changes every frame) and a golden angle spiral
+    vec3 t1 = normalize(cross(light_dir, abs(light_dir.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+    vec3 t2 = cross(light_dir, t1);
+    vec2 px = gl_FragCoord.xy + vec2(5.588238, 5.588238) * rt_noise_frame;
+    float rot = fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+    float lit = 0.0;
+    for (int i = 0; i < samples; ++i)
+    {
+        float r = sqrt((float(i) + 0.5) / float(samples)) * rt_sun_radius;
+        float phi = rot + float(i) * 2.3999632;
+        vec3 dir = normalize(light_dir + (t1 * cos(phi) + t2 * sin(phi)) * r);
+        lit += rtSunRay(origin, dir, pos_screen, lod);
+    }
+    return lit / float(samples);
 }
 #endif
 
