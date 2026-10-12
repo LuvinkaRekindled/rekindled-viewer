@@ -207,6 +207,7 @@ struct Stats
     U64 mProbeCount = 0, mProbeNow = 0, mProbeNoUpdate = 0, mProbeNoUpdateFast = 0, mProbeFast = 0;     // size probe: bytes the new group structures need with the flags used / without ALLOW_UPDATE / without it and with PREFER_FAST_BUILD / with PREFER_FAST_BUILD
     U64 mCompacted = 0, mCompactBefore = 0, mCompactAfter = 0, mCompactSkipped = 0, mCompactFailed = 0;     // compaction: structures replaced, bytes before and after
     U64 mScanChecks = 0, mScanMismatch = 0;       // the candidate lists against a full walk (verify)
+    U64 mForceWhy[5] = {};          // the whole cache was made again because: eviction, camera too far from the origin, alpha switch, material switch, compaction
     U64 mRecRowsWritten = 0, mMatRowsWritten = 0, mMatUpdates = 0, mTableMismatch = 0, mRecNoMaterial = 0, mRecMaterial = 0;     // the table writes (deltas) and the material tables
     U64 mRefreshed = 0, mFullRebuilds = 0, mVerifies = 0, mVerifyGroups = 0, mVerifyMismatch = 0, mTopologyChecks = 0;      // the scene cache (see sInstArray)
 };
@@ -1610,6 +1611,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 it = sBlas.erase(it);
                 ++sStats.mEvicted;
                 sForceFull = true;
+                ++sStats.mForceWhy[0];
             }
             else
             {
@@ -2557,29 +2559,40 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     }
     {
         const float dx = cam[0] - sOrigin[0], dy = cam[1] - sOrigin[1], dz = cam[2] - sOrigin[2];
-        if (!sOriginValid || dx * dx + dy * dy + dz * dz > 48.f * 48.f)
+        // 300 m, not 48: a second scene call in a frame (a reflection probe, a snapshot) has its own camera, often far from the main one; with a tight limit the two took the origin
+        // from each other at every call and the whole cache was made again each time. Float precision at a few hundred metres (a few 1e-5 m) is plenty for the rays.
+        if (!sOriginValid || dx * dx + dy * dy + dz * dz > 300.f * 300.f)
         {
+            static U32 origin_logged = 0;
+            if (origin_logged++ < 12)
+            {
+                LL_INFOS("VkRt") << "scene origin moves: camera " << cam[0] << "," << cam[1] << "," << cam[2] << " was " << dx << "," << dy << "," << dz << " from the origin (call " << call << " of frame " << frame_now << ")" << LL_ENDL;
+            }
             for (int i = 0; i < 3; ++i)
             {
-                sOrigin[i] = floorf(cam[i] / 32.f) * 32.f;
+                sOrigin[i] = roundf(cam[i] / 32.f) * 32.f;      // the NEAREST grid point: with floor, a camera in the far corner of its cell is 55 m from the point, over the 48 m limit, and the whole scene was made again at every call
             }
             sOriginValid = true;
             sForceFull = true;
+            ++sStats.mForceWhy[1];
         }
     }
     if (sAlphaOnSeen != alpha_on)
     {
         sAlphaOnSeen = alpha_on;
         sForceFull = true;
+        ++sStats.mForceWhy[2];
     }
     if (sMatsSeen != sDbg.mMats)
     {
         sMatsSeen = sDbg.mMats;
         sForceFull = true;
+        ++sStats.mForceWhy[3];
     }
     if (sRecs.size() > sMaxRecords - 4096 - 2048 || sRecGarbage * 2 > sRecs.size() + 64)
     {
         sForceFull = true;                      // compaction
+        ++sStats.mForceWhy[4];
     }
 
     // one group's instance and alpha records, made from what it is now
@@ -3836,9 +3849,10 @@ std::string report(double frames)
         size_t used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, ", instances split: refresh %.2f, verify %.2f, copy %.2f, table %.2f, avatars %.2f", s.mSubMs[0] / scenes, s.mSubMs[1] / scenes, s.mSubMs[2] / scenes, s.mSubMs[3] / scenes, s.mSubMs[4] / scenes);
         used = strlen(buf);
-        snprintf(buf + used, sizeof(buf) - used, "; tables: %s, records written %.0f/call, material rows defined %zu (updates %.2f/frame, written %.0f/call), rows made with a material %.1f without %.1f /frame, verify mismatches %llu",
+        snprintf(buf + used, sizeof(buf) - used, "; tables: %s, records written %.0f/call, material rows defined %zu (updates %.2f/frame, written %.0f/call), rows made with a material %.1f without %.1f /frame, verify mismatches %llu, cache made again because: eviction %llu, origin %llu, alpha %llu, materials %llu, compaction %llu",
                  sMatsInit ? (sDbg.mMats ? "materials on" : "materials off live") : "no materials", (double)s.mRecRowsWritten / scenes, sMatRows.size(), (double)s.mMatUpdates / f, (double)s.mMatRowsWritten / scenes,
-                 (double)s.mRecMaterial / f, (double)s.mRecNoMaterial / f, (unsigned long long)s.mTableMismatch);
+                 (double)s.mRecMaterial / f, (double)s.mRecNoMaterial / f, (unsigned long long)s.mTableMismatch,
+                 (unsigned long long)s.mForceWhy[0], (unsigned long long)s.mForceWhy[1], (unsigned long long)s.mForceWhy[2], (unsigned long long)s.mForceWhy[3], (unsigned long long)s.mForceWhy[4]);
         used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, " (refresh = move check %.2f + dirty groups), slot lookups/call %.0f, dirty/call: moved %.1f, address %.1f, alpha info %.1f, new range %.1f, move check %.1f, structure %.1f", s.mSubMs[5] / scenes, (double)s.mSlotMisses / scenes, (double)s.mDirtyWhy[0] / scenes, (double)s.mDirtyWhy[1] / scenes, (double)s.mDirtyWhy[2] / scenes, (double)s.mDirtyWhy[3] / scenes, (double)s.mDirtyWhy[4] / scenes, (double)s.mDirtyWhy[5] / scenes);
     }
