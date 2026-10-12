@@ -1050,11 +1050,13 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         {
             // motion vectors at the render size; the upscaled picture at the window size
             if (!mMotionMap.allocate(resX, resY, GL_RG16F)) return false;
+            if (!mAvatarVelocityMap.allocate(resX, resY, GL_RGBA16F)) return false;
             if (!mUpscaledMap.allocate(window_res_x, window_res_y, GL_RGBA)) return false;
         }
         else
         {
             mMotionMap.release();
+            mAvatarVelocityMap.release();
             mUpscaledMap.release();
         }
 
@@ -1436,6 +1438,7 @@ void LLPipeline::releaseScreenBuffers()
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
     mMotionMap.release();
+    mAvatarVelocityMap.release();
     mUpscaledMap.release();
 
     mAuxillaryRT.screen.release();
@@ -9644,6 +9647,438 @@ void LLPipeline::noteSceneMatrices()
     mViewProjPrevValid = mJitterFrame != ~0u;
 }
 
+// <FS> Avatar motion vectors. The rigged draws the G-buffer drew, by pass type (the types are the rigged ones themselves): everything opaque or alpha masked that the deferred pools draw.
+// Masked draws are drawn like opaque ones: the depth test of the fragment shader drops the pixels the G-buffer discarded.
+static const U32 kVelocityRiggedTypes[] = {
+    LLRenderPass::PASS_SIMPLE_RIGGED,
+    LLRenderPass::PASS_FULLBRIGHT_RIGGED,
+    LLRenderPass::PASS_BUMP_RIGGED,
+    LLRenderPass::PASS_MATERIAL_RIGGED,
+    LLRenderPass::PASS_MATERIAL_ALPHA_MASK_RIGGED,
+    LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE_RIGGED,
+    LLRenderPass::PASS_SPECMAP_RIGGED,
+    LLRenderPass::PASS_SPECMAP_MASK_RIGGED,
+    LLRenderPass::PASS_SPECMAP_EMISSIVE_RIGGED,
+    LLRenderPass::PASS_NORMMAP_RIGGED,
+    LLRenderPass::PASS_NORMMAP_MASK_RIGGED,
+    LLRenderPass::PASS_NORMMAP_EMISSIVE_RIGGED,
+    LLRenderPass::PASS_NORMSPEC_RIGGED,
+    LLRenderPass::PASS_NORMSPEC_MASK_RIGGED,
+    LLRenderPass::PASS_NORMSPEC_EMISSIVE_RIGGED,
+    LLRenderPass::PASS_ALPHA_MASK_RIGGED,
+    LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED,
+    LLRenderPass::PASS_GLTF_PBR_RIGGED,
+    LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK_RIGGED,
+};
+
+// <FS> Step 1b: the model matrix of every draw that is not rigged, as of this frame and the frame before. The draws point at the matrix of their drawable (render matrix of an active one, the
+// region's matrix for static ones), which is rewritten in place each frame, so the values are copied here. The key is the address: an entry not seen last frame has no history (previous = current).
+struct ModelMatrixHistory
+{
+    F32 mCur[16];
+    F32 mPrev[16];
+    U32 mFrame;
+    bool mMoving;
+};
+static std::unordered_map<const LLMatrix4*, ModelMatrixHistory> sModelMatrixHistory;
+
+bool LLPipeline::avatarVelocityWanted()
+{
+    static LLCachedControl<bool> enabled(gSavedSettings, "RenderAvatarMotionVectors", false);
+    return enabled && sDLSS && sRenderDeferred && !gCubeSnapshot && !gSnapshot && LLVkMirror::upscaleAvailable() && mMotionMap.isComplete() && mUpscaledMap.isComplete()
+           && mAvatarVelocityMap.isComplete() && gAvatarVelocityProgram.isComplete() && gAvatarBodyVelocityProgram.isComplete()
+           && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
+}
+
+void LLPipeline::beginAvatarVelocity()
+{
+    mAvatarVelocityActive = avatarVelocityWanted();
+    LLViewerJointMesh::sVelocityDraws.clear();
+    LLViewerJointMesh::sRecordVelocity = mAvatarVelocityActive;
+    mAvatarVelocityDrawn = false;
+}
+
+void LLPipeline::renderAvatarVelocity()
+{
+    LLViewerJointMesh::sRecordVelocity = false;
+    if (!mAvatarVelocityActive)
+    {
+        LLViewerJointMesh::sVelocityDraws.clear();
+        return;
+    }
+    mAvatarVelocityActive = false;
+    LL_PROFILE_GPU_ZONE("avatar velocity");
+    LL_CPU_ZONE("avatar velocity");
+
+    static LLCachedControl<F32> range_setting(gSavedSettings, "RenderAvatarMotionVectorsRange", 48.f);
+    const F32 range = llmax(range_setting(), 1.f);
+    const LLVector3 camera_origin = LLViewerCamera::getInstance()->getOrigin();
+
+    // Avatars that do not move are not drawn: their vector is the camera vector the motion pass computes anyway. An upper bound of the pixels a vertex of the skin moves since last frame:
+    // the biggest change of a palette float (rotation terms, translation in meters) times a reach of 1.5 m, as pixels at the avatar's distance. 0 switches the skip off.
+    static LLCachedControl<F32> min_motion_setting(gSavedSettings, "RenderAvatarMotionVectorsMinMotion", 0.3f);
+    const F32 min_motion_px = min_motion_setting();
+    const F32 focal_px = 0.5f * (F32)mAvatarVelocityMap.getHeight() * LLViewerCamera::sJitteredProjection[1][1];
+    auto motion_pixels = [&](const F32* cur, const F32* prev, size_t count, F32 distance)
+    {
+        F32 biggest = 0.f;
+        for (size_t k = 0; k < count; ++k)
+        {
+            biggest = llmax(biggest, fabsf(cur[k] - prev[k]));
+        }
+        return biggest * 1.5f * focal_px / llmax(distance, 0.5f);
+    };
+
+    // this frame's matrices are not in mViewProjCur yet (noteSceneMatrices runs at the end of the lighting): this frame's come from the camera, last frame's are mViewProjCur
+    const glm::mat4 view_proj_cur = LLViewerCamera::sUnjitteredProjection * LLViewerCamera::sJitterModelview;
+    const glm::mat4 view_proj_prev = mViewProjPrevValid ? mViewProjCur : view_proj_cur;
+    const glm::mat4& jittered = LLViewerCamera::sJitteredProjection;
+    const F32 proj_z[2] = { jittered[2][2], jittered[3][2] };
+    static LLStaticHashedString view_proj_cur_s("view_proj_cur"), view_proj_prev_s("view_proj_prev"), render_res_s("render_res"), proj_z_s("proj_z"), tolerance_s("depth_tolerance"),
+        palette_prev_s("matrixPalettePrev");
+
+    auto setup = [&](LLGLSLShader& program)
+    {
+        program.bind();
+        program.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
+        program.uniformMatrix4fv(view_proj_cur_s, 1, GL_FALSE, glm::value_ptr(view_proj_cur));
+        program.uniformMatrix4fv(view_proj_prev_s, 1, GL_FALSE, glm::value_ptr(view_proj_prev));
+        program.uniform2f(render_res_s, (F32)mAvatarVelocityMap.getWidth(), (F32)mAvatarVelocityMap.getHeight());
+        program.uniform2fv(proj_z_s, 1, proj_z);
+        program.uniform1f(tolerance_s, 0.004f);
+    };
+
+    mAvatarVelocityMap.bindTarget();
+    gGL.setClearColor(0.f, 0.f, 0.f, 0.f);
+    mAvatarVelocityMap.clear();
+    gGL.setColorMask(true, true);
+    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+    LLGLDisable blend(GL_BLEND);
+    LLGLEnable cull(GL_CULL_FACE);
+    gGL.matrixMode(LLRender::MM_MODELVIEW);
+    gGL.loadMatrix(gGLModelView);
+    gGLLastMatrix = NULL;
+
+    U32 rigged_draws = 0, rigged_skipped = 0, body_draws = 0, packet_draws = 0, still_draws = 0, object_draws = 0, object_matrices = 0, object_unfit = 0;
+    {
+        // the rigged draws are collected first: the ones a render packet record can carry go into one record (cheap), the rest are drawn one by one (the first version of the pass, which
+        // is also the whole pass when RenderAvatarMotionVectorsPackets is off or the packet program is not available)
+        static LLCachedControl<bool> use_packets_setting(gSavedSettings, "RenderAvatarMotionVectorsPackets", true);
+        const bool use_packets = use_packets_setting && gAvatarVelocityPullProgram.mProgramObject != 0 && LLVkMirror::shadowPacketsAvailable();
+        std::vector<LLVkMirror::ShadowSkinEntry> entries;
+        std::vector<F32> palettes, prev_palettes;
+        std::unordered_map<const F32*, U32> palette_offsets;
+        std::vector<LLDrawInfo*> fallback;
+        struct AvatarState { bool mOk; F32 mDistance; };
+        std::unordered_map<const LLVOAvatar*, AvatarState> avatar_ok;
+        std::unordered_map<const F32*, bool> palette_still;
+        for (U32 type : kVelocityRiggedTypes)
+        {
+            auto* begin = beginRenderMap(type);
+            auto* end = endRenderMap(type);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                LLVOAvatar* avatar = params->mAvatar.get();
+                const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                if (!params->mCount || !avatar || params->mSkinInfo.isNull() || !vb || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))
+                {
+                    continue;
+                }
+                auto found = avatar_ok.find(avatar);
+                if (found == avatar_ok.end())
+                {
+                    const F32 distance = (avatar->getRenderPosition() - camera_origin).length();
+                    const bool ok = !avatar->isDead() && !avatar->isImpostor() && avatar->getOverallAppearance() == LLVOAvatar::AOA_NORMAL && distance <= range;
+                    found = avatar_ok.emplace(avatar, AvatarState{ ok, distance }).first;
+                }
+                if (!found->second.mOk)
+                {
+                    ++rigged_skipped;
+                    continue;
+                }
+                const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(params->mSkinInfo);
+                const U32 joints = (U32)mpc.mMatrixPalette.size();
+                if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12 || mpc.mPrevGLMp.size() != mpc.mGLMp.size())
+                {
+                    continue;       // the skin is not loaded yet: not drawn, as the G-buffer does not draw it
+                }
+                if (min_motion_px > 0.f)
+                {
+                    auto still = palette_still.find(mpc.mGLMp.data());
+                    if (still == palette_still.end())
+                    {
+                        still = palette_still.emplace(mpc.mGLMp.data(), motion_pixels(mpc.mGLMp.data(), mpc.mPrevGLMp.data(), (size_t)joints * 12, found->second.mDistance) < min_motion_px).first;
+                    }
+                    if (still->second)
+                    {
+                        ++still_draws;
+                        continue;
+                    }
+                }
+                if (use_packets && vb->getGLBuffer() && vb->getGLIndices() && vb->getIndicesType() == GL_UNSIGNED_SHORT && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0)
+                {
+                    auto it = palette_offsets.find(mpc.mGLMp.data());
+                    if (it == palette_offsets.end())
+                    {
+                        it = palette_offsets.emplace(mpc.mGLMp.data(), (U32)palettes.size()).first;
+                        palettes.insert(palettes.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
+                        prev_palettes.insert(prev_palettes.end(), mpc.mPrevGLMp.begin(), mpc.mPrevGLMp.begin() + (size_t)joints * 12);
+                    }
+                    LLVkMirror::ShadowSkinEntry e = {};
+                    e.mVertexBuffer = vb->getGLBuffer();
+                    e.mIndexBuffer = vb->getGLIndices();
+                    e.mFirstIndex = params->mOffset;
+                    e.mIndexCount = params->mCount;
+                    e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                    e.mPaletteOffset = it->second;
+                    e.mJoints = joints;
+                    entries.push_back(e);
+                    continue;
+                }
+                fallback.push_back(params);
+            }
+        }
+
+        if (!entries.empty())
+        {
+            setup(gAvatarVelocityPullProgram);
+            LLVkMirror::ShadowPacketsHeader header;
+            header.mKind = 8;
+            header.mPass = 6;
+            header.mEntries = (U32)entries.size();
+            header.mMatrices = 0;
+            header.mPaletteFloats = (U32)palettes.size();
+            const glm::mat4 view_proj = gGL.getProjectionMatrix() * glm::make_mat4(gGLModelView);
+            memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
+            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + 2 * palettes.size() * sizeof(F32));
+            memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]), palettes.data(), palettes.size() * sizeof(F32));
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + palettes.size() * sizeof(F32), prev_palettes.data(), prev_palettes.size() * sizeof(F32));
+            LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+            packet_draws = (U32)entries.size();
+            gAvatarVelocityPullProgram.unbind();
+        }
+
+        if (!fallback.empty())
+        {
+            setup(gAvatarVelocityProgram);
+            const LLVOAvatar* last_avatar = nullptr;
+            U64 last_skin = 0;
+            bool last_ok = false;
+            for (LLDrawInfo* params : fallback)
+            {
+                LLVOAvatar* avatar = params->mAvatar.get();
+                if (avatar != last_avatar || params->mSkinInfo->mHash != last_skin)
+                {
+                    last_avatar = avatar;
+                    last_skin = params->mSkinInfo->mHash;
+                    const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(params->mSkinInfo);
+                    const U32 count = (U32)mpc.mMatrixPalette.size();
+                    last_ok = count > 0 && mpc.mGLMp.size() >= (size_t)count * 12 && mpc.mPrevGLMp.size() == mpc.mGLMp.size();
+                    if (last_ok)
+                    {
+                        gAvatarVelocityProgram.uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX, count, false, mpc.mGLMp.data());
+                        gAvatarVelocityProgram.uniformMatrix3x4fv(palette_prev_s, count, false, mpc.mPrevGLMp.data());
+                    }
+                }
+                if (!last_ok)
+                {
+                    continue;
+                }
+                params->mVertexBuffer->setBuffer();
+                params->mVertexBuffer->drawRange(LLRender::TRIANGLES, params->mStart, params->mEnd, params->mCount, params->mOffset);
+                ++rigged_draws;
+            }
+            gAvatarVelocityProgram.unbind();
+        }
+    }
+
+    // Step 1b: draws that move as a whole (vehicles, physical objects, rigid attachments worn on a joint): the draws that are not rigged, whose model matrix changed since last frame.
+    // One record like the rigged one; the draws of a matrix that did not move keep the camera vector.
+    {
+        LL_CPU_ZONE("avatar velocity: moving objects");
+        static LLCachedControl<bool> objects_setting(gSavedSettings, "RenderAvatarMotionVectorsObjects", true);
+        const bool objects_on = objects_setting && gObjectVelocityPullProgram.mProgramObject != 0 && LLVkMirror::shadowPacketsAvailable();
+        if (objects_on)
+        {
+            const U32 frame = gFrameCount;
+            std::vector<LLVkMirror::ShadowPacketEntry> entries;
+            std::vector<F32> cur_matrices, prev_matrices;
+            std::unordered_map<const LLMatrix4*, U32> numbers;
+            const LLMatrix4* last_matrix = nullptr;
+            const ModelMatrixHistory* last_history = nullptr;
+            for (U32 rigged_type : kVelocityRiggedTypes)
+            {
+                // the rigged variant of a pass type is the next number
+                auto* begin = beginRenderMap(rigged_type - 1);
+                auto* end = endRenderMap(rigged_type - 1);
+                for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+                {
+                    LLDrawInfo* params = *i;
+                    LLCullResult::increment_iterator(i, end);
+                    const LLMatrix4* matrix = params->mModelMatrix;
+                    if (!matrix)
+                    {
+                        continue;
+                    }
+                    if (matrix != last_matrix)
+                    {
+                        last_matrix = matrix;
+                        const F32* value = (const F32*)matrix->mMatrix;
+                        auto it = sModelMatrixHistory.find(matrix);
+                        if (it == sModelMatrixHistory.end())
+                        {
+                            ModelMatrixHistory fresh;
+                            memcpy(fresh.mCur, value, sizeof(fresh.mCur));
+                            memcpy(fresh.mPrev, value, sizeof(fresh.mPrev));
+                            fresh.mFrame = frame;
+                            fresh.mMoving = false;
+                            it = sModelMatrixHistory.emplace(matrix, fresh).first;
+                        }
+                        else if (it->second.mFrame != frame)
+                        {
+                            ModelMatrixHistory& h = it->second;
+                            if (h.mFrame == frame - 1)
+                            {
+                                memcpy(h.mPrev, h.mCur, sizeof(h.mPrev));
+                            }
+                            else
+                            {
+                                memcpy(h.mPrev, value, sizeof(h.mPrev));
+                            }
+                            memcpy(h.mCur, value, sizeof(h.mCur));
+                            h.mFrame = frame;
+                            // the translation is the last row of a viewer matrix (row vectors)
+                            const F32 dx = value[12] - camera_origin.mV[VX], dy = value[13] - camera_origin.mV[VY], dz = value[14] - camera_origin.mV[VZ];
+                            const F32 distance = sqrtf(dx * dx + dy * dy + dz * dz);
+                            h.mMoving = distance <= range && memcmp(h.mCur, h.mPrev, sizeof(h.mCur)) != 0
+                                        && (min_motion_px <= 0.f || motion_pixels(h.mCur, h.mPrev, 16, distance) >= min_motion_px);
+                        }
+                        last_history = &it->second;
+                    }
+                    if (!last_history->mMoving || !params->mCount)
+                    {
+                        continue;
+                    }
+                    const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                    if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+                        || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+                    {
+                        ++object_unfit;
+                        continue;
+                    }
+                    auto number = numbers.find(matrix);
+                    if (number == numbers.end())
+                    {
+                        number = numbers.emplace(matrix, (U32)(cur_matrices.size() / 16)).first;
+                        cur_matrices.insert(cur_matrices.end(), last_history->mCur, last_history->mCur + 16);
+                        prev_matrices.insert(prev_matrices.end(), last_history->mPrev, last_history->mPrev + 16);
+                    }
+                    entries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, number->second, 0 });
+                }
+            }
+            if (frame % 600 == 0)
+            {
+                for (auto it = sModelMatrixHistory.begin(); it != sModelMatrixHistory.end(); )
+                {
+                    it = (it->second.mFrame + 120 < frame) ? sModelMatrixHistory.erase(it) : std::next(it);
+                }
+            }
+
+            if (!entries.empty())
+            {
+                setup(gObjectVelocityPullProgram);
+                LLVkMirror::ShadowPacketsHeader header;
+                header.mKind = 9;
+                header.mPass = 6;
+                header.mEntries = (U32)entries.size();
+                header.mMatrices = (U32)(cur_matrices.size() / 16);
+                const glm::mat4 view_proj = gGL.getProjectionMatrix() * glm::make_mat4(gGLModelView);
+                memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
+                std::vector<U8> blob(entries.size() * sizeof(entries[0]) + 2 * cur_matrices.size() * sizeof(F32));
+                memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
+                memcpy(blob.data() + entries.size() * sizeof(entries[0]), cur_matrices.data(), cur_matrices.size() * sizeof(F32));
+                memcpy(blob.data() + entries.size() * sizeof(entries[0]) + cur_matrices.size() * sizeof(F32), prev_matrices.data(), prev_matrices.size() * sizeof(F32));
+                LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+                object_draws = (U32)entries.size();
+                object_matrices = header.mMatrices;
+                gObjectVelocityPullProgram.unbind();
+            }
+        }
+    }
+
+    if (!LLViewerJointMesh::sVelocityDraws.empty())
+    {
+        setup(gAvatarBodyVelocityProgram);
+        const LLViewerJointMesh* last_mesh = nullptr;
+        for (const LLViewerJointMesh::VelocityDraw& d : LLViewerJointMesh::sVelocityDraws)
+        {
+            const F32 distance = (d.mAvatar->getRenderPosition() - camera_origin).length();
+            if (d.mAvatar->isDead() || distance > range)
+            {
+                continue;
+            }
+            if (min_motion_px > 0.f && motion_pixels(d.mMesh->getWorldPalette(), d.mMesh->getPreviousWorldPalette(), 45 * 4, distance) < min_motion_px)
+            {
+                ++still_draws;
+                continue;
+            }
+            if (d.mMesh != last_mesh)
+            {
+                last_mesh = d.mMesh;
+                gAvatarBodyVelocityProgram.uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, d.mMesh->getWorldPalette());
+                gAvatarBodyVelocityProgram.uniform4fv(palette_prev_s, 45, d.mMesh->getPreviousWorldPalette());
+            }
+            d.mBuffer->setBuffer();
+            d.mBuffer->drawRange(LLRender::TRIANGLES, d.mStart, d.mEnd, d.mCount, d.mOffset);
+            ++body_draws;
+        }
+        gAvatarBodyVelocityProgram.unbind();
+    }
+    LLViewerJointMesh::sVelocityDraws.clear();
+
+    mAvatarVelocityMap.flush();
+    mAvatarVelocityDrawn = true;
+    gGL.setColorMask(true, false);
+    gGLLastMatrix = NULL;
+    gGL.loadMatrix(gGLModelView);
+
+    static U32 frames = 0;
+    static U64 total_rigged = 0, total_body = 0, total_skipped = 0, total_packets = 0, total_still = 0, total_objects = 0, total_object_matrices = 0, total_unfit = 0;
+    total_objects += object_draws;
+    total_object_matrices += object_matrices;
+    total_unfit += object_unfit;
+    total_still += still_draws;
+    total_packets += packet_draws;
+    total_rigged += rigged_draws;
+    total_body += body_draws;
+    total_skipped += rigged_skipped;
+    if (++frames % 600 == 0)
+    {
+        LL_INFOS("VkMotion") << "avatar velocity pass: per frame over the last " << frames << " frames: " << (F32)total_rigged / frames << " rigged draws, " << (F32)total_packets / frames << " rigged draws in the packet record, " << (F32)total_body / frames
+                             << " body draws, " << (F32)total_skipped / frames << " rigged draws skipped (impostor, out of range), " << (F32)total_still / frames << " not drawn because the avatar did not move; moving objects: " << (F32)total_objects / frames << " draws with " << (F32)total_object_matrices / frames << " matrices, " << (F32)total_unfit / frames << " moving draws the packet layout cannot take" << LL_ENDL;
+    }
+}
+
+void LLPipeline::visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool show_flag)
+{
+    if (!gAvatarVelocityDebugProgram.isComplete())
+    {
+        return;
+    }
+    dst->bindTarget();
+    gAvatarVelocityDebugProgram.bind();
+    gAvatarVelocityDebugProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT, 0);
+    static LLStaticHashedString show_flag_s("show_flag");
+    gAvatarVelocityDebugProgram.uniform1f(show_flag_s, show_flag ? 1.f : 0.f);
+    mScreenTriangleVB->setBuffer();
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    gAvatarVelocityDebugProgram.unbind();
+    dst->flush();
+}
+
 void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 {
     LL_PROFILE_GPU_ZONE("motion vectors");
@@ -9657,6 +10092,15 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     LLGLDepthTest depth(GL_FALSE, GL_FALSE);
     gMotionVectorProgram.bind();
     gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
+    // <FS> avatar motion vectors: the avatar pixels take their own vector (the target is only valid when the pass ran this frame)
+    const bool use_avatar = mAvatarVelocityDrawn && mAvatarVelocityMap.isComplete();
+    if (mAvatarVelocityMap.isComplete())
+    {
+        gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mAvatarVelocityMap, false, LLTexUnit::TFO_POINT, 0);
+    }
+    static LLStaticHashedString use_avatar_s("use_avatar");
+    gMotionVectorProgram.uniform1f(use_avatar_s, use_avatar ? 1.f : 0.f);
+    mAvatarVelocityDrawn = false;
     static LLStaticHashedString to_cur_s("to_cur"), to_prev_s("to_prev"), res_s("render_res");
     gMotionVectorProgram.uniformMatrix4fv(to_cur_s, 1, GL_FALSE, glm::value_ptr(to_cur));
     gMotionVectorProgram.uniformMatrix4fv(to_prev_s, 1, GL_FALSE, glm::value_ptr(to_prev));
@@ -10689,6 +11133,18 @@ void LLPipeline::renderFinalize()
             }
             break;
         }
+        case 7:
+            if (mAvatarVelocityMap.isComplete())
+            {
+                visualizeMotion(&mAvatarVelocityMap, sourceBuffer, true);
+            }
+            break;
+        case 8:
+            if (dlss)
+            {
+                visualizeMotion(&mMotionMap, sourceBuffer, false);
+            }
+            break;
         default:
             break;
         }

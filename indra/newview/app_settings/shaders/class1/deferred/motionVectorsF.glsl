@@ -34,6 +34,8 @@ uniform sampler2D depthMap;
 uniform mat4 to_cur;        // jittered clip space of this frame -> unjittered clip space of this frame
 uniform mat4 to_prev;       // jittered clip space of this frame -> unjittered clip space of the last frame
 uniform vec2 render_res;
+uniform sampler2D diffuseRect;  // <FS> the avatar velocity target: rg = total screen motion of an avatar pixel, a = 1 where an avatar wrote
+uniform float use_avatar;       // 1 when the avatar velocity pass ran this frame
 
 void main()
 {
@@ -45,5 +47,13 @@ void main()
     vec2 prev_ndc = prev.xy / prev.w;
     // NDC spans 2 units across the render target. Texel rows grow with NDC y here (the mirror keeps GL's orientation), so no flip is needed.
     vec2 mv = (prev_ndc - cur_ndc) * 0.5 * render_res;
+    if (use_avatar > 0.5)
+    {
+        vec4 av = texture(diffuseRect, vary_fragcoord);
+        if (av.a > 0.5)
+        {
+            mv = av.xy;     // an avatar pixel: its own motion replaces the camera motion
+        }
+    }
     frag_color = vec4(mv, 0.0, 0.0);
 }

@@ -982,6 +982,12 @@ public:
         // Float array ready to be sent to GL
         std::vector<F32> mGLMp;
 
+        // <FS> motion vectors: the same palette as of the frame before (equal to mGLMp when there is no history: first time, not asked for in the last frame, joint count changed).
+        // Same layout as mGLMp. mHasPrev says whether it is real.
+        std::vector<F32> mPrevGLMp;
+        bool mHasPrev = false;
+        bool mComputed = false;     // mFrame is only meaningful after the first computation (the constructor sets it to "last frame")
+
         MatrixPaletteCache() :
             mFrame(gFrameCount - 1)
         {

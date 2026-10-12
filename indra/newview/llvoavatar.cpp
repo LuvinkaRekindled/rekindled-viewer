@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include <mutex>
+#include <atomic>
 #include "llgpuzonetimer.h"
 #include <chrono>
 
@@ -11652,7 +11653,15 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
+        // <FS> motion vectors: last frame's palette becomes the previous one, but only when the entry was computed in the frame just before (an avatar that was not
+        // asked for in between has no valid history: previous = current, no motion)
+        const bool had_last_frame = entry.mComputed && entry.mFrame == gFrameCount - 1;
+        if (had_last_frame)
+        {
+            entry.mPrevGLMp.swap(entry.mGLMp);
+        }
         entry.mFrame = gFrameCount;
+        entry.mComputed = true;
 
         //build matrix palette
         U32 count = LLSkinningUtil::getMeshJointCount(skin);
@@ -11685,6 +11694,22 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
             mp[idx + 9] = m[9];
             mp[idx + 10] = m[10];
             mp[idx + 11] = m[14];
+        }
+
+        // <FS> motion vectors: a history from last frame is only usable when the joint count is the same (the skin changed otherwise)
+        entry.mHasPrev = had_last_frame && entry.mPrevGLMp.size() == entry.mGLMp.size();
+        if (!entry.mHasPrev)
+        {
+            entry.mPrevGLMp = entry.mGLMp;
+        }
+        {
+            static std::atomic<U32> with_history{0}, without_history{0};
+            ++(entry.mHasPrev ? with_history : without_history);
+            const U32 total = with_history + without_history;
+            if (total % 20000 == 0)
+            {
+                LL_INFOS("VkMotion") << "rigged palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame)" << LL_ENDL;
+            }
         }
     }
 
