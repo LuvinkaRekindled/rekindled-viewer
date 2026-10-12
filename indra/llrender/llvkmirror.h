@@ -110,7 +110,9 @@ namespace LLVkMirror
         U32 mPaletteFloats = 0;     // floats of joint matrix palettes (12 per joint) after the model matrices; the rigged entries point into them
         U32 mPass = 0;              // the shadow pass: 0-3 sun cascades, 4-5 spot shadows, 6 other (ray tracing keeps the casters of a cached cascade)
     };
-    struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId; };      // mMatrixId: stable identity of the model matrix (ray tracing instances)
+    // mMatrixId: stable identity of the model matrix (ray tracing instances). The last four are for the ray scene only: the material of the draw (RtMaterialDef id, 0 = none) and the byte
+    // offsets of the texcoord0, colour and normal arrays in the vertex buffer (0 = the buffer has no such array)
+    struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId, mMaterial, mTexcoordOffset, mColorOffset, mNormalOffset; };
     // kind 2: a rigged draw: the offset of its weight4 array in the vertex buffer, and its palette (offset in floats from the start of the palettes, joint count)
     // (ray tracing: the vertex range the draw uses, the avatar it belongs to and the identity of its skin, both stable from frame to frame)
     struct ShadowSkinEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints, mVertexFirst, mVertexCount, mAvatarId, mSkinId, mAvatarKind; F32 mAvatarPos[3]; };
@@ -140,6 +142,31 @@ namespace LLVkMirror
         U32 mAvatarKind;            // rigged draws: what the avatar is (bit 1 animated object, 2 impostor, 4 the viewer's own, 8 jelly doll, 16 invisible, 32 too slow)
         F32 mAvatarPos[3];          // rigged draws: where the avatar is (ray tracing ranks and limits avatars by distance)
         F32 mUv[6];                 // kind 5: the texture coordinate transform as the ray query applies it: u' = mUv[0] * u + mUv[2] * v + mUv[4], v' = mUv[1] * u + mUv[3] * v + mUv[5]
+        U32 mMaterial;              // ray tracing: RtMaterialDef id of the draw, 0 = none
+        U32 mNormalOffset;          // ray tracing: byte offset of the normal array, 0 = none
+    };
+    // kind 10 (ray tracing only, nothing is drawn): mEntries RtMaterialDef rows to store (new materials, or ones whose texture names changed); the ids are the viewer's, stable for as long as a
+    // material is in use. The draws name their material by id (mMaterial of the entries above). Texture names are GL names, resolved by the viewer; the worker turns them into bindless slots.
+    enum RtMaterialFlags : U32
+    {
+        RTM_FULLBRIGHT = 1,         // no lighting: the colour is the surface
+        RTM_GLTF = 2,               // the glTF fields are valid (factors, normal / metallic-roughness / emissive maps)
+        RTM_MASK = 4,               // alpha masked: mCutoff
+        RTM_BLEND = 8,              // alpha blended
+        RTM_BATCH = 16,             // the vertex's texture index (position.w & 3) picks one of mTextures
+        RTM_EMISSIVE_LEGACY = 32    // legacy material with an emissive mask in the diffuse alpha
+    };
+    struct RtMaterialDef
+    {
+        U32 mId, mFlags;
+        U32 mTextures[4];           // diffuse / base colour textures (GL names, 0 = none = white)
+        U32 mNormalMap, mSpecularMap, mEmissiveMap, mPad;      // GL names: normal; legacy specular or glTF metallic-roughness; glTF emissive
+        F32 mColor[4];              // glTF base colour factor (legacy: 1, the colour is in the vertices)
+        F32 mEmissive[3];           // glTF emissive factor
+        F32 mCutoff;
+        F32 mMetallic, mRoughness;
+        F32 mUv[6];                 // texture coordinate transform, as ShadowAlphaEntry::mUv
+        F32 mSpecular[4];           // legacy specular colour rgb and exponent
     };
     // kind 5 (ray tracing only, nothing is drawn): ShadowAlphaEntry entries (static draws) of casters that the old path draws, named to the ray scene; flags ALPHA_RAY_ONLY = opaque
 

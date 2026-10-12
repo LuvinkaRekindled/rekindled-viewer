@@ -12755,6 +12755,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>1</integer>
   </map>
+  <key>RenderRTMaterialDebug</key>
+  <map>
+    <key>Comment</key>
+    <string>Ray scene material table debug view (RenderBufferVisualization 9, LL_VK_RT_MATERIALS=1): 1 the hit's albedo, 2 the G-buffer's albedo, 3 their difference x4, 4 the hit's flat normal, 5 material id colours, 6 status (green hit with material, yellow no material, red bad record, blue no hit, magenta other depth).</string>
+    <key>Persist</key>
+    <integer>0</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
+    <integer>1</integer>
+  </map>
   <key>RenderRTShadowHistory</key>
   <map>
     <key>Comment</key>

@@ -44,7 +44,10 @@ U64 env_u64(const char* name, U64 fallback)
 // after the earlier lighting), but what the build and the shaders read from memory the CPU writes has to be separate per call: the instances and the geometry table.
 constexpr U32 kCalls = 6;
 constexpr U32 kInstanceCapacity = 32768;                    // per call
-constexpr VkDeviceSize kTableBytes = 2u << 20;              // per call: the geometry records of the alpha masked structures
+constexpr VkDeviceSize kGeomBytesBase = 2u << 20;           // per call: the geometry records of the alpha masked structures
+constexpr VkDeviceSize kGeomBytesMats = 4u << 20;           // the same with the material tables on (LL_VK_RT_MATERIALS=1): a record for every geometry
+constexpr U32 kMatCap = 16384;                              // rows of the material table (the viewer's registry has the same capacity)
+constexpr VkDeviceSize kMatBytes = 96ull * kMatCap;
 
 // one geometry (index range) of an alpha masked structure as the ray query shader reads it (llvkshader.cpp declares the same struct, LLRtGeom)
 struct GpuGeom
@@ -57,11 +60,33 @@ struct GpuGeom
     U32 mFlags;
     F32 mCutoff;
     U32 mFirst;             // first index of the range
-    U32 mPad;
+    U32 mMaterial;          // row of the material table (0 = none)
     F32 mUv[6];             // texture coordinate transform (uv' = uv0 * u + uv1 * v + uv2)
+    U32 mNormals[2];        // address of the normal array (flag kRecNormals); record 0 (the header) carries the address of the material table of the call here
 };
-static_assert(sizeof(GpuGeom) == 80, "geometry record");
-constexpr U32 kMaxRecords = (U32)(kTableBytes / sizeof(GpuGeom));
+static_assert(sizeof(GpuGeom) == 88, "geometry record");
+constexpr U32 kRecNormals = 1024;                           // record flag: mNormals is valid
+constexpr U32 kRecOpaque = 2048;                            // record flag: a record of an opaque structure (no alpha test data)
+
+// one material as the shaders read it (LLRtMaterial in llvkshader.cpp): the viewer's RtMaterialDef with the texture names turned into slots
+struct GpuMaterial
+{
+    U32 mSlots[2];          // four 16 bit slots: the diffuse / base colour textures
+    U32 mSlots2[2];         // 16 bit slots: normal map, specular or metallic-roughness map, emissive map, unused
+    F32 mColor[4];
+    F32 mEmissive[3];
+    F32 mCutoff;
+    F32 mMetallic, mRoughness;
+    U32 mFlags;
+    U32 mPad0;
+    F32 mUv[6];
+    U32 mPad1[2];
+};
+static_assert(sizeof(GpuMaterial) == 96, "material row");
+
+bool sMatsInit = false;                                     // LL_VK_RT_MATERIALS=1 at start-up: bigger tables, records for every geometry (the scene side can still be switched off live)
+VkDeviceSize sGeomBytes = kGeomBytesBase, sRegionBytes = kGeomBytesBase;
+U32 sMaxRecords = 0, sTableCalls = kCalls;
 constexpr F32 kSkinReach = 300.f;                            // metres from the avatar's position: skinned vertices farther away are garbage and are left out
 constexpr size_t kAvatarBuilds = 16;                        // structure builds of avatars per scene call beyond the groups' limit (the jobs list is reserved for both)
 constexpr U32 kMaxSkinJobs = 2048;                          // compute skinning jobs per scene call
@@ -152,7 +177,7 @@ struct Tlas
     VkAccelerationStructureKHR mAs = VK_NULL_HANDLE;
     Buffer mStorage;
     Buffer mInstances;                              // kCalls regions of mCapacity instances
-    Buffer mTable;                                  // kCalls regions of kTableBytes
+    Buffer mTable;                                  // sTableCalls regions of sRegionBytes: the geometry records, then (material tables on) the material rows
     Buffer mSkin;                                   // kCalls regions of kSkinBytes: the compute skinning job and chunk tables
     U32 mCapacity = 0;
     VkDescriptorSet mSet = VK_NULL_HANDLE;
@@ -182,6 +207,7 @@ struct Stats
     U64 mProbeCount = 0, mProbeNow = 0, mProbeNoUpdate = 0, mProbeNoUpdateFast = 0, mProbeFast = 0;     // size probe: bytes the new group structures need with the flags used / without ALLOW_UPDATE / without it and with PREFER_FAST_BUILD / with PREFER_FAST_BUILD
     U64 mCompacted = 0, mCompactBefore = 0, mCompactAfter = 0, mCompactSkipped = 0, mCompactFailed = 0;     // compaction: structures replaced, bytes before and after
     U64 mScanChecks = 0, mScanMismatch = 0;       // the candidate lists against a full walk (verify)
+    U64 mRecRowsWritten = 0, mMatRowsWritten = 0, mMatUpdates = 0, mTableMismatch = 0, mRecNoMaterial = 0, mRecMaterial = 0;     // the table writes (deltas) and the material tables
     U64 mRefreshed = 0, mFullRebuilds = 0, mVerifies = 0, mVerifyGroups = 0, mVerifyMismatch = 0, mTopologyChecks = 0;      // the scene cache (see sInstArray)
 };
 
@@ -223,6 +249,9 @@ struct DebugSwitches
     F32 mSkinMaxDist = 0.f;         // C4: avatars farther than this many metres (from the eye) get no new pose or structure (0 = no limit); one that was built keeps its last pose
     bool mSkinFast = false;         // C4: avatar structures are built with PREFER_FAST_BUILD instead of PREFER_FAST_TRACE (cheaper builds and refits, slower rays)
     bool mSkinTest = false;         // stage C step C1: structures of opaque casters are built from a compute-pass copy of their vertices (must look identical to the direct path)
+    bool mMats = false;             // records for the opaque geometries too, the material table is filled and traced against (needs LL_VK_RT_MATERIALS=1 at start-up)
+    bool mDelta = true;             // the tables are written to the call's region as deltas (rows changed since the region was last written); off: all rows every call
+    bool mTableVerify = false;      // after every table write compare the region with the kept rows (slow: reads video memory)
     bool mBBox = false;             // one line per build/refit of a structure with a matrix of its own (CPU-visible data only) into <work>/rt-bbox.log: bounding box, largest coordinate (stage C step 0)
 };
 DebugSwitches sDbg;
@@ -247,6 +276,7 @@ void read_debug_switches()
     d.mRigged = env_u64("LL_VK_RT_RIGGED", 1) != 0;
     d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_PERIOD_MAX", 4));
     d.mCompact = env_u64("LL_VK_RT_COMPACT", 0) != 0;       // off by default: saved only about 5 % of the memory here and the tree leaf shadows disappeared with it on (PLAN-rt-shadows.md)
+    d.mMats = sMatsInit;
     d.mSkinFast = env_u64("LL_VK_RT_SKIN_FAST", 1) != 0;       // on by default: builds and refits of the avatar structures 38 % cheaper, traces unchanged (measured 2026-10-12)
     if (FILE* f = fopen(path, "rb"))
     {
@@ -282,6 +312,9 @@ void read_debug_switches()
                 else if (k == "skintest") d.mSkinTest = v != 0;
                 else if (k == "skinfast") d.mSkinFast = v != 0;
                 else if (k == "skindist") d.mSkinMaxDist = (F32)v;
+                else if (k == "mats") d.mMats = sMatsInit && v != 0;
+                else if (k == "delta") d.mDelta = v != 0;
+                else if (k == "tableverify") d.mTableVerify = v != 0;
                 else if (k == "compact") d.mCompact = v != 0;
                 else if (k == "sizeprobe") d.mSizeProbe = v != 0;
                 else if (k == "rigged") d.mRigged = v != 0;
@@ -382,6 +415,60 @@ std::unordered_map<U32, Avatar> sAvatars;
 // array, plus the alpha records of the masked groups (texture slots are filled in at every call), both made again only for groups that changed (sDirtyKeys).
 std::vector<VkAccelerationStructureInstanceKHR> sInstArray;
 std::vector<Group*> sInstGroup;                 // the group behind each instance (valid until the group is erased: drop_entry runs first)
+// A table that lives in memory the GPU reads, written to the regions of the scene calls as DELTAS: the rows are kept here (the truth), every change of a row is logged, and a region
+// is brought up to date by copying the rows logged since it was last written (a region that is behind the log's start, or from before a reset, gets everything). The log is trimmed
+// by a reset when it gets long (every region then copies everything once).
+struct RowLog
+{
+    std::vector<U32> mLog;
+    U64 mBase = 0;                  // sequence number of mLog[0]
+    U64 mEpoch = 1;
+    void touch(U32 row) { mLog.push_back(row); }
+    void reset() { ++mEpoch; mBase += mLog.size(); mLog.clear(); }
+    U64 seq() const { return mBase + mLog.size(); }
+};
+struct RegionState
+{
+    U64 mEpoch = 0, mSeq = 0;
+};
+// writes the rows that changed since the region was last written; returns the number of rows copied
+template <class T>
+size_t apply_rows(RowLog& log, RegionState& rs, const std::vector<T>& rows, T* dst, bool delta)
+{
+    if (log.mLog.size() > 400000)
+    {
+        log.reset();
+    }
+    size_t copied = 0;
+    if (!delta || rs.mEpoch != log.mEpoch || rs.mSeq < log.mBase || rs.mSeq > log.seq())
+    {
+        if (!rows.empty())
+        {
+            memcpy(dst, rows.data(), rows.size() * sizeof(T));
+        }
+        copied = rows.size();
+    }
+    else
+    {
+        for (size_t k = (size_t)(rs.mSeq - log.mBase); k < log.mLog.size(); ++k)
+        {
+            const U32 i = log.mLog[k];
+            if (i < rows.size())
+            {
+                dst[i] = rows[i];
+                ++copied;
+            }
+        }
+    }
+    rs.mEpoch = log.mEpoch;
+    rs.mSeq = log.seq();
+    return copied;
+}
+RowLog sRecLog, sMatLog;
+RegionState sRecRegion[Context::FRAMES_IN_FLIGHT * kCalls], sMatRegion[Context::FRAMES_IN_FLIGHT * kCalls];
+std::vector<GpuMaterial> sMatRows;              // by viewer id (row 0 unused); slots are patched in at every frame
+std::vector<std::array<U32, 8>> sMatNames;      // GL names of each row: 4 diffuse, normal, specular, emissive, unused (all zero: no row)
+bool sMatsSeen = false;
 std::vector<GpuGeom> sRecs;                     // alpha records, a group's rows contiguous; a dropped group's rows stay as garbage until the next compaction
 std::vector<std::array<U32, 4>> sRecNames;      // the textures (GL names) of each row, all zero for garbage rows: the slots come from them
 U32 sRecGarbage = 0;
@@ -600,7 +687,7 @@ void tlas_sizes(U32 capacity, VkAccelerationStructureBuildSizesInfoKHR& sizes)
 
 // a top-level structure for up to `capacity` instances, the instance and table memory of its frame slot, and the set pointing at them (made once at start-up: a set that
 // recorded commands refer to must not be rewritten)
-bool make_tlas(Tlas& t, U32 capacity)
+bool make_tlas(Tlas& t, U32 capacity, U32 table_calls)
 {
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
@@ -608,7 +695,7 @@ bool make_tlas(Tlas& t, U32 capacity)
     tlas_sizes(capacity, sizes);
     if (!ctx.createBuffer(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, Context::Memory::Device, t.mStorage)
         || !ctx.createBuffer(64ull * capacity * kCalls, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, Context::Memory::UploadDevice, t.mInstances)
-        || !ctx.createBuffer(kTableBytes * kCalls, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, t.mTable)
+        || !ctx.createBuffer(sRegionBytes * table_calls, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, t.mTable)
         || !ctx.createBuffer(kSkinBytes * kCalls, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, t.mSkin))
     {
         ctx.destroyBuffer(t.mStorage);
@@ -617,7 +704,7 @@ bool make_tlas(Tlas& t, U32 capacity)
         ctx.destroyBuffer(t.mSkin);
         return false;
     }
-    memset(t.mTable.mMapped, 0, (size_t)(kTableBytes * kCalls));
+    memset(t.mTable.mMapped, 0, (size_t)(sRegionBytes * table_calls));
     VkAccelerationStructureCreateInfoKHR ci = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
     ci.buffer = t.mStorage.mBuffer;
     ci.size = sizes.accelerationStructureSize;
@@ -635,7 +722,7 @@ bool make_tlas(Tlas& t, U32 capacity)
     VkWriteDescriptorSetAccelerationStructureKHR as_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR };
     as_write.accelerationStructureCount = 1;
     as_write.pAccelerationStructures = &t.mAs;
-    VkDescriptorBufferInfo table = { t.mTable.mBuffer, 0, kTableBytes };
+    VkDescriptorBufferInfo table = { t.mTable.mBuffer, 0, sGeomBytes };
     VkWriteDescriptorSet w[2] = {};
     w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w[0].pNext = &as_write;
@@ -999,6 +1086,11 @@ bool init(VkDescriptorSetLayout set_layout)
     }
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
+    sMatsInit = env_u64("LL_VK_RT_MATERIALS", 0) != 0;
+    sGeomBytes = sMatsInit ? kGeomBytesMats : kGeomBytesBase;
+    sRegionBytes = sGeomBytes + (sMatsInit ? kMatBytes : 0);
+    sMaxRecords = (U32)(sGeomBytes / sizeof(GpuGeom));
+    sTableCalls = sMatsInit ? 3 : kCalls;
     VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, Context::frameCount() + 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, Context::frameCount() + 1 } };
     VkDescriptorPoolCreateInfo pi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pi.maxSets = Context::frameCount() + 1;
@@ -1028,14 +1120,14 @@ bool init(VkDescriptorSetLayout set_layout)
     for (U32 i = 0; i < Context::frameCount(); ++i)
     {
         sTlas[i].mSet = sets[i];
-        if (!make_tlas(sTlas[i], kInstanceCapacity))
+        if (!make_tlas(sTlas[i], kInstanceCapacity, sTableCalls))
         {
             sFailed = true;
             return false;
         }
     }
     sNullTlas.mSet = sets[Context::frameCount()];
-    if (!make_tlas(sNullTlas, 16))
+    if (!make_tlas(sNullTlas, 16, 1))
     {
         sFailed = true;
         return false;
@@ -1092,7 +1184,8 @@ bool init(VkDescriptorSetLayout set_layout)
         Context::instance().setHangReporter(report_recent_scene_calls);
     }
     LL_INFOS("VkRt") << "ray tracing scene ready: mode " << shadowMode() << ", " << Context::frameCount() << " frame slots, " << kCalls << " scene calls per frame, instance capacity "
-                     << kInstanceCapacity << ", geometry table " << (kTableBytes >> 10) << " KB per call" << LL_ENDL;
+                     << kInstanceCapacity << ", geometry table " << (sGeomBytes >> 10) << " KB per call (" << sMaxRecords << " records), material tables " << (sMatsInit ? "on" : "off")
+                     << ", table regions per frame slot " << sTableCalls << LL_ENDL;
     return true;
 }
 
@@ -1153,6 +1246,49 @@ void shutdown()
     sInit = false;
 }
 
+bool materialsOn()
+{
+    return sInit && sMatsInit;
+}
+
+void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count)
+{
+    if (!sInit || !sMatsInit)
+    {
+        return;
+    }
+    for (U32 i = 0; i < count; ++i)
+    {
+        const LLVkMirror::RtMaterialDef& d = defs[i];
+        if (d.mId == 0 || d.mId >= kMatCap)
+        {
+            continue;
+        }
+        if (sMatRows.size() <= d.mId)
+        {
+            sMatRows.resize(d.mId + 1);
+            sMatNames.resize(d.mId + 1);
+        }
+        GpuMaterial& m = sMatRows[d.mId];
+        const U32 s0 = m.mSlots[0], s1 = m.mSlots[1], t0 = m.mSlots2[0], t1 = m.mSlots2[1];
+        memset(&m, 0, sizeof(m));
+        m.mSlots[0] = s0;                           // this frame's slots stay until the patch finds that they changed
+        m.mSlots[1] = s1;
+        m.mSlots2[0] = t0;
+        m.mSlots2[1] = t1;
+        memcpy(m.mColor, d.mColor, sizeof(m.mColor));
+        memcpy(m.mEmissive, d.mEmissive, sizeof(m.mEmissive));
+        m.mCutoff = d.mCutoff;
+        m.mMetallic = d.mMetallic;
+        m.mRoughness = d.mRoughness;
+        m.mFlags = d.mFlags;
+        memcpy(m.mUv, d.mUv, sizeof(m.mUv));
+        sMatNames[d.mId] = { d.mTextures[0], d.mTextures[1], d.mTextures[2], d.mTextures[3], d.mNormalMap, d.mSpecularMap, d.mEmissiveMap, 0u };
+        sMatLog.touch(d.mId);
+        ++sStats.mMatUpdates;
+    }
+}
+
 void noteCaster(const Caster& c)
 {
     if (!sInit || sFailed || c.mCount < 3)
@@ -1184,7 +1320,7 @@ void noteCaster(const Caster& c)
         }
         sSeenRows[it->second.mId] = SeenRow();
         sSeenRows[it->second.mId].mGroup = &it->second;
-        if (key.mKind == 1)
+        if (key.mKind == 1 || (key.mKind == 0 && sDbg.mMats))
         {
             sNameGroups.emplace(key.mVb, key);
             sNameGroups.emplace(key.mIb, key);
@@ -1216,7 +1352,7 @@ void noteCaster(const Caster& c)
         memcpy(g.mPrevModel, g.mModel, sizeof(g.mModel));
         g.mMoving = diff > 1e-5f;
         memcpy(g.mModel, now_model, sizeof(g.mModel));
-        if (g.mMoving || (c.mKind == 1 && (g.mVi.mAddress != c.mVi.mAddress || g.mIi.mAddress != c.mIi.mAddress)))
+        if (g.mMoving || ((c.mKind == 1 || (c.mKind == 0 && c.mAlpha)) && (g.mVi.mAddress != c.mVi.mAddress || g.mIi.mAddress != c.mIi.mAddress)))
         {
             ++sStats.mDirtyWhy[g.mMoving ? 0 : 1];
             mark_dirty(g);                      // the instance matrix, or the buffer addresses in the alpha records, changed
@@ -1234,7 +1370,7 @@ void noteCaster(const Caster& c)
         {
             if (c.mAlpha && memcmp(&g.mAlpha[k], c.mAlpha, sizeof(AlphaInfo)) != 0)
             {
-                g.mAlpha[k] = *c.mAlpha;                // the textures may have changed
+                g.mAlpha[k] = *c.mAlpha;                // the textures (or the material) may have changed
                 g.mBlas->mAlpha[r.id()] = *c.mAlpha;
                 ++sStats.mDirtyWhy[2];
                 mark_dirty(g);
@@ -1248,9 +1384,9 @@ void noteCaster(const Caster& c)
         ++sStats.mDirtyWhy[3];
         mark_dirty(g);
         g.mAlpha.push_back(c.mAlpha ? *c.mAlpha : AlphaInfo());
-        if (c.mKind == 1)
+        if (c.mAlpha)
         {
-            g.mBlas->mAlpha[r.id()] = g.mAlpha.back();     // the alpha test data of each range of a masked structure, as last drawn
+            g.mBlas->mAlpha[r.id()] = g.mAlpha.back();     // the alpha test data of each range of a masked structure, as last drawn (and the material of an opaque one)
         }
     }
 }
@@ -2404,9 +2540,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         call = kCalls - 1;                      // more scene calls in one frame than regions: the last region is shared (earlier traces of the frame may see its later content)
         ++sStats.mExtraCalls;
     }
-    GpuGeom* table = (GpuGeom*)((U8*)tlas.mTable.mMapped + (size_t)call * kTableBytes);
+    const U32 table_call = std::min(call, sTableCalls - 1);
+    GpuGeom* table = (GpuGeom*)((U8*)tlas.mTable.mMapped + (size_t)table_call * sRegionBytes);
+    GpuMaterial* mat_table = sMatsInit ? (GpuMaterial*)((U8*)table + sGeomBytes) : nullptr;
+    const U64 mat_table_address = sMatsInit ? (U64)tlas.mTable.mAddress + (U64)table_call * sRegionBytes + sGeomBytes : 0;
+    const U32 region_index = ctx.getFrameSlot() * kCalls + table_call;
     U32 records = 0;
-    sTableOffset = (U32)(call * kTableBytes);
+    sTableOffset = (U32)(table_call * sRegionBytes);
 
     // the camera in the scene's space, and the origin the instance transforms are relative to (a point on a 32 m grid near the camera, moved when the camera gets 48 m away: close to
     // the camera the numbers stay small, and everything is made again only when it moves)
@@ -2432,7 +2572,12 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         sAlphaOnSeen = alpha_on;
         sForceFull = true;
     }
-    if (sRecs.size() > kMaxRecords - 4096 - 2048 || sRecGarbage * 2 > sRecs.size() + 64)
+    if (sMatsSeen != sDbg.mMats)
+    {
+        sMatsSeen = sDbg.mMats;
+        sForceFull = true;
+    }
+    if (sRecs.size() > sMaxRecords - 4096 - 2048 || sRecGarbage * 2 > sRecs.size() + 64)
     {
         sForceFull = true;                      // compaction
     }
@@ -2513,7 +2658,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         // masked structures: one record per geometry, in the order of the structure's geometry list (the texture slots are put in at every call)
         std::vector<GpuGeom> recs;
         std::vector<std::array<U32, 4>> names;
-        if (g.mKey.mKind == 1)
+        if (g.mKey.mKind == 1 || (g.mKey.mKind == 0 && sDbg.mMats))
         {
             const std::vector<Range>& set = job ? job->mSet : b.mBuilt;
             LLVkGL::BufferInfo lvi, lii;
@@ -2534,7 +2679,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 drop_entry(g, 5);
                 return;
             }
-            if (sRecs.size() + set.size() > kMaxRecords - 4096)
+            if (sRecs.size() + set.size() > sMaxRecords - 4096)
             {
                 ++sStats.mTableFull;
                 drop_entry(g, 6);
@@ -2565,6 +2710,19 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                     rec.mColors[1] = (U32)(cc >> 32);
                 }
                 rec.mFlags = a.mFlags;
+                if (a.mNormalOffset)
+                {
+                    const U64 nn = pa + a.mNormalOffset;
+                    rec.mNormals[0] = (U32)nn;
+                    rec.mNormals[1] = (U32)(nn >> 32);
+                    rec.mFlags |= kRecNormals;
+                }
+                if (g.mKey.mKind == 0)
+                {
+                    rec.mFlags |= kRecOpaque;
+                }
+                rec.mMaterial = a.mMaterial;
+                ++(a.mMaterial ? sStats.mRecMaterial : sStats.mRecNoMaterial);
                 rec.mCutoff = a.mCutoff;
                 rec.mFirst = r.mFirst;
                 memcpy(rec.mUv, a.mUv, sizeof(rec.mUv));
@@ -2590,6 +2748,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             g.mRecFirst = (U32)sRecs.size();
             g.mRecCount = (U32)recs.size();
             sRecs.insert(sRecs.end(), recs.begin(), recs.end());
+            for (U32 k = 0; k < g.mRecCount; ++k)
+            {
+                sRecLog.touch(g.mRecFirst + k);
+            }
             sRecNames.insert(sRecNames.end(), names.begin(), names.end());
             custom_index = 1 + g.mRecFirst;     // record 0 of the table is the header
         }
@@ -2627,6 +2789,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         sRecs.clear();
         sRecNames.clear();
         sRecGarbage = 0;
+        sRecLog.reset();
         sDirtyKeys.clear();
         for (auto& kv : sGroups)
         {
@@ -2657,7 +2820,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             ++sStats.mTopologyChecks;
             auto check_group = [&](Group* gp)
             {
-                if (gp->mKey.mKind == 1 && gp->mSlot != ~0u && !gp->mDirty)
+                if ((gp->mKey.mKind == 1 || (gp->mKey.mKind == 0 && sDbg.mMats)) && gp->mSlot != ~0u && !gp->mDirty)
                 {
                     LLVkGL::BufferInfo tvi, tii;
                     if (!LLVkGL::getBufferInfo(gp->mKey.mVb, tvi) || !LLVkGL::getBufferInfo(gp->mKey.mIb, tii) || tvi.mAddress != gp->mCacheVb || tii.mAddress != gp->mCacheIb)
@@ -2826,32 +2989,86 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         const float header_words[12] = { view[0], view[4], view[8], view[1], view[5], view[9], view[2], view[6], view[10], cam[0] - sOrigin[0], cam[1] - sOrigin[1], cam[2] - sOrigin[2] };
         memset(&table[0], 0, sizeof(GpuGeom));
         memcpy(&table[0], header_words, sizeof(header_words));
+        table[0].mNormals[0] = (U32)mat_table_address;          // where the material rows of this call are
+        table[0].mNormals[1] = (U32)(mat_table_address >> 32);
         const size_t n = sRecs.size();
-        if (n)
+        // this frame's texture slots go into the kept rows; only a changed word is logged (and so written to the region)
+        for (size_t r = 0; r < n; ++r)
         {
-            // the rows are put together in ordinary memory (the table is write-combined memory: only one sequential copy goes there)
-            static std::vector<GpuGeom> stage;
-            stage.assign(sRecs.begin(), sRecs.end());
-            GpuGeom* rows = stage.data();
-            for (size_t r = 0; r < n; ++r)
+            const std::array<U32, 4>& nm = sRecNames[r];
+            if (!(nm[0] | nm[1] | nm[2] | nm[3]))
             {
-                const std::array<U32, 4>& nm = sRecNames[r];
-                if (!(nm[0] | nm[1] | nm[2] | nm[3]))
+                continue;
+            }
+            U32 slot[4] = {};
+            for (U32 k = 0; k < 4; ++k)
+            {
+                if (nm[k] && slot_of)
                 {
-                    continue;
+                    slot[k] = slot_lookup(nm[k]);
                 }
-                U32 slot[4] = {};
-                for (U32 k = 0; k < 4; ++k)
+            }
+            const U32 w0 = slot[0] | (slot[1] << 16), w1 = slot[2] | (slot[3] << 16);
+            if (sRecs[r].mSlots[0] != w0 || sRecs[r].mSlots[1] != w1)
+            {
+                sRecs[r].mSlots[0] = w0;
+                sRecs[r].mSlots[1] = w1;
+                sRecLog.touch((U32)r);
+            }
+        }
+        sStats.mRecRowsWritten += apply_rows(sRecLog, sRecRegion[region_index], sRecs, table + 1, sDbg.mDelta);
+        if (sDbg.mTableVerify && n && memcmp(table + 1, sRecs.data(), n * sizeof(GpuGeom)) != 0)
+        {
+            ++sStats.mTableMismatch;
+            static U32 logged_table = 0;
+            if (logged_table++ < 20)
+            {
+                LL_WARNS("VkRt") << "table verify: the geometry records of region " << region_index << " differ from the kept rows (" << n << " rows, epoch " << sRecLog.mEpoch << ")" << LL_ENDL;
+            }
+        }
+        if (mat_table && sDbg.mMats)
+        {
+            static U64 patched_frame = ~0ull;
+            if (patched_frame != frame_now)
+            {
+                patched_frame = frame_now;
+                for (size_t id = 1; id < sMatRows.size(); ++id)
                 {
-                    if (nm[k] && slot_of)
+                    const std::array<U32, 8>& nm = sMatNames[id];
+                    if (!(nm[0] | nm[1] | nm[2] | nm[3] | nm[4] | nm[5] | nm[6]))
                     {
-                        slot[k] = slot_lookup(nm[k]);
+                        continue;
+                    }
+                    U32 slot[8] = {};
+                    for (U32 k = 0; k < 7; ++k)
+                    {
+                        if (nm[k] && slot_of)
+                        {
+                            slot[k] = slot_lookup(nm[k]);
+                        }
+                    }
+                    GpuMaterial& m = sMatRows[id];
+                    const U32 w[4] = { slot[0] | (slot[1] << 16), slot[2] | (slot[3] << 16), slot[4] | (slot[5] << 16), slot[6] };
+                    if (m.mSlots[0] != w[0] || m.mSlots[1] != w[1] || m.mSlots2[0] != w[2] || m.mSlots2[1] != w[3])
+                    {
+                        m.mSlots[0] = w[0];
+                        m.mSlots[1] = w[1];
+                        m.mSlots2[0] = w[2];
+                        m.mSlots2[1] = w[3];
+                        sMatLog.touch((U32)id);
                     }
                 }
-                rows[r].mSlots[0] = slot[0] | (slot[1] << 16);
-                rows[r].mSlots[1] = slot[2] | (slot[3] << 16);
             }
-            memcpy(table + 1, rows, n * sizeof(GpuGeom));
+            sStats.mMatRowsWritten += apply_rows(sMatLog, sMatRegion[region_index], sMatRows, mat_table, sDbg.mDelta);
+            if (sDbg.mTableVerify && !sMatRows.empty() && memcmp(mat_table, sMatRows.data(), sMatRows.size() * sizeof(GpuMaterial)) != 0)
+            {
+                ++sStats.mTableMismatch;
+                static U32 logged_mat = 0;
+                if (logged_mat++ < 20)
+                {
+                    LL_WARNS("VkRt") << "table verify: the material rows of region " << region_index << " differ from the kept rows (" << sMatRows.size() << " rows)" << LL_ENDL;
+                }
+            }
         }
         records = 1 + (U32)n;
         sStats.mAlphaStructs += n - std::min<size_t>(n, sRecGarbage);
@@ -2898,7 +3115,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         U32 custom_index = 0;
         if (any_alpha)
         {
-            if (records + a.mBuiltIdx.size() > kMaxRecords)
+            if (records + a.mBuiltIdx.size() > sMaxRecords)
             {
                 ++sStats.mTableFull;
                 avatar_skipped(a, kv.first, "geometry table full");
@@ -3604,7 +3821,7 @@ std::string report(double frames)
     const Stats& s = sStats;
     const double scenes = std::max<double>(1.0, (double)s.mScenes);
     const double f = std::max(1.0, frames);
-    char buf[3000];
+    char buf[3600];
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
              "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
@@ -3618,6 +3835,10 @@ std::string report(double frames)
     {
         size_t used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, ", instances split: refresh %.2f, verify %.2f, copy %.2f, table %.2f, avatars %.2f", s.mSubMs[0] / scenes, s.mSubMs[1] / scenes, s.mSubMs[2] / scenes, s.mSubMs[3] / scenes, s.mSubMs[4] / scenes);
+        used = strlen(buf);
+        snprintf(buf + used, sizeof(buf) - used, "; tables: %s, records written %.0f/call, material rows defined %zu (updates %.2f/frame, written %.0f/call), rows made with a material %.1f without %.1f /frame, verify mismatches %llu",
+                 sMatsInit ? (sDbg.mMats ? "materials on" : "materials off live") : "no materials", (double)s.mRecRowsWritten / scenes, sMatRows.size(), (double)s.mMatUpdates / f, (double)s.mMatRowsWritten / scenes,
+                 (double)s.mRecMaterial / f, (double)s.mRecNoMaterial / f, (unsigned long long)s.mTableMismatch);
         used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, " (refresh = move check %.2f + dirty groups), slot lookups/call %.0f, dirty/call: moved %.1f, address %.1f, alpha info %.1f, new range %.1f, move check %.1f, structure %.1f", s.mSubMs[5] / scenes, (double)s.mSlotMisses / scenes, (double)s.mDirtyWhy[0] / scenes, (double)s.mDirtyWhy[1] / scenes, (double)s.mDirtyWhy[2] / scenes, (double)s.mDirtyWhy[3] / scenes, (double)s.mDirtyWhy[4] / scenes, (double)s.mDirtyWhy[5] / scenes);
     }

@@ -25,6 +25,8 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include <atomic>
+#include <mutex>
 #include <unordered_set>
 
 #include "llvksubstream.h"
@@ -4633,6 +4635,330 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
 
 static U32 rt_matrix_id(const LLMatrix4* m);
 
+// ---- <FS> ray scene materials (doc/vulkan/PLAN-rt-materials.md) ----
+// Every draw that names a caster to the ray scene also names its material: an id into this registry, which the worker keeps as a persistent table (RtMaterialDef rows, kind 10 records,
+// sent only when a row is new or a texture name changed). The id is cached on the draw info; builders of several cascades share it (atomics, a lock only to create a row).
+// Rows not named for a long time are released. Texture animation matrices are ignored (a scrolling texture would make a material per frame): legacy draws use the identity transform.
+namespace
+{
+constexpr U32 kRtMatCap = 16384;
+constexpr U64 kRtMatIdleFrames = 1800;
+struct RtMatRow
+{
+    LLVkMirror::RtMaterialDef mDef = {};
+    LLPointer<LLViewerTexture> mTex[7];                 // 0-3 diffuse, 4 normal map, 5 specular / metallic-roughness map, 6 emissive map
+    LLPointer<LLFetchedGLTFMaterial> mGltf;
+    U64 mKey = 0;
+    std::atomic<U64> mUsed{0};                          // frame (sRtMatFrame) a draw last named it
+    std::atomic<U32> mGen{0};                           // 0 = free row; changes whenever the row is given to another material
+    U32 mSent[8] = {};                                  // the texture names last sent (same order as mTex)
+    bool mDirty = false;
+};
+RtMatRow sRtMatRows[kRtMatCap];
+std::mutex sRtMatLock;
+std::unordered_map<U64, U32> sRtMatByKey;
+std::vector<U32> sRtMatFree;
+U32 sRtMatHigh = 1;                                     // rows below it have been used (row 0 = no material)
+U32 sRtMatGenCounter = 0;
+std::atomic<U64> sRtMatFrame{0};
+struct RtMatStats { U64 mCreated = 0, mReleased = 0, mSent = 0, mFlushes = 0, mFull = 0, mLegacy = 0, mGltf = 0, mUsedNow = 0; } sRtMatStats;
+
+bool rt_materials_on()
+{
+    static const bool on = LLVkMirror::rtShadowMode() != 0 && getenv("LL_VK_RT_MATERIALS") && getenv("LL_VK_RT_MATERIALS")[0] == '1';       // off unless the launcher asks (doc/vulkan/PLAN-rt-materials.md)
+    return on;
+}
+
+U32 rt_tex_name(LLViewerTexture* t)
+{
+    LLImageGL* gl = t ? t->getGLTexture() : nullptr;
+    return gl ? (U32)gl->getTexName() : 0u;
+}
+
+// the KHR texture transform as the ray query applies it (see render_rt_extra_packets)
+void rt_khr_uv(const LLGLTFMaterial::TextureTransform& khr, F32* out)
+{
+    auto eval = [&](F32 u, F32 v, F32& ou, F32& ov)
+    {
+        F32 x = u, y = 1.f - v;
+        const F32 sx = khr.mScale.mV[VX] * x, sy = khr.mScale.mV[VY] * y;
+        const F32 c = cosf(khr.mRotation), s = sinf(khr.mRotation);
+        x = c * sx + s * sy + khr.mOffset.mV[VX];
+        y = -s * sx + c * sy + khr.mOffset.mV[VY];
+        ou = x;
+        ov = 1.f - y;
+    };
+    F32 o0x, o0y, o1x, o1y, o2x, o2y;
+    eval(0.f, 0.f, o0x, o0y);
+    eval(1.f, 0.f, o1x, o1y);
+    eval(0.f, 1.f, o2x, o2y);
+    out[0] = o1x - o0x;
+    out[1] = o1y - o0y;
+    out[2] = o2x - o0x;
+    out[3] = o2y - o0y;
+    out[4] = o0x;
+    out[5] = o0y;
+}
+
+inline void rt_hash(U64& h, U64 v)
+{
+    h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+    h *= 0xFF51AFD7ED558CCDull;
+}
+
+inline U32 rt_float_bits(F32 f)
+{
+    U32 b;
+    memcpy(&b, &f, 4);
+    return b;
+}
+} // namespace
+
+// hint: 1 = the draw is alpha masked, 2 = alpha blended. Returns 0 when materials are off or the registry is full.
+static U32 rt_material_id(LLDrawInfo* p, U32 hint)
+{
+    if (!rt_materials_on() || !p)
+    {
+        return 0;
+    }
+    const U64 stamp = sRtMatFrame.load(std::memory_order_relaxed);
+    const U64 cached = p->mRtMaterial.load(std::memory_order_relaxed);
+    if (cached)
+    {
+        const U32 id = (U32)cached;
+        if (id < kRtMatCap && sRtMatRows[id].mGen.load(std::memory_order_relaxed) == (U32)(cached >> 32))
+        {
+            sRtMatRows[id].mUsed.store(stamp, std::memory_order_relaxed);
+            return id;
+        }
+    }
+    LLVkMirror::RtMaterialDef d = {};
+    LLPointer<LLViewerTexture> tex[7];
+    LLFetchedGLTFMaterial* gm = p->mGLTFMaterial.get();
+    U32 flags = 0;
+    d.mColor[0] = d.mColor[1] = d.mColor[2] = d.mColor[3] = 1.f;
+    d.mUv[0] = 1.f;
+    d.mUv[3] = 1.f;
+    d.mRoughness = 1.f;
+    if (gm)
+    {
+        flags |= LLVkMirror::RTM_GLTF;
+        tex[0] = p->mTexture.notNull() ? p->mTexture : LLPointer<LLViewerTexture>(gm->mBaseColorTexture.get());
+        tex[4] = gm->mNormalTexture.get();
+        tex[5] = gm->mMetallicRoughnessTexture.get();
+        tex[6] = gm->mEmissiveTexture.get();
+        for (int k = 0; k < 4; ++k)
+        {
+            d.mColor[k] = gm->mBaseColor.mV[k];
+        }
+        for (int k = 0; k < 3; ++k)
+        {
+            d.mEmissive[k] = gm->mEmissiveColor.mV[k];
+        }
+        d.mMetallic = gm->mMetallicFactor;
+        d.mRoughness = gm->mRoughnessFactor;
+        d.mCutoff = gm->mAlphaCutoff;
+        rt_khr_uv(gm->mTextureTransform[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR], d.mUv);
+        if (gm->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK)
+        {
+            flags |= LLVkMirror::RTM_MASK;
+        }
+        else if (gm->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND)
+        {
+            flags |= LLVkMirror::RTM_BLEND;
+        }
+    }
+    else
+    {
+        if (p->mTextureList.size() > 1)
+        {
+            flags |= LLVkMirror::RTM_BATCH;
+            for (size_t t = 0; t < p->mTextureList.size() && t < 4; ++t)
+            {
+                tex[t] = p->mTextureList[t];
+            }
+        }
+        else
+        {
+            tex[0] = p->mTexture;
+        }
+        tex[4] = p->mNormalMap;
+        tex[5] = p->mSpecularMap;
+        if (p->mFullbright)
+        {
+            flags |= LLVkMirror::RTM_FULLBRIGHT;
+        }
+        if (p->mDiffuseAlphaMode == LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE)
+        {
+            flags |= LLVkMirror::RTM_EMISSIVE_LEGACY;
+        }
+        d.mCutoff = p->mAlphaMaskCutoff;
+        for (int k = 0; k < 4; ++k)
+        {
+            d.mSpecular[k] = p->mSpecColor.mV[k];
+        }
+        d.mMetallic = p->mEnvIntensity;                 // the legacy environment intensity rides along
+    }
+    if (hint & 1)
+    {
+        flags |= LLVkMirror::RTM_MASK;
+    }
+    if (hint & 2)
+    {
+        flags |= LLVkMirror::RTM_BLEND;
+    }
+    d.mFlags = flags;
+    U64 key = 0x1234567ull;
+    rt_hash(key, flags);
+    for (int k = 0; k < 7; ++k)
+    {
+        rt_hash(key, (U64)(uintptr_t)tex[k].get());
+    }
+    rt_hash(key, (U64)(uintptr_t)gm);
+    rt_hash(key, rt_float_bits(d.mCutoff));
+    for (int k = 0; k < 4; ++k)
+    {
+        rt_hash(key, rt_float_bits(d.mColor[k]) ^ ((U64)rt_float_bits(d.mSpecular[k]) << 32));
+    }
+    rt_hash(key, rt_float_bits(d.mMetallic) ^ ((U64)rt_float_bits(d.mRoughness) << 32));
+    for (int k = 0; k < 6; ++k)
+    {
+        rt_hash(key, rt_float_bits(d.mUv[k]));
+    }
+    std::lock_guard<std::mutex> lock(sRtMatLock);
+    U32 id = 0;
+    auto found = sRtMatByKey.find(key);
+    if (found != sRtMatByKey.end())
+    {
+        id = found->second;
+    }
+    else
+    {
+        if (!sRtMatFree.empty())
+        {
+            id = sRtMatFree.back();
+            sRtMatFree.pop_back();
+        }
+        else if (sRtMatHigh < kRtMatCap)
+        {
+            id = sRtMatHigh++;
+        }
+        else
+        {
+            ++sRtMatStats.mFull;
+            return 0;
+        }
+        RtMatRow& fresh = sRtMatRows[id];
+        fresh.mDef = d;
+        fresh.mDef.mId = id;
+        for (int k = 0; k < 7; ++k)
+        {
+            fresh.mTex[k] = tex[k];
+        }
+        fresh.mGltf = gm;
+        fresh.mKey = key;
+        memset(fresh.mSent, 0, sizeof(fresh.mSent));
+        fresh.mDirty = true;
+        fresh.mGen.store(++sRtMatGenCounter, std::memory_order_relaxed);
+        sRtMatByKey.emplace(key, id);
+        ++sRtMatStats.mCreated;
+    }
+    RtMatRow& row = sRtMatRows[id];
+    row.mUsed.store(stamp, std::memory_order_relaxed);
+    p->mRtMaterial.store(((U64)row.mGen.load(std::memory_order_relaxed) << 32) | id, std::memory_order_relaxed);
+    return id;
+}
+
+// main thread, once per frame before the ray scene call: the rows whose names are new or changed go to the worker (kind 10 record); rows idle for a long time are released
+static void rt_flush_materials()
+{
+    static U64 last_frame = ~0ull;
+    if (!rt_materials_on() || last_frame == (U64)gFrameCount)
+    {
+        return;
+    }
+    last_frame = gFrameCount;
+    const U64 frame = gFrameCount;
+    std::vector<LLVkMirror::RtMaterialDef> out;
+    {
+        std::lock_guard<std::mutex> lock(sRtMatLock);
+        U64 used_now = 0, legacy = 0, gltf = 0;
+        for (U32 id = 1; id < sRtMatHigh; ++id)
+        {
+            RtMatRow& row = sRtMatRows[id];
+            if (!row.mGen.load(std::memory_order_relaxed))
+            {
+                continue;
+            }
+            const U64 used = row.mUsed.load(std::memory_order_relaxed);
+            const U64 age = frame > used ? frame - used : 0;
+            if (age > kRtMatIdleFrames)
+            {
+                sRtMatByKey.erase(row.mKey);
+                for (auto& t : row.mTex)
+                {
+                    t = nullptr;
+                }
+                row.mGltf = nullptr;
+                row.mGen.store(0, std::memory_order_relaxed);
+                sRtMatFree.push_back(id);
+                ++sRtMatStats.mReleased;
+                continue;
+            }
+            if (age > 2 && !row.mDirty)
+            {
+                continue;                               // not named lately: its names are looked at again when it is
+            }
+            ++used_now;
+            ((row.mDef.mFlags & LLVkMirror::RTM_GLTF) ? gltf : legacy)++;
+            LLVkMirror::RtMaterialDef& d = row.mDef;
+            if (LLFetchedGLTFMaterial* gm = row.mGltf.get())
+            {
+                row.mTex[4] = gm->mNormalTexture.get();
+                row.mTex[5] = gm->mMetallicRoughnessTexture.get();
+                row.mTex[6] = gm->mEmissiveTexture.get();
+                if (!row.mTex[0])
+                {
+                    row.mTex[0] = gm->mBaseColorTexture.get();      // the draw named no texture of its own: the material's
+                }
+            }
+            U32 names[8] = { rt_tex_name(row.mTex[0].get()), rt_tex_name(row.mTex[1].get()), rt_tex_name(row.mTex[2].get()), rt_tex_name(row.mTex[3].get()),
+                             rt_tex_name(row.mTex[4].get()), rt_tex_name(row.mTex[5].get()), rt_tex_name(row.mTex[6].get()), 0 };
+            if (row.mDirty || memcmp(names, row.mSent, sizeof(names)) != 0)
+            {
+                memcpy(d.mTextures, names, sizeof(d.mTextures));
+                d.mNormalMap = names[4];
+                d.mSpecularMap = names[5];
+                d.mEmissiveMap = names[6];
+                memcpy(row.mSent, names, sizeof(names));
+                row.mDirty = false;
+                out.push_back(d);
+            }
+        }
+        sRtMatStats.mUsedNow += used_now;
+        sRtMatStats.mLegacy += legacy;
+        sRtMatStats.mGltf += gltf;
+        sRtMatStats.mSent += out.size();
+        ++sRtMatStats.mFlushes;
+        if (sRtMatStats.mFlushes % 1200 == 0)
+        {
+            const F64 n = (F64)sRtMatStats.mFlushes;
+            LL_INFOS("VkRtMaterials") << "ray scene materials per frame: in use " << sRtMatStats.mUsedNow / n << " (legacy " << sRtMatStats.mLegacy / n << ", glTF " << sRtMatStats.mGltf / n
+                << "), sent " << sRtMatStats.mSent / n << "; registry rows " << sRtMatHigh << " (free " << sRtMatFree.size() << "), created " << sRtMatStats.mCreated << ", released "
+                << sRtMatStats.mReleased << ", registry full " << sRtMatStats.mFull << LL_ENDL;
+            sRtMatStats = RtMatStats();
+        }
+    }
+    sRtMatFrame.store(frame, std::memory_order_relaxed);
+    if (!out.empty())
+    {
+        LLVkMirror::ShadowPacketsHeader header;
+        header.mKind = 10;
+        header.mEntries = (U32)out.size();
+        LLVkMirror::shadowPackets(header, out.data(), out.size() * sizeof(LLVkMirror::RtMaterialDef));
+    }
+}
+
 // List of render pass types that use the prim volume as the shadow, ignoring textures.
 static const U32 kShadowStaticTypes[] = {
     LLRenderPass::PASS_SIMPLE,
@@ -4704,7 +5030,15 @@ static void build_shadow_static(LLCullResult& result, const U32* list, size_t co
                 }
                 matrix = it->second;
             }
-            out.mEntries.push_back({ vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, rt_matrix_id(params->mModelMatrix) });
+            LLVkMirror::ShadowPacketEntry entry = { vb->getGLBuffer(), vb->getGLIndices(), params->mOffset, params->mCount, matrix, rt_matrix_id(params->mModelMatrix) };
+            if (rt_materials_on())
+            {
+                entry.mMaterial = rt_material_id(params, 0);
+                entry.mTexcoordOffset = vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) ? vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0) : 0;
+                entry.mColorOffset = vb->hasDataType(LLVertexBuffer::TYPE_COLOR) ? vb->getOffset(LLVertexBuffer::TYPE_COLOR) : 0;
+                entry.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+            }
+            out.mEntries.push_back(entry);
         }
     }
 }
@@ -8896,6 +9230,11 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 }
                 e.mFlags = flags;
                 e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
+                if (rt_materials_on() && !rigged)
+                {
+                    e.mMaterial = rt_material_id(params, (source.kind == KIND_ALPHA) ? 2u : 1u);
+                    e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+                }
                 entries.push_back(e);
             }
         }
@@ -10097,6 +10436,28 @@ void LLPipeline::visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool 
     dst->flush();
 }
 
+// <FS> RenderBufferVisualization 9: the ray scene's geometry records and material table, traced from the eye (rtMaterialDebugF.glsl); RenderRTMaterialDebug picks what is shown
+void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
+{
+    if (!gRtMaterialDebugProgram.isComplete() || !LLVkMirror::rtShadowMode())
+    {
+        return;
+    }
+    static LLCachedControl<S32> mode(gSavedSettings, "RenderRTMaterialDebug", 1);
+    static LLStaticHashedString mode_s("rt_debug_mode");
+    dst->bindTarget();
+    bindDeferredShader(gRtMaterialDebugProgram);
+    gRtMaterialDebugProgram.uniform1i(mode_s, llclamp((S32)mode, 1, 6));
+    {
+        LLGLDisable   blend(GL_BLEND);
+        LLGLDepthTest depth(GL_FALSE, GL_FALSE, GL_ALWAYS);
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+    unbindDeferredShader(gRtMaterialDebugProgram);
+    dst->flush();
+}
+
 // <FS> Temporal accumulation of the ray traced sun shadow. Between the sun lightmap pass and its blur: last frame's accumulated shadow is found again for every pixel (camera matrices, or the
 // avatar velocity for avatar pixels) and blended with this frame's, see shadowAccumF.glsl. Returns the target whose attachment 0 is the lightmap for the blur, or null when nothing was done.
 // noteSceneMatrices runs at the end of the lighting: here mViewProjCur and gGLLastModelView are still last frame's.
@@ -11215,6 +11576,9 @@ void LLPipeline::renderFinalize()
                 visualizeMotion(&mMotionMap, sourceBuffer, false);
             }
             break;
+        case 9:
+            visualizeRtMaterials(sourceBuffer);
+            break;
         default:
             break;
         }
@@ -11846,6 +12210,7 @@ void LLPipeline::renderDeferredLighting()
             {
                 rt_name_rigged_main_view();         // the avatars of the main view, whatever the shadow passes did this frame
             }
+            rt_flush_materials();
             LLVkMirror::RtSceneArgs scene;
             memcpy(scene.mView, glm::value_ptr(mat), sizeof(scene.mView));
             LLVkMirror::rtScene(scene);
@@ -13288,6 +13653,23 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             e.mFlags = flags;
             e.mCutoff = cutoff;
             uv_transform(anim, khr, e.mUv);
+            if (rt_materials_on())
+            {
+                e.mMaterial = rt_material_id(params, (flags & LLVkMirror::ALPHA_HARD) ? 1u : ((flags & LLVkMirror::ALPHA_RAY_ONLY) ? 0u : 2u));
+                e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+                if (flags & LLVkMirror::ALPHA_RAY_ONLY)
+                {
+                    // opaque: no alpha test, but the material needs the arrays (the entry's alpha fields are read by the opaque record path as well)
+                    if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+                    {
+                        e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+                    }
+                    if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+                    {
+                        e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+                    }
+                }
+            }
             entries.push_back(e);
             return true;
         };

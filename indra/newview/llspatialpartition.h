@@ -46,6 +46,7 @@
 //<FS:Beq> needed to resolve render_hull dep
 #include "llmodel.h"
 //</FS:Beq>
+#include <atomic>
 #include <queue>
 #include <unordered_map>
 
@@ -141,6 +142,10 @@ public:
     U8   mShiny = 0;
     bool mFullbright = false;
     bool mHasGlow = false;
+
+    // <FS> ray scene: the draw's material in the viewer's registry (pipeline.cpp, rt_material_id): the row in the low 32 bits, its generation in the high 32 (0 = not looked up yet).
+    // Atomic: the packet builders of several cascades run in parallel and meet the same draw.
+    std::atomic<U64> mRtMaterial{0};
 
     struct CompareTexture
     {

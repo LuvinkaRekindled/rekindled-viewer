@@ -277,6 +277,7 @@ extern LLGLSLShader         gAvatarVelocityPullProgram;
 extern LLGLSLShader         gObjectVelocityPullProgram;
 extern LLGLSLShader         gShadowAccumProgram;
 extern LLGLSLShader         gAvatarVelocityDebugProgram;
+extern LLGLSLShader         gRtMaterialDebugProgram;
 extern LLGLSLShader         gDeferredAvatarShadowProgram;
 extern LLGLSLShader         gDeferredAvatarAlphaShadowProgram;
 extern LLGLSLShader         gDeferredAvatarAlphaMaskShadowProgram;
