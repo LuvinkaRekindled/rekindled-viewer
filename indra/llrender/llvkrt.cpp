@@ -177,6 +177,8 @@ struct Stats
     U64 mDirtyWhy[7] = {};          // marked dirty because: moved, buffer address, alpha info, new range, buffer move check, structure change (3 places)
     double mSubMs[6] = {};          // inside "instances": cache refresh, verify, instance copy, records table, avatars
     double mPhaseMs[6] = {};        // expire, order, scan (with sort), instances, recording, the rest
+    U64 mDropped[2][8] = {};         // instances taken out of the scene while they were in it, by kind (0 opaque, 1 masked) and reason: expired, switched off, no structure, bad matrix, singular matrix, no buffer data, records table full, other
+    U64 mMaskedMin = ~0ull, mMaskedMax = 0;     // live alpha records per scene call over the report interval (a dip shows leaves leaving the scene)
     U64 mProbeCount = 0, mProbeNow = 0, mProbeNoUpdate = 0, mProbeNoUpdateFast = 0, mProbeFast = 0;     // size probe: bytes the new group structures need with the flags used / without ALLOW_UPDATE / without it and with PREFER_FAST_BUILD / with PREFER_FAST_BUILD
     U64 mCompacted = 0, mCompactBefore = 0, mCompactAfter = 0, mCompactSkipped = 0, mCompactFailed = 0;     // compaction: structures replaced, bytes before and after
     U64 mScanChecks = 0, mScanMismatch = 0;       // the candidate lists against a full walk (verify)
@@ -471,10 +473,11 @@ void remove_pending(Group& g)
 }
 
 // takes the group's instance and records out of the cache
-void drop_entry(Group& g)
+void drop_entry(Group& g, U32 why = 7)
 {
     if (g.mSlot != ~0u)
     {
+        ++sStats.mDropped[g.mKey.mKind == 1 ? 1 : 0][std::min<U32>(why, 7)];
         const U32 last = (U32)sInstArray.size() - 1;
         if (g.mSlot != last)
         {
@@ -1539,7 +1542,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                         }
                     }
                 }
-                drop_entry(g);
+                drop_entry(g, 0);
                 remove_pending(g);
                 sSeenFree.push_back(g.mId);
                 row.mGroup = nullptr;
@@ -2440,7 +2443,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         g.mDirty = false;
         if (g.mSkip || (g.mKey.mKind == 1 && !alpha_on))
         {
-            drop_entry(g);
+            drop_entry(g, 1);
             return;
         }
         const Blas& b = *g.mBlas;
@@ -2452,7 +2455,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         }
         if (!address)
         {
-            drop_entry(g);
+            drop_entry(g, 2);
             return;
         }
         if (g.mSlot == ~0u && sInstArray.size() + 512 >= kInstanceCapacity)
@@ -2479,7 +2482,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                     LL_WARNS("VkRt") << "bad instance matrix: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " kind " << g.mKey.mKind << " matrix id " << g.mKey.mMatrixId << " model "
                                      << g.mModel[0] << "," << g.mModel[5] << "," << g.mModel[10] << " translation " << g.mModel[12] << "," << g.mModel[13] << "," << g.mModel[14] << LL_ENDL;
                 }
-                drop_entry(g);
+                drop_entry(g, 3);
                 return;
             }
             // the determinant of the 3x3 part: zero scale (how objects are hidden) has no inverse
@@ -2493,7 +2496,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                     LL_WARNS("VkRt") << "singular instance matrix left out: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " kind " << g.mKey.mKind << " matrix id " << g.mKey.mMatrixId << " determinant " << det
                                      << " model diag " << g.mModel[0] << "," << g.mModel[5] << "," << g.mModel[10] << LL_ENDL;
                 }
-                drop_entry(g);
+                drop_entry(g, 4);
                 return;
             }
             F32 scale = 0.f;
@@ -2522,19 +2525,19 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             else if (!LLVkGL::getBufferInfo(g.mKey.mVb, lvi) || !LLVkGL::getBufferInfo(g.mKey.mIb, lii))
             {
                 ++sStats.mNoData;
-                drop_entry(g);
+                drop_entry(g, 5);
                 return;
             }
             if (!lvi.mAddress || !lii.mAddress)
             {
                 ++sStats.mNoData;
-                drop_entry(g);
+                drop_entry(g, 5);
                 return;
             }
             if (sRecs.size() + set.size() > kMaxRecords - 4096)
             {
                 ++sStats.mTableFull;
-                drop_entry(g);
+                drop_entry(g, 6);
                 return;
             }
             for (const Range& r : set)
@@ -2852,6 +2855,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         }
         records = 1 + (U32)n;
         sStats.mAlphaStructs += n - std::min<size_t>(n, sRecGarbage);
+        {
+            const U64 live = n - std::min<size_t>(n, sRecGarbage);
+            sStats.mMaskedMin = std::min<U64>(sStats.mMaskedMin, live);
+            sStats.mMaskedMax = std::max<U64>(sStats.mMaskedMax, live);
+        }
     }
     sub_lap(3);
     auto avatar_skipped = [&](const Avatar& a, U32 id, const char* why)
@@ -3628,6 +3636,23 @@ std::string report(double frames)
         snprintf(cbuf, sizeof(cbuf), ", compaction (%s): %llu structures replaced by a compacted copy, %.0f MB -> %.0f MB, kept as they were (not worth it) %llu, failed %llu", sDbg.mCompact ? "on" : "off", (unsigned long long)s.mCompacted,
                  (double)s.mCompactBefore / 1048576.0, (double)s.mCompactAfter / 1048576.0, (unsigned long long)s.mCompactSkipped, (unsigned long long)s.mCompactFailed);
         text += cbuf;
+    }
+    {
+        // why instances left the scene: leaves flickering on a camera turn show as masked drops and as a dip of the live alpha records
+        static const char* const why[8] = { "expired", "switched off", "no structure", "bad matrix", "singular matrix", "no buffer data", "records table full", "other" };
+        char dbuf[600];
+        size_t used = (size_t)snprintf(dbuf, sizeof(dbuf), ", instances taken out of the scene: masked");
+        for (int k = 0; k < 8; ++k)
+        {
+            used += (size_t)snprintf(dbuf + used, sizeof(dbuf) - used, " %s %llu,", why[k], (unsigned long long)s.mDropped[1][k]);
+        }
+        used += (size_t)snprintf(dbuf + used, sizeof(dbuf) - used, " opaque");
+        for (int k = 0; k < 8 && used < sizeof(dbuf) - 40; ++k)
+        {
+            used += (size_t)snprintf(dbuf + used, sizeof(dbuf) - used, " %s %llu,", why[k], (unsigned long long)s.mDropped[0][k]);
+        }
+        snprintf(dbuf + used, sizeof(dbuf) - used, " (live alpha records per call %llu..%llu)", (unsigned long long)(s.mMaskedMin == ~0ull ? 0 : s.mMaskedMin), (unsigned long long)s.mMaskedMax);
+        text += dbuf;
     }
     if (s.mProbeCount)
     {
