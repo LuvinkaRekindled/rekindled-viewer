@@ -4716,6 +4716,52 @@ inline U32 rt_float_bits(F32 f)
 
 static U32 rt_material_intern(LLVkMirror::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, LLDrawInfo* cache_on);
 
+// <FS> ray scene: a masked caster whose texture has no data yet would be traced with the viewer's default image (opaque: the whole card casts, see LLTexUnit::prepareFast). In ray shadow mode
+// such a draw is not named until its textures are there; it joins the scene the frame they arrive. Builders run on several threads: read only.
+static bool rt_texture_ready(LLViewerTexture* t)
+{
+    if (!t)
+    {
+        return true;                    // no texture: white, the draw is what it is
+    }
+    LLImageGL* gl = t->getGLTexture();
+    return gl && gl->getTexName() != 0;
+}
+
+static bool rt_textures_ready(const LLDrawInfo& p, bool batch_textures)
+{
+    if (LLVkMirror::rtShadowMode() != 1)
+    {
+        return true;
+    }
+    bool ready = true;
+    if (batch_textures && p.mTextureList.size() > 1)
+    {
+        for (const LLPointer<LLViewerTexture>& t : p.mTextureList)
+        {
+            ready = ready && rt_texture_ready(t.get());
+        }
+    }
+    else
+    {
+        ready = rt_texture_ready(p.mTexture.get());
+        if (ready && p.mTexture.isNull() && p.mGLTFMaterial.notNull())
+        {
+            ready = rt_texture_ready(p.mGLTFMaterial->mBaseColorTexture.get());
+        }
+    }
+    if (!ready)
+    {
+        static std::atomic<U64> left_out{0};
+        const U64 n = ++left_out;
+        if (n == 1 || n % 20000 == 0)
+        {
+            LL_INFOS("VkRtMaterials") << "ray scene: masked draws left out because their texture has no data yet: " << n << " so far (they join the scene when it arrives)" << LL_ENDL;
+        }
+    }
+    return ready;
+}
+
 // hint: 1 = the draw is alpha masked, 2 = alpha blended, 4 = the mask test ignores the vertex alpha (materials passes). Returns 0 when materials are off or the registry is full.
 static U32 rt_material_id(LLDrawInfo* p, U32 hint)
 {
@@ -9193,6 +9239,10 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                     ++out.mFbGLTF;
                     continue;       // left to renderAlphaObjects
                 }
+                if (!rt_textures_ready(*params, batch))
+                {
+                    continue;       // ray shadows: the texture has no data yet, nothing is traced for the draw until it has
+                }
                 if (!shadow_alpha_packet_ok(*params, batch, rigged))
                 {
                     switch (shadow_alpha_fallback_reason(*params, batch, rigged))
@@ -11988,7 +12038,7 @@ LLVector4 pow4fsrgb(LLVector4 v, F32 f)
 // draws are not handled here (they do not move), nothing is drawn by these records. Same entries as render_skin_packets / render_alpha_packets build in renderShadow.
 static U32 rt_matrix_id(const LLMatrix4* m);
 
-// what kind of avatar a rigged draw belongs to, for the ray scene's statistics and limits: 1 animated object (control avatar), 2 impostor, 4 the viewer's own, 8 jelly doll, 16 invisible, 32 too slow
+// what kind of avatar a rigged draw belongs to, for the ray scene's statistics and limits: 1 animated object (control avatar), 2 impostor, 4 the viewer's own, 8 jelly doll, 16 invisible, 32 too slow, 64 not fully loaded yet
 static U32 rt_avatar_kind(LLVOAvatar* avatar)
 {
     U32 kind = 0;
@@ -11999,6 +12049,7 @@ static U32 rt_avatar_kind(LLVOAvatar* avatar)
     if (appearance == LLVOAvatar::AOA_JELLYDOLL) kind |= 8;
     if (appearance == LLVOAvatar::AOA_INVISIBLE) kind |= 16;
     if (avatar->isTooSlow()) kind |= 32;
+    if (!avatar->isFullyLoaded()) kind |= 64;      // still loading in: nothing is traced for it until it is (its shape and textures are not final)
     return kind;
 }
 
@@ -12155,7 +12206,7 @@ static void rt_name_rigged_main_view()
             {
                 LLDrawInfo* params = *i;
                 LLCullResult::increment_iterator(i, end);
-                if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || !shadow_alpha_packet_ok(*params, batch, true))
+                if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || !shadow_alpha_packet_ok(*params, batch, true) || !rt_textures_ready(*params, batch))
                 {
                     continue;
                 }
@@ -13713,6 +13764,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
             {
                 return false;
+            }
+            if (!(flags & LLVkMirror::ALPHA_RAY_ONLY) && tex && !rt_texture_ready(tex))
+            {
+                return false;       // the texture has no data yet: nothing is traced for the draw until it has
             }
             LLVkMirror::ShadowAlphaEntry e = {};
             e.mVertexBuffer = vb->getGLBuffer();
