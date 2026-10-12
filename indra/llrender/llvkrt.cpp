@@ -177,6 +177,7 @@ struct Stats
     U64 mDirtyWhy[7] = {};          // marked dirty because: moved, buffer address, alpha info, new range, buffer move check, structure change (3 places)
     double mSubMs[6] = {};          // inside "instances": cache refresh, verify, instance copy, records table, avatars
     double mPhaseMs[6] = {};        // expire, order, scan (with sort), instances, recording, the rest
+    U64 mProbeCount = 0, mProbeNow = 0, mProbeNoUpdate = 0, mProbeNoUpdateFast = 0, mProbeFast = 0;     // size probe: bytes the new group structures need with the flags used / without ALLOW_UPDATE / without it and with PREFER_FAST_BUILD / with PREFER_FAST_BUILD
     U64 mCompacted = 0, mCompactBefore = 0, mCompactAfter = 0, mCompactSkipped = 0, mCompactFailed = 0;     // compaction: structures replaced, bytes before and after
     U64 mScanChecks = 0, mScanMismatch = 0;       // the candidate lists against a full walk (verify)
     U64 mRefreshed = 0, mFullRebuilds = 0, mVerifies = 0, mVerifyGroups = 0, mVerifyMismatch = 0, mTopologyChecks = 0;      // the scene cache (see sInstArray)
@@ -215,6 +216,7 @@ struct DebugSwitches
     bool mAvatarLog = false;        // one line per avatar instance of every scene call into D:/claude/rt-avatars.log: how old its data is, why it was not refreshed
     bool mSkinProbe = false;        // about every 90 scene calls: run the skin jobs again on their own, read a few results back and log their bounding boxes
     bool mRigged = true;            // rigged opaque casters (avatar attachments) in the scene, skinned by the compute pass
+    bool mSizeProbe = false;        // log what the new group structures would need with other build flags (no behaviour change)
     bool mCompact = false;          // static structures are compacted: built with ALLOW_COMPACTION, the size asked for, copied into a smaller allocation a few frames later
     F32 mSkinMaxDist = 0.f;         // C4: avatars farther than this many metres (from the eye) get no new pose or structure (0 = no limit); one that was built keeps its last pose
     bool mSkinFast = false;         // C4: avatar structures are built with PREFER_FAST_BUILD instead of PREFER_FAST_TRACE (cheaper builds and refits, slower rays)
@@ -279,6 +281,7 @@ void read_debug_switches()
                 else if (k == "skinfast") d.mSkinFast = v != 0;
                 else if (k == "skindist") d.mSkinMaxDist = (F32)v;
                 else if (k == "compact") d.mCompact = v != 0;
+                else if (k == "sizeprobe") d.mSizeProbe = v != 0;
                 else if (k == "rigged") d.mRigged = v != 0;
                 else if (k == "skinprobe") d.mSkinProbe = v != 0;
                 else if (k == "avlog") d.mAvatarLog = v != 0;
@@ -2014,6 +2017,26 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         VkAccelerationStructureBuildSizesInfoKHR sizes = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
         vkGetAccelerationStructureBuildSizesKHR(dev, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &job.mInfo, job.mCounts.data(), &sizes);
         job.mUpdateScratch = sizes.updateScratchSize;
+        if (sDbg.mSizeProbe && !job.mUpdate)
+        {
+            // what the same structure would need with other flags (the driver's answer for this device); nothing is built from it
+            VkAccelerationStructureBuildGeometryInfoKHR other = job.mInfo;
+            VkAccelerationStructureBuildSizesInfoKHR other_sizes = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+            const VkBuildAccelerationStructureFlagsKHR keep_bits = job.mInfo.flags & VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+            other.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | keep_bits;
+            vkGetAccelerationStructureBuildSizesKHR(dev, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &other, job.mCounts.data(), &other_sizes);
+            const U64 no_update = other_sizes.accelerationStructureSize;
+            other.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR | keep_bits;
+            vkGetAccelerationStructureBuildSizesKHR(dev, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &other, job.mCounts.data(), &other_sizes);
+            const U64 no_update_fast = other_sizes.accelerationStructureSize;
+            other.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR | keep_bits;
+            vkGetAccelerationStructureBuildSizesKHR(dev, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &other, job.mCounts.data(), &other_sizes);
+            ++sStats.mProbeCount;
+            sStats.mProbeNow += sizes.accelerationStructureSize;
+            sStats.mProbeNoUpdate += no_update;
+            sStats.mProbeNoUpdateFast += no_update_fast;
+            sStats.mProbeFast += other_sizes.accelerationStructureSize;
+        }
         if (job.mUpdate)
         {
             job.mInfo.srcAccelerationStructure = b.mAs;
@@ -3605,6 +3628,15 @@ std::string report(double frames)
         snprintf(cbuf, sizeof(cbuf), ", compaction (%s): %llu structures replaced by a compacted copy, %.0f MB -> %.0f MB, kept as they were (not worth it) %llu, failed %llu", sDbg.mCompact ? "on" : "off", (unsigned long long)s.mCompacted,
                  (double)s.mCompactBefore / 1048576.0, (double)s.mCompactAfter / 1048576.0, (unsigned long long)s.mCompactSkipped, (unsigned long long)s.mCompactFailed);
         text += cbuf;
+    }
+    if (s.mProbeCount)
+    {
+        char pbuf[500];
+        const double mb = 1.0 / 1048576.0;
+        snprintf(pbuf, sizeof(pbuf), ", size probe (%llu new structures): flags used %.1f MB, without ALLOW_UPDATE %.1f MB (%.0f %%), without ALLOW_UPDATE and PREFER_FAST_BUILD %.1f MB (%.0f %%), ALLOW_UPDATE + PREFER_FAST_BUILD %.1f MB (%.0f %%)",
+                 (unsigned long long)s.mProbeCount, s.mProbeNow * mb, s.mProbeNoUpdate * mb, 100.0 * (double)s.mProbeNoUpdate / (double)std::max<U64>(1, s.mProbeNow), s.mProbeNoUpdateFast * mb,
+                 100.0 * (double)s.mProbeNoUpdateFast / (double)std::max<U64>(1, s.mProbeNow), s.mProbeFast * mb, 100.0 * (double)s.mProbeFast / (double)std::max<U64>(1, s.mProbeNow));
+        text += pbuf;
     }
     return text;
 }
