@@ -141,6 +141,7 @@ struct Blas
     U32 mPrims = 0;
     U32 mRefits = 0;                                // since the last build (a refit keeps the tree: after a number of them, build again)
     bool mFastBuild = false;                        // avatar structures: built with PREFER_FAST_BUILD (the flags of an update must match the build's)
+    bool mCompacted = false;                        // replaced by its compacted copy: not refitted any more (a change builds a new structure)
     U64 mLastSeen = 0;                              // scene call number
     U64 mJobCall = 0;                               // the scene call a job for this structure belongs to (mJob is valid only then)
     Job* mJob = nullptr;
@@ -176,6 +177,7 @@ struct Stats
     U64 mDirtyWhy[7] = {};          // marked dirty because: moved, buffer address, alpha info, new range, buffer move check, structure change (3 places)
     double mSubMs[6] = {};          // inside "instances": cache refresh, verify, instance copy, records table, avatars
     double mPhaseMs[6] = {};        // expire, order, scan (with sort), instances, recording, the rest
+    U64 mCompacted = 0, mCompactBefore = 0, mCompactAfter = 0, mCompactSkipped = 0, mCompactFailed = 0;     // compaction: structures replaced, bytes before and after
     U64 mScanChecks = 0, mScanMismatch = 0;       // the candidate lists against a full walk (verify)
     U64 mRefreshed = 0, mFullRebuilds = 0, mVerifies = 0, mVerifyGroups = 0, mVerifyMismatch = 0, mTopologyChecks = 0;      // the scene cache (see sInstArray)
 };
@@ -213,6 +215,7 @@ struct DebugSwitches
     bool mAvatarLog = false;        // one line per avatar instance of every scene call into D:/claude/rt-avatars.log: how old its data is, why it was not refreshed
     bool mSkinProbe = false;        // about every 90 scene calls: run the skin jobs again on their own, read a few results back and log their bounding boxes
     bool mRigged = true;            // rigged opaque casters (avatar attachments) in the scene, skinned by the compute pass
+    bool mCompact = false;          // static structures are compacted: built with ALLOW_COMPACTION, the size asked for, copied into a smaller allocation a few frames later
     F32 mSkinMaxDist = 0.f;         // C4: avatars farther than this many metres (from the eye) get no new pose or structure (0 = no limit); one that was built keeps its last pose
     bool mSkinFast = false;         // C4: avatar structures are built with PREFER_FAST_BUILD instead of PREFER_FAST_TRACE (cheaper builds and refits, slower rays)
     bool mSkinTest = false;         // stage C step C1: structures of opaque casters are built from a compute-pass copy of their vertices (must look identical to the direct path)
@@ -239,6 +242,7 @@ void read_debug_switches()
     d.mSkinTest = env_u64("LL_VK_RT_SKINTEST", 0) != 0;
     d.mRigged = env_u64("LL_VK_RT_RIGGED", 1) != 0;
     d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_PERIOD_MAX", 4));
+    d.mCompact = env_u64("LL_VK_RT_COMPACT", 0) != 0;       // off by default: saved only about 5 % of the memory here and the tree leaf shadows disappeared with it on (PLAN-rt-shadows.md)
     d.mSkinFast = env_u64("LL_VK_RT_SKIN_FAST", 1) != 0;       // on by default: builds and refits of the avatar structures 38 % cheaper, traces unchanged (measured 2026-10-12)
     if (FILE* f = fopen(path, "rb"))
     {
@@ -274,6 +278,7 @@ void read_debug_switches()
                 else if (k == "skintest") d.mSkinTest = v != 0;
                 else if (k == "skinfast") d.mSkinFast = v != 0;
                 else if (k == "skindist") d.mSkinMaxDist = (F32)v;
+                else if (k == "compact") d.mCompact = v != 0;
                 else if (k == "rigged") d.mRigged = v != 0;
                 else if (k == "skinprobe") d.mSkinProbe = v != 0;
                 else if (k == "avlog") d.mAvatarLog = v != 0;
@@ -386,6 +391,19 @@ U64 sVerifyScanCounter = 0;
 U64 sSceneCalls = 0;
 U64 sBlasStorageBytes = 0;
 U32 sLastInstances = 0;
+// Compaction of static structures (see buildScene): a query pool per frame slot for the compacted sizes, and what is waiting for its answer. The answer is read when the slot comes round again
+// (its fence has been waited for by then): the structure is copied into an allocation of the compacted size, and the instance follows at the next call.
+constexpr U32 kCompactQueries = 512;
+struct PendingCompact
+{
+    Key mKey;
+    VkAccelerationStructureKHR mAs = VK_NULL_HANDLE;
+    VkDeviceAddress mAddress = 0;
+};
+VkQueryPool sCompactPool[Context::FRAMES_IN_FLIGHT] = {};
+std::vector<PendingCompact> sCompactPending[Context::FRAMES_IN_FLIGHT];
+U64 sCompactFrame[Context::FRAMES_IN_FLIGHT] = {};      // the frame + 1 of the slot's latest reset of its pool
+U32 sCompactNext[Context::FRAMES_IN_FLIGHT] = {};       // the next free query of the slot's pool
 
 // Flight recorder: what the latest scene calls handed to the GPU, printed when a frame is stuck (the driver resets the device after 2 s and nothing can be asked of it afterwards).
 // The hangs seen so far were in the top-level structure build: what it is given (a count, transforms, references to bottom-level structures) is what this keeps.
@@ -858,6 +876,8 @@ struct Job
     bool mFresh = false;            // there was no structure before (the others replace one or refit it)
     bool mHasSkin = false;          // a compute pass job fills the vertex data the structure is built from
     bool mFastBuild = false;        // avatar structures: built with PREFER_FAST_BUILD
+    bool mCompact = false;          // built with ALLOW_COMPACTION: the compacted size is asked for after the build
+    U32 mQuery = ~0u;               // the query of that size (assigned when the call is recorded)
     SkinJob mSkin = {};
 };
 
@@ -1110,6 +1130,15 @@ void shutdown()
         vkDestroyAccelerationStructureKHR(dev, sNullTlas.mAs, nullptr);
     }
     sNullTlas = Tlas();
+    for (U32 i = 0; i < Context::FRAMES_IN_FLIGHT; ++i)
+    {
+        if (sCompactPool[i] != VK_NULL_HANDLE)
+        {
+            vkDestroyQueryPool(dev, sCompactPool[i], nullptr);
+            sCompactPool[i] = VK_NULL_HANDLE;
+        }
+        sCompactPending[i].clear();
+    }
     if (sPool)
     {
         vkDestroyDescriptorPool(dev, sPool, nullptr);
@@ -1404,6 +1433,16 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     static const U64 rebuild_after_refits = 64;
     ++sSceneCalls;
     const U64 keep = sDbg.mKeep;
+    if (sDbg.mCompact && sCompactPool[ctx.getFrameSlot()] == VK_NULL_HANDLE && vkCmdCopyAccelerationStructureKHR && vkCmdWriteAccelerationStructuresPropertiesKHR)
+    {
+        VkQueryPoolCreateInfo qi = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+        qi.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+        qi.queryCount = kCompactQueries;
+        if (vkCreateQueryPool(dev, &qi, nullptr, &sCompactPool[ctx.getFrameSlot()]) != VK_SUCCESS)
+        {
+            sCompactPool[ctx.getFrameSlot()] = VK_NULL_HANDLE;
+        }
+    }
 
     auto lap = [&](int phase, std::chrono::steady_clock::time_point& last) {
         const auto now = std::chrono::steady_clock::now();
@@ -1778,7 +1817,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             sj.mMode = 2;
             sj.mModel[0] = sj.mModel[5] = sj.mModel[10] = 1.f;
         }
-        job.mUpdate = !grew && !ib_changed && !force_build && b.mRefits < rebuild_after_refits && b.mAs != VK_NULL_HANDLE && !sDbg.mNoRefit;
+        job.mUpdate = !grew && !ib_changed && !force_build && b.mRefits < rebuild_after_refits && b.mAs != VK_NULL_HANDLE && !sDbg.mNoRefit && !b.mCompacted;
         job.mVbVersion = vi.mVersion;
         job.mIbVersion = ii.mVersion;
         std::sort(want.begin(), want.end());
@@ -1967,7 +2006,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         job.mSet = std::move(want);
         job.mInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
         job.mInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-        job.mInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        job.mCompact = sDbg.mCompact && !job.mUpdate && !job.mHasSkin && sCompactPool[ctx.getFrameSlot()] != VK_NULL_HANDLE;
+        job.mInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | (job.mCompact ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR : 0);
         job.mInfo.mode = job.mUpdate ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
         job.mInfo.geometryCount = (U32)job.mGeometries.size();
         job.mInfo.pGeometries = job.mGeometries.data();
@@ -3228,6 +3268,80 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             }
         }
     }
+    // Compaction (static structures only; the avatars' structures refit in place). The sizes asked for by the builds of this frame slot's last use are read now (its fence has been waited for
+    // when the slot's frame began): a structure that would shrink by 15 % or more is copied into an allocation of the compacted size, recorded in this call's command buffer after the builds.
+    // The swap (and, through the dirty mark, the instance) follows once the copy is recorded; the old structure goes the way of every given-up one (destroyLater: after the frame that may still use it).
+    struct Compaction
+    {
+        Key mKey;
+        Blas* mBlas = nullptr;
+        VkAccelerationStructureKHR mOldAs = VK_NULL_HANDLE, mNewAs = VK_NULL_HANDLE;
+        VkDeviceAddress mNewAddress = 0;
+        ArenaRef mNewStorage;
+    };
+    std::vector<Compaction> compactions;
+    const U32 compact_slot = ctx.getFrameSlot();
+    const bool compact_ok = sDbg.mCompact && sCompactPool[compact_slot] != VK_NULL_HANDLE;
+    bool compact_reset = false;
+    if (compact_ok && sCompactFrame[compact_slot] != ctx.getFrameNumber() + 1)
+    {
+        sCompactFrame[compact_slot] = ctx.getFrameNumber() + 1;
+        compact_reset = true;
+        std::vector<PendingCompact>& pending = sCompactPending[compact_slot];
+        if (!pending.empty())
+        {
+            std::vector<U64> sizes(pending.size(), 0);
+            if (vkGetQueryPoolResults(dev, sCompactPool[compact_slot], 0, (U32)pending.size(), sizes.size() * sizeof(U64), sizes.data(), sizeof(U64), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
+            {
+                for (size_t i = 0; i < pending.size() && compactions.size() < 64; ++i)
+                {
+                    const PendingCompact& pc = pending[i];
+                    auto it = sBlas.find(pc.mKey);
+                    if (it == sBlas.end())
+                    {
+                        continue;
+                    }
+                    Blas& b = it->second;
+                    // still the structure that was asked about, untouched since (an update makes the answer wrong), not being rebuilt in this call
+                    if (b.mAs != pc.mAs || b.mAddress != pc.mAddress || b.mRefits != 0 || b.mJobCall == sSceneCalls || b.mCompacted || sizes[i] == 0)
+                    {
+                        continue;
+                    }
+                    if (sizes[i] * 100 > b.mStorage.mSize * 85)
+                    {
+                        ++sStats.mCompactSkipped;       // not worth a copy
+                        continue;
+                    }
+                    Compaction c;
+                    c.mKey = pc.mKey;
+                    c.mBlas = &b;
+                    c.mOldAs = b.mAs;
+                    if (!ctx.arenaAlloc(sizes[i], 256, ArenaKind::Accel, c.mNewStorage))
+                    {
+                        ++sStats.mCompactFailed;
+                        continue;
+                    }
+                    VkAccelerationStructureCreateInfoKHR ci = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
+                    ci.buffer = c.mNewStorage.mBuffer;
+                    ci.offset = c.mNewStorage.mOffset;
+                    ci.size = sizes[i];
+                    ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+                    if (vkCreateAccelerationStructureKHR(dev, &ci, nullptr, &c.mNewAs) != VK_SUCCESS)
+                    {
+                        ctx.arenaFree(c.mNewStorage);
+                        ++sStats.mCompactFailed;
+                        continue;
+                    }
+                    VkAccelerationStructureDeviceAddressInfoKHR ai = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR };
+                    ai.accelerationStructure = c.mNewAs;
+                    c.mNewAddress = vkGetAccelerationStructureDeviceAddressKHR(dev, &ai);
+                    compactions.push_back(c);
+                }
+            }
+            pending.clear();
+        }
+        sCompactNext[compact_slot] = 0;
+    }
     const VkDeviceAddress scratch_base = (sScratch.mAddress + align - 1) / align * align;
     std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
     std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> ranges;
@@ -3255,6 +3369,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
 
     const bool recorded = Renderer::instance().recordExternal({}, [&](VkCommandBuffer cmd) {
         ctx.gpuStamp(Context::stampTag("rt scene"));
+        if (compact_reset)
+        {
+            vkCmdResetQueryPool(cmd, sCompactPool[compact_slot], 0, kCompactQueries);
+        }
         // earlier work (last frame's traces, the shadow passes that wrote the vertex data) is done before anything is built over it
         full_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
@@ -3284,6 +3402,31 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             full_barrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                          VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
         }
+        if (compact_ok)
+        {
+            // the sizes the builds above would have when compacted (they are final: the barrier above made the builds visible)
+            for (Job& j : jobs)
+            {
+                if (j.mCompact && !j.mUpdate && sCompactNext[compact_slot] < kCompactQueries)
+                {
+                    j.mQuery = sCompactNext[compact_slot]++;
+                    vkCmdWriteAccelerationStructuresPropertiesKHR(cmd, 1, &j.mNewAs, VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, sCompactPool[compact_slot], j.mQuery);
+                }
+            }
+            if (!compactions.empty())
+            {
+                for (const Compaction& c : compactions)
+                {
+                    VkCopyAccelerationStructureInfoKHR ci = { VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR };
+                    ci.src = c.mOldAs;
+                    ci.dst = c.mNewAs;
+                    ci.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+                    vkCmdCopyAccelerationStructureKHR(cmd, &ci);
+                }
+                full_barrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                             VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+            }
+        }
         ctx.gpuStamp(Context::stampTag("rt scene tlas"));
         vkCmdBuildAccelerationStructuresKHR(cmd, 1, &tinfo, tranges);
         full_barrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
@@ -3292,6 +3435,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     if (!recorded)
     {
         // no frame is being recorded: undo the new structures, the groups are named again when the passes run
+        for (Compaction& c : compactions)
+        {
+            vkDestroyAccelerationStructureKHR(dev, c.mNewAs, nullptr);
+            ctx.arenaFree(c.mNewStorage);
+        }
         undo_jobs();
         return;
     }
@@ -3315,6 +3463,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             b.mStorage = j.mNewStorage;
             b.mRefits = 0;
             b.mFastBuild = j.mFastBuild;
+            b.mCompacted = false;
             ++sStats.mBuilds;
             sStats.mPrimsBuilt += j.mPrims;
         }
@@ -3323,6 +3472,44 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         b.mIbVersion = j.mIbVersion;
         b.mPrims = j.mPrims;
         b.mUpdateScratch = j.mUpdateScratch;
+    }
+    if (compact_ok)
+    {
+        // what this call built and asked the compacted size of: read when this frame slot comes round again
+        for (Job& j : jobs)
+        {
+            if (j.mCompact && !j.mUpdate && j.mQuery != ~0u)
+            {
+                PendingCompact pc;
+                pc.mKey = j.mKey;
+                pc.mAs = j.mNewAs;
+                pc.mAddress = j.mNewAddress;
+                sCompactPending[compact_slot].push_back(pc);
+            }
+        }
+        // the copies are recorded: the structures are the compacted ones from here (the instances follow at the next call, through the dirty mark)
+        for (Compaction& c : compactions)
+        {
+            Blas& b = *c.mBlas;
+            ++sStats.mCompacted;
+            sStats.mCompactBefore += b.mStorage.mSize;
+            sStats.mCompactAfter += c.mNewStorage.mSize;
+            sDeadRecent[b.mAddress] = sSceneCalls;
+            VkAccelerationStructureKHR old_as = b.mAs;
+            ctx.destroyLater([=]() { vkDestroyAccelerationStructureKHR(dev, old_as, nullptr); });     // before its storage: deferred calls run in order
+            sBlasStorageBytes -= std::min<U64>(sBlasStorageBytes, b.mStorage.mSize);
+            ctx.arenaFree(b.mStorage);
+            b.mAs = c.mNewAs;
+            b.mAddress = c.mNewAddress;
+            b.mStorage = c.mNewStorage;
+            b.mCompacted = true;
+            sBlasStorageBytes += b.mStorage.mSize;
+            auto owner = sGroups.find(c.mKey);
+            if (owner != sGroups.end())
+            {
+                mark_dirty(owner->second);
+            }
+        }
     }
     for (const SkinJob& sj : skin_jobs)
     {
@@ -3412,7 +3599,14 @@ std::string report(double frames)
         const size_t used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, ", structure memory ceiling %llu MB (new structures held back by it: %.2f/frame), instances left out for naming a dead structure: %llu", (unsigned long long)env_u64("LL_VK_RT_MAX_MB", 1536), (double)s.mCeilingHeld / f, (unsigned long long)s.mDeadRefs);
     }
-    return buf;
+    std::string text = buf;
+    {
+        char cbuf[400];
+        snprintf(cbuf, sizeof(cbuf), ", compaction (%s): %llu structures replaced by a compacted copy, %.0f MB -> %.0f MB, kept as they were (not worth it) %llu, failed %llu", sDbg.mCompact ? "on" : "off", (unsigned long long)s.mCompacted,
+                 (double)s.mCompactBefore / 1048576.0, (double)s.mCompactAfter / 1048576.0, (unsigned long long)s.mCompactSkipped, (unsigned long long)s.mCompactFailed);
+        text += cbuf;
+    }
+    return text;
 }
 
 } // namespace Rt
