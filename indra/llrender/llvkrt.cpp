@@ -1464,6 +1464,10 @@ void noteSkinned(const SkinCaster& c)
     {
         return;
     }
+    if (c.mAvatarKind & 64u)
+    {
+        return;                             // an avatar that is still loading in (shape, textures, attachments not final): not named, so not in the scene until it is
+    }
     auto it = sAvatars.find(c.mAvatarId);
     if (it == sAvatars.end())
     {

@@ -219,7 +219,7 @@ struct BodyMeshRecord
     U32 mFrame = 0;
 };
 std::unordered_map<LLViewerJointMesh*, BodyMeshRecord> sRecentBodyMeshes;
-constexpr U32 kBodyMeshMemory = 4;      // frames a mesh is named again after the last time the main view drew it
+constexpr U32 kBodyMeshMemory = 2;      // frames a mesh is named again after the last time the main view drew it (the meshes are drawn every frame: a short memory keeps stale data out)
 }
 
 void LLViewerJointMesh::noteRecentBodyMeshes()
@@ -302,9 +302,9 @@ void LLViewerJointMesh::noteRayShadow()
         return;
     }
     LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(drawable->getVObj().get());
-    if (!avatar)
+    if (!avatar || !avatar->isFullyLoaded())
     {
-        return;
+        return;                             // (an avatar still loading in is not traced until it is loaded)
     }
     LLVkMirror::ShadowBodyEntry e = {};
     e.mVertexBuffer = buff->getGLBuffer();
