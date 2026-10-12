@@ -168,6 +168,15 @@ public:
     bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst);    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
     static bool sDLSS;
     static F32 getDLSSScale();          // the render resolution as a fraction of the window: FSVkDLSSScale if set, else from FSVkDLSSQuality
+    // <FS> avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6): the velocity pass after the G-buffer. begin: before the main view's renderGeomDeferred (sets the body recording
+    // when the pass is wanted); render: after the G-buffer is flushed, before the lighting. mAvatarVelocityMap: RGBA16F at render size, rg = total screen motion in pixels, a = 1 where an avatar wrote.
+    void beginAvatarVelocity();
+    void renderAvatarVelocity();
+    bool avatarVelocityWanted();
+    void visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool show_flag);
+    LLRenderTarget          mAvatarVelocityMap;
+    bool                    mAvatarVelocityActive = false;      // begin said yes for this frame
+    bool                    mAvatarVelocityDrawn = false;       // the pass ran this frame: generateMotionVectors takes the target
     LLRenderTarget          mMotionMap;
     LLRenderTarget          mUpscaledMap;
     glm::mat4               mViewProjCur = glm::mat4(1.f);          // unjittered, this frame's

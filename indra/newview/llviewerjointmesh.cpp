@@ -58,6 +58,8 @@
 #include "llvkmirror.h"
 
 #include <unordered_set>
+#include <atomic>
+#include "llappviewer.h"
 
 extern bool gCubeSnapshot;
 
@@ -200,6 +202,39 @@ void LLViewerJointMesh::uploadJointMatrices()
         stop_glerror();
 }
 
+bool LLViewerJointMesh::sRecordVelocity = false;
+std::vector<LLViewerJointMesh::VelocityDraw> LLViewerJointMesh::sVelocityDraws;
+
+// <FS> Motion vectors (doc/vulkan/PLAN-ray-tracing.md, "Design notes for item 6"): the body palette in world space, this frame and last frame
+void LLViewerJointMesh::updatePaletteHistory()
+{
+    if (mPaletteComputed && mPaletteFrame == gFrameCount)
+    {
+        return;
+    }
+    const bool had_last_frame = mPaletteComputed && mPaletteFrame == gFrameCount - 1;
+    if (had_last_frame)
+    {
+        memcpy(mPrevWorldPalette, mWorldPalette, sizeof(mWorldPalette));
+    }
+    computeJointPalette(mWorldPalette, false);
+    if (!had_last_frame)
+    {
+        memcpy(mPrevWorldPalette, mWorldPalette, sizeof(mWorldPalette));
+    }
+    mPaletteHasPrev = had_last_frame;
+    mPaletteFrame = gFrameCount;
+    mPaletteComputed = true;
+
+    static std::atomic<U32> with_history{0}, without_history{0};
+    ++(mPaletteHasPrev ? with_history : without_history);
+    const U32 total = with_history + without_history;
+    if (total % 20000 == 0)
+    {
+        LL_INFOS("VkMotion") << "body palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame)" << LL_ENDL;
+    }
+}
+
 // <FS> Ray tracing (doc/vulkan/PLAN-rt-shadows.md, stage C): the ray scene skins the body on the GPU, from the same buffer and the same joints as the shadow maps draw it. One small
 // record per mesh and frame (the four cascades draw it four times); nothing is drawn by it.
 void LLViewerJointMesh::noteRayShadow()
@@ -325,6 +360,21 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         && (LLDrawPoolAvatar::sShadowPass == LLDrawPoolAvatar::SHADOW_PASS_AVATAR_OPAQUE || (LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)))
     {
         noteRayShadow();
+    }
+
+    // motion vectors: the history of the body palette follows the frames in which the main view draws the mesh
+    if (mMesh->hasWeights() && LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)
+    {
+        updatePaletteHistory();
+        if (sRecordVelocity && mFace && mFace->getVertexBuffer())
+        {
+            LLDrawable* drawable = mFace->getDrawable();
+            LLVOAvatar* avatar = drawable ? dynamic_cast<LLVOAvatar*>(drawable->getVObj().get()) : nullptr;
+            if (avatar)
+            {
+                sVelocityDraws.push_back({ mFace->getVertexBuffer(), mMesh->mFaceVertexOffset, mMesh->mFaceVertexOffset + mMesh->mFaceVertexCount - 1, mMesh->mFaceIndexCount, mMesh->mFaceIndexOffset, this, avatar });
+            }
+        }
     }
 
     S32 diffuse_channel = LLDrawPoolAvatar::sDiffuseChannel;

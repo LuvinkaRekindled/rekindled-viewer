@@ -11482,13 +11482,68 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderBufferVisualization</key>
   <map>
     <key>Comment</key>
-    <string>Outputs a selected buffer to the screen.  -1 = final render buffer.  0 = Albedo, 1 = Specular/ORM, 2 = Normal, 3 = Emissive, 4 = Eye luminance, 5 = FXAA Luminance/SMAA Edge Tex, 6 = SMAA Blend Weights</string>
+    <string>Outputs a selected buffer to the screen.  -1 = final render buffer.  0 = Albedo, 1 = Specular/ORM, 2 = Normal, 3 = Emissive, 4 = Eye luminance, 5 = FXAA Luminance/SMAA Edge Tex, 6 = SMAA Blend Weights, 7 = Avatar velocity (red/green = pixels moved, blue = avatar pixel; needs RenderAvatarMotionVectors), 8 = Final motion vectors the upscaler gets</string>
     <key>Persist</key>
     <integer>0</integer>
     <key>Type</key>
     <string>S32</string>
     <key>Value</key>
     <integer>-1</integer>
+  </map>
+  <key>RenderAvatarMotionVectors</key>
+  <map>
+    <key>Comment</key>
+    <string>Per-object motion vectors for avatars (skinned body and rigged attachments) for the upscaler: a velocity pass after the G-buffer (doc/vulkan/PLAN-ray-tracing.md, item 6). Needs DLSS.</string>
+    <key>Persist</key>
+    <integer>0</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderAvatarMotionVectorsPackets</key>
+  <map>
+    <key>Comment</key>
+    <string>Draw the rigged parts of the avatar velocity pass as one render packet record (cheap); off: one draw per batch (the first version, kept as the reference and the fallback).</string>
+    <key>Persist</key>
+    <integer>0</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+  </map>
+  <key>RenderAvatarMotionVectorsMinMotion</key>
+  <map>
+    <key>Comment</key>
+    <string>Avatars (skins) that moved less than this many pixels since the last frame (an upper bound estimate) are not drawn by the avatar velocity pass: the camera vector is right for them. 0 draws everything.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.3</real>
+  </map>
+  <key>RenderAvatarMotionVectorsObjects</key>
+  <map>
+    <key>Comment</key>
+    <string>Also give moving objects (vehicles, physical objects, rigid worn attachments) their own motion vectors in the velocity pass. Needs RenderAvatarMotionVectors.</string>
+    <key>Persist</key>
+    <integer>0</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+  </map>
+  <key>RenderAvatarMotionVectorsRange</key>
+  <map>
+    <key>Comment</key>
+    <string>Avatars further away than this (meters) get no avatar motion vectors (their ghosting is not visible).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>48.0</real>
   </map>
   <key>RenderCompressTextures</key>
   <map>

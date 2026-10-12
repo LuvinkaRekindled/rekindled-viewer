@@ -2312,6 +2312,17 @@ void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 cou
     }
 }
 
+void LLGLSLShader::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const GLfloat* v)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
+    GLint location = getUniformLocation(uniform);
+
+    if (location >= 0)
+    {
+        mirrorMatrix(location, 3, 4, transpose, count, v);
+    }
+}
+
 
 void LLGLSLShader::vertexAttrib4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
 {

@@ -3997,6 +3997,236 @@ static void on_shadow_skin_packets(const LLVkMirror::ShadowPacketsHeader& h, con
     sDrawsTotal += h.mEntries;
 }
 
+// <FS> Avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6): the worker side of a record of rigged draws for the velocity pass (kind 8, avatarVelocityPullV.glsl). Entries as kind 2
+// (ShadowSkinEntry; no model matrices), then the palettes of this frame, then the palettes of the frame before, at the same offsets. The viewer sets the other uniforms the normal way.
+static void on_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+{
+    struct VelocityGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mWeights[2]; U32 mPalette[2]; U32 mPrevPalette[2]; U32 mFirst, mJoints; };
+    static_assert(sizeof(VelocityGpu) == 48, "velocity packet entry");
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<U32> used_cache, packet_used;
+    static thread_local std::vector<U32> counts;
+    VertexInput& vi = vi_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used_cache.clear();
+    packet_used.clear();
+
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (h.mEntries == 0 || h.mPaletteFloats == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    {
+        ++sStats.mNoProgram;
+        return;
+    }
+    const LLVkMirror::ShadowSkinEntry* entries = (const LLVkMirror::ShadowSkinEntry*)blob;
+    const F32* palette_data = (const F32*)(blob + sizeof(LLVkMirror::ShadowSkinEntry) * h.mEntries);
+    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(VelocityGpu) * (size_t)h.mEntries);
+    Renderer::ScratchAlloc palettes = r.allocVertexScratch(8 * (size_t)h.mPaletteFloats);      // this frame's, then last frame's
+    if (!table.mPtr || !palettes.mPtr || !table.mAddress || !palettes.mAddress)
+    {
+        return;
+    }
+    memcpy(palettes.mPtr, palette_data, 8 * (size_t)h.mPaletteFloats);
+    const U64 frame_now = Context::instance().getFrameNumber();
+    counts.assign(h.mEntries, 0);
+    VelocityGpu* out = (VelocityGpu*)table.mPtr;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const LLVkMirror::ShadowSkinEntry& e = entries[i];
+        VelocityGpu& g = out[i];
+        memset(&g, 0, sizeof(g));
+        Buf* vb = packet_buffer(e.mVertexBuffer);
+        Buf* ib = packet_buffer(e.mIndexBuffer);
+        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+        {
+            continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
+        }
+        const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
+        const U64 wa = pa + e.mWeightOffset;
+        const U64 pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+        const U64 prev = pal + 4ull * h.mPaletteFloats;
+        g.mPositions[0] = (U32)pa;
+        g.mPositions[1] = (U32)(pa >> 32);
+        g.mIndices[0] = (U32)ia;
+        g.mIndices[1] = (U32)(ia >> 32);
+        g.mWeights[0] = (U32)wa;
+        g.mWeights[1] = (U32)(wa >> 32);
+        g.mPalette[0] = (U32)pal;
+        g.mPalette[1] = (U32)(pal >> 32);
+        g.mPrevPalette[0] = (U32)prev;
+        g.mPrevPalette[1] = (U32)(prev >> 32);
+        g.mFirst = e.mFirstIndex;
+        g.mJoints = e.mJoints;
+        counts[i] = e.mIndexCount;
+        vb->mLastUseFrame = frame_now;
+        ib->mLastUseFrame = frame_now;
+        if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
+        {
+            packet_used.push_back(e.mVertexBuffer);
+            packet_used.push_back(e.mIndexBuffer);
+        }
+    }
+
+    const U64 table_address = (U64)table.mAddress;
+    const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
+    program->setInts("ll_packet_table", table_words, 2);
+    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+
+    if (!prepare_draw(vi, used_cache))
+    {
+        return;
+    }
+    ensure_buffers_current(packet_used, 0);
+    r.setVertexInput(vi);
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    if (r.bindlessAvailable())
+    {
+        r.bindlessFlush();      // the depth texture the fragment shader reads
+    }
+
+    Renderer::ScratchAlloc commands;
+    const auto& caps = Context::instance().getCaps();
+    if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
+    {
+        commands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)h.mEntries);
+        if (commands.mPtr)
+        {
+            VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)commands.mPtr;
+            for (U32 i = 0; i < h.mEntries; ++i)
+            {
+                c[i] = { counts[i], 1u, 0u, i };
+            }
+        }
+    }
+    if (r.drawPackets(counts.data(), h.mEntries, commands.mPtr ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
+    {
+        if (sStatsEnabled)
+        {
+            sStats.mDone += h.mEntries;
+        }
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
+    sDraws += h.mEntries;
+    sDrawsTotal += h.mEntries;
+}
+
+// <FS> Avatar motion vectors, step 1b (doc/vulkan/PLAN-ray-tracing.md, item 6): the worker side of a record of draws that move as a whole (kind 9, objectVelocityPullV.glsl). Entries as the static
+// shadow casters (ShadowPacketEntry), then the model matrices of this frame (mMatrices of them, 16 floats), then the ones of the frame before (same numbers).
+static void on_object_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+{
+    struct ObjectGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
+    static_assert(sizeof(ObjectGpu) == 32, "object velocity packet entry");
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<U32> used_cache, packet_used;
+    static thread_local std::vector<U32> counts;
+    VertexInput& vi = vi_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used_cache.clear();
+    packet_used.clear();
+
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (h.mEntries == 0 || h.mMatrices == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    {
+        ++sStats.mNoProgram;
+        return;
+    }
+    const LLVkMirror::ShadowPacketEntry* entries = (const LLVkMirror::ShadowPacketEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowPacketEntry) * h.mEntries);
+    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(ObjectGpu) * (size_t)h.mEntries);
+    Renderer::ScratchAlloc models = r.allocVertexScratch(128 * (size_t)h.mMatrices);      // this frame's, then last frame's
+    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
+    {
+        return;
+    }
+    memcpy(models.mPtr, matrices, 128 * (size_t)h.mMatrices);
+    const U64 frame_now = Context::instance().getFrameNumber();
+    counts.assign(h.mEntries, 0);
+    ObjectGpu* out = (ObjectGpu*)table.mPtr;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const LLVkMirror::ShadowPacketEntry& e = entries[i];
+        ObjectGpu& g = out[i];
+        memset(&g, 0, sizeof(g));
+        Buf* vb = packet_buffer(e.mVertexBuffer);
+        Buf* ib = packet_buffer(e.mIndexBuffer);
+        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+        {
+            continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
+        }
+        const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
+        g.mPositions[0] = (U32)pa;
+        g.mPositions[1] = (U32)(pa >> 32);
+        g.mIndices[0] = (U32)ia;
+        g.mIndices[1] = (U32)(ia >> 32);
+        g.mFirst = e.mFirstIndex;
+        g.mCount = e.mIndexCount;
+        g.mModel = e.mMatrix;
+        counts[i] = e.mIndexCount;
+        vb->mLastUseFrame = frame_now;
+        ib->mLastUseFrame = frame_now;
+        if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
+        {
+            packet_used.push_back(e.mVertexBuffer);
+            packet_used.push_back(e.mIndexBuffer);
+        }
+    }
+
+    const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress, prev_address = models_address + 64ull * h.mMatrices;
+    const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
+    const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
+    const S32 prev_words[2] = { (S32)(U32)prev_address, (S32)(U32)(prev_address >> 32) };
+    program->setInts("ll_packet_table", table_words, 2);
+    program->setInts("ll_packet_models", models_words, 2);
+    program->setInts("ll_packet_prev_models", prev_words, 2);
+    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+
+    if (!prepare_draw(vi, used_cache))
+    {
+        return;
+    }
+    ensure_buffers_current(packet_used, 0);
+    r.setVertexInput(vi);
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    if (r.bindlessAvailable())
+    {
+        r.bindlessFlush();      // the depth texture the fragment shader reads
+    }
+
+    Renderer::ScratchAlloc commands;
+    const auto& caps = Context::instance().getCaps();
+    if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
+    {
+        commands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)h.mEntries);
+        if (commands.mPtr)
+        {
+            VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)commands.mPtr;
+            for (U32 i = 0; i < h.mEntries; ++i)
+            {
+                c[i] = { counts[i], 1u, 0u, i };
+            }
+        }
+    }
+    if (r.drawPackets(counts.data(), h.mEntries, commands.mPtr ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
+    {
+        if (sStatsEnabled)
+        {
+            sStats.mDone += h.mEntries;
+        }
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
+    sDraws += h.mEntries;
+    sDrawsTotal += h.mEntries;
+}
+
 // <FS> Render packets: the worker side of LLVkMirror::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
@@ -4009,6 +4239,16 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     if (h.mKind == 2)
     {
         on_shadow_skin_packets(h, blob);
+        return;
+    }
+    if (h.mKind == 8)
+    {
+        on_velocity_packets(h, blob);
+        return;
+    }
+    if (h.mKind == 9)
+    {
+        on_object_velocity_packets(h, blob);
         return;
     }
     if (h.mKind == 3)

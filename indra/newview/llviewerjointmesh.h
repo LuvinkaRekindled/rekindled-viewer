@@ -32,6 +32,7 @@
 #include "llavatarjointmesh.h"
 #include "llpolymesh.h"
 #include "v4color.h"
+#include <vector>
 
 class LLDrawable;
 class LLFace;
@@ -56,6 +57,22 @@ public:
     void computeJointPalette(F32* mat, bool with_modelview);
     // ray tracing: names this mesh (once per frame) to the ray scene, which skins it on the GPU
     void noteRayShadow();
+    // motion vectors: the world space palette (the layout of computeJointPalette) of this frame and of the frame before. Computed once per frame, on the first call of the frame.
+    // The previous palette equals the current one when there is no history (first time, or the mesh was not asked for in the last frame): no motion.
+    void updatePaletteHistory();
+    const F32* getWorldPalette() const { return mWorldPalette; }
+    const F32* getPreviousWorldPalette() const { return mPrevWorldPalette; }
+    bool hasPreviousWorldPalette() const { return mPaletteHasPrev; }
+    // motion vectors: the body meshes the main view's G-buffer drew this frame (recorded in drawShape while sRecordVelocity is set), drawn again by the avatar velocity pass
+    struct VelocityDraw
+    {
+        class LLVertexBuffer* mBuffer;
+        U32 mStart, mEnd, mCount, mOffset;
+        const LLViewerJointMesh* mMesh;
+        class LLVOAvatar* mAvatar;
+    };
+    static bool sRecordVelocity;
+    static std::vector<VelocityDraw> sVelocityDraws;
 
     // overloaded from base class
     U32 drawShape( F32 pixelArea, bool first_pass, bool is_dummy ) override;
@@ -71,6 +88,13 @@ public:
     void dump() override;
 
     bool isAnimatable() const override { return false; }
+
+private:
+    F32 mWorldPalette[45 * 4] = {};
+    F32 mPrevWorldPalette[45 * 4] = {};
+    U32 mPaletteFrame = 0;
+    bool mPaletteComputed = false;
+    bool mPaletteHasPrev = false;
 };
 
 #endif // LL_LLVIEWERJOINTMESH_H

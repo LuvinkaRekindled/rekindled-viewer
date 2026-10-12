@@ -1390,6 +1390,19 @@
                  function="RLV.EnableIfNot"
                  parameter="setenv" />
             </menu_item_check>
+            <menu_item_check
+             label="Morning"
+             name="Morning">
+                <menu_item_check.on_click
+                 function="World.EnvSettings"
+                 parameter="morning" />
+                <menu_item_check.on_check
+                 function="World.EnableEnvSettings"
+                 parameter="morning" />
+                <menu_item_check.on_enable
+                 function="RLV.EnableIfNot"
+                 parameter="setenv" />
+            </menu_item_check>
           <menu_item_check
            label="Midday"
            name="Noon"
@@ -1417,6 +1430,19 @@
              function="RLV.EnableIfNot"
              parameter="setenv" />
           </menu_item_check>
+            <menu_item_check
+             label="Afternoon"
+             name="Afternoon">
+                <menu_item_check.on_click
+                 function="World.EnvSettings"
+                 parameter="afternoon" />
+                <menu_item_check.on_check
+                 function="World.EnableEnvSettings"
+                 parameter="afternoon" />
+                <menu_item_check.on_enable
+                 function="RLV.EnableIfNot"
+                 parameter="setenv" />
+            </menu_item_check>
             <menu_item_check
              label="Sunset"
              name="Sunset"

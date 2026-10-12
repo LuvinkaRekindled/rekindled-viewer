@@ -148,6 +148,9 @@ namespace LLVkMirror
     struct ShadowBodyEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mVertexFirst, mVertexCount, mAvatarId, mMeshId, mWeightOffset, mJoints, mMode, mSelf; F32 mAvatarPos[3]; F32 mModel[16]; };
     // kinds 6 and 7 (ray tracing only, nothing is drawn): the rigged draws of the MAIN view named to the ray scene every frame, as kind 2 (ShadowSkinEntry) and kind 1 with
     // ALPHA_RIGGED (ShadowAlphaEntry): entries, model matrices, palettes, the layout of the kinds they copy
+    // kind 8: rigged draws of the avatar velocity pass (avatarVelocityPullV.glsl): ShadowSkinEntry entries (no model matrices), then the palettes of this frame (mPaletteFloats floats, 12 per joint), then
+    // the palettes of the frame before, same layout and offsets. mViewProj is the jittered view-projection (the pixels of the G-buffer); the unjittered ones come as ordinary uniforms
+    // kind 9: draws that move as a whole, for the velocity pass (objectVelocityPullV.glsl): ShadowPacketEntry entries, then mMatrices model matrices of this frame, then mMatrices of the frame before
     // kind 3: a draw of a deferred geometry pass (the colour passes). The matrices after the entries are 44 floats each: modelview, modelview * projection, and the normal
     // matrix as three vec4 columns (the viewer computes them, once per model matrix). Matrix 0 is the view alone.
     enum GeoFlags : U32

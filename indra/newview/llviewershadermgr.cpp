@@ -212,6 +212,11 @@ LLGLSLShader            gExposureProgram;
 LLGLSLShader            gExposureProgramNoFade;
 LLGLSLShader            gLuminanceProgram;
 LLGLSLShader            gMotionVectorProgram;
+LLGLSLShader            gAvatarVelocityProgram;         // <FS> avatar motion vectors: rigged draws
+LLGLSLShader            gAvatarBodyVelocityProgram;     // <FS> avatar motion vectors: the avatar's own body meshes
+LLGLSLShader            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
+LLGLSLShader            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
+LLGLSLShader            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
 LLGLSLShader            gFXAAProgram[4];
 LLGLSLShader            gSMAAEdgeDetectProgram[4];
 LLGLSLShader            gSMAABlendWeightsProgram[4];
@@ -1175,6 +1180,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gExposureProgramNoFade.unload();
         gLuminanceProgram.unload();
         gMotionVectorProgram.unload();
+        gAvatarVelocityProgram.unload();
+        gAvatarBodyVelocityProgram.unload();
+        gAvatarVelocityPullProgram.unload();
+        gObjectVelocityPullProgram.unload();
+        gAvatarVelocityDebugProgram.unload();
         gDeferredPostGammaCorrectProgram.unload();
         gLegacyPostGammaCorrectProgram.unload();
         gDeferredPostTonemapProgram.unload();
@@ -2627,6 +2637,75 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gMotionVectorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gMotionVectorProgram.createShader();
         llassert(success);
+    }
+
+    // <FS> avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6). Optional: a failure here must not stop the programs that follow (the pass checks isComplete()).
+    if (success)
+    {
+        const std::string max_joints = std::to_string(LLSkinningUtil::getMaxJointCount());     // the Vulkan translator wants literal array sizes
+        gAvatarVelocityProgram.mName = "Avatar Velocity (rigged)";
+        gAvatarVelocityProgram.mShaderFiles.clear();
+        gAvatarVelocityProgram.clearPermutations();
+        gAvatarVelocityProgram.addPermutation("MAX_JOINTS_PER_MESH_OBJECT", max_joints);
+        gAvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityV.glsl", GL_VERTEX_SHADER));
+        gAvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+        gAvatarVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gAvatarVelocityProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the avatar velocity program (rigged) did not compile: no avatar motion vectors" << LL_ENDL;
+        }
+
+        if (LLVkMirror::shadowPacketsAvailable())
+        {
+            gAvatarVelocityPullProgram.mName = "Avatar Velocity (rigged, packets)";
+            gAvatarVelocityPullProgram.mShaderFiles.clear();
+            gAvatarVelocityPullProgram.clearPermutations();
+            gAvatarVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityPullV.glsl", GL_VERTEX_SHADER));
+            gAvatarVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+            gAvatarVelocityPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            if (!gAvatarVelocityPullProgram.createShader())
+            {
+                LL_WARNS("VkMotion") << "the avatar velocity pull program did not compile: the pass draws the rigged parts one by one" << LL_ENDL;
+                gAvatarVelocityPullProgram.unload();
+            }
+        }
+
+        if (LLVkMirror::shadowPacketsAvailable())
+        {
+            gObjectVelocityPullProgram.mName = "Object Velocity (packets)";
+            gObjectVelocityPullProgram.mShaderFiles.clear();
+            gObjectVelocityPullProgram.clearPermutations();
+            gObjectVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/objectVelocityPullV.glsl", GL_VERTEX_SHADER));
+            gObjectVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+            gObjectVelocityPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            if (!gObjectVelocityPullProgram.createShader())
+            {
+                LL_WARNS("VkMotion") << "the object velocity pull program did not compile: no motion vectors for moving objects" << LL_ENDL;
+                gObjectVelocityPullProgram.unload();
+            }
+        }
+
+        gAvatarBodyVelocityProgram.mName = "Avatar Velocity (body)";
+        gAvatarBodyVelocityProgram.mShaderFiles.clear();
+        gAvatarBodyVelocityProgram.clearPermutations();
+        gAvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarBodyVelocityV.glsl", GL_VERTEX_SHADER));
+        gAvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+        gAvatarBodyVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gAvatarBodyVelocityProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the avatar velocity program (body) did not compile: no avatar motion vectors" << LL_ENDL;
+        }
+
+        gAvatarVelocityDebugProgram.mName = "Avatar Velocity Debug";
+        gAvatarVelocityDebugProgram.mShaderFiles.clear();
+        gAvatarVelocityDebugProgram.clearPermutations();
+        gAvatarVelocityDebugProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gAvatarVelocityDebugProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityDebugF.glsl", GL_FRAGMENT_SHADER));
+        gAvatarVelocityDebugProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gAvatarVelocityDebugProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the avatar velocity debug program did not compile" << LL_ENDL;
+        }
     }
 
     if (success)

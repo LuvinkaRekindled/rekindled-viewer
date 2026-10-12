@@ -61,6 +61,7 @@
 #include "lldebugview.h"
 #include "lldiskcache.h"
 #include "llenvironment.h"
+#include "llsettingsvo.h"
 #include "llfilepicker.h"
 #include "llfirstuse.h"
 #include "llfloaterabout.h"
@@ -12090,6 +12091,39 @@ class LLToolsSelectTool : public view_listener_t
     }
 };
 
+// <FS> Morning and Afternoon (for testing shadows): the sky halfway between two of the library skies (Sunrise and Midday, Midday and Sunset). The two library assets are fetched like the menu items
+// do, then the first is cloned, blended 50 % towards the second and set as the local fixed sky. The name is what the menu check compares.
+static void set_blended_sky(const LLUUID& from_id, const LLUUID& to_id, const std::string& name)
+{
+    LLSettingsVOBase::getSettingsAsset(from_id, [to_id, name](LLUUID, LLSettingsBase::ptr_t from, S32 from_status, LLExtStat)
+    {
+        if (!from || from_status)
+        {
+            LL_WARNS("ENVIRONMENT") << "Could not load the first sky for " << name << LL_ENDL;
+            return;
+        }
+        LLSettingsVOBase::getSettingsAsset(to_id, [from, name](LLUUID, LLSettingsBase::ptr_t to, S32 to_status, LLExtStat)
+        {
+            if (!to || to_status)
+            {
+                LL_WARNS("ENVIRONMENT") << "Could not load the second sky for " << name << LL_ENDL;
+                return;
+            }
+            LLSettingsBase::ptr_t blended = from->buildDerivedClone();
+            if (!blended)
+            {
+                return;
+            }
+            blended->blend(to, 0.5);
+            blended->setName(name);
+            const LLSettingsBase::Seconds transition(static_cast<F64>(gSavedSettings.getF32("FSEnvironmentManualTransitionTime")));
+            LLEnvironment::instance().setEnvironment(LLEnvironment::ENV_LOCAL, blended);
+            LLEnvironment::instance().setSelectedEnvironment(LLEnvironment::ENV_LOCAL);
+            LLEnvironment::instance().updateEnvironment(transition);
+        });
+    });
+}
+
 /// WINDLIGHT callbacks
 class LLWorldEnvSettings : public view_listener_t
 {
@@ -12183,6 +12217,16 @@ class LLWorldEnvSettings : public view_listener_t
             // </FS:Beq>
             defocusEnvFloaters();
         }
+        else if (event_name == "morning")
+        {
+            set_blended_sky(LLEnvironment::KNOWN_SKY_SUNRISE, LLEnvironment::KNOWN_SKY_MIDDAY, "Morning");
+            defocusEnvFloaters();
+        }
+        else if (event_name == "afternoon")
+        {
+            set_blended_sky(LLEnvironment::KNOWN_SKY_MIDDAY, LLEnvironment::KNOWN_SKY_SUNSET, "Afternoon");
+            defocusEnvFloaters();
+        }
         else if (event_name == "legacy noon")
         {
             // <FS:Beq> Add legacy noon to the manually selected environments that can have a user defined transition time.
@@ -12270,6 +12314,14 @@ class LLWorldEnableEnvSettings : public view_listener_t
             {
             result = (skyid == LLEnvironment::KNOWN_SKY_MIDDAY);
             }
+        else if (event_name == "morning")
+        {
+            result = (skyname == "Morning");
+        }
+        else if (event_name == "afternoon")
+        {
+            result = (skyname == "Afternoon");
+        }
         else if (event_name == "legacy noon")
         {
             result = (skyid == LLEnvironment::KNOWN_SKY_LEGACY_MIDDAY);
