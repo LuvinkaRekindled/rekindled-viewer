@@ -312,6 +312,8 @@ public:
     // The persistent table: a slot belongs to an (image view, sampler, layout) for as long as something keeps using it (it is freed after a few hundred idle frames), so slot numbers
     // mean the same thing from frame to frame. `hint` is the slot the caller got last time for the same thing: checked first, no lookup. Every frame's set has its own copy of the
     // table; a descriptor is written into the set of the frame that uses it, once (until the slot changes hands).
+    void bindlessPrefetch(U32 table, U32 slot);                                                  // <FS> asks the memory system for the entries bindlessTouch / bindlessSlotIn will read
+    bool bindlessTouch(U32 table, U32 slot, U64 view_id, VkImageView view, VkSampler sampler);      // <FS> the slot still holds this view and sampler: keep it alive and written into this frame's set (no table search)
     U32 bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout, U32 hint = 0);     // table 0 2D, 1 cube, 2 cube array, 3 2D shadow
     void bindlessFlush();           // writes the slots taken since the last call into the frame's set and binds it
 

@@ -6,6 +6,7 @@
 #include "linden_common.h"
 
 #include "llvkrenderer.h"
+#include <xmmintrin.h>
 
 // <FS> Tracy GPU zones from the Vulkan timestamps. Tracy loads its Vulkan functions through the proc-address tables (our Vulkan is loaded at run time).
 #if defined(TRACY_ENABLE)
@@ -2412,6 +2413,49 @@ void Renderer::bindlessSweep(U64 min_idle_frames)
 U32 Renderer::bindlessSlot(Image* image, VkSampler sampler)
 {
     return bindlessSlotIn(0, image, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0);
+}
+
+void Renderer::bindlessPrefetch(U32 table, U32 slot)
+{
+    if (table >= BINDLESS_TABLES || !slot)
+    {
+        return;
+    }
+    BindlessTable& tbl = mBindlessTbl[table];
+    if (slot < tbl.mSlots.size())
+    {
+        _mm_prefetch((const char*)&tbl.mSlots[slot], _MM_HINT_T0);
+    }
+    if (slot < tbl.mShadow[mSlot].size())
+    {
+        _mm_prefetch((const char*)&tbl.mShadow[mSlot][slot], _MM_HINT_T0);
+    }
+    if (slot < tbl.mShadowId[mSlot].size())
+    {
+        _mm_prefetch((const char*)&tbl.mShadowId[mSlot][slot], _MM_HINT_T0);
+    }
+}
+
+bool Renderer::bindlessTouch(U32 table, U32 slot, U64 view_id, VkImageView view, VkSampler sampler)
+{
+    if (!mSet2Layout || table >= BINDLESS_TABLES || !slot || !view_id)
+    {
+        return false;
+    }
+    BindlessTable& tbl = mBindlessTbl[table];
+    if (slot >= tbl.mSlots.size())
+    {
+        return false;
+    }
+    BindlessSlot& s = tbl.mSlots[slot];
+    if (!s.mActive || s.mKey.mViewId != view_id || s.mInfo.imageView != view || s.mInfo.sampler != sampler || s.mInfo.imageLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    {
+        return false;
+    }
+    bindlessStart();
+    s.mLastUsed = Context::instance().getFrameNumber();
+    bindlessQueue(tbl, slot, s.mInfo, s.mKey.mViewId);
+    return true;
 }
 
 U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout, U32 hint)

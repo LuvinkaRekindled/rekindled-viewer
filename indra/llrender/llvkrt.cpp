@@ -8,6 +8,7 @@
 #if defined(LL_VULKAN)
 
 #include "llvkrt.h"
+#include <xmmintrin.h>
 #include "llvkrenderer.h"
 #include "llvkmirror.h"
 
@@ -208,6 +209,8 @@ struct Stats
     U64 mCompacted = 0, mCompactBefore = 0, mCompactAfter = 0, mCompactSkipped = 0, mCompactFailed = 0;     // compaction: structures replaced, bytes before and after
     U64 mScanChecks = 0, mScanMismatch = 0;       // the candidate lists against a full walk (verify)
     U64 mForceWhy[5] = {};          // the whole cache was made again because: eviction, camera too far from the origin, alpha switch, material switch, compaction
+    double mTblMs[4] = {};          // inside the table part: record slot patch, record write, material slot patch, material write
+    U64 mMatNear = 0, mMatPatches = 0;      // materials that got slots (near ones), per patch pass
     U64 mRecRowsWritten = 0, mMatRowsWritten = 0, mMatUpdates = 0, mTableMismatch = 0, mRecNoMaterial = 0, mRecMaterial = 0;     // the table writes (deltas) and the material tables
     U64 mRefreshed = 0, mFullRebuilds = 0, mVerifies = 0, mVerifyGroups = 0, mVerifyMismatch = 0, mTopologyChecks = 0;      // the scene cache (see sInstArray)
 };
@@ -250,6 +253,8 @@ struct DebugSwitches
     F32 mSkinMaxDist = 0.f;         // C4: avatars farther than this many metres (from the eye) get no new pose or structure (0 = no limit); one that was built keeps its last pose
     bool mSkinFast = false;         // C4: avatar structures are built with PREFER_FAST_BUILD instead of PREFER_FAST_TRACE (cheaper builds and refits, slower rays)
     bool mSkinTest = false;         // stage C step C1: structures of opaque casters are built from a compute-pass copy of their vertices (must look identical to the direct path)
+    U32 mPfA = 14, mPfB = 6;        // slot lookups: how many materials ahead the texture state and the table entries are prefetched (0 = no prefetch)
+    U32 mMatPass = 4;               // only materials named by shadow passes up to this one (0-3 sun cascades: the nearer ones) get texture slots; 4 = all (each slot costs a lookup per frame)
     bool mMats = false;             // records for the opaque geometries too, the material table is filled and traced against (needs LL_VK_RT_MATERIALS=1 at start-up)
     bool mDelta = true;             // the tables are written to the call's region as deltas (rows changed since the region was last written); off: all rows every call
     bool mTableVerify = false;      // after every table write compare the region with the kept rows (slow: reads video memory)
@@ -278,6 +283,7 @@ void read_debug_switches()
     d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_PERIOD_MAX", 4));
     d.mCompact = env_u64("LL_VK_RT_COMPACT", 0) != 0;       // off by default: saved only about 5 % of the memory here and the tree leaf shadows disappeared with it on (PLAN-rt-shadows.md)
     d.mMats = sMatsInit;
+    d.mMatPass = (U32)env_u64("LL_VK_RT_MAT_PASS", 4);
     d.mSkinFast = env_u64("LL_VK_RT_SKIN_FAST", 1) != 0;       // on by default: builds and refits of the avatar structures 38 % cheaper, traces unchanged (measured 2026-10-12)
     if (FILE* f = fopen(path, "rb"))
     {
@@ -314,6 +320,9 @@ void read_debug_switches()
                 else if (k == "skinfast") d.mSkinFast = v != 0;
                 else if (k == "skindist") d.mSkinMaxDist = (F32)v;
                 else if (k == "mats") d.mMats = sMatsInit && v != 0;
+                else if (k == "pfa") d.mPfA = (U32)std::max<long long>(0, v);
+                else if (k == "pfb") d.mPfB = (U32)std::max<long long>(0, v);
+                else if (k == "matpass") d.mMatPass = (U32)std::max<long long>(0, v);
                 else if (k == "delta") d.mDelta = v != 0;
                 else if (k == "tableverify") d.mTableVerify = v != 0;
                 else if (k == "compact") d.mCompact = v != 0;
@@ -468,6 +477,7 @@ size_t apply_rows(RowLog& log, RegionState& rs, const std::vector<T>& rows, T* d
 RowLog sRecLog, sMatLog;
 RegionState sRecRegion[Context::FRAMES_IN_FLIGHT * kCalls], sMatRegion[Context::FRAMES_IN_FLIGHT * kCalls];
 std::vector<GpuMaterial> sMatRows;              // by viewer id (row 0 unused); slots are patched in at every frame
+std::vector<U64> sMatNear;                      // per material id: the frame tag (+1) a near shadow pass last named it
 std::vector<std::array<U32, 8>> sMatNames;      // GL names of each row: 4 diffuse, normal, specular, emissive, unused (all zero: no row)
 bool sMatsSeen = false;
 std::vector<GpuGeom> sRecs;                     // alpha records, a group's rows contiguous; a dropped group's rows stay as garbage until the next compaction
@@ -1333,6 +1343,14 @@ void noteCaster(const Caster& c)
     Group& g = it->second;
     const U32 pass = std::min<U32>(c.mPass, kPasses - 1);
     const U64 frame_tag = Context::instance().getFrameNumber() + 1;
+    if (c.mAlpha && c.mAlpha->mMaterial && c.mAlpha->mMaterial < kMatCap && c.mPass <= sDbg.mMatPass)
+    {
+        if (sMatNear.size() < kMatCap)
+        {
+            sMatNear.resize(kMatCap, 0);
+        }
+        sMatNear[c.mAlpha->mMaterial] = frame_tag;
+    }
     sSeenRows[g.mId].mSeen[pass] = frame_tag;
     sPassFrame[pass] = frame_tag;
     if (g.mNotedTag != frame_tag)
@@ -1533,7 +1551,7 @@ U32 tableOffset(U32 frame_slot)
     return frame_slot < Context::FRAMES_IN_FLIGHT && !scene_current(frame_slot) ? 0u : sTableOffset;
 }
 
-void buildScene(const F32* view, TextureSlotFn slot_of)
+void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefetch)
 {
     if (!sInit || sFailed)
     {
@@ -3005,9 +3023,29 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
         table[0].mNormals[0] = (U32)mat_table_address;          // where the material rows of this call are
         table[0].mNormals[1] = (U32)(mat_table_address >> 32);
         const size_t n = sRecs.size();
+        auto tbl_t0 = std::chrono::steady_clock::now();
+        auto tbl_lap = [&](int k) { const auto now = std::chrono::steady_clock::now(); sStats.mTblMs[k] += std::chrono::duration<double, std::milli>(now - tbl_t0).count(); tbl_t0 = now; };
         // this frame's texture slots go into the kept rows; only a changed word is logged (and so written to the region)
         for (size_t r = 0; r < n; ++r)
         {
+            if (prefetch && sDbg.mPfA)
+            {
+                for (int stage = 0; stage < 2; ++stage)
+                {
+                    const size_t ahead = r + (stage == 0 ? sDbg.mPfA : sDbg.mPfB);
+                    if (ahead < n)
+                    {
+                        const std::array<U32, 4>& an = sRecNames[ahead];
+                        for (int k = 0; k < 4; ++k)
+                        {
+                            if (an[k])
+                            {
+                                prefetch(an[k], (U32)stage);
+                            }
+                        }
+                    }
+                }
+            }
             const std::array<U32, 4>& nm = sRecNames[r];
             if (!(nm[0] | nm[1] | nm[2] | nm[3]))
             {
@@ -3029,7 +3067,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                 sRecLog.touch((U32)r);
             }
         }
+        tbl_lap(0);
         sStats.mRecRowsWritten += apply_rows(sRecLog, sRecRegion[region_index], sRecs, table + 1, sDbg.mDelta);
+        tbl_lap(1);
         if (sDbg.mTableVerify && n && memcmp(table + 1, sRecs.data(), n * sizeof(GpuGeom)) != 0)
         {
             ++sStats.mTableMismatch;
@@ -3045,19 +3085,52 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
             if (patched_frame != frame_now)
             {
                 patched_frame = frame_now;
+                // which materials are worth a texture slot this frame: the ones the nearer cascades named lately (noteCaster stamps them; a slot costs a lookup per frame, the table is not persistent yet)
+                const U64 near_tag = frame_now + 1;
+                const bool ranged = sDbg.mMatPass < 4;
+                ++sStats.mMatPatches;
                 for (size_t id = 1; id < sMatRows.size(); ++id)
                 {
+                    if (prefetch && sDbg.mPfA)
+                    {
+                        // the lookups below are bound by cache misses (every texture has its own state, table entries and descriptor shadow): ask for the next materials' data ahead of use
+                        for (int stage = 0; stage < 2; ++stage)
+                        {
+                            const size_t ahead = id + (stage == 0 ? sDbg.mPfA : sDbg.mPfB);
+                            if (ahead < sMatNames.size() && (!ranged || (ahead < sMatNear.size() && sMatNear[ahead] + 8 >= near_tag)))
+                            {
+                                const std::array<U32, 8>& an = sMatNames[ahead];
+                                for (int k = 0; k < 7; ++k)
+                                {
+                                    if (an[k])
+                                    {
+                                        prefetch(an[k], (U32)stage);
+                                        if (stage == 1)
+                                        {
+                                            const U32 ph = (an[k] * 2654435761u) >> 18;
+                                            _mm_prefetch((const char*)&sSlotCacheName[ph], _MM_HINT_T0);
+                                            _mm_prefetch((const char*)&sSlotCacheSlot[ph], _MM_HINT_T0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     const std::array<U32, 8>& nm = sMatNames[id];
                     if (!(nm[0] | nm[1] | nm[2] | nm[3] | nm[4] | nm[5] | nm[6]))
                     {
                         continue;
                     }
                     U32 slot[8] = {};
-                    for (U32 k = 0; k < 7; ++k)
+                    if (!ranged || (id < sMatNear.size() && sMatNear[id] + 8 >= near_tag))
                     {
-                        if (nm[k] && slot_of)
+                        ++sStats.mMatNear;
+                        for (U32 k = 0; k < 7; ++k)
                         {
-                            slot[k] = slot_lookup(nm[k]);
+                            if (nm[k] && slot_of)
+                            {
+                                slot[k] = slot_lookup(nm[k]);
+                            }
                         }
                     }
                     GpuMaterial& m = sMatRows[id];
@@ -3072,7 +3145,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
                     }
                 }
             }
+            tbl_lap(2);
             sStats.mMatRowsWritten += apply_rows(sMatLog, sMatRegion[region_index], sMatRows, mat_table, sDbg.mDelta);
+            tbl_lap(3);
             if (sDbg.mTableVerify && !sMatRows.empty() && memcmp(mat_table, sMatRows.data(), sMatRows.size() * sizeof(GpuMaterial)) != 0)
             {
                 ++sStats.mTableMismatch;
@@ -3849,9 +3924,9 @@ std::string report(double frames)
         size_t used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, ", instances split: refresh %.2f, verify %.2f, copy %.2f, table %.2f, avatars %.2f", s.mSubMs[0] / scenes, s.mSubMs[1] / scenes, s.mSubMs[2] / scenes, s.mSubMs[3] / scenes, s.mSubMs[4] / scenes);
         used = strlen(buf);
-        snprintf(buf + used, sizeof(buf) - used, "; tables: %s, records written %.0f/call, material rows defined %zu (updates %.2f/frame, written %.0f/call), rows made with a material %.1f without %.1f /frame, verify mismatches %llu, cache made again because: eviction %llu, origin %llu, alpha %llu, materials %llu, compaction %llu",
+        snprintf(buf + used, sizeof(buf) - used, "; tables: %s, records written %.0f/call, material rows defined %zu (updates %.2f/frame, written %.0f/call), rows made with a material %.1f without %.1f /frame, materials with slots %.0f of %zu, verify mismatches %llu, table ms/call: record slots %.2f write %.2f, material slots %.2f write %.2f, cache made again because: eviction %llu, origin %llu, alpha %llu, materials %llu, compaction %llu",
                  sMatsInit ? (sDbg.mMats ? "materials on" : "materials off live") : "no materials", (double)s.mRecRowsWritten / scenes, sMatRows.size(), (double)s.mMatUpdates / f, (double)s.mMatRowsWritten / scenes,
-                 (double)s.mRecMaterial / f, (double)s.mRecNoMaterial / f, (unsigned long long)s.mTableMismatch,
+                 (double)s.mRecMaterial / f, (double)s.mRecNoMaterial / f, s.mMatPatches ? (double)s.mMatNear / (double)s.mMatPatches : 0.0, sMatRows.size(), (unsigned long long)s.mTableMismatch, s.mTblMs[0] / scenes, s.mTblMs[1] / scenes, s.mTblMs[2] / scenes, s.mTblMs[3] / scenes,
                  (unsigned long long)s.mForceWhy[0], (unsigned long long)s.mForceWhy[1], (unsigned long long)s.mForceWhy[2], (unsigned long long)s.mForceWhy[3], (unsigned long long)s.mForceWhy[4]);
         used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, " (refresh = move check %.2f + dirty groups), slot lookups/call %.0f, dirty/call: moved %.1f, address %.1f, alpha info %.1f, new range %.1f, move check %.1f, structure %.1f", s.mSubMs[5] / scenes, (double)s.mSlotMisses / scenes, (double)s.mDirtyWhy[0] / scenes, (double)s.mDirtyWhy[1] / scenes, (double)s.mDirtyWhy[2] / scenes, (double)s.mDirtyWhy[3] / scenes, (double)s.mDirtyWhy[4] / scenes, (double)s.mDirtyWhy[5] / scenes);
