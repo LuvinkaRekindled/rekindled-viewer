@@ -11808,6 +11808,18 @@ void LLPipeline::renderDeferredLighting()
                                               (GLfloat)deferred_light_target->getWidth(),
                                               (GLfloat)deferred_light_target->getHeight());
 
+                if (LLVkMirror::rtShadowMode())
+                {
+                    // <FS> soft ray traced sun shadows: the sun's disc and the rays per pixel (the other shaders that sample the sun shadow leave these at 0 and trace one hard ray)
+                    static LLCachedControl<F32> rt_softness(gSavedSettings, "RenderRTShadowSoftness", 0.35f);
+                    static LLCachedControl<S32> rt_samples(gSavedSettings, "RenderRTShadowSamples", 2);
+                    static LLStaticHashedString radius_s("rt_sun_radius"), samples_s("rt_sun_samples"), frame_s("rt_noise_frame");
+                    sun_shader.uniform1f(radius_s, tanf(llclamp(rt_softness(), 0.f, 5.f) * DEG_TO_RAD));
+                    sun_shader.uniform1i(samples_s, llclamp(rt_samples(), 1, 16));
+                    // the noise changes every frame when the upscaler is there to accumulate it, else it stays put and the blur alone smooths it
+                    sun_shader.uniform1f(frame_s, sDLSS ? (F32)(mJitterIndex % 64) : 0.f);
+                }
+
                 {
                     LLGLDisable   blend(GL_BLEND);
                     LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_ALWAYS);
