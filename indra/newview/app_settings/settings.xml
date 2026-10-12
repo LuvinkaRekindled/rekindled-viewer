@@ -12744,6 +12744,28 @@ Change of this parameter will affect the layout of buttons in notification toast
     <integer>0</integer>
   </map>
 
+  <key>RenderRTShadowAccumulate</key>
+  <map>
+    <key>Comment</key>
+    <string>Ray traced sun shadows (with DLSS): average the shadow over the last frames, found again through the camera and avatar motion, so that one or two rays per pixel look smooth. See RenderRTShadowHistory.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+  </map>
+  <key>RenderRTShadowHistory</key>
+  <map>
+    <key>Comment</key>
+    <string>Ray traced sun shadows: the most frames that go into the average (2 to 32). Longer is smoother and slower to follow a shadow that changes.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
+    <integer>8</integer>
+  </map>
   <key>RenderRTShadowSoftness</key>
   <map>
     <key>Comment</key>

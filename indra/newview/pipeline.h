@@ -175,6 +175,11 @@ public:
     bool avatarVelocityWanted();
     void visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool show_flag);
     LLRenderTarget          mAvatarVelocityMap;
+    // <FS> temporal accumulation of the ray traced sun shadow (shadowAccumF.glsl): two targets of two attachments (0 = lightmap shaped, 1 = history), used in turn
+    LLRenderTarget          mShadowAccum[2];
+    U32                     mShadowAccumIndex = 0;              // the target written last
+    U32                     mShadowAccumFrame = 0;              // the frame it was written in (+1; 0 = never)
+    LLRenderTarget*         accumulateSunShadow(LLRenderTarget* light);     // null: not done, the blur reads the plain lightmap
     bool                    mAvatarVelocityActive = false;      // begin said yes for this frame
     bool                    mAvatarVelocityDrawn = false;       // the pass ran this frame: generateMotionVectors takes the target
     LLRenderTarget          mMotionMap;
