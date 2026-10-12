@@ -145,7 +145,8 @@ namespace LLVkMirror
 
     // kind 4 (ray tracing only, nothing is drawn): one mesh of an avatar's own body, as the old path draws it. mMode 1: skinned by the palette (15 joints, 12 floats each, after
     // the entries; one weight float per vertex at mWeightOffset picks joint i and i + 1), 2: rigid under mModel (column-major, the joint's world matrix)
-    struct ShadowBodyEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mVertexFirst, mVertexCount, mAvatarId, mMeshId, mWeightOffset, mJoints, mMode, mSelf; F32 mAvatarPos[3]; F32 mModel[16]; };
+    // mAlphaFlags: 0 = opaque, else an alpha masked part (hair, eyelashes, skirt) with the diffuse texture mTexture (GL name, 0 = none), the byte offset of its texcoord0 array and the cutoff: the same as ShadowAlphaFlags, tree style (no vertex alpha)
+    struct ShadowBodyEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mVertexFirst, mVertexCount, mAvatarId, mMeshId, mWeightOffset, mJoints, mMode, mSelf; F32 mAvatarPos[3]; F32 mModel[16]; U32 mAlphaFlags, mTexture, mTexcoordOffset; F32 mCutoff; };
     // kinds 6 and 7 (ray tracing only, nothing is drawn): the rigged draws of the MAIN view named to the ray scene every frame, as kind 2 (ShadowSkinEntry) and kind 1 with
     // ALPHA_RIGGED (ShadowAlphaEntry): entries, model matrices, palettes, the layout of the kinds they copy
     // kind 8: rigged draws of the avatar velocity pass (avatarVelocityPullV.glsl): ShadowSkinEntry entries (no model matrices), then the palettes of this frame (mPaletteFloats floats, 12 per joint), then

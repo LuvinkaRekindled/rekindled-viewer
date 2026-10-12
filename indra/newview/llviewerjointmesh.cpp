@@ -279,6 +279,38 @@ void LLViewerJointMesh::noteRayShadow()
         e.mAvatarPos[1] = avatar_position.mV[1];
         e.mAvatarPos[2] = avatar_position.mV[2];
     }
+    // the alpha masked parts of the body (hair, eyelashes, skirt) are cut by the alpha of their diffuse texture, found as drawShape finds it
+    {
+        const S32 mesh_id = LLAvatarJointMesh::getMeshID();
+        if ((mesh_id == LLAvatarAppearanceDefines::MESH_ID_HAIR || mesh_id == LLAvatarAppearanceDefines::MESH_ID_EYELASH || mesh_id == LLAvatarAppearanceDefines::MESH_ID_SKIRT)
+            && buff->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && !mTestImageName)
+        {
+            LLViewerTexLayerSet* layerset = dynamic_cast<LLViewerTexLayerSet*>(mLayerSet);
+            LLTexture* tex = nullptr;
+            if (layerset)
+            {
+                if (layerset->hasComposite())
+                {
+                    tex = layerset->getViewerComposite();
+                }
+                else
+                {
+                    tex = LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT);
+                }
+            }
+            else if (mTexture.notNull())
+            {
+                tex = mTexture.get();
+            }
+            if (tex)
+            {
+                e.mAlphaFlags = LLVkMirror::ALPHA_TREE | LLVkMirror::ALPHA_NO_INDEX | LLVkMirror::ALPHA_HAS_TEXCOORD;
+                e.mTexture = gGL.getTexUnit(0)->prepareFast(tex);
+                e.mTexcoordOffset = buff->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+                e.mCutoff = 0.5f;
+            }
+        }
+    }
     std::vector<F32> palette;
     if (mMesh->hasWeights())
     {
