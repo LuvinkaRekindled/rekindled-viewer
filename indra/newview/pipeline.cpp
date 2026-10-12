@@ -997,6 +997,22 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     // </FS:Beq>
     { //only need mRT->deferredLight for shadows OR ssao OR dof OR fxaa
         if (!mRT->deferredLight.allocate(resX, resY, screenFormat)) return false;
+        if (sDLSS && LLVkMirror::rtShadowMode())
+        {
+            for (LLRenderTarget& t : mShadowAccum)
+            {
+                if (!t.allocate(resX, resY, GL_RGBA16F) || !t.addColorAttachment(GL_RGBA16F))
+                {
+                    t.release();
+                }
+            }
+        }
+        else
+        {
+            mShadowAccum[0].release();
+            mShadowAccum[1].release();
+        }
+        mShadowAccumFrame = 0;
     }
     else
     {
@@ -1439,6 +1455,8 @@ void LLPipeline::releaseScreenBuffers()
     mRT->deferredLight.release();
     mMotionMap.release();
     mAvatarVelocityMap.release();
+    mShadowAccum[0].release();
+    mShadowAccum[1].release();
     mUpscaledMap.release();
 
     mAuxillaryRT.screen.release();
@@ -10079,6 +10097,58 @@ void LLPipeline::visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool 
     dst->flush();
 }
 
+// <FS> Temporal accumulation of the ray traced sun shadow. Between the sun lightmap pass and its blur: last frame's accumulated shadow is found again for every pixel (camera matrices, or the
+// avatar velocity for avatar pixels) and blended with this frame's, see shadowAccumF.glsl. Returns the target whose attachment 0 is the lightmap for the blur, or null when nothing was done.
+// noteSceneMatrices runs at the end of the lighting: here mViewProjCur and gGLLastModelView are still last frame's.
+LLRenderTarget* LLPipeline::accumulateSunShadow(LLRenderTarget* light)
+{
+    static LLCachedControl<bool> enabled(gSavedSettings, "RenderRTShadowAccumulate", true);
+    static LLCachedControl<S32> history_setting(gSavedSettings, "RenderRTShadowHistory", 8);
+    if (!enabled || !sDLSS || !LLVkMirror::rtShadowMode() || gCubeSnapshot || gSnapshot || !gShadowAccumProgram.isComplete() || !light->isComplete()
+        || !mShadowAccum[0].isComplete() || !mShadowAccum[1].isComplete() || mShadowAccum[0].getNumTextures() < 2 || mShadowAccum[1].getNumTextures() < 2
+        || mShadowAccum[0].getWidth() != light->getWidth() || mShadowAccum[0].getHeight() != light->getHeight())
+    {
+        mShadowAccumFrame = 0;
+        return nullptr;
+    }
+    LL_PROFILE_GPU_ZONE("shadow accumulate");
+    LL_CPU_ZONE("shadow accumulate");
+    const U32 frame = LLFrameTimer::getFrameCount();
+    const bool have_history = mShadowAccumFrame != 0 && mShadowAccumFrame == frame;       // written in the frame before (stored as frame + 1)
+    const U32 write = have_history ? 1 - mShadowAccumIndex : mShadowAccumIndex;
+    LLRenderTarget& out = mShadowAccum[write];
+    LLRenderTarget& prev = mShadowAccum[1 - write];
+
+    const glm::mat4 view = glm::make_mat4(gGLModelView);
+    const glm::mat4 inv_view = glm::inverse(view);
+    const glm::mat4 prev_clip_from_view = mViewProjCur * inv_view;
+    const glm::mat4 prev_view_from_view = glm::make_mat4(gGLLastModelView) * inv_view;
+    static LLStaticHashedString prev_clip_s("prev_clip_from_view"), prev_view_s("prev_view_from_view"), res_s("render_res"), len_s("history_len"), use_s("use_history"), vel_s("use_velocity");
+
+    out.bindTarget();
+    bindDeferredShader(gShadowAccumProgram, light);
+    gShadowAccumProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &prev, false, LLTexUnit::TFO_BILINEAR, 1);
+    const bool velocity = mAvatarVelocityDrawn && mAvatarVelocityMap.isComplete();
+    gShadowAccumProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, velocity ? &mAvatarVelocityMap : light, false, LLTexUnit::TFO_POINT, 0);
+    gShadowAccumProgram.uniformMatrix4fv(prev_clip_s, 1, GL_FALSE, glm::value_ptr(prev_clip_from_view));
+    gShadowAccumProgram.uniformMatrix4fv(prev_view_s, 1, GL_FALSE, glm::value_ptr(prev_view_from_view));
+    gShadowAccumProgram.uniform2f(res_s, (F32)out.getWidth(), (F32)out.getHeight());
+    gShadowAccumProgram.uniform1f(len_s, (F32)llclamp(history_setting(), 2, 32));
+    gShadowAccumProgram.uniform1f(use_s, have_history ? 1.f : 0.f);
+    gShadowAccumProgram.uniform1f(vel_s, velocity ? 1.f : 0.f);
+    {
+        LLGLDisable   blend(GL_BLEND);
+        LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_ALWAYS);
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+    unbindDeferredShader(gShadowAccumProgram);
+    out.flush();
+    mShadowAccumIndex = write;
+    mShadowAccumFrame = frame + 1;
+    return &out;
+}
+
 void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 {
     LL_PROFILE_GPU_ZONE("motion vectors");
@@ -11831,6 +11901,8 @@ void LLPipeline::renderDeferredLighting()
             deferred_light_target->flush();
         }
 
+        LLRenderTarget* accumulated = (RenderDeferredSSAO && !gCubeSnapshot) ? accumulateSunShadow(deferred_light_target) : nullptr;       // <FS> the blur reads the accumulated sun shadow when there is one
+
         if (RenderDeferredSSAO && !gCubeSnapshot)
         {
             // soften direct lighting lightmap
@@ -11843,7 +11915,7 @@ void LLPipeline::renderDeferredLighting()
             screen_target->clear(GL_COLOR_BUFFER_BIT);
             gGL.setClearColor(0, 0, 0, 0);
 
-            bindDeferredShader(gDeferredBlurLightProgram);
+            bindDeferredShader(gDeferredBlurLightProgram, accumulated);
 
             LLVector3 go = RenderShadowGaussian;
             const U32 kern_length = 4;

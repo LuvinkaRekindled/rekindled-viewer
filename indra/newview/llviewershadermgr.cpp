@@ -216,6 +216,7 @@ LLGLSLShader            gAvatarVelocityProgram;         // <FS> avatar motion ve
 LLGLSLShader            gAvatarBodyVelocityProgram;     // <FS> avatar motion vectors: the avatar's own body meshes
 LLGLSLShader            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
 LLGLSLShader            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
+LLGLSLShader            gShadowAccumProgram;            // <FS> temporal accumulation of the ray traced sun shadow
 LLGLSLShader            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
 LLGLSLShader            gFXAAProgram[4];
 LLGLSLShader            gSMAAEdgeDetectProgram[4];
@@ -1184,6 +1185,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAvatarBodyVelocityProgram.unload();
         gAvatarVelocityPullProgram.unload();
         gObjectVelocityPullProgram.unload();
+        gShadowAccumProgram.unload();
         gAvatarVelocityDebugProgram.unload();
         gDeferredPostGammaCorrectProgram.unload();
         gLegacyPostGammaCorrectProgram.unload();
@@ -2694,6 +2696,19 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gAvatarBodyVelocityProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the avatar velocity program (body) did not compile: no avatar motion vectors" << LL_ENDL;
+        }
+
+        gShadowAccumProgram.mName = "Shadow Accumulation";
+        gShadowAccumProgram.mFeatures.isDeferred = true;
+        gShadowAccumProgram.mShaderFiles.clear();
+        gShadowAccumProgram.clearPermutations();
+        gShadowAccumProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gShadowAccumProgram.mShaderFiles.push_back(make_pair("deferred/shadowAccumF.glsl", GL_FRAGMENT_SHADER));
+        gShadowAccumProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gShadowAccumProgram);
+        if (!gShadowAccumProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the shadow accumulation program did not compile: ray shadows are not accumulated" << LL_ENDL;
         }
 
         gAvatarVelocityDebugProgram.mName = "Avatar Velocity Debug";
