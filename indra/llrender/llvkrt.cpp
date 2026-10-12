@@ -1391,7 +1391,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of)
     }
     // Builds per scene call. A structure costs the GPU about 0.18 ms to build whatever its size (a plaza of small objects is a burst of 100 k of them), so on arrival somewhere new the old
     // limit of 256 per call put 33 ms of builds into every frame for two minutes. The nearest structures are built first, the rest follow over the next seconds.
-    static const U64 max_builds_default = env_u64("LL_VK_RT_BUILD_MAX", 32);
+    static const U64 max_builds_default = env_u64("LL_VK_RT_BUILD_MAX", 128);
     // Ceiling for the memory of the structures (LL_VK_RT_MAX_MB, default 1.5 GB: the steady state of a busy place is about 1 GB). Over it no NEW structure is started, and structures that nothing has
     // named for a short while are given back at once (see below), so that the scene cannot push video memory past the budget the OS grants (over it the driver moves allocations to system memory).
     static const U64 as_ceiling_mb = env_u64("LL_VK_RT_MAX_MB", 1536);
