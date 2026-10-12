@@ -8,6 +8,7 @@
  */
 
 #include "linden_common.h"
+#include <xmmintrin.h>
 
 #include "llglheaders.h"
 
@@ -357,6 +358,7 @@ struct Tex
     U32 mBindlessEpoch = 0;                     // <FS> the slot this texture holds in the bindless table, for the frame (epoch) and image view it was taken for
     U32 mBindlessSlot = 0;
     VkImageView mBindlessView = VK_NULL_HANDLE;
+    U64 mBindlessFullFrame = 0;                 // <FS> the frame of the last full slot lookup (packet_texture_slot): in between only the slot is kept alive
 };
 
 VkComponentSwizzle swizzle_component(LLVkFormat::Swizzle s)
@@ -2852,8 +2854,8 @@ static Buf* packet_buffer(U32 name)
 
 static Tex* packet_texture(U32 name)
 {
-    static Tex* cache_tex[8192];
-    static U32 cache_name[8192];
+    static Tex* cache_tex[32768];
+    static U32 cache_name[32768];
     static U64 cache_generation = ~0ull;
     if (cache_generation != sPacketTextureGeneration)
     {
@@ -2861,7 +2863,7 @@ static Tex* packet_texture(U32 name)
         memset(cache_name, 0, sizeof(cache_name));
         cache_generation = sPacketTextureGeneration;
     }
-    const U32 slot = (name * 2654435761u) >> 19;
+    const U32 slot = (name * 2654435761u) >> 17;
     if (cache_name[slot] == name && cache_tex[slot])
     {
         return cache_tex[slot];
@@ -2884,6 +2886,14 @@ static U32 packet_texture_slot(Renderer& r, U32 name)
     {
         return 0;
     }
+    // <FS> the ray scene asks for thousands of textures every frame (material tables): a texture whose full lookup was made within the last 32 frames, and whose view has not changed, only
+    // has its slot kept alive and written into this frame's set (bindlessTouch); the full lookup (sampler parameters, layout, table search) is repeated every 16 frames, spread by name
+    const U64 frame_now = Context::instance().getFrameNumber();
+    if (t->mBindlessSlot && t->mBindlessView == t->mImage.mView && t->mBindlessFullFrame + 32 > frame_now && ((frame_now + name) & 15u) != 0 && t->mImage.mLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        && r.bindlessTouch(0, t->mBindlessSlot, t->mImage.mViewId, t->mImage.mView, t->mVkSampler))
+    {
+        return t->mBindlessSlot;
+    }
     if (t->mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
     {
         const char* prev_cause = r.setBarrierCause("packet texture");
@@ -2894,6 +2904,8 @@ static U32 packet_texture_slot(Renderer& r, U32 name)
     // view and sampler and that this frame's set has it written
     const U32 slot = r.bindlessSlotIn(0, &t->mImage, texture_sampler(r, *t), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, t->mBindlessSlot);
     t->mBindlessSlot = slot;
+    t->mBindlessView = t->mImage.mView;
+    t->mBindlessFullFrame = frame_now;
     return slot;
 }
 
@@ -4446,6 +4458,30 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     sDrawsTotal += h.mEntries;
 }
 
+// asks the memory system for what packet_texture_slot will read (see Rt::TexturePrefetchFn)
+static void packet_texture_prefetch(U32 name, U32 stage)
+{
+    Tex* t = packet_texture(name);
+    if (!t)
+    {
+        return;
+    }
+    if (stage == 0)
+    {
+        const char* p = (const char*)t;
+        _mm_prefetch(p, _MM_HINT_T0);
+        _mm_prefetch(p + 64, _MM_HINT_T0);
+        _mm_prefetch(p + 128, _MM_HINT_T0);
+        _mm_prefetch((const char*)&t->mVkSampler, _MM_HINT_T0);
+        _mm_prefetch((const char*)&t->mBindlessSlot, _MM_HINT_T0);
+        _mm_prefetch((const char*)&t->mBindlessFullFrame, _MM_HINT_T0);
+    }
+    else
+    {
+        Renderer::instance().bindlessPrefetch(0, t->mBindlessSlot);
+    }
+}
+
 // <FS> Ray query shadows: the viewer asks for the frame's scene before the lighting that samples the sun shadow (LLVkMirror::rtScene)
 void on_rt_scene(const LLVkMirror::RtSceneArgs& args)
 {
@@ -4454,7 +4490,7 @@ void on_rt_scene(const LLVkMirror::RtSceneArgs& args)
         return;
     }
     flush_buffer_updates();         // the structures are built over the vertex data: writes that are still pending are recorded first
-    Rt::buildScene(args.mView, [](U32 name) { return packet_texture_slot(Renderer::instance(), name); });
+    Rt::buildScene(args.mView, [](U32 name) { return packet_texture_slot(Renderer::instance(), name); }, packet_texture_prefetch);
 }
 
 //-----------------------------------------------------------------------------------------------------

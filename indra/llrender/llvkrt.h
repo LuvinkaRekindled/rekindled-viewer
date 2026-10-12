@@ -80,6 +80,8 @@ void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count);
 
 // the slot of a texture (by GL name) in this frame's bindless table
 typedef U32 (*TextureSlotFn)(U32 gl_name);
+// asks the memory system for what a slot lookup of this texture will read: stage 0 the texture's own state, stage 1 its table entries (needs stage 0 to have arrived)
+typedef void (*TexturePrefetchFn)(U32 gl_name, U32 stage);
 
 // the device can do it and the mode is on (the descriptor set layout exists, structures are built)
 bool active();
@@ -93,7 +95,7 @@ void noteCaster(const Caster& c);
 
 // Builds what the casters noted since the last call need (a budget per call), then the top-level structure for this view: the instances are transformed into eye space
 // (view * model), the space the lighting shaders work in. Recorded into the current frame outside any render pass. view: 16 floats column-major.
-void buildScene(const F32* view, TextureSlotFn slot_of);
+void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefetch = nullptr);
 
 // the set to bind as set 3 for the frame slot (always valid once active())
 VkDescriptorSet descriptorSet(U32 frame_slot);
