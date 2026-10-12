@@ -174,6 +174,7 @@ public:
     void renderAvatarVelocity();
     bool avatarVelocityWanted();
     void visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool show_flag);
+    void visualizeRtMaterials(LLRenderTarget* dst);
     LLRenderTarget          mAvatarVelocityMap;
     // <FS> temporal accumulation of the ray traced sun shadow (shadowAccumF.glsl): two targets of two attachments (0 = lightmap shaped, 1 = history), used in turn
     LLRenderTarget          mShadowAccum[2];

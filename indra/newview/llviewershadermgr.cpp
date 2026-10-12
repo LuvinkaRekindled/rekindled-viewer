@@ -218,6 +218,7 @@ LLGLSLShader            gAvatarVelocityPullProgram;     // <FS> avatar motion ve
 LLGLSLShader            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
 LLGLSLShader            gShadowAccumProgram;            // <FS> temporal accumulation of the ray traced sun shadow
 LLGLSLShader            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
+LLGLSLShader            gRtMaterialDebugProgram;        // <FS> debug view of the ray scene's material table (RenderBufferVisualization 9)
 LLGLSLShader            gFXAAProgram[4];
 LLGLSLShader            gSMAAEdgeDetectProgram[4];
 LLGLSLShader            gSMAABlendWeightsProgram[4];
@@ -1187,6 +1188,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gObjectVelocityPullProgram.unload();
         gShadowAccumProgram.unload();
         gAvatarVelocityDebugProgram.unload();
+        gRtMaterialDebugProgram.unload();
         gDeferredPostGammaCorrectProgram.unload();
         gLegacyPostGammaCorrectProgram.unload();
         gDeferredPostTonemapProgram.unload();
@@ -2720,6 +2722,22 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gAvatarVelocityDebugProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the avatar velocity debug program did not compile" << LL_ENDL;
+        }
+
+        if (LLVkMirror::rtShadowMode() && getenv("LL_VK_RT_MATERIALS") && getenv("LL_VK_RT_MATERIALS")[0] == '1')
+        {
+            gRtMaterialDebugProgram.mName = "Ray Scene Material Debug";
+            gRtMaterialDebugProgram.mFeatures.isDeferred = true;
+            gRtMaterialDebugProgram.mShaderFiles.clear();
+            gRtMaterialDebugProgram.clearPermutations();
+            gRtMaterialDebugProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+            gRtMaterialDebugProgram.mShaderFiles.push_back(make_pair("deferred/rtMaterialDebugF.glsl", GL_FRAGMENT_SHADER));
+            gRtMaterialDebugProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            add_common_permutations(&gRtMaterialDebugProgram);
+            if (!gRtMaterialDebugProgram.createShader())
+            {
+                LL_WARNS("VkRtMaterials") << "the ray scene material debug program did not compile" << LL_ENDL;
+            }
         }
     }
 

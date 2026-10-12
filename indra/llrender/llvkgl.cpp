@@ -3355,9 +3355,9 @@ static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf&
     c.mModel = model;
     c.mAlpha = alpha;
     c.mPass = pass;
-    if (kind == 1)
+    if (kind == 1 || alpha)
     {
-        // the alpha test reads these buffers while the lighting runs: watched for moves, and in use this frame (a CPU rewrite of a host-written range has to rename it first)
+        // the alpha test (and the material tables' hit shading) reads these buffers while the lighting runs: watched for moves, and in use this frame (a CPU rewrite of a host-written range has to rename it first)
         const U64 frame_now = Context::instance().getFrameNumber();
         Buf& vb_rw = const_cast<Buf&>(vbuf);
         Buf& ib_rw = const_cast<Buf&>(ibuf);
@@ -3448,7 +3448,16 @@ static void on_rt_only_packets(const LLVkMirror::ShadowPacketsHeader& h, const U
         const F32* model = e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr;
         if (e.mFlags & LLVkMirror::ALPHA_RAY_ONLY)
         {
-            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, model);
+            Rt::AlphaInfo info;
+            if (Rt::materialsOn())
+            {
+                info.mFlags = (e.mTexcoordOffset ? 8u : 0u) | (e.mColorOffset ? 16u : 0u);
+                info.mTexcoordOffset = e.mTexcoordOffset;
+                info.mColorOffset = e.mColorOffset;
+                info.mNormalOffset = e.mNormalOffset;
+                info.mMaterial = e.mMaterial;
+            }
+            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, model, Rt::materialsOn() ? &info : nullptr);
             continue;
         }
         Rt::AlphaInfo alpha;
@@ -3458,6 +3467,8 @@ static void on_rt_only_packets(const LLVkMirror::ShadowPacketsHeader& h, const U
         memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
         alpha.mCutoff = e.mCutoff;
         memcpy(alpha.mUv, e.mUv, sizeof(alpha.mUv));
+        alpha.mNormalOffset = e.mNormalOffset;
+        alpha.mMaterial = e.mMaterial;
         note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, model, &alpha);
     }
 }
@@ -3630,6 +3641,8 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
             alpha.mColorOffset = e.mColorOffset;
             memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
             alpha.mCutoff = e.mCutoff;
+            alpha.mNormalOffset = e.mNormalOffset;
+            alpha.mMaterial = e.mMaterial;
             note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr, &alpha);
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
@@ -4252,6 +4265,11 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
         on_shadow_skin_packets(h, blob);
         return;
     }
+    if (h.mKind == 10)
+    {
+        Rt::updateMaterials((const LLVkMirror::RtMaterialDef*)blob, h.mEntries);
+        return;
+    }
     if (h.mKind == 8)
     {
         on_velocity_packets(h, blob);
@@ -4353,7 +4371,16 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
         }
         if (Rt::active())
         {
-            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+            Rt::AlphaInfo info;
+            if (Rt::materialsOn())
+            {
+                info.mFlags = (e.mTexcoordOffset ? 8u : 0u) | (e.mColorOffset ? 16u : 0u);
+                info.mTexcoordOffset = e.mTexcoordOffset;
+                info.mColorOffset = e.mColorOffset;
+                info.mNormalOffset = e.mNormalOffset;
+                info.mMaterial = e.mMaterial;
+            }
+            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr, Rt::materialsOn() ? &info : nullptr);
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         g.mPositions[0] = (U32)pa;

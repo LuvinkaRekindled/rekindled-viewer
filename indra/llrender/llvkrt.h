@@ -35,6 +35,8 @@ struct AlphaInfo
     U32 mTextures[4] = {};                          // GL names of the textures the vertices' texture index picks from, 0 = none (white)
     F32 mCutoff = 0.f;
     F32 mUv[6] = { 1.f, 0.f, 0.f, 1.f, 0.f, 0.f };   // texture coordinate transform: u' = mUv[0] * u + mUv[2] * v + mUv[4], v' = mUv[1] * u + mUv[3] * v + mUv[5]
+    U32 mNormalOffset = 0;                          // byte offset of the normal array (0 = none); ray scene materials
+    U32 mMaterial = 0;                              // the viewer's material id (RtMaterialDef), 0 = none. Opaque casters carry an AlphaInfo too when materials are on (flags 8 / 16 say which arrays exist)
 };
 
 struct Caster
@@ -71,6 +73,10 @@ struct SkinCaster
     LLVkGL::BufferInfo mVi, mIi;
 };
 void noteSkinned(const SkinCaster& c);
+
+// the ray scene keeps a table of materials (LL_VK_RT_MATERIALS=1): the viewer's definitions (kind 10 records) are stored here, and every geometry of the scene gets a record that names its material
+bool materialsOn();
+void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count);
 
 // the slot of a texture (by GL name) in this frame's bindless table
 typedef U32 (*TextureSlotFn)(U32 gl_name);
