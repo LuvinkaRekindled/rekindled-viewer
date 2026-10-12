@@ -363,6 +363,13 @@ namespace LLVkGL
     unsigned long long bufferTopologyVersion();
     // the names of the watched buffers whose storage changed since the last call (what bufferTopologyVersion counts); false: too many to list, look at all of them
     bool takeTopologyChanges(std::vector<unsigned>& names);
+    // Pinned textures (doc/vulkan/PLAN-rt-materials.md, "persistent bindless table"): the ray scene's rows name a texture by a PIN INDEX; the pin owns a bindless slot for as long as the
+    // texture is in use (no per-frame lookup), the GPU reads index -> slot from a table (Rt::setPinSlot keeps it). Acquire / release count references of one GL name.
+    unsigned int rtPinAcquire(unsigned int gl_name);
+    void rtPinRelease(unsigned int pin_index);
+    // once per scene call: the pins whose texture changed (image replaced, parameters, levels), the ones still waiting for their texture, and a slice of all of them checked again
+    void rtPinUpdate();
+    void rtPinCounts(unsigned long long& pins, unsigned long long& resolves, unsigned long long& events);
 }
 #endif
 

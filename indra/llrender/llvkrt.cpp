@@ -49,6 +49,8 @@ constexpr VkDeviceSize kGeomBytesBase = 2u << 20;           // per call: the geo
 constexpr VkDeviceSize kGeomBytesMats = 4u << 20;           // the same with the material tables on (LL_VK_RT_MATERIALS=1): a record for every geometry
 constexpr U32 kMatCap = 16384;                              // rows of the material table (the viewer's registry has the same capacity)
 constexpr VkDeviceSize kMatBytes = 96ull * kMatCap;
+constexpr U32 kPinCap = 32768;                              // pin indices (a pin = a texture with a permanent bindless slot, see LLVkGL::rtPinAcquire)
+constexpr VkDeviceSize kPinBytes = 4ull * kPinCap;          // the pin table of a call's region: slot by pin index
 
 // one geometry (index range) of an alpha masked structure as the ray query shader reads it (llvkshader.cpp declares the same struct, LLRtGeom)
 struct GpuGeom
@@ -68,6 +70,7 @@ struct GpuGeom
 static_assert(sizeof(GpuGeom) == 88, "geometry record");
 constexpr U32 kRecNormals = 1024;                           // record flag: mNormals is valid
 constexpr U32 kRecOpaque = 2048;                            // record flag: a record of an opaque structure (no alpha test data)
+constexpr U32 kRecPinned = 4096;                            // record flag: mSlots hold PIN indices (16 bit each), the shader looks the slots up in the pin table
 
 // one material as the shaders read it (LLRtMaterial in llvkshader.cpp): the viewer's RtMaterialDef with the texture names turned into slots
 struct GpuMaterial
@@ -210,7 +213,7 @@ struct Stats
     U64 mScanChecks = 0, mScanMismatch = 0;       // the candidate lists against a full walk (verify)
     U64 mForceWhy[5] = {};          // the whole cache was made again because: eviction, camera too far from the origin, alpha switch, material switch, compaction
     double mTblMs[4] = {};          // inside the table part: record slot patch, record write, material slot patch, material write
-    U64 mMatNear = 0, mMatPatches = 0;      // materials that got slots (near ones), per patch pass
+    U64 mPinsHeld = 0, mPinsDropped = 0, mPinWrites = 0;   // pins taken and given back by the rows, pin table entries written to the regions
     U64 mRecRowsWritten = 0, mMatRowsWritten = 0, mMatUpdates = 0, mTableMismatch = 0, mRecNoMaterial = 0, mRecMaterial = 0;     // the table writes (deltas) and the material tables
     U64 mRefreshed = 0, mFullRebuilds = 0, mVerifies = 0, mVerifyGroups = 0, mVerifyMismatch = 0, mTopologyChecks = 0;      // the scene cache (see sInstArray)
 };
@@ -254,7 +257,6 @@ struct DebugSwitches
     bool mSkinFast = false;         // C4: avatar structures are built with PREFER_FAST_BUILD instead of PREFER_FAST_TRACE (cheaper builds and refits, slower rays)
     bool mSkinTest = false;         // stage C step C1: structures of opaque casters are built from a compute-pass copy of their vertices (must look identical to the direct path)
     U32 mPfA = 14, mPfB = 6;        // slot lookups: how many materials ahead the texture state and the table entries are prefetched (0 = no prefetch)
-    U32 mMatPass = 4;               // only materials named by shadow passes up to this one (0-3 sun cascades: the nearer ones) get texture slots; 4 = all (each slot costs a lookup per frame)
     bool mMats = false;             // records for the opaque geometries too, the material table is filled and traced against (needs LL_VK_RT_MATERIALS=1 at start-up)
     bool mDelta = true;             // the tables are written to the call's region as deltas (rows changed since the region was last written); off: all rows every call
     bool mTableVerify = false;      // after every table write compare the region with the kept rows (slow: reads video memory)
@@ -283,7 +285,6 @@ void read_debug_switches()
     d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_PERIOD_MAX", 4));
     d.mCompact = env_u64("LL_VK_RT_COMPACT", 0) != 0;       // off by default: saved only about 5 % of the memory here and the tree leaf shadows disappeared with it on (PLAN-rt-shadows.md)
     d.mMats = sMatsInit;
-    d.mMatPass = (U32)env_u64("LL_VK_RT_MAT_PASS", 4);
     d.mSkinFast = env_u64("LL_VK_RT_SKIN_FAST", 1) != 0;       // on by default: builds and refits of the avatar structures 38 % cheaper, traces unchanged (measured 2026-10-12)
     if (FILE* f = fopen(path, "rb"))
     {
@@ -322,7 +323,6 @@ void read_debug_switches()
                 else if (k == "mats") d.mMats = sMatsInit && v != 0;
                 else if (k == "pfa") d.mPfA = (U32)std::max<long long>(0, v);
                 else if (k == "pfb") d.mPfB = (U32)std::max<long long>(0, v);
-                else if (k == "matpass") d.mMatPass = (U32)std::max<long long>(0, v);
                 else if (k == "delta") d.mDelta = v != 0;
                 else if (k == "tableverify") d.mTableVerify = v != 0;
                 else if (k == "compact") d.mCompact = v != 0;
@@ -477,8 +477,11 @@ size_t apply_rows(RowLog& log, RegionState& rs, const std::vector<T>& rows, T* d
 RowLog sRecLog, sMatLog;
 RegionState sRecRegion[Context::FRAMES_IN_FLIGHT * kCalls], sMatRegion[Context::FRAMES_IN_FLIGHT * kCalls];
 std::vector<GpuMaterial> sMatRows;              // by viewer id (row 0 unused); slots are patched in at every frame
-std::vector<U64> sMatNear;                      // per material id: the frame tag (+1) a near shadow pass last named it
-std::vector<std::array<U32, 8>> sMatNames;      // GL names of each row: 4 diffuse, normal, specular, emissive, unused (all zero: no row)
+std::vector<std::array<U32, 8>> sMatPins;       // pin indices of each material row's textures: 4 diffuse, normal, specular, emissive, unused (0 = none)
+std::vector<U32> sPinSlots;                     // the pin table: bindless slot by pin index (written by LLVkGL's pin code through setPinSlot)
+RowLog sPinLog;
+RegionState sPinRegion[Context::FRAMES_IN_FLIGHT * kCalls];
+std::vector<std::array<U32, 4>> sRecPins;       // pin indices of the texture names of each record row (all zero for rows without pins)
 bool sMatsSeen = false;
 std::vector<GpuGeom> sRecs;                     // alpha records, a group's rows contiguous; a dropped group's rows stay as garbage until the next compaction
 std::vector<std::array<U32, 4>> sRecNames;      // the textures (GL names) of each row, all zero for garbage rows: the slots come from them
@@ -571,6 +574,8 @@ void remove_pending(Group& g)
 }
 
 // takes the group's instance and records out of the cache
+void release_row(size_t row);
+
 void drop_entry(Group& g, U32 why = 7)
 {
     if (g.mSlot != ~0u)
@@ -591,10 +596,28 @@ void drop_entry(Group& g, U32 why = 7)
     {
         for (U32 k = 0; k < g.mRecCount; ++k)
         {
-            sRecNames[g.mRecFirst + k] = { 0u, 0u, 0u, 0u };
+            release_row(g.mRecFirst + k);
         }
         sRecGarbage += g.mRecCount;
         g.mRecCount = 0;
+    }
+}
+
+// a row of the alpha / opaque records is not used any more: its texture names are forgotten and the pins it held given back
+void release_row(size_t row)
+{
+    sRecNames[row] = { 0u, 0u, 0u, 0u };
+    if (row < sRecPins.size())
+    {
+        for (U32& pin : sRecPins[row])
+        {
+            if (pin)
+            {
+                LLVkGL::rtPinRelease(pin);
+                ++sStats.mPinsDropped;
+                pin = 0;
+            }
+        }
     }
 }
 
@@ -1099,7 +1122,7 @@ bool init(VkDescriptorSetLayout set_layout)
     VkDevice dev = ctx.getDevice();
     sMatsInit = env_u64("LL_VK_RT_MATERIALS", 0) != 0;
     sGeomBytes = sMatsInit ? kGeomBytesMats : kGeomBytesBase;
-    sRegionBytes = sGeomBytes + (sMatsInit ? kMatBytes : 0);
+    sRegionBytes = sGeomBytes + (sMatsInit ? kMatBytes + kPinBytes : 0);
     sMaxRecords = (U32)(sGeomBytes / sizeof(GpuGeom));
     sTableCalls = sMatsInit ? 3 : kCalls;
     VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, Context::frameCount() + 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, Context::frameCount() + 1 } };
@@ -1262,6 +1285,23 @@ bool materialsOn()
     return sInit && sMatsInit;
 }
 
+void setPinSlot(U32 index, U32 slot)
+{
+    if (index == 0 || index >= kPinCap)
+    {
+        return;
+    }
+    if (sPinSlots.size() <= index)
+    {
+        sPinSlots.resize(index + 1, 0);
+    }
+    if (sPinSlots[index] != slot)
+    {
+        sPinSlots[index] = slot;
+        sPinLog.touch(index);
+    }
+}
+
 void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count)
 {
     if (!sInit || !sMatsInit)
@@ -1278,15 +1318,10 @@ void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count)
         if (sMatRows.size() <= d.mId)
         {
             sMatRows.resize(d.mId + 1);
-            sMatNames.resize(d.mId + 1);
+            sMatPins.resize(d.mId + 1, std::array<U32, 8>{});
         }
         GpuMaterial& m = sMatRows[d.mId];
-        const U32 s0 = m.mSlots[0], s1 = m.mSlots[1], t0 = m.mSlots2[0], t1 = m.mSlots2[1];
         memset(&m, 0, sizeof(m));
-        m.mSlots[0] = s0;                           // this frame's slots stay until the patch finds that they changed
-        m.mSlots[1] = s1;
-        m.mSlots2[0] = t0;
-        m.mSlots2[1] = t1;
         memcpy(m.mColor, d.mColor, sizeof(m.mColor));
         memcpy(m.mEmissive, d.mEmissive, sizeof(m.mEmissive));
         m.mCutoff = d.mCutoff;
@@ -1294,7 +1329,27 @@ void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count)
         m.mRoughness = d.mRoughness;
         m.mFlags = d.mFlags;
         memcpy(m.mUv, d.mUv, sizeof(m.mUv));
-        sMatNames[d.mId] = { d.mTextures[0], d.mTextures[1], d.mTextures[2], d.mTextures[3], d.mNormalMap, d.mSpecularMap, d.mEmissiveMap, 0u };
+        // the textures are pins: the pin index goes where the slot used to be (the shader looks the slot up), the pins of the old definition of this row are given back afterwards
+        const U32 names[7] = { d.mTextures[0], d.mTextures[1], d.mTextures[2], d.mTextures[3], d.mNormalMap, d.mSpecularMap, d.mEmissiveMap };
+        std::array<U32, 8> fresh = {};
+        for (int k = 0; k < 7; ++k)
+        {
+            fresh[k] = names[k] ? LLVkGL::rtPinAcquire(names[k]) : 0u;
+            sStats.mPinsHeld += names[k] ? 1 : 0;
+        }
+        for (U32 old_pin : sMatPins[d.mId])
+        {
+            if (old_pin)
+            {
+                LLVkGL::rtPinRelease(old_pin);
+                ++sStats.mPinsDropped;
+            }
+        }
+        sMatPins[d.mId] = fresh;
+        m.mSlots[0] = (fresh[0] & 0xFFFFu) | (fresh[1] << 16);
+        m.mSlots[1] = (fresh[2] & 0xFFFFu) | (fresh[3] << 16);
+        m.mSlots2[0] = (fresh[4] & 0xFFFFu) | (fresh[5] << 16);
+        m.mSlots2[1] = fresh[6] & 0xFFFFu;
         sMatLog.touch(d.mId);
         ++sStats.mMatUpdates;
     }
@@ -1343,14 +1398,6 @@ void noteCaster(const Caster& c)
     Group& g = it->second;
     const U32 pass = std::min<U32>(c.mPass, kPasses - 1);
     const U64 frame_tag = Context::instance().getFrameNumber() + 1;
-    if (c.mAlpha && c.mAlpha->mMaterial && c.mAlpha->mMaterial < kMatCap && c.mPass <= sDbg.mMatPass)
-    {
-        if (sMatNear.size() < kMatCap)
-        {
-            sMatNear.resize(kMatCap, 0);
-        }
-        sMatNear[c.mAlpha->mMaterial] = frame_tag;
-    }
     sSeenRows[g.mId].mSeen[pass] = frame_tag;
     sPassFrame[pass] = frame_tag;
     if (g.mNotedTag != frame_tag)
@@ -2763,12 +2810,37 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             g.mCacheVb = lvi.mAddress;
             g.mCacheIb = lii.mAddress;
         }
+        // the new rows take their pins before the old rows of this group give theirs back: a texture that stays in use keeps its pin and its slot (no new lookup)
+        std::vector<std::array<U32, 4>> pins(recs.size(), std::array<U32, 4>{ 0u, 0u, 0u, 0u });
+        if (sMatsInit && sDbg.mMats)
+        {
+            // the textures of the rows become pins: the rows hold pin indices, no slot is looked up per frame
+            for (size_t i = 0; i < recs.size(); ++i)
+            {
+                bool any = false;
+                for (int k = 0; k < 4; ++k)
+                {
+                    if (names[i][k])
+                    {
+                        pins[i][k] = LLVkGL::rtPinAcquire(names[i][k]);
+                        ++sStats.mPinsHeld;
+                        any = true;
+                    }
+                }
+                if (any)
+                {
+                    recs[i].mSlots[0] = (pins[i][0] & 0xFFFFu) | (pins[i][1] << 16);
+                    recs[i].mSlots[1] = (pins[i][2] & 0xFFFFu) | (pins[i][3] << 16);
+                    recs[i].mFlags |= kRecPinned;
+                }
+            }
+        }
         // install: the old rows become garbage, the new ones go to the end
         if (g.mRecCount)
         {
             for (U32 k = 0; k < g.mRecCount; ++k)
             {
-                sRecNames[g.mRecFirst + k] = { 0u, 0u, 0u, 0u };
+                release_row(g.mRecFirst + k);
             }
             sRecGarbage += g.mRecCount;
             g.mRecCount = 0;
@@ -2784,6 +2856,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 sRecLog.touch(g.mRecFirst + k);
             }
             sRecNames.insert(sRecNames.end(), names.begin(), names.end());
+            sRecPins.insert(sRecPins.end(), pins.begin(), pins.end());
             custom_index = 1 + g.mRecFirst;     // record 0 of the table is the header
         }
         VkAccelerationStructureInstanceKHR inst = {};
@@ -2817,8 +2890,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         sForceFull = false;
         sInstArray.clear();
         sInstGroup.clear();
+        for (size_t row = 0; row < sRecPins.size(); ++row)
+        {
+            release_row(row);
+        }
         sRecs.clear();
         sRecNames.clear();
+        sRecPins.clear();
         sRecGarbage = 0;
         sRecLog.reset();
         sDirtyKeys.clear();
@@ -3022,11 +3100,21 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         memcpy(&table[0], header_words, sizeof(header_words));
         table[0].mNormals[0] = (U32)mat_table_address;          // where the material rows of this call are
         table[0].mNormals[1] = (U32)(mat_table_address >> 32);
+        const bool pins_on = mat_table && sDbg.mMats;
+        U32* pin_table = pins_on ? (U32*)((U8*)mat_table + kMatBytes) : nullptr;
+        if (pins_on)
+        {
+            // the pinned textures: those that changed are looked at again, the pin table (slot by pin index) gets what changed since this region was written; its address is in the header
+            LLVkGL::rtPinUpdate();
+            const U64 pa = mat_table_address + kMatBytes;
+            const U32 words[2] = { (U32)pa, (U32)(pa >> 32) };
+            memcpy(table[0].mUv, words, sizeof(words));
+        }
         const size_t n = sRecs.size();
         auto tbl_t0 = std::chrono::steady_clock::now();
         auto tbl_lap = [&](int k) { const auto now = std::chrono::steady_clock::now(); sStats.mTblMs[k] += std::chrono::duration<double, std::milli>(now - tbl_t0).count(); tbl_t0 = now; };
         // this frame's texture slots go into the kept rows; only a changed word is logged (and so written to the region)
-        for (size_t r = 0; r < n; ++r)
+        for (size_t r = 0; r < n && !pins_on; ++r)
         {
             if (prefetch && sDbg.mPfA)
             {
@@ -3079,70 +3167,17 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 LL_WARNS("VkRt") << "table verify: the geometry records of region " << region_index << " differ from the kept rows (" << n << " rows, epoch " << sRecLog.mEpoch << ")" << LL_ENDL;
             }
         }
-        if (mat_table && sDbg.mMats)
+        if (pins_on)
         {
-            static U64 patched_frame = ~0ull;
-            if (patched_frame != frame_now)
+            tbl_lap(2);
+            sStats.mPinWrites += apply_rows(sPinLog, sPinRegion[region_index], sPinSlots, pin_table, sDbg.mDelta);
+            if (sDbg.mTableVerify && !sPinSlots.empty() && memcmp(pin_table, sPinSlots.data(), sPinSlots.size() * sizeof(U32)) != 0)
             {
-                patched_frame = frame_now;
-                // which materials are worth a texture slot this frame: the ones the nearer cascades named lately (noteCaster stamps them; a slot costs a lookup per frame, the table is not persistent yet)
-                const U64 near_tag = frame_now + 1;
-                const bool ranged = sDbg.mMatPass < 4;
-                ++sStats.mMatPatches;
-                for (size_t id = 1; id < sMatRows.size(); ++id)
+                ++sStats.mTableMismatch;
+                static U32 logged_pins = 0;
+                if (logged_pins++ < 20)
                 {
-                    if (prefetch && sDbg.mPfA)
-                    {
-                        // the lookups below are bound by cache misses (every texture has its own state, table entries and descriptor shadow): ask for the next materials' data ahead of use
-                        for (int stage = 0; stage < 2; ++stage)
-                        {
-                            const size_t ahead = id + (stage == 0 ? sDbg.mPfA : sDbg.mPfB);
-                            if (ahead < sMatNames.size() && (!ranged || (ahead < sMatNear.size() && sMatNear[ahead] + 8 >= near_tag)))
-                            {
-                                const std::array<U32, 8>& an = sMatNames[ahead];
-                                for (int k = 0; k < 7; ++k)
-                                {
-                                    if (an[k])
-                                    {
-                                        prefetch(an[k], (U32)stage);
-                                        if (stage == 1)
-                                        {
-                                            const U32 ph = (an[k] * 2654435761u) >> 18;
-                                            _mm_prefetch((const char*)&sSlotCacheName[ph], _MM_HINT_T0);
-                                            _mm_prefetch((const char*)&sSlotCacheSlot[ph], _MM_HINT_T0);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    const std::array<U32, 8>& nm = sMatNames[id];
-                    if (!(nm[0] | nm[1] | nm[2] | nm[3] | nm[4] | nm[5] | nm[6]))
-                    {
-                        continue;
-                    }
-                    U32 slot[8] = {};
-                    if (!ranged || (id < sMatNear.size() && sMatNear[id] + 8 >= near_tag))
-                    {
-                        ++sStats.mMatNear;
-                        for (U32 k = 0; k < 7; ++k)
-                        {
-                            if (nm[k] && slot_of)
-                            {
-                                slot[k] = slot_lookup(nm[k]);
-                            }
-                        }
-                    }
-                    GpuMaterial& m = sMatRows[id];
-                    const U32 w[4] = { slot[0] | (slot[1] << 16), slot[2] | (slot[3] << 16), slot[4] | (slot[5] << 16), slot[6] };
-                    if (m.mSlots[0] != w[0] || m.mSlots[1] != w[1] || m.mSlots2[0] != w[2] || m.mSlots2[1] != w[3])
-                    {
-                        m.mSlots[0] = w[0];
-                        m.mSlots[1] = w[1];
-                        m.mSlots2[0] = w[2];
-                        m.mSlots2[1] = w[3];
-                        sMatLog.touch((U32)id);
-                    }
+                    LL_WARNS("VkRt") << "table verify: the pin table of region " << region_index << " differs from the kept entries (" << sPinSlots.size() << " entries)" << LL_ENDL;
                 }
             }
             tbl_lap(2);
@@ -3909,6 +3944,8 @@ std::string report(double frames)
     const Stats& s = sStats;
     const double scenes = std::max<double>(1.0, (double)s.mScenes);
     const double f = std::max(1.0, frames);
+    unsigned long long pin_total = 0, pin_resolves = 0, pin_events = 0;
+    LLVkGL::rtPinCounts(pin_total, pin_resolves, pin_events);
     char buf[3600];
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
@@ -3924,9 +3961,9 @@ std::string report(double frames)
         size_t used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, ", instances split: refresh %.2f, verify %.2f, copy %.2f, table %.2f, avatars %.2f", s.mSubMs[0] / scenes, s.mSubMs[1] / scenes, s.mSubMs[2] / scenes, s.mSubMs[3] / scenes, s.mSubMs[4] / scenes);
         used = strlen(buf);
-        snprintf(buf + used, sizeof(buf) - used, "; tables: %s, records written %.0f/call, material rows defined %zu (updates %.2f/frame, written %.0f/call), rows made with a material %.1f without %.1f /frame, materials with slots %.0f of %zu, verify mismatches %llu, table ms/call: record slots %.2f write %.2f, material slots %.2f write %.2f, cache made again because: eviction %llu, origin %llu, alpha %llu, materials %llu, compaction %llu",
+        snprintf(buf + used, sizeof(buf) - used, "; tables: %s, records written %.0f/call, material rows defined %zu (updates %.2f/frame, written %.0f/call), rows made with a material %.1f without %.1f /frame, pins %llu (resolves %.1f events %.1f /frame, taken %llu given back %llu, table entries written %.1f/call), verify mismatches %llu, table ms/call: record slots %.2f write %.2f, pins %.2f write %.2f, cache made again because: eviction %llu, origin %llu, alpha %llu, materials %llu, compaction %llu",
                  sMatsInit ? (sDbg.mMats ? "materials on" : "materials off live") : "no materials", (double)s.mRecRowsWritten / scenes, sMatRows.size(), (double)s.mMatUpdates / f, (double)s.mMatRowsWritten / scenes,
-                 (double)s.mRecMaterial / f, (double)s.mRecNoMaterial / f, s.mMatPatches ? (double)s.mMatNear / (double)s.mMatPatches : 0.0, sMatRows.size(), (unsigned long long)s.mTableMismatch, s.mTblMs[0] / scenes, s.mTblMs[1] / scenes, s.mTblMs[2] / scenes, s.mTblMs[3] / scenes,
+                 (double)s.mRecMaterial / f, (double)s.mRecNoMaterial / f, pin_total, (double)pin_resolves / f, (double)pin_events / f, (unsigned long long)s.mPinsHeld, (unsigned long long)s.mPinsDropped, (double)s.mPinWrites / scenes, (unsigned long long)s.mTableMismatch, s.mTblMs[0] / scenes, s.mTblMs[1] / scenes, s.mTblMs[2] / scenes, s.mTblMs[3] / scenes,
                  (unsigned long long)s.mForceWhy[0], (unsigned long long)s.mForceWhy[1], (unsigned long long)s.mForceWhy[2], (unsigned long long)s.mForceWhy[3], (unsigned long long)s.mForceWhy[4]);
         used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, " (refresh = move check %.2f + dirty groups), slot lookups/call %.0f, dirty/call: moved %.1f, address %.1f, alpha info %.1f, new range %.1f, move check %.1f, structure %.1f", s.mSubMs[5] / scenes, (double)s.mSlotMisses / scenes, (double)s.mDirtyWhy[0] / scenes, (double)s.mDirtyWhy[1] / scenes, (double)s.mDirtyWhy[2] / scenes, (double)s.mDirtyWhy[3] / scenes, (double)s.mDirtyWhy[4] / scenes, (double)s.mDirtyWhy[5] / scenes);

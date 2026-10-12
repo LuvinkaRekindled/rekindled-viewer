@@ -1023,7 +1023,9 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                     "struct LLRtGeom { uvec2 positions; uvec2 indices; uvec2 texcoords; uvec2 colors; uvec2 slots; uint flags; float cutoff; uint first; uint material; vec2 uv0; vec2 uv1; vec2 uv2; uvec2 normals; };\n"
                     "struct LLRtMaterial { uvec2 slots; uvec2 slots2; vec4 color; vec4 emissive; vec4 params; vec2 uv0; vec2 uv1; vec2 uv2; vec2 pad; };\n"
                     "layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer LLRtMaterials { LLRtMaterial m[]; };\n"
-                    "layout(std430, set = 3, binding = 1) readonly buffer LLRtGeoms { LLRtGeom g[]; } ll_rt_geoms;\n";
+                    "layout(std430, set = 3, binding = 1) readonly buffer LLRtGeoms { LLRtGeom g[]; } ll_rt_geoms;\n"
+                    "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer LLRtPins { uint s[]; };\n"
+                    "uint ll_rt_slot(uint pin) { return pin < 32768u ? LLRtPins(uvec2(floatBitsToUint(ll_rt_geoms.g[0].uv0.x), floatBitsToUint(ll_rt_geoms.g[0].uv0.y))).s[pin] : 0u; }\n";
             if (bindless)
             {
                 text << "#define ll_rt_tex ll_vk_tbl0\n";

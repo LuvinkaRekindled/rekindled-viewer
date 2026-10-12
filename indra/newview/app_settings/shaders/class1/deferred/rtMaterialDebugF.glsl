@@ -91,7 +91,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
         tex_index = floatBitsToUint(pb.v[ix[0]].w) & 3u;
     }
     uint pair = (tex_index < 2u) ? m.slots.x : m.slots.y;
-    uint slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
+    uint slot = ll_rt_slot((pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu);       // the material holds pin indices
     vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod);
     vec4 vcol = vec4(1.0);
     if ((g.flags & 16u) != 0u)

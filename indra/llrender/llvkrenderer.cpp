@@ -2399,7 +2399,7 @@ void Renderer::bindlessSweep(U64 min_idle_frames)
         for (U32 slot = 1; slot < (U32)tbl.mSlots.size(); ++slot)
         {
             BindlessSlot& s = tbl.mSlots[slot];
-            if (s.mActive && s.mLastUsed + min_idle_frames < frame)
+            if (s.mActive && !s.mPins && s.mLastUsed + min_idle_frames < frame)
             {
                 tbl.mMap.erase(s.mKey);
                 s.mActive = false;
@@ -2413,6 +2413,75 @@ void Renderer::bindlessSweep(U64 min_idle_frames)
 U32 Renderer::bindlessSlot(Image* image, VkSampler sampler)
 {
     return bindlessSlotIn(0, image, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0);
+}
+
+void Renderer::bindlessPin(U32 table, U32 slot)
+{
+    if (table >= BINDLESS_TABLES || !slot)
+    {
+        return;
+    }
+    BindlessTable& tbl = mBindlessTbl[table];
+    if (slot >= tbl.mSlots.size() || !tbl.mSlots[slot].mActive)
+    {
+        return;
+    }
+    ++tbl.mSlots[slot].mPins;
+    tbl.mPinLog.push_back(slot);                // every frame's set gets this descriptor at its next flush
+}
+
+void Renderer::bindlessUnpin(U32 table, U32 slot)
+{
+    if (table >= BINDLESS_TABLES || !slot)
+    {
+        return;
+    }
+    BindlessTable& tbl = mBindlessTbl[table];
+    if (slot < tbl.mSlots.size() && tbl.mSlots[slot].mPins)
+    {
+        --tbl.mSlots[slot].mPins;
+        tbl.mSlots[slot].mLastUsed = Context::instance().getFrameNumber();     // idle from now on
+    }
+}
+
+// the pinned slots that changed since this frame's set was last brought up to date go into its dirty list (bindlessQueue checks what the set already holds)
+void Renderer::bindlessSyncPins(BindlessTable& tbl)
+{
+    const U64 end = tbl.mPinBase + tbl.mPinLog.size();
+    U64& applied = tbl.mPinApplied[mSlot];
+    if (applied == end)
+    {
+        return;
+    }
+    if (applied < tbl.mPinBase || applied > end)
+    {
+        for (U32 slot = 1; slot < (U32)tbl.mSlots.size(); ++slot)       // the log no longer reaches back far enough (or this set was never given anything): every pinned slot
+        {
+            const BindlessSlot& s = tbl.mSlots[slot];
+            if (s.mActive && s.mPins)
+            {
+                bindlessQueue(tbl, slot, s.mInfo, s.mKey.mViewId);
+            }
+        }
+    }
+    else
+    {
+        for (U64 i = applied - tbl.mPinBase; i < tbl.mPinLog.size(); ++i)
+        {
+            const U32 slot = tbl.mPinLog[i];
+            if (slot < tbl.mSlots.size() && tbl.mSlots[slot].mActive)
+            {
+                const BindlessSlot& s = tbl.mSlots[slot];
+                bindlessQueue(tbl, slot, s.mInfo, s.mKey.mViewId);
+            }
+        }
+    }
+    applied = end;
+    if (tbl.mPinLog.size() > 200000)
+    {
+        tbl.mPinBase += tbl.mPinLog.size();      // sets behind the new base start over with all pinned slots
+        tbl.mPinLog.clear();
+    }
 }
 
 void Renderer::bindlessPrefetch(U32 table, U32 slot)
@@ -2521,6 +2590,10 @@ U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImage
         }
     }
     BindlessSlot& s = tbl.mSlots[slot];
+    if (s.mPins && s.mInfo.imageView != image->mView)
+    {
+        tbl.mPinLog.push_back(slot);
+    }
     s.mInfo.imageView = image->mView;           // (the same key, the same view; kept in step in case the handle was ever replaced under the id)
     s.mLastUsed = Context::instance().getFrameNumber();
     bindlessQueue(tbl, slot, s.mInfo, s.mKey.mViewId);
@@ -2540,6 +2613,12 @@ void Renderer::bindlessFlush()
     for (U32 t = 0; t < BINDLESS_TABLES; ++t)
     {
         BindlessTable& tbl = mBindlessTbl[t];
+        if (tbl.mShadow[mSlot].empty())
+        {
+            tbl.mShadow[mSlot].resize(1);
+            tbl.mShadowId[mSlot].assign(1, ~0ull);
+        }
+        bindlessSyncPins(tbl);
         if (tbl.mDirty.empty())
         {
             continue;

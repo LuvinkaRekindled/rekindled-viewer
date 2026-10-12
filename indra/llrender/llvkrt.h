@@ -77,6 +77,8 @@ void noteSkinned(const SkinCaster& c);
 // the ray scene keeps a table of materials (LL_VK_RT_MATERIALS=1): the viewer's definitions (kind 10 records) are stored here, and every geometry of the scene gets a record that names its material
 bool materialsOn();
 void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count);
+// the bindless slot of a pinned texture (by pin index, see LLVkGL::rtPinAcquire) changed: the GPU reads it from the pin table
+void setPinSlot(U32 index, U32 slot);
 
 // the slot of a texture (by GL name) in this frame's bindless table
 typedef U32 (*TextureSlotFn)(U32 gl_name);

@@ -359,7 +359,11 @@ struct Tex
     U32 mBindlessSlot = 0;
     VkImageView mBindlessView = VK_NULL_HANDLE;
     U64 mBindlessFullFrame = 0;                 // <FS> the frame of the last full slot lookup (packet_texture_slot): in between only the slot is kept alive
+    U32 mPinIndex = 0;                          // <FS> the ray scene's pin of this texture (0 = none): a change of the texture asks for it to be looked at again
 };
+
+// <FS> something about this texture that a bindless descriptor depends on changed (image, view, sampler parameters, levels): a pin of it is looked at again at the next ray scene call
+void pin_touch(Tex& t);
 
 VkComponentSwizzle swizzle_component(LLVkFormat::Swizzle s)
 {
@@ -403,6 +407,7 @@ void rebuild_sampling_view(Tex& t)
     ctx.destroyLater([=]() { vkDestroyImageView(dev, old, nullptr); });
     t.mImage.mView = fresh;
     t.mImage.mViewId = 0;       // a different view: the bindless table must not take it for the old one
+    pin_touch(t);
 }
 
 struct Buf
@@ -645,6 +650,7 @@ inline S32 edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength :
 
 void destroy_tex_images(Tex& t)
 {
+    pin_touch(t);
     ++sTargetEpoch;
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
@@ -739,6 +745,7 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     t.mLevels = td.mMips;
     t.mStore = st;
     t.mFormat = fm;
+    pin_touch(t);
     return true;
 }
 
@@ -785,6 +792,7 @@ bool grow_levels(Tex& t)
     destroy_tex_images(t);
     t.mImage = fresh;
     t.mLevels = full;
+    pin_touch(t);
     for (auto& kv : sGL.mTextures)
     {
         if (&kv.second == &t)
@@ -827,6 +835,7 @@ void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z,
     if ((U32)level == t.mValidLevels)
     {
         ++t.mValidLevels;       // levels are normally defined in order, level 0 first
+        pin_touch(t);
     }
     const void* src = pixel_source(pixels);
     if (!src)
@@ -2017,6 +2026,8 @@ void create_textures(S32 n, U32* textures)
 
 static U64 sPacketTextureGeneration = 0;     // <FS> bumped when a texture entry goes: the packet records' lookup cache starts over
 
+namespace { void pin_lost(Tex& t, U32 name); }
+
 void destroy_textures(S32 n, const U32* textures)
 {
     for (S32 i = 0; i < n; ++i)
@@ -2024,6 +2035,7 @@ void destroy_textures(S32 n, const U32* textures)
         auto it = sGL.mTextures.find(textures[i]);
         if (it != sGL.mTextures.end())
         {
+            pin_lost(it->second, it->first);
             destroy_tex_images(it->second);
             tex_forget(it->first);
             sGL.mTextures.erase(it);
@@ -2165,6 +2177,7 @@ void edit_setting(const LLVkFormat::Setting& st)
         break;
     default: break;
     }
+    pin_touch(*t);
 }
 
 void edit_mipmap()
@@ -2174,6 +2187,7 @@ void edit_mipmap()
     {
         Renderer::instance().generateMipmaps(t->mImage);
         t->mValidLevels = t->mLevels;
+        pin_touch(*t);
     }
 }
 
@@ -2193,6 +2207,7 @@ static void copy_to_texture(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 y
     if (tg.mFace >= 0) layer = (U32)tg.mFace;
     else if (t->mDim == LLVkFormat::DIM_2D_ARRAY || t->mDim == LLVkFormat::DIM_CUBE_ARRAY) layer = (U32)zoffset;
     Renderer::instance().copyRegion(*src, x, y, t->mImage, (U32)level, layer, xoffset, yoffset, width, height);
+    pin_touch(*t);
     ++sCopies;
 }
 
@@ -2908,6 +2923,112 @@ static U32 packet_texture_slot(Renderer& r, U32 name)
     t->mBindlessFullFrame = frame_now;
     return slot;
 }
+
+//-----------------------------------------------------------------------------------------------------
+// Pinned textures for the ray scene (doc/vulkan/PLAN-rt-materials.md). The material and geometry rows name a texture by PIN INDEX; a pin owns a bindless slot for as long as anything refers
+// to it, the sets of all frames get its descriptor once (Renderer::bindlessPin), and the GPU reads index -> slot from a table the ray scene keeps (Rt::setPinSlot): nothing is looked up
+// per frame. What can make a slot wrong is a change of the texture: the places that change one call pin_touch, the pin is looked at again before the next scene is built. Missed
+// changes are caught by checking a slice of all pins every frame (every pin once in about 32 frames).
+//-----------------------------------------------------------------------------------------------------
+namespace
+{
+struct Pin
+{
+    U32 mName = 0;              // GL name (0 = free entry)
+    U32 mSlot = 0;              // the pinned bindless slot (0 = none yet: the texture has no image, or is not a plain 2D one)
+    U32 mRefs = 0;
+    bool mQueued = false;       // in sPinDirty
+    bool mWaiting = false;      // in sPinWaiting
+};
+std::vector<Pin> sPins(1);
+std::unordered_map<U32, U32> sPinByName;
+std::vector<U32> sPinFree;
+std::vector<U32> sPinDirty;
+std::vector<U32> sPinWaiting;       // pins without a slot: looked at again in turns
+size_t sPinCheckCursor = 0;
+U64 sPinResolves = 0, sPinEvents = 0;
+
+void pin_queue(U32 index)
+{
+    if (index && index < sPins.size() && sPins[index].mName && !sPins[index].mQueued)
+    {
+        sPins[index].mQueued = true;
+        sPinDirty.push_back(index);
+    }
+}
+
+void pin_touch(Tex& t)
+{
+    if (t.mPinIndex)
+    {
+        ++sPinEvents;
+        pin_queue(t.mPinIndex);
+    }
+}
+
+// the texture of a pin as it is now: find its slot (the full lookup), pin the slot, tell the ray scene when the slot changed
+void pin_resolve(U32 index)
+{
+    Pin& p = sPins[index];
+    p.mQueued = false;
+    if (!p.mName)
+    {
+        return;
+    }
+    ++sPinResolves;
+    Renderer& r = Renderer::instance();
+    U32 slot = 0;
+    Tex* t = packet_texture(p.mName);
+    if (t && t->mImage.valid() && t->mImage.mViewType == VK_IMAGE_VIEW_TYPE_2D)
+    {
+        if (t->mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        {
+            const char* prev_cause = r.setBarrierCause("pinned texture");
+            r.ensureLayout(t->mImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            r.setBarrierCause(prev_cause);
+        }
+        slot = r.bindlessSlotIn(0, &t->mImage, texture_sampler(r, *t), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, p.mSlot);
+        t->mPinIndex = index;
+    }
+    if (slot != p.mSlot)
+    {
+        if (slot)
+        {
+            r.bindlessPin(0, slot);
+        }
+        if (p.mSlot)
+        {
+            r.bindlessUnpin(0, p.mSlot);
+        }
+        p.mSlot = slot;
+        Rt::setPinSlot(index, slot);
+    }
+    if (!slot && !p.mWaiting)
+    {
+        p.mWaiting = true;
+        sPinWaiting.push_back(index);
+    }
+}
+
+// the texture entry goes away: the pin falls back to waiting (the slot is released; the descriptor keeps naming the old view until frames in flight are done, which is how all slots work)
+void pin_lost(Tex& t, U32 name)
+{
+    const U32 index = t.mPinIndex;
+    t.mPinIndex = 0;
+    if (index && index < sPins.size() && sPins[index].mName == name && sPins[index].mSlot)
+    {
+        Renderer::instance().bindlessUnpin(0, sPins[index].mSlot);
+        sPins[index].mSlot = 0;
+        Rt::setPinSlot(index, 0);
+        if (!sPins[index].mWaiting)
+        {
+            sPins[index].mWaiting = true;
+            sPinWaiting.push_back(index);
+        }
+    }
+}
+
+} // anonymous namespace (pins)
 
 //-----------------------------------------------------------------------------------------------------
 // Arena phase 3: BLAS probe (LL_VK_BLAS_PROBE=1, needs LL_VK_RT=1 and the arena). One bottom-level acceleration structure per (vertex buffer, index buffer) pair, one geometry per
@@ -4456,6 +4577,124 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     }
     sDraws += h.mEntries;
     sDrawsTotal += h.mEntries;
+}
+
+unsigned int rtPinAcquire(unsigned int gl_name)
+{
+    if (!gl_name)
+    {
+        return 0;
+    }
+    auto it = sPinByName.find(gl_name);
+    U32 index;
+    if (it != sPinByName.end())
+    {
+        index = it->second;
+    }
+    else
+    {
+        if (!sPinFree.empty())
+        {
+            index = sPinFree.back();
+            sPinFree.pop_back();
+        }
+        else
+        {
+            index = (U32)sPins.size();
+            sPins.emplace_back();
+        }
+        sPins[index] = Pin();
+        sPins[index].mName = gl_name;
+        sPinByName[gl_name] = index;
+    }
+    ++sPins[index].mRefs;
+    if (sPins[index].mRefs == 1)
+    {
+        pin_queue(index);
+    }
+    return index;
+}
+
+void rtPinRelease(unsigned int index)
+{
+    if (!index || index >= sPins.size() || !sPins[index].mName || !sPins[index].mRefs)
+    {
+        return;
+    }
+    Pin& p = sPins[index];
+    if (--p.mRefs)
+    {
+        return;
+    }
+    if (p.mSlot)
+    {
+        Renderer::instance().bindlessUnpin(0, p.mSlot);
+        p.mSlot = 0;
+        Rt::setPinSlot(index, 0);
+    }
+    sPinByName.erase(p.mName);
+    if (Tex* t = packet_texture(p.mName))
+    {
+        if (t->mPinIndex == index)
+        {
+            t->mPinIndex = 0;
+        }
+    }
+    p.mName = 0;
+    sPinFree.push_back(index);
+}
+
+void rtPinUpdate()
+{
+    // 1. pins whose texture changed or that are new
+    for (size_t i = 0; i < sPinDirty.size(); ++i)
+    {
+        pin_resolve(sPinDirty[i]);
+    }
+    sPinDirty.clear();
+    // 2. pins still waiting for an image: a slice in turns
+    if (!sPinWaiting.empty())
+    {
+        const size_t n = std::min<size_t>(sPinWaiting.size(), 256);
+        std::vector<U32> batch(sPinWaiting.begin(), sPinWaiting.begin() + n);
+        sPinWaiting.erase(sPinWaiting.begin(), sPinWaiting.begin() + n);
+        for (U32 index : batch)
+        {
+            if (index < sPins.size())
+            {
+                sPins[index].mWaiting = false;
+                if (sPins[index].mName && !sPins[index].mSlot && sPins[index].mRefs)
+                {
+                    pin_resolve(index);         // (puts itself back into the waiting list when there is still nothing)
+                }
+            }
+        }
+    }
+    // 3. the safety net: every pin is looked at again about every 32 frames
+    const size_t total = sPins.size();
+    if (total > 1)
+    {
+        const size_t n = total / 32 + 1;
+        for (size_t k = 0; k < n; ++k)
+        {
+            if (++sPinCheckCursor >= total)
+            {
+                sPinCheckCursor = 1;
+            }
+            if (sPins[sPinCheckCursor].mName && sPins[sPinCheckCursor].mSlot)
+            {
+                pin_resolve((U32)sPinCheckCursor);
+            }
+        }
+    }
+}
+
+void rtPinCounts(unsigned long long& pins, unsigned long long& resolves, unsigned long long& events)
+{
+    pins = sPinByName.size();
+    resolves = sPinResolves;
+    events = sPinEvents;
+    sPinResolves = sPinEvents = 0;
 }
 
 // asks the memory system for what packet_texture_slot will read (see Rt::TexturePrefetchFn)
