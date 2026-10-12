@@ -2939,6 +2939,8 @@ struct Pin
     U32 mRefs = 0;
     bool mQueued = false;       // in sPinDirty
     bool mWaiting = false;      // in sPinWaiting
+    U64 mNextTry = 0;           // a pin with no image is tried again from this frame on (the wait doubles each time, up to 256 frames)
+    U32 mBackoff = 8;
 };
 std::vector<Pin> sPins(1);
 std::unordered_map<U32, U32> sPinByName;
@@ -2989,6 +2991,15 @@ void pin_resolve(U32 index)
         }
         slot = r.bindlessSlotIn(0, &t->mImage, texture_sampler(r, *t), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, p.mSlot);
         t->mPinIndex = index;
+    }
+    if (slot)
+    {
+        p.mBackoff = 8;
+    }
+    else
+    {
+        p.mNextTry = Context::instance().getFrameNumber() + p.mBackoff;
+        p.mBackoff = std::min<U32>(p.mBackoff * 2, 256);
     }
     if (slot != p.mSlot)
     {
@@ -4652,7 +4663,8 @@ void rtPinUpdate()
         pin_resolve(sPinDirty[i]);
     }
     sPinDirty.clear();
-    // 2. pins still waiting for an image: a slice in turns
+    // 2. pins still waiting for an image: a slice in turns, each one only when it is due
+    const U64 frame = Context::instance().getFrameNumber();
     if (!sPinWaiting.empty())
     {
         const size_t n = std::min<size_t>(sPinWaiting.size(), 256);
@@ -4665,7 +4677,15 @@ void rtPinUpdate()
                 sPins[index].mWaiting = false;
                 if (sPins[index].mName && !sPins[index].mSlot && sPins[index].mRefs)
                 {
-                    pin_resolve(index);         // (puts itself back into the waiting list when there is still nothing)
+                    if (frame < sPins[index].mNextTry)
+                    {
+                        sPins[index].mWaiting = true;       // not due yet: back of the line, nothing looked at
+                        sPinWaiting.push_back(index);
+                    }
+                    else
+                    {
+                        pin_resolve(index);         // (puts itself back into the waiting list when there is still nothing)
+                    }
                 }
             }
         }
