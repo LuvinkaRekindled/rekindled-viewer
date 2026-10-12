@@ -366,6 +366,7 @@ struct SkinDraw
     AlphaInfo mAlpha;
     LLVkGL::BufferInfo mVi, mIi;
     U64 mNotedTag = 0, mSkinnedTag = 0;
+    U64 mMarkedTag = 0;                 // frame in which its buffers were marked as in use for the records (once per frame, not per scene call)
     ArenaRef mOut;                      // the skinned vertices (world space), indexed like the vertex buffer relative to mVertexFirst
 };
 
@@ -1502,7 +1503,14 @@ void noteSkinned(const SkinCaster& c)
         {
             if (c.mAlpha)
             {
-                d.mAlpha = *c.mAlpha;               // the textures may have changed
+                // the textures may have changed. A note without a material (the shadow passes name some draws without one) leaves the material the main view named.
+                const U32 material = d.mAlpha.mMaterial, normals = d.mAlpha.mNormalOffset;
+                d.mAlpha = *c.mAlpha;
+                if (!d.mAlpha.mMaterial && material)
+                {
+                    d.mAlpha.mMaterial = material;
+                    d.mAlpha.mNormalOffset = normals;
+                }
             }
             d.mDead = false;
             if (d.mNotedTag != tag)
@@ -2400,6 +2408,27 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             total_verts += d.mVertexCount;
             chunks_needed += (d.mVertexCount + kSkinChunkVerts - 1) / kSkinChunkVerts;
         }
+        if (sDbg.mAvatarLog && a.mSelf)
+        {
+            // debug (avlog=1): every draw of the viewer's own avatar, about once in 120 frames: what the structure is made of and what is left out
+            static U64 last_draw_log = 0;
+            if (av_tag >= last_draw_log + 120)
+            {
+                last_draw_log = av_tag;
+                static FILE* draw_log = fopen("<work>/rt-avatar-draws.log", "ab");
+                if (draw_log)
+                {
+                    fprintf(draw_log, "frame %llu own avatar: %zu draws, %zu in the structure\n", (unsigned long long)av_tag, a.mDraws.size(), cur.size());
+                    for (const SkinDraw& d : a.mDraws)
+                    {
+                        const bool in = std::find(cur.begin(), cur.end(), &d) != cur.end();
+                        fprintf(draw_log, "  kind %u mode %u tris %u first %u vtx %u+%u material %u normals %u texc %u color %u noted_age %lld dead %d out %d %s\n", d.mKind, d.mMode, d.mCount / 3, d.mFirst, d.mVertexFirst, d.mVertexCount,
+                                d.mAlpha.mMaterial, d.mAlpha.mNormalOffset, d.mAlpha.mTexcoordOffset, d.mAlpha.mColorOffset, (long long)(av_tag - d.mNotedTag), d.mDead ? 1 : 0, d.mOut.valid() ? 1 : 0, in ? "IN" : "left out");
+                    }
+                    fflush(draw_log);
+                }
+            }
+        }
         if (cur.empty())
         {
             continue;
@@ -3230,13 +3259,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             break;
         }
         // masked geometries need a record each (the shader finds it by the geometry's place in the structure): what the alpha test reads, at the buffers' addresses of now
-        bool any_alpha = false;
+        bool any_alpha = false, any_material = false;
         for (U32 idx : a.mBuiltIdx)
         {
             any_alpha = any_alpha || (idx < a.mDraws.size() && a.mDraws[idx].mKind == 1);
+            any_material = any_material || (sDbg.mMats && idx < a.mDraws.size() && a.mDraws[idx].mAlpha.mMaterial != 0);
         }
         U32 custom_index = 0;
-        if (any_alpha)
+        if (any_alpha || any_material)
         {
             if (records + a.mBuiltIdx.size() > sMaxRecords)
             {
@@ -3249,7 +3279,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             for (size_t k = 0; k < a.mBuiltIdx.size(); ++k)
             {
                 const SkinDraw& d = a.mDraws[a.mBuiltIdx[k]];
-                if (d.mKind != 1)
+                if (d.mKind != 1 && !(sDbg.mMats && d.mAlpha.mMaterial))
                 {
                     continue;
                 }
@@ -3273,10 +3303,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             custom_index = records;
             for (size_t k = 0; k < a.mBuiltIdx.size(); ++k)
             {
-                const SkinDraw& d = a.mDraws[a.mBuiltIdx[k]];
-                GpuGeom& rec = table[records++];
+                SkinDraw& d = a.mDraws[a.mBuiltIdx[k]];
+                // the record is built on the stack and copied once (the table is mapped device memory: scattered stores into it are slow); the copy happens at every exit of the iteration
+                GpuGeom rec;
                 memset(&rec, 0, sizeof(rec));
-                if (d.mKind != 1)
+                struct Commit { GpuGeom* mDst; const GpuGeom* mSrc; ~Commit() { memcpy(mDst, mSrc, sizeof(GpuGeom)); } } commit{ &table[records++], &rec };
+                const bool with_material = sDbg.mMats && d.mAlpha.mMaterial != 0;
+                if (d.mKind != 1 && !with_material)
                 {
                     continue;                       // an opaque geometry: its candidates never reach the alpha test
                 }
@@ -3285,8 +3318,12 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     rec.mFlags = 256u;              // the shader rejects the candidates without reading anything
                     continue;
                 }
-                LLVkGL::markBufferUsed(d.mVb);      // the alpha test reads texcoords, colours and indices while the lighting runs
-                LLVkGL::markBufferUsed(d.mIb);
+                if (d.mMarkedTag != av_tag)
+                {
+                    d.mMarkedTag = av_tag;
+                    LLVkGL::markBufferUsed(d.mVb);  // the alpha test reads texcoords, colours and indices while the lighting runs
+                    LLVkGL::markBufferUsed(d.mIb);
+                }
                 const U64 pa = d.mOut.mAddress - 16ull * d.mVertexFirst, ia = iis[k].mAddress, va = vis[k].mAddress;
                 rec.mPositions[0] = (U32)pa;
                 rec.mPositions[1] = (U32)(pa >> 32);
@@ -3318,8 +3355,25 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 rec.mCutoff = d.mAlpha.mCutoff;
                 rec.mFirst = d.mFirst;
                 memcpy(rec.mUv, d.mAlpha.mUv, sizeof(rec.mUv));
+                if (with_material)
+                {
+                    // ray scene materials: the texture is in the material row; the normals are the triangles' own (the skinned copy holds positions only)
+                    rec.mMaterial = d.mAlpha.mMaterial;
+                    ++sStats.mRecMaterial;
+                    if (d.mKind != 1)
+                    {
+                        rec.mFlags |= kRecOpaque;
+                    }
+                }
+                else
+                {
+                    ++sStats.mRecNoMaterial;
+                }
             }
-            ++sStats.mAlphaStructs;
+            if (any_alpha)
+            {
+                ++sStats.mAlphaStructs;
+            }
         }
         {
             ++sStats.mAvatarInstances;

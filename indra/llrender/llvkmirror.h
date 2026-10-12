@@ -115,7 +115,9 @@ namespace LLVkMirror
     struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId, mMaterial, mTexcoordOffset, mColorOffset, mNormalOffset; };
     // kind 2: a rigged draw: the offset of its weight4 array in the vertex buffer, and its palette (offset in floats from the start of the palettes, joint count)
     // (ray tracing: the vertex range the draw uses, the avatar it belongs to and the identity of its skin, both stable from frame to frame)
-    struct ShadowSkinEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints, mVertexFirst, mVertexCount, mAvatarId, mSkinId, mAvatarKind; F32 mAvatarPos[3]; };
+    // ray scene materials (LL_VK_RT_MATERIALS): mMaterial = RtMaterialDef id of the draw (0 = none), mNormalOffset / mTexcoordOffset / mColorOffset = byte offsets of those arrays in the vertex
+    // buffer (0 = none)
+    struct ShadowSkinEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints, mVertexFirst, mVertexCount, mAvatarId, mSkinId, mAvatarKind; F32 mAvatarPos[3]; U32 mMaterial, mNormalOffset, mTexcoordOffset, mColorOffset; };
     // kind 1: the same, with what the alpha test needs
     enum ShadowAlphaFlags : U32
     {
@@ -154,7 +156,8 @@ namespace LLVkMirror
         RTM_MASK = 4,               // alpha masked: mCutoff
         RTM_BLEND = 8,              // alpha blended
         RTM_BATCH = 16,             // the vertex's texture index (position.w & 3) picks one of mTextures
-        RTM_EMISSIVE_LEGACY = 32    // legacy material with an emissive mask in the diffuse alpha
+        RTM_EMISSIVE_LEGACY = 32,   // legacy material with an emissive mask in the diffuse alpha
+        RTM_NO_VERTEX_ALPHA = 64    // the alpha mask test uses the texture alpha alone (the legacy materials passes do not multiply the vertex colour alpha in, materialF.glsl)
     };
     struct RtMaterialDef
     {
@@ -173,10 +176,11 @@ namespace LLVkMirror
     // kind 4 (ray tracing only, nothing is drawn): one mesh of an avatar's own body, as the old path draws it. mMode 1: skinned by the palette (15 joints, 12 floats each, after
     // the entries; one weight float per vertex at mWeightOffset picks joint i and i + 1), 2: rigid under mModel (column-major, the joint's world matrix)
     // mAlphaFlags: 0 = opaque, else an alpha masked part (hair, eyelashes, skirt) with the diffuse texture mTexture (GL name, 0 = none), the byte offset of its texcoord0 array and the cutoff: the same as ShadowAlphaFlags, tree style (no vertex alpha)
-    struct ShadowBodyEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mVertexFirst, mVertexCount, mAvatarId, mMeshId, mWeightOffset, mJoints, mMode, mSelf; F32 mAvatarPos[3]; F32 mModel[16]; U32 mAlphaFlags, mTexture, mTexcoordOffset; F32 mCutoff; };
+    // ray scene materials (LL_VK_RT_MATERIALS): mTexcoordOffset is set for every mesh that has texcoords (mAlphaFlags decides alone whether the alpha test runs), mNormalOffset = byte offset of
+    // the normal array (0 = none), mMaterial = RtMaterialDef id of the mesh (0 = none)
+    struct ShadowBodyEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mVertexFirst, mVertexCount, mAvatarId, mMeshId, mWeightOffset, mJoints, mMode, mSelf; F32 mAvatarPos[3]; F32 mModel[16]; U32 mAlphaFlags, mTexture, mTexcoordOffset; F32 mCutoff; U32 mNormalOffset, mMaterial; };
     // kinds 6 and 7 (ray tracing only, nothing is drawn): the rigged draws of the MAIN view named to the ray scene every frame, as kind 2 (ShadowSkinEntry) and kind 1 with
-    // ALPHA_RIGGED (ShadowAlphaEntry): entries, model matrices, palettes, the layout of the kinds they copy
-    // kind 8: rigged draws of the avatar velocity pass (avatarVelocityPullV.glsl): ShadowSkinEntry entries (no model matrices), then the palettes of this frame (mPaletteFloats floats, 12 per joint), then
+    // ALPHA_RIGGED (ShadowAlphaEntry): entries, model matrices, palettes, the layout of the kinds they copy.    // kind 8: rigged draws of the avatar velocity pass (avatarVelocityPullV.glsl): ShadowSkinEntry entries (no model matrices), then the palettes of this frame (mPaletteFloats floats, 12 per joint), then
     // the palettes of the frame before, same layout and offsets. mViewProj is the jittered view-projection (the pixels of the G-buffer); the unjittered ones come as ordinary uniforms
     // kind 9: draws that move as a whole, for the velocity pass (objectVelocityPullV.glsl): ShadowPacketEntry entries, then mMatrices model matrices of this frame, then mMatrices of the frame before
     // kind 3: a draw of a deferred geometry pass (the colour passes). The matrices after the entries are 44 floats each: modelview, modelview * projection, and the normal

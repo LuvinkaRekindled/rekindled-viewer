@@ -41,6 +41,10 @@ void dbgSceneFrame(out mat3 to_scene, out vec3 camera)
 }
 
 // what a hit looks like through its record and material. status: 0 fine, 1 unusable record, 2 no material row. Returns false when the record cannot be read at all.
+float dbg_raw_alpha = 0.0;      // mode 10: the texture alpha x vertex alpha x colour alpha of the last surface looked at, the cutoff it is held against, whether the material is alpha masked
+float dbg_cutoff = 0.5;
+bool dbg_masked = false;
+
 bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, out vec3 flat_normal, out uint mat_id, out uint status)
 {
     albedo = vec4(1.0, 0.0, 1.0, 1.0);
@@ -99,9 +103,24 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
         LLRtColors col = LLRtColors(g.colors);
         vcol = (unpackUnorm4x8(col.c[ix[0]]) * w.x + unpackUnorm4x8(col.c[ix[1]]) * w.y + unpackUnorm4x8(col.c[ix[2]]) * w.z);
     }
+    if ((mflags & 64u) != 0u)
+    {
+        vcol.a = 1.0;                                           // the legacy materials passes test the texture alpha alone
+    }
     albedo = tex * vcol * m.color;
-    // the G-buffer holds linear colour; the textures and vertex colours are sRGB values: modes 1 to 3 are compared in the G-buffer's space (rt_debug_srgb 1 gives them back as sRGB)
-    albedo.rgb = mix(albedo.rgb / 12.92, pow((albedo.rgb + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), albedo.rgb));
+    // the G-buffer holds sRGB values for legacy materials and linear ones for glTF: modes 1 to 3 are compared in the G-buffer's space
+    // (legacy materials keep their sRGB values in the G-buffer, glTF ones are linear: only glTF is converted here)
+    if ((mflags & 2u) != 0u)
+    {
+        albedo.rgb = mix(albedo.rgb / 12.92, pow((albedo.rgb + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), albedo.rgb));
+    }
+    dbg_raw_alpha = albedo.a;
+    dbg_cutoff = ((mflags & 4u) != 0u) ? m.emissive.w : 0.5;
+    dbg_masked = (mflags & 4u) != 0u;
+    if ((mflags & 4u) != 0u)
+    {
+        albedo.a = (albedo.a >= m.emissive.w) ? 1.0 : 0.0;     // alpha masked: the draw's own cutoff, as the G-buffer pass applies it (hair edges, foliage)
+    }
     if ((mflags & 1u) != 0u)
     {
         albedo.a = 1.0;
@@ -143,7 +162,7 @@ void main()
             uint mid, st;
             if (dbgSurface(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod, a, n, mid, st))
             {
-                if (a.a >= 0.5)
+                if (a.a >= 0.5 || rt_debug_mode == 7 || rt_debug_mode == 10 || (rt_debug_mode == 9 && ((int(gl_FragCoord.x) / 12 + int(gl_FragCoord.y) / 12) & 1) == 1))       // mode 7: no alpha test (shows which triangles exist, cards included); mode 9: the difference view, alpha test off in a checkerboard of 12 pixel blocks
                 {
                     rayQueryConfirmIntersectionEXT(rq);
                 }
@@ -167,7 +186,13 @@ void main()
     bool ok = dbgSurface(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)), rayQueryGetIntersectionBarycentricsEXT(rq, true), lod, albedo, n_obj, mat_id, status);
     mat4x3 w2o = rayQueryGetIntersectionWorldToObjectEXT(rq, true);
     vec3 n_world = normalize(n_obj * mat3(w2o));
-    if (rt_debug_mode == 1)
+    if (rt_debug_mode == 10)
+    {
+        // red: the surface alpha, green: 1 where it passes the material cutoff (0 where the alpha test would drop it), blue: the cutoff; blue only (no red) = alpha is 0 and the material is not masked
+        frag_color = vec4(dbg_raw_alpha, dbg_raw_alpha >= dbg_cutoff ? 1.0 : 0.0, dbg_masked ? dbg_cutoff : 0.0, 1.0);
+    }
+    else
+    if (rt_debug_mode == 1 || rt_debug_mode == 7)
     {
         frag_color = vec4(ok ? albedo.rgb : vec3(1.0, 0.0, 1.0), 1.0);
     }
@@ -175,7 +200,7 @@ void main()
     {
         frag_color = vec4(ref, 1.0);
     }
-    else if (rt_debug_mode == 3)
+    else if (rt_debug_mode == 3 || rt_debug_mode == 9)
     {
         frag_color = vec4(clamp(abs(albedo.rgb - ref) * 4.0, 0.0, 1.0), 1.0);
     }
