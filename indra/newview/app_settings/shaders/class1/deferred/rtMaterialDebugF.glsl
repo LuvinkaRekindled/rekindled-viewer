@@ -100,6 +100,8 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
         vcol = (unpackUnorm4x8(col.c[ix[0]]) * w.x + unpackUnorm4x8(col.c[ix[1]]) * w.y + unpackUnorm4x8(col.c[ix[2]]) * w.z);
     }
     albedo = tex * vcol * m.color;
+    // the G-buffer holds linear colour; the textures and vertex colours are sRGB values: modes 1 to 3 are compared in the G-buffer's space (rt_debug_srgb 1 gives them back as sRGB)
+    albedo.rgb = mix(albedo.rgb / 12.92, pow((albedo.rgb + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), albedo.rgb));
     if ((mflags & 1u) != 0u)
     {
         albedo.a = 1.0;

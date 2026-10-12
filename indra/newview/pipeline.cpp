@@ -4642,7 +4642,7 @@ static U32 rt_matrix_id(const LLMatrix4* m);
 namespace
 {
 constexpr U32 kRtMatCap = 16384;
-constexpr U64 kRtMatIdleFrames = 1800;
+constexpr U64 kRtMatIdleFrames = 900;
 struct RtMatRow
 {
     LLVkMirror::RtMaterialDef mDef = {};
@@ -13435,6 +13435,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     a.mIndexCount = entries[k].mIndexCount;
                     a.mMatrix = entries[k].mMatrix;
                     a.mMatrixId = entries[k].mMatrixId;
+                    a.mMaterial = entries[k].mMaterial;
+                    a.mTexcoordOffset = entries[k].mTexcoordOffset;
+                    a.mColorOffset = entries[k].mColorOffset;
+                    a.mNormalOffset = entries[k].mNormalOffset;
                     a.mFlags = LLVkMirror::ALPHA_RAY_ONLY;
                     named[k] = a;
                 }
