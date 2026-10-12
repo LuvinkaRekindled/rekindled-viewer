@@ -3552,6 +3552,17 @@ static void on_body_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* 
         c.mPalette = e.mMode == 1 ? (U64)palettes.mAddress : 0;
         c.mModel = e.mMode == 2 ? e.mModel : nullptr;
         c.mPass = h.mPass;
+        Rt::AlphaInfo alpha;
+        if (e.mAlphaFlags)
+        {
+            // hair, eyelashes, skirt: one texture, the alpha cut at the cutoff (the old shadow shader's semi-transparent dithering is dropped)
+            c.mKind = 1;
+            alpha.mFlags = e.mAlphaFlags;
+            alpha.mTexcoordOffset = e.mTexcoordOffset;
+            alpha.mTextures[0] = e.mTexture;
+            alpha.mCutoff = e.mCutoff;
+            c.mAlpha = &alpha;
+        }
         buffer_info_of(*vb, c.mVi);
         buffer_info_of(*ib, c.mIi);
         Rt::noteSkinned(c);

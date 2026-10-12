@@ -13295,6 +13295,59 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 }
             }
         }
+        // Linden trees (LLDrawPoolTree: one vertex buffer per face, drawn whole under the region's render matrix, alpha test on the pool's texture at 0.5, no vertex alpha, no dithering):
+        // their faces are in the pool's draw list after this pass's sort
+        {
+            U32 tree_faces = 0;
+            for (LLDrawPool* pool : mPools)
+            {
+                if (pool->getType() != LLDrawPool::POOL_TREE)
+                {
+                    continue;
+                }
+                LLViewerTexture* tex = pool->getTexture();
+                for (LLFace* face : static_cast<LLFacePool*>(pool)->mDrawFace)
+                {
+                    LLVertexBuffer* vb = face->getVertexBuffer();
+                    LLDrawable* drawable = face->getDrawable();
+                    LLViewerRegion* region = drawable ? drawable->getRegion() : nullptr;
+                    if (!vb || !region || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || vb->getNumIndices() == 0
+                        || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !tex)
+                    {
+                        continue;
+                    }
+                    const LLMatrix4* model = &region->mRenderMatrix;
+                    LLVkMirror::ShadowAlphaEntry e = {};
+                    e.mVertexBuffer = vb->getGLBuffer();
+                    e.mIndexBuffer = vb->getGLIndices();
+                    e.mFirstIndex = 0;
+                    e.mIndexCount = vb->getNumIndices();
+                    e.mMatrixId = rt_matrix_id(model);
+                    auto it = matrix_numbers.find(model);
+                    if (it == matrix_numbers.end())
+                    {
+                        it = matrix_numbers.emplace(model, (U32)(matrices.size() / 16)).first;
+                        const F32* m = (const F32*)model->mMatrix;
+                        matrices.insert(matrices.end(), m, m + 16);
+                    }
+                    e.mMatrix = it->second;
+                    e.mFlags = LLVkMirror::ALPHA_TREE | LLVkMirror::ALPHA_NO_INDEX | LLVkMirror::ALPHA_HAS_TEXCOORD;
+                    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+                    e.mTextures[0] = texture_name(tex);
+                    e.mCutoff = 0.5f;
+                    uv_transform(nullptr, nullptr, e.mUv);
+                    entries.push_back(e);
+                    ++tree_faces;
+                }
+            }
+            static U32 calls = 0;
+            static U64 total_tree_faces = 0;
+            total_tree_faces += tree_faces;
+            if (++calls % 2400 == 0)
+            {
+                LL_INFOS("VkShadow") << "ray scene: Linden tree faces named per shadow pass: " << (F32)total_tree_faces / calls << " (over " << calls << " passes)" << LL_ENDL;
+            }
+        }
         if (!entries.empty())
         {
             LLVkMirror::ShadowPacketsHeader header;
