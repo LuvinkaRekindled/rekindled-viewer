@@ -58,6 +58,8 @@
 #include "llvkmirror.h"
 
 #include <unordered_set>
+#include <unordered_map>
+#include <array>
 #include <atomic>
 #include "llappviewer.h"
 
@@ -200,6 +202,47 @@ void LLViewerJointMesh::uploadJointMatrices()
             LLGLSLShader::sCurBoundShaderPtr->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, mat);
         }
         stop_glerror();
+}
+
+static bool rt_body_log_wanted()
+{
+    static const bool on = getenv("LL_VK_RT_BODYLOG") != nullptr;
+    return on;
+}
+
+// the body meshes the main view drew lately (main thread): the avatar is held so that the mesh cannot be freed under the record
+namespace
+{
+struct BodyMeshRecord
+{
+    LLPointer<LLVOAvatar> mAvatar;
+    U32 mFrame = 0;
+};
+std::unordered_map<LLViewerJointMesh*, BodyMeshRecord> sRecentBodyMeshes;
+constexpr U32 kBodyMeshMemory = 4;      // frames a mesh is named again after the last time the main view drew it
+}
+
+void LLViewerJointMesh::noteRecentBodyMeshes()
+{
+    if (!LLVkMirror::rtShadowMode())
+    {
+        return;
+    }
+    const U32 frame = LLFrameTimer::getFrameCount();
+    for (auto it = sRecentBodyMeshes.begin(); it != sRecentBodyMeshes.end(); )
+    {
+        BodyMeshRecord& record = it->second;
+        if (frame > record.mFrame + kBodyMeshMemory || record.mAvatar.isNull() || record.mAvatar->isDead())
+        {
+            it = sRecentBodyMeshes.erase(it);
+            continue;
+        }
+        if (record.mFrame != frame)
+        {
+            it->first->noteRayShadow();         // (once per frame per mesh: noteRayShadow keeps count)
+        }
+        ++it;
+    }
 }
 
 bool LLViewerJointMesh::sRecordVelocity = false;
@@ -401,6 +444,40 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         && (LLDrawPoolAvatar::sShadowPass == LLDrawPoolAvatar::SHADOW_PASS_AVATAR_OPAQUE || (LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)))
     {
         noteRayShadow();
+        if (LLDrawPoolAvatar::sShadowPass < 0)
+        {
+            // drawn by the main view: remembered, so that the next frames name it before their scene call (noteRecentBodyMeshes)
+            LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;
+            LLVOAvatar* avatar = drawable ? dynamic_cast<LLVOAvatar*>(drawable->getVObj().get()) : nullptr;
+            if (avatar)
+            {
+                BodyMeshRecord& record = sRecentBodyMeshes[this];
+                record.mAvatar = avatar;
+                record.mFrame = LLFrameTimer::getFrameCount();
+            }
+        }
+        if (rt_body_log_wanted())
+        {
+            // debug (LL_VK_RT_BODYLOG=1): how often each mesh of the viewer's own avatar is reached from the shadow passes and from the main view, logged every 600 frames
+            static std::unordered_map<S32, std::array<U32, 2>> reached;
+            static U32 last_report = 0;
+            LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;
+            LLVOAvatar* own = drawable ? dynamic_cast<LLVOAvatar*>(drawable->getVObj().get()) : nullptr;
+            const U32 frame_now = LLFrameTimer::getFrameCount();
+            if (own && own->isSelf())
+            {
+                ++reached[LLAvatarJointMesh::getMeshID() * 16 + (mMesh && mMesh->hasWeights() ? 1 : 0)][LLDrawPoolAvatar::sShadowPass >= 0 ? 0 : 1];
+            }
+            if (frame_now >= last_report + 600)
+            {
+                for (const auto& kv : reached)
+                {
+                    LL_INFOS("VkRtMaterials") << "own body mesh id " << kv.first / 16 << " (skinned " << (kv.first & 15) << "): reached from shadow passes " << kv.second[0] << ", from the main view " << kv.second[1] << " times in " << (frame_now - last_report) << " frames" << LL_ENDL;
+                }
+                reached.clear();
+                last_report = frame_now;
+            }
+        }
     }
 
     // motion vectors: the history of the body palette follows the frames in which the main view draws the mesh

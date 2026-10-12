@@ -57,6 +57,9 @@ public:
     void computeJointPalette(F32* mat, bool with_modelview);
     // ray tracing: names this mesh (once per frame) to the ray scene, which skins it on the GPU
     void noteRayShadow();
+    // ray tracing: names again every body mesh the main view drew in the last few frames. The alpha masked ones (hair, skirt, eyelashes) are drawn after the lighting, i.e. after the
+    // ray scene call of the frame, so the draw itself names them too late. Main thread, once per frame before the scene call.
+    static void noteRecentBodyMeshes();
     // motion vectors: the world space palette (the layout of computeJointPalette) of this frame and of the frame before. Computed once per frame, on the first call of the frame.
     // The previous palette equals the current one when there is no history (first time, or the mesh was not asked for in the last frame): no motion.
     void updatePaletteHistory();
