@@ -3534,6 +3534,17 @@ static void note_rt_skinned(U32 pass, const LLVkMirror::ShadowSkinEntry& e, cons
     c.mPass = pass;
     memcpy(c.mAvatarPos, e.mAvatarPos, sizeof(c.mAvatarPos));
     c.mAvatarKind = e.mAvatarKind;
+    Rt::AlphaInfo info;
+    if (Rt::materialsOn() && e.mMaterial)
+    {
+        // ray scene materials: an opaque draw names its material and the arrays the hit shading reads (no alpha test: kind 0)
+        info.mFlags = (e.mTexcoordOffset ? 8u : 0u) | (e.mColorOffset ? 16u : 0u);
+        info.mTexcoordOffset = e.mTexcoordOffset;
+        info.mColorOffset = e.mColorOffset;
+        info.mNormalOffset = e.mNormalOffset;
+        info.mMaterial = e.mMaterial;
+        c.mAlpha = &info;
+    }
     buffer_info_of(vbuf, c.mVi);
     buffer_info_of(ibuf, c.mIi);
     Rt::noteSkinned(c);
@@ -3548,6 +3559,11 @@ static void note_rt_skinned_alpha(U32 pass, const LLVkMirror::ShadowAlphaEntry& 
     alpha.mColorOffset = e.mColorOffset;
     memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
     alpha.mCutoff = e.mCutoff;
+    if (Rt::materialsOn())
+    {
+        alpha.mNormalOffset = e.mNormalOffset;
+        alpha.mMaterial = e.mMaterial;
+    }
     Rt::SkinCaster c;
     c.mAvatarId = e.mAvatarId;
     c.mSkinId = e.mSkinId;
@@ -3716,6 +3732,19 @@ static void on_body_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* 
             alpha.mTexcoordOffset = e.mTexcoordOffset;
             alpha.mTextures[0] = e.mTexture;
             alpha.mCutoff = e.mCutoff;
+            c.mAlpha = &alpha;
+        }
+        if (Rt::materialsOn() && e.mMaterial)
+        {
+            // ray scene materials: the arrays the hit shading reads (the texture is in the material); an alpha masked part keeps its alpha test fields
+            if (!e.mAlphaFlags)
+            {
+                alpha.mFlags = 0;
+            }
+            alpha.mFlags |= e.mTexcoordOffset ? 8u : 0u;
+            alpha.mTexcoordOffset = e.mTexcoordOffset;
+            alpha.mNormalOffset = e.mNormalOffset;
+            alpha.mMaterial = e.mMaterial;
             c.mAlpha = &alpha;
         }
         buffer_info_of(*vb, c.mVi);

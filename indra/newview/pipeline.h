@@ -1246,6 +1246,9 @@ public:
 
 void render_bbox(const LLVector3 &min, const LLVector3 &max);
 void render_hud_elements();
+// <FS> ray scene materials: the material id (pipeline.cpp registry) of an avatar body mesh drawn with this texture, 0 when materials are off. color: 4 floats or null.
+class LLViewerTexture;
+U32 rt_body_material(LLViewerTexture* texture, const F32* color, bool masked);
 
 extern LLPipeline gPipeline;
 extern bool gDebugPipeline;

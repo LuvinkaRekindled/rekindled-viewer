@@ -4714,7 +4714,9 @@ inline U32 rt_float_bits(F32 f)
 }
 } // namespace
 
-// hint: 1 = the draw is alpha masked, 2 = alpha blended. Returns 0 when materials are off or the registry is full.
+static U32 rt_material_intern(LLVkMirror::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, LLDrawInfo* cache_on);
+
+// hint: 1 = the draw is alpha masked, 2 = alpha blended, 4 = the mask test ignores the vertex alpha (materials passes). Returns 0 when materials are off or the registry is full.
 static U32 rt_material_id(LLDrawInfo* p, U32 hint)
 {
     if (!rt_materials_on() || !p)
@@ -4807,7 +4809,20 @@ static U32 rt_material_id(LLDrawInfo* p, U32 hint)
     {
         flags |= LLVkMirror::RTM_BLEND;
     }
+    if (hint & 4)
+    {
+        flags |= LLVkMirror::RTM_NO_VERTEX_ALPHA;
+    }
     d.mFlags = flags;
+    return rt_material_intern(d, tex, gm, p);
+}
+
+// the registry part shared by draws (rt_material_id) and the body meshes of avatars (rt_body_material): finds or creates the row of a definition. cache_on (may be null): the draw info
+// that remembers the row.
+static U32 rt_material_intern(LLVkMirror::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, LLDrawInfo* cache_on)
+{
+    const U64 stamp = sRtMatFrame.load(std::memory_order_relaxed);
+    const U32 flags = d.mFlags;
     U64 key = 0x1234567ull;
     rt_hash(key, flags);
     for (int k = 0; k < 7; ++k)
@@ -4865,8 +4880,34 @@ static U32 rt_material_id(LLDrawInfo* p, U32 hint)
     }
     RtMatRow& row = sRtMatRows[id];
     row.mUsed.store(stamp, std::memory_order_relaxed);
-    p->mRtMaterial.store(((U64)row.mGen.load(std::memory_order_relaxed) << 32) | id, std::memory_order_relaxed);
+    if (cache_on)
+    {
+        cache_on->mRtMaterial.store(((U64)row.mGen.load(std::memory_order_relaxed) << 32) | id, std::memory_order_relaxed);
+    }
     return id;
+}
+
+// the body meshes of avatars (head, upper body, lower body, eyes, hair, eyelashes, skirt) have no draw info: their material is the texture the mesh is drawn with (a baked texture or a
+// layer set composite, white when none) times the mesh colour. masked: hair, eyelashes and skirt are cut at 0.5 of the texture alpha. 0 = materials off or registry full.
+U32 rt_body_material(LLViewerTexture* texture, const F32* color, bool masked)
+{
+    if (!rt_materials_on())
+    {
+        return 0;
+    }
+    LLVkMirror::RtMaterialDef d = {};
+    LLPointer<LLViewerTexture> tex[7];
+    tex[0] = texture;
+    for (int k = 0; k < 4; ++k)
+    {
+        d.mColor[k] = color ? color[k] : 1.f;
+    }
+    d.mUv[0] = 1.f;
+    d.mUv[3] = 1.f;
+    d.mRoughness = 1.f;
+    d.mFlags = masked ? LLVkMirror::RTM_MASK : 0u;
+    d.mCutoff = masked ? 0.5f : 0.f;
+    return rt_material_intern(d, tex, nullptr, nullptr);
 }
 
 // main thread, once per frame before the ray scene call: the rows whose names are new or changed go to the worker (kind 10 record); rows idle for a long time are released
@@ -5072,6 +5113,19 @@ struct LLPipeline::ShadowSkinBuild
     size_t mPaletteCount = 0;
 };
 
+// ray scene materials: the material and the arrays the hit shading reads, for a rigged draw (every rigged entry gets them, whatever pass names the draw)
+static void rt_skin_material(LLVkMirror::ShadowSkinEntry& e, LLDrawInfo* params, const LLVertexBuffer* vb)
+{
+    if (!rt_materials_on())
+    {
+        return;
+    }
+    e.mMaterial = rt_material_id(params, 0);
+    e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+    e.mTexcoordOffset = vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) ? vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0) : 0;
+    e.mColorOffset = vb->hasDataType(LLVertexBuffer::TYPE_COLOR) ? vb->getOffset(LLVertexBuffer::TYPE_COLOR) : 0;
+}
+
 static void build_shadow_skin(LLCullResult& result, const U32* list, size_t count, LLPipeline::ShadowSkinBuild& out)
 {
     out = LLPipeline::ShadowSkinBuild();
@@ -5123,6 +5177,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                     e.mAvatarPos[2] = avatar_position.mV[2];
                     e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
                 }
+                rt_skin_material(e, params, vb);
                 if (params->mModelMatrix)
                 {
                     auto it = matrix_numbers.find(params->mModelMatrix);
@@ -9230,9 +9285,9 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 }
                 e.mFlags = flags;
                 e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
-                if (rt_materials_on() && !rigged)
+                if (rt_materials_on())
                 {
-                    e.mMaterial = rt_material_id(params, (source.kind == KIND_ALPHA) ? 2u : 1u);
+                    e.mMaterial = rt_material_id(params, (source.kind == KIND_ALPHA) ? 2u : ((source.kind == KIND_MATERIAL) ? 5u : 1u));
                     e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
                 }
                 entries.push_back(e);
@@ -10447,7 +10502,7 @@ void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
     static LLStaticHashedString mode_s("rt_debug_mode");
     dst->bindTarget();
     bindDeferredShader(gRtMaterialDebugProgram);
-    gRtMaterialDebugProgram.uniform1i(mode_s, llclamp((S32)mode, 1, 6));
+    gRtMaterialDebugProgram.uniform1i(mode_s, llclamp((S32)mode, 1, 10));
     {
         LLGLDisable   blend(GL_BLEND);
         LLGLDepthTest depth(GL_FALSE, GL_FALSE, GL_ALWAYS);
@@ -11949,6 +12004,39 @@ static U32 rt_avatar_kind(LLVOAvatar* avatar)
 
 static void rt_name_rigged_main_view()
 {
+    if (rt_materials_on())
+    {
+        // debug aid: which pass types hold the viewer's own avatar's rigged draws (about once in 600 frames), to see what the naming below leaves out
+        static U64 last_log = 0;
+        if (gFrameCount >= last_log + 600)
+        {
+            last_log = gFrameCount;
+            std::vector<U32> all(std::begin(kVelocityRiggedTypes), std::end(kVelocityRiggedTypes));
+            all.push_back(LLRenderPass::PASS_ALPHA);
+            for (U32 type : all)
+            {
+                U32 draws = 0, gltf = 0;
+                U64 tris = 0;
+                auto* begin = gPipeline.beginRenderMap(type);
+                auto* end = gPipeline.endRenderMap(type);
+                for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+                {
+                    LLDrawInfo* params = *i;
+                    LLCullResult::increment_iterator(i, end);
+                    if (params->mAvatar && params->mAvatar->isSelf())
+                    {
+                        ++draws;
+                        tris += params->mCount / 3;
+                        gltf += params->mGLTFMaterial ? 1u : 0u;
+                    }
+                }
+                if (draws)
+                {
+                    LL_INFOS("VkRtMaterials") << "own avatar rigged draws, pass type " << type << ": " << draws << " draws, " << tris << " triangles, " << gltf << " with a glTF material" << LL_ENDL;
+                }
+            }
+        }
+    }
     static const U32 types[] = {
         LLRenderPass::PASS_SIMPLE, LLRenderPass::PASS_FULLBRIGHT, LLRenderPass::PASS_SHINY, LLRenderPass::PASS_BUMP, LLRenderPass::PASS_FULLBRIGHT_SHINY, LLRenderPass::PASS_MATERIAL,
         LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE, LLRenderPass::PASS_SPECMAP, LLRenderPass::PASS_SPECMAP_EMISSIVE, LLRenderPass::PASS_NORMMAP, LLRenderPass::PASS_NORMMAP_EMISSIVE,
@@ -11996,6 +12084,7 @@ static void rt_name_rigged_main_view()
                     e.mAvatarPos[2] = avatar_position.mV[2];
                     e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
                 }
+                rt_skin_material(e, params, vb);
                 if (params->mModelMatrix)
                 {
                     auto it = matrix_numbers.find(params->mModelMatrix);
@@ -12142,6 +12231,11 @@ static void rt_name_rigged_main_view()
                 }
                 e.mFlags = flags;
                 e.mCutoff = source.kind == KIND_ALPHA ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
+                if (rt_materials_on())
+                {
+                    e.mMaterial = rt_material_id(params, source.kind == KIND_ALPHA ? 2u : (source.kind == KIND_MATERIAL ? 5u : 1u));
+                    e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+                }
                 entries.push_back(e);
             }
         }

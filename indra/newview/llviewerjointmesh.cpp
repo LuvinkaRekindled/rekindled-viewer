@@ -279,11 +279,12 @@ void LLViewerJointMesh::noteRayShadow()
         e.mAvatarPos[1] = avatar_position.mV[1];
         e.mAvatarPos[2] = avatar_position.mV[2];
     }
-    // the alpha masked parts of the body (hair, eyelashes, skirt) are cut by the alpha of their diffuse texture, found as drawShape finds it
+    // the alpha masked parts of the body (hair, eyelashes, skirt) are cut by the alpha of their diffuse texture, found as drawShape finds it; the ray scene's materials want the texture of
+    // every mesh
     {
         const S32 mesh_id = LLAvatarJointMesh::getMeshID();
-        if ((mesh_id == LLAvatarAppearanceDefines::MESH_ID_HAIR || mesh_id == LLAvatarAppearanceDefines::MESH_ID_EYELASH || mesh_id == LLAvatarAppearanceDefines::MESH_ID_SKIRT)
-            && buff->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && !mTestImageName)
+        const bool masked = mesh_id == LLAvatarAppearanceDefines::MESH_ID_HAIR || mesh_id == LLAvatarAppearanceDefines::MESH_ID_EYELASH || mesh_id == LLAvatarAppearanceDefines::MESH_ID_SKIRT;
+        if (buff->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && !mTestImageName)
         {
             LLViewerTexLayerSet* layerset = dynamic_cast<LLViewerTexLayerSet*>(mLayerSet);
             LLTexture* tex = nullptr;
@@ -302,12 +303,20 @@ void LLViewerJointMesh::noteRayShadow()
             {
                 tex = mTexture.get();
             }
-            if (tex)
+            if (masked && tex)
             {
                 e.mAlphaFlags = LLVkMirror::ALPHA_TREE | LLVkMirror::ALPHA_NO_INDEX | LLVkMirror::ALPHA_HAS_TEXCOORD;
                 e.mTexture = gGL.getTexUnit(0)->prepareFast(tex);
-                e.mTexcoordOffset = buff->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
                 e.mCutoff = 0.5f;
+            }
+            e.mTexcoordOffset = buff->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+            if (tex)
+            {
+                e.mMaterial = rt_body_material(dynamic_cast<LLViewerTexture*>(tex), mColor.mV, masked);
+                if (buff->hasDataType(LLVertexBuffer::TYPE_NORMAL))
+                {
+                    e.mNormalOffset = buff->getOffset(LLVertexBuffer::TYPE_NORMAL);
+                }
             }
         }
     }
