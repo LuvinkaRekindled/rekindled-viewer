@@ -187,6 +187,8 @@ LL_VK_DEVICE_FN(vkDestroyAccelerationStructureKHR)
 LL_VK_DEVICE_FN(vkGetAccelerationStructureBuildSizesKHR)
 LL_VK_DEVICE_FN(vkCmdBuildAccelerationStructuresKHR)
 LL_VK_DEVICE_FN(vkGetAccelerationStructureDeviceAddressKHR)
+LL_VK_DEVICE_FN(vkCmdCopyAccelerationStructureKHR)
+LL_VK_DEVICE_FN(vkCmdWriteAccelerationStructuresPropertiesKHR)
 
 // VK_NV_device_diagnostic_checkpoints (null unless the driver offers it): markers in the command buffer, read back after VK_ERROR_DEVICE_LOST to name the pass the GPU died in
 LL_VK_DEVICE_FN(vkCmdSetCheckpointNV)
