@@ -129,6 +129,10 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(LLRtPositions(g.positions).v[ix[0]].w) & 3u);
     uint pair = (tex_index < 2u) ? g.slots.x : g.slots.y;
     uint slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
+    if ((g.flags & 4096u) != 0u)
+    {
+        slot = ll_rt_slot(slot);            // the record holds a pin index (the persistent bindless table)
+    }
     float alpha = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod).a;
     if ((g.flags & 64u) != 0u)
     {

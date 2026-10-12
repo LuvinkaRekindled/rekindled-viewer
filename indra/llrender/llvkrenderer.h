@@ -313,6 +313,8 @@ public:
     // mean the same thing from frame to frame. `hint` is the slot the caller got last time for the same thing: checked first, no lookup. Every frame's set has its own copy of the
     // table; a descriptor is written into the set of the frame that uses it, once (until the slot changes hands).
     void bindlessPrefetch(U32 table, U32 slot);                                                  // <FS> asks the memory system for the entries bindlessTouch / bindlessSlotIn will read
+    void bindlessPin(U32 table, U32 slot);          // <FS> a pinned slot is never given back by the sweep, and its descriptor reaches every frame's set (no per-frame lookup keeps it alive)
+    void bindlessUnpin(U32 table, U32 slot);
     bool bindlessTouch(U32 table, U32 slot, U64 view_id, VkImageView view, VkSampler sampler);      // <FS> the slot still holds this view and sampler: keep it alive and written into this frame's set (no table search)
     U32 bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout, U32 hint = 0);     // table 0 2D, 1 cube, 2 cube array, 3 2D shadow
     void bindlessFlush();           // writes the slots taken since the last call into the frame's set and binds it
@@ -488,6 +490,7 @@ private:
         BindlessKey mKey;
         VkDescriptorImageInfo mInfo = {};               // what the slot holds
         U64 mLastUsed = 0;                              // frame number
+        U32 mPins = 0;                                  // pins held (ray scene textures): not swept
         bool mActive = false;
     };
     struct BindlessTable
@@ -501,8 +504,12 @@ private:
         std::vector<U64> mShadowId[Context::FRAMES_IN_FLIGHT];                      // ... and the identity (Image::mViewId) of the view it holds: handles can be reused by a later view
         std::vector<U32> mDirty;                        // slots to write into this frame's set at the next flush
         std::vector<U8> mQueued;                        // by slot: 1 while the slot is in mDirty
+        std::vector<U32> mPinLog;                       // pinned slots whose descriptor is new or changed, in order (mPinBase = sequence number of the first entry)
+        U64 mPinBase = 0;
+        U64 mPinApplied[Context::FRAMES_IN_FLIGHT] = {};    // how much of the log each frame's set has been given (a set behind the base gets every pinned slot)
     };
     void bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want, U64 want_id);
+    void bindlessSyncPins(BindlessTable& tbl);
     void bindlessSweep(U64 min_idle_frames);
     BindlessTable mBindlessTbl[BINDLESS_TABLES];
     U32 mBindlessCap[BINDLESS_TABLES] = {};         // slots per table: the 2D table is the big one
