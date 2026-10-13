@@ -6,6 +6,8 @@
 #include "linden_common.h"
 
 #include "llvkrenderer.h"
+#include <set>
+#include <cmath>
 #include <xmmintrin.h>
 
 // <FS> Tracy GPU zones from the Vulkan timestamps. Tracy loads its Vulkan functions through the proc-address tables (our Vulkan is loaded at run time).
@@ -14,6 +16,7 @@
 #include <tracy/TracyVulkan.hpp>
 #endif
 #include "llvkasync.h"
+#include "llvkgl.h"
 #include "llvkdlss.h"
 #include "llvkmirror.h"
 #include "llvkrt.h"
@@ -1765,6 +1768,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     }
     mRingPeak = std::max(mRingPeak, mRingUsed);
     mRingUsed = 0;
+    ++mRingEpoch;       // every program's cached ring offset is void: the ring starts again from 0 (a mid-frame flush keeps the frame number, so the frame number cannot tell)
     mVertexRingUsed = 0;
     mDrawCount = 0;
     mRendering = false;
@@ -2219,6 +2223,7 @@ void Renderer::beginRenderingIfNeeded()
     }
     mInBegin = true;
     mDrawStamps = false;
+    mSerialPass = true;
     mDrawStampCount = 0;
     if (LLVkMirror::gPhaseTiming)
     {
@@ -2231,6 +2236,20 @@ void Renderer::beginRenderingIfNeeded()
             // (the reflection probe faces are 343x343 with the same attachments: told apart by that size. An impostor target can be any size from a few texels to 512x512, square or not: hangs and
             // faults have been in 128x256, 64x64 and 512x512)
             mDrawStamps = draw_stamp_mode >= 2 || (mColorCount == 4 && mDepthTarget && w <= 1024 && h <= 1024 && !(w == 343 && h == 343));
+            // LL_VK_DRAW_SERIAL_ONLY=<width> serializes only the passes of that target width, LL_VK_DRAW_SERIAL_SKIP=<width> all but those (bisecting which pass needs it)
+            static const int only = getenv("LL_VK_DRAW_SERIAL_ONLY") ? atoi(getenv("LL_VK_DRAW_SERIAL_ONLY")) : 0;
+            static const int skip = getenv("LL_VK_DRAW_SERIAL_SKIP") ? atoi(getenv("LL_VK_DRAW_SERIAL_SKIP")) : 0;
+            mSerialPass = (!only || (int)w == only) && (!skip || (int)w != skip);
+            static const bool serial_log = getenv("LL_VK_DRAW_SERIAL_LOG") != nullptr;
+            if (mSerialPass && serial_log)
+            {
+                static std::set<std::string> seen;
+                const std::string d = describeTarget();
+                if (seen.insert(d).second)
+                {
+                    LL_INFOS("Vulkan") << "serial draw pass target: " << d << " (" << w << "x" << h << ")" << LL_ENDL;
+                }
+            }
         }
         mPassTag = Context::stampTag(describeTarget());
         mBeginTag = mZoneStack.empty() ? mPassTag : mZoneStack.back();
@@ -2715,6 +2734,9 @@ Renderer::ScratchAlloc Renderer::allocVertexScratch(VkDeviceSize size)
     return a;
 }
 
+// LL_VK_RING_STALE=1 brings back the old behaviour (a program's ring offset is trusted for the whole frame number, also across a mid-frame flush): A/B for the login device lost
+static const bool sRingEpochOff = getenv("LL_VK_RING_STALE") != nullptr;
+
 U32 Renderer::allocUniform(U32 size)
 {
     const U32 align = (U32)Context::instance().getCaps().mUniformAlignment;
@@ -3117,10 +3139,11 @@ void Renderer::applyState()
     LLVkMirror::phaseLap(LLVkMirror::PH_A_SAMP, lap_t);
     // 6. loose uniforms, class by class: copy a class's shadow into the ring when it changed (or on its first use this frame)
     const U64 frame_number = Context::instance().getFrameNumber();
+    const U64 ring_key = sRingEpochOff ? frame_number : mRingEpoch;
     for (U32 k = 0; k < UC_COUNT; ++k)
     {
         std::vector<U8>& shadow = mProgram->mShadow[k];
-        if (shadow.empty() || (!mProgram->mDirty[k] && mProgram->mRingFrame[k] == frame_number))
+        if (shadow.empty() || (!mProgram->mDirty[k] && mProgram->mRingFrame[k] == ring_key))
         {
             continue;
         }
@@ -3158,7 +3181,7 @@ void Renderer::applyState()
             }
         }
         memcpy((U8*)mRing[mSlot].mMapped + ring_offset, shadow.data(), shadow.size());
-        mProgram->mRingFrame[k] = frame_number;
+        mProgram->mRingFrame[k] = ring_key;
         mProgram->mDirty[k] = false;
     }
     LLVkMirror::gLastLap = 304;
@@ -3316,7 +3339,7 @@ std::string Renderer::describeSlot(U32 slot) const
     snprintf(buf, sizeof(buf), "slot %u: %s, given to its image %lld frames ago, %u descriptor writes, last used %lld frames ago, pins %u, image %ux%u format %u mips %u layers %u layout %u, view id %llu, %s",
              slot, s.mActive ? "active" : "FREE", (long long)(frame - s.mCreatedFrame), s.mDbgWrites, (long long)(frame - s.mLastUsed), s.mPins, s.mDbgW, s.mDbgH, s.mDbgFormat, s.mDbgMips, s.mDbgLayers, s.mDbgLayout,
              (unsigned long long)s.mKey.mViewId, dead ? "image DESTROYED" : "image alive");
-    return buf;
+    return std::string(buf) + ", image handle " + std::to_string((unsigned long long)s.mDbgImage) + ": " + Context::instance().describeBinding(s.mDbgImage) + " | " + LLVkGL::describe_texture_of_view(s.mKey.mViewId);
 }
 
 std::string Renderer::auditBindless() const
@@ -3377,9 +3400,16 @@ std::string Renderer::auditBindless() const
 
 // One GPU timestamp after a draw, described well enough to find the draw again: when a frame hangs the watchdog (Context::beginFrame) names the first draw whose stamp never
 // completed. The program, what was drawn, and the buffers (handle and offset: the arena buffers are shared, the offset tells which range).
+// LL_VK_ADDR_LOG is read once (getenv on every draw stamp made the render thread the bottleneck)
+static bool addr_log_on()
+{
+    static const bool on = getenv("LL_VK_ADDR_LOG") != nullptr;
+    return on;
+}
+
 U32 Renderer::drawTag(const char* what, U32 count, U32 first, S32 vertex_offset)
 {
-    char text[560];
+    char text[3200];
     int n = snprintf(text, sizeof(text), "draw %u: %s, %s %u from %u, vertex offset %d, vertex buffer %llx+%llu, index buffer %llx+%llu", ++mDrawStampCount, mProgram ? mProgram->getName().c_str() : "(no program)", what, count, first,
                      vertex_offset, (unsigned long long)(uintptr_t)mVertexBuffer, (unsigned long long)mVertexOffset, (unsigned long long)(uintptr_t)mIndexBuffer, (unsigned long long)mIndexOffset);
     if (mProgram && n > 0 && n < (int)sizeof(text) - 80)
@@ -3396,6 +3426,68 @@ U32 Renderer::drawTag(const char* what, U32 count, U32 first, S32 vertex_offset)
                 memcpy(&slot, draw_class.data() + offset, sizeof(U32));
                 n += snprintf(text + n, sizeof(text) - n, " %u", slot);
             }
+        }
+    }
+    const bool avatar_draw = mProgram && mProgram->getName().find("Avatar") != std::string::npos;       // the draws that fault: detail without the address log (a handful a frame)
+    if (mProgram && n > 0 && n < (int)sizeof(text) - 400 && (addr_log_on() || avatar_draw))
+    {
+        // where the vertex and index data of this draw are (the memory ranges the address log saw), for a fault that reads somewhere none of them is
+        const Context& ctx = Context::instance();
+        static thread_local std::unordered_map<U64, std::string> cache;       // (the scan of the event ring is slow: once a frame per buffer)
+        static thread_local U64 cache_frame = ~0ull;
+        if (cache_frame != ctx.getFrameNumber())
+        {
+            cache.clear();
+            cache_frame = ctx.getFrameNumber();
+        }
+        auto where = [&](U64 handle) -> const std::string& {
+            auto it = cache.find(handle);
+            if (it == cache.end())
+            {
+                it = cache.emplace(handle, ctx.describeBinding(handle, true)).first;
+            }
+            return it->second;
+        };
+        if (mUseVertexInput)
+        {
+            for (size_t b = 0; b < mVertexInput.mBindings.size() && b < 4 && n < (int)sizeof(text) - 250; ++b)
+            {
+                const VertexInput::Binding& vb = mVertexInput.mBindings[b];
+                n += snprintf(text + n, sizeof(text) - n, " | vertex binding %zu: %llx+%llu stride %u, %s", b, (unsigned long long)(uintptr_t)vb.mBuffer, (unsigned long long)vb.mOffset, vb.mStride,
+                              where((U64)(uintptr_t)vb.mBuffer).c_str());
+            }
+        }
+        if (n < (int)sizeof(text) - 250)
+        {
+            n += snprintf(text + n, sizeof(text) - n, " | index buffer %s", where((U64)(uintptr_t)mIndexBuffer).c_str());
+        }
+    }
+    if (mProgram && n > 0 && n < (int)sizeof(text) - 1200 && avatar_draw)
+    {
+        // the avatar draws are the ones that fault: what the pipeline and the uniforms were (draw class bytes in hex, the bone palette checked for values no matrix has)
+        n += snprintf(text + n, sizeof(text) - n, " | pipeline %llx", (unsigned long long)(uintptr_t)mBoundPipeline);
+        const std::vector<U8>& dc = mProgram->mShadow[UC_DRAW];
+        n += snprintf(text + n, sizeof(text) - n, " | draw uniforms %zu bytes:", dc.size());
+        for (size_t k = 0; k < dc.size() && k < 192 && n < (int)sizeof(text) - 400; ++k)
+        {
+            n += snprintf(text + n, sizeof(text) - n, "%s%02x", (k % 4 == 0) ? " " : "", dc[k]);
+        }
+        const std::vector<U8>& sk = mProgram->mShadow[UC_SKIN];
+        U32 nonfinite = 0;
+        float max_abs = 0.f;
+        for (size_t k = 0; k + 4 <= sk.size(); k += 4)
+        {
+            float f;
+            memcpy(&f, sk.data() + k, 4);
+            if (!std::isfinite(f)) ++nonfinite;
+            else max_abs = std::max(max_abs, std::fabs(f));
+        }
+        n += snprintf(text + n, sizeof(text) - n, " | skin uniforms %zu bytes, %u non-finite floats, largest magnitude %g", sk.size(), nonfinite, (double)max_abs);
+        const std::vector<U8>& mc = mProgram->mShadow[UC_MATERIAL];
+        n += snprintf(text + n, sizeof(text) - n, " | material uniforms %zu bytes:", mc.size());
+        for (size_t k = 0; k < mc.size() && k < 96 && n < (int)sizeof(text) - 100; ++k)
+        {
+            n += snprintf(text + n, sizeof(text) - n, "%s%02x", (k % 4 == 0) ? " " : "", mc[k]);
         }
     }
     return Context::drawStampTag(text);
@@ -3473,6 +3565,24 @@ std::string Renderer::describeDraw(U64 serial) const
     return out;
 }
 
+// LL_VK_DRAW_SERIAL=1 (with LL_VK_DRAW_STAMPS=2): every stamped draw finishes before the next one starts, so the draw of the last reached checkpoint is the one that faulted
+// (without it a lost device only says which draws were in flight together)
+static void serialize_draw(VkCommandBuffer cmd, bool pass_ok)
+{
+    static const bool on = getenv("LL_VK_DRAW_SERIAL") != nullptr;
+    if (!on || !pass_ok)
+    {
+        return;
+    }
+    VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+    mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    VkDependencyInfo dep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &mb;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
 bool Renderer::draw(U32 vertex_count, U32 first_vertex)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget))
@@ -3495,6 +3605,10 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
         Context::instance().drawCheckpoint(stamp_tag);       // (before the draw: a lost device names the draw the GPU had started)
     }
     vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
+    if (stamp_tag)
+    {
+        serialize_draw(mCmd, mSerialPass);
+    }
     if (stamp_tag)
     {
         Context::instance().gpuStamp(stamp_tag);
@@ -3547,6 +3661,7 @@ bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirec
     if (mDrawStamps)
     {
         Context::instance().gpuStamp(drawTag("packet draws", draws, 0, 0));
+        serialize_draw(mCmd, mSerialPass);
     }
     ++mModCount;
     return true;
@@ -3597,6 +3712,10 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         Context::instance().drawCheckpoint(stamp_tag);       // (before the draw: a lost device names the draw the GPU had started)
     }
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
+    if (stamp_tag)
+    {
+        serialize_draw(mCmd, mSerialPass);
+    }
     if (stamp_tag)
     {
         Context::instance().gpuStamp(stamp_tag);
@@ -4085,6 +4204,14 @@ bool Renderer::flushAndRestart()
     if (mCmd == VK_NULL_HANDLE)
     {
         return false;
+    }
+    {
+        static int logged = 0;
+        if (logged < 60)
+        {
+            ++logged;
+            LL_INFOS("Vulkan") << "mid-frame flush #" << (mFlushCount + 1) << " at frame " << Context::instance().getFrameNumber() << ", " << mDrawCount << " draws recorded so far" << LL_ENDL;
+        }
     }
     flushPendingClear();
     endRendering();

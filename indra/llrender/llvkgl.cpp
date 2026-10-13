@@ -3041,6 +3041,28 @@ void pin_lost(Tex& t, U32 name)
 
 } // anonymous namespace (pins)
 
+// the texture behind a view id, for the device lost report (read after the loss, on the thread that found it: no lock, the table is only read)
+std::string describe_texture_of_view(U64 view_id)
+{
+    if (!view_id)
+    {
+        return "no view id";
+    }
+    for (const auto& kv : sGL.mTextures)
+    {
+        const Tex& t = kv.second;
+        if (t.mImage.mViewId == view_id)
+        {
+            char buf[300];
+            snprintf(buf, sizeof(buf), "GL texture %u: %ux%u, %u levels allocated, %u levels hold data, dim %u, layers %u, bindless slot %u, pin %u, sampler 0x%llx, swizzle %s",
+                     kv.first, t.mWidth, t.mHeight, t.mLevels, t.mValidLevels, (unsigned)t.mDim, t.mImage.mLayers, t.mBindlessSlot, t.mPinIndex, (unsigned long long)(uintptr_t)t.mVkSampler, t.mSwizzleSet ? "set" : "default");
+            return buf;
+        }
+    }
+    return "no GL texture has this view (the texture was deleted or its image replaced)";
+}
+
+
 //-----------------------------------------------------------------------------------------------------
 // Arena phase 3: BLAS probe (LL_VK_BLAS_PROBE=1, needs LL_VK_RT=1 and the arena). One bottom-level acceleration structure per (vertex buffer, index buffer) pair, one geometry per
 // distinct drawn index range, built or refitted at the end of the frame the buffer was drawn in. Nothing traces: the probe only measures what per-buffer structures cost
