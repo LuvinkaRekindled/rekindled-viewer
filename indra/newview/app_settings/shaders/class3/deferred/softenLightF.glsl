@@ -353,6 +353,17 @@ void main()
             color.rgb = vec3(BRDF(clamp(dot(gb.normal, -normalize(pos.xyz)), 0.0, 1.0), 0.5), 0.0);        // probe: the BRDF lookup at roughness argument 0.5
         }
     }
+    else if (rt_glossy_reflections == 15)
+    {
+        color.rgb = vec3(1.0, 0.0, 1.0);       // probe: plumbing check for values above 11 (every pixel magenta)
+    }
+    else if (rt_glossy_reflections == 14)
+    {
+        if (dbg_branch != 0)
+        {
+            color.rgb = vec3(BRDF(tc.x, 1.0 - tc.y), 0.0);       // probe: the BRDF lookup texture itself: view angle left to right, roughness argument 0 (bottom) to 1 (top); scale red, bias green
+        }
+    }
     else if (rt_glossy_reflections == 10)
     {
         if (dbg_branch == 1)
