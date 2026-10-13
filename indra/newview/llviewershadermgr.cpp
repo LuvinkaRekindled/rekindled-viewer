@@ -584,6 +584,10 @@ void LLViewerShaderMgr::setShaders()
     static LLCachedControl<S32> reserved_texture_units(gSavedSettings, "RenderReservedTextureIndices", 14);
 
     LLGLSLShader::sIndexedTextureChannels = 4;
+    if (const char* channels = getenv("LL_VK_INDEXED_CHANNELS"))      // test switch: 1 = every draw one texture, no per-vertex texture index
+    {
+        LLGLSLShader::sIndexedTextureChannels = llclamp<S32>(atoi(channels), 1, 4);
+    }
         //llclamp<S32>(max_texture_index, 1, gGLManager.mNumTextureImageUnits-reserved_texture_units);
 
     reentrance = true;

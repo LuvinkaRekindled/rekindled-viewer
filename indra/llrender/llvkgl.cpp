@@ -5134,6 +5134,13 @@ void after_frame()
                             Context::GpuPassStats gp;
                             Context::instance().takeGpuPassStats(gp);
                             const double total = (double)(gp.mMainMicros + gp.mOffMicros);
+                            {
+                                U64 vram_used = 0, vram_budget = 0;
+                                if (Context::instance().videoMemory(vram_used, vram_budget))
+                                {
+                                    LL_INFOS("VkPhases") << "video memory: " << (vram_used >> 20) << " MB used of a budget of " << (vram_budget >> 20) << " MB" << LL_ENDL;
+                                }
+                            }
                             LL_INFOS("VkPhases") << "GPU time per viewer frame: " << total / 1000.0 / frames << " ms in all (the frame that is presented " << (double)gp.mMainMicros / 1000.0 / std::max<double>(1, (double)gp.mMainFrames)
                                                  << " ms avg, slowest " << (double)gp.mMainMax / 1000.0 << " ms; the off-screen frame after it " << (double)gp.mOffMicros / 1000.0 / std::max<double>(1, (double)gp.mOffFrames)
                                                  << " ms avg, slowest " << (double)gp.mOffMax / 1000.0 << " ms). Timestamps between passes make this a little higher than an unprofiled run" << LL_ENDL;

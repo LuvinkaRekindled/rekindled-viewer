@@ -31,8 +31,14 @@ uniform vec4 matrixPalette[45];
 mat4 getSkinnedTransform()
 {
     mat4 ret;
-    int i = int(floor(weight.x));
-    float x = fract(weight.x);
+    // a NaN or out-of-range weight (the vertex data is rewritten every update) turned into an index far outside the palette: the read then lands in memory that is not ours (device lost)
+    float wx = weight.x;
+    if (!(wx >= 0.0 && wx <= 13.999))
+    {
+        wx = 0.0;
+    }
+    int i = int(floor(wx));
+    float x = fract(wx);
 
     ret[0] = mix(matrixPalette[i+0], matrixPalette[i+1], x);
     ret[1] = mix(matrixPalette[i+15],matrixPalette[i+16], x);

@@ -412,6 +412,10 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         ++sPrograms;
         if (mBindless) ++sBindlessPrograms;
         if (mInfo.mSamplers.empty()) ++sNoSamplers;
+        if (!mInfo.mSamplers.empty())
+        {
+            LL_INFOS("VkShader") << "program '" << mName << "': " << (mBindless ? "bindless" : "classic") << ", " << mInfo.mSamplers.size() << " samplers" << LL_ENDL;
+        }
         if (sPrograms % 50 == 0)
         {
             LL_INFOS("VkShader") << "programs: " << sPrograms << " created, " << sBindlessPrograms << " with bindless textures, " << sNoSamplers << " without samplers" << LL_ENDL;
@@ -1022,6 +1026,13 @@ bool Renderer::createLayouts()
             b2[t].descriptorCount = cap[t];
             b2[t].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
             binding_flags[t] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+            // Entries are written in the middle of recording a frame, while work recorded earlier (a flush, the previous frame of a shared set) may still be pending: without this bit that is
+            // undefined for EVERY entry of the set. LL_VK_BINDLESS_NOUNUSED=1 leaves it out (A/B switch).
+            static const bool leave_out = getenv("LL_VK_BINDLESS_NOUNUSED") != nullptr;
+            if (ctx.getCaps().mBindlessUpdateUnused && !leave_out)
+            {
+                binding_flags[t] |= VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
+            }
         }
         VkDescriptorSetLayoutBindingFlagsCreateInfo fi = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
         fi.bindingCount = BINDLESS_TABLES;
