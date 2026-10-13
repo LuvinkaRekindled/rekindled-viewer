@@ -772,6 +772,7 @@ VkResult Program::createPipelineObject(const PipelineKey& key, VkPipelineCreateF
     gi.layout = r.mPipelineLayout;
 
     gi.flags = flags;
+    gDebugProgram = getName().c_str();      // (validation messages about this pipeline name its program)
     return vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &out);
 }
 

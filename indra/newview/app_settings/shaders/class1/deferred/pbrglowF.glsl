@@ -34,7 +34,6 @@ uniform sampler2D emissiveMap;
 
 out vec4 frag_color;
 
-in vec3 vary_position;
 in vec4 vertex_emissive;
 
 in vec2 base_color_texcoord;
