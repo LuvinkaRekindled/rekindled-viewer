@@ -104,6 +104,13 @@ vec3 pbrBaseLight(vec3 diffuseColor,
                   vec3 atten);
 
 GBufferInfo getGBuffer(vec2 screenpos);
+vec2 BRDF(float NoV, float roughness);       // probe (modes 10, 11)
+
+#if defined(HAS_SUN_SHADOW) && defined(LL_RT_REFLECTIONS)
+#define SOFTEN_RT_REFLECTION 1
+uniform int rt_glossy_reflections;
+vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback);
+#endif
 vec3 clampHDRRange(vec3 color);
 
 void adjustIrradiance(inout vec3 irradiance, float ambocc)
@@ -163,9 +170,17 @@ void main()
     vec3 amblit_linear = amblit;
 
     vec3  radiance  = vec3(0);
+    int dbg_branch = 0;                  // probe (remove): 1 PBR path, 2 legacy path, 3 other
+    int dbg_trace = 0;                   // probe: 1 a reflection ray was traced and missed, 2 it hit
+    vec3 dbg_radiance = vec3(0.0);       // probe (mode 10): the reflection value just before the lighting call
+    vec2 dbg_brdf = vec2(0.0);           // probe (mode 11): the reflectance response the lighting uses
+    vec3 dbg_orm = vec3(0.0);            // probe: occlusion, roughness, metallic of a PBR pixel (mode 9)
+    vec3 dbg_rt_color = vec3(0.0);       // probe: the colour the traced reflection found (mode 7)
+    float dbg_gloss = 0.0;               // probe: the gloss of the pixel
 
     if (GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_HAS_PBR))
     {
+        dbg_branch = 1;
         vec3 orm = spec.rgb;
         float perceptualRoughness = orm.g;
         float metallic = orm.b;
@@ -178,6 +193,25 @@ void main()
 
         sampleReflectionProbes(irradiance, radiance, tc, pos.xyz, gb.normal, gloss, false, amblit_linear);
 
+#ifdef SOFTEN_RT_REFLECTION
+        dbg_gloss = gloss;
+        dbg_orm = vec3(ao, perceptualRoughness, metallic);
+        if (rt_glossy_reflections != 0 && rt_glossy_reflections != 2 && rt_glossy_reflections != 5 && rt_glossy_reflections != 6 && gloss >= (rt_glossy_reflections >= 4 ? 0.0 : 0.9))
+        {
+            // <FS> a ray along the reflected view direction into the ray scene: a hit replaces the probe / screen space result, a miss keeps it (3: hits green, misses red; 4: the same for every gloss)
+            vec4 rt_refl = rtReflection(pos.xyz + gb.normal * 0.02, normalize(reflect(pos.xyz, gb.normal)), normalize(light_dir), sunlit_linear, amblit_linear, tc, radiance);
+            if (rt_glossy_reflections >= 3)
+            {
+                dbg_trace = rt_refl.a > 0.5 ? 2 : 1;       // the views 3 and 4 only show where it traced and what it found
+                dbg_rt_color = rt_refl.rgb;
+            }
+            else
+            {
+                radiance = mix(radiance, rt_refl.rgb, rt_refl.a);
+            }
+        }
+#endif
+
         adjustIrradiance(irradiance, ambocc);
 
         vec3 diffuseColor;
@@ -185,6 +219,8 @@ void main()
         calcDiffuseSpecular(baseColor.rgb, metallic, diffuseColor, specularColor);
 
         vec3 v = -normalize(pos.xyz);
+        dbg_radiance = radiance;
+        dbg_brdf = BRDF(clamp(dot(gb.normal, v), 0.0, 1.0), 1.0 - perceptualRoughness);
         color = pbrBaseLight(diffuseColor, specularColor, metallic, v, gb.normal, perceptualRoughness, light_dir, sunlit_linear, scol, radiance, irradiance, colorEmissive, ao, additive, atten);
     }
     else if (GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_HAS_HDRI))
@@ -205,6 +241,7 @@ void main()
     }
     else
     {
+        dbg_branch = 2;
         // legacy shaders are still writng sRGB to gbuffer
         baseColor.rgb = srgb_to_linear(baseColor.rgb);
 
@@ -217,6 +254,23 @@ void main()
         vec3 legacyenv = vec3(0);
 
         sampleReflectionProbesLegacy(irradiance, glossenv, legacyenv, tc, pos.xyz, gb.normal, spec.a, envIntensity, false, amblit_linear);
+
+#ifdef SOFTEN_RT_REFLECTION
+        dbg_gloss = spec.a;
+        if (rt_glossy_reflections != 0 && rt_glossy_reflections != 2 && rt_glossy_reflections != 5 && rt_glossy_reflections != 6 && spec.a >= (rt_glossy_reflections >= 4 ? 0.01 : 0.9))
+        {
+            vec4 rt_refl = rtReflection(pos.xyz + gb.normal * 0.02, normalize(reflect(pos.xyz, gb.normal)), normalize(light_dir), sunlit_linear, amblit_linear, tc, glossenv);
+            if (rt_glossy_reflections >= 3)
+            {
+                dbg_trace = rt_refl.a > 0.5 ? 2 : 1;
+                dbg_rt_color = rt_refl.rgb;
+            }
+            else
+            {
+                glossenv = mix(glossenv, rt_refl.rgb, rt_refl.a);
+            }
+        }
+#endif
 
         adjustIrradiance(irradiance, ambocc);
 
@@ -276,6 +330,79 @@ void main()
    }
 
     //color.r = classic_mode > 0 ? 1.0 : 0.0;
+#ifdef SOFTEN_RT_REFLECTION
+    if (rt_glossy_reflections == 3 || rt_glossy_reflections == 4)
+    {
+        // probe: green where the reflection ray hit something, red where it missed (the pixels that were traced only; 4 traces every gloss)
+        if (dbg_trace != 0)
+        {
+            color.rgb = dbg_trace == 2 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        }
+    }
+    else if (rt_glossy_reflections == 12)
+    {
+        if (dbg_branch == 1)
+        {
+            color.rgb = vec3(BRDF(clamp(dot(gb.normal, -normalize(pos.xyz)), 0.0, 1.0), 0.98), 0.0);       // probe: the BRDF lookup at roughness argument 0.98 (the mirror asks for 1.0)
+        }
+    }
+    else if (rt_glossy_reflections == 13)
+    {
+        if (dbg_branch == 1)
+        {
+            color.rgb = vec3(BRDF(clamp(dot(gb.normal, -normalize(pos.xyz)), 0.0, 1.0), 0.5), 0.0);        // probe: the BRDF lookup at roughness argument 0.5
+        }
+    }
+    else if (rt_glossy_reflections == 10)
+    {
+        if (dbg_branch == 1)
+        {
+            color.rgb = dbg_radiance;
+        }
+    }
+    else if (rt_glossy_reflections == 11)
+    {
+        if (dbg_branch == 1)
+        {
+            color.rgb = vec3(dbg_brdf, 0.0);          // probe: the BRDF lookup's two terms (scale red, bias green)
+        }
+    }
+    else if (rt_glossy_reflections == 9)
+    {
+        if (dbg_branch == 1)
+        {
+            color.rgb = dbg_orm;                    // probe: occlusion (red), roughness (green), metallic (blue) of the PBR path pixels
+        }
+    }
+    else if (rt_glossy_reflections == 8)
+    {
+        // probe: the base colour of the surface (the G-buffer's albedo) where something was traced, linear
+        if (dbg_trace != 0)
+        {
+            color.rgb = baseColor.rgb;
+        }
+    }
+    else if (rt_glossy_reflections == 7)
+    {
+        // probe: the colour the traced reflection found, at every traced pixel (the rest keeps the picture)
+        if (dbg_trace == 2)
+        {
+            color.rgb = dbg_rt_color;
+        }
+    }
+    else if (rt_glossy_reflections == 5)
+    {
+        color.rgb = dbg_branch != 0 ? vec3(dbg_gloss) : vec3(0.0, 0.0, 0.3);        // probe: the gloss as a grey level (PBR: 1 - roughness, legacy: the specular alpha)
+    }
+    else if (rt_glossy_reflections == 2)
+    {
+        color.rgb = dbg_branch == 1 ? vec3(1.0, 0.0, 1.0) : color.rgb;              // probe: every pixel of the PBR path
+    }
+    else if (rt_glossy_reflections == 6)
+    {
+        color.rgb = mix(color.rgb, dbg_branch == 1 ? vec3(1.0, 0.0, 0.0) : (dbg_branch == 2 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0)), 0.6);       // probe: red PBR path, green legacy path, blue the rest
+    }
+#endif
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;

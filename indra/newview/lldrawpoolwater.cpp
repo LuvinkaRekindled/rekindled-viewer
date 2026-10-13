@@ -238,7 +238,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
 
     shader->bindTexture(LLShaderMgr::WATER_EXCLUSIONTEX, &gPipeline.mWaterExclusionMask);
     {
-        // <FS> ray traced reflections on the water (rt-debug.txt waterrt, rtWaterReflection in shadowUtil.glsl)
+        // <FS> ray traced reflections on the water (rt-debug.txt waterrt, rtReflection in shadowUtil.glsl)
         static LLStaticHashedString rt_water_s("rt_water_reflections");
         shader->uniform1i(rt_water_s, LLVkMirror::rtWaterReflections());
     }

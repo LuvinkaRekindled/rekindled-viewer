@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file llvkrt.cpp
  * @brief Ray tracing scene: bottom-level structures per vertex/index buffer pair, a top-level structure per frame (see llvkrt.h and doc/vulkan/PLAN-rt-shadows.md)
  */
@@ -261,7 +261,8 @@ struct DebugSwitches
     bool mMats = false;             // records for the opaque geometries too, the material table is filled and traced against (needs LL_VK_RT_MATERIALS=1 at start-up)
     bool mDelta = true;             // the tables are written to the call's region as deltas (rows changed since the region was last written); off: all rows every call
     bool mTableVerify = false;      // after every table write compare the region with the kept rows (slow: reads video memory)
-    S32 mWaterRt = 1;               // live (waterrt=N, 1 by default; needs LL_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtWaterReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
+    S32 mGlossyRt = 0;              // live (glossyrt=N, 0 = off by default until it has been seen working; needs LL_VK_RT_MATERIALS=1): 1 ray traced reflections on glossy surfaces of the lighting pass (gloss 0.9 and up), 2 PBR path pixels magenta, 3 / 4 where it traced: hits green, misses red (4: every gloss), 5 gloss as grey, 6 which lighting path a pixel takes
+    S32 mWaterRt = 1;               // live (waterrt=N, 1 by default; needs LL_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
     S32 mView = 0;                  // live (view=N): the ray scene material debug view mode (RenderRTMaterialDebug) the viewer shows, 0 = the setting decides
     bool mGate = true;              // live (gate=0/1): avatars still loading and masked casters without texture data are not named (the viewer asks through LLVkMirror::rtLoadingGates)
     bool mBodyName = true;          // live (bodyname=0/1): the viewer names the body meshes of the last frames again before the scene call (LLVkMirror::rtBodyRename)
@@ -270,7 +271,7 @@ struct DebugSwitches
 };
 DebugSwitches sDbg;
 std::atomic<S32> sViewLive{0};
-std::atomic<S32> sWaterRtLive{0};
+std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkMirror)
 std::chrono::steady_clock::time_point sDbgRead;
 
@@ -330,6 +331,7 @@ void read_debug_switches()
                 else if (k == "skinfast") d.mSkinFast = v != 0;
                 else if (k == "view") d.mView = (S32)v;
                 else if (k == "waterrt") d.mWaterRt = (S32)v;
+                else if (k == "glossyrt") d.mGlossyRt = (S32)v;
                 else if (k == "gate") d.mGate = v != 0;
                 else if (k == "bodyname") d.mBodyName = v != 0;
                 else if (k == "skinreach") d.mSkinReach = (F32)std::max<long long>(1, v);
@@ -369,6 +371,7 @@ void read_debug_switches()
     }
     sViewLive.store(d.mView, std::memory_order_relaxed);
     sWaterRtLive.store(sMatsInit ? d.mWaterRt : 0, std::memory_order_relaxed);
+    sGlossyRtLive.store(sMatsInit ? d.mGlossyRt : 0, std::memory_order_relaxed);
     sGateLive.store(d.mGate, std::memory_order_relaxed);
     sBodyNameLive.store(d.mBodyName, std::memory_order_relaxed);
     sDbg = d;
@@ -1033,6 +1036,7 @@ struct Job
 
 } // anonymous namespace
 
+S32 glossyReflections() { return sGlossyRtLive.load(std::memory_order_relaxed); }
 S32 waterReflections() { return sWaterRtLive.load(std::memory_order_relaxed); }
 S32 debugView() { return sViewLive.load(std::memory_order_relaxed); }
 bool loadingGates() { return sGateLive.load(std::memory_order_relaxed); }
@@ -1152,7 +1156,10 @@ bool init(VkDescriptorSetLayout set_layout)
     sGeomBytes = sMatsInit ? kGeomBytesMats : kGeomBytesBase;
     sRegionBytes = sGeomBytes + (sMatsInit ? kMatBytes + kPinBytes : 0);
     sMaxRecords = (U32)(sGeomBytes / sizeof(GpuGeom));
-    sTableCalls = sMatsInit ? 3 : kCalls;
+    // One table region per scene call of a frame (up to kCalls). With the material tables on there used to be only 3: a frame with more scene calls (a mirror or other extra views: 3.5 calls per frame in a
+    // mirror room) made the calls from the fourth on rewrite the third call's region while the GPU still had to trace the earlier calls against it: records that do not match their structures,
+    // GPU hangs (device lost within seconds of entering the room, 2026-10-12). Cost: 6 x 5.6 MB per frame slot.
+    sTableCalls = kCalls;
     VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, Context::frameCount() + 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, Context::frameCount() + 1 } };
     VkDescriptorPoolCreateInfo pi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pi.maxSets = Context::frameCount() + 1;

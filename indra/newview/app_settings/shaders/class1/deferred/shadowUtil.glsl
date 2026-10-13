@@ -320,7 +320,7 @@ bool rtShadeSurface(uint record, uint prim, vec2 bary, float lod, out vec3 albed
 // A ray from origin (eye space) along dir (unit, eye space) against the scene. The hit is lit like a legacy surface of the deferred pass: (ambient + sun * N.L * shadow) * albedo + emissive,
 // the shadow from a ray towards the sun; fullbright surfaces show their albedo. Hits far away fade into fallback (the probe / sky colour already known for that direction).
 // Returns rgb and a = 1 for a hit, a = 0 for a miss (the caller keeps what it has).
-vec4 rtWaterReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback)
+vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback)
 {
     mat3 to_scene;
     vec3 camera;

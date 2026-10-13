@@ -939,6 +939,15 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     return std::string();
 }
 
+// <FS> ray traced reflections (rtReflection in shadowUtil.glsl): the programs that use it see them as the permutation LL_RT_REFLECTIONS. The device is not up yet when the water is configured
+// (LLVkMirror::rtShadowMode() still says 0), so the launcher's environment is the early answer: ray shadows on and the material table on.
+static bool rt_reflections_possible()
+{
+    const char* rt_env = getenv("LL_VK_RT_SHADOWS");
+    const char* rt_materials_env = getenv("LL_VK_RT_MATERIALS");
+    return rt_env && rt_env[0] && rt_env[0] != '0' && rt_materials_env && rt_materials_env[0] == '1';
+}
+
 bool LLViewerShaderMgr::loadShadersWater()
 {
     LL_PROFILE_ZONE_SCOPED;
@@ -969,10 +978,8 @@ bool LLViewerShaderMgr::loadShadersWater()
         gWaterProgram.mShaderFiles.clear();
         gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", GL_VERTEX_SHADER));
         gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterF.glsl", GL_FRAGMENT_SHADER));
-        // (the device is not up yet when the water is configured: LLVkMirror::rtShadowMode() still says 0; the launcher's environment is the early answer. The ray traced reflection (rtWaterReflection in shadowUtil.glsl) needs the scene and the material table; the program's own files only see the permutations, the global defines such as SUN_SHADOW reach the library files only)
-        const char* rt_env = getenv("LL_VK_RT_SHADOWS");
-        const char* rt_materials_env = getenv("LL_VK_RT_MATERIALS");
-        const bool rt_water_reflections_possible = use_sun_shadow && rt_env && rt_env[0] && rt_env[0] != '0' && rt_materials_env && rt_materials_env[0] == '1';
+        // (the device is not up yet when the water is configured: LLVkMirror::rtShadowMode() still says 0; the launcher's environment is the early answer. The ray traced reflection (rtReflection in shadowUtil.glsl) needs the scene and the material table; the program's own files only see the permutations, the global defines such as SUN_SHADOW reach the library files only)
+        const bool rt_water_reflections_possible = use_sun_shadow && rt_reflections_possible();
         gWaterProgram.clearPermutations();
         if (rt_water_reflections_possible)
         {
@@ -2195,6 +2202,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (use_sun_shadow)
         {
             gDeferredSoftenProgram.addPermutation("HAS_SUN_SHADOW", "1");
+            if (rt_reflections_possible())
+            {
+                gDeferredSoftenProgram.addPermutation("LL_RT_REFLECTIONS", "1");        // glossy surfaces trace their reflection (softenLightF.glsl)
+            }
         }
 
         if (gSavedSettings.getBOOL("RenderDeferredSSAO"))
