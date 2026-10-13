@@ -213,6 +213,190 @@ float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
     return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
 }
 
+// <FS> Ray traced reflections (doc/vulkan/PLAN-rt-materials.md, stage M4): one ray from a surface into the ray scene, the hit shaded from the geometry records and the material table.
+// Used first by the water (waterF.glsl, permutation LL_RT_REFLECTIONS). They live here because the scene declarations (the ll_rt_* block, with the function ll_rt_slot) are added to every
+// file that mentions ll_rt_tlas, and two files of one program may not both have them.
+vec3 rtSrgbToLinear(vec3 c)
+{
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+// What the surface of a hit looks like: linear albedo, emissive, the (smooth or flat) normal in object space, alpha for the mask test. false: the record cannot be read.
+// The same decode as the material debug view (rtMaterialDebugF.glsl dbgSurface), which is the proof that records, uvs, colours and slots are right.
+bool rtShadeSurface(uint record, uint prim, vec2 bary, float lod, out vec3 albedo, out vec3 emissive, out vec3 n_obj, out float alpha, out bool fullbright)
+{
+    albedo = vec3(0.5);
+    emissive = vec3(0.0);
+    n_obj = vec3(0.0, 1.0, 0.0);
+    alpha = 1.0;
+    fullbright = false;
+    if (record == 0u || record >= ll_rt_geoms.g[0].first)
+    {
+        return false;
+    }
+    LLRtGeom g = ll_rt_geoms.g[record];
+    if ((g.flags & 256u) != 0u || (g.indices.x == 0u && g.indices.y == 0u) || (g.positions.x == 0u && g.positions.y == 0u))
+    {
+        return false;
+    }
+    vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
+    LLRtIndices ib = LLRtIndices(g.indices);
+    uint ix[3];
+    for (uint k = 0u; k < 3u; ++k)
+    {
+        uint i = g.first + prim * 3u + k;
+        uint word = ib.w[i >> 1];
+        ix[k] = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+    }
+    LLRtPositions pb = LLRtPositions(g.positions);
+    vec3 p0 = pb.v[ix[0]].xyz, p1 = pb.v[ix[1]].xyz, p2 = pb.v[ix[2]].xyz;
+    n_obj = normalize(cross(p1 - p0, p2 - p0));
+    if ((g.flags & 1024u) != 0u)
+    {
+        LLRtNormals nb = LLRtNormals(g.normals);
+        vec3 ns = nb.n[ix[0]].xyz * w.x + nb.n[ix[1]].xyz * w.y + nb.n[ix[2]].xyz * w.z;
+        n_obj = dot(ns, ns) > 1e-8 ? normalize(ns) : n_obj;
+    }
+    uint mat_id = g.material;
+    if (mat_id == 0u || mat_id >= 16384u)
+    {
+        return true;                    // no material: a neutral grey
+    }
+    LLRtMaterial m = LLRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id];
+    uint mflags = floatBitsToUint(m.params.z);
+    vec2 uv = vec2(0.0);
+    if ((g.flags & 8u) != 0u)
+    {
+        LLRtTexcoords tc = LLRtTexcoords(g.texcoords);
+        uv = tc.t[ix[0]] * w.x + tc.t[ix[1]] * w.y + tc.t[ix[2]] * w.z;
+        uv = m.uv0 * uv.x + m.uv1 * uv.y + m.uv2;
+    }
+    uint tex_index = 0u;
+    if ((mflags & 16u) != 0u)
+    {
+        tex_index = floatBitsToUint(pb.v[ix[0]].w) & 3u;
+    }
+    uint pair = (tex_index < 2u) ? m.slots.x : m.slots.y;
+    uint slot = ll_rt_slot((pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu);
+    vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod);
+    vec4 vcol = vec4(1.0);
+    if ((g.flags & 16u) != 0u)
+    {
+        LLRtColors col = LLRtColors(g.colors);
+        vcol = (unpackUnorm4x8(col.c[ix[0]]) * w.x + unpackUnorm4x8(col.c[ix[1]]) * w.y + unpackUnorm4x8(col.c[ix[2]]) * w.z);
+    }
+    if ((mflags & 64u) != 0u)
+    {
+        vcol.a = 1.0;                   // the legacy materials passes test the texture alpha alone
+    }
+    alpha = tex.a * vcol.a * m.color.a;
+    if ((mflags & 4u) != 0u)
+    {
+        alpha = (alpha >= m.emissive.w) ? 1.0 : 0.0;        // alpha masked: the draw's own cutoff
+    }
+    if ((mflags & 2u) != 0u)
+    {
+        albedo = rtSrgbToLinear(tex.rgb) * rtSrgbToLinear(vcol.rgb) * m.color.rgb;     // glTF: the factor is linear
+        vec3 emissive_tex = vec3(1.0);
+        uint emissive_pin = m.slots2.y & 0xFFFFu;
+        if (emissive_pin != 0u)
+        {
+            uint emissive_slot = ll_rt_slot(emissive_pin);
+            if (emissive_slot != 0u)
+            {
+                emissive_tex = rtSrgbToLinear(textureLod(ll_rt_tex[nonuniformEXT(emissive_slot)], uv, lod).rgb);
+            }
+        }
+        emissive = m.emissive.xyz * emissive_tex;
+    }
+    else
+    {
+        albedo = rtSrgbToLinear(tex.rgb * vcol.rgb * m.color.rgb);                     // legacy: texture and vertex colour are sRGB values
+    }
+    fullbright = (mflags & 1u) != 0u;
+    return true;
+}
+
+// A ray from origin (eye space) along dir (unit, eye space) against the scene. The hit is lit like a legacy surface of the deferred pass: (ambient + sun * N.L * shadow) * albedo + emissive,
+// the shadow from a ray towards the sun; fullbright surfaces show their albedo. Hits far away fade into fallback (the probe / sky colour already known for that direction).
+// Returns rgb and a = 1 for a hit, a = 0 for a miss (the caller keeps what it has).
+vec4 rtWaterReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback)
+{
+    mat3 to_scene;
+    vec3 camera;
+    rtSceneFrame(to_scene, camera);
+    float tmax = 1500.0;
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x03, to_scene * origin + camera, 0.02, to_scene * dir, tmax);
+    float lod_start = clamp(0.5 * log2(max(length(origin), 1.0)) - 1.0, 0.0, 4.0);
+    uint steps = 0u;
+    while (rayQueryProceedEXT(rq))
+    {
+        if (++steps > 64u)
+        {
+            rayQueryTerminateEXT(rq);
+            break;
+        }
+        if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
+        {
+            // a masked structure: its own alpha decides
+            uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
+            vec3 a, e, n;
+            float alpha;
+            bool fb;
+            if (rtShadeSurface(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod_start, a, e, n, alpha, fb))
+            {
+                if (alpha >= 0.5)
+                {
+                    rayQueryConfirmIntersectionEXT(rq);
+                }
+            }
+            else
+            {
+                rayQueryConfirmIntersectionEXT(rq);
+            }
+        }
+    }
+    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT)
+    {
+        return vec4(0.0);
+    }
+    float t = rayQueryGetIntersectionTEXT(rq, true);
+    uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, true));
+    float lod = clamp(0.5 * log2(max(t + length(origin), 1.0)) - 1.0, 0.0, 4.0);
+    vec3 albedo, emissive, n_obj;
+    float alpha;
+    bool fullbright;
+    if (!rtShadeSurface(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)), rayQueryGetIntersectionBarycentricsEXT(rq, true), lod, albedo, emissive, n_obj, alpha, fullbright))
+    {
+        return vec4(0.0);               // a record that cannot be read: not a hit
+    }
+    mat4x3 w2o = rayQueryGetIntersectionWorldToObjectEXT(rq, true);
+    vec3 n_eye = normalize(normalize(n_obj * mat3(w2o)) * to_scene);
+    if (dot(n_eye, dir) > 0.0)
+    {
+        n_eye = -n_eye;                 // two sided
+    }
+    vec3 hit_pos = origin + dir * t;
+    vec3 color;
+    if (fullbright)
+    {
+        color = albedo + emissive;
+    }
+    else
+    {
+        float nl = clamp(dot(n_eye, sun_dir), 0.0, 1.0);
+        float sh = 0.0;
+        if (nl > 0.0)
+        {
+            sh = rtSunRay(hit_pos + n_eye * (0.02 + 0.0006 * length(hit_pos)), sun_dir, pos_screen, lod);
+        }
+        color = (amblit_linear + nl * sh * sunlit_linear) * albedo + emissive;
+    }
+    float fade = smoothstep(250.0, 1200.0, t);
+    return vec4(mix(color, fallback, fade), 1.0);
+}
+
 float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
 {
     if (dot(norm, light_dir) <= 0.0)
