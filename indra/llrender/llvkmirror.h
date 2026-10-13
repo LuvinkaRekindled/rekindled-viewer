@@ -203,6 +203,9 @@ namespace LLVkMirror
     // ---- ray query shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md) ----
     // 0 = off (or the device cannot), 1 = ray query shadows replace the cascades, 2 = split screen, 3 = disagreement map. Fixed for the run; the shader programs are compiled for it.
     U32 rtShadowMode();
+    // live switches (rt-debug.txt gate=, bodyname=), 1 by default: do not trace avatars still loading and masked casters whose texture has no data; name the body meshes of the last frames again
+    bool rtLoadingGates();
+    bool rtBodyRename();
     // Builds the scene the shadow passes of this frame named (their casters) for the camera view: bottom-level structures as the budget allows, then the top-level structure in
     // eye space. Call before the lighting that samples the sun shadow. view: the camera's view matrix, column-major.
     struct RtSceneArgs { F32 mView[16] = {}; };

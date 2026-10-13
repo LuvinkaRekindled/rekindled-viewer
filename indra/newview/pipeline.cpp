@@ -4730,7 +4730,7 @@ static bool rt_texture_ready(LLViewerTexture* t)
 
 static bool rt_textures_ready(const LLDrawInfo& p, bool batch_textures)
 {
-    if (LLVkMirror::rtShadowMode() != 1)
+    if (LLVkMirror::rtShadowMode() != 1 || !LLVkMirror::rtLoadingGates())
     {
         return true;
     }
@@ -12049,13 +12049,16 @@ static U32 rt_avatar_kind(LLVOAvatar* avatar)
     if (appearance == LLVOAvatar::AOA_JELLYDOLL) kind |= 8;
     if (appearance == LLVOAvatar::AOA_INVISIBLE) kind |= 16;
     if (avatar->isTooSlow()) kind |= 32;
-    if (!avatar->isFullyLoaded()) kind |= 64;      // still loading in: nothing is traced for it until it is (its shape and textures are not final)
+    if (!avatar->isFullyLoaded() && LLVkMirror::rtLoadingGates()) kind |= 64;      // still loading in: nothing is traced for it until it is (its shape and textures are not final)
     return kind;
 }
 
 static void rt_name_rigged_main_view()
 {
-    LLViewerJointMesh::noteRecentBodyMeshes();      // the body meshes drawn after the lighting (hair, skirt, eyelashes) would be named a frame late otherwise
+    if (LLVkMirror::rtBodyRename())
+    {
+        LLViewerJointMesh::noteRecentBodyMeshes();      // the body meshes drawn after the lighting (hair, skirt, eyelashes) would be named a frame late otherwise
+    }
     if (rt_materials_on())
     {
         // debug aid: which pass types hold the viewer's own avatar's rigged draws (about once in 600 frames), to see what the naming below leaves out

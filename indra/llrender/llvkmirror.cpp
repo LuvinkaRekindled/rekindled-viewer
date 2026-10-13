@@ -29,6 +29,8 @@ bool LLVkMirror::shadowAlphaPacketsAvailable() { return false; }
 void LLVkMirror::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
 void LLVkMirror::upscale(const UpscaleArgs&) {}
 U32 LLVkMirror::rtShadowMode() { return 0; }
+bool LLVkMirror::rtLoadingGates() { return false; }
+bool LLVkMirror::rtBodyRename() { return false; }
 void LLVkMirror::rtScene(const RtSceneArgs&) {}
 void LLVkMirror::presentFrame() {}
 void LLVkMirror::shutdown() {}
@@ -1259,6 +1261,16 @@ U32 LLVkMirror::rtShadowMode()
     // known once the device exists (the shaders are compiled after that); the scene is built only when the device was created with ray queries
     const LLVk::Capabilities& caps = LLVk::Context::instance().getCaps();
     return sMirror.mReady && caps.mRt.mEnabled && caps.mRt.mUsable ? LLVk::Rt::shadowMode() : 0;
+}
+
+bool LLVkMirror::rtLoadingGates()
+{
+    return rtShadowMode() != 0 && LLVk::Rt::loadingGates();
+}
+
+bool LLVkMirror::rtBodyRename()
+{
+    return rtShadowMode() != 0 && LLVk::Rt::bodyRename();
 }
 
 void LLVkMirror::rtScene(const RtSceneArgs& args)

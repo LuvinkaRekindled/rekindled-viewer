@@ -78,6 +78,19 @@ extern PFNGLVERTEXBLENDARBPROC glVertexBlendARB;
 //-----------------------------------------------------------------------------
 
 
+// the body meshes the main view drew lately (main thread, ray scene naming): the avatar is held while a mesh is in the list, and a mesh that is destroyed (an avatar that rebuilds its
+// skeleton frees and remakes its meshes while it lives on) takes itself out in its destructor: no entry can point at a freed mesh
+namespace
+{
+struct BodyMeshRecord
+{
+    LLPointer<LLVOAvatar> mAvatar;
+    U32 mFrame = 0;
+};
+auto& sRecentBodyMeshes = *new std::unordered_map<LLViewerJointMesh*, BodyMeshRecord>();     // never destroyed: mesh destructors may run at exit
+constexpr U32 kBodyMeshMemory = 2;      // frames a mesh is named again after the last time the main view drew it (the meshes are drawn every frame: a short memory keeps stale data out)
+}
+
 //-----------------------------------------------------------------------------
 // LLViewerJointMesh()
 //-----------------------------------------------------------------------------
@@ -94,6 +107,7 @@ LLViewerJointMesh::LLViewerJointMesh()
 //-----------------------------------------------------------------------------
 LLViewerJointMesh::~LLViewerJointMesh()
 {
+    sRecentBodyMeshes.erase(this);
 }
 
 const S32 NUM_AXES = 3;
@@ -210,17 +224,6 @@ static bool rt_body_log_wanted()
     return on;
 }
 
-// the body meshes the main view drew lately (main thread): the avatar is held so that the mesh cannot be freed under the record
-namespace
-{
-struct BodyMeshRecord
-{
-    LLPointer<LLVOAvatar> mAvatar;
-    U32 mFrame = 0;
-};
-std::unordered_map<LLViewerJointMesh*, BodyMeshRecord> sRecentBodyMeshes;
-constexpr U32 kBodyMeshMemory = 2;      // frames a mesh is named again after the last time the main view drew it (the meshes are drawn every frame: a short memory keeps stale data out)
-}
 
 void LLViewerJointMesh::noteRecentBodyMeshes()
 {
@@ -294,6 +297,10 @@ void LLViewerJointMesh::noteRayShadow()
     {
         return;
     }
+    if (!mValid || !mVisible)
+    {
+        return;                             // not the level of detail in use (drawShape draws nothing for it): its offsets into the shared face buffer belong to another mesh by now
+    }
     LLVertexBuffer* buff = mFace ? mFace->getVertexBuffer() : nullptr;
     LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;
     if (!buff || !drawable || !mMesh || !buff->getGLBuffer() || !buff->getGLIndices() || buff->getIndicesType() != GL_UNSIGNED_SHORT
@@ -302,7 +309,7 @@ void LLViewerJointMesh::noteRayShadow()
         return;
     }
     LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(drawable->getVObj().get());
-    if (!avatar || !avatar->isFullyLoaded())
+    if (!avatar || (!avatar->isFullyLoaded() && LLVkMirror::rtLoadingGates()))
     {
         return;                             // (an avatar still loading in is not traced until it is loaded)
     }
