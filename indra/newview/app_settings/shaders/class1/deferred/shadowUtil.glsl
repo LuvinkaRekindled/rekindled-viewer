@@ -191,6 +191,10 @@ bool rtRayOk(vec3 o, vec3 d)
     return !(any(isnan(o)) || any(isinf(o)) || any(isnan(d)) || any(isinf(d)));
 }
 
+// Test switch of the traced glossy reflection (rt-debug.txt glossyrt=20 / 21 / 22, set by the soften pass only; 0 everywhere else): how a hit is lit by the sun. 1: always sunlit (no shadow ray),
+// 2: the shadow ray starts 0.15 m off the surface (instead of 0.02 m), 3: a reflection ray may look at 1024 masked candidates (instead of 64) before it gives up.
+uniform int rt_hit_shadow_variant;
+
 float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
 {
     mat3 to_scene;
@@ -351,7 +355,7 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
     uint steps = 0u;
     while (rayQueryProceedEXT(rq))
     {
-        if (++steps > 64u)
+        if (++steps > (rt_hit_shadow_variant == 3 ? 1024u : 64u))
         {
             rayQueryTerminateEXT(rq);
             break;
@@ -408,7 +412,14 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
         float sh = 0.0;
         if (nl > 0.0)
         {
-            sh = rtSunRay(hit_pos + n_eye * (0.02 + 0.0006 * length(hit_pos)), sun_dir, pos_screen, lod);
+            if (rt_hit_shadow_variant == 1)
+            {
+                sh = 1.0;
+            }
+            else
+            {
+                sh = rtSunRay(hit_pos + n_eye * ((rt_hit_shadow_variant == 2 ? 0.15 : 0.02) + 0.0006 * length(hit_pos)), sun_dir, pos_screen, lod);
+            }
         }
         color = (amblit_linear + nl * sh * sunlit_linear) * albedo + emissive;
     }
