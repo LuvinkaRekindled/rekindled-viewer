@@ -249,7 +249,8 @@ struct DebugSwitches
     bool mVerify = false;           // every 120 scene calls: make the whole cached scene again from the groups and compare it with the one kept up to date (log line "scene cache check")
     U32 mSkinPeriodMax = 4;         // avatars farther than LL_VK_RT_SKIN_NEAR (8 m) are refreshed (skinned and refitted) every 2..this many viewer frames, by distance (1 = every frame for all)
     bool mPreflush = true;          // before the builds and the skinning: record the queued writes of video-memory buffers (they are only recorded when a draw reads the buffer, which a build does not)
-    bool mAvatarLog = false;        // one line per avatar instance of every scene call into <work>/rt-avatars.log: how old its data is, why it was not refreshed
+    bool mAvatarLog = false;
+    bool mAvatarKeepOff = false;       // live (avatarkeep=1): an avatar structure is made only from the draws named in this very frame (the old behaviour: the body vanished from the traced reflection on the frames without the naming pass)        // one line per avatar instance of every scene call into <work>/rt-avatars.log: how old its data is, why it was not refreshed
     bool mSkinProbe = false;        // about every 90 scene calls: run the skin jobs again on their own, read a few results back and log their bounding boxes
     bool mRigged = true;            // rigged opaque casters (avatar attachments) in the scene, skinned by the compute pass
     bool mSizeProbe = false;        // log what the new group structures would need with other build flags (no behaviour change)
@@ -346,6 +347,7 @@ void read_debug_switches()
                 else if (k == "rigged") d.mRigged = v != 0;
                 else if (k == "skinprobe") d.mSkinProbe = v != 0;
                 else if (k == "avlog") d.mAvatarLog = v != 0;
+                else if (k == "avatarkeep") d.mAvatarKeepOff = v != 0;
                 else if (k == "preflush") d.mPreflush = v != 0;
                 else if (k == "verify") d.mVerify = v != 0;
                 else if (k == "skinperiod") d.mSkinPeriodMax = (U32)std::max<long long>(1, v);
@@ -2446,9 +2448,24 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         U64 total_verts = 0, chunks_needed = 0;
         for (SkinDraw& d : a.mDraws)
         {
-            if (d.mNotedTag != av_tag)
+            // A draw is named by the passes that run in a frame, and not every pass runs every frame (the probe faces and cascades follow their own cadence): a structure made only from the draws
+            // named THIS frame lost its opaque body and clothes on the frames whose passes did not name them (the body vanished from the traced reflection every few frames). A draw named
+            // within the last few frames stays in the structure over its last skinned output (its palette is the memory of the frame it was named in: only draws named now are skinned again).
+            const bool fresh = d.mNotedTag == av_tag;
+            if (!fresh && (d.mDead || !d.mNotedTag || av_tag > d.mNotedTag + std::max<U64>(1, sDbg.mKeep) || !d.mSkinnedTag || !d.mOut.valid() || sDbg.mAvatarKeepOff))
             {
                 continue;
+            }
+            if (!fresh)
+            {
+                // a draw named some frames ago: its buffers must still be the ones it was named with (a buffer that was made again, moved or given up has a new epoch or address: the avatar's
+                // meshes are rebuilt while it loads, and a structure over indices of a range that now holds something else is a spike in the shadow)
+                LLVkGL::BufferInfo vi_now, ii_now;
+                if (!LLVkGL::getBufferInfo(d.mVb, vi_now) || !LLVkGL::getBufferInfo(d.mIb, ii_now) || vi_now.mEpoch != d.mVi.mEpoch || ii_now.mEpoch != d.mIi.mEpoch
+                    || vi_now.mAddress != d.mVi.mAddress || ii_now.mAddress != d.mIi.mAddress || vi_now.mSize != d.mVi.mSize || ii_now.mSize != d.mIi.mSize)
+                {
+                    continue;
+                }
             }
             // the ranges must lie inside the buffers as they are now
             const U64 weight_stride = d.mMode == 0 ? 16 : (d.mMode == 1 ? 4 : 0);
@@ -2459,8 +2476,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 continue;
             }
             cur.push_back(&d);
-            total_verts += d.mVertexCount;
-            chunks_needed += (d.mVertexCount + kSkinChunkVerts - 1) / kSkinChunkVerts;
+            if (fresh)
+            {
+                total_verts += d.mVertexCount;
+                chunks_needed += (d.mVertexCount + kSkinChunkVerts - 1) / kSkinChunkVerts;
+            }
         }
         if (sDbg.mAvatarLog && a.mSelf)
         {
@@ -2551,7 +2571,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         {
             LLVkGL::markBufferUsed(d->mVb);         // the compute pass and the build read them when the GPU gets here
             LLVkGL::markBufferUsed(d->mIb);
-            if (d->mSkinnedTag != av_tag)
+            if (d->mNotedTag == av_tag && d->mSkinnedTag != av_tag)
             {
                 d->mSkinnedTag = av_tag;
                 const U32 ji = (U32)skin_jobs.size();
@@ -3576,6 +3596,16 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         r.mCall = call;
         r.mSceneCall = sSceneCalls;
         r.mInstances = (U32)instances.size();
+        if (sDbg.mAvatarLog)
+        {
+            static FILE* inst_log = fopen("<work>/rt-avatars.log", "ab");
+            if (inst_log)
+            {
+                const long long wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                fprintf(inst_log, "%lld frame %llu SCENEINST %u instances %zu groups %zu records %u\n", wall, (unsigned long long)frame_now, call, instances.size(), sGroups.size(), records);
+                fflush(inst_log);
+            }
+        }
         r.mCapacity = tlas.mCapacity;
         r.mJobs = (U32)jobs.size();
         r.mSkinChunks = (U32)skin_chunks.size();
