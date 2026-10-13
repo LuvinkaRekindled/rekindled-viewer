@@ -1299,6 +1299,7 @@ bool Renderer::init()
     mReady = true;
     tracyInit();
     Context::instance().setDrawDescriber([](U64 serial) { return Renderer::instance().describeDraw(serial); });
+    Context::instance().setBindlessAudit([]() { return Renderer::instance().auditBindless(); });
     LL_INFOS("Vulkan") << "Vulkan renderer ready" << LL_ENDL;
     return true;
 }
@@ -2590,6 +2591,15 @@ U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImage
         }
     }
     BindlessSlot& s = tbl.mSlots[slot];
+    s.mDbgW = image->mExtent.width;
+    s.mDbgH = image->mExtent.height;
+    s.mDbgMips = image->mMipLevels;
+    s.mDbgLayers = image->mLayers;
+    s.mDbgFormat = (U32)image->mFormat;
+    s.mDbgLayout = (U32)image->mLayout;
+    s.mDbgImage = (U64)image->mImage;
+    s.mDbgZero = image->mZeroOnFirstUse;
+    s.mDbgOwned = image->mOwner != nullptr;
     if (s.mPins && s.mInfo.imageView != image->mView)
     {
         tbl.mPinLog.push_back(slot);
@@ -3266,6 +3276,62 @@ VkDescriptorSet Renderer::uboSet()
     mLastUboSet = set;
     mUboKeyDirty = false;
     return set;
+}
+
+std::string Renderer::auditBindless() const
+{
+    // Slots whose image was destroyed are normal until the sweep gives them back; the dangerous ones were USED after their image was destroyed (the destroy call is deferred until the frame
+    // that recorded it has completed, so a use in the same frame is fine). Also the newest slots (a texture that just arrived) with what they hold.
+    const Context& ctx = Context::instance();
+    const U64 frame = ctx.getFrameNumber();
+    std::string out;
+    unsigned stale = 0, used_after = 0, recent = 0;
+    char buf[260];
+    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
+    {
+        const BindlessTable& tbl = mBindlessTbl[t];
+        for (U32 slot = 1; slot < (U32)tbl.mSlots.size(); ++slot)
+        {
+            const BindlessSlot& s = tbl.mSlots[slot];
+            if (!s.mActive)
+            {
+                continue;
+            }
+            if (s.mLastUsed + 3 >= frame)
+            {
+                ++recent;
+            }
+            U64 destroyed_at = 0;
+            if (ctx.destroyedViewFrame(s.mKey.mViewId, destroyed_at))
+            {
+                ++stale;
+                if (s.mLastUsed > destroyed_at && ++used_after <= 24)
+                {
+                    snprintf(buf, sizeof(buf), "[USED AFTER DESTROY: table %u slot %u view id %llu destroyed %lld frames ago, last used %lld frames ago, pins %u] ", t, slot, (unsigned long long)s.mKey.mViewId,
+                             (long long)(frame - destroyed_at), (long long)(frame - s.mLastUsed), s.mPins);
+                    out += buf;
+                }
+            }
+        }
+    }
+    const BindlessTable& t0 = mBindlessTbl[0];
+    unsigned shown = 0;
+    for (U32 slot = (U32)t0.mSlots.size(); slot-- > 1 && shown < 10; )
+    {
+        const BindlessSlot& s = t0.mSlots[slot];
+        if (s.mActive)
+        {
+            ++shown;
+            U64 destroyed_at = 0;
+            const bool dead = ctx.destroyedViewFrame(s.mKey.mViewId, destroyed_at);
+            snprintf(buf, sizeof(buf), "[newest slot %u: view id %llu view handle %llx image %llx %ux%u format %u mips %u layers %u layout %u zero-first %d view-of-owner %d, last used %lld frames ago, %s] ", slot, (unsigned long long)s.mKey.mViewId,
+                     (unsigned long long)(uintptr_t)s.mInfo.imageView, (unsigned long long)s.mDbgImage, s.mDbgW, s.mDbgH, s.mDbgFormat, s.mDbgMips, s.mDbgLayers, s.mDbgLayout, s.mDbgZero ? 1 : 0, s.mDbgOwned ? 1 : 0,
+                     (long long)(frame - s.mLastUsed), dead ? "image DESTROYED" : "image alive");
+            out += buf;
+        }
+    }
+    snprintf(buf, sizeof(buf), "%u active slots point at a destroyed image (%u of them used after it was destroyed), %u slots used in the last 3 frames, table 0 has %zu slots; ", stale, used_after, recent, t0.mSlots.size());
+    return std::string(buf) + out;
 }
 
 // One GPU timestamp after a draw, described well enough to find the draw again: when a frame hangs the watchdog (Context::beginFrame) names the first draw whose stamp never

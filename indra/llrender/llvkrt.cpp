@@ -1059,6 +1059,14 @@ bool active()
 // the flight recorder's report (Context::setHangReporter): the latest scene calls, oldest first; the newest one is also checked against the structures that exist now
 void report_recent_scene_calls()
 {
+    for (U32 i = 0; i < Context::frameCount(); ++i)
+    {
+        const Tlas& t = sTlas[i];
+        LL_WARNS("VkRt") << "ray scene buffers of frame slot " << i << " (device address, size): instances 0x" << std::hex << (unsigned long long)t.mInstances.mAddress << std::dec << " " << (unsigned long long)t.mInstances.mSize
+                         << ", table 0x" << std::hex << (unsigned long long)t.mTable.mAddress << std::dec << " " << (unsigned long long)t.mTable.mSize
+                         << ", skin 0x" << std::hex << (unsigned long long)t.mSkin.mAddress << std::dec << " " << (unsigned long long)t.mSkin.mSize
+                         << ", storage 0x" << std::hex << (unsigned long long)t.mStorage.mAddress << std::dec << " " << (unsigned long long)t.mStorage.mSize << LL_ENDL;
+    }
     std::unordered_set<U64> known;
     for (const auto& kv : sBlas)
     {
