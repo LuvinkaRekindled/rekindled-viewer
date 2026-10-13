@@ -370,8 +370,9 @@ void read_debug_switches()
         LL_INFOS("VkRt") << "debug switches: gate (loading avatars and textures) " << d.mGate << ", bodyname " << d.mBodyName << ", skin reach " << d.mSkinReach << " m" << LL_ENDL;
     }
     sViewLive.store(d.mView, std::memory_order_relaxed);
-    sWaterRtLive.store(sMatsInit ? d.mWaterRt : 0, std::memory_order_relaxed);
-    sGlossyRtLive.store(sMatsInit ? d.mGlossyRt : 0, std::memory_order_relaxed);
+    // (they read the material table: with the table off live (mats=0) a trace would read material rows through a null address and lose the device)
+    sWaterRtLive.store(sMatsInit && d.mMats ? d.mWaterRt : 0, std::memory_order_relaxed);
+    sGlossyRtLive.store(sMatsInit && d.mMats ? d.mGlossyRt : 0, std::memory_order_relaxed);
     sGateLive.store(d.mGate, std::memory_order_relaxed);
     sBodyNameLive.store(d.mBodyName, std::memory_order_relaxed);
     sDbg = d;
@@ -2698,6 +2699,22 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     const U32 region_index = ctx.getFrameSlot() * kCalls + table_call;
     U32 records = 0;
     sTableOffset = (U32)(table_call * sRegionBytes);
+    if (sDbg.mAvatarLog)
+    {
+        // which scene call is which (the main view, a probe face, a snapshot): the camera of every call, in the avatar log's file (rt-avatars.log, "SCENECALL" lines)
+        static FILE* call_log = fopen("D:/claude/rt-avatars.log", "ab");
+        if (call_log)
+        {
+            const long long wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            float cam_here[3];
+            for (int i = 0; i < 3; ++i)
+            {
+                cam_here[i] = -(view[i * 4 + 0] * view[12] + view[i * 4 + 1] * view[13] + view[i * 4 + 2] * view[14]);
+            }
+            fprintf(call_log, "%lld frame %llu SCENECALL %u camera %.2f %.2f %.2f forward %.3f %.3f %.3f\n", wall, (unsigned long long)frame_now, call, cam_here[0], cam_here[1], cam_here[2], -view[2], -view[6], -view[10]);
+            fflush(call_log);
+        }
+    }
 
     // the camera in the scene's space, and the origin the instance transforms are relative to (a point on a 32 m grid near the camera, moved when the camera gets 48 m away: close to
     // the camera the numbers stay small, and everything is made again only when it moves)

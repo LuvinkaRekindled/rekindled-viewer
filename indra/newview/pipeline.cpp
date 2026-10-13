@@ -12543,7 +12543,16 @@ void LLPipeline::renderDeferredLighting()
             {
                 // <FS> ray traced reflections on glossy surfaces (rt-debug.txt glossyrt, softenLightF.glsl)
                 static LLStaticHashedString rt_glossy_s("rt_glossy_reflections");
-                soften_shader.uniform1i(rt_glossy_s, LLVkMirror::rtGlossyReflections());
+                S32 rt_glossy_mode = LLVkMirror::rtGlossyReflections();
+                S32 rt_hit_shadow_variant = 0;
+                if (rt_glossy_mode >= 20 && rt_glossy_mode <= 22)       // 20 / 21 / 22: the glossy mode 1 with a test variant of how a hit is lit (shadowUtil.glsl rt_hit_shadow_variant)
+                {
+                    rt_hit_shadow_variant = rt_glossy_mode - 19;
+                    rt_glossy_mode = 1;
+                }
+                static LLStaticHashedString rt_hit_variant_s("rt_hit_shadow_variant");
+                soften_shader.uniform1i(rt_glossy_s, rt_glossy_mode);
+                soften_shader.uniform1i(rt_hit_variant_s, rt_hit_shadow_variant);
             }
 
             {
