@@ -368,7 +368,8 @@ vec3 hue_to_rgb(float hue)
 
 vec2 BRDF(float NoV, float roughness)
 {
-    return texture(brdfLut, vec2(NoV, roughness)).rg;
+    // <FS> keep both coordinates off the very edge of the lookup texture: a surface facing the camera head-on (a mirror: NoV exactly 1.0) read (0, 0) there and its reflection came out black
+    return texture(brdfLut, clamp(vec2(NoV, roughness), vec2(0.004), vec2(0.996))).rg;
 }
 
 // set colorDiffuse and colorSpec to the results of GLTF PBR style IBL

@@ -3844,6 +3844,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         if (!skin_chunks.empty())
         {
             // the compute pass writes the vertices the builds below read (and the alpha test reads later): one dispatch, every job of the call
+            ctx.gpuStamp(Context::stampTag("rt scene skin"));        // a fault between this stamp and "rt scene builds" is in the skinning dispatch
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sSkinPipe.mPipe);
             const U32 push[4] = { (U32)skin_jobs_address, (U32)(skin_jobs_address >> 32), (U32)skin_chunks_address, (U32)(skin_chunks_address >> 32) };
             vkCmdPushConstants(cmd, sSkinPipe.mLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push);
