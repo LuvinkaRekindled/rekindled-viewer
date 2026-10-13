@@ -13494,8 +13494,14 @@ static bool rt_sun_cascades_unused()
     return !keep && (mode == 1 || mode == 4 || mode == 5);
 }
 
+S32 LLPipeline::sRtProbePass = -1;
+
 static U32 shadow_pass_index()
 {
+    if (LLPipeline::sRtProbePass >= 0)
+    {
+        return (U32)LLPipeline::sRtProbePass;
+    }
     const S32 id = (S32)LLViewerCamera::sCurCameraID;
     if (id >= (S32)LLViewerCamera::CAMERA_SUN_SHADOW0 && id <= (S32)LLViewerCamera::CAMERA_SPOT_SHADOW1)
     {

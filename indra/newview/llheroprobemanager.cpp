@@ -315,6 +315,9 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     LL_PROFILE_GPU_ZONE("hero probe update");
 
+    // <FS> ray scene: the casters this face names belong to this face (a face renders every third frame: its casters stay until it renders again)
+    struct ProbePassScope { S32 mPrev; explicit ProbePassScope(S32 pass) : mPrev(LLPipeline::sRtProbePass) { LLPipeline::sRtProbePass = pass; } ~ProbePassScope() { LLPipeline::sRtProbePass = mPrev; } } probe_pass_scope(7 + (S32)(face % 6));
+
     // hacky hot-swap of camera specific render targets
     gPipeline.mRT = &gPipeline.mHeroProbeRT;
 
