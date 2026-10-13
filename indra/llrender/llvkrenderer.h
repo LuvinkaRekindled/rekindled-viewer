@@ -459,6 +459,7 @@ private:
     void noteDraw(U8 kind, U32 count, U32 first, S32 vertex_offset);
 public:
     std::string describeDraw(U64 serial) const;
+    std::string auditBindless() const;     // the slots that still point at an image destroyed lately (a draw sampling one reads memory that is not its own)
 private:      // the description of the draw about to be made (a stamp tag), see drawTag
 public:
     bool detailPass() const { return mDrawStamps; }     // this pass is checked and stamped draw by draw (impostor-sized targets)
@@ -491,6 +492,10 @@ private:
         VkDescriptorImageInfo mInfo = {};               // what the slot holds
         U64 mLastUsed = 0;                              // frame number
         U32 mPins = 0;                                  // pins held (ray scene textures): not swept
+        // what the image looked like when the slot last asked for it (for the device lost audit)
+        U32 mDbgW = 0, mDbgH = 0, mDbgMips = 0, mDbgLayers = 0, mDbgFormat = 0, mDbgLayout = 0;
+        U64 mDbgImage = 0;
+        bool mDbgZero = false, mDbgOwned = false;
         bool mActive = false;
     };
     struct BindlessTable

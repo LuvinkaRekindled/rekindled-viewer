@@ -14,6 +14,10 @@
 #include <chrono>
 #include <cstring>
 #include <unordered_map>
+#include <atomic>
+#include <cstdarg>
+#include <windows.h>
+#include <dbghelp.h>
 
 namespace LLVk
 {
@@ -28,6 +32,110 @@ bool gDeviceLost = false;
 
 namespace
 {
+
+// LL_VK_AV_LOG=<file>: a vectored exception handler that writes the call stack (names from the PDB next to the exe) of the first access violations to the file, whichever module they
+// fault in. The driver's own crashes (nvoglv64.dll) left no trace in the viewer's log; the stack names the Vulkan call that was running.
+LONG CALLBACK av_stack_handler(PEXCEPTION_POINTERS ep)
+{
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
+    {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    static std::atomic<int> count{ 0 };
+    if (count.fetch_add(1) >= 6)
+    {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    char path[MAX_PATH] = {};
+    if (GetEnvironmentVariableA("LL_VK_AV_LOG", path, sizeof(path)) == 0)
+    {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    HANDLE file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    auto put = [&](const char* fmt, ...) {
+        char line[1024];
+        va_list args;
+        va_start(args, fmt);
+        const int n = _vsnprintf_s(line, sizeof(line), _TRUNCATE, fmt, args);
+        va_end(args);
+        DWORD written = 0;
+        WriteFile(file, line, n > 0 ? (DWORD)n : 0, &written, nullptr);
+    };
+    typedef BOOL(WINAPI* SymInitializeT)(HANDLE, PCSTR, BOOL);
+    typedef BOOL(WINAPI* SymFromAddrT)(HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO);
+    typedef BOOL(WINAPI* StackWalk64T)(DWORD, HANDLE, HANDLE, LPSTACKFRAME64, PVOID, PREAD_PROCESS_MEMORY_ROUTINE64, PFUNCTION_TABLE_ACCESS_ROUTINE64, PGET_MODULE_BASE_ROUTINE64, PTRANSLATE_ADDRESS_ROUTINE64);
+    typedef DWORD(WINAPI* SymSetOptionsT)(DWORD);
+    HMODULE dbg = LoadLibraryA("dbghelp.dll");
+    const HANDLE process = GetCurrentProcess();
+    put("=== access violation %d: thread %lu, code address %p, accessing %p (%s)\r\n", count.load(), GetCurrentThreadId(), ep->ExceptionRecord->ExceptionAddress,
+        ep->ExceptionRecord->NumberParameters > 1 ? (void*)ep->ExceptionRecord->ExceptionInformation[1] : nullptr,
+        ep->ExceptionRecord->NumberParameters > 0 ? (ep->ExceptionRecord->ExceptionInformation[0] == 0 ? "read" : (ep->ExceptionRecord->ExceptionInformation[0] == 1 ? "write" : "execute")) : "?");
+    if (dbg)
+    {
+        SymInitializeT sym_init = (SymInitializeT)GetProcAddress(dbg, "SymInitialize");
+        SymSetOptionsT sym_opts = (SymSetOptionsT)GetProcAddress(dbg, "SymSetOptions");
+        SymFromAddrT sym_from = (SymFromAddrT)GetProcAddress(dbg, "SymFromAddr");
+        if (sym_init && sym_opts && sym_from)
+        {
+            sym_opts(0x2 /*UNDNAME*/ | 0x4 /*DEFERRED_LOADS*/);
+            static bool inited = false;
+            if (!inited)
+            {
+                inited = true;
+                sym_init(process, nullptr, TRUE);
+            }
+            CONTEXT ctx = *ep->ContextRecord;
+            for (int i = 0; i < 40; ++i)
+            {
+                const DWORD64 pc = ctx.Rip;
+                if (!pc)
+                {
+                    break;
+                }
+                char buf[sizeof(SYMBOL_INFO) + 256] = {};
+                PSYMBOL_INFO sym = (PSYMBOL_INFO)buf;
+                sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+                sym->MaxNameLen = 255;
+                DWORD64 disp = 0;
+                HMODULE m = nullptr;
+                char modname[MAX_PATH] = "?";
+                if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)pc, &m))
+                {
+                    GetModuleFileNameA(m, modname, sizeof(modname));
+                }
+                const char* base = strrchr(modname, '\\');
+                if (sym_from(process, pc, &disp, sym))
+                {
+                    put("  #%02d %s!%s+0x%llx\r\n", i, base ? base + 1 : modname, sym->Name, (unsigned long long)disp);
+                }
+                else
+                {
+                    put("  #%02d %s+0x%llx\r\n", i, base ? base + 1 : modname, (unsigned long long)(pc - (DWORD64)m));
+                }
+                // the OS unwinder (the function tables of every module, symbols or not)
+                DWORD64 image_base = 0;
+                PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(pc, &image_base, nullptr);
+                if (entry)
+                {
+                    PVOID handler_data = nullptr;
+                    DWORD64 establisher = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, pc, entry, &ctx, &handler_data, &establisher, nullptr);
+                }
+                else
+                {
+                    ctx.Rip = *(DWORD64*)ctx.Rsp;       // a leaf function: the return address is on top of the stack
+                    ctx.Rsp += 8;
+                }
+            }
+        }
+    }
+    CloseHandle(file);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 
 bool vk_ok(VkResult r, const char* what)
 {
@@ -493,6 +601,7 @@ bool Context::pickDevice()
             mCaps.mDiscrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
             mCaps.mMemoryBudget = has_extension(exts, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
             mCaps.mCheckpoints = has_extension(exts, VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+            mCaps.mDeviceFault = has_extension(exts, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
             mCaps.mWideLines = chain.f2.features.wideLines != VK_FALSE;
             mCaps.mDepthClamp = chain.f2.features.depthClamp != VK_FALSE && chain.eds3.extendedDynamicState3DepthClampEnable != VK_FALSE;
             mCaps.mAnisotropy = chain.f2.features.samplerAnisotropy != VK_FALSE;
@@ -631,6 +740,10 @@ bool Context::pickDevice()
 
 bool Context::createDevice()
 {
+    if (GetEnvironmentVariableA("LL_VK_AV_LOG", nullptr, 0) > 0)
+    {
+        AddVectoredExceptionHandler(1, av_stack_handler);
+    }
     FeatureChain chain;
     // C6: ray tracing goes onto the device only when asked for and the device can do it. The extension structs of the vendor / later extensions stay out
     // (reported by pickDevice, not enabled): only what the first ray tracing steps use, which is what a device creation check should cover.
@@ -671,6 +784,18 @@ bool Context::createDevice()
     if (mCaps.mCheckpoints)
     {
         device_extensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+    }
+    VkPhysicalDeviceFaultFeaturesEXT fault_features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT };
+    if (mCaps.mDeviceFault)
+    {
+        device_extensions.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+        fault_features.deviceFault = VK_TRUE;
+        VkBaseOutStructure* tail = reinterpret_cast<VkBaseOutStructure*>(&chain.f2);
+        while (tail->pNext)
+        {
+            tail = tail->pNext;
+        }
+        tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&fault_features);
     }
     if (LLVkDlss::requested())
     {
@@ -923,6 +1048,74 @@ void Context::reportDeviceLost()
 
 void Context::reportCheckpoints(const char* when)
 {
+    if (mCaps.mDeviceFault && vkGetDeviceFaultInfoEXT && strcmp(when, "device lost") == 0)       // only after the loss: asked while a frame is merely stuck, the driver itself crashed (access violation in nvoglv64.dll)
+    {
+        VkDeviceFaultCountsEXT counts = { VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT };
+        const VkResult r = vkGetDeviceFaultInfoEXT(mDevice, &counts, nullptr);
+        if (r == VK_SUCCESS || r == VK_INCOMPLETE)
+        {
+            std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+            std::vector<VkDeviceFaultVendorInfoEXT> vendors(counts.vendorInfoCount);
+            LL_WARNS("Vulkan") << when << ": device fault counts: addresses " << counts.addressInfoCount << ", vendor records " << counts.vendorInfoCount << ", vendor binary " << (unsigned long long)counts.vendorBinarySize << " bytes (not requested)" << LL_ENDL;
+            counts.vendorBinarySize = 0;        // no binary blob asked for: the driver wrote through the (null) binary pointer when the size was left as it reported it
+            VkDeviceFaultInfoEXT info = { VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT };
+            info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
+            info.pVendorInfos = vendors.empty() ? nullptr : vendors.data();
+            const VkResult r2 = vkGetDeviceFaultInfoEXT(mDevice, &counts, &info);
+            LL_WARNS("Vulkan") << when << ": vkGetDeviceFaultInfoEXT (second call) answered " << (int)r2 << LL_ENDL;
+            if (r2 == VK_SUCCESS || r2 == VK_INCOMPLETE)
+            {
+                if (mBindlessAudit)
+                {
+                    LL_WARNS("Vulkan") << "  bindless audit (frame " << mFrameNumber << "): " << mBindlessAudit() << LL_ENDL;
+                }
+                LL_WARNS("Vulkan") << when << ": device fault: " << info.description << "; " << addresses.size() << " addresses, " << vendors.size() << " vendor records" << LL_ENDL;
+                for (const auto& a : addresses)
+                {
+                    LL_WARNS("Vulkan") << "  fault address type " << (int)a.addressType << " (1 read invalid, 2 write invalid, 3 execute invalid, 4-6 instruction pointer) at 0x" << std::hex << (unsigned long long)a.reportedAddress
+                                       << " precision 0x" << (unsigned long long)a.addressPrecision << std::dec << LL_ENDL;
+                }
+                {
+                    // which arena block (if any) holds each faulting address: inside a block = a range that was freed (or never written); in none = not an arena address at all
+                    std::unique_lock<std::mutex> lock(mArenaMutex, std::try_to_lock);
+                    for (const auto& a : addresses)
+                    {
+                        const unsigned long long at = (unsigned long long)a.reportedAddress;
+                        bool found = false;
+                        for (size_t k = 0; lock.owns_lock() && k < mArenaBlocks.size(); ++k)
+                        {
+                            const ArenaBlock* b = mArenaBlocks[k];
+                            if (b && b->mAddress && at + 1 > b->mAddress && at < b->mAddress + b->mSize + 0x1000)
+                            {
+                                found = true;
+                                LL_WARNS("Vulkan") << "  address 0x" << std::hex << at << std::dec << " is in arena block " << k << " (" << (b->mAccel ? "accel" : (b->mHost ? "host" : (b->mShared ? "shared" : "device"))) << ", " << (b->mSize >> 20) << " MB, starts at 0x" << std::hex << (unsigned long long)b->mAddress << std::dec << ", offset " << (at - (unsigned long long)b->mAddress) << ")" << LL_ENDL;
+                            }
+                        }
+                        if (!found)
+                        {
+                            LL_WARNS("Vulkan") << "  address 0x" << std::hex << at << std::dec << " is in no arena block" << (lock.owns_lock() ? "" : " (arena busy: not checked)") << LL_ENDL;
+                        }
+                    }
+                    for (size_t k = 0; lock.owns_lock() && k < mArenaBlocks.size(); ++k)
+                    {
+                        const ArenaBlock* b = mArenaBlocks[k];
+                        if (b)
+                        {
+                            LL_WARNS("Vulkan") << "  arena block " << k << ": " << (b->mAccel ? "accel" : (b->mHost ? "host" : (b->mShared ? "shared" : "device"))) << ", " << (b->mSize >> 20) << " MB at 0x" << std::hex << (unsigned long long)b->mAddress << std::dec << ", " << b->mAllocs << " ranges" << LL_ENDL;
+                        }
+                    }
+                }
+                for (const auto& v : vendors)
+                {
+                    LL_WARNS("Vulkan") << "  vendor fault: " << v.description << ", code " << (unsigned long long)v.vendorFaultCode << ", data 0x" << std::hex << (unsigned long long)v.vendorFaultData << std::dec << LL_ENDL;
+                }
+            }
+        }
+        else
+        {
+            LL_WARNS("Vulkan") << when << ": vkGetDeviceFaultInfoEXT answered " << (int)r << LL_ENDL;
+        }
+    }
     if (!mCaps.mCheckpoints || !vkGetQueueCheckpointData2NV)
     {
         LL_WARNS("Vulkan") << when << ": this driver keeps no checkpoints" << LL_ENDL;
@@ -1741,12 +1934,36 @@ bool Context::createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkForma
     return true;
 }
 
+void Context::noteDestroyedView(U64 view_id)
+{
+    if (view_id)
+    {
+        const U64 i = mDestroyedCount.fetch_add(1) % DESTROYED_RING;
+        mDestroyedIds[i] = view_id;
+        mDestroyedFrames[i] = mFrameNumber;
+    }
+}
+
+bool Context::destroyedViewFrame(U64 view_id, U64& frame) const
+{
+    for (size_t i = 0; i < DESTROYED_RING; ++i)
+    {
+        if (mDestroyedIds[i] == view_id)
+        {
+            frame = mDestroyedFrames[i];
+            return true;
+        }
+    }
+    return false;
+}
+
 void Context::destroyImage(Image& image)
 {
     if (!image.valid())
     {
         return;
     }
+    noteDestroyedView(image.mViewId);
     VkImage i = image.mImage;
     VkImageView v = image.mView;
     VmaAllocation a = image.mAllocation;

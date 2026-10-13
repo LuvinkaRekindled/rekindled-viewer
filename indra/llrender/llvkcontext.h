@@ -61,6 +61,7 @@ struct Capabilities
     bool mDiscrete = false;
     bool mMemoryBudget = false;     // VK_EXT_memory_budget available
     bool mCheckpoints = false;      // VK_NV_device_diagnostic_checkpoints available (enabled on the device when it is)
+    bool mDeviceFault = false;      // VK_EXT_device_fault available (enabled on the device when it is): after a device loss the faulting address
     bool mWideLines = false;
     bool mDepthClamp = false;       // dynamic depth clamp (the shadow passes need it)
     bool mAnisotropy = false;
@@ -229,6 +230,15 @@ public:
     void serialCheckpoint(U64 serial);  // a checkpoint named by a draw's serial number (bit 62 set): see Renderer::noteDraw
     void setDrawDescriber(std::function<std::string(U64)> fn) { mDrawDescriber = std::move(fn); }
     std::function<std::string(U64)> mDrawDescriber;
+    // images destroyed lately (view id, frame number): the bindless audit at a device loss names the slots that still point at one of them
+    void noteDestroyedView(U64 view_id);
+    bool destroyedViewFrame(U64 view_id, U64& frame) const;
+    void setBindlessAudit(std::function<std::string()> fn) { mBindlessAudit = std::move(fn); }
+    std::function<std::string()> mBindlessAudit;
+    static constexpr size_t DESTROYED_RING = 8192;
+    U64 mDestroyedIds[DESTROYED_RING] = {};
+    U64 mDestroyedFrames[DESTROYED_RING] = {};
+    std::atomic<U64> mDestroyedCount{ 0 };
     void reportCheckpoints(const char* when);       // asks the driver for the checkpoints and logs them (also at the watchdog mark: the driver may answer before it resets the device)       // a checkpoint (no timestamp) set BEFORE a draw: after a device loss the latest one that was started names the draw the GPU was in
     void reportDeviceLost();            // logs the last checkpoints (pass names) the GPU reached, when the driver keeps them
     // called (once per hang) when a frame has been stuck for a second and when the device is lost: whatever a subsystem keeps to explain its latest work (the ray scene's last scene calls)

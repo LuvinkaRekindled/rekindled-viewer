@@ -194,6 +194,9 @@ LL_VK_DEVICE_FN(vkCmdWriteAccelerationStructuresPropertiesKHR)
 LL_VK_DEVICE_FN(vkCmdSetCheckpointNV)
 LL_VK_DEVICE_FN(vkGetQueueCheckpointData2NV)
 
+// VK_EXT_device_fault (null unless the driver offers it): after VK_ERROR_DEVICE_LOST, what the GPU faulted on (address, access type)
+LL_VK_DEVICE_FN(vkGetDeviceFaultInfoEXT)
+
 #undef LL_VK_GLOBAL_FN
 #undef LL_VK_INSTANCE_FN
 #undef LL_VK_DEVICE_FN
