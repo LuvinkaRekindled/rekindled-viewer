@@ -1019,6 +1019,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                     "layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer LLRtPositions { vec4 v[]; };\n"
                     "layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer LLRtTexcoords { vec2 t[]; };\n"
                     "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer LLRtColors { uint c[]; };\n"
+                    "layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer LLRtNormals { vec4 n[]; };\n"
                     "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer LLRtIndices { uint w[]; };\n"
                     "struct LLRtGeom { uvec2 positions; uvec2 indices; uvec2 texcoords; uvec2 colors; uvec2 slots; uint flags; float cutoff; uint first; uint material; vec2 uv0; vec2 uv1; vec2 uv2; uvec2 normals; };\n"
                     "struct LLRtMaterial { uvec2 slots; uvec2 slots2; vec4 color; vec4 emissive; vec4 params; vec2 uv0; vec2 uv1; vec2 uv2; vec2 pad; };\n"

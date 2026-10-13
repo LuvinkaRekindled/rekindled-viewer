@@ -3554,11 +3554,15 @@ static void note_rt_skinned(U32 pass, const LLVkMirror::ShadowSkinEntry& e, cons
 static void note_rt_skinned_alpha(U32 pass, const LLVkMirror::ShadowAlphaEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
 {
     Rt::AlphaInfo alpha;
-    alpha.mFlags = e.mFlags & 31u;
+    alpha.mFlags = e.mFlags & (31u | LLVkMirror::ALPHA_HARD);
     alpha.mTexcoordOffset = e.mTexcoordOffset;
     alpha.mColorOffset = e.mColorOffset;
     memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
     alpha.mCutoff = e.mCutoff;
+    if (e.mFlags & LLVkMirror::ALPHA_HARD)
+    {
+        memcpy(alpha.mUv, e.mUv, sizeof(alpha.mUv));         // the glTF texture transform
+    }
     if (Rt::materialsOn())
     {
         alpha.mNormalOffset = e.mNormalOffset;
