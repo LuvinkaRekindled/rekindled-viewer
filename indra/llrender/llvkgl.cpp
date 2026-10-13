@@ -5050,6 +5050,7 @@ void after_frame()
                                              << (double)t.mSpecDevNew / frames << " (" << (double)t.mSpecDevNewBytes / frames / 1024 << " KB), host-visible " << (double)t.mSpecHost / frames
                                              << " (" << (double)t.mSpecHostBytes / frames / 1024 << " KB); sub-writes device " << (double)t.mSubDev / frames << " ("
                                              << (double)t.mSubDevBytes / frames / 1024 << " KB), host-visible " << (double)t.mSubHost / frames << " (" << (double)t.mSubHostBytes / frames / 1024 << " KB)" << LL_ENDL;
+                        LL_INFOS("VkPhases") << Renderer::instance().takeFlushReport(frames) << LL_ENDL;
                         LL_INFOS("VkPhases") << "buffer flushes per frame: by a draw " << (double)t.mFlushDraw / frames << ", at frame end " << (double)t.mFlushFrameEnd / frames
                                              << "; buffers with pending writes per flush " << ((t.mFlushDraw + t.mFlushFrameEnd) ? (double)t.mFlushBuffers / (t.mFlushDraw + t.mFlushFrameEnd) : 0.0) << LL_ENDL;
                         {
@@ -5617,7 +5618,7 @@ bool fetch_rect_cached(Image& view, S32 x, S32 y, S32 w, S32 h, std::vector<U8>&
     }
     if (sReadCache.mImage != &view || sReadCache.mMip != mip || sReadCache.mLayer != layer || sReadCache.mEpoch != r.modificationCount())
     {
-        if (LLVkMirror::inFrame() && !r.flushAndRestart())
+        if (LLVkMirror::inFrame() && !r.flushAndRestart(1))
         {
             return false;
         }
@@ -5756,7 +5757,7 @@ void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Tr
         return;
     }
     Renderer& r = Renderer::instance();
-    if (LLVkMirror::inFrame() && !r.flushAndRestart())
+    if (LLVkMirror::inFrame() && !r.flushAndRestart(2))
     {
         return;
     }
@@ -5806,7 +5807,7 @@ void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, voi
         }
         return;
     }
-    if (LLVkMirror::inFrame() && !r.flushAndRestart())
+    if (LLVkMirror::inFrame() && !r.flushAndRestart(3))
     {
         return;
     }
