@@ -32,7 +32,7 @@ out vec4 frag_color;
 #if defined(HAS_SUN_SHADOW) && defined(LL_RT_REFLECTIONS)
 #define WATER_RT_REFLECTION 1
 uniform int rt_water_reflections;
-vec4 rtWaterReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback);
+vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback);
 #endif
 #ifdef HAS_SUN_SHADOW
 float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
@@ -319,7 +319,7 @@ void main()
         vec3 rt_dir = normalize(reflect(pos.xyz, wave_ibl.xyz));
         if (dot(rt_dir, up) > 0.0)
         {
-            vec4 rt_refl = rtWaterReflection(pos.xyz + wave_ibl.xyz * 0.05, rt_dir, normalize(transform_normal(lightDir)), sunlit_linear, amblit, distort, radiance);
+            vec4 rt_refl = rtReflection(pos.xyz + wave_ibl.xyz * 0.05, rt_dir, normalize(transform_normal(lightDir)), sunlit_linear, amblit, distort, radiance);
             if (rt_water_reflections == 3)
             {
                 radiance = rt_refl.a > 0.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);

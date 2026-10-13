@@ -12526,6 +12526,11 @@ void LLPipeline::renderDeferredLighting()
             soften_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1, environment.getClampedLightNorm().mV);
 
             soften_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
+            {
+                // <FS> ray traced reflections on glossy surfaces (rt-debug.txt glossyrt, softenLightF.glsl)
+                static LLStaticHashedString rt_glossy_s("rt_glossy_reflections");
+                soften_shader.uniform1i(rt_glossy_s, LLVkMirror::rtGlossyReflections());
+            }
 
             {
                 LLGLDepthTest depth(GL_FALSE);
