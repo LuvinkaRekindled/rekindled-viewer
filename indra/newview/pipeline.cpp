@@ -1641,6 +1641,37 @@ F32 lerpf(F32 a, F32 b, F32 w)
     return a + w * (b - a);
 }
 
+void LLPipeline::generateBrdfLut(bool allocate)
+{
+    LL_INFOS("RTMaterials") << "BRDF lookup generation, allocate " << allocate << ", program complete " << gDeferredGenBrdfLutProgram.isComplete() << LL_ENDL;
+    if (allocate)
+    {
+        mPbrBrdfLut.allocate(512, 512, GL_RG16F);
+    }
+    mPbrBrdfLut.bindTarget();
+
+    if (gDeferredGenBrdfLutProgram.isComplete())
+    {
+        gDeferredGenBrdfLutProgram.bind();
+        llassert_always(LLGLSLShader::sCurBoundShaderPtr != nullptr);
+
+        gGL.begin(LLRender::TRIANGLE_STRIP);
+        gGL.vertex2f(-1, -1);
+        gGL.vertex2f(-1, 1);
+        gGL.vertex2f(1, -1);
+        gGL.vertex2f(1, 1);
+        gGL.end();
+        gGL.flush();
+    }
+    else
+    {
+        LL_WARNS("Brad") << gDeferredGenBrdfLutProgram.mName << " failed to load, cannot be used!" << LL_ENDL;
+    }
+
+    gDeferredGenBrdfLutProgram.unbind();
+    mPbrBrdfLut.flush();
+}
+
 void LLPipeline::createLUTBuffers()
 {
     if (!mLightFunc)
@@ -1704,29 +1735,7 @@ void LLPipeline::createLUTBuffers()
         delete [] ls;
     }
 
-    mPbrBrdfLut.allocate(512, 512, GL_RG16F);
-    mPbrBrdfLut.bindTarget();
-
-    if (gDeferredGenBrdfLutProgram.isComplete())
-    {
-        gDeferredGenBrdfLutProgram.bind();
-        llassert_always(LLGLSLShader::sCurBoundShaderPtr != nullptr);
-
-        gGL.begin(LLRender::TRIANGLE_STRIP);
-        gGL.vertex2f(-1, -1);
-        gGL.vertex2f(-1, 1);
-        gGL.vertex2f(1, -1);
-        gGL.vertex2f(1, 1);
-        gGL.end();
-        gGL.flush();
-    }
-    else
-    {
-        LL_WARNS("Brad") << gDeferredGenBrdfLutProgram.mName << " failed to load, cannot be used!" << LL_ENDL;
-    }
-
-    gDeferredGenBrdfLutProgram.unbind();
-    mPbrBrdfLut.flush();
+    generateBrdfLut(true);
 
     mExposureMap.allocate(1, 1, GL_R16F);
     mExposureMap.bindTarget();
@@ -12330,6 +12339,11 @@ static void rt_name_rigged_main_view()
 
 void LLPipeline::renderDeferredLighting()
 {
+    static int sBrdfFrames = 0;
+    if (++sBrdfFrames == 200 || sBrdfFrames == 400 || sBrdfFrames == 800)
+    {
+        generateBrdfLut(false);                  // regenerated while running: the native renderer builds the program's pipeline in the background and drops the draws until then, so the start-up generation leaves the lookup empty
+    }
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("renderDeferredLighting");
     if (!sCull)

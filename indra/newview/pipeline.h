@@ -112,6 +112,7 @@ public:
 
     void createGLBuffers();
     void createLUTBuffers();
+    void generateBrdfLut(bool allocate);
 
     //allocate the largest screen buffer possible up to resX, resY
     //returns true if full size buffer allocated, false if some other size is allocated
