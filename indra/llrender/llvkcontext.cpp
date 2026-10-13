@@ -1151,8 +1151,26 @@ void Context::reportCheckpoints(const char* when)
             if (stage & 0x1) started_serial = number;
             if (stage & 0x2000) completed_serial = number;
         }
+        const std::string what = serial ? (mDrawDescriber ? mDrawDescriber(number) : std::string("draw ") + std::to_string(number)) : (tag ? stampTagName(tag - 1) : std::string("(none)"));
         LL_WARNS("Vulkan") << "  stage 0x" << std::hex << stage << std::dec << (stage & 0x1 ? " (top of pipe: the latest STARTED)" : (stage & 0x2000 ? " (bottom of pipe: the latest COMPLETED)" : "")) << ": "
-                           << (serial ? (mDrawDescriber ? mDrawDescriber(number) : std::string("draw ") + std::to_string(number)) : (tag ? stampTagName(tag - 1) : std::string("(none)"))) << LL_ENDL;
+                           << what << LL_ENDL;
+        if (mSlotDescriber)
+        {
+            // the texture slots the draw names (per-draw stamps carry them in the text), with what the bindless table says about each
+            const size_t at = what.find("texture slots");
+            if (at != std::string::npos)
+            {
+                const char* p = what.c_str() + at + 13;
+                for (int k = 0; k < 16; ++k)
+                {
+                    char* end = nullptr;
+                    const unsigned long v = strtoul(p, &end, 10);
+                    if (end == p) break;
+                    LL_WARNS("Vulkan") << "      its " << mSlotDescriber((U32)v) << LL_ENDL;
+                    p = end;
+                }
+            }
+        }
     }
     if (mDrawDescriber && (completed_serial || started_serial))
     {
@@ -1160,6 +1178,24 @@ void Context::reportCheckpoints(const char* when)
         // fault it is the one the fault is in. The draws after it (up to the last started) are shown for context.
         const U64 culprit = completed_serial ? completed_serial : started_serial;
         LL_WARNS("Vulkan") << "THE FAULT IS MOST LIKELY IN: " << mDrawDescriber(culprit) << LL_ENDL;
+        if (mSlotDescriber)
+        {
+            // the texture slots of that draw, with what the table says about each
+            const std::string text = mDrawDescriber(culprit);
+            const size_t at = text.find("texture slots");
+            if (at != std::string::npos)
+            {
+                const char* p = text.c_str() + at + 13;
+                for (int k = 0; k < 16; ++k)
+                {
+                    char* end = nullptr;
+                    const unsigned long v = strtoul(p, &end, 10);
+                    if (end == p) break;
+                    LL_WARNS("Vulkan") << "    that draw's " << mSlotDescriber((U32)v) << LL_ENDL;
+                    p = end;
+                }
+            }
+        }
         for (U64 s = culprit > 6 ? culprit - 6 : 1; s <= std::max(culprit, started_serial) && s < culprit + 10; ++s)
         {
             LL_WARNS("Vulkan") << "    " << (s == culprit ? ">>> " : "    ") << mDrawDescriber(s) << LL_ENDL;
