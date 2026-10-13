@@ -21,6 +21,10 @@ namespace LLVk
 namespace Rt
 {
 
+// live switches of rt-debug.txt the viewer reads (main thread): gate=0/1 (do not trace avatars that are still loading nor masked casters without texture data), bodyname=0/1
+bool loadingGates();
+bool bodyRename();
+
 // LL_VK_RT_SHADOWS: 0 off, 1 ray query shadows replace the cascades, 2 split screen (left cascades, right rays), 3 disagreement map. Decided once, before the shaders compile.
 U32 shadowMode();
 

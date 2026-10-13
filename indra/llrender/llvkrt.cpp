@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -260,9 +261,13 @@ struct DebugSwitches
     bool mMats = false;             // records for the opaque geometries too, the material table is filled and traced against (needs LL_VK_RT_MATERIALS=1 at start-up)
     bool mDelta = true;             // the tables are written to the call's region as deltas (rows changed since the region was last written); off: all rows every call
     bool mTableVerify = false;      // after every table write compare the region with the kept rows (slow: reads video memory)
+    bool mGate = true;              // live (gate=0/1): avatars still loading and masked casters without texture data are not named (the viewer asks through LLVkMirror::rtLoadingGates)
+    bool mBodyName = true;          // live (bodyname=0/1): the viewer names the body meshes of the last frames again before the scene call (LLVkMirror::rtBodyRename)
+    F32 mSkinReach = kSkinReach;    // live (skinreach=N metres): skinned vertices farther than this from their avatar are dropped (the guard of the skinning pass)
     bool mBBox = false;             // one line per build/refit of a structure with a matrix of its own (CPU-visible data only) into <work>/rt-bbox.log: bounding box, largest coordinate (stage C step 0)
 };
 DebugSwitches sDbg;
+std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkMirror)
 std::chrono::steady_clock::time_point sDbgRead;
 
 void read_debug_switches()
@@ -319,6 +324,9 @@ void read_debug_switches()
                 else if (k == "bbox") d.mBBox = v != 0;
                 else if (k == "skintest") d.mSkinTest = v != 0;
                 else if (k == "skinfast") d.mSkinFast = v != 0;
+                else if (k == "gate") d.mGate = v != 0;
+                else if (k == "bodyname") d.mBodyName = v != 0;
+                else if (k == "skinreach") d.mSkinReach = (F32)std::max<long long>(1, v);
                 else if (k == "skindist") d.mSkinMaxDist = (F32)v;
                 else if (k == "mats") d.mMats = sMatsInit && v != 0;
                 else if (k == "pfa") d.mPfA = (U32)std::max<long long>(0, v);
@@ -349,6 +357,12 @@ void read_debug_switches()
                          << ", check " << d.mCheck << ", skipbad " << d.mSkipBad << ", only " << d.mOnly << ", moving " << d.mMoving << ", dynamic " << d.mDynamic << ", kind " << d.mKind
                          << ", dist " << d.mMinDist << ".." << d.mMaxDist << ", dump " << d.mDump << ", dynamic casters " << d.mDynCasters << ", singular " << d.mSingular << ", max instances " << d.mMaxInstances << ", build max " << d.mBuildMax << ", serial " << d.mSerial << ", pad " << d.mPad << ", skintest " << d.mSkinTest << ", rigged " << d.mRigged << LL_ENDL;
     }
+    if (d.mGate != sDbg.mGate || d.mBodyName != sDbg.mBodyName || d.mSkinReach != sDbg.mSkinReach)
+    {
+        LL_INFOS("VkRt") << "debug switches: gate (loading avatars and textures) " << d.mGate << ", bodyname " << d.mBodyName << ", skin reach " << d.mSkinReach << " m" << LL_ENDL;
+    }
+    sGateLive.store(d.mGate, std::memory_order_relaxed);
+    sBodyNameLive.store(d.mBodyName, std::memory_order_relaxed);
     sDbg = d;
 }
 
@@ -1011,6 +1025,9 @@ struct Job
 
 } // anonymous namespace
 
+bool loadingGates() { return sGateLive.load(std::memory_order_relaxed); }
+bool bodyRename() { return sBodyNameLive.load(std::memory_order_relaxed); }
+
 U32 shadowMode()
 {
     static const U32 mode = []() {
@@ -1464,7 +1481,7 @@ void noteSkinned(const SkinCaster& c)
     {
         return;
     }
-    if (c.mAvatarKind & 64u)
+    if ((c.mAvatarKind & 64u) && sDbg.mGate)
     {
         return;                             // an avatar that is still loading in (shape, textures, attachments not final): not named, so not in the scene until it is
     }
@@ -2454,11 +2471,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             continue;
         }
         // what the structure covers: a change in the draws (or in the index data they use) means a new structure, otherwise it is refitted over the new pose
+        // (the body meshes, mode 1 and 2, are rewritten into their buffer at every avatar update, indices included, with the same content: their write version is not part of it, or such an avatar
+        // would be built from scratch again at every update instead of refitted; a buffer that is made again has a new epoch)
         std::vector<U64> sig;
         for (SkinDraw* d : cur)
         {
             U64 h = 1469598103934665603ull;
-            for (U64 v : { (U64)d->mVb, (U64)d->mIb, (U64)d->mFirst, (U64)d->mCount, (U64)d->mVertexFirst, (U64)d->mVertexCount, (U64)d->mSkinId, (U64)d->mKind, (U64)d->mMode, d->mIi.mEpoch, d->mIi.mVersion, d->mVi.mEpoch })
+            for (U64 v : { (U64)d->mVb, (U64)d->mIb, (U64)d->mFirst, (U64)d->mCount, (U64)d->mVertexFirst, (U64)d->mVertexCount, (U64)d->mSkinId, (U64)d->mKind, (U64)d->mMode, d->mIi.mEpoch, d->mMode == 0 ? d->mIi.mVersion : 0ull, d->mVi.mEpoch })
             {
                 h = (h ^ v) * 1099511628211ull;
             }
@@ -2532,7 +2551,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     sj.mGuard[0] = a.mPos[0];
                     sj.mGuard[1] = a.mPos[1];
                     sj.mGuard[2] = a.mPos[2];
-                    sj.mGuard[3] = kSkinReach;
+                    sj.mGuard[3] = sDbg.mSkinReach;
                 }
                 skin_jobs.push_back(sj);
                 skin_job_draws.push_back(d);
