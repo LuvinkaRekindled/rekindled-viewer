@@ -1515,7 +1515,7 @@ void Renderer::resolveQueries()
 {
     if (mCmd != VK_NULL_HANDLE)
     {
-        flushAndRestart();
+        flushAndRestart(5);
     }
     Context& ctx = Context::instance();
     ctx.waitIdle();
@@ -4203,7 +4203,7 @@ bool Renderer::flushBufferUpdates()
     return true;
 }
 
-bool Renderer::flushAndRestart()
+bool Renderer::flushAndRestart(U32 why)
 {
     if (mCmd == VK_NULL_HANDLE)
     {
@@ -4238,6 +4238,7 @@ bool Renderer::flushAndRestart()
         return false;
     }
     ++mFlushCount;
+    ++mFlushWhy[why < 6 ? why : 0];
     mRestarting = true;
     beginFrame(cmd, slot);      // forgets everything cached about the old recording
     mRestarting = false;
@@ -4248,6 +4249,24 @@ bool Renderer::flushAndRestart()
     }
     mDepthTarget = depth;
     return true;
+}
+
+std::string Renderer::takeFlushReport(double frames)
+{
+    static const char* const names[6] = { "other", "pixel readback", "glGetTexImage", "compressed readback", "snapshot boundary", "occlusion results" };
+    U64 total = 0;
+    for (U64 n : mFlushWhy) total += n;
+    char buf[400];
+    int len = snprintf(buf, sizeof(buf), "mid-frame flushes (each waits for the GPU): %llu over %.0f frames (%.2f per 100 frames)", (unsigned long long)total, frames, frames > 0 ? 100.0 * (double)total / frames : 0.0);
+    for (U32 i = 0; i < 6 && len > 0 && len < (int)sizeof(buf) - 60; ++i)
+    {
+        if (mFlushWhy[i])
+        {
+            len += snprintf(buf + len, sizeof(buf) - len, ", %s %llu", names[i], (unsigned long long)mFlushWhy[i]);
+        }
+        mFlushWhy[i] = 0;
+    }
+    return buf;
 }
 
 bool Renderer::readbackRegion(Image& view_or_image, U32 mip, U32 layer, S32 x, S32 y, U32 w, U32 h, std::vector<U8>& texels)

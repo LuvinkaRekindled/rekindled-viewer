@@ -343,7 +343,9 @@ public:
     bool readbackImage(Image& image, U32 mip, U32 layer, std::vector<U8>& texels);
     // Submits what the frame has recorded so far, waits, and keeps recording (render targets are kept; the next pass
     // loads rather than clears). Use before a readback that must see this frame's results.
-    bool flushAndRestart();
+    // why: 0 other, 1 pixel readback (cache miss), 2 glGetTexImage, 3 compressed readback, 4 snapshot boundary, 5 occlusion query results
+    bool flushAndRestart(U32 why = 0);
+    std::string takeFlushReport(double frames);       // mid-frame flushes since the last call, by cause
     // counters the readback cache and the emulated fences use: anything that changes image contents bumps the first, every flushAndRestart the second
     U64 modificationCount() const { return mModCount; }
     U64 flushCount() const { return mFlushCount; }
@@ -669,6 +671,7 @@ private:
     std::vector<U64> mTsSerial[Context::FRAMES_IN_FLIGHT];
     std::vector<U8> mTsIsEnd[Context::FRAMES_IN_FLIGHT];
     U64 mModCount = 0, mFlushCount = 0;
+    U64 mFlushWhy[6] = {};
     bool mRestarting = false;           // beginFrame is called by flushAndRestart: the frame goes on
     U64 mRingEpoch = 1;                 // changes whenever the uniform ring starts again from 0 (beginFrame); a program's cached ring offset belongs to one epoch
     S32 mOccPending = -1;           // allocated, starts with the next draw
