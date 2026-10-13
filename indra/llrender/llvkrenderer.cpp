@@ -1311,6 +1311,7 @@ bool Renderer::init()
     tracyInit();
     Context::instance().setDrawDescriber([](U64 serial) { return Renderer::instance().describeDraw(serial); });
     Context::instance().setBindlessAudit([]() { return Renderer::instance().auditBindless(); });
+    Context::instance().setSlotDescriber([](U32 slot) { return Renderer::instance().describeSlot(slot); });
     LL_INFOS("Vulkan") << "Vulkan renderer ready" << LL_ENDL;
     return true;
 }
@@ -1819,6 +1820,13 @@ void Renderer::endFrame()
 {
     flushPendingClear();
     endRendering();
+    // descriptors that draws of this frame asked for (render packet textures: bindlessTouch only queues them, a flush comes with the next draw of a bindless program) are written before
+    // the command buffer is submitted; beginFrame throws away what is still queued
+    static const bool skip_end_flush = getenv("LL_VK_NO_END_FLUSH") != nullptr;
+    if (!skip_end_flush)
+    {
+        bindlessFlush();
+    }
 #if defined(TRACY_ENABLE)
     if (mTracyCtx && mCmd != VK_NULL_HANDLE)
     {
@@ -2593,6 +2601,8 @@ U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImage
             s.mKey = key;
             s.mInfo = { sampler, image->mView, layout };
             s.mActive = true;
+            s.mCreatedFrame = Context::instance().getFrameNumber();
+            s.mDbgWrites = 0;
             tbl.mMap.emplace(key, slot);
             ++tbl.mActiveCount;
             if (tbl.mActiveCount > mStatBindlessPeak.load(std::memory_order_relaxed))
@@ -2651,6 +2661,7 @@ void Renderer::bindlessFlush()
         {
             const U32 slot = tbl.mDirty[i];
             sh[slot] = slot == 0 ? tbl.mStandIn : tbl.mSlots[slot].mInfo;
+            if (slot != 0) ++tbl.mSlots[slot].mDbgWrites;
             ids[slot] = slot == 0 ? 0 : tbl.mSlots[slot].mKey.mViewId;
             tbl.mQueued[slot] = 0;
         }
@@ -3287,6 +3298,25 @@ VkDescriptorSet Renderer::uboSet()
     mLastUboSet = set;
     mUboKeyDirty = false;
     return set;
+}
+
+std::string Renderer::describeSlot(U32 slot) const
+{
+    const BindlessTable& t0 = mBindlessTbl[0];
+    char buf[420];
+    if (slot >= t0.mSlots.size())
+    {
+        snprintf(buf, sizeof(buf), "slot %u: beyond the table (%zu slots)", slot, t0.mSlots.size());
+        return buf;
+    }
+    const BindlessSlot& s = t0.mSlots[slot];
+    const U64 frame = Context::instance().getFrameNumber();
+    U64 destroyed_at = 0;
+    const bool dead = Context::instance().destroyedViewFrame(s.mKey.mViewId, destroyed_at);
+    snprintf(buf, sizeof(buf), "slot %u: %s, given to its image %lld frames ago, %u descriptor writes, last used %lld frames ago, pins %u, image %ux%u format %u mips %u layers %u layout %u, view id %llu, %s",
+             slot, s.mActive ? "active" : "FREE", (long long)(frame - s.mCreatedFrame), s.mDbgWrites, (long long)(frame - s.mLastUsed), s.mPins, s.mDbgW, s.mDbgH, s.mDbgFormat, s.mDbgMips, s.mDbgLayers, s.mDbgLayout,
+             (unsigned long long)s.mKey.mViewId, dead ? "image DESTROYED" : "image alive");
+    return buf;
 }
 
 std::string Renderer::auditBindless() const
@@ -4058,6 +4088,11 @@ bool Renderer::flushAndRestart()
     }
     flushPendingClear();
     endRendering();
+    static const bool skip_flush_flush = getenv("LL_VK_NO_END_FLUSH") != nullptr;
+    if (!skip_flush_flush)
+    {
+        bindlessFlush();        // the draws recorded so far run before the partial frame returns: their descriptors must be written now (beginFrame below drops the queue)
+    }
     Image* colors[8] = {};
     const U32 color_count = mColorCount;
     for (U32 i = 0; i < color_count; ++i)

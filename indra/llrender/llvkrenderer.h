@@ -459,6 +459,7 @@ private:
     void noteDraw(U8 kind, U32 count, U32 first, S32 vertex_offset);
 public:
     std::string describeDraw(U64 serial) const;
+    std::string describeSlot(U32 slot) const;      // one slot of the 2D table: age, writes, image size, mips, layout (device lost report)
     std::string auditBindless() const;     // the slots that still point at an image destroyed lately (a draw sampling one reads memory that is not its own)
 private:      // the description of the draw about to be made (a stamp tag), see drawTag
 public:
@@ -495,6 +496,8 @@ private:
         // what the image looked like when the slot last asked for it (for the device lost audit)
         U32 mDbgW = 0, mDbgH = 0, mDbgMips = 0, mDbgLayers = 0, mDbgFormat = 0, mDbgLayout = 0;
         U64 mDbgImage = 0;
+        U64 mCreatedFrame = 0;      // frame number the slot was given to this key
+        U32 mDbgWrites = 0;         // descriptor writes flushed for it (all frame sets together)
         bool mDbgZero = false, mDbgOwned = false;
         bool mActive = false;
     };

@@ -235,6 +235,8 @@ public:
     void noteDestroyedView(U64 view_id);
     bool destroyedViewFrame(U64 view_id, U64& frame) const;
     void setBindlessAudit(std::function<std::string()> fn) { mBindlessAudit = std::move(fn); }
+    void setSlotDescriber(std::function<std::string(U32)> fn) { mSlotDescriber = std::move(fn); }
+    std::function<std::string(U32)> mSlotDescriber;
     std::function<std::string()> mBindlessAudit;
     static constexpr size_t DESTROYED_RING = 8192;
     U64 mDestroyedIds[DESTROYED_RING] = {};
