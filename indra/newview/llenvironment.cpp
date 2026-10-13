@@ -1777,6 +1777,30 @@ void LLEnvironment::update(const LLViewerCamera * cam)
 
         // cache this for use in rotating the rotated light vec for shader param updates later...
         mLastCamYaw = cam->getYaw() + SUN_DELTA_YAW;
+
+        // <FS> where the sun is, logged when it has moved half a degree (and at the first frame): a crash or an odd shadow can be matched to the time of day afterwards
+        {
+            static LLVector3 last_sun;
+            static std::string last_sky;
+            static bool first = true;
+            static LLFrameTimer log_timer;
+            const LLSettingsSky::ptr_t sky = getCurrentSky();
+            if (sky && (first || log_timer.getElapsedTimeF32() > 5.f))
+            {
+                const LLVector3 sun = getSunDirection();
+                const std::string name = sky->getName();
+                if (first || name != last_sky || (sun - last_sun).length() > 0.0087f)       // about half a degree
+                {
+                    const F32 elevation = RAD_TO_DEG * asinf(llclamp(sun.mV[VZ], -1.f, 1.f));
+                    const F32 azimuth = RAD_TO_DEG * atan2f(sun.mV[VY], sun.mV[VX]);
+                    LL_INFOS("ENVIRONMENT") << "sun direction " << sun << ", elevation " << elevation << " deg, azimuth " << azimuth << " deg, sky '" << name << "'" << LL_ENDL;
+                    last_sun = sun;
+                    last_sky = name;
+                    first = false;
+                }
+                log_timer.reset();
+            }
+        }
     }
 
     updateSettingsUniforms();

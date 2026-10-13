@@ -198,7 +198,7 @@ struct Stats
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
     U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0, mSkinThrottled = 0;
     U64 mAvatarInstances = 0, mAvatarStale = 0, mAvatarStaleFrames = 0, mAvatarStaleMax = 0;
-    U64 mOverCap = 0, mExtraCalls = 0, mBadVertices = 0, mBadMatrices = 0, mChecked = 0, mSingular = 0, mCompared = 0, mMismatched = 0;
+    U64 mOverCap = 0, mExtraCalls = 0, mBadVertices = 0, mBadMatrices = 0, mChecked = 0, mCheckUs = 0, mSingular = 0, mCompared = 0, mMismatched = 0;
     F32 mMaxScale = 0.f;
     Key mMaxScaleKey;
     U64 mWhyNew = 0, mWhyEpoch = 0, mWhyGrew = 0, mWhyIb = 0, mWhyRefitLimit = 0, mNewGroups = 0, mNewMasked = 0;      // why structures were built (and how many casters were new)
@@ -287,7 +287,7 @@ void read_debug_switches()
     DebugSwitches d;
     d.mKeep = env_u64("LL_VK_RT_KEEP_FRAMES", 8);
     d.mAlpha = env_u64("LL_VK_RT_ALPHA", 1) != 0;
-    d.mCheck = env_u64("LL_VK_RT_CHECK", 0) != 0;
+    d.mCheck = env_u64("LL_VK_RT_CHECK", 1) != 0;       // on by default: measured 1-2 microseconds a frame in the mirror room (2026-10-13), and it keeps NaN vertices and indices past the buffer out of the structures
     d.mSkipBad = env_u64("LL_VK_RT_SKIPBAD", 1) != 0;
     d.mDynCasters = env_u64("LL_VK_RT_DYNAMIC", 1) != 0;
     d.mSkinTest = env_u64("LL_VK_RT_SKINTEST", 0) != 0;
@@ -2114,6 +2114,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         if (check_on && vi.mCpu && ii.mCpu)
         {
             ++sStats.mChecked;
+            LARGE_INTEGER check_t0;
+            QueryPerformanceCounter(&check_t0);
             const F32* pos = (const F32*)vi.mCpu;
             const U16* idx = (const U16*)ii.mCpu;
             const U64 verts = vi.mSize / 16;
@@ -2213,6 +2215,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 }
                 job.mPrims = (U32)prims;
             }
+            LARGE_INTEGER check_t1, check_f;
+            QueryPerformanceCounter(&check_t1);
+            QueryPerformanceFrequency(&check_f);
+            sStats.mCheckUs += (U64)((check_t1.QuadPart - check_t0.QuadPart) * 1000000ll / check_f.QuadPart);
         }
         if (sDbg.mBBox && (g.mKey.mMatrixId & 0x80000000u) == 0 && g.mKey.mMatrixId != 0)
         {
@@ -4075,6 +4081,11 @@ std::string report(double frames)
     {
         const size_t used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, ", tables sizes: groups %zu, seen rows %zu (free %zu), name entries %zu, structures %zu", sGroups.size(), sSeenRows.size(), sSeenFree.size(), sNameGroups.size(), sBlas.size());
+    }
+    if (s.mChecked)
+    {
+        const size_t used = strlen(buf);
+        snprintf(buf + used, sizeof(buf) - used, ", range check CPU %.4f ms/frame (%.2f structures/frame, %llu bad ranges in total)", (double)s.mCheckUs / 1000.0 / f, (double)s.mChecked / f, (unsigned long long)s.mBadVertices);
     }
     if (s.mScanChecks)
     {

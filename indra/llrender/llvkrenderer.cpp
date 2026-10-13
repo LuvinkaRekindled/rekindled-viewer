@@ -88,6 +88,9 @@ bool vk_ok(VkResult r, const char* what)
 
 const U32 RING_BYTES = 128u * 1024 * 1024;     // per frame in flight (a crowd of rigged avatars uploads tens of MB of skinning matrices per frame)
 const U32 DUMMY_UBO_BYTES = 64 * 1024;
+// LL_VK_RING_STALE=1 brings back the old behaviour (a program's uniform ring offset is trusted for the whole frame number, also across a mid-frame flush, and the vertex scratch ring restarts there too): A/B for the login device lost
+static const bool sRingEpochOff = getenv("LL_VK_RING_STALE") != nullptr;
+
 const U32 VERTEX_RING_BYTES = 8u * 1024 * 1024;
 
 VkShaderStageFlags all_graphics_stages()
@@ -1769,7 +1772,10 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mRingPeak = std::max(mRingPeak, mRingUsed);
     mRingUsed = 0;
     ++mRingEpoch;       // every program's cached ring offset is void: the ring starts again from 0 (a mid-frame flush keeps the frame number, so the frame number cannot tell)
-    mVertexRingUsed = 0;
+    if (!mRestarting || sRingEpochOff)
+    {
+        mVertexRingUsed = 0;        // (a mid-frame flush keeps it going: the ray scene reads palettes and tables written earlier in the frame by address, and the new start would overwrite them)
+    }
     mDrawCount = 0;
     mRendering = false;
     mPendingClear = 0;
@@ -2733,9 +2739,6 @@ Renderer::ScratchAlloc Renderer::allocVertexScratch(VkDeviceSize size)
     a.mAddress = mVertexRing[mSlot].mAddress ? mVertexRing[mSlot].mAddress + start : 0;
     return a;
 }
-
-// LL_VK_RING_STALE=1 brings back the old behaviour (a program's ring offset is trusted for the whole frame number, also across a mid-frame flush): A/B for the login device lost
-static const bool sRingEpochOff = getenv("LL_VK_RING_STALE") != nullptr;
 
 U32 Renderer::allocUniform(U32 size)
 {
@@ -4234,7 +4237,9 @@ bool Renderer::flushAndRestart()
         return false;
     }
     ++mFlushCount;
+    mRestarting = true;
     beginFrame(cmd, slot);      // forgets everything cached about the old recording
+    mRestarting = false;
     mColorCount = color_count;
     for (U32 i = 0; i < color_count; ++i)
     {
