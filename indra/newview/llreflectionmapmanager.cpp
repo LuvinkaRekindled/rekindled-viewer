@@ -803,6 +803,8 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     LL_PROFILE_GPU_ZONE("probe update");
+    // <FS> ray scene: the casters this face names belong to this face's pass (see LLPipeline::sRtProbePass)
+    struct ProbePassScope { S32 mPrev; explicit ProbePassScope(S32 pass) : mPrev(LLPipeline::sRtProbePass) { LLPipeline::sRtProbePass = pass; } ~ProbePassScope() { LLPipeline::sRtProbePass = mPrev; } } probe_pass_scope(13 + (S32)(face % 6));
     // hacky hot-swap of camera specific render targets
     gPipeline.mRT = &gPipeline.mAuxillaryRT;
 

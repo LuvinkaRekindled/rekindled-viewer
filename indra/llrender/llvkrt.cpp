@@ -99,7 +99,7 @@ constexpr U32 kSkinChunkVerts = 128;                        // vertices per work
 constexpr U32 kMaxSkinChunks = 131072;
 constexpr VkDeviceSize kSkinJobBytes = 112ull * kMaxSkinJobs;
 constexpr VkDeviceSize kSkinBytes = kSkinJobBytes + 8ull * kMaxSkinChunks;
-constexpr U32 kPasses = 8;                                  // shadow passes tracked: 0-3 sun cascades, 4-5 spot shadows, 6 other
+constexpr U32 kPasses = 20;                                 // passes tracked: 0-3 sun cascades, 4-5 spot shadows, 6 other (the main view), 7-12 the six faces of the hero probe, 13-18 the faces of a reflection probe
 
 struct Range
 {
@@ -251,6 +251,8 @@ struct DebugSwitches
     bool mPreflush = true;          // before the builds and the skinning: record the queued writes of video-memory buffers (they are only recorded when a draw reads the buffer, which a build does not)
     bool mAvatarLog = false;
     bool mAvatarKeepOff = false;       // live (avatarkeep=1): an avatar structure is made only from the draws named in this very frame (the old behaviour: the body vanished from the traced reflection on the frames without the naming pass)        // one line per avatar instance of every scene call into D:/claude/rt-avatars.log: how old its data is, why it was not refreshed
+    bool mInstDump = false;            // live (instdump=1): the instance list (structure address, translation, mask) of the next 40 scene calls goes into D:/claude/rt-instances.log; 0 re-arms it
+    U64 mGroupHold = 0;                // live (grouphold=N), TEST BRIDGE (off: it leaves ghosts behind moving objects): frames a caster group seen by a pass stays in the scene when that pass rendered without naming it (0: only the casters named in the frame stay). The proper fix is a pass id per hero probe face
     bool mSkinProbe = false;        // about every 90 scene calls: run the skin jobs again on their own, read a few results back and log their bounding boxes
     bool mRigged = true;            // rigged opaque casters (avatar attachments) in the scene, skinned by the compute pass
     bool mSizeProbe = false;        // log what the new group structures would need with other build flags (no behaviour change)
@@ -348,6 +350,8 @@ void read_debug_switches()
                 else if (k == "skinprobe") d.mSkinProbe = v != 0;
                 else if (k == "avlog") d.mAvatarLog = v != 0;
                 else if (k == "avatarkeep") d.mAvatarKeepOff = v != 0;
+                else if (k == "instdump") d.mInstDump = v != 0;
+                else if (k == "grouphold") d.mGroupHold = (U64)std::max<long long>(0, v);
                 else if (k == "preflush") d.mPreflush = v != 0;
                 else if (k == "verify") d.mVerify = v != 0;
                 else if (k == "skinperiod") d.mSkinPeriodMax = (U32)std::max<long long>(1, v);
@@ -1768,8 +1772,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 }
                 if (rendered[p])
                 {
-                    // the pass rendered this frame: its casters are the ones it named
+                    // the pass rendered this frame: its casters are the ones it named. A pass that renders only part of its views per frame (the hero probe faces: two of six per frame, a turn
+                    // every third frame) names a caster only in the frames of the faces that see it: such a group has to stay for a few frames, or it is in the scene two frames in three
+                    // (the globe, window and wall pictures seen only in the mirror came and went every third frame). grouphold=0 (live) is the old behaviour.
                     if (seen == tag)
+                    {
+                        alive = true;
+                    }
+                    else if (tag <= seen + sDbg.mGroupHold)
                     {
                         alive = true;
                     }
@@ -1778,9 +1788,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                         seen = 0;
                     }
                 }
-                else if (tag <= seen + keep)
+                else if (tag <= seen + (p >= 7 ? std::max<U64>(keep, 128) : keep))
                 {
-                    alive = true;           // cached (or not rendered at all): the shadow map it fed is still in use
+                    alive = true;           // cached (or not rendered at all): the shadow map it fed is still in use (a probe face: until it renders again, a face of a reflection probe may wait many frames)
                 }
             }
             if (!alive)
@@ -3588,6 +3598,38 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     {
         memcpy((U8*)tlas.mInstances.mMapped + instance_offset, instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
     }
+    if (sDbg.mAvatarLog)
+    {
+        static FILE* inst_log = fopen("D:/claude/rt-avatars.log", "ab");
+        if (inst_log)
+        {
+            const long long wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            size_t avatar_inst = 0, masked_inst = 0;
+            for (const VkAccelerationStructureInstanceKHR& inst : instances)
+            {
+                avatar_inst += (inst.mask & 4u) ? 1 : 0;
+                masked_inst += (inst.mask & 2u) ? 1 : 0;
+            }
+            fprintf(inst_log, "%lld frame %llu SCENEINST %u instances %zu (avatars %zu, with masked geometry %zu) groups %zu records %u\n", wall, (unsigned long long)frame_now, call, instances.size(), avatar_inst, masked_inst, sGroups.size(), records);
+            fflush(inst_log);
+        }
+    }
+    if (sDbg.mInstDump)
+    {
+        static int dumped = 0;
+        static FILE* dump_log = fopen("D:/claude/rt-instances.log", "ab");
+        if (dump_log && dumped < 40)
+        {
+            ++dumped;
+            const long long wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            fprintf(dump_log, "CALL %lld frame %llu call %u camera %.2f %.2f %.2f instances %zu%s", wall, (unsigned long long)frame_now, call, cam[0], cam[1], cam[2], instances.size(), "\n");
+            for (const VkAccelerationStructureInstanceKHR& inst : instances)
+            {
+                fprintf(dump_log, "%llx %.2f %.2f %.2f %u %u%s", (unsigned long long)inst.accelerationStructureReference, inst.transform.matrix[0][3], inst.transform.matrix[1][3], inst.transform.matrix[2][3], inst.mask, inst.instanceCustomIndex, "\n");
+            }
+            fflush(dump_log);
+        }
+    }
     if (diag_on())
     {
         // flight recorder (see sRecent): a pass over the instances, a few microseconds per thousand
@@ -3596,16 +3638,6 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         r.mCall = call;
         r.mSceneCall = sSceneCalls;
         r.mInstances = (U32)instances.size();
-        if (sDbg.mAvatarLog)
-        {
-            static FILE* inst_log = fopen("D:/claude/rt-avatars.log", "ab");
-            if (inst_log)
-            {
-                const long long wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                fprintf(inst_log, "%lld frame %llu SCENEINST %u instances %zu groups %zu records %u\n", wall, (unsigned long long)frame_now, call, instances.size(), sGroups.size(), records);
-                fflush(inst_log);
-            }
-        }
         r.mCapacity = tlas.mCapacity;
         r.mJobs = (U32)jobs.size();
         r.mSkinChunks = (U32)skin_chunks.size();

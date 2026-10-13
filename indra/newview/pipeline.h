@@ -759,6 +759,8 @@ public:
     static bool             sNoAlpha;
     static bool             sUseFarClip;
     static bool             sShadowRender;
+    static S32              sRtProbePass;       // <FS> ray scene: the probe face being rendered (hero faces 7-12, reflection probe faces 13-18), -1 outside a probe face: its casters are named under that pass, not under the main view's
+
     static bool             sDynamicLOD;
     static bool             sPickAvatar;
     static bool             sReflectionRender;
