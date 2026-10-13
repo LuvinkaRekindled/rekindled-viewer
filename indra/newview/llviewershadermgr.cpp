@@ -969,7 +969,15 @@ bool LLViewerShaderMgr::loadShadersWater()
         gWaterProgram.mShaderFiles.clear();
         gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", GL_VERTEX_SHADER));
         gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterF.glsl", GL_FRAGMENT_SHADER));
+        // (the device is not up yet when the water is configured: LLVkMirror::rtShadowMode() still says 0; the launcher's environment is the early answer. The ray traced reflection (rtWaterReflection in shadowUtil.glsl) needs the scene and the material table; the program's own files only see the permutations, the global defines such as SUN_SHADOW reach the library files only)
+        const char* rt_env = getenv("LL_VK_RT_SHADOWS");
+        const char* rt_materials_env = getenv("LL_VK_RT_MATERIALS");
+        const bool rt_water_reflections_possible = use_sun_shadow && rt_env && rt_env[0] && rt_env[0] != '0' && rt_materials_env && rt_materials_env[0] == '1';
         gWaterProgram.clearPermutations();
+        if (rt_water_reflections_possible)
+        {
+            gWaterProgram.addPermutation("LL_RT_REFLECTIONS", "1");      // after clearPermutations: it wipes them
+        }
         if (LLPipeline::sRenderTransparentWater)
         {
             gWaterProgram.addPermutation("TRANSPARENT_WATER", "1");

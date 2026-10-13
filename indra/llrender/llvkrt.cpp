@@ -261,6 +261,7 @@ struct DebugSwitches
     bool mMats = false;             // records for the opaque geometries too, the material table is filled and traced against (needs LL_VK_RT_MATERIALS=1 at start-up)
     bool mDelta = true;             // the tables are written to the call's region as deltas (rows changed since the region was last written); off: all rows every call
     bool mTableVerify = false;      // after every table write compare the region with the kept rows (slow: reads video memory)
+    S32 mWaterRt = 1;               // live (waterrt=N, 1 by default; needs LL_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtWaterReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
     S32 mView = 0;                  // live (view=N): the ray scene material debug view mode (RenderRTMaterialDebug) the viewer shows, 0 = the setting decides
     bool mGate = true;              // live (gate=0/1): avatars still loading and masked casters without texture data are not named (the viewer asks through LLVkMirror::rtLoadingGates)
     bool mBodyName = true;          // live (bodyname=0/1): the viewer names the body meshes of the last frames again before the scene call (LLVkMirror::rtBodyRename)
@@ -269,6 +270,7 @@ struct DebugSwitches
 };
 DebugSwitches sDbg;
 std::atomic<S32> sViewLive{0};
+std::atomic<S32> sWaterRtLive{0};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkMirror)
 std::chrono::steady_clock::time_point sDbgRead;
 
@@ -327,6 +329,7 @@ void read_debug_switches()
                 else if (k == "skintest") d.mSkinTest = v != 0;
                 else if (k == "skinfast") d.mSkinFast = v != 0;
                 else if (k == "view") d.mView = (S32)v;
+                else if (k == "waterrt") d.mWaterRt = (S32)v;
                 else if (k == "gate") d.mGate = v != 0;
                 else if (k == "bodyname") d.mBodyName = v != 0;
                 else if (k == "skinreach") d.mSkinReach = (F32)std::max<long long>(1, v);
@@ -365,6 +368,7 @@ void read_debug_switches()
         LL_INFOS("VkRt") << "debug switches: gate (loading avatars and textures) " << d.mGate << ", bodyname " << d.mBodyName << ", skin reach " << d.mSkinReach << " m" << LL_ENDL;
     }
     sViewLive.store(d.mView, std::memory_order_relaxed);
+    sWaterRtLive.store(sMatsInit ? d.mWaterRt : 0, std::memory_order_relaxed);
     sGateLive.store(d.mGate, std::memory_order_relaxed);
     sBodyNameLive.store(d.mBodyName, std::memory_order_relaxed);
     sDbg = d;
@@ -1029,6 +1033,7 @@ struct Job
 
 } // anonymous namespace
 
+S32 waterReflections() { return sWaterRtLive.load(std::memory_order_relaxed); }
 S32 debugView() { return sViewLive.load(std::memory_order_relaxed); }
 bool loadingGates() { return sGateLive.load(std::memory_order_relaxed); }
 bool bodyRename() { return sBodyNameLive.load(std::memory_order_relaxed); }

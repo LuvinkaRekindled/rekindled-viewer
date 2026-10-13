@@ -29,6 +29,11 @@
 
 out vec4 frag_color;
 
+#if defined(HAS_SUN_SHADOW) && defined(LL_RT_REFLECTIONS)
+#define WATER_RT_REFLECTION 1
+uniform int rt_water_reflections;
+vec4 rtWaterReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback);
+#endif
 #ifdef HAS_SUN_SHADOW
 float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
 #endif
@@ -301,6 +306,34 @@ void main()
     sampleReflectionProbesWater(irradiance, radiance, distort2, pos.xyz, wave_ibl.xyz, gloss, amblit);
 #elif WATER_MINIMAL_PLUS
     sampleReflectionProbes(irradiance, radiance, distort2, pos.xyz, wave_ibl.xyz, gloss, false, amblit);
+#endif
+
+#ifdef WATER_RT_REFLECTION
+    if (rt_water_reflections == 2)
+    {
+        radiance = vec3(1.0, 0.0, 1.0);        // plumbing check: the code runs
+    }
+    else if (rt_water_reflections != 0)
+    {
+        // <FS> a ray from the water surface into the ray scene: a hit replaces what the probes and the screen space trace found, a miss keeps it (3: hits green, misses red, upward rays only)
+        vec3 rt_dir = normalize(reflect(pos.xyz, wave_ibl.xyz));
+        if (dot(rt_dir, up) > 0.0)
+        {
+            vec4 rt_refl = rtWaterReflection(pos.xyz + wave_ibl.xyz * 0.05, rt_dir, normalize(transform_normal(lightDir)), sunlit_linear, amblit, distort, radiance);
+            if (rt_water_reflections == 3)
+            {
+                radiance = rt_refl.a > 0.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+            }
+            else
+            {
+                radiance = mix(radiance, rt_refl.rgb, rt_refl.a);
+            }
+        }
+        else if (rt_water_reflections == 3)
+        {
+            radiance = vec3(0.0, 0.0, 1.0);    // the reflection ray points down
+        }
+    }
 #endif
 
     vec3 diffuseColor = vec3(0);

@@ -44,6 +44,7 @@
 #include "llvowater.h"
 #include "llworld.h"
 #include "pipeline.h"
+#include "llvkmirror.h"
 #include "llviewershadermgr.h"
 #include "llenvironment.h"
 #include "llsettingssky.h"
@@ -236,6 +237,11 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     }
 
     shader->bindTexture(LLShaderMgr::WATER_EXCLUSIONTEX, &gPipeline.mWaterExclusionMask);
+    {
+        // <FS> ray traced reflections on the water (rt-debug.txt waterrt, rtWaterReflection in shadowUtil.glsl)
+        static LLStaticHashedString rt_water_s("rt_water_reflections");
+        shader->uniform1i(rt_water_s, LLVkMirror::rtWaterReflections());
+    }
 
     shader->uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
 

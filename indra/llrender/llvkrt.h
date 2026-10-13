@@ -23,6 +23,7 @@ namespace Rt
 
 // live switches of rt-debug.txt the viewer reads (main thread): gate=0/1 (do not trace avatars that are still loading nor masked casters without texture data), bodyname=0/1
 bool loadingGates();
+S32 waterReflections();    // waterrt=1: ray traced water reflections
 S32 debugView();        // view=N: the material debug view mode to show (0 = the setting RenderRTMaterialDebug)
 bool bodyRename();
 
