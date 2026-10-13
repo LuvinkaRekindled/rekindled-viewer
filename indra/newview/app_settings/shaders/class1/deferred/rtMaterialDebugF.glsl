@@ -28,9 +28,11 @@ out vec4 frag_color;
 in vec2 vary_fragcoord;
 
 uniform sampler2D diffuseRect;
+uniform sampler2D emissiveRect;
 uniform int rt_debug_mode;
 
 vec4 getPosition(vec2 pos_screen);
+vec4 getNorm(vec2 screenpos);
 
 void dbgSceneFrame(out mat3 to_scene, out vec3 camera)
 {
@@ -41,6 +43,9 @@ void dbgSceneFrame(out mat3 to_scene, out vec3 camera)
 }
 
 // what a hit looks like through its record and material. status: 0 fine, 1 unusable record, 2 no material row. Returns false when the record cannot be read at all.
+vec3 dbg_normal_obj = vec3(0.0, 1.0, 0.0);     // modes 11-13: the shaded normal of the surface (object space: the smooth normal where the record has them, the normal map through a tangent frame from the uv derivatives)
+vec3 dbg_normal_geo_obj = vec3(0.0, 1.0, 0.0);  // the same without the normal map
+vec3 dbg_emissive = vec3(0.0);                  // glTF emissive factor x emissive texture (linear)
 float dbg_raw_alpha = 0.0;      // mode 10: the texture alpha x vertex alpha x colour alpha of the last surface looked at, the cutoff it is held against, whether the material is alpha masked
 float dbg_cutoff = 0.5;
 bool dbg_masked = false;
@@ -49,6 +54,9 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
 {
     albedo = vec4(1.0, 0.0, 1.0, 1.0);
     flat_normal = vec3(0.0, 1.0, 0.0);
+    dbg_normal_obj = flat_normal;
+    dbg_normal_geo_obj = flat_normal;
+    dbg_emissive = vec3(0.0);
     mat_id = 0u;
     status = 1u;
     if (record == 0u || record >= ll_rt_geoms.g[0].first)
@@ -106,6 +114,61 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
     if ((mflags & 64u) != 0u)
     {
         vcol.a = 1.0;                                           // the legacy materials passes test the texture alpha alone
+    }
+    // the shaded normal: smooth where the record has the normal array (static draws), flat otherwise (avatars); with the normal map through a tangent frame from this triangle's uv derivatives
+    vec3 n_geo = flat_normal;
+    if ((g.flags & 1024u) != 0u)
+    {
+        LLRtNormals nb = LLRtNormals(g.normals);
+        vec3 ns = nb.n[ix[0]].xyz * w.x + nb.n[ix[1]].xyz * w.y + nb.n[ix[2]].xyz * w.z;
+        n_geo = dot(ns, ns) > 1e-8 ? normalize(ns) : flat_normal;
+    }
+    dbg_normal_obj = n_geo;
+    dbg_normal_geo_obj = n_geo;
+    uint normal_pin = m.slots2.x & 0xFFFFu;
+    if (normal_pin != 0u && (g.flags & 8u) != 0u)
+    {
+        uint normal_slot = ll_rt_slot(normal_pin);
+        if (normal_slot != 0u)
+        {
+            LLRtTexcoords tcn = LLRtTexcoords(g.texcoords);
+            vec2 a0 = tcn.t[ix[0]], a1 = tcn.t[ix[1]], a2 = tcn.t[ix[2]];
+            a0 = m.uv0 * a0.x + m.uv1 * a0.y + m.uv2;
+            a1 = m.uv0 * a1.x + m.uv1 * a1.y + m.uv2;
+            a2 = m.uv0 * a2.x + m.uv1 * a2.y + m.uv2;
+            vec3 e1 = p1 - p0, e2 = p2 - p0;
+            vec2 d1 = a1 - a0, d2 = a2 - a0;
+            float det = d1.x * d2.y - d2.x * d1.y;
+            if (abs(det) > 1e-12)
+            {
+                vec3 tangent = (e1 * d2.y - e2 * d1.y) / det;
+                vec3 bitangent = (e2 * d1.x - e1 * d2.x) / det;
+                tangent = tangent - n_geo * dot(n_geo, tangent);
+                if (dot(tangent, tangent) > 1e-12)
+                {
+                    tangent = normalize(tangent);
+                    vec3 bit = cross(n_geo, tangent);
+                    bit *= (dot(bit, bitangent) < 0.0) ? -1.0 : 1.0;       // the handedness of the uv layout
+                    vec3 nm = textureLod(ll_rt_tex[nonuniformEXT(normal_slot)], uv, lod).xyz * 2.0 - 1.0;
+                    dbg_normal_obj = normalize(tangent * nm.x + bit * nm.y + n_geo * nm.z);
+                }
+            }
+        }
+    }
+    if ((mflags & 2u) != 0u)
+    {
+        vec3 emissive_tex = vec3(1.0);
+        uint emissive_pin = m.slots2.y & 0xFFFFu;
+        if (emissive_pin != 0u)
+        {
+            uint emissive_slot = ll_rt_slot(emissive_pin);
+            if (emissive_slot != 0u)
+            {
+                vec3 c = textureLod(ll_rt_tex[nonuniformEXT(emissive_slot)], uv, lod).rgb;
+                emissive_tex = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+            }
+        }
+        dbg_emissive = m.emissive.xyz * emissive_tex;
     }
     albedo = tex * vcol * m.color;
     // the G-buffer holds sRGB values for legacy materials and linear ones for glTF: modes 1 to 3 are compared in the G-buffer's space
@@ -186,7 +249,38 @@ void main()
     bool ok = dbgSurface(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)), rayQueryGetIntersectionBarycentricsEXT(rq, true), lod, albedo, n_obj, mat_id, status);
     mat4x3 w2o = rayQueryGetIntersectionWorldToObjectEXT(rq, true);
     vec3 n_world = normalize(n_obj * mat3(w2o));
-    if (rt_debug_mode == 10)
+    if (rt_debug_mode == 16)
+    {
+        // 16: the difference to the G-buffer normal (x2) with the geometric normal only (13 has the normal map applied): the two tell whether the normal map helps
+        vec3 n_geo_eye = normalize(normalize(dbg_normal_geo_obj * mat3(w2o)) * to_scene);
+        frag_color = vec4(clamp(abs(n_geo_eye - getNorm(uv).xyz) * 2.0, 0.0, 1.0), 1.0);
+    }
+    else if (rt_debug_mode == 14 || rt_debug_mode == 15)
+    {
+        // 14 / 15: blocks of 12 pixels alternate between the hit's normal (14: with the normal map, 15: without) and the G-buffer's, both as colours in eye space: where they agree the pattern disappears
+        vec3 n_hit_eye = normalize(normalize((rt_debug_mode == 14 ? dbg_normal_obj : dbg_normal_geo_obj) * mat3(w2o)) * to_scene);
+        bool hit_block = ((int(gl_FragCoord.x) / 12 + int(gl_FragCoord.y) / 12) & 1) == 0;
+        frag_color = vec4((hit_block ? n_hit_eye : getNorm(uv).xyz) * 0.5 + 0.5, 1.0);
+    }
+    else if (rt_debug_mode >= 11 && rt_debug_mode <= 13)
+    {
+        // 11: the hit's emissive against the G-buffer's (difference x4), 12: the shaded normal of the hit (eye space, as a colour), 13: its difference to the G-buffer's normal (x2)
+        vec3 n_shaded_world = normalize(dbg_normal_obj * mat3(w2o));
+        vec3 n_shaded_eye = normalize(n_shaded_world * to_scene);
+        if (rt_debug_mode == 11)
+        {
+            frag_color = vec4(clamp(abs(dbg_emissive - texture(emissiveRect, uv).rgb) * 4.0, 0.0, 1.0), 1.0);
+        }
+        else if (rt_debug_mode == 12)
+        {
+            frag_color = vec4(n_shaded_eye * 0.5 + 0.5, 1.0);
+        }
+        else
+        {
+            frag_color = vec4(clamp(abs(n_shaded_eye - getNorm(uv).xyz) * 2.0, 0.0, 1.0), 1.0);
+        }
+    }
+    else if (rt_debug_mode == 10)
     {
         // red: the surface alpha, green: 1 where it passes the material cutoff (0 where the alpha test would drop it), blue: the cutoff; blue only (no red) = alpha is 0 and the material is not masked
         frag_color = vec4(dbg_raw_alpha, dbg_raw_alpha >= dbg_cutoff ? 1.0 : 0.0, dbg_masked ? dbg_cutoff : 0.0, 1.0);

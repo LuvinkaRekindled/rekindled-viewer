@@ -205,6 +205,7 @@ namespace LLVkMirror
     U32 rtShadowMode();
     // live switches (rt-debug.txt gate=, bodyname=), 1 by default: do not trace avatars still loading and masked casters whose texture has no data; name the body meshes of the last frames again
     bool rtLoadingGates();
+    S32 rtDebugView();      // rt-debug.txt view=N: the ray scene material debug view mode to show, 0 = the setting RenderRTMaterialDebug decides
     bool rtBodyRename();
     // Builds the scene the shadow passes of this frame named (their casters) for the camera view: bottom-level structures as the budget allows, then the top-level structure in
     // eye space. Call before the lighting that samples the sun shadow. view: the camera's view matrix, column-major.

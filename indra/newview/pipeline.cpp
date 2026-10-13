@@ -9122,10 +9122,10 @@ void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
 // Currently only used for shadows -Cosmic,2023-04-19
 // <FS> Render packets with textures: can this static draw be an entry of a record of alpha masked casters? The pull shader reads 16 bit indices, positions
 // first, and takes the draw's texture(s) from a table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
-static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged)
+static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf = false)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
-    if (!p.mCount || rigged != (p.mAvatar != nullptr) || p.mGLTFMaterial || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+    if (!p.mCount || rigged != (p.mAvatar != nullptr) || (p.mGLTFMaterial && !allow_gltf) || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
     {
         return false;
@@ -9138,7 +9138,7 @@ static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, boo
     {
         return p.mTextureList.size() <= 4;
     }
-    return !(p.mTexture.notNull() && p.mTextureMatrix);
+    return allow_gltf || !(p.mTexture.notNull() && p.mTextureMatrix);
 }
 
 // <FS> why shadow_alpha_packet_ok said no (for the statistics, and for the ray scene, which takes the texture matrix draws): 1 glTF material, 2 buffer layout, 3 rigged without weights
@@ -10552,7 +10552,8 @@ void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
     static LLStaticHashedString mode_s("rt_debug_mode");
     dst->bindTarget();
     bindDeferredShader(gRtMaterialDebugProgram);
-    gRtMaterialDebugProgram.uniform1i(mode_s, llclamp((S32)mode, 1, 10));
+    const S32 live_view = LLVkMirror::rtDebugView();        // rt-debug.txt view=N overrides the setting (changed while running, no restart)
+    gRtMaterialDebugProgram.uniform1i(mode_s, llclamp(live_view > 0 ? live_view : (S32)mode, 1, 16));
     {
         LLGLDisable   blend(GL_BLEND);
         LLGLDepthTest depth(GL_FALSE, GL_FALSE, GL_ALWAYS);
@@ -12095,7 +12096,8 @@ static void rt_name_rigged_main_view()
     static const U32 types[] = {
         LLRenderPass::PASS_SIMPLE, LLRenderPass::PASS_FULLBRIGHT, LLRenderPass::PASS_SHINY, LLRenderPass::PASS_BUMP, LLRenderPass::PASS_FULLBRIGHT_SHINY, LLRenderPass::PASS_MATERIAL,
         LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE, LLRenderPass::PASS_SPECMAP, LLRenderPass::PASS_SPECMAP_EMISSIVE, LLRenderPass::PASS_NORMMAP, LLRenderPass::PASS_NORMMAP_EMISSIVE,
-        LLRenderPass::PASS_NORMSPEC, LLRenderPass::PASS_NORMSPEC_EMISSIVE
+        LLRenderPass::PASS_NORMSPEC, LLRenderPass::PASS_NORMSPEC_EMISSIVE,
+        LLRenderPass::PASS_GLTF_PBR              // glTF materials (the rigged variant is the next number like for the others)
     };
     {
         std::vector<LLVkMirror::ShadowSkinEntry> entries;
@@ -12170,7 +12172,7 @@ static void rt_name_rigged_main_view()
     }
     // the rigged alpha casters
     {
-        enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_MATERIAL };
+        enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_MATERIAL, KIND_GLTF };
         struct Source { U32 type; int kind; };
         static const Source sources[] = {
             { LLRenderPass::PASS_ALPHA_MASK, KIND_MASK },
@@ -12180,6 +12182,7 @@ static void rt_name_rigged_main_view()
             { LLRenderPass::PASS_MATERIAL_ALPHA_MASK, KIND_MATERIAL },
             { LLRenderPass::PASS_SPECMAP_MASK, KIND_MATERIAL },
             { LLRenderPass::PASS_NORMMAP_MASK, KIND_MATERIAL },
+            { LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK, KIND_GLTF },
         };
         std::vector<LLVkMirror::ShadowAlphaEntry> entries;
         std::vector<F32> matrices(16, 0.f);
@@ -12209,7 +12212,8 @@ static void rt_name_rigged_main_view()
             {
                 LLDrawInfo* params = *i;
                 LLCullResult::increment_iterator(i, end);
-                if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || !shadow_alpha_packet_ok(*params, batch, true) || !rt_textures_ready(*params, batch))
+                if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || (source.kind == KIND_GLTF && !params->mGLTFMaterial)
+                    || !shadow_alpha_packet_ok(*params, batch, true, source.kind == KIND_GLTF) || !rt_textures_ready(*params, batch))
                 {
                     continue;
                 }
@@ -12248,6 +12252,10 @@ static void rt_name_rigged_main_view()
                     e.mMatrix = it->second;
                 }
                 U32 flags = LLVkMirror::ALPHA_RIGGED;
+                if (source.kind == KIND_GLTF)
+                {
+                    flags |= LLVkMirror::ALPHA_HARD;        // glTF alpha mask: a plain cut at the material's cutoff on texture alpha times vertex alpha
+                }
                 if (source.kind == KIND_FULLBRIGHT)
                 {
                     flags |= LLVkMirror::ALPHA_FULLBRIGHT;
@@ -12279,13 +12287,23 @@ static void rt_name_rigged_main_view()
                 else
                 {
                     flags |= LLVkMirror::ALPHA_NO_INDEX;
-                    if (params->mTexture.notNull())
+                    if (source.kind == KIND_GLTF)
+                    {
+                        LLFetchedGLTFMaterial* gm = params->mGLTFMaterial.get();
+                        LLViewerTexture* base = params->mTexture.notNull() ? params->mTexture.get() : gm->mBaseColorTexture.get();
+                        if (base)
+                        {
+                            e.mTextures[0] = texture_name(base);
+                        }
+                        rt_khr_uv(gm->mTextureTransform[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR], e.mUv);
+                    }
+                    else if (params->mTexture.notNull())
                     {
                         e.mTextures[0] = texture_name(params->mTexture.get());
                     }
                 }
                 e.mFlags = flags;
-                e.mCutoff = source.kind == KIND_ALPHA ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
+                e.mCutoff = source.kind == KIND_ALPHA ? ALPHA_BLEND_CUTOFF : (source.kind == KIND_GLTF ? params->mGLTFMaterial->mAlphaCutoff : params->mAlphaMaskCutoff);
                 if (rt_materials_on())
                 {
                     e.mMaterial = rt_material_id(params, source.kind == KIND_ALPHA ? 2u : (source.kind == KIND_MATERIAL ? 5u : 1u));
