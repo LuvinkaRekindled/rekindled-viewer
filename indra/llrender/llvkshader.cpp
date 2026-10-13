@@ -1524,7 +1524,7 @@ bool bindlessShaders()
     return on;
 }
 
-bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
+bool compileProgramImpl(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
                     ProgramInfo& out, const std::string& dump_dir)
 {
     // the debug wrapper records per-program sampler names while compiling, and a dump request needs the compile to run
@@ -1557,6 +1557,36 @@ bool compileProgram(const std::string& program_name, const std::vector<StageSour
         spirv_cache_store(path, out);
     }
     return ok;
+}
+
+// LL_VK_BINDLESS_ONLY=name1|name2|... : only the programs with exactly one of these names read their textures through the bindless tables, the rest use the classic push descriptor
+// path. LL_VK_BINDLESS_SKIP=name1|name2 : the listed programs use the classic path. For bisecting a bindless crash (the names are in the log: "program '<name>': bindless").
+static bool name_matches(const std::string& name, const char* list)
+{
+    const std::string rest(list);
+    size_t pos = 0;
+    while (pos <= rest.size())
+    {
+        size_t end = rest.find('|', pos);
+        if (end == std::string::npos) end = rest.size();
+        if (rest.compare(pos, end - pos, name) == 0 && end - pos == name.size()) return true;
+        pos = end + 1;
+    }
+    return false;
+}
+
+bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
+                    ProgramInfo& out, const std::string& dump_dir)
+{
+    static const char* only = getenv("LL_VK_BINDLESS_ONLY");
+    static const char* skip = getenv("LL_VK_BINDLESS_SKIP");
+    if (env.mBindless && ((only && !name_matches(program_name, only)) || (skip && name_matches(program_name, skip))))
+    {
+        ShaderEnv classic = env;
+        classic.mBindless = false;
+        return compileProgramImpl(program_name, stages, classic, out, dump_dir);
+    }
+    return compileProgramImpl(program_name, stages, env, out, dump_dir);
 }
 
 namespace

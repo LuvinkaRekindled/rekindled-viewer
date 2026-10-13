@@ -150,3 +150,28 @@ The native renderer builds a program's pipeline in the background and drops draw
 - **Careful:** my first device-fault query crashed the NVIDIA driver (`vkGetDeviceFaultInfoEXT` with the vendor binary size left as reported and no buffer): the size is now zeroed, and the query is only made after the loss, never at the 'frame stuck' mark.
 - **Tools left in:** `LL_VK_AV_LOG=<file>` (access violation stack with names, in-process), `LL_VK_RT_NAMELEAK`, device fault + arena block + bindless audit in the device lost report, harness `RT_OFF=1`, `RT_AV_LOG`, `<work>ree-account.ps1` (Radegast frees the account).
 - **Next:** the read page is not in the arena, so the candidates are the small non-arena buffers (per-frame uniform rings, staging) and image memory: list their device addresses at the loss, then check the avatar draw's inputs (vertex data of the own avatar is rewritten at every update).
+
+## To fix later (found by GPU-assisted validation, 2026-10-13; Adam asked not to forget)
+
+- Ray scene BLAS builds: indices run past `maxVertex` (UINT16, e.g. indices 768-770 with maxVertex 767, stride 16). Reads inside the buffer; not the login crash.
+- Ray queries with NaN origins in a mirror / reflection path shader (OpRayQueryInitializeKHR). Not the base crash.
+
+## Login device lost: bisect results so far (2026-10-13, all with the mirror on, ray tracing on unless noted; 12 logins = a clean verdict)
+
+| Change | Result |
+|---|---|
+| `RenderMirrors=0` | 0 of 12 crashed |
+| `LL_VK_BINDLESS=0` (no bindless textures; also turns the packets off) | 0 of 12 |
+| `LL_VK_ASYNC=0` (no worker thread) | 0 of 12 |
+| `LL_VK_ASYNC=lockstep` (worker, main waits every frame) | 0 of 12 |
+| ray tracing off, mirror on | 2 of 2 crashed (so ray tracing is not required) |
+| packets off (FSDeferredPackets/FSShadowPackets 0), bindless on | crashed (login 1) |
+| `LL_VK_FRAMES=6`, COARSE_BARRIERS, NO_DEVICE_BUFFERS, ARENA=0, NO_QUERIES, INDEXED_CHANNELS=1, bone palette index clamp, UPDATE_UNUSED_WHILE_PENDING flag | each still crashed |
+| bindless limited by program (`LL_VK_BINDLESS_ONLY=a|b`): first 97 of 194 programs / first 48 crash; first 24 clean; every subset of programs 25-48 clean | no single program: it needs many bindless programs at once |
+
+So the crash needs: bindless texture binding in many programs + the mirror (hero probe) pass + main thread / worker overlap. Not memory pressure (2.7-4.4 GB of 12.8 GB used), not ray tracing, not packets, not the buffer arena or device buffer copies, not stale bindless slots (no slot used after its image was destroyed), not a bone index out of range.
+
+- **Draw to suspect (checkpoint rule: markers are set BEFORE draws, so the draw of the last COMPLETED marker is the first unfinished one):** in 11 of 15 crash logs it is 'Deferred Diffuse Alpha Mask Shader' (indexed texture channels, a small mesh such as 270 indices) and otherwise 'Deferred Avatar Shader indices 4962'. Recent crashes also stop in the first draws after the world loads in around the own avatar's arrival.
+- **Fault info** (VK_EXT_device_fault, page-level precision): unmapped page reads, the page changes every run, instruction address constant per pipeline set; the 'in arena block' check never matched.
+- **Open leads:** (1) bindless descriptor writes happen in the middle of recording into one set per frame slot with update-after-bind (the pending-write rules are only partly covered by the UPDATE_UNUSED_WHILE_PENDING bit now set); (2) queued-but-unflushed descriptor entries are dropped at `Renderer::beginFrame` (also called by `flushAndRestart`) while pull-shader draws (classic programs reading set 2 by packet slot numbers) need them flushed before submit; (3) a per-frame data race between main-thread vertex/index data writes and the worker's flush of them (only visible with overlap); (4) synchronization validation reports write-after-write copy hazards on device buffers (harmless alone).
+- **Test switches added:** `LL_VK_BINDLESS_ONLY` / `LL_VK_BINDLESS_SKIP` (exact program names, `|` separated), `LL_VK_INDEXED_CHANNELS`, `LL_VK_BINDLESS_NOUNUSED`, harness `hunt.ps1`, `bisect-bindless.ps1`, `free-account.ps1`, `RT_ENV`, `RT_FRAMES`, `RT_VALIDATE`/`RT_GPUAV`/`RT_SYNCVAL`.

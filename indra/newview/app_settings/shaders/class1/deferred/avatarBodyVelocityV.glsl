@@ -44,8 +44,13 @@ vec3 skinPosition(vec4 p, vec4 a0, vec4 a1, vec4 a2, vec4 b0, vec4 b1, vec4 b2, 
 
 void main()
 {
-    int i = int(floor(weight.x));
-    float x = fract(weight.x);
+    float wx = weight.x;
+    if (!(wx >= 0.0 && wx <= 13.999))          // NaN or out-of-range: an index outside the palette reads memory that is not ours
+    {
+        wx = 0.0;
+    }
+    int i = int(floor(wx));
+    float x = fract(wx);
     vec4 p = vec4(position, 1.0);
 
     vec3 world_cur = skinPosition(p, matrixPalette[i], matrixPalette[i + 15], matrixPalette[i + 30], matrixPalette[i + 1], matrixPalette[i + 16], matrixPalette[i + 31], x);

@@ -719,6 +719,7 @@ bool Context::pickDevice()
                     left(p12.maxPerStageUpdateAfterBindResources, 160), left(p12.maxDescriptorSetUpdateAfterBindSamplers, 96),
                     left(p12.maxDescriptorSetUpdateAfterBindSampledImages, 96) });
                 mCaps.mBindlessSlots = n >= 1024 ? n : 0;
+                mCaps.mBindlessUpdateUnused = chain.f12.descriptorBindingUpdateUnusedWhilePending != VK_FALSE;
             }
             LL_INFOS("Vulkan") << "descriptor indexing: runtime arrays " << (chain.f12.runtimeDescriptorArray ? 1 : 0) << ", partially bound "
                 << (chain.f12.descriptorBindingPartiallyBound ? 1 : 0) << ", sampled image update after bind " << (chain.f12.descriptorBindingSampledImageUpdateAfterBind ? 1 : 0)
@@ -1048,6 +1049,13 @@ void Context::reportDeviceLost()
 
 void Context::reportCheckpoints(const char* when)
 {
+    {
+        U64 used = 0, budget = 0;
+        if (videoMemory(used, budget))
+        {
+            LL_WARNS("Vulkan") << when << ": video memory used " << (used >> 20) << " MB of a budget of " << (budget >> 20) << " MB" << LL_ENDL;
+        }
+    }
     if (mCaps.mDeviceFault && vkGetDeviceFaultInfoEXT && strcmp(when, "device lost") == 0)       // only after the loss: asked while a frame is merely stuck, the driver itself crashed (access violation in nvoglv64.dll)
     {
         VkDeviceFaultCountsEXT counts = { VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT };
