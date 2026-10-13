@@ -35,6 +35,8 @@ namespace LLVkGL
     void resource_destroy(unsigned kind, int n, const unsigned* ids);
     // DLSS: runs the upscaler on four mirror-owned textures (colour, depth, motion vectors -> output); the gMutex must be held
     void on_upscale(const LLVkMirror::UpscaleArgs& args);
+    // the GL texture whose image has this view id (device lost report)
+    std::string describe_texture_of_view(U64 view_id);
 }
 
 #endif // LL_VULKAN

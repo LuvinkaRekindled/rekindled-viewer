@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <map>
+#include <mutex>
 #include <cstring>
 #include <unordered_map>
 #include <atomic>
@@ -179,6 +181,77 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
         LL_WARNS("VulkanValidation") << "[draw: " << (gDebugProgram ? gDebugProgram : "-") << "] " << data->pMessage << LL_ENDL;
     }
     return VK_FALSE;
+}
+
+// LL_VK_ADDR_LOG=1: VK_EXT_device_address_binding_report. Every bind / unbind of GPU memory to a buffer, image or acceleration structure goes into a ring, so the
+// address of a device fault can be traced to the resource that held it and the frame it was given up in (the report lists them)
+struct AddrEvent
+{
+    U64 mFrame;
+    U64 mMicros;
+    U64 mBase;
+    U64 mSize;
+    U64 mHandle;
+    U32 mObjectType;
+    U8 mBind;           // 1 bind, 0 unbind
+    U8 mInternal;
+};
+std::mutex sAddrMutex;
+std::vector<AddrEvent> sAddrRing;
+U64 sAddrCount = 0;
+const size_t ADDR_RING = 1u << 20;
+
+U64 addr_micros()
+{
+    LARGE_INTEGER f, c;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    return (U64)(c.QuadPart * 1000000ll / f.QuadPart);
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL address_binding_callback(VkDebugUtilsMessageSeverityFlagBitsEXT, VkDebugUtilsMessageTypeFlagsEXT,
+                                                        const VkDebugUtilsMessengerCallbackDataEXT* data, void*)
+{
+    for (const VkBaseInStructure* p = reinterpret_cast<const VkBaseInStructure*>(data->pNext); p; p = p->pNext)
+    {
+        if (p->sType != VK_STRUCTURE_TYPE_DEVICE_ADDRESS_BINDING_CALLBACK_DATA_EXT)
+        {
+            continue;
+        }
+        const VkDeviceAddressBindingCallbackDataEXT* d = reinterpret_cast<const VkDeviceAddressBindingCallbackDataEXT*>(p);
+        AddrEvent e = {};
+        e.mFrame = Context::instance().getFrameNumber();
+        e.mMicros = addr_micros();
+        e.mBase = (U64)d->baseAddress;
+        e.mSize = (U64)d->size;
+        e.mBind = d->bindingType == VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT ? 1 : 0;
+        e.mInternal = (d->flags & VK_DEVICE_ADDRESS_BINDING_INTERNAL_OBJECT_BIT_EXT) ? 1 : 0;
+        if (data->objectCount > 0 && data->pObjects)
+        {
+            e.mObjectType = (U32)data->pObjects[0].objectType;
+            e.mHandle = (U64)data->pObjects[0].objectHandle;
+        }
+        std::lock_guard<std::mutex> lock(sAddrMutex);
+        if (sAddrRing.empty())
+        {
+            sAddrRing.resize(ADDR_RING);
+        }
+        sAddrRing[sAddrCount % ADDR_RING] = e;
+        ++sAddrCount;
+    }
+    return VK_FALSE;
+}
+
+const char* addr_object_name(U32 t)
+{
+    switch (t)
+    {
+    case VK_OBJECT_TYPE_BUFFER: return "buffer";
+    case VK_OBJECT_TYPE_IMAGE: return "image";
+    case VK_OBJECT_TYPE_DEVICE_MEMORY: return "memory";
+    case VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR: return "accel";
+    default: return "other";
+    }
 }
 
 // the feature structures the backend queries and enables, chained together
@@ -445,7 +518,8 @@ bool Context::createInstance()
         }
     }
     const bool want_validation = GetEnvironmentVariableA("LL_VK_VALIDATION", nullptr, 0) > 0;
-    const bool debug_utils = want_validation && has_extension(available, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    const bool want_addr_log = GetEnvironmentVariableA("LL_VK_ADDR_LOG", nullptr, 0) > 0;
+    const bool debug_utils = (want_validation || want_addr_log) && has_extension(available, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     if (debug_utils)
     {
         wanted.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -482,7 +556,17 @@ bool Context::createInstance()
     if (debug_utils)
     {
         auto create_messenger = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(mInstance, "vkCreateDebugUtilsMessengerEXT");
-        if (create_messenger)
+        if (create_messenger && want_addr_log)
+        {
+            VkDebugUtilsMessengerCreateInfoEXT ai = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+            ai.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+            ai.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT;
+            ai.pfnUserCallback = address_binding_callback;
+            VkDebugUtilsMessengerEXT m = VK_NULL_HANDLE;
+            create_messenger(mInstance, &ai, nullptr, &m);
+            LL_INFOS("Vulkan") << "device address binding log requested (LL_VK_ADDR_LOG)" << LL_ENDL;
+        }
+        if (create_messenger && want_validation)
         {
             VkDebugUtilsMessengerCreateInfoEXT mi = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
             mi.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
@@ -786,6 +870,48 @@ bool Context::createDevice()
     {
         device_extensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
     }
+    VkPhysicalDeviceAddressBindingReportFeaturesEXT addr_features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ADDRESS_BINDING_REPORT_FEATURES_EXT };
+    if (GetEnvironmentVariableA("LL_VK_ADDR_LOG", nullptr, 0) > 0)
+    {
+        U32 n = 0;
+        vkEnumerateDeviceExtensionProperties(mPhysical, nullptr, &n, nullptr);
+        std::vector<VkExtensionProperties> have(n);
+        vkEnumerateDeviceExtensionProperties(mPhysical, nullptr, &n, have.data());
+        if (has_extension(have, VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME))
+        {
+            device_extensions.push_back(VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME);
+            addr_features.reportAddressBinding = VK_TRUE;
+            VkBaseOutStructure* tail = reinterpret_cast<VkBaseOutStructure*>(&chain.f2);
+            while (tail->pNext)
+            {
+                tail = tail->pNext;
+            }
+            tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&addr_features);
+        }
+    }
+    // LL_VK_ROBUST2=1: VK_EXT_robustness2 (robust image access: an access outside the image or view reads zeros instead of memory; null descriptors read zeros). A/B for the login device lost.
+    VkPhysicalDeviceRobustness2FeaturesEXT robust2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT };
+    if (GetEnvironmentVariableA("LL_VK_ROBUST2", nullptr, 0) > 0)
+    {
+        U32 n = 0;
+        vkEnumerateDeviceExtensionProperties(mPhysical, nullptr, &n, nullptr);
+        std::vector<VkExtensionProperties> have(n);
+        vkEnumerateDeviceExtensionProperties(mPhysical, nullptr, &n, have.data());
+        if (has_extension(have, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME))
+        {
+            device_extensions.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+            robust2.robustBufferAccess2 = VK_TRUE;
+            robust2.robustImageAccess2 = VK_TRUE;
+            robust2.nullDescriptor = VK_TRUE;
+            VkBaseOutStructure* tail = reinterpret_cast<VkBaseOutStructure*>(&chain.f2);
+            while (tail->pNext)
+            {
+                tail = tail->pNext;
+            }
+            tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&robust2);
+            LL_INFOS("Vulkan") << "robustness2 enabled (LL_VK_ROBUST2): robust buffer and image access, null descriptors" << LL_ENDL;
+        }
+    }
     VkPhysicalDeviceFaultFeaturesEXT fault_features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT };
     if (mCaps.mDeviceFault)
     {
@@ -1047,6 +1173,153 @@ void Context::reportDeviceLost()
     reportCheckpoints("device lost");
 }
 
+std::string Context::describeBinding(U64 handle, bool buffer) const
+{
+    std::lock_guard<std::mutex> lock(sAddrMutex);
+    if (sAddrCount == 0 || !handle)
+    {
+        return "no address log";
+    }
+    const U64 first = sAddrCount > ADDR_RING ? sAddrCount - ADDR_RING : 0;
+    char buf[200];
+    for (U64 i = sAddrCount; i > first; --i)
+    {
+        const AddrEvent& e = sAddrRing[(i - 1) % ADDR_RING];
+        if (e.mHandle == handle && e.mObjectType == (buffer ? (U32)VK_OBJECT_TYPE_BUFFER : (U32)VK_OBJECT_TYPE_IMAGE))
+        {
+            snprintf(buf, sizeof(buf), "memory %s at 0x%llx + 0x%llx (%lld frames ago)", e.mBind ? "bound" : "UNBOUND", (unsigned long long)e.mBase, (unsigned long long)e.mSize, (long long)(mFrameNumber - e.mFrame));
+            return buf;
+        }
+    }
+    return buffer ? "no binding event for the buffer" : "no binding event for the image";
+}
+
+void Context::reportAddressHistory(const std::vector<VkDeviceFaultAddressInfoEXT>& addresses)
+{
+    std::lock_guard<std::mutex> lock(sAddrMutex);
+    if (sAddrCount == 0)
+    {
+        return;
+    }
+    const U64 total = sAddrCount;
+    const U64 first = total > ADDR_RING ? total - ADDR_RING : 0;
+    const U64 now_us = addr_micros();
+    LL_WARNS("Vulkan") << "  address binding log: " << total << " events (" << (total - first) << " kept), frame " << mFrameNumber << LL_ENDL;
+    for (const auto& a : addresses)
+    {
+        const U64 at = (U64)a.reportedAddress;
+        const U64 lo = at & ~0xFFFull, hi = lo + 0x1000;        // page precision
+        // live bindings after replaying the kept events, and every event that touched the page
+        std::map<U64, AddrEvent> live;
+        std::vector<AddrEvent> touched;
+        for (U64 i = first; i < total; ++i)
+        {
+            const AddrEvent& e = sAddrRing[i % ADDR_RING];
+            if (e.mBind)
+            {
+                live[e.mBase] = e;
+            }
+            else
+            {
+                live.erase(e.mBase);
+            }
+            if (e.mBase < hi && e.mBase + e.mSize > lo)
+            {
+                touched.push_back(e);
+            }
+        }
+        LL_WARNS("Vulkan") << "  fault page 0x" << std::hex << lo << std::dec << ": " << touched.size() << " events touched it" << LL_ENDL;
+        for (size_t k = touched.size() > 24 ? touched.size() - 24 : 0; k < touched.size(); ++k)
+        {
+            const AddrEvent& e = touched[k];
+            LL_WARNS("Vulkan") << "    " << (e.mBind ? "BIND  " : "UNBIND") << " " << addr_object_name(e.mObjectType) << (e.mInternal ? " (internal)" : "") << " handle 0x" << std::hex << e.mHandle
+                               << " range 0x" << e.mBase << " + 0x" << e.mSize << std::dec << ", frame " << e.mFrame << " (" << (double)(now_us - e.mMicros) / 1000.0 << " ms ago, "
+                               << (mFrameNumber - e.mFrame) << " frames ago)" << LL_ENDL;
+        }
+        // is it live now, and the neighbours
+        // the faults cluster at 0x1_1xxxxxxx: a valid low address with bit 32 set? look the page up as it would be with the high bits cleared
+        for (U64 alt : { at & 0xFFFFFFFFull, at & ~(1ull << 32) })
+        {
+            if (alt == at)
+            {
+                continue;
+            }
+            const U64 alt_lo = alt & ~0xFFFull;
+            std::vector<AddrEvent> alt_events;
+            U64 bound_now = 0;
+            for (U64 i = first; i < total; ++i)
+            {
+                const AddrEvent& e = sAddrRing[i % ADDR_RING];
+                if (e.mBase < alt_lo + 0x1000 && e.mBase + e.mSize > alt_lo)
+                {
+                    alt_events.push_back(e);
+                }
+            }
+            for (const auto& l : live)
+            {
+                if (l.second.mBase < alt_lo + 0x1000 && l.second.mBase + l.second.mSize > alt_lo)
+                {
+                    ++bound_now;
+                }
+            }
+            LL_WARNS("Vulkan") << "    same page with the address as 0x" << std::hex << alt << std::dec << ": " << alt_events.size() << " events, " << bound_now << " live bindings now" << LL_ENDL;
+            for (size_t k = alt_events.size() > 12 ? alt_events.size() - 12 : 0; k < alt_events.size(); ++k)
+            {
+                const AddrEvent& e = alt_events[k];
+                LL_WARNS("Vulkan") << "      " << (e.mBind ? "BIND  " : "UNBIND") << " " << addr_object_name(e.mObjectType) << " handle 0x" << std::hex << e.mHandle << " range 0x" << e.mBase << " + 0x" << e.mSize << std::dec
+                                   << ", " << (mFrameNumber - e.mFrame) << " frames ago" << LL_ENDL;
+            }
+        }
+        auto it = live.upper_bound(at);
+        if (it != live.begin())
+        {
+            auto prev = std::prev(it);
+            const bool inside = at < prev->second.mBase + prev->second.mSize;
+            LL_WARNS("Vulkan") << "    now: " << (inside ? "INSIDE a live binding" : "in no live binding") << "; the one below: " << addr_object_name(prev->second.mObjectType) << " 0x" << std::hex << prev->second.mBase << " + 0x" << prev->second.mSize
+                               << " (the page is 0x" << (at - prev->second.mBase) << " from its start)" << std::dec << LL_ENDL;
+        }
+        if (it != live.end())
+        {
+            LL_WARNS("Vulkan") << "    the live one above: " << addr_object_name(it->second.mObjectType) << " 0x" << std::hex << it->second.mBase << " + 0x" << it->second.mSize << std::dec << LL_ENDL;
+        }
+        if (&a == &addresses[0])
+        {
+            // the last 40 unbinds overall (what was freed just before the loss)
+            LL_WARNS("Vulkan") << "  the last unbinds (newest last):" << LL_ENDL;
+            std::vector<AddrEvent> recent;
+            for (U64 i = total; i > first && recent.size() < 40; --i)
+            {
+                const AddrEvent& e = sAddrRing[(i - 1) % ADDR_RING];
+                if (!e.mBind)
+                {
+                    recent.push_back(e);
+                }
+            }
+            for (size_t k = recent.size(); k > 0; --k)
+            {
+                const AddrEvent& e = recent[k - 1];
+                LL_WARNS("Vulkan") << "    UNBIND " << addr_object_name(e.mObjectType) << " handle 0x" << std::hex << e.mHandle << " range 0x" << e.mBase << " + 0x" << e.mSize << std::dec << ", " << (mFrameNumber - e.mFrame) << " frames ago" << LL_ENDL;
+            }
+            // and the last 40 binds of images and buffers over 64 KB (a texture or mesh that arrived just before the loss)
+            LL_WARNS("Vulkan") << "  the last binds of 64 KB or more (newest last):" << LL_ENDL;
+            std::vector<AddrEvent> binds;
+            for (U64 i = total; i > first && binds.size() < 40; --i)
+            {
+                const AddrEvent& e = sAddrRing[(i - 1) % ADDR_RING];
+                if (e.mBind && e.mSize >= 0x10000)
+                {
+                    binds.push_back(e);
+                }
+            }
+            for (size_t k = binds.size(); k > 0; --k)
+            {
+                const AddrEvent& e = binds[k - 1];
+                LL_WARNS("Vulkan") << "    BIND " << addr_object_name(e.mObjectType) << " handle 0x" << std::hex << e.mHandle << " range 0x" << e.mBase << " + 0x" << e.mSize << std::dec << ", " << (mFrameNumber - e.mFrame) << " frames ago" << LL_ENDL;
+            }
+        }
+    }
+}
+
 void Context::reportCheckpoints(const char* when)
 {
     {
@@ -1113,6 +1386,7 @@ void Context::reportCheckpoints(const char* when)
                         }
                     }
                 }
+                reportAddressHistory(addresses);
                 for (const auto& v : vendors)
                 {
                     LL_WARNS("Vulkan") << "  vendor fault: " << v.description << ", code " << (unsigned long long)v.vendorFaultCode << ", data 0x" << std::hex << (unsigned long long)v.vendorFaultData << std::dec << LL_ENDL;

@@ -235,6 +235,7 @@ public:
     void noteDestroyedView(U64 view_id);
     bool destroyedViewFrame(U64 view_id, U64& frame) const;
     void setBindlessAudit(std::function<std::string()> fn) { mBindlessAudit = std::move(fn); }
+    std::string describeBinding(U64 handle, bool buffer = false) const;      // LL_VK_ADDR_LOG: where the memory of an image (VkImage handle) is
     void setSlotDescriber(std::function<std::string(U32)> fn) { mSlotDescriber = std::move(fn); }
     std::function<std::string(U32)> mSlotDescriber;
     std::function<std::string()> mBindlessAudit;
@@ -344,6 +345,7 @@ private:
     bool selfTest();
     void measureBandwidth();            // C6: device-local copy throughput into mCaps.mMemoryBandwidthGBps (start-up, single threaded)
     void destroyFrameResources(Frame& f);
+    void reportAddressHistory(const std::vector<VkDeviceFaultAddressInfoEXT>& addresses);     // LL_VK_ADDR_LOG: what held the fault page and when it was given up
 
     GpuPassStats mPassStats;
     bool mNextOffscreen = false;

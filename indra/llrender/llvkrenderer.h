@@ -440,6 +440,7 @@ private:
     U32 mPassTag = 0;
     U32 mBeginTag = 0;
     bool mBeginSplit = false;
+    bool mSerialPass = true;            // LL_VK_DRAW_SERIAL applies to this pass (LL_VK_DRAW_SERIAL_ONLY / _SKIP by target width)
     bool mDrawStamps = false;           // this pass stamps every draw (LL_VK_DRAW_STAMPS: avatar impostors by default), see stampDraw
     U32 mDrawStampCount = 0;            // draws stamped in this pass
     U32 drawTag(const char* what, U32 count, U32 first, S32 vertex_offset);
@@ -668,6 +669,7 @@ private:
     std::vector<U64> mTsSerial[Context::FRAMES_IN_FLIGHT];
     std::vector<U8> mTsIsEnd[Context::FRAMES_IN_FLIGHT];
     U64 mModCount = 0, mFlushCount = 0;
+    U64 mRingEpoch = 1;                 // changes whenever the uniform ring starts again from 0 (beginFrame); a program's cached ring offset belongs to one epoch
     S32 mOccPending = -1;           // allocated, starts with the next draw
     S32 mOccActive = -1;            // begun inside the current pass
     std::vector<QueryResult> mQueryResults;
