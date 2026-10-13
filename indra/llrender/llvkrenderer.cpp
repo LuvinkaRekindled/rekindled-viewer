@@ -1349,7 +1349,7 @@ void Renderer::tracyInit()
     VkDevice dev = ctx.getDevice();
     // Tracy records and submits a command buffer of its own to line the GPU clock up with the CPU clock: give it a throw-away one
     VkCommandPoolCreateInfo pi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
-    pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;       // (Tracy begins this buffer twice: the second begin resets it)
     pi.queueFamilyIndex = ctx.getQueueFamily();
     VkCommandPool pool = VK_NULL_HANDLE;
     if (vkCreateCommandPool(dev, &pi, nullptr, &pool) != VK_SUCCESS)
