@@ -1776,7 +1776,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             {
                 Group& g = *row.mGroup;
                 const Key dead_key = g.mKey;
-                if (dead_key.mKind == 1)
+                static const bool keep_old_leak = getenv("LL_VK_RT_NAMELEAK") != nullptr;      // A/B switch: the old behaviour (opaque groups of the material mode never left the table)
+                if (dead_key.mKind == 1 || (dead_key.mKind == 0 && sDbg.mMats && !keep_old_leak))     // the same groups that were added to sNameGroups (the material mode adds opaque ones too)
                 {
                     for (U32 name : { dead_key.mVb, dead_key.mIb })
                     {
@@ -4062,6 +4063,10 @@ std::string report(double frames)
                  (unsigned long long)s.mForceWhy[0], (unsigned long long)s.mForceWhy[1], (unsigned long long)s.mForceWhy[2], (unsigned long long)s.mForceWhy[3], (unsigned long long)s.mForceWhy[4]);
         used = strlen(buf);
         snprintf(buf + used, sizeof(buf) - used, " (refresh = move check %.2f + dirty groups), slot lookups/call %.0f, dirty/call: moved %.1f, address %.1f, alpha info %.1f, new range %.1f, move check %.1f, structure %.1f", s.mSubMs[5] / scenes, (double)s.mSlotMisses / scenes, (double)s.mDirtyWhy[0] / scenes, (double)s.mDirtyWhy[1] / scenes, (double)s.mDirtyWhy[2] / scenes, (double)s.mDirtyWhy[3] / scenes, (double)s.mDirtyWhy[4] / scenes, (double)s.mDirtyWhy[5] / scenes);
+    }
+    {
+        const size_t used = strlen(buf);
+        snprintf(buf + used, sizeof(buf) - used, ", tables sizes: groups %zu, seen rows %zu (free %zu), name entries %zu, structures %zu", sGroups.size(), sSeenRows.size(), sSeenFree.size(), sNameGroups.size(), sBlas.size());
     }
     if (s.mScanChecks)
     {
