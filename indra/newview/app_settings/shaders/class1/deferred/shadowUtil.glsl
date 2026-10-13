@@ -184,13 +184,26 @@ uniform float rt_sun_radius;
 uniform int rt_sun_samples;
 uniform float rt_noise_frame;
 
+// A ray whose origin or direction is NaN or infinite (a pixel whose eye space position was rebuilt from a zero or far-plane depth, a scene frame record not written yet) is undefined for a
+// ray query (GPU-assisted validation: "Ray Origin contains a NaN"): no ray is cast, the caller takes the no-hit answer.
+bool rtRayOk(vec3 o, vec3 d)
+{
+    return !(any(isnan(o)) || any(isinf(o)) || any(isnan(d)) || any(isinf(d)));
+}
+
 float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
 {
     mat3 to_scene;
     vec3 camera;
     rtSceneFrame(to_scene, camera);
+    const vec3 ray_origin = to_scene * origin + camera;
+    const vec3 ray_dir = to_scene * dir;
+    if (!rtRayOk(ray_origin, ray_dir))
+    {
+        return 1.0;
+    }
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, to_scene * origin + camera, 0.005, to_scene * dir, 2000.0);
+    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, ray_origin, 0.005, ray_dir, 2000.0);
     // a ray is given a limited number of masked candidates: a structure that is not what it should be (garbage geometry spread over the scene) must cost a frame some shadows, not
     // a GPU job that outlasts the 2 seconds the driver allows (VK_ERROR_DEVICE_LOST: the viewer cannot go on). The ray stops with what it has found: no hit, lit.
     uint candidates = 0u;
@@ -326,8 +339,14 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
     vec3 camera;
     rtSceneFrame(to_scene, camera);
     float tmax = 1500.0;
+    const vec3 ray_origin = to_scene * origin + camera;
+    const vec3 ray_dir = to_scene * dir;
+    if (!rtRayOk(ray_origin, ray_dir))
+    {
+        return vec4(0.0);
+    }
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x03, to_scene * origin + camera, 0.02, to_scene * dir, tmax);
+    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x03, ray_origin, 0.02, ray_dir, tmax);
     float lod_start = clamp(0.5 * log2(max(length(origin), 1.0)) - 1.0, 0.0, 4.0);
     uint steps = 0u;
     while (rayQueryProceedEXT(rq))

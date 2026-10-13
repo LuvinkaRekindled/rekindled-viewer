@@ -669,6 +669,7 @@ private:
     std::vector<U64> mTsSerial[Context::FRAMES_IN_FLIGHT];
     std::vector<U8> mTsIsEnd[Context::FRAMES_IN_FLIGHT];
     U64 mModCount = 0, mFlushCount = 0;
+    bool mRestarting = false;           // beginFrame is called by flushAndRestart: the frame goes on
     U64 mRingEpoch = 1;                 // changes whenever the uniform ring starts again from 0 (beginFrame); a program's cached ring offset belongs to one epoch
     S32 mOccPending = -1;           // allocated, starts with the next draw
     S32 mOccActive = -1;            // begun inside the current pass
