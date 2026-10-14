@@ -12544,6 +12544,11 @@ void LLPipeline::renderDeferredLighting()
                 // <FS> ray traced reflections on glossy surfaces (rt-debug.txt glossyrt, softenLightF.glsl)
                 static LLStaticHashedString rt_glossy_s("rt_glossy_reflections");
                 S32 rt_glossy_mode = LLVkMirror::rtGlossyReflections();
+                static LLCachedControl<bool> glossy_mirror_setting(gSavedSettings, "FSVkGlossyMirror", false);
+                if (rt_glossy_mode == 0 && glossy_mirror_setting && LLVkMirror::rtMaterialsAvailable())
+                {
+                    rt_glossy_mode = 1;         // the preference (Graphics > Vulkan): the traced glossy mirror; rt-debug.txt glossyrt=N still overrides it for tests
+                }
                 S32 rt_hit_shadow_variant = 0;
                 if (rt_glossy_mode >= 20 && rt_glossy_mode <= 22)       // 20 / 21 / 22: the glossy mode 1 with a test variant of how a hit is lit (shadowUtil.glsl rt_hit_shadow_variant)
                 {

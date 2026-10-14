@@ -33,6 +33,7 @@ bool LLVkMirror::rtLoadingGates() { return false; }
 S32 LLVkMirror::rtDebugView() { return 0; }
 S32 LLVkMirror::rtWaterReflections() { return 0; }
 S32 LLVkMirror::rtGlossyReflections() { return 0; }
+bool LLVkMirror::rtMaterialsAvailable() { return false; }
 bool LLVkMirror::rtBodyRename() { return false; }
 void LLVkMirror::rtScene(const RtSceneArgs&) {}
 void LLVkMirror::presentFrame() {}
@@ -1264,6 +1265,11 @@ U32 LLVkMirror::rtShadowMode()
     // known once the device exists (the shaders are compiled after that); the scene is built only when the device was created with ray queries
     const LLVk::Capabilities& caps = LLVk::Context::instance().getCaps();
     return sMirror.mReady && caps.mRt.mEnabled && caps.mRt.mUsable ? LLVk::Rt::shadowMode() : 0;
+}
+
+bool LLVkMirror::rtMaterialsAvailable()
+{
+    return rtShadowMode() != 0 && LLVk::Rt::materialsOn();
 }
 
 S32 LLVkMirror::rtGlossyReflections()
