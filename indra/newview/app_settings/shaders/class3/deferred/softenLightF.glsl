@@ -113,6 +113,9 @@ uniform int rt_hit_quality;     // how a traced hit is lit: 0 flat diffuse (rtRe
 vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback);
 bool rtTraceHit(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full, out vec3 albedo, out vec3 emissive, out vec3 n_geo_eye, out vec3 n_eye, out vec3 hit_pos, out float t,
                 out float shadow, out bool fullbright, out vec4 mr, out vec4 spec);
+bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full, bool layers, out vec3 albedo, out vec3 emissive, out vec3 n_geo_eye, out vec3 n_eye, out vec3 hit_pos, out float t,
+                  out float shadow, out bool fullbright, out vec4 mr, out vec4 spec,
+                  out float layer_alpha, out vec3 l_albedo, out vec3 l_emissive, out vec3 l_n_geo, out vec3 l_n, out vec3 l_hp, out float l_t, out float l_shadow, out bool l_fb, out vec4 l_mr, out vec4 l_spec);
 void preProbeSample(vec3 pos);
 vec3 sampleProbes(vec3 pos, vec3 dir, float lod);
 vec3 sampleProbeAmbient(vec3 pos, vec3 dir, vec3 amblit);
@@ -330,72 +333,9 @@ vec3 rtHitForwardLights(vec3 hp, vec3 n, vec3 albedo)
     return sum * (classic_mode > 0 ? 0.9 : 1.0);
 }
 
-// <FS> A traced reflection ray whose hit is lit like a surface of the main pass (doc/vulkan/PLAN-glossy-mirror-quality.md, steps A and B): the hit's normal map, roughness / metallic
-// (glTF, through pbrBaseLight) or specular map (legacy materials, the blinn-phong lines of main() below), the sun with the ray's shadow, and the reflection probes sampled AT THE HIT for ambient
-// light and for the surface's own specular reflection. rt_hit_quality 0 keeps the flat diffuse shading of rtReflection (the water uses that one only).
-vec4 rtHitLightsOnly(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
-vec4 rtHitProjectorInternals(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
-
-vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3 amblit_in, vec2 tc, vec3 fallback)
+// The lighting of one decoded hit (the steps of the header comment above): the colour of the surface seen along dir at hp, before the fade into the fallback.
+vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3 amblit_in, vec2 tc, vec3 albedo, vec3 emissive, vec3 n_geo, vec3 n, vec3 hp, float t, float shadow, bool fb, vec4 mr, vec4 spec)
 {
-    if (rt_hit_quality <= 0)
-    {
-        return rtReflection(origin, dir, light_dir_n, sunlit_in, amblit_in, tc, fallback);
-    }
-    rt_lights_noshadow = (rt_hit_quality == 4 || rt_hit_quality == 5);
-    if (rt_hit_quality == 3 || rt_hit_quality == 4)
-    {
-        return rtHitLightsOnly(origin, dir, light_dir_n, tc);
-    }
-    if (rt_hit_quality == 6)
-    {
-        return rtHitProjectorInternals(origin, dir, light_dir_n, tc);
-    }
-    if (rt_hit_quality >= 7 && rt_hit_quality <= 9 || rt_hit_quality >= 11 && rt_hit_quality <= 13)
-    {
-        // test views of the hit: 7 = material (red metallic, green roughness, blue 0.5 for a glTF material / the legacy glossiness x 0.5 + 0.5 for one with a specular map), 8 = the probe ambient at the hit
-        // (irradiance), 9 = the sun term alone (N.L x shadow x sunlit, white = lit)
-        vec3 a7, e7, ng7, n7, hp7;
-        float t7, sh7;
-        bool fb7;
-        vec4 mr7, sp7;
-        if (!rtTraceHit(origin, dir, light_dir_n, tc, true, a7, e7, ng7, n7, hp7, t7, sh7, fb7, mr7, sp7))
-        {
-            return vec4(0.0);
-        }
-        if (rt_hit_quality == 7)
-        {
-            return vec4(mr7.x, mr7.y, (mr7.z > 0.5 ? 0.5 : 0.0) + (sp7.a > 0.0 ? 0.5 * sp7.a + 0.5 : 0.0), fb7 ? 1.0 : 0.75);
-        }
-        if (rt_hit_quality == 11)
-        {
-            return vec4(a7, 1.0);                       // the albedo of the hit (linear)
-        }
-        if (rt_hit_quality == 12)
-        {
-            preProbeSample(hp7);
-            return vec4((classic_mode == 0 ? sampleProbeAmbient(hp7, n7, amblit_in) : amblit_in) * a7, 1.0);       // the ambient part of a legacy hit: irradiance x albedo
-        }
-        if (rt_hit_quality == 13)
-        {
-            // yellow: a legacy material that is alpha blended; else red: a glTF material, green: the emissive mask amount, blue: the legacy glossiness
-            return mr7.w < -0.5 ? vec4(1.0, 1.0, 0.0, 1.0) : vec4(mr7.z, mr7.w, sp7.a, 1.0);
-        }
-        if (rt_hit_quality == 8)
-        {
-            preProbeSample(hp7);
-            return vec4(classic_mode == 0 ? sampleProbeAmbient(hp7, n7, amblit_in) : amblit_in, 1.0);
-        }
-        return vec4(vec3(clamp(dot(n7, light_dir_n), 0.0, 1.0) * sh7) * sunlit_in, 1.0);
-    }
-    vec3 albedo, emissive, n_geo, n, hp;
-    float t, shadow;
-    bool fb;
-    vec4 mr, spec;
-    if (!rtTraceHit(origin, dir, light_dir_n, tc, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec))
-    {
-        return vec4(0.0);
-    }
     vec3 color;
     if (fb)
     {
@@ -486,8 +426,135 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
             color = c + emissive;
         }
     }
+    return color;
+}
+
+// <FS> A traced reflection ray whose hit is lit like a surface of the main pass (doc/vulkan/PLAN-glossy-mirror-quality.md, steps A and B): the hit's normal map, roughness / metallic
+// (glTF, through pbrBaseLight) or specular map (legacy materials, the blinn-phong lines of main() below), the sun with the ray's shadow, and the reflection probes sampled AT THE HIT for ambient
+// light and for the surface's own specular reflection. rt_hit_quality 0 keeps the flat diffuse shading of rtReflection (the water uses that one only).
+vec4 rtHitLightsOnly(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
+vec4 rtHitProjectorInternals(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
+
+vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3 amblit_in, vec2 tc, vec3 fallback)
+{
+    if (rt_hit_quality <= 0)
+    {
+        return rtReflection(origin, dir, light_dir_n, sunlit_in, amblit_in, tc, fallback);
+    }
+    rt_lights_noshadow = (rt_hit_quality == 4 || rt_hit_quality == 5);
+    if (rt_hit_quality == 3 || rt_hit_quality == 4)
+    {
+        return rtHitLightsOnly(origin, dir, light_dir_n, tc);
+    }
+    if (rt_hit_quality == 6)
+    {
+        return rtHitProjectorInternals(origin, dir, light_dir_n, tc);
+    }
+    if (rt_hit_quality >= 7 && rt_hit_quality <= 9 || rt_hit_quality >= 11 && rt_hit_quality <= 13)
+    {
+        // test views of the hit: 7 = material (red metallic, green roughness, blue 0.5 for a glTF material / the legacy glossiness x 0.5 + 0.5 for one with a specular map), 8 = the probe ambient at the hit
+        // (irradiance), 9 = the sun term alone (N.L x shadow x sunlit, white = lit)
+        vec3 a7, e7, ng7, n7, hp7;
+        float t7, sh7;
+        bool fb7;
+        vec4 mr7, sp7;
+        if (!rtTraceHit(origin, dir, light_dir_n, tc, true, a7, e7, ng7, n7, hp7, t7, sh7, fb7, mr7, sp7))
+        {
+            return vec4(0.0);
+        }
+        if (rt_hit_quality == 7)
+        {
+            return vec4(mr7.x, mr7.y, (mr7.z > 0.5 ? 0.5 : 0.0) + (sp7.a > 0.0 ? 0.5 * sp7.a + 0.5 : 0.0), fb7 ? 1.0 : 0.75);
+        }
+        if (rt_hit_quality == 11)
+        {
+            return vec4(a7, 1.0);                       // the albedo of the hit (linear)
+        }
+        if (rt_hit_quality == 12)
+        {
+            preProbeSample(hp7);
+            return vec4((classic_mode == 0 ? sampleProbeAmbient(hp7, n7, amblit_in) : amblit_in) * a7, 1.0);       // the ambient part of a legacy hit: irradiance x albedo
+        }
+        if (rt_hit_quality == 13)
+        {
+            // yellow: a legacy material that is alpha blended; else red: a glTF material, green: the emissive mask amount, blue: the legacy glossiness
+            return mr7.w < -0.5 ? vec4(1.0, 1.0, 0.0, 1.0) : vec4(mr7.z, mr7.w, sp7.a, 1.0);
+        }
+        if (rt_hit_quality == 8)
+        {
+            preProbeSample(hp7);
+            return vec4(classic_mode == 0 ? sampleProbeAmbient(hp7, n7, amblit_in) : amblit_in, 1.0);
+        }
+        return vec4(vec3(clamp(dot(n7, light_dir_n), 0.0, 1.0) * sh7) * sunlit_in, 1.0);
+    }
+    vec3 albedo, emissive, n_geo, n, hp;
+    float t, shadow;
+    bool fb;
+    vec4 mr, spec;
+    float layer_alpha, l_t, l_shadow;
+    vec3 l_albedo, l_emissive, l_n_geo, l_n, l_hp;
+    bool l_fb;
+    vec4 l_mr, l_spec;
+    if (!rtTraceHitEx(origin, dir, light_dir_n, tc, true, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec, layer_alpha, l_albedo, l_emissive, l_n_geo, l_n, l_hp, l_t, l_shadow, l_fb, l_mr, l_spec))
+    {
+        return vec4(0.0);
+    }
+    if (rt_hit_quality == 14)
+    {
+        // the hit's own albedo dimmed (so the avatar and the room can be told apart), plus: red = opacity of a blended layer in front of it, green = the highest opacity of any blended surface the ray met without using it
+        // (it was behind the hit or too transparent), blue = how many (x0.25), yellow added where the opaque hit is a blended material itself, white where a blended surface was the hit (layer_alpha < 0)
+        vec3 dbg = 0.3 * albedo;
+        if (layer_alpha > 0.0)
+        {
+            dbg += vec3(layer_alpha, 0.0, 0.0);
+        }
+        else
+        {
+            dbg += vec3(0.0, l_shadow, min(l_t * 0.25, 1.0)) * 0.7;
+        }
+        if (layer_alpha < 0.0)
+        {
+            dbg += vec3(-layer_alpha);
+        }
+        if (mr.w < -0.5)
+        {
+            dbg += vec3(0.4, 0.4, 0.0);
+        }
+        return vec4(dbg, 1.0);
+    }
+    if (rt_hit_quality == 15)
+    {
+        // the albedo of the blended layer (linear), magenta where there is none; its distance in front of the hit in blue-less red channel is not shown
+        return layer_alpha > 0.0 ? vec4(l_albedo, 1.0) : vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    if (rt_hit_quality == 16)
+    {
+        // the layer lit like a hit: what it adds before the mix (magenta where there is none)
+        return layer_alpha > 0.0 ? vec4(rtLitHitColor(origin, dir, light_dir_n, sunlit_in, amblit_in, tc, l_albedo, l_emissive, l_n_geo, l_n, l_hp, l_t, l_shadow, l_fb, l_mr, l_spec), 1.0) : vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    if (rt_hit_quality == 18)
+    {
+        return vec4(n_geo * 0.5 + 0.5, 1.0);          // test: the geometric normal of the hit (eye space)
+    }
+    if (rt_hit_quality == 17)
+    {
+        // test: every hit is lit as if its normal looked at the viewer (the flat triangle normals of avatars are suspected of leaving the hair and face in the dark)
+        n = -dir;
+        n_geo = -dir;
+    }
+    vec3 color = rtLitHitColor(origin, dir, light_dir_n, sunlit_in, amblit_in, tc, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec);
+    if (layer_alpha > 0.0)
+    {
+        // a blended surface (hair) in front of the hit: lit like any hit, composited over it by its opacity like the alpha pass of the main view
+        color = mix(color, rtLitHitColor(origin, dir, light_dir_n, sunlit_in, amblit_in, tc, l_albedo, l_emissive, l_n_geo, l_n, l_hp, l_t, l_shadow, l_fb, l_mr, l_spec), layer_alpha);
+    }
     float fade = smoothstep(250.0, 1200.0, t);
-    return vec4(mix(color, fallback, fade), 1.0);
+    color = mix(color, fallback, fade);
+    if (layer_alpha < 0.0)
+    {
+        color = mix(fallback, color, -layer_alpha);        // only a blended surface on the way: partly transparent over what the caller has behind
+    }
+    return vec4(color, 1.0);
 }
 #endif
 

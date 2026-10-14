@@ -3683,6 +3683,34 @@ static void on_rigged_note_packets(const LLVkMirror::ShadowPacketsHeader& h, con
             const LLVkMirror::ShadowAlphaEntry& e = ((const LLVkMirror::ShadowAlphaEntry*)blob)[i];
             Buf* vb = packet_buffer(e.mVertexBuffer);
             Buf* ib = packet_buffer(e.mIndexBuffer);
+            // debug: why a rigged alpha entry of the main view is turned away here (counted, logged about once in 600 packets)
+            static U64 why[6] = {}, packets = 0;
+            static std::string examples;
+            if (i == 0 && ++packets % 600 == 0)
+            {
+                LL_INFOS("VkRt") << "rigged alpha packets (main view naming): no vertex buffer " << why[0] << ", no index buffer " << why[1] << ", vertex buffer not valid " << why[2] << ", index buffer not valid " << why[3]
+                    << ", no address " << why[4] << ", noted " << why[5] << "; skipped examples (triangles vb/ib name):" << examples << LL_ENDL;
+                memset(why, 0, sizeof(why));
+                examples.clear();
+            }
+            int reason = -1;
+            if (!vb) reason = 0;
+            else if (!ib) reason = 1;
+            else if (!vb->mVk.valid()) reason = 2;
+            else if (!ib->mVk.valid()) reason = 3;
+            else if (!vb->mVk.mAddress || !ib->mVk.mAddress) reason = 4;
+            if (reason >= 0)
+            {
+                ++why[reason];
+                if (examples.size() < 400)
+                {
+                    examples += " " + std::to_string(e.mIndexCount / 3) + " " + std::to_string(e.mVertexBuffer) + "/" + std::to_string(e.mIndexBuffer) + "(" + std::to_string(reason) + ")";
+                }
+            }
+            else
+            {
+                ++why[5];
+            }
             if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress || !(e.mFlags & LLVkMirror::ALPHA_RIGGED))
             {
                 continue;
