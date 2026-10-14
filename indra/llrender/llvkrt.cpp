@@ -266,7 +266,8 @@ struct DebugSwitches
     bool mDelta = true;             // the tables are written to the call's region as deltas (rows changed since the region was last written); off: all rows every call
     bool mTableVerify = false;      // after every table write compare the region with the kept rows (slow: reads video memory)
     S32 mGlossyRt = 0;              // live (glossyrt=N, 0 = off by default until it has been seen working; needs LL_VK_RT_MATERIALS=1): 1 ray traced reflections on glossy surfaces of the lighting pass (gloss 0.9 and up), 2 PBR path pixels magenta, 3 / 4 where it traced: hits green, misses red (4: every gloss), 5 gloss as grey, 6 which lighting path a pixel takes
-    S32 mHitQ = 0;                  // live (hitq=N, 0 default): how a hit of the traced glossy mirror is lit, 0 flat diffuse, 1 the main pass lighting at the hit (normal map, roughness / metallic / specular map, probes at the hit)
+    S32 mHitRays = -1;              // live (hitrays=N, -1 = not set): shadow rays per local light at a traced hit (1, 2 or 4)
+    S32 mHitQ = -1;                 // live (hitq=N, -1 = not set: the preference FSVkMirrorQuality decides): how a hit of the traced glossy mirror is lit, 0 flat diffuse, 1 the main pass lighting at the hit (normal map, roughness / metallic / specular map, probes at the hit)
     S32 mWaterRt = 0;               // live (waterrt=N, 0 by default: the preference FSVkRTWater asks for 1; needs LL_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
     S32 mView = 0;                  // live (view=N): the ray scene material debug view mode (RenderRTMaterialDebug) the viewer shows, 0 = the setting decides
     bool mGate = true;              // live (gate=0/1): avatars still loading and masked casters without texture data are not named (the viewer asks through LLVkMirror::rtLoadingGates)
@@ -276,7 +277,7 @@ struct DebugSwitches
 };
 DebugSwitches sDbg;
 std::atomic<S32> sViewLive{0};
-std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{0};
+std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkMirror)
 std::chrono::steady_clock::time_point sDbgRead;
 
@@ -338,6 +339,7 @@ void read_debug_switches()
                 else if (k == "waterrt") d.mWaterRt = (S32)v;
                 else if (k == "glossyrt") d.mGlossyRt = (S32)v;
                 else if (k == "hitq") d.mHitQ = (S32)v;
+                else if (k == "hitrays") d.mHitRays = (S32)v;
                 else if (k == "gate") d.mGate = v != 0;
                 else if (k == "bodyname") d.mBodyName = v != 0;
                 else if (k == "skinreach") d.mSkinReach = (F32)std::max<long long>(1, v);
@@ -383,6 +385,7 @@ void read_debug_switches()
     sWaterRtLive.store(sMatsInit && d.mMats ? d.mWaterRt : 0, std::memory_order_relaxed);
     sGlossyRtLive.store(sMatsInit && d.mMats ? d.mGlossyRt : 0, std::memory_order_relaxed);
     sHitQLive.store(d.mHitQ, std::memory_order_relaxed);
+    sHitRaysLive.store(d.mHitRays, std::memory_order_relaxed);
     sGateLive.store(d.mGate, std::memory_order_relaxed);
     sBodyNameLive.store(d.mBodyName, std::memory_order_relaxed);
     sDbg = d;
@@ -1069,6 +1072,7 @@ struct Job
 S32 glossyReflections() { return sGlossyRtLive.load(std::memory_order_relaxed); }
 S32 waterReflections() { return sWaterRtLive.load(std::memory_order_relaxed); }
 S32 hitQuality() { return sHitQLive.load(std::memory_order_relaxed); }
+S32 hitRays() { return sHitRaysLive.load(std::memory_order_relaxed); }
 S32 debugView() { return sViewLive.load(std::memory_order_relaxed); }
 bool loadingGates() { return sGateLive.load(std::memory_order_relaxed); }
 bool bodyRename() { return sBodyNameLive.load(std::memory_order_relaxed); }
@@ -1762,7 +1766,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         const U64 unseen_limit = as_pressure ? 150 : 900;       // calls: about 1.5 s under pressure, about 9 s otherwise
         for (auto it = sBlas.begin(); it != sBlas.end();)
         {
-            if (sSceneCalls - it->second.mLastSeen > unseen_limit)
+            // a structure that a live group or avatar still points at stays: the group (kept alive by the pass hold windows without being named every call) and the avatar keep a raw pointer to their node,
+            // and erasing it left them with a destroyed structure (the next note of the group wrote into its freed alpha map: a crash about half a minute after login, when the arena was full)
+            const bool in_use = sGroups.find(it->first) != sGroups.end() || (it->first.mKind == 3 && sAvatars.find(it->first.mVb) != sAvatars.end());
+            if (!in_use && sSceneCalls - it->second.mLastSeen > unseen_limit)
             {
                 drop_blas(it->second);
                 it = sBlas.erase(it);

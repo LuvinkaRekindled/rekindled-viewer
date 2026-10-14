@@ -117,6 +117,9 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
                   out float shadow, out bool fullbright, out vec4 mr, out vec4 spec,
                   out float layer_alpha, out vec3 l_albedo, out vec3 l_emissive, out vec3 l_n_geo, out vec3 l_n, out vec3 l_hp, out float l_t, out float l_shadow, out bool l_fb, out vec4 l_mr, out vec4 l_spec);
 void preProbeSample(vec3 pos);
+void probeListSave();
+void probeListReset();
+void probeListRestore();
 vec3 sampleProbes(vec3 pos, vec3 dir, float lod);
 vec3 sampleProbeAmbient(vec3 pos, vec3 dir, vec3 amblit);
 uniform float max_probe_lod;
@@ -241,7 +244,9 @@ vec3 rtHitLocalLights(vec3 hp, vec3 n_geo, vec3 n, vec3 v, float lod, vec2 tc, R
         {
             continue;                       // spot lights: the textured projector below, or the forward lighting of blended hits
         }
-        float sh = rt_lights_noshadow ? 1.0 : rtShadowRayArea(base, rt_hit_light_pos[i].xyz, rtLightMargin(d), RT_LIGHT_SIZE, tc, lod);
+        // a light that adds next to nothing at this hit needs no shadow ray
+        const bool faint = max(rt_hit_light_col[i].r, max(rt_hit_light_col[i].g, rt_hit_light_col[i].b)) * atten * max(dot(n, L), 0.0) < 0.004;
+        float sh = (rt_lights_noshadow || faint) ? 1.0 : rtShadowRayArea(base, rt_hit_light_pos[i].xyz, rtLightMargin(d), RT_LIGHT_SIZE, tc, lod);
         vec3 add = rtLightOnHit(rt_hit_light_col[i].rgb * atten * sh, L, n, v, s);
         sum += add;
         rt_dbg_point += add;
@@ -346,9 +351,15 @@ vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3
     }
     else
     {
-        preProbeSample(hp);
+        // the probe list is state of the invocation (reflectionProbeF.glsl): the pixel's own list is put aside, the hit gets a clean one, the pixel's comes back at the end
+        probeListSave();
+        probeListReset();
+        if (rt_hit_quality != 23)           // (23: a cost test without any probe lookup at the hit)
+        {
+            preProbeSample(hp);
+        }
         vec3 irradiance = amblit_in;
-        if (classic_mode == 0)
+        if (classic_mode == 0 && rt_hit_quality != 23)
         {
             irradiance = sampleProbeAmbient(hp, n, amblit_in);
         }
@@ -357,7 +368,7 @@ vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3
         if (mr.z > 0.5)
         {
             float rough = max(mr.y, 0.04);
-            vec3 radiance = sampleProbes(hp, refl, rough * max_probe_lod);
+            vec3 radiance = rt_hit_quality == 23 ? vec3(0.1) : sampleProbes(hp, refl, rough * max_probe_lod);
             vec3 diffuseColor, specularColor;
             calcDiffuseSpecular(albedo, mr.x, diffuseColor, specularColor);
             color = pbrBaseLight(diffuseColor, specularColor, mr.x, v, n, rough, light_dir_n, sunlit_in, shadow, radiance, irradiance, emissive, 1.0, vec3(0.0), vec3(1.0));
@@ -405,7 +416,7 @@ vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3
                     float sc = shadow * fres * textureLod(lightFunc, vec2(nh, spec.a), 0.0).r * gt / (nh * nl);
                     c += lit * sc * sl * spec.rgb;
                 }
-                vec3 glossenv = sampleProbes(hp, refl, (1.0 - spec.a) * max_probe_lod);
+                vec3 glossenv = rt_hit_quality == 23 ? vec3(0.0) : sampleProbes(hp, refl, (1.0 - spec.a) * max_probe_lod);
                 applyGlossEnv(c, glossenv, spec, dir, n);
             }
             if (rt_hit_quality >= 2 && mr.w > -0.5)
@@ -428,6 +439,10 @@ vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3
             }
             color = c + emissive;
         }
+    }
+    if (!fb)
+    {
+        probeListRestore();
     }
     return color;
 }
@@ -498,7 +513,7 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
     vec3 l_albedo, l_emissive, l_n_geo, l_n, l_hp;
     bool l_fb;
     vec4 l_mr, l_spec;
-    if (!rtTraceHitEx(origin, dir, light_dir_n, tc, true, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec, layer_alpha, l_albedo, l_emissive, l_n_geo, l_n, l_hp, l_t, l_shadow, l_fb, l_mr, l_spec))
+    if (!rtTraceHitEx(origin, dir, light_dir_n, tc, rt_hit_quality != 24, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec, layer_alpha, l_albedo, l_emissive, l_n_geo, l_n, l_hp, l_t, l_shadow, l_fb, l_mr, l_spec))
     {
         return vec4(0.0);
     }

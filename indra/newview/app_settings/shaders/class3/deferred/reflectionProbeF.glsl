@@ -98,6 +98,37 @@ bool isAbove(vec3 pos, vec4 plane)
 
 bool sample_automatic = true;
 
+// preProbeSample appends to probeIndex (it is meant to be called once for an invocation) and sample_automatic is changed by what it finds. A SECOND position in the same invocation (a hit of a traced
+// reflection, softenLightF.glsl rtLitHitColor) needs an empty list, and the pixel's own list has to come back afterwards: without this the second call wrote past the end of probeIndex
+// and the weights and the cost of every probe lookup grew with the number of hits lit.
+int probeSavedCount = 0;
+int probeSavedIndex[REF_SAMPLE_COUNT];
+bool probeSavedAuto = true;
+void probeListSave()
+{
+    probeSavedCount = probeInfluences;
+    for (int i = 0; i < REF_SAMPLE_COUNT; ++i)
+    {
+        probeSavedIndex[i] = probeIndex[i];
+    }
+    probeSavedAuto = sample_automatic;
+}
+void probeListReset()
+{
+    probeInfluences = 0;
+    sample_automatic = true;
+}
+void probeListRestore()
+{
+    probeInfluences = probeSavedCount;
+    for (int i = 0; i < REF_SAMPLE_COUNT; ++i)
+    {
+        probeIndex[i] = probeSavedIndex[i];
+    }
+    sample_automatic = probeSavedAuto;
+}
+
+
 // return true if probe at index i influences position pos
 bool shouldSampleProbe(int i, vec3 pos)
 {

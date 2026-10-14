@@ -2667,6 +2667,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>FSVkMirrorQuality</key>
+    <map>
+      <key>Comment</key>
+      <string>Quality of what the ray traced glossy mirror shows (needs FSVkGlossyMirror): 1 Low = flat colours, 2 Medium = lit surfaces (materials, probes, sun shadow), 3 High = also the local lights, 4 Ultra = soft shadows of the local lights. Higher costs more frame time.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>3</integer>
+    </map>
     <key>FSVkRTWater</key>
     <map>
       <key>Comment</key>

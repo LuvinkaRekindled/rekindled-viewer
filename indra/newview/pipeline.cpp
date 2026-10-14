@@ -12671,8 +12671,17 @@ void LLPipeline::renderDeferredLighting()
                 static LLStaticHashedString rt_noise_frame_s("rt_noise_frame");
                 soften_shader.uniform1f(rt_noise_frame_s, (F32)(gFrameCount & 63));        // the soft shadow rays of the traced hits turn their pattern every frame
                 static LLStaticHashedString rt_hit_quality_s("rt_hit_quality");
-                const S32 rt_hit_quality = LLVkMirror::rtHitQuality();
+                // the levels of the preference FSVkMirrorQuality (rt-debug.txt hitq / hitrays override them for tests): 1 Low = flat colours at the hits (hitq 0), 2 Medium = lit hits (hitq 1), 3 High = lit hits + the
+                // local lights with one shadow ray each (hitq 2), 4 Ultra = the same with 4 soft shadow rays per light
+                static LLCachedControl<S32> mirror_quality_setting(gSavedSettings, "FSVkMirrorQuality", 3);
+                const S32 mirror_level = llclamp((S32)mirror_quality_setting, 1, 4);
+                const S32 dbg_hit_quality = LLVkMirror::rtHitQuality();
+                const S32 dbg_hit_rays = LLVkMirror::rtHitRays();
+                const S32 rt_hit_quality = dbg_hit_quality >= 0 ? dbg_hit_quality : (mirror_level == 1 ? 0 : (mirror_level == 2 ? 1 : 2));
+                const S32 rt_hit_rays = dbg_hit_rays > 0 ? dbg_hit_rays : (mirror_level >= 4 ? 4 : 1);
                 soften_shader.uniform1i(rt_hit_quality_s, rt_hit_quality);
+                static LLStaticHashedString rt_hit_rays_s("rt_hit_shadow_samples");
+                soften_shader.uniform1i(rt_hit_rays_s, rt_hit_rays);
 
                 // hit quality 2: the local lights seen from the traced hits (softenLightF.glsl rtHitLocalLights). Not culled to the view frustum: a mirror shows what is behind the camera
                 static LLStaticHashedString rt_hit_light_count_s("rt_hit_light_count"), rt_hit_light_pos_s("rt_hit_light_pos"), rt_hit_light_col_s("rt_hit_light_col"), rt_hit_light_dir_s("rt_hit_light_dir");

@@ -242,6 +242,7 @@ bool rtRayOk(vec3 o, vec3 d)
 // Test switch of the traced glossy reflection (rt-debug.txt glossyrt=20 / 21 / 22, set by the soften pass only; 0 everywhere else): how a hit is lit by the sun. 1: always sunlit (no shadow ray),
 // 2: the shadow ray starts 0.15 m off the surface (instead of 0.02 m), 3: a reflection ray may look at 1024 masked candidates (instead of 64) before it gives up.
 uniform int rt_hit_shadow_variant;
+uniform int rt_hit_shadow_samples;      // shadow rays per local light at a traced hit: 1 (one ray at the light's centre), 2 or 4 (the light is a disc, soft shadows); 0 = not set (4)
 
 // 1 = nothing in the way for tmax metres (the sun: 2000, a local light: its distance), 0 = blocked
 float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
@@ -344,22 +345,27 @@ float rtShadowRayArea(vec3 origin, vec3 light_center, float margin, float radius
     {
         return rtShadowRayHit(origin, L, dist - margin, pos_screen, lod);
     }
+    const int samples = rt_hit_shadow_samples <= 0 ? 4 : min(rt_hit_shadow_samples, 4);
+    if (samples == 1)
+    {
+        return rtShadowRayHit(origin, L, dist - margin, pos_screen, lod);
+    }
     vec3 up = abs(L.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
     vec3 t = normalize(cross(L, up));
     vec3 b = cross(L, t);
     // interleaved gradient noise of the pixel (a much finer, less grainy pattern than a hash: neighbouring pixels differ evenly), moved on every frame so that the temporal upscaler averages it
     const float rot = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * rt_noise_frame, vec2(0.06711056, 0.00583715))));
     float sum = 0.0;
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < samples; ++i)
     {
-        const float a = rot + 1.5707963 * float(i);
+        const float a = rot + (samples == 2 ? 3.1415927 : 1.5707963) * float(i);
         const float rr = radius * ((i & 1) == 0 ? 0.45 : 0.9);
         vec3 target = light_center + (t * cos(a) + b * sin(a)) * rr;
         vec3 dv = target - origin;
         float dd = length(dv);
         sum += rtShadowRayHit(origin, dv / dd, max(dd - margin, 0.01), pos_screen, lod);
     }
-    return 0.25 * sum;
+    return sum / float(samples);
 }
 
 // <FS> Ray traced reflections (doc/vulkan/PLAN-rt-materials.md, stage M4): one ray from a surface into the ray scene, the hit shaded from the geometry records and the material table.

@@ -32,7 +32,8 @@ U32 LLVkMirror::rtShadowMode() { return 0; }
 bool LLVkMirror::rtLoadingGates() { return false; }
 S32 LLVkMirror::rtDebugView() { return 0; }
 S32 LLVkMirror::rtWaterReflections() { return 0; }
-S32 LLVkMirror::rtHitQuality() { return 0; }
+S32 LLVkMirror::rtHitQuality() { return -1; }
+S32 LLVkMirror::rtHitRays() { return -1; }
 S32 LLVkMirror::rtGlossyReflections() { return 0; }
 bool LLVkMirror::rtMaterialsAvailable() { return false; }
 bool LLVkMirror::rtBodyRename() { return false; }
@@ -1280,7 +1281,12 @@ S32 LLVkMirror::rtGlossyReflections()
 
 S32 LLVkMirror::rtHitQuality()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::hitQuality() : 0;
+    return rtShadowMode() != 0 ? LLVk::Rt::hitQuality() : -1;
+}
+
+S32 LLVkMirror::rtHitRays()
+{
+    return rtShadowMode() != 0 ? LLVk::Rt::hitRays() : -1;
 }
 
 S32 LLVkMirror::rtWaterReflections()
