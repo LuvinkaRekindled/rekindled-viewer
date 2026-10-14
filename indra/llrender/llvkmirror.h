@@ -208,6 +208,7 @@ namespace LLVkMirror
     bool rtMaterialsAvailable();       // ray tracing is on and has the material table (the traced glossy mirror and the traced water reflections can run: the FSVkGlossyMirror / FSVkRTWater settings ask for them)
     S32 rtGlossyReflections();      // rt-debug.txt glossyrt=N (needs LL_VK_RT_MATERIALS=1): ray traced reflections on glossy surfaces of the lighting pass
     S32 rtWaterReflections();      // rt-debug.txt waterrt=1 (needs LL_VK_RT_MATERIALS=1): the water traces its reflection into the ray scene
+    S32 rtHitRays();               // rt-debug.txt hitrays=N (-1 = not set): shadow rays per local light at a traced hit
     S32 rtHitQuality();            // rt-debug.txt hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 the main pass lighting at the hit)
     S32 rtDebugView();      // rt-debug.txt view=N: the ray scene material debug view mode to show, 0 = the setting RenderRTMaterialDebug decides
     bool rtBodyRename();
