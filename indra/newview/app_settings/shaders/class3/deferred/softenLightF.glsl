@@ -117,6 +117,28 @@ void preProbeSample(vec3 pos);
 vec3 sampleProbes(vec3 pos, vec3 dir, float lod);
 vec3 sampleProbeAmbient(vec3 pos, vec3 dir, vec3 amblit);
 uniform float max_probe_lod;
+
+// local lights at a hit (rt_hit_quality 2): the nearest point lights as arrays (eye space centre and size, linear colour and falloff) and the first projector (spot light) through the
+// uniforms its own shader uses (proj_mat, proj_n, proj_origin, proj_lod ... set by LLPipeline::setupSpotLight, the projected texture is projectionMap, colour / size / falloff of the light)
+const int RT_HIT_LIGHTS = 8;
+uniform int rt_hit_light_count;
+uniform vec4 rt_hit_light_pos[8];
+uniform vec4 rt_hit_light_col[8];
+uniform int rt_hit_spot;
+uniform vec3 rt_hit_spot_center;
+uniform vec3 proj_origin;
+uniform float proj_ambiance;
+uniform float proj_lod;
+uniform float proj_focus;
+uniform float proj_range;
+uniform vec3 color;
+uniform float falloff;
+float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod);
+bool clipProjectedLightVars(vec3 light_center, vec3 pos, out float dist, out float l_dist, out vec3 lv, out vec4 proj_tc);
+vec3 getProjectedLightDiffuseColor(float light_distance, vec2 projected_uv);
+vec3 getProjectedLightAmbiance(float amb_da, float attenuation, float lit, float nl, float noise, vec2 projected_uv);
+float calcLegacyDistanceAttenuation(float distance, float falloff);
+void pbrPunctual(vec3 diffuseColor, vec3 specularColor, float perceptualRoughness, float metallic, vec3 n, vec3 v, vec3 l, out float nl, out vec3 diff, out vec3 spec);
 #endif
 vec3 clampHDRRange(vec3 color);
 
@@ -131,14 +153,163 @@ void adjustIrradiance(inout vec3 irradiance, float ambocc)
 }
 
 #ifdef SOFTEN_RT_REFLECTION
+// What one local light adds to a hit, from the same formulas as pointLightF / spotLightF: radiance = the light's colour x its distance attenuation x its shadow (x the projected texture for a
+// projector), L = unit vector from the hit to the light. pbr: pbrPunctual with the 3.25 balance factor, legacy: lambert on the albedo plus the blinn-phong highlight of the specular map.
+struct RtHitSurface    // the parts of the hit the lights need (same unit only: a plain struct of the soften pass)
+{
+    bool pbr;
+    vec3 diffuseColor;
+    vec3 specularColor;
+    float roughness;
+    float metallic;
+    vec3 albedo;
+    vec4 spec;
+};
+
+vec3 rtLightOnHit(vec3 radiance, vec3 L, vec3 n, vec3 v, RtHitSurface s)
+{
+    if (s.pbr)
+    {
+        float nl = 0.0;
+        vec3 diffPunc = vec3(0.0);
+        vec3 specPunc = vec3(0.0);
+        pbrPunctual(s.diffuseColor, s.specularColor, s.roughness, s.metallic, n, v, L, nl, diffPunc, specPunc);
+        return radiance * 3.25 * clamp(nl * (diffPunc + specPunc), vec3(0.0), vec3(10.0));
+    }
+    vec3 h, l;
+    float nh, nl, nv, vh, lightDist;
+    calcHalfVectors(L, n, v, h, l, nh, nl, nv, vh, lightDist);
+    vec3 c = radiance * nl * s.albedo;
+    if (s.spec.a > 0.0 && nh > 0.0)
+    {
+        float lit = min(nl * 6.0, 1.0);
+        float fres = pow(1.0 - vh, 5.0) * 0.4 + 0.5;
+        float gtdenom = 2.0 * nh;
+        float gt = max(0.0, min(gtdenom * nv / vh, gtdenom * nl / vh));
+        float scol = fres * textureLod(lightFunc, vec2(nh, s.spec.a), 0.0).r * gt / (nh * nl);
+        c += clamp(radiance * lit * scol * s.spec.rgb, vec3(0.0), vec3(1.0));
+    }
+    return c;
+}
+
+// the ray to a light stops short of the light's centre: the light sits inside a prim (a lamp, the projector box), whose own surface would block the ray; the main pass does not shadow lights at all.
+// rt_hit_quality 4 (and 5 below) skip the shadow rays: a test of that
+bool rt_lights_noshadow = false;
+vec3 rt_dbg_point = vec3(0.0);       // the debug view (rt_hit_quality 3 / 4): what the point lights and the projector added, and how far the projector got
+vec3 rt_dbg_spot = vec3(0.0);
+float rt_dbg_status = 0.0;
+float rtLightMargin(float d)
+{
+    return max(0.3, 0.1 * d);
+}
+
+vec3 rtHitLocalLights(vec3 hp, vec3 n_geo, vec3 n, vec3 v, float lod, vec2 tc, RtHitSurface s)
+{
+    vec3 sum = vec3(0.0);
+    vec3 base = hp + n_geo * (0.02 + 0.0006 * length(hp));
+    for (int i = 0; i < RT_HIT_LIGHTS; ++i)
+    {
+        if (i >= rt_hit_light_count)
+        {
+            break;
+        }
+        vec3 lv = rt_hit_light_pos[i].xyz - hp;
+        float d = length(lv);
+        float sz = rt_hit_light_pos[i].w;
+        if (d >= sz || d < 0.001)
+        {
+            continue;
+        }
+        vec3 L = lv / d;
+        if (dot(n, L) <= 0.0 && dot(n_geo, L) <= 0.0)
+        {
+            continue;
+        }
+        float atten = calcLegacyDistanceAttenuation(d / sz, rt_hit_light_col[i].a);
+        if (atten <= 0.0)
+        {
+            continue;
+        }
+        float sh = rt_lights_noshadow ? 1.0 : rtShadowRay(base, L, d - rtLightMargin(d), tc, lod);
+        vec3 add = rtLightOnHit(rt_hit_light_col[i].rgb * atten * sh, L, n, v, s);
+        sum += add;
+        rt_dbg_point += add;
+    }
+    if (rt_hit_spot != 0)
+    {
+        float sdist, l_dist;
+        vec3 slv;
+        vec4 proj_tc;
+        if (!clipProjectedLightVars(rt_hit_spot_center, hp, sdist, l_dist, slv, proj_tc))
+        {
+            float atten = calcLegacyDistanceAttenuation(sdist, falloff);
+            rt_dbg_status = 0.3;
+            if (atten > 0.0 && proj_tc.z > 0.0 && proj_tc.x > 0.0 && proj_tc.x < 1.0 && proj_tc.y > 0.0 && proj_tc.y < 1.0)
+            {
+                rt_dbg_status = 0.6;
+                vec3 L = normalize(proj_origin - hp);
+                float nl = dot(n, L);
+                vec3 to_center = rt_hit_spot_center - hp;
+                float cd = length(to_center);
+                float sh = 1.0;
+                if (nl > 0.0 && cd > 0.05 && !rt_lights_noshadow)
+                {
+                    sh = rtShadowRay(base, to_center / cd, cd - rtLightMargin(cd), tc, lod);
+                }
+                if (nl > 0.0)
+                {
+                    rt_dbg_status = 1.0;
+                }
+                float amb_da = 0.0;
+                float lit = 0.0;
+                if (nl > 0.0)
+                {
+                    lit = nl * atten;
+                    amb_da = (nl * 0.5 + 0.5) * proj_ambiance;
+                    vec3 add = rtLightOnHit(getProjectedLightDiffuseColor(l_dist, proj_tc.xy) * atten * sh, L, n, v, s);
+                    sum += add;
+                    rt_dbg_spot += add;
+                }
+                // the projector's ambiance (the soft light around the cone), not shadowed in the main pass either
+                vec3 amb_rgb = getProjectedLightAmbiance(amb_da, atten, lit, nl, 1.0, proj_tc.xy);
+                if (s.pbr)
+                {
+                    float nl2 = 0.0;
+                    vec3 diffPunc = vec3(0.0);
+                    vec3 specPunc = vec3(0.0);
+                    pbrPunctual(s.diffuseColor, s.specularColor, s.roughness, s.metallic, n, v, L, nl2, diffPunc, specPunc);
+                    sum += amb_rgb * 3.25 * clamp(nl2 * (diffPunc + specPunc), vec3(0.0), vec3(10.0));
+                }
+                else
+                {
+                    sum += s.albedo * amb_rgb * max(dot(-L, n), 0.0);
+                }
+            }
+        }
+    }
+    return sum;
+}
+
 // <FS> A traced reflection ray whose hit is lit like a surface of the main pass (doc/vulkan/PLAN-glossy-mirror-quality.md, steps A and B): the hit's normal map, roughness / metallic
 // (glTF, through pbrBaseLight) or specular map (legacy materials, the blinn-phong lines of main() below), the sun with the ray's shadow, and the reflection probes sampled AT THE HIT for ambient
 // light and for the surface's own specular reflection. rt_hit_quality 0 keeps the flat diffuse shading of rtReflection (the water uses that one only).
+vec4 rtHitLightsOnly(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
+vec4 rtHitProjectorInternals(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
+
 vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3 amblit_in, vec2 tc, vec3 fallback)
 {
     if (rt_hit_quality <= 0)
     {
         return rtReflection(origin, dir, light_dir_n, sunlit_in, amblit_in, tc, fallback);
+    }
+    rt_lights_noshadow = (rt_hit_quality == 4 || rt_hit_quality == 5);
+    if (rt_hit_quality == 3 || rt_hit_quality == 4)
+    {
+        return rtHitLightsOnly(origin, dir, light_dir_n, tc);
+    }
+    if (rt_hit_quality == 6)
+    {
+        return rtHitProjectorInternals(origin, dir, light_dir_n, tc);
     }
     vec3 albedo, emissive, n_geo, n, hp;
     float t, shadow;
@@ -170,6 +341,18 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
             vec3 diffuseColor, specularColor;
             calcDiffuseSpecular(albedo, mr.x, diffuseColor, specularColor);
             color = pbrBaseLight(diffuseColor, specularColor, mr.x, v, n, rough, light_dir_n, sunlit_in, shadow, radiance, irradiance, emissive, 1.0, vec3(0.0), vec3(1.0));
+            if (rt_hit_quality >= 2)
+            {
+                RtHitSurface s;
+                s.pbr = true;
+                s.diffuseColor = diffuseColor;
+                s.specularColor = specularColor;
+                s.roughness = rough;
+                s.metallic = mr.x;
+                s.albedo = albedo;
+                s.spec = vec4(0.0);
+                color += rtHitLocalLights(hp, n_geo, n, v, clamp(0.5 * log2(max(t + length(origin), 1.0)) - 1.0, 0.0, 4.0), tc, s);
+            }
         }
         else
         {
@@ -205,11 +388,91 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
                 vec3 glossenv = sampleProbes(hp, refl, (1.0 - spec.a) * max_probe_lod);
                 applyGlossEnv(c, glossenv, spec, dir, n);
             }
+            if (rt_hit_quality >= 2)
+            {
+                RtHitSurface s;
+                s.pbr = false;
+                s.diffuseColor = albedo;
+                s.specularColor = vec3(0.0);
+                s.roughness = 1.0;
+                s.metallic = 0.0;
+                s.albedo = albedo;
+                s.spec = spec;
+                c += rtHitLocalLights(hp, n_geo, n, v, clamp(0.5 * log2(max(t + length(origin), 1.0)) - 1.0, 0.0, 4.0), tc, s);
+            }
             color = c + emissive;
         }
     }
     float fade = smoothstep(250.0, 1200.0, t);
     return vec4(mix(color, fallback, fade), 1.0);
+}
+#endif
+
+#ifdef SOFTEN_RT_REFLECTION
+// rt_hit_quality 3 (test): a traced hit shows only what the local lights add (x4), magenta where the soften pass was sent no light at all
+vec4 rtHitLightsOnly(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc)
+{
+    vec3 albedo, emissive, n_geo, n, hp;
+    float t, shadow;
+    bool fb;
+    vec4 mr, spec;
+    if (!rtTraceHit(origin, dir, light_dir_n, tc, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec))
+    {
+        return vec4(0.0);
+    }
+    if (rt_hit_light_count == 0 && rt_hit_spot == 0)
+    {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    RtHitSurface s;
+    s.pbr = mr.z > 0.5;
+    calcDiffuseSpecular(albedo, mr.x, s.diffuseColor, s.specularColor);
+    s.roughness = max(mr.y, 0.04);
+    s.metallic = mr.x;
+    s.albedo = albedo;
+    s.spec = spec;
+    if (!s.pbr)
+    {
+        s.diffuseColor = albedo;
+        s.specularColor = vec3(0.0);
+        s.roughness = 1.0;
+        s.metallic = 0.0;
+    }
+    rtHitLocalLights(hp, n_geo, n, -dir, clamp(0.5 * log2(max(t + length(origin), 1.0)) - 1.0, 0.0, 4.0), tc, s);
+    // red: the point lights, green: the projector (x4), blue: how far the projector got (0.3 inside its range, 0.6 inside its cone, 1 facing the hit)
+    return vec4(4.0 * dot(rt_dbg_point, vec3(0.3, 0.59, 0.11)), 4.0 * dot(rt_dbg_spot, vec3(0.3, 0.59, 0.11)), rt_dbg_status, 1.0);
+}
+#endif
+
+#ifdef SOFTEN_RT_REFLECTION
+// rt_hit_quality 6 (test): the projector's uniforms and what its texture returns at the hit. red: |light colour| / 2, green: proj_lod / 10, blue: the projected diffuse colour x4 (luminance);
+// the same pixel is also marked (alpha 1) only when the projector's range / cone test passed; magenta: no projector uploaded
+vec4 rtHitProjectorInternals(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc)
+{
+    vec3 albedo, emissive, n_geo, n, hp;
+    float t, shadow;
+    bool fb;
+    vec4 mr, spec;
+    if (!rtTraceHit(origin, dir, light_dir_n, tc, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec))
+    {
+        return vec4(0.0);
+    }
+    if (rt_hit_spot == 0)
+    {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    float sdist, l_dist;
+    vec3 slv;
+    vec4 proj_tc;
+    vec3 dl = vec3(0.0);
+    if (!clipProjectedLightVars(rt_hit_spot_center, hp, sdist, l_dist, slv, proj_tc))
+    {
+        if (proj_tc.x > 0.0 && proj_tc.x < 1.0 && proj_tc.y > 0.0 && proj_tc.y < 1.0 && proj_tc.z > 0.0)
+        {
+            dl = getProjectedLightDiffuseColor(l_dist, proj_tc.xy);
+        }
+    }
+    return vec4(clamp(length(color) * 0.5, 0.0, 1.0), clamp(proj_lod * 0.1, 0.0, 1.0), clamp(4.0 * dot(dl, vec3(0.3, 0.59, 0.11)), 0.0, 1.0), 1.0);
 }
 #endif
 

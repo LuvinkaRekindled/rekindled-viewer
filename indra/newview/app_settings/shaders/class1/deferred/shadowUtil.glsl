@@ -195,19 +195,20 @@ bool rtRayOk(vec3 o, vec3 d)
 // 2: the shadow ray starts 0.15 m off the surface (instead of 0.02 m), 3: a reflection ray may look at 1024 masked candidates (instead of 64) before it gives up.
 uniform int rt_hit_shadow_variant;
 
-float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
+// 1 = nothing in the way for tmax metres (the sun: 2000, a local light: its distance), 0 = blocked
+float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
 {
     mat3 to_scene;
     vec3 camera;
     rtSceneFrame(to_scene, camera);
     const vec3 ray_origin = to_scene * origin + camera;
     const vec3 ray_dir = to_scene * dir;
-    if (!rtRayOk(ray_origin, ray_dir))
+    if (!rtRayOk(ray_origin, ray_dir) || !(tmax > 0.005))
     {
         return 1.0;
     }
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, ray_origin, 0.005, ray_dir, 2000.0);
+    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, ray_origin, 0.005, ray_dir, tmax);
     // a ray is given a limited number of masked candidates: a structure that is not what it should be (garbage geometry spread over the scene) must cost a frame some shadows, not
     // a GPU job that outlasts the 2 seconds the driver allows (VK_ERROR_DEVICE_LOST: the viewer cannot go on). The ray stops with what it has found: no hit, lit.
     uint candidates = 0u;
@@ -228,6 +229,11 @@ float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
         }
     }
     return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
+}
+
+float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
+{
+    return rtShadowRay(origin, dir, 2000.0, pos_screen, lod);
 }
 
 // <FS> Ray traced reflections (doc/vulkan/PLAN-rt-materials.md, stage M4): one ray from a surface into the ray scene, the hit shaded from the geometry records and the material table.
