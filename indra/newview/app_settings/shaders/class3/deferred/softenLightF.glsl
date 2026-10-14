@@ -109,7 +109,14 @@ vec2 BRDF(float NoV, float roughness);       // probe (modes 10, 11)
 #if defined(HAS_SUN_SHADOW) && defined(LL_RT_REFLECTIONS)
 #define SOFTEN_RT_REFLECTION 1
 uniform int rt_glossy_reflections;
+uniform int rt_hit_quality;     // how a traced hit is lit: 0 flat diffuse (rtReflection), 1 the lighting of the main pass at the hit (normal map, roughness / metallic / specular map, probes)
 vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback);
+bool rtTraceHit(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full, out vec3 albedo, out vec3 emissive, out vec3 n_geo_eye, out vec3 n_eye, out vec3 hit_pos, out float t,
+                out float shadow, out bool fullbright, out vec4 mr, out vec4 spec);
+void preProbeSample(vec3 pos);
+vec3 sampleProbes(vec3 pos, vec3 dir, float lod);
+vec3 sampleProbeAmbient(vec3 pos, vec3 dir, vec3 amblit);
+uniform float max_probe_lod;
 #endif
 vec3 clampHDRRange(vec3 color);
 
@@ -122,6 +129,89 @@ void adjustIrradiance(inout vec3 irradiance, float ambocc)
     irradiance = mix(ssao_effect_mat * min(irradiance.rgb*ssao_irradiance_scale, vec3(ssao_irradiance_max)), irradiance.rgb, ambocc);
 #endif
 }
+
+#ifdef SOFTEN_RT_REFLECTION
+// <FS> A traced reflection ray whose hit is lit like a surface of the main pass (doc/vulkan/PLAN-glossy-mirror-quality.md, steps A and B): the hit's normal map, roughness / metallic
+// (glTF, through pbrBaseLight) or specular map (legacy materials, the blinn-phong lines of main() below), the sun with the ray's shadow, and the reflection probes sampled AT THE HIT for ambient
+// light and for the surface's own specular reflection. rt_hit_quality 0 keeps the flat diffuse shading of rtReflection (the water uses that one only).
+vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3 amblit_in, vec2 tc, vec3 fallback)
+{
+    if (rt_hit_quality <= 0)
+    {
+        return rtReflection(origin, dir, light_dir_n, sunlit_in, amblit_in, tc, fallback);
+    }
+    vec3 albedo, emissive, n_geo, n, hp;
+    float t, shadow;
+    bool fb;
+    vec4 mr, spec;
+    if (!rtTraceHit(origin, dir, light_dir_n, tc, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec))
+    {
+        return vec4(0.0);
+    }
+    vec3 color;
+    if (fb)
+    {
+        color = albedo + emissive;
+    }
+    else
+    {
+        preProbeSample(hp);
+        vec3 irradiance = amblit_in;
+        if (classic_mode == 0)
+        {
+            irradiance = sampleProbeAmbient(hp, n, amblit_in);
+        }
+        vec3 refl = reflect(dir, n);
+        vec3 v = -dir;
+        if (mr.z > 0.5)
+        {
+            float rough = max(mr.y, 0.04);
+            vec3 radiance = sampleProbes(hp, refl, rough * max_probe_lod);
+            vec3 diffuseColor, specularColor;
+            calcDiffuseSpecular(albedo, mr.x, diffuseColor, specularColor);
+            color = pbrBaseLight(diffuseColor, specularColor, mr.x, v, n, rough, light_dir_n, sunlit_in, shadow, radiance, irradiance, emissive, 1.0, vec3(0.0), vec3(1.0));
+        }
+        else
+        {
+            float da = clamp(dot(n, light_dir_n), 0.0, 1.0);
+            vec3 sl = sunlit_in;
+            vec3 c;
+            if (classic_mode > 0)
+            {
+                da = pow(da, 1.2);
+                vec3 sun_contrib = vec3(min(da, shadow));
+                c = srgb_to_linear(irradiance * 0.9 + linear_to_srgb(sun_contrib) * sl * 0.7);
+                sl = srgb_to_linear(sl);
+            }
+            else
+            {
+                c = irradiance + min(da, shadow) * sl;
+            }
+            c *= albedo;
+            if (spec.a > 0.0)
+            {
+                vec3 h, l;
+                float nh, nl, nv, vh, lightDist;
+                calcHalfVectors(light_dir_n, n, v, h, l, nh, nl, nv, vh, lightDist);
+                if (nl > 0.0 && nh > 0.0)
+                {
+                    float lit = min(nl * 6.0, 1.0);
+                    float fres = pow(1.0 - vh, 5.0) * 0.4 + 0.5;
+                    float gtdenom = 2.0 * nh;
+                    float gt = max(0.0, min(gtdenom * nv / vh, gtdenom * nl / vh));
+                    float sc = shadow * fres * textureLod(lightFunc, vec2(nh, spec.a), 0.0).r * gt / (nh * nl);
+                    c += lit * sc * sl * spec.rgb;
+                }
+                vec3 glossenv = sampleProbes(hp, refl, (1.0 - spec.a) * max_probe_lod);
+                applyGlossEnv(c, glossenv, spec, dir, n);
+            }
+            color = c + emissive;
+        }
+    }
+    float fade = smoothstep(250.0, 1200.0, t);
+    return vec4(mix(color, fallback, fade), 1.0);
+}
+#endif
 
 void main()
 {
@@ -199,7 +289,7 @@ void main()
         if (rt_glossy_reflections != 0 && rt_glossy_reflections != 2 && rt_glossy_reflections != 5 && rt_glossy_reflections != 6 && gloss >= (rt_glossy_reflections >= 4 ? 0.0 : 0.9))
         {
             // <FS> a ray along the reflected view direction into the ray scene: a hit replaces the probe / screen space result, a miss keeps it (3: hits green, misses red; 4: the same for every gloss)
-            vec4 rt_refl = rtReflection(pos.xyz + gb.normal * 0.02, normalize(reflect(pos.xyz, gb.normal)), normalize(light_dir), sunlit_linear, amblit_linear, tc, radiance);
+            vec4 rt_refl = rtReflectionLit(pos.xyz + gb.normal * 0.02, normalize(reflect(pos.xyz, gb.normal)), normalize(light_dir), sunlit_linear, amblit_linear, tc, radiance);
             if (rt_glossy_reflections >= 3)
             {
                 dbg_trace = rt_refl.a > 0.5 ? 2 : 1;       // the views 3 and 4 only show where it traced and what it found
@@ -259,7 +349,7 @@ void main()
         dbg_gloss = spec.a;
         if (rt_glossy_reflections != 0 && rt_glossy_reflections != 2 && rt_glossy_reflections != 5 && rt_glossy_reflections != 6 && spec.a >= (rt_glossy_reflections >= 4 ? 0.01 : 0.9))
         {
-            vec4 rt_refl = rtReflection(pos.xyz + gb.normal * 0.02, normalize(reflect(pos.xyz, gb.normal)), normalize(light_dir), sunlit_linear, amblit_linear, tc, glossenv);
+            vec4 rt_refl = rtReflectionLit(pos.xyz + gb.normal * 0.02, normalize(reflect(pos.xyz, gb.normal)), normalize(light_dir), sunlit_linear, amblit_linear, tc, glossenv);
             if (rt_glossy_reflections >= 3)
             {
                 dbg_trace = rt_refl.a > 0.5 ? 2 : 1;
