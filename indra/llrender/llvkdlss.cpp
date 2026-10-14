@@ -446,6 +446,23 @@ bool evaluate(VkCommandBuffer cmd, const Params& p)
             exposure = resource_of(*p.mExposure, false, VK_IMAGE_ASPECT_COLOR_BIT);
             eval.pInExposureTexture = &exposure;
         }
+        NVSDK_NGX_Resource_VK refl_motion = {};
+        if (p.mReflectionMotion)
+        {
+            refl_motion = resource_of(*p.mReflectionMotion, false, VK_IMAGE_ASPECT_COLOR_BIT);
+            eval.pInMotionVectorsReflections = &refl_motion;
+        }
+        NVSDK_NGX_Resource_VK hit_distance = {};
+        float world_to_view[16], view_to_clip[16];
+        if (p.mHitDistance)
+        {
+            hit_distance = resource_of(*p.mHitDistance, false, VK_IMAGE_ASPECT_COLOR_BIT);
+            memcpy(world_to_view, p.mWorldToView, sizeof(world_to_view));
+            memcpy(view_to_clip, p.mViewToClip, sizeof(view_to_clip));
+            eval.pInSpecularHitDistance = &hit_distance;
+            eval.pInWorldToViewMatrix = world_to_view;
+            eval.pInViewToClipMatrix = view_to_clip;
+        }
         eval.pInDiffuseAlbedo = &diffuse;
         eval.pInSpecularAlbedo = &specular;
         eval.pInNormals = &normals;

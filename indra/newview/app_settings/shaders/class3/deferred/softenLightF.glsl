@@ -109,6 +109,7 @@ vec2 BRDF(float NoV, float roughness);       // probe (modes 10, 11)
 #if defined(HAS_SUN_SHADOW) && defined(LL_RT_REFLECTIONS)
 #define SOFTEN_RT_REFLECTION 1
 uniform int rt_glossy_reflections;
+uniform float rr_hit_distance;  // 1: the alpha of the output carries the traced reflection's hit distance (ray reconstruction is on)
 uniform int rt_hit_quality;     // how a traced hit is lit: 0 flat diffuse (rtReflection), 1 the lighting of the main pass at the hit (normal map, roughness / metallic / specular map, probes)
 vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 amblit_linear, vec2 pos_screen, vec3 fallback);
 bool rtTraceHit(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full, out vec3 albedo, out vec3 emissive, out vec3 n_geo_eye, out vec3 n_eye, out vec3 hit_pos, out float t,
@@ -453,6 +454,11 @@ vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3
 vec4 rtHitLightsOnly(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
 vec4 rtHitProjectorInternals(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
 
+// <FS> For DLSS ray reconstruction (pipeline.cpp, rrHitDistF.glsl): how far the traced reflection ray of this pixel went (metres from its origin to the hit; RT_HIT_DISTANCE_MISS when it found nothing,
+// a far away environment). 0 = not traced. Written to the alpha of the soften output, moved to a target of its own right after the lighting.
+const float RT_HIT_DISTANCE_MISS = 500.0;
+float rt_hit_dist_out = 0.0;
+
 vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3 amblit_in, vec2 tc, vec3 fallback)
 {
     if (rt_hit_quality <= 0)
@@ -515,8 +521,10 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
     vec4 l_mr, l_spec;
     if (!rtTraceHitEx(origin, dir, light_dir_n, tc, rt_hit_quality != 24, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec, layer_alpha, l_albedo, l_emissive, l_n_geo, l_n, l_hp, l_t, l_shadow, l_fb, l_mr, l_spec))
     {
+        rt_hit_dist_out = RT_HIT_DISTANCE_MISS;
         return vec4(0.0);
     }
+    rt_hit_dist_out = t;
     if (rt_hit_quality == 14)
     {
         // the hit's own albedo dimmed (so the avatar and the room can be told apart), plus: red = opacity of a blended layer in front of it, green = the highest opacity of any blended surface the ray met without using it
@@ -947,5 +955,9 @@ void main()
         final_scale = 1.1;
 
     frag_color.rgb = clampHDRRange(color.rgb * final_scale); //output linear since local lights will be added to this shader's results
+#ifdef SOFTEN_RT_REFLECTION
+    frag_color.a = rr_hit_distance > 0.5 ? rt_hit_dist_out : 0.0;     // (the alpha is the glow amount: it is moved out and cleared right after the lighting, see LLPipeline::extractRRHitDistance)
+#else
     frag_color.a = 0.0;
+#endif
 }

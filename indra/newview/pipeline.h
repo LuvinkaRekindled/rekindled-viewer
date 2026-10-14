@@ -173,6 +173,14 @@ public:
     static bool sRR;
     bool rayReconstructionActive();     // sRR and everything it needs exists (targets, program, device support, no zoomed snapshot)
     void generateRRGuides(LLRenderTarget* dst);
+    // the traced reflections' hit distance (specular hit distance guide): the soften pass leaves it in the alpha of the lit picture, this moves it to mRRHitDist and clears the alpha again
+    void extractRRHitDistance(LLRenderTarget* screen);
+    void generateRRReflectionMotion(LLRenderTarget* dst);       // specular motion vectors from the hit distance: the reflected point projected with this frame's and last frame's camera
+    LLRenderTarget          mRRReflMotion;  // render size RG16F
+    bool                    mRRReflMotionValid = false;
+    LLRenderTarget          mRRHitDist;     // render size R16F: metres from a glossy pixel to what its reflection ray hit (0: not traced)
+    bool                    mRRHitDistPending = false;      // the soften pass of this frame writes the distance
+    bool                    mRRHitDistValid = false;        // mRRHitDist holds this frame's distances
     LLRenderTarget          mRRGuides;      // render size: 0 diffuse albedo, 1 specular albedo, 2 world normal + roughness (all RGBA16F)
     LLRenderTarget          mRRHdr;         // window size RGBA16F: what ray reconstruction outputs
     LLRenderTarget          mRRPing;        // window size RGBA16F: the post chain after the upscale

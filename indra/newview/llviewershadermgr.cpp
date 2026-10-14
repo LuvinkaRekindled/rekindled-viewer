@@ -217,6 +217,8 @@ LLGLSLShader            gAvatarBodyVelocityProgram;     // <FS> avatar motion ve
 LLGLSLShader            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
 LLGLSLShader            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
 LLGLSLShader            gShadowAccumProgram;            // <FS> temporal accumulation of the ray traced sun shadow
+LLGLSLShader            gRRHitDistProgram;              // <FS> DLSS ray reconstruction: the hit distance of the traced reflections out of the alpha of the lit picture
+LLGLSLShader            gRRReflMotionProgram;           // <FS> DLSS ray reconstruction: motion vectors of what the traced reflections show
 LLGLSLShader            gRRGuidesProgram;               // <FS> DLSS ray reconstruction: diffuse / specular albedo and normal + roughness from the G-buffer
 LLGLSLShader            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
 LLGLSLShader            gRtMaterialDebugProgram;        // <FS> debug view of the ray scene's material table (RenderBufferVisualization 9)
@@ -1208,6 +1210,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gObjectVelocityPullProgram.unload();
         gShadowAccumProgram.unload();
         gRRGuidesProgram.unload();
+        gRRReflMotionProgram.unload();
+        gRRHitDistProgram.unload();
         gAvatarVelocityDebugProgram.unload();
         gRtMaterialDebugProgram.unload();
         gDeferredPostGammaCorrectProgram.unload();
@@ -2750,6 +2754,30 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gRRGuidesProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the ray reconstruction guides program did not compile: no ray reconstruction" << LL_ENDL;
+        }
+
+        gRRReflMotionProgram.mName = "Ray Reconstruction Reflection Motion";
+        gRRReflMotionProgram.mFeatures.isDeferred = true;
+        gRRReflMotionProgram.mShaderFiles.clear();
+        gRRReflMotionProgram.clearPermutations();
+        gRRReflMotionProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gRRReflMotionProgram.mShaderFiles.push_back(make_pair("deferred/rrReflMotionF.glsl", GL_FRAGMENT_SHADER));
+        gRRReflMotionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gRRReflMotionProgram);
+        if (!gRRReflMotionProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the ray reconstruction reflection motion program did not compile: no reflection motion vectors" << LL_ENDL;
+        }
+
+        gRRHitDistProgram.mName = "Ray Reconstruction Hit Distance";
+        gRRHitDistProgram.mShaderFiles.clear();
+        gRRHitDistProgram.clearPermutations();
+        gRRHitDistProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gRRHitDistProgram.mShaderFiles.push_back(make_pair("deferred/rrHitDistF.glsl", GL_FRAGMENT_SHADER));
+        gRRHitDistProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gRRHitDistProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the ray reconstruction hit distance program did not compile: no hit distance guide" << LL_ENDL;
         }
 
         gAvatarVelocityDebugProgram.mName = "Avatar Velocity Debug";
