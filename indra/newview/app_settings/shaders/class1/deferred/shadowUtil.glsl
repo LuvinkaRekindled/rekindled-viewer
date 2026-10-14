@@ -485,7 +485,13 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
         if (normal_pin != 0u && (g.flags & 8u) != 0u)
         {
             uint normal_slot = ll_rt_slot(normal_pin);
-            if (normal_slot != 0u)
+            if (normal_slot != 0u && (g.flags & 8192u) != 0u)
+            {
+                // a skinned avatar draw (kRecSkinned): the tangent frame below is made per triangle and the avatar's normals are smooth (skinned by the compute pass): the frame jumps at every triangle edge
+                // and roughens skin, hair edges and hands. Only the alpha of the map (the legacy glossiness mask) is read.
+                normal_alpha = textureLod(ll_rt_tex[nonuniformEXT(normal_slot)], uv, lod).a;
+            }
+            else if (normal_slot != 0u)
             {
                 LLRtTexcoords tcn = LLRtTexcoords(g.texcoords);
                 vec2 a0 = tcn.t[ix[0]], a1 = tcn.t[ix[1]], a2 = tcn.t[ix[2]];

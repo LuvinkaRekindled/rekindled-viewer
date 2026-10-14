@@ -72,6 +72,7 @@ static_assert(sizeof(GpuGeom) == 88, "geometry record");
 constexpr U32 kRecNormals = 1024;                           // record flag: mNormals is valid
 constexpr U32 kRecOpaque = 2048;                            // record flag: a record of an opaque structure (no alpha test data)
 constexpr U32 kRecPinned = 4096;                            // record flag: mSlots hold PIN indices (16 bit each), the shader looks the slots up in the pin table
+constexpr U32 kRecSkinned = 8192;                           // record flag: a skinned avatar draw (its normals are skinned smooth normals: the shader reads no normal map frame for it)
 
 // one material as the shaders read it (LLRtMaterial in llvkshader.cpp): the viewer's RtMaterialDef with the texture names turned into slots
 struct GpuMaterial
@@ -3496,7 +3497,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 }
                 rec.mSlots[0] = slot[0] | (slot[1] << 16);
                 rec.mSlots[1] = slot[2] | (slot[3] << 16);
-                rec.mFlags = d.mAlpha.mFlags;
+                rec.mFlags = d.mAlpha.mFlags | kRecSkinned;
                 rec.mCutoff = d.mAlpha.mCutoff;
                 rec.mFirst = d.mFirst;
                 memcpy(rec.mUv, d.mAlpha.mUv, sizeof(rec.mUv));
