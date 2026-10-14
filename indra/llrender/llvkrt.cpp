@@ -406,6 +406,7 @@ struct SkinDraw
     LLVkGL::BufferInfo mVi, mIi;
     U64 mNotedTag = 0, mSkinnedTag = 0;
     U64 mMarkedTag = 0;                 // frame in which its buffers were marked as in use for the records (once per frame, not per scene call)
+    U32 mRecCalls = 0, mRecBad = 0;     // debug (avlog): scene calls that built an alpha test / material record for this draw, and how many of them had to reject its candidates
     U32 mWhyOut = 0;                    // debug (avlog): why it was left out of the structure at the last pass: 0 in, 1 dead, 2 never named, 3 named too long ago, 4 never skinned, 5 no output, 6 keep off, 7 buffer info missing, 8 epoch changed, 9 address changed, 10 size changed, 11 bad range
     ArenaRef mOut;                      // the skinned vertices (world space), indexed like the vertex buffer relative to mVertexFirst
 };
@@ -2578,8 +2579,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     for (const SkinDraw& d : a.mDraws)
                     {
                         const bool in = std::find(cur.begin(), cur.end(), &d) != cur.end();
-                        fprintf(draw_log, "  kind %u mode %u tris %u first %u vtx %u+%u material %u normals %u texc %u color %u noted_age %lld dead %d out %d why %u %s\n", d.mKind, d.mMode, d.mCount / 3, d.mFirst, d.mVertexFirst, d.mVertexCount,
-                                d.mAlpha.mMaterial, d.mAlpha.mNormalOffset, d.mAlpha.mTexcoordOffset, d.mAlpha.mColorOffset, (long long)(av_tag - d.mNotedTag), d.mDead ? 1 : 0, d.mOut.valid() ? 1 : 0, d.mWhyOut, in ? "IN" : "left out");
+                        fprintf(draw_log, "  kind %u mode %u tris %u first %u vtx %u+%u material %u normals %u texc %u color %u noted_age %lld dead %d out %d why %u rec_calls %u rec_bad %u %s\n", d.mKind, d.mMode, d.mCount / 3, d.mFirst, d.mVertexFirst, d.mVertexCount,
+                                d.mAlpha.mMaterial, d.mAlpha.mNormalOffset, d.mAlpha.mTexcoordOffset, d.mAlpha.mColorOffset, (long long)(av_tag - d.mNotedTag), d.mDead ? 1 : 0, d.mOut.valid() ? 1 : 0, d.mWhyOut, d.mRecCalls, d.mRecBad, in ? "IN" : "left out");
                     }
                     fflush(draw_log);
                 }
@@ -3468,6 +3469,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     continue;
                 }
                 bool ok = !d.mDead && d.mOut.valid();
+                ++a.mDraws[a.mBuiltIdx[k]].mRecCalls;
                 if (ok && d.mNotedTag == av_tag)
                 {
                     vis[k] = d.mVi;
@@ -3482,6 +3484,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 {
                     usable[k] = 0;                  // the buffers of this draw changed since it was named: its alpha test is skipped (candidates rejected), the rest of the avatar stays
                     ++sStats.mNoData;
+                    ++a.mDraws[a.mBuiltIdx[k]].mRecBad;
                 }
             }
             custom_index = records;
