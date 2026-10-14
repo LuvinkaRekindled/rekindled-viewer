@@ -1382,6 +1382,13 @@ void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count)
         m.mMetallic = d.mMetallic;
         m.mRoughness = d.mRoughness;
         m.mFlags = d.mFlags;
+        if (!(d.mFlags & LLVkMirror::RTM_GLTF))
+        {
+            // legacy materials have no emissive colour here: the slots carry the specular colour (rgb, in place of the emissive colour) and the specular exponent / 255 (in the pad of the params),
+            // which the lit hits of the traced mirror need (softenLightF.glsl: spec.rgb = specular map x colour, glossiness = exponent x normal map alpha, like the G-buffer pass)
+            memcpy(m.mEmissive, d.mSpecular, 3 * sizeof(F32));
+            memcpy(&m.mPad0, &d.mSpecular[3], sizeof(F32));
+        }
         memcpy(m.mUv, d.mUv, sizeof(m.mUv));
         // the textures are pins: the pin index goes where the slot used to be (the shader looks the slot up), the pins of the old definition of this row are given back afterwards
         const U32 names[7] = { d.mTextures[0], d.mTextures[1], d.mTextures[2], d.mTextures[3], d.mNormalMap, d.mSpecularMap, d.mEmissiveMap };
