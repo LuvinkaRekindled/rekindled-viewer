@@ -12540,6 +12540,7 @@ void LLPipeline::renderDeferredLighting()
             soften_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1, environment.getClampedLightNorm().mV);
 
             soften_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
+            bool rt_hit_spot_bound = false;         // a projector's texture is bound for the traced hits (unbound after the draw)
             {
                 // <FS> ray traced reflections on glossy surfaces (rt-debug.txt glossyrt, softenLightF.glsl)
                 static LLStaticHashedString rt_glossy_s("rt_glossy_reflections");
@@ -12559,7 +12560,118 @@ void LLPipeline::renderDeferredLighting()
                 soften_shader.uniform1i(rt_glossy_s, rt_glossy_mode);
                 soften_shader.uniform1i(rt_hit_variant_s, rt_hit_shadow_variant);
                 static LLStaticHashedString rt_hit_quality_s("rt_hit_quality");
-                soften_shader.uniform1i(rt_hit_quality_s, LLVkMirror::rtHitQuality());
+                const S32 rt_hit_quality = LLVkMirror::rtHitQuality();
+                soften_shader.uniform1i(rt_hit_quality_s, rt_hit_quality);
+
+                // hit quality 2: the local lights seen from the traced hits (softenLightF.glsl rtHitLocalLights). Not culled to the view frustum: a mirror shows what is behind the camera
+                static LLStaticHashedString rt_hit_light_count_s("rt_hit_light_count"), rt_hit_light_pos_s("rt_hit_light_pos"), rt_hit_light_col_s("rt_hit_light_col");
+                static LLStaticHashedString rt_hit_spot_s("rt_hit_spot"), rt_hit_spot_center_s("rt_hit_spot_center");
+                static LLCachedControl<S32> hit_light_limit(gSavedSettings, "RenderLocalLightCount", 256);
+                LLVector4 hit_light_pos[8], hit_light_col[8];
+                S32 hit_lights = 0;
+                LLDrawable* hit_spot = nullptr;
+                if (rt_hit_quality >= 2 && rt_glossy_mode != 0 && hit_light_limit > 0)
+                {
+                    // the nearby list is sorted by distance minus radius, so every light that covers the camera has distance 0 and the order among them is arbitrary: rank them by how much they light
+                    // the surroundings of the camera (the hits of a mirror are mostly close to it): colour x the viewer's own distance attenuation at the camera
+                    struct RtHitLightCand
+                    {
+                        F32 score;
+                        LLDrawable* drawable;
+                        bool spot;
+                    };
+                    std::vector<RtHitLightCand> cands;
+                    const LLVector3 cam_pos = camera->getOrigin();
+                    S32 seen = 0;
+                    for (light_set_t::iterator iter = mNearbyLights.begin(); iter != mNearbyLights.end() && seen < hit_light_limit; ++iter)
+                    {
+                        ++seen;
+                        LLDrawable* drawablep = iter->drawable;
+                        LLVOVolume* volume = drawablep ? drawablep->getVOVolume() : nullptr;
+                        if (!volume || (volume->isAttachment() && !sRenderAttachedLights))
+                        {
+                            continue;
+                        }
+                        const F32 s = volume->getLightRadius() * 1.5f;
+                        LLColor3 col = volume->getLightLinearColor() * light_scale;
+                        if (s <= 0.001f || col.magVecSquared() < 0.001f)
+                        {
+                            continue;
+                        }
+                        const F32 d = dist_vec(drawablep->getPositionAgent(), cam_pos);
+                        const F32 falloff = volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF);
+                        F32 atten = 1.f - llclamp((d / s + falloff) / (1.f + falloff), 0.f, 1.f);
+                        atten *= atten;
+                        const F32 score = atten * (col.mV[0] * 0.3f + col.mV[1] * 0.59f + col.mV[2] * 0.11f);
+                        if (score > 0.f)
+                        {
+                            cands.push_back({ score, drawablep, volume->isLightSpotlight() });
+                        }
+                    }
+                    std::sort(cands.begin(), cands.end(), [](const RtHitLightCand& a, const RtHitLightCand& b) { return a.score > b.score; });
+                    for (const RtHitLightCand& c : cands)
+                    {
+                        if (c.spot)
+                        {
+                            if (!hit_spot)
+                            {
+                                hit_spot = c.drawable;
+                            }
+                        }
+                        else if (hit_lights < 8)
+                        {
+                            LLVOVolume* volume = c.drawable->getVOVolume();
+                            LLColor3 col = volume->getLightLinearColor() * light_scale;
+                            glm::vec3 tc(c.drawable->getPositionAgent());
+                            tc = mul_mat4_vec3(mat, tc);
+                            hit_light_pos[hit_lights] = LLVector4(tc.x, tc.y, tc.z, volume->getLightRadius() * 1.5f);
+                            hit_light_col[hit_lights] = LLVector4(col.mV[0], col.mV[1], col.mV[2], volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF));
+                            ++hit_lights;
+                        }
+                        if (hit_lights >= 8 && hit_spot)
+                        {
+                            break;
+                        }
+                    }
+                }
+                if (rt_hit_quality >= 2 && !gCubeSnapshot)
+                {
+                    static U32 hit_light_log = 0;
+                    if (hit_light_log++ % 600 == 0)
+                    {
+                        LL_INFOS("VkRt") << "traced hit lights: " << hit_lights << " point lights, projector " << (hit_spot ? "yes" : "no") << ", nearby lights " << mNearbyLights.size()
+                                         << ", local light limit " << (S32)hit_light_limit << LL_ENDL;
+                    }
+                }
+                soften_shader.uniform1i(rt_hit_light_count_s, hit_lights);
+                if (hit_lights > 0)
+                {
+                    soften_shader.uniform4fv(rt_hit_light_pos_s, hit_lights, (GLfloat*)hit_light_pos);
+                    soften_shader.uniform4fv(rt_hit_light_col_s, hit_lights, (GLfloat*)hit_light_col);
+                }
+                soften_shader.uniform1i(rt_hit_spot_s, hit_spot ? 1 : 0);
+                if (hit_spot)
+                {
+                    LLVOVolume* volume = hit_spot->getVOVolume();
+                    setupSpotLight(soften_shader, hit_spot);
+                    LLColor3 col = volume->getLightLinearColor() * light_scale;
+                    glm::vec3 tc(hit_spot->getPositionAgent());
+                    tc = mul_mat4_vec3(mat, tc);
+                    soften_shader.uniform3fv(LLShaderMgr::DIFFUSE_COLOR, 1, col.mV);
+                    soften_shader.uniform1f(LLShaderMgr::LIGHT_SIZE, volume->getLightRadius() * 1.5f);
+                    soften_shader.uniform1f(LLShaderMgr::LIGHT_FALLOFF, volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF));
+                    soften_shader.uniform3fv(rt_hit_spot_center_s, 1, glm::value_ptr(tc));
+                    static U32 spot_log = 0;
+                    if (spot_log++ % 600 == 0 && !gCubeSnapshot)
+                    {
+                        LLViewerTexture* img = volume->getLightTexture();
+                        LL_INFOS("VkRt") << "traced hit projector: texture channel " << soften_shader.enableTexture(LLShaderMgr::DEFERRED_PROJECTION) << ", light texture "
+                                         << (img ? (S32)img->getWidth() : -1) << " px, colour " << col.mV[0] << "," << col.mV[1] << "," << col.mV[2] << ", radius " << volume->getLightRadius()
+                                         << ", falloff " << volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF)
+                                         << ", " << dist_vec(hit_spot->getPositionAgent(), camera->getOrigin()) << " m from the camera" << LL_ENDL;
+                    }
+                }
+                rt_hit_spot_bound = hit_spot != nullptr;
             }
 
             {
@@ -12571,6 +12683,10 @@ void LLPipeline::renderDeferredLighting()
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
 
+            if (rt_hit_spot_bound)
+            {
+                soften_shader.disableTexture(LLShaderMgr::DEFERRED_PROJECTION);
+            }
             unbindDeferredShader(gDeferredSoftenProgram);
         }
 
