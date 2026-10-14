@@ -12558,6 +12558,8 @@ void LLPipeline::renderDeferredLighting()
                 static LLStaticHashedString rt_hit_variant_s("rt_hit_shadow_variant");
                 soften_shader.uniform1i(rt_glossy_s, rt_glossy_mode);
                 soften_shader.uniform1i(rt_hit_variant_s, rt_hit_shadow_variant);
+                static LLStaticHashedString rt_hit_quality_s("rt_hit_quality");
+                soften_shader.uniform1i(rt_hit_quality_s, LLVkMirror::rtHitQuality());
             }
 
             {

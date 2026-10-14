@@ -25,6 +25,7 @@ namespace Rt
 bool loadingGates();
 S32 glossyReflections();   // glossyrt: ray traced reflections on glossy surfaces of the lighting pass
 S32 waterReflections();    // waterrt=1: ray traced water reflections
+S32 hitQuality();          // hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 main pass lighting at the hit)
 S32 debugView();        // view=N: the material debug view mode to show (0 = the setting RenderRTMaterialDebug)
 bool bodyRename();
 
