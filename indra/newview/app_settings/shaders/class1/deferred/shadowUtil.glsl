@@ -167,6 +167,54 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     return true;
 }
 
+// Coverage (0..1) of a masked or blended candidate for the SOFT shadows of traced hits (rtShadowRaySoft): the texture alpha is read from a blurred mip (hair strands and foliage are cut-outs finer than a
+// pixel: a binary ray gives hard stripes where the main view's filtered shadow maps give a soft shade), and a ramp around the cutoff turns it into a fraction.
+float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
+{
+    if (record == 0u || record >= ll_rt_geoms.g[0].first)
+    {
+        return 0.0;
+    }
+    LLRtGeom g = ll_rt_geoms.g[record];
+    if ((g.flags & 256u) != 0u)
+    {
+        return 0.0;
+    }
+    vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
+    LLRtIndices ib = LLRtIndices(g.indices);
+    uint ix[3];
+    for (uint k = 0u; k < 3u; ++k)
+    {
+        uint i = g.first + prim * 3u + k;
+        uint word = ib.w[i >> 1];
+        ix[k] = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+    }
+    vec2 uv = vec2(0.0);
+    if ((g.flags & 8u) != 0u)
+    {
+        LLRtTexcoords tc = LLRtTexcoords(g.texcoords);
+        uv = tc.t[ix[0]] * w.x + tc.t[ix[1]] * w.y + tc.t[ix[2]] * w.z;
+        uv = g.uv0 * uv.x + g.uv1 * uv.y + g.uv2;
+    }
+    uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(LLRtPositions(g.positions).v[ix[0]].w) & 3u);
+    uint pair = (tex_index < 2u) ? g.slots.x : g.slots.y;
+    uint slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
+    if ((g.flags & 4096u) != 0u)
+    {
+        slot = ll_rt_slot(slot);
+    }
+    float alpha = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod + 2.0).a;
+    if ((g.flags & 64u) != 0u || ((g.flags & 2u) == 0u && (g.flags & 1u) == 0u))
+    {
+        if ((g.flags & 16u) != 0u)
+        {
+            LLRtColors col = LLRtColors(g.colors);
+            alpha *= (float(col.c[ix[0]] >> 24) * w.x + float(col.c[ix[1]] >> 24) * w.y + float(col.c[ix[2]] >> 24) * w.z) * (1.0 / 255.0);
+        }
+    }
+    return clamp((alpha - g.cutoff) * 3.0 + 0.5, 0.0, 1.0);
+}
+
 // The scene's instances are in world space relative to an origin the scene call chose, so they do not depend on the camera: record 0 of the geometry table holds how a ray
 // moves from eye space into that space: a rotation (3 columns) and the camera's place in it (12 floats packed into the first 48 bytes of the record).
 void rtSceneFrame(out mat3 to_scene, out vec3 camera)
@@ -234,6 +282,84 @@ float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
 float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
 {
     return rtShadowRay(origin, dir, 2000.0, pos_screen, lod);
+}
+
+// Soft version for the shadows of traced hits (the glossy mirror, local lights and the sun at a hit): masked and blended candidates do not stop the ray, each one lets through the fraction its blurred
+// alpha leaves (rtAlphaCover), the product is the light that arrives; an opaque hit blocks all. 1 = lit, 0 = blocked.
+float rtShadowRaySoft(vec3 origin, vec3 dir, float tmax, float lod)
+{
+    mat3 to_scene;
+    vec3 camera;
+    rtSceneFrame(to_scene, camera);
+    const vec3 ray_origin = to_scene * origin + camera;
+    const vec3 ray_dir = to_scene * dir;
+    if (!rtRayOk(ray_origin, ray_dir) || !(tmax > 0.005))
+    {
+        return 1.0;
+    }
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsNoneEXT, 0x03, ray_origin, 0.005, ray_dir, tmax);
+    float transmit = 1.0;
+    uint candidates = 0u;
+    while (rayQueryProceedEXT(rq))
+    {
+        if (++candidates > 96u)
+        {
+            rayQueryTerminateEXT(rq);
+            break;
+        }
+        if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
+        {
+            uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
+            transmit *= 1.0 - rtAlphaCover(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod);
+            if (transmit < 0.03)
+            {
+                rayQueryTerminateEXT(rq);
+                return 0.0;
+            }
+        }
+    }
+    return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? transmit : 0.0;
+}
+
+// what the traced hits call (the sun at a hit and, through rtShadowRayArea, the local lights)
+float rtShadowRayHit(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
+{
+    return rtShadowRaySoft(origin, dir, tmax, lod);
+}
+
+// Shadow of a local light of the traced hits: the light has a size (a lamp, a projector box), so its shadow edges have a penumbra: 4 soft rays to points of a disc of `radius` metres around the
+// light's centre (perpendicular to the way to the light), rotated per pixel. A single ray from a point gave a hard edge that followed the triangles of the occluder (the hair on the shoulder:
+// stair steps). rt_hit_shadow_variant 9 (glossyrt=28): the single ray of before. margin = how far short of the target a ray stops (the light sits inside its prim).
+float rtShadowRayArea(vec3 origin, vec3 light_center, float margin, float radius, vec2 pos_screen, float lod)
+{
+    vec3 to_light = light_center - origin;
+    float dist = length(to_light);
+    if (!(dist > 0.01))
+    {
+        return 1.0;
+    }
+    vec3 L = to_light / dist;
+    if (rt_hit_shadow_variant == 9)
+    {
+        return rtShadowRayHit(origin, L, dist - margin, pos_screen, lod);
+    }
+    vec3 up = abs(L.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 t = normalize(cross(L, up));
+    vec3 b = cross(L, t);
+    // interleaved gradient noise of the pixel (a much finer, less grainy pattern than a hash: neighbouring pixels differ evenly), moved on every frame so that the temporal upscaler averages it
+    const float rot = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * rt_noise_frame, vec2(0.06711056, 0.00583715))));
+    float sum = 0.0;
+    for (int i = 0; i < 4; ++i)
+    {
+        const float a = rot + 1.5707963 * float(i);
+        const float rr = radius * ((i & 1) == 0 ? 0.45 : 0.9);
+        vec3 target = light_center + (t * cos(a) + b * sin(a)) * rr;
+        vec3 dv = target - origin;
+        float dd = length(dv);
+        sum += rtShadowRayHit(origin, dv / dd, max(dd - margin, 0.01), pos_screen, lod);
+    }
+    return 0.25 * sum;
 }
 
 // <FS> Ray traced reflections (doc/vulkan/PLAN-rt-materials.md, stage M4): one ray from a surface into the ray scene, the hit shaded from the geometry records and the material table.
@@ -468,7 +594,7 @@ bool rtResolveHit(uint record, uint prim, vec2 bary, mat4x3 w2o, float t, vec3 o
             }
             else
             {
-                shadow = rtSunRay(hit_pos + n_geo_eye * ((rt_hit_shadow_variant == 2 ? 0.15 : 0.02) + 0.0006 * length(hit_pos)), sun_dir, pos_screen, lod);
+                shadow = rtShadowRayHit(hit_pos + n_geo_eye * ((rt_hit_shadow_variant == 2 ? 0.15 : 0.02) + 0.0006 * length(hit_pos)), sun_dir, 2000.0, pos_screen, lod);
             }
         }
     }

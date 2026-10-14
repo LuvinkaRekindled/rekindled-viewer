@@ -12660,7 +12660,7 @@ void LLPipeline::renderDeferredLighting()
                     rt_glossy_mode = 1;         // the preference (Graphics > Vulkan): the traced glossy mirror; rt-debug.txt glossyrt=N still overrides it for tests
                 }
                 S32 rt_hit_shadow_variant = 0;
-                if (rt_glossy_mode >= 20 && rt_glossy_mode <= 23)       // 20 / 21 / 22 / 23: the glossy mode 1 with a test variant of how a hit is lit (shadowUtil.glsl rt_hit_shadow_variant; 4 = texture mip 0 at every hit)
+                if (rt_glossy_mode >= 20 && rt_glossy_mode <= 28)       // 20 .. 28: the glossy mode 1 with a test variant of how a hit is lit (shadowUtil.glsl rt_hit_shadow_variant; 1 sun always lit, 2 / 3 / 4: ray start 0.15 m, 1024 candidates, texture mip 0; 9 = one shadow ray per local light instead of 4)
                 {
                     rt_hit_shadow_variant = rt_glossy_mode - 19;
                     rt_glossy_mode = 1;
@@ -12668,6 +12668,8 @@ void LLPipeline::renderDeferredLighting()
                 static LLStaticHashedString rt_hit_variant_s("rt_hit_shadow_variant");
                 soften_shader.uniform1i(rt_glossy_s, rt_glossy_mode);
                 soften_shader.uniform1i(rt_hit_variant_s, rt_hit_shadow_variant);
+                static LLStaticHashedString rt_noise_frame_s("rt_noise_frame");
+                soften_shader.uniform1f(rt_noise_frame_s, (F32)(gFrameCount & 63));        // the soft shadow rays of the traced hits turn their pattern every frame
                 static LLStaticHashedString rt_hit_quality_s("rt_hit_quality");
                 const S32 rt_hit_quality = LLVkMirror::rtHitQuality();
                 soften_shader.uniform1i(rt_hit_quality_s, rt_hit_quality);
