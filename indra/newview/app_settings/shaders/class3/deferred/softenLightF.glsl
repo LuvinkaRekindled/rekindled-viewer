@@ -124,6 +124,7 @@ const int RT_HIT_LIGHTS = 8;
 uniform int rt_hit_light_count;
 uniform vec4 rt_hit_light_pos[8];
 uniform vec4 rt_hit_light_col[8];
+uniform vec4 rt_hit_light_dir[8];        // xyz: the axis a spot light looks along (eye space), w: 1 for a spot light
 uniform int rt_hit_spot;
 uniform vec3 rt_hit_spot_center;
 uniform vec3 proj_origin;
@@ -230,6 +231,10 @@ vec3 rtHitLocalLights(vec3 hp, vec3 n_geo, vec3 n, vec3 v, float lod, vec2 tc, R
         {
             continue;
         }
+        if (rt_hit_light_dir[i].w > 0.5)
+        {
+            continue;                       // spot lights: the textured projector below, or the forward lighting of blended hits
+        }
         float sh = rt_lights_noshadow ? 1.0 : rtShadowRay(base, L, d - rtLightMargin(d), tc, lod);
         vec3 add = rtLightOnHit(rt_hit_light_col[i].rgb * atten * sh, L, n, v, s);
         sum += add;
@@ -290,6 +295,41 @@ vec3 rtHitLocalLights(vec3 hp, vec3 n_geo, vec3 n, vec3 v, float lod, vec2 tc, R
     return sum;
 }
 
+// Blended legacy hits (hair): the viewer lights them in the forward alpha pass (materialF.glsl calcPointLightOrSpotLight) with the nearby lights as plain lights: a spot light is a wide cone with the
+// spot exponent 2 (no projected texture, no edge, no shadow), the attenuation is tweaked to match the deferred one, the result is scaled by 0.9 (classic mode) and the whole colour by 1.1 (classic mode)
+vec3 rtHitForwardLights(vec3 hp, vec3 n, vec3 albedo)
+{
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < RT_HIT_LIGHTS; ++i)
+    {
+        if (i >= rt_hit_light_count)
+        {
+            break;
+        }
+        vec3 lv = rt_hit_light_pos[i].xyz - hp;
+        float d = length(lv);
+        float sz = rt_hit_light_pos[i].w;
+        if (d >= sz || d < 0.001)
+        {
+            continue;
+        }
+        lv /= d;
+        float atten = calcLegacyDistanceAttenuation(d / sz, rt_hit_light_col[i].a);
+        float da = 1.0;
+        if (rt_hit_light_dir[i].w > 0.5)
+        {
+            float spot = max(dot(-rt_hit_light_dir[i].xyz, lv), 0.0);
+            da *= spot * spot;
+        }
+        da *= dot(n, lv);
+        if (da > 0.0)
+        {
+            sum += clamp(da * atten, 0.0, 1.0) * rt_hit_light_col[i].rgb * albedo;
+        }
+    }
+    return sum * (classic_mode > 0 ? 0.9 : 1.0);
+}
+
 // <FS> A traced reflection ray whose hit is lit like a surface of the main pass (doc/vulkan/PLAN-glossy-mirror-quality.md, steps A and B): the hit's normal map, roughness / metallic
 // (glTF, through pbrBaseLight) or specular map (legacy materials, the blinn-phong lines of main() below), the sun with the ray's shadow, and the reflection probes sampled AT THE HIT for ambient
 // light and for the surface's own specular reflection. rt_hit_quality 0 keeps the flat diffuse shading of rtReflection (the water uses that one only).
@@ -338,7 +378,8 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
         }
         if (rt_hit_quality == 13)
         {
-            return vec4(mr7.z, mr7.w, sp7.a, 1.0);      // red: a glTF material, green: the emissive mask amount, blue: the legacy glossiness
+            // yellow: a legacy material that is alpha blended; else red: a glTF material, green: the emissive mask amount, blue: the legacy glossiness
+            return mr7.w < -0.5 ? vec4(1.0, 1.0, 0.0, 1.0) : vec4(mr7.z, mr7.w, sp7.a, 1.0);
         }
         if (rt_hit_quality == 8)
         {
@@ -424,7 +465,7 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
                 vec3 glossenv = sampleProbes(hp, refl, (1.0 - spec.a) * max_probe_lod);
                 applyGlossEnv(c, glossenv, spec, dir, n);
             }
-            if (rt_hit_quality >= 2)
+            if (rt_hit_quality >= 2 && mr.w > -0.5)
             {
                 RtHitSurface s;
                 s.pbr = false;
@@ -436,7 +477,12 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
                 s.spec = spec;
                 c += rtHitLocalLights(hp, n_geo, n, v, clamp(0.5 * log2(max(t + length(origin), 1.0)) - 1.0, 0.0, 4.0), tc, s);
             }
-            c = mix(c, albedo, mr.w);       // a legacy material with an emissive mask in the diffuse alpha: the lit colour is blended towards the albedo, like the soften pass does for the pixels of the main view
+            c = mix(c, albedo, max(mr.w, 0.0));       // a legacy material with an emissive mask in the diffuse alpha: the lit colour is blended towards the albedo, like the soften pass does for the pixels of the main view
+            if (mr.w < -0.5 && rt_hit_quality >= 2)
+            {
+                c += rtHitForwardLights(hp, n, albedo);         // blended: lit like the forward alpha pass (the lights block above is for opaque hits)
+                c *= (classic_mode > 0 ? 1.1 : 1.0);
+            }
             color = c + emissive;
         }
     }

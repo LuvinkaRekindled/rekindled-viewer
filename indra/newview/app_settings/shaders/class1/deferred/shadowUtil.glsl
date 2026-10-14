@@ -345,7 +345,11 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     fullbright = (mflags & 1u) != 0u;
     if (full && !fullbright)
     {
-        if ((mflags & 32u) != 0u && (mflags & 2u) == 0u)
+        if ((mflags & 8u) != 0u && (mflags & 2u) == 0u)
+        {
+            mr.w = -1.0;                            // a legacy material that is alpha BLENDED (hair, some clothes): the viewer lights it in the forward alpha pass, not in the soften pass (softenLightF.glsl rtHitForwardLights)
+        }
+        else if ((mflags & 32u) != 0u && (mflags & 2u) == 0u)
         {
             mr.w = clamp(tex.a, 0.0, 1.0);          // DIFFUSE_ALPHA_MODE_EMISSIVE: the stock lighting blends the lit colour towards the albedo by this (softenLightF.glsl: mix(color, baseColor, baseColor.a))
         }
