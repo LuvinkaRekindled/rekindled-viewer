@@ -217,6 +217,7 @@ LLGLSLShader            gAvatarBodyVelocityProgram;     // <FS> avatar motion ve
 LLGLSLShader            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
 LLGLSLShader            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
 LLGLSLShader            gShadowAccumProgram;            // <FS> temporal accumulation of the ray traced sun shadow
+LLGLSLShader            gRRGuidesProgram;               // <FS> DLSS ray reconstruction: diffuse / specular albedo and normal + roughness from the G-buffer
 LLGLSLShader            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
 LLGLSLShader            gRtMaterialDebugProgram;        // <FS> debug view of the ray scene's material table (RenderBufferVisualization 9)
 LLGLSLShader            gFXAAProgram[4];
@@ -1206,6 +1207,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAvatarVelocityPullProgram.unload();
         gObjectVelocityPullProgram.unload();
         gShadowAccumProgram.unload();
+        gRRGuidesProgram.unload();
         gAvatarVelocityDebugProgram.unload();
         gRtMaterialDebugProgram.unload();
         gDeferredPostGammaCorrectProgram.unload();
@@ -2734,6 +2736,20 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gShadowAccumProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the shadow accumulation program did not compile: ray shadows are not accumulated" << LL_ENDL;
+        }
+
+        gRRGuidesProgram.mName = "Ray Reconstruction Guides";
+        gRRGuidesProgram.mFeatures.isDeferred = true;
+        gRRGuidesProgram.mFeatures.hasFullGBuffer = true;
+        gRRGuidesProgram.mShaderFiles.clear();
+        gRRGuidesProgram.clearPermutations();
+        gRRGuidesProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gRRGuidesProgram.mShaderFiles.push_back(make_pair("deferred/rrGuidesF.glsl", GL_FRAGMENT_SHADER));
+        gRRGuidesProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gRRGuidesProgram);
+        if (!gRRGuidesProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the ray reconstruction guides program did not compile: no ray reconstruction" << LL_ENDL;
         }
 
         gAvatarVelocityDebugProgram.mName = "Avatar Velocity Debug";

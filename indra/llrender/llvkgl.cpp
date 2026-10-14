@@ -5873,12 +5873,16 @@ void on_upscale(const LLVkMirror::UpscaleArgs& a)
     Tex* depth = find(a.mDepth);
     Tex* motion = find(a.mMotion);
     Tex* output = find(a.mOutput);
-    if (!color || !depth || !motion || !output)
+    Tex* diffuse = a.mRayReconstruction ? find(a.mDiffuseAlbedo) : nullptr;
+    Tex* specular = a.mRayReconstruction ? find(a.mSpecularAlbedo) : nullptr;
+    Tex* normals = a.mRayReconstruction ? find(a.mNormals) : nullptr;
+    Tex* exposure = a.mRayReconstruction && a.mExposure ? find(a.mExposure) : nullptr;
+    if (!color || !depth || !motion || !output || (a.mRayReconstruction && (!diffuse || !specular || !normals)))
     {
         if (failures++ < 5)
         {
             LL_WARNS("VkDlss") << "upscale: a texture is missing (colour " << (color != nullptr) << ", depth " << (depth != nullptr) << ", motion " << (motion != nullptr)
-                               << ", output " << (output != nullptr) << ")" << LL_ENDL;
+                               << ", output " << (output != nullptr) << ", guides " << (diffuse != nullptr) << (specular != nullptr) << (normals != nullptr) << ")" << LL_ENDL;
         }
         return;
     }
@@ -5897,12 +5901,28 @@ void on_upscale(const LLVkMirror::UpscaleArgs& a)
     p.mMotionScaleY = a.mMotionScaleY;
     p.mReset = a.mReset != 0;
     p.mHdr = a.mHdr != 0;
-    const std::vector<std::pair<Image*, VkImageLayout>> needs = {
+    std::vector<std::pair<Image*, VkImageLayout>> needs = {
         { p.mColor, LLVkDlss::inputLayout(*p.mColor) },
         { p.mDepth, LLVkDlss::inputLayout(*p.mDepth) },
         { p.mMotion, LLVkDlss::inputLayout(*p.mMotion) },
         { p.mOutput, LLVkDlss::outputLayout() },
     };
+    if (a.mRayReconstruction)
+    {
+        p.mRayReconstruction = true;
+        p.mDiffuseAlbedo = &diffuse->mImage;
+        p.mSpecularAlbedo = &specular->mImage;
+        p.mNormals = &normals->mImage;
+        p.mPreset = a.mPreset;
+        needs.push_back({ p.mDiffuseAlbedo, LLVkDlss::inputLayout(*p.mDiffuseAlbedo) });
+        needs.push_back({ p.mSpecularAlbedo, LLVkDlss::inputLayout(*p.mSpecularAlbedo) });
+        needs.push_back({ p.mNormals, LLVkDlss::inputLayout(*p.mNormals) });
+        if (exposure)
+        {
+            p.mExposure = &exposure->mImage;
+            needs.push_back({ p.mExposure, LLVkDlss::inputLayout(*p.mExposure) });
+        }
+    }
     bool done = false;
     Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDlss::evaluate(cmd, p); });
     if (done)

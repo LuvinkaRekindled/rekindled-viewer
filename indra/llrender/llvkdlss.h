@@ -45,6 +45,13 @@ namespace LLVkDlss
         float mMotionScaleX = 1.f, mMotionScaleY = 1.f;
         bool mReset = false;                // history is useless (camera cut)
         bool mHdr = false;                  // the colour is linear HDR rather than display-referred
+        // ray reconstruction (the denoiser + upscaler for noisy ray traced input) runs instead of super resolution when this is set: the colour must be noisy linear HDR radiance, the guides at render size
+        bool mRayReconstruction = false;
+        LLVk::Image* mDiffuseAlbedo = nullptr;      // RGBA16F: the diffuse albedo of the visible surface (linear)
+        LLVk::Image* mSpecularAlbedo = nullptr;     // RGBA16F: the specular albedo (F0 times the environment BRDF)
+        LLVk::Image* mNormals = nullptr;            // RGBA16F: world space normal in xyz, roughness in w
+        LLVk::Image* mExposure = nullptr;           // 1x1 R16F: the factor the tonemap multiplies the radiance with (the network works on exposed values)
+        S32 mPreset = 0;                            // the ray reconstruction model: 0 default, 4 D, 5 E (transformer), 6 F
     };
 
     // Records the upscale into 'cmd'. The images must already be in the layouts layoutNeeded() names. Creates the DLSS feature on first use
