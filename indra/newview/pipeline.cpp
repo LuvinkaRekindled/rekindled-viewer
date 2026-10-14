@@ -12582,6 +12582,8 @@ void LLPipeline::renderDeferredLighting()
                     };
                     std::vector<RtHitLightCand> cands;
                     const LLVector3 cam_pos = camera->getOrigin();
+                    // the other place a mirror shows is around the avatar standing in front of it: a light counts for what it does at the camera plus what it does at the avatar
+                    const LLVector3 avatar_pos = isAgentAvatarValid() ? gAgentAvatarp->getPositionAgent() : cam_pos;
                     S32 seen = 0;
                     for (light_set_t::iterator iter = mNearbyLights.begin(); iter != mNearbyLights.end() && seen < hit_light_limit; ++iter)
                     {
@@ -12598,17 +12600,38 @@ void LLPipeline::renderDeferredLighting()
                         {
                             continue;
                         }
-                        const F32 d = dist_vec(drawablep->getPositionAgent(), cam_pos);
                         const F32 falloff = volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF);
-                        F32 atten = 1.f - llclamp((d / s + falloff) / (1.f + falloff), 0.f, 1.f);
-                        atten *= atten;
-                        const F32 score = atten * (col.mV[0] * 0.3f + col.mV[1] * 0.59f + col.mV[2] * 0.11f);
+                        // a projector only lights what is inside its cone (looking along -z of the prim, the field of view is parameter 0): outside it counts a tenth
+                        const bool is_spot = volume->isLightSpotlight();
+                        LLVector3 axis(0.f, 0.f, -1.f);
+                        axis *= volume->getRenderRotation();
+                        const F32 cos_half_fov = cosf(volume->getSpotLightParams().mV[0] * 0.5f);
+                        auto attenuation_at = [&](const LLVector3& at)
+                        {
+                            const LLVector3 to = at - drawablep->getPositionAgent();
+                            const F32 d = to.length();
+                            const F32 a = 1.f - llclamp((d / s + falloff) / (1.f + falloff), 0.f, 1.f);
+                            const F32 cone = (!is_spot || d < 0.01f || (to / d) * axis > cos_half_fov) ? 1.f : 0.1f;
+                            return a * a * cone;
+                        };
+                        const F32 score = (attenuation_at(cam_pos) + attenuation_at(avatar_pos)) * (col.mV[0] * 0.3f + col.mV[1] * 0.59f + col.mV[2] * 0.11f);
                         if (score > 0.f)
                         {
                             cands.push_back({ score, drawablep, volume->isLightSpotlight() });
                         }
                     }
                     std::sort(cands.begin(), cands.end(), [](const RtHitLightCand& a, const RtHitLightCand& b) { return a.score > b.score; });
+                    static U32 cand_log = 0;
+                    if (!gCubeSnapshot && cand_log++ % 300 == 0)
+                    {
+                        std::string top;
+                        for (size_t i = 0; i < cands.size() && i < 4; ++i)
+                        {
+                            const LLVector3 pos = cands[i].drawable->getPositionAgent();
+                            top += llformat(" [%s %.2f at %.1f,%.1f,%.1f]", cands[i].spot ? "spot" : "point", cands[i].score, pos.mV[0], pos.mV[1], pos.mV[2]);
+                        }
+                        LL_INFOS("VkRt") << "traced hit light candidates " << cands.size() << ", best:" << top << " camera " << cam_pos << " avatar " << avatar_pos << LL_ENDL;
+                    }
                     for (const RtHitLightCand& c : cands)
                     {
                         if (c.spot)
@@ -12662,7 +12685,7 @@ void LLPipeline::renderDeferredLighting()
                     soften_shader.uniform1f(LLShaderMgr::LIGHT_FALLOFF, volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF));
                     soften_shader.uniform3fv(rt_hit_spot_center_s, 1, glm::value_ptr(tc));
                     static U32 spot_log = 0;
-                    if (spot_log++ % 600 == 0 && !gCubeSnapshot)
+                    if (!gCubeSnapshot && spot_log++ % 300 == 0)
                     {
                         LLViewerTexture* img = volume->getLightTexture();
                         LL_INFOS("VkRt") << "traced hit projector: texture channel " << soften_shader.enableTexture(LLShaderMgr::DEFERRED_PROJECTION) << ", light texture "
