@@ -311,6 +311,42 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
     {
         return rtHitProjectorInternals(origin, dir, light_dir_n, tc);
     }
+    if (rt_hit_quality >= 7 && rt_hit_quality <= 9 || rt_hit_quality >= 11 && rt_hit_quality <= 13)
+    {
+        // test views of the hit: 7 = material (red metallic, green roughness, blue 0.5 for a glTF material / the legacy glossiness x 0.5 + 0.5 for one with a specular map), 8 = the probe ambient at the hit
+        // (irradiance), 9 = the sun term alone (N.L x shadow x sunlit, white = lit)
+        vec3 a7, e7, ng7, n7, hp7;
+        float t7, sh7;
+        bool fb7;
+        vec4 mr7, sp7;
+        if (!rtTraceHit(origin, dir, light_dir_n, tc, true, a7, e7, ng7, n7, hp7, t7, sh7, fb7, mr7, sp7))
+        {
+            return vec4(0.0);
+        }
+        if (rt_hit_quality == 7)
+        {
+            return vec4(mr7.x, mr7.y, (mr7.z > 0.5 ? 0.5 : 0.0) + (sp7.a > 0.0 ? 0.5 * sp7.a + 0.5 : 0.0), fb7 ? 1.0 : 0.75);
+        }
+        if (rt_hit_quality == 11)
+        {
+            return vec4(a7, 1.0);                       // the albedo of the hit (linear)
+        }
+        if (rt_hit_quality == 12)
+        {
+            preProbeSample(hp7);
+            return vec4((classic_mode == 0 ? sampleProbeAmbient(hp7, n7, amblit_in) : amblit_in) * a7, 1.0);       // the ambient part of a legacy hit: irradiance x albedo
+        }
+        if (rt_hit_quality == 13)
+        {
+            return vec4(mr7.z, mr7.w, sp7.a, 1.0);      // red: a glTF material, green: the emissive mask amount, blue: the legacy glossiness
+        }
+        if (rt_hit_quality == 8)
+        {
+            preProbeSample(hp7);
+            return vec4(classic_mode == 0 ? sampleProbeAmbient(hp7, n7, amblit_in) : amblit_in, 1.0);
+        }
+        return vec4(vec3(clamp(dot(n7, light_dir_n), 0.0, 1.0) * sh7) * sunlit_in, 1.0);
+    }
     vec3 albedo, emissive, n_geo, n, hp;
     float t, shadow;
     bool fb;
@@ -400,6 +436,7 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
                 s.spec = spec;
                 c += rtHitLocalLights(hp, n_geo, n, v, clamp(0.5 * log2(max(t + length(origin), 1.0)) - 1.0, 0.0, 4.0), tc, s);
             }
+            c = mix(c, albedo, mr.w);       // a legacy material with an emissive mask in the diffuse alpha: the lit colour is blended towards the albedo, like the soften pass does for the pixels of the main view
             color = c + emissive;
         }
     }
@@ -684,6 +721,13 @@ void main()
 
     //color.r = classic_mode > 0 ? 1.0 : 0.0;
 #ifdef SOFTEN_RT_REFLECTION
+    if (rt_hit_quality == 10 && depth < 1.0)
+    {
+        // test (hitq=10): the surface of every pixel is shaded by the hit shading of the traced mirror instead of the lighting above, from a ray of the eye. The same surface, the same lights: any difference to
+        // hitq=0 is a difference of the two shadings (the traced mirror's ray scene, material rows and lighting of a hit against the G-buffer and its lighting)
+        vec4 rt_eye = rtReflectionLit(vec3(0.0), normalize(pos.xyz), normalize(light_dir), sunlit_linear, amblit_linear, tc, color.rgb);
+        color.rgb = mix(color.rgb, rt_eye.rgb, rt_eye.a);
+    }
     if (rt_glossy_reflections == 3 || rt_glossy_reflections == 4)
     {
         // probe: green where the reflection ray hit something, red where it missed (the pixels that were traced only; 4 traces every gloss)

@@ -247,7 +247,7 @@ vec3 rtSrgbToLinear(vec3 c)
 // What the surface of a hit looks like: linear albedo, emissive, the (smooth or flat) normal in object space, alpha for the mask test. false: the record cannot be read.
 // The same decode as the material debug view (rtMaterialDebugF.glsl dbgSurface), which is the proof that records, uvs, colours and slots are right.
 // full: also decode what the lighting of a hit needs (hit shading quality 1): n_shaded = the normal with the normal map applied (object space, a tangent frame from the triangle's uv derivatives),
-// mr = (metallic, roughness, 1 for a glTF material else 0, 0), spec = legacy specular map (linear rgb, alpha = glossiness; alpha 0 = no specular map). Without full they are neutral.
+// mr = (metallic, roughness, 1 for a glTF material else 0, the emissive amount of a legacy material whose diffuse alpha is an emissive mask (else 0)), spec = legacy specular map (linear rgb, alpha = glossiness; alpha 0 = no specular map). Without full they are neutral.
 bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, out vec3 albedo, out vec3 emissive, out vec3 n_obj, out vec3 n_shaded, out float alpha, out bool fullbright, out vec4 mr, out vec4 spec)
 {
     mr = vec4(0.0, 1.0, 0.0, 0.0);
@@ -345,6 +345,10 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     fullbright = (mflags & 1u) != 0u;
     if (full && !fullbright)
     {
+        if ((mflags & 32u) != 0u && (mflags & 2u) == 0u)
+        {
+            mr.w = clamp(tex.a, 0.0, 1.0);          // DIFFUSE_ALPHA_MODE_EMISSIVE: the stock lighting blends the lit colour towards the albedo by this (softenLightF.glsl: mix(color, baseColor, baseColor.a))
+        }
         // the normal map through a tangent frame (the same decode as the material debug view, rtMaterialDebugF.glsl); its alpha is the glossiness mask of a legacy material
         float normal_alpha = 1.0;
         uint normal_pin = m.slots2.x & 0xFFFFu;
