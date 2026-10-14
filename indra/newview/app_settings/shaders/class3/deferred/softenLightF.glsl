@@ -124,6 +124,7 @@ uniform float max_probe_lod;
 // local lights at a hit (rt_hit_quality 2): the nearest point lights as arrays (eye space centre and size, linear colour and falloff) and the first projector (spot light) through the
 // uniforms its own shader uses (proj_mat, proj_n, proj_origin, proj_lod ... set by LLPipeline::setupSpotLight, the projected texture is projectionMap, colour / size / falloff of the light)
 const int RT_HIT_LIGHTS = 8;
+const float RT_LIGHT_SIZE = 0.5;        // metres: the radius of the disc the soft shadow rays of a local light are aimed at (rtShadowRayArea)
 uniform int rt_hit_light_count;
 uniform vec4 rt_hit_light_pos[8];
 uniform vec4 rt_hit_light_col[8];
@@ -138,6 +139,8 @@ uniform float proj_range;
 uniform vec3 color;
 uniform float falloff;
 float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod);
+float rtShadowRayHit(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod);
+float rtShadowRayArea(vec3 origin, vec3 light_center, float margin, float radius, vec2 pos_screen, float lod);
 bool clipProjectedLightVars(vec3 light_center, vec3 pos, out float dist, out float l_dist, out vec3 lv, out vec4 proj_tc);
 vec3 getProjectedLightDiffuseColor(float light_distance, vec2 projected_uv);
 vec3 getProjectedLightAmbiance(float amb_da, float attenuation, float lit, float nl, float noise, vec2 projected_uv);
@@ -238,7 +241,7 @@ vec3 rtHitLocalLights(vec3 hp, vec3 n_geo, vec3 n, vec3 v, float lod, vec2 tc, R
         {
             continue;                       // spot lights: the textured projector below, or the forward lighting of blended hits
         }
-        float sh = rt_lights_noshadow ? 1.0 : rtShadowRay(base, L, d - rtLightMargin(d), tc, lod);
+        float sh = rt_lights_noshadow ? 1.0 : rtShadowRayArea(base, rt_hit_light_pos[i].xyz, rtLightMargin(d), RT_LIGHT_SIZE, tc, lod);
         vec3 add = rtLightOnHit(rt_hit_light_col[i].rgb * atten * sh, L, n, v, s);
         sum += add;
         rt_dbg_point += add;
@@ -262,7 +265,7 @@ vec3 rtHitLocalLights(vec3 hp, vec3 n_geo, vec3 n, vec3 v, float lod, vec2 tc, R
                 float sh = 1.0;
                 if (nl > 0.0 && cd > 0.05 && !rt_lights_noshadow)
                 {
-                    sh = rtShadowRay(base, to_center / cd, cd - rtLightMargin(cd), tc, lod);
+                    sh = rtShadowRayArea(base, rt_hit_spot_center, rtLightMargin(cd), RT_LIGHT_SIZE, tc, lod);
                 }
                 if (nl > 0.0)
                 {

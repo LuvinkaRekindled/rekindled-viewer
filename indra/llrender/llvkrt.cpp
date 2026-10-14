@@ -97,7 +97,7 @@ constexpr size_t kAvatarBuilds = 16;                        // structure builds 
 constexpr U32 kMaxSkinJobs = 2048;                          // compute skinning jobs per scene call
 constexpr U32 kSkinChunkVerts = 128;                        // vertices per workgroup (one chunk table entry)
 constexpr U32 kMaxSkinChunks = 131072;
-constexpr VkDeviceSize kSkinJobBytes = 112ull * kMaxSkinJobs;
+constexpr VkDeviceSize kSkinJobBytes = 128ull * kMaxSkinJobs;
 constexpr VkDeviceSize kSkinBytes = kSkinJobBytes + 8ull * kMaxSkinChunks;
 constexpr U32 kPasses = 20;                                 // passes tracked: 0-3 sun cascades, 4-5 spot shadows, 6 other (the main view), 7-12 the six faces of the hero probe, 13-18 the faces of a reflection probe
 
@@ -845,15 +845,23 @@ struct SkinJob
     U32 mPalette[2];
     U32 mDst[2];
     U32 mFirst, mCount, mMode, mJoints;
+    U32 mNormalSrc[2];              // the source normals (vec4 array, bind pose, indexed by the absolute vertex number) or 0: none are skinned
+    U32 mNormalDst[2];              // where the skinned normals go (world space, vec4, indexed by the absolute vertex number)
     F32 mModel[12];                 // three rows of four
     F32 mGuard[4];                  // centre (xyz) and radius of the volume the skinned vertices must lie in (radius 0: no limit)
 };
-static_assert(sizeof(SkinJob) == 112, "skin job");
+static_assert(sizeof(SkinJob) == 128, "skin job");
 
 struct SkinChunk
 {
     U32 mJob, mOffset;
 };
+
+// does the draw's source vertex buffer hold normals the compute pass can read (16 bytes a vertex from the named offset)?
+static bool skin_normals_ok(const SkinDraw& d)
+{
+    return d.mAlpha.mNormalOffset != 0 && d.mVi.mAddress != 0 && (U64)d.mAlpha.mNormalOffset + ((U64)d.mVertexFirst + d.mVertexCount) * 16 <= d.mVi.mSize;
+}
 
 const char* kSkinShader = R"GLSL(#version 450
 #extension GL_EXT_buffer_reference : require
@@ -864,7 +872,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer InF
 layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer OutVec4 { vec4 v[]; };
 struct Joint { vec4 c0; vec4 c1; vec4 c2; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Palette { Joint j[]; };
-struct Job { uvec2 src; uvec2 weights; uvec2 palette; uvec2 dst; uint first; uint count; uint mode; uint joints; vec4 m0; vec4 m1; vec4 m2; vec4 guard; };
+struct Job { uvec2 src; uvec2 weights; uvec2 palette; uvec2 dst; uint first; uint count; uint mode; uint joints; uvec2 nsrc; uvec2 ndst; vec4 m0; vec4 m1; vec4 m2; vec4 guard; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Jobs { Job j[]; };
 struct Chunk { uint job; uint offset; };
 layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer Chunks { Chunk c[]; };
@@ -881,6 +889,8 @@ void main()
     uint v = job.first + i;
     vec4 source = InVec4(job.src).v[v];
     vec3 pos = source.xyz;
+    const bool with_normals = (job.nsrc.x | job.nsrc.y) != 0u;
+    vec3 nrm = with_normals ? InVec4(job.nsrc).v[v].xyz : vec3(0.0, 1.0, 0.0);
     if (job.mode == 0u)
     {
         // as getObjectSkinnedTransform() in objectSkinV.glsl; the joint numbers stay inside the palette that was sent
@@ -903,6 +913,7 @@ void main()
         trans += vec3(j3.c0.w, j3.c1.w, j3.c2.w) * w.z;
         trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
         pos = m * pos + trans;
+        nrm = m * nrm;                  // the same linear part (the viewer's own skinning shaders do the same: no inverse transpose)
     }
     else if (job.mode == 1u)
     {
@@ -915,7 +926,9 @@ void main()
         Joint ja = palette.j[i];
         Joint jb = palette.j[i2];
         vec4 ps = vec4(pos, 1.0);
-        pos = vec3(dot(mix(ja.c0, jb.c0, x), ps), dot(mix(ja.c1, jb.c1, x), ps), dot(mix(ja.c2, jb.c2, x), ps));
+        vec4 r0 = mix(ja.c0, jb.c0, x), r1 = mix(ja.c1, jb.c1, x), r2 = mix(ja.c2, jb.c2, x);
+        pos = vec3(dot(r0, ps), dot(r1, ps), dot(r2, ps));
+        nrm = vec3(dot(r0.xyz, nrm), dot(r1.xyz, nrm), dot(r2.xyz, nrm));
     }
     vec4 p4 = vec4(pos, 1.0);
     vec3 world = vec3(dot(job.m0, p4), dot(job.m1, p4), dot(job.m2, p4));
@@ -934,6 +947,12 @@ void main()
         world = vec3(uintBitsToFloat(0x7fc00000u));
     }
     OutVec4(job.dst).v[v] = vec4(world, source.w);       // w: the texture index of masked draws
+    if (with_normals)
+    {
+        vec3 wn = vec3(dot(job.m0.xyz, nrm), dot(job.m1.xyz, nrm), dot(job.m2.xyz, nrm));
+        float len = length(wn);
+        OutVec4(job.ndst).v[v] = vec4(len > 1e-6 ? wn / len : vec3(0.0, 0.0, 1.0), 0.0);
+    }
 }
 )GLSL";
 
@@ -2564,7 +2583,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         bool alloc_failed = false;
         for (SkinDraw* d : cur)
         {
-            const VkDeviceSize bytes = ((VkDeviceSize)d->mVertexCount * 16 + 255) / 256 * 256;
+            // the skinned positions (16 bytes a vertex), then, when the draw has normals, the skinned normals (the same size): one allocation, the normals start at the aligned size of the positions
+            const VkDeviceSize pos_bytes = ((VkDeviceSize)d->mVertexCount * 16 + 255) / 256 * 256;
+            const VkDeviceSize bytes = pos_bytes * (skin_normals_ok(*d) ? 2 : 1);
             if (!d->mOut.valid() || d->mOut.mSize < bytes)
             {
                 if (d->mOut.valid())
@@ -2610,6 +2631,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 sj.mPalette[1] = (U32)(d->mPalette >> 32);
                 sj.mDst[0] = (U32)dst;
                 sj.mDst[1] = (U32)(dst >> 32);
+                if (skin_normals_ok(*d) && d->mOut.mSize >= 2 * (((VkDeviceSize)d->mVertexCount * 16 + 255) / 256 * 256))
+                {
+                    const U64 nsrc = d->mVi.mAddress + d->mAlpha.mNormalOffset, ndst = d->mOut.mAddress + ((VkDeviceSize)d->mVertexCount * 16 + 255) / 256 * 256 - 16ull * d->mVertexFirst;
+                    sj.mNormalSrc[0] = (U32)nsrc;
+                    sj.mNormalSrc[1] = (U32)(nsrc >> 32);
+                    sj.mNormalDst[0] = (U32)ndst;
+                    sj.mNormalDst[1] = (U32)(ndst >> 32);
+                }
                 sj.mFirst = d->mVertexFirst;
                 sj.mCount = d->mVertexCount;
                 sj.mMode = d->mMode;
@@ -3476,6 +3505,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     // ray scene materials: the texture is in the material row; the normals are the triangles' own (the skinned copy holds positions only)
                     rec.mMaterial = d.mAlpha.mMaterial;
                     ++sStats.mRecMaterial;
+                    if (skin_normals_ok(d) && d.mOut.mSize >= 2 * (((VkDeviceSize)d.mVertexCount * 16 + 255) / 256 * 256))
+                    {
+                        // the compute pass skinned the normals too: smooth shading of the avatar (the triangles' own normals shaded it in facets)
+                        const U64 nn = d.mOut.mAddress + ((VkDeviceSize)d.mVertexCount * 16 + 255) / 256 * 256 - 16ull * d.mVertexFirst;
+                        rec.mNormals[0] = (U32)nn;
+                        rec.mNormals[1] = (U32)(nn >> 32);
+                        rec.mFlags |= kRecNormals;
+                    }
                     if (d.mKind != 1)
                     {
                         rec.mFlags |= kRecOpaque;
