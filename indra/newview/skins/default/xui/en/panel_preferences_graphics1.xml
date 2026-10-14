@@ -1983,6 +1983,41 @@ If you do not understand the distinction then leave this control alone."
          name="3"
          value="3"/>
       </combo_box>
+      <check_box
+       control_name="FSVkRayTracing"
+       height="16"
+       initial_value="false"
+       label="Use ray tracing (RTX graphics cards, experimental)"
+       layout="topleft"
+       left_delta="-18"
+       name="FSVkRayTracing"
+       tool_tip="Ray traced sun shadows. Needs an NVIDIA RTX graphics card. Takes effect after the viewer is restarted."
+       top_pad="12"
+       width="400"/>
+      <check_box
+       control_name="FSVkGlossyMirror"
+       enabled_control="FSVkRayTracing"
+       height="16"
+       initial_value="false"
+       label="Ray traced glossy mirror (costs frame rate)"
+       layout="topleft"
+       left_delta="18"
+       name="FSVkGlossyMirror"
+       tool_tip="Mirrors and other glossy surfaces show the scene by tracing rays instead of using the reflection probes: moving objects and avatars are reflected correctly. Needs ray tracing, costs frame rate. Switching it off takes effect at once. Switching it on takes effect at once if this launch started with ray tracing and the glossy mirror or the water option on, otherwise after a restart."
+       top_pad="8"
+       width="400"/>
+      <check_box
+       control_name="FSVkRTWater"
+       enabled_control="FSVkRayTracing"
+       height="16"
+       initial_value="false"
+       label="Ray traced water reflections (costs frame rate)"
+       layout="topleft"
+       left_delta="0"
+       name="FSVkRTWater"
+       tool_tip="The water reflects the scene by tracing rays instead of using the reflection probes and screen space reflections. Needs ray tracing, costs frame rate. Switching it off takes effect at once. Switching it on takes effect at once if this launch started with ray tracing and the glossy mirror or the water option on, otherwise after a restart."
+       top_pad="8"
+       width="400"/>
       <text
        type="string"
        length="1"

@@ -3902,6 +3902,15 @@ bool LLAppViewer::initWindow()
             _putenv_s("LL_VK_DLSS", "1");       // NVIDIA DLSS upscaling (experimental)
             _putenv_s("LL_VK_DLSS_SCALE", std::to_string(LLPipeline::getDLSSScale()).c_str());     // the render scale, for the texture LOD bias
         }
+        if (gSavedSettings.getBOOL("FSVkRayTracing") && !getenv("LL_VK_RT") && !getenv("LL_VK_RT_SHADOWS"))
+        {
+            _putenv_s("LL_VK_RT", "1");             // the ray scene and ray traced sun shadows (experimental, RTX)
+            _putenv_s("LL_VK_RT_SHADOWS", "1");
+            if ((gSavedSettings.getBOOL("FSVkGlossyMirror") || gSavedSettings.getBOOL("FSVkRTWater")) && !getenv("LL_VK_RT_MATERIALS"))
+            {
+                _putenv_s("LL_VK_RT_MATERIALS", "1");   // the material table the traced glossy mirror and the traced water reflections shade their hits from (costs frame time, so only with those options)
+            }
+        }
         if (!getenv("LL_VK_ASYNC"))
         {
             _putenv_s("LL_VK_ASYNC", "1");      // the Vulkan work runs on its own thread

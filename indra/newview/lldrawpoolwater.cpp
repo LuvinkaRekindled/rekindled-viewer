@@ -240,7 +240,13 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     {
         // <FS> ray traced reflections on the water (rt-debug.txt waterrt, rtReflection in shadowUtil.glsl)
         static LLStaticHashedString rt_water_s("rt_water_reflections");
-        shader->uniform1i(rt_water_s, LLVkMirror::rtWaterReflections());
+        S32 rt_water_mode = LLVkMirror::rtWaterReflections();
+        static LLCachedControl<bool> rt_water_setting(gSavedSettings, "FSVkRTWater", false);
+        if (rt_water_mode == 0 && rt_water_setting && LLVkMirror::rtMaterialsAvailable())
+        {
+            rt_water_mode = 1;      // the preference (Graphics > Vulkan); rt-debug.txt waterrt=N still overrides it for tests
+        }
+        shader->uniform1i(rt_water_s, rt_water_mode);
     }
 
     shader->uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
