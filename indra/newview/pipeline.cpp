@@ -1085,10 +1085,12 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             // <FS> ray reconstruction (the albedos are 16 bit: linear 8 bit bands in the darks): the guides at the render size, its output and the post chain that follows at the window size. The chain is 16 bit
             // too: it used to run at the render size before the upscale, whose temporal averaging hid the 8 bit steps of dark gradients; after the upscale nothing hides them
             if (!mRRGuides.allocate(resX, resY, GL_RGBA16F) || !mRRGuides.addColorAttachment(GL_RGBA16F) || !mRRGuides.addColorAttachment(GL_RGBA16F)
-                || !mRRHdr.allocate(window_res_x, window_res_y, GL_RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, GL_RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, GL_RGBA16F))
+                || !mRRHitDist.allocate(resX, resY, GL_R16F) || !mRRReflMotion.allocate(resX, resY, GL_RG16F) || !mRRHdr.allocate(window_res_x, window_res_y, GL_RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, GL_RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, GL_RGBA16F))
             {
                 LL_WARNS("VkDlss") << "the ray reconstruction targets could not be made: ray reconstruction stays off" << LL_ENDL;
                 mRRGuides.release();
+                mRRHitDist.release();
+                mRRReflMotion.release();
                 mRRHdr.release();
                 mRRPing.release();
                 mRRPong.release();
@@ -1097,6 +1099,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         else
         {
             mRRGuides.release();
+            mRRHitDist.release();
+            mRRReflMotion.release();
             mRRHdr.release();
             mRRPing.release();
             mRRPong.release();
@@ -1486,6 +1490,8 @@ void LLPipeline::releaseScreenBuffers()
     mShadowAccum[1].release();
     mUpscaledMap.release();
     mRRGuides.release();
+    mRRHitDist.release();
+    mRRReflMotion.release();
     mRRHdr.release();
     mRRPing.release();
     mRRPong.release();
@@ -10688,7 +10694,8 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 }
 
 // <FS> test switch, read from <work>/rr-debug.txt about once a second (one number): 0 normal, 1 no ray reconstruction (the picture is only stretched), 2 / 3 / 4 show the diffuse albedo /
-// specular albedo / normal guide, 5 plain DLSS super resolution instead, 6 ray reconstruction with our own ray shadow accumulation switched on as well
+// specular albedo / normal guide, 5 plain DLSS super resolution instead, 6 ray reconstruction with our own ray shadow accumulation switched on as well,
+// 7 ray reconstruction without the traced reflection guides, 8 show the reflection motion vectors, 10 the hit distance + matrices guide instead of the motion vectors
 S32 rrDebugMode()
 {
     static S32 mode = 0;
@@ -10705,6 +10712,64 @@ S32 rrDebugMode()
         }
     }
     return mode;
+}
+
+void LLPipeline::generateRRReflectionMotion(LLRenderTarget* dst)
+{
+    LL_PROFILE_GPU_ZONE("rr reflection motion");
+    const glm::dmat4 inv_scene = glm::inverse(glm::dmat4(LLViewerCamera::sJitteredProjection) * glm::dmat4(LLViewerCamera::sJitterModelview));
+    const glm::mat4 view_proj_cur = mViewProjCur;
+    const glm::mat4 view_proj_prev = mViewProjPrevValid ? mViewProjPrev : mViewProjCur;
+    const glm::mat4 view_inv = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
+    const glm::mat3 view_to_world = glm::mat3(view_inv);
+    const glm::mat4 inv_scene_f = glm::mat4(inv_scene);
+    static LLStaticHashedString inv_scene_s("inv_scene"), cur_s("view_proj_cur"), prev_s("view_proj_prev"), cam_s("cam_pos"), v2w_s("view_to_world"), res_s("render_res");
+
+    dst->bindTarget();
+    bindDeferredShader(gRRReflMotionProgram);
+    gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mMotionMap, false, LLTexUnit::TFO_POINT, 0);
+    gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mRRHitDist, false, LLTexUnit::TFO_POINT, 0);
+    gRRReflMotionProgram.uniformMatrix4fv(inv_scene_s, 1, GL_FALSE, glm::value_ptr(inv_scene_f));
+    gRRReflMotionProgram.uniformMatrix4fv(cur_s, 1, GL_FALSE, glm::value_ptr(view_proj_cur));
+    gRRReflMotionProgram.uniformMatrix4fv(prev_s, 1, GL_FALSE, glm::value_ptr(view_proj_prev));
+    gRRReflMotionProgram.uniform3f(cam_s, view_inv[3][0], view_inv[3][1], view_inv[3][2]);
+    gRRReflMotionProgram.uniformMatrix3fv(v2w_s, 1, GL_FALSE, glm::value_ptr(view_to_world));
+    gRRReflMotionProgram.uniform2f(res_s, (F32)dst->getWidth(), (F32)dst->getHeight());
+    {
+        LLGLDisable   blend(GL_BLEND);
+        LLGLDepthTest depth(GL_FALSE, GL_FALSE, GL_ALWAYS);
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+    unbindDeferredShader(gRRReflMotionProgram);
+    dst->flush();
+}
+
+void LLPipeline::extractRRHitDistance(LLRenderTarget* screen)
+{
+    LL_PROFILE_GPU_ZONE("rr hit distance");
+    static LLStaticHashedString clear_s("clear_only");
+    screen->flush();
+    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+    LLGLDisable blend(GL_BLEND);
+
+    mRRHitDist.bindTarget();
+    gRRHitDistProgram.bind();
+    gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, screen, false, LLTexUnit::TFO_POINT);
+    gRRHitDistProgram.uniform1f(clear_s, 0.f);
+    mScreenTriangleVB->setBuffer();
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    mRRHitDist.flush();
+
+    // the glow amount starts at zero again: only the alpha of the lit picture is written, with 0
+    screen->bindTarget();
+    gGL.setColorMask(false, true);
+    gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRRHitDist, false, LLTexUnit::TFO_POINT);
+    gRRHitDistProgram.uniform1f(clear_s, 1.f);
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    gGL.setColorMask(true, true);
+    gRRHitDistProgram.unbind();
+    mRRHitDistValid = true;
 }
 
 bool LLPipeline::rayReconstructionActive()
@@ -10761,6 +10826,17 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
         a.mSpecularAlbedo = mRRGuides.getTexture(1);
         a.mNormals = mRRGuides.getTexture(2);
         a.mExposure = mExposureMap.getTexture(0);
+        if (mRRReflMotionValid && mRRReflMotion.isComplete())
+        {
+            a.mReflectionMotion = mRRReflMotion.getTexture(0);      // what the traced reflections show, moved by the camera
+        }
+        if (mRRHitDistValid && mRRHitDist.isComplete() && rrDebugMode() == 10)       // test: the hit distance guide with matrices instead of the motion vectors
+        {
+            // the specular hit distance of the traced reflections; with it the denoiser wants the camera matrices (no jitter in them): world (the region) to view, and view to clip
+            a.mSpecularHitDistance = mRRHitDist.getTexture(0);
+            memcpy(a.mWorldToView, glm::value_ptr(LLViewerCamera::sJitterModelview), sizeof(a.mWorldToView));
+            memcpy(a.mViewToClip, glm::value_ptr(LLViewerCamera::sUnjitteredProjection), sizeof(a.mViewToClip));
+        }
         a.mPreset = gSavedSettings.getS32("FSVkRRPreset");
     }
     // the history is useless after a pause in rendering or a resize
@@ -11661,6 +11737,12 @@ void LLPipeline::renderFinalize()
         if (dlss && rayReconstructionActive())
         {
             generateRRGuides(&mRRGuides);
+            mRRReflMotionValid = false;
+            if (mRRHitDistValid && mRRReflMotion.isComplete() && gRRReflMotionProgram.isComplete() && rrDebugMode() != 7)
+            {
+                generateRRReflectionMotion(&mRRReflMotion);
+                mRRReflMotionValid = true;
+            }
             if (rrDebugMode() == 1)
             {
                 copyRenderTarget(&mRT->screen, &mRRHdr);       // test: no ray reconstruction, the picture only stretched
@@ -11776,7 +11858,7 @@ void LLPipeline::renderFinalize()
     sourceBuffer = auxActiveBuffer;
     // </FS:Beq>
     const S32 rr_dbg = rr_done ? rrDebugMode() : 0;
-    const S32 visualization = (rr_dbg >= 2 && rr_dbg <= 4) ? 10 + rr_dbg - 2 : RenderBufferVisualization;
+    const S32 visualization = (rr_dbg >= 2 && rr_dbg <= 4) ? 10 + rr_dbg - 2 : (rr_dbg == 8 ? 13 : RenderBufferVisualization);
     if (visualization > -1)
     {
         switch (visualization)
@@ -11820,6 +11902,12 @@ void LLPipeline::renderFinalize()
             break;
         case 9:
             visualizeRtMaterials(sourceBuffer);
+            break;
+        case 13:        // <FS> the reflection motion vectors
+            if (mRRReflMotion.isComplete())
+            {
+                visualizeMotion(&mRRReflMotion, sourceBuffer, false);
+            }
             break;
         case 10:        // <FS> the ray reconstruction guides: diffuse albedo, specular albedo, normal (+ roughness in alpha)
         case 11:
@@ -12806,6 +12894,11 @@ void LLPipeline::renderDeferredLighting()
                 }
                 static LLStaticHashedString rt_hit_variant_s("rt_hit_shadow_variant");
                 soften_shader.uniform1i(rt_glossy_s, rt_glossy_mode);
+                // <FS> ray reconstruction: the soften pass leaves the traced reflection's hit distance in the alpha, extractRRHitDistance picks it up after the lights
+                static LLStaticHashedString rr_hit_s("rr_hit_distance");
+                mRRHitDistValid = false;
+                mRRHitDistPending = rt_glossy_mode != 0 && rayReconstructionActive() && mRRHitDist.isComplete() && gRRHitDistProgram.isComplete();
+                soften_shader.uniform1f(rr_hit_s, mRRHitDistPending ? 1.f : 0.f);
                 soften_shader.uniform1i(rt_hit_variant_s, rt_hit_shadow_variant);
                 static LLStaticHashedString rt_noise_frame_s("rt_noise_frame");
                 soften_shader.uniform1f(rt_noise_frame_s, (F32)(gFrameCount & 63));        // the soft shadow rays of the traced hits turn their pattern every frame
@@ -13241,6 +13334,12 @@ void LLPipeline::renderDeferredLighting()
         }
 
         gGL.setColorMask(true, true);
+    }
+
+    if (mRRHitDistPending)
+    {
+        extractRRHitDistance(screen_target);
+        mRRHitDistPending = false;
     }
 
     {  // render non-deferred geometry (alpha, fullbright, glow)

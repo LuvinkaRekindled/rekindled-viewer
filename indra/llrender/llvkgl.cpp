@@ -5877,6 +5877,8 @@ void on_upscale(const LLVkMirror::UpscaleArgs& a)
     Tex* specular = a.mRayReconstruction ? find(a.mSpecularAlbedo) : nullptr;
     Tex* normals = a.mRayReconstruction ? find(a.mNormals) : nullptr;
     Tex* exposure = a.mRayReconstruction && a.mExposure ? find(a.mExposure) : nullptr;
+    Tex* hit_distance = a.mRayReconstruction && a.mSpecularHitDistance ? find(a.mSpecularHitDistance) : nullptr;
+    Tex* refl_motion = a.mRayReconstruction && a.mReflectionMotion ? find(a.mReflectionMotion) : nullptr;
     if (!color || !depth || !motion || !output || (a.mRayReconstruction && (!diffuse || !specular || !normals)))
     {
         if (failures++ < 5)
@@ -5917,6 +5919,18 @@ void on_upscale(const LLVkMirror::UpscaleArgs& a)
         needs.push_back({ p.mDiffuseAlbedo, LLVkDlss::inputLayout(*p.mDiffuseAlbedo) });
         needs.push_back({ p.mSpecularAlbedo, LLVkDlss::inputLayout(*p.mSpecularAlbedo) });
         needs.push_back({ p.mNormals, LLVkDlss::inputLayout(*p.mNormals) });
+        if (refl_motion)
+        {
+            p.mReflectionMotion = &refl_motion->mImage;
+            needs.push_back({ p.mReflectionMotion, LLVkDlss::inputLayout(*p.mReflectionMotion) });
+        }
+        if (hit_distance)
+        {
+            p.mHitDistance = &hit_distance->mImage;
+            memcpy(p.mWorldToView, a.mWorldToView, sizeof(p.mWorldToView));
+            memcpy(p.mViewToClip, a.mViewToClip, sizeof(p.mViewToClip));
+            needs.push_back({ p.mHitDistance, LLVkDlss::inputLayout(*p.mHitDistance) });
+        }
         if (exposure)
         {
             p.mExposure = &exposure->mImage;

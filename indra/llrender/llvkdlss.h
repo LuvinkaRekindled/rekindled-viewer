@@ -50,6 +50,9 @@ namespace LLVkDlss
         LLVk::Image* mDiffuseAlbedo = nullptr;      // RGBA16F: the diffuse albedo of the visible surface (linear)
         LLVk::Image* mSpecularAlbedo = nullptr;     // RGBA16F: the specular albedo (F0 times the environment BRDF)
         LLVk::Image* mNormals = nullptr;            // RGBA16F: world space normal in xyz, roughness in w
+        LLVk::Image* mReflectionMotion = nullptr;   // RG16F: motion vectors of the reflected image (same units as mMotion)
+        LLVk::Image* mHitDistance = nullptr;        // R16F: specular hit distance (traced reflections), with the two matrices below
+        float mWorldToView[16] = {}, mViewToClip[16] = {};
         LLVk::Image* mExposure = nullptr;           // 1x1 R16F: the factor the tonemap multiplies the radiance with (the network works on exposed values)
         S32 mPreset = 0;                            // the ray reconstruction model: 0 default, 4 D, 5 E (transformer), 6 F
     };

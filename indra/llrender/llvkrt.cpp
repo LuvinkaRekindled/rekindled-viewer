@@ -406,6 +406,7 @@ struct SkinDraw
     LLVkGL::BufferInfo mVi, mIi;
     U64 mNotedTag = 0, mSkinnedTag = 0;
     U64 mMarkedTag = 0;                 // frame in which its buffers were marked as in use for the records (once per frame, not per scene call)
+    U32 mWhyOut = 0;                    // debug (avlog): why it was left out of the structure at the last pass: 0 in, 1 dead, 2 never named, 3 named too long ago, 4 never skinned, 5 no output, 6 keep off, 7 buffer info missing, 8 epoch changed, 9 address changed, 10 size changed, 11 bad range
     ArenaRef mOut;                      // the skinned vertices (world space), indexed like the vertex buffer relative to mVertexFirst
 };
 
@@ -422,6 +423,8 @@ struct Avatar
     bool mHasPos = false;
     bool mSelf = false;                 // the viewer's own avatar
     U32 mAvatarKind = 0;                // as SkinCaster::mAvatarKind
+    U32 mSlotClears = 0;                // debug (avlog): how often a new draw took the slot of a dead one (the structure is then rebuilt)
+    U32 mExcl[8] = {};                  // debug (avlog): why draws were left out of the structure in the last pass: dead, never named, named too long ago, never skinned, no output, keep off, buffer changed, bad range
     U64 mProcessedTag = 0;              // frame whose jobs were made
     U64 mOverTag = 0;                   // frame in which it was named but left alone (vertex budget, job tables full, no data)
     U64 mLastVerts = 0, mLastTris = 0;  // what its structure was last made of (skinned vertices, triangles)
@@ -1664,9 +1667,17 @@ void noteSkinned(const SkinCaster& c)
     }
     if (slot)
     {
+        const U32 slot_index = (U32)(slot - a.mDraws.data());
         *slot = std::move(d);
-        a.mSig.clear();                     // the geometry indices of a built structure may point at this slot: it is rebuilt before it is used again
-        a.mBuiltIdx.clear();
+        a.mSig.clear();                     // the structure is built again at the next pass over this avatar
+        // The geometries of the structure that is built NOW stay in use until then, unless one of them is this very slot: a dead draw is left out of every structure made after it died, so the slot is normally not
+        // in it. Wiping the list unconditionally took the whole avatar out of the scene calls that follow the note in the same frame ("no geometries"): the reflected avatar flashed whenever a draw
+        // appeared (an avatar with 128 draws or more: a level of detail switch of a rigged attachment is enough).
+        if (std::find(a.mBuiltIdx.begin(), a.mBuiltIdx.end(), slot_index) != a.mBuiltIdx.end())
+        {
+            a.mBuiltIdx.clear();
+        }
+        ++a.mSlotClears;
     }
     else
     {
@@ -2494,6 +2505,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         Blas& b = *a.mBlas;
         std::vector<SkinDraw*> cur;
         U64 total_verts = 0, chunks_needed = 0;
+        memset(a.mExcl, 0, sizeof(a.mExcl));
         for (SkinDraw& d : a.mDraws)
         {
             // A draw is named by the passes that run in a frame, and not every pass runs every frame (the probe faces and cascades follow their own cadence): a structure made only from the draws
@@ -2503,8 +2515,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             // computes (the parts of an avatar only they name, hair layer and sock tops, were never fresh and never skinned). The palette they carry is in the vertex scratch ring (one slot per frame
             // number, FRAMES_IN_FLIGHT of them): intact for this long.
             const bool fresh = d.mNotedTag != 0 && d.mNotedTag + 2 >= av_tag;
+            d.mWhyOut = 0;
             if (!fresh && (d.mDead || !d.mNotedTag || av_tag > d.mNotedTag + std::max<U64>(1, sDbg.mKeep) || !d.mSkinnedTag || !d.mOut.valid() || sDbg.mAvatarKeepOff))
             {
+                d.mWhyOut = d.mDead ? 1 : (!d.mNotedTag ? 2 : (av_tag > d.mNotedTag + std::max<U64>(1, sDbg.mKeep) ? 3 : (!d.mSkinnedTag ? 4 : (!d.mOut.valid() ? 5 : 6))));
+                ++a.mExcl[d.mDead ? 0 : (!d.mNotedTag ? 1 : (av_tag > d.mNotedTag + std::max<U64>(1, sDbg.mKeep) ? 2 : (!d.mSkinnedTag ? 3 : (!d.mOut.valid() ? 4 : 5))))];
                 continue;
             }
             if (d.mNotedTag != av_tag)
@@ -2515,6 +2530,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 if (!LLVkGL::getBufferInfo(d.mVb, vi_now) || !LLVkGL::getBufferInfo(d.mIb, ii_now) || vi_now.mEpoch != d.mVi.mEpoch || ii_now.mEpoch != d.mIi.mEpoch
                     || vi_now.mAddress != d.mVi.mAddress || ii_now.mAddress != d.mIi.mAddress || vi_now.mSize != d.mVi.mSize || ii_now.mSize != d.mIi.mSize)
                 {
+                    ++a.mExcl[6];
+                    d.mWhyOut = !LLVkGL::getBufferInfo(d.mVb, vi_now) || !LLVkGL::getBufferInfo(d.mIb, ii_now) ? 7
+                                : (vi_now.mEpoch != d.mVi.mEpoch || ii_now.mEpoch != d.mIi.mEpoch ? 8 : (vi_now.mAddress != d.mVi.mAddress || ii_now.mAddress != d.mIi.mAddress ? 9 : 10));
                     continue;
                 }
             }
@@ -2524,6 +2542,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 || (weight_stride && (U64)d.mWeightOffset + ((U64)d.mVertexFirst + d.mVertexCount) * weight_stride > d.mVi.mSize) || ((U64)d.mFirst + d.mCount) * 2 > d.mIi.mSize)
             {
                 ++sStats.mNoData;
+                ++a.mExcl[7];
+                d.mWhyOut = 11;
                 continue;
             }
             cur.push_back(&d);
@@ -2537,7 +2557,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         {
             // debug (avlog=1): every draw of the viewer's own avatar, about once in 120 frames: what the structure is made of and what is left out
             static U64 last_draw_log = 0;
-            if (av_tag >= last_draw_log + 120)
+            if (av_tag >= last_draw_log + 20)
             {
                 last_draw_log = av_tag;
                 static FILE* draw_log = fopen("<work>/rt-avatar-draws.log", "ab");
@@ -2547,8 +2567,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     for (const SkinDraw& d : a.mDraws)
                     {
                         const bool in = std::find(cur.begin(), cur.end(), &d) != cur.end();
-                        fprintf(draw_log, "  kind %u mode %u tris %u first %u vtx %u+%u material %u normals %u texc %u color %u noted_age %lld dead %d out %d %s\n", d.mKind, d.mMode, d.mCount / 3, d.mFirst, d.mVertexFirst, d.mVertexCount,
-                                d.mAlpha.mMaterial, d.mAlpha.mNormalOffset, d.mAlpha.mTexcoordOffset, d.mAlpha.mColorOffset, (long long)(av_tag - d.mNotedTag), d.mDead ? 1 : 0, d.mOut.valid() ? 1 : 0, in ? "IN" : "left out");
+                        fprintf(draw_log, "  kind %u mode %u tris %u first %u vtx %u+%u material %u normals %u texc %u color %u noted_age %lld dead %d out %d why %u %s\n", d.mKind, d.mMode, d.mCount / 3, d.mFirst, d.mVertexFirst, d.mVertexCount,
+                                d.mAlpha.mMaterial, d.mAlpha.mNormalOffset, d.mAlpha.mTexcoordOffset, d.mAlpha.mColorOffset, (long long)(av_tag - d.mNotedTag), d.mDead ? 1 : 0, d.mOut.valid() ? 1 : 0, d.mWhyOut, in ? "IN" : "left out");
                     }
                     fflush(draw_log);
                 }
@@ -3392,8 +3412,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             if (skip_log)
             {
                 const long long wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                fprintf(skip_log, "%lld frame %llu SKIP avatar %u self 1 why %s named_age %llu address %d built_geometries %zu draws %zu\n", wall, (unsigned long long)frame_now, id, why, (unsigned long long)(av_tag - a.mNotedTag),
-                        a.mAddressNow ? 1 : 0, a.mBuiltIdx.size(), a.mDraws.size());
+                fprintf(skip_log, "%lld frame %llu SKIP avatar %u self 1 why %s named_age %llu address %d built_geometries %zu draws %zu excluded dead %u unnamed %u old %u unskinned %u noout %u keepoff %u bufchanged %u badrange %u slot_clears %u processed_tag_age %lld\n", wall, (unsigned long long)frame_now, id, why, (unsigned long long)(av_tag - a.mNotedTag),
+                        a.mAddressNow ? 1 : 0, a.mBuiltIdx.size(), a.mDraws.size(), a.mExcl[0], a.mExcl[1], a.mExcl[2], a.mExcl[3], a.mExcl[4], a.mExcl[5], a.mExcl[6], a.mExcl[7], a.mSlotClears, (long long)(av_tag - a.mProcessedTag));
                 fflush(skip_log);
             }
         }

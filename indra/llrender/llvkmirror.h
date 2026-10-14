@@ -94,6 +94,9 @@ namespace LLVkMirror
         // ray reconstruction instead of super resolution: the GL names of the guide textures (render size) and the model preset (0 default, 4 D, 5 E, 6 F)
         S32 mRayReconstruction = 0;
         U32 mDiffuseAlbedo = 0, mSpecularAlbedo = 0, mNormals = 0, mExposure = 0;
+        U32 mReflectionMotion = 0;                      // render size RG16F: motion vectors of what the traced reflections show (pixels, previous minus current); 0 = none
+        U32 mSpecularHitDistance = 0;                   // render size R16F: metres from the surface to what its reflection ray hit (0: not traced); 0 here = no such guide
+        F32 mWorldToView[16] = {}, mViewToClip[16] = {};    // column-major, no jitter: only used with the hit distance
         S32 mPreset = 0;
     };
     // DLSS is initialised and usable (decided when the Vulkan device was created)
