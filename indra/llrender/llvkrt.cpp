@@ -2527,13 +2527,24 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 // a draw named some frames (or the slot before this scene call's tag) ago: its buffers must still be the ones it was named with (a buffer that was made again, moved or given up has a new epoch or address: the avatar's
                 // meshes are rebuilt while it loads, and a structure over indices of a range that now holds something else is a spike in the shadow)
                 LLVkGL::BufferInfo vi_now, ii_now;
-                if (!LLVkGL::getBufferInfo(d.mVb, vi_now) || !LLVkGL::getBufferInfo(d.mIb, ii_now) || vi_now.mEpoch != d.mVi.mEpoch || ii_now.mEpoch != d.mIi.mEpoch
-                    || vi_now.mAddress != d.mVi.mAddress || ii_now.mAddress != d.mIi.mAddress || vi_now.mSize != d.mVi.mSize || ii_now.mSize != d.mIi.mSize)
+                const bool known = LLVkGL::getBufferInfo(d.mVb, vi_now) && LLVkGL::getBufferInfo(d.mIb, ii_now);
+                const bool same_content = known && vi_now.mEpoch == d.mVi.mEpoch && ii_now.mEpoch == d.mIi.mEpoch && vi_now.mSize == d.mVi.mSize && ii_now.mSize == d.mIi.mSize;
+                const bool same_place = same_content && vi_now.mAddress == d.mVi.mAddress && ii_now.mAddress == d.mIi.mAddress;
+                if (!same_place)
                 {
-                    ++a.mExcl[6];
-                    d.mWhyOut = !LLVkGL::getBufferInfo(d.mVb, vi_now) || !LLVkGL::getBufferInfo(d.mIb, ii_now) ? 7
-                                : (vi_now.mEpoch != d.mVi.mEpoch || ii_now.mEpoch != d.mIi.mEpoch ? 8 : (vi_now.mAddress != d.mVi.mAddress || ii_now.mAddress != d.mIi.mAddress ? 9 : 10));
-                    continue;
+                    if (same_content && d.mMode != 0)
+                    {
+                        // A body mesh (mode 1 and 2: rewritten into its buffer at every avatar update, the same content each time) whose buffer only MOVED: the masked hair mesh was left out of every frame it was not named in
+                        // (its address changed in between), so the hair came and went. Its skinned vertices are in memory of their own: the draw takes the buffers' current place (the next build or refit reads the indices there).
+                        d.mVi = vi_now;
+                        d.mIi = ii_now;
+                    }
+                    else
+                    {
+                        ++a.mExcl[6];
+                        d.mWhyOut = !known ? 7 : (!same_content && (vi_now.mEpoch != d.mVi.mEpoch || ii_now.mEpoch != d.mIi.mEpoch) ? 8 : (same_content ? 9 : 10));
+                        continue;
+                    }
                 }
             }
             // the ranges must lie inside the buffers as they are now
