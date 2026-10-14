@@ -12211,9 +12211,110 @@ static void rt_name_rigged_main_view()
             texture_names.emplace(tex, name);
             return name;
         };
-        for (const Source& source : sources)
+        auto add_entry = [&](LLDrawInfo* params, const Source& source)
         {
             const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
+            if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || (source.kind == KIND_GLTF && !params->mGLTFMaterial)
+                || !shadow_alpha_packet_ok(*params, batch, true, source.kind == KIND_GLTF) || !rt_textures_ready(*params, batch))
+            {
+                return;
+            }
+            const LLVertexBuffer* vb = params->mVertexBuffer.get();
+            LLVkMirror::ShadowAlphaEntry e = {};
+            e.mVertexBuffer = vb->getGLBuffer();
+            e.mIndexBuffer = vb->getGLIndices();
+            e.mFirstIndex = params->mOffset;
+            e.mIndexCount = params->mCount;
+            e.mMatrixId = rt_matrix_id(params->mModelMatrix);
+            if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+            {
+                return;
+            }
+            e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+            e.mVertexFirst = params->mStart;
+            e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
+            e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
+            e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+            {
+                const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                e.mAvatarPos[0] = avatar_position.mV[0];
+                e.mAvatarPos[1] = avatar_position.mV[1];
+                e.mAvatarPos[2] = avatar_position.mV[2];
+                e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
+            }
+            if (params->mModelMatrix)
+            {
+                auto it = matrix_numbers.find(params->mModelMatrix);
+                if (it == matrix_numbers.end())
+                {
+                    it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                    const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                    matrices.insert(matrices.end(), m, m + 16);
+                }
+                e.mMatrix = it->second;
+            }
+            U32 flags = LLVkMirror::ALPHA_RIGGED;
+            if (source.kind == KIND_GLTF)
+            {
+                flags |= LLVkMirror::ALPHA_HARD;        // glTF alpha mask: a plain cut at the material's cutoff on texture alpha times vertex alpha
+            }
+            if (source.kind == KIND_FULLBRIGHT)
+            {
+                flags |= LLVkMirror::ALPHA_FULLBRIGHT;
+            }
+            if (source.kind == KIND_MATERIAL)
+            {
+                flags |= LLVkMirror::ALPHA_TREE;
+            }
+            if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+            {
+                flags |= LLVkMirror::ALPHA_HAS_TEXCOORD;
+                e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+            }
+            if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+            {
+                flags |= LLVkMirror::ALPHA_HAS_COLOR;
+                e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+            }
+            if (batch && params->mTextureList.size() > 1)
+            {
+                for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
+                {
+                    if (params->mTextureList[t].notNull())
+                    {
+                        e.mTextures[t] = texture_name(params->mTextureList[t].get());
+                    }
+                }
+            }
+            else
+            {
+                flags |= LLVkMirror::ALPHA_NO_INDEX;
+                if (source.kind == KIND_GLTF)
+                {
+                    LLFetchedGLTFMaterial* gm = params->mGLTFMaterial.get();
+                    LLViewerTexture* base = params->mTexture.notNull() ? params->mTexture.get() : gm->mBaseColorTexture.get();
+                    if (base)
+                    {
+                        e.mTextures[0] = texture_name(base);
+                    }
+                    rt_khr_uv(gm->mTextureTransform[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR], e.mUv);
+                }
+                else if (params->mTexture.notNull())
+                {
+                    e.mTextures[0] = texture_name(params->mTexture.get());
+                }
+            }
+            e.mFlags = flags;
+            e.mCutoff = source.kind == KIND_ALPHA ? ALPHA_BLEND_CUTOFF : (source.kind == KIND_GLTF ? params->mGLTFMaterial->mAlphaCutoff : params->mAlphaMaskCutoff);
+            if (rt_materials_on())
+            {
+                e.mMaterial = rt_material_id(params, source.kind == KIND_ALPHA ? 2u : (source.kind == KIND_MATERIAL ? 5u : 1u));
+                e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+            }
+            entries.push_back(e);
+        };
+        for (const Source& source : sources)
+        {
             const U32 type = source.kind != KIND_ALPHA ? source.type + 1 : source.type;       // PASS_ALPHA holds both
             auto* begin = gPipeline.beginRenderMap(type);
             auto* end = gPipeline.endRenderMap(type);
@@ -12221,104 +12322,32 @@ static void rt_name_rigged_main_view()
             {
                 LLDrawInfo* params = *i;
                 LLCullResult::increment_iterator(i, end);
-                if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || (source.kind == KIND_GLTF && !params->mGLTFMaterial)
-                    || !shadow_alpha_packet_ok(*params, batch, true, source.kind == KIND_GLTF) || !rt_textures_ready(*params, batch))
+                add_entry(params, source);
+            }
+        }
+        // alpha BLENDED rigged draws (the blond hair layer of a mesh head, clothes) are not in the render maps: the alpha pool walks the rigged alpha groups and their draw maps (LLDrawPoolAlpha::renderAlpha),
+        // so the ray scene never saw them: the reflection showed the opaque layer under the hair only
+        {
+            static const Source blended = { LLRenderPass::PASS_ALPHA, KIND_ALPHA };
+            for (LLCullResult::sg_iterator g = gPipeline.beginRiggedAlphaGroups(); g != gPipeline.endRiggedAlphaGroups(); ++g)
+            {
+                LLSpatialGroup* group = *g;
+                if (!group || group->isDead())
                 {
                     continue;
                 }
-                const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                LLVkMirror::ShadowAlphaEntry e = {};
-                e.mVertexBuffer = vb->getGLBuffer();
-                e.mIndexBuffer = vb->getGLIndices();
-                e.mFirstIndex = params->mOffset;
-                e.mIndexCount = params->mCount;
-                e.mMatrixId = rt_matrix_id(params->mModelMatrix);
-                if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                LLSpatialGroup::draw_map_t::iterator rigged_alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA_RIGGED);
+                if (rigged_alpha == group->mDrawMap.end())
                 {
                     continue;
                 }
-                e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-                e.mVertexFirst = params->mStart;
-                e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
-                e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
-                e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                for (auto& pointer : rigged_alpha->second)
                 {
-                    const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
-                    e.mAvatarPos[0] = avatar_position.mV[0];
-                    e.mAvatarPos[1] = avatar_position.mV[1];
-                    e.mAvatarPos[2] = avatar_position.mV[2];
-                    e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
-                }
-                if (params->mModelMatrix)
-                {
-                    auto it = matrix_numbers.find(params->mModelMatrix);
-                    if (it == matrix_numbers.end())
+                    if (pointer.notNull())
                     {
-                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
-                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
-                        matrices.insert(matrices.end(), m, m + 16);
-                    }
-                    e.mMatrix = it->second;
-                }
-                U32 flags = LLVkMirror::ALPHA_RIGGED;
-                if (source.kind == KIND_GLTF)
-                {
-                    flags |= LLVkMirror::ALPHA_HARD;        // glTF alpha mask: a plain cut at the material's cutoff on texture alpha times vertex alpha
-                }
-                if (source.kind == KIND_FULLBRIGHT)
-                {
-                    flags |= LLVkMirror::ALPHA_FULLBRIGHT;
-                }
-                if (source.kind == KIND_MATERIAL)
-                {
-                    flags |= LLVkMirror::ALPHA_TREE;
-                }
-                if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
-                {
-                    flags |= LLVkMirror::ALPHA_HAS_TEXCOORD;
-                    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
-                }
-                if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
-                {
-                    flags |= LLVkMirror::ALPHA_HAS_COLOR;
-                    e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
-                }
-                if (batch && params->mTextureList.size() > 1)
-                {
-                    for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
-                    {
-                        if (params->mTextureList[t].notNull())
-                        {
-                            e.mTextures[t] = texture_name(params->mTextureList[t].get());
-                        }
+                        add_entry(pointer.get(), blended);
                     }
                 }
-                else
-                {
-                    flags |= LLVkMirror::ALPHA_NO_INDEX;
-                    if (source.kind == KIND_GLTF)
-                    {
-                        LLFetchedGLTFMaterial* gm = params->mGLTFMaterial.get();
-                        LLViewerTexture* base = params->mTexture.notNull() ? params->mTexture.get() : gm->mBaseColorTexture.get();
-                        if (base)
-                        {
-                            e.mTextures[0] = texture_name(base);
-                        }
-                        rt_khr_uv(gm->mTextureTransform[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR], e.mUv);
-                    }
-                    else if (params->mTexture.notNull())
-                    {
-                        e.mTextures[0] = texture_name(params->mTexture.get());
-                    }
-                }
-                e.mFlags = flags;
-                e.mCutoff = source.kind == KIND_ALPHA ? ALPHA_BLEND_CUTOFF : (source.kind == KIND_GLTF ? params->mGLTFMaterial->mAlphaCutoff : params->mAlphaMaskCutoff);
-                if (rt_materials_on())
-                {
-                    e.mMaterial = rt_material_id(params, source.kind == KIND_ALPHA ? 2u : (source.kind == KIND_MATERIAL ? 5u : 1u));
-                    e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
-                }
-                entries.push_back(e);
             }
         }
         if (!entries.empty())
@@ -12564,10 +12593,10 @@ void LLPipeline::renderDeferredLighting()
                 soften_shader.uniform1i(rt_hit_quality_s, rt_hit_quality);
 
                 // hit quality 2: the local lights seen from the traced hits (softenLightF.glsl rtHitLocalLights). Not culled to the view frustum: a mirror shows what is behind the camera
-                static LLStaticHashedString rt_hit_light_count_s("rt_hit_light_count"), rt_hit_light_pos_s("rt_hit_light_pos"), rt_hit_light_col_s("rt_hit_light_col");
+                static LLStaticHashedString rt_hit_light_count_s("rt_hit_light_count"), rt_hit_light_pos_s("rt_hit_light_pos"), rt_hit_light_col_s("rt_hit_light_col"), rt_hit_light_dir_s("rt_hit_light_dir");
                 static LLStaticHashedString rt_hit_spot_s("rt_hit_spot"), rt_hit_spot_center_s("rt_hit_spot_center");
                 static LLCachedControl<S32> hit_light_limit(gSavedSettings, "RenderLocalLightCount", 256);
-                LLVector4 hit_light_pos[8], hit_light_col[8];
+                LLVector4 hit_light_pos[8], hit_light_col[8], hit_light_dir[8];
                 S32 hit_lights = 0;
                 LLDrawable* hit_spot = nullptr;
                 if (rt_hit_quality >= 2 && rt_glossy_mode != 0 && hit_light_limit > 0)
@@ -12634,21 +12663,24 @@ void LLPipeline::renderDeferredLighting()
                     }
                     for (const RtHitLightCand& c : cands)
                     {
-                        if (c.spot)
+                        if (c.spot && !hit_spot)
                         {
-                            if (!hit_spot)
-                            {
-                                hit_spot = c.drawable;
-                            }
+                            hit_spot = c.drawable;          // the best projector is lit with its texture and cone (opaque hits)
                         }
-                        else if (hit_lights < 8)
+                        if (hit_lights < 8)
                         {
+                            // every light goes into the arrays: points are lit like the deferred lights, spot lights (flag w = 1) are skipped there (the projector above) and lit like the forward
+                            // alpha pass does it (a plain cone: spot exponent 2, no texture) for blended hits (hair)
                             LLVOVolume* volume = c.drawable->getVOVolume();
                             LLColor3 col = volume->getLightLinearColor() * light_scale;
                             glm::vec3 tc(c.drawable->getPositionAgent());
                             tc = mul_mat4_vec3(mat, tc);
                             hit_light_pos[hit_lights] = LLVector4(tc.x, tc.y, tc.z, volume->getLightRadius() * 1.5f);
                             hit_light_col[hit_lights] = LLVector4(col.mV[0], col.mV[1], col.mV[2], volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF));
+                            LLVector3 axis(0.f, 0.f, -1.f);
+                            axis *= volume->getRenderRotation();
+                            const glm::vec3 ea = glm::mat3(mat) * glm::vec3(axis.mV[0], axis.mV[1], axis.mV[2]);
+                            hit_light_dir[hit_lights] = LLVector4(ea.x, ea.y, ea.z, c.spot ? 1.f : 0.f);
                             ++hit_lights;
                         }
                         if (hit_lights >= 8 && hit_spot)
@@ -12662,7 +12694,8 @@ void LLPipeline::renderDeferredLighting()
                     static U32 hit_light_log = 0;
                     if (hit_light_log++ % 600 == 0)
                     {
-                        LL_INFOS("VkRt") << "traced hit lights: " << hit_lights << " point lights, projector " << (hit_spot ? "yes" : "no") << ", nearby lights " << mNearbyLights.size()
+                        LL_INFOS("VkRt") << "traced hit lights: " << hit_lights << " lights, projector " << (hit_spot ? "yes" : "no") << ", classic mode " << (LLEnvironment::instance().getCurrentSky()->canAutoAdjust() ? "yes" : "no")
+                                         << ", nearby lights " << mNearbyLights.size()
                                          << ", local light limit " << (S32)hit_light_limit << LL_ENDL;
                     }
                 }
@@ -12671,6 +12704,7 @@ void LLPipeline::renderDeferredLighting()
                 {
                     soften_shader.uniform4fv(rt_hit_light_pos_s, hit_lights, (GLfloat*)hit_light_pos);
                     soften_shader.uniform4fv(rt_hit_light_col_s, hit_lights, (GLfloat*)hit_light_col);
+                    soften_shader.uniform4fv(rt_hit_light_dir_s, hit_lights, (GLfloat*)hit_light_dir);
                 }
                 soften_shader.uniform1i(rt_hit_spot_s, hit_spot ? 1 : 0);
                 if (hit_spot)
