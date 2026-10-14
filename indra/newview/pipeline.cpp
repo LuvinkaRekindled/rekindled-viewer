@@ -10696,6 +10696,7 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 // <FS> test switch, read from D:/claude/rr-debug.txt about once a second (one number): 0 normal, 1 no ray reconstruction (the picture is only stretched), 2 / 3 / 4 show the diffuse albedo /
 // specular albedo / normal guide, 5 plain DLSS super resolution instead, 6 ray reconstruction with our own ray shadow accumulation switched on as well,
 // 7 ray reconstruction without the traced reflection guides, 8 show the reflection motion vectors, 10 the hit distance + matrices guide instead of the motion vectors
+static S32 sRrHairMode = 0;         // the second number of the file: how the traced mirror takes hair (rt_hair_soft in shadowUtil.glsl)
 S32 rrDebugMode()
 {
     static S32 mode = 0;
@@ -10705,10 +10706,11 @@ S32 rrDebugMode()
     {
         checked = frame;
         mode = 0;
+        sRrHairMode = 0;
         std::ifstream in("D:/claude/rr-debug.txt");
         if (in)
         {
-            in >> mode;
+            in >> mode >> sRrHairMode;
         }
     }
     return mode;
@@ -12894,6 +12896,9 @@ void LLPipeline::renderDeferredLighting()
                 }
                 static LLStaticHashedString rt_hit_variant_s("rt_hit_shadow_variant");
                 soften_shader.uniform1i(rt_glossy_s, rt_glossy_mode);
+                static LLStaticHashedString rt_hair_soft_s("rt_hair_soft");
+                rrDebugMode();          // (reads the test file now and then)
+                soften_shader.uniform1i(rt_hair_soft_s, sRrHairMode);
                 // <FS> ray reconstruction: the soften pass leaves the traced reflection's hit distance in the alpha, extractRRHitDistance picks it up after the lights
                 static LLStaticHashedString rr_hit_s("rr_hit_distance");
                 mRRHitDistValid = false;

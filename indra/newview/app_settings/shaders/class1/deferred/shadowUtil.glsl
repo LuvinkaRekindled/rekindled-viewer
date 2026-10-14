@@ -242,6 +242,11 @@ bool rtRayOk(vec3 o, vec3 d)
 // Test switch of the traced glossy reflection (rt-debug.txt glossyrt=20 / 21 / 22, set by the soften pass only; 0 everywhere else): how a hit is lit by the sun. 1: always sunlit (no shadow ray),
 // 2: the shadow ray starts 0.15 m off the surface (instead of 0.02 m), 3: a reflection ray may look at 1024 masked candidates (instead of 64) before it gives up.
 uniform int rt_hit_shadow_variant;
+// <FS> Hair in the traced mirror (test switch, second number of D:/claude/rr-debug.txt): a skinned alpha MASKED draw (hair cards) is tested hit or miss against its cutoff at the pixel's sub-pixel position, so
+// thin strands pop in and out while the view moves (nothing averages one ray per pixel then). 1: the cutoff becomes a smooth step and such a candidate is treated like a blended layer (the opacity
+// it has, not all or nothing), 2: also the opacity of the layer is the combined opacity of every such card the ray crossed (order independent), 3: the same on a blurrier mip of the alpha.
+uniform int rt_hair_soft;
+bool rt_soft_masked = false;            // set by rtShadeSurfaceEx: the last surface looked at was a skinned masked draw taken softly
 uniform int rt_hit_shadow_samples;      // shadow rays per local light at a traced hit: 1 (one ray at the light's centre), 2 or 4 (the light is a disc, soft shadows); 0 = not set (4)
 
 // 1 = nothing in the way for tmax metres (the sun: 2000, a local light: its distance), 0 = blocked
@@ -382,6 +387,7 @@ vec3 rtSrgbToLinear(vec3 c)
 // mr = (metallic, roughness, 1 for a glTF material else 0, the emissive amount of a legacy material whose diffuse alpha is an emissive mask (else 0)), spec = legacy specular map (linear rgb, alpha = glossiness; alpha 0 = no specular map). Without full they are neutral.
 bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, out vec3 albedo, out vec3 emissive, out vec3 n_obj, out vec3 n_shaded, out float alpha, out bool fullbright, out vec4 mr, out vec4 spec)
 {
+    rt_soft_masked = false;
     mr = vec4(0.0, 1.0, 0.0, 0.0);
     spec = vec4(0.0);
     n_shaded = vec3(0.0, 1.0, 0.0);
@@ -439,7 +445,8 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     }
     uint pair = (tex_index < 2u) ? m.slots.x : m.slots.y;
     uint slot = ll_rt_slot((pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu);
-    vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod);
+    rt_soft_masked = rt_hair_soft != 0 && (mflags & 4u) != 0u && (g.flags & 8192u) != 0u;
+    vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, rt_soft_masked && rt_hair_soft == 3 ? lod + 1.5 : lod);
     vec4 vcol = vec4(1.0);
     if ((g.flags & 16u) != 0u)
     {
@@ -453,7 +460,14 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     alpha = tex.a * vcol.a * m.color.a;
     if ((mflags & 4u) != 0u)
     {
-        alpha = (alpha >= m.emissive.w) ? 1.0 : 0.0;        // alpha masked: the draw's own cutoff
+        if (rt_soft_masked)
+        {
+            alpha = smoothstep(m.emissive.w - 0.2, m.emissive.w + 0.2, alpha);       // hair taken softly: the opacity near the cutoff, not all or nothing
+        }
+        else
+        {
+            alpha = (alpha >= m.emissive.w) ? 1.0 : 0.0;        // alpha masked: the draw's own cutoff
+        }
     }
     if ((mflags & 2u) != 0u)
     {
@@ -659,6 +673,7 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
     uint steps = 0u;
     // the nearest blended candidate seen so far (its place in the scene, kept until the ray is done)
     float c_t = 1e30, c_alpha = 0.0;
+    float transmit = 1.0;                       // hair taken softly (rt_hair_soft 2, 3): what is left of the light after every such card the ray crossed
     float seen = 0.0, seen_alpha = 0.0;         // debug: how many blended candidates the ray met and the highest opacity among them
     uint c_record = 0u, c_prim = 0u;
     vec2 c_bary = vec2(0.0);
@@ -681,11 +696,15 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
             bool fb;
             if (rtShadeSurface(record, prim, bary, lod_start, a, e, n, alpha, fb))
             {
-                if (layers && rtRecordBlended(record))
+                if (layers && (rtRecordBlended(record) || rt_soft_masked))
                 {
                     seen += 1.0;
                     seen_alpha = max(seen_alpha, alpha);
                     float ct = rayQueryGetIntersectionTEXT(rq, false);
+                    if (alpha >= 0.03 && rt_soft_masked && rt_hair_soft >= 2)
+                    {
+                        transmit *= 1.0 - min(alpha, 1.0);
+                    }
                     if (alpha >= 0.03 && ct < c_t)
                     {
                         c_t = ct;
@@ -706,6 +725,10 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
                 rayQueryConfirmIntersectionEXT(rq);
             }
         }
+    }
+    if (rt_hair_soft >= 2 && c_record != 0u)
+    {
+        c_alpha = max(c_alpha, 1.0 - transmit);       // the combined opacity of the hair cards the ray crossed
     }
     const bool have_main = rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT;
     l_t = seen;                          // debug (rt_hit_quality 14): without a layer these two tell what the ray saw of blended surfaces
