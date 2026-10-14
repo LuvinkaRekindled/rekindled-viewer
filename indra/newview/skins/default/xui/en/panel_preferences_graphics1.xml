@@ -1984,6 +1984,18 @@ If you do not understand the distinction then leave this control alone."
          value="3"/>
       </combo_box>
       <check_box
+       control_name="FSVkRayReconstruction"
+       enabled_control="FSVkDLSS"
+       height="16"
+       initial_value="false"
+       label="Ray reconstruction (denoises ray traced reflections)"
+       layout="topleft"
+       left_delta="0"
+       name="FSVkRayReconstruction"
+       tool_tip="DLSS ray reconstruction replaces the plain DLSS upscaling: it removes the noise of ray traced reflections and shadows and keeps reflected moving objects steady. Needs DLSS on (and ray tracing to have anything to denoise). Depth of field is not applied while it is on. Applies at once."
+       top_pad="8"
+       width="400"/>
+      <check_box
        control_name="FSVkRayTracing"
        height="16"
        initial_value="false"

@@ -91,9 +91,15 @@ namespace LLVkMirror
         F32 mMotionScaleX = 1.f, mMotionScaleY = 1.f;
         S32 mReset = 0;                                 // the history is useless (camera cut)
         S32 mHdr = 0;                                   // the colour is linear HDR
+        // ray reconstruction instead of super resolution: the GL names of the guide textures (render size) and the model preset (0 default, 4 D, 5 E, 6 F)
+        S32 mRayReconstruction = 0;
+        U32 mDiffuseAlbedo = 0, mSpecularAlbedo = 0, mNormals = 0, mExposure = 0;
+        S32 mPreset = 0;
     };
     // DLSS is initialised and usable (decided when the Vulkan device was created)
     bool upscaleAvailable();
+    // DLSS ray reconstruction can run here (DLSS is ready and NGX reports the feature)
+    bool rayReconstructionAvailable();
     // the texture mip bias DLSS wants for the current render scale (log2 of it, 0 at 100% or with DLSS off); samplers made afterwards use it
     void setUpscaleLodBias(float bias);
 

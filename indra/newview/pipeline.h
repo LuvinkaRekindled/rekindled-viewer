@@ -166,8 +166,17 @@ public:
     void updateJitter();                                // call right before the main scene's setup3DRender
     void noteSceneMatrices();                           // call at the end of the main scene render
     void generateMotionVectors(LLRenderTarget* dst);    // camera motion from depth and the last two view-projection matrices, in render pixels
-    bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst);    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
+    bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction = false);    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
     static bool sDLSS;
+    // <FS> DLSS ray reconstruction (FSVkRayReconstruction, needs DLSS): the denoiser / upscaler takes the noisy linear HDR picture (mRT->screen) before the tonemap, with guide buffers made from the
+    // G-buffer, and gives back a window sized HDR picture; the tonemap, CAS, glow and the rest of the post chain then run at the window size on mRRPing / mRRPong.
+    static bool sRR;
+    bool rayReconstructionActive();     // sRR and everything it needs exists (targets, program, device support, no zoomed snapshot)
+    void generateRRGuides(LLRenderTarget* dst);
+    LLRenderTarget          mRRGuides;      // render size: 0 diffuse albedo, 1 specular albedo, 2 world normal + roughness (all RGBA16F)
+    LLRenderTarget          mRRHdr;         // window size RGBA16F: what ray reconstruction outputs
+    LLRenderTarget          mRRPing;        // window size RGBA16F: the post chain after the upscale
+    LLRenderTarget          mRRPong;
     static F32 getDLSSScale();          // the render resolution as a fraction of the window: FSVkDLSSScale if set, else from FSVkDLSSQuality
     // <FS> avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6): the velocity pass after the G-buffer. begin: before the main view's renderGeomDeferred (sets the body recording
     // when the pass is wanted); render: after the G-buffer is flushed, before the lighting. mAvatarVelocityMap: RGBA16F at render size, rg = total screen motion in pixels, a = 1 where an avatar wrote.

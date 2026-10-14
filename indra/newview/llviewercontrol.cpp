@@ -1364,6 +1364,7 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "FSVkDLSS", handleRenderResolutionDivisorChanged);
     setting_setup_signal_listener(gSavedSettings, "FSVkDLSSQuality", handleRenderResolutionDivisorChanged);
     setting_setup_signal_listener(gSavedSettings, "FSVkDLSSScale", handleRenderResolutionDivisorChanged);
+    setting_setup_signal_listener(gSavedSettings, "FSVkRayReconstruction", handleRenderResolutionDivisorChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeLevel", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeDetail", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeCount", handleReflectionProbeCountChanged);

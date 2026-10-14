@@ -23,6 +23,7 @@ void LLVkMirror::holdFrame(bool) {}
 void LLVkMirror::setPresentPreference(S32, bool) {}
 void LLVkMirror::snapshotBoundary(S32) {}
 bool LLVkMirror::upscaleAvailable() { return false; }
+bool LLVkMirror::rayReconstructionAvailable() { return false; }
 void LLVkMirror::setUpscaleLodBias(float) {}
 bool LLVkMirror::shadowPacketsAvailable() { return false; }
 bool LLVkMirror::shadowAlphaPacketsAvailable() { return false; }
@@ -1238,6 +1239,11 @@ void LLVkMirror::setUpscaleLodBias(float bias)
 bool LLVkMirror::upscaleAvailable()
 {
     return sMirror.mReady && LLVkDlss::ready();
+}
+
+bool LLVkMirror::rayReconstructionAvailable()
+{
+    return sMirror.mReady && LLVkDlss::rayReconstructionAvailable();
 }
 
 void LLVkMirror::upscale(const UpscaleArgs& args)

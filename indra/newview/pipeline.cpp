@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include <atomic>
+#include <fstream>
 #include <mutex>
 #include <unordered_set>
 
@@ -165,6 +166,7 @@ U32 LLPipeline::RenderResolutionDivisor;
 F32 LLPipeline::RenderResolutionMultiplier;
 // [/SL:KB]
 bool LLPipeline::sDLSS = false;
+bool LLPipeline::sRR = false;
 bool LLPipeline::RenderUIBuffer;
 S32 LLPipeline::RenderShadowDetail;
 S32 LLPipeline::RenderShadowSplits;
@@ -1078,6 +1080,28 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mUpscaledMap.release();
         }
 
+        if (sRR && LLVkMirror::rayReconstructionAvailable())
+        {
+            // <FS> ray reconstruction (the albedos are 16 bit: linear 8 bit bands in the darks): the guides at the render size, its output and the post chain that follows at the window size. The chain is 16 bit
+            // too: it used to run at the render size before the upscale, whose temporal averaging hid the 8 bit steps of dark gradients; after the upscale nothing hides them
+            if (!mRRGuides.allocate(resX, resY, GL_RGBA16F) || !mRRGuides.addColorAttachment(GL_RGBA16F) || !mRRGuides.addColorAttachment(GL_RGBA16F)
+                || !mRRHdr.allocate(window_res_x, window_res_y, GL_RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, GL_RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, GL_RGBA16F))
+            {
+                LL_WARNS("VkDlss") << "the ray reconstruction targets could not be made: ray reconstruction stays off" << LL_ENDL;
+                mRRGuides.release();
+                mRRHdr.release();
+                mRRPing.release();
+                mRRPong.release();
+            }
+        }
+        else
+        {
+            mRRGuides.release();
+            mRRHdr.release();
+            mRRPing.release();
+            mRRPong.release();
+        }
+
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("mPostMapBuffer"); // <FS:Beq/> improve Tracy scoping 
         mPostPingMap.allocate(resX, resY, GL_RGBA);
         mPostPongMap.allocate(resX, resY, GL_RGBA);
@@ -1260,6 +1284,7 @@ void LLPipeline::refreshCachedSettings()
     // DLSS can only run if the viewer started with it on (the upscaler and its Vulkan extensions are set up then; LL_VK_DLSS is set at start-up by FSVkDLSS)
     static const bool dlss_started = getenv("LL_VK_DLSS") != nullptr;
     sDLSS = dlss_started && gSavedSettings.getBOOL("FSVkDLSS");
+    sRR = sDLSS && gSavedSettings.getBOOL("FSVkRayReconstruction");       // <FS> whether the device can do it is checked where the targets are made and where it runs
     if (sDLSS)
     {
         // the world is drawn smaller and the upscaler brings it back to the window size
@@ -1460,6 +1485,10 @@ void LLPipeline::releaseScreenBuffers()
     mShadowAccum[0].release();
     mShadowAccum[1].release();
     mUpscaledMap.release();
+    mRRGuides.release();
+    mRRHdr.release();
+    mRRPing.release();
+    mRRPong.release();
 
     mAuxillaryRT.screen.release();
     mAuxillaryRT.deferredScreen.release();
@@ -10573,6 +10602,7 @@ void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
     dst->flush();
 }
 
+S32 rrDebugMode();      // the test switch of ray reconstruction (below)
 // <FS> Temporal accumulation of the ray traced sun shadow. Between the sun lightmap pass and its blur: last frame's accumulated shadow is found again for every pixel (camera matrices, or the
 // avatar velocity for avatar pixels) and blended with this frame's, see shadowAccumF.glsl. Returns the target whose attachment 0 is the lightmap for the blur, or null when nothing was done.
 // noteSceneMatrices runs at the end of the lighting: here mViewProjCur and gGLLastModelView are still last frame's.
@@ -10580,7 +10610,7 @@ LLRenderTarget* LLPipeline::accumulateSunShadow(LLRenderTarget* light)
 {
     static LLCachedControl<bool> enabled(gSavedSettings, "RenderRTShadowAccumulate", true);
     static LLCachedControl<S32> history_setting(gSavedSettings, "RenderRTShadowHistory", 8);
-    if (!enabled || !sDLSS || !LLVkMirror::rtShadowMode() || gCubeSnapshot || gSnapshot || !gShadowAccumProgram.isComplete() || !light->isComplete()
+    if (!enabled || !sDLSS || (rayReconstructionActive() && rrDebugMode() != 6) || !LLVkMirror::rtShadowMode() || gCubeSnapshot || gSnapshot || !gShadowAccumProgram.isComplete() || !light->isComplete()
         || !mShadowAccum[0].isComplete() || !mShadowAccum[1].isComplete() || mShadowAccum[0].getNumTextures() < 2 || mShadowAccum[1].getNumTextures() < 2
         || mShadowAccum[0].getWidth() != light->getWidth() || mShadowAccum[0].getHeight() != light->getHeight())
     {
@@ -10657,7 +10687,53 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     dst->flush();
 }
 
-bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
+// <FS> test switch, read from <work>/rr-debug.txt about once a second (one number): 0 normal, 1 no ray reconstruction (the picture is only stretched), 2 / 3 / 4 show the diffuse albedo /
+// specular albedo / normal guide, 5 plain DLSS super resolution instead, 6 ray reconstruction with our own ray shadow accumulation switched on as well
+S32 rrDebugMode()
+{
+    static S32 mode = 0;
+    static U32 checked = 0;
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (frame - checked >= 60 || frame < checked)
+    {
+        checked = frame;
+        mode = 0;
+        std::ifstream in("<work>/rr-debug.txt");
+        if (in)
+        {
+            in >> mode;
+        }
+    }
+    return mode;
+}
+
+bool LLPipeline::rayReconstructionActive()
+{
+    return rrDebugMode() != 5 && sRR && sDLSS && !gCubeSnapshot && mMotionMap.isComplete() && mUpscaledMap.isComplete() && mRRGuides.isComplete() && mRRHdr.isComplete() && mRRPing.isComplete() && mRRPong.isComplete()
+           && mRRGuides.getNumTextures() >= 3 && gRRGuidesProgram.isComplete() && LLVkMirror::rayReconstructionAvailable() && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
+}
+
+// <FS> The guide buffers ray reconstruction wants, from the G-buffer (rrGuidesF.glsl)
+void LLPipeline::generateRRGuides(LLRenderTarget* dst)
+{
+    LL_PROFILE_GPU_ZONE("rr guides");
+    const glm::mat3 view_to_world = glm::mat3(glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview)));
+    static LLStaticHashedString view_to_world_s("view_to_world");
+
+    dst->bindTarget();
+    bindDeferredShader(gRRGuidesProgram);
+    gRRGuidesProgram.uniformMatrix3fv(view_to_world_s, 1, GL_FALSE, glm::value_ptr(view_to_world));
+    {
+        LLGLDisable   blend(GL_BLEND);
+        LLGLDepthTest depth(GL_FALSE, GL_FALSE, GL_ALWAYS);
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+    unbindDeferredShader(gRRGuidesProgram);
+    dst->flush();
+}
+
+bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction)
 {
     if (!LLVkMirror::upscaleAvailable())
     {
@@ -10677,6 +10753,16 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     a.mOutputHeight = dst->getHeight();
     a.mJitterX = LLViewerCamera::sJitterPixels.x;
     a.mJitterY = LLViewerCamera::sJitterPixels.y;
+    if (ray_reconstruction)
+    {
+        a.mRayReconstruction = 1;
+        a.mHdr = 1;                     // the colour is the linear radiance before the tonemap
+        a.mDiffuseAlbedo = mRRGuides.getTexture(0);
+        a.mSpecularAlbedo = mRRGuides.getTexture(1);
+        a.mNormals = mRRGuides.getTexture(2);
+        a.mExposure = mExposureMap.getTexture(0);
+        a.mPreset = gSavedSettings.getS32("FSVkRRPreset");
+    }
     // the history is useless after a pause in rendering or a resize
     // <FS> a snapshot renders several times within one frame number: those renders continue each other's history
     const bool continues = frame == last_frame + 1 || (gSnapshot && frame == last_frame);
@@ -10692,7 +10778,7 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     static U32 logged = 0;
     if (logged++ < 3)
     {
-        LL_INFOS("VkDlss") << "upscale call " << logged << ": render " << a.mRenderWidth << "x" << a.mRenderHeight << " -> " << a.mOutputWidth << "x" << a.mOutputHeight
+        LL_INFOS("VkDlss") << "upscale call " << logged << (ray_reconstruction ? " (ray reconstruction)" : "") << ": render " << a.mRenderWidth << "x" << a.mRenderHeight << " -> " << a.mOutputWidth << "x" << a.mOutputHeight
                            << ", jitter " << a.mJitterX << "," << a.mJitterY << ", reset " << a.mReset << LL_ENDL;
     }
     LLVkMirror::upscale(a);
@@ -11559,6 +11645,11 @@ void LLPipeline::renderFinalize()
         generateMotionVectors(&mMotionMap);
     }
 
+    // <FS> ray reconstruction: upscale and denoise the HDR picture here, the post chain below then runs at the window size on mRRPing / mRRPong
+    LLRenderTarget* post_ping = &mPostPingMap;
+    LLRenderTarget* post_pong = &mPostPongMap;
+    bool rr_done = false;
+
     if (hdr)
     {
         copyScreenSpaceReflections(&mRT->screen, &mSceneMap);
@@ -11567,15 +11658,48 @@ void LLPipeline::renderFinalize()
 
         generateExposure(&mLuminanceMap, &mExposureMap);
 
+        if (dlss && rayReconstructionActive())
+        {
+            generateRRGuides(&mRRGuides);
+            if (rrDebugMode() == 1)
+            {
+                copyRenderTarget(&mRT->screen, &mRRHdr);       // test: no ray reconstruction, the picture only stretched
+                rr_done = true;
+            }
+            else
+            {
+                rr_done = applyUpscale(&mRT->screen, &mRRHdr, true);
+            }
+            if (rr_done)
+            {
+                // the alpha of the picture is the glow amount (read by the glow passes): ray reconstruction does not give it back, so the render size alpha is stretched over the output's
+                LL_PROFILE_GPU_ZONE("rr alpha");
+                mRRHdr.bindTarget();
+                gGL.setColorMask(false, true);
+                gDeferredPostNoDoFProgram.bind();
+                gDeferredPostNoDoFProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRT->screen);
+                gDeferredPostNoDoFProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
+                mScreenTriangleVB->setBuffer();
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+                gDeferredPostNoDoFProgram.unbind();
+                mRRHdr.flush();
+                gGL.setColorMask(true, true);
+                post_ping = &mRRPing;
+                post_pong = &mRRPong;
+            }
+        }
+
         static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
         bool apply_cas = cas_sharpness != 0.0f && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
 
-        tonemap(&mRT->screen, apply_cas ? &mRT->deferredLight : &mPostPingMap, !apply_cas);
+        // the CAS pass needs a scratch target of the picture's size: the lighting's at the render size, mRRPong at the window size
+        LLRenderTarget* cas_scratch = rr_done ? post_pong : &mRT->deferredLight;
+        tonemap(rr_done ? &mRRHdr : &mRT->screen, apply_cas ? cas_scratch : post_ping, !apply_cas);
 
         if (apply_cas)
         {
             // Gamma Corrects
-            applyCAS(&mRT->deferredLight, &mPostPingMap);
+            applyCAS(cas_scratch, post_ping);
         }
     }
     else
@@ -11585,10 +11709,10 @@ void LLPipeline::renderFinalize()
 
     LLVertexBuffer::unbind();
 
-    generateGlow(&mPostPingMap);
+    generateGlow(post_ping);
 
-    LLRenderTarget* sourceBuffer = &mPostPingMap;
-    LLRenderTarget* targetBuffer = &mPostPongMap;
+    LLRenderTarget* sourceBuffer = post_ping;
+    LLRenderTarget* targetBuffer = post_pong;
 
     combineGlow(sourceBuffer, targetBuffer);
     std::swap(sourceBuffer, targetBuffer);
@@ -11601,7 +11725,8 @@ void LLPipeline::renderFinalize()
 
     if((RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
         RenderDepthOfField &&
-        !gCubeSnapshot)
+        !gCubeSnapshot &&
+        !rr_done)       // <FS> the depth of field works at the render size (its depth, its scratch targets): not yet with ray reconstruction
     {
         renderDoF(sourceBuffer, targetBuffer);
         std::swap(sourceBuffer, targetBuffer);
@@ -11625,7 +11750,7 @@ void LLPipeline::renderFinalize()
 
     // <FS:Beq> Restore shader post proc for Vignette
     LLRenderTarget* auxActiveBuffer = sourceBuffer;
-    LLRenderTarget* auxTargetBuffer = RenderFSAAType ? &mRT->screen : &mPostPingMap;
+    LLRenderTarget* auxTargetBuffer = rr_done ? targetBuffer : (RenderFSAAType ? &mRT->screen : &mPostPingMap);
 // [RLVa:KB] - @setsphere
     if (RlvActions::hasBehaviour(RLV_BHVR_SETSPHERE))
     {
@@ -11650,9 +11775,11 @@ void LLPipeline::renderFinalize()
 
     sourceBuffer = auxActiveBuffer;
     // </FS:Beq>
-    if (RenderBufferVisualization > -1)
+    const S32 rr_dbg = rr_done ? rrDebugMode() : 0;
+    const S32 visualization = (rr_dbg >= 2 && rr_dbg <= 4) ? 10 + rr_dbg - 2 : RenderBufferVisualization;
+    if (visualization > -1)
     {
-        switch (RenderBufferVisualization)
+        switch (visualization)
         {
         case 0:
         case 1:
@@ -11694,12 +11821,24 @@ void LLPipeline::renderFinalize()
         case 9:
             visualizeRtMaterials(sourceBuffer);
             break;
+        case 10:        // <FS> the ray reconstruction guides: diffuse albedo, specular albedo, normal (+ roughness in alpha)
+        case 11:
+        case 12:
+            if (mRRGuides.isComplete())
+            {
+                visualizeBuffers(&mRRGuides, sourceBuffer, visualization - 10);
+            }
+            break;
         default:
             break;
         }
     }
 
-    if (dlss && applyUpscale(sourceBuffer, &mUpscaledMap))
+    if (rr_done)
+    {
+        // already at the window size
+    }
+    else if (dlss && applyUpscale(sourceBuffer, &mUpscaledMap))
     {
         sourceBuffer = &mUpscaledMap;
     }

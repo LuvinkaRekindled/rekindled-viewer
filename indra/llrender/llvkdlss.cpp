@@ -13,6 +13,7 @@
 #include "nvsdk_ngx_vk.h"
 #include "nvsdk_ngx_helpers_vk.h"
 #include "nvsdk_ngx_defs_dlssd.h"
+#include "nvsdk_ngx_helpers_dlssd_vk.h"
 #endif
 
 #include <atomic>
@@ -101,7 +102,7 @@ bool gRayReconstruction = false;    // NGX reports the ray reconstruction featur
 VkDevice gDevice = VK_NULL_HANDLE;
 NVSDK_NGX_Parameter* gParams = nullptr;
 NVSDK_NGX_Handle* gFeature = nullptr;
-U32 gFeatureKey[5] = {};            // render w/h, output w/h, flags the feature was created with
+U32 gFeatureKey[6] = {};            // render w/h, output w/h, flags, kind (super resolution 0 / ray reconstruction 1 + preset) the feature was created with
 std::wstring gDataPath;
 
 // not an NVIDIA-assigned id: NGX takes a custom project id for applications without one
@@ -359,26 +360,64 @@ bool evaluate(VkCommandBuffer cmd, const Params& p)
     {
         return false;
     }
+    const bool rr = p.mRayReconstruction;
+    if (rr && (!gRayReconstruction || !p.mDiffuseAlbedo || !p.mSpecularAlbedo || !p.mNormals))
+    {
+        return false;
+    }
     const U32 flags = (p.mHdr ? NVSDK_NGX_DLSS_Feature_Flags_IsHDR : 0) | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
-    const U32 key[5] = { p.mRenderWidth, p.mRenderHeight, p.mOutputWidth, p.mOutputHeight, flags };
+    const U32 key[6] = { p.mRenderWidth, p.mRenderHeight, p.mOutputWidth, p.mOutputHeight, flags, rr ? (1u | ((U32)p.mPreset << 8)) : 0u };
     if (!gFeature || memcmp(key, gFeatureKey, sizeof(key)) != 0)
     {
         release_feature();
-        NVSDK_NGX_DLSS_Create_Params create = {};
-        create.Feature.InWidth = p.mRenderWidth;
-        create.Feature.InHeight = p.mRenderHeight;
-        create.Feature.InTargetWidth = p.mOutputWidth;
-        create.Feature.InTargetHeight = p.mOutputHeight;
-        create.Feature.InPerfQualityValue = quality_for(p.mRenderWidth, p.mOutputWidth);
-        create.InFeatureCreateFlags = (int)flags;
-        if (!ok(NGX_VULKAN_CREATE_DLSS_EXT1(gDevice, cmd, 1, 1, &gFeature, gParams, &create), "creating the DLSS feature"))
+        const NVSDK_NGX_PerfQuality_Value quality = quality_for(p.mRenderWidth, p.mOutputWidth);
+        if (rr)
         {
-            gFeature = nullptr;
-            return false;
+            // the model the network runs: one hint per quality mode (the SDK picks the one of the mode the feature is created with)
+            const U32 preset = (U32)p.mPreset;
+            for (const char* hint : { NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_DLAA, NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Quality,
+                                      NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Balanced, NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Performance,
+                                      NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_UltraPerformance, NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_UltraQuality })
+            {
+                NVSDK_NGX_Parameter_SetUI(gParams, hint, preset);
+            }
+            NVSDK_NGX_DLSSD_Create_Params create = {};
+            create.InDenoiseMode = NVSDK_NGX_DLSS_Denoise_Mode_DLUnified;
+            create.InRoughnessMode = NVSDK_NGX_DLSS_Roughness_Mode_Packed;      // the roughness travels in the w of the normals
+            create.InUseHWDepth = NVSDK_NGX_DLSS_Depth_Type_HW;
+            create.InWidth = p.mRenderWidth;
+            create.InHeight = p.mRenderHeight;
+            create.InTargetWidth = p.mOutputWidth;
+            create.InTargetHeight = p.mOutputHeight;
+            create.InPerfQualityValue = quality;
+            create.InFeatureCreateFlags = (int)flags;
+            create.InEnableOutputSubrects = false;
+            if (!ok(NGX_VULKAN_CREATE_DLSSD_EXT1(gDevice, cmd, 1, 1, &gFeature, gParams, &create), "creating the ray reconstruction feature"))
+            {
+                gFeature = nullptr;
+                return false;
+            }
+            LL_INFOS("VkDlss") << "ray reconstruction feature created: " << p.mRenderWidth << "x" << p.mRenderHeight << " -> " << p.mOutputWidth << "x" << p.mOutputHeight
+                               << " quality " << (S32)quality << " preset " << p.mPreset << LL_ENDL;
+        }
+        else
+        {
+            NVSDK_NGX_DLSS_Create_Params create = {};
+            create.Feature.InWidth = p.mRenderWidth;
+            create.Feature.InHeight = p.mRenderHeight;
+            create.Feature.InTargetWidth = p.mOutputWidth;
+            create.Feature.InTargetHeight = p.mOutputHeight;
+            create.Feature.InPerfQualityValue = quality;
+            create.InFeatureCreateFlags = (int)flags;
+            if (!ok(NGX_VULKAN_CREATE_DLSS_EXT1(gDevice, cmd, 1, 1, &gFeature, gParams, &create), "creating the DLSS feature"))
+            {
+                gFeature = nullptr;
+                return false;
+            }
+            LL_INFOS("VkDlss") << "DLSS feature created: " << p.mRenderWidth << "x" << p.mRenderHeight << " -> " << p.mOutputWidth << "x" << p.mOutputHeight
+                               << " quality " << (S32)quality << LL_ENDL;
         }
         memcpy(gFeatureKey, key, sizeof(key));
-        LL_INFOS("VkDlss") << "DLSS feature created: " << p.mRenderWidth << "x" << p.mRenderHeight << " -> " << p.mOutputWidth << "x" << p.mOutputHeight
-                           << " quality " << (S32)create.Feature.InPerfQualityValue << LL_ENDL;
     }
 
     NVSDK_NGX_Resource_VK color = resource_of(*p.mColor, false, VK_IMAGE_ASPECT_COLOR_BIT);
@@ -393,6 +432,34 @@ bool evaluate(VkCommandBuffer cmd, const Params& p)
     {
         LL_INFOS("VkDlss") << "evaluate " << logged << ": jitter " << p.mJitterX << "," << p.mJitterY << " reset " << p.mReset << " sign multipliers mv " << mv_x << "," << mv_y
                            << " jitter " << j_x << "," << j_y << LL_ENDL;
+    }
+
+    if (rr)
+    {
+        NVSDK_NGX_Resource_VK diffuse = resource_of(*p.mDiffuseAlbedo, false, VK_IMAGE_ASPECT_COLOR_BIT);
+        NVSDK_NGX_Resource_VK specular = resource_of(*p.mSpecularAlbedo, false, VK_IMAGE_ASPECT_COLOR_BIT);
+        NVSDK_NGX_Resource_VK normals = resource_of(*p.mNormals, false, VK_IMAGE_ASPECT_COLOR_BIT);
+        NVSDK_NGX_Resource_VK exposure = {};
+        NVSDK_NGX_VK_DLSSD_Eval_Params eval = {};
+        if (p.mExposure)
+        {
+            exposure = resource_of(*p.mExposure, false, VK_IMAGE_ASPECT_COLOR_BIT);
+            eval.pInExposureTexture = &exposure;
+        }
+        eval.pInDiffuseAlbedo = &diffuse;
+        eval.pInSpecularAlbedo = &specular;
+        eval.pInNormals = &normals;
+        eval.pInColor = &color;
+        eval.pInOutput = &output;
+        eval.pInDepth = &depth;
+        eval.pInMotionVectors = &motion;
+        eval.InJitterOffsetX = p.mJitterX * j_x;
+        eval.InJitterOffsetY = p.mJitterY * j_y;
+        eval.InRenderSubrectDimensions = { p.mRenderWidth, p.mRenderHeight };
+        eval.InReset = p.mReset ? 1 : 0;
+        eval.InMVScaleX = p.mMotionScaleX * mv_x;
+        eval.InMVScaleY = p.mMotionScaleY * mv_y;
+        return ok(NGX_VULKAN_EVALUATE_DLSSD_EXT(cmd, gFeature, gParams, &eval), "evaluating ray reconstruction");
     }
 
     NVSDK_NGX_VK_DLSS_Eval_Params eval = {};

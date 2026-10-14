@@ -2722,6 +2722,28 @@
       <key>Value</key>
       <real>0</real>
     </map>
+    <key>FSVkRayReconstruction</key>
+    <map>
+      <key>Comment</key>
+      <string>With FSVkDLSS (an RTX card): DLSS ray reconstruction denoises and upscales the picture instead of plain DLSS super resolution. The picture is upscaled before the tonemap; depth of field is not applied yet. Applies at once while DLSS is running.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
+    <key>FSVkRRPreset</key>
+    <map>
+      <key>Comment</key>
+      <string>The ray reconstruction model: 0 default, 4 preset D (transformer), 5 preset E (latest transformer), 6 preset F. Takes effect when the feature is made again (a size or mode change, or a restart).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>6</integer>
+    </map>
     <key>FSSkipStaticRiggedAttachmentUpdates</key>
     <map>
       <key>Comment</key>

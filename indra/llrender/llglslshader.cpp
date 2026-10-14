@@ -2299,6 +2299,19 @@ void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, c
     }
 }
 
+void LLGLSLShader::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const GLfloat* v)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
+    GLint location = getUniformLocation(uniform);
+
+    if (location >= 0)
+    {
+        stop_glerror();
+        mirrorMatrix(location, 3, 3, transpose, count, v);
+        stop_glerror();
+    }
+}
+
 void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const GLfloat* v)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
