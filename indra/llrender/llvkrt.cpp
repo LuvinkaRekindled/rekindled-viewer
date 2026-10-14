@@ -2472,14 +2472,17 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             // A draw is named by the passes that run in a frame, and not every pass runs every frame (the probe faces and cascades follow their own cadence): a structure made only from the draws
             // named THIS frame lost its opaque body and clothes on the frames whose passes did not name them (the body vanished from the traced reflection every few frames). A draw named
             // within the last few frames stays in the structure over its last skinned output (its palette is the memory of the frame it was named in: only draws named now are skinned again).
-            const bool fresh = d.mNotedTag == av_tag;
+            // named in this scene call's frame or the slot before it: the notes of the shadow passes and of the main view's naming (rt_name_rigged_main_view) land one frame slot BEFORE the tag the scene call
+            // computes (the parts of an avatar only they name, hair layer and sock tops, were never fresh and never skinned). The palette they carry is in the vertex scratch ring (one slot per frame
+            // number, FRAMES_IN_FLIGHT of them): intact for this long.
+            const bool fresh = d.mNotedTag != 0 && d.mNotedTag + 2 >= av_tag;
             if (!fresh && (d.mDead || !d.mNotedTag || av_tag > d.mNotedTag + std::max<U64>(1, sDbg.mKeep) || !d.mSkinnedTag || !d.mOut.valid() || sDbg.mAvatarKeepOff))
             {
                 continue;
             }
-            if (!fresh)
+            if (d.mNotedTag != av_tag)
             {
-                // a draw named some frames ago: its buffers must still be the ones it was named with (a buffer that was made again, moved or given up has a new epoch or address: the avatar's
+                // a draw named some frames (or the slot before this scene call's tag) ago: its buffers must still be the ones it was named with (a buffer that was made again, moved or given up has a new epoch or address: the avatar's
                 // meshes are rebuilt while it loads, and a structure over indices of a range that now holds something else is a spike in the shadow)
                 LLVkGL::BufferInfo vi_now, ii_now;
                 if (!LLVkGL::getBufferInfo(d.mVb, vi_now) || !LLVkGL::getBufferInfo(d.mIb, ii_now) || vi_now.mEpoch != d.mVi.mEpoch || ii_now.mEpoch != d.mIi.mEpoch
@@ -2592,7 +2595,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         {
             LLVkGL::markBufferUsed(d->mVb);         // the compute pass and the build read them when the GPU gets here
             LLVkGL::markBufferUsed(d->mIb);
-            if (d->mNotedTag == av_tag && d->mSkinnedTag != av_tag)
+            if (d->mNotedTag != 0 && d->mNotedTag + 2 >= av_tag && d->mSkinnedTag != av_tag)
             {
                 d->mSkinnedTag = av_tag;
                 const U32 ji = (U32)skin_jobs.size();

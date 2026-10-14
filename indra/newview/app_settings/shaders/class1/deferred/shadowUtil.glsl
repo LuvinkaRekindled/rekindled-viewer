@@ -418,77 +418,37 @@ bool rtShadeSurface(uint record, uint prim, vec2 bary, float lod, out vec3 albed
     return rtShadeSurfaceEx(record, prim, bary, lod, false, albedo, emissive, n_obj, n_shaded, alpha, fullbright, mr, spec);
 }
 
-// The trace and the decode of the hit, without lighting it: everything the lighting of the soften pass needs (hit quality 1, softenLightF.glsl) or the flat shading below.
-// full: decode normal map, roughness / metallic / specular map as well. n_geo_eye = the (smooth) normal of the geometry, n_eye = the shaded one (normal map), both eye space, facing the ray.
-// shadow = the sun ray towards sun_dir from the hit (0 or 1, 0 when the geometry faces away), mr / spec as rtShadeSurfaceEx. Returns false for a miss or a record that cannot be read.
-bool rtTraceHit(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full, out vec3 albedo, out vec3 emissive, out vec3 n_geo_eye, out vec3 n_eye, out vec3 hit_pos, out float t,
-                out float shadow, out bool fullbright, out vec4 mr, out vec4 spec)
+// Is the record's material a legacy material that is alpha BLENDED (hair, some clothes)? The main view draws those in the forward alpha pass over the opaque layers behind them.
+bool rtRecordBlended(uint record)
 {
-    albedo = vec3(0.0);
-    emissive = vec3(0.0);
+    if (record == 0u || record >= ll_rt_geoms.g[0].first)
+    {
+        return false;
+    }
+    uint mat_id = ll_rt_geoms.g[record].material;
+    if (mat_id == 0u || mat_id >= 16384u)
+    {
+        return false;
+    }
+    uint mf = floatBitsToUint(LLRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id].params.z);
+    return (mf & 8u) != 0u && (mf & 2u) == 0u;
+}
+
+// Decode a hit that is known by record, triangle, barycentrics and distance (a committed intersection, or a blended candidate kept aside): the surface, the eye space normals facing the ray,
+// the sun ray from the hit. w2o = the instance's world to object matrix of the intersection.
+bool rtResolveHit(uint record, uint prim, vec2 bary, mat4x3 w2o, float t, vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full, mat3 to_scene,
+                  out vec3 albedo, out vec3 emissive, out vec3 n_geo_eye, out vec3 n_eye, out vec3 hit_pos, out float shadow, out bool fullbright, out vec4 mr, out vec4 spec, out float alpha)
+{
     n_geo_eye = vec3(0.0, 0.0, 1.0);
     n_eye = n_geo_eye;
     hit_pos = origin;
-    t = 0.0;
     shadow = 0.0;
-    fullbright = false;
-    mr = vec4(0.0, 1.0, 0.0, 0.0);
-    spec = vec4(0.0);
-    mat3 to_scene;
-    vec3 camera;
-    rtSceneFrame(to_scene, camera);
-    float tmax = 1500.0;
-    const vec3 ray_origin = to_scene * origin + camera;
-    const vec3 ray_dir = to_scene * dir;
-    if (!rtRayOk(ray_origin, ray_dir))
-    {
-        return false;
-    }
-    rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x03, ray_origin, 0.02, ray_dir, tmax);
-    float lod_start = clamp(0.5 * log2(max(length(origin), 1.0)) - 1.0, 0.0, 4.0);
-    uint steps = 0u;
-    while (rayQueryProceedEXT(rq))
-    {
-        if (++steps > (rt_hit_shadow_variant == 3 ? 1024u : 64u))
-        {
-            rayQueryTerminateEXT(rq);
-            break;
-        }
-        if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
-        {
-            // a masked structure: its own alpha decides
-            uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
-            vec3 a, e, n;
-            float alpha;
-            bool fb;
-            if (rtShadeSurface(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod_start, a, e, n, alpha, fb))
-            {
-                if (alpha >= 0.5)
-                {
-                    rayQueryConfirmIntersectionEXT(rq);
-                }
-            }
-            else
-            {
-                rayQueryConfirmIntersectionEXT(rq);
-            }
-        }
-    }
-    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT)
-    {
-        return false;
-    }
-    t = rayQueryGetIntersectionTEXT(rq, true);
-    uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, true));
-    float lod = clamp(0.5 * log2(max(t + length(origin), 1.0)) - 1.0, 0.0, 4.0);
+    float lod = rt_hit_shadow_variant == 4 ? 0.0 : clamp(0.5 * log2(max(t + length(origin), 1.0)) - 1.0, 0.0, 4.0);
     vec3 n_obj, n_shaded;
-    float alpha;
-    if (!rtShadeSurfaceEx(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)), rayQueryGetIntersectionBarycentricsEXT(rq, true), lod, full, albedo, emissive, n_obj, n_shaded, alpha, fullbright, mr, spec))
+    if (!rtShadeSurfaceEx(record, prim, bary, lod, full, albedo, emissive, n_obj, n_shaded, alpha, fullbright, mr, spec))
     {
         return false;                   // a record that cannot be read: not a hit
     }
-    mat4x3 w2o = rayQueryGetIntersectionWorldToObjectEXT(rq, true);
     n_geo_eye = normalize(normalize(n_obj * mat3(w2o)) * to_scene);
     n_eye = full ? normalize(normalize(n_shaded * mat3(w2o)) * to_scene) : n_geo_eye;
     if (dot(n_geo_eye, dir) > 0.0)
@@ -500,7 +460,6 @@ bool rtTraceHit(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full,
     if (!fullbright)
     {
         float nl = clamp(dot(n_geo_eye, sun_dir), 0.0, 1.0);
-        shadow = 0.0;
         if (nl > 0.0)
         {
             if (rt_hit_shadow_variant == 1)
@@ -514,6 +473,149 @@ bool rtTraceHit(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full,
         }
     }
     return true;
+}
+
+// The trace and the decode of the hit, without lighting it: everything the lighting of the soften pass needs (hit quality 1, softenLightF.glsl) or the flat shading below.
+// full: decode normal map, roughness / metallic / specular map as well. n_geo_eye = the (smooth) normal of the geometry, n_eye = the shaded one (normal map), both eye space, facing the ray.
+// shadow = the sun ray towards sun_dir from the hit (0 or 1, 0 when the geometry faces away), mr / spec as rtShadeSurfaceEx. Returns false for a miss or a record that cannot be read.
+// layers: alpha BLENDED surfaces (hair) never stop the ray, like they do not in the main view where the alpha pass draws them over the opaque scene: the nearest one in front of the hit comes back
+// as l_* (layer_alpha its opacity, 0 = none), to be shaded and composited over the hit by the caller. A blended surface with nothing behind it is the hit itself, layer_alpha = -its opacity.
+bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full, bool layers, out vec3 albedo, out vec3 emissive, out vec3 n_geo_eye, out vec3 n_eye, out vec3 hit_pos, out float t,
+                  out float shadow, out bool fullbright, out vec4 mr, out vec4 spec,
+                  out float layer_alpha, out vec3 l_albedo, out vec3 l_emissive, out vec3 l_n_geo, out vec3 l_n, out vec3 l_hp, out float l_t, out float l_shadow, out bool l_fb, out vec4 l_mr, out vec4 l_spec)
+{
+    albedo = vec3(0.0);
+    emissive = vec3(0.0);
+    n_geo_eye = vec3(0.0, 0.0, 1.0);
+    n_eye = n_geo_eye;
+    hit_pos = origin;
+    t = 0.0;
+    shadow = 0.0;
+    fullbright = false;
+    mr = vec4(0.0, 1.0, 0.0, 0.0);
+    spec = vec4(0.0);
+    layer_alpha = 0.0;
+    l_albedo = vec3(0.0);
+    l_emissive = vec3(0.0);
+    l_n_geo = n_geo_eye;
+    l_n = n_geo_eye;
+    l_hp = origin;
+    l_t = 0.0;
+    l_shadow = 0.0;
+    l_fb = false;
+    l_mr = mr;
+    l_spec = spec;
+    mat3 to_scene;
+    vec3 camera;
+    rtSceneFrame(to_scene, camera);
+    float tmax = 1500.0;
+    const vec3 ray_origin = to_scene * origin + camera;
+    const vec3 ray_dir = to_scene * dir;
+    if (!rtRayOk(ray_origin, ray_dir))
+    {
+        return false;
+    }
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x03, ray_origin, 0.02, ray_dir, tmax);
+    float lod_start = rt_hit_shadow_variant == 4 ? 0.0 : clamp(0.5 * log2(max(length(origin), 1.0)) - 1.0, 0.0, 4.0);
+    uint steps = 0u;
+    // the nearest blended candidate seen so far (its place in the scene, kept until the ray is done)
+    float c_t = 1e30, c_alpha = 0.0;
+    float seen = 0.0, seen_alpha = 0.0;         // debug: how many blended candidates the ray met and the highest opacity among them
+    uint c_record = 0u, c_prim = 0u;
+    vec2 c_bary = vec2(0.0);
+    mat4x3 c_w2o = mat4x3(1.0);
+    while (rayQueryProceedEXT(rq))
+    {
+        if (++steps > (rt_hit_shadow_variant == 3 ? 1024u : 64u))
+        {
+            rayQueryTerminateEXT(rq);
+            break;
+        }
+        if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
+        {
+            // a masked structure: its own alpha decides
+            uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
+            uint prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false));
+            vec2 bary = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+            vec3 a, e, n;
+            float alpha;
+            bool fb;
+            if (rtShadeSurface(record, prim, bary, lod_start, a, e, n, alpha, fb))
+            {
+                if (layers && rtRecordBlended(record))
+                {
+                    seen += 1.0;
+                    seen_alpha = max(seen_alpha, alpha);
+                    float ct = rayQueryGetIntersectionTEXT(rq, false);
+                    if (alpha >= 0.03 && ct < c_t)
+                    {
+                        c_t = ct;
+                        c_alpha = min(alpha, 1.0);
+                        c_record = record;
+                        c_prim = prim;
+                        c_bary = bary;
+                        c_w2o = rayQueryGetIntersectionWorldToObjectEXT(rq, false);
+                    }
+                }
+                else if (alpha >= 0.5)
+                {
+                    rayQueryConfirmIntersectionEXT(rq);
+                }
+            }
+            else
+            {
+                rayQueryConfirmIntersectionEXT(rq);
+            }
+        }
+    }
+    const bool have_main = rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+    l_t = seen;                          // debug (rt_hit_quality 14): without a layer these two tell what the ray saw of blended surfaces
+    l_shadow = seen_alpha;
+    if (!have_main && c_record == 0u)
+    {
+        return false;
+    }
+    float alpha;
+    if (have_main)
+    {
+        t = rayQueryGetIntersectionTEXT(rq, true);
+        uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, true));
+        if (!rtResolveHit(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)), rayQueryGetIntersectionBarycentricsEXT(rq, true), rayQueryGetIntersectionWorldToObjectEXT(rq, true),
+                          t, origin, dir, sun_dir, pos_screen, full, to_scene, albedo, emissive, n_geo_eye, n_eye, hit_pos, shadow, fullbright, mr, spec, alpha))
+        {
+            return false;
+        }
+        if (c_record != 0u && c_t < t)
+        {
+            l_t = c_t;
+            float la;
+            if (rtResolveHit(c_record, c_prim, c_bary, c_w2o, c_t, origin, dir, sun_dir, pos_screen, full, to_scene, l_albedo, l_emissive, l_n_geo, l_n, l_hp, l_shadow, l_fb, l_mr, l_spec, la))
+            {
+                layer_alpha = c_alpha;
+            }
+        }
+        return true;
+    }
+    // only a blended surface on the way: it is the hit, partly transparent over whatever the caller has behind it
+    t = c_t;
+    if (!rtResolveHit(c_record, c_prim, c_bary, c_w2o, c_t, origin, dir, sun_dir, pos_screen, full, to_scene, albedo, emissive, n_geo_eye, n_eye, hit_pos, shadow, fullbright, mr, spec, alpha))
+    {
+        return false;
+    }
+    layer_alpha = -c_alpha;
+    return true;
+}
+
+bool rtTraceHit(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full, out vec3 albedo, out vec3 emissive, out vec3 n_geo_eye, out vec3 n_eye, out vec3 hit_pos, out float t,
+                out float shadow, out bool fullbright, out vec4 mr, out vec4 spec)
+{
+    float la, lt, ls;
+    vec3 l_albedo, l_emissive, l_n_geo, l_n, l_hp;
+    bool l_fb;
+    vec4 l_mr, l_spec;
+    return rtTraceHitEx(origin, dir, sun_dir, pos_screen, full, false, albedo, emissive, n_geo_eye, n_eye, hit_pos, t, shadow, fullbright, mr, spec,
+                        la, l_albedo, l_emissive, l_n_geo, l_n, l_hp, lt, ls, l_fb, l_mr, l_spec);
 }
 
 // A ray from origin (eye space) along dir (unit, eye space) against the scene. The hit is lit like a legacy surface of the deferred pass: (ambient + sun * N.L * shadow) * albedo + emissive,

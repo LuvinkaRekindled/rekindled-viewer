@@ -12187,6 +12187,7 @@ static void rt_name_rigged_main_view()
             { LLRenderPass::PASS_ALPHA_MASK, KIND_MASK },
             { LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, KIND_FULLBRIGHT },
             { LLRenderPass::PASS_ALPHA, KIND_ALPHA },
+            { LLRenderPass::PASS_ALPHA_RIGGED, KIND_ALPHA },        // the main view keeps the avatars' blended draws in this render map (the shadow cull's PASS_ALPHA holds them too): without it the hair layer and sock tops were named by the shadow passes only, a frame behind the scene call
             { LLRenderPass::PASS_NORMSPEC_MASK, KIND_MATERIAL },
             { LLRenderPass::PASS_MATERIAL_ALPHA_MASK, KIND_MATERIAL },
             { LLRenderPass::PASS_SPECMAP_MASK, KIND_MATERIAL },
@@ -12211,12 +12212,32 @@ static void rt_name_rigged_main_view()
             texture_names.emplace(tex, name);
             return name;
         };
+        // debug: why the own avatar's draws were turned away (counted until the next log line): 0 count / no avatar / glTF mismatch, 1..5 packet layout (shadow_alpha_fallback_reason), 6 texture not ready,
+        // 7 palette, 8 accepted
+        static U32 sRtNameWhy[9] = {};
+        auto note_why = [&](LLDrawInfo* params, U32 why)
+        {
+            if (params->mAvatar && params->mAvatar->isSelf())
+            {
+                ++sRtNameWhy[why];
+            }
+        };
         auto add_entry = [&](LLDrawInfo* params, const Source& source)
         {
             const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
-            if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || (source.kind == KIND_GLTF && !params->mGLTFMaterial)
-                || !shadow_alpha_packet_ok(*params, batch, true, source.kind == KIND_GLTF) || !rt_textures_ready(*params, batch))
+            if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || (source.kind == KIND_GLTF && !params->mGLTFMaterial))
             {
+                if (params->mAvatar) note_why(params, 0);
+                return;
+            }
+            if (!shadow_alpha_packet_ok(*params, batch, true, source.kind == KIND_GLTF))
+            {
+                note_why(params, std::min(5, shadow_alpha_fallback_reason(*params, batch, true)));
+                return;
+            }
+            if (!rt_textures_ready(*params, batch))
+            {
+                note_why(params, 6);
                 return;
             }
             const LLVertexBuffer* vb = params->mVertexBuffer.get();
@@ -12228,8 +12249,10 @@ static void rt_name_rigged_main_view()
             e.mMatrixId = rt_matrix_id(params->mModelMatrix);
             if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
             {
+                note_why(params, 7);
                 return;
             }
+            note_why(params, 8);
             e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
             e.mVertexFirst = params->mStart;
             e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
@@ -12329,25 +12352,82 @@ static void rt_name_rigged_main_view()
         // so the ray scene never saw them: the reflection showed the opaque layer under the hair only
         {
             static const Source blended = { LLRenderPass::PASS_ALPHA, KIND_ALPHA };
-            for (LLCullResult::sg_iterator g = gPipeline.beginRiggedAlphaGroups(); g != gPipeline.endRiggedAlphaGroups(); ++g)
+            // debug aid (about once in 600 frames): what the rigged alpha groups hold and which check turns the viewer's own avatar's blended draws away
+            static U64 last_blend_log = 0;
+            const bool blend_log = rt_materials_on() && gFrameCount >= last_blend_log + 600;
+            if (blend_log)
             {
-                LLSpatialGroup* group = *g;
-                if (!group || group->isDead())
+                last_blend_log = gFrameCount;
+            }
+            U32 n_groups = 0, n_with_map = 0, n_draws = 0, n_self = 0, n_gltf = 0, n_layout = 0, n_texture = 0, n_ok = 0;
+            U64 self_tris = 0;
+            // both group lists (the rigged alpha groups and the ordinary alpha groups) and both pass types: the draws named only by the shadow passes were one frame behind the scene call (never fresh), so the
+            // parts of an avatar they alone knew (hair layer, sock tops) stayed out of its structure until something named them in the main view (a snapshot)
+            for (int list = 0; list < 2; ++list)
+            {
+                LLCullResult::sg_iterator begin = list == 0 ? gPipeline.beginRiggedAlphaGroups() : gPipeline.beginAlphaGroups();
+                LLCullResult::sg_iterator end = list == 0 ? gPipeline.endRiggedAlphaGroups() : gPipeline.endAlphaGroups();
+                for (LLCullResult::sg_iterator g = begin; g != end; ++g)
                 {
-                    continue;
-                }
-                LLSpatialGroup::draw_map_t::iterator rigged_alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA_RIGGED);
-                if (rigged_alpha == group->mDrawMap.end())
-                {
-                    continue;
-                }
-                for (auto& pointer : rigged_alpha->second)
-                {
-                    if (pointer.notNull())
+                    LLSpatialGroup* group = *g;
+                    ++n_groups;
+                    if (!group || group->isDead())
                     {
-                        add_entry(pointer.get(), blended);
+                        continue;
+                    }
+                    for (U32 pass_type : { (U32)LLRenderPass::PASS_ALPHA_RIGGED, (U32)LLRenderPass::PASS_ALPHA })
+                    {
+                        LLSpatialGroup::draw_map_t::iterator rigged_alpha = group->mDrawMap.find(pass_type);
+                        if (rigged_alpha == group->mDrawMap.end())
+                        {
+                            continue;
+                        }
+                        ++n_with_map;
+                        for (auto& pointer : rigged_alpha->second)
+                        {
+                            LLDrawInfo* p = pointer.get();
+                            if (!p || !p->mAvatar)
+                            {
+                                continue;
+                            }
+                            if (blend_log)
+                            {
+                                ++n_draws;
+                                if (p->mAvatar->isSelf())
+                                {
+                                    ++n_self;
+                                    self_tris += p->mCount / 3;
+                                    if (p->mGLTFMaterial) ++n_gltf;
+                                    else if (!shadow_alpha_packet_ok(*p, true, true, false)) ++n_layout;
+                                    else if (!rt_textures_ready(*p, true)) ++n_texture;
+                                    else ++n_ok;
+                                }
+                            }
+                            add_entry(p, blended);
+                        }
                     }
                 }
+            }
+            if (blend_log)
+            {
+                // debug: the entries that go to the worker, own avatar only (triangles, material, first index) so they can be matched to the draw log of the ray scene (avlog=1)
+                std::string list;
+                for (const LLVkMirror::ShadowAlphaEntry& e : entries)
+                {
+                    list += llformat(" %u/%u", e.mIndexCount / 3, e.mMaterial);
+                }
+                LL_INFOS("VkRtMaterials") << "rigged alpha entries sent (triangles/material): " << entries.size() << ":" << list << LL_ENDL;
+            }
+            if (blend_log)
+            {
+                LL_INFOS("VkRtMaterials") << "own avatar rigged alpha naming since the last line: no count / glTF mismatch " << sRtNameWhy[0] << ", layout " << sRtNameWhy[1] << " / " << sRtNameWhy[2] << " / " << sRtNameWhy[3]
+                    << " / " << sRtNameWhy[4] << " / texture matrix " << sRtNameWhy[5] << ", texture not ready " << sRtNameWhy[6] << ", no palette " << sRtNameWhy[7] << ", named " << sRtNameWhy[8] << LL_ENDL;
+                memset(sRtNameWhy, 0, sizeof(sRtNameWhy));
+            }
+            if (blend_log)
+            {
+                LL_INFOS("VkRtMaterials") << "blended rigged draws: " << n_groups << " rigged alpha groups, " << n_with_map << " with a PASS_ALPHA_RIGGED map, " << n_draws << " draws, own avatar " << n_self
+                    << " (" << self_tris << " triangles): glTF " << n_gltf << ", layout/skin rejected " << n_layout << ", texture not ready " << n_texture << ", accepted " << n_ok << LL_ENDL;
             }
         }
         if (!entries.empty())
@@ -12580,7 +12660,7 @@ void LLPipeline::renderDeferredLighting()
                     rt_glossy_mode = 1;         // the preference (Graphics > Vulkan): the traced glossy mirror; rt-debug.txt glossyrt=N still overrides it for tests
                 }
                 S32 rt_hit_shadow_variant = 0;
-                if (rt_glossy_mode >= 20 && rt_glossy_mode <= 22)       // 20 / 21 / 22: the glossy mode 1 with a test variant of how a hit is lit (shadowUtil.glsl rt_hit_shadow_variant)
+                if (rt_glossy_mode >= 20 && rt_glossy_mode <= 23)       // 20 / 21 / 22 / 23: the glossy mode 1 with a test variant of how a hit is lit (shadowUtil.glsl rt_hit_shadow_variant; 4 = texture mip 0 at every hit)
                 {
                     rt_hit_shadow_variant = rt_glossy_mode - 19;
                     rt_glossy_mode = 1;
