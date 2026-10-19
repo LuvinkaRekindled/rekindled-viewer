@@ -941,15 +941,6 @@ void LLVertexBuffer::drawNoAttributes(U32 mode, U32 first, U32 count)
 }
 
 //static
-void LLVertexBuffer::arrayMaskChange(U32 data_mask, U32& enable, U32& disable)
-{
-    const U32 valid = (1u << TYPE_MAX) - 1;
-    enable = data_mask & ~sLastMask & valid;
-    disable = sLastMask & ~data_mask & valid;
-    sLastMask = data_mask;
-}
-
-//static
 void LLVertexBuffer::forgetBoundBuffers()
 {
     sGLRenderBuffer = 0;
@@ -959,7 +950,6 @@ void LLVertexBuffer::forgetBoundBuffers()
 //static
 void LLVertexBuffer::unbind()
 {
-    LLVkAsync::setArrayState(true, 0, true, 0, nullptr, 0);      // both buffer binds as one record
     LLVkAsync::drawBindingClear();
     sGLRenderBuffer = 0;
     sGLRenderIndices = 0;
@@ -1655,63 +1645,37 @@ void LLVertexBuffer::setBuffer()
         "Attribute mask mismatch! mTypeMask should be a superset of data_mask.  data_mask: 0x"
                 << std::hex << data_mask << " mTypeMask: 0x" << mTypeMask << " Missing: 0x" << (data_mask & ~mTypeMask) <<  std::dec);
 
-    const bool bind_array = sGLRenderBuffer != mGLBuffer;
-    const bool setup = bind_array || sLastMask != data_mask;
-    const bool bind_elem = mGLIndices != sGLRenderIndices;
-
-    // <FS> the whole vertex array state is one typed record (buffer binds and every attribute pointer)
-    if (bind_array || setup || bind_elem)
+    // the binding of the next draws is the whole thing (this buffer, the bound shader's attributes): it is worked out when the buffers or the mask are not those of the binding the
+    // producer holds, and reused while this buffer's layout, buffers and mask are the same (the cache)
+    if (sGLRenderBuffer != mGLBuffer || sGLRenderIndices != mGLIndices || sLastMask != data_mask)
     {
-        AttribSink sink;
-        // F2.4: with the draw record on, the binding is the whole thing (this buffer, the bound shader's attributes): reused from the cache while the layout, buffers and mask are the same
-        const bool binding_rec = LLVkAsync::gDrawRec != 0;
-        bool cache_hit = false;
-        if (binding_rec)
+        const VkBindCache* c = mVkBindCache;
+        const bool cache_hit = c && c->mNumVerts == mNumVerts && c->mTypeMask == mTypeMask && c->mMask == data_mask && c->mArray == mGLBuffer && c->mElem == mGLIndices;
+        if (cache_hit)
         {
-            const VkBindCache* c = mVkBindCache;
-            cache_hit = c && c->mNumVerts == mNumVerts && c->mTypeMask == mTypeMask && c->mMask == data_mask && c->mArray == mGLBuffer && c->mElem == mGLIndices;
+            LLVkAsync::drawBindingSet(c->mBinding);
         }
-        // (the old stream, modes 0 and 1, still needs the attribute pointers when its own state says they changed)
-        if ((setup && LLVkAsync::gDrawRec != 2) || (binding_rec && !cache_hit))
+        else
         {
+            AttribSink sink;
             sAttribSink = &sink;
             setupVertexBuffer();
             sAttribSink = nullptr;
-        }
-        if (binding_rec)
-        {
-            if (cache_hit)
+            LLVkAsync::drawBinding(mGLBuffer, mGLIndices, sink.mAttribs, sink.mCount);
+            if (!mVkBindCache)
             {
-                LLVkAsync::drawBindingSet(mVkBindCache->mBinding);
+                mVkBindCache = new VkBindCache();
             }
-            else
-            {
-                LLVkAsync::drawBinding(mGLBuffer, mGLIndices, sink.mAttribs, sink.mCount);
-                if (!mVkBindCache)
-                {
-                    mVkBindCache = new VkBindCache();
-                }
-                mVkBindCache->mNumVerts = mNumVerts;
-                mVkBindCache->mTypeMask = mTypeMask;
-                mVkBindCache->mMask = data_mask;
-                mVkBindCache->mArray = mGLBuffer;
-                mVkBindCache->mElem = mGLIndices;
-                LLVkAsync::drawBindingGet(mVkBindCache->mBinding);
-            }
+            mVkBindCache->mNumVerts = mNumVerts;
+            mVkBindCache->mTypeMask = mTypeMask;
+            mVkBindCache->mMask = data_mask;
+            mVkBindCache->mArray = mGLBuffer;
+            mVkBindCache->mElem = mGLIndices;
+            LLVkAsync::drawBindingGet(mVkBindCache->mBinding);
         }
-        LLVkAsync::setArrayState(bind_array, mGLBuffer, bind_elem, mGLIndices, sink.mAttribs, setup ? sink.mCount : 0);
-        if (bind_array)
-        {
-            sGLRenderBuffer = mGLBuffer;
-        }
-        else if (setup)
-        {
-            sLastMask = data_mask;
-        }
-        if (bind_elem)
-        {
-            sGLRenderIndices = mGLIndices;
-        }
+        sGLRenderBuffer = mGLBuffer;
+        sGLRenderIndices = mGLIndices;
+        sLastMask = data_mask;
     }
 }
 

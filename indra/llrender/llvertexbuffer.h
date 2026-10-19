@@ -108,7 +108,6 @@ public:
 
     static void unbind(); //unbind any bound vertex buffer
     // <FS> the attribute arrays to switch on / off to go from the last mask to data_mask (sets the last mask, like setupClientArrays, but issues no GL call)
-    static void arrayMaskChange(U32 data_mask, U32& enable, U32& disable);
     // a draw that reads no vertex attributes (the shader makes its own positions from the vertex index), with whatever is bound
     static void drawNoAttributes(U32 mode, U32 first, U32 count);
     // <FS> forgets the bound buffers (the state unbind() leaves behind) without issuing a GL call

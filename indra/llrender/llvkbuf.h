@@ -33,22 +33,13 @@ namespace LLVkBuf
 namespace LLVkGL
 {
     void uniform_block_bind(unsigned binding, unsigned buffer);
-    // the vertex input state the draws read: which buffer holds the vertices and the indices, and where each attribute of the shader comes from
-    void vertex_input_apply(bool bind_array, unsigned array_buffer, bool bind_elem, unsigned elem_buffer, const LLVkAsync::VertexAttrib* attribs, unsigned count);
-    // binds the program and switches the attribute arrays (bit masks of locations); the vertex and index buffers are unbound
-    void shader_bind(void* program, unsigned enable_mask, unsigned disable_mask);
     void draw_arrays(unsigned mode, int first, int count);
     void draw_elements(unsigned mode, unsigned start, unsigned end, int count, unsigned type, const void* indices);
     void constant_attribute(unsigned location, float x, float y, float z, float w);
     // F2.4 draw records: the worker makes the program and (when given) the vertex binding of a CMD_DRAW2 current, in place of the shader bind / array run records
     void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding);
-    // LL_VK_DRAWREC=1: compares what the producer says the next draw uses (CMD_DRAW_CHECK, right before the old CMD_DRAW) with what the old state machine holds
-    void draw_check(void* program, const LLVkState::Block& producer_state, const LLVkAsync::DrawBinding& binding, const unsigned* slot_ids);
-    // F2.6 verify: after the draw's slot binds, every sampler of the current program resolves to the same texture through the producer's per-unit ids as through the old unit x target table
-    void slot_check();
     // F2.6: a draw record's texture slot: the unit holds this texture (no target)
     void slot_set(unsigned unit, unsigned name);
-    void draw_check_draw();                 // an old CMD_DRAW arrived (verify counts a draw without a check)
     // F2.5 verify: after a draw's uniform writes were applied, the current program's real class blocks are compared with the producer's range writes
     void uniform_check();
     std::string draw_check_report();        // counts since the last call

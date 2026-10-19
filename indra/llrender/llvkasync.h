@@ -68,7 +68,7 @@ namespace LLVkAsync
     // the vertex array state of LLVertexBuffer::setBuffer(): optional array buffer bind, the attribute pointers, optional index buffer bind (played in that order).
     // Only on the main producer (see mainProducer()); one record, played by the worker through the same functions the separate calls reach.
     // a texture bind with its unit (LLTexUnit): replaces a held glActiveTexture + glBindTexture pair
-    void bindTextureUnit(U32 unit, U32 target, U32 texture);
+    void bindTextureUnit(U32 unit, U32 texture);
     // draws (LLVertexBuffer): the same records glDrawRangeElements / glDrawArrays queue, written without the call coalescer in between
     void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices);
     void drawArrays(U32 mode, S32 first, S32 count);
@@ -78,7 +78,7 @@ namespace LLVkAsync
     // the vertex buffer pool gives a buffer name to another owner (or takes it back): what the name held is not what it will hold; the arena's epoch moves on
     void bufferRecycle(U32 name);
     // LLGLSLShader::bind(): unbinds the vertex and index buffers, binds the program (null: unchanged) and enables / disables vertex attribute arrays (bit masks of attribute locations)
-    void shaderBind(void* program, U32 enable_mask, U32 disable_mask);
+    void shaderBind(void* program);
     // one texture parameter (wrap, filter, anisotropy ...), see LLVkTex::params
     struct TexParam { U32 mPname; U32 mIsFloat; S32 mInt; F32 mFloat; };
     // render targets (LLRenderTarget): attach a texture to a framebuffer by name (then bind restore_fbo again), and make a framebuffer current with its draw buffers and viewport
@@ -94,7 +94,6 @@ namespace LLVkAsync
     void targetDrawBuffers(U32 fbo, S32 draw_buffers);
     // a named GPU zone (the viewer's LL_PROFILE_GPU_ZONE scopes, enabled with FSGpuZoneTimers + LL_VK_PHASES): the worker writes a GPU timestamp at this point of the frame
     void gpuZone(const char* name, bool begin);
-    void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
     // ---- F2.5 measure first: main-thread cost per front-end entry point (counted with LL_VK_OPSTATS, every 16th call timed; reported in the VkOps "worker operations" line) ----
     enum FrontPoint { FP_SHADER_BIND, FP_UNIFORM, FP_UNIFORM_MATRIX, FP_UNIFORM_SENT, FP_TEXUNIT_BIND, FP_BLEND, FP_GLSTATE, FP_SET_BUFFER, FP_DRAW, FP_SYNC_MATRICES, FP_COUNT };
@@ -112,9 +111,7 @@ namespace LLVkAsync
     inline void frontCount(int id) { if (gFrontStats) frontNote(id); }
 
     // ---- F2.4: the draw record (doc/vulkan/F2-draw-records.md) ----
-    // LL_VK_DRAWREC (default 2): 0 the old stream (shader bind + array run records, the worker keeps a vertex array state), 1 verify (the old stream plus a CMD_DRAW_CHECK before every draw that
-    // carries what the draw record would say), 2 draw records only (CMD_DRAW2 names its program and carries its vertex binding; no shader bind / array run records)
-    extern int gDrawRec;
+    // F2.4: the draw record (doc/vulkan/F2-draw-records.md): a draw names its program and carries its vertex binding, the texture ids and the uniform writes that changed
     // F2.5: LL_VK_UNIFORMREC: 0 per-uniform records and a value cache per shader (old), 1 verify (old + the producer's class blocks, range writes go to a second copy the worker
     // compares with the real one at every draw), 2 range writes only (the producer keeps a copy of each program's class blocks, resolves uniforms to byte ranges, sends the changed bytes)
     extern int gUniformRec;
@@ -185,13 +182,11 @@ namespace LLVkAsync
         CMD_FRAME_BEGIN, CMD_FRAME_END, CMD_PRESENT, CMD_HOLD, CMD_SNAPSHOT_BOUNDARY,
         CMD_UPSCALE, CMD_PROGRAM_BIND, CMD_UNIFORM_SCALAR, CMD_UNIFORM_VECTOR, CMD_UNIFORM_MATRIX, CMD_SAMPLER_UNIT, CMD_PROGRAM_DESTROY,
         CMD_SYNC, CMD_STOP, CMD_WRAP,
-        CMD_BIND_TEXTURE_UNIT, CMD_ARRAY_RUN,      // merged records, see the coalescing in llvkasync.cpp
         CMD_BUFFER_DATA, CMD_BUFFER_SUBDATA,       // named buffer storage (bufferData / bufferSubData)
         CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (LLVkMirror::shadowPackets)
-        CMD_SHADER_BIND,                           // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
         CMD_TEX_PARAMS,                            // texture parameters of the bound texture, several in one record (LLTexUnit sampler state)
         CMD_FBO_ATTACH, CMD_TARGET_STATE,          // render target commands (framebufferAttach, targetState)
-        CMD_TEX_SLOTS, CMD_DRAW,                   // texture slots that changed since the last draw, alone or folded into the draw record
+        CMD_TEX_SLOTS,                             // texture ids that changed since the last draw, when something other than a draw comes first (a draw record carries them itself)
         CMD_GPU_ZONE,                              // a named GPU timing zone begins or ends here in the command stream (FSGpuZoneTimers)
         CMD_UNIFORM_BATCH,                         // loose uniform writes that were pending when something other than a draw came first (a draw carries them inside its own record)
         CMD_BUFFER_RECYCLE,                        // a pooled buffer name changes hands (bufferRecycle)
@@ -203,7 +198,7 @@ namespace LLVkAsync
         CMD_CLEAR,                                 // F1.4: clear the current target (llvktarget.h)
         CMD_QUERY_BEGIN, CMD_QUERY_END,            // F1.6: a query kind begins / ends here in the stream (llvkquery.h)
         CMD_RESOURCE_CREATE, CMD_RESOURCE_DESTROY, // F2.1: names of textures / targets / buffers / queries come into being or go (resourceCreate / resourceDestroy)
-        CMD_DRAW_CHECK, CMD_DRAW2,                 // F2.4: verify record before each old draw (LL_VK_DRAWREC=1) / the draw record that names its program and vertex binding (=2)
+        CMD_DRAW,                                  // F2.4: the draw record: program, vertex binding when it changed, texture ids, uniform writes
         CMD_UNIFORM_RANGE,                         // F2.5: inside a uniform batch: bytes of a program's class block (uniformRange)
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
