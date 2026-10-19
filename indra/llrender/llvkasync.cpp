@@ -332,6 +332,7 @@ struct Pend
     U32 mActive = TEX_UNIT_BASE;          // the active unit as the producer sees it (the worker's after everything queued)
     std::vector<U8> mUni;
     DrawCtx mDraw;
+    U32 mSlotId[32] = {};                 // F2.6: the texture each unit holds as the producer sees it (the ids of the draw records; the unit's target is not part of a binding any more)
 };
 Pend gMainPend;
 thread_local Pend* tlsPend = nullptr;
@@ -692,6 +693,7 @@ void bindTextureUnit(U32 unit, U32 target, U32 texture)
     }
     // the slot table is the record: nothing is written here, what changed goes out with the next draw (or when something that can read texture state comes first)
     pend().mTex[u] = { target, texture };
+    pend().mSlotId[u] = texture;
     pend().mMask |= 1u << u;
 }
 
@@ -760,11 +762,12 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
         DrawCtx& d = pend().mDraw;
         const LLVkState::Block& blk = LLVkState::current();
         const U32 bb = (U32)drawBindingSize(d.mBinding);
-        const U32 cp = (U32)(sizeof(void*) + sizeof(LLVkState::Block) + bb);
+        const U32 cp = (U32)(sizeof(void*) + sizeof(LLVkState::Block) + sizeof(pend().mSlotId) + bb);
         U8* cpp = mainReserve(cp, CMD_DRAW_CHECK, 0);
         memcpy(cpp, &d.mProgram, sizeof(void*));
         memcpy(cpp + sizeof(void*), &blk, sizeof(blk));
-        drawBindingWrite(cpp + sizeof(void*) + sizeof(blk), d.mBinding);
+        memcpy(cpp + sizeof(void*) + sizeof(blk), pend().mSlotId, sizeof(pend().mSlotId));
+        drawBindingWrite(cpp + sizeof(void*) + sizeof(blk) + sizeof(pend().mSlotId), d.mBinding);
         mainCommit(cp);
         noteRecord();
     }
@@ -775,7 +778,8 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
         const U32 n2 = (U32)__popcnt(pend().mMask);
         const U32 uni2 = (U32)pend().mUni.size();
         const U32 bb = d.mDirty ? (U32)((drawBindingSize(d.mBinding) + 7) & ~(size_t)7) : 0;       // padded: the texture entries and uniform writes after it stay aligned
-        const U32 payload2 = (U32)(sizeof(DrawHeader2) + bb + sizeof(PendTex) * n2 + uni2);
+        const U32 idb = (n2 * (U32)sizeof(U32) + 7) & ~7u;       // F2.6: the texture ids of the units that changed (no target), padded
+        const U32 payload2 = (U32)(sizeof(DrawHeader2) + bb + idb + uni2);
         U8* p2 = mainReserve(payload2, CMD_DRAW2, 0);
         DrawHeader2 h2 = { { kind, mode, start, end, count, type, indices, pend().mMask, pend().mActive, n2, uni2 }, d.mProgram, bb, 0 };
         memcpy(p2, &h2, sizeof(h2));
@@ -783,10 +787,21 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
         {
             drawBindingWrite(p2 + sizeof(h2), d.mBinding);
         }
-        pendTexWrite(p2 + sizeof(h2) + bb);
+        {
+            U32* ids = (U32*)(p2 + sizeof(h2) + bb);
+            U32 k = 0;
+            for (U32 m = pend().mMask; m; m &= m - 1)
+            {
+                ids[k++] = pend().mTex[lowBit(m)].mName;
+            }
+            if (idb > n2 * (U32)sizeof(U32))
+            {
+                ids[n2] = 0;
+            }
+        }
         if (uni2)
         {
-            memcpy(p2 + sizeof(h2) + bb + sizeof(PendTex) * n2, pend().mUni.data(), uni2);
+            memcpy(p2 + sizeof(h2) + bb + idb, pend().mUni.data(), uni2);
         }
         mainCommit(payload2);
         noteRecord();
@@ -2336,9 +2351,11 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         memcpy(&program, payload, sizeof(program));
         LLVkState::Block blk;
         memcpy(&blk, payload + sizeof(void*), sizeof(blk));
+        U32 slot_ids[32];
+        memcpy(slot_ids, payload + sizeof(void*) + sizeof(blk), sizeof(slot_ids));
         DrawBinding b;
-        drawBindingRead(payload + sizeof(void*) + sizeof(blk), b);
-        LLVkGL::draw_check(program, blk, b);
+        drawBindingRead(payload + sizeof(void*) + sizeof(blk) + sizeof(slot_ids), b);
+        LLVkGL::draw_check(program, blk, b, slot_ids);
         break;
     }
     case CMD_DRAW2:
@@ -2351,10 +2368,11 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             drawBindingRead(payload + sizeof(DrawHeader2), b);
         }
         LLVkGL::draw_context_apply(h2->mProgram, h2->mBindBytes ? &b : nullptr);
-        const PendTex* e = (const PendTex*)(payload + sizeof(DrawHeader2) + h2->mBindBytes);
+        const U32* ids = (const U32*)(payload + sizeof(DrawHeader2) + h2->mBindBytes);
+        const U32 id_bytes = (h->mCountTex * (U32)sizeof(U32) + 7) & ~7u;
         if (h->mUniBytes)
         {
-            applyUniformBatch(payload + sizeof(DrawHeader2) + h2->mBindBytes + sizeof(PendTex) * h->mCountTex, h->mUniBytes);
+            applyUniformBatch(payload + sizeof(DrawHeader2) + h2->mBindBytes + id_bytes, h->mUniBytes);
         }
         if (gUniformRec == 1)
         {
@@ -2363,7 +2381,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         U32 k = 0;
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
         {
-            LLVkGL::slot_bind(lowBit(m), e[k].mTarget, e[k].mName);
+            LLVkGL::slot_set(lowBit(m), ids[k]);
         }
         if (h->mKind == 0)
         {
@@ -2395,6 +2413,10 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
         {
             LLVkGL::slot_bind(lowBit(m), e[k].mTarget, e[k].mName);
+        }
+        if (gDrawRec == 1)
+        {
+            LLVkGL::slot_check();
         }
         if (h->mKind == 0)
         {

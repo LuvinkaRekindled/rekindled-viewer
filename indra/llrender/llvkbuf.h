@@ -43,7 +43,11 @@ namespace LLVkGL
     // F2.4 draw records: the worker makes the program and (when given) the vertex binding of a CMD_DRAW2 current, in place of the shader bind / array run records
     void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding);
     // LL_VK_DRAWREC=1: compares what the producer says the next draw uses (CMD_DRAW_CHECK, right before the old CMD_DRAW) with what the old state machine holds
-    void draw_check(void* program, const LLVkState::Block& producer_state, const LLVkAsync::DrawBinding& binding);
+    void draw_check(void* program, const LLVkState::Block& producer_state, const LLVkAsync::DrawBinding& binding, const unsigned* slot_ids);
+    // F2.6 verify: after the draw's slot binds, every sampler of the current program resolves to the same texture through the producer's per-unit ids as through the old unit x target table
+    void slot_check();
+    // F2.6: a draw record's texture slot: the unit holds this texture (no target)
+    void slot_set(unsigned unit, unsigned name);
     void draw_check_draw();                 // an old CMD_DRAW arrived (verify counts a draw without a check)
     // F2.5 verify: after a draw's uniform writes were applied, the current program's real class blocks are compared with the producer's range writes
     void uniform_check();
