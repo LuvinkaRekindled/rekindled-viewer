@@ -957,6 +957,7 @@ void LLVertexBuffer::forgetBoundBuffers()
 void LLVertexBuffer::unbind()
 {
     LLVkAsync::setArrayState(true, 0, true, 0, nullptr, 0);      // both buffer binds as one record
+    LLVkAsync::drawBindingClear();
     sGLRenderBuffer = 0;
     sGLRenderIndices = 0;
 }
@@ -1648,13 +1649,19 @@ void LLVertexBuffer::setBuffer()
     if (bind_array || setup || bind_elem)
     {
         AttribSink sink;
-        if (setup)
+        // F2.4: with the draw record on, the binding is the whole thing (this buffer, the bound shader's attributes), so the attribute pointers are worked out whenever the binding changes
+        const bool binding_rec = LLVkAsync::gDrawRec != 0;
+        if (setup || binding_rec)
         {
             sAttribSink = &sink;
             setupVertexBuffer();
             sAttribSink = nullptr;
         }
-        LLVkAsync::setArrayState(bind_array, mGLBuffer, bind_elem, mGLIndices, sink.mAttribs, sink.mCount);
+        if (binding_rec)
+        {
+            LLVkAsync::drawBinding(mGLBuffer, mGLIndices, sink.mAttribs, sink.mCount);
+        }
+        LLVkAsync::setArrayState(bind_array, mGLBuffer, bind_elem, mGLIndices, sink.mAttribs, setup ? sink.mCount : 0);
         if (bind_array)
         {
             sGLRenderBuffer = mGLBuffer;

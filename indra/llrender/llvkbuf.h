@@ -15,6 +15,7 @@
 
 #include "linden_common.h"
 #include "llvkasync.h"
+#include "llvkstate.h"
 
 namespace LLVkBuf
 {
@@ -39,6 +40,12 @@ namespace LLVkGL
     void draw_arrays(unsigned mode, int first, int count);
     void draw_elements(unsigned mode, unsigned start, unsigned end, int count, unsigned type, const void* indices);
     void constant_attribute(unsigned location, float x, float y, float z, float w);
+    // F2.4 draw records: the worker makes the program and (when given) the vertex binding of a CMD_DRAW2 current, in place of the shader bind / array run records
+    void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding);
+    // LL_VK_DRAWREC=1: compares what the producer says the next draw uses (CMD_DRAW_CHECK, right before the old CMD_DRAW) with what the old state machine holds
+    void draw_check(void* program, const LLVkState::Block& producer_state, const LLVkAsync::DrawBinding& binding);
+    void draw_check_draw();                 // an old CMD_DRAW arrived (verify counts a draw without a check)
+    std::string draw_check_report();        // counts since the last call
 }
 
 #endif // LL_VULKAN

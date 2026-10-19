@@ -96,6 +96,52 @@ namespace LLVkAsync
     void gpuZone(const char* name, bool begin);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
+    // ---- F2.4: the draw record (doc/vulkan/F2-draw-records.md) ----
+    // LL_VK_DRAWREC: 0 the old stream (shader bind + array run records, the worker keeps a vertex array state), 1 verify (the old stream plus a CMD_DRAW_CHECK before every draw that
+    // carries what the draw record would say), 2 draw records only (CMD_DRAW2 names its program and carries its vertex binding; no shader bind / array run records)
+    extern int gDrawRec;
+    // where the vertex attributes of a draw come from, as values: the buffers and, for each shader attribute location that is read from an array, how
+    struct BindAttr { S32 mSize; S32 mStride; U64 mOffset; U8 mType; U8 mNormalized; U8 mInteger; U8 mPad[5]; };       // mType: LLVkFormat::PType
+    struct DrawBinding
+    {
+        U32 mArray = 0;             // vertex buffer id (0: none)
+        U32 mElem = 0;              // index buffer id
+        U32 mPresent = 0;           // bit per attribute location read from the array; the others read the constant attribute
+        BindAttr mAttr[16] = {};
+    };
+    // a binding in a record: array, elem, present mask, then one BindAttr per present location in location order
+    inline size_t drawBindingSize(const DrawBinding& b)
+    {
+        size_t n = 0;
+        for (U32 m = b.mPresent; m; m &= m - 1) { ++n; }
+        return 3 * sizeof(U32) + n * sizeof(BindAttr);
+    }
+    inline U8* drawBindingWrite(U8* p, const DrawBinding& b)
+    {
+        memcpy(p, &b, 3 * sizeof(U32));
+        p += 3 * sizeof(U32);
+        for (U32 i = 0; i < 16; ++i)
+        {
+            if (b.mPresent & (1u << i)) { memcpy(p, &b.mAttr[i], sizeof(BindAttr)); p += sizeof(BindAttr); }
+        }
+        return p;
+    }
+    inline const U8* drawBindingRead(const U8* p, DrawBinding& b)
+    {
+        memcpy(&b, p, 3 * sizeof(U32));
+        p += 3 * sizeof(U32);
+        for (U32 i = 0; i < 16; ++i)
+        {
+            if (b.mPresent & (1u << i)) { memcpy(&b.mAttr[i], p, sizeof(BindAttr)); p += sizeof(BindAttr); }
+            else { memset(&b.mAttr[i], 0, sizeof(BindAttr)); }
+        }
+        return p;
+    }
+    // the draw context of the calling producer: LLGLSLShader::bind/unbind and LLVertexBuffer::setBuffer/unbind write it (only when gDrawRec != 0)
+    void drawProgram(void* program);                                                             // the program of the next draws (null: none)
+    void drawBindingClear();                                                                     // no buffers bound
+    void drawBinding(U32 array_buffer, U32 elem_buffer, const VertexAttrib* attribs, U32 count); // the whole binding for the bound shader's attributes (GL type numbers as in setArrayState)
+
     // ---- texture pixels without a copy (C4) ----
     // LL_VK_TEXONECOPY=1 turns the one-copy upload path on (off by default: no measured gain, see PLAN-cleanup-before-rt.md C4)
     extern bool gTexOneCopy;
@@ -134,7 +180,8 @@ namespace LLVkAsync
         CMD_CONST_ATTRIB,                          // F1.3: the constant value of a vertex attribute that has no array
         CMD_CLEAR,                                 // F1.4: clear the current target (llvktarget.h)
         CMD_QUERY_BEGIN, CMD_QUERY_END,            // F1.6: a query kind begins / ends here in the stream (llvkquery.h)
-        CMD_RESOURCE_CREATE, CMD_RESOURCE_DESTROY  // F2.1: names of textures / targets / buffers / queries come into being or go (resourceCreate / resourceDestroy)
+        CMD_RESOURCE_CREATE, CMD_RESOURCE_DESTROY, // F2.1: names of textures / targets / buffers / queries come into being or go (resourceCreate / resourceDestroy)
+        CMD_DRAW_CHECK, CMD_DRAW2                  // F2.4: verify record before each old draw (LL_VK_DRAWREC=1) / the draw record that names its program and vertex binding (=2)
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 
