@@ -115,6 +115,11 @@ namespace LLVkAsync
     // LL_VK_DRAWREC (default 2): 0 the old stream (shader bind + array run records, the worker keeps a vertex array state), 1 verify (the old stream plus a CMD_DRAW_CHECK before every draw that
     // carries what the draw record would say), 2 draw records only (CMD_DRAW2 names its program and carries its vertex binding; no shader bind / array run records)
     extern int gDrawRec;
+    // F2.5: LL_VK_UNIFORMREC: 0 per-uniform records and a value cache per shader (old), 1 verify (old + the producer's class blocks, range writes go to a second copy the worker
+    // compares with the real one at every draw), 2 range writes only (the producer keeps a copy of each program's class blocks, resolves uniforms to byte ranges, sends the changed bytes)
+    extern int gUniformRec;
+    bool mainOnlyProducer();            // the main thread, not inside a sub-stream: the only producer that owns the shaders' class block copies
+    void uniformRange(void* program, U32 cls, U32 offset, U32 size, const void* data);
     // where the vertex attributes of a draw come from, as values: the buffers and, for each shader attribute location that is read from an array, how
     struct BindAttr { S32 mSize; S32 mStride; U64 mOffset; U8 mType; U8 mNormalized; U8 mInteger; U8 mPad[5]; };       // mType: LLVkFormat::PType
     struct DrawBinding
@@ -196,7 +201,8 @@ namespace LLVkAsync
         CMD_CLEAR,                                 // F1.4: clear the current target (llvktarget.h)
         CMD_QUERY_BEGIN, CMD_QUERY_END,            // F1.6: a query kind begins / ends here in the stream (llvkquery.h)
         CMD_RESOURCE_CREATE, CMD_RESOURCE_DESTROY, // F2.1: names of textures / targets / buffers / queries come into being or go (resourceCreate / resourceDestroy)
-        CMD_DRAW_CHECK, CMD_DRAW2                  // F2.4: verify record before each old draw (LL_VK_DRAWREC=1) / the draw record that names its program and vertex binding (=2)
+        CMD_DRAW_CHECK, CMD_DRAW2,                 // F2.4: verify record before each old draw (LL_VK_DRAWREC=1) / the draw record that names its program and vertex binding (=2)
+        CMD_UNIFORM_RANGE,                         // F2.5: inside a uniform batch: bytes of a program's class block (uniformRange)
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 

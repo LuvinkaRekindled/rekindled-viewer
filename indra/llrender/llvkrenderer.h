@@ -61,6 +61,14 @@ public:
     // the same, addressing the uniform by its index in getInfo().mUniforms
     void setFloatsAt(size_t uniform_index, const F32* data, U32 components, U32 count);
     void setMatricesAt(size_t uniform_index, const F32* data, U32 columns, U32 rows, U32 count);
+    // F2.5: the producer resolves the uniform (class, byte offset) and sends the bytes of the range it changed; the class is uploaded only when the bytes differ
+    void writeRange(U32 cls, U32 offset, U32 size, const U8* data);
+    // the loose uniform block of a class as built (initial values from the shader text): the producer's own copy starts from it
+    const std::vector<U8>& shadowOf(U32 cls) const { return mShadow[cls]; }
+    // LL_VK_UNIFORMREC=1 (verify): the producer's range writes go to a second copy of the blocks, and this counts the bytes where it differs from the real one (the slots the
+    // worker writes itself are left out); 'first' describes the first difference
+    void writeRangeVerify(U32 cls, U32 offset, U32 size, const U8* data);
+    U32 verifyShadows(std::string& first) const;
 
     // texture unit each sampler reads (GL numbering; defaults to the sampler's binding)
     void setSamplerUnit(size_t sampler_index, U32 unit) { if (sampler_index < mSamplerUnits.size()) mSamplerUnits[sampler_index] = unit; }
@@ -107,6 +115,7 @@ private:
     std::vector<U32> mSamplerUnits;
     std::vector<U8> mSamplerClass;      // 0 2D, 1 cube, 2 cube array, 3 2D array, 4 3D, 5 multisample (index into the GL per-unit texture bindings)
     std::vector<U8> mShadow[UC_COUNT];   // the loose uniform block of each class (F2.3): written by the setters, copied to the uniform ring when its class changed
+    std::vector<U8> mShadowNew[UC_COUNT];   // F2.5 verify only: what the producer's range writes make of the blocks
     bool mBindless = false;             // <FS> samplers are table slots written into mShadow (see ProgramInfo::mBindless)
     bool mUsesRt = false;               // <FS> traces rays against the frame's scene: the draw binds set 3 (ProgramInfo::mUsesRt)
     std::vector<U8> mSamplerTable;      // per sampler: the bindless table it reads (0 2D, 1 cube, 2 cube array, 3 2D shadow)

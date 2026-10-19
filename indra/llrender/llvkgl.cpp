@@ -2682,6 +2682,7 @@ namespace
 struct DrawCheckStats
 {
     U64 mChecks = 0, mDraws = 0;
+    U64 mUniformChecks = 0, mBadUniform = 0;
     U64 mBadProgram = 0, mBadState = 0, mBadBuffers = 0, mBadEnabled = 0, mBadAttrib = 0, mNoDraw = 0, mNoCheck = 0;
     std::map<std::string, U64> mBadPerProgram;
 };
@@ -2774,6 +2775,26 @@ void draw_check(void* program, const LLVkState::Block& producer_state, const LLV
     }
 }
 
+void uniform_check()
+{
+    if (!LLVkMirror::isReady())
+    {
+        return;
+    }
+    Program* cur = Renderer::instance().getProgram();
+    if (!cur)
+    {
+        return;
+    }
+    ++sDc.mUniformChecks;
+    std::string first;
+    if (const U32 bad = cur->verifyShadows(first))
+    {
+        ++sDc.mBadUniform;
+        dc_log("uniform class blocks differ", std::to_string(bad) + " bytes, first: " + first);
+    }
+}
+
 void draw_check_draw()
 {
     ++sDc.mDraws;
@@ -2789,7 +2810,8 @@ std::string draw_check_report()
 {
     std::string out = "draws " + std::to_string(sDc.mDraws) + ", checks " + std::to_string(sDc.mChecks) + " | mismatches: program " + std::to_string(sDc.mBadProgram) + ", state " + std::to_string(sDc.mBadState)
                     + ", buffers " + std::to_string(sDc.mBadBuffers) + ", attribute source " + std::to_string(sDc.mBadEnabled) + ", attribute fields " + std::to_string(sDc.mBadAttrib)
-                    + ", check without draw " + std::to_string(sDc.mNoDraw) + ", draw without check " + std::to_string(sDc.mNoCheck);
+                    + ", check without draw " + std::to_string(sDc.mNoDraw) + ", draw without check " + std::to_string(sDc.mNoCheck)
+                    + " | uniform blocks: checks " + std::to_string(sDc.mUniformChecks) + ", draws with a difference " + std::to_string(sDc.mBadUniform);
     if (!sDc.mBadPerProgram.empty())
     {
         out += " | by program:";
