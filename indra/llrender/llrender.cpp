@@ -35,7 +35,6 @@
 #include "llrendertarget.h"
 #include "lltexture.h"
 #include "llshadermgr.h"
-#include "hbxxh.h"
 #if defined(LL_VULKAN)
 #include "llvkasync.h"
 #endif
@@ -70,13 +69,6 @@ bool LLRender::sNsightDebugSupport = false;
 LLVector2 LLRender::sUIGLScaleFactor = LLVector2(1.f, 1.f);
 bool LLRender::sClassicMode = false;
 
-struct LLVBCache
-{
-    LLPointer<LLVertexBuffer> vb;
-    std::chrono::steady_clock::time_point touched;
-};
-
-static std::unordered_map<U64, LLVBCache> sVBCache;
 static thread_local std::list<LLVertexBufferData> *sBufferDataList = nullptr;
 
 static const GLenum sGLTextureType[] =
@@ -1816,6 +1808,7 @@ void LLRender::flush()
     if (mCount > 0)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+        LLVkAsync::FrontLap front_lap(LLVkAsync::FP_FLUSH);
         llassert_always(LLGLSLShader::sCurBoundShaderPtr != nullptr);
 
         if (!mUIOffset.empty())
@@ -1856,6 +1849,7 @@ void LLRender::flush()
 
             if (sBufferDataList)
             {
+                // a list that is kept and drawn again later (the font cache): real vertex buffers
                 vb = genBuffer(attribute_mask, count);
                 sBufferDataList->emplace_back(
                     vb,
@@ -1866,13 +1860,23 @@ void LLRender::flush()
                     mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]],
                     mMatrix[MM_TEXTURE0][mMatIdx[MM_TEXTURE0]]
                     );
+                drawBuffer(vb, mMode, count);
             }
             else
             {
-                vb = bufferfromCache(attribute_mask, count);
+                // F3.1: the vertices travel in the draw record (no vertex buffer, no hash cache): position always, texcoord and colour when the shader reads them
+                static_assert((U32)LLVkAsync::SCRATCH_POSITION == (U32)LLVertexBuffer::MAP_VERTEX && (U32)LLVkAsync::SCRATCH_TEXCOORD0 == (U32)LLVertexBuffer::MAP_TEXCOORD0 &&
+                              (U32)LLVkAsync::SCRATCH_COLOR == (U32)LLVertexBuffer::MAP_COLOR, "scratch attribute bits are the vertex buffer's");
+                if (attribute_mask & ~immediate_mask)
+                {
+                    LL_WARNS_ONCE("Vulkan") << "immediate mode: the bound shader reads attributes (mask 0x" << std::hex << attribute_mask << std::dec << ") that immediate vertices do not have: they read the constant value" << LL_ENDL;
+                }
+                LLVkAsync::FrontLap draw_lap(LLVkAsync::FP_DRAW);
+                ++LLVertexBuffer::sDrawCalls;
+                gGL.syncMatrices();
+                LLVkAsync::drawScratch(LLVertexBuffer::sGLMode[mMode], (S32)count, (attribute_mask & immediate_mask) | LLVertexBuffer::MAP_VERTEX,
+                                       mVerticesp.get(), mTexcoordsp.get(), mColorsp.get());
             }
-
-            drawBuffer(vb, mMode, count);
         }
         else
         {
@@ -1882,81 +1886,6 @@ void LLRender::flush()
 
         resetStriders(count);
     }
-}
-
-LLVertexBuffer* LLRender::bufferfromCache(U32 attribute_mask, U32 count)
-{
-    LLVertexBuffer *vb = nullptr;
-    HBXXH64 hash;
-
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("vb cache hash");
-
-        hash.update((U8*)mVerticesp.get(), count * sizeof(LLVector4a));
-        if (attribute_mask & LLVertexBuffer::MAP_TEXCOORD0)
-        {
-            hash.update((U8*)mTexcoordsp.get(), count * sizeof(LLVector2));
-        }
-
-        if (attribute_mask & LLVertexBuffer::MAP_COLOR)
-        {
-            hash.update((U8*)mColorsp.get(), count * sizeof(LLColor4U));
-        }
-
-        hash.finalize();
-    }
-
-    U64 vhash = hash.digest();
-
-    // check the VB cache before making a new vertex buffer
-    // This is a giant hack to deal with (mostly) our terrible UI rendering code
-    // that was built on top of OpenGL immediate mode.  Huge performance wins
-    // can be had by not uploading geometry to VRAM unless absolutely necessary.
-    // Most of our usage of the "immediate mode" style draw calls is actually
-    // sending the same geometry over and over again.
-    // To leverage this, we maintain a running hash of the vertex stream being
-    // built up before a flush, and then check that hash against a VB
-    // cache just before creating a vertex buffer in VRAM
-    std::unordered_map<U64, LLVBCache>::iterator cache = sVBCache.find(vhash);
-
-    if (cache != sVBCache.end())
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("vb cache hit");
-        // cache hit, just use the cached buffer
-        vb = cache->second.vb;
-        cache->second.touched = std::chrono::steady_clock::now();
-    }
-    else
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("vb cache miss");
-        vb = genBuffer(attribute_mask, count);
-
-        sVBCache[vhash] = { vb , std::chrono::steady_clock::now() };
-
-        static U32 miss_count = 0;
-        miss_count++;
-        if (miss_count > 1024)
-        {
-            LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("vb cache clean");
-            miss_count = 0;
-            auto now = std::chrono::steady_clock::now();
-
-            using namespace std::chrono_literals;
-            // every 1024 misses, clean the cache of any VBs that haven't been touched in the last second
-            for (std::unordered_map<U64, LLVBCache>::iterator iter = sVBCache.begin(); iter != sVBCache.end(); )
-            {
-                if (now - iter->second.touched > 1s)
-                {
-                    iter = sVBCache.erase(iter);
-                }
-                else
-                {
-                    ++iter;
-                }
-            }
-        }
-    }
-    return vb;
 }
 
 LLVertexBuffer* LLRender::genBuffer(U32 attribute_mask, S32 count)

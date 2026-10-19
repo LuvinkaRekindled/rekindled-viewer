@@ -182,11 +182,11 @@ unsigned long long gOpStatCalls[OP_STAT_SLOTS] = {};
 unsigned long long gOpStatTsc0 = 0;
 unsigned long long gFrontCalls[FP_COUNT] = {};
 unsigned long long gFrontTicks[FP_COUNT] = {};
-const char* const kFrontNames[FP_COUNT] = { "LLGLSLShader::bind", "uniform*", "uniformMatrix*", "uniform writes sent (count only)", "LLTexUnit::bind", "blendFunc", "LLGLState", "setBuffer", "draw*", "syncMatrices (contains uniformMatrix)" };
+const char* const kFrontNames[FP_COUNT] = { "LLGLSLShader::bind", "uniform*", "uniformMatrix*", "uniform writes sent (count only)", "LLTexUnit::bind", "blendFunc", "LLGLState", "setBuffer", "draw*", "syncMatrices (contains uniformMatrix)", "LLRender::flush (contains draw*)" };
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bufferData", "bufferSubData", "shadowPackets", "texParams", "fboAttach", "targetState", "texSlots", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "draw", "uniformRange" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bufferData", "bufferSubData", "shadowPackets", "texParams", "fboAttach", "targetState", "texSlots", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "draw", "uniformRange", "drawScratch" };
 const char* slotName(int slot) { return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
@@ -725,7 +725,8 @@ namespace
 }
 
 // the draw and the texture slots / uniform writes that changed since the last one, as one record
-static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices)
+// scratch (kind 2, F3.1): the vertices follow the uniform writes (extra: three pieces, null when absent); the draw reads no vertex binding, so the producer's binding is neither written nor marked as sent
+static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices, const void* const* extra = nullptr, const size_t* extra_bytes = nullptr)
 {
     MainLap lap;
     stateEmit();
@@ -734,15 +735,33 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
         DrawCtx& d = pend().mDraw;
         const U32 n2 = (U32)__popcnt(pend().mMask);
         const U32 uni2 = (U32)pend().mUni.size();
-        const U32 bb = d.mDirty ? (U32)((drawBindingSize(d.mBinding) + 7) & ~(size_t)7) : 0;       // padded: the texture entries and uniform writes after it stay aligned
+        const bool scratch = kind == 2;
+        const U32 bb = (d.mDirty && !scratch) ? (U32)((drawBindingSize(d.mBinding) + 7) & ~(size_t)7) : 0;       // padded: the texture entries and uniform writes after it stay aligned
         const U32 idb = (n2 * (U32)sizeof(U32) + 7) & ~7u;       // F2.6: the texture ids of the units that changed (no target), padded
-        const U32 payload2 = (U32)(sizeof(DrawHeader2) + bb + idb + uni2);
-        U8* p2 = mainReserve(payload2, CMD_DRAW, 0);
+        size_t vbytes = 0;
+        for (int i = 0; scratch && i < 3; ++i)
+        {
+            vbytes += extra_bytes[i];
+        }
+        const U32 payload2 = (U32)(sizeof(DrawHeader2) + bb + idb + uni2 + vbytes);
+        U8* p2 = mainReserve(payload2, scratch ? CMD_DRAW_SCRATCH : CMD_DRAW, 0);
         DrawHeader2 h2 = { { kind, mode, start, end, count, type, indices, pend().mMask, n2, uni2 }, d.mProgram, bb, 0 };
         memcpy(p2, &h2, sizeof(h2));
         if (bb)
         {
             drawBindingWrite(p2 + sizeof(h2), d.mBinding);
+        }
+        if (scratch)
+        {
+            U8* q = p2 + sizeof(h2) + idb + uni2;
+            for (int i = 0; i < 3; ++i)
+            {
+                if (extra_bytes[i])
+                {
+                    memcpy(q, extra[i], extra_bytes[i]);
+                    q += extra_bytes[i];
+                }
+            }
         }
         {
             U32* ids = (U32*)(p2 + sizeof(h2) + bb);
@@ -762,7 +781,10 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
         }
         mainCommit(payload2);
         noteRecord();
-        d.mDirty = false;
+        if (!scratch)
+        {
+            d.mDirty = false;
+        }
         d.mSent = d.mProgram;
         pend().mMask = 0;
         pend().mUni.clear();
@@ -809,6 +831,33 @@ void drawArrays(U32 gl_mode, S32 first, S32 count)
         return;
     }
     writeDraw(1, mode, (U32)first, 0, count, 0, nullptr);
+}
+
+void drawScratch(U32 gl_mode, S32 count, U32 mask, const void* positions, const void* texcoords, const void* colors)
+{
+    const U32 mode = LLVkFormat::topology(gl_mode);
+    const size_t n = (size_t)std::max<S32>(count, 0);
+    const void* const pieces[3] = { positions, (mask & SCRATCH_TEXCOORD0) ? texcoords : nullptr, (mask & SCRATCH_COLOR) ? colors : nullptr };
+    const size_t bytes[3] = { n * 16, (mask & SCRATCH_TEXCOORD0) ? n * 8 : 0, (mask & SCRATCH_COLOR) ? n * 4 : 0 };
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::draw_context_apply(pend().mDraw.mProgram, nullptr);
+        std::vector<U8> joined(bytes[0] + bytes[1] + bytes[2]);
+        size_t at = 0;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (bytes[i]) { memcpy(joined.data() + at, pieces[i], bytes[i]); at += bytes[i]; }
+        }
+        LLVkGL::draw_scratch(mode, count, mask, joined.data());
+        return;
+    }
+    if (!produces())
+    {
+        return;
+    }
+    // (kind 2: start carries the attribute mask)
+    writeDraw(2, mode, mask, 0, count, 0, nullptr, pieces, bytes);
 }
 
 void gpuZone(const char* name, bool begin)
@@ -2229,6 +2278,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         break;
     }
     case CMD_DRAW:
+    case CMD_DRAW_SCRATCH:
     {
         const DrawHeader2* h2 = (const DrawHeader2*)payload;
         const DrawHeader* h = &h2->mDraw;
@@ -2256,6 +2306,10 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         if (h->mKind == 0)
         {
             LLVkGL::draw_elements(h->mMode, h->mStart, h->mEnd, h->mCount, h->mType, h->mIndices);
+        }
+        else if (h->mKind == 2)
+        {
+            LLVkGL::draw_scratch(h->mMode, h->mCount, h->mStart, payload + sizeof(DrawHeader2) + h2->mBindBytes + id_bytes + h->mUniBytes);
         }
         else
         {
