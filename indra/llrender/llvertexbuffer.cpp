@@ -989,6 +989,15 @@ void LLVertexBuffer::cleanupClass()
 
 //----------------------------------------------------------------------------
 
+// F2.4: what setBuffer worked out for this buffer last: the whole vertex binding for the shader attribute mask. The attribute pointers are a function of the layout (type mask and
+// vertex count, which fix the offsets), the two buffer ids and the mask, so the binding is reused while all five are the same (the verify mode of LL_VK_DRAWREC compares every draw's
+// binding with the old state machine's, so a stale one shows up there).
+struct LLVertexBuffer::VkBindCache
+{
+    U32 mNumVerts = 0, mTypeMask = 0, mMask = 0, mArray = 0, mElem = 0;
+    LLVkAsync::DrawBinding mBinding;
+};
+
 LLVertexBuffer::LLVertexBuffer(U32 typemask)
 :   LLRefCount(),
     mTypeMask(typemask)
@@ -1061,6 +1070,7 @@ U32 LLVertexBuffer::calcVertexSize(const U32& typemask)
 //virtual
 LLVertexBuffer::~LLVertexBuffer()
 {
+    delete mVkBindCache;
     if (mMapped)
     { // is on the mapped buffer list but doesn't need to be flushed
         mMapped = false;
@@ -1653,9 +1663,16 @@ void LLVertexBuffer::setBuffer()
     if (bind_array || setup || bind_elem)
     {
         AttribSink sink;
-        // F2.4: with the draw record on, the binding is the whole thing (this buffer, the bound shader's attributes), so the attribute pointers are worked out whenever the binding changes
+        // F2.4: with the draw record on, the binding is the whole thing (this buffer, the bound shader's attributes): reused from the cache while the layout, buffers and mask are the same
         const bool binding_rec = LLVkAsync::gDrawRec != 0;
-        if (setup || binding_rec)
+        bool cache_hit = false;
+        if (binding_rec)
+        {
+            const VkBindCache* c = mVkBindCache;
+            cache_hit = c && c->mNumVerts == mNumVerts && c->mTypeMask == mTypeMask && c->mMask == data_mask && c->mArray == mGLBuffer && c->mElem == mGLIndices;
+        }
+        // (the old stream, modes 0 and 1, still needs the attribute pointers when its own state says they changed)
+        if ((setup && LLVkAsync::gDrawRec != 2) || (binding_rec && !cache_hit))
         {
             sAttribSink = &sink;
             setupVertexBuffer();
@@ -1663,7 +1680,24 @@ void LLVertexBuffer::setBuffer()
         }
         if (binding_rec)
         {
-            LLVkAsync::drawBinding(mGLBuffer, mGLIndices, sink.mAttribs, sink.mCount);
+            if (cache_hit)
+            {
+                LLVkAsync::drawBindingSet(mVkBindCache->mBinding);
+            }
+            else
+            {
+                LLVkAsync::drawBinding(mGLBuffer, mGLIndices, sink.mAttribs, sink.mCount);
+                if (!mVkBindCache)
+                {
+                    mVkBindCache = new VkBindCache();
+                }
+                mVkBindCache->mNumVerts = mNumVerts;
+                mVkBindCache->mTypeMask = mTypeMask;
+                mVkBindCache->mMask = data_mask;
+                mVkBindCache->mArray = mGLBuffer;
+                mVkBindCache->mElem = mGLIndices;
+                LLVkAsync::drawBindingGet(mVkBindCache->mBinding);
+            }
         }
         LLVkAsync::setArrayState(bind_array, mGLBuffer, bind_elem, mGLIndices, sink.mAttribs, setup ? sink.mCount : 0);
         if (bind_array)

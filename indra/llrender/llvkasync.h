@@ -161,6 +161,8 @@ namespace LLVkAsync
     void drawProgram(void* program);                                                             // the program of the next draws (null: none)
     void drawBindingClear();                                                                     // no buffers bound
     void drawBinding(U32 array_buffer, U32 elem_buffer, const VertexAttrib* attribs, U32 count); // the whole binding for the bound shader's attributes (GL type numbers as in setArrayState)
+    void drawBindingSet(const DrawBinding& binding);        // a binding worked out earlier (LLVertexBuffer keeps the last one of each buffer)
+    void drawBindingGet(DrawBinding& out);                  // the producer's current binding
 
     // ---- texture pixels without a copy (C4) ----
     // LL_VK_TEXONECOPY=1 turns the one-copy upload path on (off by default: no measured gain, see PLAN-cleanup-before-rt.md C4)

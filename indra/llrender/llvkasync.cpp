@@ -635,6 +635,23 @@ void drawBinding(U32 array_buffer, U32 elem_buffer, const VertexAttrib* given, U
     d->mDirty = true;
 }
 
+void drawBindingSet(const DrawBinding& binding)
+{
+    if (DrawCtx* d = drawCtx())
+    {
+        d->mBinding = binding;
+        d->mDirty = true;
+    }
+}
+
+void drawBindingGet(DrawBinding& out)
+{
+    if (DrawCtx* d = drawCtx())
+    {
+        out = d->mBinding;
+    }
+}
+
 void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
 {
     if (DrawCtx* d = drawCtx())
