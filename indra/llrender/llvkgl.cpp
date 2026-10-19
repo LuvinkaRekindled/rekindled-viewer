@@ -2628,6 +2628,179 @@ void shader_bind(void* program, unsigned enable_mask, unsigned disable_mask)
     }
 }
 
+//-----------------------------------------------------------------------------------------------------
+// F2.4: draw records (doc/vulkan/F2-draw-records.md)
+//-----------------------------------------------------------------------------------------------------
+
+// CMD_DRAW2: the draw names its program and carries its vertex binding when it changed; the binding is written into the vertex input state the draw functions read
+void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
+{
+    if (LLVkMirror::isReady())
+    {
+        Renderer& r = Renderer::instance();
+        if (r.getProgram() != (Program*)program)
+        {
+            r.setProgram((Program*)program);
+        }
+    }
+    if (!binding)
+    {
+        return;
+    }
+    sVin.mArrayBuffer = binding->mArray;
+    if (binding->mArray)
+    {
+        sGL.mBuffers[binding->mArray];
+    }
+    sVin.mElementBuffer = binding->mElem;
+    if (binding->mElem)
+    {
+        sGL.mBuffers[binding->mElem];
+    }
+    for (unsigned i = 0; i < 16; ++i)
+    {
+        VaoAttrib& a = sVin.mAttrib[i];
+        if (!(binding->mPresent & (1u << i)))
+        {
+            a.mEnabled = false;
+            continue;
+        }
+        const LLVkAsync::BindAttr& e = binding->mAttr[i];
+        a.mEnabled = true;
+        a.mBuffer = binding->mArray;
+        a.mSize = e.mSize;
+        a.mType = e.mType;
+        a.mNormalized = e.mNormalized != 0;
+        a.mInteger = e.mInteger != 0;
+        a.mStride = e.mStride;
+        a.mOffset = e.mOffset;
+    }
+}
+
+namespace
+{
+struct DrawCheckStats
+{
+    U64 mChecks = 0, mDraws = 0;
+    U64 mBadProgram = 0, mBadState = 0, mBadBuffers = 0, mBadEnabled = 0, mBadAttrib = 0, mNoDraw = 0, mNoCheck = 0;
+    std::map<std::string, U64> mBadPerProgram;
+};
+DrawCheckStats sDc;
+bool sDcPending = false;
+U32 sDcLogged = 0;
+
+void dc_log(const char* what, const std::string& detail)
+{
+    Program* p = LLVkMirror::isReady() ? Renderer::instance().getProgram() : nullptr;
+    const std::string name = p ? p->getName() : std::string("(none)");
+    ++sDc.mBadPerProgram[name];
+    if (sDcLogged++ < 30)
+    {
+        LL_WARNS("VkDrawRec") << "draw record check: " << what << " in program '" << name << "': " << detail << LL_ENDL;
+    }
+}
+}
+
+void draw_check(void* program, const LLVkState::Block& producer_state, const LLVkAsync::DrawBinding& b)
+{
+    if (sDcPending)
+    {
+        ++sDc.mNoDraw;
+        dc_log("check without a draw", "");
+    }
+    sDcPending = true;
+    ++sDc.mChecks;
+    if (!LLVkMirror::isReady())
+    {
+        return;
+    }
+    Program* cur = Renderer::instance().getProgram();
+    if (cur != (Program*)program)
+    {
+        ++sDc.mBadProgram;
+        dc_log("program differs", std::string("record says ") + (program ? ((Program*)program)->getName() : "(none)"));
+        return;     // the rest compares against another program's draw: not meaningful
+    }
+    if (const LLVkState::Block* rb = LLVkState::received())
+    {
+        if (!(*rb == producer_state))
+        {
+            ++sDc.mBadState;
+            dc_log("state block differs", LLVkState::describeDifference(*rb, producer_state));
+        }
+    }
+    if (sVin.mArrayBuffer != b.mArray || sVin.mElementBuffer != b.mElem)
+    {
+        ++sDc.mBadBuffers;
+        dc_log("buffers differ", "array " + std::to_string(sVin.mArrayBuffer) + " vs record " + std::to_string(b.mArray) + ", elem " + std::to_string(sVin.mElementBuffer) + " vs record " + std::to_string(b.mElem));
+    }
+    // the attributes the program reads from arrays (a location the shader does not declare is not read, whatever the state machine holds)
+    static const ProgramInfo none_info;
+    const ProgramInfo& info = cur ? cur->getInfo() : none_info;
+    U32 read_mask = 0;
+    for (size_t a = 0; a < info.mAttributeLocations.size(); ++a)
+    {
+        if (info.mAttributeLocations[a] < 16)
+        {
+            read_mask |= 1u << info.mAttributeLocations[a];
+        }
+    }
+    for (unsigned i = 0; i < 16; ++i)
+    {
+        if (!(read_mask & (1u << i)))
+        {
+            continue;
+        }
+        const VaoAttrib& a = sVin.mAttrib[i];
+        const bool mine = (b.mPresent & (1u << i)) != 0;
+        const bool theirs = a.mEnabled && a.mBuffer;
+        if (mine != theirs)
+        {
+            ++sDc.mBadEnabled;
+            dc_log("attribute read from an array differs", "location " + std::to_string(i) + " worker " + (theirs ? "array" : "constant") + " record " + (mine ? "array" : "constant"));
+            continue;
+        }
+        if (mine)
+        {
+            const LLVkAsync::BindAttr& e = b.mAttr[i];
+            if (a.mBuffer != b.mArray || a.mSize != e.mSize || a.mType != e.mType || a.mNormalized != (e.mNormalized != 0) || a.mInteger != (e.mInteger != 0) || a.mStride != e.mStride || a.mOffset != e.mOffset)
+            {
+                ++sDc.mBadAttrib;
+                dc_log("attribute differs", "location " + std::to_string(i) + " worker buf " + std::to_string(a.mBuffer) + " size " + std::to_string(a.mSize) + " type " + std::to_string((int)a.mType) + " norm " + std::to_string((int)a.mNormalized)
+                       + " int " + std::to_string((int)a.mInteger) + " stride " + std::to_string(a.mStride) + " off " + std::to_string(a.mOffset) + " | record buf " + std::to_string(b.mArray) + " size " + std::to_string(e.mSize)
+                       + " type " + std::to_string((int)e.mType) + " norm " + std::to_string((int)e.mNormalized) + " int " + std::to_string((int)e.mInteger) + " stride " + std::to_string(e.mStride) + " off " + std::to_string(e.mOffset));
+            }
+        }
+    }
+}
+
+void draw_check_draw()
+{
+    ++sDc.mDraws;
+    if (!sDcPending)
+    {
+        ++sDc.mNoCheck;
+        dc_log("draw without a check", "");
+    }
+    sDcPending = false;
+}
+
+std::string draw_check_report()
+{
+    std::string out = "draws " + std::to_string(sDc.mDraws) + ", checks " + std::to_string(sDc.mChecks) + " | mismatches: program " + std::to_string(sDc.mBadProgram) + ", state " + std::to_string(sDc.mBadState)
+                    + ", buffers " + std::to_string(sDc.mBadBuffers) + ", attribute source " + std::to_string(sDc.mBadEnabled) + ", attribute fields " + std::to_string(sDc.mBadAttrib)
+                    + ", check without draw " + std::to_string(sDc.mNoDraw) + ", draw without check " + std::to_string(sDc.mNoCheck);
+    if (!sDc.mBadPerProgram.empty())
+    {
+        out += " | by program:";
+        for (const auto& kv : sDc.mBadPerProgram)
+        {
+            out += " [" + kv.first + " " + std::to_string(kv.second) + "]";
+        }
+    }
+    return out;     // (cumulative since the start: a long run is judged by its last line)
+}
+
 void constant_attribute(unsigned location, float x, float y, float z, float w)
 {
     if (location < 16)

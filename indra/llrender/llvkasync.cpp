@@ -59,6 +59,8 @@ namespace LLVkAsync
 bool gEnabled = false;
 bool gTexOneCopy = false;   // C4: opt-in (LL_VK_TEXONECOPY=1), the measured gain was nil
 static int gMode = 1;
+static int drawRecFromEnv() { const char* e = getenv("LL_VK_DRAWREC"); return e ? std::min(2, std::max(0, atoi(e))) : 0; }
+int gDrawRec = drawRecFromEnv();        // F2.4, see llvkasync.h
 
 namespace
 {
@@ -181,7 +183,7 @@ unsigned long long gOpStatTsc0 = 0;
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "drawCheck", "draw2" };
 const char* slotName(int slot) { return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
@@ -310,12 +312,21 @@ struct PendTex { U32 mTarget; U32 mName; };
 inline U32 lowBit(U32 m) { unsigned long i; _BitScanForward(&i, m); return (U32)i; }
 constexpr U32 TEX_UNIT_BASE = 0x84C0;       // GL_TEXTURE0
 // the pending texture slots, active unit and uniform writes of one producer (the main thread's, or a sub-stream's)
+// F2.4: what the next draw uses besides state, textures and uniforms: the program and the vertex binding, as values (written by LLGLSLShader::bind/unbind and LLVertexBuffer::setBuffer)
+struct DrawCtx
+{
+    void* mProgram = nullptr;
+    void* mSent = (void*)(intptr_t)-1;    // the program the worker's renderer holds as far as the stream says (a draw record names its program; packet records read the renderer's: see pushData); -1: unknown
+    DrawBinding mBinding;
+    bool mDirty = true;                   // the binding changed since the last draw record that carried it (a draw record only carries a binding when it is new)
+};
 struct Pend
 {
     PendTex mTex[32];
     U32 mMask = 0;
     U32 mActive = TEX_UNIT_BASE;          // the active unit as the producer sees it (the worker's after everything queued)
     std::vector<U8> mUni;
+    DrawCtx mDraw;
 };
 Pend gMainPend;
 thread_local Pend* tlsPend = nullptr;
@@ -543,8 +554,77 @@ void clearTarget(bool color, bool depth, const F32* rgba)
     rawPush(CMD_CLEAR, &rec, sizeof(rec));
 }
 
+namespace
+{
+// the draw context of the calling producer (null when the draw record is off, or on a thread that does not produce)
+inline DrawCtx* drawCtx()
+{
+    return (gDrawRec && (!gEnabled || produces())) ? &pend().mDraw : nullptr;
+}
+}
+
+void drawProgram(void* program)
+{
+    if (DrawCtx* d = drawCtx())
+    {
+        d->mProgram = program;
+    }
+}
+
+void drawBindingClear()
+{
+    if (DrawCtx* d = drawCtx())
+    {
+        d->mBinding = DrawBinding();
+        d->mDirty = true;
+    }
+}
+
+void drawBinding(U32 array_buffer, U32 elem_buffer, const VertexAttrib* given, U32 count)
+{
+    DrawCtx* d = drawCtx();
+    if (!d)
+    {
+        return;
+    }
+    DrawBinding& b = d->mBinding;
+    b = DrawBinding();
+    b.mArray = array_buffer;
+    b.mElem = elem_buffer;
+    for (U32 i = 0; i < count; ++i)
+    {
+        const VertexAttrib& e = given[i];
+        if (e.mIndex >= 16)
+        {
+            continue;
+        }
+        BindAttr& a = b.mAttr[e.mIndex];
+        a.mSize = e.mSize;
+        a.mStride = e.mStride;
+        a.mOffset = (U64)e.mPointer;
+        a.mType = (U8)LLVkFormat::componentType(e.mType);
+        a.mNormalized = (e.mKind == 0 && e.mNormalized != 0) ? 1 : 0;
+        a.mInteger = e.mKind == 1 ? 1 : 0;
+        b.mPresent |= 1u << e.mIndex;
+    }
+    d->mDirty = true;
+}
+
 void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
 {
+    if (DrawCtx* d = drawCtx())
+    {
+        if (program)
+        {
+            d->mProgram = program;
+        }
+        d->mBinding = DrawBinding();        // a program bind leaves no buffers bound
+        d->mDirty = true;
+        if (gDrawRec == 2)
+        {
+            return;
+        }
+    }
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
@@ -623,6 +703,8 @@ void bufferRecycle(U32 name)
 namespace
 {
     struct DrawHeader { U32 mKind; U32 mMode; U32 mStart; U32 mEnd; S32 mCount; U32 mType; const void* mIndices; U32 mMask; U32 mActive; U32 mCountTex; U32 mUniBytes; };
+    // CMD_DRAW2: the draw, then (mBindBytes) the vertex binding when it changed, the texture slots, the uniform writes
+    struct DrawHeader2 { DrawHeader mDraw; void* mProgram; U32 mBindBytes; U32 mPad; };
 }
 
 // the draw and the texture slots / uniform writes that changed since the last one, as one record
@@ -630,6 +712,48 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
 {
     MainLap lap;
     stateEmit();
+    if (gDrawRec == 1)
+    {
+        // verify: what the draw record would say, right before the old draw; the worker compares it with what its own state machine holds
+        DrawCtx& d = pend().mDraw;
+        const LLVkState::Block& blk = LLVkState::current();
+        const U32 bb = (U32)drawBindingSize(d.mBinding);
+        const U32 cp = (U32)(sizeof(void*) + sizeof(LLVkState::Block) + bb);
+        U8* cpp = mainReserve(cp, CMD_DRAW_CHECK, 0);
+        memcpy(cpp, &d.mProgram, sizeof(void*));
+        memcpy(cpp + sizeof(void*), &blk, sizeof(blk));
+        drawBindingWrite(cpp + sizeof(void*) + sizeof(blk), d.mBinding);
+        mainCommit(cp);
+        noteRecord();
+    }
+    else if (gDrawRec == 2)
+    {
+        // the draw record: the old draw plus the program and, when it changed, the vertex binding (nothing the draw reads is left in the worker's state)
+        DrawCtx& d = pend().mDraw;
+        const U32 n2 = (U32)__popcnt(pend().mMask);
+        const U32 uni2 = (U32)pend().mUni.size();
+        const U32 bb = d.mDirty ? (U32)((drawBindingSize(d.mBinding) + 7) & ~(size_t)7) : 0;       // padded: the texture entries and uniform writes after it stay aligned
+        const U32 payload2 = (U32)(sizeof(DrawHeader2) + bb + sizeof(PendTex) * n2 + uni2);
+        U8* p2 = mainReserve(payload2, CMD_DRAW2, 0);
+        DrawHeader2 h2 = { { kind, mode, start, end, count, type, indices, pend().mMask, pend().mActive, n2, uni2 }, d.mProgram, bb, 0 };
+        memcpy(p2, &h2, sizeof(h2));
+        if (bb)
+        {
+            drawBindingWrite(p2 + sizeof(h2), d.mBinding);
+        }
+        pendTexWrite(p2 + sizeof(h2) + bb);
+        if (uni2)
+        {
+            memcpy(p2 + sizeof(h2) + bb + sizeof(PendTex) * n2, pend().mUni.data(), uni2);
+        }
+        mainCommit(payload2);
+        noteRecord();
+        d.mDirty = false;
+        d.mSent = d.mProgram;
+        pend().mMask = 0;
+        pend().mUni.clear();
+        return;
+    }
     const U32 n = (U32)__popcnt(pend().mMask);
     const U32 uni = (U32)pend().mUni.size();
     const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n + uni);
@@ -647,12 +771,25 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
     pend().mUni.clear();
 }
 
+// inline mode (the queue has not started): a draw record's program and binding are applied directly (the gMutex is held)
+static void inlineDrawApply()
+{
+    if (gDrawRec != 2)
+    {
+        return;
+    }
+    DrawCtx& d = pend().mDraw;
+    LLVkGL::draw_context_apply(d.mProgram, d.mDirty ? &d.mBinding : nullptr);
+    d.mDirty = false;
+}
+
 void drawRangeElements(U32 gl_mode, U32 start, U32 end, S32 count, U32 gl_type, const void* indices)
 {
     const U32 mode = LLVkFormat::topology(gl_mode), type = LLVkFormat::componentType(gl_type);
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts): the draw is made here
+        inlineDrawApply();
         LLVkGL::draw_elements(mode, start, end, count, type, indices);
         return;
     }
@@ -669,6 +806,7 @@ void drawArrays(U32 gl_mode, S32 first, S32 count)
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        inlineDrawApply();
         LLVkGL::draw_arrays(mode, first, count);
         return;
     }
@@ -691,6 +829,10 @@ void gpuZone(const char* name, bool begin)
 
 void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* given, U32 count)
 {
+    if (gDrawRec == 2)
+    {
+        return;         // the draw records carry the vertex binding (drawBinding / drawBindingClear)
+    }
     // the component types are LLVkFormat::PType from here on
     VertexAttrib typed[16];
     count = std::min<U32>(count, 16);
@@ -739,6 +881,16 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         if (op == CMD_SHADOW_PACKETS)
         {
             stateEmit();
+            if (gDrawRec == 2)
+            {
+                // the packet handlers draw with the renderer's current program, which a shader bind used to set: with draw records it is written here, when the program changed since the last record that set it
+                DrawCtx& d = pend().mDraw;
+                if (d.mSent != d.mProgram)
+                {
+                    rawPush(CMD_PROGRAM_BIND, &d.mProgram, sizeof(d.mProgram));
+                    d.mSent = d.mProgram;
+                }
+            }
         }
         if (!texIndependent(op))
         {
@@ -1039,7 +1191,15 @@ void snapshotBoundary(S32 mode) { push(CMD_SNAPSHOT_BOUNDARY, &mode, sizeof(mode
 // shader program commands
 // ---------------------------------------------------------------------------------------------------------------------------------
 
-void programBind(void* program) { push(CMD_PROGRAM_BIND, &program, sizeof(program)); }
+void programBind(void* program)
+{
+    drawProgram(program);
+    if (DrawCtx* d = drawCtx())
+    {
+        d->mSent = program;
+    }
+    push(CMD_PROGRAM_BIND, &program, sizeof(program));
+}
 void programDestroy(void* program) { push(CMD_PROGRAM_DESTROY, &program, sizeof(program)); }
 void samplerUnit(void* program, unsigned sampler_index, unsigned unit)
 {
@@ -2051,6 +2211,15 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             LL_INFOS("VkOps") << "worker operations: " << opStatsReport(gOpStatsFrames) << LL_ENDL;
             gOpStatsFrames = 0;
         }
+        if (gDrawRec == 1)
+        {
+            static unsigned check_frames = 0;
+            if (++check_frames >= 600)
+            {
+                check_frames = 0;
+                LL_INFOS("VkDrawRec") << "draw record check: " << LLVkGL::draw_check_report() << LL_ENDL;
+            }
+        }
         break;
     case CMD_HOLD: LLVkMirror::holdFrameImpl(r.get<S32>() != 0); break;
     case CMD_SNAPSHOT_BOUNDARY: LLVkMirror::snapshotBoundaryImpl(r.get<S32>()); break;
@@ -2093,8 +2262,53 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         applyUniformBatch(payload + sizeof(U32) * 2, bytes);
         break;
     }
+    case CMD_DRAW_CHECK:
+    {
+        void* program;
+        memcpy(&program, payload, sizeof(program));
+        LLVkState::Block blk;
+        memcpy(&blk, payload + sizeof(void*), sizeof(blk));
+        DrawBinding b;
+        drawBindingRead(payload + sizeof(void*) + sizeof(blk), b);
+        LLVkGL::draw_check(program, blk, b);
+        break;
+    }
+    case CMD_DRAW2:
+    {
+        const DrawHeader2* h2 = (const DrawHeader2*)payload;
+        const DrawHeader* h = &h2->mDraw;
+        DrawBinding b;
+        if (h2->mBindBytes)
+        {
+            drawBindingRead(payload + sizeof(DrawHeader2), b);
+        }
+        LLVkGL::draw_context_apply(h2->mProgram, h2->mBindBytes ? &b : nullptr);
+        const PendTex* e = (const PendTex*)(payload + sizeof(DrawHeader2) + h2->mBindBytes);
+        if (h->mUniBytes)
+        {
+            applyUniformBatch(payload + sizeof(DrawHeader2) + h2->mBindBytes + sizeof(PendTex) * h->mCountTex, h->mUniBytes);
+        }
+        U32 k = 0;
+        for (U32 m = h->mMask; m; m &= m - 1, ++k)
+        {
+            LLVkGL::slot_bind(lowBit(m), e[k].mTarget, e[k].mName);
+        }
+        if (h->mKind == 0)
+        {
+            LLVkGL::draw_elements(h->mMode, h->mStart, h->mEnd, h->mCount, h->mType, h->mIndices);
+        }
+        else
+        {
+            LLVkGL::draw_arrays(h->mMode, (S32)h->mStart, h->mCount);
+        }
+        break;
+    }
     case CMD_DRAW:
     {
+        if (gDrawRec == 1)
+        {
+            LLVkGL::draw_check_draw();
+        }
         const DrawHeader* h = (const DrawHeader*)payload;
         const PendTex* e = (const PendTex*)(payload + sizeof(DrawHeader));
         if (h->mUniBytes)
@@ -2595,11 +2809,13 @@ struct SubStream::Impl
     LLVkState::Context* mState = nullptr;
     LLVkState::Context* mSeed = nullptr;            // the main producer's render state when the sub-stream was made
     std::string mLeft;                              // what the work left changed in the render state
+    DrawCtx mSeedDraw;                              // F2.4: the main producer's program and vertex binding when the sub-stream was made
 };
 
 SubStream::SubStream() : mImpl(new Impl)
 {
     mImpl->mSeed = LLVkState::cloneContext();       // the main producer's state now: where the sub-stream's work starts from
+    mImpl->mSeedDraw = gMainPend.mDraw;
 }
 
 SubStream::~SubStream()
@@ -2626,6 +2842,9 @@ void SubStream::begin()
     s.mBuf.mBuf.clear();
     s.mBuf.mCur = 0;
     s.mPend = Pend();
+    s.mPend.mDraw = s.mSeedDraw;
+    s.mPend.mDraw.mSent = (void*)(intptr_t)-1;
+    s.mPend.mDraw.mDirty = true;                    // the first draw of the sub-stream carries its binding: nothing is assumed about what the worker holds
     tlsBuf = &s.mBuf;
     tlsPend = &s.mPend;
     LLVkState::bindContext(s.mState);
@@ -2669,6 +2888,8 @@ void SubStream::splice()
     }
     LLVkState::adoptChanges(s.mSeed, s.mState);     // what the work changed in the render state is the state the main producer goes on with
     LLVkState::forceEmit();                         // what the worker holds is the sub-stream's last state, not what the main producer last wrote
+    gMainPend.mDraw = s.mPend.mDraw;                // the program and binding the viewer's classes believe are bound are the sub-stream's last (the beliefs are shared statics)
+    gMainPend.mDraw.mDirty = true;
 }
 
 U32 SubStream::records() const
