@@ -75,6 +75,8 @@ private:
 
     // setup by beginFooPass, [0] is static variant, [1] is rigged variant
     LLGLSLShader* simple_shader = nullptr;
+    F32 mDepthCutoff = 0.f;                             // <FS> alpha cutoff of the depth only pass of the rigged alpha, 0 outside of it
+    std::vector<LLGLSLShader*> mDepthCutoffShaders;     // <FS> the shaders that drew in it (they get the usual cutoff back)
     LLGLSLShader* fullbright_shader = nullptr;
     LLGLSLShader* emissive_shader = nullptr;
     LLGLSLShader* pbr_emissive_shader = nullptr;
