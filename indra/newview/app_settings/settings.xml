@@ -2700,6 +2700,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>FSOverlayDepthMode</key>
+    <map>
+      <key>Comment</key>
+      <string>Depth that overlays drawn after the DLSS upscale (selection outlines) are tested against while something is selected: 0 the scene depth as it is (jittered), 1 farthest of 3x3 render pixels plus margin, 2 the same with 5x5, 3 no depth test at all (overlays always on top), 4 depth at the unjittered position (bilinear of the four render pixels around, margin by their range). Applies at once.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>4</integer>
+    </map>
     <key>FSVkDLSSQuality</key>
     <map>
       <key>Comment</key>

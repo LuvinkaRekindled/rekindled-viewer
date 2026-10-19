@@ -11947,6 +11947,18 @@ void LLPipeline::renderFinalize()
     gDeferredPostNoDoFNoiseProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)sourceBuffer->getWidth(), (GLfloat)sourceBuffer->getHeight());
 
     {
+        // <FS> selection outlines and other overlays test against this depth after the upscale: with the camera jitter in it they flicker (see the shader). Only while one is shown.
+        static const LLStaticHashedString depth_texel("depth_texel");
+        static const LLStaticHashedString depth_radius("depth_radius");
+        static LLCachedControl<S32> overlay_depth_mode(gSavedSettings, "FSOverlayDepthMode", 4);
+        const bool overlay = overlay_depth_mode() > 0 && LLViewerCamera::sJitterInEffect && !gCubeSnapshot && !LLSelectMgr::getInstance()->getSelection()->isEmpty();
+        gDeferredPostNoDoFNoiseProgram.uniform2f(depth_texel, overlay ? 1.f / (F32)mRT->deferredScreen.getWidth() : 0.f, overlay ? 1.f / (F32)mRT->deferredScreen.getHeight() : 0.f);
+        gDeferredPostNoDoFNoiseProgram.uniform1f(depth_radius, overlay_depth_mode() == 3 ? -1.f : (overlay_depth_mode() == 2 ? 2.f : (overlay_depth_mode() >= 4 ? 0.f : 1.f)));
+        static const LLStaticHashedString depth_jitter("depth_jitter");
+        gDeferredPostNoDoFNoiseProgram.uniform2f(depth_jitter, LLViewerCamera::sJitterPixels.x / (F32)mRT->deferredScreen.getWidth(), LLViewerCamera::sJitterPixels.y / (F32)mRT->deferredScreen.getHeight());
+    }
+
+    {
         LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
