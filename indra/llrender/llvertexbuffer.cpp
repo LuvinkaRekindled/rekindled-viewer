@@ -870,6 +870,7 @@ void LLVertexBuffer::clone(LLVertexBuffer& target) const
 
 void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indices_offset) const
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_DRAW);
     ++sDrawCalls;
     llassert(validateRange(start, end, count, indices_offset));
     llassert(mGLBuffer == sGLRenderBuffer);
@@ -880,6 +881,7 @@ void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indi
 
 void LLVertexBuffer::drawRangeFast(U32 mode, U32 start, U32 end, U32 count, U32 indices_offset) const
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_DRAW);
     ++sDrawCalls;
     LLVkAsync::drawRangeElements(sGLMode[mode], start, end, count, mIndicesType, (const void*)(indices_offset * (size_t)mIndicesStride));
 }
@@ -893,6 +895,7 @@ void LLVertexBuffer::draw(U32 mode, U32 count, U32 indices_offset) const
 
 void LLVertexBuffer::drawArrays(U32 mode, U32 first, U32 count) const
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_DRAW);
     ++sDrawCalls;
     llassert(first + count <= mNumVerts);
     llassert(mGLBuffer == sGLRenderBuffer);
@@ -1619,6 +1622,7 @@ static inline void ll_attribIPointer(GLuint index, GLint size, GLenum type, GLsi
 // Set for rendering
 void LLVertexBuffer::setBuffer()
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SET_BUFFER);
     STOP_GLERROR;
 
     if (mMapped)

@@ -270,6 +270,7 @@ GLuint LLTexUnit::prepareFast(LLTexture* texture)
 
 bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     stop_glerror();
     if (mIndex >= 0)
@@ -335,6 +336,7 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 
 bool LLTexUnit::bind(LLImageGL* texture, bool for_rendering, bool forceBind, S32 usename)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
     stop_glerror();
     if (mIndex < 0) return false;
 
@@ -1040,6 +1042,7 @@ void LLRender::syncLightState()
 
 void LLRender::syncMatrices()
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SYNC_MATRICES);
     STOP_GLERROR;
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
 
@@ -1606,6 +1609,7 @@ void LLRender::getTexImage(U32 texture, U32 gl_target, S32 level, U32 gl_format,
 
 void LLRender::setSceneBlendType(eBlendType type)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_BLEND);
     switch (type)
     {
         case BT_ALPHA:
@@ -1637,6 +1641,7 @@ void LLRender::setSceneBlendType(eBlendType type)
 
 void LLRender::blendFunc(eBlendFactor sfactor, eBlendFactor dfactor)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_BLEND);
     llassert(sfactor < BF_UNDEF);
     llassert(dfactor < BF_UNDEF);
     if (mCurrBlendColorSFactor != sfactor || mCurrBlendColorDFactor != dfactor ||
@@ -1654,6 +1659,7 @@ void LLRender::blendFunc(eBlendFactor sfactor, eBlendFactor dfactor)
 void LLRender::blendFunc(eBlendFactor color_sfactor, eBlendFactor color_dfactor,
              eBlendFactor alpha_sfactor, eBlendFactor alpha_dfactor)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_BLEND);
     llassert(color_sfactor < BF_UNDEF);
     llassert(color_dfactor < BF_UNDEF);
     llassert(alpha_sfactor < BF_UNDEF);
