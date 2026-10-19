@@ -68,7 +68,8 @@ void main()
     float final_alpha = color.a * vertex_color.a;
 
 #ifdef HAS_ALPHA_MASK
-    if (color.a < minimum_alpha)
+    // <FS> final alpha (with the vertex colour's): the depth only pass of the rigged alpha must agree with the colour shaders about what is above its cutoff
+    if (final_alpha < minimum_alpha)
     {
         discard;
     }

@@ -58,7 +58,8 @@ public:
     /*virtual*/ void renderPostDeferred(S32 pass);
     /*virtual*/ S32  getNumPasses() { return 1; }
 
-    void forwardRender(bool write_depth = false);
+    void forwardRender(bool rigged = false, bool fringe = false);
+    bool hasStaticAlpha();
     /*virtual*/ void prerender();
 
     void renderDebugAlpha();
@@ -75,6 +76,8 @@ private:
 
     // setup by beginFooPass, [0] is static variant, [1] is rigged variant
     LLGLSLShader* simple_shader = nullptr;
+    bool mFringePending = false;                        // <FS> the rigged alpha was split: its soft part is still to be drawn after the static alpha
+    bool mFringePass = false;                           // <FS> drawing that soft part
     F32 mDepthCutoff = 0.f;                             // <FS> alpha cutoff of the depth only pass of the rigged alpha, 0 outside of it
     std::vector<LLGLSLShader*> mDepthCutoffShaders;     // <FS> the shaders that drew in it (they get the usual cutoff back)
     LLGLSLShader* fullbright_shader = nullptr;

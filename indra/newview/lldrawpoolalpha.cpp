@@ -230,6 +230,12 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // second pass, regular forward alpha rendering
     forwardRender();
 
+    if (mFringePending)
+    {   // <FS> the soft part of the rigged alpha (below the depth cutoff), over the static alpha it was left out of: see forwardRender
+        mFringePending = false;
+        forwardRender(true, true);
+    }
+
     // final pass, render to depth for depth of field effects
     if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
     {
@@ -251,7 +257,21 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     }
 }
 
-void LLDrawPoolAlpha::forwardRender(bool rigged)
+// <FS> is there any static alpha blended draw to be drawn after the rigged ones (foliage, glass, particles...)?
+bool LLDrawPoolAlpha::hasStaticAlpha()
+{
+    for (LLCullResult::sg_iterator i = gPipeline.beginAlphaGroups(); i != gPipeline.endAlphaGroups(); ++i)
+    {
+        LLSpatialGroup* group = *i;
+        if (group && !group->isDead() && !group->mDrawMap[LLRenderPass::PASS_ALPHA].empty())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
 {
     gPipeline.enableLightsDynamic();
 
@@ -262,19 +282,29 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
 
     // <FS> Hair halo. The rigged pass writes depth so that rigged layers hide each other and the static alpha drawn after it (foliage behind the avatar) is cut away
     // behind them, but every fragment above 1/255 alpha wrote it: the nearly transparent texels around hair strands then cut a halo of the mesh edge out of the foliage
-    // behind. A depth only pass first writes depth just where the texture alpha reaches the cutoff; the colour pass after it tests against that and writes none.
+    // behind. With static alpha to draw afterwards the rigged alpha is now drawn in three steps: (1) a depth only pass that writes depth just where the texture alpha
+    // reaches the cutoff, (2) the colour of those texels (alpha >= cutoff) against that depth, (3) after the static alpha, the colour of the soft texels (alpha below
+    // the cutoff) over everything, rejected where step 1 wrote depth (same triangles, drawn a little farther, depth test LESS). Foliage behind the soft part of the hair is
+    // then under it, as it should be, and the cutoff can stay high enough that semi transparent front hair does not hide the layers behind it.
     static LLCachedControl<F32> rigged_depth_cutoff(gSavedSettings, "RenderRiggedAlphaDepthCutoff", 0.8f);
-    const bool depth_prepass = rigged && rigged_depth_cutoff() > 0.f && !LLPipeline::sImpostorRender && !gCubeSnapshot && !LLPipeline::sRenderingHUDs;
+    const bool depth_prepass = rigged && !fringe && rigged_depth_cutoff() > 0.f && !LLPipeline::sImpostorRender && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && hasStaticAlpha();
+    if (depth_prepass)
+    {
+        mFringePending = true;
+    }
 
-    bool write_depth = (rigged && !depth_prepass) ||
+    bool write_depth = (rigged && !depth_prepass && !fringe) ||
         LLDrawPoolWater::sSkipScreenCopy
         // we want depth written so that rendered alpha will
         // contribute to the alpha mask used for impostors
         || LLPipeline::sImpostorRenderAlphaDepthPass
         || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER; // needed for accurate water fog
+    if (fringe)
+    {
+        write_depth = false;
+    }
 
-
-    LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE);
+    LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE, fringe ? GL_LESS : GL_LEQUAL);
 
     mColorSFactor = LLRender::BF_SOURCE_ALPHA;           // } regular alpha blend
     mColorDFactor = LLRender::BF_ONE_MINUS_SOURCE_ALPHA; // }
@@ -282,7 +312,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
     mAlphaDFactor = LLRender::BF_ONE_MINUS_SOURCE_ALPHA;       // }
     gGL.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
 
-    if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER)
+    if (rigged && !fringe && mType == LLDrawPool::POOL_ALPHA_POST_WATER)
     { // draw GLTF scene to depth buffer before rigged alpha
         LL_GPU_TIMER_ZONE("alpha: gltf scene depth"); // <FS>
         LL::GLTFSceneManager::instance().render(false, false);
@@ -313,15 +343,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
         gGL.setColorMask(true, true);
         gGL.setPolygonOffset(0.f, 0.f);
 
-        // every shader that drew with the cutoff goes back to the usual one (the colour pass and the static alpha after it do not set it again)
         LLGLSLShader::unbind();
-        mDepthCutoff = 0.f;
-        for (LLGLSLShader* shader : mDepthCutoffShaders)
-        {
-            shader->bind();
-            shader->setMinimumAlpha(MINIMUM_ALPHA);
-        }
-        mDepthCutoffShaders.clear();
 
         simple_shader = saved_simple;
         fullbright_shader = saved_fullbright;
@@ -332,9 +354,34 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
     // We don't want the nearly invisible objects to cause of DoF effects
     {
         // <FS> GPU timer zone per alpha pass
-        LL_GPU_TIMER_ZONE(rigged ? (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: rigged (post water)" : "alpha: rigged (pre water)")
+        LL_GPU_TIMER_ZONE(fringe ? "alpha: rigged fringe" : rigged ? (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: rigged (post water)" : "alpha: rigged (pre water)")
                                  : (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: static (post water)" : "alpha: static (pre water)"));
+        // the soft part: drawn a little farther than the depth only pass wrote the same triangles, so that what wrote depth there fails the strict test
+        LLGLEnable fringe_offset(fringe ? GL_POLYGON_OFFSET_FILL : 0);
+        if (fringe)
+        {
+            gGL.setPolygonOffset(1.f, 8.f);
+            mFringePass = true;
+        }
         renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, false, rigged);
+        mFringePass = false;
+        if (fringe)
+        {
+            gGL.setPolygonOffset(0.f, 0.f);
+        }
+    }
+
+    if (depth_prepass)
+    {   // every shader that drew with the cutoff goes back to the usual one (the static alpha and the soft part do not set it again)
+        LLGLSLShader::unbind();
+        mDepthCutoff = 0.f;
+        for (LLGLSLShader* shader : mDepthCutoffShaders)
+        {
+            shader->bind();
+            shader->setMinimumAlpha(MINIMUM_ALPHA);
+        }
+        mDepthCutoffShaders.clear();
+        LLGLSLShader::unbind();
     }
 
     gGL.setColorMask(true, false);
@@ -869,8 +916,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 
                 bool tex_setup = TexSetup(&params, (mat != nullptr));
 
-                if (depth_only && mDepthCutoff > 0.f && current_shader)
-                {   // <FS> depth only pass of the rigged alpha (hair halo): the shader of this draw cuts at the cutoff instead of 1/255 (a custom blend draw below sets 0 and puts this back)
+                if (mDepthCutoff > 0.f && current_shader)
+                {   // <FS> depth only pass and colour pass of the rigged alpha (hair halo): the shader of this draw cuts at the cutoff instead of 1/255 (a custom blend draw below sets 0 and puts this back)
                     if (std::find(mDepthCutoffShaders.begin(), mDepthCutoffShaders.end(), current_shader) == mDepthCutoffShaders.end())
                     {
                         mDepthCutoffShaders.push_back(current_shader);
@@ -896,7 +943,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 
                     if (reset_minimum_alpha)
                     {
-                        current_shader->setMinimumAlpha((depth_only && mDepthCutoff > 0.f) ? mDepthCutoff : MINIMUM_ALPHA);
+                        current_shader->setMinimumAlpha(mDepthCutoff > 0.f ? mDepthCutoff : MINIMUM_ALPHA);
                     }
                 }
 
@@ -938,7 +985,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             }
 
             // render emissive faces into alpha channel for bloom effects
-            if (!depth_only)
+            if (!depth_only && !mFringePass)
             {
                 gPipeline.enableLightsDynamic();
 
