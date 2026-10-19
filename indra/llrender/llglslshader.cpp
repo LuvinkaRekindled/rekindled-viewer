@@ -39,6 +39,7 @@
 #include "llvkshader.h"
 #include "llvkrenderer.h"
 #include "llvkasync.h"
+#include <emmintrin.h>
 #include "llvkbuf.h"
 #include "llvkquery.h"
 #include "llvkmirror.h"
@@ -430,6 +431,28 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram) return;
+    if (LLVkAsync::gUniformRec == 2 && LLVkAsync::mainOnlyProducer())
+    {
+        // range writes: the copy of the class block does the comparing (samplers and unknown locations take the long way below)
+        const S32 twin = vkTwinOf(location);
+        if (twin >= 0)
+        {
+            F32 f[4] = {};
+            S32 iv[4] = {};
+            U32 n = 0;
+            for (double v : values)
+            {
+                if (n < 4)
+                {
+                    f[n] = (F32)v;
+                    iv[n] = (S32)v;
+                    ++n;
+                }
+            }
+            vkWriteFloats(twin, kind == 0 ? f : reinterpret_cast<const F32*>(iv), n, 1);
+            return;
+        }
+    }
     const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
     std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
@@ -445,6 +468,21 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
     if (twin < 0)
     {
         // a sampler: the integer is the texture unit it now reads
+        if (LLVkAsync::gUniformRec == 2 && async)
+        {
+            // (the value cache does not filter these any more: only a changed unit is a record)
+            const size_t si = (size_t)(~twin);
+            const S32 unit = (S32)*values.begin();
+            if (mVkSamplerUnits.size() <= si)
+            {
+                mVkSamplerUnits.resize(si + 1, -1);
+            }
+            if (mVkSamplerUnits[si] == unit)
+            {
+                return;
+            }
+            mVkSamplerUnits[si] = unit;
+        }
         if (async)
         {
             LLVkAsync::samplerUnit(mVkProgram, (unsigned)(~twin), (unsigned)(S32)*values.begin());
@@ -463,6 +501,14 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
             f[n] = (F32)v;
             i[n] = (S32)v;
             ++n;
+        }
+    }
+    if (LLVkAsync::gUniformRec != 0 && (!async || LLVkAsync::mainOnlyProducer()))
+    {
+        vkWriteFloats(twin, kind == 0 ? f : reinterpret_cast<const F32*>(i), n, 1);
+        if (LLVkAsync::gUniformRec == 2)
+        {
+            return;
         }
     }
     if (async)
@@ -484,6 +530,15 @@ void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 co
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram || !data) return;
+    if (LLVkAsync::gUniformRec == 2 && LLVkAsync::mainOnlyProducer())
+    {
+        const S32 twin = vkTwinOf(location);
+        if (twin >= 0)
+        {
+            vkWriteFloats(twin, reinterpret_cast<const F32*>(data), components, count);
+            return;
+        }
+    }
     const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
     std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
@@ -497,6 +552,14 @@ void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 co
         return;     // unknown, or a sampler array (units are fixed at link time)
     }
     (void)kind;     // floats and ints are copied bit for bit
+    if (LLVkAsync::gUniformRec != 0 && (!async || LLVkAsync::mainOnlyProducer()))
+    {
+        vkWriteFloats(twin, reinterpret_cast<const F32*>(data), components, count);
+        if (LLVkAsync::gUniformRec == 2)
+        {
+            return;
+        }
+    }
     if (async)
     {
         LLVkAsync::uniformVector(mVkProgram, (unsigned)twin, components, count, data);
@@ -509,6 +572,15 @@ void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram || !data) return;
+    if (LLVkAsync::gUniformRec == 2 && LLVkAsync::mainOnlyProducer())
+    {
+        const S32 twin = vkTwinOf(location);
+        if (twin >= 0)
+        {
+            vkWriteMatrix(twin, data, columns, rows, transpose != GL_FALSE, count);
+            return;
+        }
+    }
     const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
     std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
@@ -520,6 +592,14 @@ void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean
     if (twin < 0)
     {
         return;
+    }
+    if (LLVkAsync::gUniformRec != 0 && (!async || LLVkAsync::mainOnlyProducer()))
+    {
+        vkWriteMatrix(twin, data, columns, rows, transpose != GL_FALSE, count);
+        if (LLVkAsync::gUniformRec == 2)
+        {
+            return;
+        }
     }
     if (transpose)
     {
@@ -551,6 +631,183 @@ void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean
     mVkProgram->setMatricesAt((size_t)twin, data, columns, rows, count);
 }
 
+// copies 'floats' values (1..4) over the destination when they differ; true when it changed (inline: a variable size memcmp/memcpy call per uniform was most of the cost)
+static inline bool vkDiffCopy(U8* dst, const F32* src, U32 floats)
+{
+    switch (floats)
+    {
+    case 4:
+    {
+        const __m128i a = _mm_loadu_si128((const __m128i*)dst);
+        const __m128i b = _mm_loadu_si128((const __m128i*)src);
+        if (_mm_movemask_epi8(_mm_cmpeq_epi8(a, b)) == 0xFFFF)
+        {
+            return false;
+        }
+        _mm_storeu_si128((__m128i*)dst, b);
+        return true;
+    }
+    case 3:
+    {
+        U64 d0, s0;
+        U32 d1, s1;
+        memcpy(&d0, dst, 8); memcpy(&s0, src, 8);
+        memcpy(&d1, dst + 8, 4); memcpy(&s1, (const U8*)src + 8, 4);
+        if (d0 == s0 && d1 == s1)
+        {
+            return false;
+        }
+        memcpy(dst, &s0, 8); memcpy(dst + 8, &s1, 4);
+        return true;
+    }
+    case 2:
+    {
+        U64 d0, s0;
+        memcpy(&d0, dst, 8); memcpy(&s0, src, 8);
+        if (d0 == s0)
+        {
+            return false;
+        }
+        memcpy(dst, &s0, 8);
+        return true;
+    }
+    default:
+    {
+        U32 d0, s0;
+        memcpy(&d0, dst, 4); memcpy(&s0, src, 4);
+        if (d0 == s0)
+        {
+            return false;
+        }
+        memcpy(dst, &s0, 4);
+        return true;
+    }
+    }
+}
+
+bool LLGLSLShader::uniformValueChanged(GLint location, const LLVector4& value, bool force)
+{
+    if (LLVkAsync::gUniformRec == 2)
+    {
+        return true;
+    }
+    const auto it = mValue.find(location);
+    if (!force && it != mValue.end() && !shouldChange(it->second, value))
+    {
+        return false;
+    }
+    mValue[location] = value;
+    return true;
+}
+
+// a range of this shader's copy of a class block changed: it goes to the worker (or, before the queue runs, straight into the program)
+void LLGLSLShader::vkSendRange(U32 cls, U32 offset, U32 size)
+{
+    const U8* bytes = &mVkShadow[cls][offset];
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::uniformRange(mVkProgram, cls, offset, size, bytes);
+    }
+    else if (LLVkAsync::gUniformRec == 1)
+    {
+        mVkProgram->writeRangeVerify(cls, offset, size, bytes);       // (the caller holds the mirror lock)
+    }
+    else
+    {
+        mVkProgram->writeRange(cls, offset, size, bytes);
+    }
+}
+
+bool LLGLSLShader::vkWriteFloats(S32 twin, const F32* data, U32 components, U32 count)
+{
+    if ((size_t)twin >= mVkUni.size())
+    {
+        return false;
+    }
+    const VkUni& u = mVkUni[twin];
+    std::vector<U8>& sh = mVkShadow[u.mClass];
+    if (u.mArraySize == 0 && count <= 1)
+    {
+        // the common case: one scalar or vector
+        if (u.mOffset + components * 4 > sh.size() || components < 1 || components > 4 || !vkDiffCopy(&sh[u.mOffset], data, components))
+        {
+            return false;
+        }
+        vkSendRange(u.mClass, u.mOffset, components * 4);
+        return true;
+    }
+    const U32 max_count = std::max<U32>(1, u.mArraySize);
+    count = std::min(count, max_count);
+    const U32 stride = u.mArraySize > 0 ? 16 : 4 * components;
+    U32 lo = ~0u, hi = 0;
+    for (U32 i = 0; i < count; ++i)
+    {
+        const U32 off = u.mOffset + i * stride;
+        if (off + components * 4 > sh.size())
+        {
+            break;
+        }
+        if (memcmp(&sh[off], data + i * components, components * 4) != 0)
+        {
+            memcpy(&sh[off], data + i * components, components * 4);
+            lo = std::min(lo, off);
+            hi = std::max(hi, off + components * 4);
+        }
+    }
+    if (lo == ~0u)
+    {
+        return false;
+    }
+    vkSendRange(u.mClass, lo, hi - lo);
+    return true;
+}
+
+bool LLGLSLShader::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 rows, bool transpose, U32 count)
+{
+    if ((size_t)twin >= mVkUni.size())
+    {
+        return false;
+    }
+    const VkUni& u = mVkUni[twin];
+    std::vector<U8>& sh = mVkShadow[u.mClass];
+    const U32 max_count = std::max<U32>(1, u.mArraySize);
+    count = std::min(count, max_count);
+    const U32 stride = columns * 16;        // std140: every column occupies 16 bytes
+    U32 lo = ~0u, hi = 0;
+    for (U32 m = 0; m < count; ++m)
+    {
+        for (U32 c = 0; c < columns; ++c)
+        {
+            const U32 off = u.mOffset + m * stride + c * 16;
+            if (off + rows * 4 > sh.size())
+            {
+                continue;
+            }
+            const F32* col = data + ((size_t)m * columns + c) * rows;       // column-major data: the column is in place
+            F32 gathered[4];
+            if (transpose)
+            {
+                for (U32 r = 0; r < rows; ++r)
+                {
+                    gathered[r] = data[(size_t)m * columns * rows + r * columns + c];       // (the viewer hands transposed matrices over row-major)
+                }
+                col = gathered;
+            }
+            if (vkDiffCopy(&sh[off], col, rows))
+            {
+                lo = std::min(lo, off);
+                hi = std::max(hi, off + rows * 4);
+            }
+        }
+    }
+    if (lo == ~0u)
+    {
+        return false;
+    }
+    vkSendRange(u.mClass, lo, hi - lo);
+    return true;
+}
+
 // the program has been built (link()) and the viewer-side mapping is done: it becomes the one draws use, and its samplers get their texture units
 void LLGLSLShader::mirrorCreate()
 {
@@ -562,6 +819,24 @@ void LLGLSLShader::mirrorCreate()
     mVkProgramPending = nullptr;
     LLShaderMgr* mgr = LLShaderMgr::instance();
     const LLVk::ProgramInfo& pi = mVkProgram->getInfo();
+
+    // F2.5: this shader's copy of the class blocks starts as the program built them (initial values from the shader text)
+    static_assert(LLVk::UC_COUNT == 5, "LLGLSLShader::mVkShadow");
+    mVkUni.clear();
+    mVkUni.reserve(pi.mUniforms.size());
+    for (const LLVk::LooseUniform& lu : pi.mUniforms)
+    {
+        VkUni vu;
+        vu.mClass = lu.mClass;
+        vu.mOffset = lu.mOffset;
+        vu.mArraySize = lu.mArraySize;
+        mVkUni.push_back(vu);
+    }
+    for (U32 k = 0; k < LLVk::UC_COUNT; ++k)
+    {
+        mVkShadow[k] = mVkProgram->shadowOf(k);
+    }
+    mVkSamplerUnits.clear();
 
     // texture units: the viewer's reserved samplers got their channel in mTexture, "texN" are fixed
     for (U32 r = 0; r < mTexture.size(); ++r)
@@ -1616,11 +1891,9 @@ void LLGLSLShader::uniform1i(U32 index, GLint x)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
-            if (iter == mValue.end() || iter->second.mV[0] != x)
+            if (uniformValueChanged(mUniform[index], LLVector4((F32)x, 0.f, 0.f, 0.f)))
             {
                 mirrorScalar(mUniform[index], 1, {(double)(x)});
-                mValue[mUniform[index]] = LLVector4((F32)x, 0.f, 0.f, 0.f);
             }
         }
     }
@@ -1655,11 +1928,9 @@ void LLGLSLShader::uniform1f(U32 index, GLfloat x)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
-            if (iter == mValue.end() || iter->second.mV[0] != x)
+            if (uniformValueChanged(mUniform[index], LLVector4(x, 0.f, 0.f, 0.f)))
             {
                 mirrorScalar(mUniform[index], 0, {(double)(x)});
-                mValue[mUniform[index]] = LLVector4(x, 0.f, 0.f, 0.f);
             }
         }
     }
@@ -1693,12 +1964,10 @@ void LLGLSLShader::uniform2f(U32 index, GLfloat x, GLfloat y)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec(x, y, 0.f, 0.f);
-            if (iter == mValue.end() || shouldChange(iter->second, vec))
+            if (uniformValueChanged(mUniform[index], vec))
             {
                 mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y)});
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -1721,12 +1990,10 @@ void LLGLSLShader::uniform3f(U32 index, GLfloat x, GLfloat y, GLfloat z)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec(x, y, z, 0.f);
-            if (iter == mValue.end() || shouldChange(iter->second, vec))
+            if (uniformValueChanged(mUniform[index], vec))
             {
                 mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y), (double)(z)});
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -1749,12 +2016,10 @@ void LLGLSLShader::uniform4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec(x, y, z, w);
-            if (iter == mValue.end() || shouldChange(iter->second, vec))
+            if (uniformValueChanged(mUniform[index], vec))
             {
                 mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y), (double)(z), (double)(w)});
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -1777,12 +2042,10 @@ void LLGLSLShader::uniform1iv(U32 index, U32 count, const GLint* v)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec((F32)v[0], 0.f, 0.f, 0.f);
-            if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 mirrorVector(mUniform[index], 1, 1, count, v);
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -1805,11 +2068,9 @@ void LLGLSLShader::uniform4iv(U32 index, U32 count, const GLint* v)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
-            if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+            if (uniformValueChanged(mUniform[index], vec, true))
             {
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -1833,12 +2094,10 @@ void LLGLSLShader::uniform1fv(U32 index, U32 count, const GLfloat* v)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec(v[0], 0.f, 0.f, 0.f);
-            if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 mirrorVector(mUniform[index], 0, 1, count, v);
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -1861,12 +2120,10 @@ void LLGLSLShader::uniform2fv(U32 index, U32 count, const GLfloat* v)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec(v[0], v[1], 0.f, 0.f);
-            if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 mirrorVector(mUniform[index], 0, 2, count, v);
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -1889,12 +2146,10 @@ void LLGLSLShader::uniform3fv(U32 index, U32 count, const GLfloat* v)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec(v[0], v[1], v[2], 0.f);
-            if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 mirrorVector(mUniform[index], 0, 3, count, v);
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -1917,13 +2172,11 @@ void LLGLSLShader::uniform4fv(U32 index, U32 count, const GLfloat* v)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec(v[0], v[1], v[2], v[3]);
-            if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
                 mirrorVector(mUniform[index], 0, 4, count, v);
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -1946,13 +2199,11 @@ void LLGLSLShader::uniform4uiv(U32 index, U32 count, const GLuint* v)
 
         if (mUniform[index] >= 0)
         {
-            const auto& iter = mValue.find(mUniform[index]);
             LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
-            if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
                 mirrorVector(mUniform[index], 1, 4, count, v);
-                mValue[mUniform[index]] = vec;
             }
         }
     }
@@ -2103,12 +2354,10 @@ void LLGLSLShader::uniform1i(const LLStaticHashedString& uniform, GLint v)
 
     if (location >= 0)
     {
-        const auto& iter = mValue.find(location);
         LLVector4 vec((F32)v, 0.f, 0.f, 0.f);
-        if (iter == mValue.end() || shouldChange(iter->second, vec))
+        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 1, {(double)(v)});
-            mValue[location] = vec;
         }
     }
 }
@@ -2122,12 +2371,10 @@ void LLGLSLShader::uniform1iv(const LLStaticHashedString& uniform, U32 count, co
     if (location >= 0)
     {
         LLVector4 vec((F32)v[0], 0.f, 0.f, 0.f);
-        const auto& iter = mValue.find(location);
-        if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+        if (uniformValueChanged(location, vec, true))
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             mirrorVector(location, 1, 1, count, v);
-            mValue[location] = vec;
         }
     }
 }
@@ -2141,12 +2388,10 @@ void LLGLSLShader::uniform4iv(const LLStaticHashedString& uniform, U32 count, co
     if (location >= 0)
     {
         LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
-        const auto& iter = mValue.find(location);
-        if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+        if (uniformValueChanged(location, vec, true))
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             mirrorVector(location, 1, 4, count, v);
-            mValue[location] = vec;
         }
     }
 }
@@ -2159,12 +2404,10 @@ void LLGLSLShader::uniform2i(const LLStaticHashedString& uniform, GLint i, GLint
 
     if (location >= 0)
     {
-        const auto& iter = mValue.find(location);
         LLVector4 vec((F32)i, (F32)j, 0.f, 0.f);
-        if (iter == mValue.end() || shouldChange(iter->second, vec))
+        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 1, {(double)(i), (double)(j)});
-            mValue[location] = vec;
         }
     }
 }
@@ -2178,12 +2421,10 @@ void LLGLSLShader::uniform1f(const LLStaticHashedString& uniform, GLfloat v)
 
     if (location >= 0)
     {
-        const auto& iter = mValue.find(location);
         LLVector4 vec(v, 0.f, 0.f, 0.f);
-        if (iter == mValue.end() || shouldChange(iter->second, vec))
+        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 0, {(double)(v)});
-            mValue[location] = vec;
         }
     }
 }
@@ -2196,12 +2437,10 @@ void LLGLSLShader::uniform2f(const LLStaticHashedString& uniform, GLfloat x, GLf
 
     if (location >= 0)
     {
-        const auto& iter = mValue.find(location);
         LLVector4 vec(x, y, 0.f, 0.f);
-        if (iter == mValue.end() || shouldChange(iter->second, vec))
+        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 0, {(double)(x), (double)(y)});
-            mValue[location] = vec;
         }
     }
 
@@ -2215,12 +2454,10 @@ void LLGLSLShader::uniform3f(const LLStaticHashedString& uniform, GLfloat x, GLf
 
     if (location >= 0)
     {
-        const auto& iter = mValue.find(location);
         LLVector4 vec(x, y, z, 0.f);
-        if (iter == mValue.end() || shouldChange(iter->second, vec))
+        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 0, {(double)(x), (double)(y), (double)(z)});
-            mValue[location] = vec;
         }
     }
 }
@@ -2233,12 +2470,10 @@ void LLGLSLShader::uniform4f(const LLStaticHashedString& uniform, GLfloat x, GLf
 
     if (location >= 0)
     {
-        const auto& iter = mValue.find(location);
         LLVector4 vec(x, y, z, w);
-        if (iter == mValue.end() || shouldChange(iter->second, vec))
+        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 0, {(double)(x), (double)(y), (double)(z), (double)(w)});
-            mValue[location] = vec;
         }
     }
 }
@@ -2251,12 +2486,10 @@ void LLGLSLShader::uniform1fv(const LLStaticHashedString& uniform, U32 count, co
 
     if (location >= 0)
     {
-        const auto& iter = mValue.find(location);
         LLVector4 vec(v[0], 0.f, 0.f, 0.f);
-        if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+        if (uniformValueChanged(location, vec, true))
         {
             mirrorVector(location, 0, 1, count, v);
-            mValue[location] = vec;
         }
     }
 }
@@ -2269,12 +2502,10 @@ void LLGLSLShader::uniform2fv(const LLStaticHashedString& uniform, U32 count, co
 
     if (location >= 0)
     {
-        const auto& iter = mValue.find(location);
         LLVector4 vec(v[0], v[1], 0.f, 0.f);
-        if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+        if (uniformValueChanged(location, vec, true))
         {
             mirrorVector(location, 0, 2, count, v);
-            mValue[location] = vec;
         }
     }
 }
@@ -2287,12 +2518,10 @@ void LLGLSLShader::uniform3fv(const LLStaticHashedString& uniform, U32 count, co
 
     if (location >= 0)
     {
-        const auto& iter = mValue.find(location);
         LLVector4 vec(v[0], v[1], v[2], 0.f);
-        if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+        if (uniformValueChanged(location, vec, true))
         {
             mirrorVector(location, 0, 3, count, v);
-            mValue[location] = vec;
         }
     }
 }
@@ -2306,12 +2535,10 @@ void LLGLSLShader::uniform4fv(const LLStaticHashedString& uniform, U32 count, co
     if (location >= 0)
     {
         LLVector4 vec(v);
-        const auto& iter = mValue.find(location);
-        if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+        if (uniformValueChanged(location, vec, true))
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             mirrorVector(location, 0, 4, count, v);
-            mValue[location] = vec;
         }
     }
 }
@@ -2325,12 +2552,10 @@ void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, c
     if (location >= 0)
     {
         LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
-        const auto& iter = mValue.find(location);
-        if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
+        if (uniformValueChanged(location, vec, true))
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             mirrorVector(location, 1, 4, count, v);
-            mValue[location] = vec;
         }
     }
 }

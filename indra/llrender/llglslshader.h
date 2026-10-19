@@ -346,6 +346,16 @@ public:
     void mirrorScalar(GLint location, int kind, std::initializer_list<double> values);   // kind 0: float, 1: int
     void mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data);
     void mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean transpose, U32 count, const GLfloat* data);
+    // F2.5 (LL_VK_UNIFORMREC): this shader's copy of the program's uniform class blocks; a write is resolved to a byte range, compared with the copy and sent as the bytes that changed
+    struct VkUni { U8 mClass = 0; U32 mOffset = 0; U32 mArraySize = 0; };
+    std::vector<VkUni> mVkUni;                  // by the program's own uniform index
+    std::vector<U8> mVkShadow[5];               // by class (LLVk::UC_COUNT)
+    std::vector<S32> mVkSamplerUnits;           // the texture unit last sent for each sampler (-1: not yet)
+    bool vkWriteFloats(S32 twin, const F32* data, U32 components, U32 count);
+    bool vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 rows, bool transpose, U32 count);
+    void vkSendRange(U32 cls, U32 offset, U32 size);
+    // the value cache the setters used to keep per shader (a hash map): true when the value must be written; with range writes the class block copy does the comparing and this is always true
+    bool uniformValueChanged(GLint location, const LLVector4& value, bool force = false);
 
     //statistics for profiling shader performance
     bool mProfilePending = false;

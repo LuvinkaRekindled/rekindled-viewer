@@ -60,6 +60,8 @@ bool gEnabled = false;
 bool gTexOneCopy = false;   // C4: opt-in (LL_VK_TEXONECOPY=1), the measured gain was nil
 static int gMode = 1;
 static int drawRecFromEnv() { const char* e = getenv("LL_VK_DRAWREC"); return e ? std::min(2, std::max(0, atoi(e))) : 2; }       // default 2 (draw records); 0 is the old stream, 1 verifies it
+static int uniformRecFromEnv() { const char* e = getenv("LL_VK_UNIFORMREC"); return e ? std::min(2, std::max(0, atoi(e))) : 2; }
+int gUniformRec = uniformRecFromEnv();  // F2.5, see llvkasync.h
 int gDrawRec = drawRecFromEnv();        // F2.4, see llvkasync.h
 
 namespace
@@ -186,7 +188,7 @@ const char* const kFrontNames[FP_COUNT] = { "LLGLSLShader::bind", "uniform*", "u
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "drawCheck", "draw2" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "drawCheck", "draw2", "uniformRange" };
 const char* slotName(int slot) { return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
@@ -498,6 +500,13 @@ struct MainLap
 };
 
 bool gFrontStats = false;
+bool mainOnlyProducer() { return gEnabled && tlsBuf == nullptr && isMainThread(); }
+void uniformRange(void* program, U32 cls, U32 offset, U32 size, const void* data)
+{
+    MainLap lap;
+    struct A { void* mProgram; U32 mClass; U32 mOffset; U32 mSize; U32 mPad; } a = { program, cls, offset, size, 0 };
+    uniAppend(CMD_UNIFORM_RANGE, &a, sizeof(a), data, size);
+}
 unsigned long long frontStart(int id)
 {
     if (!isMainThread())
@@ -2102,6 +2111,18 @@ void applyUniformBatch(const U8* p, U32 bytes)
             if (pr) pr->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(d + sizeof(a)), a.mColumns, a.mRows, a.mCount);
             break;
         }
+        case CMD_UNIFORM_RANGE:
+        {
+            struct A { void* mProgram; U32 mClass; U32 mOffset; U32 mSize; U32 mPad; } a;
+            memcpy(&a, d, sizeof(a));
+            LLVk::Program* pr = (LLVk::Program*)a.mProgram;
+            if (pr)
+            {
+                if (gUniformRec == 1) pr->writeRangeVerify(a.mClass, a.mOffset, a.mSize, d + sizeof(a));
+                else pr->writeRange(a.mClass, a.mOffset, a.mSize, d + sizeof(a));
+            }
+            break;
+        }
         default:
             break;
         }
@@ -2241,7 +2262,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             LL_INFOS("VkOps") << "worker operations: " << opStatsReport(gOpStatsFrames) << LL_ENDL;
             gOpStatsFrames = 0;
         }
-        if (gDrawRec == 1)
+        if (gDrawRec == 1 || gUniformRec == 1)
         {
             static unsigned check_frames = 0;
             if (++check_frames >= 600)
@@ -2318,6 +2339,10 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         {
             applyUniformBatch(payload + sizeof(DrawHeader2) + h2->mBindBytes + sizeof(PendTex) * h->mCountTex, h->mUniBytes);
         }
+        if (gUniformRec == 1)
+        {
+            LLVkGL::uniform_check();
+        }
         U32 k = 0;
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
         {
@@ -2344,6 +2369,10 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         if (h->mUniBytes)
         {
             applyUniformBatch(payload + sizeof(DrawHeader) + sizeof(PendTex) * h->mCountTex, h->mUniBytes);
+        }
+        if (gUniformRec == 1)
+        {
+            LLVkGL::uniform_check();
         }
         U32 k = 0;
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
