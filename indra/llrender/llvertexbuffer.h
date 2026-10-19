@@ -304,6 +304,8 @@ protected:
     U8* mMappedIndexData = nullptr; // pointer to currently mapped indices (NULL if unmapped)
 
     U32     mTypeMask = 0;      // bitmask of present vertex attributes
+    struct VkBindCache;
+    VkBindCache* mVkBindCache = nullptr;    // F2.4: the vertex binding last worked out for this buffer (see setBuffer)
 
     U32     mSize = 0;          // size in bytes of mMappedData
     U32     mIndicesSize = 0;   // size in bytes of mMappedIndexData
