@@ -2722,16 +2722,27 @@
       <key>Value</key>
       <real>20.0</real>
     </map>
+    <key>RenderRiggedAlphaDepthPrepass</key>
+    <map>
+      <key>Comment</key>
+      <string>Rigged alpha (hair, clothes) with static alpha to follow: true = a depth only pass first, so that the depth of the rigged layers does not depend on their draw order (a second skinning of them, about 1 ms of GPU in a crowd); false = the colour pass writes depth for the texels at or above RenderRiggedAlphaDepthCutoff itself, in draw order, like the stock viewer.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>RenderRiggedAlphaDepthCutoff</key>
     <map>
       <key>Comment</key>
-      <string>Rigged alpha blended parts (hair, clothes) write depth only where the texture alpha reaches this value (a depth only pass before the colour pass), so the nearly transparent texels around hair strands no longer cut a halo out of foliage and other alpha surfaces behind. Low values (0.33) make semi-transparent front hair hide the layers behind it; 0.8 keeps both right. 0 = the old behaviour (every fragment above 1/255 writes depth).</string>
+      <string>Rigged alpha blended parts (hair, clothes) write depth only where the texture alpha reaches this value (a depth only pass before the colour pass), so the nearly transparent texels around hair strands no longer cut a halo out of foliage and other alpha surfaces behind. With the depth prepass (RenderRiggedAlphaDepthPrepass) a low value makes semi-transparent front hair hide the layers behind it (0.8 was needed); without it, as by default, 0.33 is right. 0 = the old behaviour (every fragment above 1/255 writes depth).</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.8</real>
+      <real>0.33</real>
     </map>
     <key>FSOverlayDepthMode</key>
     <map>
