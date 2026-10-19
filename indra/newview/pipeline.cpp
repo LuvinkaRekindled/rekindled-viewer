@@ -15883,7 +15883,28 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 static LLCachedControl<F32> far_max_move(gSavedSettings, "FSShadowFarCascadeMaxCameraMove", 0.5f);
                 static LLCachedControl<F32> far_max_turn(gSavedSettings, "FSShadowFarCascadeMaxCameraTurn", 1.0f);
                 CascadeReuse& cr = sCascadeReuse[j];
-                if (far_interval > 1 && (U32)j >= far_first && cr.mValid && cr.mTexture == mRT->shadow[j].getDepth())
+                // <FS> ray tracing only: the far cascades' passes only name casters to the ray scene (nothing is drawn, no shadow map is read) and the scene keeps the casters of a pass that does not run
+                // for a few frames, so the camera and the sun do not matter: each far cascade just takes its turn (staggered), whatever the camera does
+                static LLCachedControl<U32> rt_far_interval(gSavedSettings, "FSRtShadowFarCascadeInterval", 4);
+                if (rt_sun_cascades_unused() && rt_far_interval > 1 && (U32)j >= far_first && cr.mValid && cr.mTexture == mRT->shadow[j].getDepth())
+                {
+                    const U64 frame_now = LLFrameTimer::getFrameCount();
+                    if (((frame_now + (U64)j) % rt_far_interval) != 0 && frame_now - cr.mFrame < 2 * (U64)rt_far_interval)
+                    {
+                        view[j] = cr.mView;
+                        proj[j] = cr.mProj;
+                        mShadowError.mV[j] = cr.mError;
+                        mShadowFOV.mV[j] = cr.mFOV;
+                        glm::mat4 rt_reuse_trans(0.5f, 0.0f, 0.0f, 0.0f,
+                                                 0.0f, 0.5f, 0.0f, 0.0f,
+                                                 0.0f, 0.0f, 0.5f, 0.0f,
+                                                 0.5f, 0.5f, 0.5f, 1.0f);
+                        mSunShadowMatrix[j] = rt_reuse_trans * proj[j] * view[j] * inv_view;
+                        sShadowPassesReused++;
+                        continue;
+                    }
+                }
+                else if (far_interval > 1 && (U32)j >= far_first && cr.mValid && cr.mTexture == mRT->shadow[j].getDepth())
                 {
                     const U64 frame_now = LLFrameTimer::getFrameCount();
                     const bool its_turn = ((frame_now + (U64)j) % far_interval) == 0;

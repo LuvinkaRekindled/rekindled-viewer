@@ -2557,6 +2557,17 @@
       <key>Value</key>
       <real>3.0</real>
     </map>
+    <key>FSRtShadowFarCascadeInterval</key>
+    <map>
+      <key>Comment</key>
+      <string>Ray traced sun shadows: the far sun cascades' passes only name the shadow casters to the ray scene (nothing is drawn), and the scene keeps casters for a few frames, so each far cascade (from FSShadowFarCascadeFirst) runs only every Nth frame (staggered), whatever the camera does. Saves CPU on the main thread and the render worker. 1 = every cascade every frame. A distant avatar's shadow pose updates at 1/N of the frame rate.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>4</integer>
+    </map>
     <key>FSShadowFarCascadeInterval</key>
     <map>
       <key>Comment</key>
