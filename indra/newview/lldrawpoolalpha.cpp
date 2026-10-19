@@ -43,6 +43,7 @@
 #include "llviewerobjectlist.h" // For debugging
 #include "llviewerwindow.h"
 #include "pipeline.h"
+#include "llvkmirror.h"          // <FS> rtShadowMode()
 #include "llviewershadermgr.h"
 #include "llviewerregion.h"
 #include "lldrawpoolwater.h"
@@ -90,6 +91,8 @@ S32 LLDrawPoolAlpha::getNumPostDeferredPasses()
 }
 
 // set some common parameters on the given shader to prepare for alpha rendering
+extern S32 rrAlphaSunOld();    // pipeline.cpp: test switch, 1 = the old one hard sun ray
+
 static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment, F32 water_sign)
 {
     static LLCachedControl<F32> displayGamma(gSavedSettings, "RenderDeferredDisplayGamma");
@@ -108,6 +111,19 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
 
     shader->bind();
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
+
+    if (LLVkMirror::rtShadowMode() && !rrAlphaSunOld())
+    {
+        // <FS> ray traced sun shadows on alpha blended surfaces (hair, glass, clothes layers): these shaders used to leave the sun's size and the sample count at 0 and trace ONE HARD ray, so the
+        // shadow of a leaf fell crisp on the hair while the opaque surfaces next to it (skin, clothes) get the soft sun disc of the lightmap, accumulated and blurred. They get the same sun disc now,
+        // with more rays per pixel because nothing blurs or accumulates what they trace.
+        static LLCachedControl<F32> rt_softness(gSavedSettings, "RenderRTShadowSoftness", 0.35f);
+        static LLCachedControl<S32> rt_samples(gSavedSettings, "RenderRTShadowSamples", 2);
+        static LLStaticHashedString radius_s("rt_sun_radius"), samples_s("rt_sun_samples"), frame_s("rt_noise_frame");
+        shader->uniform1f(radius_s, tanf(llclamp(rt_softness(), 0.f, 5.f) * DEG_TO_RAD));
+        shader->uniform1i(samples_s, llclamp(rt_samples() * 3, 1, 16));
+        shader->uniform1f(frame_s, LLPipeline::sDLSS ? (F32)(gPipeline.mJitterIndex % 64) : 0.f);
+    }
 
     if (LLPipeline::sRenderingHUDs)
     { // for HUD attachments, only the pre-water pass is executed and we never want to clip anything
