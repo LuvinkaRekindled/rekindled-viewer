@@ -40,6 +40,7 @@
 #include "stdtypes.h"
 #include "v4math.h"
 #include "llplane.h"
+#include "llrenderstate.h"
 #include "llgltypes.h"
 #include "llinstancetracker.h"
 
@@ -258,10 +259,11 @@ public:
 
 protected:
     static std::unordered_map<LLGLenum, LLGLboolean> sStateMap;
+    static bool currentState(LLGLenum state);       // F3.2a: the block's value (the map only for capabilities the block does not hold)
 
 public:
     enum { CURRENT_STATE = -2, DISABLED_STATE = 0, ENABLED_STATE = 1 };
-    LLGLState(LLGLenum state, S32 enabled = CURRENT_STATE);
+    LLGLState(LLGLenum state, S32 enabled = CURRENT_STATE, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     ~LLGLState();
     void setEnabled(S32 enabled);
     void enable() { setEnabled(ENABLED_STATE); }
@@ -303,14 +305,14 @@ public:
 class LLGLEnable : public LLGLState
 {
 public:
-    LLGLEnable(LLGLenum state) : LLGLState(state, ENABLED_STATE) {}
+    LLGLEnable(LLGLenum state, const char* file = __builtin_FILE(), int line = __builtin_LINE()) : LLGLState(state, ENABLED_STATE, file, line) {}
 };
 
 /// TODO: Being deprecated.
 class LLGLDisable : public LLGLState
 {
 public:
-    LLGLDisable(LLGLenum state) : LLGLState(state, DISABLED_STATE) {}
+    LLGLDisable(LLGLenum state, const char* file = __builtin_FILE(), int line = __builtin_LINE()) : LLGLState(state, DISABLED_STATE, file, line) {}
 };
 
 /*

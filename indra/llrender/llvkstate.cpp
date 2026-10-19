@@ -11,8 +11,11 @@
 
 #include "llvkstate.h"
 #include "llframetimer.h"
+#include "llrender.h"
+#include "llvkasync.h"
 
 #include <atomic>
+#include <vector>
 #include <cstring>
 #include <intrin.h>
 
@@ -275,6 +278,117 @@ void setStencilMask(U32 mask)
     C().mBlock.mDepth.mWriteMask = mask;
 }
 
+// F3.2: typed overloads (llrenderstate.h). The enums are in Vulkan's order, so the conversion is a table of one line each
+namespace
+{
+VkCompareOp toVk(LLRenderState::CompareOp op)
+{
+    using LLRenderState::CompareOp;
+    switch (op)
+    {
+    case CompareOp::Never: return VK_COMPARE_OP_NEVER;
+    case CompareOp::Less: return VK_COMPARE_OP_LESS;
+    case CompareOp::Equal: return VK_COMPARE_OP_EQUAL;
+    case CompareOp::LessEqual: return VK_COMPARE_OP_LESS_OR_EQUAL;
+    case CompareOp::Greater: return VK_COMPARE_OP_GREATER;
+    case CompareOp::NotEqual: return VK_COMPARE_OP_NOT_EQUAL;
+    case CompareOp::GreaterEqual: return VK_COMPARE_OP_GREATER_OR_EQUAL;
+    default: return VK_COMPARE_OP_ALWAYS;
+    }
+}
+
+LLRenderState::CompareOp fromVk(VkCompareOp op)
+{
+    using LLRenderState::CompareOp;
+    switch (op)
+    {
+    case VK_COMPARE_OP_NEVER: return CompareOp::Never;
+    case VK_COMPARE_OP_LESS: return CompareOp::Less;
+    case VK_COMPARE_OP_EQUAL: return CompareOp::Equal;
+    case VK_COMPARE_OP_LESS_OR_EQUAL: return CompareOp::LessEqual;
+    case VK_COMPARE_OP_GREATER: return CompareOp::Greater;
+    case VK_COMPARE_OP_NOT_EQUAL: return CompareOp::NotEqual;
+    case VK_COMPARE_OP_GREATER_OR_EQUAL: return CompareOp::GreaterEqual;
+    default: return CompareOp::Always;
+    }
+}
+
+VkStencilOp toVk(LLRenderState::StencilOp op)
+{
+    using LLRenderState::StencilOp;
+    switch (op)
+    {
+    case StencilOp::Zero: return VK_STENCIL_OP_ZERO;
+    case StencilOp::Replace: return VK_STENCIL_OP_REPLACE;
+    case StencilOp::IncrClamp: return VK_STENCIL_OP_INCREMENT_AND_CLAMP;
+    case StencilOp::DecrClamp: return VK_STENCIL_OP_DECREMENT_AND_CLAMP;
+    case StencilOp::Invert: return VK_STENCIL_OP_INVERT;
+    case StencilOp::IncrWrap: return VK_STENCIL_OP_INCREMENT_AND_WRAP;
+    case StencilOp::DecrWrap: return VK_STENCIL_OP_DECREMENT_AND_WRAP;
+    default: return VK_STENCIL_OP_KEEP;
+    }
+}
+}
+
+void setCullFace(LLRenderState::CullFace face)
+{
+    using LLRenderState::CullFace;
+    if (face == CullFace::None)
+    {
+        return;
+    }
+    CTX_CALL();
+    C().mCullFace = face == CullFace::Front ? VK_CULL_MODE_FRONT_BIT : (face == CullFace::FrontAndBack ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_BACK_BIT);
+    recomputeCull();
+}
+
+void setPolygonMode(LLRenderState::PolygonMode mode)
+{
+    using LLRenderState::PolygonMode;
+    CTX_CALL();
+    C().mBlock.mRaster.mPolygonMode = mode == PolygonMode::Line ? VK_POLYGON_MODE_LINE : (mode == PolygonMode::Point ? VK_POLYGON_MODE_POINT : VK_POLYGON_MODE_FILL);
+}
+
+void setDepthFunc(LLRenderState::CompareOp op)
+{
+    CTX_CALL();
+    C().mBlock.mDepth.mDepthOp = toVk(op);
+}
+
+void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask)
+{
+    CTX_CALL();
+    DepthStencilState& ds = C().mBlock.mDepth;
+    ds.mStencilOp = toVk(op);
+    ds.mReference = (U32)ref;
+    ds.mCompareMask = mask;
+}
+
+void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass)
+{
+    CTX_CALL();
+    DepthStencilState& ds = C().mBlock.mDepth;
+    ds.mFail = toVk(sfail);
+    ds.mDepthFail = toVk(dpfail);
+    ds.mPass = toVk(dppass);
+}
+
+int capability(U32 cap)
+{
+    const Block& b = C().mBlock;
+    switch (cap)
+    {
+    case GL_BLEND: return b.mBlend.mEnable;
+    case GL_DEPTH_TEST: return b.mDepth.mDepthTest;
+    case GL_CULL_FACE: return C().mCullOn;
+    case GL_SCISSOR_TEST: return b.mScissorOn;
+    case GL_STENCIL_TEST: return b.mDepth.mStencilTest;
+    case GL_POLYGON_OFFSET_FILL: return b.mRaster.mDepthBias;
+    case GL_DEPTH_CLAMP: return b.mRaster.mDepthClamp;
+    default: return -1;
+    }
+}
+
 void setViewport(S32 x, S32 y, S32 w, S32 h)
 {
     CTX_CALL();
@@ -461,9 +575,155 @@ std::string statsReport()
     char buf[260];
     snprintf(buf, sizeof(buf), "state context: %llu setter calls, %llu blocks written, %llu setter calls from other threads (ignored), %llu unknown blend factors", c.mCalls, c.mBlocks, c.mOffThread, c.mUnknownFactor);
     c.mCalls = c.mBlocks = c.mOffThread = c.mUnknownFactor = 0;
-    return buf;
+    return std::string(buf) + LLRenderState::guardReport();
 }
 
 } // namespace LLVkState
+
+// ---- F3.2: the scoped guards of llrenderstate.h ----
+namespace LLRenderState
+{
+
+bool sGuardCheck = []() { const char* e = getenv("LL_VK_STATE_GUARD_CHECK"); return e && e[0] == '1'; }();
+
+namespace
+{
+using LLVkState::C;
+
+const char* kindName(Kind k)
+{
+    static const char* const names[(int)Kind::Count] = { "blend", "scissor test", "stencil test", "polygon offset", "depth clamp", "cull (bit 0 on, bits 1-2 face)", "depth (bit 0 test, bit 1 write, bits 2-4 func)" };
+    return names[(int)k];
+}
+
+// a warning per guard site (file + line of the constructor), the first 200 sites; the total is in the stats line
+struct Site { const char* mFile; int mLine; U32 mCount; };
+std::vector<Site> gSites;
+U64 gWarnings = 0;
+
+void warn(const char* what, Kind k, U32 expected, U32 found, U32 saved, const char* file, int line)
+{
+    ++gWarnings;
+    for (Site& s : gSites)
+    {
+        if (s.mLine == line && s.mFile == file)
+        {
+            ++s.mCount;
+            return;
+        }
+    }
+    if (gSites.size() < 200)
+    {
+        gSites.push_back({ file, line, 1 });
+        LL_WARNS("StateGuard") << what << ": " << kindName(k) << " expected 0x" << std::hex << expected << " found 0x" << found << " (saved 0x" << saved << std::dec
+            << ") guard made at " << (file ? file : "?") << ":" << line << LL_ENDL;
+    }
+}
+}
+
+std::string guardReport()
+{
+    if (!sGuardCheck)
+    {
+        return std::string();
+    }
+    char buf[96];
+    snprintf(buf, sizeof(buf), ", guard check: %llu warnings at %u sites", gWarnings, (U32)gSites.size());
+    return buf;
+}
+
+void reportDrift(const char* what, Kind k, U32 legacy, U32 block, const char* file, int line)
+{
+    warn(what, k, legacy, block, legacy, file, line);
+}
+
+U32 read(Kind kind)
+{
+    const LLVkState::Block& b = C().mBlock;
+    switch (kind)
+    {
+    case Kind::Blend: return b.mBlend.mEnable;
+    case Kind::Scissor: return b.mScissorOn;
+    case Kind::Stencil: return b.mDepth.mStencilTest;
+    case Kind::PolygonOffset: return b.mRaster.mDepthBias;
+    case Kind::DepthClamp: return b.mRaster.mDepthClamp;
+    case Kind::Cull:
+    {
+        const VkCullModeFlags f = C().mCullFace;
+        const CullFace face = f == VK_CULL_MODE_FRONT_BIT ? CullFace::Front : (f == VK_CULL_MODE_FRONT_AND_BACK ? CullFace::FrontAndBack : CullFace::Back);
+        return packCull(C().mCullOn, face);
+    }
+    case Kind::Depth:
+        return packDepth(b.mDepth.mDepthTest, b.mDepthMask, LLVkState::fromVk(b.mDepth.mDepthOp));
+    default: return 0;
+    }
+}
+
+U32 exchange(Kind kind, U32 value)
+{
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_GLSTATE);
+    const U32 old = read(kind);
+    if (kind == Kind::Cull && !(value & 6))
+    {
+        value |= old & 6;                       // face None: keep the face
+    }
+    if (old == value)
+    {
+        return old;
+    }
+    gGL.flush();                                // pending immediate-mode vertices belong to the old state
+    switch (kind)
+    {
+    case Kind::Blend: LLVkState::setEnable(GL_BLEND, value != 0); break;
+    case Kind::Scissor: LLVkState::setEnable(GL_SCISSOR_TEST, value != 0); break;
+    case Kind::Stencil: LLVkState::setEnable(GL_STENCIL_TEST, value != 0); break;
+    case Kind::PolygonOffset: LLVkState::setEnable(GL_POLYGON_OFFSET_FILL, value != 0); break;
+    case Kind::DepthClamp: LLVkState::setEnable(GL_DEPTH_CLAMP, value != 0); break;
+    case Kind::Cull:
+        if ((old & 1) != (value & 1))
+        {
+            LLVkState::setEnable(GL_CULL_FACE, (value & 1) != 0);
+        }
+        if ((old & 6) != (value & 6))
+        {
+            LLVkState::setCullFace((CullFace)((value >> 1) & 3));
+        }
+        break;
+    case Kind::Depth:
+        if ((old & 1) != (value & 1))
+        {
+            LLVkState::setEnable(GL_DEPTH_TEST, (value & 1) != 0);
+        }
+        if ((old & 28) != (value & 28))
+        {
+            LLVkState::setDepthFunc((CompareOp)((value >> 2) & 7));
+        }
+        if ((old & 2) != (value & 2))
+        {
+            LLVkState::setDepthMask((value & 2) != 0);
+        }
+        break;
+    default: break;
+    }
+    return old;
+}
+
+void leave(Kind kind, U32 saved, U32 set, const char* file, int line)
+{
+    if (sGuardCheck)
+    {
+        const U32 now = read(kind);
+        if (now != set)
+        {
+            warn("state changed while a guard was alive", kind, set, now, saved, file, line);
+        }
+    }
+    if (set != saved)
+    {
+        exchange(kind, saved);
+    }
+}
+
+}
 
 #endif // LL_VULKAN

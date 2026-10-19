@@ -19,6 +19,7 @@
 
 #include "linden_common.h"
 #include "llvkrenderer.h"
+#include "llrenderstate.h"
 
 #include <string>
 
@@ -53,6 +54,14 @@ namespace LLVkState
     void setStencilFunc(U32 func, S32 ref, U32 mask);
     void setStencilOp(U32 sfail, U32 dpfail, U32 dppass);
     void setStencilMask(U32 mask);
+    // F3.2: the same setters with typed values (llrenderstate.h); the GL-number ones above go away with the last GL-named user
+    void setCullFace(LLRenderState::CullFace face);                       // None: no change
+    void setPolygonMode(LLRenderState::PolygonMode mode);
+    void setDepthFunc(LLRenderState::CompareOp op);
+    void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask);
+    void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass);
+    // what the block holds for a GL capability (0 / 1), -1 when the block does not hold it (LLGLState reads this instead of keeping its own map)
+    int capability(U32 cap);
     void setViewport(S32 x, S32 y, S32 w, S32 h);
     void setScissor(S32 x, S32 y, S32 w, S32 h);
     // a setter call arrived on a thread other than the main producer: it is not written to the context (the old path still sees it)
