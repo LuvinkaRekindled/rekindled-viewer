@@ -112,16 +112,22 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
     shader->bind();
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
 
-    if (LLVkMirror::rtShadowMode() && !rrAlphaSunOld())
+    if (LLVkMirror::rtShadowMode())
     {
-        // <FS> ray traced sun shadows on alpha blended surfaces (hair, glass, clothes layers): these shaders used to leave the sun's size and the sample count at 0 and trace ONE HARD ray, so the
-        // shadow of a leaf fell crisp on the hair while the opaque surfaces next to it (skin, clothes) get the soft sun disc of the lightmap, accumulated and blurred. They get the same sun disc now,
-        // with more rays per pixel because nothing blurs or accumulates what they trace.
+        // <FS> ray traced sun shadows on alpha blended surfaces (hair, glass, flat decals like a logo on the floor): these shaders used to leave the sun's size and the sample count at 0 and trace ONE HARD ray, so
+        // the shadow of a leaf fell crisp on the hair while the opaque surfaces next to it (skin, clothes, the ground) get the soft sun disc of the lightmap, accumulated and blurred. They get the same
+        // sun disc now, with more rays per pixel because nothing blurs or accumulates what they trace. Test switch (third number of rr-debug.txt): 1 = the old single hard ray (set explicitly: uniforms
+        // stay in the program), 0 and 2 = a disc twice the sun's (the default), 3 / 4 = 4 / 8 times with more rays (the lightmap's blur softens the ground more than the sun disc alone does).
+        const S32 alpha_sun = rrAlphaSunOld();
         static LLCachedControl<F32> rt_softness(gSavedSettings, "RenderRTShadowSoftness", 0.35f);
         static LLCachedControl<S32> rt_samples(gSavedSettings, "RenderRTShadowSamples", 2);
         static LLStaticHashedString radius_s("rt_sun_radius"), samples_s("rt_sun_samples"), frame_s("rt_noise_frame");
-        shader->uniform1f(radius_s, tanf(llclamp(rt_softness(), 0.f, 5.f) * DEG_TO_RAD));
-        shader->uniform1i(samples_s, llclamp(rt_samples() * 3, 1, 16));
+        F32 scale = 2.f;                    // chosen by eye (Adam, plaza: a logo on the floor next to the ground): twice the sun disc, 6 rays per sample setting
+        S32 samples = rt_samples() * 6;
+        if (alpha_sun == 3) { scale = 4.f; samples = rt_samples() * 6; }
+        else if (alpha_sun >= 4) { scale = 8.f; samples = rt_samples() * 6; }
+        shader->uniform1f(radius_s, alpha_sun == 1 ? 0.f : tanf(llclamp(rt_softness() * scale, 0.f, 20.f) * DEG_TO_RAD));
+        shader->uniform1i(samples_s, alpha_sun == 1 ? 1 : llclamp(samples, 1, 16));
         shader->uniform1f(frame_s, LLPipeline::sDLSS ? (F32)(gPipeline.mJitterIndex % 64) : 0.f);
     }
 
