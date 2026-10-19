@@ -10697,6 +10697,8 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 // specular albedo / normal guide, 5 plain DLSS super resolution instead, 6 ray reconstruction with our own ray shadow accumulation switched on as well,
 // 7 ray reconstruction without the traced reflection guides, 8 show the reflection motion vectors, 10 the hit distance + matrices guide instead of the motion vectors
 static S32 sRrHairMode = 0;         // the second number of the file: how the traced mirror takes hair (rt_hair_soft in shadowUtil.glsl)
+static S32 sRrAlphaSunOld = 0;      // the third number: 1 = the alpha pass (hair) traces its one hard sun ray as it did before, 0 = the soft sun like the lightmap
+S32 rrAlphaSunOld() { rrDebugMode(); return sRrAlphaSunOld; }
 S32 rrDebugMode()
 {
     static S32 mode = 0;
@@ -10707,10 +10709,11 @@ S32 rrDebugMode()
         checked = frame;
         mode = 0;
         sRrHairMode = 0;
+        sRrAlphaSunOld = 0;
         std::ifstream in("<work>/rr-debug.txt");
         if (in)
         {
-            in >> mode >> sRrHairMode;
+            in >> mode >> sRrHairMode >> sRrAlphaSunOld;
         }
     }
     return mode;
