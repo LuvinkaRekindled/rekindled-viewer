@@ -2709,7 +2709,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>8.0</real>
+      <real>4.0</real>
     </map>
     <key>RenderRTShadowAlphaLodFar</key>
     <map>
@@ -2720,7 +2720,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>30.0</real>
+      <real>20.0</real>
     </map>
     <key>RenderRiggedAlphaDepthCutoff</key>
     <map>
