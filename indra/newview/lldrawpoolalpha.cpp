@@ -290,11 +290,17 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
     // reaches the cutoff, (2) the colour of those texels (alpha >= cutoff) against that depth, (3) after the static alpha, the colour of the soft texels (alpha below
     // the cutoff) over everything, rejected where step 1 wrote depth (same triangles, drawn a little farther, depth test LESS). Foliage behind the soft part of the hair is
     // then under it, as it should be, and the cutoff can stay high enough that semi transparent front hair does not hide the layers behind it.
-    static LLCachedControl<F32> rigged_depth_cutoff(gSavedSettings, "RenderRiggedAlphaDepthCutoff", 0.8f);
-    const bool depth_prepass = rigged && !fringe && rigged_depth_cutoff() > 0.f && !LLPipeline::sImpostorRender && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && hasStaticAlpha();
-    if (depth_prepass)
+    static LLCachedControl<F32> rigged_depth_cutoff(gSavedSettings, "RenderRiggedAlphaDepthCutoff", 0.33f);
+    // The depth only pass (RenderRiggedAlphaDepthPrepass, off by default: it skins the rigged alpha a second time, 1 ms of GPU in a crowd) makes the depth of the rigged layers independent of their
+    // draw order; without it the colour pass itself writes depth for the texels at or above the cutoff, in draw order, as the viewer always did (with the cutoff instead of 1/255).
+    static LLCachedControl<bool> rigged_prepass(gSavedSettings, "RenderRiggedAlphaDepthPrepass", false);
+    const bool split = rigged && !fringe && rigged_depth_cutoff() > 0.f && !LLPipeline::sImpostorRender && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && hasStaticAlpha();
+    const bool depth_prepass = split && rigged_prepass();
+    if (split)
     {
         mFringePending = true;
+        mDepthCutoff = rigged_depth_cutoff();
+        mDepthCutoffShaders.clear();
     }
 
     bool write_depth = (rigged && !depth_prepass && !fringe) ||
@@ -332,9 +338,6 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
         LLGLSLShader* saved_fullbright = fullbright_shader;
         LLGLSLShader* mask_shader = &gDeferredFullbrightAlphaMaskProgram;
         simple_shader = fullbright_shader = mask_shader;
-
-        mDepthCutoff = rigged_depth_cutoff();
-        mDepthCutoffShaders.clear();
 
         gGL.setColorMask(false, false);
         {
@@ -375,7 +378,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
         }
     }
 
-    if (depth_prepass)
+    if (split)
     {   // every shader that drew with the cutoff goes back to the usual one (the static alpha and the soft part do not set it again)
         LLGLSLShader::unbind();
         mDepthCutoff = 0.f;
