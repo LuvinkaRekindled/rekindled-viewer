@@ -2700,6 +2700,28 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>RenderRTShadowAlphaLodNear</key>
+    <map>
+      <key>Comment</key>
+      <string>Ray traced sun shadow on alpha blended surfaces (hair, glass, decals): up to this distance in metres every pixel traces the full set of rays (RenderRTShadowSamples x 6); from here to RenderRTShadowAlphaLodFar the number of rays falls to a quarter (at least 2). 0 = the full set at any distance.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>8.0</real>
+    </map>
+    <key>RenderRTShadowAlphaLodFar</key>
+    <map>
+      <key>Comment</key>
+      <string>Distance in metres from which alpha blended surfaces trace a quarter of the sun shadow rays (see RenderRTShadowAlphaLodNear).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>30.0</real>
+    </map>
     <key>RenderRiggedAlphaDepthCutoff</key>
     <map>
       <key>Comment</key>
