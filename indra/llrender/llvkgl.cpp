@@ -484,6 +484,8 @@ inline PerContext& current_ctx() { return sCtxOverride ? *sCtxOverride : sCtxTls
 
 // F1.2: the texture slots a draw samples from (unit, target class): written by the typed slot records only
 U32 sSlots[32][8] = {};
+// F2.6: the texture each unit holds, by id only (draw records, LL_VK_DRAWREC=2); a sampler of dimension 'cls' samples it when the texture has that dimension
+U32 sUnitTex[32] = {};
 // F1.4: the render target draws go to (0: the back buffer): set by the typed target state record only
 U32 sDrawFbo = 0;
 
@@ -1277,6 +1279,18 @@ void sync_draw_state(Renderer& r, bool has_depth)
     last_valid = true;
 }
 
+// the texture a sampler of dimension 'cls' reads from a unit, through the unit's id alone (a texture of another dimension is not what a sampler of this dimension samples)
+inline U32 unit_texture(U32 unit, U32 cls)
+{
+    const U32 name = sUnitTex[unit];
+    if (!name)
+    {
+        return 0;
+    }
+    Tex* t = tex_ptr(name);
+    return (t && t->mDim == cls) ? name : 0;
+}
+
 // binds the textures the program's samplers read
 void sync_textures(Renderer& r, Program& program)
 {
@@ -1289,7 +1303,8 @@ void sync_textures(Renderer& r, Program& program)
             continue;
         }
         const U32 cls = program.getSamplerClass(k);
-        Tex* tex = tex_ptr(sSlots[unit][cls]);
+        const U32 slot_name = LLVkAsync::gDrawRec == 2 ? unit_texture(unit, cls) : sSlots[unit][cls];
+        Tex* tex = tex_ptr(slot_name);
         if (sStatsEnabled)
         {
             const std::string& type = info.mSamplers[k].mType;
@@ -1298,7 +1313,7 @@ void sync_textures(Renderer& r, Program& program)
             for (const char* w : watch) if (program.getName().find(w) != std::string::npos) wanted = true;
             if (wanted)
             {
-                std::string what = "unit " + std::to_string(unit) + " tex " + std::to_string(sSlots[unit][cls]) + " ";
+                std::string what = "unit " + std::to_string(unit) + " tex " + std::to_string(slot_name) + " ";
                 if (!tex) what += "UNBOUND";
                 else if (!tex->mImage.valid()) what += "NO IMAGE";
                 else
@@ -1320,7 +1335,7 @@ void sync_textures(Renderer& r, Program& program)
             r.setTexture(unit, &tex->mImage, texture_sampler(r, *tex));
             if (sStatsEnabled)
             {
-                const U32 tname = sSlots[unit][cls];
+                const U32 tname = slot_name;
                 ++sFrameSampled[tname];
                 if (std::find(sCurTargets.begin(), sCurTargets.end(), tname) != sCurTargets.end())
                 {
@@ -2049,6 +2064,10 @@ void destroy_textures(S32 n, const U32* textures)
                 if (b == textures[i]) b = 0;
             }
         }
+        for (U32& n : sUnitTex)
+        {
+            if (n == textures[i]) n = 0;
+        }
         for (auto& f : sGL.mFbos)
         {
             for (auto& a : f.second.mColor) if (a.mTexture == textures[i]) a.mTexture = 0;
@@ -2057,10 +2076,23 @@ void destroy_textures(S32 n, const U32* textures)
     }
 }
 
+void slot_set(unsigned unit, unsigned name)
+{
+    if (unit < 32)
+    {
+        sUnitTex[unit] = name;
+        if (name)
+        {
+            sGL.mTextures[name];
+        }
+    }
+}
+
 void slot_bind(unsigned unit, unsigned dim, unsigned name)
 {
     if (unit < 32 && dim < 8)
     {
+        sUnitTex[unit] = name;      // (a record that carries a target keeps both tables: the draw record path reads the ids)
         sSlots[unit][dim] = name;
         if (name)
         {
@@ -2682,7 +2714,8 @@ namespace
 struct DrawCheckStats
 {
     U64 mChecks = 0, mDraws = 0;
-    U64 mUniformChecks = 0, mBadUniform = 0;
+    U64 mUniformChecks = 0, mBadUniform = 0, mSlotChecks = 0, mBadSlot = 0;
+    U32 mIds[32] = {};
     U64 mBadProgram = 0, mBadState = 0, mBadBuffers = 0, mBadEnabled = 0, mBadAttrib = 0, mNoDraw = 0, mNoCheck = 0;
     std::map<std::string, U64> mBadPerProgram;
 };
@@ -2702,8 +2735,9 @@ void dc_log(const char* what, const std::string& detail)
 }
 }
 
-void draw_check(void* program, const LLVkState::Block& producer_state, const LLVkAsync::DrawBinding& b)
+void draw_check(void* program, const LLVkState::Block& producer_state, const LLVkAsync::DrawBinding& b, const unsigned* slot_ids)
 {
+    memcpy(sDc.mIds, slot_ids, sizeof(sDc.mIds));
     if (sDcPending)
     {
         ++sDc.mNoDraw;
@@ -2775,6 +2809,43 @@ void draw_check(void* program, const LLVkState::Block& producer_state, const LLV
     }
 }
 
+void slot_check()
+{
+    if (!LLVkMirror::isReady())
+    {
+        return;
+    }
+    Program* cur = Renderer::instance().getProgram();
+    if (!cur)
+    {
+        return;
+    }
+    ++sDc.mSlotChecks;
+    const ProgramInfo& info = cur->getInfo();
+    for (size_t k = 0; k < info.mSamplers.size(); ++k)
+    {
+        const U32 unit = cur->getSamplerUnit(k);
+        if (unit >= 32)
+        {
+            continue;
+        }
+        const U32 cls = cur->getSamplerClass(k);
+        Tex* old_tex = tex_ptr(sSlots[unit][cls]);
+        Tex* new_tex = nullptr;
+        if (const U32 n = sDc.mIds[unit])
+        {
+            Tex* t = tex_ptr(n);
+            new_tex = (t && t->mDim == cls) ? t : nullptr;
+        }
+        if (old_tex != new_tex)
+        {
+            ++sDc.mBadSlot;
+            dc_log("texture slot differs", "sampler " + info.mSamplers[k].mName + " unit " + std::to_string(unit) + " class " + std::to_string(cls) + ": old table texture " + std::to_string(sSlots[unit][cls])
+                   + " producer id " + std::to_string(sDc.mIds[unit]));
+        }
+    }
+}
+
 void uniform_check()
 {
     if (!LLVkMirror::isReady())
@@ -2811,7 +2882,8 @@ std::string draw_check_report()
     std::string out = "draws " + std::to_string(sDc.mDraws) + ", checks " + std::to_string(sDc.mChecks) + " | mismatches: program " + std::to_string(sDc.mBadProgram) + ", state " + std::to_string(sDc.mBadState)
                     + ", buffers " + std::to_string(sDc.mBadBuffers) + ", attribute source " + std::to_string(sDc.mBadEnabled) + ", attribute fields " + std::to_string(sDc.mBadAttrib)
                     + ", check without draw " + std::to_string(sDc.mNoDraw) + ", draw without check " + std::to_string(sDc.mNoCheck)
-                    + " | uniform blocks: checks " + std::to_string(sDc.mUniformChecks) + ", draws with a difference " + std::to_string(sDc.mBadUniform);
+                    + " | uniform blocks: checks " + std::to_string(sDc.mUniformChecks) + ", draws with a difference " + std::to_string(sDc.mBadUniform)
+                    + " | texture slots: draws checked " + std::to_string(sDc.mSlotChecks) + ", samplers that differ " + std::to_string(sDc.mBadSlot);
     if (!sDc.mBadPerProgram.empty())
     {
         out += " | by program:";
