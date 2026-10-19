@@ -92,6 +92,8 @@ const U32 DUMMY_UBO_BYTES = 64 * 1024;
 static const bool sRingEpochOff = getenv("LL_VK_RING_STALE") != nullptr;
 
 const U32 VERTEX_RING_BYTES = 8u * 1024 * 1024;
+const U32 VERTEX_OVERFLOW_CHUNK_BYTES = 32u * 1024 * 1024;      // F3.1: see mVertexOverflow
+const U32 VERTEX_OVERFLOW_MAX_CHUNKS = 8;
 
 VkShaderStageFlags all_graphics_stages()
 {
@@ -1708,6 +1710,14 @@ void Renderer::shutdown()
             if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
             b = Buffer();
         }
+        for (std::vector<Buffer>& chunks : mVertexOverflow)
+        {
+            for (Buffer& b : chunks)
+            {
+                if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
+            }
+            chunks.clear();
+        }
         if (mDummyUbo.valid()) vmaDestroyBuffer(ctx.getAllocator(), mDummyUbo.mBuffer, mDummyUbo.mAllocation);
         mDummyUbo = Buffer();
         if (mWhite.valid())
@@ -1854,6 +1864,25 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     if (!mRestarting || sRingEpochOff)
     {
         mVertexRingUsed = 0;        // (a mid-frame flush keeps it going: the ray scene reads palettes and tables written earlier in the frame by address, and the new start would overwrite them)
+        if (mOverflowChunk || mOverflowUsed)
+        {
+            mOverflowIdle = 0;
+        }
+        else if (++mOverflowIdle >= 600)
+        {
+            // no frame used the overflow for 600 frames: nothing on the GPU reads it any more
+            for (std::vector<Buffer>& chunks : mVertexOverflow)
+            {
+                for (Buffer& b : chunks)
+                {
+                    if (b.valid()) vmaDestroyBuffer(Context::instance().getAllocator(), b.mBuffer, b.mAllocation);
+                }
+                chunks.clear();
+            }
+            mOverflowIdle = 0;
+        }
+        mOverflowChunk = 0;
+        mOverflowUsed = 0;
     }
     mDrawCount = 0;
     mRendering = false;
@@ -2808,8 +2837,41 @@ Renderer::ScratchAlloc Renderer::allocVertexScratch(VkDeviceSize size)
     const U32 start = (mVertexRingUsed + 15) / 16 * 16;
     if (start + size > VERTEX_RING_BYTES || !mVertexRing[mSlot].valid())
     {
-        LL_WARNS_ONCE("Vulkan") << "vertex scratch ring exhausted" << LL_ENDL;
-        return a;
+        if (!mVertexRing[mSlot].valid())
+        {
+            LL_WARNS_ONCE("Vulkan") << "vertex scratch ring exhausted" << LL_ENDL;
+            return a;
+        }
+        // the ring is full: the scratch continues in the overflow chunks of this slot (made when first needed)
+        std::vector<Buffer>& chunks = mVertexOverflow[mSlot];
+        for (;;)
+        {
+            if (mOverflowChunk < chunks.size())
+            {
+                const Buffer& c = chunks[mOverflowChunk];
+                const VkDeviceSize s = (mOverflowUsed + 15) / 16 * 16;
+                if (s + size <= c.mSize)
+                {
+                    mOverflowUsed = (U32)(s + size);
+                    a.mBuffer = c.mBuffer;
+                    a.mOffset = s;
+                    a.mPtr = (U8*)c.mMapped + s;
+                    a.mAddress = c.mAddress ? c.mAddress + s : 0;
+                    return a;
+                }
+                ++mOverflowChunk;
+                mOverflowUsed = 0;
+                continue;
+            }
+            Buffer b;
+            if (size > VERTEX_OVERFLOW_CHUNK_BYTES || chunks.size() >= VERTEX_OVERFLOW_MAX_CHUNKS ||
+                !Context::instance().createBuffer(VERTEX_OVERFLOW_CHUNK_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, Context::Memory::UploadDevice, b))
+            {
+                LL_WARNS_ONCE("Vulkan") << "vertex scratch ring and overflow chunks exhausted" << LL_ENDL;
+                return a;
+            }
+            chunks.push_back(b);
+        }
     }
     mVertexRingUsed = start + (U32)size;
     a.mBuffer = mVertexRing[mSlot].mBuffer;

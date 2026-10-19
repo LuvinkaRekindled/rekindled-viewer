@@ -648,6 +648,10 @@ private:
     PushedBinding mPushed[MAX_TEXTURE_UNITS] = {};      // what each push-descriptor binding currently holds
     Buffer mVertexRing[Context::FRAMES_IN_FLIGHT];
     U32 mVertexRingUsed = 0;
+    // F3.1: chunks that carry the vertex scratch when the ring is full (immediate mode draws its vertices there: a debug draw of every bounding box needs far more than the ring); reused each time a slot
+    // comes round, released after a long time without use. The cursor is reset with the ring.
+    std::vector<Buffer> mVertexOverflow[Context::FRAMES_IN_FLIGHT];
+    U32 mOverflowChunk = 0, mOverflowUsed = 0, mOverflowIdle = 0;
     VkBuffer mVertexBuffer = VK_NULL_HANDLE;
     VkDeviceSize mVertexOffset = 0;
     VkBuffer mIndexBuffer = VK_NULL_HANDLE;
