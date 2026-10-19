@@ -230,6 +230,7 @@ void rtSceneFrame(out mat3 to_scene, out vec3 camera)
 // (blurLightF.glsl) smooths them. Both uniforms are set by the sun lightmap pass only; every other shader that samples the sun shadow (alpha, water) leaves them 0 and gets one hard ray.
 uniform float rt_sun_radius;
 uniform int rt_sun_samples;
+uniform vec2 rt_sun_lod;                // <FS> (near, far) metres: the rays of the sun disc go from rt_sun_samples at `near` down to a quarter of them (at least 2) at `far` and beyond; 0 = all of them (set by the alpha pass only)
 uniform float rt_noise_frame;
 
 // A ray whose origin or direction is NaN or infinite (a pixel whose eye space position was rebuilt from a zero or far-plane depth, a scene frame record not written yet) is undefined for a
@@ -819,6 +820,13 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     vec3 origin = pos + norm * (0.015 + 0.0006 * -pos.z);
     float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
     int samples = (rt_sun_radius > 0.0) ? clamp(rt_sun_samples, 1, 16) : 1;
+    if (rt_sun_lod.x > 0.0 && samples > 4)
+    {
+        // <FS> far from the camera the penumbra is a fraction of a pixel and the temporal upscaler averages the noise: fewer rays (the alpha pass traces for every blended pixel, in a crowd that is hair, clothes and
+        // glass of dozens of avatars and cost over 5 ms of GPU with 12 rays)
+        float k = smoothstep(rt_sun_lod.x, max(rt_sun_lod.y, rt_sun_lod.x + 1.0), -pos.z);
+        samples = clamp(int(mix(float(samples), float(max(samples / 4, 2)), k) + 0.5), 1, 16);
+    }
     if (samples == 1 && rt_sun_radius <= 0.0)
     {
         return rtSunRay(origin, light_dir, pos_screen, lod);

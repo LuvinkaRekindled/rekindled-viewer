@@ -130,6 +130,10 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
         shader->uniform1f(radius_s, alpha_sun == 1 ? 0.f : tanf(llclamp(rt_softness() * scale, 0.f, 20.f) * DEG_TO_RAD));
         shader->uniform1i(samples_s, alpha_sun == 1 ? 1 : llclamp(samples, 1, 16));
         shader->uniform1f(frame_s, LLPipeline::sDLSS ? (F32)(gPipeline.mJitterIndex % 64) : 0.f);
+        static LLCachedControl<F32> rt_lod_near(gSavedSettings, "RenderRTShadowAlphaLodNear", 8.f);
+        static LLCachedControl<F32> rt_lod_far(gSavedSettings, "RenderRTShadowAlphaLodFar", 30.f);
+        static LLStaticHashedString lod_s("rt_sun_lod");
+        shader->uniform2f(lod_s, alpha_sun == 1 ? 0.f : rt_lod_near(), rt_lod_far());
     }
 
     if (LLPipeline::sRenderingHUDs)
