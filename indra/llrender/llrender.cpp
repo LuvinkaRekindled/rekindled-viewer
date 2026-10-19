@@ -1459,6 +1459,11 @@ void LLRender::setCullFace(U32 gl_face)
     LLVkState::setCullFace(gl_face);
 }
 
+void LLRender::setCullFace(LLRenderState::CullFace face)
+{
+    LLVkState::setCullFace(face);
+}
+
 void LLRender::setPolygonOffset(F32 factor, F32 units)
 {
     LLVkState::setPolygonOffset(factor, units);
@@ -1468,6 +1473,11 @@ void LLRender::setPolygonMode(U32 gl_face, U32 gl_mode)
 {
     (void)gl_face;
     LLVkState::setPolygonMode(gl_mode);
+}
+
+void LLRender::setPolygonMode(LLRenderState::PolygonMode mode)
+{
+    LLVkState::setPolygonMode(mode);
 }
 
 void LLRender::setPointSize(F32 size)
@@ -1483,6 +1493,16 @@ void LLRender::setStencilFunc(U32 gl_func, S32 ref, U32 mask)
 void LLRender::setStencilOp(U32 gl_sfail, U32 gl_dpfail, U32 gl_dppass)
 {
     LLVkState::setStencilOp(gl_sfail, gl_dpfail, gl_dppass);
+}
+
+void LLRender::setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask)
+{
+    LLVkState::setStencilFunc(op, ref, mask);
+}
+
+void LLRender::setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass)
+{
+    LLVkState::setStencilOp(sfail, dpfail, dppass);
 }
 
 void LLRender::setStencilMask(U32 mask)

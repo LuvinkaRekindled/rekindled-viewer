@@ -456,9 +456,7 @@ void clear_glerror()
 // Static members
 std::unordered_map<LLGLenum, LLGLboolean> LLGLState::sStateMap;
 
-GLboolean LLGLDepthTest::sDepthEnabled = GL_FALSE; // OpenGL default
-GLenum LLGLDepthTest::sDepthFunc = GL_LESS; // OpenGL default
-GLboolean LLGLDepthTest::sWriteEnabled = GL_TRUE; // OpenGL default
+U32 LLGLDepthTest::sShadow = LLRenderState::packDepth(false, true, LLRenderState::CompareOp::Less); // OpenGL defaults
 
 //static
 void LLGLState::initClass()
@@ -507,7 +505,16 @@ void LLGLState::checkStates(GLboolean writeAlpha)
 
 ///////////////////////////////////////////////////////////////////////
 
-LLGLState::LLGLState(LLGLenum state, S32 enabled) :
+// F3.2a: what the viewer has set is what the producer's block holds; sStateMap is now only the answer for capabilities the block does not hold (and the old
+// shadow copy that LL_VK_STATE_GUARD_CHECK compares with the block). Before this, a state changed through a LLRenderState guard (or any direct setter) left the
+// map stale and the next LLGLState believed the old value.
+bool LLGLState::currentState(LLGLenum state)
+{
+    const int in_block = LLVkState::capability(state);
+    return in_block >= 0 ? in_block != 0 : sStateMap[state] == GL_TRUE;
+}
+
+LLGLState::LLGLState(LLGLenum state, S32 enabled, const char* file, int line) :
     mState(state), mWasEnabled(false), mIsEnabled(false)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -515,7 +522,21 @@ LLGLState::LLGLState(LLGLenum state, S32 enabled) :
 
     if (mState)
     {
-        mWasEnabled = sStateMap[state];
+        if (LLRenderState::sGuardCheck)
+        {
+            const int in_block = LLVkState::capability(state);
+            const auto it = sStateMap.find(state);
+            const U32 legacy = (it != sStateMap.end() && it->second == GL_TRUE) ? 1u : 0u;
+            if (in_block >= 0 && (U32)in_block != legacy)
+            {
+                using LLRenderState::Kind;
+                const Kind kind = state == GL_BLEND ? Kind::Blend : state == GL_SCISSOR_TEST ? Kind::Scissor : state == GL_STENCIL_TEST ? Kind::Stencil
+                    : state == GL_POLYGON_OFFSET_FILL ? Kind::PolygonOffset : state == GL_DEPTH_CLAMP ? Kind::DepthClamp : state == GL_CULL_FACE ? Kind::Cull : Kind::Depth;
+                // for cull the value is bit 0 (on); for GL_DEPTH_TEST it is the depth test, bit 0 of 'depth'
+                LLRenderState::reportDrift("LLGLState map differs from the block", kind, legacy, (U32)in_block, file, line);
+            }
+        }
+        mWasEnabled = currentState(state);
         setEnabled(enabled);
     }
 }
@@ -528,15 +549,15 @@ void LLGLState::setEnabled(S32 enabled)
     }
     if (enabled == CURRENT_STATE)
     {
-        enabled = sStateMap[mState] == GL_TRUE ? ENABLED_STATE : DISABLED_STATE;
+        enabled = currentState(mState) ? ENABLED_STATE : DISABLED_STATE;
     }
-    else if (enabled == ENABLED_STATE && sStateMap[mState] != GL_TRUE)
+    else if (enabled == ENABLED_STATE && !currentState(mState))
     {
         gGL.flush();
         LLVkState::setEnable(mState, true);
         sStateMap[mState] = GL_TRUE;
     }
-    else if (enabled == DISABLED_STATE && sStateMap[mState] != GL_FALSE)
+    else if (enabled == DISABLED_STATE && currentState(mState))
     {
         gGL.flush();
         LLVkState::setEnable(mState, false);
@@ -764,62 +785,53 @@ LLGLUserClipPlane::~LLGLUserClipPlane()
     disable();
 }
 
-LLGLDepthTest::LLGLDepthTest(GLboolean depth_enabled, GLboolean write_enabled, GLenum depth_func)
-: mPrevDepthEnabled(sDepthEnabled), mPrevDepthFunc(sDepthFunc), mPrevWriteEnabled(sWriteEnabled)
+static LLRenderState::CompareOp depth_op_of(GLenum func)
 {
-    stop_glerror();
+    using LLRenderState::CompareOp;
+    switch (func)
+    {
+    case GL_NEVER: return CompareOp::Never;
+    case GL_LESS: return CompareOp::Less;
+    case GL_EQUAL: return CompareOp::Equal;
+    case GL_LEQUAL: return CompareOp::LessEqual;
+    case GL_GREATER: return CompareOp::Greater;
+    case GL_NOTEQUAL: return CompareOp::NotEqual;
+    case GL_GEQUAL: return CompareOp::GreaterEqual;
+    default: return CompareOp::Always;
+    }
+}
+
+// F3.2a: decides and restores from the producer's block (the machinery of LLRenderState::DepthScope); sShadow is only the old shadow copy for the drift report
+LLGLDepthTest::LLGLDepthTest(GLboolean depth_enabled, GLboolean write_enabled, GLenum depth_func, const char* file, int line)
+: mSaved(0), mSet(0), mFile(file), mLine(line)
+{
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    checkState();
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_GLSTATE);
 
-    if (!depth_enabled)
-    { // always disable depth writes if depth testing is disabled
-      // GL spec defines this as a requirement, but some implementations allow depth writes with testing disabled
-      // The proper way to write to depth buffer with testing disabled is to enable testing and use a depth_func of GL_ALWAYS
-        write_enabled = GL_FALSE;
+    if (LLRenderState::sGuardCheck)
+    {
+        const U32 block = LLRenderState::read(LLRenderState::Kind::Depth);
+        if (sShadow != block)
+        {
+            LLRenderState::reportDrift("LLGLDepthTest shadow copy differs from the block", LLRenderState::Kind::Depth, sShadow, block, file, line);
+        }
     }
 
-    if (depth_enabled != sDepthEnabled)
-    {
-        gGL.flush();
-        LLVkState::setEnable(GL_DEPTH_TEST, depth_enabled != 0);
-        sDepthEnabled = depth_enabled;
-    }
-    if (depth_func != sDepthFunc)
-    {
-        gGL.flush();
-        LLVkState::setDepthFunc(depth_func);
-        sDepthFunc = depth_func;
-    }
-    if (write_enabled != sWriteEnabled)
-    {
-        gGL.flush();
-        LLVkState::setDepthMask(write_enabled != 0);
-        sWriteEnabled = write_enabled;
-    }
+    // always disable depth writes if depth testing is disabled (the GL spec requires it; the proper way to write depth with testing off is the test on with GL_ALWAYS)
+    mSet = LLRenderState::packDepth(depth_enabled != 0, depth_enabled != 0 && write_enabled != 0, depth_op_of(depth_func));
+    mSaved = LLRenderState::exchange(LLRenderState::Kind::Depth, mSet);
+    sShadow = mSet;
 }
 
 LLGLDepthTest::~LLGLDepthTest()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    checkState();
-    if (sDepthEnabled != mPrevDepthEnabled )
+    if (mSet != mSaved || LLRenderState::sGuardCheck)
     {
-        gGL.flush();
-        LLVkState::setEnable(GL_DEPTH_TEST, mPrevDepthEnabled != 0);
-        sDepthEnabled = mPrevDepthEnabled;
+        LLVkAsync::FrontLap front_lap(LLVkAsync::FP_GLSTATE);
+        LLRenderState::leave(LLRenderState::Kind::Depth, mSaved, mSet, mFile, mLine);
     }
-    if (sDepthFunc != mPrevDepthFunc)
-    {
-        gGL.flush();
-        LLVkState::setDepthFunc(mPrevDepthFunc);
-        sDepthFunc = mPrevDepthFunc;
-    }
-    if (sWriteEnabled != mPrevWriteEnabled )
-    {
-        gGL.flush();
-        LLVkState::setDepthMask(mPrevWriteEnabled != 0);
-        sWriteEnabled = mPrevWriteEnabled;
-    }
+    sShadow = mSaved;           // what the old destructor left in its statics
 }
 
 void LLGLDepthTest::checkState()
