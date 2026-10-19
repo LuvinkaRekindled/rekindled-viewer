@@ -35,6 +35,8 @@ namespace LLVkGL
     void uniform_block_bind(unsigned binding, unsigned buffer);
     void draw_arrays(unsigned mode, int first, int count);
     void draw_elements(unsigned mode, unsigned start, unsigned end, int count, unsigned type, const void* indices);
+    // F3.1: a non-indexed draw whose vertices are given (see LLVkAsync::drawScratch for the layout of `bytes`); they are copied to the frame's vertex scratch
+    void draw_scratch(unsigned mode, int count, unsigned mask, const void* bytes);
     void constant_attribute(unsigned location, float x, float y, float z, float w);
     // F2.4 draw records: the worker makes the program and (when given) the vertex binding of a CMD_DRAW2 current, in place of the shader bind / array run records
     void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding);

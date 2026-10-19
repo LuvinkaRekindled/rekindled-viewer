@@ -539,7 +539,6 @@ public:
 private:
     friend class LLLightState;
 
-    LLVertexBuffer* bufferfromCache(U32 attribute_mask, U32 count);
     LLVertexBuffer* genBuffer(U32 attribute_mask, S32 count);
     void drawBuffer(LLVertexBuffer* vb, U32 mode, S32 count);
     void resetStriders(S32 count);

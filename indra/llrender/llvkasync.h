@@ -72,6 +72,11 @@ namespace LLVkAsync
     // draws (LLVertexBuffer): the same records glDrawRangeElements / glDrawArrays queue, written without the call coalescer in between
     void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices);
     void drawArrays(U32 mode, S32 first, S32 count);
+    // F3.1 immediate mode: one draw whose vertices travel inside the record (non-indexed). `mask` says which attribute locations are supplied (bit = attribute location:
+    // SCRATCH_POSITION always, SCRATCH_TEXCOORD0, SCRATCH_COLOR); the others read the constant attribute. The bytes are `count` positions (4 floats, 3 used), then `count` texcoords
+    // (2 floats) when SCRATCH_TEXCOORD0 is set, then `count` colours (4 normalized bytes) when SCRATCH_COLOR is set. The worker copies them into the frame's vertex scratch.
+    enum ScratchAttr : U32 { SCRATCH_POSITION = 1u << 0, SCRATCH_TEXCOORD0 = 1u << 2, SCRATCH_COLOR = 1u << 6 };
+    void drawScratch(U32 mode, S32 count, U32 mask, const void* positions, const void* texcoords, const void* colors);
     // buffer storage by name (LLVertexBuffer): (re)specify a buffer / write a range of it, without binding it first. target only says vertex or index.
     void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage);
     void bufferSubData(U32 name, S64 offset, S64 size, const void* data);
@@ -96,7 +101,7 @@ namespace LLVkAsync
     void gpuZone(const char* name, bool begin);
 
     // ---- F2.5 measure first: main-thread cost per front-end entry point (counted with LL_VK_OPSTATS, every 16th call timed; reported in the VkOps "worker operations" line) ----
-    enum FrontPoint { FP_SHADER_BIND, FP_UNIFORM, FP_UNIFORM_MATRIX, FP_UNIFORM_SENT, FP_TEXUNIT_BIND, FP_BLEND, FP_GLSTATE, FP_SET_BUFFER, FP_DRAW, FP_SYNC_MATRICES, FP_COUNT };
+    enum FrontPoint { FP_SHADER_BIND, FP_UNIFORM, FP_UNIFORM_MATRIX, FP_UNIFORM_SENT, FP_TEXUNIT_BIND, FP_BLEND, FP_GLSTATE, FP_SET_BUFFER, FP_DRAW, FP_SYNC_MATRICES, FP_FLUSH, FP_COUNT };
     extern bool gFrontStats;
     unsigned long long frontStart(int id);                 // counts the call (main thread only); returns a timestamp when this call is timed, else 0
     void frontStop(int id, unsigned long long t0);
@@ -200,6 +205,7 @@ namespace LLVkAsync
         CMD_RESOURCE_CREATE, CMD_RESOURCE_DESTROY, // F2.1: names of textures / targets / buffers / queries come into being or go (resourceCreate / resourceDestroy)
         CMD_DRAW,                                  // F2.4: the draw record: program, vertex binding when it changed, texture ids, uniform writes
         CMD_UNIFORM_RANGE,                         // F2.5: inside a uniform batch: bytes of a program's class block (uniformRange)
+        CMD_DRAW_SCRATCH,                          // F3.1: a non-indexed draw with its vertices inline (immediate mode: LLRender::flush); no vertex binding, the worker supplies the vertex scratch
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };
 

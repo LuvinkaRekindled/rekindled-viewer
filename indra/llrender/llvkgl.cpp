@@ -1438,9 +1438,90 @@ U32 attrib_type_bytes(U8 type)
     }
 }
 
+// F3.1: vertices that travel inside a draw record (immediate mode): set around prepare_draw by draw_scratch, read by build_vertex_input
+struct ScratchVerts
+{
+    S32 mCount = 0;
+    U32 mMask = 0;                  // LLVkAsync::ScratchAttr bits (bit = attribute location)
+    const U8* mBytes = nullptr;     // positions (16 bytes each), texcoords (8), colours (4), one run after the other
+};
+thread_local const ScratchVerts* sScratchVerts = nullptr;
+
+// the vertex input of a scratch draw: the vertices are copied to the frame's vertex scratch; the locations the record supplies read it, the others read the constant attribute
+bool build_scratch_input(Renderer& r, Program& program, VertexInput& vi)
+{
+    const ScratchVerts& sv = *sScratchVerts;
+    const ProgramInfo& info = program.getInfo();
+    const size_t n = (size_t)sv.mCount;
+    const size_t pos_bytes = n * 16, uv_bytes = (sv.mMask & LLVkAsync::SCRATCH_TEXCOORD0) ? n * 8 : 0, col_bytes = (sv.mMask & LLVkAsync::SCRATCH_COLOR) ? n * 4 : 0;
+    Renderer::ScratchAlloc sa = r.allocVertexScratch(pos_bytes + uv_bytes + col_bytes);
+    if (!sa.mPtr)
+    {
+        return false;
+    }
+    memcpy(sa.mPtr, sv.mBytes, pos_bytes + uv_bytes + col_bytes);
+    // the attribute locations are the vertex buffer's attribute types (position 0, texcoord0 2, colour 6); one binding each, stride = element size
+    struct Src { U32 mLocation; U32 mBit; VkDeviceSize mOffset; U32 mStride; S32 mSize; U8 mType; bool mNormalized; };
+    const Src srcs[3] = {
+        { 0, LLVkAsync::SCRATCH_POSITION, 0, 16, 3, LLVkFormat::T_F32, false },
+        { 2, LLVkAsync::SCRATCH_TEXCOORD0, pos_bytes, 8, 2, LLVkFormat::T_F32, false },
+        { 6, LLVkAsync::SCRATCH_COLOR, pos_bytes + uv_bytes, 4, 4, LLVkFormat::T_U8, true },
+    };
+    for (size_t a = 0; a < info.mAttributes.size(); ++a)
+    {
+        const U32 loc = info.mAttributeLocations[a];
+        if (loc >= 16)
+        {
+            continue;
+        }
+        const Src* src = nullptr;
+        for (const Src& s : srcs)
+        {
+            if (s.mLocation == loc && (sv.mMask & s.mBit))
+            {
+                src = &s;
+            }
+        }
+        VertexInput::Binding b;
+        VertexInput::Attribute va;
+        va.mLocation = loc;
+        va.mOffset = 0;
+        if (src)
+        {
+            b.mBuffer = sa.mBuffer;
+            b.mOffset = sa.mOffset + src->mOffset;
+            b.mStride = src->mStride;
+            const std::string& stype = info.mAttributeTypes[a];
+            const char numeric = stype.empty() ? 'f' : (stype[0] == 'u' ? 'u' : (stype[0] == 'i' ? 'i' : 'f'));
+            va.mFormat = vertex_format(src->mSize, src->mType, src->mNormalized, false, numeric);
+        }
+        else
+        {
+            Renderer::ScratchAlloc ca = r.allocVertexScratch(16);
+            if (!ca.mPtr)
+            {
+                return false;
+            }
+            memcpy(ca.mPtr, sGL.mConstAttrib[loc], 16);
+            b.mBuffer = ca.mBuffer;
+            b.mOffset = ca.mOffset;
+            b.mStride = 0;
+            va.mFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+        }
+        va.mBinding = (U32)vi.mBindings.size();
+        vi.mBindings.push_back(b);
+        vi.mAttributes.push_back(va);
+    }
+    return vi.mBindings.size() <= 16;
+}
+
 // Builds the vertex input for the current VAO and the program's attributes.
 bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vector<U32>& used_buffers)
 {
+    if (sScratchVerts)
+    {
+        return build_scratch_input(r, program, vi);
+    }
     const BoundVertices& vao = sBound;
     const ProgramInfo& info = program.getInfo();
     // bindings made so far: buffer, stride, byte offset of the binding inside the buffer
@@ -2750,6 +2831,55 @@ void draw_arrays(unsigned topo, int first, int count)
         ++sStats.mRendererRefused;
     }
     mark_used(used, 0);
+    ++sDraws;
+    ++sDrawsTotal;
+}
+
+// F3.1: a non-indexed draw with its vertices given (immediate mode); same path as draw_arrays, the vertex input comes from the given bytes
+void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
+{
+    HookTimer hook_timer;
+    LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<U32> used_cache;
+    VertexInput& vi = vi_cache;
+    std::vector<U32>& used = used_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used.clear();
+    ScratchVerts sv;
+    sv.mCount = count;
+    sv.mMask = mask;
+    sv.mBytes = (const U8*)bytes;
+    sScratchVerts = &sv;
+    const bool ok = count > 0 && prepare_draw(vi, used);
+    sScratchVerts = nullptr;
+    if (!ok)
+    {
+        return;
+    }
+    Renderer& r = Renderer::instance();
+    LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
+    r.setVertexInput(vi);
+    r.setTopology(topology((LLVkFormat::Topology)topo));
+    if (r.draw((U32)count, 0))
+    {
+        if (LLVkMirror::gPhaseTiming)
+        {
+            ++sPhaseProgramDraws[r.getProgram()->getName()];
+            ++sPhaseTargetDraws[r.describeTarget()];
+            note_draw_time(r.getProgram()->getName());
+        }
+        if (sStatsEnabled)
+        {
+            ++sStats.mDone;
+            ++sStats.mDonePerProgram[r.getProgram()->getName()];
+        }
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
     ++sDraws;
     ++sDrawsTotal;
 }
