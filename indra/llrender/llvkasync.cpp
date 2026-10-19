@@ -59,10 +59,8 @@ namespace LLVkAsync
 bool gEnabled = false;
 bool gTexOneCopy = false;   // C4: opt-in (LL_VK_TEXONECOPY=1), the measured gain was nil
 static int gMode = 1;
-static int drawRecFromEnv() { const char* e = getenv("LL_VK_DRAWREC"); return e ? std::min(2, std::max(0, atoi(e))) : 2; }       // default 2 (draw records); 0 is the old stream, 1 verifies it
 static int uniformRecFromEnv() { const char* e = getenv("LL_VK_UNIFORMREC"); return e ? std::min(2, std::max(0, atoi(e))) : 2; }
 int gUniformRec = uniformRecFromEnv();  // F2.5, see llvkasync.h
-int gDrawRec = drawRecFromEnv();        // F2.4, see llvkasync.h
 
 namespace
 {
@@ -188,7 +186,7 @@ const char* const kFrontNames[FP_COUNT] = { "LLGLSLShader::bind", "uniform*", "u
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bindTextureUnit", "arrayRun", "bufferData", "bufferSubData", "shadowPackets", "shaderBind", "texParams", "fboAttach", "targetState", "texSlots", "draw", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "drawCheck", "draw2", "uniformRange" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bufferData", "bufferSubData", "shadowPackets", "texParams", "fboAttach", "targetState", "texSlots", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "draw", "uniformRange" };
 const char* slotName(int slot) { return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
@@ -295,10 +293,6 @@ bool gTyped = true;                           // LL_VK_TYPED=0: typed records (L
 unsigned long long gMainRecords = 0;        // records actually written by the main thread (a sub-stream's are counted when it is spliced)
 inline void noteRecord() { if (!tlsBuf) { ++gMainRecords; } }
 
-struct BindTexUnitArgs { U32 mUnit; U32 mTarget; U32 mTexture; U32 mPad; };
-struct RunHeader { U32 mReserved; U32 mBuffer; U32 mCount; U32 mFlags; U32 mElem; U32 mPad; };   // flags: bit 0 array buffer bind, bit 1 index buffer bind (played after the pointers)
-struct RunEntry { U32 mKind; U32 mIndex; S32 mSize; U32 mType; S32 mStride; U32 mNormalized; const void* mPointer; };   // kind 0: glVertexAttribPointer, 1: glVertexAttribIPointer
-static_assert(sizeof(RunEntry) == 32, "run entry");
 
 inline void rawPush(U16 op, const void* args, unsigned size)
 {
@@ -311,9 +305,8 @@ inline void rawPush(U16 op, const void* args, unsigned size)
     noteRecord();
 }
 
-// <FS> draw-record plan step 1: texture binds of LLTexUnit do not write a record each. The producer keeps the slot table (unit -> target, name) and the last
-// active unit; what changed since the last draw is written with that draw (CMD_DRAW) or, when something that can read texture state comes first, as CMD_TEX_SLOTS.
-struct PendTex { U32 mTarget; U32 mName; };
+// <FS> draw-record plan step 1: texture binds of LLTexUnit do not write a record each. The producer keeps the slot array (unit -> texture id); what changed since the last
+// draw is written with that draw (CMD_DRAW) or, when something that can read texture state comes first, as CMD_TEX_SLOTS.
 inline U32 lowBit(U32 m) { unsigned long i; _BitScanForward(&i, m); return (U32)i; }
 constexpr U32 TEX_UNIT_BASE = 0x84C0;       // GL_TEXTURE0
 // the pending texture slots, active unit and uniform writes of one producer (the main thread's, or a sub-stream's)
@@ -327,12 +320,10 @@ struct DrawCtx
 };
 struct Pend
 {
-    PendTex mTex[32];
-    U32 mMask = 0;
-    U32 mActive = TEX_UNIT_BASE;          // the active unit as the producer sees it (the worker's after everything queued)
+    U32 mTex[32] = {};                    // the texture each unit holds as the producer sees it (the ids the draw records carry)
+    U32 mMask = 0;                        // the units whose texture changed since the last record
     std::vector<U8> mUni;
     DrawCtx mDraw;
-    U32 mSlotId[32] = {};                 // F2.6: the texture each unit holds as the producer sees it (the ids of the draw records; the unit's target is not part of a binding any more)
 };
 Pend gMainPend;
 thread_local Pend* tlsPend = nullptr;
@@ -345,10 +336,10 @@ U32 pendTexWrite(U8* p)
     for (U32 m = pend().mMask; m; m &= m - 1)
     {
         const U32 u = lowBit(m);
-        memcpy(p + n * sizeof(PendTex), &pend().mTex[u], sizeof(PendTex));
+        memcpy(p + n * sizeof(U32), &pend().mTex[u], sizeof(U32));
         ++n;
     }
-    return n * (U32)sizeof(PendTex);
+    return n * (U32)sizeof(U32);
 }
 
 unsigned long long gTexFlushWhy[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: what forced the pending texture slots out as a record of their own (slot of the operation)
@@ -364,9 +355,9 @@ void flushPendingTex(int why = 0)
         ++gTexFlushWhy[why];
     }
     const U32 count = (U32)__popcnt(pend().mMask);
-    const U32 payload = (U32)(sizeof(U32) * 3 + sizeof(PendTex) * count);
+    const U32 payload = (U32)(sizeof(U32) * 2 + sizeof(U32) * count);
     U8* p = mainReserve(payload, CMD_TEX_SLOTS, 0);
-    const U32 head[3] = { pend().mMask, pend().mActive, count };
+    const U32 head[2] = { pend().mMask, count };
     memcpy(p, head, sizeof(head));
     pendTexWrite(p + sizeof(head));
     mainCommit(payload);
@@ -429,7 +420,7 @@ inline bool texIndependent(U16 op)
     case CMD_TEX_IMAGE: case CMD_TEX_PARAMS_ID: case CMD_TEX_OP: case CMD_UNIFORM_BLOCK:
     case CMD_CONST_ATTRIB: case CMD_CLEAR: case CMD_BUFFER_DATA: case CMD_BUFFER_SUBDATA: case CMD_BUFFER_RECYCLE: case CMD_GPU_ZONE:
     case CMD_QUERY_BEGIN: case CMD_QUERY_END:
-    case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_SHADER_BIND:
+    case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND:
         return true;
     default:
         return false;
@@ -585,7 +576,7 @@ namespace
 // the draw context of the calling producer (null when the draw record is off, or on a thread that does not produce)
 inline DrawCtx* drawCtx()
 {
-    return (gDrawRec && (!gEnabled || produces())) ? &pend().mDraw : nullptr;
+    return (!gEnabled || produces()) ? &pend().mDraw : nullptr;
 }
 }
 
@@ -653,7 +644,8 @@ void drawBindingGet(DrawBinding& out)
     }
 }
 
-void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
+// LLGLSLShader::bind: the program of the next draws; a program bind leaves no buffers bound
+void shaderBind(void* program)
 {
     if (DrawCtx* d = drawCtx())
     {
@@ -661,40 +653,21 @@ void shaderBind(void* program, U32 enable_mask, U32 disable_mask)
         {
             d->mProgram = program;
         }
-        d->mBinding = DrawBinding();        // a program bind leaves no buffers bound
+        d->mBinding = DrawBinding();
         d->mDirty = true;
-        if (gDrawRec == 2)
-        {
-            return;
-        }
     }
-    if (!gEnabled)
-    {
-        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
-        LLVkGL::shader_bind(program, enable_mask, disable_mask);
-        return;
-    }
-    if (!produces())
-    {
-        return;
-    }
-    MainLap lap;
-    struct A { void* mProgram; U32 mEnable; U32 mDisable; } a = { program, enable_mask, disable_mask };
-    rawPush(CMD_SHADER_BIND, &a, sizeof(a));
 }
 
-void bindTextureUnit(U32 unit, U32 target, U32 texture)
+void bindTextureUnit(U32 unit, U32 texture)
 {
     MainLap lap;
-    const U32 u = unit - TEX_UNIT_BASE;
-    if (u >= 32)
+    if (unit >= 32)
     {
         return;
     }
-    // the slot table is the record: nothing is written here, what changed goes out with the next draw (or when something that can read texture state comes first)
-    pend().mTex[u] = { target, texture };
-    pend().mSlotId[u] = texture;
-    pend().mMask |= 1u << u;
+    // the slot array is the record: nothing is written here, what changed goes out with the next draw (or when something that can read texture state comes first)
+    pend().mTex[unit] = texture;
+    pend().mMask |= 1u << unit;
 }
 
 namespace
@@ -743,11 +716,11 @@ void bufferRecycle(U32 name)
     pushData(CMD_BUFFER_RECYCLE, &a, sizeof(a), nullptr, 0);
 }
 
-// a draw record: the draw and the texture slots that changed since the last one (CMD_DRAW), or the plain draw call record when none changed
+// the draw record: the draw, the program, the vertex binding when it changed, the texture ids that changed since the last one and the uniform writes
 namespace
 {
-    struct DrawHeader { U32 mKind; U32 mMode; U32 mStart; U32 mEnd; S32 mCount; U32 mType; const void* mIndices; U32 mMask; U32 mActive; U32 mCountTex; U32 mUniBytes; };
-    // CMD_DRAW2: the draw, then (mBindBytes) the vertex binding when it changed, the texture slots, the uniform writes
+    struct DrawHeader { U32 mKind; U32 mMode; U32 mStart; U32 mEnd; S32 mCount; U32 mType; const void* mIndices; U32 mMask; U32 mCountTex; U32 mUniBytes; };
+    // CMD_DRAW: the draw, then (mBindBytes) the vertex binding when it changed, the texture ids, the uniform writes
     struct DrawHeader2 { DrawHeader mDraw; void* mProgram; U32 mBindBytes; U32 mPad; };
 }
 
@@ -756,32 +729,16 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
 {
     MainLap lap;
     stateEmit();
-    if (gDrawRec == 1)
     {
-        // verify: what the draw record would say, right before the old draw; the worker compares it with what its own state machine holds
-        DrawCtx& d = pend().mDraw;
-        const LLVkState::Block& blk = LLVkState::current();
-        const U32 bb = (U32)drawBindingSize(d.mBinding);
-        const U32 cp = (U32)(sizeof(void*) + sizeof(LLVkState::Block) + sizeof(pend().mSlotId) + bb);
-        U8* cpp = mainReserve(cp, CMD_DRAW_CHECK, 0);
-        memcpy(cpp, &d.mProgram, sizeof(void*));
-        memcpy(cpp + sizeof(void*), &blk, sizeof(blk));
-        memcpy(cpp + sizeof(void*) + sizeof(blk), pend().mSlotId, sizeof(pend().mSlotId));
-        drawBindingWrite(cpp + sizeof(void*) + sizeof(blk) + sizeof(pend().mSlotId), d.mBinding);
-        mainCommit(cp);
-        noteRecord();
-    }
-    else if (gDrawRec == 2)
-    {
-        // the draw record: the old draw plus the program and, when it changed, the vertex binding (nothing the draw reads is left in the worker's state)
+        // the draw record: the draw plus the program and, when it changed, the vertex binding (nothing the draw reads is left in the worker's state)
         DrawCtx& d = pend().mDraw;
         const U32 n2 = (U32)__popcnt(pend().mMask);
         const U32 uni2 = (U32)pend().mUni.size();
         const U32 bb = d.mDirty ? (U32)((drawBindingSize(d.mBinding) + 7) & ~(size_t)7) : 0;       // padded: the texture entries and uniform writes after it stay aligned
         const U32 idb = (n2 * (U32)sizeof(U32) + 7) & ~7u;       // F2.6: the texture ids of the units that changed (no target), padded
         const U32 payload2 = (U32)(sizeof(DrawHeader2) + bb + idb + uni2);
-        U8* p2 = mainReserve(payload2, CMD_DRAW2, 0);
-        DrawHeader2 h2 = { { kind, mode, start, end, count, type, indices, pend().mMask, pend().mActive, n2, uni2 }, d.mProgram, bb, 0 };
+        U8* p2 = mainReserve(payload2, CMD_DRAW, 0);
+        DrawHeader2 h2 = { { kind, mode, start, end, count, type, indices, pend().mMask, n2, uni2 }, d.mProgram, bb, 0 };
         memcpy(p2, &h2, sizeof(h2));
         if (bb)
         {
@@ -792,7 +749,7 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
             U32 k = 0;
             for (U32 m = pend().mMask; m; m &= m - 1)
             {
-                ids[k++] = pend().mTex[lowBit(m)].mName;
+                ids[k++] = pend().mTex[lowBit(m)];
             }
             if (idb > n2 * (U32)sizeof(U32))
             {
@@ -809,32 +766,12 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
         d.mSent = d.mProgram;
         pend().mMask = 0;
         pend().mUni.clear();
-        return;
     }
-    const U32 n = (U32)__popcnt(pend().mMask);
-    const U32 uni = (U32)pend().mUni.size();
-    const U32 payload = (U32)(sizeof(DrawHeader) + sizeof(PendTex) * n + uni);
-    U8* p = mainReserve(payload, CMD_DRAW, 0);
-    const DrawHeader h = { kind, mode, start, end, count, type, indices, pend().mMask, pend().mActive, n, uni };
-    memcpy(p, &h, sizeof(h));
-    pendTexWrite(p + sizeof(h));
-    if (uni)
-    {
-        memcpy(p + sizeof(h) + sizeof(PendTex) * n, pend().mUni.data(), uni);
-    }
-    mainCommit(payload);
-    noteRecord();
-    pend().mMask = 0;
-    pend().mUni.clear();
 }
 
 // inline mode (the queue has not started): a draw record's program and binding are applied directly (the gMutex is held)
 static void inlineDrawApply()
 {
-    if (gDrawRec != 2)
-    {
-        return;
-    }
     DrawCtx& d = pend().mDraw;
     LLVkGL::draw_context_apply(d.mProgram, d.mDirty ? &d.mBinding : nullptr);
     d.mDirty = false;
@@ -884,45 +821,6 @@ void gpuZone(const char* name, bool begin)
     pushData(CMD_GPU_ZONE, head, sizeof(head), text, len + 1);
 }
 
-void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* given, U32 count)
-{
-    if (gDrawRec == 2)
-    {
-        return;         // the draw records carry the vertex binding (drawBinding / drawBindingClear)
-    }
-    // the component types are LLVkFormat::PType from here on
-    VertexAttrib typed[16];
-    count = std::min<U32>(count, 16);
-    for (U32 i = 0; i < count; ++i)
-    {
-        typed[i] = given[i];
-        typed[i].mType = LLVkFormat::componentType(given[i].mType);
-    }
-    const VertexAttrib* attribs = typed;
-    if (!gEnabled)
-    {
-        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
-        LLVkGL::vertex_input_apply(bind_array, array_buffer, bind_elem, elem_buffer, attribs, count);
-        return;
-    }
-    if (!produces())
-    {
-        return;
-    }
-    MainLap lap;
-    static_assert(sizeof(VertexAttrib) == sizeof(RunEntry), "typed attribute record matches the run entry");
-    const U32 payload = (U32)(sizeof(RunHeader) + sizeof(RunEntry) * count);       // the array state does not depend on texture state: the pending slots stay
-    U8* p = mainReserve(payload, CMD_ARRAY_RUN, 0);
-    const RunHeader h = { 0, array_buffer, count, (bind_array ? 1u : 0u) | (bind_elem ? 2u : 0u), elem_buffer, 0 };
-    memcpy(p, &h, sizeof(h));
-    if (count)
-    {
-        memcpy(p + sizeof(h), attribs, sizeof(RunEntry) * count);
-    }
-    mainCommit(payload);
-    noteRecord();
-}
-
 void pushData(unsigned short op, const void* args, unsigned size, const void* data, size_t data_size)
 {
     if (produces())
@@ -938,9 +836,8 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         if (op == CMD_SHADOW_PACKETS)
         {
             stateEmit();
-            if (gDrawRec == 2)
             {
-                // the packet handlers draw with the renderer's current program, which a shader bind used to set: with draw records it is written here, when the program changed since the last record that set it
+                // the packet handlers draw with the renderer's current program: it is written here, when the program changed since the last record that set it
                 DrawCtx& d = pend().mDraw;
                 if (d.mSent != d.mProgram)
                 {
@@ -1615,19 +1512,18 @@ void setUnpackRowLength(S32 row_length)
     tlsPixelStore.mUnpackRowLength = row_length;
 }
 
-void bindSlot(S32 unit, U32 target, U32 id)
+void bindSlot(S32 unit, U32 id)
 {
-    const U32 dim = LLVkFormat::target(target).mDim;
     if (LLVkAsync::gEnabled)
     {
         if (produces())
         {
-            LLVkAsync::bindTextureUnit(TEX_UNIT_BASE + (U32)unit, dim, id);
+            LLVkAsync::bindTextureUnit((U32)unit, id);
         }
         return;
     }
     auto lock = inlineLock();
-    LLVkGL::slot_bind((unsigned)unit, dim, id);
+    LLVkGL::slot_set((unsigned)unit, id);
 }
 
 void image2D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 format, U32 type, const void* pixels)
@@ -2234,19 +2130,6 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         break;
     }
     case CMD_FRAME_END: LLVkMirror::endFrameImpl(); break;
-    case CMD_BIND_TEXTURE_UNIT:
-    {
-        const BindTexUnitArgs* a = (const BindTexUnitArgs*)payload;
-        LLVkGL::slot_bind(a->mUnit - TEX_UNIT_BASE, a->mTarget, a->mTexture);
-        break;
-    }
-    case CMD_ARRAY_RUN:
-    {
-        const RunHeader* h = (const RunHeader*)payload;
-        const RunEntry* e = (const RunEntry*)(payload + sizeof(RunHeader));
-        LLVkGL::vertex_input_apply((h->mFlags & 1) != 0, h->mBuffer, (h->mFlags & 2) != 0, h->mElem, (const VertexAttrib*)e, h->mCount);
-        break;
-    }
     case CMD_CONST_ATTRIB:
     {
         struct R { U32 mLocation; F32 mV[4]; };
@@ -2294,7 +2177,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             LL_INFOS("VkOps") << "worker operations: " << opStatsReport(gOpStatsFrames) << LL_ENDL;
             gOpStatsFrames = 0;
         }
-        if (gDrawRec == 1 || gUniformRec == 1)
+        if (gUniformRec == 1)
         {
             static unsigned check_frames = 0;
             if (++check_frames >= 600)
@@ -2330,11 +2213,11 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     case CMD_TEX_SLOTS:
     {
         const U32* head = (const U32*)payload;
-        const PendTex* e = (const PendTex*)(payload + sizeof(U32) * 3);
+        const U32* e = (const U32*)(payload + sizeof(U32) * 2);
         U32 k = 0;
         for (U32 m = head[0]; m; m &= m - 1, ++k)
         {
-            LLVkGL::slot_bind(lowBit(m), e[k].mTarget, e[k].mName);
+            LLVkGL::slot_set(lowBit(m), e[k]);
         }
         break;
     }
@@ -2345,20 +2228,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         applyUniformBatch(payload + sizeof(U32) * 2, bytes);
         break;
     }
-    case CMD_DRAW_CHECK:
-    {
-        void* program;
-        memcpy(&program, payload, sizeof(program));
-        LLVkState::Block blk;
-        memcpy(&blk, payload + sizeof(void*), sizeof(blk));
-        U32 slot_ids[32];
-        memcpy(slot_ids, payload + sizeof(void*) + sizeof(blk), sizeof(slot_ids));
-        DrawBinding b;
-        drawBindingRead(payload + sizeof(void*) + sizeof(blk) + sizeof(slot_ids), b);
-        LLVkGL::draw_check(program, blk, b, slot_ids);
-        break;
-    }
-    case CMD_DRAW2:
+    case CMD_DRAW:
     {
         const DrawHeader2* h2 = (const DrawHeader2*)payload;
         const DrawHeader* h = &h2->mDraw;
@@ -2382,41 +2252,6 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
         {
             LLVkGL::slot_set(lowBit(m), ids[k]);
-        }
-        if (h->mKind == 0)
-        {
-            LLVkGL::draw_elements(h->mMode, h->mStart, h->mEnd, h->mCount, h->mType, h->mIndices);
-        }
-        else
-        {
-            LLVkGL::draw_arrays(h->mMode, (S32)h->mStart, h->mCount);
-        }
-        break;
-    }
-    case CMD_DRAW:
-    {
-        if (gDrawRec == 1)
-        {
-            LLVkGL::draw_check_draw();
-        }
-        const DrawHeader* h = (const DrawHeader*)payload;
-        const PendTex* e = (const PendTex*)(payload + sizeof(DrawHeader));
-        if (h->mUniBytes)
-        {
-            applyUniformBatch(payload + sizeof(DrawHeader) + sizeof(PendTex) * h->mCountTex, h->mUniBytes);
-        }
-        if (gUniformRec == 1)
-        {
-            LLVkGL::uniform_check();
-        }
-        U32 k = 0;
-        for (U32 m = h->mMask; m; m &= m - 1, ++k)
-        {
-            LLVkGL::slot_bind(lowBit(m), e[k].mTarget, e[k].mName);
-        }
-        if (gDrawRec == 1)
-        {
-            LLVkGL::slot_check();
         }
         if (h->mKind == 0)
         {
@@ -2476,13 +2311,6 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     case CMD_TEX_IMAGE: runImage(r, flags); break;
     case CMD_TEX_PARAMS_ID: runParams(r, flags); break;
     case CMD_TEX_OP: runOp(r); break;
-    case CMD_SHADER_BIND:
-    {
-        struct A { void* mProgram; U32 mEnable; U32 mDisable; };
-        const A* a = (const A*)payload;
-        LLVkGL::shader_bind(a->mProgram, a->mEnable, a->mDisable);
-        break;
-    }
     case CMD_PROGRAM_BIND:
     {
         LLVk::Program* p = r.get<LLVk::Program*>();

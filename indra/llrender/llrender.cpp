@@ -127,7 +127,8 @@ LLTexUnit::LLTexUnit(S32 index)
 // <FS> F1.2: a texture bind is a slot write (the typed record carries the unit); the active unit is only the producer's own bookkeeping for the helpers that act on 'the bound texture'
 static inline void ll_bindTexUnit(S32 unit_index, GLenum target, GLuint texture)
 {
-    LLVkTex::bindSlot(unit_index, target, texture);
+    (void)target;       // a unit holds a texture: its dimension is the texture's own
+    LLVkTex::bindSlot(unit_index, texture);
 }
 
 U32 LLTexUnit::getInternalType(eTextureType type)
@@ -1584,7 +1585,8 @@ U32 LLRender::getError()
 
 void LLRender::bindTextureSlot(S32 unit, U32 gl_target, U32 id)
 {
-    LLVkTex::bindSlot(unit, gl_target, id);
+    (void)gl_target;
+    LLVkTex::bindSlot(unit, id);
 }
 
 void LLRender::deleteTextures(S32 count, const U32* ids)

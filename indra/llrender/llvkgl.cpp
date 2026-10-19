@@ -435,7 +435,7 @@ struct Buf
     std::vector<U8> mShadow;
 };
 
-struct VaoAttrib
+struct BoundAttrib
 {
     bool mEnabled = false;
     U32 mBuffer = 0;
@@ -447,13 +447,13 @@ struct VaoAttrib
     U64 mOffset = 0;
 };
 
-struct VertexInputState
+struct BoundVertices
 {
-    VaoAttrib mAttrib[16];
+    BoundAttrib mAttrib[16];
     U32 mArrayBuffer = 0;        // the buffer the next attribute pointers refer to
     U32 mElementBuffer = 0;
 };
-VertexInputState sVin;
+BoundVertices sBound;
 
 struct FboAttachment
 {
@@ -482,8 +482,6 @@ thread_local PerContext* sCtxOverride = nullptr;      // set on the async worker
 inline PerContext& current_ctx() { return sCtxOverride ? *sCtxOverride : sCtxTls; }
 #define sCtx (current_ctx())
 
-// F1.2: the texture slots a draw samples from (unit, target class): written by the typed slot records only
-U32 sSlots[32][8] = {};
 // F2.6: the texture each unit holds, by id only (draw records, LL_VK_DRAWREC=2); a sampler of dimension 'cls' samples it when the texture has that dimension
 U32 sUnitTex[32] = {};
 // F1.4: the render target draws go to (0: the back buffer): set by the typed target state record only
@@ -1303,7 +1301,7 @@ void sync_textures(Renderer& r, Program& program)
             continue;
         }
         const U32 cls = program.getSamplerClass(k);
-        const U32 slot_name = LLVkAsync::gDrawRec == 2 ? unit_texture(unit, cls) : sSlots[unit][cls];
+        const U32 slot_name = unit_texture(unit, cls);
         Tex* tex = tex_ptr(slot_name);
         if (sStatsEnabled)
         {
@@ -1443,7 +1441,7 @@ U32 attrib_type_bytes(U8 type)
 // Builds the vertex input for the current VAO and the program's attributes.
 bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vector<U32>& used_buffers)
 {
-    const VertexInputState& vao = sVin;
+    const BoundVertices& vao = sBound;
     const ProgramInfo& info = program.getInfo();
     // bindings made so far: buffer, stride, byte offset of the binding inside the buffer
     struct BindingKey { U32 mBuffer; S32 mStride; U64 mBase; U32 mBinding; };
@@ -1461,7 +1459,7 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
         {
             continue;
         }
-        const VaoAttrib& at = vao.mAttrib[loc];
+        const BoundAttrib& at = vao.mAttrib[loc];
         auto bit = sGL.mBuffers.end();
         bool from_buffer = false;
         if (at.mEnabled && at.mBuffer)
@@ -1646,7 +1644,7 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
                 const std::string& ty = gi.mSamplers[k].mType;
                 const bool cube = ty.find("Cube") != std::string::npos, arr = ty.find("Array") != std::string::npos;
                 const U32 want = ty.find("CubeArray") != std::string::npos ? 2 : cube ? 1 : arr ? 3 : ty.find("3D") != std::string::npos ? 4 : 0;
-                bound = sSlots[unit][want];
+                bound = unit_texture(unit, want);
                 break;
             }
             if (bound && sFrameTargets.count(bound)) key += std::to_string(bound) + " ";
@@ -1677,7 +1675,7 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
                 if (ty.find("CubeArray") != std::string::npos) cls = 2;
                 else if (ty.find("Cube") != std::string::npos) cls = 1;
                 else if (ty.find("2DArray") != std::string::npos) cls = 3;
-                e += " [" + pi.mSamplers[k].mName + "=" + std::to_string(sSlots[unit][cls]) + "]";
+                e += " [" + pi.mSamplers[k].mName + "=" + std::to_string(unit_texture(unit, cls)) + "]";
             }
         }
         sStats.mBackbufferEvents.push_back(e);
@@ -2057,13 +2055,6 @@ void destroy_textures(S32 n, const U32* textures)
             ++sTargetEpoch;
             ++sPacketTextureGeneration;
         }
-        for (auto& unit : sSlots)
-        {
-            for (auto& b : unit)
-            {
-                if (b == textures[i]) b = 0;
-            }
-        }
         for (U32& n : sUnitTex)
         {
             if (n == textures[i]) n = 0;
@@ -2083,24 +2074,10 @@ void slot_set(unsigned unit, unsigned name)
         sUnitTex[unit] = name;
         if (name)
         {
-            sGL.mTextures[name];
-        }
-    }
-}
-
-void slot_bind(unsigned unit, unsigned dim, unsigned name)
-{
-    if (unit < 32 && dim < 8)
-    {
-        sUnitTex[unit] = name;      // (a record that carries a target keeps both tables: the draw record path reads the ids)
-        sSlots[unit][dim] = name;
-        if (name)
-        {
             sGL.mTextures[name];     // a name that was never generated is still a texture (the first edit makes it)
         }
     }
 }
-
 
 void edit_image2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels)
 {
@@ -2444,8 +2421,8 @@ void destroy_buffers(S32 n, const U32* buffers)
             sGL.mBuffers.erase(it);
             ++sPacketBufferGeneration;
         }
-        if (sVin.mArrayBuffer == buffers[i]) sVin.mArrayBuffer = 0;
-        if (sVin.mElementBuffer == buffers[i]) sVin.mElementBuffer = 0;
+        if (sBound.mArrayBuffer == buffers[i]) sBound.mArrayBuffer = 0;
+        if (sBound.mElementBuffer == buffers[i]) sBound.mElementBuffer = 0;
         if (sCtx.mPixelUnpackBuffer == buffers[i]) sCtx.mPixelUnpackBuffer = 0;
         if (sCtx.mPixelPackBuffer == buffers[i]) sCtx.mPixelPackBuffer = 0;
     }
@@ -2609,57 +2586,6 @@ void uniform_block_bind(unsigned index, unsigned buffer)
     }
 }
 
-void vertex_input_apply(bool bind_array, unsigned array_buffer, bool bind_elem, unsigned elem_buffer, const LLVkAsync::VertexAttrib* attribs, unsigned count)
-{
-    if (bind_array)
-    {
-        sVin.mArrayBuffer = array_buffer;
-        if (array_buffer)
-        {
-            sGL.mBuffers[array_buffer];
-        }
-    }
-    for (unsigned i = 0; i < count; ++i)
-    {
-        const LLVkAsync::VertexAttrib& e = attribs[i];
-        if (e.mIndex >= 16)
-        {
-            continue;
-        }
-        VaoAttrib& a = sVin.mAttrib[e.mIndex];
-        a.mBuffer = sVin.mArrayBuffer;
-        a.mSize = e.mSize;
-        a.mType = e.mType;
-        a.mNormalized = e.mKind == 0 && e.mNormalized != 0;
-        a.mInteger = e.mKind == 1;
-        a.mStride = e.mStride;
-        a.mOffset = (U64)e.mPointer;
-    }
-    if (bind_elem)
-    {
-        sVin.mElementBuffer = elem_buffer;
-        if (elem_buffer)
-        {
-            sGL.mBuffers[elem_buffer];
-        }
-    }
-}
-
-void shader_bind(void* program, unsigned enable_mask, unsigned disable_mask)
-{
-    sVin.mArrayBuffer = 0;
-    sVin.mElementBuffer = 0;
-    if (program && LLVkMirror::isReady())
-    {
-        Renderer::instance().setProgram((Program*)program);
-    }
-    for (unsigned i = 0; i < 16; ++i)
-    {
-        if (enable_mask & (1u << i)) sVin.mAttrib[i].mEnabled = true;
-        if (disable_mask & (1u << i)) sVin.mAttrib[i].mEnabled = false;
-    }
-}
-
 //-----------------------------------------------------------------------------------------------------
 // F2.4: draw records (doc/vulkan/F2-draw-records.md)
 //-----------------------------------------------------------------------------------------------------
@@ -2679,19 +2605,19 @@ void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
     {
         return;
     }
-    sVin.mArrayBuffer = binding->mArray;
+    sBound.mArrayBuffer = binding->mArray;
     if (binding->mArray)
     {
         sGL.mBuffers[binding->mArray];
     }
-    sVin.mElementBuffer = binding->mElem;
+    sBound.mElementBuffer = binding->mElem;
     if (binding->mElem)
     {
         sGL.mBuffers[binding->mElem];
     }
     for (unsigned i = 0; i < 16; ++i)
     {
-        VaoAttrib& a = sVin.mAttrib[i];
+        BoundAttrib& a = sBound.mAttrib[i];
         if (!(binding->mPresent & (1u << i)))
         {
             a.mEnabled = false;
@@ -2713,14 +2639,10 @@ namespace
 {
 struct DrawCheckStats
 {
-    U64 mChecks = 0, mDraws = 0;
-    U64 mUniformChecks = 0, mBadUniform = 0, mSlotChecks = 0, mBadSlot = 0;
-    U32 mIds[32] = {};
-    U64 mBadProgram = 0, mBadState = 0, mBadBuffers = 0, mBadEnabled = 0, mBadAttrib = 0, mNoDraw = 0, mNoCheck = 0;
+    U64 mUniformChecks = 0, mBadUniform = 0;
     std::map<std::string, U64> mBadPerProgram;
 };
 DrawCheckStats sDc;
-bool sDcPending = false;
 U32 sDcLogged = 0;
 
 void dc_log(const char* what, const std::string& detail)
@@ -2733,117 +2655,6 @@ void dc_log(const char* what, const std::string& detail)
         LL_WARNS("VkDrawRec") << "draw record check: " << what << " in program '" << name << "': " << detail << LL_ENDL;
     }
 }
-}
-
-void draw_check(void* program, const LLVkState::Block& producer_state, const LLVkAsync::DrawBinding& b, const unsigned* slot_ids)
-{
-    memcpy(sDc.mIds, slot_ids, sizeof(sDc.mIds));
-    if (sDcPending)
-    {
-        ++sDc.mNoDraw;
-        dc_log("check without a draw", "");
-    }
-    sDcPending = true;
-    ++sDc.mChecks;
-    if (!LLVkMirror::isReady())
-    {
-        return;
-    }
-    Program* cur = Renderer::instance().getProgram();
-    if (cur != (Program*)program)
-    {
-        ++sDc.mBadProgram;
-        dc_log("program differs", std::string("record says ") + (program ? ((Program*)program)->getName() : "(none)"));
-        return;     // the rest compares against another program's draw: not meaningful
-    }
-    if (const LLVkState::Block* rb = LLVkState::received())
-    {
-        if (!(*rb == producer_state))
-        {
-            ++sDc.mBadState;
-            dc_log("state block differs", LLVkState::describeDifference(*rb, producer_state));
-        }
-    }
-    if (sVin.mArrayBuffer != b.mArray || sVin.mElementBuffer != b.mElem)
-    {
-        ++sDc.mBadBuffers;
-        dc_log("buffers differ", "array " + std::to_string(sVin.mArrayBuffer) + " vs record " + std::to_string(b.mArray) + ", elem " + std::to_string(sVin.mElementBuffer) + " vs record " + std::to_string(b.mElem));
-    }
-    // the attributes the program reads from arrays (a location the shader does not declare is not read, whatever the state machine holds)
-    static const ProgramInfo none_info;
-    const ProgramInfo& info = cur ? cur->getInfo() : none_info;
-    U32 read_mask = 0;
-    for (size_t a = 0; a < info.mAttributeLocations.size(); ++a)
-    {
-        if (info.mAttributeLocations[a] < 16)
-        {
-            read_mask |= 1u << info.mAttributeLocations[a];
-        }
-    }
-    for (unsigned i = 0; i < 16; ++i)
-    {
-        if (!(read_mask & (1u << i)))
-        {
-            continue;
-        }
-        const VaoAttrib& a = sVin.mAttrib[i];
-        const bool mine = (b.mPresent & (1u << i)) != 0;
-        const bool theirs = a.mEnabled && a.mBuffer;
-        if (mine != theirs)
-        {
-            ++sDc.mBadEnabled;
-            dc_log("attribute read from an array differs", "location " + std::to_string(i) + " worker " + (theirs ? "array" : "constant") + " record " + (mine ? "array" : "constant"));
-            continue;
-        }
-        if (mine)
-        {
-            const LLVkAsync::BindAttr& e = b.mAttr[i];
-            if (a.mBuffer != b.mArray || a.mSize != e.mSize || a.mType != e.mType || a.mNormalized != (e.mNormalized != 0) || a.mInteger != (e.mInteger != 0) || a.mStride != e.mStride || a.mOffset != e.mOffset)
-            {
-                ++sDc.mBadAttrib;
-                dc_log("attribute differs", "location " + std::to_string(i) + " worker buf " + std::to_string(a.mBuffer) + " size " + std::to_string(a.mSize) + " type " + std::to_string((int)a.mType) + " norm " + std::to_string((int)a.mNormalized)
-                       + " int " + std::to_string((int)a.mInteger) + " stride " + std::to_string(a.mStride) + " off " + std::to_string(a.mOffset) + " | record buf " + std::to_string(b.mArray) + " size " + std::to_string(e.mSize)
-                       + " type " + std::to_string((int)e.mType) + " norm " + std::to_string((int)e.mNormalized) + " int " + std::to_string((int)e.mInteger) + " stride " + std::to_string(e.mStride) + " off " + std::to_string(e.mOffset));
-            }
-        }
-    }
-}
-
-void slot_check()
-{
-    if (!LLVkMirror::isReady())
-    {
-        return;
-    }
-    Program* cur = Renderer::instance().getProgram();
-    if (!cur)
-    {
-        return;
-    }
-    ++sDc.mSlotChecks;
-    const ProgramInfo& info = cur->getInfo();
-    for (size_t k = 0; k < info.mSamplers.size(); ++k)
-    {
-        const U32 unit = cur->getSamplerUnit(k);
-        if (unit >= 32)
-        {
-            continue;
-        }
-        const U32 cls = cur->getSamplerClass(k);
-        Tex* old_tex = tex_ptr(sSlots[unit][cls]);
-        Tex* new_tex = nullptr;
-        if (const U32 n = sDc.mIds[unit])
-        {
-            Tex* t = tex_ptr(n);
-            new_tex = (t && t->mDim == cls) ? t : nullptr;
-        }
-        if (old_tex != new_tex)
-        {
-            ++sDc.mBadSlot;
-            dc_log("texture slot differs", "sampler " + info.mSamplers[k].mName + " unit " + std::to_string(unit) + " class " + std::to_string(cls) + ": old table texture " + std::to_string(sSlots[unit][cls])
-                   + " producer id " + std::to_string(sDc.mIds[unit]));
-        }
-    }
 }
 
 void uniform_check()
@@ -2866,24 +2677,9 @@ void uniform_check()
     }
 }
 
-void draw_check_draw()
-{
-    ++sDc.mDraws;
-    if (!sDcPending)
-    {
-        ++sDc.mNoCheck;
-        dc_log("draw without a check", "");
-    }
-    sDcPending = false;
-}
-
 std::string draw_check_report()
 {
-    std::string out = "draws " + std::to_string(sDc.mDraws) + ", checks " + std::to_string(sDc.mChecks) + " | mismatches: program " + std::to_string(sDc.mBadProgram) + ", state " + std::to_string(sDc.mBadState)
-                    + ", buffers " + std::to_string(sDc.mBadBuffers) + ", attribute source " + std::to_string(sDc.mBadEnabled) + ", attribute fields " + std::to_string(sDc.mBadAttrib)
-                    + ", check without draw " + std::to_string(sDc.mNoDraw) + ", draw without check " + std::to_string(sDc.mNoCheck)
-                    + " | uniform blocks: checks " + std::to_string(sDc.mUniformChecks) + ", draws with a difference " + std::to_string(sDc.mBadUniform)
-                    + " | texture slots: draws checked " + std::to_string(sDc.mSlotChecks) + ", samplers that differ " + std::to_string(sDc.mBadSlot);
+    std::string out = "uniform blocks: checks " + std::to_string(sDc.mUniformChecks) + ", draws with a difference " + std::to_string(sDc.mBadUniform);
     if (!sDc.mBadPerProgram.empty())
     {
         out += " | by program:";
@@ -2973,7 +2769,7 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
     {
         return;
     }
-    const VertexInputState& vao = sVin;
+    const BoundVertices& vao = sBound;
     auto eit = sGL.mBuffers.find(vao.mElementBuffer);
     if (eit == sGL.mBuffers.end() || !eit->second.mVk.valid())
     {
@@ -2988,7 +2784,7 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
     if (probe_on() && type == LLVkFormat::T_U16)
     {
         // BLAS probe: positions are attribute 0 (vec4 array at the start of the vertex buffer); rigged draws (weights, joints enabled) and the UI are left out
-        const VaoAttrib& pos = vao.mAttrib[0];
+        const BoundAttrib& pos = vao.mAttrib[0];
         auto vit = sGL.mBuffers.find(pos.mBuffer);
         if (pos.mEnabled && pos.mBuffer && vit != sGL.mBuffers.end() && pos.mType == LLVkFormat::T_F32 && pos.mSize >= 3 && pos.mOffset == 0 && (pos.mStride == 16 || (pos.mStride == 0 && pos.mSize == 4))
             && !vao.mAttrib[10].mEnabled && !vao.mAttrib[12].mEnabled)
@@ -3014,7 +2810,7 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
             }
             for (int a = 0; !why && a < 16; ++a)
             {
-                const VaoAttrib& at = vao.mAttrib[a];
+                const BoundAttrib& at = vao.mAttrib[a];
                 if (!at.mEnabled || !at.mBuffer)
                 {
                     continue;
@@ -3043,7 +2839,7 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
                 }
                 for (int a = 0; !why && a < 16; ++a)
                 {
-                    const VaoAttrib& at = vao.mAttrib[a];
+                    const BoundAttrib& at = vao.mAttrib[a];
                     auto vit = at.mEnabled && at.mBuffer ? sGL.mBuffers.find(at.mBuffer) : sGL.mBuffers.end();
                     if (vit == sGL.mBuffers.end() || !vit->second.mVk.valid())
                     {

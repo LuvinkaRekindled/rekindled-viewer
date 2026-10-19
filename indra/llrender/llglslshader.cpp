@@ -1633,13 +1633,11 @@ void LLGLSLShader::bind()
         {
             sCurBoundShaderPtr->readProfileQuery();
         }
-        // <FS> one record for the buffer unbinds, the program bind and the attribute array switches
+        // <FS> the program of the next draws; no buffers are bound after a program bind
         LLVertexBuffer::forgetBoundBuffers();
         sCurBoundShader = mProgramObject;
         sCurBoundShaderPtr = this;
-        U32 enable = 0, disable = 0;
-        LLVertexBuffer::arrayMaskChange(mAttributeMask, enable, disable);
-        LLVkAsync::shaderBind(mVkProgram, enable, disable);
+        LLVkAsync::shaderBind(mVkProgram);
         placeProfileQuery();
     }
 
