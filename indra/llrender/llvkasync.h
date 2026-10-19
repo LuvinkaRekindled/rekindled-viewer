@@ -97,7 +97,7 @@ namespace LLVkAsync
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
     // ---- F2.4: the draw record (doc/vulkan/F2-draw-records.md) ----
-    // LL_VK_DRAWREC: 0 the old stream (shader bind + array run records, the worker keeps a vertex array state), 1 verify (the old stream plus a CMD_DRAW_CHECK before every draw that
+    // LL_VK_DRAWREC (default 2): 0 the old stream (shader bind + array run records, the worker keeps a vertex array state), 1 verify (the old stream plus a CMD_DRAW_CHECK before every draw that
     // carries what the draw record would say), 2 draw records only (CMD_DRAW2 names its program and carries its vertex binding; no shader bind / array run records)
     extern int gDrawRec;
     // where the vertex attributes of a draw come from, as values: the buffers and, for each shader attribute location that is read from an array, how

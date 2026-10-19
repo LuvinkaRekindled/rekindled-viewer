@@ -59,7 +59,7 @@ namespace LLVkAsync
 bool gEnabled = false;
 bool gTexOneCopy = false;   // C4: opt-in (LL_VK_TEXONECOPY=1), the measured gain was nil
 static int gMode = 1;
-static int drawRecFromEnv() { const char* e = getenv("LL_VK_DRAWREC"); return e ? std::min(2, std::max(0, atoi(e))) : 0; }
+static int drawRecFromEnv() { const char* e = getenv("LL_VK_DRAWREC"); return e ? std::min(2, std::max(0, atoi(e))) : 2; }       // default 2 (draw records); 0 is the old stream, 1 verifies it
 int gDrawRec = drawRecFromEnv();        // F2.4, see llvkasync.h
 
 namespace
