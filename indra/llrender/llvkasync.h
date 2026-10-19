@@ -96,6 +96,21 @@ namespace LLVkAsync
     void gpuZone(const char* name, bool begin);
     void setArrayState(bool bind_array, U32 array_buffer, bool bind_elem, U32 elem_buffer, const VertexAttrib* attribs, U32 count);
 
+    // ---- F2.5 measure first: main-thread cost per front-end entry point (counted with LL_VK_OPSTATS, every 16th call timed; reported in the VkOps "worker operations" line) ----
+    enum FrontPoint { FP_SHADER_BIND, FP_UNIFORM, FP_UNIFORM_MATRIX, FP_UNIFORM_SENT, FP_TEXUNIT_BIND, FP_BLEND, FP_GLSTATE, FP_SET_BUFFER, FP_DRAW, FP_SYNC_MATRICES, FP_COUNT };
+    extern bool gFrontStats;
+    unsigned long long frontStart(int id);                 // counts the call (main thread only); returns a timestamp when this call is timed, else 0
+    void frontStop(int id, unsigned long long t0);
+    void frontNote(int id);                                // count only
+    struct FrontLap
+    {
+        int mId;
+        unsigned long long mT0;
+        explicit FrontLap(int id) : mId(id), mT0(0) { if (gFrontStats) mT0 = frontStart(id); }
+        ~FrontLap() { if (mT0) frontStop(mId, mT0); }
+    };
+    inline void frontCount(int id) { if (gFrontStats) frontNote(id); }
+
     // ---- F2.4: the draw record (doc/vulkan/F2-draw-records.md) ----
     // LL_VK_DRAWREC (default 2): 0 the old stream (shader bind + array run records, the worker keeps a vertex array state), 1 verify (the old stream plus a CMD_DRAW_CHECK before every draw that
     // carries what the draw record would say), 2 draw records only (CMD_DRAW2 names its program and carries its vertex binding; no shader bind / array run records)

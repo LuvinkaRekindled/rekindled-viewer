@@ -428,6 +428,7 @@ S32 LLGLSLShader::vkTwinOf(GLint location) const
 
 void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<double> values)
 {
+    LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram) return;
     const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
@@ -481,6 +482,7 @@ void LLGLSLShader::mirrorScalar(GLint location, int kind, std::initializer_list<
 
 void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data)
 {
+    LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram || !data) return;
     const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
@@ -505,6 +507,7 @@ void LLGLSLShader::mirrorVector(GLint location, int kind, U32 components, U32 co
 
 void LLGLSLShader::mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean transpose, U32 count, const GLfloat* data)
 {
+    LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram || !data) return;
     const bool async = LLVkAsync::gEnabled;
     LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
@@ -1343,6 +1346,7 @@ bool LLGLSLShader::link(bool suppress_errors)
 void LLGLSLShader::bind()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SHADER_BIND);
 
     llassert_always(mProgramObject != 0);
 
@@ -1598,6 +1602,7 @@ S32 LLGLSLShader::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
 
 void LLGLSLShader::uniform1i(U32 index, GLint x)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
     if (mProgramObject)
@@ -1623,16 +1628,19 @@ void LLGLSLShader::uniform1i(U32 index, GLint x)
 
 void LLGLSLShader::uniform1fAt(S32 location, F32 v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorScalar(location, 0, {(double)(v)});
 }
 
 void LLGLSLShader::uniform4fvAt(S32 location, S32 count, const F32* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorVector(location, 0, 4, count, v);
 }
 
 void LLGLSLShader::uniform1f(U32 index, GLfloat x)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1659,6 +1667,7 @@ void LLGLSLShader::uniform1f(U32 index, GLfloat x)
 
 void LLGLSLShader::fastUniform1f(U32 index, GLfloat x)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
     llassert(mProgramObject);
@@ -1669,6 +1678,7 @@ void LLGLSLShader::fastUniform1f(U32 index, GLfloat x)
 
 void LLGLSLShader::uniform2f(U32 index, GLfloat x, GLfloat y)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1696,6 +1706,7 @@ void LLGLSLShader::uniform2f(U32 index, GLfloat x, GLfloat y)
 
 void LLGLSLShader::uniform3f(U32 index, GLfloat x, GLfloat y, GLfloat z)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1723,6 +1734,7 @@ void LLGLSLShader::uniform3f(U32 index, GLfloat x, GLfloat y, GLfloat z)
 
 void LLGLSLShader::uniform4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1750,6 +1762,7 @@ void LLGLSLShader::uniform4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat
 
 void LLGLSLShader::uniform1iv(U32 index, U32 count, const GLint* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1777,6 +1790,7 @@ void LLGLSLShader::uniform1iv(U32 index, U32 count, const GLint* v)
 
 void LLGLSLShader::uniform4iv(U32 index, U32 count, const GLint* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1804,6 +1818,7 @@ void LLGLSLShader::uniform4iv(U32 index, U32 count, const GLint* v)
 
 void LLGLSLShader::uniform1fv(U32 index, U32 count, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1831,6 +1846,7 @@ void LLGLSLShader::uniform1fv(U32 index, U32 count, const GLfloat* v)
 
 void LLGLSLShader::uniform2fv(U32 index, U32 count, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1858,6 +1874,7 @@ void LLGLSLShader::uniform2fv(U32 index, U32 count, const GLfloat* v)
 
 void LLGLSLShader::uniform3fv(U32 index, U32 count, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1885,6 +1902,7 @@ void LLGLSLShader::uniform3fv(U32 index, U32 count, const GLfloat* v)
 
 void LLGLSLShader::uniform4fv(U32 index, U32 count, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1913,6 +1931,7 @@ void LLGLSLShader::uniform4fv(U32 index, U32 count, const GLfloat* v)
 
 void LLGLSLShader::uniform4uiv(U32 index, U32 count, const GLuint* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1941,6 +1960,7 @@ void LLGLSLShader::uniform4uiv(U32 index, U32 count, const GLuint* v)
 
 void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1962,6 +1982,7 @@ void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, c
 
 void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1983,6 +2004,7 @@ void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, c
 
 void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2004,6 +2026,7 @@ void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose,
 
 void LLGLSLShader::uniformMatrix4fv(U32 index, U32 count, GLboolean transpose, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2074,6 +2097,7 @@ GLint LLGLSLShader::getAttribLocation(U32 attrib)
 
 void LLGLSLShader::uniform1i(const LLStaticHashedString& uniform, GLint v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2091,6 +2115,7 @@ void LLGLSLShader::uniform1i(const LLStaticHashedString& uniform, GLint v)
 
 void LLGLSLShader::uniform1iv(const LLStaticHashedString& uniform, U32 count, const GLint* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2109,6 +2134,7 @@ void LLGLSLShader::uniform1iv(const LLStaticHashedString& uniform, U32 count, co
 
 void LLGLSLShader::uniform4iv(const LLStaticHashedString& uniform, U32 count, const GLint* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2127,6 +2153,7 @@ void LLGLSLShader::uniform4iv(const LLStaticHashedString& uniform, U32 count, co
 
 void LLGLSLShader::uniform2i(const LLStaticHashedString& uniform, GLint i, GLint j)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2145,6 +2172,7 @@ void LLGLSLShader::uniform2i(const LLStaticHashedString& uniform, GLint i, GLint
 
 void LLGLSLShader::uniform1f(const LLStaticHashedString& uniform, GLfloat v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2162,6 +2190,7 @@ void LLGLSLShader::uniform1f(const LLStaticHashedString& uniform, GLfloat v)
 
 void LLGLSLShader::uniform2f(const LLStaticHashedString& uniform, GLfloat x, GLfloat y)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2180,6 +2209,7 @@ void LLGLSLShader::uniform2f(const LLStaticHashedString& uniform, GLfloat x, GLf
 
 void LLGLSLShader::uniform3f(const LLStaticHashedString& uniform, GLfloat x, GLfloat y, GLfloat z)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2197,6 +2227,7 @@ void LLGLSLShader::uniform3f(const LLStaticHashedString& uniform, GLfloat x, GLf
 
 void LLGLSLShader::uniform4f(const LLStaticHashedString& uniform, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2214,6 +2245,7 @@ void LLGLSLShader::uniform4f(const LLStaticHashedString& uniform, GLfloat x, GLf
 
 void LLGLSLShader::uniform1fv(const LLStaticHashedString& uniform, U32 count, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2231,6 +2263,7 @@ void LLGLSLShader::uniform1fv(const LLStaticHashedString& uniform, U32 count, co
 
 void LLGLSLShader::uniform2fv(const LLStaticHashedString& uniform, U32 count, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2248,6 +2281,7 @@ void LLGLSLShader::uniform2fv(const LLStaticHashedString& uniform, U32 count, co
 
 void LLGLSLShader::uniform3fv(const LLStaticHashedString& uniform, U32 count, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2265,6 +2299,7 @@ void LLGLSLShader::uniform3fv(const LLStaticHashedString& uniform, U32 count, co
 
 void LLGLSLShader::uniform4fv(const LLStaticHashedString& uniform, U32 count, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2283,6 +2318,7 @@ void LLGLSLShader::uniform4fv(const LLStaticHashedString& uniform, U32 count, co
 
 void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, const GLuint* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2301,6 +2337,7 @@ void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, c
 
 void LLGLSLShader::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2314,6 +2351,7 @@ void LLGLSLShader::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 cou
 
 void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 
@@ -2327,6 +2365,7 @@ void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 cou
 
 void LLGLSLShader::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const GLfloat* v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     GLint location = getUniformLocation(uniform);
 

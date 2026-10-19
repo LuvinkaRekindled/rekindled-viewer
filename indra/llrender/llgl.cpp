@@ -29,6 +29,7 @@
 
 #include "linden_common.h"
 #include "llvkmirror.h"
+#include "llvkasync.h"
 #include <atomic>
 
 #include "boost/tokenizer.hpp"
@@ -510,6 +511,7 @@ LLGLState::LLGLState(LLGLenum state, S32 enabled) :
     mState(state), mWasEnabled(false), mIsEnabled(false)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_GLSTATE);
 
     if (mState)
     {
@@ -546,6 +548,7 @@ void LLGLState::setEnabled(S32 enabled)
 LLGLState::~LLGLState()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_GLSTATE);
     if (mState)
     {
         if (mIsEnabled != mWasEnabled)

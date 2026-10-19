@@ -33,3 +33,18 @@ Code: `LLVkAsync::drawBinding/drawBindingClear/drawProgram` (llvkasync.h), `Draw
 - **Mode 2 vs mode 0, same spot, same launcher style (opstats, no phases):** records/frame 13.8k -> 8.1k (-41%); producer calls/frame 32.4k -> 25.8k; main thread queue writing 0.77 -> 0.66 ms/frame; worker draw path (draw + arrayRun + shaderBind) 6.18 -> 6.01 ms/frame (draw ns 1075 -> 1125 with the binding expanded in the record, minus the 0.24 ms of the two removed record kinds); shadowPackets 2.65 ms in both. Draw counts 5.54k vs 5.33k per frame (the crowd differs by 3 avatars between the runs). Pictures: trees, buildings, couch, lamp, billboard all present in both. As expected from the design this is not a speed-up (-0.1 ms main, -0.2 ms worker); it is the base for F2.5-F2.7.
 - Default is 2 from 8f8db7a8+1 (Adam: mode 2 is the way forward; `LL_VK_DRAWREC=0` is the old stream until F5). Not yet exercised in mode 2: snapshots, model/avatar previews, sub-stream and UI-substream modes (`FSUiSubstream` etc.), media textures. Run the REGRESSION-CHECKLIST items before flipping the default.
 - Next: F2.5 (producer-side uniform classes) after the front-end per-entry-point counters ("Measure before F2.5" above); F2.7 removes `sVin`, `shader_bind`, `vertex_input_apply`, `CMD_SHADER_BIND`, `CMD_ARRAY_RUN` once mode 2 is the default.
+
+## F2.5 step 1: where the main thread's front-end time goes (2026-10-19, counters, London City crowd, mode 2, lean opstats run)
+Counters (`LLVkAsync::FrontLap`, every 16th call timed, only with `LL_VK_OPSTATS`; the VkOps "worker operations" line has a `FRONT END main thread:` part). Per frame:
+| entry point | calls | ms | ns/call |
+|---|---|---|---|
+| `uniform*` (all setters but matrices) | 23,539 | 0.52 | 22 |
+| `uniformMatrix*` | 3,521 | 0.14 | 39 |
+| `syncMatrices` (5,848 calls, contains the matrix writes above) | 5,848 | 0.12 | 21 |
+| `LLVertexBuffer::setBuffer` | 4,390 | 0.38 | 86 |
+| `LLVertexBuffer::draw*` (writes the CMD_DRAW2) | 5,263 | 0.35 | 66 |
+| `LLGLSLShader::bind` | 1,066 | 0.14 | 128 |
+| `LLTexUnit::bind` | 893 | 0.11 | 121 |
+| `LLGLState` ctor+dtor | 5,333 | 0.05 | 9 |
+| `blendFunc`/`setSceneBlendType` | 3,057 | 0.04 | 12 |
+Only 7,852 of the 23,539 uniform calls reach the stream (the producer's value cache filters 67%). Total of the listed entry points about 1.8 ms of a 15 ms loop: the classes' own work is not where most of the main thread goes (the rest is the pass code above them: culling, sorting, building lists, avatar and object update). What the numbers say to do inside F2.5: (a) `setBuffer` recomputes the whole binding (86 ns x 4.4k = 0.38 ms) on almost every draw: a cached binding per buffer and shader mask removes most of it; (b) the uniform path costs 22 ns for a call that is usually filtered: the filter is a hash map lookup (`mValue`) plus an initializer-list/mirror call chain, and a matrix write with `transpose` allocates a vector; a per-program shadow indexed by uniform replaces the map; (c) the 7.9k writes that do go out become class range writes resolved on the producer (no uniform index, no op dispatch on the worker).

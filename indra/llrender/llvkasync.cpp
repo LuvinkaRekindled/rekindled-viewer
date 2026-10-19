@@ -180,6 +180,9 @@ unsigned gOpStatsFrames = 0;
 unsigned long long gOpStatTicks[OP_STAT_SLOTS] = {};
 unsigned long long gOpStatCalls[OP_STAT_SLOTS] = {};
 unsigned long long gOpStatTsc0 = 0;
+unsigned long long gFrontCalls[FP_COUNT] = {};
+unsigned long long gFrontTicks[FP_COUNT] = {};
+const char* const kFrontNames[FP_COUNT] = { "LLGLSLShader::bind", "uniform*", "uniformMatrix*", "uniform writes sent (count only)", "LLTexUnit::bind", "blendFunc", "LLGLState", "setBuffer", "draw*", "syncMatrices (contains uniformMatrix)" };
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
@@ -493,6 +496,19 @@ struct MainLap
     MainLap() : mTimed(gOpStats && !tlsBuf && ((++gMainPushOps & 15) == 0)), mT0(mTimed ? __rdtsc() : 0) {}
     ~MainLap() { if (mTimed) { gMainPushTicks += (__rdtsc() - mT0) * 16; } }
 };
+
+bool gFrontStats = false;
+unsigned long long frontStart(int id)
+{
+    if (!isMainThread())
+    {
+        return 0;
+    }
+    const unsigned long long n = ++gFrontCalls[id];
+    return (n & 15) == 0 ? (__rdtsc() | 1) : 0;
+}
+void frontStop(int id, unsigned long long t0) { gFrontTicks[id] += (__rdtsc() - t0) * 16; }
+void frontNote(int id) { if (isMainThread()) { ++gFrontCalls[id]; } }
 
 bool mainProducer()
 {
@@ -1067,6 +1083,20 @@ std::string opStatsReport(size_t frames)
                  (double)push_ops / (double)frames, (double)records / (double)frames,
                  (double)push_ticks * ms_per_tick / (double)frames, push_ops ? (double)push_ticks * ms_per_tick * 1e6 / (double)push_ops : 0.0);
         out = buf;
+    }
+    {
+        // F2.5: the viewer's front-end entry points on the main thread (calls per frame, ms per frame from every 16th call timed, ns per call)
+        out += "FRONT END main thread: ";
+        for (int i = 0; i < FP_COUNT; ++i)
+        {
+            const double ms = (double)gFrontTicks[i] * ms_per_tick / (double)frames;
+            snprintf(buf, sizeof(buf), "%s %.0f calls %.2f ms %.0f ns, ", kFrontNames[i], (double)gFrontCalls[i] / (double)frames, ms,
+                     gFrontCalls[i] ? (double)gFrontTicks[i] * ms_per_tick * 1e6 / (double)gFrontCalls[i] : 0.0);
+            out += buf;
+            gFrontCalls[i] = 0;
+            gFrontTicks[i] = 0;
+        }
+        out += "| ";
     }
     {
         // the plain calls still pushed one by one (candidates for typed records), most frequent first
@@ -2759,6 +2789,7 @@ bool start()
         gOpStatQpc0 = qn.QuadPart;
         gOpStatTsc0 = __rdtsc();
         gOpStats = true;
+        gFrontStats = true;
     }
     if (getenv("LL_VK_WORKERPHASES"))
     {
