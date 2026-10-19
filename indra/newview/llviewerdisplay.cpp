@@ -286,6 +286,21 @@ void display_update_camera()
 void display_stats()
 {
     LL_PROFILE_ZONE_SCOPED;
+    {
+        // how much of the world has arrived, every 5 s: objects known to the viewer and vertex buffer draws per frame (for telling a world still loading from a rendering fault)
+        static LLTimer load_timer;
+        static U64 last_draws = 0;
+        static U32 load_frames = 0;
+        ++load_frames;
+        if (load_timer.getElapsedTimeF32() >= 5.f)
+        {
+            const U64 draws = LLVertexBuffer::sDrawCalls;
+            LL_INFOS("VkLoad") << "world: " << gObjectList.getNumObjects() << " objects, " << (load_frames ? (draws - last_draws) / load_frames : 0) << " vertex buffer draws per frame, " << load_frames << " frames" << LL_ENDL;
+            last_draws = draws;
+            load_frames = 0;
+            load_timer.reset();
+        }
+    }
     constexpr F32 FPS_LOG_FREQUENCY = 10.f;
     if (gRecentFPSTime.getElapsedTimeF32() >= FPS_LOG_FREQUENCY)
     {
