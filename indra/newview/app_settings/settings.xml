@@ -2700,6 +2700,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>RenderRiggedAlphaDepthCutoff</key>
+    <map>
+      <key>Comment</key>
+      <string>Rigged alpha blended parts (hair, clothes) write depth only where the texture alpha reaches this value (a depth only pass before the colour pass), so the nearly transparent texels around hair strands no longer cut a halo out of foliage and other alpha surfaces behind. Low values (0.33) make semi-transparent front hair hide the layers behind it; 0.8 keeps both right. 0 = the old behaviour (every fragment above 1/255 writes depth).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.8</real>
+    </map>
     <key>FSOverlayDepthMode</key>
     <map>
       <key>Comment</key>

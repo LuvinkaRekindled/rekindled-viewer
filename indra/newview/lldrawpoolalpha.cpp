@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "lldrawpoolalpha.h"
+#include <algorithm>
 
 #include "llglheaders.h"
 #include "llviewercontrol.h"
@@ -259,7 +260,13 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
     //enable writing to alpha for emissive effects
     gGL.setColorMask(true, true);
 
-    bool write_depth = rigged ||
+    // <FS> Hair halo. The rigged pass writes depth so that rigged layers hide each other and the static alpha drawn after it (foliage behind the avatar) is cut away
+    // behind them, but every fragment above 1/255 alpha wrote it: the nearly transparent texels around hair strands then cut a halo of the mesh edge out of the foliage
+    // behind. A depth only pass first writes depth just where the texture alpha reaches the cutoff; the colour pass after it tests against that and writes none.
+    static LLCachedControl<F32> rigged_depth_cutoff(gSavedSettings, "RenderRiggedAlphaDepthCutoff", 0.8f);
+    const bool depth_prepass = rigged && rigged_depth_cutoff() > 0.f && !LLPipeline::sImpostorRender && !gCubeSnapshot && !LLPipeline::sRenderingHUDs;
+
+    bool write_depth = (rigged && !depth_prepass) ||
         LLDrawPoolWater::sSkipScreenCopy
         // we want depth written so that rendered alpha will
         // contribute to the alpha mask used for impostors
@@ -282,6 +289,43 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
         LL::GLTFSceneManager::instance().render(false, true);
         LL::GLTFSceneManager::instance().render(false, false, true);
         LL::GLTFSceneManager::instance().render(false, true, true);
+    }
+
+    if (depth_prepass)
+    {
+        LL_GPU_TIMER_ZONE("alpha: rigged depth");
+        LLGLSLShader* saved_simple = simple_shader;
+        LLGLSLShader* saved_fullbright = fullbright_shader;
+        LLGLSLShader* mask_shader = &gDeferredFullbrightAlphaMaskProgram;
+        simple_shader = fullbright_shader = mask_shader;
+
+        mDepthCutoff = rigged_depth_cutoff();
+        mDepthCutoffShaders.clear();
+
+        gGL.setColorMask(false, false);
+        {
+            LLGLDepthTest prepass_depth(GL_TRUE, GL_TRUE);
+            // the colour pass draws the same triangles and tests with LEQUAL: written a hair farther so that no rounding between the two passes makes them fail
+            LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
+            gGL.setPolygonOffset(1.f, 4.f);
+            renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, true, true);
+        }
+        gGL.setColorMask(true, true);
+        gGL.setPolygonOffset(0.f, 0.f);
+
+        // every shader that drew with the cutoff goes back to the usual one (the colour pass and the static alpha after it do not set it again)
+        LLGLSLShader::unbind();
+        mDepthCutoff = 0.f;
+        for (LLGLSLShader* shader : mDepthCutoffShaders)
+        {
+            shader->bind();
+            shader->setMinimumAlpha(MINIMUM_ALPHA);
+        }
+        mDepthCutoffShaders.clear();
+
+        simple_shader = saved_simple;
+        fullbright_shader = saved_fullbright;
+        LLGLSLShader::unbind();
     }
 
     // If the face is more than 90% transparent, then don't update the Depth buffer for Dof
@@ -825,6 +869,15 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 
                 bool tex_setup = TexSetup(&params, (mat != nullptr));
 
+                if (depth_only && mDepthCutoff > 0.f && current_shader)
+                {   // <FS> depth only pass of the rigged alpha (hair halo): the shader of this draw cuts at the cutoff instead of 1/255 (a custom blend draw below sets 0 and puts this back)
+                    if (std::find(mDepthCutoffShaders.begin(), mDepthCutoffShaders.end(), current_shader) == mDepthCutoffShaders.end())
+                    {
+                        mDepthCutoffShaders.push_back(current_shader);
+                    }
+                    current_shader->setMinimumAlpha(mDepthCutoff);
+                }
+
                 {
                     gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
 
@@ -843,7 +896,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 
                     if (reset_minimum_alpha)
                     {
-                        current_shader->setMinimumAlpha(MINIMUM_ALPHA);
+                        current_shader->setMinimumAlpha((depth_only && mDepthCutoff > 0.f) ? mDepthCutoff : MINIMUM_ALPHA);
                     }
                 }
 
