@@ -187,7 +187,7 @@ const char* const kFrontNames[FP_COUNT] = { "LLGLSLShader::bind", "uniform*", "u
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bufferData", "bufferSubData", "shadowPackets", "texParams", "fboAttach", "targetState", "texSlots", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "draw", "uniformRange", "drawScratch" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bufferData", "bufferSubData", "shadowPackets", "texParams", "fboAttach", "targetState", "texSlots", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "draw", "uniformRange", "pass", "drawScratch" };
 const char* slotName(int slot) { return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
@@ -564,6 +564,33 @@ void targetDrawBuffers(U32 fbo, S32 draw_buffers)
     coFlushAll(opStatSlot(CMD_TARGET_STATE));
     const S32 a[2] = { (S32)fbo, draw_buffers };
     rawPush(CMD_TARGET_STATE, a, sizeof(a));
+}
+
+void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool clear_color, bool clear_depth, const F32* rgba)
+{
+    LLVkState::setViewport(vx, vy, vw, vh);
+    if (!gEnabled)
+    {
+        std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+        LLVkGL::target_state(fbo, draw_buffers);
+        if (clear_color || clear_depth)
+        {
+            LLVkGL::clear_target(clear_color, clear_depth, rgba);
+        }
+        return;
+    }
+    if (!produces())
+    {
+        return;
+    }
+    MainLap lap;
+    coFlushAll(opStatSlot(CMD_PASS));
+    if (clear_color || clear_depth)
+    {
+        stateEmit();        // the clear honours the colour / depth write masks and the scissor: the state record comes first, as before a clear
+    }
+    struct R { S32 mFbo; S32 mDrawBuffers; U32 mFlags; F32 mColor[4]; } rec = { (S32)fbo, draw_buffers, (clear_color ? 1u : 0u) | (clear_depth ? 2u : 0u), { rgba[0], rgba[1], rgba[2], rgba[3] } };
+    rawPush(CMD_PASS, &rec, sizeof(rec));
 }
 
 void clearTarget(bool color, bool depth, const F32* rgba)
@@ -2343,6 +2370,17 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         const S32* a = (const S32*)payload;
         LLVkGL::target_state((unsigned)a[0], a[1]);
+        break;
+    }
+    case CMD_PASS:
+    {
+        struct R { S32 mFbo; S32 mDrawBuffers; U32 mFlags; F32 mColor[4]; };
+        const R* a = (const R*)payload;
+        LLVkGL::target_state((unsigned)a->mFbo, a->mDrawBuffers);
+        if (a->mFlags & 3)
+        {
+            LLVkGL::clear_target((a->mFlags & 1) != 0, (a->mFlags & 2) != 0, a->mColor);
+        }
         break;
     }
     case CMD_CLEAR:

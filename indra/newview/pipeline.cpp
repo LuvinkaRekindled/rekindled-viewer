@@ -1772,10 +1772,7 @@ void LLPipeline::createLUTBuffers()
     generateBrdfLut(true);
 
     mExposureMap.allocate(1, 1, GL_R16F);
-    RenderPassScope pass_1775(mExposureMap);
-    gGL.setClearColor(1, 1, 1, 0);
-    mExposureMap.clear();
-    gGL.setClearColor(0, 0, 0, 0);
+    RenderPassScope pass_1775(mExposureMap, RenderPass::Clear(1, 1, 1, 0));
     pass_1775.end();
 
     mLuminanceMap.allocate(256, 256, GL_R16F, false, LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_AUTO);
@@ -12723,7 +12720,7 @@ void LLPipeline::renderDeferredLighting()
         if ((RenderDeferredSSAO && !gCubeSnapshot) || RenderShadowDetail > 0)
         {
             LL_PROFILE_GPU_ZONE("sun program");
-            RenderPassScope pass(*deferred_light_target);
+            RenderPassScope pass(*deferred_light_target, RenderPass::Clear(1, 1, 1, 1, GL_COLOR_BUFFER_BIT));
             {  // paint shadow/SSAO light map (direct lighting lightmap)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - sun shadow");
                 LL_CPU_ZONE("lighting: sun shadow");
@@ -12731,9 +12728,6 @@ void LLPipeline::renderDeferredLighting()
                 LLGLSLShader& sun_shader = gCubeSnapshot ? gDeferredSunProbeProgram : gDeferredSunProgram;
                 bindDeferredShader(sun_shader, deferred_light_target);
                 mScreenTriangleVB->setBuffer();
-                gGL.setClearColor(1, 1, 1, 1);
-                deferred_light_target->clear(GL_COLOR_BUFFER_BIT);
-                gGL.setClearColor(0, 0, 0, 0);
 
                 sun_shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES,
                                               (GLfloat)deferred_light_target->getWidth(),
@@ -12770,11 +12764,8 @@ void LLPipeline::renderDeferredLighting()
             LL_CPU_ZONE("lighting: soften shadow");
             LL_PROFILE_GPU_ZONE("soften shadow");
             // blur lightmap
-            RenderPassScope pass_12784(*screen_target);
+            RenderPassScope pass_12784(*screen_target, RenderPass::Clear(1, 1, 1, 1, GL_COLOR_BUFFER_BIT));
             LLRenderState::DepthReadOnlyScope blur_depth_read_only(true);      // F3.5c: the blur samples the depth
-            gGL.setClearColor(1, 1, 1, 1);
-            screen_target->clear(GL_COLOR_BUFFER_BIT);
-            gGL.setClearColor(0, 0, 0, 0);
 
             bindDeferredShader(gDeferredBlurLightProgram, accumulated);
 
@@ -12827,11 +12818,9 @@ void LLPipeline::renderDeferredLighting()
             unbindDeferredShader(gDeferredBlurLightProgram);
         }
 
-        screen_pass.begin(*screen_target);
+        screen_pass.begin(*screen_target, RenderPass::Clear(0, 0, 0, 0, GL_COLOR_BUFFER_BIT));
         lighting_depth_read_only.setEnabled(true);
-        // clear color buffer here - zeroing alpha (glow) is important or it will accumulate against sky
-        gGL.setClearColor(0, 0, 0, 0);
-        screen_target->clear(GL_COLOR_BUFFER_BIT);
+        // the pass cleared the colour buffer when it began - zeroing alpha (glow) is important or it will accumulate against sky
 
         if (RenderDeferredAtmospheric)
         {  // apply sunlight contribution

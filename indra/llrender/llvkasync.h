@@ -97,6 +97,8 @@ namespace LLVkAsync
     void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh);
     // the colour attachment count of a target without touching the viewport
     void targetDrawBuffers(U32 fbo, S32 draw_buffers);
+    // F3.5d: a pass begins: the target (colour attachment count), the viewport and the load op (clear colour / depth with the colour to clear to) are ONE record (was: targetState + clear)
+    void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool clear_color, bool clear_depth, const F32* rgba);
     // a named GPU zone (the viewer's LL_PROFILE_GPU_ZONE scopes, enabled with FSGpuZoneTimers + LL_VK_PHASES): the worker writes a GPU timestamp at this point of the frame
     void gpuZone(const char* name, bool begin);
 
@@ -206,6 +208,7 @@ namespace LLVkAsync
         CMD_RESOURCE_CREATE, CMD_RESOURCE_DESTROY, // F2.1: names of textures / targets / buffers / queries come into being or go (resourceCreate / resourceDestroy)
         CMD_DRAW,                                  // F2.4: the draw record: program, vertex binding when it changed, texture ids, uniform writes
         CMD_UNIFORM_RANGE,                         // F2.5: inside a uniform batch: bytes of a program's class block (uniformRange)
+        CMD_PASS,                                  // F3.5d: a render pass begins: target, colour attachment count and the load op (clear) in one record (passBegin)
         CMD_DRAW_SCRATCH,                          // F3.1: a non-indexed draw with its vertices inline (immediate mode: LLRender::flush); no vertex binding, the worker supplies the vertex scratch
         // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
     };

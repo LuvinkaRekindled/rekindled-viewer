@@ -469,6 +469,7 @@ public:
     // Mask/face arguments are the GL enum values (GL_COLOR_BUFFER_BIT, GL_FRONT, ...).
     void clearBuffers(U32 gl_buffer_mask);
     void setClearColor(F32 r, F32 g, F32 b, F32 a);
+    const F32* getClearColor() const { return mClearColor; }       // F3.5d: the pass scope clears to this unless it is given a colour
     void setViewport(S32 x, S32 y, S32 width, S32 height);
     void setCullFace(LLRenderState::CullFace face);       // F3.2: typed (llrenderstate.h)
     void setPolygonOffset(F32 factor, F32 units);

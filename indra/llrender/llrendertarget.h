@@ -176,7 +176,8 @@ public:
     // *HACK
     void swapFBORefs(LLRenderTarget& other);
 
-    static LLRenderTarget* sBoundTarget;
+    static LLRenderTarget* sBoundTarget;        // the innermost open pass (the top of the stack of open passes, which lives in llrendertarget.cpp: F3.5d)
+    friend void RenderPass::begin(LLRenderTarget&, RenderPass::LoadOp, U32, const F32*, const char*, int);
     // the number of colour attachments draws write to on the current target (the rest are not written until the target is bound again)
     static void setCurrentDrawBufferCount(S32 count);
 
@@ -186,13 +187,12 @@ protected:
     std::vector<U32> mTex;
     std::vector<U32> mInternalFormat;
     U32 mFBO;
-    LLRenderTarget* mPreviousRT = nullptr;
 
     // F3.5a: where the pass was begun (bindTarget's call site), the draw count at that moment, the counters of the entry points and the pass check
     const char* mBindFile = nullptr;
     int mBindLine = 0;
     unsigned long long mBindDraw = 0;
-    void bindImpl(const char* file, int line, bool restore);
+    void bindImpl(const char* file, int line, bool restore, U32 clear_mask = 0, const F32* clear_color = nullptr);
     void noteBind(const char* file, int line);
     void noteFlush(const char* file, int line);
     void noteClear(const char* file, int line);
