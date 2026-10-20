@@ -115,7 +115,13 @@ namespace LLVkBridge
         F32 mTargetWidth = 0.f;     // kind 1: the width of the shadow target (the dithering of semi-transparent casters)
         U32 mPaletteFloats = 0;     // floats of joint matrix palettes (12 per joint) after the model matrices; the rigged entries point into them
         U32 mPass = 0;              // the shadow pass: 0-3 sun cascades, 4-5 spot shadows, 6 other (ray tracing keeps the casters of a cached cascade)
+        U32 mFragment = 0;          // kind 11: the id of the fragment retained (S1, below)
     };
+    // S1 retained fragments (doc/vulkan/S1-handoff.md): the untextured static casters of one spatial group, kept by the worker under an id until released.
+    // kind 11 RETAIN: mFragment = id, mEntries ShadowPacketEntry in the blob; mMatrix of an entry is 0 (no matrix) or 1 + the fragment's own matrix number.
+    // kind 12 RELEASE: mEntries ids (U32) in the blob.
+    // kind 13 retained pass: like kind 0, but the entries are named by fragment: mEntries = fragments, mPaletteFloats = words of the matrix map; the blob is
+    //   mEntries x { id, offset into the map }, the map (per fragment its own matrix number -> the number in this record's matrices), then mMatrices x 16 floats.
     // mMatrixId: stable identity of the model matrix (ray tracing instances). The last four are for the ray scene only: the material of the draw (RtMaterialDef id, 0 = none) and the byte
     // offsets of the texcoord0, colour and normal arrays in the vertex buffer (0 = the buffer has no such array)
     struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId, mMaterial, mTexcoordOffset, mColorOffset, mNormalOffset; };
