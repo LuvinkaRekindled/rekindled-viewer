@@ -1865,7 +1865,7 @@ S32 LLGLSLShader::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
                 LL_ERRS() << "Texture channel " << index << " texture type corrupted. Expected: " << mode << ", Found: " << curr_type << LL_ENDL;
             }
         }
-        tex_unit->disable();
+        tex_unit->clear();
     }
 
     return index;

@@ -551,7 +551,7 @@ void LLVOSky::initCubeMap()
         mCubeMap->init(images);
     }
 
-    gGL.getTexUnit(0)->disable();
+    gGL.getTexUnit(0)->clear();
 }
 
 

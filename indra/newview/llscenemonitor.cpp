@@ -383,11 +383,11 @@ void LLSceneMonitor::compare()
 
     gTwoTextureCompareProgram.unbind();
 
-    gGL.getTexUnit(0)->disable();
+    gGL.getTexUnit(0)->clear();
     gGL.getTexUnit(0)->bindWhite();
-    gGL.getTexUnit(1)->disable();
+    gGL.getTexUnit(1)->clear();
     gGL.getTexUnit(1)->bindWhite();
-    gGL.getTexUnit(2)->disable();
+    gGL.getTexUnit(2)->clear();
     gGL.getTexUnit(2)->bindWhite();
 
     if (!mDebugViewerVisible)

@@ -85,7 +85,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
         LL_WARNS() << "Failed to allocate render target" << LL_ENDL;
         return false;
     }
-    gGL.getTexUnit(0)->disable();
+    gGL.getTexUnit(0)->clear();
     stop_glerror();
 
     scratch_target.bindTarget();
@@ -256,7 +256,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
         shader.disableTexture(LLViewerShaderMgr::TERRAIN_ALPHARAMP);
 
         gGL.getTexUnit(alpha_ramp)->bindWhite();
-        gGL.getTexUnit(alpha_ramp)->disable();
+        gGL.getTexUnit(alpha_ramp)->clear();
 
         shader.unbind();
     }

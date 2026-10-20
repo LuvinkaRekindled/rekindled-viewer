@@ -1530,7 +1530,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         // </FS:ND>
                     }
 
-                    gGL.getTexUnit(0)->disable();
+                    gGL.getTexUnit(0)->clear();
 
                     ll_aligned_free_32(temp);
                 }

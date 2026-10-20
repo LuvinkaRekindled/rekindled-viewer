@@ -96,7 +96,7 @@ void LLCubeMap::initGL()
                 mImages[i]->setAddressMode(LLTexUnit::TAM_CLAMP);
                 stop_glerror();
             }
-            gGL.getTexUnit(0)->disable();
+            gGL.getTexUnit(0)->clear();
         }
         disable();
     }
@@ -222,7 +222,7 @@ void LLCubeMap::initEnvironmentMap(const std::vector<LLPointer<LLImageRaw> >& ra
     bind();
     mImages[0]->setFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
     LLVkTex::generateMipmap(mImages[0]->getTexName(), GL_TEXTURE_CUBE_MAP);
-    gGL.getTexUnit(0)->disable();
+    gGL.getTexUnit(0)->clear();
     disable();
 }
 
@@ -239,7 +239,7 @@ void LLCubeMap::generateMipMaps()
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("cmgmm - glGenerateMipmap");
         LLVkTex::generateMipmap(mImages[0]->getTexName(), GL_TEXTURE_CUBE_MAP);
     }
-    gGL.getTexUnit(0)->disable();
+    gGL.getTexUnit(0)->clear();
     disable();
 }
 
@@ -275,7 +275,7 @@ void LLCubeMap::disableTexture(void)
 {
     if (mTextureStage >= 0 && LLCubeMap::sUseCubeMaps)
     {
-        gGL.getTexUnit(mTextureStage)->disable();
+        gGL.getTexUnit(mTextureStage)->clear();
         if (mTextureStage == 0)
         {
         }
