@@ -65,12 +65,6 @@
 
 extern bool gCubeSnapshot;
 
-#if !LL_DARWIN && !LL_LINUX
-extern PFNGLWEIGHTPOINTERARBPROC glWeightPointerARB;
-extern PFNGLWEIGHTFVARBPROC glWeightfvARB;
-extern PFNGLVERTEXBLENDARBPROC glVertexBlendARB;
-#endif
-
 //-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------
 // LLViewerJointMesh

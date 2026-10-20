@@ -97,6 +97,9 @@ bool LLModelPreview::sIgnoreLoadedCallback = false;
 static const std::string DEFAULT_PHYSICS_MESH_NAME = "default_physics_shape";
 const F32 SKIN_WEIGHT_CAMERA_DISTANCE = 16.f;
 
+// GLOD (the mesh simplification library) names OpenGL types in its interface and works on client memory: it is the one place that still includes the system GL header
+#include "llwin32headers.h"
+#include <GL/gl.h>
 #include "glod/glod.h" // <FS:Beq/> More flexible LOD generation
 // <FS:Beq> mesh loader suffix configuration
 //static

@@ -28,7 +28,7 @@
 
 #include "linden_common.h"
 
-#include "llgl.h"
+#include "llpluginmediaformat.h"      // the numbers of the texture format messages
 
 #include "llplugininstance.h"
 #include "llpluginmessage.h"
@@ -186,8 +186,8 @@ MediaPluginGStreamer010::MediaPluginGStreamer010(
     MediaPluginBase(host_send_func, host_user_data),
     mBusWatchID ( 0 ),
     mCurrentRowbytes ( 4 ),
-    mTextureFormatPrimary ( GL_RGBA ),
-    mTextureFormatType ( GL_UNSIGNED_INT_8_8_8_8_REV ),
+    mTextureFormatPrimary ( WIRE_RGBA ),
+    mTextureFormatType ( WIRE_UNSIGNED_INT_8_8_8_8_REV ),
     mSeekWanted(false),
     mSeekDestination(0.0),
     mPump ( NULL ),
@@ -493,20 +493,20 @@ MediaPluginGStreamer010::update(int milliseconds)
                 int newh = mVideoSink->retained_frame_height;
 
                 int newd = 4;
-                mTextureFormatPrimary = GL_RGBA;
-                mTextureFormatType = GL_UNSIGNED_INT_8_8_8_8_REV;
+                mTextureFormatPrimary = WIRE_RGBA;
+                mTextureFormatType = WIRE_UNSIGNED_INT_8_8_8_8_REV;
 
                 /*
                 int newd = SLVPixelFormatBytes[mVideoSink->retained_frame_format];
                 if (SLV_PF_BGRX == mVideoSink->retained_frame_format)
                 {
-                    mTextureFormatPrimary = GL_BGRA;
-                    mTextureFormatType = GL_UNSIGNED_INT_8_8_8_8_REV;
+                    mTextureFormatPrimary = WIRE_BGRA;
+                    mTextureFormatType = WIRE_UNSIGNED_INT_8_8_8_8_REV;
                 }
                 else
                 {
-                    mTextureFormatPrimary = GL_RGBA;
-                    mTextureFormatType = GL_UNSIGNED_INT_8_8_8_8_REV;
+                    mTextureFormatPrimary = WIRE_RGBA;
+                    mTextureFormatType = WIRE_UNSIGNED_INT_8_8_8_8_REV;
                 }
                 */
 
@@ -1136,13 +1136,13 @@ void MediaPluginGStreamer010::receiveMessage(const char *message_string)
                 mTextureWidth = 1;
                 mTextureHeight = 1;
 
-                message.setValueU32("format", GL_RGBA);
-                message.setValueU32("type", GL_UNSIGNED_INT_8_8_8_8_REV);
+                message.setValueU32("format", WIRE_RGBA);
+                message.setValueU32("type", WIRE_UNSIGNED_INT_8_8_8_8_REV);
 
                 message.setValueS32("depth", mDepth);
                 message.setValueS32("default_width", mWidth);
                 message.setValueS32("default_height", mHeight);
-                message.setValueU32("internalformat", GL_RGBA8);
+                message.setValueU32("internalformat", WIRE_RGBA8);
                 message.setValueBoolean("coords_opengl", true); // true == use OpenGL-style coordinates, false == (0,0) is upper left.
                 message.setValueBoolean("allow_downsample", true); // we respond with grace and performance if asked to downscale
                 sendMessage(message);

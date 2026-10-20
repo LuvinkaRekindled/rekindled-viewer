@@ -74,10 +74,9 @@ namespace LLVkFormat
     inline Transfer transfer(PixelFormat f, ComponentType t) { Transfer r; r.mComps = (U8)f; r.mType = (U8)t; return r; }
 
     // LL_VK_FORMAT_VERIFY=1: every texture data call names its call site and what it carries; the first time a (site, entry, store, comps, type) combination is seen it is logged
-    // ("FormatVerify"), so two builds can be compared by the sets of lines. tables() checks the decoders against the typed values once (the migration tables).
+    // ("FormatVerify"), so two builds can be compared by the sets of lines.
     bool formatVerify();
     void noteFormat(const char* what, const char* file, int line, U8 store, U8 comps, U8 type);
-    void verifyTables();
     // F3.6f: the same for the decoded targets, settings, swizzles and level queries (one line per distinct combination: LL_VK_FORMAT_VERIFY)
     void noteKey(const char* what, int a = 0, int b = 0, int c = 0, int d = 0, float f = 0.f);
 

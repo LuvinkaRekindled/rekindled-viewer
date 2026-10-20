@@ -30,7 +30,7 @@
 
 #include "linden_common.h"
 
-#include "llgl.h"
+#include "llpluginmediaformat.h"      // the numbers of the texture format messages
 
 #include "llplugininstance.h"
 #include "llpluginmessage.h"
@@ -845,13 +845,13 @@ void MediaPluginGStreamer10::receiveMessage(const char *message_string)
                 mTextureWidth = 1;
                 mTextureHeight = 1;
 
-                message.setValueU32("format", GL_RGBA);
-                message.setValueU32("type", GL_UNSIGNED_INT_8_8_8_8_REV);
+                message.setValueU32("format", WIRE_RGBA);
+                message.setValueU32("type", WIRE_UNSIGNED_INT_8_8_8_8_REV);
 
                 message.setValueS32("depth", mDepth);
                 message.setValueS32("default_width", INTERNAL_TEXTURE_SIZE );
                 message.setValueS32("default_height", INTERNAL_TEXTURE_SIZE );
-                message.setValueU32("internalformat", GL_RGBA8);
+                message.setValueU32("internalformat", WIRE_RGBA8);
                 message.setValueBoolean("coords_opengl", true); // true == use OpenGL-style coordinates, false == (0,0) is upper left.
                 message.setValueBoolean("allow_downsample", true); // we respond with grace and performance if asked to downscale
                 sendMessage(message);
