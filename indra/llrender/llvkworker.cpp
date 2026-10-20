@@ -434,6 +434,8 @@ struct Buf
     U64 mVersion = 0;
     U64 mMoves = 0;
     unsigned mRtName = 0;               // its GL name, for the list of changed watched buffers
+    bool mResWatched = false;           // S2: a resident fragment of the ray scene reads it: a change (epoch, moves, version) is logged by name (sResChanged)
+    U32 mResName = 0;
     bool mRtWatched = false;            // the ray scene reads this buffer at trace time (alpha records): a change of its storage is counted (sBufferTopology)
     // The Vulkan buffer lives in write-combined video memory, which is very slow to read from the CPU. This copy in ordinary memory
     // is what a renamed buffer is refilled from when only part of it is rewritten.
@@ -1759,6 +1761,8 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
 
 // ---- device-local buffers: writes become GPU copies, recorded when a draw is about to read the buffer ----
 std::vector<U32> sPendingBufs;       // the buffers whose Buf::mPending is set
+std::vector<U32> sResChanged;           // names of the buffers a resident fragment reads that changed since the ray membership was last looked at
+inline void res_touched(const Buf& b) { if (b.mResWatched) { sResChanged.push_back(b.mResName); } }
 U64 sBufferTopology = 0;                // see Buf::mRtWatched
 std::vector<unsigned> sTopologyNames;  // the names behind the count (cleared when taken; sTopologyOverflow: too many)
 bool sTopologyOverflow = false;
@@ -1859,12 +1863,12 @@ void release_storage(Buf& b)
     {
         retire_range(b.mArena);
         b.mVk = Buffer();
-        ++b.mEpoch;
+        ++b.mEpoch; res_touched(b);
     }
     else if (b.mVk.valid())
     {
         ctx.destroyBuffer(b.mVk);
-        ++b.mEpoch;
+        ++b.mEpoch; res_touched(b);
     }
 }
 
@@ -1884,7 +1888,7 @@ bool acquire_arena_storage(Buf& b, U64 size, ArenaKind kind)
     b.mVk.mSize = (VkDeviceSize)size;
     b.mVk.mAddress = ref.mAddress;
     b.mVk.mMapped = ref.mMapped;
-    ++b.mEpoch;
+    ++b.mEpoch; res_touched(b);
     if (b.mRtWatched)
     {
         note_topology_change(b);
@@ -1991,7 +1995,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
     {
         ++sBufTraffic.mSubDev;
         sBufTraffic.mSubDevBytes += size;
-        ++b.mVersion;
+        ++b.mVersion; res_touched(b);
         if (b.mVk.valid() && data && size && offset + size <= b.mVk.mSize)
         {
             Renderer::instance().updateBuffer(b.mVk.mBuffer, b.mArena.mOffset + offset, size, data);
@@ -2005,7 +2009,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
     }
     ++sBufTraffic.mSubHost;
     sBufTraffic.mSubHostBytes += size;
-    ++b.mVersion;
+    ++b.mVersion; res_touched(b);
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
     const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1;
@@ -2039,7 +2043,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
                 b.mVk.mSize = (VkDeviceSize)b.mSize;
                 b.mVk.mAddress = fresh_range.mAddress;
                 b.mVk.mMapped = fresh_range.mMapped;
-                ++b.mMoves;
+                ++b.mMoves; res_touched(b);
                 if (b.mRtWatched)
                 {
                     note_topology_change(b);
@@ -2508,7 +2512,7 @@ void on_bufferData(U32 name, unsigned kind, S64 size, const void* data)
         // the same size again (the viewer re-specifies a buffer to rewrite it): keep the Vulkan buffer, queue the data
         b.mSize = (U64)size;
         ++sBufTraffic.mSpecDevSame;
-        ++b.mVersion;
+        ++b.mVersion; res_touched(b);
         if (data)
         {
             Renderer::instance().updateBuffer(b.mVk.mBuffer, b.mArena.mOffset, (VkDeviceSize)size, data);
@@ -2525,7 +2529,7 @@ void on_bufferData(U32 name, unsigned kind, S64 size, const void* data)
     b.mLastUseFrame = ~0ull;
     b.mShadow.clear();
     b.mDevicePath = want_device;
-    ++b.mVersion;
+    ++b.mVersion; res_touched(b);
     if (want_device)
     {
         ++sBufTraffic.mSpecDevNew;
@@ -2572,7 +2576,7 @@ void on_bufferRecycle(U32 name)
     auto it = sGL.mBuffers.find(name);
     if (it != sGL.mBuffers.end())
     {
-        ++it->second.mEpoch;
+        ++it->second.mEpoch; res_touched(it->second);
     }
 }
 
@@ -4629,8 +4633,10 @@ static void on_object_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h,
 // only tells the worker what changed (RETAIN_RESIDENT / RELEASE, kinds 14 / 12), the region matrices (15) and which pass to draw (16).
 struct ResGpu32 { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
 static_assert(sizeof(ResGpu32) == 32, "resident entry");
+struct ResFrag;
 struct ResPair
 {
+    ResFrag* mFrag = nullptr; U32 mIndex = 0;                  // its fragment and its place in the fragment's pairs (the events of its buffers find the entries by them)
     U32 mVb = 0, mIb = 0; Buf* mPvb = nullptr; Buf* mPib = nullptr; U64 mGen = ~0ull, mEvb = 0, mMvb = 0, mEib = 0, mMib = 0; bool mOk = false;
     U64 mNote[6] = {};                                          // epoch, moves, version of both buffers at the last full ray note (the cheap note is valid while they are the same)
 };
@@ -4647,7 +4653,7 @@ struct ResFrag
     size_t mCullIndex = 0;                                      // its row in sRes.mCull
 };
 // one row per fragment, contiguous, for the sphere test of the ray notes (a sweep over 5,000 fragments must not touch their scattered nodes): centre in region space, radius, the region matrix slot
-struct ResCullItem { F32 mC[3]; F32 mR; U32 mSlot; U32 mId; ResFrag* mFrag; };
+struct ResCullItem { F32 mC[3]; F32 mR; U32 mSlot; U32 mId; ResFrag* mFrag; bool mHeld; };
 static std::unordered_multimap<U32, struct ResPair*> sResPairByName;     // the fragments' buffer pairs by the names of their buffers (to drop their cached pointers when a buffer goes)
 static const U32 kResCapacity = 131072;
 static const U32 kResMatrixSlots = 256;
@@ -4663,6 +4669,10 @@ static struct ResState
     std::vector<std::pair<U32, U64>> mRetired;                  // slot, frame it was given up (reusable once the frames in flight are done)
     std::unordered_map<U32, ResFrag> mFrags;
     std::vector<ResCullItem> mCull;
+    F32 mPlanes[4][24] = {};                                    // ray range mode: the frustum planes each sun cascade pass last named (6 planes of 4 floats)
+    U32 mPlaneMask = 0;                                         // which of them are set
+    std::vector<bool> mMatrixDirty = std::vector<bool>(256, false);     // slots whose region matrix changed value since the membership was last looked at
+    U64 mEntered = 0, mLeft = 0, mEventNotes = 0, mMembershipFrames = 0, mMembershipNs = 0, mHeldNow = 0;
     U64 mRefreshFrame = ~0ull;
     U64 mRefreshNs = 0;
     std::vector<F32> mMatrixCpu = std::vector<F32>(16 * 256, 0.f);     // the region matrices as sent (the ray notes read them: the table copy is write-combined)
@@ -4826,7 +4836,46 @@ static bool res_pair_ready(ResPair& p)
         }
         p.mPib = &i->second;
     }
+    p.mPvb->mResWatched = true;
+    p.mPvb->mResName = p.mVb;
+    p.mPib->mResWatched = true;
+    p.mPib->mResName = p.mIb;
     return p.mPvb->mVk.valid() && p.mPib->mVk.valid() && p.mPvb->mVk.mAddress && p.mPib->mVk.mAddress;
+}
+
+// the entry named to the ray scene in full (creates or updates its group, ranges and buffer info, and refreshes the handle)
+static void res_full_note(ResFrag& f, size_t i)
+{
+    ResPair& pair = f.mPairs[f.mPairOf[i]];
+    const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+    note_rt_caster_ref(0, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, &f.mRefs[i]);
+    f.mRefMat[i] = sRes.mMatrixVersion[e.mMatrix];
+}
+
+// the fragment comes into range: all its pairs have to be there, then every entry is named in full and its group held
+static bool res_enter(ResFrag& f)
+{
+    for (ResPair& p : f.mPairs)
+    {
+        if (!res_pair_ready(p))
+        {
+            return false;
+        }
+    }
+    for (size_t i = 0; i < f.mEntries.size(); ++i)
+    {
+        res_full_note(f, i);
+        LLVk::Rt::holdGroup(f.mRefs[i], 1);
+    }
+    return true;
+}
+
+static void res_leave(ResFrag& f)
+{
+    for (size_t i = 0; i < f.mEntries.size(); ++i)
+    {
+        LLVk::Rt::holdGroup(f.mRefs[i], -1);
+    }
 }
 
 static void res_release(U32 id)
@@ -4835,6 +4884,11 @@ static void res_release(U32 id)
     if (it == sRes.mFrags.end())
     {
         return;
+    }
+    if (!it->second.mSlots.empty() && sRes.mCull[it->second.mCullIndex].mHeld)
+    {
+        res_leave(it->second);
+        sRes.mCull[it->second.mCullIndex].mHeld = false;
     }
     for (ResPair& p : it->second.mPairs)
     {
@@ -4923,14 +4977,17 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         sRes.mT[slot].mModel = e.mMatrix;
     }
     ResFrag& stored = sRes.mFrags[h.mFragment] = std::move(f);
-    for (ResPair& p : stored.mPairs)
+    for (size_t k = 0; k < stored.mPairs.size(); ++k)
     {
+        ResPair& p = stored.mPairs[k];
+        p.mFrag = &stored;
+        p.mIndex = (U32)k;
         sResPairByName.emplace(p.mVb, &p);
         sResPairByName.emplace(p.mIb, &p);
     }
     if (!stored.mSlots.empty())
     {
-        ResCullItem item = { { stored.mBounds[0], stored.mBounds[1], stored.mBounds[2] }, stored.mBounds[3], stored.mEntries[0].mMatrix, h.mFragment, &stored };
+        ResCullItem item = { { stored.mBounds[0], stored.mBounds[1], stored.mBounds[2] }, stored.mBounds[3], stored.mEntries[0].mMatrix, h.mFragment, &stored, false };
         stored.mCullIndex = sRes.mCull.size();
         sRes.mCull.push_back(item);
     }
@@ -5001,6 +5058,7 @@ static void res_matrices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blo
         if (memcmp(sRes.mMatrixCpu.data() + 16 * (size_t)s, blob + 64 * (size_t)s, 64) != 0)
         {
             ++sRes.mMatrixVersion[s];
+            sRes.mMatrixDirty[s] = true;
         }
     }
     memcpy(sRes.mMatrixCpu.data(), blob, 64 * (size_t)n);
@@ -5127,6 +5185,17 @@ static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         return;
     }
+    static const bool range = getenv("LL_VK_SCENE_RAYRANGE") && getenv("LL_VK_SCENE_RAYRANGE")[0] == '1';
+    if (range)
+    {
+        // membership by residency: the pass only tells where its frustum is; which fragments are in the scene is decided once a frame, before the scene call (res_ray_membership)
+        if (h.mPass < 4)
+        {
+            memcpy(sRes.mPlanes[h.mPass], blob, 24 * sizeof(F32));
+            sRes.mPlaneMask |= 1u << h.mPass;
+        }
+        return;
+    }
     static const bool fast = getenv("LL_VK_SCENE_RAYFAST") && getenv("LL_VK_SCENE_RAYFAST")[0] == '1';
     const U64 frame_now = Context::instance().getFrameNumber();
     if (fast)
@@ -5209,6 +5278,125 @@ static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (passes % 2400 == 0)
     {
         LL_INFOS("VkScene") << "resident ray notes: " << passes << " passes, " << noted << " casters named (" << again << " cheap, " << full << " full), " << fragments_in << " fragments inside the frustum" << LL_ENDL;
+    }
+}
+
+// S2 stage 2 (LL_VK_SCENE_RAYRANGE=1): once a frame, before the scene call: a resident fragment is in the ray scene while its sphere is inside the frustum of any sun cascade pass (the planes
+// each pass last named: a cascade that does not render this frame keeps its last frustum, as its cached shadow map kept its casters). Only the fragments that change sides are touched
+// (their groups are held or released); the groups of unchanged fragments are not named at all. Changes of what a held fragment was made from arrive as events: a buffer it reads changed (the
+// worker's write sites log its name), or a region matrix changed value (a region shift).
+static void res_ray_membership(U64 frame)
+{
+    static const bool range = getenv("LL_VK_SCENE_RAYRANGE") && getenv("LL_VK_SCENE_RAYRANGE")[0] == '1';
+    static U64 last = ~0ull;
+    if (!range || !Rt::active() || !sRes.mReady || last == frame)
+    {
+        return;
+    }
+    last = frame;
+    const auto t0 = std::chrono::steady_clock::now();
+    res_reclaim(frame);
+    static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
+    const U32 mask = sRes.mPlaneMask;
+    U64 held = 0;
+    for (ResCullItem& item : sRes.mCull)
+    {
+        bool inside = false;
+        if (mask)
+        {
+            const F32* m0 = item.mSlot ? sRes.mMatrixCpu.data() + 16 * (size_t)item.mSlot : nullptr;
+            const F32 c[3] = { item.mC[0] + (m0 ? m0[12] : 0.f), item.mC[1] + (m0 ? m0[13] : 0.f), item.mC[2] + (m0 ? m0[14] : 0.f) };
+            for (U32 pass = 0; pass < 4 && !inside; ++pass)
+            {
+                if (!(mask & (1u << pass)))
+                {
+                    continue;
+                }
+                const F32* planes = sRes.mPlanes[pass];
+                bool in = true;
+                for (U32 p = 0; p < plane_count && in; ++p)
+                {
+                    in = planes[4 * p] * c[0] + planes[4 * p + 1] * c[1] + planes[4 * p + 2] * c[2] + planes[4 * p + 3] >= -item.mR;
+                }
+                inside = in;
+            }
+        }
+        if (inside && !item.mHeld)
+        {
+            if (res_enter(*item.mFrag))
+            {
+                item.mHeld = true;
+                ++sRes.mEntered;
+            }
+        }
+        else if (!inside && item.mHeld)
+        {
+            res_leave(*item.mFrag);
+            item.mHeld = false;
+            ++sRes.mLeft;
+        }
+        held += item.mHeld ? 1 : 0;
+    }
+    sRes.mHeldNow = held;
+    // events: a buffer a held fragment reads changed (its group's buffer info and ranges are made again by a full note)
+    if (!sResChanged.empty())
+    {
+        std::sort(sResChanged.begin(), sResChanged.end());
+        sResChanged.erase(std::unique(sResChanged.begin(), sResChanged.end()), sResChanged.end());
+        for (U32 name : sResChanged)
+        {
+            auto range_it = sResPairByName.equal_range(name);
+            for (auto it = range_it.first; it != range_it.second; ++it)
+            {
+                ResPair* p = it->second;
+                ResFrag* f = p->mFrag;
+                if (!f || f->mSlots.empty() || !sRes.mCull[f->mCullIndex].mHeld || !res_pair_ready(*p))
+                {
+                    continue;
+                }
+                for (size_t i = 0; i < f->mEntries.size(); ++i)
+                {
+                    if (f->mPairOf[i] == p->mIndex)
+                    {
+                        res_full_note(*f, i);
+                        ++sRes.mEventNotes;
+                    }
+                }
+            }
+        }
+        sResChanged.clear();
+    }
+    // events: a region matrix changed value (the scene moved with a region shift): the entries that use it are named again
+    bool any_matrix = false;
+    for (U32 s = 1; s < 256; ++s)
+    {
+        any_matrix = any_matrix || sRes.mMatrixDirty[s];
+    }
+    if (any_matrix)
+    {
+        for (ResCullItem& item : sRes.mCull)
+        {
+            if (!item.mHeld)
+            {
+                continue;
+            }
+            ResFrag& f = *item.mFrag;
+            for (size_t i = 0; i < f.mEntries.size(); ++i)
+            {
+                if (f.mEntries[i].mMatrix && sRes.mMatrixDirty[f.mEntries[i].mMatrix] && res_pair_ready(f.mPairs[f.mPairOf[i]]))
+                {
+                    res_full_note(f, i);
+                    ++sRes.mEventNotes;
+                }
+            }
+        }
+        std::fill(sRes.mMatrixDirty.begin(), sRes.mMatrixDirty.end(), false);
+    }
+    sRes.mMembershipNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+    if (++sRes.mMembershipFrames % 600 == 0)
+    {
+        LL_INFOS("VkScene") << "resident ray membership: " << sRes.mHeldNow << " of " << sRes.mCull.size() << " fragments in the scene, " << sRes.mEntered << " entered and " << sRes.mLeft << " left in total, "
+            << sRes.mEventNotes << " event notes, " << (double)sRes.mMembershipNs / 1000.0 / sRes.mMembershipFrames << " us a frame" << LL_ENDL;
     }
 }
 
@@ -5741,6 +5929,7 @@ void on_rt_scene(const LLVkBridge::RtSceneArgs& args)
         return;
     }
     flush_buffer_updates();         // the structures are built over the vertex data: writes that are still pending are recorded first
+    res_ray_membership(Context::instance().getFrameNumber());
     Rt::buildScene(args.mView, [](U32 name) { return packet_texture_slot(Renderer::instance(), name); }, packet_texture_prefetch);
 }
 

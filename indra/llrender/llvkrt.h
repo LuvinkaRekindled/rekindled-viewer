@@ -117,6 +117,9 @@ void noteCaster(const Caster& c, CasterRef* ref = nullptr);
 bool noteAgain(const CasterRef& ref, U32 pass);
 // a pass rendered this frame (the pass stamps of the groups are read against it) even though all its casters were named by an earlier pass of the frame
 void passRendered(U32 pass);
+// S2 stage 2: a group a resident caster belongs to is HELD while the caster is in range (delta +1 when it enters, -1 when it leaves or is released): the expiry sweep keeps a held group whatever its
+// pass stamps say, so nothing has to name it every frame. A handle that does not name the group any more is ignored.
+void holdGroup(const CasterRef& ref, int delta);
 
 // Builds what the casters noted since the last call need (a budget per call), then the top-level structure for this view: the instances are transformed into eye space
 // (view * model), the space the lighting shaders work in. Recorded into the current frame outside any render pass. view: 16 floats column-major.

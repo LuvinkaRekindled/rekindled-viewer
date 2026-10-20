@@ -455,6 +455,7 @@ std::unordered_map<Key, Blas, KeyHash> sBlas;
 struct SeenRow
 {
     U64 mSeen[kPasses] = {};
+    U16 mHold = 0;                                      // S2: held by resident casters in range (see holdGroup): alive whatever the stamps say
     Group* mGroup = nullptr;                            // null: a free row
 };
 std::vector<SeenRow> sSeenRows;
@@ -1475,6 +1476,28 @@ bool noteAgain(const CasterRef& ref, U32 pass)
     return true;
 }
 
+void holdGroup(const CasterRef& ref, int delta)
+{
+    if (!sInit || sFailed)
+    {
+        return;
+    }
+    Group* g = (Group*)ref.mGroup;
+    if (!g || ref.mRow >= sSeenRows.size() || sSeenRows[ref.mRow].mGroup != g || g->mId != ref.mRow || g->mKey.mVb != ref.mVb || g->mKey.mIb != ref.mIb || g->mKey.mMatrixId != ref.mMatrixId)
+    {
+        return;
+    }
+    U16& hold = sSeenRows[ref.mRow].mHold;
+    if (delta > 0)
+    {
+        ++hold;
+    }
+    else if (hold)
+    {
+        --hold;
+    }
+}
+
 void passRendered(U32 pass)
 {
     if (sInit && !sFailed)
@@ -1855,9 +1878,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         }
         for (SeenRow& row : sSeenRows)
         {
-            if (!row.mGroup)
+            if (!row.mGroup || row.mHold)
             {
-                continue;
+                continue;                   // free, or held by resident casters in range
             }
             bool alive = false;
             for (U32 p = 0; p < kPasses; ++p)
