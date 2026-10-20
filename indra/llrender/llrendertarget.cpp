@@ -52,6 +52,8 @@ static void ll_fboAttach(GLuint fbo, GLenum attachment, GLenum textarget, GLuint
 }
 
 LLRenderTarget* LLRenderTarget::sBoundTarget = NULL;
+// F3.5d: the open passes, outermost first (was a linked list through the targets: mPreviousRT); sBoundTarget is its last element
+static std::vector<LLRenderTarget*> sTargetStack;
 
 void LLRenderTarget::setCurrentDrawBufferCount(S32 count)
 {
@@ -397,7 +399,7 @@ void LLRenderTarget::bindTarget(const char* file, int line)
 }
 
 // restore: the flush of a nested pass puts the pass it interrupted back (it keeps the bind site and the draw count of its own bindTarget)
-void LLRenderTarget::bindImpl(const char* file, int line, bool restore)
+void LLRenderTarget::bindImpl(const char* file, int line, bool restore, U32 clear_mask, const F32* clear_color)
 {
     LL_PROFILE_GPU_ZONE("bindTarget");
     if (!restore)
@@ -412,11 +414,25 @@ void LLRenderTarget::bindImpl(const char* file, int line, bool restore)
 
     // the target, its colour attachment count and the viewport are one record
     sCurFBO = mFBO;
-    LLVkAsync::targetState(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY);
+    // the load op: a clear that came with the bind is part of the same record (what bindTarget(); clear(); did as two)
+    const U32 clears = clear_mask && !restore ? ((GL_COLOR_BUFFER_BIT | (mUseDepth ? GL_DEPTH_BUFFER_BIT : 0)) & clear_mask) : 0;
+    if (clears)
+    {
+        sBoundTarget = this;
+        noteClear(file, line);
+        LLVkAsync::passBegin(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY, (clears & GL_COLOR_BUFFER_BIT) != 0, (clears & GL_DEPTH_BUFFER_BIT) != 0, clear_color);
+    }
+    else
+    {
+        LLVkAsync::targetState(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY);
+    }
     sCurResX = mResX;
     sCurResY = mResY;
 
-    mPreviousRT = sBoundTarget;
+    if (!restore)
+    {
+        sTargetStack.push_back(this);
+    }
     sBoundTarget = this;
 }
 
@@ -501,12 +517,14 @@ void LLRenderTarget::flush(const char* file, int line)
         LLVkTex::generateMipmap(mTex[0], GL_TEXTURE_2D);
     }
 
-    if (mPreviousRT)
+    sTargetStack.erase(std::remove(sTargetStack.begin(), sTargetStack.end(), this), sTargetStack.end());
+    if (!sTargetStack.empty())
     {
         // a bit hacky -- pop the RT stack back two frames and push
         // the previous frame back on to play nice with the GL state machine
-        sBoundTarget = mPreviousRT->mPreviousRT;
-        mPreviousRT->bindImpl(mPreviousRT->mBindFile, mPreviousRT->mBindLine, true);
+        LLRenderTarget* previous = sTargetStack.back();
+        sBoundTarget = previous;
+        previous->bindImpl(previous->mBindFile, previous->mBindLine, true);
     }
     else
     {
@@ -534,13 +552,7 @@ void LLRenderTarget::getViewport(S32* viewport)
 
 bool LLRenderTarget::isBoundInStack() const
 {
-    LLRenderTarget* cur = sBoundTarget;
-    while (cur && cur != this)
-    {
-        cur = cur->mPreviousRT;
-    }
-
-    return cur == this;
+    return std::find(sTargetStack.begin(), sTargetStack.end(), this) != sTargetStack.end();
 }
 
 void LLRenderTarget::swapFBORefs(LLRenderTarget& other)
@@ -550,7 +562,6 @@ void LLRenderTarget::swapFBORefs(LLRenderTarget& other)
     llassert(other.mFBO);
 
     // Must be unbound
-    // *NOTE: mPreviousRT can be non-null even if this target is unbound - presumably for debugging purposes?
     llassert(sCurFBO != mFBO);
     llassert(sCurFBO != other.mFBO);
     llassert(!isBoundInStack());
@@ -660,10 +671,7 @@ std::string pass_site_text(const char* file, int line)
 unsigned LLRenderTarget::stackDepth()
 {
     unsigned d = 0;
-    for (const LLRenderTarget* t = sBoundTarget; t && d < 64; t = t->mPreviousRT)
-    {
-        ++d;
-    }
+    d = (unsigned)sTargetStack.size();
     return d;
 }
 
@@ -671,14 +679,8 @@ unsigned LLRenderTarget::stackDepth()
 bool LLRenderTarget::boundInStackBounded() const
 {
     unsigned d = 0;
-    for (const LLRenderTarget* t = sBoundTarget; t && d < 64; t = t->mPreviousRT, ++d)
-    {
-        if (t == this)
-        {
-            return true;
-        }
-    }
-    return false;
+    (void)d;
+    return std::find(sTargetStack.begin(), sTargetStack.end(), this) != sTargetStack.end();
 }
 
 void LLRenderTarget::noteBind(const char* file, int line)
@@ -714,7 +716,7 @@ void LLRenderTarget::noteBind(const char* file, int line)
         }
         if (boundInStackBounded())
         {
-            pass_warn("bindTarget of a target that is already bound (the mPreviousRT chain gets a cycle)", file, line,
+            pass_warn("bindTarget of a target that is already bound (it is in the stack of open passes twice)", file, line,
                       std::string("; it was bound at ") + pass_site_text(mBindFile, mBindLine));
         }
         else if (stackDepth() >= 8)
@@ -736,7 +738,7 @@ void LLRenderTarget::noteFlush(const char* file, int line)
     if (stats)
     {
         ++gPassFlushes;
-        if (mPreviousRT)
+        if (sTargetStack.size() > 1)
         {
             ++gPassRestores;
         }
@@ -831,12 +833,15 @@ void LLRenderTarget::checkFrameEnd()
 namespace RenderPass
 {
 
-void begin(LLRenderTarget& target, LoadOp load, U32 clear_mask, const char* file, int line)
+void begin(LLRenderTarget& target, LoadOp load, U32 clear_mask, const F32* clear_color, const char* file, int line)
 {
-    target.bindTarget(file, line);
     if (load == LoadOp::Clear)
     {
-        target.clear(clear_mask, file, line);
+        target.bindImpl(file, line, false, clear_mask, clear_color ? clear_color : gGL.getClearColor());
+    }
+    else
+    {
+        target.bindImpl(file, line, false);
     }
 }
 

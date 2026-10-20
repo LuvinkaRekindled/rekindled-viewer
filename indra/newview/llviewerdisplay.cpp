@@ -1225,17 +1225,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         RenderPassScope world_pass;     // F3.5b: the world pass on the deferred screen target: begun here, ended after the render flush below
         {
         LL_CPU_ZONE("display: deferredScreen bind + clear");
-        world_pass.begin(gPipeline.mRT->deferredScreen);
-        if (gUseWireframe)
-        {
-            constexpr F32 g = 0.5f;
-            gGL.setClearColor(g, g, g, 1.f);
-        }
-        else
-        {
-            gGL.setClearColor(1, 0, 1, 1);
-        }
-        gPipeline.mRT->deferredScreen.clear();
+        world_pass.begin(gPipeline.mRT->deferredScreen, gUseWireframe ? RenderPass::Clear(0.5f, 0.5f, 0.5f, 1.f) : RenderPass::Clear(1, 0, 1, 1));
         }
 
         gGL.setColorMask(true, false);
@@ -1526,16 +1516,7 @@ void display_cube_face()
     gGL.setColorMask(true, true);
 
     {
-        RenderPassScope pass(gPipeline.mRT->deferredScreen);
-        if (gUseWireframe)
-        {
-            gGL.setClearColor(0.5f, 0.5f, 0.5f, 1.f);
-        }
-        else
-        {
-            gGL.setClearColor(1.f, 0.f, 1.f, 1.f);
-        }
-        gPipeline.mRT->deferredScreen.clear();
+        RenderPassScope pass(gPipeline.mRT->deferredScreen, gUseWireframe ? RenderPass::Clear(0.5f, 0.5f, 0.5f, 1.f) : RenderPass::Clear(1.f, 0.f, 1.f, 1.f));
 
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
 
