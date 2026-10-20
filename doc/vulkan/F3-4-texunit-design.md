@@ -1,0 +1,47 @@
+# F3.4: the texture unit vocabulary (design, 2026-10-20; counters built, nothing else changed)
+
+Part of `F3-plan.md` (after F3.3, 59eeef0c). Counted from the code and the run `f34a1-beach` (Sirens Beach, F3.3e build plus the new counters, `RT_OPSTATS=1`; one run, scene drift of tens of percent between runs: orders of magnitude). Like F3.2 and F3.3 this is a **vocabulary change**; the plan's first sentence for it ("`unbind` and `enable/disable` become no-ops") turns out to be wrong for part of the call sites, so the design below corrects it.
+
+## What the texture unit code is today
+- `LLTexUnit` (llrender.h) is a GL texture unit as a class: `mIndex`, `mCurrTexture` (a GL name), `mCurrTexType`, `mHasMipMaps`, plus **a hidden "active unit"** on `LLRender` (`mCurrTextureUnitIndex`) set by `activate()` and by every bind. It is the same kind of hidden mode as the matrix mode that F3.3 removed: `activate()` only matters to helpers that act on "the bound texture of the active unit" (`setTextureAddressMode`, `setTextureFilteringOption`), and to the new `Kind::CurrentTexture` texture matrix of F3.3 (`getCurrentTexUnitIndex()`).
+- What a bind does: `bind(...)` flushes the immediate batch, `activate()`, `enable(type)`, writes `LLVkTex::bindSlot(unit, texture)` (the slot write of F1.2/F2.6; a draw record carries the unit texture ids), updates bind stats and applies address mode / filtering options when dirty. `bindFast` / `prepareFast` are the inner-loop forms.
+- **`unbind(TT_TEXTURE)` is not a no-op**: it flushes, activates the unit and **binds the white texture** (`sWhiteTexture`) in the slot (for the other types it binds name 0). Untextured immediate-mode draws (UI rectangles, lines, outlines, manipulators) sample whatever is in unit 0, so they call `unbind(TT_TEXTURE)` first to get white. `disable()` is `unbind(mCurrTexType)`. `enable(type)`, `mCurrTexType` and `mHasMipMaps` are bookkeeping for GL fixed-function state that no longer exists (a unit holds a texture, and its dimension is the texture's own).
+
+## Call sites (newview + llui + llrender (without llrender.cpp/.h) + llappearance, comments excluded; `getTexUnit(n)->...`)
+`bind` 155, `bindFast` 16, `bindManual` 39 (raw GL names: F3.6), `prepareFast` 5, **`unbind` 183** (176 `TT_TEXTURE`, 1 `TT_CUBE_MAP_ARRAY`, the rest are other types or `mCurrTexType`) + `unbindFast` 11, **`activate` 53**, `enable` 13, `disable` 27, `setTextureAddressMode` 38, `setTextureFilteringOption` 31; 583 `getTexUnit(` lines in all. Heaviest: `lldrawpoolterrain` 42 unit calls, `pipeline.cpp` 21, `llscenemonitor` 18, `lldrawpoolwlsky` 14, `llappearance/lltexlayer` 14, `lldrawpoolbump` 13, `llrender2dutils` 10, `llcubemap` 10.
+**The 183 unbinds by what follows them** (`f34-classify-unbind.py`, read-only, a lookahead of 8 statements: an estimate): **51 immediate** (the next statements are an immediate-mode draw: the unbind is the "white texture" for an untextured draw: functional), **8 draw** (another bind or a buffer draw follows: redundant), **124 cleanup** (last statement of the block or nothing that draws next). The cleanup ones are not free to drop: a later untextured draw that does not unbind itself may rely on a previous cleanup having put white in the slot.
+
+## Measured (f34a1-beach, main thread per frame)
+| entry point | calls | ms | ns per call |
+|---|---|---|---|
+| `LLTexUnit::bind` | 438 | 0.03 | 75 |
+| `unbind` / `unbindFast` (contains flush) | 593 | 0.01 | 21 |
+| `activate` / `enable` / `disable` | 13,344 | 0.11 | 9 |
+| `bindManual` (contains flush) | 3,249 | 0.05 | 15 |
+| `setTextureAddressMode` / `FilteringOption` | 491 | 0.02 | 45 |
+The whole unit machinery is **about 0.22 ms per frame**. The 13.3k `activate/enable/disable` calls are mostly nested (every bind and `bindManual` calls `activate` and `enable`: `bindManual` is 3,249 per frame, nearly all of it from the immediate-mode and post passes), they cost little each and are the largest count: they are pure bookkeeping. Draws per frame in the same run: 1,971 (so about 6.6 unit-state calls per draw).
+
+## Target
+- **A draw record names its textures; the producer's unit state is not an input.** The slot ids per draw are already in the record (F2.6). What is left to remove is the *unit state as a hidden input*: the active unit, `mCurrTexType`, the "unbind to get white" convention.
+- **Untextured immediate-mode batches get white by themselves.** `LLRender::flush` knows the vertex mask of the batch (F3.1): a batch that has no texture coordinates (no `texCoord` call between `begin` and `end`) writes **unit 0 = white** into *its* draw record (CMD_DRAW_SCRATCH), without touching the unit's state. That makes the colour-only immediate draws independent of what was bound before, and the 51 + most of the 124 `unbind(TT_TEXTURE)` calls unnecessary. A batch **with** texture coordinates that is meant to be white (rare: a gradient made of texcoords on white) keeps an explicit `LLTexUnit::bindWhite()` (the intent of today's `unbind(TT_TEXTURE)`), which the migration finds by the verify mode below.
+- **`bindNone(type)`** for the one cube-map-array unbind (slot 0).
+- **Address mode and filtering belong to the image, not to the "bound texture of the active unit"**: `setTextureAddressMode` / `setTextureFilteringOption` (69 sites) become methods that name the image (they are `LLImageGL` sampler options today, applied when the image is bound); their typed form takes the image.
+- **`Kind::CurrentTexture`** of the matrix scopes (F3.3) is replaced by the explicit `Kind::Texture0..3`, because the sites that use it activate unit 0 first (the three sites in `lldrawpoolbump` / `lldrawpoolmaterials` and the `lldrawpool*` texture matrix code), so the unit is known at the site.
+- **Not here**: `bindManual` (39 sites, raw GL names, `LLImageGL` names) goes with F3.6 (GL types in `LLVertexBuffer` / `LLImageGL`); render target binds (`bind(LLRenderTarget*)`) with F3.5.
+
+## Steps (each its own commit; same-session baseline pictures; Adam's lists)
+- **F3.4a measure and foundation** (build only, nothing migrated): the counters (**done**, in this commit); `LLTexUnit::bindWhite()` / `bindNone(type)`; **`LL_VK_TEXUNIT_VERIFY=1`**: at every scratch draw the producer computes the textures the new rule would give (white for a batch without texture coordinates) and counts, per draw site (file:line of the last unbind or bind when `WHY` is on), the batches where unit 0 is *not* white although the batch has no texture coordinates (the draws that today depend on an earlier unbind; if the number is 0 the 124 cleanup unbinds are all redundant) and the batches with texture coordinates whose unit 0 holds white (the ones that need `bindWhite`). Like the F2.6 verify run (28.7M draws): a long plaza run decides.
+- **F3.4b untextured immediate batches take white from the record** (the rule above, default on) and the unbinds that the verify run proves redundant are removed (script by file group; the 51 functional ones become nothing or `bindWhite()` by the verify result). Gate: UI and manipulator pictures, Adam's immediate-mode list, counters (`unbind` calls per frame down).
+- **F3.4c `activate` / `enable` / `disable` and the sampler option calls**: `activate` and `enable` become unnecessary once `bind` does not need them and the option helpers name their image (53 + 13 + 27 + 69 sites).
+- **F3.4d the matrix kind** (`CurrentTexture` -> `Texture0..3`).
+- **F3.4e deletion**: `mCurrTextureUnitIndex`, `mCurrTexType`, `activate`, `enable`, `disable`, `unbind`, `unbindFast`, `getCurrentTexUnitIndex`. Gate: grep (`getTexUnit(n)->unbind|activate|enable|disable` 0).
+
+## Gates (the F3-plan ones plus these)
+Pictures against a same-session baseline (login screen, a crowd spot, the beach); VkOps: 0 `unknown command`, **records per frame and `texSlots` not up**, draw ns equal or down; the unit counters (`unbind`, `activate/enable/disable`) down as sites go; verify run: 0 draws whose texture differs from what the old code gave (except the explicitly named cases); Adam's immediate-mode list after F3.4b (UI, floaters, outlines, manipulators, world map, minimap, name tags, preview floaters).
+
+## Risks
+- **Hidden dependence on the unit state**: a draw that samples unit 0 without binding (immediate or not) after some other code left something there; the verify run is the instrument, and unexercised paths (water, snapshots, preview floaters) need Adam.
+- **Texture matrix code** (`lldrawpool*`, `lldrawpoolterrain`, `llcubemap`): activates a unit, then works on its matrix; keep these sites in the last group of their file.
+- **`unbind` flushes**: `unbind` flushes the batch and callers may rely on it ("some code paths assume unbind always flushes and sets the active texture"); a removed unbind must not remove a flush that a later change of state used to rely on; `bind` and the state guards flush already.
+- **No old path to A/B**: baselines in the same session.
+- **Gain**: the unit machinery is 0.22 ms per frame, so none is claimed beyond what the counters show after each step; the point is that a retained draw record can name its textures without the producer's unit state.

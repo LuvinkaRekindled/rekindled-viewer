@@ -149,6 +149,7 @@ void LLTexUnit::refreshState(void)
 
 void LLTexUnit::activate(void)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_STATE);
     if (mIndex < 0) return;
 
     if ((S32)gGL.mCurrTextureUnitIndex != mIndex || gGL.mDirty)
@@ -160,6 +161,7 @@ void LLTexUnit::activate(void)
 
 void LLTexUnit::enable(eTextureType type)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_STATE);
     if (mIndex < 0) return;
 
     if ( (mCurrTexType != type || gGL.mDirty) && (type != TT_NONE) )
@@ -177,6 +179,7 @@ void LLTexUnit::enable(eTextureType type)
 
 void LLTexUnit::disable(void)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_STATE);
     if (mIndex < 0) return;
 
     if (mCurrTexType != TT_NONE)
@@ -442,6 +445,7 @@ bool LLTexUnit::bind(LLRenderTarget* renderTarget, bool bindDepth)
 
 bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_MANUAL);
     if (mIndex < 0)
     {
         return false;
@@ -462,6 +466,7 @@ bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips)
 
 void LLTexUnit::unbind(eTextureType type)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
     stop_glerror();
 
     if (mIndex < 0) return;
@@ -490,6 +495,7 @@ void LLTexUnit::unbind(eTextureType type)
 
 void LLTexUnit::unbindFast(eTextureType type)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
     activate();
 
     // Disabled caching of binding state.
@@ -510,6 +516,7 @@ void LLTexUnit::unbindFast(eTextureType type)
 
 void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_OPTIONS);
     if (mIndex < 0 || mCurrTexture == 0) return;
 
     gGL.flush();
@@ -545,6 +552,7 @@ void LLTexUnit::setTextureAddressModeFast(eTextureAddressMode mode, eTextureType
 
 void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions option)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_OPTIONS);
     if (mIndex < 0 || mCurrTexture == 0 || mCurrTexType == LLTexUnit::TT_MULTISAMPLE_TEXTURE) return;
 
     gGL.flush();
