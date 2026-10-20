@@ -1045,7 +1045,7 @@ void LLRenderPass::pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_te
             {
                 gGL.getTexUnit(0)->activate();
                 gGL.matrixMode(LLRender::MM_TEXTURE);
-                gGL.loadMatrix((GLfloat*) params.mTextureMatrix->mMatrix);
+                LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*) params.mTextureMatrix->mMatrix);
                 gPipeline.mTextureMatrixOps++;
             }
 

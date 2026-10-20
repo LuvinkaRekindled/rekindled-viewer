@@ -6067,7 +6067,7 @@ void LLAgent::renderAutoPilotTarget()
         LLVector3d target_global;
 
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         // not textured
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
@@ -6077,15 +6077,15 @@ void LLAgent::renderAutoPilotTarget()
 
         target_global = mAutoPilotTargetGlobal;
 
-        gGL.translatef((F32)(target_global.mdV[VX]), (F32)(target_global.mdV[VY]), (F32)(target_global.mdV[VZ]));
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)(target_global.mdV[VX]), (F32)(target_global.mdV[VY]), (F32)(target_global.mdV[VZ]));
 
         height_meters = 1.f;
 
-        gGL.scalef(height_meters, height_meters, height_meters);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, height_meters, height_meters, height_meters);
 
         gSphere.render();
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 

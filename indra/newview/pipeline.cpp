@@ -5849,7 +5849,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                 llassert(!gCubeSnapshot); // never do occlusion culling on cube snapshots
                 occlude = false;
                 gGLLastMatrix = NULL;
-                gGL.loadMatrix(gGLModelView);
+                LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
                 doOcclusion(camera);
             }
 
@@ -5859,7 +5859,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("deferred pool render");
 
                 gGLLastMatrix = NULL;
-                gGL.loadMatrix(gGLModelView);
+                LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
                 for( S32 i = 0; i < poolp->getNumDeferredPasses(); i++ )
                 {
@@ -5902,7 +5902,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
         gGLLastMatrix = NULL;
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.loadMatrix(gGLModelView);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
         gGL.setColorMask(true, false);
 
@@ -6095,7 +6095,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
             LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("deferred poolrender");
 
             gGLLastMatrix = NULL;
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
             for( S32 i = 0; i < poolp->getNumPostDeferredPasses(); i++ )
             {
@@ -6141,7 +6141,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
     gGLLastMatrix = NULL;
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
     if (!gCubeSnapshot)
     {
@@ -6183,7 +6183,7 @@ void LLPipeline::renderGeomShadow(LLCamera& camera)
             poolp->prerender() ;
 
             gGLLastMatrix = NULL;
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
             for( S32 i = 0; i < poolp->getNumShadowPasses(); i++ )
             {
@@ -6220,7 +6220,7 @@ void LLPipeline::renderGeomShadow(LLCamera& camera)
     }
 
     gGLLastMatrix = NULL;
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 }
 
 
@@ -6307,13 +6307,13 @@ void LLPipeline::renderSnapshotGuidesOverlay()
     }
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
-    gGL.loadIdentity();
-    gGL.ortho(0.f, width, 0.f, height, -1.f, 1.f);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.f, width, 0.f, height, -1.f, 1.f);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
-    gGL.loadIdentity();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
     gGLLastMatrix = nullptr;
 
     const LLColor4 line_color(mSnapshotGuideState.color, alpha);
@@ -6577,9 +6577,9 @@ void LLPipeline::renderSnapshotGuidesOverlay()
     }
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
     gGLLastMatrix = nullptr;
 
     ui_shader->unbind();
@@ -6598,8 +6598,8 @@ void LLPipeline::renderFocusPoint()
         LLVector3 focus_point = sLastFocusPoint;
         F32 size = 0.02f;
         LLRenderState::DepthScope gls_depth(false);
-        gGL.pushMatrix();
-        gGL.translatef(focus_point.mV[VX], focus_point.mV[VY], focus_point.mV[VZ]);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, focus_point.mV[VX], focus_point.mV[VY], focus_point.mV[VZ]);
            
         gGL.begin(LLRender::LINES);
         if (LLPipeline::FSFocusPointLocked)
@@ -6623,7 +6623,7 @@ void LLPipeline::renderFocusPoint()
     
         gGL.end();
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gGL.flush();
         gDebugProgram.unbind();
     }
@@ -6975,7 +6975,7 @@ void LLPipeline::renderDebug()
     }
 
     gGLLastMatrix = NULL;
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGL.setColorMask(true, false);
 
 
@@ -7055,10 +7055,10 @@ void LLPipeline::renderDebug()
             LLSpatialBridge* bridge = *i;
             if (!bridge->isDead() && hasRenderType(bridge->mDrawableType))
             {
-                gGL.pushMatrix();
-                gGL.multMatrix((F32*)bridge->mDrawable->getRenderMatrix().mMatrix);
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)bridge->mDrawable->getRenderMatrix().mMatrix);
                 bridge->renderDebug();
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
         }
     }
@@ -9115,7 +9115,7 @@ void LLPipeline::resetVertexBuffers(LLDrawable* drawable)
 void LLPipeline::renderObjects(U32 type, bool texture, bool batch_texture, bool rigged)
 {
     assertInitialized();
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
 
     if (rigged)
@@ -9127,14 +9127,14 @@ void LLPipeline::renderObjects(U32 type, bool texture, bool batch_texture, bool 
         mSimplePool->pushBatches(type, texture, batch_texture);
     }
 
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
 }
 
 void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
 {
     assertInitialized();
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
 
     if (rigged)
@@ -9146,7 +9146,7 @@ void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
         mSimplePool->pushGLTFBatches(type, texture);
     }
 
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
 
     if (!rigged)
@@ -9488,7 +9488,7 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     assertInitialized();
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
     S32 sun_up = LLEnvironment::instance().getIsSunUp() ? 1 : 0;
     U32 target_width = LLRenderTarget::sCurResX;
@@ -9564,7 +9564,7 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
         }
     }
 
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
 }
 
@@ -9572,7 +9572,7 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
 void LLPipeline::renderMaskedObjects(U32 type, bool texture, bool batch_texture, bool rigged)
 {
     assertInitialized();
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
     if (rigged)
     {
@@ -9582,7 +9582,7 @@ void LLPipeline::renderMaskedObjects(U32 type, bool texture, bool batch_texture,
     {
         mAlphaMaskPool->pushMaskBatches(type, texture, batch_texture);
     }
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
 }
 
@@ -9590,7 +9590,7 @@ void LLPipeline::renderMaskedObjects(U32 type, bool texture, bool batch_texture,
 void LLPipeline::renderFullbrightMaskedObjects(U32 type, bool texture, bool batch_texture, bool rigged)
 {
     assertInitialized();
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
     if (rigged)
     {
@@ -9600,7 +9600,7 @@ void LLPipeline::renderFullbrightMaskedObjects(U32 type, bool texture, bool batc
     {
         mFullbrightAlphaMaskPool->pushMaskBatches(type, texture, batch_texture);
     }
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
 }
 
@@ -9609,25 +9609,25 @@ void apply_cube_face_rotation(U32 face)
     switch (face)
     {
         case 0:
-            gGL.rotatef(90.f, 0, 1, 0);
-            gGL.rotatef(180.f, 1, 0, 0);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90.f, 0, 1, 0);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 180.f, 1, 0, 0);
         break;
         case 2:
-            gGL.rotatef(-90.f, 1, 0, 0);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, -90.f, 1, 0, 0);
         break;
         case 4:
-            gGL.rotatef(180.f, 0, 1, 0);
-            gGL.rotatef(180.f, 0, 0, 1);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 180.f, 0, 1, 0);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 180.f, 0, 0, 1);
         break;
         case 1:
-            gGL.rotatef(-90.f, 0, 1, 0);
-            gGL.rotatef(180.f, 1, 0, 0);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, -90.f, 0, 1, 0);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 180.f, 1, 0, 0);
         break;
         case 3:
-            gGL.rotatef(90, 1, 0, 0);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90, 1, 0, 0);
         break;
         case 5:
-            gGL.rotatef(180, 0, 0, 1);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 180, 0, 0, 1);
         break;
     }
 }
@@ -10258,7 +10258,7 @@ void LLPipeline::renderAvatarVelocity()
     LLRenderState::BlendScope blend(false);
     LLRenderState::CullScope cull(true);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
 
     U32 rigged_draws = 0, rigged_skipped = 0, body_draws = 0, packet_draws = 0, still_draws = 0, object_draws = 0, object_matrices = 0, object_unfit = 0;
@@ -10545,7 +10545,7 @@ void LLPipeline::renderAvatarVelocity()
     mAvatarVelocityDrawn = true;
     gGL.setColorMask(true, false);
     gGLLastMatrix = NULL;
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
     static U32 frames = 0;
     static U64 total_rigged = 0, total_body = 0, total_skipped = 0, total_packets = 0, total_still = 0, total_objects = 0, total_object_matrices = 0, total_unfit = 0;
@@ -13546,7 +13546,7 @@ void LLPipeline::doWaterHaze()
             LLRenderState::CullScope cull(false);
 
             gGLLastMatrix = NULL;
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
             if (mWaterPool)
             {
@@ -14097,11 +14097,11 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     //generate shadow map
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(proj));
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj));
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(view));
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(view));
 
     stop_glerror();
     gGLLastMatrix = NULL;
@@ -14198,14 +14198,14 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             gShadowDrawStats.mPacketFallback += fallback.size();
             gDeferredShadowProgram.bind(false);
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
             gGLLastMatrix = NULL;
             for (LLDrawInfo* params : fallback)
             {
                 mSimplePool->pushUntexturedBatch(*params);
             }
         }
-        gGL.loadMatrix(gGLModelView);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
         gGLLastMatrix = NULL;
     };
 
@@ -14259,7 +14259,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             gShadowDrawStats.mSkinFallback += fallback.size();
             gDeferredShadowProgram.bind(true);
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
             gGLLastMatrix = NULL;
             const LLVOAvatar* last_avatar = nullptr;
             U64 last_mesh = 0;
@@ -14272,7 +14272,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 }
             }
         }
-        gGL.loadMatrix(gGLModelView);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
         gGLLastMatrix = NULL;
     };
 
@@ -14642,7 +14642,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 LLGLSLShader::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
                 LLGLSLShader::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
             }
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
             gGLLastMatrix = NULL;
             const LLVOAvatar* last_avatar = nullptr;
             U64 last_mesh = 0;
@@ -14656,7 +14656,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 }
                 pool->pushBatch(*params, true, batch);
             }
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
             gGLLastMatrix = NULL;
         };
         if (!rt_skip)
@@ -14836,7 +14836,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             LLGLSLShader::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
             LLGLSLShader::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
 
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
             gGLLastMatrix = NULL;
 
             U32 type = LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK;
@@ -14850,7 +14850,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 mAlphaMaskPool->pushGLTFBatches(type);
             }
 
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
             gGLLastMatrix = NULL;
         }
     }
@@ -14860,14 +14860,14 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     gDeferredShadowCubeProgram.bind();
     gGLLastMatrix = NULL;
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
     gGL.setColorMask(true, true);
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     gGLLastMatrix = NULL;
 
     // reset occlusion culling flag
@@ -16262,9 +16262,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     {
         set_current_modelview(view[1]);
         set_current_projection(proj[1]);
-        gGL.loadMatrix(glm::value_ptr(view[1]));
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(view[1]));
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.loadMatrix(glm::value_ptr(proj[1]));
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj[1]));
         gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
     gGL.setColorMask(true, true);
@@ -16573,23 +16573,23 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
         tdim.mV[1] = fabsf(half_height.dot3(up).getF32());
 
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
 
         F32 distance = (pos-camera.getOrigin()).length();
         F32 fov = atanf(tdim.mV[1]/distance)*2.f*RAD_TO_DEG;
         F32 aspect = tdim.mV[0]/tdim.mV[1];
         glm::mat4 persp = glm::perspective(glm::radians(fov), aspect, 1.f, 256.f);
         set_current_projection(persp);
-        gGL.loadMatrix(glm::value_ptr(persp));
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(persp));
 
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         F32 ogl_mat[16];
         camera.getOpenGLTransform(ogl_mat);
         glm::mat4 mat = glm::make_mat4((GLfloat*) OGL_TO_CFR_ROTATION) * glm::make_mat4(ogl_mat);
 
-        gGL.loadMatrix(glm::value_ptr(mat));
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(mat));
         set_current_modelview(mat);
 
         gGL.setClearColor(0.0f,0.0f,0.0f,0.0f);
@@ -16690,11 +16690,11 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
         gGL.flush();
 
-        gGL.pushMatrix();
-        gGL.loadIdentity();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.pushMatrix();
-        gGL.loadIdentity();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
 
         static const F32 clip_plane = 0.99999f;
 
@@ -16729,9 +16729,9 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
         gDebugProgram.unbind();
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 
     if (!preview_avatar && !for_profile)
@@ -16749,9 +16749,9 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     if (!preview_avatar)
     {
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 
     if (!preview_avatar && !for_profile)

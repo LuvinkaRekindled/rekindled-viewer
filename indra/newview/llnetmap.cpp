@@ -379,17 +379,17 @@ void LLNetMap::draw()
     // Prepare a scissor region
     F32 rotation = 0;
 
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     gGL.pushUIMatrix();
 
     LLVector3 offset = gGL.getUITranslation();
     LLVector3 scale = gGL.getUIScale();
 
-    gGL.loadIdentity();
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
     gGL.loadUIIdentity();
 
-    gGL.scalef(scale.mV[0], scale.mV[1], scale.mV[2]);
-    gGL.translatef(offset.mV[0], offset.mV[1], offset.mV[2]);
+    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale.mV[0], scale.mV[1], scale.mV[2]);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, offset.mV[0], offset.mV[1], offset.mV[2]);
 
     {
         LLLocalClipRect clip(getLocalRect());
@@ -408,16 +408,16 @@ void LLNetMap::draw()
         S32 center_sw_left = getRect().getWidth() / 2 + llfloor(mCurPan.mV[VX]);
         S32 center_sw_bottom = getRect().getHeight() / 2 + llfloor(mCurPan.mV[VY]);
 
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
-        gGL.translatef( (F32) center_sw_left, (F32) center_sw_bottom, 0.f);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32) center_sw_left, (F32) center_sw_bottom, 0.f);
 
         static LLUICachedControl<bool> rotate_map("MiniMapRotate", true);
         if( rotate_map )
         {
             // rotate subsequent draws to agent rotation
             rotation = atan2( LLViewerCamera::getInstance()->getAtAxis().mV[VX], LLViewerCamera::getInstance()->getAtAxis().mV[VY] );
-            gGL.rotatef( rotation * RAD_TO_DEG, 0.f, 0.f, 1.f);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, rotation * RAD_TO_DEG, 0.f, 0.f, 1.f);
         }
 
         // figure out where agent is
@@ -674,7 +674,7 @@ void LLNetMap::draw()
         //}
         // </FS:Ansariel>
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
         // Mouse pointer in local coordinates
         S32 local_mouse_x;
@@ -923,23 +923,23 @@ void LLNetMap::draw()
 
         if( rotate_map )
         {
-            gGL.pushMatrix();
-                gGL.translatef( ctr_x, ctr_y, 0 );
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, ctr_x, ctr_y, 0);
                 gl_washer_segment_2d(far_clip_pixels, 0, arc_start, arc_end, steps, map_frustum_color(), map_frustum_color());
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         }
         else
         {
-            gGL.pushMatrix();
-                gGL.translatef( ctr_x, ctr_y, 0 );
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, ctr_x, ctr_y, 0);
                 // If we don't rotate the map, we have to rotate the frustum.
-                gGL.rotatef( atan2( LLViewerCamera::getInstance()->getAtAxis().mV[VX], LLViewerCamera::getInstance()->getAtAxis().mV[VY] ) * RAD_TO_DEG, 0.f, 0.f, -1.f);
+                LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, atan2( LLViewerCamera::getInstance()->getAtAxis().mV[VX], LLViewerCamera::getInstance()->getAtAxis().mV[VY] ) * RAD_TO_DEG, 0.f, 0.f, -1.f);
                 gl_washer_segment_2d(far_clip_pixels, 0, arc_start, arc_end, steps, map_frustum_color(), map_frustum_color());
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         }
     }
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     gGL.popUIMatrix();
 
     LLUICtrl::draw();

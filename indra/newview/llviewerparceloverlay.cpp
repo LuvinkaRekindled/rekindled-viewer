@@ -707,13 +707,13 @@ void LLViewerParcelOverlay::renderPropertyLines()
     pull_toward_camera.mV[VZ] += 0.01f;
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     // Move to appropriate region coords
     LLVector3 origin = mRegion->getOriginAgent();
-    gGL.translatef(origin.mV[VX], origin.mV[VY], origin.mV[VZ]);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, origin.mV[VX], origin.mV[VY], origin.mV[VZ]);
 
-    gGL.translatef(pull_toward_camera.mV[VX], pull_toward_camera.mV[VY],
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pull_toward_camera.mV[VX], pull_toward_camera.mV[VY],
         pull_toward_camera.mV[VZ]);
 
     // Stomp the camera into two dimensions
@@ -786,7 +786,7 @@ void LLViewerParcelOverlay::renderPropertyLines()
         }
     }
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 // Draw half of a single cell (no fill) in a grid drawn from left to right and from bottom to top

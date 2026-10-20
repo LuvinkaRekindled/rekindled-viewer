@@ -97,26 +97,26 @@ void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLoca
     llassert_always(NULL != shader);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     //chop off translation
     if (LLPipeline::sReflectionRender && camPosLocal.mV[2] > 256.f)
     {
-        gGL.translatef(camPosLocal.mV[0], camPosLocal.mV[1], 256.f-camPosLocal.mV[2]*0.5f);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, camPosLocal.mV[0], camPosLocal.mV[1], 256.f-camPosLocal.mV[2]*0.5f);
     }
     else
     {
-        gGL.translatef(camPosLocal.mV[0], camPosLocal.mV[1], camPosLocal.mV[2]);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, camPosLocal.mV[0], camPosLocal.mV[1], camPosLocal.mV[2]);
     }
 
 
     // the windlight sky dome works most conveniently in a coordinate system
     // where Y is up, so permute our basis vectors accordingly.
-    gGL.rotatef(120.f, 1.f / F_SQRT3, 1.f / F_SQRT3, 1.f / F_SQRT3);
+    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 120.f, 1.f / F_SQRT3, 1.f / F_SQRT3, 1.f / F_SQRT3);
 
-    gGL.scalef(0.333f, 0.333f, 0.333f);
+    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 0.333f, 0.333f, 0.333f);
 
-    gGL.translatef(0.f,-camHeightLocal, 0.f);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, 0.f,-camHeightLocal, 0.f);
 
     // Draw WL Sky
     shader->uniform3f(sCamPosLocal, 0.f, camHeightLocal, 0.f);
@@ -124,7 +124,7 @@ void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLoca
     gSky.mVOWLSkyp->drawDome();
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 extern LLPointer<LLImageGL> gEXRImage;
@@ -262,9 +262,9 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
         gGL.getTexUnit(1)->bind(tex_b);
     }
 
-    gGL.pushMatrix();
-    gGL.translatef(camPosLocal.mV[0], camPosLocal.mV[1], camPosLocal.mV[2]);
-    gGL.rotatef(gFrameTimeSeconds*0.01f, 0.f, 0.f, 1.f);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, camPosLocal.mV[0], camPosLocal.mV[1], camPosLocal.mV[2]);
+    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, gFrameTimeSeconds*0.01f, 0.f, 0.f, 1.f);
     gDeferredStarProgram.uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
 
     if (LLPipeline::sReflectionRender)
@@ -284,7 +284,7 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
 
     gDeferredStarProgram.unbind();
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 camHeightLocal, LLGLSLShader* cloudshader) const
@@ -358,8 +358,8 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
     LLGLSPipelineBlendSkyBox gls_skybox(true, true); // SL-14113 we need moon to write to depth to clip stars behind
 
     LLVector3 const & origin = LLViewerCamera::getInstance()->getOrigin();
-    gGL.pushMatrix();
-    gGL.translatef(origin.mV[0], origin.mV[1], origin.mV[2]);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, origin.mV[0], origin.mV[1], origin.mV[2]);
 
     LLFace * face = gSky.mVOSkyp->mFace[LLVOSky::FACE_SUN];
 
@@ -465,7 +465,7 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
         }
     }
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void LLDrawPoolWLSky::renderDeferred(S32 pass)

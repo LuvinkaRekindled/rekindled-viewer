@@ -6825,21 +6825,21 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         F32 aspect = LLViewerCamera::getInstance()->getAspect(); // <FS:Ansariel> Performance improvement
 
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.pushMatrix();
-        gGL.loadIdentity();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
         F32 depth = llmax(1.f, hud_bbox.getExtentLocal().mV[VX] * 1.1f);
         // <FS:Ansariel> Performance improvement
         //gGL.ortho(-0.5f * LLViewerCamera::getInstance()->getAspect(), 0.5f * LLViewerCamera::getInstance()->getAspect(), -0.5f, 0.5f, 0.f, depth);
-        gGL.ortho(-0.5f * aspect, 0.5f * aspect, -0.5f, 0.5f, 0.f, depth);
+        LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -0.5f * aspect, 0.5f * aspect, -0.5f, 0.5f, 0.f, depth);
 
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         gGL.pushUIMatrix();
         gGL.loadUIIdentity();
-        gGL.loadIdentity();
-        gGL.loadMatrix(OGL_TO_CFR_ROTATION);        // Load Cory's favorite reference frame
-        gGL.translatef(-hud_bbox.getCenterLocal().mV[VX] + (depth *0.5f), 0.f, 0.f);
-        gGL.scalef(cur_zoom, cur_zoom, cur_zoom);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, OGL_TO_CFR_ROTATION);        // Load Cory's favorite reference frame
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, -hud_bbox.getCenterLocal().mV[VX] + (depth *0.5f), 0.f, 0.f);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, cur_zoom, cur_zoom, cur_zoom);
     }
 
     bool wireframe_selection = (gFloaterTools && gFloaterTools->getVisible()) || LLSelectMgr::sRenderHiddenSelections;
@@ -6860,24 +6860,24 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         }
 
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         bool is_hud_object = objectp->isHUDAttachment();
 
         if (!is_hud_object)
         {
-            gGL.loadIdentity();
-            gGL.multMatrix(gGLModelView);
+            LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, gGLModelView);
         }
 
         if (objectp->mDrawable->isActive())
         {
-            gGL.multMatrix((F32*)objectp->getRenderMatrix().mMatrix);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)objectp->getRenderMatrix().mMatrix);
         }
         else if (!is_hud_object)
         {
             LLVector3 trans = objectp->getRegion()->getOriginAgent();
-            gGL.translatef(trans.mV[0], trans.mV[1], trans.mV[2]);
+            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
         }
 
         bool bRenderHidenSelection = node->isTransient() ? false : LLSelectMgr::sRenderHiddenSelections;
@@ -6887,8 +6887,8 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         if (vobj)
         {
             LLVertexBuffer::unbind();
-            gGL.pushMatrix();
-            gGL.multMatrix((F32*)vobj->getRelativeXform().mMatrix);
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)vobj->getRelativeXform().mMatrix);
 
             if (objectp->mDrawable->isState(LLDrawable::RIGGED))
             {
@@ -6907,8 +6907,8 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
             }
         }
 
-        gGL.popMatrix();
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
         gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
         gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
@@ -7041,10 +7041,10 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
     if (isAgentAvatarValid() && for_hud)
     {
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gGL.popUIMatrix();
         stop_glerror();
     }

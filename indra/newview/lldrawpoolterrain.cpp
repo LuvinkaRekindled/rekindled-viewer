@@ -682,10 +682,10 @@ void LLDrawPoolTerrain::renderOwnership()
     // ownership map not line up with the selection. We address this with
     // a texture matrix multiply.
     gGL.matrixMode(LLRender::MM_TEXTURE);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::CurrentTexture);
 
     const F32 TEXTURE_FUDGE = 257.f / 256.f;
-    gGL.scalef( TEXTURE_FUDGE, TEXTURE_FUDGE, 1.f );
+    LLRenderMatrix::scale(LLRenderMatrix::Kind::CurrentTexture, TEXTURE_FUDGE, TEXTURE_FUDGE, 1.f);
     for (std::vector<LLFace*>::iterator iter = mDrawFace.begin();
          iter != mDrawFace.end(); iter++)
     {
@@ -694,7 +694,7 @@ void LLDrawPoolTerrain::renderOwnership()
     }
 
     gGL.matrixMode(LLRender::MM_TEXTURE);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::CurrentTexture);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
 }
 

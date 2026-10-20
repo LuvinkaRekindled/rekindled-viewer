@@ -73,8 +73,8 @@ void LLHUDEffectBlob::render()
     color.mV[VALPHA] = (U8)clamp_rescale(time, 0.f, mDuration, 255.f, 0.f);
     gGL.color4ubv(color.mV);
 
-    { gGL.pushMatrix();
-        gGL.translatef(pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
+    { LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
         LLVector3 u_scale = pixel_right * (F32)mPixelSize;
         LLVector3 v_scale = pixel_up * (F32)mPixelSize;
 
@@ -96,7 +96,7 @@ void LLHUDEffectBlob::render()
         }
         gGL.end();
 
-    } gGL.popMatrix();
+    } LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void LLHUDEffectBlob::renderForTimer()

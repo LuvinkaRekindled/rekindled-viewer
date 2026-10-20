@@ -4350,22 +4350,22 @@ bool LLModelPreview::render()
 
         //clear background to grey
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.pushMatrix();
-        gGL.loadIdentity();
-        gGL.ortho(0.0f, (F32)width, 0.0f, (F32)height, -1.0f, 1.0f);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+        LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)width, 0.0f, (F32)height, -1.0f, 1.0f);
 
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.pushMatrix();
-        gGL.loadIdentity();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
         gGL.color4fv(canvas_col().mV); // <FS:Beq/> restore changes removed by the lab
         gl_rect_2d_simple(width, height);
 
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gUIProgram.unbind();
     }
 
@@ -4550,7 +4550,7 @@ bool LLModelPreview::render()
 
     gObjectPreviewProgram.bind(show_skin_weight);
 
-    gGL.loadIdentity();
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
     gPipeline.enableLightsPreview();
     gObjectPreviewProgram.uniform4fv(LLShaderMgr::AMBIENT, 1, LLPipeline::PreviewAmbientColor.mV); // <FS:Beq> pass ambient setting to shader
 
@@ -4571,7 +4571,7 @@ bool LLModelPreview::render()
 
     stop_glerror();
 
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     gGL.color4fv(edge_col().mV); // <FS:Beq/> restore changes removed by the lab
 
     if (!mBaseModel.empty() && mVertexBuffer[LLModel::NUM_LODS].empty())
@@ -4623,11 +4623,11 @@ bool LLModelPreview::render()
                     continue;
                 }
 
-                gGL.pushMatrix();
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
                 LLMatrix4 mat = instance.mTransform;
 
-                gGL.multMatrix((GLfloat*)mat.mMatrix);
+                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mat.mMatrix);
 
                 auto num_models = mVertexBuffer[mPreviewLOD][model].size();
                 for (size_t i = 0; i < num_models; ++i)
@@ -4689,7 +4689,7 @@ bool LLModelPreview::render()
                     }
                     buffer->unmapBuffer();
                 }
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
 
             if (show_physics)
@@ -4723,10 +4723,10 @@ bool LLModelPreview::render()
                             continue;
                         }
 
-                        gGL.pushMatrix();
+                        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                         LLMatrix4 mat = instance.mTransform;
 
-                        gGL.multMatrix((GLfloat*)mat.mMatrix);
+                        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mat.mMatrix);
 
 
                         bool render_mesh = true;
@@ -4760,12 +4760,12 @@ bool LLModelPreview::render()
                                     {
                                         if (physics_explode > 0.f)
                                         {
-                                            gGL.pushMatrix();
+                                            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
                                             LLVector3 offset = model->mHullCenter[i] - model->mCenterOfHullCenters;
                                             offset *= physics_explode;
 
-                                            gGL.translatef(offset.mV[0], offset.mV[1], offset.mV[2]);
+                                            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, offset.mV[0], offset.mV[1], offset.mV[2]);
                                         }
 
                                         static std::vector<LLColor4U> hull_colors;
@@ -4780,7 +4780,7 @@ bool LLModelPreview::render()
 
                                         if (physics_explode > 0.f)
                                         {
-                                            gGL.popMatrix();
+                                            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                                         }
                                     }
 
@@ -4822,7 +4822,7 @@ bool LLModelPreview::render()
                                 }
                             }
                         }
-                        gGL.popMatrix();
+                        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                     }
 
                     // only do this if mDegenerate was set in the preceding mesh checks [Check this if the ordering ever breaks]
@@ -4854,10 +4854,10 @@ bool LLModelPreview::render()
                                 continue;
                             }
 
-                            gGL.pushMatrix();
+                            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                             LLMatrix4 mat = instance.mTransform;
 
-                            gGL.multMatrix((GLfloat*)mat.mMatrix);
+                            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mat.mMatrix);
 
 
                             LLPhysicsDecomp* decomp = gMeshRepo.mDecompThread;
@@ -4910,7 +4910,7 @@ bool LLModelPreview::render()
                                 }
                             }
 
-                            gGL.popMatrix();
+                            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                         }
                         gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
                         gGL.setPointSize(1.f);
@@ -5084,7 +5084,7 @@ bool LLModelPreview::render()
 
     gObjectPreviewProgram.unbind();
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     return true;
 }

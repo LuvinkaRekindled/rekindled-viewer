@@ -809,15 +809,15 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
             LLVector3 pos = avatarp->getPositionAgent();
             gGL.color4f(1.0f, 1.0f, 1.0f, 0.7f);
 
-            gGL.pushMatrix();
-            gGL.translatef((F32)(pos.mV[VX]),
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)(pos.mV[VX]),
                            (F32)(pos.mV[VY]),
                             (F32)(pos.mV[VZ]));
-             gGL.scalef(0.15f, 0.15f, 0.3f);
+             LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 0.15f, 0.15f, 0.3f);
 
              gSphere.renderGGL();
 
-             gGL.popMatrix();
+             LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
              gGL.setColorMask(true, false);
         }
         // don't render please

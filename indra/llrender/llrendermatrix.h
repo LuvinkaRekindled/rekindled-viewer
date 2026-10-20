@@ -26,7 +26,7 @@
 namespace LLRenderMatrix
 {
 
-enum class Kind : U8 { Modelview, Projection, Texture0, Texture1, Texture2, Texture3 };      // the order of LLRender::eMatrixMode
+enum class Kind : U8 { Modelview, Projection, Texture0, Texture1, Texture2, Texture3, CurrentTexture };      // the order of LLRender::eMatrixMode; CurrentTexture: the texture matrix of the texture unit that is active when the call is made (what matrixMode(MM_TEXTURE) selects)
 
 extern bool sGuardCheck;                                                                       // LL_VK_MATRIX_GUARD_CHECK=1
 

@@ -545,14 +545,14 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
     {
         gGL.getTexUnit(0)->bind(imagep);
 
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         if (mDrawablep->isActive())
         {
-            gGL.multMatrix((GLfloat*)mDrawablep->getRenderMatrix().mMatrix);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mDrawablep->getRenderMatrix().mMatrix);
         }
         else
         {
-            gGL.multMatrix((GLfloat*)mDrawablep->getRegion()->mRenderMatrix.mMatrix);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mDrawablep->getRegion()->mRenderMatrix.mMatrix);
         }
 
         gGL.diffuseColor4fv(color.mV);
@@ -569,7 +569,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
                     // called when selecting a face during edit of a mesh object
                     LLRenderState::PolygonOffsetScope offset(true);
                     gGL.setPolygonOffset(-1.f, -1.f);
-                    gGL.multMatrix((F32*) volume->getRelativeXform().mMatrix);
+                    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) volume->getRelativeXform().mMatrix);
                     const LLVolumeFace& vol_face = rigged->getVolumeFace(getTEOffset());
                     // <FS:Ansariel> Use a vbo for the static LLVertexBuffer::drawArray/Element functions; by Drake Arconis/Shyotl Kuhr
                     //LLVertexBuffer::unbind();
@@ -610,7 +610,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
             }
         }
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 
