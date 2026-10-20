@@ -1937,7 +1937,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
 void Renderer::endFrame()
 {
     flushPendingClear();
-    endRendering();
+    endRendering(PE_FRAME);
     // descriptors that draws of this frame asked for (render packet textures: bindlessTouch only queues them, a flush comes with the next draw of a bindless program) are written before
     // the command buffer is submitted; beginFrame throws away what is still queued
     static const bool skip_end_flush = getenv("LL_VK_NO_END_FLUSH") != nullptr;
@@ -1963,10 +1963,17 @@ void Renderer::flushPendingClear()
     }
 }
 
-void Renderer::endRendering()
+void Renderer::endRendering(PassEnd why)
 {
     if (mRendering)
     {
+        ++mPassEnds[why];
+        mPassDrawsTotal += mDrawCount - mPassDrawStart;
+        if (mDrawCount == mPassDrawStart)
+        {
+            ++mPassesEmpty;         // F3.5a: a pass that drew nothing (a clear, or a pass begun for a layout)
+        }
+        mLastPassEnd = why;
         if (mOccActive >= 0)
         {
             vkCmdEndQuery(mCmd, mOccPool[mSlot], (U32)mOccActive);      // a query cannot outlive its render pass instance
@@ -1990,7 +1997,7 @@ void Renderer::setRenderTarget(Image* const* colors, U32 color_count, Image* dep
         return;
     }
     flushPendingClear();
-    endRendering();
+    endRendering(PE_TARGET);
     mColorCount = std::min<U32>(color_count, 8);
     for (U32 i = 0; i < mColorCount; ++i)
     {
@@ -2296,6 +2303,34 @@ std::string Renderer::takeBarrierReport(size_t frames)
     return out;
 }
 
+// F3.5a: the render pass counters of the worker since the last call, per frame (always counted: plain increments), appended to the VkOps line
+std::string Renderer::takePassReport(size_t frames)
+{
+    static const char* const kEnd[PE_COUNT] = { "frame end", "target change", "layout barrier", "depth read-only flip", "external (DLSS)", "command buffer", "mid-frame flush", "row copy", "copy" };
+    const double f = (double)std::max<size_t>(1, frames);
+    char buf[256];
+    std::string out;
+    snprintf(buf, sizeof(buf), "render passes (worker) per frame: %.1f begun (%.1f began with a clear, %.1f depth only, %.1f with read-only depth, %.1f drew nothing), %.1f draws per pass; clears: %.1f before a pass (its load op), %.1f inside a pass; passes began after (what ended the pass before):",
+             (double)mPassBegins / f, (double)mPassBeginsClear / f, (double)mPassBeginsDepthOnly / f, (double)mPassBeginsDepthRO / f, (double)mPassesEmpty / f,
+             mPassBegins ? (double)mPassDrawsTotal / (double)mPassBegins : 0.0,(double)mClearsPending / f, (double)mClearsInPass / f);
+    out = buf;
+    for (int i = 0; i < PE_COUNT; ++i)
+    {
+        snprintf(buf, sizeof(buf), " %s %.1f,", kEnd[i], (double)mPassBeginAfter[i] / f);
+        out += buf;
+    }
+    snprintf(buf, sizeof(buf), " | depth read-only flips per frame: to read-only %.1f, back to writable %.1f (%.1f of them ended a pass) | ", (double)mDepthROFlips[1] / f, (double)mDepthROFlips[0] / f, (double)mDepthROFlipEnded / f);
+    out += buf;
+    mPassBegins = mPassBeginsClear = mPassBeginsDepthOnly = mPassBeginsDepthRO = mPassesEmpty = mClearsPending = mClearsInPass = mDepthROFlipEnded = mPassDrawsTotal = 0;
+    for (int i = 0; i < PE_COUNT; ++i)
+    {
+        mPassEnds[i] = 0;
+        mPassBeginAfter[i] = 0;
+    }
+    mDepthROFlips[0] = mDepthROFlips[1] = 0;
+    return out;
+}
+
 void Renderer::ensureLayout(Image& image, VkImageLayout layout)
 {
     Image* root = root_of(&image);
@@ -2314,7 +2349,7 @@ void Renderer::ensureLayout(Image& image, VkImageLayout layout)
     // barriers are not allowed inside a render pass: any layout change ends the current one
     if (mRendering)
     {
-        endRendering();
+        endRendering(PE_BARRIER);
         mBarrierEndedPass = true;
     }
     else if (mPendingClear && !mInBegin)
@@ -2322,7 +2357,7 @@ void Renderer::ensureLayout(Image& image, VkImageLayout layout)
         if (is_attached())
         {
             flushPendingClear();     // the clear is recorded before the image changes layout
-            endRendering();
+            endRendering(PE_BARRIER);
             mBarrierEndedPass = true;
         }
     }
@@ -2336,6 +2371,21 @@ void Renderer::beginRenderingIfNeeded()
         return;
     }
     mInBegin = true;
+    ++mPassBegins;
+    ++mPassBeginAfter[mLastPassEnd];
+    mPassDrawStart = mDrawCount;
+    if (mPendingClear)
+    {
+        ++mPassBeginsClear;
+    }
+    if (!mColorCount)
+    {
+        ++mPassBeginsDepthOnly;
+    }
+    if (mDepthRO)
+    {
+        ++mPassBeginsDepthRO;
+    }
     mDrawStamps = false;
     mSerialPass = true;
     mDrawStampCount = 0;
@@ -2438,9 +2488,11 @@ void Renderer::clear(U32 bits, const F32 color[4], F32 depth, U32 stencil)
 
     if (!mRendering)
     {
+        ++mClearsPending;
         mPendingClear |= bits;      // becomes the load op of the next pass
         return;
     }
+    ++mClearsInPass;
 
     // a pass is already running: clear inside it
     VkClearAttachment atts[9] = {};
@@ -2997,8 +3049,13 @@ void Renderer::applyState()
     }
     if (depth_ro != mDepthRO)
     {
+        ++mDepthROFlips[depth_ro ? 1 : 0];
+        if (mRendering)
+        {
+            ++mDepthROFlipEnded;
+        }
         flushPendingClear();
-        endRendering();
+        endRendering(PE_DEPTH_FLIP);
         mDepthRO = depth_ro;
     }
     if (depth_ro)
@@ -3929,7 +3986,7 @@ bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>
         ensureLayout(*i.first, i.second);
         setBarrierCause(prev_cause);
     }
-    endRendering();
+    endRendering(PE_EXTERNAL);
     record(mCmd);
     ++mModCount;
     // whatever the callback bound or set, the next draw starts from scratch
@@ -3952,7 +4009,7 @@ void Renderer::withCommandBuffer(const std::function<void(VkCommandBuffer)>& rec
 {
     if (mCmd != VK_NULL_HANDLE)
     {
-        endRendering();     // copies and blits are not allowed inside a render pass; the next draw resumes it
+        endRendering(PE_COMMAND_BUFFER);     // copies and blits are not allowed inside a render pass; the next draw resumes it
         record(mCmd);
         return;
     }
@@ -4358,7 +4415,7 @@ bool Renderer::flushAndRestart(U32 why)
         }
     }
     flushPendingClear();
-    endRendering();
+    endRendering(PE_FLUSH_RESTART);
     static const bool skip_flush_flush = getenv("LL_VK_NO_END_FLUSH") != nullptr;
     if (!skip_flush_flush)
     {
@@ -4497,7 +4554,7 @@ bool Renderer::recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuff
         return false;
     }
     flushPendingClear();
-    endRendering();
+    endRendering(PE_ROW_COPY);
     const VkImageLayout old_layout = root->mLayout;
     transition(mCmd, view, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     const U32 w = view.mExtent.width;
@@ -4526,7 +4583,7 @@ bool Renderer::copyRegion(Image& src, S32 sx, S32 sy, Image& dst, U32 dst_mip, U
     Image* dst_root = dst.mOwner ? dst.mOwner : &dst;
     const bool same_image = src_root == dst_root;
     flushPendingClear();
-    endRendering();
+    endRendering(PE_COPY);
 
     if (same_image)
     {

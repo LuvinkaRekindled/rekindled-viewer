@@ -380,6 +380,8 @@ public:
     const char* setBarrierCause(const char* cause) { const char* old = mBarrierCause; mBarrierCause = cause; return old; }
     // the transitions since the last call grouped by cause, image kind and layout change (per frame), the images with the most, and how many ended a render pass
     std::string takeBarrierReport(size_t frames);
+    // F3.5a: render pass counters (passes begun and why, clears, depth read-only flips) since the last call, per frame
+    std::string takePassReport(size_t frames);
     static U32 compressedMipBytes(const Image& image, U32 mip);
     // debug: records copies of the given pixel rows of a colour image (level/layer of the view) into a host buffer, tightly packed, in the current frame
     bool recordRowCopies(Image& view, const std::vector<U32>& rows, VkBuffer buffer);
@@ -433,7 +435,8 @@ private:
     void withCommandBuffer(const std::function<void(VkCommandBuffer)>& record);
     void applyState();
     void beginRenderingIfNeeded();
-    void endRendering();
+    enum PassEnd { PE_FRAME, PE_TARGET, PE_BARRIER, PE_DEPTH_FLIP, PE_EXTERNAL, PE_COMMAND_BUFFER, PE_FLUSH_RESTART, PE_ROW_COPY, PE_COPY, PE_COUNT };      // what ended a render pass (F3.5a counters)
+    void endRendering(PassEnd why);
     U32 allocUniform(U32 size);
 
     bool mReady = false;
@@ -580,6 +583,14 @@ private:
     std::unordered_map<std::string, BarrierStat> mBarrierStats;
     std::unordered_map<const Image*, U32> mBarrierPerImage;
     bool mBarrierEndedPass = false;                 // the transition being made had to end a render pass first
+    // F3.5a: render pass counters (plain increments on the worker, read by takePassReport)
+    U64 mPassBegins = 0, mPassBeginsClear = 0, mPassBeginsDepthOnly = 0, mPassBeginsDepthRO = 0, mPassesEmpty = 0, mPassDrawsTotal = 0;
+    U64 mClearsPending = 0, mClearsInPass = 0, mDepthROFlipEnded = 0;
+    U64 mPassEnds[PE_COUNT] = {};
+    U64 mPassBeginAfter[PE_COUNT] = {};                 // passes begun, by what ended the pass before
+    U64 mDepthROFlips[2] = {};                          // [1] the pass went to read-only depth, [0] back to writable
+    PassEnd mLastPassEnd = PE_FRAME;
+    U32 mPassDrawStart = 0;
     void noteBarrier(const Image& image, VkImageLayout from, VkImageLayout to);
     // C9: the depth-target use of each draw (write on / depth buffer sampled by the program) and what each change of use cost
     U32 mDepthUseCounts[4] = {};

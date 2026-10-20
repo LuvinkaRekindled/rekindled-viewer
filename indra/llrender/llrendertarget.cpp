@@ -27,9 +27,14 @@
 #include "linden_common.h"
 
 #include "llrendertarget.h"
+#include "llrenderpass.h"
 #include "llrender.h"
 #include "llgl.h"
 #include <atomic>
+#include <algorithm>
+#include <vector>
+#include <string>
+#include <cstring>
 #include <windows.h>        // CaptureStackBackTrace
 #if defined(LL_VULKAN)
 #include "llvkasync.h"
@@ -328,6 +333,7 @@ void LLRenderTarget::shareDepthBuffer(LLRenderTarget& target)
 void LLRenderTarget::release()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
+    noteRelease();
     llassert(!isBoundInStack());
 
     if (mDepth)
@@ -385,9 +391,22 @@ void LLRenderTarget::release()
     mResX = mResY = 0;
 }
 
-void LLRenderTarget::bindTarget()
+void LLRenderTarget::bindTarget(const char* file, int line)
+{
+    bindImpl(file, line, false);
+}
+
+// restore: the flush of a nested pass puts the pass it interrupted back (it keeps the bind site and the draw count of its own bindTarget)
+void LLRenderTarget::bindImpl(const char* file, int line, bool restore)
 {
     LL_PROFILE_GPU_ZONE("bindTarget");
+    if (!restore)
+    {
+        noteBind(file, line);
+        mBindFile = file;
+        mBindLine = line;
+        mBindDraw = LLVkAsync::drawSeq();
+    }
     llassert(mFBO);
     llassert(!isBoundInStack());
 
@@ -401,9 +420,10 @@ void LLRenderTarget::bindTarget()
     sBoundTarget = this;
 }
 
-void LLRenderTarget::clear(U32 mask_in)
+void LLRenderTarget::clear(U32 mask_in, const char* file, int line)
 {
     LL_PROFILE_GPU_ZONE("clear");
+    noteClear(file, line);
     llassert(mFBO);
     U32 mask = GL_COLOR_BUFFER_BIT;
     if (mUseDepth)
@@ -465,9 +485,10 @@ void LLRenderTarget::bindTexture(U32 index, S32 channel, LLTexUnit::eTextureFilt
     gGL.getTexUnit(channel)->setTextureFilteringOption(filter_options);
 }
 
-void LLRenderTarget::flush()
+void LLRenderTarget::flush(const char* file, int line)
 {
     LL_PROFILE_GPU_ZONE("rt flush");
+    noteFlush(file, line);
     gGL.flush();
     llassert(mFBO);
     llassert(sCurFBO == mFBO);
@@ -485,7 +506,7 @@ void LLRenderTarget::flush()
         // a bit hacky -- pop the RT stack back two frames and push
         // the previous frame back on to play nice with the GL state machine
         sBoundTarget = mPreviousRT->mPreviousRT;
-        mPreviousRT->bindTarget();
+        mPreviousRT->bindImpl(mPreviousRT->mBindFile, mPreviousRT->mBindLine, true);
     }
     else
     {
@@ -495,6 +516,7 @@ void LLRenderTarget::flush()
         sCurResX = gGLViewport[2];
         sCurResY = gGLViewport[3];
     }
+    mBindFile = nullptr;
 }
 
 bool LLRenderTarget::isComplete() const
@@ -548,4 +570,335 @@ void LLRenderTarget::swapFBORefs(LLRenderTarget& other)
 
     std::swap(mFBO, other.mFBO);
     std::swap(mTex, other.mTex);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// F3.5a: the counters of the render target entry points (LL_VK_OPSTATS) and the pass check (LL_VK_PASS_CHECK=1); see llrenderpass.h.
+// Both only look at the main thread's producer (the targets of the frame); a target bound on another thread is not counted.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+namespace
+{
+
+struct PassSite { const char* mFile; int mLine; int mKind; unsigned long long mCount; unsigned long long mAfterBind; };      // mKind: 0 bindTarget, 1 clear
+constexpr int PASS_SITES = 192;
+PassSite gPassSites[PASS_SITES];
+std::atomic<int> gPassSiteCount{ 0 };
+unsigned long long gPassBinds = 0, gPassNested = 0, gPassRestores = 0, gPassFlushes = 0, gPassClears = 0, gPassClearsAfterBind = 0;
+unsigned gPassMaxDepth = 0;
+
+bool pass_check()
+{
+    static const bool on = []() {
+        const char* e = getenv("LL_VK_PASS_CHECK");
+        const bool v = e && e[0] && e[0] != '0';
+        if (v)
+        {
+            LL_INFOS("PassCheck") << "LL_VK_PASS_CHECK is on: warnings name the call site of the first occurrence" << LL_ENDL;
+        }
+        return v;
+    }();
+    return on;
+}
+
+const char* pass_base(const char* file)
+{
+    if (!file)
+    {
+        return "?";
+    }
+    const char* base = file;
+    for (const char* p = file; *p; ++p)
+    {
+        if (*p == '/' || *p == '\\')
+        {
+            base = p + 1;
+        }
+    }
+    return base;
+}
+
+PassSite* pass_site(int kind, const char* file, int line)
+{
+    const int n = gPassSiteCount.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i)
+    {
+        PassSite& s = gPassSites[i];
+        if (s.mKind == kind && s.mLine == line && (s.mFile == file || (file && s.mFile && strcmp(s.mFile, file) == 0)))
+        {
+            return &s;
+        }
+    }
+    if (n >= PASS_SITES)
+    {
+        return nullptr;
+    }
+    gPassSites[n] = { file, line, kind, 0, 0 };
+    gPassSiteCount.store(n + 1, std::memory_order_release);
+    return &gPassSites[n];
+}
+
+// the first occurrence per (what, call site) is logged
+void pass_warn(const char* what, const char* file, int line, const std::string& detail)
+{
+    static std::vector<std::string> seen;
+    const std::string key = std::string(what) + "|" + pass_base(file) + ":" + std::to_string(line);
+    if (seen.size() >= 200 || std::find(seen.begin(), seen.end(), key) != seen.end())
+    {
+        return;
+    }
+    seen.push_back(key);
+    LL_WARNS("PassCheck") << what << " (call at " << pass_base(file) << ":" << line << ")" << detail << LL_ENDL;
+}
+
+std::string pass_site_text(const char* file, int line)
+{
+    return std::string(pass_base(file)) + ":" + std::to_string(line);
+}
+
+}
+
+unsigned LLRenderTarget::stackDepth()
+{
+    unsigned d = 0;
+    for (const LLRenderTarget* t = sBoundTarget; t && d < 64; t = t->mPreviousRT)
+    {
+        ++d;
+    }
+    return d;
+}
+
+// isBoundInStack() walks the chain without a limit: a target bound twice makes the chain a cycle, which the check has to survive
+bool LLRenderTarget::boundInStackBounded() const
+{
+    unsigned d = 0;
+    for (const LLRenderTarget* t = sBoundTarget; t && d < 64; t = t->mPreviousRT, ++d)
+    {
+        if (t == this)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void LLRenderTarget::noteBind(const char* file, int line)
+{
+    const bool stats = LLVkAsync::gFrontStats;
+    const bool check = pass_check();
+    if ((!stats && !check) || !LLVkAsync::mainOnlyProducer())
+    {
+        return;
+    }
+    if (stats)
+    {
+        ++gPassBinds;
+        if (PassSite* s = pass_site(0, file, line))
+        {
+            ++s->mCount;
+        }
+        if (sBoundTarget)
+        {
+            ++gPassNested;
+        }
+        const unsigned d = stackDepth() + 1;
+        if (d > gPassMaxDepth)
+        {
+            gPassMaxDepth = d;
+        }
+    }
+    if (check)
+    {
+        if (!mFBO)
+        {
+            pass_warn("bindTarget of a target without a frame buffer", file, line, "");
+        }
+        if (boundInStackBounded())
+        {
+            pass_warn("bindTarget of a target that is already bound (the mPreviousRT chain gets a cycle)", file, line,
+                      std::string("; it was bound at ") + pass_site_text(mBindFile, mBindLine));
+        }
+        else if (stackDepth() >= 8)
+        {
+            pass_warn("bindTarget with 8 passes already open (nesting this deep is not meant)", file, line,
+                      std::string("; innermost bound at ") + (sBoundTarget ? pass_site_text(sBoundTarget->mBindFile, sBoundTarget->mBindLine) : std::string("?")));
+        }
+    }
+}
+
+void LLRenderTarget::noteFlush(const char* file, int line)
+{
+    const bool stats = LLVkAsync::gFrontStats;
+    const bool check = pass_check();
+    if ((!stats && !check) || !LLVkAsync::mainOnlyProducer())
+    {
+        return;
+    }
+    if (stats)
+    {
+        ++gPassFlushes;
+        if (mPreviousRT)
+        {
+            ++gPassRestores;
+        }
+    }
+    if (check)
+    {
+        if (!sBoundTarget)
+        {
+            pass_warn("flush with no target bound (flushed twice, or never bound)", file, line, "");
+        }
+        else if (sBoundTarget != this)
+        {
+            if (!mBindFile)
+            {
+                pass_warn("flush of a target that is not bound (flushed twice, or never bound)", file, line,
+                          std::string("; the innermost bound target was bound at ") + pass_site_text(sBoundTarget->mBindFile, sBoundTarget->mBindLine));
+            }
+            else
+            {
+                pass_warn("flush of a target that is not the innermost bound one (bad nesting: the chain is not a stack)", file, line,
+                          std::string("; this target was bound at ") + pass_site_text(mBindFile, mBindLine) + ", the innermost at " + pass_site_text(sBoundTarget->mBindFile, sBoundTarget->mBindLine));
+            }
+        }
+    }
+}
+
+void LLRenderTarget::noteClear(const char* file, int line)
+{
+    const bool stats = LLVkAsync::gFrontStats;
+    const bool check = pass_check();
+    if ((!stats && !check) || !LLVkAsync::mainOnlyProducer())
+    {
+        return;
+    }
+    if (stats)
+    {
+        ++gPassClears;
+        // directly after its bind: no draw was made between (the shape that becomes the load op of the pass)
+        const bool after_bind = sBoundTarget == this && mBindFile && LLVkAsync::drawSeq() == mBindDraw;
+        if (after_bind)
+        {
+            ++gPassClearsAfterBind;
+        }
+        if (PassSite* s = pass_site(1, file, line))
+        {
+            ++s->mCount;
+            if (after_bind)
+            {
+                ++s->mAfterBind;
+            }
+        }
+    }
+    if (check)
+    {
+        if (sBoundTarget != this)
+        {
+            pass_warn("clear of a target that is not the innermost bound one", file, line,
+                      std::string("; the innermost bound target was bound at ") + (sBoundTarget ? pass_site_text(sBoundTarget->mBindFile, sBoundTarget->mBindLine) : std::string("(none)")));
+        }
+        else if (sCurFBO != mFBO)
+        {
+            pass_warn("clear of a target whose frame buffer is not the current one", file, line, "");
+        }
+    }
+}
+
+void LLRenderTarget::noteRelease()
+{
+    if (pass_check() && mFBO && LLVkAsync::mainOnlyProducer() && boundInStackBounded())
+    {
+        pass_warn("a target is released while it is bound", mBindFile, mBindLine, " (the call site is where it was bound)");
+    }
+}
+
+void LLRenderTarget::checkFrameEnd()
+{
+    if (!pass_check() || !LLVkAsync::mainOnlyProducer())
+    {
+        return;
+    }
+    if (sBoundTarget)
+    {
+        pass_warn("a target is still bound at the end of the frame (a flush is missing)", sBoundTarget->mBindFile, sBoundTarget->mBindLine,
+                  std::string("; ") + std::to_string(stackDepth()) + " pass(es) open (the call site is where the innermost was bound)");
+    }
+    else if (sCurFBO != 0)
+    {
+        pass_warn("sCurFBO is not 0 at the end of the frame although no target is bound", nullptr, 0, "");
+    }
+}
+
+namespace RenderPass
+{
+
+void begin(LLRenderTarget& target, LoadOp load, U32 clear_mask, const char* file, int line)
+{
+    target.bindTarget(file, line);
+    if (load == LoadOp::Clear)
+    {
+        target.clear(clear_mask, file, line);
+    }
+}
+
+void end(LLRenderTarget& target, const char* file, int line)
+{
+    target.flush(file, line);
+}
+
+void frameEnd()
+{
+    LLRenderTarget::checkFrameEnd();
+}
+
+std::string report(size_t frames)
+{
+    if (!LLVkAsync::gFrontStats)
+    {
+        return std::string();
+    }
+    const double f = (double)std::max<size_t>(1, frames);
+    char buf[320];
+    snprintf(buf, sizeof(buf), "render targets (producer) per frame: bindTarget %.1f (inside another pass %.1f, deepest stack %u), flush %.1f (restoring the pass before %.1f), clear %.1f (directly after its bind, no draw between: %.1f; later: %.1f) | ",
+             (double)gPassBinds / f, (double)gPassNested / f, gPassMaxDepth, (double)gPassFlushes / f, (double)gPassRestores / f, (double)gPassClears / f,
+             (double)gPassClearsAfterBind / f, (double)(gPassClears - std::min(gPassClears, gPassClearsAfterBind)) / f);
+    std::string out = buf;
+    const int n = gPassSiteCount.load(std::memory_order_acquire);
+    std::vector<PassSite> sites(gPassSites, gPassSites + n);
+    std::sort(sites.begin(), sites.end(), [](const PassSite& a, const PassSite& b) { return a.mCount > b.mCount; });
+    for (int kind = 0; kind < 2; ++kind)
+    {
+        out += kind == 0 ? "bindTarget sites per frame:" : "clear sites per frame (n, of them directly after the bind):";
+        int shown = 0;
+        for (const PassSite& s : sites)
+        {
+            if (s.mKind != kind || !s.mCount)
+            {
+                continue;
+            }
+            if (++shown > (kind == 0 ? 60 : 40))
+            {
+                break;
+            }
+            if (kind == 0)
+            {
+                snprintf(buf, sizeof(buf), " [%s:%d %.2f]", pass_base(s.mFile), s.mLine, (double)s.mCount / f);
+            }
+            else
+            {
+                snprintf(buf, sizeof(buf), " [%s:%d %.2f, %.2f]", pass_base(s.mFile), s.mLine, (double)s.mCount / f, (double)s.mAfterBind / f);
+            }
+            out += buf;
+        }
+        out += " | ";
+    }
+    for (int i = 0; i < n; ++i)
+    {
+        gPassSites[i].mCount = 0;
+        gPassSites[i].mAfterBind = 0;
+    }
+    gPassBinds = gPassNested = gPassRestores = gPassFlushes = gPassClears = gPassClearsAfterBind = 0;
+    gPassMaxDepth = 0;
+    return out;
+}
+
 }

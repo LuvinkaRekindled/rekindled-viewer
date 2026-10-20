@@ -69,6 +69,7 @@ set(llrender_HEADER_FILES
     llpostprocess.h
     llrender.h
     llrendermatrix.h
+    llrenderpass.h
     llrenderstate.h
     llrender2dutils.h
     llrendernavprim.h

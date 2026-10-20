@@ -114,6 +114,7 @@ namespace LLVkAsync
         ~FrontLap() { if (mT0) frontStop(mId, mT0); }
     };
     inline void frontCount(int id) { if (gFrontStats) frontNote(id); }
+    unsigned long long drawSeq();                          // F3.5a: draws counted so far on the main thread (only while gFrontStats): "no draw between a bind and its clear"
 
     // ---- F2.4: the draw record (doc/vulkan/F2-draw-records.md) ----
     // F2.4: the draw record (doc/vulkan/F2-draw-records.md): a draw names its program and carries its vertex binding, the texture ids and the uniform writes that changed
