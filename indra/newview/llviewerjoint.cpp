@@ -119,13 +119,13 @@ U32 LLViewerJoint::render( F32 pixelArea, bool first_pass, bool is_dummy )
             else
             {
                 // Render Inside (no Z buffer write)
-                gGL.setCullFace(GL_FRONT);
+                gGL.setCullFace(LLRenderState::CullFace::Front);
                 {
                     LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
                     triangle_count += drawShape( pixelArea, first_pass, is_dummy  );
                 }
                 // Render Outside (write to the Z buffer)
-                gGL.setCullFace(GL_BACK);
+                gGL.setCullFace(LLRenderState::CullFace::Back);
                 {
                     triangle_count += drawShape( pixelArea, false, is_dummy  );
                 }

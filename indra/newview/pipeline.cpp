@@ -5774,7 +5774,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
     if (gUseWireframe)
     {
-        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
     }
 
     if (&camera == LLViewerCamera::getInstance())
@@ -5914,7 +5914,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
     if (gUseWireframe)
     {
-        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
     }
 }
 
@@ -6023,7 +6023,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
     if (gUseWireframe)
     {
-        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
     }
 
     U32 cur_type = 0;
@@ -6159,7 +6159,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
     if (gUseWireframe)
     {
-        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
     }
 }
 
@@ -6662,7 +6662,7 @@ void LLPipeline::renderPhysicsDisplay()
 
         if (wireframe)
         {
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
         }
 
         for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
@@ -6685,7 +6685,7 @@ void LLPipeline::renderPhysicsDisplay()
 
         if (wireframe)
         {
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
         }
     }
     gGL.setLineWidth(1.f);
@@ -6766,7 +6766,7 @@ void LLPipeline::renderDebug()
                         gGL.setClearColor(clearColor.mV[0],clearColor.mV[1],clearColor.mV[2],0);
                         gGL.clearBuffers(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // no stencil -- deprecated | GL_STENCIL_BUFFER_BIT);
                         gGL.setColorMask(true, false);
-                        gGL.setPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+                        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                     }
 
                     //NavMesh
@@ -6796,7 +6796,7 @@ void LLPipeline::renderDebug()
                         gPathfindingProgram.bind();
 
                         gGL.flush();
-                        gGL.setPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+                        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                         gGL.setLineWidth(1.0f); // <FS> Line width OGL core profile fix by Rye Mutt
                         gGL.flush();
                     }
@@ -6853,7 +6853,7 @@ void LLPipeline::renderDebug()
                             LLGLDisable cull(i >= 2 ? GL_CULL_FACE : 0);
 
                             gGL.flush();
-                            gGL.setPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+                            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
 
                             //get rid of some z-fighting
                             LLGLEnable polyOffset(GL_POLYGON_OFFSET_FILL);
@@ -6879,7 +6879,7 @@ void LLPipeline::renderDebug()
                                 }
 
                                 LLGLEnable lineOffset(GL_POLYGON_OFFSET_LINE);
-                                gGL.setPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+                                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
 
                                 F32 offset = gSavedSettings.getF32("PathfindingLineOffset");
 
@@ -6899,10 +6899,10 @@ void LLPipeline::renderDebug()
                                     }
                                     else
                                     {
-                                        gGL.setPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+                                        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                                         gPathfindingProgram.uniform1f(sAmbiance, ambiance);
                                         llPathingLibInstance->renderNavMeshShapesVBO( render_order[i] );
-                                        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                                        gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
                                     }
                                 }
 
@@ -6919,7 +6919,7 @@ void LLPipeline::renderDebug()
                                     gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
                                 }
 
-                                gGL.setPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+                                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                             }
                         }
                     }
@@ -6947,10 +6947,10 @@ void LLPipeline::renderDebug()
 
                         if (gSavedSettings.getBOOL("PathfindingXRayWireframe"))
                         { //draw hidden wireframe as darker and less opaque
-                            gGL.setPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+                            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
                             gPathfindingProgram.uniform1f(sAmbiance, 1.f);
                             llPathingLibInstance->renderNavMesh();
-                            gGL.setPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+                            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                         }
                         else
                         {

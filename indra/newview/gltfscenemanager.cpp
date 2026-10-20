@@ -1030,7 +1030,7 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
             if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_RAYCAST))
             {
                 gGL.flush();
-                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
 
                 // convert raycast to node local space
                 vec4 local_start = node.mAssetMatrixInv * start;
@@ -1048,7 +1048,7 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
                 }
 
                 gGL.flush();
-                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
             }
 #endif
             gGL.popMatrix();
@@ -1181,7 +1181,7 @@ void GLTFSceneManager::renderDebug()
                 Primitive* primitive = &asset->mMeshes[node->mMesh].mPrimitives[primitive_hit];
 
                 gGL.flush();
-                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
                 gGL.color3f(1, 0, 1);
                 drawBoxOutline(intersection, LLVector4a(0.1f, 0.1f, 0.1f, 0.f));
 
@@ -1191,7 +1191,7 @@ void GLTFSceneManager::renderDebug()
                 drawBoxOutline(listener->mBounds[0], listener->mBounds[1]);
 
                 gGL.flush();
-                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                 gGL.popMatrix();
             }
         }

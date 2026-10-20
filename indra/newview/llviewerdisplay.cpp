@@ -1982,9 +1982,9 @@ static void renderChatRangeSphere(const LLVector3& center, F32 radius, const LLC
         gGL.pushMatrix();
         {
             gGL.scalef(radius, radius, radius);
-            gGL.setCullFace(GL_FRONT);
+            gGL.setCullFace(LLRenderState::CullFace::Front);
             gSphere.render();
-            gGL.setCullFace(GL_BACK);
+            gGL.setCullFace(LLRenderState::CullFace::Back);
             gSphere.render();
         }
         gGL.popMatrix();
@@ -2283,7 +2283,7 @@ void render_ui_2d()
     // Render 2D UI elements that overlay the world (no z compare)
 
     //  Disable wireframe mode below here, as this is HUD/menus
-    gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
 
     //  Menu overlays, HUD, etc
     gViewerWindow->setup2DRender();

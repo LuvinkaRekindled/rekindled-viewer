@@ -133,7 +133,7 @@ void LLHUDText::render()
         // So it turns out when the LLGLDepthTest object goes out of scope, it reverts back
         // to the previous state. So by having the LLGLDepthTest in the if statements, they were
         // never applied.
-        LLGLDepthTest gls_depth(mbUseHoverHighlight && mbIsHighlighted ? GL_FALSE : GL_TRUE, GL_FALSE);
+        LLRenderState::DepthScope gls_depth(mbUseHoverHighlight && mbIsHighlighted ? false : true, false);
         // </FS:minerjr> [FIRE-35019] </FS:minerjr> [FIRE-35102]	
         //LLGLDisable gls_stencil(GL_STENCIL_TEST);
         renderText();
@@ -149,7 +149,7 @@ void LLHUDText::renderText()
 
     gGL.getTexUnit(0)->enable(LLTexUnit::TT_TEXTURE);
 
-    LLGLState gls_blend(GL_BLEND, true);
+    LLRenderState::BlendScope gls_blend(true);
 
     LLColor4 shadow_color(0.f, 0.f, 0.f, 1.f);
     F32 alpha_factor = 1.f;
@@ -763,7 +763,7 @@ void LLHUDText::renderAllHUD()
     LLGLState::checkStates();
 
     {
-        LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+        LLRenderState::DepthScope depth(false, false);
 
         VisibleTextObjectIterator text_it;
 

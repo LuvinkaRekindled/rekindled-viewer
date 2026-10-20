@@ -83,8 +83,8 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
 
     LLGLSUIDefault gls_ui;
     gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
-    LLGLDepthTest gls_depth(GL_TRUE);
-    LLGLEnable gl_blend(GL_BLEND);
+    LLRenderState::DepthScope gls_depth(true);
+    LLRenderState::BlendScope gl_blend(true);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.pushMatrix();
@@ -96,8 +96,8 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
         {
             gDebugProgram.bind();
 
-            LLGLEnable cull_face(GL_CULL_FACE);
-            LLGLDepthTest gls_depth(GL_FALSE);
+            LLRenderState::CullScope cull_face(true);
+            LLRenderState::DepthScope gls_depth(false);
             gGL.pushMatrix();
             {
                 gGL.color4fv(color.mV);
@@ -128,8 +128,8 @@ static void renderStaticSphere(const LLVector3& joint_world_position, const LLCo
 {
     LLGLSUIDefault gls_ui;
     gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
-    LLGLDepthTest gls_depth(GL_TRUE);
-    LLGLEnable gl_blend(GL_BLEND);
+    LLRenderState::DepthScope gls_depth(true);
+    LLRenderState::BlendScope gl_blend(true);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.pushMatrix();
@@ -141,8 +141,8 @@ static void renderStaticSphere(const LLVector3& joint_world_position, const LLCo
         {
             gDebugProgram.bind();
 
-            LLGLEnable cull_face(GL_CULL_FACE);
-            LLGLDepthTest gls_depth(GL_FALSE);
+            LLRenderState::CullScope cull_face(true);
+            LLRenderState::DepthScope gls_depth(false);
             gGL.pushMatrix();
             {
                 gGL.color4fv(color.mV);
@@ -550,9 +550,9 @@ void FSManipRotateJoint::renderManipulatorRings(const LLVector3& agent_space_cen
     gDebugProgram.bind();
     gGL.pushMatrix();
     {
-        LLGLEnable cull_face(GL_CULL_FACE);
-        LLGLDepthTest gls_depth(GL_FALSE);        
-        LLGLEnable clip_plane0(GL_CLIP_PLANE0);
+        LLRenderState::CullScope cull_face(true);
+        LLRenderState::DepthScope gls_depth(false);        
+        // F3.2: LLGLEnable clip_plane0(GL_CLIP_PLANE0) had no effect on the render state block (never mapped); dropped
         gGL.translatef(joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
 
         LLMatrix4 rot_mat(rotation);
@@ -608,8 +608,8 @@ void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& no
 {
     gGL.pushMatrix();
     {
-        LLGLEnable cull_face(GL_CULL_FACE);
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::CullScope cull_face(true);
+        LLRenderState::DepthScope gls_depth(false);
 
         constexpr int segments = 64;
         gGL.setLineWidth(6.0f); // Set the desired line thickness
@@ -655,8 +655,8 @@ void FSManipRotateJoint::renderCenterSphere(const F32 radius, const LLColor4& no
 {
     gGL.pushMatrix();
     {
-        LLGLEnable cull_face(GL_CULL_FACE);
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::CullScope cull_face(true);
+        LLRenderState::DepthScope gls_depth(false);
         
         float scale = radius * 0.8f;
         
@@ -714,8 +714,8 @@ void FSManipRotateJoint::render()
     // Setup GL state.
     LLGLSUIDefault gls_ui;
     gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
-    LLGLDepthTest gls_depth(GL_TRUE);
-    LLGLEnable gl_blend(GL_BLEND);
+    LLRenderState::DepthScope gls_depth(true);
+    LLRenderState::BlendScope gl_blend(true);
 
     // Iterate through the avatar's joint map.
     // If a joint other than the currently selected is highlighted, render a pulsing sphere.
@@ -775,9 +775,9 @@ void FSManipRotateJoint::render()
 
 void FSManipRotateJoint::renderAxes(const LLVector3& agent_space_center, F32 size, const LLQuaternion& rotation)
 {
-    LLGLEnable cull_face(GL_CULL_FACE);
-    LLGLEnable clip_plane0(GL_CLIP_PLANE0);
-    LLGLDepthTest gls_depth(GL_FALSE);
+    LLRenderState::CullScope cull_face(true);
+    // F3.2: LLGLEnable clip_plane0(GL_CLIP_PLANE0) had no effect on the render state block (never mapped); dropped
+    LLRenderState::DepthScope gls_depth(false);
     gGL.pushMatrix();
     gGL.translatef(agent_space_center.mV[VX], agent_space_center.mV[VY], agent_space_center.mV[VZ]);
 
@@ -910,7 +910,7 @@ void FSManipRotateJoint::renderNameXYZ(const LLQuaternion& rot)
 
         LLFontGL* font = LLFontGL::getFontSansSerif();
         LLLocale locale(LLLocale::USER_LOCALE);
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
 
         F32 base_y = (F32)(window_center_y + vertical_offset);
 
@@ -981,13 +981,13 @@ void FSManipRotateJoint::renderNameXYZ(const LLQuaternion& rot)
 
 void FSManipRotateJoint::renderActiveRing( F32 radius, F32 width, const LLColor4& front_color, const LLColor4& back_color)
 {
-    LLGLEnable cull_face(GL_CULL_FACE);
+    LLRenderState::CullScope cull_face(true);
     {
         gl_ring(radius, width, back_color, back_color * 0.5f, CIRCLE_STEPS, false);
         gl_ring(radius, width, back_color, back_color * 0.5f, CIRCLE_STEPS, true);
     }
     {
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
         gl_ring(radius, width, front_color, front_color * 0.5f, CIRCLE_STEPS, false);
         gl_ring(radius, width, front_color, front_color * 0.5f, CIRCLE_STEPS, true);
     }

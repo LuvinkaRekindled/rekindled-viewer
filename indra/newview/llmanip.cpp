@@ -541,7 +541,7 @@ void LLManip::renderXYZ(const LLVector3 &vec)
         // </FS:AR> [FIRE-36909]
         LLFontGL* font = LLFontGL::getFontSansSerif();
         LLLocale locale(LLLocale::USER_LOCALE);
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
 
         // render drop shadowed text (manually because of bigger 'distance')
         F32 right_x;

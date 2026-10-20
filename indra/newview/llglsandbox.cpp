@@ -358,7 +358,7 @@ void LLViewerParcelMgr::renderRect(const LLVector3d &west_south_bottom_global,
 {
     LLGLSUIDefault gls_ui;
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-    LLGLDepthTest gls_depth(GL_TRUE);
+    LLRenderState::DepthScope gls_depth(true);
 
     LLVector3 west_south_bottom_agent = gAgent.getPosAgentFromGlobal(west_south_bottom_global);
     F32 west    = west_south_bottom_agent.mV[VX];
@@ -550,8 +550,8 @@ void LLViewerParcelMgr::renderHighlightSegments(const U8* segments, LLViewerRegi
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
     // <FS:Ansariel> FIRE-10546: Show parcel boundary up to max. build level
     //LLGLDepthTest gls_depth(GL_TRUE);
-    LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
-    LLGLDisable cull(GL_CULL_FACE);
+    LLRenderState::DepthScope gls_depth(true, false);
+    LLRenderState::CullScope cull(false);
 
     static LLCachedControl<bool> fsRenderParcelSelectionToMaxBuildHeight(gSavedSettings, "FSRenderParcelSelectionToMaxBuildHeight");
     F32 height = fsRenderParcelSelectionToMaxBuildHeight ? LLWorld::instance().getMaxPrimZPos() + PARCEL_POST_HEIGHT : PARCEL_POST_HEIGHT;
@@ -636,8 +636,8 @@ void LLViewerParcelMgr::renderCollisionSegments(U8* segments, bool use_pass, LLV
     F32 pos_y = pos.mV[VY];
 
     LLGLSUIDefault gls_ui;
-    LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
-    LLGLDisable cull(GL_CULL_FACE);
+    LLRenderState::DepthScope gls_depth(true, false);
+    LLRenderState::CullScope cull(false);
 
     if (mCollisionBanned == BA_BANNED ||
         regionp->getRegionFlag(REGION_FLAGS_BLOCK_FLYOVER))
@@ -845,7 +845,7 @@ void LLViewerObjectList::renderObjectBeacons()
 
     {
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-        LLGLDepthTest gls_depth(GL_TRUE);
+        LLRenderState::DepthScope gls_depth(true);
 
         S32 last_line_width = -1;
         // gGL.begin(LLRender::LINES); // Always happens in (line_width != last_line_width)
@@ -1068,7 +1068,7 @@ F32 gpu_benchmark()
         }
     }
 
-    LLGLDisable blend(GL_BLEND);
+    LLRenderState::BlendScope blend(false);
 
     //measure memory bandwidth by:
     // - allocating a batch of textures and render targets
@@ -1098,7 +1098,7 @@ F32 gpu_benchmark()
     }
 
     gGL.setColorMask(true, true);
-    LLGLDepthTest depth(GL_FALSE);
+    LLRenderState::DepthScope depth(false);
 
     LLTimer alloc_timer;
     alloc_timer.start();

@@ -4341,9 +4341,9 @@ bool LLModelPreview::render()
     S32 height = getHeight();
 
     LLGLSUIDefault def;
-    LLGLDisable no_blend(GL_BLEND);
-    LLGLEnable cull(GL_CULL_FACE);
-    LLGLDepthTest depth(GL_FALSE); // SL-12781 disable z-buffer to render background color
+    LLRenderState::BlendScope no_blend(false);
+    LLRenderState::CullScope cull(true);
+    LLRenderState::DepthScope depth(false); // SL-12781 disable z-buffer to render background color
 
     {
         gUIProgram.bind();
@@ -4520,7 +4520,7 @@ bool LLModelPreview::render()
 
     F32 physics_explode = (F32)mFMP->childGetValue("physics_explode").asReal();
 
-    LLGLDepthTest gls_depth(GL_TRUE); // SL-12781 re-enable z-buffer for 3D model preview
+    LLRenderState::DepthScope gls_depth(true); // SL-12781 re-enable z-buffer for 3D model preview
 
     LLRect preview_rect;
 
@@ -4682,9 +4682,9 @@ bool LLModelPreview::render()
                     if (show_edges)
                     {
                         gGL.setLineWidth(edge_width()); // <FS:Beq/> restore changes removed by the lab
-                        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                        gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
                         buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
-                        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                         gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
                     }
                     buffer->unmapBuffer();
@@ -4708,7 +4708,7 @@ bool LLModelPreview::render()
                     }
 
                     //enable alpha blending on second pass but not first pass
-                    LLGLState blend(GL_BLEND, pass);
+                    LLRenderState::BlendScope blend(pass);
 
                     gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
 
@@ -4812,10 +4812,10 @@ bool LLModelPreview::render()
                                     gGL.diffuseColor4fv(phys_edge_col().mV);
                                     gGL.setLineWidth(phys_edge_width());
                                     // </FS:Beq>
-                                    gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                                    gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
                                     buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
 
-                                    gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                                    gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                                     gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
 
                                     buffer->unmapBuffer();
@@ -4837,8 +4837,8 @@ bool LLModelPreview::render()
                         // gPipeline.enableLightsFullbright(); // This may need to be restored when I fined the cause of the black rendering
                         // </FS:Beq>
                         //show degenerate triangles
-                        LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS);
-                        LLGLDisable cull(GL_CULL_FACE);
+                        LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
+                        LLRenderState::CullScope cull(false);
 
                         // gGL.diffuseColor4f(1.f, 0.f, 0.f, 1.f); // <FS:Beq/> restore proper functionality
                         const LLVector4a scale(0.5f);
@@ -4893,10 +4893,10 @@ bool LLModelPreview::render()
                                             if (ll_is_degenerate(v1, v2, v3))
                                             {
                                                 // <FS:Beq> restore (configurable) coloured overlay
-                                                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                                                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                                                 gGL.diffuseColor4fv(deg_fill_col().mV);
                                                 buffer->draw(LLRender::TRIANGLES, 3, i);
-                                                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                                                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
                                                 gGL.diffuseColor3fv(deg_edge_col().mV);
                                                 gGL.color3fv(deg_edge_col().mV);
                                                 // </FS:Beq>
@@ -5041,9 +5041,9 @@ bool LLModelPreview::render()
                                 gGL.diffuseColor4fv(edge_col().mV);
                                 gGL.setLineWidth(edge_width());
                                 // </FS:Beq>
-                                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
                                 buffer->draw(LLRender::TRIANGLES, buffer->getNumIndices(), 0);
-                                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                                 gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
                             }
                         }

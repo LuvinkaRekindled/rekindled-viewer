@@ -222,8 +222,8 @@ void LLManipScale::render()
 {
     LLGLSUIDefault gls_ui;
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-    LLGLDepthTest gls_depth(GL_TRUE);
-    LLGLEnable gl_blend(GL_BLEND);
+    LLRenderState::DepthScope gls_depth(true);
+    LLRenderState::BlendScope gl_blend(true);
     LLBBox bbox = LLSelectMgr::getInstance()->getBBoxOfSelection();
 
     if( canAffectSelection() )
@@ -308,7 +308,7 @@ void LLManipScale::render()
 
 
             {
-                LLGLEnable poly_offset(GL_POLYGON_OFFSET_FILL);
+                LLRenderState::PolygonOffsetScope poly_offset(true);
                 gGL.setPolygonOffset( -2.f, -2.f);
 
                 renderCorners( bbox );
@@ -639,7 +639,7 @@ void LLManipScale::renderFaces( const LLBBox& bbox )
     if (mManipPart == LL_NO_PART)
     {
         gGL.color4fv( default_normal_color.mV );
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
         gGL.begin(LLRender::TRIANGLE_STRIP);
         {
             gGL.vertex3f(min.mV[VX], max.mV[VY], min.mV[VZ]);
@@ -685,7 +685,7 @@ void LLManipScale::renderFaces( const LLBBox& bbox )
     };
 
     {
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
 
         for (S32 i = 0; i < 6; i++)
         {
@@ -756,7 +756,7 @@ void LLManipScale::renderCorners( const LLBBox& bbox )
 void LLManipScale::renderBoxHandle( F32 x, F32 y, F32 z )
 {
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-    LLGLDepthTest gls_depth(GL_FALSE);
+    LLRenderState::DepthScope gls_depth(false);
     //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 
     gGL.pushMatrix();
@@ -1324,11 +1324,11 @@ void LLManipScale::renderGuidelinesPart( const LLBBox& bbox )
     guideline_end += guideline_start;
 
     {
-        LLGLDepthTest gls_depth(GL_TRUE);
+        LLRenderState::DepthScope gls_depth(true);
         gl_line_3d( guideline_start, guideline_end, LLColor4(1.f, 1.f, 1.f, 0.5f) );
     }
     {
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
         gl_line_3d( guideline_start, guideline_end, LLColor4(1.f, 1.f, 1.f, 0.25f) );
     }
 }
@@ -1606,7 +1606,7 @@ void LLManipScale::renderSnapGuides(const LLBBox& bbox)
     }
 
     {
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
 
         F32 dist_grid_axis = llmax(0.f, (drag_point - mScaleCenter) * mScaleDir);
 
