@@ -1,6 +1,6 @@
 /**
- * @file llvkgl.h
- * @brief The Vulkan mirror's worker side: what the render thread keeps and runs for the typed command records (see llvkgl.cpp and llvkasync.cpp).
+ * @file llvkworker.h
+ * @brief The Vulkan mirror's worker side: what the render thread keeps and runs for the typed command records (see llvkworker.cpp and llvkasync.cpp).
  *
  * There are no intercepted GL functions any more (F2.1): the viewer writes typed records (llvkstate.h, llvktex.h, llvkbuf.h, llvktarget.h, llvkquery.h, llvkasync.h)
  * and the worker plays them. This header only has what the two translation units and the mirror share.
@@ -12,7 +12,7 @@
 #define LL_LLVKGL_H
 
 #include <mutex>
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 #include "llvkasync.h"
 
 namespace LLVkWorker

@@ -49,7 +49,7 @@
 // Linden library includes
 #include "llaudioengine.h"
 #include "llbutton.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llfloater.h"
 #include "llfloaterreg.h"
 #include "llimagej2c.h"

@@ -1,5 +1,5 @@
 /**
- * @file llglslshader.cpp
+ * @file llshaderprogram.cpp
  * @brief GLSL helper functions and state.
  *
  * $LicenseInfo:firstyear=2005&license=viewerlgpl$
@@ -26,7 +26,7 @@
 
 #include "linden_common.h"
 
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 #include <cctype>
 #include <set>
 
@@ -42,7 +42,7 @@
 #include <emmintrin.h>
 #include "llvkbuf.h"
 #include "llvkquery.h"
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 #endif
 
 #include "hbxxh.h"

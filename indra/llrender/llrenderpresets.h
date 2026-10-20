@@ -1,5 +1,5 @@
 /**
- * @file llglstates.h
+ * @file llrenderpresets.h
  * @brief LLGL states definitions
  *
  * $LicenseInfo:firstyear=2001&license=viewerlgpl$
@@ -24,11 +24,11 @@
  * $/LicenseInfo$
  */
 
-//THIS HEADER SHOULD ONLY BE INCLUDED FROM llgl.h
+//THIS HEADER SHOULD ONLY BE INCLUDED FROM lldevicecaps.h
 #ifndef LL_LLGLSTATES_H
 #define LL_LLGLSTATES_H
 
-#include "llimagegl.h"
+#include "llimagetex.h"
 
 //----------------------------------------------------------------------------
 

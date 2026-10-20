@@ -30,7 +30,7 @@
 #include "llpointer.h"
 #include "llstl.h"
 
-#include "llimagegl.h"
+#include "llimagetex.h"
 #include "llfontbitmapcache.h"
 
 #include <unordered_map>

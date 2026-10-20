@@ -28,9 +28,9 @@
 
 #include "llbox.h"
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 
 LLBox       gBox;
 

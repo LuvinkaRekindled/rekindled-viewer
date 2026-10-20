@@ -10,7 +10,7 @@
 #include "llvkrt.h"
 #include <xmmintrin.h>
 #include "llvkrenderer.h"
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/Public/ResourceLimits.h>

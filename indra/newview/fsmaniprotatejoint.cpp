@@ -28,7 +28,7 @@
 #include "llviewerprecompiledheaders.h"
 #include "fsmaniprotatejoint.h"
 #include "llmath.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "v4color.h"
 #include "llprimitive.h"

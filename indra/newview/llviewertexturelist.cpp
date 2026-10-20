@@ -33,8 +33,8 @@
 #include "lldrawpool.h"
 
 #include "llagent.h"
-#include "llgl.h" // fot gathering stats from GL
-#include "llimagegl.h"
+#include "lldevicecaps.h" // fot gathering stats from GL
+#include "llimagetex.h"
 #include "llimagebmp.h"
 #include "llimagej2c.h"
 #include "llimagetga.h"
@@ -66,7 +66,7 @@
 #include "llviewerwindow.h"
 #include "llwindow.h"
 #include "llprogressview.h"
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 
 ////////////////////////////////////////////////////////////////////////////
 

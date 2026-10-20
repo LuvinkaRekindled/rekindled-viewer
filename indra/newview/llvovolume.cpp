@@ -67,7 +67,7 @@
 #include "llworld.h"
 #include "llselectmgr.h"
 #include "pipeline.h"
-#include "llvkmirror.h"     // <FS> LLVkBridge::readbackAffordable (sculpt maps)
+#include "llvkbridge.h"     // <FS> LLVkBridge::readbackAffordable (sculpt maps)
 #include "llsdutil.h"
 #include "llmatrix4a.h"
 #include "llmediaentry.h"

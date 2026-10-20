@@ -27,7 +27,7 @@
 #include "linden_common.h"
 
 #include "llpostprocess.h"
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 #include "llsdserialize.h"
 #include "llrender.h"
 #include "llvktex.h"

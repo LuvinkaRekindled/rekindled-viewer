@@ -49,7 +49,7 @@
 #include "material_codes.h"
 #include "v3color.h"
 #include "llui.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llrender.h"
 #include "llstartup.h"
 #include "llwindow.h"   // swapBuffers()
@@ -84,7 +84,7 @@
 #include "lltool.h"
 #include "lltoolmgr.h"
 #include "llviewercamera.h"
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 #include "llviewermediafocus.h"
 #include "llviewertexturelist.h"
 #include "llviewerobject.h"

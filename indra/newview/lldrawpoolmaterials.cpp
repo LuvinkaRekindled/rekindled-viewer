@@ -30,7 +30,7 @@
 #include "lldrawpoolmaterials.h"
 #include "llviewershadermgr.h"
 #include "pipeline.h"
-#include "llglcommonfunc.h"
+#include "llrendercommonfunc.h"
 #include "llvoavatar.h"
 
 LLDrawPoolMaterials::LLDrawPoolMaterials()

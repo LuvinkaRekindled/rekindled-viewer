@@ -36,7 +36,7 @@
 #include "llpointer.h"
 #include "lldrawpoolalpha.h"
 #include "lldrawpoolmaterials.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "lldrawable.h"
 #include "llrendertarget.h"
 #include "llreflectionmapmanager.h"

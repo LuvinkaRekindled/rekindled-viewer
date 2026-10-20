@@ -1,5 +1,5 @@
 /**
- * @file llgl.cpp
+ * @file lldevicecaps.cpp
  * @brief LLGL implementation
  *
  * $LicenseInfo:firstyear=2001&license=viewerlgpl$
@@ -28,7 +28,7 @@
 // useful functions for GL operations.
 
 #include "linden_common.h"
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 #include "llvkasync.h"
 #include <atomic>
 
@@ -36,8 +36,8 @@
 
 #include "llsys.h"
 
-#include "llgl.h"
-#include "llglstates.h"
+#include "lldevicecaps.h"
+#include "llrenderpresets.h"
 #include "llrender.h"
 
 #include "llerror.h"
@@ -48,8 +48,8 @@
 #include "llstring.h"
 #include "llstacktrace.h"
 
-#include "llglheaders.h"
-#include "llglslshader.h"
+#include "llrenderheaders.h"
+#include "llshaderprogram.h"
 
 #include "glm/glm.hpp"
 #include <glm/gtc/matrix_access.hpp>
@@ -322,7 +322,7 @@ void LLDeviceCaps::shutdownRenderDevice()
 }
 
 #if defined(LL_VULKAN)
-#include "llvkgl.h"
+#include "llvkworker.h"
 #include "llvkstate.h"
 #endif
 

@@ -29,7 +29,7 @@
 
 #include "lluuid.h"
 //#include "message.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llviewertexture.h"
 #include "llui.h"
 #include <list>

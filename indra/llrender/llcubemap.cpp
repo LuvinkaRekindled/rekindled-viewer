@@ -36,9 +36,9 @@
 #include "m4math.h"
 
 #include "llrender.h"
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llvktex.h"
 
 namespace {

@@ -1,11 +1,11 @@
 /**
- * @file llvkmirror.cpp
- * @brief Vulkan mirror mode (see llvkmirror.h)
+ * @file llvkbridge.cpp
+ * @brief Vulkan mirror mode (see llvkbridge.h)
  */
 
 #include "linden_common.h"
 
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 
 #if !defined(LL_VULKAN)
 
@@ -46,7 +46,7 @@ void LLVkBridge::stopAsync() {}
 
 #else // LL_VULKAN
 
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include <psapi.h>
 #include "llvkcontext.h"
 #include "llvkdlss.h"
@@ -631,7 +631,7 @@ bool LLVkBridge::describeDevice(DeviceInfo& out)
     version = buf;
     out.mVramMb = (U32)(LLVk::Context::instance().deviceLocalBytes() / (1024 * 1024));
 
-    // limits: what the GL queries used to be answered with (see emulate_limit in llvkgl.cpp, which reads the same capabilities)
+    // limits: what the GL queries used to be answered with (see emulate_limit in llvkworker.cpp, which reads the same capabilities)
     out.mMaxTextureSize = (S32)caps.mMaxImageDim2D;
     out.mTextureImageUnits = (S32)std::min<U32>(caps.mMaxSampledImagesPerStage, 32u);     // not the descriptor limit (a million): display() loops over every unit
     out.mMaxSamples = (S32)caps.mMaxSampleCount;

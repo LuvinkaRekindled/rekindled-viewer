@@ -28,7 +28,7 @@
 #include "llviewerprecompiledheaders.h"
 #include "llfloaterauction.h"
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llimagej2c.h"
 #include "llimagetga.h"
 #include "llparcel.h"

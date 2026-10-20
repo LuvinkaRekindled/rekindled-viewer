@@ -1,5 +1,5 @@
 /**
- * @file llgltexture.h
+ * @file llbasetexture.h
  * @brief Object for managing opengl textures
  *
  * $LicenseInfo:firstyear=2012&license=viewerlgpl$
@@ -29,7 +29,7 @@
 #define LL_GL_TEXTURE_H
 
 #include "lltexture.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 
 class LLImageRaw;
 

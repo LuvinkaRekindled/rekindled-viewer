@@ -29,7 +29,7 @@
 #include "llhudeffect.h"
 
 #include "message.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llagent.h"
 #include "llrendersphere.h"
 

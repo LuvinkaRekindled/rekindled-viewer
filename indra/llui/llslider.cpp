@@ -29,7 +29,7 @@
 #include "llslider.h"
 #include "llui.h"
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llwindow.h"
 #include "llfocusmgr.h"
 #include "llkeyboard.h"         // for the MASK constants

@@ -31,7 +31,7 @@
 #include "v4math.h"
 #include "v4color.h"
 #include "lluuid.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llviewertexture.h"
 
 class LLViewerCamera;

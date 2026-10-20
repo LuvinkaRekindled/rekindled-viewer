@@ -29,7 +29,7 @@
 #include "llrendertarget.h"
 #include "llrenderpass.h"
 #include "llrender.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include <atomic>
 #include <algorithm>
 #include <vector>

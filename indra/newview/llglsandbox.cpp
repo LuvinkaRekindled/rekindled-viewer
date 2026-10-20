@@ -33,9 +33,9 @@
 
 #include "llviewercontrol.h"
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llparcel.h"
 #include "llui.h"
 

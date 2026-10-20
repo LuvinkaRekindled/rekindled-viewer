@@ -1,5 +1,5 @@
 /**
- * @file llglslshader.h
+ * @file llshaderprogram.h
  * @brief GLSL shader wrappers
  *
  * $LicenseInfo:firstyear=2001&license=viewerlgpl$
@@ -27,7 +27,7 @@
 #ifndef LL_LLGLSLSHADER_H
 #define LL_LLGLSLSHADER_H
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "llrenderformat.h"
 #include "llstaticstringtable.h"

@@ -29,7 +29,7 @@
 
 // LLRenderTarget is unavailible on the mapserver since it uses FBOs.
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "llrenderpass.h"        // F3.5a: RenderPassScope
 

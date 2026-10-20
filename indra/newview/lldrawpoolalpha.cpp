@@ -29,7 +29,7 @@
 #include "lldrawpoolalpha.h"
 #include <algorithm>
 
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llviewercontrol.h"
 #include "llcriticaldamp.h"
 #include "llfasttimer.h"
@@ -44,12 +44,12 @@
 #include "llviewerobjectlist.h" // For debugging
 #include "llviewerwindow.h"
 #include "pipeline.h"
-#include "llvkmirror.h"          // <FS> rtShadowMode()
+#include "llvkbridge.h"          // <FS> rtShadowMode()
 #include "llviewershadermgr.h"
 #include "llviewerregion.h"
 #include "lldrawpoolwater.h"
 #include "llspatialpartition.h"
-#include "llglcommonfunc.h"
+#include "llrendercommonfunc.h"
 #include "llvoavatar.h"
 #include "gltfscenemanager.h"
 

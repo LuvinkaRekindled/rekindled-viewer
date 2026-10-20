@@ -24,7 +24,7 @@
  * $/LicenseInfo$
  */
 
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 
 void LLShaderProgram::uniform1f(const std::string& uniform, F32 num)
 {

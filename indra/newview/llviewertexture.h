@@ -28,7 +28,7 @@
 #define LL_LLVIEWERTEXTURE_H
 
 #include "llatomic.h"
-#include "llgltexture.h"
+#include "llbasetexture.h"
 #include "lltimer.h"
 #include "llframetimer.h"
 #include "llhost.h"

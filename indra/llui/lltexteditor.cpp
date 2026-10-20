@@ -32,7 +32,7 @@
 
 #include "llfontfreetype.h" // for LLFontFreetype::FIRST_CHAR
 #include "llfontgl.h"
-#include "llgl.h"           // LLRenderPresetUIDefault()
+#include "lldevicecaps.h"           // LLRenderPresetUIDefault()
 #include "lllocalcliprect.h"
 #include "llrender.h"
 #include "llui.h"

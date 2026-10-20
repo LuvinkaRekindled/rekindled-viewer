@@ -30,7 +30,7 @@
 #include "llimage.h"
 #include "llrender.h"
 #include "lltexlayer.h"
-#include "llgltexture.h"
+#include "llbasetexture.h"
 #include "lluuid.h"
 #include "llwearable.h"
 

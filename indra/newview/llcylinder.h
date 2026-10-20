@@ -28,7 +28,7 @@
 #define LL_LLCYLINDER_H
 
 //#include "stdtypes.h"
-//#include "llgl.h"
+//#include "lldevicecaps.h"
 
 #include "llvertexbuffer.h"
 

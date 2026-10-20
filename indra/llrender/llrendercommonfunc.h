@@ -1,5 +1,5 @@
 /**
-* @file llglcommonfunc.h
+* @file llrendercommonfunc.h
 * @brief File include common opengl code snippets
 *
 * $LicenseInfo:firstyear=2003&license=viewerlgpl$

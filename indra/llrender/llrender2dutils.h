@@ -33,7 +33,7 @@
 #include "llpointer.h"      // LLPointer<>
 #include "llrect.h"
 #include "llsingleton.h"
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 
 class LLColor4;
 class LLVector3;

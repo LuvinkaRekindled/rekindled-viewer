@@ -1,5 +1,5 @@
 /**
-* @file llglcommonfunc.cpp
+* @file llrendercommonfunc.cpp
 * @brief Implementation of the LLGLCommonFunc.
 *
 * $LicenseInfo:firstyear=2001&license=viewerlgpl$
@@ -24,8 +24,8 @@
 * $/LicenseInfo$
 */
 
-#include "llglheaders.h"
-#include "llglcommonfunc.h"
+#include "llrenderheaders.h"
+#include "llrendercommonfunc.h"
 
 namespace LLGLCommonFunc
 {

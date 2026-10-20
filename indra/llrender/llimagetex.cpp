@@ -1,5 +1,5 @@
 /**
- * @file llimagegl.cpp
+ * @file llimagetex.cpp
  * @brief Generic GL image handler
  *
  * $LicenseInfo:firstyear=2001&license=viewerlgpl$
@@ -30,15 +30,15 @@
 #include "linden_common.h"
 #include <chrono>
 
-#include "llimagegl.h"
+#include "llimagetex.h"
 
 #include "llerror.h"
 #include "llfasttimer.h"
 #include "llimage.h"
 
 #include "llmath.h"
-#include "llgl.h"
-#include "llglslshader.h"
+#include "lldevicecaps.h"
+#include "llshaderprogram.h"
 #include "llrender.h"
 #include "llwindow.h"
 #include "llframetimer.h"
@@ -765,7 +765,7 @@ void LLImageTex::setExplicitFormat( TexelFormat internal_format, PixelFormat pri
 
 //----------------------------------------------------------------------------
 
-// <FS> native-vk (C4): see the declaration in llimagegl.h
+// <FS> native-vk (C4): see the declaration in llimagetex.h
 LLImageTex::PixelHandover::PixelHandover(const LLImageRaw* raw)
 :   mActive(false)
 {

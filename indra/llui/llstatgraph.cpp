@@ -32,8 +32,8 @@
 
 #include "llmath.h"
 #include "llui.h"
-#include "llgl.h"
-#include "llglheaders.h"
+#include "lldevicecaps.h"
+#include "llrenderheaders.h"
 #include "lltracerecording.h"
 #include "lltracethreadrecorder.h"
 

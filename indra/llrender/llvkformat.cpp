@@ -4,7 +4,7 @@
  */
 
 #include "linden_common.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 
 #if defined(LL_VULKAN)
 

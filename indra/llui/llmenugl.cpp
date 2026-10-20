@@ -40,7 +40,7 @@
 
 #include "llmenugl.h"
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llmath.h"
 #include "llrender.h"
 #include "llfocusmgr.h"

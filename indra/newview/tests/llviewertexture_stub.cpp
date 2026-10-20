@@ -26,7 +26,7 @@
 
 #include "linden_common.h"
 #include "../llviewertexture.h"
-#include "../../llrender/llgltexture.h"
+#include "../../llrender/llbasetexture.h"
 
 void LLViewerTexture::setBoostLevel(int level)
 {

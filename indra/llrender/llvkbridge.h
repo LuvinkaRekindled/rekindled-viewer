@@ -1,5 +1,5 @@
 /**
- * @file llvkmirror.h
+ * @file llvkbridge.h
  * @brief Vulkan "mirror" mode: OpenGL stays the renderer of record while the llrender classes replay what they do
  *        into the Vulkan backend, which renders the same frame into its own window.
  *

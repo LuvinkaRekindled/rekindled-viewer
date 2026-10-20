@@ -32,7 +32,7 @@
 #include "llrect.h"
 #include "llcombobox.h"
 #include "llerror.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llimagepng.h"
 #include "llrender.h"
 #include "llrendertarget.h"

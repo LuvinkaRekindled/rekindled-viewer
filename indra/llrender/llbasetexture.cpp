@@ -1,5 +1,5 @@
 /**
- * @file llgltexture.cpp
+ * @file llbasetexture.cpp
  * @brief Opengl texture implementation
  *
  * $LicenseInfo:firstyear=2000&license=viewerlgpl$
@@ -24,7 +24,7 @@
  * $/LicenseInfo$
  */
 #include "linden_common.h"
-#include "llgltexture.h"
+#include "llbasetexture.h"
 
 
 LLBaseTexture::LLBaseTexture(bool usemipmaps)

@@ -25,7 +25,7 @@
 #ifndef LLLOCALCLIPRECT_H
 #define LLLOCALCLIPRECT_H
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrect.h"     // can't forward declare, it's templated
 #include <stack>
 

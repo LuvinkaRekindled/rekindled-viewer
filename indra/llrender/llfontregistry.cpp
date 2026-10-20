@@ -26,7 +26,7 @@
  */
 
 #include "linden_common.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llfontfreetype.h"
 #include "llfontgl.h"
 #include "llfontregistry.h"

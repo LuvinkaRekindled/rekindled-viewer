@@ -32,7 +32,7 @@
 #include "llcoord.h"
 #include "llfontgl.h"
 #include "llframetimer.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llhost.h"
 #include "llnotificationsutil.h"
 #include "llregionflags.h"

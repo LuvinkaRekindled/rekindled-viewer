@@ -1,5 +1,5 @@
 /**
- * @file llgl.h
+ * @file lldevicecaps.h
  * @brief LLGL definition
  *
  * $LicenseInfo:firstyear=2001&license=viewerlgpl$
@@ -44,7 +44,7 @@
 #include "llgltypes.h"
 #include "llinstancetracker.h"
 
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "glm/mat4x4.hpp"
 
 extern bool gDebugRender;
@@ -250,7 +250,7 @@ public:
 
 extern LLMatrix4 gRenderObliqueProjectionInverse;
 
-#include "llglstates.h"
+#include "llrenderpresets.h"
 
 void init_glstates();
 

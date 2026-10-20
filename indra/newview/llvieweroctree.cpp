@@ -30,7 +30,7 @@
 #include "pipeline.h"
 #include "llviewercontrol.h"
 #include "llappviewer.h"
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 #include "llviewershadermgr.h"
 #include "lldrawpoolwater.h"
 

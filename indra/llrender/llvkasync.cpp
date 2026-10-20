@@ -9,9 +9,9 @@
 
 #include "llvkasync.h"
 #include "llrenderpass.h"
-#include "llglheaders.h"
-#include "llvkgl.h"
-#include "llvkmirror.h"
+#include "llrenderheaders.h"
+#include "llvkworker.h"
+#include "llvkbridge.h"
 #include "llvkzones.h"
 #include "llvkrenderer.h"
 #include "llvkstate.h"

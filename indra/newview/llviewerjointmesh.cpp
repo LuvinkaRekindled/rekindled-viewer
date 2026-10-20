@@ -39,7 +39,7 @@
 #include "lldrawpoolbump.h"
 #include "lldynamictexture.h"
 #include "llface.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llviewertexlayer.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
@@ -55,7 +55,7 @@
 #include "m4math.h"
 #include "llmatrix4a.h"
 #include "llperfstats.h"
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 
 #include <unordered_set>
 #include <unordered_map>

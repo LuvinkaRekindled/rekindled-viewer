@@ -121,7 +121,7 @@
 #include "nd/ndlogthrottle.h"
 // <FS:Zi> Run Prio 0 default bento pose in the background to fix splayed hands, open mouths, etc.
 #include "llanimationstates.h"
-#include "llvkmirror.h" // <FS> Vulkan present mode
+#include "llvkbridge.h" // <FS> Vulkan present mode
 
 // Third party library includes
 #include <boost/algorithm/string.hpp>

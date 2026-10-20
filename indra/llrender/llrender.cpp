@@ -30,8 +30,8 @@
 
 #include "llvertexbuffer.h"
 #include "llcubemap.h"
-#include "llglslshader.h"
-#include "llimagegl.h"
+#include "llshaderprogram.h"
+#include "llimagetex.h"
 #include "llrendertarget.h"
 #include "lltexture.h"
 #include "llshadermgr.h"

@@ -27,7 +27,7 @@
 #ifndef LL_LLVERTEXBUFFER_H
 #define LL_LLVERTEXBUFFER_H
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "v2math.h"
 #include "v3math.h"
 #include "v4math.h"

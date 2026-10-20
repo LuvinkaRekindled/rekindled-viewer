@@ -30,7 +30,7 @@
 #include "lltoolselectrect.h"
 
 // Library includes
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 
 // Viewer includes
@@ -43,7 +43,7 @@
 #include "llviewerwindow.h"
 #include "llviewercamera.h"
 
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 
 // Globals
 const S32 SLOP_RADIUS = 5;

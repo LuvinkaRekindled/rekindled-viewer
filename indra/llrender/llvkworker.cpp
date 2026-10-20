@@ -1,6 +1,6 @@
 /**
- * @file llvkgl.cpp
- * @brief Translation of the viewer's OpenGL call stream into Vulkan (see llvkgl.h).
+ * @file llvkworker.cpp
+ * @brief Translation of the viewer's OpenGL call stream into Vulkan (see llvkworker.h).
  *
  * Every hook runs after the real GL call. The hooks keep a copy of the GL state that matters (textures, framebuffer
  * attachments, buffers, vertex arrays, draw state) and, at each draw, translate it into Vulkan state and replay the
@@ -10,12 +10,12 @@
 #include "linden_common.h"
 #include <xmmintrin.h>
 
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 
 #if defined(LL_VULKAN)
 
-#include "llvkmirror.h"
-#include "llglslshader.h"
+#include "llvkbridge.h"
+#include "llshaderprogram.h"
 #include "llshadermgr.h"
 #include "llvkshader.h"
 #include "llvkcontext.h"
@@ -30,7 +30,7 @@
 #include "llvkrt.h"
 
 #include <chrono>
-#include "llvkgl.h"
+#include "llvkworker.h"
 #include "llvkasync.h"
 #include <map>
 #include <mutex>
@@ -50,7 +50,7 @@ namespace LLVkWorker
 {
 
 bool gActive = false;
-bool gOwn = false;      // LL_VK_OWN: the mirror owns the GL resources (see llvkgl.h)
+bool gOwn = false;      // LL_VK_OWN: the mirror owns the GL resources (see llvkworker.h)
 LLVkBridge::Mutex gMutex;
 
 // CPU time spent inside the translator's draw/clear hooks (the cost of recording the work into Vulkan), in ticks of the performance counter
