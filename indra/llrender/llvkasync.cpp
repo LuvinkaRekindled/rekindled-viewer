@@ -60,8 +60,6 @@ namespace LLVkAsync
 bool gEnabled = false;
 bool gTexOneCopy = false;   // C4: opt-in (LL_VK_TEXONECOPY=1), the measured gain was nil
 static int gMode = 1;
-static int uniformRecFromEnv() { const char* e = getenv("LL_VK_UNIFORMREC"); return e ? std::min(2, std::max(0, atoi(e))) : 2; }
-int gUniformRec = uniformRecFromEnv();  // F2.5, see llvkasync.h
 
 namespace
 {
@@ -283,7 +281,6 @@ inline void mainCommit(size_t payload_bytes)
 // and written as one record each: BIND_TEXTURE_UNIT (the unit and the bind) and ARRAY_RUN (the buffer bind and its attribute pointers).
 // Nothing is dropped and nothing is reordered: whatever else is queued first writes out what is held, and the worker plays a merged record
 // by calling the same functions in the same order.
-bool gTyped = true;                           // LL_VK_TYPED=0: typed records (LLVertexBuffer::setBuffer) off, the separate calls are queued as before
 unsigned long long gMainRecords = 0;        // records actually written by the main thread (a sub-stream's are counted when it is spliced)
 inline void noteRecord() { if (!tlsBuf) { ++gMainRecords; } }
 
@@ -513,7 +510,7 @@ void frontNote(int id) { if (isMainThread()) { ++gFrontCalls[id]; if (id == FP_D
 
 bool mainProducer()
 {
-    return gEnabled && gTyped && produces();
+    return gEnabled && produces();
 }
 
 void framebufferAttach(U32 fbo, U32 slot, U32 texture)
@@ -2144,8 +2141,7 @@ void applyUniformBatch(const U8* p, U32 bytes)
             LLVk::Program* pr = (LLVk::Program*)a.mProgram;
             if (pr)
             {
-                if (gUniformRec == 1) pr->writeRangeVerify(a.mClass, a.mOffset, a.mSize, d + sizeof(a));
-                else pr->writeRange(a.mClass, a.mOffset, a.mSize, d + sizeof(a));
+                pr->writeRange(a.mClass, a.mOffset, a.mSize, d + sizeof(a));
             }
             break;
         }
@@ -2275,15 +2271,6 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             LL_INFOS("VkOps") << "worker operations: " << opStatsReport(gOpStatsFrames) << LL_ENDL;
             gOpStatsFrames = 0;
         }
-        if (gUniformRec == 1)
-        {
-            static unsigned check_frames = 0;
-            if (++check_frames >= 600)
-            {
-                check_frames = 0;
-                LL_INFOS("VkDrawRec") << "draw record check: " << LLVkWorker::draw_check_report() << LL_ENDL;
-            }
-        }
         break;
     case CMD_HOLD: LLVkBridge::holdFrameImpl(r.get<S32>() != 0); break;
     case CMD_SNAPSHOT_BOUNDARY: LLVkBridge::snapshotBoundaryImpl(r.get<S32>()); break;
@@ -2342,10 +2329,6 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         if (h->mUniBytes)
         {
             applyUniformBatch(payload + sizeof(DrawHeader2) + h2->mBindBytes + id_bytes, h->mUniBytes);
-        }
-        if (gUniformRec == 1)
-        {
-            LLVkWorker::uniform_check();
         }
         U32 k = 0;
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
@@ -2763,7 +2746,6 @@ bool start()
         return true;
     }
     gMainTid = __readgsdword(0x48);
-    { const char* ty = getenv("LL_VK_TYPED"); gTyped = !(ty && ty[0] == '0'); }
     { const char* t1 = getenv("LL_VK_TEXONECOPY"); gTexOneCopy = t1 && t1[0] == '1'; }
     if (!gRing)
     {

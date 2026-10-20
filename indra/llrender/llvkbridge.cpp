@@ -9,7 +9,6 @@
 
 #if !defined(LL_VULKAN)
 
-bool LLVkBridge::isRequested() { return false; }
 bool LLVkBridge::isReady() { return false; }
 bool LLVkBridge::videoMemory(U64&, U64&) { return false; }
 bool LLVkBridge::readbackAffordable() { return true; }
@@ -58,7 +57,7 @@ void LLVkBridge::stopAsync() {}
 
 #include <cstdlib>
 
-namespace LLVkWorker { extern bool gActive; extern bool gOwn; extern LLVkBridge::Mutex gMutex; void after_frame(); void before_end_frame(); double take_hook_ms(); std::string resource_summary(); }
+namespace LLVkWorker { extern bool gActive; extern LLVkBridge::Mutex gMutex; void after_frame(); void before_end_frame(); double take_hook_ms(); std::string resource_summary(); }
 
 namespace LLVkBridge
 {
@@ -86,303 +85,20 @@ long long phaseNow()
 namespace
 {
 
-//-----------------------------------------------------------------------------------------------------
-// Benchmark mode (LL_VK_MIRROR_BENCH=1): times the same work on the GPU in OpenGL (timestamp queries) and in Vulkan (timestamp
-// queries in the mirrored command buffers). OpenGL is finished before each Vulkan frame is submitted and Vulkan is waited for
-// before OpenGL continues, so the two never share the GPU while being timed. A loop iteration has two stretches of work:
-//   A: display() up to the swap           (GL: stamps 0..1, Vulkan: the present frame)
-//   B: probe update, snapshots, the rest  (GL: stamps 2..3, Vulkan: the off-screen frame)
-// The CPU cost of recording the work into Vulkan (time inside the draw/clear hooks) is reported alongside.
-//-----------------------------------------------------------------------------------------------------
-
-bool bench_enabled()
-{
-    static const bool enabled = getenv("LL_VK_MIRROR_BENCH") != nullptr;
-    return enabled;
-}
-
 const char* const PHASE_NAMES[] = { "all hooks", "uniform hooks", "draw hooks", "draw: target", "draw: state", "draw: textures", "draw: uniform blocks", "draw: vertex input", "draw: renderer apply+record", "draw: debug stats",
                                      "apply: texture layouts", "apply: begin pass", "apply: pipeline", "apply: dynamic state", "apply: vertex input", "apply: sampler slots + ray scene set", "apply: uniforms", "apply: push textures", "apply: vkCmdDraw" };
 
-// LL_VK_MIRROR_GLONLY=1 (with LL_VK_MIRROR_BENCH=1, without LL_VK_MIRROR): no Vulkan at all; only the GL side is timed, at the viewer's natural pace
-bool glonly_mode()
-{
-    static const bool glonly = getenv("LL_VK_MIRROR_GLONLY") != nullptr && getenv("LL_VK_MIRROR_BENCH") != nullptr;
-    return glonly;
-}
-
-// kinds of pass the Vulkan GPU time is split into (every fourth iteration is recorded with a timestamp at each change of kind)
-const char* const BENCH_KINDS[] = { "setup/other", "shadow", "occlusion", "sky", "gbuffer", "lighting", "alpha", "post", "probes", "hud", "ui" };
-const U32 BENCH_KIND_COUNT = (U32)(sizeof(BENCH_KINDS) / sizeof(BENCH_KINDS[0]));
-
-U32 bench_kind_of(const char* n)
-{
-    const std::string name = n ? n : "";
-    auto has = [&](const char* s) { return name.find(s) != std::string::npos; };
-    if (has("Shadow")) return 1;
-    if (has("Occlusion")) return 2;
-    if (has("Reflection") || has("Radiance") || has("Irradiance")) return 8;
-    if (has("Windlight") || has("Star") || has("Sun Program") || has("Cloud")) return 3;
-    if (has("Soften") || has("Light Shader") || has("MultiLight") || has("SpotLight") || has("Sun Shader") || has("Blur Light")) return 5;
-    if (has("HUD")) return 9;
-    if (has("UI Shader")) return 10;
-    if (has("Glow") || has("Tonemap") || has("Exposure") || has("Luminance") || has("SMAA") || has("Sharpening") || has("Post") || has("Copy") || has("Haze")) return 7;
-    if (has("Alpha")) return 6;
-    return 4;
-}
-
-struct Bench
-{
-    static const U32 SLOTS = 16;
-    static const U32 PHASE_QUERIES = 4096;
-    bool mInit = false;
-    VkQueryPool mPool = VK_NULL_HANDLE;
-    VkQueryPool mPhasePool = VK_NULL_HANDLE;
-    bool mPhaseIteration = false;           // this iteration's present frame records phase timestamps
-    bool mPhaseActive = false;              // ... and is recording right now
-    U32 mPhaseUsed = 0;
-    U32 mPhaseKind[PHASE_QUERIES] = {};
-    int mCurrentKind = -1;
-    double mKindMs[16] = {};
-    U32 mPhaseFrames = 0;
-    double mThreadCpu = 0;
-    ULONGLONG mLastThreadTime = 0;
-    U32 mNextSlot = 0;
-    U32 mCurSlot = 0;
-    U32 mIter = 0;
-    double mGlA = 0, mGlB = 0, mVkA = 0, mVkB = 0, mHook = 0, mWall = 0, mGlCpu = 0, mDispCpu = 0;
-    U32 mGlN = 0, mVkAN = 0, mVkBN = 0, mWallN = 0, mDispN = 0;
-    LARGE_INTEGER mLastT0 = {};
-    LARGE_INTEGER mDispStart = {};
-};
-Bench sBench;
-
-void bench_init()
-{
-    if (!bench_enabled() || sBench.mInit)
-    {
-        return;
-    }
-    sBench.mInit = true;
-    LLVkBridge::gPhaseTiming = !glonly_mode();
-    if (glonly_mode())
-    {
-        LL_INFOS("VkBench") << "benchmark mode on, OpenGL only: no Vulkan work; GL GPU time and CPU time are measured at the viewer's natural pace" << LL_ENDL;
-        return;
-    }
-    LLVk::Context& ctx = LLVk::Context::instance();
-    VkQueryPoolCreateInfo qi = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
-    qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    qi.queryCount = Bench::SLOTS * 2;
-    LLVk::vkCreateQueryPool(ctx.getDevice(), &qi, nullptr, &sBench.mPool);
-    qi.queryCount = Bench::PHASE_QUERIES;
-    LLVk::vkCreateQueryPool(ctx.getDevice(), &qi, nullptr, &sBench.mPhasePool);
-    LL_INFOS("VkBench") << "benchmark mode on: GL and Vulkan GPU times are measured with the two APIs serialised" << LL_ENDL;
-}
-
-void bench_log()
-{
-    const double n = (double)std::max<U32>(1, sBench.mGlN);
-    LL_INFOS("VkBench") << "BENCH over " << sBench.mGlN << " iterations: wall " << (sBench.mWallN ? sBench.mWall / sBench.mWallN : 0.0) << " ms/iter | GPU OpenGL display "
-                        << sBench.mGlA / n << " ms + rest " << sBench.mGlB / n << " ms = " << (sBench.mGlA + sBench.mGlB) / n
-                        << " ms | GPU Vulkan present frame " << (sBench.mVkAN ? sBench.mVkA / sBench.mVkAN : 0.0) << " ms + off-screen frame "
-                        << (sBench.mVkBN ? sBench.mVkB / sBench.mVkBN : 0.0) << " ms | CPU recording into Vulkan " << sBench.mHook / std::max<U32>(1, sBench.mWallN)
-                        << " ms/iter | CPU inside OpenGL calls " << sBench.mGlCpu / std::max<U32>(1, sBench.mWallN) << " ms/iter | CPU of display() up to the swap "
-                        << (sBench.mDispN ? sBench.mDispCpu / sBench.mDispN : 0.0) << " ms | main thread CPU busy " << sBench.mThreadCpu / std::max<U32>(1, sBench.mWallN) << " ms/iter" << LL_ENDL;
-    {
-        U32 ring_peak = 0, ring_dropped = 0;
-        LLVk::Renderer::instance().getRingStats(ring_peak, ring_dropped);
-        PROCESS_MEMORY_COUNTERS_EX pmc = {};
-        pmc.cb = sizeof(pmc);
-        GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
-        LL_INFOS("VkBench") << "BENCH memory: process working set " << pmc.WorkingSetSize / (1024 * 1024) << " MB, private " << pmc.PrivateUsage / (1024 * 1024)
-                            << " MB | uniform ring peak " << ring_peak / 1024 << " KB of " << (128 * 1024) << " KB per frame, " << ring_dropped << " draws dropped | "
-                            << LLVk::Context::instance().memoryBudgetText() << LL_ENDL;
-        LL_INFOS("VkBench") << "BENCH resources: " << LLVkWorker::resource_summary() << LL_ENDL;
-    }
-    if (LLVkBridge::gPhaseTiming)
-    {
-        LARGE_INTEGER freq;
-        QueryPerformanceFrequency(&freq);
-        std::string text;
-        for (int p = 0; p < LLVkBridge::PH_COUNT; ++p)
-        {
-            text += std::string(PHASE_NAMES[p]) + " " + std::to_string((double)LLVkBridge::gPhaseTicks[p] * 1000.0 / (double)freq.QuadPart / std::max<U32>(1, sBench.mWallN)).substr(0, 5) + " | ";
-            LLVkBridge::gPhaseTicks[p] = 0;
-        }
-        LL_INFOS("VkBench") << "BENCH translator CPU by phase (ms/iter; hooks include the draw phases, 'all hooks' also the unhooked-uniform and state calls): " << text << LL_ENDL;
-    }
-    if (sBench.mPhaseFrames)
-    {
-        std::vector<std::pair<double, U32>> kinds;
-        for (U32 k = 0; k < BENCH_KIND_COUNT; ++k) kinds.push_back({ sBench.mKindMs[k] / sBench.mPhaseFrames, k });
-        std::sort(kinds.rbegin(), kinds.rend());
-        std::string text;
-        double total = 0;
-        for (auto& kv : kinds)
-        {
-            total += kv.first;
-            if (kv.first > 0.01) text += std::string(BENCH_KINDS[kv.second]) + " " + std::to_string(kv.first).substr(0, 5) + " | ";
-        }
-        LL_INFOS("VkBench") << "BENCH Vulkan present-frame GPU by pass kind over " << sBench.mPhaseFrames << " frames (timestamps between kinds, a little pessimistic): " << text << "total " << total << " ms" << LL_ENDL;
-    }
-    sBench.mGlA = sBench.mGlB = sBench.mVkA = sBench.mVkB = sBench.mHook = sBench.mWall = sBench.mGlCpu = sBench.mDispCpu = sBench.mThreadCpu = 0;
-    sBench.mGlN = sBench.mVkAN = sBench.mVkBN = sBench.mWallN = sBench.mDispN = 0;
-    sBench.mPhaseFrames = 0;
-    for (double& v : sBench.mKindMs) v = 0;
-}
-
-// the swap is about to happen: CPU time of display() so far
-void bench_mark_present()
-{
-    if (!sBench.mInit || !sBench.mDispStart.QuadPart)
-    {
-        return;
-    }
-    LARGE_INTEGER now, freq;
-    QueryPerformanceCounter(&now);
-    QueryPerformanceFrequency(&freq);
-    sBench.mDispCpu += (double)(now.QuadPart - sBench.mDispStart.QuadPart) * 1000.0 / (double)freq.QuadPart;
-    ++sBench.mDispN;
-}
-
-// start of a loop iteration (display() begins)
-void bench_begin_iteration()
-{
-    if (!sBench.mInit)
-    {
-        return;
-    }
-    LARGE_INTEGER now, freq;
-    QueryPerformanceCounter(&now);
-    QueryPerformanceFrequency(&freq);
-    if (sBench.mLastT0.QuadPart)
-    {
-        sBench.mWall += (double)(now.QuadPart - sBench.mLastT0.QuadPart) * 1000.0 / (double)freq.QuadPart;
-        ++sBench.mWallN;
-    }
-    sBench.mLastT0 = now;
-    sBench.mDispStart = now;
-    {
-        FILETIME created, exited, kernel, user;
-        if (GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user))
-        {
-            const ULONGLONG total = (((ULONGLONG)kernel.dwHighDateTime << 32) | kernel.dwLowDateTime) + (((ULONGLONG)user.dwHighDateTime << 32) | user.dwLowDateTime);
-            if (sBench.mLastThreadTime)
-            {
-                sBench.mThreadCpu += (double)(total - sBench.mLastThreadTime) / 10000.0;      // 100 ns units
-            }
-            sBench.mLastThreadTime = total;
-        }
-    }
-    sBench.mPhaseIteration = !glonly_mode() && (sBench.mIter % 4) == 0;
-    {
-        // GL call time of the previous iteration (this thread's counter, then reset)
-        sBench.mGlCpu += (double)LLVkWorker::gGlTicks * 1000.0 / (double)freq.QuadPart;
-        LLVkWorker::gGlTicks = 0;
-    }
-    ++sBench.mIter;
-    if (sBench.mIter % 150 == 0)
-    {
-        bench_log();
-    }
-}
-
-void bench_vk_begin(VkCommandBuffer cmd, bool offscreen)
-{
-    if (!sBench.mInit || glonly_mode())
-    {
-        return;
-    }
-    LLVk::Context& ctx = LLVk::Context::instance();
-    sBench.mCurSlot = sBench.mNextSlot++ % Bench::SLOTS;
-    LLVk::vkResetQueryPool(ctx.getDevice(), sBench.mPool, sBench.mCurSlot * 2, 2);
-    LLVk::vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, sBench.mPool, sBench.mCurSlot * 2);
-    sBench.mPhaseActive = false;
-    if (!offscreen && sBench.mPhaseIteration && sBench.mPhasePool)
-    {
-        LLVk::vkResetQueryPool(ctx.getDevice(), sBench.mPhasePool, 0, Bench::PHASE_QUERIES);
-        sBench.mPhaseUsed = 0;
-        sBench.mCurrentKind = -1;
-        sBench.mPhaseActive = true;
-    }
-}
-
-// just before the frame's command buffer is submitted: end stamp, and OpenGL is finished first
-void bench_vk_end(VkCommandBuffer cmd)
-{
-    if (!sBench.mInit || glonly_mode())
-    {
-        return;
-    }
-    LLVk::vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, sBench.mPool, sBench.mCurSlot * 2 + 1);
-    if (sBench.mPhaseActive && sBench.mPhaseUsed > 0)
-    {
-        LLVk::vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, sBench.mPhasePool, sBench.mPhaseUsed);
-    }
-}
-
-// after the frame was submitted: wait for it and read its GPU time
-void bench_vk_collect(bool offscreen)
-{
-    if (!sBench.mInit)
-    {
-        return;
-    }
-    LLVk::Context& ctx = LLVk::Context::instance();
-    ctx.waitIdle();
-    U64 t[2] = {};
-    LLVk::vkGetQueryPoolResults(ctx.getDevice(), sBench.mPool, sBench.mCurSlot * 2, 2, sizeof(t), t, sizeof(U64), VK_QUERY_RESULT_64_BIT);
-    const double ms = (double)(t[1] - t[0]) * (double)ctx.getCaps().mTimestampPeriodNs / 1.0e6;
-    if (offscreen)
-    {
-        sBench.mVkB += ms;
-        ++sBench.mVkBN;
-    }
-    else
-    {
-        sBench.mVkA += ms;
-        ++sBench.mVkAN;
-        if (sBench.mPhaseActive && sBench.mPhaseUsed > 0)
-        {
-            std::vector<U64> stamps(sBench.mPhaseUsed + 1);
-            LLVk::vkGetQueryPoolResults(ctx.getDevice(), sBench.mPhasePool, 0, sBench.mPhaseUsed + 1, stamps.size() * sizeof(U64), stamps.data(), sizeof(U64), VK_QUERY_RESULT_64_BIT);
-            for (U32 k = 0; k < sBench.mPhaseUsed; ++k)
-            {
-                sBench.mKindMs[sBench.mPhaseKind[k]] += (double)(stamps[k + 1] - stamps[k]) * (double)ctx.getCaps().mTimestampPeriodNs / 1.0e6;
-            }
-            ++sBench.mPhaseFrames;
-        }
-        sBench.mPhaseActive = false;
-    }
-    sBench.mHook += LLVkWorker::take_hook_ms();
-}
-
-const wchar_t* const MIRROR_WINDOW_CLASS = L"LLVkMirrorWindow";
-void* sMainWindowHandle = nullptr;        // LL_VK_NOGL: the viewer's main window (no GL context to find it from)
-
-// The mirror never drops a frame by default: OpenGL moves on regardless, so a dropped frame would lose incremental work such as a
-// reflection probe face. LL_VK_MIRROR_DROP=1 restores the non-blocking behaviour (frames are skipped while the GPU is behind).
-bool mirror_blocks()
-{
-    static const bool blocks = getenv("LL_VK_MIRROR_DROP") == nullptr;
-    return blocks;
-}
+void* sMainWindowHandle = nullptr;        // the viewer's main window (the window code hands it over once it exists)
 
 struct MirrorState
 {
-    bool mRequestChecked = false;
-    bool mRequested = false;
     bool mReady = false;
     bool mFailed = false;
     bool mInFrame = false;
     bool mHold = false;
     bool mOffscreen = false;        // the open frame has no swapchain image (work recorded after the present)
 
-    HWND mWindow = nullptr;
-    bool mOwnsWindow = true;        // false: the mirror presents into the viewer's main window (LL_VK_EMBED=main)
-    HWND mParent = nullptr;         // LL_VK_EMBED: the viewer's main window, which the mirror window covers as a child
-    volatile bool mClosed = false;
+    HWND mWindow = nullptr;         // the viewer's main window: Vulkan presents into it
     volatile bool mResized = false;
 
     LLVk::Swapchain mSwapchain;
@@ -400,102 +116,17 @@ struct MirrorState
 
 MirrorState sMirror;
 
-LRESULT CALLBACK mirror_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
-{
-    switch (msg)
-    {
-    case WM_CLOSE:
-        if (!sMirror.mParent)
-        {
-            sMirror.mClosed = true;     // shutdown() runs on the viewer's own thread at the next frame
-        }
-        return 0;
-    case WM_NCHITTEST:
-        if (sMirror.mParent)
-        {
-            return HTTRANSPARENT;       // the mouse belongs to the main window underneath
-        }
-        break;
-    case WM_MOUSEACTIVATE:
-        if (sMirror.mParent)
-        {
-            return MA_NOACTIVATE;
-        }
-        break;
-    case WM_ERASEBKGND:
-        if (sMirror.mParent)
-        {
-            return 1;
-        }
-        break;
-    case WM_SIZE:
-        sMirror.mResized = true;
-        break;
-    default:
-        break;
-    }
-    return DefWindowProcW(hwnd, msg, wparam, lparam);
-}
-
 bool create_window()
 {
-    HINSTANCE inst = GetModuleHandleW(nullptr);
-    WNDCLASSEXW wc = {};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = mirror_wnd_proc;
-    wc.hInstance = inst;
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.lpszClassName = MIRROR_WINDOW_CLASS;
-    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+    if (!sMainWindowHandle)
     {
+        LL_WARNS("VkMirror") << "Vulkan cannot present: the window code has not handed over the main window" << LL_ENDL;
         return false;
     }
-    // LL_VK_EMBED=main: present into the viewer's main window (the one the current GL context draws to); needs LL_VK_OWN so OpenGL stops swapping over it.
-    // LL_VK_EMBED=child: cover that window with a child window instead (the main window then stops receiving the mouse; not usable).
-    HWND parent = nullptr;
-    const char* embed = getenv("LL_VK_EMBED");
-    if (embed != nullptr)
-    {
-        if (sMainWindowHandle)
-        {
-            parent = (HWND)sMainWindowHandle;       // the window code told us
-        }
-        if (parent && strcmp(embed, "main") == 0)
-        {
-            if (getenv("LL_VK_OWN") != nullptr)
-            {
-                sMirror.mWindow = parent;
-                sMirror.mOwnsWindow = false;
-                LLWindow::sSkipSwapBuffers = true;
-                LL_INFOS("VkMirror") << "the Vulkan mirror presents into the viewer's main window (LL_VK_EMBED=main)" << LL_ENDL;
-                return true;
-            }
-            LL_WARNS("VkMirror") << "LL_VK_EMBED=main needs LL_VK_OWN; using a separate mirror window" << LL_ENDL;
-            parent = nullptr;
-        }
-        else if (strcmp(embed, "child") != 0)
-        {
-            parent = nullptr;
-        }
-    }
-    if (parent)
-    {
-        RECT rc = {};
-        GetClientRect(parent, &rc);
-        sMirror.mParent = parent;
-        sMirror.mWindow = CreateWindowExW(0, MIRROR_WINDOW_CLASS, L"Firestorm Vulkan mirror", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-                                          0, 0, std::max<LONG>(rc.right, 64), std::max<LONG>(rc.bottom, 64), parent, nullptr, inst, nullptr);
-        if (sMirror.mWindow)
-        {
-            LL_INFOS("VkMirror") << "the mirror window is a child of the viewer's main window (LL_VK_EMBED)" << LL_ENDL;
-            return true;
-        }
-        sMirror.mParent = nullptr;
-    }
-    sMirror.mWindow = CreateWindowExW(0, MIRROR_WINDOW_CLASS, L"Firestorm Vulkan mirror", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                                      80, 80, 1280, 720, nullptr, nullptr, inst, nullptr);
-    return sMirror.mWindow != nullptr;
+    sMirror.mWindow = (HWND)sMainWindowHandle;
+    LLWindow::sSkipSwapBuffers = true;
+    LL_INFOS("VkMirror") << "Vulkan presents into the viewer's main window" << LL_ENDL;
+    return true;
 }
 
 void destroy_backbuffer()
@@ -539,20 +170,6 @@ bool create_backbuffer(U32 width, U32 height)
 void LLVkBridge::setPresentPreference(S32 mode, bool vsync_on)
 {
     LLVk::setPresentPreference((int)mode, vsync_on);
-}
-
-bool LLVkBridge::isRequested()
-{
-    if (!sMirror.mRequestChecked)
-    {
-        sMirror.mRequestChecked = true;
-        sMirror.mRequested = getenv("LL_VK_MIRROR") != nullptr;
-        if (sMirror.mRequested)
-        {
-            LL_INFOS("VkMirror") << "LL_VK_MIRROR set: Vulkan mirror mode requested" << LL_ENDL;
-        }
-    }
-    return sMirror.mRequested;
 }
 
 LLVkBridge::Mutex& LLVkBridge::lock()
@@ -661,7 +278,7 @@ bool LLVkBridge::ensureReady()
     {
         return true;
     }
-    if (!isRequested() || sMirror.mFailed)
+    if (sMirror.mFailed)
     {
         return false;
     }
@@ -670,7 +287,7 @@ bool LLVkBridge::ensureReady()
     if (!create_window() || !ctx.init(sMirror.mWindow) || !LLVk::Renderer::instance().init()
         || !sMirror.mSwapchain.create(ctx.getSurface(), sMirror.mWindow))
     {
-        LL_WARNS("VkMirror") << "Vulkan mirror initialisation failed; continuing with OpenGL only" << LL_ENDL;
+        LL_WARNS("VkMirror") << "Vulkan initialisation failed: there is no other renderer" << LL_ENDL;
         sMirror.mFailed = true;
         shutdown();
         sMirror.mFailed = true;
@@ -678,12 +295,6 @@ bool LLVkBridge::ensureReady()
     }
     sMirror.mReady = true;
     LLVkWorker::gActive = true;
-    LLVkWorker::gOwn = getenv("LL_VK_OWN") != nullptr;
-    if (LLVkWorker::gOwn)
-    {
-        LL_INFOS("VkMirror") << "LL_VK_OWN: the mirror owns textures, buffers, framebuffers, vertex arrays, queries and fences; OpenGL no longer executes them or the draws. The main window stays blank, the picture is in the mirror window." << LL_ENDL;
-    }
-    bench_init();
     LL_INFOS("VkMirror") << "Vulkan mirror ready" << LL_ENDL;
     return true;
 }
@@ -708,12 +319,7 @@ void LLVkBridge::shutdown()
 {
     LLVkAsync::stop();
     std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    if (LLVkWorker::gOwn)
-    {
-        LL_WARNS("VkMirror") << "the mirror shut down while it owned the resources: nothing can be drawn any more" << LL_ENDL;
-    }
     LLVkWorker::gActive = false;
-    LLVkWorker::gOwn = false;
     LLVk::Context& ctx = LLVk::Context::instance();
     if (ctx.isReady())
     {
@@ -731,28 +337,15 @@ void LLVkBridge::shutdown()
     ctx.shutdown();
     if (sMirror.mWindow)
     {
-        if (sMirror.mOwnsWindow)
-        {
-            DestroyWindow(sMirror.mWindow);
-        }
         sMirror.mWindow = nullptr;
-        sMirror.mParent = nullptr;
-        sMirror.mOwnsWindow = true;
         LLWindow::sSkipSwapBuffers = false;
     }
-    sMirror.mClosed = false;
 }
 
 void LLVkBridge::beginFrameImpl(S32 width, S32 height)
 {
     gMainThreadId = __readgsdword(0x48);
     std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    if (glonly_mode())
-    {
-        bench_init();
-        bench_begin_iteration();
-        return;
-    }
     if (LLVk::gDeviceLost && !sMirror.mFailed)
     {
         // <FS> there is no OpenGL to fall back to: carrying on would leave a blank window. Stop with a message the crash report carries
@@ -772,94 +365,22 @@ void LLVkBridge::beginFrameImpl(S32 width, S32 height)
     {
         return;
     }
-    if (sMirror.mClosed)
-    {
-        shutdown();
-        sMirror.mFailed = true;      // the user closed the mirror window: stay off
-        return;
-    }
     if (width <= 0 || height <= 0)
     {
         return;
     }
 
-    if (!sMirror.mOwnsWindow && sMirror.mWindow)
+    if (sMirror.mWindow)
     {
-        // presenting into the main window: nobody tells the mirror when it is resized
+        // presenting into the main window: nobody tells the swapchain when it is resized
         RECT rc = {};
         GetClientRect(sMirror.mWindow, &rc);
-        {
-            // LL_VK_NUDGE (experiment): once the size has stopped changing, poke the compositor: r = repaint the window, c = recreate the swapchain, d = DwmFlush
-            static const char* nudge = getenv("LL_VK_NUDGE");
-            static S32 prev_w = -1, prev_h = -1;
-            static ULONGLONG changed_at = 0;
-            static bool pending = false;
-            const ULONGLONG now_ms = GetTickCount64();
-            if (rc.right != prev_w || rc.bottom != prev_h)
-            {
-                prev_w = rc.right; prev_h = rc.bottom;
-                changed_at = now_ms;
-                pending = true;
-            }
-            else if (nudge && pending && now_ms - changed_at >= 200)
-            {
-                pending = false;
-                if (strchr(nudge, 'r'))
-                {
-                    RedrawWindow(sMirror.mWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW | RDW_ALLCHILDREN);
-                }
-                if (strchr(nudge, 'c'))
-                {
-                    sMirror.mResized = true;
-                }
-                if (strchr(nudge, 'd'))
-                {
-                    typedef HRESULT(WINAPI * DwmFlushFn)();
-                    if (HMODULE dwm = LoadLibraryW(L"dwmapi.dll"))
-                    {
-                        if (DwmFlushFn flush = (DwmFlushFn)GetProcAddress(dwm, "DwmFlush")) flush();
-                    }
-                }
-                LL_INFOS("VkSize") << "nudged the window after the resize settled (" << nudge << ")" << LL_ENDL;
-            }
-        }
-        static const bool size_log = getenv("LL_VK_SIZELOG") != nullptr;
-        if (size_log)
-        {
-            static ULONGLONG next_stats = 0;
-            const ULONGLONG now_ms = GetTickCount64();
-            if (now_ms >= next_stats)
-            {
-                next_stats = now_ms + 5000;
-                LL_INFOS("VkSize") << "mirror frames " << sMirror.mFrames << ", skipped " << sMirror.mSkipped << ", presents refused " << sMirror.mPresentFailed << LL_ENDL;
-            }
-            static S32 last_sizes[6] = {};
-            const S32 now[6] = { width, height, (S32)rc.right, (S32)rc.bottom, (S32)sMirror.mSwapchain.getExtent().width, (S32)sMirror.mSwapchain.getExtent().height };
-            if (memcmp(now, last_sizes, sizeof(now)) != 0)
-            {
-                memcpy(last_sizes, now, sizeof(now));
-                LL_INFOS("VkSize") << "beginFrame: viewer window " << width << "x" << height << ", client area " << rc.right << "x" << rc.bottom << ", swapchain "
-                                   << now[4] << "x" << now[5] << ", backbuffer " << sMirror.mBackWidth << "x" << sMirror.mBackHeight << LL_ENDL;
-            }
-        }
         const LLVk::Swapchain& swap = sMirror.mSwapchain;
         if (swap.isValid() ? ((U32)rc.right != swap.getExtent().width || (U32)rc.bottom != swap.getExtent().height) : (rc.right > 0 && rc.bottom > 0))
         {
             sMirror.mResized = true;
         }
     }
-    if (sMirror.mParent && sMirror.mWindow)
-    {
-        // an embedded mirror window follows the size of the main window
-        RECT parent_rc = {}, mine = {};
-        GetClientRect(sMirror.mParent, &parent_rc);
-        GetClientRect(sMirror.mWindow, &mine);
-        if (parent_rc.right > 0 && parent_rc.bottom > 0 && (parent_rc.right != mine.right || parent_rc.bottom != mine.bottom))
-        {
-            SetWindowPos(sMirror.mWindow, HWND_TOP, 0, 0, parent_rc.right, parent_rc.bottom, SWP_NOACTIVATE);
-        }
-    }
-
     LLVk::Context& ctx = LLVk::Context::instance();
     LLVk::Renderer& renderer = LLVk::Renderer::instance();
     LLVk::Swapchain& sc = sMirror.mSwapchain;
@@ -890,10 +411,8 @@ void LLVkBridge::beginFrameImpl(S32 width, S32 height)
         }
     }
 
-    bench_begin_iteration();
-
-    // never stall the viewer: if the GPU is behind, this frame simply is not mirrored
-    VkCommandBuffer cmd = ctx.beginFrame(mirror_blocks() ? true : false);
+    // wait for the GPU when it is behind: a dropped frame would lose incremental work such as a reflection probe face
+    VkCommandBuffer cmd = ctx.beginFrame(true);
     if (cmd == VK_NULL_HANDLE)
     {
         ++sMirror.mSkipped;
@@ -905,7 +424,7 @@ void LLVkBridge::beginFrameImpl(S32 width, S32 height)
     bool acquired = false;
     for (int attempt = 0; attempt < 3 && !acquired; ++attempt)
     {
-        acquired = sc.acquire(ctx.getAcquireSemaphore(), image_index, LLVkWorker::gOwn ? 250ull * 1000 * 1000 : 0ull);
+        acquired = sc.acquire(ctx.getAcquireSemaphore(), image_index, 250ull * 1000 * 1000);
         if (!acquired)
         {
             if (!sc.needsRecreate() || !sc.create(ctx.getSurface(), sMirror.mWindow) || !sc.isValid())
@@ -923,7 +442,6 @@ void LLVkBridge::beginFrameImpl(S32 width, S32 height)
     sMirror.mImageIndex = image_index;
 
     renderer.beginFrame(cmd, ctx.getFrameSlot());
-    bench_vk_begin(cmd, false);
     LLVk::Image* colors[1] = { &sMirror.mBackbuffer };
     renderer.setRenderTarget(colors, 1, &sMirror.mDepth);
     sMirror.mInFrame = true;
@@ -943,7 +461,7 @@ bool begin_offscreen_frame()
     LLVk::Context& ctx = LLVk::Context::instance();
     LLVk::Renderer& renderer = LLVk::Renderer::instance();
     ctx.setNextFrameOffscreen(true);
-    VkCommandBuffer cmd = ctx.beginFrame(mirror_blocks() ? true : false);
+    VkCommandBuffer cmd = ctx.beginFrame(true);
     if (cmd == VK_NULL_HANDLE)
     {
         ++sMirror.mSkipped;
@@ -951,7 +469,6 @@ bool begin_offscreen_frame()
         return false;
     }
     renderer.beginFrame(cmd, ctx.getFrameSlot());
-    bench_vk_begin(cmd, true);
     LLVk::Image* colors[1] = { &sMirror.mBackbuffer };
     renderer.setRenderTarget(colors, 1, &sMirror.mDepth);
     sMirror.mInFrame = true;
@@ -1014,16 +531,10 @@ void LLVkBridge::snapshotBoundaryImpl(S32 mode)
 void LLVkBridge::presentFrameImpl()
 {
     std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    if (glonly_mode())
-    {
-        bench_mark_present();
-        return;
-    }
     if (!sMirror.mReady || !sMirror.mInFrame || sMirror.mOffscreen)
     {
         return;
     }
-    bench_mark_present();
     const bool held = sMirror.mHold;
     sMirror.mHold = false;
     endFrameImpl();
@@ -1081,10 +592,6 @@ bool represent_after_resize()
 void LLVkBridge::endFrameImpl()
 {
     std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    if (glonly_mode())
-    {
-        return;
-    }
     if (!sMirror.mReady || !sMirror.mInFrame || sMirror.mHold)
     {
         return;
@@ -1101,9 +608,7 @@ void LLVkBridge::endFrameImpl()
     {
         sMirror.mOffscreen = false;
         renderer.endFrame();
-        bench_vk_end(ctx.getCommandBuffer());
         ctx.endFrame(VK_NULL_HANDLE, VK_NULL_HANDLE);
-        bench_vk_collect(true);
         return;
     }
 
@@ -1132,39 +637,18 @@ void LLVkBridge::endFrameImpl()
 
     renderer.ensureLayout(target, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     renderer.endFrame();
-    bench_vk_end(ctx.getCommandBuffer());
     ctx.endFrame(ctx.getAcquireSemaphore(), sc.getRenderDone(index));
     if (!sc.present(index, sc.getRenderDone(index)))
     {
         ++sMirror.mPresentFailed;
-        if (sc.lastPresentOutOfDate() && !sMirror.mOwnsWindow)
+        if (sc.lastPresentOutOfDate())
         {
             ctx.waitIdle();
             represent_after_resize();
         }
     }
-    bench_vk_collect(false);
     ++sMirror.mFrames;
     LLVkWorker::after_frame();
-}
-
-bool LLVkBridge::benchPhasesActive()
-{
-    return sBench.mPhaseActive;
-}
-
-void LLVkBridge::benchPass(const char* name)
-{
-    const U32 kind = bench_kind_of(name);
-    if ((int)kind == sBench.mCurrentKind || sBench.mPhaseUsed + 2 >= Bench::PHASE_QUERIES)
-    {
-        return;
-    }
-    LLVk::Context& ctx = LLVk::Context::instance();
-    LLVk::vkCmdWriteTimestamp2(ctx.getCommandBuffer(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, sBench.mPhasePool, sBench.mPhaseUsed);
-    sBench.mPhaseKind[sBench.mPhaseUsed] = kind;
-    ++sBench.mPhaseUsed;
-    sBench.mCurrentKind = (int)kind;
 }
 
 // ---- the public frame calls: queued for the worker thread in async mode (LL_VK_ASYNC), inline otherwise ----
@@ -1173,7 +657,7 @@ namespace
 // The worker takes over between two frames: once a frame has been closed in the usual way and the mirror is ready.
 void maybe_start_async()
 {
-    if (!LLVkAsync::gEnabled && LLVkAsync::requested() && sMirror.mReady && !sMirror.mInFrame && !sMirror.mHold && LLVkWorker::gOwn)
+    if (!LLVkAsync::gEnabled && LLVkAsync::requested() && sMirror.mReady && !sMirror.mInFrame && !sMirror.mHold)
     {
         LLVkAsync::start();
     }

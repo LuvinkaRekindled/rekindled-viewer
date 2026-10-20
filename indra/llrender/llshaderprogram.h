@@ -347,7 +347,7 @@ public:
     void mirrorScalar(S32 location, int kind, std::initializer_list<double> values);   // kind 0: float, 1: int
     void mirrorVector(S32 location, int kind, U32 components, U32 count, const void* data);
     void mirrorMatrix(S32 location, U32 columns, U32 rows, bool transpose, U32 count, const F32* data);
-    // F2.5 (LL_VK_UNIFORMREC): this shader's copy of the program's uniform class blocks; a write is resolved to a byte range, compared with the copy and sent as the bytes that changed
+    // F2.5: this shader's copy of the program's uniform class blocks; a write is resolved to a byte range, compared with the copy and sent as the bytes that changed
     struct VkUni { U8 mClass = 0; U32 mOffset = 0; U32 mArraySize = 0; };
     std::vector<VkUni> mVkUni;                  // by the program's own uniform index
     std::vector<U8> mVkShadow[5];               // by class (LLVk::UC_COUNT)

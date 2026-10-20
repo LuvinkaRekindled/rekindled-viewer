@@ -23,9 +23,6 @@ namespace LLVk { struct Image; }
 
 namespace LLVkBridge
 {
-    // mirror mode was requested (environment) and this build supports it
-    bool isRequested();
-
     // true once Vulkan is initialised and the mirror has not been switched off
     bool isReady();
     // video memory as the OS sees this process (what it uses, what it may use before the driver pages allocations out), for the viewer's texture budget; false when no Vulkan device
@@ -354,10 +351,6 @@ namespace LLVkBridge
         }
     };
 
-    // benchmark (LL_VK_MIRROR_BENCH): true while the present frame is recording per-pass-kind GPU timestamps
-    bool benchPhasesActive();
-    // called before each mirrored draw while benchPhasesActive(): notes which kind of pass the draw belongs to
-    void benchPass(const char* program_name);
 #endif
 }
 

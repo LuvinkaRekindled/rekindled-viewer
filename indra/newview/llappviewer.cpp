@@ -3888,15 +3888,12 @@ bool LLAppViewer::initWindow()
         .first_run(mIsFirstRun);
 
 #if LL_WINDOWS
-    // <FS> FSVulkanRenderer: draw with Vulkan in the main window. The mirror reads its mode from the environment, so the setting
-    // is translated here, before the window and its OpenGL context exist. Variables set by hand take precedence. If Vulkan cannot be
-    // set up the mirror logs it and the viewer carries on with OpenGL.
+    // <FS> The settings of the Vulkan renderer (DLSS, ray tracing, the worker thread) are translated to the environment variables the renderer reads, before the window exists.
+    // LL_VK_MIRROR set by hand (the launchers do) means "configured by hand": the settings are not translated and the variables the launcher set are used as they are.
     if (!getenv("LL_VK_MIRROR"))
     {
-        LL_INFOS("AppInit") << "FSVulkanRenderer is set: asking for the Vulkan renderer in the main window" << LL_ENDL;
+        LL_INFOS("AppInit") << "translating the Vulkan renderer settings" << LL_ENDL;
         _putenv_s("LL_VK_MIRROR", "1");
-        _putenv_s("LL_VK_OWN", "1");
-        _putenv_s("LL_VK_EMBED", "main");
         if (gSavedSettings.getBOOL("FSVkDLSS") && !getenv("LL_VK_DLSS"))
         {
             _putenv_s("LL_VK_DLSS", "1");       // NVIDIA DLSS upscaling (experimental)

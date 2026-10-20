@@ -508,17 +508,6 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
     }
 
     {
-        static const bool verify_uniforms = getenv("LL_VK_UNIFORMREC") && atoi(getenv("LL_VK_UNIFORMREC")) == 1;
-        if (verify_uniforms)
-        {
-            for (U32 k = 0; k < UC_COUNT; ++k)
-            {
-                mShadowNew[k] = mShadow[k];
-            }
-        }
-    }
-
-    {
         // LL_VK_UNIFORM_DUMP=1: every program's loose uniforms and samplers, for the uniform class table (doc/vulkan/F0-inventory.md)
         static FILE* dump = getenv("LL_VK_UNIFORM_DUMP") ? fopen("<work>/run-logs/program-uniforms.txt", "wb") : nullptr;
         if (dump)
@@ -656,59 +645,6 @@ void Program::writeRange(U32 cls, U32 offset, U32 size, const U8* data)
         memcpy(dst, data, size);
         mDirty[cls] = true;
     }
-}
-
-void Program::writeRangeVerify(U32 cls, U32 offset, U32 size, const U8* data)
-{
-    if (cls < UC_COUNT && (size_t)offset + size <= mShadowNew[cls].size())
-    {
-        memcpy(&mShadowNew[cls][offset], data, size);
-    }
-}
-
-U32 Program::verifyShadows(std::string& first) const
-{
-    U32 bad = 0;
-    for (U32 cls = 0; cls < UC_COUNT; ++cls)
-    {
-        if (mShadowNew[cls].size() != mShadow[cls].size())
-        {
-            continue;
-        }
-        for (size_t i = 0; i < mShadow[cls].size(); ++i)
-        {
-            if (mShadow[cls][i] == mShadowNew[cls][i])
-            {
-                continue;
-            }
-            bool slot = false;      // the bindless slots of the draw class are written by the worker at the draw
-            if (cls == UC_DRAW)
-            {
-                for (U32 off : mSlotOffset)
-                {
-                    if (i >= off && i < off + 4) { slot = true; break; }
-                }
-            }
-            if (slot)
-            {
-                continue;
-            }
-            if (bad++ == 0)
-            {
-                std::string name = "?";
-                for (const LooseUniform& u : mInfo.mUniforms)
-                {
-                    if (u.mClass == cls && i >= u.mOffset && i < u.mOffset + std::max<U32>(u.mSize, 4))
-                    {
-                        name = u.mName + " (" + u.mType + ")";
-                        break;
-                    }
-                }
-                first = "class " + std::to_string(cls) + " byte " + std::to_string(i) + " uniform " + name + ": worker " + std::to_string((int)mShadow[cls][i]) + " producer " + std::to_string((int)mShadowNew[cls][i]);
-            }
-        }
-    }
-    return bad;
 }
 
 bool Program::setInts(const std::string& name, const S32* data, U32 components, U32 count)

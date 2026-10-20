@@ -50,7 +50,6 @@ namespace LLVkWorker
 {
 
 bool gActive = false;
-bool gOwn = false;      // LL_VK_OWN: the mirror owns the GL resources (see llvkworker.h)
 LLVkBridge::Mutex gMutex;
 
 // CPU time spent inside the translator's draw/clear hooks (the cost of recording the work into Vulkan), in ticks of the performance counter
@@ -1646,10 +1645,6 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
         ++sStats.mNoProgram;
         return false;
     }
-    if (LLVkBridge::benchPhasesActive())
-    {
-        LLVkBridge::benchPass(program->getName().c_str());
-    }
     sDbgMatch = !sDbgFilter.empty() && program->getName().find(sDbgFilter) != std::string::npos;
     LLVkBridge::gLastLap = 201;
     {
@@ -2717,40 +2712,6 @@ void dc_log(const char* what, const std::string& detail)
         LL_WARNS("VkDrawRec") << "draw record check: " << what << " in program '" << name << "': " << detail << LL_ENDL;
     }
 }
-}
-
-void uniform_check()
-{
-    if (!LLVkBridge::isReady())
-    {
-        return;
-    }
-    Program* cur = Renderer::instance().getProgram();
-    if (!cur)
-    {
-        return;
-    }
-    ++sDc.mUniformChecks;
-    std::string first;
-    if (const U32 bad = cur->verifyShadows(first))
-    {
-        ++sDc.mBadUniform;
-        dc_log("uniform class blocks differ", std::to_string(bad) + " bytes, first: " + first);
-    }
-}
-
-std::string draw_check_report()
-{
-    std::string out = "uniform blocks: checks " + std::to_string(sDc.mUniformChecks) + ", draws with a difference " + std::to_string(sDc.mBadUniform);
-    if (!sDc.mBadPerProgram.empty())
-    {
-        out += " | by program:";
-        for (const auto& kv : sDc.mBadPerProgram)
-        {
-            out += " [" + kv.first + " " + std::to_string(kv.second) + "]";
-        }
-    }
-    return out;     // (cumulative since the start: a long run is judged by its last line)
 }
 
 void constant_attribute(unsigned location, float x, float y, float z, float w)
@@ -5462,7 +5423,7 @@ U64 sQuerySerial = 0;
 bool queries_on()
 {
     static const bool disabled = getenv("LL_VK_NO_QUERIES") != nullptr;
-    return gOwn && !disabled;
+    return !disabled;
 }
 
 // pulls finished Vulkan query results and hands them to the main thread
