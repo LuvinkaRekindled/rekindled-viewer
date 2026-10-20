@@ -848,8 +848,6 @@ LLRender::~LLRender()
 
 bool LLRender::init(bool needs_vertex_buffer)
 {
-    LLVkTex::setUnpackAlignment(1);
-
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
     gGL.setAmbientLightColor(LLColor4::black);
 

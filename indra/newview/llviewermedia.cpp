@@ -3214,8 +3214,7 @@ LLViewerMediaTexture* LLViewerMediaImpl::updateMediaImage()
         // ask media source for correct GL image format constants
         media_tex->setExplicitFormat(texelFormatFromGL(mMediaSource->getTextureFormatInternal()),
             pixelFormatFromGL(mMediaSource->getTextureFormatPrimary()),
-            componentTypeFromGL(mMediaSource->getTextureFormatType()),
-            mMediaSource->getTextureFormatSwapBytes());
+            componentTypeFromGL(mMediaSource->getTextureFormatType()));
 
         int discard_level = 0;
         if (!media_tex->createGLTexture(discard_level, raw))

@@ -144,13 +144,6 @@ struct UniformVecArgs { void* mProgram; unsigned mIndex, mComponents, mCount; };
 struct UniformMatArgs { void* mProgram; unsigned mIndex, mColumns, mRows, mCount; };
 
 // ---- main-side shadows of the state the encoders need ----
-struct PixelStoreShadow
-{
-    int mUnpackAlignment = 4;
-    int mUnpackRowLength = 0;
-    unsigned mUnpackBuffer = 0;
-};
-thread_local PixelStoreShadow tlsPixelStore;
 thread_local std::vector<std::pair<unsigned, unsigned>> tlsActiveQueries;     // target -> query name in progress
 
 // ---- the occlusion query results the worker publishes ----
@@ -1463,16 +1456,15 @@ bool query_get(int kind, unsigned id, unsigned pname, void* params)
 namespace
 {
 
-size_t pixel_bytes(LLVkFormat::Transfer tr, S32 w, S32 h, S32 d, const PixelStoreShadow& ps)
+size_t pixel_bytes(LLVkFormat::Transfer tr, S32 w, S32 h, S32 d, S32 row_length)
 {
     const unsigned comps = LLVkFormat::compCount(tr.mComps), tb = LLVkFormat::typeBytes(tr.mType);
     if (!comps || !tb || w <= 0 || h <= 0 || d <= 0)
     {
         return 0;       // the worker's conversion refuses these without reading anything
     }
-    const size_t row_texels = ps.mUnpackRowLength > 0 ? (size_t)ps.mUnpackRowLength : (size_t)w;
-    const size_t align = ps.mUnpackAlignment > 0 ? (size_t)ps.mUnpackAlignment : 4;
-    const size_t row_bytes = (row_texels * comps * tb + align - 1) / align * align;
+    const size_t row_texels = row_length > 0 ? (size_t)row_length : (size_t)w;
+    const size_t row_bytes = row_texels * comps * tb;       // tightly packed rows
     return ((size_t)d * h - 1) * row_bytes + (size_t)w * comps * tb;
 }
 
@@ -1483,12 +1475,12 @@ struct TexArgs
     S32 mWidth, mHeight, mDepth;
     S32 mX, mY, mZ;
     S32 mImageSize;
-    U64 mOffset;                // the pixels pointer when the data comes from a bound pixel unpack buffer (mode 2) or from a held image (mode 3)
-    U32 mMode;                  // 0 no data, 1 data follows, 2 offset into the unpack buffer, 3 pixels in a held image (no copy)
+    U64 mOffset;                // the pixels pointer when the data comes from a held image (mode 3)
+    U32 mMode;                  // 0 no data, 1 data follows, 3 pixels in a held image (no copy)
     const void* mOwner;         // mode 3: what keeps the pixels alive; the worker calls mUnref on it after reading them
     void (*mUnref)(const void*);
     // F1.2 (CMD_TEX_IMAGE): the texture the edit names, which call it is, and the unpack state it needs
-    U32 mTex; U32 mKind; S32 mAlignment; S32 mRowLength; U32 mUnpackBuffer; U32 mPad;
+    U32 mTex; U32 mKind; S32 mRowLength; U32 mPad;
 };
 
 struct TexMainLap
@@ -1513,12 +1505,6 @@ void push_tex(unsigned short op, TexArgs& a, const void* pixels, size_t bytes)
     if (!pixels)
     {
         a.mMode = 0;
-        push(op, &a, sizeof(a));
-    }
-    else if (tlsPixelStore.mUnpackBuffer)
-    {
-        a.mMode = 2;
-        a.mOffset = (U64)(uintptr_t)pixels;
         push(op, &a, sizeof(a));
     }
     else if (gTexOneCopy && tlsHoldSet && bytes && isMainThread() && (const U8*)pixels >= (const U8*)tlsHoldData.mBase
@@ -1555,21 +1541,16 @@ using namespace LLVkAsync;
 namespace
 {
 
-PixelStore currentPS()
+PixelStore currentPS(S32 row_length = 0)
 {
     PixelStore ps;
-    ps.mAlignment = tlsPixelStore.mUnpackAlignment;
-    ps.mRowLength = tlsPixelStore.mUnpackRowLength;
-    ps.mUnpackBuffer = LLVkAsync::gEnabled ? tlsPixelStore.mUnpackBuffer : LLVkGL::inline_pixel_store().mUnpackBuffer;     // the buffer binding is still a GL call (buffers family)
+    ps.mRowLength = row_length;
     return ps;
 }
 
 void pushImage(TexKind kind, TexArgs a, const void* pixels, size_t bytes)
 {
     a.mKind = kind;
-    a.mAlignment = tlsPixelStore.mUnpackAlignment;
-    a.mRowLength = tlsPixelStore.mUnpackRowLength;
-    a.mUnpackBuffer = tlsPixelStore.mUnpackBuffer;
     push_tex(CMD_TEX_IMAGE, a, pixels, bytes);
 }
 
@@ -1584,16 +1565,6 @@ void create(S32 count, U32* ids)
 void destroy(S32 count, const U32* ids)
 {
     LLVkAsync::resourceDestroy(LLVkAsync::RES_TEXTURE, count, ids);
-}
-
-void setUnpackAlignment(S32 alignment)
-{
-    tlsPixelStore.mUnpackAlignment = alignment;
-}
-
-void setUnpackRowLength(S32 row_length)
-{
-    tlsPixelStore.mUnpackRowLength = row_length;
 }
 
 void bindSlot(S32 unit, U32 id)
@@ -1623,7 +1594,7 @@ static void image2D_impl(U32 id, TextureTarget target, S32 level, LLVkFormat::St
     TexMainLap lap;
     TexArgs a = {};
     a.mTarget = tg; a.mTransfer = tr; a.mStore = st; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = 1; a.mTex = id;
-    pushImage(K_IMAGE2D, a, pixels, pixel_bytes(tr, width, height, 1, tlsPixelStore));
+    pushImage(K_IMAGE2D, a, pixels, pixel_bytes(tr, width, height, 1, 0));
 }
 
 void image2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
@@ -1646,7 +1617,7 @@ static void image3D_impl(U32 id, TextureTarget target, S32 level, LLVkFormat::St
     TexMainLap lap;
     TexArgs a = {};
     a.mTarget = tg; a.mTransfer = tr; a.mStore = st; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = depth; a.mTex = id;
-    pushImage(K_IMAGE3D, a, pixels, pixel_bytes(tr, width, height, depth, tlsPixelStore));
+    pushImage(K_IMAGE3D, a, pixels, pixel_bytes(tr, width, height, depth, 0));
 }
 
 void image3D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
@@ -1656,27 +1627,27 @@ void image3D(U32 id, TextureTarget target, S32 level, TexelFormat internal_forma
     image3D_impl(id, target, level, LLVkFormat::store(internal_format), width, height, depth, tr, pixels);
 }
 
-static void subImage2D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels)
+static void subImage2D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels, S32 row_length)
 {
     const LLVkFormat::Target tg = LLVkFormat::target(target);
     LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkGL::tex_subimage2D(id, currentPS(), tg, level, x, y, width, height, tr, pixels);
+        LLVkGL::tex_subimage2D(id, currentPS(row_length), tg, level, x, y, width, height, tr, pixels);
         return;
     }
     TexMainLap lap;
     TexArgs a = {};
-    a.mTarget = tg; a.mTransfer = tr; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = 1; a.mX = x; a.mY = y; a.mTex = id;
-    pushImage(K_SUB2D, a, pixels, pixel_bytes(tr, width, height, 1, tlsPixelStore));
+    a.mTarget = tg; a.mTransfer = tr; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = 1; a.mX = x; a.mY = y; a.mTex = id; a.mRowLength = row_length;
+    pushImage(K_SUB2D, a, pixels, pixel_bytes(tr, width, height, 1, row_length));
 }
 
-void subImage2D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
+void subImage2D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, S32 row_length, const char* file, int line)
 {
     const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     LLVkFormat::noteFormat("subImage2D", file, line, 0, tr.mComps, tr.mType);
-    subImage2D_impl(id, target, level, x, y, width, height, tr, pixels);
+    subImage2D_impl(id, target, level, x, y, width, height, tr, pixels, row_length);
 }
 
 static void subImage3D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, LLVkFormat::Transfer tr, const void* pixels)
@@ -1692,7 +1663,7 @@ static void subImage3D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 
     TexMainLap lap;
     TexArgs a = {};
     a.mTarget = tg; a.mTransfer = tr; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = depth; a.mX = x; a.mY = y; a.mZ = z; a.mTex = id;
-    pushImage(K_SUB3D, a, pixels, pixel_bytes(tr, width, height, depth, tlsPixelStore));
+    pushImage(K_SUB3D, a, pixels, pixel_bytes(tr, width, height, depth, 0));
 }
 
 void subImage3D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
@@ -2198,13 +2169,13 @@ void runImage(Reader& r, U8 flags)
         blob = read_blob(r, flags);
         pixels = blob.mData;
     }
-    else if (a.mMode == 2 || a.mMode == 3)
+    else if (a.mMode == 3)
     {
         pixels = (const void*)(uintptr_t)a.mOffset;
     }
     struct Release { const TexArgs& mA; ~Release() { if (mA.mMode == 3 && mA.mUnref) mA.mUnref(mA.mOwner); } } release = { a };
     PixelStore ps;
-    ps.mAlignment = a.mAlignment; ps.mRowLength = a.mRowLength; ps.mUnpackBuffer = a.mUnpackBuffer;
+    ps.mRowLength = a.mRowLength;
     const LLVkFormat::Store st = (LLVkFormat::Store)a.mStore;
     switch (a.mKind)
     {
