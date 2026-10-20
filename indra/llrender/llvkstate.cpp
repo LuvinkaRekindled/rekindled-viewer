@@ -14,7 +14,9 @@
 #include "llrender.h"
 #include "llvkasync.h"
 
+#include <algorithm>
 #include <atomic>
+#include <map>
 #include <vector>
 #include <cstring>
 #include <intrin.h>
@@ -172,7 +174,7 @@ inline bool ownThread(const char* what)
     return true;
 }
 
-#define CTX_CALL() if (!ownThread(__func__)) return; ++C().mCalls
+#define CTX_CALL() if (!ownThread(__func__)) return; ++C().mCalls; if (LLRenderState::sWhy && !LLRenderState::sInGuard && !tlsCtx) LLRenderState::noteDirect(__func__)
 static bool scissor_trace_now();
 
 void setEnable(U32 cap, bool on)
@@ -521,6 +523,10 @@ bool takeChanged(Block& out)
     {
         return false;
     }
+    if (LLRenderState::sWhy && !tlsCtx)
+    {
+        LLRenderState::whyEmit(c.mTakenValid ? describeDifference(c.mTaken, c.mBlock) : std::string("first"));
+    }
     c.mTaken = c.mBlock;
     c.mTakenValid = true;
     ++c.mBlocks;
@@ -632,9 +638,138 @@ std::string guardReport()
     return buf;
 }
 
+bool sWhy = []() { const char* e = getenv("LL_VK_STATE_WHY"); return e && e[0] == '1'; }();
+bool sInGuard = false;
+
+namespace
+{
+struct Pending { const char* mFile; int mLine; int mKind; };
+std::vector<Pending> gPending;
+std::map<std::string, U64> gByField;
+std::map<std::string, U64> gByWriter;
+U64 gEmitted = 0;
+U32 gLastDump = 0;
+
+const char* fieldOfKind(int kind)
+{
+    static const char* const names[(int)Kind::Count] = { "blendEnable", "scissorTest", "stencil", "polygonOffset", "depthClamp", "cull", "depth" };
+    return kind >= 0 && kind < (int)Kind::Count ? names[kind] : nullptr;
+}
+
+void dumpTop(const char* what, std::map<std::string, U64>& m)
+{
+    std::vector<std::pair<U64, std::string>> v;
+    for (auto& e : m)
+    {
+        v.push_back({ e.second, e.first });
+    }
+    std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::string line;
+    for (size_t i = 0; i < v.size() && i < 15; ++i)
+    {
+        line += "\n   " + std::to_string(v[i].first) + "  " + v[i].second;
+    }
+    LL_INFOS("StateWhy") << what << line << LL_ENDL;
+    m.clear();
+}
+}
+
+void noteWriter(const char* file, int line, int kind)
+{
+    if (!sWhy || LLVkState::tlsCtx)
+    {
+        return;
+    }
+    for (const Pending& p : gPending)
+    {
+        if (p.mLine == line && p.mFile == file && p.mKind == kind)
+        {
+            return;
+        }
+    }
+    if (gPending.size() < 64)
+    {
+        gPending.push_back({ file, line, kind });
+    }
+}
+
+void noteDirect(const char* what)
+{
+    noteWriter(what, 0, -1);
+}
+
+// a CMD_STATE record is about to be written because the block differs from the last one taken: credit the fields that differ and the writers (since the last record) whose field is among them
+void whyEmit(const std::string& diff)
+{
+    ++gEmitted;
+    size_t pos = 0;
+    while (pos < diff.size())
+    {
+        const size_t sp = diff.find(' ', pos);
+        const std::string f = diff.substr(pos, sp == std::string::npos ? std::string::npos : sp - pos);
+        if (!f.empty())
+        {
+            ++gByField[f];
+        }
+        if (sp == std::string::npos)
+        {
+            break;
+        }
+        pos = sp + 1;
+    }
+    for (const Pending& p : gPending)
+    {
+        const char* field = fieldOfKind(p.mKind);
+        if (field && diff.find(field) == std::string::npos)
+        {
+            continue;                           // that write was undone before the draw
+        }
+        std::string key;
+        if (p.mLine)
+        {
+            const char* base = strrchr(p.mFile, '\\');
+            key = std::string(base ? base + 1 : p.mFile) + ":" + std::to_string(p.mLine) + (field ? std::string(" ") + field : std::string());
+        }
+        else
+        {
+            key = std::string("direct ") + p.mFile;
+        }
+        ++gByWriter[key];
+    }
+    gPending.clear();
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (frame - gLastDump >= 600)
+    {
+        if (gLastDump)
+        {
+            LL_INFOS("StateWhy") << "CMD_STATE records since the last report: " << gEmitted << " over " << (frame - gLastDump) << " frames" << LL_ENDL;
+            dumpTop("changed fields (per record)", gByField);
+            dumpTop("writers (guard file:line field, or direct setter)", gByWriter);
+        }
+        gByField.clear();
+        gByWriter.clear();
+        gEmitted = 0;
+        gLastDump = frame;
+    }
+}
+
 void reportDrift(const char* what, Kind k, U32 legacy, U32 block, const char* file, int line)
 {
     warn(what, k, legacy, block, legacy, file, line);
+}
+
+bool sLegacy = []() { const char* e = getenv("LL_VK_STATE_LEGACY"); return e && e[0] == '1'; }();
+// the old classes' belief of "what GL has" (defaults of GL), written only by guards and the old classes: LL_VK_STATE_LEGACY=1 makes the guards decide from it
+static U32 gShadow[(int)Kind::Count] = { 0, 0, 0, 0, 0, packCull(false, CullFace::Back), packDepth(false, true, CompareOp::Less) };
+
+bool legacyGet(Kind kind)
+{
+    return (gShadow[(int)kind] & 1) != 0;
+}
+
+void legacySet(Kind kind, bool on)
+{
+    gShadow[(int)kind] = (gShadow[(int)kind] & ~1u) | (on ? 1u : 0u);
 }
 
 U32 read(Kind kind)
@@ -659,10 +794,10 @@ U32 read(Kind kind)
     }
 }
 
-U32 exchange(Kind kind, U32 value)
+U32 exchange(Kind kind, U32 value, const char* file, int line)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_GLSTATE);
-    const U32 old = read(kind);
+    const U32 old = sLegacy ? gShadow[(int)kind] : read(kind);
     if (kind == Kind::Cull && !(value & 6))
     {
         value |= old & 6;                       // face None: keep the face
@@ -672,6 +807,7 @@ U32 exchange(Kind kind, U32 value)
         return old;
     }
     gGL.flush();                                // pending immediate-mode vertices belong to the old state
+    sInGuard = true;
     switch (kind)
     {
     case Kind::Blend: LLVkState::setEnable(GL_BLEND, value != 0); break;
@@ -705,6 +841,15 @@ U32 exchange(Kind kind, U32 value)
         break;
     default: break;
     }
+    sInGuard = false;
+    if (sLegacy)
+    {
+        gShadow[(int)kind] = value;
+    }
+    if (sWhy)
+    {
+        noteWriter(file ? file : "?", line, (int)kind);
+    }
     return old;
 }
 
@@ -720,7 +865,7 @@ void leave(Kind kind, U32 saved, U32 set, const char* file, int line)
     }
     if (set != saved)
     {
-        exchange(kind, saved);
+        exchange(kind, saved, file, line);
     }
 }
 

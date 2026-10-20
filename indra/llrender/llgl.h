@@ -272,6 +272,8 @@ protected:
     LLGLenum mState;
     bool mWasEnabled;
     bool mIsEnabled;
+    const char* mFile = nullptr;      // where it was made (LL_VK_STATE_WHY / the guard check)
+    int mLine = 0;
 };
 
 // New LLGLState class wrappers that don't depend on actual GL flags.
