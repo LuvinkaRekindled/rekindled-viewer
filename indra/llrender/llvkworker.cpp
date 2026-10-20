@@ -4628,6 +4628,7 @@ struct ResFrag
     std::vector<LLVkBridge::ShadowPacketEntry> mEntries;
     std::vector<U32> mPairOf;                                   // per entry: index into mPairs
     std::vector<ResPair> mPairs;
+    F32 mBounds[4] = {};                                        // the sphere (the table copy is write-combined memory: never read back by the CPU)
 };
 static const U32 kResCapacity = 131072;
 static const U32 kResMatrixSlots = 256;
@@ -4643,6 +4644,7 @@ static struct ResState
     std::vector<std::pair<U32, U64>> mRetired;                  // slot, frame it was given up (reusable once the frames in flight are done)
     std::unordered_map<U32, ResFrag> mFrags;
     U64 mRefreshFrame = ~0ull;
+    std::vector<F32> mMatrixCpu = std::vector<F32>(16 * 256, 0.f);     // the region matrices as sent (the ray notes read them: the table copy is write-combined)
     U64 mPasses = 0, mDrawn = 0, mReport = 0, mOverflow = 0, mUnresolved = 0, mRecheck = 0;
 } sRes;
 
@@ -4682,6 +4684,7 @@ static bool res_init()
     for (U32 i = 0; i < kResMatrixSlots; ++i)
     {
         sRes.mM[16 * i] = sRes.mM[16 * i + 5] = sRes.mM[16 * i + 10] = sRes.mM[16 * i + 15] = 1.f;
+        sRes.mMatrixCpu[16 * i] = sRes.mMatrixCpu[16 * i + 5] = sRes.mMatrixCpu[16 * i + 10] = sRes.mMatrixCpu[16 * i + 15] = 1.f;
     }
     sRes.mFailed = false;
     sRes.mReady = true;
@@ -4792,6 +4795,7 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     res_reclaim(Context::instance().getFrameNumber());
     const LLVkBridge::ShadowPacketEntry* entries = (const LLVkBridge::ShadowPacketEntry*)blob;
     ResFrag f;
+    memcpy(f.mBounds, h.mViewProj, sizeof(f.mBounds));
     f.mEntries.assign(entries, entries + h.mEntries);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
@@ -4895,6 +4899,7 @@ static void res_matrices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blo
     }
     const U32 n = std::min<U32>(h.mMatrices, kResMatrixSlots);
     memcpy(sRes.mM, blob, 64 * (size_t)n);
+    memcpy(sRes.mMatrixCpu.data(), blob, 64 * (size_t)n);
 }
 
 namespace
@@ -5011,6 +5016,57 @@ static bool res_cull_pipeline()
     return true;
 }
 
+static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha);
+// kind 17 (ray shadows): the casters of a cascade pass for the ray scene, from the resident fragments: the same frustum test as the GPU cull, on the CPU, per fragment (its entries share its bounds)
+static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!Rt::active() || !sRes.mReady || sRes.mFrags.empty())
+    {
+        return;
+    }
+    res_refresh(Context::instance().getFrameNumber());
+    static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
+    const F32* planes = (const F32*)blob;
+    static U64 passes = 0, noted = 0, fragments_in = 0;
+    for (auto& kv : sRes.mFrags)
+    {
+        const ResFrag& f = kv.second;
+        if (f.mSlots.empty())
+        {
+            continue;
+        }
+        // the sphere (all entries of a fragment carry the same one); the centre is in region space: add the entry's region matrix translation
+        const F32* b = f.mBounds;
+        const F32* m0 = f.mEntries[0].mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)f.mEntries[0].mMatrix : nullptr;
+        const F32 c[3] = { b[0] + (m0 ? m0[12] : 0.f), b[1] + (m0 ? m0[13] : 0.f), b[2] + (m0 ? m0[14] : 0.f) };
+        bool inside = true;
+        for (U32 p = 0; p < plane_count && inside; ++p)
+        {
+            inside = planes[4 * p] * c[0] + planes[4 * p + 1] * c[1] + planes[4 * p + 2] * c[2] + planes[4 * p + 3] >= -b[3];
+        }
+        if (!inside)
+        {
+            continue;
+        }
+        ++fragments_in;
+        for (size_t i = 0; i < f.mEntries.size(); ++i)
+        {
+            const ResPair& pair = f.mPairs[f.mPairOf[i]];
+            if (!pair.mOk)
+            {
+                continue;
+            }
+            const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+            note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, nullptr);
+            ++noted;
+        }
+    }
+    if (++passes % 2400 == 0)
+    {
+        LL_INFOS("VkScene") << "resident ray notes: " << passes << " passes, " << noted << " casters named, " << fragments_in << " fragments inside the frustum" << LL_ENDL;
+    }
+}
+
 void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob);
 // kind 16: cull the resident entries against the pass's planes on the GPU, then draw the commands it wrote with the packet program (already bound by the viewer: the same one as kind 0)
 static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
@@ -5100,9 +5156,30 @@ void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     typedef LLVkBridge::ShadowPacketEntry Entry;
-    if (h.mKind == 14) { res_retain(h, blob); return; }
-    if (h.mKind == 15) { res_matrices(h, blob); return; }
-    if (h.mKind == 16) { res_draw(h, blob); return; }
+    if (h.mKind >= 14 && h.mKind <= 17)
+    {
+        // timing per kind (LL_VK_SCENE_TIMES=1): what the resident records cost the worker
+        static const bool timed = getenv("LL_VK_SCENE_TIMES") != nullptr;
+        static U64 ns[4] = {}, calls[4] = {}, last_log = 0;
+        const auto t0 = std::chrono::steady_clock::now();
+        if (h.mKind == 14) res_retain(h, blob);
+        else if (h.mKind == 15) res_matrices(h, blob);
+        else if (h.mKind == 16) res_draw(h, blob);
+        else res_note(h, blob);
+        if (timed)
+        {
+            ns[h.mKind - 14] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+            ++calls[h.mKind - 14];
+            const U64 now = (U64)Context::instance().getFrameNumber();
+            if (now >= last_log + 300)
+            {
+                last_log = now;
+                LL_INFOS("VkScene") << "resident records, worker time: retain " << ns[0] / 1000000 << " ms in " << calls[0] << " calls, matrices " << ns[1] / 1000000 << " ms in " << calls[1] << ", draw "
+                    << ns[2] / 1000000 << " ms in " << calls[2] << ", note " << ns[3] / 1000000 << " ms in " << calls[3] << " (totals)" << LL_ENDL;
+            }
+        }
+        return;
+    }
     if (h.mKind == 11)
     {
         sShadowFragments[h.mFragment].assign((const Entry*)blob, (const Entry*)blob + h.mEntries);
@@ -5164,7 +5241,7 @@ static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const 
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if (h.mKind >= 11 && h.mKind <= 16)
+    if (h.mKind >= 11 && h.mKind <= 17)
     {
         on_shadow_fragments(h, blob);
         return;

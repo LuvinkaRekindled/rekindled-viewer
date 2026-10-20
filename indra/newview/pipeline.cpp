@@ -5553,7 +5553,7 @@ static const char* scene_fragment_diff(const LLSceneFragment& a, const LLSceneFr
 }
 
 // the fragments of the cull result's visible groups (the groups shadowPrepRenderMap takes draws from); send: tell the worker about new ones (RETAIN) and gone ones (RELEASE)
-static void scene_gather(LLCullResult& result, bool send, SceneGather& g)
+static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool retain = true)
 {
     g.mMatrices.assign(16, 0.f);
     g.mMatrices[0] = g.mMatrices[5] = g.mMatrices[10] = g.mMatrices[15] = 1.f;
@@ -5594,7 +5594,7 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g)
         {
             continue;
         }
-        if (send && !f->mSent)
+        if (send && retain && !f->mSent)
         {
             LLVkBridge::ShadowPacketsHeader header;
             header.mKind = 11;
@@ -5681,7 +5681,7 @@ static void scene_frustum_planes(const glm::mat4& vp, F32 planes[6][4])
     }
 }
 
-static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPipeline::ShadowStaticBuild* source, const SceneGather& gather)
+static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPipeline::ShadowStaticBuild* source, const SceneGather& gather, bool ray_notes)
 {
     for (LLSceneFragment* f : sPendingResident)
     {
@@ -5732,7 +5732,7 @@ static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPi
     scene_frustum_planes(view_proj, planes);
     {
         LLVkBridge::ShadowPacketsHeader header;
-        header.mKind = 16;
+        header.mKind = ray_notes ? 17 : 16;
         header.mPass = pass;
         memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
         LLVkBridge::shadowPackets(header, planes, sizeof(planes));
@@ -10104,7 +10104,7 @@ void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
     LLAsyncPool& pool = LLAsyncPool::shared();
     prep.mSkinBuild = std::make_shared<ShadowSkinBuild>();
     std::shared_ptr<ShadowSkinBuild> skin_build = prep.mSkinBuild;
-    if (!(scene_fragments_use() && !scene_verify_on() && !LLVkBridge::rtShadowMode()))      // S1: the fragments serve the cascade (render_shadow_packets builds inline when it still needs entries)
+    if (!(scene_fragments_use() && !scene_verify_on() && (!LLVkBridge::rtShadowMode() || scene_resident_on())))      // S1: the fragments serve the cascade (render_shadow_packets builds inline when it still needs entries)
     {
         prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
         std::shared_ptr<ShadowStaticBuild> static_build = prep.mStaticBuild;
@@ -14724,7 +14724,9 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
         const ShadowStaticBuild* source = prepared ? prepared->mStaticBuild.get() : nullptr;
         // S1: the cascade's casters from the groups' retained fragments (LL_VK_SCENE_FRAGMENTS=1), compared with the builder's when LL_VK_SCENE_VERIFY=1 (then the builder's record is the one drawn)
-        if (!rt_skip && prepared && (scene_fragments_use() || scene_verify_on()) && !rt_materials_on() && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
+        ShadowStaticBuild from_fragments;       // ray shadows with resident fragments: the entries of the groups the worker does not hold, expanded here
+        bool fragment_source = false;
+        if ((!rt_skip || scene_resident_on()) && prepared && (scene_fragments_use() || scene_verify_on()) && !rt_materials_on() && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
         {
             bool all_types = true;
             for (size_t t = 0; t < count && all_types; ++t)
@@ -14736,16 +14738,33 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 LL_CPU_ZONE("packets: shadow static (fragments)");
                 const bool use = scene_fragments_use();
                 SceneGather gather;
-                scene_gather(result, use, gather);
+                scene_gather(result, use, gather, !rt_skip);
                 if (source && scene_verify_on() && !scene_resident_on())
                 {
                     scene_verify_view(gather, *source);
                 }
                 if (use && scene_resident_on())
                 {
-                    scene_resident_pass(gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView), shadow_pass_index(), source, gather);
+                    scene_resident_pass(gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView), shadow_pass_index(), source, gather, rt_skip);
                 }
-                if (use)
+                if (use && rt_skip)
+                {
+                    // the note-only record below carries the non-resident casters: their entries from the fragments, matrices numbered for this record
+                    from_fragments.mMatrices = gather.mMatrices;
+                    from_fragments.mFallback = gather.mFallback;
+                    for (size_t r = 0; r < gather.mRefs.size(); ++r)
+                    {
+                        const LLSceneFragment* f = gather.mFragments[r];
+                        for (LLVkBridge::ShadowPacketEntry e : f->mEntries)
+                        {
+                            e.mMatrix = e.mMatrix ? gather.mMap[gather.mRefs[r].mMapOffset + e.mMatrix - 1] : 0;
+                            from_fragments.mEntries.push_back(e);
+                        }
+                    }
+                    source = &from_fragments;
+                    fragment_source = true;
+                }
+                else if (use)
                 {
                     if (!gather.mRefs.empty())
                     {
@@ -14788,7 +14807,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             build_shadow_static(result, list, count, built);
             source = &built;
         }
-        else if (builder_verify())
+        else if (builder_verify() && !fragment_source)
         {
             build_shadow_static(result, list, count, built);
             verify_shadow_static("static", *source, built);
