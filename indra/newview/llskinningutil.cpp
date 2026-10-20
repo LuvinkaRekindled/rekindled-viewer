@@ -154,6 +154,10 @@ void LLSkinningUtil::initSkinningMatrixPalette(
         }
         else
         {
+            // <FS> a joint that is not found used to leave world[j] uninitialised; the loop below then overwrote the fallback matrix assigned here with
+            // invBind * (stack garbage): the vertices weighted to that joint were pulled far away (a stretched spike, e.g. a hand). With an identity world matrix the
+            // loop below gives mat[j] = invBind, which is what the line below meant to do.
+            world[j].setIdentity();
             mat[j] = skin->mInvBindMatrix[j];
 #if DEBUG_SKINNING
             // This  shouldn't  happen   -  in  mesh  upload,  skinned
