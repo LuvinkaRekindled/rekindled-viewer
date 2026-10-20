@@ -373,9 +373,9 @@ void QToolAlign::render()
 
         // Draw bounding box
         LLGLSUIDefault gls_ui;
-        LLGLEnable gl_blend(GL_BLEND);
-        LLGLEnable gls_alpha_test(GL_ALPHA_TEST);
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::BlendScope gl_blend(true);
+        // F3.2: LLGLEnable(GL_ALPHA_TEST) had no effect on the render state block (never mapped); dropped
+        LLRenderState::DepthScope gls_depth(false);
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
 
         // render box

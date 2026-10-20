@@ -423,7 +423,7 @@ void LLSceneMonitor::calcDiffAggregate()
         mQueryObject = LLOcclusionCullingGroup::getNewOcclusionQueryObjectName();
     }
 
-    LLGLDepthTest depth(true, false, GL_ALWAYS);
+    LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
     if(!mDebugViewerVisible)
     {
         gGL.setColorMask(false, false, false, false);

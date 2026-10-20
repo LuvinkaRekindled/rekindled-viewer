@@ -228,7 +228,7 @@ void LLHUDNameTag::render()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
     if (sDisplayText)
     {
-        LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
+        LLRenderState::DepthScope gls_depth(true, false);
         renderText();
     }
 }
@@ -292,7 +292,7 @@ void LLHUDNameTag::renderText()
             + (x_pixel_vec * screen_offset.mV[VX])
             + (y_pixel_vec * screen_offset.mV[VY]);
 
-    LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
+    LLRenderState::DepthScope gls_depth(true, false);
     LLRect screen_rect;
     screen_rect.setCenterAndSize(0, static_cast<S32>(lltrunc(-mHeight / 2 + mOffsetY)), static_cast<S32>(lltrunc(mWidth)), static_cast<S32>(lltrunc(mHeight)));
     {

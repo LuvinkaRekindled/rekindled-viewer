@@ -567,7 +567,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
                 if (rigged)
                 {
                     // called when selecting a face during edit of a mesh object
-                    LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
+                    LLRenderState::PolygonOffsetScope offset(true);
                     gGL.setPolygonOffset(-1.f, -1.f);
                     gGL.multMatrix((F32*) volume->getRelativeXform().mMatrix);
                     const LLVolumeFace& vol_face = rigged->getVolumeFace(getTEOffset());
@@ -646,7 +646,7 @@ void LLFace::renderOneWireframe(const LLColor4 &color, F32 fogCfx, bool wirefram
     if (bRenderHiddenSelections)
     {
         gGL.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
-        LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE, GL_GEQUAL);
+        LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::GreaterEqual);
         if (shader)
         {
             gGL.diffuseColor4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.4f);
@@ -668,9 +668,9 @@ void LLFace::renderOneWireframe(const LLColor4 &color, F32 fogCfx, bool wirefram
     gGL.diffuseColor4f(color.mV[VRED] * 2, color.mV[VGREEN] * 2, color.mV[VBLUE] * 2, color.mV[VALPHA]);
 
     {
-        LLGLDisable depth(wireframe_selection ? 0 : GL_BLEND);
+        LLRenderState::BlendScope depth(false, !wireframe_selection);
 
-        LLGLEnable offset(GL_POLYGON_OFFSET_LINE);
+        // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
         gGL.setPolygonOffset(3.f, 3.f);
         gGL.setLineWidth(5.f); // <FS> Line width OGL core profile fix by Rye Mutt
         gGL.setPolygonMode(LLRenderState::PolygonMode::Line);

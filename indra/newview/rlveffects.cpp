@@ -379,7 +379,7 @@ void RlvSphereEffect::run(const LLVisualEffectParams* pParams)
     LL_RECORD_BLOCK_TIME(FTM_RLV_EFFECT_SPHERE);
     if (gRlvSphereProgram.isComplete())
     {
-        LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+        LLRenderState::DepthScope depth(false, false);
 
         gRlvSphereProgram.bind();
         setShaderUniforms(&gRlvSphereProgram);

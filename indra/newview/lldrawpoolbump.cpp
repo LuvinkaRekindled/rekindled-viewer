@@ -358,7 +358,7 @@ void LLDrawPoolBump::renderFullbrightShiny()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_SHINY);
 
     {
-        LLGLEnable blend_enable(GL_BLEND);
+        LLRenderState::BlendScope blend_enable(true);
 
         if (mShaderLevel > 1)
         {
@@ -519,11 +519,11 @@ void LLDrawPoolBump::beginBump()
 void LLDrawPoolBump::renderBump(U32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_BUMP);
-    LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
-    LLGLEnable blend(GL_BLEND);
+    LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::LessEqual);
+    LLRenderState::BlendScope blend(true);
     gGL.diffuseColor4f(1,1,1,1);
     /// Get rid of z-fighting with non-bump pass.
-    LLGLEnable polyOffset(GL_POLYGON_OFFSET_FILL);
+    LLRenderState::PolygonOffsetScope polyOffset(true);
     gGL.setPolygonOffset(-1.0f, -1.0f);
     pushBumpBatches(pass);
 }
@@ -922,9 +922,9 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
         {
             sRenderTarget.bindTarget();
 
-            LLGLDepthTest depth(GL_FALSE);
-            LLGLDisable cull(GL_CULL_FACE);
-            LLGLDisable blend(GL_BLEND);
+            LLRenderState::DepthScope depth(false);
+            LLRenderState::CullScope cull(false);
+            LLRenderState::BlendScope blend(false);
             gGL.setColorMask(true, true);
 
             LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;

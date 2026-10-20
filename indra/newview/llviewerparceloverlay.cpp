@@ -688,7 +688,7 @@ void LLViewerParcelOverlay::renderPropertyLines()
 
     LLGLSUIDefault gls_ui; // called from pipeline
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-    LLGLDepthTest mDepthTest(GL_TRUE);
+    LLRenderState::DepthScope mDepthTest(true);
 
     // Find camera height off the ground (not from zero)
     F32 ground_height_at_camera = land.resolveHeightGlobal( gAgentCamera.getCameraPositionGlobal() );
@@ -769,7 +769,7 @@ void LLViewerParcelOverlay::renderPropertyLines()
 
         if (render_hidden)
         {
-            LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_GREATER);
+            LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Greater);
 
             gGL.begin(LLRender::TRIANGLE_STRIP);
 

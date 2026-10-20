@@ -299,7 +299,7 @@ bool LLVisualParamHint::render()
             << " dirtyMesh=" << gAgentAvatarp->mDirtyMesh
             << " mMeshValid=" << gAgentAvatarp->mMeshValid
             << LL_ENDL;
-        LLGLDepthTest gls_depth(GL_TRUE, GL_TRUE);
+        LLRenderState::DepthScope gls_depth(true, true);
         gGL.flush();
         gGL.setSceneBlendType(LLRender::BT_REPLACE);
         gPipeline.generateImpostor(gAgentAvatarp, true);

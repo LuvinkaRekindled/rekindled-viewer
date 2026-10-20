@@ -1322,7 +1322,7 @@ void LLRenderPass::pushGLTFBatch(LLDrawInfo& params)
         mat->bind(params.mTexture);
     }
 
-    LLGLDisable cull_face(mat.notNull() && mat->mDoubleSided ? GL_CULL_FACE : 0);
+    LLRenderState::CullScope cull_face(false, mat.notNull() && mat->mDoubleSided);
 
     setup_texture_matrix(params);
 
@@ -1343,7 +1343,7 @@ void LLRenderPass::pushUntexturedGLTFBatch(LLDrawInfo& params)
     }
     auto& mat = params.mGLTFMaterial;
 
-    LLGLDisable cull_face(mat->mDoubleSided ? GL_CULL_FACE : 0);
+    LLRenderState::CullScope cull_face(false, mat->mDoubleSided);
 
     applyModelMatrix(params);
 

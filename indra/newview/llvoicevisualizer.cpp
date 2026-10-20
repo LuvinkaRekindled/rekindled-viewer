@@ -359,7 +359,7 @@ void LLVoiceVisualizer::render()
         // some gl state
         //---------------------------------------------------------------
         LLGLSPipelineAlpha alpha_blend;
-        LLGLDepthTest depth(GL_TRUE, GL_FALSE);
+        LLRenderState::DepthScope depth(true, false);
         //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 
         //-------------------------------------------------------------

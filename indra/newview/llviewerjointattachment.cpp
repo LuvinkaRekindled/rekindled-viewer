@@ -87,7 +87,7 @@ U32 LLViewerJointAttachment::drawShape( F32 pixelArea, bool first_pass, bool is_
 {
     if (LLVOAvatar::sShowAttachmentPoints)
     {
-        LLGLDisable cull_face(GL_CULL_FACE);
+        LLRenderState::CullScope cull_face(false);
 
         gGL.color4f(1.f, 1.f, 1.f, 1.f);
         gGL.begin(LLRender::TRIANGLES);

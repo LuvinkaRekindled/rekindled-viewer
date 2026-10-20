@@ -314,7 +314,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
         write_depth = false;
     }
 
-    LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE, fringe ? GL_LESS : GL_LEQUAL);
+    LLRenderState::DepthScope depth(true, write_depth ? true : false, fringe ? LLRenderState::CompareOp::Less : LLRenderState::CompareOp::LessEqual);
 
     mColorSFactor = LLRender::BF_SOURCE_ALPHA;           // } regular alpha blend
     mColorDFactor = LLRender::BF_ONE_MINUS_SOURCE_ALPHA; // }
@@ -341,9 +341,9 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
 
         gGL.setColorMask(false, false);
         {
-            LLGLDepthTest prepass_depth(GL_TRUE, GL_TRUE);
+            LLRenderState::DepthScope prepass_depth(true, true);
             // the colour pass draws the same triangles and tests with LEQUAL: written a hair farther so that no rounding between the two passes makes them fail
-            LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
+            LLRenderState::PolygonOffsetScope offset(true);
             gGL.setPolygonOffset(1.f, 4.f);
             renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, true, true);
         }
@@ -364,7 +364,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
         LL_GPU_TIMER_ZONE(fringe ? "alpha: rigged fringe" : rigged ? (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: rigged (post water)" : "alpha: rigged (pre water)")
                                  : (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: static (post water)" : "alpha: static (pre water)"));
         // the soft part: drawn a little farther than the depth only pass wrote the same triangles, so that what wrote depth there fails the strict test
-        LLGLEnable fringe_offset(fringe ? GL_POLYGON_OFFSET_FILL : 0);
+        LLRenderState::PolygonOffsetScope fringe_offset(true, fringe);
         if (fringe)
         {
             gGL.setPolygonOffset(1.f, 8.f);
@@ -651,7 +651,7 @@ void LLDrawPoolAlpha::renderPbrEmissives(std::vector<LLDrawInfo*>& emissives)
     for (LLDrawInfo* draw : emissives)
     {
         llassert(draw->mGLTFMaterial);
-        LLGLDisable cull_face(draw->mGLTFMaterial->mDoubleSided ? GL_CULL_FACE : 0);
+        LLRenderState::CullScope cull_face(false, draw->mGLTFMaterial->mDoubleSided);
         draw->mGLTFMaterial->bind(draw->mTexture);
         draw->mVertexBuffer->setBuffer();
         draw->mVertexBuffer->drawRange(LLRender::TRIANGLES, draw->mStart, draw->mEnd, draw->mCount, draw->mOffset);
@@ -660,7 +660,7 @@ void LLDrawPoolAlpha::renderPbrEmissives(std::vector<LLDrawInfo*>& emissives)
 
 void LLDrawPoolAlpha::renderRiggedEmissives(std::vector<LLDrawInfo*>& emissives)
 {
-    LLGLDepthTest depth(GL_TRUE, GL_FALSE); //disable depth writes since "emissive" is additive so sorting doesn't matter
+    LLRenderState::DepthScope depth(true, false); //disable depth writes since "emissive" is additive so sorting doesn't matter
     LLGLSLShader* shader = emissive_shader->mRiggedVariant;
     shader->bind();
     shader->uniform1f(LLShaderMgr::EMISSIVE_BRIGHTNESS, 1.f);
@@ -684,7 +684,7 @@ void LLDrawPoolAlpha::renderRiggedEmissives(std::vector<LLDrawInfo*>& emissives)
 
 void LLDrawPoolAlpha::renderRiggedPbrEmissives(std::vector<LLDrawInfo*>& emissives)
 {
-    LLGLDepthTest depth(GL_TRUE, GL_FALSE); //disable depth writes since "emissive" is additive so sorting doesn't matter
+    LLRenderState::DepthScope depth(true, false); //disable depth writes since "emissive" is additive so sorting doesn't matter
     pbr_emissive_shader->bind(true);
 
     const LLVOAvatar* lastAvatar = nullptr;
@@ -698,7 +698,7 @@ void LLDrawPoolAlpha::renderRiggedPbrEmissives(std::vector<LLDrawInfo*>& emissiv
             continue;
         }
 
-        LLGLDisable cull_face(draw->mGLTFMaterial->mDoubleSided ? GL_CULL_FACE : 0);
+        LLRenderState::CullScope cull_face(false, draw->mGLTFMaterial->mDoubleSided);
         draw->mGLTFMaterial->bind(draw->mTexture);
         draw->mVertexBuffer->setBuffer();
         draw->mVertexBuffer->drawRange(LLRender::TRIANGLES, draw->mStart, draw->mEnd, draw->mCount, draw->mOffset);
@@ -795,7 +795,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             // </FS:LO>
 
             bool disable_cull = is_particle_or_hud_particle;
-            LLGLDisable cull(disable_cull ? GL_CULL_FACE : 0);
+            LLRenderState::CullScope cull(false, disable_cull);
 
             LLSpatialGroup::drawmap_elem_t& draw_info = rigged ? group->mDrawMap[LLRenderPass::PASS_ALPHA_RIGGED] : group->mDrawMap[LLRenderPass::PASS_ALPHA];
 
@@ -814,7 +814,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 LLMaterial* mat = NULL;
                 LLGLTFMaterial *gltf_mat = params.mGLTFMaterial;
 
-                LLGLDisable cull_face(gltf_mat && gltf_mat->mDoubleSided ? GL_CULL_FACE : 0);
+                LLRenderState::CullScope cull_face(false, gltf_mat && gltf_mat->mDoubleSided);
 
                 if (gltf_mat && gltf_mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND)
                 {

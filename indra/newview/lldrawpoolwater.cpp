@@ -118,7 +118,7 @@ void LLDrawPoolWater::beginPostDeferredPass(S32 pass)
     {
         // copy framebuffer contents so far to a texture to be used for
         // reflections and refractions
-        LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS);
+        LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
 
         LLRenderTarget& src = gPipeline.mRT->screen;
         LLRenderTarget& depth_src = gPipeline.mRT->deferredScreen;
@@ -143,7 +143,7 @@ void LLDrawPoolWater::beginPostDeferredPass(S32 pass)
 void LLDrawPoolWater::renderPostDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    LLGLDisable blend(GL_BLEND);
+    LLRenderState::BlendScope blend(false);
 
     gGL.setColorMask(true, true);
 
@@ -315,7 +315,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
         shader->uniform1f(LLShaderMgr::WATER_REFSCALE, pwater->getScaleAbove());
     }
 
-    LLGLDisable cullface(GL_CULL_FACE);
+    LLRenderState::CullScope cullface(false);
 
     // Only push the water planes once.
     // Previously we did this twice: once for void water and one for region water.

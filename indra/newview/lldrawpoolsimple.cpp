@@ -47,14 +47,14 @@ void LLDrawPoolGlow::renderPostDeferred(S32 pass)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     LLGLSLShader* shader = &gDeferredEmissiveProgram;
 
-    LLGLEnable blend(GL_BLEND);
+    LLRenderState::BlendScope blend(true);
     gGL.flush();
     /// Get rid of z-fighting with non-glow pass.
-    LLGLEnable polyOffset(GL_POLYGON_OFFSET_FILL);
+    LLRenderState::PolygonOffsetScope polyOffset(true);
     gGL.setPolygonOffset(-1.0f, -1.0f);
     gGL.setSceneBlendType(LLRender::BT_ADD);
 
-    LLGLDepthTest depth(GL_TRUE, GL_FALSE);
+    LLRenderState::DepthScope depth(true, false);
     gGL.setColorMask(false, true);
 
     //first pass -- static objects
@@ -99,7 +99,7 @@ S32 LLDrawPoolSimple::getNumDeferredPasses()
 void LLDrawPoolSimple::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_SIMPLE_DEFERRED);
-    LLGLDisable blend(GL_BLEND);
+    LLRenderState::BlendScope blend(false);
 
     //render static
     if (deferredPacketsEnabled())
@@ -217,7 +217,7 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
         shader = &gDeferredFullbrightAlphaMaskProgram;
     }
 
-    LLGLDisable blend(GL_BLEND);
+    LLRenderState::BlendScope blend(false);
 
     // render static
     shader->bind();

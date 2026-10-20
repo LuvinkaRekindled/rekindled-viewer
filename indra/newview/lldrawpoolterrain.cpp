@@ -647,7 +647,7 @@ void LLDrawPoolTerrain::hilightParcelOwners()
         sShader = &gDeferredHighlightProgram;
         sShader->bind();
         gGL.diffuseColor4f(1, 1, 1, 1);
-        LLGLEnable polyOffset(GL_POLYGON_OFFSET_FILL);
+        LLRenderState::PolygonOffsetScope polyOffset(true);
         gGL.setPolygonOffset(-1.0f, -1.0f);
         renderOwnership();
         sShader = old_shader;

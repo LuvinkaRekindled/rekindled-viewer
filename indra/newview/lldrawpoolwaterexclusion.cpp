@@ -50,14 +50,14 @@ void LLDrawPoolWaterExclusion::render(S32 pass)
     }
 
 
-    LLGLDepthTest depth(GL_TRUE);
+    LLRenderState::DepthScope depth(true);
     gDrawColorProgram.uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 1, 1, 1);
 
     LLDrawPoolWater* pwaterpool = (LLDrawPoolWater*)gPipeline.getPool(LLDrawPool::POOL_WATER);
     if (pwaterpool)
     {
         // Just treat our water planes as double sided for the purposes of generating the exclusion mask.
-        LLGLDisable cullface(GL_CULL_FACE);
+        LLRenderState::CullScope cullface(false);
         pwaterpool->pushWaterPlanes(0);
 
         // Take care of the edge water tiles.
