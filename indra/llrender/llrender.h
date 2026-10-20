@@ -161,15 +161,8 @@ public:
     // returns the index of this texture unit
     S32 getIndex(void) const { return mIndex; }
 
-    // Sets this tex unit to be the currently active one
-    void activate(void);
-
-    // Enables this texture unit for the given texture type
-    // (automatically disables any previously enabled texture type)
-    void enable(eTextureType type);
-
-    // Disables the current texture unit
-    void disable(void);
+    // The unit holds nothing: white when it held a 2D texture, no texture (slot 0) for the other types (what disable() was)
+    void clear();
 
     // Binds the LLImageGL to this texture unit
     // (automatically enables the unit for the LLImageGL's texture type)
@@ -524,7 +517,6 @@ public:
 
     LLTexUnit* getTexUnit(U32 index);
 
-    U32 getCurrentTexUnitIndex(void) const { return mCurrTextureUnitIndex; }
 
 
     void debugTexUnits(void);
@@ -566,7 +558,6 @@ private:
     int             mBatchTexLine = 0;
     bool            mBatchHasTexCoord = false;     // F3.4: a texCoord call since the last flush (an untextured batch gets white from its draw record)
     U32             mMode;
-    U32             mCurrTextureUnitIndex;
     F32             mClearColor[4] = { 0.f, 0.f, 0.f, 0.f };     // the colour clearBuffers() clears to
     bool                mCurrColorMask[4];
     F32             mLineWidth; // <FS> Line width OGL core profile fix by Rye Mutt

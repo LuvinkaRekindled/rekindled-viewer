@@ -167,37 +167,7 @@ void LLTexUnit::refreshState(void)
     }
 }
 
-void LLTexUnit::activate(void)
-{
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_STATE);
-    if (mIndex < 0) return;
-
-    if ((S32)gGL.mCurrTextureUnitIndex != mIndex || gGL.mDirty)
-    {
-        gGL.flush();
-        gGL.mCurrTextureUnitIndex = mIndex;
-    }
-}
-
-void LLTexUnit::enable(eTextureType type)
-{
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_STATE);
-    if (mIndex < 0) return;
-
-    if ( (mCurrTexType != type || gGL.mDirty) && (type != TT_NONE) )
-    {
-        activate();
-        if (mCurrTexType != TT_NONE && !gGL.mDirty)
-        {
-            disable(); // Force a disable of a previous texture type if it's enabled.
-        }
-        mCurrTexType = type;
-
-        gGL.flush();
-    }
-}
-
-void LLTexUnit::disable(void)
+void LLTexUnit::clear()
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_STATE);
     if (mIndex < 0) return;
@@ -211,7 +181,6 @@ void LLTexUnit::disable(void)
 
 void LLTexUnit::applyTexOptions(LLImageGL* gl_tex)
 {
-    gGL.mCurrTextureUnitIndex = mIndex;
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
     ll_bindTexUnit(mIndex, sGLTextureType[gl_tex->getTarget()], mCurrTexture);
@@ -225,7 +194,6 @@ void LLTexUnit::bindFast(LLTexture* texture)
 {
     LLImageGL* gl_tex = texture->getGLTexture();
     texture->setActive();
-    gGL.mCurrTextureUnitIndex = mIndex;
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
     if (!mCurrTexture)
@@ -303,8 +271,7 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
                 //in audit, replace the selected texture by the default one.
                 if ((mCurrTexture != gl_tex->getTexName()) || forceBind)
                 {
-                    activate();
-                    enable(gl_tex->getTarget());
+                    mCurrTexType = gl_tex->getTarget();
                     mCurrTexture = gl_tex->getTexName();
                     ll_bindTexUnit(mIndex, sGLTextureType[gl_tex->getTarget()], mCurrTexture);
                     if(gl_tex->updateBindStats())
@@ -379,9 +346,8 @@ bool LLTexUnit::bind(LLImageGL* texture, bool for_rendering, bool forceBind, S32
     {
         gGL.flush();
         stop_glerror();
-        activate();
         stop_glerror();
-        enable(texture->getTarget());
+        mCurrTexType = texture->getTarget();
         stop_glerror();
         mCurrTexture = texname;
         ll_bindTexUnit(mIndex, sGLTextureType[texture->getTarget()], mCurrTexture);
@@ -419,8 +385,7 @@ bool LLTexUnit::bind(LLCubeMap* cubeMap)
     {
         if (LLCubeMap::sUseCubeMaps)
         {
-            activate();
-            enable(LLTexUnit::TT_CUBE_MAP);
+            mCurrTexType = LLTexUnit::TT_CUBE_MAP;
             mCurrTexture = cubeMap->mImages[0]->getTexName();
             ll_bindTexUnit(mIndex, GL_TEXTURE_CUBE_MAP, mCurrTexture);
             mHasMipMaps = cubeMap->mImages[0]->mHasMipMaps;
@@ -477,8 +442,10 @@ bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const c
     {
         gGL.flush();
 
-        activate();
-        enable(type);
+        if (type != TT_NONE)
+        {
+            mCurrTexType = type;
+        }
         mCurrTexture = texture;
         ll_bindTexUnit(mIndex, sGLTextureType[type], texture);
         mHasMipMaps = hasMips;
@@ -535,10 +502,9 @@ void LLTexUnit::unbind(eTextureType type, const char* file, int line)
 
     if (mIndex < 0) return;
 
-    //always flush and activate for consistency
-    //   some code paths assume unbind always flushes and sets the active texture
+    //always flush for consistency
+    //   some code paths assume unbind always flushes (it is the boundary between a textured and an untextured immediate batch)
     gGL.flush();
-    activate();
 
     // Disabled caching of binding state.
     if (mCurrTexType == type)
@@ -562,7 +528,6 @@ void LLTexUnit::unbindFast(eTextureType type, const char* file, int line)
     sNextFile = file;
     sNextLine = line;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
-    activate();
 
     // Disabled caching of binding state.
     if (mCurrTexType == type)
@@ -934,7 +899,6 @@ LLRender::LLRender()
   : mDirty(false),
     mCount(0),
     mMode(LLRender::TRIANGLES),
-    mCurrTextureUnitIndex(0),
     mLineWidth(1.f), // <FS> Line width OGL core profile fix by Rye Mutt
     // <FS:Ansariel> Don't ignore OpenGL max line width
     mMaxLineWidthSmooth(1.f),
@@ -1037,14 +1001,10 @@ void LLRender::refreshState(void)
 {
     mDirty = true;
 
-    U32 active_unit = mCurrTextureUnitIndex;
-
     for (U32 i = 0; i < mTexUnits.size(); i++)
     {
         mTexUnits[i].refreshState();
     }
-
-    mTexUnits[active_unit].activate();
 
     setColorMask(mCurrColorMask[0], mCurrColorMask[1], mCurrColorMask[2], mCurrColorMask[3]);
 
@@ -2328,13 +2288,10 @@ void LLRender::diffuseColor4ub(U8 r, U8 g, U8 b, U8 a)
 
 void LLRender::debugTexUnits(void)
 {
-    LL_INFOS("TextureUnit") << "Active TexUnit: " << mCurrTextureUnitIndex << LL_ENDL;
-    std::string active_enabled = "false";
     for (U32 i = 0; i < mTexUnits.size(); i++)
     {
         if (getTexUnit(i)->mCurrTexType != LLTexUnit::TT_NONE)
         {
-            if (i == mCurrTextureUnitIndex) active_enabled = "true";
             LL_INFOS("TextureUnit") << "TexUnit: " << i << " Enabled" << LL_ENDL;
             LL_INFOS("TextureUnit") << "Enabled As: " ;
             switch (getTexUnit(i)->mCurrTexType)
@@ -2355,7 +2312,6 @@ void LLRender::debugTexUnits(void)
             LL_CONT << ", Texture Bound: " << getTexUnit(i)->mCurrTexture << LL_ENDL;
         }
     }
-    LL_INFOS("TextureUnit") << "Active TexUnit Enabled : " << active_enabled << LL_ENDL;
 }
 
 glm::mat4 get_current_modelview()

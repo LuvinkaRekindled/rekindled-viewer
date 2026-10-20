@@ -319,16 +319,16 @@ void LLDrawPoolTerrain::renderFullShaderTextures()
     sShader->disableTexture(LLViewerShaderMgr::TERRAIN_DETAIL3);
 
     gGL.getTexUnit(alpha_ramp)->bindWhite();
-    gGL.getTexUnit(alpha_ramp)->disable();
+    gGL.getTexUnit(alpha_ramp)->clear();
 
     gGL.getTexUnit(detail3)->bindWhite();
-    gGL.getTexUnit(detail3)->disable();
+    gGL.getTexUnit(detail3)->clear();
 
     gGL.getTexUnit(detail2)->bindWhite();
-    gGL.getTexUnit(detail2)->disable();
+    gGL.getTexUnit(detail2)->clear();
 
     gGL.getTexUnit(detail1)->bindWhite();
-    gGL.getTexUnit(detail1)->disable();
+    gGL.getTexUnit(detail1)->clear();
 
     //----------------------------------------------------------------------------
     // Restore Texture Unit 0 defaults
@@ -569,14 +569,14 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
         sShader->disableTexture(LLViewerShaderMgr::TERRAIN_ALPHARAMP);
 
         gGL.getTexUnit(alpha_ramp)->bindWhite();
-        gGL.getTexUnit(alpha_ramp)->disable();
+        gGL.getTexUnit(alpha_ramp)->clear();
     }
     else if (paint_type == TERRAIN_PAINT_TYPE_PBR_PAINTMAP)
     {
         sShader->disableTexture(LLViewerShaderMgr::TERRAIN_PAINTMAP);
 
         gGL.getTexUnit(paint_map)->bindWhite();
-        gGL.getTexUnit(paint_map)->disable();
+        gGL.getTexUnit(paint_map)->clear();
     }
 
     for (U32 i = 0; i < terrain_material_count; ++i)
@@ -596,24 +596,24 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
         }
 
         gGL.getTexUnit(detail_basecolor[i])->bindWhite();
-        gGL.getTexUnit(detail_basecolor[i])->disable();
+        gGL.getTexUnit(detail_basecolor[i])->clear();
 
         if (sPBRDetailMode >= TERRAIN_PBR_DETAIL_NORMAL)
         {
             gGL.getTexUnit(detail_normal[i])->bindWhite();
-            gGL.getTexUnit(detail_normal[i])->disable();
+            gGL.getTexUnit(detail_normal[i])->clear();
         }
 
         if (sPBRDetailMode >= TERRAIN_PBR_DETAIL_METALLIC_ROUGHNESS)
         {
             gGL.getTexUnit(detail_metalrough[i])->bindWhite();
-            gGL.getTexUnit(detail_metalrough[i])->disable();
+            gGL.getTexUnit(detail_metalrough[i])->clear();
         }
 
         if (sPBRDetailMode >= TERRAIN_PBR_DETAIL_EMISSIVE)
         {
             gGL.getTexUnit(detail_emissive[i])->bindWhite();
-            gGL.getTexUnit(detail_emissive[i])->disable();
+            gGL.getTexUnit(detail_emissive[i])->clear();
         }
     }
 }

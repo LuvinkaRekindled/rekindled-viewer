@@ -1139,7 +1139,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         return false;
     }
 
-    gGL.getTexUnit(0)->disable();
+    gGL.getTexUnit(0)->clear();
 
     stop_glerror();
 
@@ -14700,7 +14700,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow simple"); //LL_RECORD_BLOCK_TIME(FTM_SHADOW_SIMPLE);
         LL_PROFILE_GPU_ZONE("shadow simple");
-        gGL.getTexUnit(0)->disable();
+        gGL.getTexUnit(0)->clear();
 
         if (!rigged)
         {

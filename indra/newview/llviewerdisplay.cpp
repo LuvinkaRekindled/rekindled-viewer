@@ -1290,7 +1290,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                     const auto t0 = std::chrono::steady_clock::now();
                     gGL.getTexUnit(i)->unbind(gGL.getTexUnit(i)->getCurrType());
                     const auto t1 = std::chrono::steady_clock::now();
-                    gGL.getTexUnit(i)->disable();
+                    gGL.getTexUnit(i)->clear();
                     const auto t2 = std::chrono::steady_clock::now();
                     ++unbound;
                     const auto us_unbind = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();

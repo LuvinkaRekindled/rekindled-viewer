@@ -1229,7 +1229,7 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
         {
             sub_image_lines(tex_name, mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap, data_width);
         }
-        gGL.getTexUnit(0)->disable();
+        gGL.getTexUnit(0)->clear();
         stop_glerror();
 
 
