@@ -1788,7 +1788,7 @@ void FSPanelFace::updateUI(bool force_set_values /*false*/)
 
         // Texture
         {
-            LLGLenum image_format = GL_RGB;
+            PixelFormat image_format = PixelFormat::RGB;
             bool identical_image_format = false;
             bool missing_asset = false;
             LLSelectedTE::getImageFormat(image_format, identical_image_format, missing_asset);
@@ -1798,14 +1798,14 @@ void FSPanelFace::updateUI(bool force_set_values /*false*/)
                 mIsAlpha = false;
                 switch (image_format)
                 {
-                    case GL_RGBA:
-                    case GL_ALPHA:
+                    case PixelFormat::RGBA:
+                    case PixelFormat::Alpha:
                     {
                         mIsAlpha = true;
                     }
                     break;
 
-                    case GL_RGB: break;
+                    case PixelFormat::RGB: break;
                     default:
                     {
                         LL_WARNS() << "Unexpected tex format in FSPanelFace, resorting to no alpha" << LL_ENDL;
@@ -4036,7 +4036,7 @@ void FSPanelFace::onSelectTexture()
     LLSelectMgr::getInstance()->saveSelectedObjectTextures();
     sendTexture();
 
-    LLGLenum image_format;
+    PixelFormat image_format;
     bool identical_image_format = false;
     bool missing_asset = false;
     LLSelectedTE::getImageFormat(image_format, identical_image_format, missing_asset);
@@ -4046,14 +4046,14 @@ void FSPanelFace::onSelectTexture()
         U32 alpha_mode = LLMaterial::DIFFUSE_ALPHA_MODE_NONE;
         switch (image_format)
         {
-            case GL_RGBA:
-            case GL_ALPHA:
+            case PixelFormat::RGBA:
+            case PixelFormat::Alpha:
             {
                 alpha_mode = LLMaterial::DIFFUSE_ALPHA_MODE_BLEND;
             }
             break;
 
-            case GL_RGB: break;
+            case PixelFormat::RGB: break;
             default:
             {
                 LL_WARNS() << "Unexpected tex format in FSPanelFace, resorting to no alpha" << LL_ENDL;
@@ -5955,12 +5955,12 @@ void FSPanelFace::LLSelectedTE::getFace(LLFace*& face_to_return, bool& identical
     identical_face = LLSelectMgr::getInstance()->getSelection()->getSelectedTEValue(&get_te_face_func, face_to_return, false, (LLFace*)nullptr);
 }
 
-void FSPanelFace::LLSelectedTE::getImageFormat(LLGLenum& image_format_to_return, bool& identical_face, bool& missing_asset)
+void FSPanelFace::LLSelectedTE::getImageFormat(PixelFormat& image_format_to_return, bool& identical_face, bool& missing_asset)
 {
     struct LLSelectedTEGetmatId : public LLSelectedTEFunctor
     {
         LLSelectedTEGetmatId()
-            : mImageFormat(GL_RGB)
+            : mImageFormat(PixelFormat::RGB)
             , mIdentical(true)
             , mMissingAsset(false)
             , mFirstRun(true)
@@ -5969,7 +5969,7 @@ void FSPanelFace::LLSelectedTE::getImageFormat(LLGLenum& image_format_to_return,
         bool apply(LLViewerObject* object, S32 te_index) override
         {
             LLViewerTexture* image = object ? object->getTEImage(te_index) : nullptr;
-            LLGLenum format = GL_RGB;
+            PixelFormat format = PixelFormat::RGB;
             bool missing = false;
             if (image)
             {
@@ -5990,7 +5990,7 @@ void FSPanelFace::LLSelectedTE::getImageFormat(LLGLenum& image_format_to_return,
             }
             return true;
         }
-        LLGLenum mImageFormat;
+        PixelFormat mImageFormat;
         bool mIdentical;
         bool mMissingAsset;
         bool mFirstRun;
@@ -6131,8 +6131,8 @@ void FSPanelFace::LLSelectedTEMaterial::getCurrentDiffuseAlphaMode(U8& diffuse_a
             LLViewerTexture* image = object->getTEImage(face);
             if (image)
             {
-                LLGLenum format = image->getPrimaryFormat();
-                if (format == GL_RGBA || format == GL_ALPHA)
+                PixelFormat format = image->getPrimaryFormat();
+                if (format == PixelFormat::RGBA || format == PixelFormat::Alpha)
                 {
                     has_alpha = true;
                 }

@@ -171,8 +171,8 @@ public:     // PoundLife - Improved Object Inspect
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
-                                     LLGLint internal_format = 0,
-                                     LLGLenum primary_format = 0,
+                                     TexelFormat internal_format = TexelFormat::None,
+                                     PixelFormat primary_format = PixelFormat::None,
                                      LLHost request_from_host = LLHost()
                                      );
 
@@ -182,8 +182,8 @@ private:    // PoundLife - Improved Object Inspect
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
-                                     LLGLint internal_format = 0,
-                                     LLGLenum primary_format = 0,
+                                     TexelFormat internal_format = TexelFormat::None,
+                                     PixelFormat primary_format = PixelFormat::None,
                                      const LLUUID& force_id = LLUUID::null
                                      );
 
@@ -192,8 +192,8 @@ private:    // PoundLife - Improved Object Inspect
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
-                                     LLGLint internal_format = 0,
-                                      LLGLenum primary_format = 0,
+                                     TexelFormat internal_format = TexelFormat::None,
+                                      PixelFormat primary_format = PixelFormat::None,
                                      const LLUUID& force_id = LLUUID::null
                                      );
 
@@ -205,15 +205,15 @@ private:    // PoundLife - Improved Object Inspect
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
-                                     LLGLint internal_format = 0,
-                                     LLGLenum primary_format = 0,
+                                     TexelFormat internal_format = TexelFormat::None,
+                                     PixelFormat primary_format = PixelFormat::None,
                                      LLHost request_from_host = LLHost()
                                      );
 
     // Request image from a specific host, used for baked avatar textures.
     // Implemented in header in case someone changes default params above. JC
     LLViewerFetchedTexture* getImageFromHost(const LLUUID& image_id, FTType f_type, LLHost host)
-    { return getImage(image_id, f_type, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, host); }
+    { return getImage(image_id, f_type, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, host); }
 
 public:
     typedef std::unordered_set<LLPointer<LLViewerFetchedTexture> > image_list_t;

@@ -475,7 +475,7 @@ void saveChart(const std::string& label, const char* suffix, LLImageRaw* scratch
         LLImageDataSharedLock lock(scratch);
 
         //read result back into raw image
-        gGL.readPixels(0, 0, 1024, 512, GL_RGB, GL_UNSIGNED_BYTE, scratch->getData());
+        gGL.readPixels(0, 0, 1024, 512, PixelFormat::RGB, ComponentType::U8, scratch->getData());
 
         //write results to disk
         LLPointer<LLImagePNG> result = new LLImagePNG();
@@ -494,7 +494,7 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
 {
     //allocate render target for drawing charts
     LLRenderTarget buffer;
-    buffer.allocate(1024,512, GL_RGB);
+    buffer.allocate(1024,512, TexelFormat::RGB8);
 
 
     LLSD cur;

@@ -121,17 +121,17 @@ LLCubeMapArray::LLCubeMapArray(LLCubeMapArray& lhs, U32 width, U32 count) : mTex
         U32 src_resolution = lhs.mWidth;
         U32 dst_resolution = mWidth;
         {
-            S32 components = GL_RGB;
+            PixelFormat components = PixelFormat::RGB;
             if (mImage->getComponents() == 4)
-                components = GL_RGBA;
+                components = PixelFormat::RGBA;
             // S32 format = GL_RGB; // <FS:Beq/> unused
 
             // Handle different resolutions by scaling the image
             LLPointer<LLImageRaw> src_image = new LLImageRaw(lhs.mWidth, lhs.mWidth, lhs.mImage->getComponents());
-            LLVkTex::getImage(mImage->getTexName(), GL_TEXTURE_CUBE_MAP_ARRAY, 0, components, GL_UNSIGNED_BYTE, src_image->getData());
+            LLVkTex::getImage(mImage->getTexName(), GL_TEXTURE_CUBE_MAP_ARRAY, 0, components, ComponentType::U8, src_image->getData());
 
             LLPointer<LLImageRaw> scaled_image = src_image->scaled(mWidth, mWidth);
-            LLVkTex::subImage3D(mImage->getTexName(), GL_TEXTURE_CUBE_MAP_ARRAY, 0, 0, 0, i, mWidth, mWidth, 1, components, GL_UNSIGNED_BYTE, scaled_image->getData());
+            LLVkTex::subImage3D(mImage->getTexName(), GL_TEXTURE_CUBE_MAP_ARRAY, 0, 0, 0, i, mWidth, mWidth, 1, components, ComponentType::U8, scaled_image->getData());
         }
     }
 }
@@ -160,17 +160,17 @@ void LLCubeMapArray::allocate(U32 resolution, U32 components, U32 count, bool us
     bind(0);
     free_cur_tex_image();
 
-    U32 format = components == 4 ? GL_RGBA16F : GL_R11F_G11F_B10F;
+    TexelFormat format = components == 4 ? TexelFormat::RGBA16F : TexelFormat::R11G11B10F;
     if (!hdr)
     {
-        format = components == 4 ? GL_RGBA8 : GL_RGB8;
+        format = components == 4 ? TexelFormat::RGBA8 : TexelFormat::RGB8;
     }
     U32 mip = 0;
     U32 mip_resolution = resolution;
     while (mip_resolution >= 1)
     {
-        LLVkTex::image3D(texname, GL_TEXTURE_CUBE_MAP_ARRAY, mip, format, mip_resolution, mip_resolution, count * 6, 0,
-            GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        LLVkTex::image3D(texname, GL_TEXTURE_CUBE_MAP_ARRAY, mip, format, mip_resolution, mip_resolution, count * 6,
+            PixelFormat::RGBA, ComponentType::U8, nullptr);
 
         if (!use_mips)
         {

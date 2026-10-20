@@ -143,8 +143,8 @@ void LLViewerTextureList::doPreloadImages()
                                                           MIPMAP_NO,
                                                           LLViewerFetchedTexture::BOOST_BUMP,
                                                           LLViewerTexture::FETCHED_TEXTURE,
-                                                          0,
-                                                          0,
+                                                          TexelFormat::None,
+                                                          PixelFormat::None,
                                                           BLANK_OBJECT_NORMAL);
 
     // PBR: irradiance
@@ -179,21 +179,21 @@ void LLViewerTextureList::doPreloadImages()
         mImagePreloads.insert(image);
     }
     image = LLViewerTextureManager::getFetchedTextureFromFile("transparent.j2c", FTT_LOCAL_FILE, MIPMAP_YES, LLViewerFetchedTexture::BOOST_UI, LLViewerTexture::FETCHED_TEXTURE,
-        0, 0, IMG_TRANSPARENT);
+        TexelFormat::None, PixelFormat::None, IMG_TRANSPARENT);
     if (image)
     {
         image->setAddressMode(LLTexUnit::TAM_WRAP);
         mImagePreloads.insert(image);
     }
     image = LLViewerTextureManager::getFetchedTextureFromFile("alpha_gradient.tga", FTT_LOCAL_FILE, MIPMAP_YES, LLViewerFetchedTexture::BOOST_UI, LLViewerTexture::FETCHED_TEXTURE,
-        GL_ALPHA8, GL_ALPHA, IMG_ALPHA_GRAD);
+        TexelFormat::Alpha8, PixelFormat::Alpha, IMG_ALPHA_GRAD);
     if (image)
     {
         image->setAddressMode(LLTexUnit::TAM_CLAMP);
         mImagePreloads.insert(image);
     }
     image = LLViewerTextureManager::getFetchedTextureFromFile("alpha_gradient_2d.j2c", FTT_LOCAL_FILE, MIPMAP_YES, LLViewerFetchedTexture::BOOST_UI, LLViewerTexture::FETCHED_TEXTURE,
-        GL_ALPHA8, GL_ALPHA, IMG_ALPHA_GRAD_2D);
+        TexelFormat::Alpha8, PixelFormat::Alpha, IMG_ALPHA_GRAD_2D);
     if (image)
     {
         image->setAddressMode(LLTexUnit::TAM_CLAMP);
@@ -415,8 +415,8 @@ LLViewerFetchedTexture* LLViewerTextureList::getImageFromFile(const std::string&
                                                    bool usemipmaps,
                                                    LLViewerTexture::EBoostLevel boost_priority,
                                                    S8 texture_type,
-                                                   LLGLint internal_format,
-                                                   LLGLenum primary_format,
+                                                   TexelFormat internal_format,
+                                                   PixelFormat primary_format,
                                                    const LLUUID& force_id)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -444,8 +444,8 @@ LLViewerFetchedTexture* LLViewerTextureList::getImageFromUrl(const std::string& 
                                                    bool usemipmaps,
                                                    LLViewerTexture::EBoostLevel boost_priority,
                                                    S8 texture_type,
-                                                   LLGLint internal_format,
-                                                   LLGLenum primary_format,
+                                                   TexelFormat internal_format,
+                                                   PixelFormat primary_format,
                                                    const LLUUID& force_id)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -498,7 +498,7 @@ LLViewerFetchedTexture* LLViewerTextureList::getImageFromUrl(const std::string& 
             LL_ERRS() << "Invalid texture type " << texture_type << LL_ENDL ;
         }
 
-        if (internal_format && primary_format)
+        if (internal_format != TexelFormat::None && primary_format != PixelFormat::None)
         {
             imagep->setExplicitFormat(internal_format, primary_format);
         }
@@ -567,8 +567,8 @@ LLViewerFetchedTexture* LLViewerTextureList::getImage(const LLUUID &image_id,
                                                    bool usemipmaps,
                                                    LLViewerTexture::EBoostLevel boost_priority,
                                                    S8 texture_type,
-                                                   LLGLint internal_format,
-                                                   LLGLenum primary_format,
+                                                   TexelFormat internal_format,
+                                                   PixelFormat primary_format,
                                                    LLHost request_from_host)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -624,8 +624,8 @@ LLViewerFetchedTexture* LLViewerTextureList::createImage(const LLUUID &image_id,
                                                    bool usemipmaps,
                                                    LLViewerTexture::EBoostLevel boost_priority,
                                                    S8 texture_type,
-                                                   LLGLint internal_format,
-                                                   LLGLenum primary_format,
+                                                   TexelFormat internal_format,
+                                                   PixelFormat primary_format,
                                                    LLHost request_from_host)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -644,7 +644,7 @@ LLViewerFetchedTexture* LLViewerTextureList::createImage(const LLUUID &image_id,
         LL_ERRS() << "Invalid texture type " << texture_type << LL_ENDL ;
     }
 
-    if (internal_format && primary_format)
+    if (internal_format != TexelFormat::None && primary_format != PixelFormat::None)
     {
         imagep->setExplicitFormat(internal_format, primary_format);
     }

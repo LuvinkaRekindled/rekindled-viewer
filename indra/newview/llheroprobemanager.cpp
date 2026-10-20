@@ -107,7 +107,7 @@ void LLHeroProbeManager::update()
 
     if (!mRenderTarget.isComplete())
     {
-        U32 color_fmt = render_hdr ? GL_RGBA16F : GL_RGBA8;
+        TexelFormat color_fmt = render_hdr ? TexelFormat::RGBA16F : TexelFormat::RGBA8;
         mRenderTarget.allocate(mProbeResolution, mProbeResolution, color_fmt, true);
     }
 
@@ -119,7 +119,7 @@ void LLHeroProbeManager::update()
         mMipChain.resize(count);
         for (U32 i = 0; i < count; ++i)
         {
-            mMipChain[i].allocate(res, res, render_hdr ? GL_RGBA16F : GL_RGBA8);
+            mMipChain[i].allocate(res, res, render_hdr ? TexelFormat::RGBA16F : TexelFormat::RGBA8);
             res /= 2;
         }
     }

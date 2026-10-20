@@ -3212,9 +3212,9 @@ LLViewerMediaTexture* LLViewerMediaImpl::updateMediaImage()
         raw->clear(int(mBackgroundColor.mV[VX] * 255.0f), int(mBackgroundColor.mV[VY] * 255.0f), int(mBackgroundColor.mV[VZ] * 255.0f), 0xff);
 
         // ask media source for correct GL image format constants
-        media_tex->setExplicitFormat(mMediaSource->getTextureFormatInternal(),
-            mMediaSource->getTextureFormatPrimary(),
-            mMediaSource->getTextureFormatType(),
+        media_tex->setExplicitFormat(texelFormatFromGL(mMediaSource->getTextureFormatInternal()),
+            pixelFormatFromGL(mMediaSource->getTextureFormatPrimary()),
+            componentTypeFromGL(mMediaSource->getTextureFormatType()),
             mMediaSource->getTextureFormatSwapBytes());
 
         int discard_level = 0;

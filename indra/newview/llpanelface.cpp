@@ -1234,7 +1234,7 @@ void LLPanelFace::updateUI(bool force_set_values /*false*/)
 
         bool missing_asset = false;
         {
-            LLGLenum image_format = GL_RGB;
+            PixelFormat image_format = PixelFormat::RGB;
             bool has_alpha = false;
             bool identical_image_format = false;
             LLSelectedTE::getImageFormat(image_format, has_alpha, identical_image_format, missing_asset);
@@ -1244,9 +1244,9 @@ void LLPanelFace::updateUI(bool force_set_values /*false*/)
                 mIsAlpha = has_alpha;
                 switch (image_format)
                 {
-                    case GL_RGBA:
-                    case GL_ALPHA:
-                    case GL_RGB:
+                    case PixelFormat::RGBA:
+                    case PixelFormat::Alpha:
+                    case PixelFormat::RGB:
                         break;
                     default:
                     {
@@ -3422,7 +3422,7 @@ void LLPanelFace::onSelectTexture()
     LLSelectMgr::getInstance()->saveSelectedObjectTextures();
     sendTexture();
 
-    LLGLenum image_format;
+    PixelFormat image_format;
     bool has_alpha;
     bool identical_image_format = false;
     bool missing_asset = false;
@@ -3433,9 +3433,9 @@ void LLPanelFace::onSelectTexture()
         U32 alpha_mode = has_alpha ? LLMaterial::DIFFUSE_ALPHA_MODE_BLEND : LLMaterial::DIFFUSE_ALPHA_MODE_NONE;
         switch (image_format)
         {
-        case GL_RGBA:
-        case GL_ALPHA:
-        case GL_RGB:
+        case PixelFormat::RGBA:
+        case PixelFormat::Alpha:
+        case PixelFormat::RGB:
             break;
         default:
             LL_WARNS() << "Unexpected tex format in LLPanelFace..." << LL_ENDL;
@@ -5413,12 +5413,12 @@ void LLPanelFace::LLSelectedTE::getFace(LLFace*& face_to_return, bool& identical
     identical_face = LLSelectMgr::getInstance()->getSelection()->getSelectedTEValue(&get_te_face_func, face_to_return, false, (LLFace*)nullptr);
 }
 
-void LLPanelFace::LLSelectedTE::getImageFormat(LLGLenum& image_format_to_return, bool& has_alpha, bool& identical_face, bool& missing_asset)
+void LLPanelFace::LLSelectedTE::getImageFormat(PixelFormat& image_format_to_return, bool& has_alpha, bool& identical_face, bool& missing_asset)
 {
     struct LLSelectedTEGetmatId : public LLSelectedTEFunctor
     {
         LLSelectedTEGetmatId()
-            : mImageFormat(GL_RGB)
+            : mImageFormat(PixelFormat::RGB)
             , mHasAlpha(false)
             , mIdentical(true)
             , mMissingAsset(false)
@@ -5428,13 +5428,13 @@ void LLPanelFace::LLSelectedTE::getImageFormat(LLGLenum& image_format_to_return,
         bool apply(LLViewerObject* object, S32 te_index) override
         {
             LLViewerTexture* image = object ? object->getTEImage(te_index) : nullptr;
-            LLGLenum format = GL_RGB;
+            PixelFormat format = PixelFormat::RGB;
             bool missing = false;
             if (image)
             {
                 format = image->getPrimaryFormat();
                 missing = image->isMissingAsset();
-                if (format == GL_RGBA || format == GL_ALPHA)
+                if (format == PixelFormat::RGBA || format == PixelFormat::Alpha)
                 {
                     mHasAlpha = true;
                 }
@@ -5453,7 +5453,7 @@ void LLPanelFace::LLSelectedTE::getImageFormat(LLGLenum& image_format_to_return,
             }
             return true;
         }
-        LLGLenum mImageFormat;
+        PixelFormat mImageFormat;
         bool mHasAlpha;
         bool mIdentical;
         bool mMissingAsset;
@@ -5667,8 +5667,8 @@ void LLPanelFace::LLSelectedTEMaterial::getCurrentDiffuseAlphaMode(U8& diffuse_a
             LLViewerTexture* image = object->getTEImage(face);
             if (image)
             {
-                LLGLenum format = image->getPrimaryFormat();
-                if (format == GL_RGBA || format == GL_ALPHA)
+                PixelFormat format = image->getPrimaryFormat();
+                if (format == PixelFormat::RGBA || format == PixelFormat::Alpha)
                 {
                     has_alpha = true;
                 }

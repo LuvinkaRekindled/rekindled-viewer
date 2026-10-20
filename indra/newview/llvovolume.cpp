@@ -4491,7 +4491,7 @@ U32 LLVOVolume::getRenderCost(texture_cost_t &textures) const
             {
                 alpha = 1;
             }
-            else if (img && img->getPrimaryFormat() == GL_ALPHA)
+            else if (img && img->getPrimaryFormat() == PixelFormat::Alpha)
             {
                 invisi = 1;
             }
@@ -5579,7 +5579,7 @@ bool can_batch_texture(LLFace* facep)
     }
     // </FS:Beq>
 
-    if (facep->getTexture() && facep->getTexture()->getPrimaryFormat() == GL_ALPHA)
+    if (facep->getTexture() && facep->getTexture()->getPrimaryFormat() == PixelFormat::Alpha)
     { //can't batch invisiprims
         return false;
     }
@@ -7214,7 +7214,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
                 && te->getShiny()
                 && can_be_shiny)
             { //shiny
-                if (tex && tex->getPrimaryFormat() == GL_ALPHA)
+                if (tex && tex->getPrimaryFormat() == PixelFormat::Alpha)
                 { //invisiprim+shiny
                     if (!facep->getViewerObject()->isAttachment() && !facep->getViewerObject()->isRiggedMesh())
                     {
@@ -7254,7 +7254,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
             }
             else
             { //not alpha and not shiny
-                if (!is_alpha && tex && tex->getPrimaryFormat() == GL_ALPHA)
+                if (!is_alpha && tex && tex->getPrimaryFormat() == PixelFormat::Alpha)
                 { //invisiprim
                     if (!facep->getViewerObject()->isAttachment() && !facep->getViewerObject()->isRiggedMesh())
                     {

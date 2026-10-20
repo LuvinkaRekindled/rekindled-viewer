@@ -82,7 +82,7 @@ void LLCubeMap::initGL()
                 mImages[i] = new LLImageGL(RESOLUTION, RESOLUTION, 4, false);
             #if USE_SRGB_DECODE
                 if (mIssRGB) {
-                    mImages[i]->setExplicitFormat(GL_SRGB8_ALPHA8, GL_RGBA);
+                    mImages[i]->setExplicitFormat(TexelFormat::SRGBA8, PixelFormat::RGBA);
                 }
             #endif
                 mImages[i]->setTarget(mTargets[i], LLTexUnit::TT_CUBE_MAP);

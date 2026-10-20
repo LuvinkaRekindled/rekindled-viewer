@@ -271,7 +271,7 @@ void LLManipTranslate::restoreGL()
                 }
             }
         }
-        LLImageGL::setManualImage(sGridTex->getTexName(), GL_TEXTURE_2D, mip, GL_RGBA, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE, d);
+        LLImageGL::setManualImage(sGridTex->getTexName(), GL_TEXTURE_2D, mip, TexelFormat::RGBA8, rez, rez, PixelFormat::RGBA, ComponentType::U8, d);
         rez = rez >> 1;
         mip++;
     }

@@ -319,7 +319,7 @@ void LLPostProcess::doEffects(void)
 void LLPostProcess::copyFrameBuffer(U32 & texture, unsigned int width, unsigned int height)
 {
     gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture);
-    LLVkTex::copyImage2D(texture, GL_TEXTURE_RECTANGLE, 0, GL_RGBA, 0, 0, width, height, 0, LLRenderTarget::sCurFBO);
+    LLVkTex::copyImage2D(texture, GL_TEXTURE_RECTANGLE, 0, TexelFormat::RGBA8, 0, 0, width, height, LLRenderTarget::sCurFBO);
 }
 
 void LLPostProcess::drawOrthoQuad(unsigned int width, unsigned int height, QuadType type)
@@ -356,8 +356,8 @@ void LLPostProcess::createTexture(LLPointer<LLImageGL>& texture, unsigned int wi
     if(texture->createGLTexture())
     {
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture->getTexName());
-        LLVkTex::image2D(texture->getTexName(), GL_TEXTURE_RECTANGLE, 0, 4, width, height, 0,
-            GL_RGBA, GL_UNSIGNED_BYTE, &data[0]);
+        LLVkTex::image2D(texture->getTexName(), GL_TEXTURE_RECTANGLE, 0, TexelFormat::RGBA8, width, height,
+            PixelFormat::RGBA, ComponentType::U8, &data[0]);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
     }
@@ -376,7 +376,7 @@ void LLPostProcess::createNoiseTexture(LLPointer<LLImageGL>& texture)
     if(texture->createGLTexture())
     {
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture->getTexName());
-        LLImageGL::setManualImage(texture->getTexName(), GL_TEXTURE_2D, 0, GL_LUMINANCE, NOISE_SIZE, NOISE_SIZE, GL_LUMINANCE, GL_UNSIGNED_BYTE, &buffer[0]);
+        LLImageGL::setManualImage(texture->getTexName(), GL_TEXTURE_2D, 0, TexelFormat::Lum8, NOISE_SIZE, NOISE_SIZE, PixelFormat::Lum, ComponentType::U8, &buffer[0]);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_WRAP);
     }

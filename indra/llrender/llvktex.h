@@ -48,12 +48,6 @@ namespace LLVkTex
     void subImage2D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void subImage3D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void compressedImage2D(U32 id, U32 target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 image_size, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    // (F3.6e, until the callers are migrated) the GL number forms
-    void image2D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 format, U32 type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void image3D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 depth, S32 border, U32 format, U32 type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void subImage2D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void subImage3D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, U32 format, U32 type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void compressedImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 width, S32 height, S32 border, S32 image_size, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     // sampler and level parameters (wrap, filter, anisotropy, levels, compare, swizzle): written as one record
     void params(U32 id, U32 target, const LLVkAsync::TexParam* p, U32 count);
     inline void paramI(U32 id, U32 target, U32 pname, S32 v) { LLVkAsync::TexParam p = { pname, 0, v, 0.f }; params(id, target, &p, 1); }
@@ -62,13 +56,11 @@ namespace LLVkTex
     // copies from a render target (source: its id, 0 = the back buffer; colour attachment 0) into the texture
     void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source);
     void copyImage2D(U32 id, U32 target, S32 level, TexelFormat internal_format, S32 x, S32 y, S32 width, S32 height, U32 source, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border, U32 source, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     // false: a read back now would make the main thread wait for a worker that is far behind (or too many were made this frame): ask again in a later frame. Counts the read back when it says yes.
     bool readbackAffordable();
     // answers (the caller waits for the worker)
     S32 levelParameter(U32 id, U32 target, S32 level, U32 pname);
     void getImage(U32 id, U32 target, S32 level, PixelFormat format, ComponentType type, void* out, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void getCompressedImage(U32 id, U32 target, S32 level, void* out);
 
     // a texture slot (LLTexUnit): what a draw samples from the unit. Typed record on the main producer; applied directly in inline mode; other threads render nothing, so nothing.

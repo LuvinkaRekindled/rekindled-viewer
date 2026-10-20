@@ -1503,11 +1503,6 @@ void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat forma
     LLVkTarget::readPixels(LLRenderTarget::sCurFBO, x, y, width, height, format, type, data, file, line);
 }
 
-void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data, const char* file, int line)
-{
-    LLVkTarget::readPixels(LLRenderTarget::sCurFBO, x, y, width, height, gl_format, gl_type, data, file, line);
-}
-
 void LLRender::genQueries(S32 count, U32* ids)
 {
     LLVkQuery::create(count, ids);
@@ -1583,11 +1578,6 @@ void LLRender::texImage2D(U32 texture, U32 gl_target, S32 level, TexelFormat int
     LLVkTex::image2D(texture, gl_target, level, internal_format, width, height, format, type, data, file, line);
 }
 
-void LLRender::texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data, const char* file, int line)
-{
-    LLVkTex::image2D(texture, gl_target, level, internal_format, width, height, border, gl_format, gl_type, data, file, line);
-}
-
 U32 LLRender::getError()
 {
     return 0;       // there are no GL errors
@@ -1622,11 +1612,6 @@ void LLRender::getTexLevelParameteriv(U32 texture, U32 gl_target, S32 level, U32
 void LLRender::getTexImage(U32 texture, U32 gl_target, S32 level, PixelFormat format, ComponentType type, void* pixels, const char* file, int line)
 {
     LLVkTex::getImage(texture, gl_target, level, format, type, pixels, file, line);
-}
-
-void LLRender::getTexImage(U32 texture, U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels, const char* file, int line)
-{
-    LLVkTex::getImage(texture, gl_target, level, gl_format, gl_type, pixels, file, line);
 }
 
 void LLRender::setSceneBlendType(eBlendType type)
