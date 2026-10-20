@@ -122,12 +122,12 @@ void RlvOverlayEffect::run(const LLVisualEffectParams*)
         m_pImage->addTextureStats((F32)(nWidth * nHeight));
         m_pImage->setKnownDrawSize(nWidth, nHeight);
 
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLGLSUIDefault glsUI;
         gViewerWindow->setup2DRender();
 
         const LLVector2& displayScale = gViewerWindow->getDisplayScale();
-        gGL.scalef(displayScale.mV[VX], displayScale.mV[VY], 1.f);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, displayScale.mV[VX], displayScale.mV[VY], 1.f);
 
         gGL.getTexUnit(0)->bind(m_pImage);
         const LLColor3 col = m_Color.get();
@@ -137,7 +137,7 @@ void RlvOverlayEffect::run(const LLVisualEffectParams*)
 
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gGL.flush();
         gViewerWindow->setup3DRender();
 

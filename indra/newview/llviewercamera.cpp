@@ -351,7 +351,7 @@ void LLViewerCamera::setPerspective(bool for_selection,
 
     // Load camera view matrix
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.loadIdentity();
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
 
     glm::mat4 proj_mat = glm::identity<glm::mat4>();
 
@@ -432,7 +432,7 @@ void LLViewerCamera::setPerspective(bool for_selection,
         sJitterInEffect = true;
     }
 
-    gGL.loadMatrix(glm::value_ptr(proj_mat));
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj_mat));
 
     set_current_projection(proj_mat);
 
@@ -446,7 +446,7 @@ void LLViewerCamera::setPerspective(bool for_selection,
 
     modelview *= glm::make_mat4(ogl_matrix);
 
-    gGL.loadMatrix(glm::value_ptr(modelview));
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(modelview));
 
     if (sJitterActive && !for_selection && mZoomFactor == 1.f)
     {

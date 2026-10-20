@@ -481,7 +481,7 @@ void LLHeroProbeManager::generateRadiance(LLReflectionMap* probe)
 
                     F32 mat[16];
                     frame.getOpenGLRotation(mat);
-                    gGL.loadMatrix(mat);
+                    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, mat);
 
                     mVertexBuffer->drawArrays(gGL.TRIANGLE_STRIP, 0, 4);
 

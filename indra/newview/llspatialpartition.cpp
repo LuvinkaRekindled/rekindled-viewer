@@ -1732,9 +1732,9 @@ void renderOctree(LLSpatialGroup* group)
 
                 if (!group->getSpatialPartition()->isBridge())
                 {
-                    gGL.pushMatrix();
+                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                     LLVector3 trans = drawable->getRegion()->getOriginAgent();
-                    gGL.translatef(trans.mV[0], trans.mV[1], trans.mV[2]);
+                    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
                 }
 
                 LLFace* face = drawable->getFace(0);
@@ -1745,8 +1745,8 @@ void renderOctree(LLSpatialGroup* group)
 
                 if (rigged)
                 {
-                    gGL.pushMatrix();
-                    gGL.loadMatrix(gGLModelView);
+                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
                     if (!LLRenderPass::uploadMatrixPalette(face->mAvatar, face->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
                     {
                         continue;
@@ -1793,12 +1793,12 @@ void renderOctree(LLSpatialGroup* group)
 
                 if (rigged)
                 {
-                    gGL.popMatrix();
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
 
                 if (!group->getSpatialPartition()->isBridge())
                 {
-                    gGL.popMatrix();
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
             }
             gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
@@ -2092,10 +2092,10 @@ void renderNormals(LLDrawable *drawablep)
             scale_len = 1.0;
         }
 
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         if (vol)
         {
-            gGL.multMatrix((F32 *) vol->getRelativeXform().mMatrix);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32 *) vol->getRelativeXform().mMatrix);
         }
 
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
@@ -2202,7 +2202,7 @@ void renderNormals(LLDrawable *drawablep)
             }
         }
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 
@@ -2379,8 +2379,8 @@ void renderPhysicsShape(LLDrawable* drawable, LLVOVolume* volume, bool wireframe
     LLVector3 center(0,0,0);
     LLVector3 size(0.25f,0.25f,0.25f);
 
-    gGL.pushMatrix();
-    gGL.multMatrix((F32*) volume->getRelativeXform().mMatrix);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) volume->getRelativeXform().mMatrix);
 
     if (type == LLPhysicsShapeBuilderUtil::PhysicsShapeSpecification::USER_MESH)
     {
@@ -2647,7 +2647,7 @@ void renderPhysicsShape(LLDrawable* drawable, LLVOVolume* volume, bool wireframe
         LL_ERRS() << "Unhandled type" << LL_ENDL;
     }
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
@@ -2666,10 +2666,10 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
 
             if (bridge)
             {
-                gGL.pushMatrix();
-                gGL.multMatrix((F32*)bridge->mDrawable->getRenderMatrix().mMatrix);
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)bridge->mDrawable->getRenderMatrix().mMatrix);
                 bridge->renderPhysicsShapes(wireframe);
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
         }
         else
@@ -2679,11 +2679,11 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
             {
                 if (!group->getSpatialPartition()->isBridge())
                 {
-                    gGL.pushMatrix();
+                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                     LLVector3 trans = drawable->getRegion()->getOriginAgent();
-                    gGL.translatef(trans.mV[0], trans.mV[1], trans.mV[2]);
+                    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
                     renderPhysicsShape(drawable, volume, wireframe);
-                    gGL.popMatrix();
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
                 else
                 {
@@ -2696,8 +2696,8 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
                 LLViewerObject* object = drawable->getVObj();
                 if (object && object->getPCode() == LLViewerObject::LL_VO_SURFACE_PATCH)
                 {
-                    gGL.pushMatrix();
-                    gGL.multMatrix((F32*) object->getRegion()->mRenderMatrix.mMatrix);
+                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) object->getRegion()->mRenderMatrix.mMatrix);
                     //push face vertices for terrain
                     for (S32 i = 0; i < drawable->getNumFaces(); ++i)
                     {
@@ -2719,7 +2719,7 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
                             }
                         }
                     }
-                    gGL.popMatrix();
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
 #endif
             }
@@ -2810,8 +2810,8 @@ void renderBatchSize(LLDrawInfo* params)
     bool bind = false;
     if (params->mAvatar)
     {
-        gGL.pushMatrix();
-        gGL.loadMatrix(gGLModelView);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
         bind = true;
         old_shader->mRiggedVariant->bind();
         LLRenderPass::uploadMatrixPalette(*params);
@@ -2823,7 +2823,7 @@ void renderBatchSize(LLDrawInfo* params)
 
     if (bind)
     {
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         old_shader->bind();
     }
 }
@@ -3084,9 +3084,9 @@ void renderRaycast(LLDrawable* drawablep)
                 {
                     const LLVolumeFace& face = volume->getVolumeFace(i);
 
-                    gGL.pushMatrix();
-                    gGL.translatef(trans.mV[0], trans.mV[1], trans.mV[2]);
-                    gGL.multMatrix((F32*) vobj->getRelativeXform().mMatrix);
+                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
+                    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) vobj->getRelativeXform().mMatrix);
 
                     LLVector4a start, end;
                     if (transform)
@@ -3128,7 +3128,7 @@ void renderRaycast(LLDrawable* drawablep)
                         renderOctreeRaycast(start, end, face.getOctree());
                     }
 
-                    gGL.popMatrix();
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                     gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                 }
             }
@@ -3146,10 +3146,10 @@ void renderRaycast(LLDrawable* drawablep)
         if (drawablep->getVObj() == gDebugRaycastObject)
         {
             // draw intersection point
-            gGL.pushMatrix();
-            gGL.loadMatrix(gGLModelView);
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
             LLVector3 translate(gDebugRaycastIntersection.getF32ptr());
-            gGL.translatef(translate.mV[0], translate.mV[1], translate.mV[2]);
+            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, translate.mV[0], translate.mV[1], translate.mV[2]);
             LLCoordFrame orient;
             LLVector4a debug_binormal;
 
@@ -3162,7 +3162,7 @@ void renderRaycast(LLDrawable* drawablep)
             orient.lookDir(normal, binormal);
             LLMatrix4 rotation;
             orient.getRotMatrixToParent(rotation);
-            gGL.multMatrix((float*)rotation.mMatrix);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (float*)rotation.mMatrix);
 
             gGL.diffuseColor4f(1,0,0,0.5f);
             drawBox(LLVector3(0, 0, 0), LLVector3(0.1f, 0.022f, 0.022f));
@@ -3170,7 +3170,7 @@ void renderRaycast(LLDrawable* drawablep)
             drawBox(LLVector3(0, 0, 0), LLVector3(0.021f, 0.1f, 0.021f));
             gGL.diffuseColor4f(0,0,1,0.5f);
             drawBox(LLVector3(0, 0, 0), LLVector3(0.02f, 0.02f, 0.1f));
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
             // draw bounding box of prim
             const LLVector4a* ext = drawablep->getSpatialExtents();
@@ -3467,13 +3467,13 @@ public:
                 group->rebuildMesh();
 
                 gGL.flush();
-                gGL.pushMatrix();
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                 gGLLastMatrix = NULL;
-                gGL.loadMatrix(gGLModelView);
+                LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
                 renderXRay(group, mCamera);
                 stop_glerror();
                 gGLLastMatrix = NULL;
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
         }
     }

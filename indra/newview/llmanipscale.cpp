@@ -759,13 +759,13 @@ void LLManipScale::renderBoxHandle( F32 x, F32 y, F32 z )
     LLRenderState::DepthScope gls_depth(false);
     //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
-        gGL.translatef( x, y, z );
-        gGL.scalef( mScaledBoxHandleSize, mScaledBoxHandleSize, mScaledBoxHandleSize );
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, x, y, z);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mScaledBoxHandleSize, mScaledBoxHandleSize, mScaledBoxHandleSize);
         gBox.render();
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 

@@ -969,13 +969,13 @@ bool LLImagePreviewAvatar::render()
     gGL.loadUIIdentity();
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
-    gGL.loadIdentity();
-    gGL.ortho(0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
-    gGL.loadIdentity();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
 
     LLGLSUIDefault def;
@@ -986,10 +986,10 @@ bool LLImagePreviewAvatar::render()
     gl_rect_2d_simple( mFullWidth, mFullHeight );
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     gGL.flush();
     LLVector3 target_pos = mTargetJoint->getWorldPosition();
@@ -1173,13 +1173,13 @@ bool LLImagePreviewSculpted::render()
     LLRenderState::DepthScope depth(true);
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
-    gGL.loadIdentity();
-    gGL.ortho(0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
-    gGL.loadIdentity();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
     gGL.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
@@ -1188,10 +1188,10 @@ bool LLImagePreviewSculpted::render()
     gl_rect_2d_simple( mFullWidth, mFullHeight );
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     gGL.clearBuffers(GL_DEPTH_BUFFER_BIT);
 
@@ -1220,16 +1220,16 @@ bool LLImagePreviewSculpted::render()
     gObjectPreviewProgram.bind();
     gPipeline.enableLightsPreview();
 
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     const F32 SCALE = 1.25f;
-    gGL.scalef(SCALE, SCALE, SCALE);
+    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, SCALE, SCALE, SCALE);
     const F32 BRIGHTNESS = 0.9f;
     gGL.diffuseColor3f(BRIGHTNESS, BRIGHTNESS, BRIGHTNESS);
 
     mVertexBuffer->setBuffer();
     mVertexBuffer->draw(LLRender::TRIANGLES, num_indices, 0);
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     gObjectPreviewProgram.unbind();
 

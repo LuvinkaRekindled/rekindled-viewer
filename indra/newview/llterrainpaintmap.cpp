@@ -116,16 +116,16 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     camera.getOpenGLTransform(ogl_matrix);
     modelview *= glm::make_mat4(ogl_matrix);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.loadMatrix(glm::value_ptr(modelview));
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(modelview));
     // Override the projection matrix from the camera
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
-    gGL.loadIdentity();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
     llassert(camera_origin.mV[VZ] >= surface.getMaxZ());
     const F32 region_high_near = camera_origin.mV[VZ] - surface.getMaxZ();
     constexpr F32 far_plane_delta = 0.25f;
     const F32 region_low_far = camera_origin.mV[VZ] - surface.getMinZ() + far_plane_delta;
-    gGL.ortho(-region_half_width, region_half_width, -region_half_width, region_half_width, region_high_near, region_low_far);
+    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -region_half_width, region_half_width, -region_half_width, region_half_width, region_high_near, region_low_far);
     // No need to call camera.setPerspective because we don't need the clip planes. It would be inaccurate due to the perspective rendering anyway.
 
     // Need to get the full resolution vertices in order to get an accurate
@@ -265,7 +265,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     }
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
     gGL.flush();
     LLVertexBuffer::unbind();

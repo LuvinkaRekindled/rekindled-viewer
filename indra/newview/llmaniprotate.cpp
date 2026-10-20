@@ -132,11 +132,11 @@ void LLManipRotate::render()
     }
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     if (mObjectSelection->getSelectType() == SELECT_TYPE_HUD)
     {
         F32 zoom = gAgentCamera.mHUDCurZoom;
-        gGL.scalef(zoom, zoom, zoom);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, zoom, zoom, zoom);
     }
 
 
@@ -146,7 +146,7 @@ void LLManipRotate::render()
     LLColor4 highlight_inside( 0.7f, 0.7f, 0.f, 0.5f );
     F32 width_meters = WIDTH_PIXELS * mRadiusMeters / RADIUS_PIXELS;
 
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
 
         // are we in the middle of a constrained drag?
@@ -160,11 +160,11 @@ void LLManipRotate::render()
 
             LLRenderState::CullScope cull_face(true);
             LLRenderState::DepthScope gls_depth(false);
-            gGL.pushMatrix();
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             {
                 // Draw "sphere" (intersection of sphere with tangent cone that has apex at camera)
-                gGL.translatef( mCenterToProfilePlane.mV[VX], mCenterToProfilePlane.mV[VY], mCenterToProfilePlane.mV[VZ] );
-                gGL.translatef( center.mV[VX], center.mV[VY], center.mV[VZ] );
+                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, mCenterToProfilePlane.mV[VX], mCenterToProfilePlane.mV[VY], mCenterToProfilePlane.mV[VZ]);
+                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
 
                 // Inverse change of basis vectors
                 LLVector3 forward = mCenterToCamNorm;
@@ -181,14 +181,14 @@ void LLManipRotate::render()
                 LLMatrix4 mat;
                 mat.initRows(a, b, c, LLVector4(0.f, 0.f, 0.f, 1.f));
 
-                gGL.multMatrix( &mat.mMatrix[0][0] );
+                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &mat.mMatrix[0][0]);
 
-                gGL.rotatef( -90, 0.f, 1.f, 0.f);
+                LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, -90, 0.f, 1.f, 0.f);
                 LLColor4 color;
                 if (mManipPart == LL_ROT_ROLL || mHighlightedPart == LL_ROT_ROLL)
                 {
                     color.setVec(0.8f, 0.8f, 0.8f, 0.8f);
-                    gGL.scalef(mManipulatorScales.mV[VW], mManipulatorScales.mV[VW], mManipulatorScales.mV[VW]);
+                    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VW], mManipulatorScales.mV[VW], mManipulatorScales.mV[VW]);
                 }
                 else
                 {
@@ -207,12 +207,12 @@ void LLManipRotate::render()
 
                 gGL.flush();
             }
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
             gUIProgram.bind();
         }
 
-        gGL.translatef( center.mV[VX], center.mV[VY], center.mV[VZ] );
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
 
         LLQuaternion rot;
         F32 angle_radians, x, y, z;
@@ -224,7 +224,7 @@ void LLManipRotate::render()
         LLSelectMgr::getInstance()->getGrid(grid_origin, grid_rotation, grid_scale);
 
         grid_rotation.getAngleAxis(&angle_radians, &x, &y, &z);
-        gGL.rotatef(angle_radians * RAD_TO_DEG, x, y, z);
+        LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
 
         gDebugProgram.bind();
@@ -232,44 +232,44 @@ void LLManipRotate::render()
         if (mManipPart == LL_ROT_Z)
         {
             mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, 1.f, SELECTED_MANIPULATOR_SCALE, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-            gGL.pushMatrix();
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             {
                 // selected part
-                gGL.scalef(mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ]);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ]);
                 // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                 //renderActiveRing( mRadiusMeters, width_meters, LLColor4( 0.f, 0.f, 1.f, 1.f) , LLColor4( 0.f, 0.f, 1.f, 0.3f ));
                 renderActiveRing(mRadiusMeters, width_meters, getUserEditColor(VZ), getUserEditColor(VZ, 0.3f));
                 // </FS:AR> [FIRE-36909]
             }
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         }
         else if (mManipPart == LL_ROT_Y)
         {
             mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, SELECTED_MANIPULATOR_SCALE, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-            gGL.pushMatrix();
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             {
-                gGL.rotatef( 90.f, 1.f, 0.f, 0.f );
-                gGL.scalef(mManipulatorScales.mV[VY], mManipulatorScales.mV[VY], mManipulatorScales.mV[VY]);
+                LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90.f, 1.f, 0.f, 0.f);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VY], mManipulatorScales.mV[VY], mManipulatorScales.mV[VY]);
                 // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                 //renderActiveRing( mRadiusMeters, width_meters, LLColor4( 0.f, 1.f, 0.f, 1.f), LLColor4( 0.f, 1.f, 0.f, 0.3f));
                 renderActiveRing(mRadiusMeters, width_meters, getUserEditColor(VY), getUserEditColor(VY, 0.3f));
                 // </FS:AR> [FIRE-36909]
             }
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         }
         else if (mManipPart == LL_ROT_X)
         {
             mManipulatorScales = lerp(mManipulatorScales, LLVector4(SELECTED_MANIPULATOR_SCALE, 1.f, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-            gGL.pushMatrix();
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             {
-                gGL.rotatef( 90.f, 0.f, 1.f, 0.f );
-                gGL.scalef(mManipulatorScales.mV[VX], mManipulatorScales.mV[VX], mManipulatorScales.mV[VX]);
+                LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90.f, 0.f, 1.f, 0.f);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VX], mManipulatorScales.mV[VX], mManipulatorScales.mV[VX]);
                 // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                 //renderActiveRing( mRadiusMeters, width_meters, LLColor4( 1.f, 0.f, 0.f, 1.f), LLColor4( 1.f, 0.f, 0.f, 0.3f));
                 renderActiveRing(mRadiusMeters, width_meters, getUserEditColor(VX), getUserEditColor(VX, 0.3f));
                 // </FS:AR> [FIRE-36909]
             }
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         }
         else if (mManipPart == LL_ROT_ROLL)
         {
@@ -291,12 +291,12 @@ void LLManipRotate::render()
             for( S32 i=0; i<2; i++ )
             {
 
-                gGL.pushMatrix();
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                 {
                     if (mHighlightedPart == LL_ROT_Z)
                     {
                         mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, 1.f, SELECTED_MANIPULATOR_SCALE, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-                        gGL.scalef(mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ]);
+                        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ]);
                         // hovering over part
                         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                         //gl_ring( mRadiusMeters, width_meters, LLColor4( 0.f, 0.f, 1.f, 1.f ), LLColor4( 0.f, 0.f, 1.f, 0.5f ), CIRCLE_STEPS, i);
@@ -312,15 +312,15 @@ void LLManipRotate::render()
                         // </FS:AR> [FIRE-36909]
                     }
                 }
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-                gGL.pushMatrix();
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                 {
-                    gGL.rotatef( 90.f, 1.f, 0.f, 0.f );
+                    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90.f, 1.f, 0.f, 0.f);
                     if (mHighlightedPart == LL_ROT_Y)
                     {
                         mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, SELECTED_MANIPULATOR_SCALE, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-                        gGL.scalef(mManipulatorScales.mV[VY], mManipulatorScales.mV[VY], mManipulatorScales.mV[VY]);
+                        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VY], mManipulatorScales.mV[VY], mManipulatorScales.mV[VY]);
                         // hovering over part
                         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                         //gl_ring( mRadiusMeters, width_meters, LLColor4( 0.f, 1.f, 0.f, 1.f ), LLColor4( 0.f, 1.f, 0.f, 0.5f ), CIRCLE_STEPS, i);
@@ -336,15 +336,15 @@ void LLManipRotate::render()
                         // </FS:AR> [FIRE-36909]
                     }
                 }
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-                gGL.pushMatrix();
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                 {
-                    gGL.rotatef( 90.f, 0.f, 1.f, 0.f );
+                    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90.f, 0.f, 1.f, 0.f);
                     if (mHighlightedPart == LL_ROT_X)
                     {
                         mManipulatorScales = lerp(mManipulatorScales, LLVector4(SELECTED_MANIPULATOR_SCALE, 1.f, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-                        gGL.scalef(mManipulatorScales.mV[VX], mManipulatorScales.mV[VX], mManipulatorScales.mV[VX]);
+                        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VX], mManipulatorScales.mV[VX], mManipulatorScales.mV[VX]);
 
                         // hovering over part
                         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
@@ -361,7 +361,7 @@ void LLManipRotate::render()
                         // </FS:AR> [FIRE-36909]
                     }
                 }
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
                 if (mHighlightedPart == LL_ROT_ROLL)
                 {
@@ -374,8 +374,8 @@ void LLManipRotate::render()
 
         gUIProgram.bind();
     }
-    gGL.popMatrix();
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
 
     LLVector3 euler_angles;
@@ -901,14 +901,14 @@ void LLManipRotate::renderSnapGuides()
         for (S32 pass = 0; pass < 3; pass++)
         {
             // render snap guide ring
-            gGL.pushMatrix();
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
             LLQuaternion snap_guide_rot;
             F32 angle_radians, x, y, z;
             snap_guide_rot.shortestArc(LLVector3::z_axis, getConstraintAxis());
             snap_guide_rot.getAngleAxis(&angle_radians, &x, &y, &z);
-            gGL.translatef(center.mV[VX], center.mV[VY], center.mV[VZ]);
-            gGL.rotatef(angle_radians * RAD_TO_DEG, x, y, z);
+            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
             LLColor4 line_color = setupSnapGuideRenderPass(pass);
 
@@ -931,7 +931,7 @@ void LLManipRotate::renderSnapGuides()
             {
                 gl_circle_2d(0.f, 0.f, mRadiusMeters * SNAP_GUIDE_INNER_RADIUS, CIRCLE_STEPS, false);
             }
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
             for (S32 i = 0; i < 64; i++)
             {

@@ -256,7 +256,7 @@ void PieMenu::setVisible(bool visible)
 void PieMenu::draw()
 {
     // save the current OpenGL drawing matrix so we can freely modify it
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     // save the widget's rectangle for later use
     const LLRect& r = getRect();
@@ -487,7 +487,7 @@ void PieMenu::draw()
     gl_washer_2d(PIE_INNER_SIZE + 1, PIE_INNER_SIZE - 1, steps, borderColor, lineColor);
 
     // restore OpenGL drawing matrix
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     // give control back to the UI library
     LLView::draw();

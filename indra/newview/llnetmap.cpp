@@ -993,10 +993,10 @@ void LLNetMap::drawRing(const F32 radius, const LLVector3 pos_map, const LLUICol
     F32 radius_pixels = radius * meters_to_pixels;
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
-    gGL.translatef((F32)pos_map.mV[VX], (F32)pos_map.mV[VY], 0.f);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)pos_map.mV[VX], (F32)pos_map.mV[VY], 0.f);
     gl_ring(radius_pixels, WIDTH_PIXELS, color, color, CIRCLE_STEPS, false);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void LLNetMap::drawTracking(const LLVector3d& pos_global, const LLColor4& color,

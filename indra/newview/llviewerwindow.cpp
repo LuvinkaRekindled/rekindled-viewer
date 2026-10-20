@@ -2949,7 +2949,7 @@ void LLViewerWindow::drawDebugText()
 {
     gUIProgram.bind();
     gGL.color4f(1,1,1,1);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     gGL.pushUIMatrix();
     {
         // scale view by UI global scale factor and aspect ratio correction factor
@@ -2957,7 +2957,7 @@ void LLViewerWindow::drawDebugText()
         mDebugText->draw();
     }
     gGL.popUIMatrix();
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     gGL.flush();
     gUIProgram.unbind();
@@ -4598,7 +4598,7 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
     }
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     // scope for the RAII for the depth test on hidden geometry
     {
         // This draw section covers the hidden geometry
@@ -4676,7 +4676,7 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
 
     gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
     gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     //restore the previous shader
     if (shader)
@@ -4885,11 +4885,11 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     // This is a link set. The models need an additional transform to modelview
     if (drawable->isActive())
     {
-        gGL.loadMatrix(gGLModelView);
-        gGL.multMatrix((F32*)objectp->getRenderMatrix().mMatrix);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)objectp->getRenderMatrix().mMatrix);
     }
 
-    gGL.multMatrix((F32*)vovolume->getRelativeXform().mMatrix);
+    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)vovolume->getRelativeXform().mMatrix);
 
 //pragma region PhysicsRenderSettings
     LLColor4 color;

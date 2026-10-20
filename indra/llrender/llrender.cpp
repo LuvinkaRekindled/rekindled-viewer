@@ -2379,25 +2379,57 @@ bool sGuardCheck = []() { const char* e = getenv("LL_VK_MATRIX_GUARD_CHECK"); re
 namespace
 {
 inline LLRender::eMatrixMode mode_of(Kind kind) { return (LLRender::eMatrixMode)kind; }
-}
 
-void push(Kind kind) { gGL.pushMatrixOf(mode_of(kind)); }
-void pop(Kind kind) { gGL.popMatrixOf(mode_of(kind)); }
-void set(Kind kind, const glm::mat4& m) { gGL.setMatrixOf(mode_of(kind), m); }
-void multiply(Kind kind, const glm::mat4& m) { gGL.multMatrixOf(mode_of(kind), m); }
-void identity(Kind kind) { gGL.loadIdentityOf(mode_of(kind)); }
-void translate(Kind kind, const glm::vec3& v) { gGL.translateOf(mode_of(kind), v); }
-void rotate(Kind kind, F32 degrees, const glm::vec3& axis) { gGL.rotateOf(mode_of(kind), degrees, axis); }
-void scale(Kind kind, const glm::vec3& v) { gGL.scaleOf(mode_of(kind), v); }
-void ortho(Kind kind, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar) { gGL.orthoOf(mode_of(kind), left, right, bottom, top, zNear, zFar); }
-const glm::mat4& get(Kind kind) { return gGL.matrixOf(mode_of(kind)); }
-U32 depth(Kind kind) { return gGL.matrixDepth(mode_of(kind)); }
-
-namespace
-{
 struct Site { const char* mFile; int mLine; };
 std::vector<Site> gSites;
+std::vector<Site> gModeSites;
+U64 gModeWarnings = 0;
+
+// a migrated call (it passes the caller's file and line) names a matrix; the old call would have used the current mode: they must be the same
+inline void check_mode(Kind kind, const char* file, int line)
+{
+    if (!sGuardCheck || !file)
+    {
+        return;
+    }
+    const LLRender::eMatrixMode current = gGL.rawMatrixMode();
+    if (current == mode_of(kind))
+    {
+        return;
+    }
+    ++gModeWarnings;
+    for (const Site& s : gModeSites)
+    {
+        if (s.mLine == line && s.mFile == file)
+        {
+            return;
+        }
+    }
+    if (gModeSites.size() < 200)
+    {
+        gModeSites.push_back({ file, line });
+        LL_WARNS("MatrixGuard") << "migrated call names matrix " << (int)kind << " but the current matrix mode is " << (int)current << " (0 modelview, 1 projection, 2-5 texture) at "
+            << (file ? file : "?") << ":" << line << LL_ENDL;
+    }
 }
+}
+
+void push(Kind kind, const char* file, int line) { check_mode(kind, file, line); gGL.pushMatrixOf(mode_of(kind)); }
+void pop(Kind kind, const char* file, int line) { check_mode(kind, file, line); gGL.popMatrixOf(mode_of(kind)); }
+void set(Kind kind, const glm::mat4& m, const char* file, int line) { check_mode(kind, file, line); gGL.setMatrixOf(mode_of(kind), m); }
+void load(Kind kind, const F32* m, const char* file, int line) { check_mode(kind, file, line); gGL.setMatrixOf(mode_of(kind), glm::make_mat4(m)); }
+void multiply(Kind kind, const glm::mat4& m, const char* file, int line) { check_mode(kind, file, line); gGL.multMatrixOf(mode_of(kind), m); }
+void multiply(Kind kind, const F32* m, const char* file, int line) { check_mode(kind, file, line); gGL.multMatrixOf(mode_of(kind), glm::make_mat4(m)); }
+void identity(Kind kind, const char* file, int line) { check_mode(kind, file, line); gGL.loadIdentityOf(mode_of(kind)); }
+void translate(Kind kind, const glm::vec3& v, const char* file, int line) { check_mode(kind, file, line); gGL.translateOf(mode_of(kind), v); }
+void translate(Kind kind, F32 x, F32 y, F32 z, const char* file, int line) { check_mode(kind, file, line); gGL.translateOf(mode_of(kind), glm::vec3(x, y, z)); }
+void rotate(Kind kind, F32 degrees, const glm::vec3& axis, const char* file, int line) { check_mode(kind, file, line); gGL.rotateOf(mode_of(kind), degrees, axis); }
+void rotate(Kind kind, F32 degrees, F32 x, F32 y, F32 z, const char* file, int line) { check_mode(kind, file, line); gGL.rotateOf(mode_of(kind), degrees, glm::vec3(x, y, z)); }
+void scale(Kind kind, const glm::vec3& v, const char* file, int line) { check_mode(kind, file, line); gGL.scaleOf(mode_of(kind), v); }
+void scale(Kind kind, F32 x, F32 y, F32 z, const char* file, int line) { check_mode(kind, file, line); gGL.scaleOf(mode_of(kind), glm::vec3(x, y, z)); }
+void ortho(Kind kind, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar, const char* file, int line) { check_mode(kind, file, line); gGL.orthoOf(mode_of(kind), left, right, bottom, top, zNear, zFar); }
+const glm::mat4& get(Kind kind) { return gGL.matrixOf(mode_of(kind)); }
+U32 depth(Kind kind) { return gGL.matrixDepth(mode_of(kind)); }
 
 void warnUnbalanced(Kind kind, U32 expected_depth, U32 found_depth, const char* file, int line)
 {

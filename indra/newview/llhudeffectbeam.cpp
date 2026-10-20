@@ -317,11 +317,11 @@ void LLHUDEffectBeam::render()
         coloru.mV[3] = (U8)alpha;
         gGL.color4ubv(coloru.mV);
 
-        gGL.pushMatrix();
-        gGL.translatef(pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
-        gGL.scalef(scale, scale, scale);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale, scale, scale);
         gSphere.render();
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 
