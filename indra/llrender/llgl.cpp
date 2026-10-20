@@ -879,7 +879,7 @@ LLGLSquashToFarClip::~LLGLSquashToFarClip()
 
 
 LLGLSPipelineSkyBox::LLGLSPipelineSkyBox()
-: mCullFace(GL_CULL_FACE)
+: mCullFace(false)
 , mSquashClip()
 {
 }
@@ -890,14 +890,14 @@ LLGLSPipelineSkyBox::~LLGLSPipelineSkyBox()
 
 LLGLSPipelineDepthTestSkyBox::LLGLSPipelineDepthTestSkyBox(bool depth_test, bool depth_write)
 : LLGLSPipelineSkyBox()
-, mDepth(depth_test ? GL_TRUE : GL_FALSE, depth_write ? GL_TRUE : GL_FALSE, GL_LEQUAL)
+, mDepth(depth_test, depth_write, LLRenderState::CompareOp::LessEqual)
 {
 
 }
 
 LLGLSPipelineBlendSkyBox::LLGLSPipelineBlendSkyBox(bool depth_test, bool depth_write)
 : LLGLSPipelineDepthTestSkyBox(depth_test, depth_write)
-, mBlend(GL_BLEND)
+, mBlend(true)
 {
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 }

@@ -116,8 +116,8 @@ void LLManipRotate::render()
 {
     LLGLSUIDefault gls_ui;
     gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
-    LLGLDepthTest gls_depth(GL_TRUE);
-    LLGLEnable gl_blend(GL_BLEND);
+    LLRenderState::DepthScope gls_depth(true);
+    LLRenderState::BlendScope gl_blend(true);
 
     // You can rotate if you can move
     LLViewerObject* first_object = mObjectSelection->getFirstMoveableObject(true);
@@ -158,8 +158,8 @@ void LLManipRotate::render()
         {
             gDebugProgram.bind();
 
-            LLGLEnable cull_face(GL_CULL_FACE);
-            LLGLDepthTest gls_depth(GL_FALSE);
+            LLRenderState::CullScope cull_face(true);
+            LLRenderState::DepthScope gls_depth(false);
             gGL.pushMatrix();
             {
                 // Draw "sphere" (intersection of sphere with tangent cone that has apex at camera)
@@ -282,9 +282,9 @@ void LLManipRotate::render()
                 mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, 1.f, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
             }
 
-            LLGLEnable cull_face(GL_CULL_FACE);
-            LLGLEnable clip_plane0(GL_CLIP_PLANE0);
-            LLGLDepthTest gls_depth(GL_FALSE);
+            LLRenderState::CullScope cull_face(true);
+            // F3.2: LLGLEnable clip_plane0(GL_CLIP_PLANE0) had no effect on the render state block (never mapped); dropped
+            LLRenderState::DepthScope gls_depth(false);
             //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 
             // First pass: centers. Second pass: sides.
@@ -795,13 +795,13 @@ void LLManipRotate::drag( S32 x, S32 y )
 
 void LLManipRotate::renderActiveRing( F32 radius, F32 width, const LLColor4& front_color, const LLColor4& back_color)
 {
-    LLGLEnable cull_face(GL_CULL_FACE);
+    LLRenderState::CullScope cull_face(true);
     {
         gl_ring(radius, width, back_color, back_color * 0.5f, CIRCLE_STEPS, false);
         gl_ring(radius, width, back_color, back_color * 0.5f, CIRCLE_STEPS, true);
     }
     {
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
         gl_ring(radius, width, front_color, front_color * 0.5f, CIRCLE_STEPS, false);
         gl_ring(radius, width, front_color, front_color * 0.5f, CIRCLE_STEPS, true);
     }
@@ -897,7 +897,7 @@ void LLManipRotate::renderSnapGuides()
             }
         }
 
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
         for (S32 pass = 0; pass < 3; pass++)
         {
             // render snap guide ring
@@ -1146,7 +1146,7 @@ void LLManipRotate::renderSnapGuides()
                 gGL.end();
 
                 {
-                    LLGLDepthTest gls_depth(GL_TRUE);
+                    LLRenderState::DepthScope gls_depth(true);
                     gGL.begin(LLRender::LINES);
                     {
                         gGL.vertex3fv(line_start.mV);

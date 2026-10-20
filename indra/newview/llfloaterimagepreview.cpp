@@ -1014,9 +1014,9 @@ bool LLImagePreviewAvatar::render()
 
     if (avatarp->mDrawable.notNull())
     {
-        LLGLDepthTest gls_depth(GL_TRUE, GL_TRUE);
+        LLRenderState::DepthScope gls_depth(true, true);
         // make sure alpha=0 shows avatar material color
-        LLGLDisable no_blend(GL_BLEND);
+        LLRenderState::BlendScope no_blend(false);
 
         LLFace* face = avatarp->mDrawable->getFace(0);
         if (face)
@@ -1168,9 +1168,9 @@ bool LLImagePreviewSculpted::render()
 {
     mNeedsUpdate = false;
     LLGLSUIDefault def;
-    LLGLDisable no_blend(GL_BLEND);
-    LLGLEnable cull(GL_CULL_FACE);
-    LLGLDepthTest depth(GL_TRUE);
+    LLRenderState::BlendScope no_blend(false);
+    LLRenderState::CullScope cull(true);
+    LLRenderState::DepthScope depth(true);
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
     gGL.pushMatrix();

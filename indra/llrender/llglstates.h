@@ -57,25 +57,26 @@ private:
 class LLGLSDefault
 {
 protected:
-    LLGLDisable mBlend, mCullFace;
+    LLRenderState::BlendScope mBlend;
+    LLRenderState::CullScope mCullFace;
 public:
     LLGLSDefault()
         :
         // Disable
-        mBlend(GL_BLEND),
-        mCullFace(GL_CULL_FACE)
+        mBlend(false),
+        mCullFace(false)
     { }
 };
 
 class LLGLSObjectSelect
 {
 protected:
-    LLGLDisable mBlend;
-    LLGLEnable mCullFace;
+    LLRenderState::BlendScope mBlend;
+    LLRenderState::CullScope mCullFace;
 public:
     LLGLSObjectSelect()
-        : mBlend(GL_BLEND),
-          mCullFace(GL_CULL_FACE)
+        : mBlend(false),
+          mCullFace(true)
     { }
 };
 
@@ -84,14 +85,14 @@ public:
 class LLGLSUIDefault
 {
 protected:
-    LLGLEnable mBlend;
-    LLGLDisable mCullFace;
-    LLGLDepthTest mDepthTest;
+    LLRenderState::BlendScope mBlend;
+    LLRenderState::CullScope mCullFace;
+    LLRenderState::DepthScope mDepthTest;
 public:
     LLGLSUIDefault()
-        : mBlend(GL_BLEND),
-          mCullFace(GL_CULL_FACE),
-          mDepthTest(GL_FALSE, GL_TRUE, GL_LEQUAL)
+        : mBlend(true),
+          mCullFace(false),
+          mDepthTest(false, true, LLRenderState::CompareOp::LessEqual)
     {}
 };
 
@@ -100,39 +101,39 @@ public:
 class LLGLSPipeline
 {
 protected:
-    LLGLEnable mCullFace;
-    LLGLDepthTest mDepthTest;
+    LLRenderState::CullScope mCullFace;
+    LLRenderState::DepthScope mDepthTest;
 public:
     LLGLSPipeline()
-        : mCullFace(GL_CULL_FACE),
-          mDepthTest(GL_TRUE, GL_TRUE, GL_LEQUAL)
+        : mCullFace(true),
+          mDepthTest(true, true, LLRenderState::CompareOp::LessEqual)
     { }
 };
 
 class LLGLSPipelineAlpha // : public LLGLSPipeline
 {
 protected:
-    LLGLEnable mBlend;
+    LLRenderState::BlendScope mBlend;
 public:
     LLGLSPipelineAlpha()
-        : mBlend(GL_BLEND)
+        : mBlend(true)
     { }
 };
 
 class LLGLSPipelineSelection
 {
 protected:
-    LLGLDisable mCullFace;
+    LLRenderState::CullScope mCullFace;
 public:
     LLGLSPipelineSelection()
-        : mCullFace(GL_CULL_FACE)
+        : mCullFace(false)
     {}
 };
 
 class LLGLSPipelineSkyBox
 {
 protected:
-    LLGLDisable mCullFace;
+    LLRenderState::CullScope mCullFace;
     LLGLSquashToFarClip mSquashClip;
 public:
     LLGLSPipelineSkyBox();
@@ -144,24 +145,25 @@ class LLGLSPipelineDepthTestSkyBox : public LLGLSPipelineSkyBox
 public:
     LLGLSPipelineDepthTestSkyBox(bool depth_test, bool depth_write);
 
-    LLGLDepthTest mDepth;
+    LLRenderState::DepthScope mDepth;
 };
 
 class LLGLSPipelineBlendSkyBox : public LLGLSPipelineDepthTestSkyBox
 {
 public:
     LLGLSPipelineBlendSkyBox(bool depth_test, bool depth_write);
-    LLGLEnable mBlend;
+    LLRenderState::BlendScope mBlend;
 };
 
 class LLGLSTracker
 {
 protected:
-    LLGLEnable mCullFace, mBlend;
+    LLRenderState::CullScope mCullFace;
+    LLRenderState::BlendScope mBlend;
 public:
     LLGLSTracker() :
-        mCullFace(GL_CULL_FACE),
-        mBlend(GL_BLEND)
+        mCullFace(true),
+        mBlend(true)
     { }
 };
 

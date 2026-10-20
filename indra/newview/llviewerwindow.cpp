@@ -4568,8 +4568,8 @@ const float offset_factor = -3.0;
 // decorator for renderMeshBaseHull from llspatialpartition. but with our own offsets to avoid glitching.
 void renderMeshBaseHullPhysics(LLVOVolume* volume, U32 data_mask, LLColor4& color, LLColor4& line_color)
 {
-            LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            LLRenderState::PolygonOffsetScope offset(true);
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
             gGL.setPolygonOffset(offset_factor, offset_units);
             gGL.diffuseColor4fv(color.mV);
             renderMeshBaseHullWithOutline(volume, data_mask, color, line_color);
@@ -4578,8 +4578,8 @@ void renderMeshBaseHullPhysics(LLVOVolume* volume, U32 data_mask, LLColor4& colo
 
 void renderHullPhysics(LLModel::PhysicsMesh& mesh, const LLColor4& color, const LLColor4& line_color)
 {
-    LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
-    gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    LLRenderState::PolygonOffsetScope offset(true);
+    gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
     gGL.setPolygonOffset(offset_factor, offset_units);
     render_hull_with_outline(mesh, color, line_color);
 }
@@ -4604,20 +4604,20 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
         // This draw section covers the hidden geometry
 
         gGL.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
-        LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE, GL_GEQUAL);
+        LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::GreaterEqual);
         if (shader)
         {
             {
-                LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
+                LLRenderState::PolygonOffsetScope offset(true);
                 gGL.setPolygonOffset(offset_factor, offset_units);
                 gGL.diffuseColor4fv(color.mV);
                 //decomp has physics mesh, render that mesh
-                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                 LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
             }
             {
-                LLGLEnable offset(GL_POLYGON_OFFSET_LINE);
-                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
+                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
                 gGL.setPolygonOffset(offset_factor, offset_units);
                 gGL.diffuseColor4fv(line_color.mV);
                 LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
@@ -4627,11 +4627,11 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
         {
             gGL.flush();
             {
-                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                 gGL.diffuseColor4fv(color.mV);
                 //decomp has physics mesh, render that mesh
                 LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
-                gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
                 gGL.diffuseColor4fv(line_color.mV);
                 LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
             }
@@ -4644,16 +4644,16 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
     {
         {
             gGL.diffuseColor4fv(color.mV);
-            LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            LLRenderState::PolygonOffsetScope offset(true);
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
             gGL.setPolygonOffset(offset_factor, offset_units);
             gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
         }
         {
             gGL.diffuseColor4fv(line_color.mV);
-            LLGLEnable offset(GL_POLYGON_OFFSET_LINE);
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
             gGL.setPolygonOffset(offset_factor, offset_units);
             gGL.setLineWidth(3.f); // <FS> Line width OGL core profile fix by Rye Mutt
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
@@ -4663,11 +4663,11 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
     {
         gGL.flush();
         {
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
             gGL.diffuseColor4fv(color.mV);
             //decomp has physics mesh, render that mesh
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
             gGL.diffuseColor4fv(line_color.mV);
             gGL.setLineWidth(3.f); // <FS> Line width OGL core profile fix by Rye Mutt
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
@@ -4675,7 +4675,7 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
     }
 
     gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
-    gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
     gGL.popMatrix();
 
     //restore the previous shader
@@ -4791,7 +4791,7 @@ void renderNonMeshHullPhysics(LLVOVolume* vovolume, LLVolume* volume, LLColor4 c
         //render hull
         // TODO: (BEQ) Find out why is this not a call to render_hull? it probably could be if the data is in the right form
 
-        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
 
         gGL.diffuseColor4fv(line_color.mV);
         LLVertexBuffer::unbind();
@@ -4801,7 +4801,7 @@ void renderNonMeshHullPhysics(LLVOVolume* vovolume, LLVolume* volume, LLColor4 c
         LLVertexBuffer::drawElements(LLRender::TRIANGLES, phys_volume->mHullPoints, NULL, phys_volume->mNumHullIndices, phys_volume->mHullIndices);
 
         gGL.diffuseColor4fv(color.mV);
-        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
         LLVertexBuffer::drawElements(LLRender::TRIANGLES, phys_volume->mHullPoints, NULL, phys_volume->mNumHullIndices, phys_volume->mHullIndices);
     }
     else
@@ -4984,8 +4984,8 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     // vvvv Physics shape is a Havok primitive, either box, sphere or cylinder (object must be a prim)
     else if (physicsShapeType == LLPhysicsShapeBuilderUtil::PhysicsShapeSpecification::BOX)
     {
-        LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
-        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        LLRenderState::PolygonOffsetScope offset(true);
+        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
         gGL.setPolygonOffset(offset_factor, offset_units);
         LLVector3 center = physics_spec.getCenter();
         LLVector3 scale = physics_spec.getScale();
@@ -4997,8 +4997,8 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     }
     else if (physicsShapeType == LLPhysicsShapeBuilderUtil::PhysicsShapeSpecification::SPHERE)
     {
-        LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
-        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        LLRenderState::PolygonOffsetScope offset(true);
+        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
         gGL.setPolygonOffset(offset_factor, offset_units);
 
         LLVolumeParams volume_params;
@@ -5015,8 +5015,8 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     }
     else if (physicsShapeType == LLPhysicsShapeBuilderUtil::PhysicsShapeSpecification::CYLINDER)
     {
-        LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
-        gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        LLRenderState::PolygonOffsetScope offset(true);
+        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
         gGL.setPolygonOffset(offset_factor, offset_units);
 
         LLVolumeParams volume_params;
@@ -5043,16 +5043,16 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
         gGL.setPolygonOffset(offset_factor, offset_units);
 
         {
-            LLGLEnable offset(GL_POLYGON_OFFSET_LINE);
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
 
             gGL.diffuseColor4fv(line_color.mV);
             pushVerts(phys_volume); // draw the outlines
         }
         {
-            LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
+            LLRenderState::PolygonOffsetScope offset(true);
             gGL.diffuseColor4fv(color.mV);
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
             pushVerts(phys_volume); // draw the filled boxes
         }
         LLPrimitive::sVolumeManager->unrefVolume(phys_volume);
@@ -5082,11 +5082,11 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
             //glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             //glDrawElements(GL_TRIANGLES, phys_volume->mNumHullIndices, GL_UNSIGNED_SHORT, phys_volume->mHullIndices);
             gGL.diffuseColor4fv(line_color.mV);
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
             LLVertexBuffer::drawElements(LLRender::TRIANGLES, phys_volume->mHullPoints, NULL, phys_volume->mNumHullIndices, phys_volume->mHullIndices);
 
             gGL.diffuseColor4fv(color.mV);
-            gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
             LLVertexBuffer::drawElements(LLRender::TRIANGLES, phys_volume->mHullPoints, NULL, phys_volume->mNumHullIndices, phys_volume->mHullIndices);
             // </FS:Ansariel>
         }
@@ -5186,7 +5186,7 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                 // setup opengl common parameters before we iterate over each object
                 gGL.pushMatrix();
                 //Need to because crash on ATI 3800 (and similar cards) MAINT-5018
-                LLGLDisable multisample(LLPipeline::RenderFSAAType > 0 ? GL_MULTISAMPLE_ARB : 0);
+                // F3.2: LLGLDisable(GL_MULTISAMPLE_ARB) had no effect on the render state block (never mapped); dropped
                 LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
                 if (shader)
                 {
@@ -5197,9 +5197,9 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                 gGL.setColorMask(true, true); // write color and alpha info
                 gGL.color4f(1.f, 1.f, 1.f, 0.5);
                 gGL.matrixMode(LLRender::MM_MODELVIEW);
-                LLGLEnable gls_blend(GL_BLEND);
-                LLGLEnable gls_cull(GL_CULL_FACE);
-                LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
+                LLRenderState::BlendScope gls_blend(true);
+                LLRenderState::CullScope gls_cull(true);
+                LLRenderState::DepthScope gls_depth(true, false);
 
                 struct f : public LLSelectedObjectFunctor
                 {
@@ -5244,9 +5244,9 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
         if (LLSelectMgr::sRenderLightRadius && LLToolMgr::getInstance()->inEdit())
         {
             gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-            LLGLEnable gls_blend(GL_BLEND);
-            LLGLEnable gls_cull(GL_CULL_FACE);
-            LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
+            LLRenderState::BlendScope gls_blend(true);
+            LLRenderState::CullScope gls_cull(true);
+            LLRenderState::DepthScope gls_depth(true, false);
             gGL.matrixMode(LLRender::MM_MODELVIEW);
             gGL.pushMatrix();
             if (selection->getSelectType() == SELECT_TYPE_HUD)
@@ -5278,9 +5278,9 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                         gSphere.render();
 
                         // Render Inside
-                        gGL.setCullFace(GL_FRONT);
+                        gGL.setCullFace(LLRenderState::CullFace::Front);
                         gSphere.render();
-                        gGL.setCullFace(GL_BACK);
+                        gGL.setCullFace(LLRenderState::CullFace::Back);
 
                         gGL.popMatrix();
                     }

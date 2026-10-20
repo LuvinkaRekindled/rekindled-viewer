@@ -917,7 +917,7 @@ bool LLRender::init(bool needs_vertex_buffer)
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
     gGL.setAmbientLightColor(LLColor4::black);
 
-    LLVkState::setCullFace(GL_BACK);
+    LLVkState::setCullFace(LLRenderState::CullFace::Back);
 
     // necessary for reflection maps
 

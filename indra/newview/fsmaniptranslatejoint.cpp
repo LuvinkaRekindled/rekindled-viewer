@@ -718,7 +718,7 @@ void FSManipTranslateJoint::render()
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.pushMatrix();
     {
-        LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
+        LLRenderState::DepthScope gls_depth(true, false);
         renderGuidelines();
     }
     {
@@ -740,7 +740,7 @@ void FSManipTranslateJoint::renderText()
 
 void FSManipTranslateJoint::renderTranslationHandles()
 {
-    LLGLDepthTest gls_depth(GL_FALSE);
+    LLRenderState::DepthScope gls_depth(false);
     if (!isAvatarJointSafeToUse())
         return;
 
@@ -826,7 +826,7 @@ void FSManipTranslateJoint::renderTranslationHandles()
 
         {
             gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-            LLGLDisable cull_face(GL_CULL_FACE);
+            LLRenderState::CullScope cull_face(false);
 
             LLColor4 color1;
             LLColor4 color2;
@@ -1102,11 +1102,11 @@ void FSManipTranslateJoint::renderTranslationHandles()
 void FSManipTranslateJoint::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_size, F32 arrow_size, F32 handle_size, bool reverse_direction)
 {
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-    LLGLEnable gls_blend(GL_BLEND);
+    LLRenderState::BlendScope gls_blend(true);
 
     for (S32 pass = 1; pass <= 2; pass++)
     {
-        LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE, pass == 1 ? GL_LEQUAL : GL_GREATER);
+        LLRenderState::DepthScope gls_depth(true, false, pass == 1 ? LLRenderState::CompareOp::LessEqual : LLRenderState::CompareOp::Greater);
         gGL.pushMatrix();
 
         S32 index = ARROW_TO_AXIS[which_arrow]; // red, red, green, blue
