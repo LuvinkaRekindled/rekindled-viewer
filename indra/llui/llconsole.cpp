@@ -173,7 +173,7 @@ void LLConsole::draw()
     constexpr F32 padding_horizontal = 15;
     constexpr F32 padding_vertical = 8;
     // </FS>
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
 
     // skip lines added more than mLinePersistTime ago
     F32 cur_time = mTimer.getElapsedTimeF32();

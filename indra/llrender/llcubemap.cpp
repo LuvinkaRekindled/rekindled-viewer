@@ -64,7 +64,7 @@ LLCubeMap::~LLCubeMap()
 {
 }
 
-void LLCubeMap::initGL()
+void LLCubeMap::initRenderDevice()
 {
     llassert(gDeviceCaps.mInited);
 
@@ -94,7 +94,6 @@ void LLCubeMap::initGL()
 
                 gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_CUBE_MAP, texname);
                 mImages[i]->setAddressMode(LLTexUnit::TAM_CLAMP);
-                stop_glerror();
             }
             gRender.getTexUnit(0)->clear();
         }
@@ -168,7 +167,7 @@ void LLCubeMap::init(const std::vector<LLPointer<LLImageRaw> >& rawimages)
 {
     if (!gDeviceCaps.mIsDisabled)
     {
-        initGL();
+        initRenderDevice();
         initRawData(rawimages);
         initGLData();
     }
@@ -214,7 +213,6 @@ void LLCubeMap::initEnvironmentMap(const std::vector<LLPointer<LLImageRaw> >& ra
 
         gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_CUBE_MAP, texname);
         mImages[i]->setAddressMode(LLTexUnit::TAM_CLAMP);
-        stop_glerror();
 
         mImages[i]->setSubImage(mRawImages[i], 0, 0, resolution, resolution);
     }
@@ -243,7 +241,7 @@ void LLCubeMap::generateMipMaps()
     disable();
 }
 
-U32 LLCubeMap::getGLName()
+U32 LLCubeMap::getTextureHandle()
 {
     return mImages[0]->getTexName();
 }

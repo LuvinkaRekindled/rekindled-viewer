@@ -142,7 +142,7 @@ S32 LLImageTex::sCount                   = 0;
 
 bool LLImageTex::sGlobalUseAnisotropic   = false;
 F32 LLImageTex::sLastFrameTime           = 0.f;
-LLImageTex* LLImageTex::sDefaultGLTexture = NULL ;
+LLImageTex* LLImageTex::sDefaultImageTexture = NULL ;
 bool LLImageTex::sCompressTextures = false;
 std::unordered_set<LLImageTex*> LLImageTex::sImageList;
 
@@ -182,7 +182,7 @@ void LLImageTex::checkTexSize(bool forced) const
         bool error = false;
         if (texname != mTexName)
         {
-            LL_INFOS() << "Bound: " << texname << " Should bind: " << mTexName << " Default: " << LLImageTex::sDefaultGLTexture->getTexName() << LL_ENDL;
+            LL_INFOS() << "Bound: " << texname << " Should bind: " << mTexName << " Default: " << LLImageTex::sDefaultImageTexture->getTexName() << LL_ENDL;
 
             error = true;
             if (gDebugSession)
@@ -194,11 +194,9 @@ void LLImageTex::checkTexSize(bool forced) const
                 LL_ERRS() << "Invalid texture bound!" << LL_ENDL;
             }
         }
-        stop_glerror() ;
         S32 x = 0, y = 0 ;
         x = LLVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Width);
         y = LLVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Height);
-        stop_glerror() ;
         llcallstacks << "w: " << x << " h: " << y << llcallstacksendl ;
 
         if(!x || !y)
@@ -456,7 +454,6 @@ void LLImageTex::dirtyTexOptions()
     for (auto& glimage : sImageList)
     {
         glimage->markTexOptionsDirty();
-        stop_glerror();
     }
 
 }
@@ -859,7 +856,6 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
                 {
                     S32 tex_size = (S32)formatBytes(w, h);
                     LLVkTex::compressedImage2D(edit_name, mTarget, gl_level, mFormatInternal, w, h, tex_size, (void *)data_in);
-                    stop_glerror();
                 }
                 else
                 {
@@ -872,16 +868,13 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
                     updatePickMask(w, h, data_in);
 
 
-                    stop_glerror();
                 }
-                stop_glerror();
             }
         }
         else if (!is_compressed)
         {
             if (mAutoGenMips)
             {
-                stop_glerror();
                 {
 
                     S32 w = getWidth(mCurrentDiscardLevel);
@@ -901,7 +894,6 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
                                  mFormatPrimary, mFormatType,
                                  data_in, mAllowCompression);
                     analyzeAlpha(data_in, w, h);
-                    stop_glerror();
 
                     updatePickMask(w, h, data_in);
 
@@ -911,7 +903,6 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
                         LL_PROFILE_GPU_ZONE("generate mip map");
                         LLVkTex::generateMipmap(edit_name);
                     }
-                    stop_glerror();
                 }
             }
             else
@@ -953,7 +944,6 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
                         U8* new_data = new(std::nothrow) U8[bytes];
                         if (!new_data)
                         {
-                            stop_glerror();
 
                             if (prev_mip_data)
                             {
@@ -995,7 +985,6 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
                         {
                             analyzeAlpha(data_in, w, h);
                         }
-                        stop_glerror();
                         if (m == 0)
                         {
                             updatePickMask(w, h, cur_mip_data);
@@ -1031,7 +1020,6 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
         {
             S32 tex_size = (S32)formatBytes(w, h);
             LLVkTex::compressedImage2D(edit_name, mTarget, 0, mFormatInternal, w, h, tex_size, (void *)data_in);
-            stop_glerror();
         }
         else
         {
@@ -1042,12 +1030,10 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
 
             updatePickMask(w, h, data_in);
 
-            stop_glerror();
 
 
         }
     }
-    stop_glerror();
     mImageTextureCreated = true;
     return true;
 }
@@ -1213,7 +1199,6 @@ bool LLImageTex::setSubImage(const U8* datap, S32 data_width, S32 data_height, S
         // Update the GL texture
         bool res = gRender.getTexUnit(0)->bindManual(mBindTarget, tex_name);
         if (!res) LL_ERRS() << "LLImageTex::setSubImage(): bindTexture failed" << LL_ENDL;
-        stop_glerror();
 
         const bool use_sub_image = should_stagger_image_set(isCompressed());
         if (!use_sub_image)
@@ -1229,7 +1214,6 @@ bool LLImageTex::setSubImage(const U8* datap, S32 data_width, S32 data_height, S
             sub_image_lines(tex_name, mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap, data_width);
         }
         gRender.getTexUnit(0)->clear();
-        stop_glerror();
 
 
         mImageTextureCreated = true;
@@ -1250,7 +1234,6 @@ bool LLImageTex::setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y
     {
         LLVkTex::copySubImage(mTexName, TextureTarget::Tex2D, 0, fb_x, fb_y, 0, x_pos, y_pos, width, height, LLRenderTarget::currentId());
         mImageTextureCreated = true;
-        stop_glerror();
         return true;
     }
     else
@@ -1431,7 +1414,6 @@ void LLImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel,
         intformat = TexelFormat::GenericCompressed;
     }
 
-    stop_glerror();
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("glTexImage2D");
         LL_PROFILE_ZONE_NUM(width);
@@ -1461,7 +1443,6 @@ void LLImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel,
         }
         alloc_tex_image(width, height, intformat, 1);
     }
-    stop_glerror();
 }
 
 //create an empty GL texture: just create a texture name
@@ -1480,7 +1461,6 @@ bool LLImageTex::createImageTexture()
     mImageTextureCreated = false ; //do not save this texture when gl is destroyed.
 
     llassert(gDeviceCaps.mInited);
-    stop_glerror();
 
     if(mTexName)
     {
@@ -1490,7 +1470,6 @@ bool LLImageTex::createImageTexture()
 
 
     LLImageTex::generateTextures(1, &mTexName);
-    stop_glerror();
     if (!mTexName)
     {
         LL_WARNS() << "LLImageTex::createImageTexture failed to make an empty texture" << LL_ENDL;
@@ -1512,7 +1491,6 @@ bool LLImageTex::createImageTexture(S32 discard_level, const LLImageRaw* imagera
     }
 
     llassert(gDeviceCaps.mInited);
-    stop_glerror();
 
     if (!imageraw || imageraw->isBufferInvalid())
     {
@@ -1617,7 +1595,6 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
         llassert(data_in);
     }
 
-    stop_glerror();
 
     if (discard_level < 0)
     {
@@ -1828,7 +1805,6 @@ bool LLImageTex::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compr
         }
 
         LLVkTex::getCompressedImage(mTexName, mTarget, gl_discard, (void*)(imageraw->getData()));
-        //stop_glerror();
     }
     else
     {
@@ -1850,7 +1826,6 @@ bool LLImageTex::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compr
         }
 
         LLVkTex::getImage(mTexName, TextureTarget::Tex2D, gl_discard, mFormatPrimary, mFormatType, (void*)(imageraw->getData()));
-        //stop_glerror();
     }
 
     return true ;
@@ -1920,7 +1895,6 @@ void LLImageTex::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
         gRender.flush();
         LLTexUnit::applyFilteringOption(mTexName, getTarget(), option, mHasMipMaps);
         mTexOptionsDirty = false;
-        stop_glerror();
     }
 }
 
@@ -2430,7 +2404,6 @@ void LLImageTex::checkActiveThread()
             w >>= 1; h >>= 1;
             nummips++;
         }
-        stop_glerror();
         w = width, h = height;
         const U8* prev_mip_data = 0;
         const U8* cur_mip_data = 0;
@@ -2451,7 +2424,6 @@ void LLImageTex::checkActiveThread()
             U8 test = cur_mip_data[w*h*mComponents-1];
             {
                 LLImageTex::setManualImage(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data);
-                stop_glerror();
             }
             if (prev_mip_data && prev_mip_data != rawdata)
             {

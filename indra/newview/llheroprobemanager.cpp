@@ -416,7 +416,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
                 LL_PROFILE_GPU_ZONE("hero probe mip copy");
                 mTexture->bind(0);
 
-                gRender.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, mip, 0, 0, sourceIdx * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                gRender.copyTexSubImage3D(mTexture->getTextureHandle(), TextureTarget::CubeArray, mip, 0, 0, sourceIdx * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
 
                 mTexture->unbind();
             }
@@ -481,7 +481,7 @@ void LLHeroProbeManager::generateRadiance(LLReflectionMap* probe)
 
                     mVertexBuffer->drawArrays(gRender.TRIANGLE_STRIP, 0, 4);
 
-                    gRender.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, i, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                    gRender.copyTexSubImage3D(mTexture->getTextureHandle(), TextureTarget::CubeArray, i, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
                 }
 
                 if (i != mMipChain.size() - 1)

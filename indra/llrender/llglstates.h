@@ -32,13 +32,13 @@
 
 //----------------------------------------------------------------------------
 
-class LLGLSDefault
+class LLRenderPresetDefault
 {
 protected:
     LLRenderState::BlendScope mBlend;
     LLRenderState::CullScope mCullFace;
 public:
-    LLGLSDefault()
+    LLRenderPresetDefault()
         :
         // Disable
         mBlend(false),
@@ -46,13 +46,13 @@ public:
     { }
 };
 
-class LLGLSObjectSelect
+class LLRenderPresetObjectSelect
 {
 protected:
     LLRenderState::BlendScope mBlend;
     LLRenderState::CullScope mCullFace;
 public:
-    LLGLSObjectSelect()
+    LLRenderPresetObjectSelect()
         : mBlend(false),
           mCullFace(true)
     { }
@@ -60,14 +60,14 @@ public:
 
 //----------------------------------------------------------------------------
 
-class LLGLSUIDefault
+class LLRenderPresetUIDefault
 {
 protected:
     LLRenderState::BlendScope mBlend;
     LLRenderState::CullScope mCullFace;
     LLRenderState::DepthScope mDepthTest;
 public:
-    LLGLSUIDefault()
+    LLRenderPresetUIDefault()
         : mBlend(true),
           mCullFace(false),
           mDepthTest(false, true, LLRenderState::CompareOp::LessEqual)
@@ -76,70 +76,70 @@ public:
 
 //----------------------------------------------------------------------------
 
-class LLGLSPipeline
+class LLRenderPresetPipeline
 {
 protected:
     LLRenderState::CullScope mCullFace;
     LLRenderState::DepthScope mDepthTest;
 public:
-    LLGLSPipeline()
+    LLRenderPresetPipeline()
         : mCullFace(true),
           mDepthTest(true, true, LLRenderState::CompareOp::LessEqual)
     { }
 };
 
-class LLGLSPipelineAlpha // : public LLGLSPipeline
+class LLRenderPresetPipelineAlpha // : public LLRenderPresetPipeline
 {
 protected:
     LLRenderState::BlendScope mBlend;
 public:
-    LLGLSPipelineAlpha()
+    LLRenderPresetPipelineAlpha()
         : mBlend(true)
     { }
 };
 
-class LLGLSPipelineSelection
+class LLRenderPresetPipelineSelection
 {
 protected:
     LLRenderState::CullScope mCullFace;
 public:
-    LLGLSPipelineSelection()
+    LLRenderPresetPipelineSelection()
         : mCullFace(false)
     {}
 };
 
-class LLGLSPipelineSkyBox
+class LLRenderPresetPipelineSkyBox
 {
 protected:
     LLRenderState::CullScope mCullFace;
-    LLGLSquashToFarClip mSquashClip;
+    LLRenderSquashToFarClip mSquashClip;
 public:
-    LLGLSPipelineSkyBox();
-   ~LLGLSPipelineSkyBox();
+    LLRenderPresetPipelineSkyBox();
+   ~LLRenderPresetPipelineSkyBox();
 };
 
-class LLGLSPipelineDepthTestSkyBox : public LLGLSPipelineSkyBox
+class LLRenderPresetPipelineDepthTestSkyBox : public LLRenderPresetPipelineSkyBox
 {
 public:
-    LLGLSPipelineDepthTestSkyBox(bool depth_test, bool depth_write);
+    LLRenderPresetPipelineDepthTestSkyBox(bool depth_test, bool depth_write);
 
     LLRenderState::DepthScope mDepth;
 };
 
-class LLGLSPipelineBlendSkyBox : public LLGLSPipelineDepthTestSkyBox
+class LLRenderPresetPipelineBlendSkyBox : public LLRenderPresetPipelineDepthTestSkyBox
 {
 public:
-    LLGLSPipelineBlendSkyBox(bool depth_test, bool depth_write);
+    LLRenderPresetPipelineBlendSkyBox(bool depth_test, bool depth_write);
     LLRenderState::BlendScope mBlend;
 };
 
-class LLGLSTracker
+class LLRenderPresetTracker
 {
 protected:
     LLRenderState::CullScope mCullFace;
     LLRenderState::BlendScope mBlend;
 public:
-    LLGLSTracker() :
+    LLRenderPresetTracker() :
         mCullFace(true),
         mBlend(true)
     { }

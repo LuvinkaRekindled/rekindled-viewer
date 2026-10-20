@@ -392,7 +392,7 @@ F32 gLogoutMaxTime = LOGOUT_REQUEST_TIME;
 S32 gPendingMetricsUploads = 0;
 
 // Used to restore texture state after a mode switch
-LLFrameTimer gRestoreGLTimer;
+LLFrameTimer gRestoreResourcesTimer;
 bool gRestoreResources = false;
 bool gUseWireframe = false;
 
@@ -665,7 +665,7 @@ static void settings_modify()
     LLRenderTarget::sUseFBO             = LLPipeline::sRenderDeferred;
     LLVOSurfacePatch::sLODFactor        = gSavedSettings.getF32("RenderTerrainLODFactor");
     LLVOSurfacePatch::sLODFactor *= LLVOSurfacePatch::sLODFactor; //square lod factor to get exponential range of [1,4]
-    gDebugRender       = gDebugGLSession || gDebugSession;
+    gDebugRender       = gDebugRenderSession || gDebugSession;
     gDebugPipeline = gSavedSettings.getBOOL("RenderDebugPipeline");
 }
 
@@ -1231,7 +1231,7 @@ bool LLAppViewer::init()
     LLFolderViewItem::initClass(); // SJB: Needs to happen after initWindow(), not sure why but related to fonts
 
     gDeviceCaps.getGLInfo(gDebugInfo);
-    gDeviceCaps.printGLInfoString();
+    gDeviceCaps.printDeviceInfoString();
 
     // If we don't have the right GL requirements, exit.
     // ? AG: It seems we never set mHasRequirements to false
@@ -1313,7 +1313,7 @@ bool LLAppViewer::init()
         }
     }
 
-    // Obsolete? mExpectedGLVersion is always zero
+    // Obsolete? mExpectedApiVersion is always zero
 #if LL_WINDOWS
     if (gDeviceCaps.mApiVersionNumber < LLFeatureManager::getInstance()->getExpectedGLVersion())
     {
@@ -2557,7 +2557,7 @@ bool LLAppViewer::cleanup()
     // Shut down OpenGL
     if (gViewerWindow)
     {
-        gViewerWindow->shutdownGL();
+        gViewerWindow->shutdownRenderDevice();
 
         // Destroy window, and make sure we're not fullscreen
         // This may generate window reshape and activation events.
@@ -3500,7 +3500,7 @@ bool LLAppViewer::initConfiguration()
 
     if (gSavedSettings.getBOOL("RenderDebugGLSession"))
     {
-        gDebugGLSession = true;
+        gDebugRenderSession = true;
         gDebugRender = true;
         // gDebugRender can cause excessive logging
         // so it's limited to a single session
@@ -4024,8 +4024,7 @@ bool LLAppViewer::initWindow()
     gPipeline.init();
     LL_INFOS("AppInit") << "gPipeline Initialized" << LL_ENDL;
 
-    stop_glerror();
-    gViewerWindow->initGLDefaults();
+    gViewerWindow->initRenderDefaults();
 
     gSavedSettings.setBOOL("RenderInitError", false);
     gSavedSettings.saveToFile( gSavedSettings.getString("ClientSettingsFile"), true );

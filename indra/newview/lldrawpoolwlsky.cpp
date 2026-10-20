@@ -176,7 +176,7 @@ void LLDrawPoolWLSky::renderSkyHazeDeferred(const LLVector3& camPosLocal, F32 ca
             sky_shader->bind();
         }
 
-        LLGLSPipelineDepthTestSkyBox sky(true, true);
+        LLRenderPresetPipelineDepthTestSkyBox sky(true, true);
 
         sky_shader->uniform1i(LLShaderMgr::CUBE_SNAPSHOT, gCubeSnapshot ? 1 : 0);
 
@@ -221,7 +221,7 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
         return;
     }
 
-    LLGLSPipelineBlendSkyBox gls_sky(true, false);
+    LLRenderPresetPipelineBlendSkyBox gls_sky(true, false);
 
     gRender.setSceneBlendType(LLRender::BT_ADD_WITH_ALPHA);
 
@@ -296,7 +296,7 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
     {
         LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
 
-        LLGLSPipelineBlendSkyBox pipeline(true, true);
+        LLRenderPresetPipelineBlendSkyBox pipeline(true, true);
 
         cloudshader->bind();
 
@@ -353,7 +353,7 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
 {
     if (!gSky.mVOSkyp || use_hdri_sky()) return;
 
-    LLGLSPipelineBlendSkyBox gls_skybox(true, true); // SL-14113 we need moon to write to depth to clip stars behind
+    LLRenderPresetPipelineBlendSkyBox gls_skybox(true, true); // SL-14113 we need moon to write to depth to clip stars behind
 
     LLVector3 const & origin = LLViewerCamera::getInstance()->getOrigin();
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);

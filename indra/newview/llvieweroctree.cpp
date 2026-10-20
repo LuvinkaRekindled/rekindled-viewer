@@ -1252,7 +1252,7 @@ void LLOcclusionCullingGroup::doOcclusion(LLCamera* camera, const LLVector4a* sh
                         {
                             LL_PROFILE_ZONE_NAMED_CATEGORY_OCTREE("doOcclusion - draw water");
 
-                            LLGLSquashToFarClip squash;
+                            LLRenderSquashToFarClip squash;
                             if (camera->getOrigin().isExactlyZero())
                             { //origin is invalid, draw entire box
                                 gPipeline.mCubeVB->drawRange(LLRender::TRIANGLE_FAN, 0, 7, 8, 0);

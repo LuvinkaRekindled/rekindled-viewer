@@ -61,7 +61,7 @@ LLWindowMesaHeadless::LLWindowMesaHeadless(LLWindowCallbacks* callbacks,
             LL_ERRS() << "MESA: OSMesaMakeCurrent failed!" << LL_ENDL;
         }
 
-        llverify(gDeviceCaps.initGL());
+        llverify(gDeviceCaps.initRenderDevice());
     }
 }
 

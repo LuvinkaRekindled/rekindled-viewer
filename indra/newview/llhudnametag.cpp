@@ -910,7 +910,7 @@ F32 LLHUDNameTag::getWorldHeight() const
 //static
 void LLHUDNameTag::addPickable(std::set<LLViewerObject*> &pick_list)
 {
-    //this might put an object on the pick list a second time, overriding it's mGLName, which is ok
+    //this might put an object on the pick list a second time, overriding it's mTextureHandle, which is ok
     // *FIX: we should probably cull against pick frustum
     VisibleTextObjectIterator text_it;
     for (text_it = sVisibleTextObjects.begin(); text_it != sVisibleTextObjects.end(); ++text_it)

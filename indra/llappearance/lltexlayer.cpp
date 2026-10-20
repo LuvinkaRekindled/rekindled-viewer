@@ -144,7 +144,7 @@ bool LLTexLayerSetBuffer::renderTexLayerSet(LLRenderTarget* bound_target)
     LLVertexBuffer::unbind();
 
     // Composite the color data
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     success &= mTexLayerSet->render( getCompositeOriginX(), getCompositeOriginY(),
                                      getCompositeWidth(), getCompositeHeight(), bound_target );
     gRender.flush();
@@ -316,7 +316,6 @@ bool LLTexLayerSet::setInfo(const LLTexLayerSetInfo *info)
 
     requestUpdate();
 
-    stop_glerror();
 
     return true;
 }
@@ -373,7 +372,7 @@ bool LLTexLayerSet::render( S32 x, S32 y, S32 width, S32 height, LLRenderTarget*
         }
     }
 
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     LLRenderState::DepthScope gls_depth(false, false);
     gRender.setColorMask(true, true);
 
@@ -405,7 +404,6 @@ bool LLTexLayerSet::render( S32 x, S32 y, S32 width, S32 height, LLRenderTarget*
 
         renderAlphaMaskTextures(x, y, width, height, bound_target, false);
 
-        stop_glerror();
     }
     else
     {
@@ -490,7 +488,7 @@ void LLTexLayerSet::renderAlphaMaskTextures(S32 x, S32 y, S32 width, S32 height,
             LLBaseTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture(info->mStaticAlphaFileName, true);
             if( tex )
             {
-                LLGLSUIDefault gls_ui;
+                LLRenderPresetUIDefault gls_ui;
                 gRender.getTexUnit(0)->bind(tex);
                 gl_rect_2d_simple_tex( width, height );
             }
@@ -1027,7 +1025,6 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
 {
     // *TODO: Is this correct?
     //gPipeline.disableLights();
-    stop_glerror();
 
     LLColor4 net_color;
     bool color_specified = findNetColor(&net_color);
@@ -1173,7 +1170,6 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
         // Restore standard blend func value
         gRender.flush();
         gRender.setSceneBlendType(LLRender::BT_ALPHA);
-        stop_glerror();
     }
 
     if( !success )
@@ -1385,7 +1381,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
 
     gAlphaMaskProgram.setMinimumAlpha(0.004f);
 
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
 
     gRender.setColorMask(true, true);
 

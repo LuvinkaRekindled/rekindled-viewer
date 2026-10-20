@@ -285,7 +285,7 @@ void LLPreviewTexture::draw()
 
     if (!isMinimized())
     {
-        LLGLSUIDefault gls_ui;
+        LLRenderPresetUIDefault gls_ui;
         gRender.getTexUnit(0)->bindWhite();
 
         const LLRect& border = mClientRect;

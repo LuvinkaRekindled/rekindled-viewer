@@ -179,9 +179,9 @@ public:
     virtual ~LLViewerWindow();
 
     void            shutdownViews();
-    void            shutdownGL();
+    void            shutdownRenderDevice();
 
-    void            initGLDefaults();
+    void            initRenderDefaults();
     void            initBase();
     void            adjustRectanglesForFirstUse(const LLRect& window);
     void            adjustControlRectanglesForFirstUse(const LLRect& window);

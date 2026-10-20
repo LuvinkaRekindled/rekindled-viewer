@@ -81,7 +81,7 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
     // Calculate the current sphere radius.
     float currentRadius = MAX_SPHERE_RADIUS - PULSE_AMPLITUDE * pulseFactor;
 
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);
@@ -119,7 +119,7 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
 
 static void renderStaticSphere(const LLVector3& joint_world_position, const LLColor4& color = LLColor4(1.f, 1.f, 0.f, .6f), float radius=0.01f)
 {
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);
@@ -698,7 +698,7 @@ void FSManipRotateJoint::render()
     bool activeJointVisible = updateVisiblity();
 
     // Setup GL state.
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);

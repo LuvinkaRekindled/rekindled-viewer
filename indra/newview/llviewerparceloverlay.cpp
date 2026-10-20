@@ -115,7 +115,7 @@ LLViewerParcelOverlay::LLViewerParcelOverlay(LLViewerRegion* region, F32 region_
         mOwnership[i] = PARCEL_PUBLIC;
     }
 
-    gPipeline.markGLRebuild(this);
+    gPipeline.markRenderRebuild(this);
 }
 
 
@@ -655,7 +655,7 @@ void LLViewerParcelOverlay::idleUpdate(bool force_update)
     if (mOverlayTextureIdx >= 0 && (!(mDirty && force_update)))
     {
         // We are in the middle of updating the overlay texture
-        gPipeline.markGLRebuild(this);
+        gPipeline.markRenderRebuild(this);
         return;
     }
     // Only if we're dirty and it's been a while since the last update.
@@ -686,7 +686,7 @@ void LLViewerParcelOverlay::renderPropertyLines()
     bool render_water = gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_WATER);
     F32 water_z = render_water ? land.getWaterHeight() + 0.01f : 0;
 
-    LLGLSUIDefault gls_ui; // called from pipeline
+    LLRenderPresetUIDefault gls_ui; // called from pipeline
     gRender.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope mDepthTest(true);
 

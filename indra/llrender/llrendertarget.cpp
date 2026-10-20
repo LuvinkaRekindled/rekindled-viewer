@@ -185,7 +185,6 @@ void LLRenderTarget::setColorAttachment(LLImageTex* img, U32 use_name)
     mTex.push_back(use_name);
 
     ll_fboAttach(mFBO, 0, use_name);
-    stop_glerror();
 
 }
 
@@ -230,40 +229,33 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
     LLImageTex::generateTextures(1, &tex);
     gRender.getTexUnit(0)->bindManual(mUsage, tex);
 
-    stop_glerror();
 
 
     {
-        clear_glerror();
         LLImageTex::setManualImage(tex, LLTexUnit::getInternalType(mUsage), 0, color_fmt, mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
     }
 
     sBytesAllocated += mResX*mResY*4;
 
-    stop_glerror();
 
 
     if (offset == 0)
     { //use bilinear filtering on single texture render targets that aren't multisampled
         gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
-        stop_glerror();
     }
     else
     { //don't filter data attachments
         gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
-        stop_glerror();
     }
 
     if (mUsage != LLTexUnit::TT_RECT_TEXTURE)
     {
         gRender.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_MIRROR);
-        stop_glerror();
     }
     else
     {
         // ATI doesn't support mirrored repeat for rectangular textures.
         gRender.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
-        stop_glerror();
     }
 
     if (mFBO)
@@ -292,8 +284,6 @@ bool LLRenderTarget::allocateDepth()
     gRender.getTexUnit(0)->bindManual(mUsage, mDepth);
 
     TextureTarget internal_type = LLTexUnit::getInternalType(mUsage);
-    stop_glerror();
-    clear_glerror();
     LLImageTex::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
     gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
 

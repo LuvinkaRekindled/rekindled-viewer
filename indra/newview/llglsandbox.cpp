@@ -353,7 +353,7 @@ void LLWind::renderVectors()
 void LLViewerParcelMgr::renderRect(const LLVector3d &west_south_bottom_global,
                                    const LLVector3d &east_north_top_global)
 {
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope gls_depth(true);
 
@@ -543,7 +543,7 @@ void LLViewerParcelMgr::renderHighlightSegments(const U8* segments, LLViewerRegi
     F32 x2, y2; // end point
     bool has_segments = false;
 
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bindWhite();
     // <FS:Ansariel> FIRE-10546: Show parcel boundary up to max. build level
     //LLGLDepthTest gls_depth(true);
@@ -632,7 +632,7 @@ void LLViewerParcelMgr::renderCollisionSegments(U8* segments, bool use_pass, LLV
     F32 pos_x = pos.mV[VX];
     F32 pos_y = pos.mV[VY];
 
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     LLRenderState::DepthScope gls_depth(true, false);
     LLRenderState::CullScope cull(false);
 
@@ -804,7 +804,7 @@ void LLViewerObjectList::renderObjectBeacons()
         return;
     }
 
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
 
     gUIProgram.bind();
 
@@ -899,7 +899,7 @@ void LLViewerObjectList::renderObjectBeacons()
 
 void LLSky::renderSunMoonBeacons(const LLVector3& pos_agent, const LLVector3& direction, LLColor4 color)
 {
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gUIProgram.bind();
     gRender.getTexUnit(0)->bindWhite();
 

@@ -56,12 +56,12 @@ thread_local LLRender gRender;
 // Handy copies of last good GL matrices
 F32 gRenderModelView[16];
 F32 gRenderLastModelView[16];
-F32 gGLLastProjection[16];
+F32 gRenderLastProjection[16];
 F32 gRenderProjection[16];
 
 // transform from last frame's camera space to this frame's camera space (and inverse)
-glm::mat4 gGLDeltaModelView;
-glm::mat4 gGLInverseDeltaModelView;
+glm::mat4 gRenderDeltaModelView;
+glm::mat4 gRenderInverseDeltaModelView;
 
 S32 gRenderViewport[4];
 
@@ -257,7 +257,6 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    stop_glerror();
     if (mIndex >= 0)
     {
         gRender.flush();
@@ -321,7 +320,6 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 bool LLTexUnit::bind(LLImageTex* texture, bool for_rendering, bool forceBind, S32 usename)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
-    stop_glerror();
     if (mIndex < 0) return false;
 
     U32 texname = usename ? usename : texture->getTexName();
@@ -334,37 +332,29 @@ bool LLTexUnit::bind(LLImageTex* texture, bool for_rendering, bool forceBind, S3
 
     if(!texname)
     {
-        if(LLImageTex::sDefaultGLTexture && LLImageTex::sDefaultGLTexture->getTexName())
+        if(LLImageTex::sDefaultImageTexture && LLImageTex::sDefaultImageTexture->getTexName())
         {
-            return bind(LLImageTex::sDefaultGLTexture) ;
+            return bind(LLImageTex::sDefaultImageTexture) ;
         }
-        stop_glerror();
         return false ;
     }
 
     if ((mCurrTexture != texname) || forceBind)
     {
         gRender.flush();
-        stop_glerror();
-        stop_glerror();
         mCurrTexType = texture->getTarget();
-        stop_glerror();
         mCurrTexture = texname;
         ll_bindTexUnit(mIndex, mCurrTexture);
-        stop_glerror();
         texture->updateBindStats();
         mHasMipMaps = texture->mHasMipMaps;
         if (texture->mTexOptionsDirty)
         {
-            stop_glerror();
             texture->mTexOptionsDirty = false;
             setTextureAddressMode(texture->mAddressMode);
             setTextureFilteringOption(texture->mFilterOption);
-            stop_glerror();
         }
     }
 
-    stop_glerror();
 
     return true;
 }
@@ -498,7 +488,6 @@ void LLTexUnit::unbind(eTextureType type, const char* file, int line)
     sNextFile = file;
     sNextLine = line;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
-    stop_glerror();
 
     if (mIndex < 0) return;
 
@@ -519,7 +508,6 @@ void LLTexUnit::unbind(eTextureType type, const char* file, int line)
         {
             ll_bindTexUnit(mIndex, 0);
         }
-        stop_glerror();
     }
 }
 
@@ -871,7 +859,6 @@ bool LLRender::init(bool needs_vertex_buffer)
 void LLRender::initVertexBuffer()
 {
     llassert_always(mBuffer.isNull()) ;
-    stop_glerror();
     mBuffer = new LLVertexBuffer(immediate_mask);
     // <FS:Ansariel> Warn in case of allocation failure
     //mBuffer->allocateBuffer(4096, 0);
@@ -883,7 +870,6 @@ void LLRender::initVertexBuffer()
     mBuffer->getVertexStrider(mVerticesp);
     mBuffer->getTexCoord0Strider(mTexcoordsp);
     mBuffer->getColorStrider(mColorsp);
-    stop_glerror();
 }
 
 void LLRender::resetVertexBuffer()
@@ -966,7 +952,6 @@ void LLRender::syncLightState()
 void LLRender::syncMatrices()
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SYNC_MATRICES);
-    STOP_GLERROR;
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
 
     static const U32 name[] =
@@ -1116,7 +1101,6 @@ void LLRender::syncMatrices()
             syncLightState();
         }
     }
-    STOP_GLERROR;
 }
 
 void LLRender::translateOf(eMatrixMode mode, const glm::vec3& v)
@@ -1802,7 +1786,6 @@ void note(bool has_texcoord, U32 count, const char* tex_file, int tex_line)
 
 void LLRender::flush()
 {
-    STOP_GLERROR;
     if (mCount > 0)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -2243,7 +2226,7 @@ glm::mat4 get_last_modelview()
 
 glm::mat4 get_last_projection()
 {
-    return glm::make_mat4(gGLLastProjection);
+    return glm::make_mat4(gRenderLastProjection);
 }
 
 void copy_matrix(const glm::mat4& src, F32* dst)
@@ -2272,7 +2255,7 @@ void set_last_modelview(const glm::mat4& mat)
 
 void set_last_projection(const glm::mat4& mat)
 {
-    copy_matrix(mat, gGLLastProjection);
+    copy_matrix(mat, gRenderLastProjection);
 }
 
 glm::vec3 mul_mat4_vec3(const glm::mat4& mat, const glm::vec3& vec)

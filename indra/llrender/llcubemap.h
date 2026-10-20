@@ -51,7 +51,7 @@ public:
     // respect the resolution of rawimages
     // Raw images must point to array of six square images that are all the same resolution
     void initEnvironmentMap(const std::vector<LLPointer<LLImageRaw> >& rawimages);
-    void initGL();
+    void initRenderDevice();
     void initRawData(const std::vector<LLPointer<LLImageRaw> >& rawimages);
     void initGLData();
 
@@ -72,7 +72,7 @@ public:
     // NOTE: Cube Map MUST already be resident in VRAM
     void generateMipMaps();
 
-    U32 getGLName();
+    U32 getTextureHandle();
 
     void destroyResources();
 

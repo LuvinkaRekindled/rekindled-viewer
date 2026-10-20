@@ -82,7 +82,7 @@ LLHUDIcon::~LLHUDIcon()
 
 void LLHUDIcon::render()
 {
-    LLGLSUIDefault texture_state;
+    LLRenderPresetUIDefault texture_state;
     LLRenderState::DepthScope gls_depth(true);
     //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 

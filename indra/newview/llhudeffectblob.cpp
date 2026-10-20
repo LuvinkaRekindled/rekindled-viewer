@@ -66,7 +66,7 @@ void LLHUDEffectBlob::render()
 
     LLViewerCamera::instance().getPixelVectors(pos_agent, pixel_up, pixel_right);
 
-    LLGLSPipelineAlpha gls_pipeline_alpha;
+    LLRenderPresetPipelineAlpha gls_pipeline_alpha;
     gRender.getTexUnit(0)->bind(mImage->getImage());
 
     LLColor4U color = mColor;

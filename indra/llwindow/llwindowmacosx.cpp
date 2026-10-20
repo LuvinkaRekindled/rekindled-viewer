@@ -223,7 +223,7 @@ LLWindowMacOSX::LLWindowMacOSX(LLWindowCallbacks* callbacks,
             makeWindowOrderFront(mWindow);
         }
 
-        if (!gDeviceCaps.initGL())
+        if (!gDeviceCaps.initRenderDevice())
         {
             setupFailure(
                 "Second Life is unable to run because your video card drivers\n"
@@ -244,7 +244,6 @@ LLWindowMacOSX::LLWindowMacOSX(LLWindowCallbacks* callbacks,
     }
 
     mCallbacks = callbacks;
-    stop_glerror();
 
 
 }
@@ -842,7 +841,7 @@ void LLWindowMacOSX::destroyContext()
     }
 
     // Clean up remaining GL state before blowing away window
-    gDeviceCaps.shutdownGL();
+    gDeviceCaps.shutdownRenderDevice();
 
     // Clean up the pixel format
     if(mPixelFormat != NULL)

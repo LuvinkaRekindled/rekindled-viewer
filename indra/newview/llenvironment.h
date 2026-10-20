@@ -131,7 +131,7 @@ public:
 
     void                        update(const LLViewerCamera * cam);
 
-    static void                 updateGLVariablesForSettings(LLShaderUniforms* uniforms, const LLSettingsBase::ptr_t &psetting);
+    static void                 updateRenderVariablesForSettings(LLShaderUniforms* uniforms, const LLSettingsBase::ptr_t &psetting);
     
     // apply current sky settings to given shader
     void                        updateShaderUniforms(LLShaderProgram *shader);

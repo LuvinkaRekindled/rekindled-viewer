@@ -87,7 +87,7 @@ void LLScriptEditor::draw()
 
 void LLScriptEditor::drawLineNumbers()
 {
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     LLRect scrolled_view_rect = getVisibleDocumentRect();
     LLRect content_rect = getVisibleTextRect();
     LLLocalClipRect clip(content_rect);

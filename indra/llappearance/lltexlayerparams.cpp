@@ -368,7 +368,6 @@ bool LLTexLayerParamAlpha::render(S32 x, S32 y, S32 width, S32 height)
                 gRender.getTexUnit(0)->bind(mCachedProcessedTexture);
                 gl_rect_2d_simple_tex(width, height);
                 gRender.getTexUnit(0)->bindWhite();
-                stop_glerror();
             }
         }
 
