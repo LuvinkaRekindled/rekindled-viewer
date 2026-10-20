@@ -4612,10 +4612,79 @@ static void on_object_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h,
     sDrawsTotal += h.mEntries;
 }
 
+// <FS> S1 retained fragments: the table id -> entries (kinds 11-13 of LLVkBridge::shadowPackets). Ordered with the draws by the queue, so a release never overtakes a pass that uses it.
+static std::unordered_map<U32, std::vector<LLVkBridge::ShadowPacketEntry>> sShadowFragments;
+static U64 sFragmentMissing = 0;
+
+void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob);
+static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    typedef LLVkBridge::ShadowPacketEntry Entry;
+    if (h.mKind == 11)
+    {
+        sShadowFragments[h.mFragment].assign((const Entry*)blob, (const Entry*)blob + h.mEntries);
+        return;
+    }
+    if (h.mKind == 12)
+    {
+        const U32* ids = (const U32*)blob;
+        for (U32 i = 0; i < h.mEntries; ++i)
+        {
+            sShadowFragments.erase(ids[i]);
+        }
+        return;
+    }
+    struct Ref { U32 mId, mMapOffset; };
+    const Ref* refs = (const Ref*)blob;
+    const U32* map = (const U32*)(blob + sizeof(Ref) * h.mEntries);
+    const U8* matrices = (const U8*)(map + h.mPaletteFloats);
+    static thread_local std::vector<U8> expanded;
+    size_t total = 0;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        auto it = sShadowFragments.find(refs[i].mId);
+        total += it == sShadowFragments.end() ? 0 : it->second.size();
+    }
+    expanded.resize(total * sizeof(Entry) + 64 * (size_t)h.mMatrices);
+    Entry* out = (Entry*)expanded.data();
+    size_t n = 0;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        auto it = sShadowFragments.find(refs[i].mId);
+        if (it == sShadowFragments.end())
+        {
+            ++sFragmentMissing;
+            continue;
+        }
+        const U32* local = map + refs[i].mMapOffset;
+        for (const Entry& e : it->second)
+        {
+            Entry& o = out[n++];
+            o = e;
+            o.mMatrix = e.mMatrix ? local[e.mMatrix - 1] : 0;
+        }
+    }
+    if (n == 0)
+    {
+        return;
+    }
+    memcpy(expanded.data() + n * sizeof(Entry), matrices, 64 * (size_t)h.mMatrices);
+    LLVkBridge::ShadowPacketsHeader plain = h;
+    plain.mKind = 0;
+    plain.mEntries = (U32)n;
+    plain.mPaletteFloats = 0;
+    on_shadow_packets(plain, expanded.data());
+}
+
 // <FS> Render packets: the worker side of LLVkBridge::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
+    if (h.mKind >= 11 && h.mKind <= 13)
+    {
+        on_shadow_fragments(h, blob);
+        return;
+    }
     if (h.mKind == 1)
     {
         on_shadow_alpha_packets(h, blob);

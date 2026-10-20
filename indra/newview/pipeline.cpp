@@ -5267,6 +5267,374 @@ static void verify_shadow_static(const char* what, const LLPipeline::ShadowStati
     }
 }
 
+
+// ---- <FS> S1 (doc/vulkan/S1-handoff.md): retained fragments of the untextured static shadow casters (kind 0), one per spatial group ----
+// A fragment is what build_shadow_static would make of the group's draw infos of the 13 static types, made once and kept in the group (mSceneFragment) while the group's draw info set is
+// the same (LLSpatialGroup::mDrawMapSerial) and its vertex buffers still have the ids it saw. The worker keeps a copy under the fragment's id (RETAIN, kind 11); a pass names fragments
+// (kind 13) instead of carrying their entries. LL_VK_SCENE_FRAGMENTS=1 uses them for the sun cascades, LL_VK_SCENE_VERIFY=1 compares every fragment it meets with a rebuild from the
+// live draw maps, and the entries of each cascade with the ones the builder made. Main thread only.
+struct LLSceneFragment
+{
+    U32 mId = 0;
+    U32 mSerial = 0;
+    bool mSent = false;                                 // the worker has it (RETAIN sent)
+    struct BufferRef { const LLVertexBuffer* mBuffer; U32 mVertex, mIndex; };
+    std::vector<BufferRef> mBuffers;                    // the buffers its entries name, with the ids they had
+    std::vector<LLVkBridge::ShadowPacketEntry> mEntries;    // mMatrix: 0 = none, else 1 + index into mMatrices
+    std::vector<const LLMatrix4*> mMatrices;
+    std::vector<U32> mMatrixIds;                        // rt_matrix_id of each
+    std::vector<LLDrawInfo*> mFallback;                 // draws the packet layout cannot take
+};
+
+namespace
+{
+bool scene_env(const char* name)
+{
+    const char* e = getenv(name);
+    return e && e[0] == '1';
+}
+bool scene_fragments_use()
+{
+    static const bool on = scene_env("LL_VK_SCENE_FRAGMENTS");
+    return on;
+}
+bool scene_verify_on()
+{
+    static const bool on = scene_env("LL_VK_SCENE_VERIFY");
+    return on;
+}
+
+std::mutex sFragmentReleaseLock;
+std::vector<U32> sFragmentReleases;         // ids of fragments gone (groups destroyed or rebuilt), told to the worker with the next pass
+U32 sNextFragmentId = 1;
+
+enum FragmentCause { FC_COUNT, FC_FALLBACK, FC_MATRICES, FC_VERTEX_BUFFER, FC_INDEX_BUFFER, FC_RANGE, FC_MATRIX, FC_MATRIX_ID, FC_NUM };
+const char* const kFragmentCauseNames[FC_NUM] = { "entry count", "fallback draws", "matrices", "vertex buffer id", "index buffer id", "index range", "matrix number", "matrix id" };
+
+struct FragmentStats
+{
+    U64 mPasses = 0, mGroups = 0, mReused = 0, mBuilt = 0, mBufferChanged = 0, mRetains = 0, mReleases = 0, mEntries = 0, mFallback = 0;
+    U64 mChecked = 0, mMismatch[FC_NUM] = {}, mViewsChecked = 0, mViewCount = 0, mViewContent = 0, mViewFallback = 0;
+    U32 mLastReport = 0;
+} sFragStats;
+}
+
+void ll_scene_fragment_free(LLSceneFragment*& fragment)
+{
+    if (!fragment)
+    {
+        return;
+    }
+    if (fragment->mSent)
+    {
+        std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
+        sFragmentReleases.push_back(fragment->mId);
+    }
+    delete fragment;
+    fragment = nullptr;
+}
+
+static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
+{
+    f.mBuffers.clear();
+    f.mEntries.clear();
+    f.mMatrices.clear();
+    f.mMatrixIds.clear();
+    f.mFallback.clear();
+    for (size_t t = 0; t < kShadowStaticTypeCount; ++t)
+    {
+        auto it = group->mDrawMap.find(kShadowStaticTypes[t]);
+        if (it == group->mDrawMap.end())
+        {
+            continue;
+        }
+        for (LLDrawInfo* params : it->second)
+        {
+            if (!params->mCount)
+            {
+                continue;
+            }
+            const LLVertexBuffer* vb = params->mVertexBuffer.get();
+            if (vb)
+            {
+                bool known = false;
+                for (const LLSceneFragment::BufferRef& b : f.mBuffers)
+                {
+                    if (b.mBuffer == vb)
+                    {
+                        known = true;
+                        break;
+                    }
+                }
+                if (!known)
+                {
+                    f.mBuffers.push_back({ vb, vb->getVertexBufferId(), vb->getIndexBufferId() });
+                }
+            }
+            if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
+                || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+            {
+                f.mFallback.push_back(params);
+                continue;
+            }
+            U32 matrix = 0, matrix_id = 0;
+            if (params->mModelMatrix)
+            {
+                size_t k = 0;
+                while (k < f.mMatrices.size() && f.mMatrices[k] != params->mModelMatrix)
+                {
+                    ++k;
+                }
+                if (k == f.mMatrices.size())
+                {
+                    f.mMatrices.push_back(params->mModelMatrix);
+                    f.mMatrixIds.push_back(rt_matrix_id(params->mModelMatrix));
+                }
+                matrix = (U32)k + 1;
+                matrix_id = f.mMatrixIds[k];
+            }
+            LLVkBridge::ShadowPacketEntry entry = { vb->getVertexBufferId(), vb->getIndexBufferId(), params->mOffset, params->mCount, matrix, matrix_id };
+            f.mEntries.push_back(entry);
+        }
+    }
+}
+
+// the fragment of a group, current: made again when the draw info set changed (the serial) or a buffer it names has another id (an event the plan lists as "buffer reallocated without a rebuild")
+static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
+{
+    LLSceneFragment* f = group->mSceneFragment;
+    if (f && f->mSerial == group->mDrawMapSerial)
+    {
+        bool current = true;
+        for (const LLSceneFragment::BufferRef& b : f->mBuffers)
+        {
+            if (b.mBuffer->getVertexBufferId() != b.mVertex || b.mBuffer->getIndexBufferId() != b.mIndex)
+            {
+                current = false;
+                break;
+            }
+        }
+        if (current)
+        {
+            ++sFragStats.mReused;
+            return f;
+        }
+        ++sFragStats.mBufferChanged;
+    }
+    ll_scene_fragment_free(group->mSceneFragment);
+    f = group->mSceneFragment = new LLSceneFragment();
+    f->mId = sNextFragmentId++;
+    f->mSerial = group->mDrawMapSerial;
+    scene_fragment_fill(group, *f);
+    ++sFragStats.mBuilt;
+    return f;
+}
+
+struct SceneGather
+{
+    struct Ref { U32 mId, mMapOffset; };
+    std::vector<Ref> mRefs;
+    std::vector<U32> mMap;                      // per fragment, the number in mMatrices of each of its own matrices
+    std::vector<F32> mMatrices;                 // matrix 0 is the identity
+    std::vector<LLDrawInfo*> mFallback;
+    std::vector<const LLSceneFragment*> mFragments;
+    size_t mEntries = 0;
+};
+
+// the entries of one fragment against a fresh build from the live draw maps: the cause of the first difference, or null
+static const char* scene_fragment_diff(const LLSceneFragment& a, const LLSceneFragment& b, int& cause)
+{
+    cause = -1;
+    if (a.mEntries.size() != b.mEntries.size()) { cause = FC_COUNT; }
+    else if (a.mFallback != b.mFallback) { cause = FC_FALLBACK; }
+    else if (a.mMatrices != b.mMatrices) { cause = FC_MATRICES; }
+    else
+    {
+        for (size_t i = 0; i < a.mEntries.size() && cause < 0; ++i)
+        {
+            const LLVkBridge::ShadowPacketEntry& x = a.mEntries[i];
+            const LLVkBridge::ShadowPacketEntry& y = b.mEntries[i];
+            if (x.mVertexBuffer != y.mVertexBuffer) { cause = FC_VERTEX_BUFFER; }
+            else if (x.mIndexBuffer != y.mIndexBuffer) { cause = FC_INDEX_BUFFER; }
+            else if (x.mFirstIndex != y.mFirstIndex || x.mIndexCount != y.mIndexCount) { cause = FC_RANGE; }
+            else if (x.mMatrix != y.mMatrix) { cause = FC_MATRIX; }
+            else if (x.mMatrixId != y.mMatrixId) { cause = FC_MATRIX_ID; }
+        }
+    }
+    return cause >= 0 ? kFragmentCauseNames[cause] : nullptr;
+}
+
+// the fragments of the cull result's visible groups (the groups shadowPrepRenderMap takes draws from); send: tell the worker about new ones (RETAIN) and gone ones (RELEASE)
+static void scene_gather(LLCullResult& result, bool send, SceneGather& g)
+{
+    g.mMatrices.assign(16, 0.f);
+    g.mMatrices[0] = g.mMatrices[5] = g.mMatrices[10] = g.mMatrices[15] = 1.f;
+    std::unordered_map<const void*, U32> matrix_numbers;
+    const bool verify = scene_verify_on();
+    LLSceneFragment fresh;
+    for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
+    {
+        LLSpatialGroup* group = *i;
+        if (group->isDead() || (LLPipeline::RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > LLPipeline::RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
+        {
+            continue;
+        }
+        ++sFragStats.mGroups;
+        const U64 changed_before = sFragStats.mBufferChanged;
+        LLSceneFragment* f = scene_fragment_ensure(group);
+        if (verify)
+        {
+            ++sFragStats.mChecked;
+            sFragStats.mMismatch[FC_VERTEX_BUFFER] += sFragStats.mBufferChanged - changed_before;      // same serial, buffer under it changed: the fragment would have been stale
+            scene_fragment_fill(group, fresh);
+            int cause;
+            if (scene_fragment_diff(*f, fresh, cause))
+            {
+                if (sFragStats.mMismatch[cause]++ < 8)
+                {
+                    LL_WARNS("VkScene") << "fragment verify: group fragment " << f->mId << " (serial " << f->mSerial << ") differs from a rebuild: " << kFragmentCauseNames[cause] << " (" << f->mEntries.size()
+                        << " / " << fresh.mEntries.size() << " entries)" << LL_ENDL;
+                }
+            }
+        }
+        g.mFallback.insert(g.mFallback.end(), f->mFallback.begin(), f->mFallback.end());
+        sFragStats.mFallback += f->mFallback.size();
+        if (f->mEntries.empty())
+        {
+            continue;
+        }
+        if (send && !f->mSent)
+        {
+            LLVkBridge::ShadowPacketsHeader header;
+            header.mKind = 11;
+            header.mEntries = (U32)f->mEntries.size();
+            header.mFragment = f->mId;
+            LLVkBridge::shadowPackets(header, f->mEntries.data(), f->mEntries.size() * sizeof(f->mEntries[0]));
+            f->mSent = true;
+            ++sFragStats.mRetains;
+        }
+        g.mRefs.push_back({ f->mId, (U32)g.mMap.size() });
+        for (const LLMatrix4* m : f->mMatrices)
+        {
+            auto it = matrix_numbers.find(m);
+            if (it == matrix_numbers.end())
+            {
+                it = matrix_numbers.emplace(m, (U32)(g.mMatrices.size() / 16)).first;
+                const F32* p = (const F32*)m->mMatrix;
+                g.mMatrices.insert(g.mMatrices.end(), p, p + 16);
+            }
+            g.mMap.push_back(it->second);
+        }
+        g.mEntries += f->mEntries.size();
+        g.mFragments.push_back(f);
+    }
+    sFragStats.mEntries += g.mEntries;
+    ++sFragStats.mPasses;
+    if (send)
+    {
+        std::vector<U32> gone;
+        {
+            std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
+            gone.swap(sFragmentReleases);
+        }
+        if (!gone.empty())
+        {
+            LLVkBridge::ShadowPacketsHeader header;
+            header.mKind = 12;
+            header.mEntries = (U32)gone.size();
+            LLVkBridge::shadowPackets(header, gone.data(), gone.size() * sizeof(U32));
+            sFragStats.mReleases += gone.size();
+        }
+    }
+    else
+    {
+        std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
+        sFragmentReleases.clear();
+    }
+    const U32 frame = (U32)gFrameCount;
+    if (frame >= sFragStats.mLastReport + 600)
+    {
+        sFragStats.mLastReport = frame;
+        const FragmentStats& s = sFragStats;
+        std::string causes;
+        for (int c = 0; c < FC_NUM; ++c)
+        {
+            causes += std::string(c ? ", " : "") + kFragmentCauseNames[c] + " " + std::to_string(s.mMismatch[c]);
+        }
+        LL_INFOS("VkScene") << "fragments (shadow kind 0), totals: " << s.mPasses << " passes, " << s.mGroups << " group visits (" << s.mReused << " reused, " << s.mBuilt << " built, " << s.mBufferChanged
+            << " rebuilt because a buffer id changed under the same serial), " << s.mRetains << " retained, " << s.mReleases << " released, " << s.mEntries << " entries and " << s.mFallback
+            << " fallback draws served | verify: " << s.mChecked << " fragments checked, mismatches by cause (" << causes << "); " << s.mViewsChecked
+            << " cascade lists compared with the builder's: " << s.mViewCount << " differ in count, " << s.mViewContent << " in content, " << s.mViewFallback << " in fallback draws" << LL_ENDL;
+    }
+}
+
+// the entries the fragments make against the builder's, as sets (the fragments' order is by group, the builder's by type)
+static void scene_verify_view(const SceneGather& g, const LLPipeline::ShadowStaticBuild& source)
+{
+    struct Key { U32 mVb, mIb, mFirst, mCount, mId; F32 mMatrix[16]; };
+    auto less = [](const Key& a, const Key& b)
+    {
+        if (a.mVb != b.mVb) return a.mVb < b.mVb;
+        if (a.mIb != b.mIb) return a.mIb < b.mIb;
+        if (a.mFirst != b.mFirst) return a.mFirst < b.mFirst;
+        if (a.mCount != b.mCount) return a.mCount < b.mCount;
+        if (a.mId != b.mId) return a.mId < b.mId;
+        return memcmp(a.mMatrix, b.mMatrix, sizeof(a.mMatrix)) < 0;
+    };
+    auto same = [](const Key& a, const Key& b) { return memcmp(&a, &b, sizeof(Key)) == 0; };
+    static const F32 identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    std::vector<Key> mine, theirs;
+    mine.reserve(g.mEntries);
+    for (const LLSceneFragment* f : g.mFragments)
+    {
+        for (const LLVkBridge::ShadowPacketEntry& e : f->mEntries)
+        {
+            Key k = {};
+            k.mVb = e.mVertexBuffer; k.mIb = e.mIndexBuffer; k.mFirst = e.mFirstIndex; k.mCount = e.mIndexCount; k.mId = e.mMatrixId;
+            memcpy(k.mMatrix, e.mMatrix ? (const F32*)f->mMatrices[e.mMatrix - 1]->mMatrix : identity, sizeof(k.mMatrix));
+            mine.push_back(k);
+        }
+    }
+    for (const LLVkBridge::ShadowPacketEntry& e : source.mEntries)
+    {
+        Key k = {};
+        k.mVb = e.mVertexBuffer; k.mIb = e.mIndexBuffer; k.mFirst = e.mFirstIndex; k.mCount = e.mIndexCount; k.mId = e.mMatrixId;
+        memcpy(k.mMatrix, source.mMatrices.data() + 16 * (size_t)e.mMatrix, sizeof(k.mMatrix));
+        theirs.push_back(k);
+    }
+    ++sFragStats.mViewsChecked;
+    if (mine.size() != theirs.size())
+    {
+        if (sFragStats.mViewCount++ < 8)
+        {
+            LL_WARNS("VkScene") << "fragment verify: a cascade has " << mine.size() << " entries from fragments, " << theirs.size() << " from the builder" << LL_ENDL;
+        }
+    }
+    else
+    {
+        std::sort(mine.begin(), mine.end(), less);
+        std::sort(theirs.begin(), theirs.end(), less);
+        for (size_t i = 0; i < mine.size(); ++i)
+        {
+            if (!same(mine[i], theirs[i]))
+            {
+                if (sFragStats.mViewContent++ < 8)
+                {
+                    LL_WARNS("VkScene") << "fragment verify: a cascade's entries from fragments differ in content from the builder's (first at sorted entry " << i << " of " << mine.size() << ")" << LL_ENDL;
+                }
+                break;
+            }
+        }
+    }
+    std::vector<LLDrawInfo*> a = g.mFallback, b = source.mFallback;
+    std::sort(a.begin(), a.end());
+    std::sort(b.begin(), b.end());
+    if (a != b && sFragStats.mViewFallback++ < 8)
+    {
+        LL_WARNS("VkScene") << "fragment verify: a cascade has " << a.size() << " fallback draws from fragments, " << b.size() << " from the builder" << LL_ENDL;
+    }
+}
+
 static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints);
 static U32 rt_avatar_kind(LLVOAvatar* avatar);
 
@@ -9504,11 +9872,14 @@ void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
 {
     LLCullResult* result = prep.mResult;
     LLAsyncPool& pool = LLAsyncPool::shared();
-    prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
     prep.mSkinBuild = std::make_shared<ShadowSkinBuild>();
-    std::shared_ptr<ShadowStaticBuild> static_build = prep.mStaticBuild;
     std::shared_ptr<ShadowSkinBuild> skin_build = prep.mSkinBuild;
-    prep.mStaticJob = pool.submit([result, static_build]() { build_shadow_static(*result, kShadowStaticTypes, kShadowStaticTypeCount, *static_build); });
+    if (!(scene_fragments_use() && !scene_verify_on() && !LLVkBridge::rtShadowMode()))      // S1: the fragments serve the cascade (render_shadow_packets builds inline when it still needs entries)
+    {
+        prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
+        std::shared_ptr<ShadowStaticBuild> static_build = prep.mStaticBuild;
+        prep.mStaticJob = pool.submit([result, static_build]() { build_shadow_static(*result, kShadowStaticTypes, kShadowStaticTypeCount, *static_build); });
+    }
     prep.mSkinJob = pool.submit([result, skin_build]() { build_shadow_skin(*result, kShadowStaticTypes, kShadowStaticTypeCount, *skin_build); });
     if (LLVkBridge::rtShadowMode() || (shadow_packets_enabled() && shadow_kind_on(1) && LLVkBridge::shadowAlphaPacketsAvailable()))
     {
@@ -14122,6 +14493,62 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             prepared->mStaticJob->wait();
         }
         const ShadowStaticBuild* source = prepared ? prepared->mStaticBuild.get() : nullptr;
+        // S1: the cascade's casters from the groups' retained fragments (LL_VK_SCENE_FRAGMENTS=1), compared with the builder's when LL_VK_SCENE_VERIFY=1 (then the builder's record is the one drawn)
+        if (!rt_skip && prepared && (scene_fragments_use() || scene_verify_on()) && !rt_materials_on() && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
+        {
+            bool all_types = true;
+            for (size_t t = 0; t < count && all_types; ++t)
+            {
+                all_types = hasRenderType(list[t]);
+            }
+            if (all_types)
+            {
+                LL_CPU_ZONE("packets: shadow static (fragments)");
+                const bool use = scene_fragments_use();
+                SceneGather gather;
+                scene_gather(result, use, gather);
+                if (source && scene_verify_on())
+                {
+                    scene_verify_view(gather, *source);
+                }
+                if (use)
+                {
+                    if (!gather.mRefs.empty())
+                    {
+                        LLVkBridge::ShadowPacketsHeader header;
+                        header.mKind = 13;
+                        header.mEntries = (U32)gather.mRefs.size();
+                        header.mMatrices = (U32)(gather.mMatrices.size() / 16);
+                        header.mPaletteFloats = (U32)gather.mMap.size();
+                        header.mPass = shadow_pass_index();
+                        const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
+                        memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
+                        const size_t refs_bytes = gather.mRefs.size() * sizeof(gather.mRefs[0]), map_bytes = gather.mMap.size() * sizeof(U32), matrix_bytes = gather.mMatrices.size() * sizeof(F32);
+                        std::vector<U8> blob(refs_bytes + map_bytes + matrix_bytes);
+                        memcpy(blob.data(), gather.mRefs.data(), refs_bytes);
+                        memcpy(blob.data() + refs_bytes, gather.mMap.data(), map_bytes);
+                        memcpy(blob.data() + refs_bytes + map_bytes, gather.mMatrices.data(), matrix_bytes);
+                        LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+                        gShadowDrawStats.mPacketEntries += gather.mEntries;
+                        ++gShadowDrawStats.mPacketRecords;
+                    }
+                    if (!gather.mFallback.empty())
+                    {
+                        gShadowDrawStats.mPacketFallback += gather.mFallback.size();
+                        gDeferredShadowProgram.bind(false);
+                        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+                        gRenderLastMatrix = NULL;
+                        for (LLDrawInfo* params : gather.mFallback)
+                        {
+                            mSimplePool->pushUntexturedBatch(*params);
+                        }
+                    }
+                    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+                    gRenderLastMatrix = NULL;
+                    return;
+                }
+            }
+        }
         if (!source)
         {
             build_shadow_static(result, list, count, built);

@@ -136,6 +136,7 @@ LLSpatialGroup::~LLSpatialGroup()
     sNodeCount--;
 
     clearDrawMap();
+    ll_scene_fragment_free(mSceneFragment);
 }
 
 U32 LLSpatialGroup::sDrawMapsCleared = 0;

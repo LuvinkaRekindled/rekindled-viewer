@@ -78,6 +78,9 @@ void render_hull_with_outline(LLModel::PhysicsMesh& mesh, const LLColor4& color,
     Make every effort to keep size minimal.
     Member ordering is important for cache coherency
 */
+struct LLSceneFragment;
+void ll_scene_fragment_free(LLSceneFragment*& fragment);        // pipeline.cpp (S1)
+
 class LLDrawInfo final : public LLRefCount
 {
     LL_ALIGN_NEW;
@@ -354,6 +357,8 @@ public:
     U32 mDrawMapSerial = 1;
     U32 mSceneSeenSerial = 0;
     U32 mSceneSeenFrame = 0;
+    // <FS> S1: the retained shadow fragment of this group (pipeline.cpp), valid while its serial is mDrawMapSerial; freed with the group
+    struct LLSceneFragment* mSceneFragment = nullptr;
     static U32 sDrawMapsCleared;        // non empty draw maps cleared (group rebuilds), counted per frame by LL_VK_SCENE_STATS
 
     bridge_list_t mBridgeList;
