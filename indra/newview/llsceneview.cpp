@@ -78,7 +78,7 @@ void LLSceneView::draw()
     setRect(new_rect);
 
     // Draw the window background
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     gl_rect_2d(0, getRect().getHeight(), getRect().getWidth(), 0, LLColor4(0.f, 0.f, 0.f, 0.25f));
 
 

@@ -1076,7 +1076,7 @@ void GLTFSceneManager::renderDebug()
     LLRenderState::CullScope cullface(false);
     LLRenderState::BlendScope blend(true);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     gPipeline.disableLights();
 
     for (auto& obj : mObjects)

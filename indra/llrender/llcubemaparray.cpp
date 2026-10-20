@@ -205,7 +205,7 @@ void LLCubeMapArray::bind(S32 stage)
 
 void LLCubeMapArray::unbind()
 {
-    gGL.getTexUnit(mTextureStage)->unbind(LLTexUnit::TT_CUBE_MAP_ARRAY);
+    gGL.getTexUnit(mTextureStage)->bindNone(LLTexUnit::TT_CUBE_MAP_ARRAY);
     mTextureStage = -1;
 }
 

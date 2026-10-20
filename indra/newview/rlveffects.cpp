@@ -135,7 +135,7 @@ void RlvOverlayEffect::run(const LLVisualEffectParams*)
 
         gl_rect_2d_simple_tex(nWidth, nHeight);
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gGL.flush();

@@ -456,7 +456,7 @@ void LLManip::renderGuidelines(bool draw_x, bool draw_y, bool draw_z)
 
         const F32 LINE_ALPHA = 0.33f;
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         LLUI::setLineWidth(1.5f);
 
         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)

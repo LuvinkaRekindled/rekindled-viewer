@@ -754,7 +754,7 @@ void LLHUDEffectLookAt::render()
         }
 
         // render crosshair
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, target.mV[VX], target.mV[VY], target.mV[VZ]);

@@ -318,7 +318,7 @@ void LLWind::renderVectors()
     F32 region_width_meters = gAgent.getRegion()->getWidth();
 // </FS:CR> Aurora Sim
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLVector3 origin_agent;
     origin_agent = gAgent.getPosAgentFromGlobal(mOriginGlobal);
@@ -354,7 +354,7 @@ void LLViewerParcelMgr::renderRect(const LLVector3d &west_south_bottom_global,
                                    const LLVector3d &east_north_top_global)
 {
     LLGLSUIDefault gls_ui;
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope gls_depth(true);
 
     LLVector3 west_south_bottom_agent = gAgent.getPosAgentFromGlobal(west_south_bottom_global);
@@ -544,7 +544,7 @@ void LLViewerParcelMgr::renderHighlightSegments(const U8* segments, LLViewerRegi
     bool has_segments = false;
 
     LLGLSUIDefault gls_ui;
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     // <FS:Ansariel> FIRE-10546: Show parcel boundary up to max. build level
     //LLGLDepthTest gls_depth(GL_TRUE);
     LLRenderState::DepthScope gls_depth(true, false);
@@ -809,7 +809,7 @@ void LLViewerObjectList::renderObjectBeacons()
     gUIProgram.bind();
 
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         S32 last_line_width = -1;
         // gGL.begin(LLRender::LINES); // Always happens in (line_width != last_line_width)
@@ -841,7 +841,7 @@ void LLViewerObjectList::renderObjectBeacons()
     }
 
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         LLRenderState::DepthScope gls_depth(true);
 
         S32 last_line_width = -1;
@@ -901,7 +901,7 @@ void LLSky::renderSunMoonBeacons(const LLVector3& pos_agent, const LLVector3& di
 {
     LLGLSUIDefault gls_ui;
     gUIProgram.bind();
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 
     LLVector3 pos_end;
     for (S32 i = 0; i < 3; ++i)
@@ -962,7 +962,7 @@ public:
         // unbind
         if (texUnit)
         {
-                texUnit->unbind(LLTexUnit::TT_TEXTURE);
+                texUnit->bindWhite();
         }
         // ensure that we delete these textures regardless of how we exit
         LLImageGL::deleteTextures(static_cast<S32>(source.size()), &source[0]);

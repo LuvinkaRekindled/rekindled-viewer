@@ -2473,7 +2473,7 @@ void LLFloater::drawConeToOwner(F32 &context_cone_opacity,
         owner_view->localRectToOtherView(owner_view->getLocalRect(), &owner_rect, this);
         LLRect local_rect = getLocalRect();
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         LLRenderState::CullScope cull_face(true);
         gGL.begin(LLRender::TRIANGLE_STRIP);
         {

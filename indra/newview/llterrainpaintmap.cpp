@@ -255,7 +255,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
 
         shader.disableTexture(LLViewerShaderMgr::TERRAIN_ALPHARAMP);
 
-        gGL.getTexUnit(alpha_ramp)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(alpha_ramp)->bindWhite();
         gGL.getTexUnit(alpha_ramp)->disable();
         gGL.getTexUnit(alpha_ramp)->activate();
 

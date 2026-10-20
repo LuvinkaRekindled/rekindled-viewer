@@ -891,7 +891,7 @@ void LLFloaterModelPreview::draw3dPreview()
     }
     gGL.end();
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 }
 
 //-----------------------------------------------------------------------------

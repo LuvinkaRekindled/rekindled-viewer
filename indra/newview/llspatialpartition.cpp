@@ -2098,7 +2098,7 @@ void renderNormals(LLDrawable *drawablep)
             LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32 *) vol->getRelativeXform().mMatrix);
         }
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         // Normals &tangent line segments get scaled along with the object. Divide by scale length
         // to keep the as-viewed lengths (relatively) constant with the debug setting length
@@ -2392,7 +2392,7 @@ void renderPhysicsShape(LLDrawable* drawable, LLVOVolume* volume, bool wireframe
         if (decomp)
         { //render a physics based mesh
 
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
 
             if (!decomp->mHull.empty())
             { //decomposition exists, use that
@@ -3651,7 +3651,7 @@ void LLSpatialPartition::renderPhysicsShapes(bool wireframe)
     }
 
     gGL.flush();
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     LLOctreeRenderPhysicsShapes render_physics(camera, wireframe);
     render_physics.traverse(mOctree);
     gGL.flush();
@@ -3691,7 +3691,7 @@ void LLSpatialPartition::renderDebug()
     LLRenderState::CullScope cullface(false);
     LLRenderState::BlendScope blend(true);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     gPipeline.disableLights();
 
     LLSpatialBridge* bridge = asBridge();

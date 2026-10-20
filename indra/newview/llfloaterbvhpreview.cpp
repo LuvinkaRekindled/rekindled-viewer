@@ -598,7 +598,7 @@ void LLFloaterBvhPreview::draw()
         }
         gGL.end();
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         // <FS> Preview on own avatar
         //LLVOAvatar* avatarp = mAnimPreview->getDummyAvatar();
         }
@@ -1550,7 +1550,7 @@ bool    LLPreviewAnimation::render()
     gUIProgram.bind();
 
     LLGLSUIDefault def;
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     gGL.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
     gl_rect_2d_simple( mFullWidth, mFullHeight );

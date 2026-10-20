@@ -277,7 +277,7 @@ void AnimationExplorer::draw()
             gGL.vertex2i(r.mRight, r.mTop);
         }
         gGL.end();
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
     }
 
     // update tiems and "Still playing" status in the list once every few seconds

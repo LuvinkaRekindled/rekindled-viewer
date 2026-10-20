@@ -1374,7 +1374,7 @@ void LLView::drawDebugRect()
     LLUI::pushMatrix();
     {
         // drawing solids requires texturing be disabled
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         if (getUseBoundingRect())
         {

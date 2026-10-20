@@ -204,7 +204,9 @@ public:
     bool bindManual(eTextureType type, U32 texture, bool hasMips = false, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
     // F3.4: the intent of unbind(TT_TEXTURE) before an untextured draw: the unit holds the white texture
-    void bindWhite();
+    void bindWhite(const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    // the same without the flush (inner loops: the batch is known to be empty)
+    void bindWhiteFast(const char* file = __builtin_FILE(), int line = __builtin_LINE());
     // F3.4: the unit holds no texture of that type (slot 0)
     void bindNone(eTextureType type);
 

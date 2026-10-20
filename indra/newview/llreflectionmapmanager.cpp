@@ -87,7 +87,7 @@ void load_exr(const std::string& filename)
 
         gGL.generateMipmap(texName, GL_TEXTURE_2D);
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
     }
     else
@@ -937,7 +937,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-        gGL.getTexUnit(diffuseChannel)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(diffuseChannel)->bindWhite();
         gReflectionMipProgram.unbind();
     }
 

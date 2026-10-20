@@ -7044,7 +7044,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         stop_glerror();
     }
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 }
 
 void LLSelectMgr::generateSilhouette(LLSelectNode* nodep, const LLVector3& view_point)

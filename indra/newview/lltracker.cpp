@@ -680,7 +680,7 @@ void LLTracker::renderBeacon(LLVector3d pos_global,
     LLVector3d pos_agent_3d = gAgent.getPositionGlobal();   // <FS:CR> FIRE-8234
 
     LLGLSTracker gls_tracker;
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     LLRenderState::CullScope cull_face(false);
     LLRenderState::DepthScope gls_depth(true, false);
 

@@ -5189,7 +5189,7 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                 {
                     gDebugProgram.bind();
                 }
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE); // no textures needed
+                gGL.getTexUnit(0)->bindWhite(); // no textures needed
                 gGL.setClearColor(0, 0, 0, 0); // bg black
                 gGL.setColorMask(true, true); // write color and alpha info
                 gGL.color4f(1.f, 1.f, 1.f, 0.5);
@@ -5237,7 +5237,7 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
         // Render light for editing
         if (LLSelectMgr::sRenderLightRadius && LLToolMgr::getInstance()->inEdit())
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
             LLRenderState::BlendScope gls_blend(true);
             LLRenderState::CullScope gls_cull(true);
             LLRenderState::DepthScope gls_depth(true, false);

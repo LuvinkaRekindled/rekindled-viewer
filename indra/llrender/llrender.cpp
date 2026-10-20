@@ -486,11 +486,33 @@ bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const c
     return true;
 }
 
-void LLTexUnit::bindWhite()
+// an unbind(TT_TEXTURE) did nothing when the unit held another type (mCurrTexType); bindWhite always writes white. LL_VK_TEXUNIT_VERIFY counts the calls where that is a difference.
+static U64 sWhiteOverOtherType = 0;
+static std::map<std::string, U64> sWhiteOverSites;                 // call site and the type the unit held
+
+void LLTexUnit::bindWhite(const char* file, int line)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
     if (mIndex < 0) return;
     gGL.flush();
+    sNextFile = file;
+    sNextLine = line;
+    if (mCurrTexType != TT_TEXTURE && mCurrTexType != TT_NONE)
+    {
+        ++sWhiteOverOtherType;
+        const char* base = file ? strrchr(file, '\\') : nullptr;
+        ++sWhiteOverSites[std::string(base ? base + 1 : (file ? file : "?")) + ":" + std::to_string(line) + " held type " + std::to_string((int)mCurrTexType)];
+    }
+    mCurrTexture = 0;
+    ll_bindTexUnit(mIndex, GL_TEXTURE_2D, sWhiteTexture);
+}
+
+void LLTexUnit::bindWhiteFast(const char* file, int line)
+{
+    sNextFile = file;
+    sNextLine = line;
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
+    if (mIndex < 0) return;
     mCurrTexture = 0;
     ll_bindTexUnit(mIndex, GL_TEXTURE_2D, sWhiteTexture);
 }
@@ -1912,7 +1934,7 @@ void note(bool has_texcoord, U32 count, const char* tex_file, int tex_line)
                 lines += "\n   " + std::to_string(v[i].first) + "  " + v[i].second;
             }
             LL_INFOS("TexUnitVerify") << "immediate batches in " << (frame - sLastReport) << " frames: " << sBatches << " (untextured " << sUntextured << ", with texture coordinates " << sTextured
-                << "); A (untextured, unit 0 not white) " << sA << ", B (textured, unit 0 white) " << sB << lines << LL_ENDL;
+                << "); A (untextured, unit 0 not white) " << sA << ", B (textured, unit 0 white) " << sB << "; bindWhite over a unit that held another type (an unbind would have done nothing) " << sWhiteOverOtherType << lines << [&]() { std::string w; std::vector<std::pair<U64, std::string>> ws; for (auto& e : sWhiteOverSites) ws.push_back({ e.second, e.first }); std::sort(ws.begin(), ws.end(), [](const auto& a, const auto& b) { return a.first > b.first; }); for (size_t i = 0; i < ws.size() && i < 8; ++i) w += "\n   bindWhite over another type: " + std::to_string(ws[i].first) + "  " + ws[i].second; return w; }() << LL_ENDL;
         }
         sCounts.clear();
         sBatches = sUntextured = sTextured = sA = sB = 0;
