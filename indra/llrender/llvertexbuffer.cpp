@@ -610,23 +610,23 @@ void LLVertexBufferData::drawWithMatrix()
     }
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(mModelView));
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(mModelView));
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(mProjection));
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(mProjection));
     gGL.matrixMode(LLRender::MM_TEXTURE0);
-    gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(mTexture0));
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Texture0);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, glm::value_ptr(mTexture0));
 
     mVB->setBuffer();
     mVB->drawArrays(mMode, 0, mCount);
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Texture0);
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void LLVertexBufferData::draw()

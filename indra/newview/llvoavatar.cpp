@@ -1781,10 +1781,10 @@ void render_sphere_and_line(const LLVector3& begin_pos, const LLVector3& end_pos
 
 
     // Draw sphere representing joint pos
-    gGL.pushMatrix();
-    gGL.scalef(sphere_scale, sphere_scale, sphere_scale);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, sphere_scale, sphere_scale, sphere_scale);
     gSphere.renderGGL();
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     LLRenderState::DepthScope depth_under(true, false, LLRenderState::CompareOp::Greater);
 
@@ -1797,10 +1797,10 @@ void render_sphere_and_line(const LLVector3& begin_pos, const LLVector3& end_pos
     gGL.end();
 
     // Draw sphere representing joint pos
-    gGL.pushMatrix();
-    gGL.scalef(sphere_scale, sphere_scale, sphere_scale);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, sphere_scale, sphere_scale, sphere_scale);
     gSphere.renderGGL();
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 //-----------------------------------------------------------------------------
@@ -1818,8 +1818,8 @@ void LLVOAvatar::renderCollisionVolumes()
 
         collision_volume.updateWorldMatrix();
 
-        gGL.pushMatrix();
-        gGL.multMatrix( &collision_volume.getXform()->getWorldMatrix().mMatrix[0][0] );
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &collision_volume.getXform()->getWorldMatrix().mMatrix[0][0]);
 
         LLVector3 begin_pos(0,0,0);
         LLVector3 end_pos(collision_volume.getEnd());
@@ -1850,7 +1850,7 @@ void LLVOAvatar::renderCollisionVolumes()
         render_sphere_and_line(begin_pos, end_pos, sphere_scale, cv_color_occluded, cv_color_visible);
         render_sphere_and_line(begin_pos, end_pos, center_dot_scale, dot_color_occluded, dot_color_visible);
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 
 
@@ -1934,12 +1934,12 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
         LLVector3 end_pos(jointp->getEnd());
 
 
-        gGL.pushMatrix();
-        gGL.multMatrix( &jointp->getXform()->getWorldMatrix().mMatrix[0][0] );
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getXform()->getWorldMatrix().mMatrix[0][0]);
 
         render_sphere_and_line(begin_pos, end_pos, sphere_scale, occ_color, visible_color);
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 
 
@@ -1962,8 +1962,8 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
                 // Ignore bounding box of HUD joints
                 continue;
             }
-            gGL.pushMatrix();
-            gGL.multMatrix(&joint->getXform()->getWorldMatrix().mMatrix[0][0]);
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &joint->getXform()->getWorldMatrix().mMatrix[0][0]);
 
             LLVector4a pos;
             LLVector4a size;
@@ -1977,7 +1977,7 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
 
             drawBoxOutline(pos, size);
 
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         }
     }
 
@@ -2065,8 +2065,8 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
         occ_color = SELECTED_COLOR_OCCLUDED;
         visible_color = SELECTED_COLOR_VISIBLE;
 
-        gGL.pushMatrix();
-        gGL.multMatrix( &jointp->getXform()->getWorldMatrix().mMatrix[0][0] );
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getXform()->getWorldMatrix().mMatrix[0][0]);
 
         gGL.diffuseColor3f( 1.f, 0.f, 1.f );
 
@@ -2126,7 +2126,7 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
 
         gGL.end();
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
         
         // renderBoxAroundJointAttachments( jointp );
@@ -2227,8 +2227,8 @@ void LLVOAvatar::renderBoxAroundJointAttachments(LLJoint * joint)
     if (joint && rig_info && rig_info->isRiggedTo())
     {
         LLViewerJointAttachment* as_joint_attach = dynamic_cast<LLViewerJointAttachment*>(joint);
-        gGL.pushMatrix();
-        gGL.multMatrix(&joint->getXform()->getWorldMatrix().mMatrix[0][0]);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &joint->getXform()->getWorldMatrix().mMatrix[0][0]);
 
         LLVector4a pos;
         LLVector4a size;
@@ -2242,7 +2242,7 @@ void LLVOAvatar::renderBoxAroundJointAttachments(LLJoint * joint)
 
         drawBoxOutline(pos, size);
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 
@@ -2265,8 +2265,8 @@ void LLVOAvatar::renderJoints()
 
         jointp->updateWorldMatrix();
 
-        gGL.pushMatrix();
-        gGL.multMatrix( &jointp->getXform()->getWorldMatrix().mMatrix[0][0] );
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getXform()->getWorldMatrix().mMatrix[0][0]);
 
         gGL.diffuseColor3f( 1.f, 0.f, 1.f );
 
@@ -2326,7 +2326,7 @@ void LLVOAvatar::renderJoints()
 
         gGL.end();
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 
     mDebugText.clear();

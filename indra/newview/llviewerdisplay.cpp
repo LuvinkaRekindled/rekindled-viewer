@@ -1057,9 +1057,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 set_current_projection(proj);
                 set_current_modelview(mod);
                 gGL.matrixMode(LLRender::MM_PROJECTION);
-                gGL.loadMatrix(glm::value_ptr(proj));
+                LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj));
                 gGL.matrixMode(LLRender::MM_MODELVIEW);
-                gGL.loadMatrix(glm::value_ptr(mod));
+                LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(mod));
                 gViewerWindow->setup3DViewport();
 
             }
@@ -1557,9 +1557,9 @@ void render_hud_attachments()
 {
     LLPerfStats::RecordSceneTime T ( LLPerfStats::StatType_t::RENDER_HUDS); // render time capture - Primary contributor to HUDs (though these end up in render batches)
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     glm::mat4 current_proj = get_current_projection();
     glm::mat4 current_mod = get_current_modelview();
@@ -1663,9 +1663,9 @@ void render_hud_attachments()
         LLPipeline::sRenderingHUDs = false;
     }
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     set_current_projection(current_proj);
     set_current_modelview(current_mod);
@@ -1758,11 +1758,11 @@ bool setup_hud_matrices(const LLRect& screen_region)
 
     // set up transform to keep HUD objects in front of camera
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.loadMatrix(glm::value_ptr(proj));
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj));
     set_current_projection(proj);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.loadMatrix(glm::value_ptr(model));
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(model));
     set_current_modelview(model);
     return true;
 }
@@ -1777,18 +1777,18 @@ void render_ui(F32 zoom_factor, int subfield)
 
     if (!gSnapshot)
     {
-        gGL.pushMatrix();
-        gGL.loadMatrix(gGLLastModelView);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLLastModelView);
         set_current_modelview(glm::make_mat4(gGLLastModelView));
     }
 
     if(LLSceneMonitor::getInstance()->needsUpdate())
     {
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         gViewerWindow->setup2DRender();
         LLSceneMonitor::getInstance()->compare();
         gViewerWindow->setup3DRender();
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 
     // apply gamma correction and post effects
@@ -1862,7 +1862,7 @@ void render_ui(F32 zoom_factor, int subfield)
     if (!gSnapshot)
     {
         set_current_modelview(saved_view);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 
@@ -1943,36 +1943,36 @@ void draw_axes()
         gGL.vertex3f(0.0f, 0.0f, 40.0f);
     gGL.end();
     // Some coordinate axes
-    gGL.pushMatrix();
-        gGL.translatef( v.mV[VX], v.mV[VY], v.mV[VZ] );
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, v.mV[VX], v.mV[VY], v.mV[VZ]);
         renderCoordinateAxes();
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 // <FS:PP> Render chat range spheres in 3D world
 static void renderChatRangeSphere(const LLVector3& center, F32 radius, const LLColor4& color)
 {
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
-        gGL.translatef(center.mV[VX], center.mV[VY], center.mV[VZ]);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
         gDebugProgram.bind();
         LLRenderState::BlendScope blend(true);
         LLRenderState::DepthScope depth(true, true);
         gGL.color4fv(color.mV);
         gGL.diffuseColor4fv(color.mV);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         {
-            gGL.scalef(radius, radius, radius);
+            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, radius, radius, radius);
             gGL.setCullFace(LLRenderState::CullFace::Front);
             gSphere.render();
             gGL.setCullFace(LLRenderState::CullFace::Back);
             gSphere.render();
         }
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gUIProgram.bind();
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 static void drawChatRangeSpheres()
@@ -2294,16 +2294,16 @@ void render_ui_2d()
     if (isAgentAvatarValid() && gAgentCamera.mHUDCurZoom < 0.98f)
     {
         gUIProgram.bind();
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         S32 half_width = (gViewerWindow->getWorldViewWidthScaled() / 2);
         S32 half_height = (gViewerWindow->getWorldViewHeightScaled() / 2);
-        gGL.scalef(LLUI::getScaleFactor().mV[VX], LLUI::getScaleFactor().mV[VY], 1.f);
-        gGL.translatef((F32)half_width, (F32)half_height, 0.f);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, LLUI::getScaleFactor().mV[VX], LLUI::getScaleFactor().mV[VY], 1.f);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)half_width, (F32)half_height, 0.f);
         F32 zoom = gAgentCamera.mHUDCurZoom;
-        gGL.scalef(zoom,zoom,1.f);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, zoom,zoom,1.f);
         gGL.color4fv(LLColor4::white.mV);
         gl_rect_2d(-half_width, half_height, half_width, -half_height, false);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gUIProgram.unbind();
         stop_glerror();
     }
@@ -2438,20 +2438,20 @@ void render_disconnected_background()
     {
         LLGLSUIDefault gls_ui;
         gViewerWindow->setup2DRender();
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         {
             // scale ui to reflect UIScaleFactor
             // this can't be done in setup2DRender because it requires a
             // pushMatrix/popMatrix pair
             const LLVector2& display_scale = gViewerWindow->getDisplayScale();
-            gGL.scalef(display_scale.mV[VX], display_scale.mV[VY], 1.f);
+            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, display_scale.mV[VX], display_scale.mV[VY], 1.f);
 
             gGL.getTexUnit(0)->bind(gDisconnectedImagep);
             gGL.color4f(1.f, 1.f, 1.f, 1.f);
             gl_rect_2d_simple_tex(width, height);
             gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
         }
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
     gGL.flush();
 

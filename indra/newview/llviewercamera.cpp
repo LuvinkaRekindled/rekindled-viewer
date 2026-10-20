@@ -73,8 +73,8 @@ LLUnjitteredScope::LLUnjitteredScope()
     {
         mSaved = get_current_projection();
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.pushMatrix();
-        gGL.loadMatrix(glm::value_ptr(LLViewerCamera::sUnjitteredProjection));
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(LLViewerCamera::sUnjitteredProjection));
         set_current_projection(LLViewerCamera::sUnjitteredProjection);
         gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
@@ -85,7 +85,7 @@ LLUnjitteredScope::~LLUnjitteredScope()
     if (mActive)
     {
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         set_current_projection(mSaved);
         gGL.matrixMode(LLRender::MM_MODELVIEW);
     }

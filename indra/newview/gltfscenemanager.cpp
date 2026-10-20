@@ -620,18 +620,18 @@ void GLTFSceneManager::render(U8 variant)
         }
 
         Asset* asset = mObjects[i]->mGLTFAsset.get();
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         LLMatrix4a mat = mObjects[i]->getGLTFAssetToAgentTransform();
 
         // provide a modelview matrix that goes from asset to camera space
         // (matrix palettes are in asset space)
-        gGL.loadMatrix(gGLModelView);
-        gGL.multMatrix(mat.getF32ptr());
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, mat.getF32ptr());
 
         render(*asset, variant);
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 
@@ -984,11 +984,11 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
     // assumes appropriate shader is already bound
     // assumes modelview matrix is already set
 
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     // get raycast in asset space
     LLMatrix4a agent_to_asset = obj->getAgentToGLTFAssetTransform();
 
-    gGL.multMatrix(agent_to_asset.getF32ptr());
+    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, agent_to_asset.getF32ptr());
 
     vec4 start;
     vec4 end;
@@ -1007,8 +1007,8 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
 
         if (node.mMesh != INVALID_INDEX)
         {
-            gGL.pushMatrix();
-            gGL.multMatrix((F32*)glm::value_ptr(node.mAssetMatrix));
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)glm::value_ptr(node.mAssetMatrix));
 
             // draw bounding box of mesh primitives
             if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_BBOXES))
@@ -1051,11 +1051,11 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
                 gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
             }
 #endif
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         }
     }
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void GLTFSceneManager::renderDebug()
@@ -1070,8 +1070,8 @@ void GLTFSceneManager::renderDebug()
 
     gDebugProgram.bind();
 
-    gGL.pushMatrix();
-    gGL.loadMatrix(gGLModelView);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
     LLRenderState::CullScope cullface(false);
     LLRenderState::BlendScope blend(true);
@@ -1106,16 +1106,16 @@ void GLTFSceneManager::renderDebug()
                     continue;
                 }
 
-                gGL.pushMatrix();
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
-                gGL.multMatrix(obj->getGLTFAssetToAgentTransform().getF32ptr());
+                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, obj->getGLTFAssetToAgentTransform().getF32ptr());
 
                 Asset* asset = obj->mGLTFAsset.get();
 
                 for (auto& node : asset->mNodes)
                 {
-                    gGL.pushMatrix();
-                    gGL.multMatrix(glm::value_ptr(node.mAssetMatrix));
+                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, glm::value_ptr(node.mAssetMatrix));
                     // render x-axis red, y-axis green, z-axis blue
                     gGL.color4f(1.f, 0.f, 0.f, 0.5f);
                     gGL.begin(LLRender::LINES);
@@ -1151,10 +1151,10 @@ void GLTFSceneManager::renderDebug()
                     }
                     gGL.end();
                     gGL.flush();
-                    gGL.popMatrix();
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
 
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
         }
     }
@@ -1174,8 +1174,8 @@ void GLTFSceneManager::renderDebug()
             LLViewerObject* obj = drawable->getVObj();
             if (obj)
             {
-                gGL.pushMatrix();
-                gGL.multMatrix(obj->getGLTFAssetToAgentTransform().getF32ptr());
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, obj->getGLTFAssetToAgentTransform().getF32ptr());
                 Asset* asset = obj->mGLTFAsset.get();
                 Node* node = &asset->mNodes[node_hit];
                 Primitive* primitive = &asset->mMeshes[node->mMesh].mPrimitives[primitive_hit];
@@ -1185,19 +1185,19 @@ void GLTFSceneManager::renderDebug()
                 gGL.color3f(1, 0, 1);
                 drawBoxOutline(intersection, LLVector4a(0.1f, 0.1f, 0.1f, 0.f));
 
-                gGL.multMatrix(glm::value_ptr(node->mAssetMatrix));
+                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, glm::value_ptr(node->mAssetMatrix));
 
                 auto* listener = (LLVolumeOctreeListener*)primitive->mOctree->getListener(0);
                 drawBoxOutline(listener->mBounds[0], listener->mBounds[1]);
 
                 gGL.flush();
                 gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
         }
     }
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     gDebugProgram.unbind();
 
 }

@@ -338,12 +338,12 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
     // downsample to placeholder map
     {
         gGL.matrixMode(gGL.MM_MODELVIEW);
-        gGL.pushMatrix();
-        gGL.loadIdentity();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
         gGL.matrixMode(gGL.MM_PROJECTION);
-        gGL.pushMatrix();
-        gGL.loadIdentity();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
 
         gGL.flush();
         U32 res = mProbeResolution * 2;
@@ -425,9 +425,9 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
             mMipChain[i].flush();
         }
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         gGL.matrixMode(gGL.MM_MODELVIEW);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
         gGL.getTexUnit(diffuseChannel)->unbind(LLTexUnit::TT_TEXTURE);
         gReflectionMipProgram.unbind();

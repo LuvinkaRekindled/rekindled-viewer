@@ -1534,18 +1534,18 @@ void LLManipTranslate::renderSnapGuides()
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
         highlightIntersection(normal, selection_center, grid_rotation, inner_color);
 
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         F32 x,y,z,angle_radians;
         grid_rotation.getAngleAxis(&angle_radians, &x, &y, &z);
-        gGL.translatef(selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);
-        gGL.rotatef(angle_radians * RAD_TO_DEG, x, y, z);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);
+        LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
         F32 sz = mGridSizeMeters;
         F32 tiles = sz;
 
         gGL.matrixMode(LLRender::MM_TEXTURE);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::CurrentTexture);
         usc = 1.0f/usc;
         vsc = 1.0f/vsc;
 
@@ -1558,8 +1558,8 @@ void LLManipTranslate::renderSnapGuides()
             vsc *= 0.5f;
         }
 
-        gGL.scalef(usc, vsc, 1.0f);
-        gGL.translatef(u, v, 0);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::CurrentTexture, usc, vsc, 1.0f);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::CurrentTexture, u, v, 0);
 
         float a = line_alpha;
 
@@ -1588,9 +1588,9 @@ void LLManipTranslate::renderSnapGuides()
                     gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
                     renderGrid(u,v,tiles,1,1,1,a);
 
-                    gGL.popMatrix();
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::CurrentTexture);
                     gGL.matrixMode(LLRender::MM_MODELVIEW);
-                    gGL.popMatrix();
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
 
                 {

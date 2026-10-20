@@ -599,7 +599,7 @@ void LLGLUserClipPlane::disable()
     if (mApply)
     {
         gGL.matrixMode(LLRender::MM_PROJECTION);
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
     mApply = false;
@@ -656,8 +656,8 @@ void LLGLSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
     LLRender::eMatrixMode last_matrix_mode = gGL.getMatrixMode();
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(projection));
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(projection));
 
     gGL.matrixMode(last_matrix_mode);
 }
@@ -667,7 +667,7 @@ LLGLSquashToFarClip::~LLGLSquashToFarClip()
     LLRender::eMatrixMode last_matrix_mode = gGL.getMatrixMode();
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
     gGL.matrixMode(last_matrix_mode);
 }

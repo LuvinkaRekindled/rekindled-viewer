@@ -229,11 +229,11 @@ void LLManipScale::render()
     if( canAffectSelection() )
     {
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         if (mObjectSelection->getSelectType() == SELECT_TYPE_HUD)
         {
             F32 zoom = gAgentCamera.mHUDCurZoom;
-            gGL.scalef(zoom, zoom, zoom);
+            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, zoom, zoom, zoom);
         }
 
         ////////////////////////////////////////////////////////////////////////
@@ -298,13 +298,13 @@ void LLManipScale::render()
         LLQuaternion rot = bbox.getRotation();
 
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         {
-            gGL.translatef(pos_agent.mV[VX], pos_agent.mV[VY], pos_agent.mV[VZ]);
+            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[VX], pos_agent.mV[VY], pos_agent.mV[VZ]);
 
             F32 angle_radians, x, y, z;
             rot.getAngleAxis(&angle_radians, &x, &y, &z);
-            gGL.rotatef(angle_radians * RAD_TO_DEG, x, y, z);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
 
             {
@@ -322,13 +322,13 @@ void LLManipScale::render()
                 gGL.setPolygonOffset( 0.f, 0.f);
             }
         }
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
         if (mManipPart != LL_NO_PART)
         {
             renderSnapGuides(bbox);
         }
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
         renderXYZ(bbox.getExtentLocal());
     }
@@ -781,16 +781,15 @@ void LLManipScale::renderAxisHandle( U32 handle_index, const LLVector3& start, c
         LLVector3 delta = end - offset_start;
         LLVector3 pos = offset_start + 0.5f * delta;
 
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         {
-            gGL.translatef( pos.mV[VX], pos.mV[VY], pos.mV[VZ] );
-            gGL.scalef(
-                mBoxHandleSize[handle_index] + llabs(delta.mV[VX]),
+            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos.mV[VX], pos.mV[VY], pos.mV[VZ]);
+            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mBoxHandleSize[handle_index] + llabs(delta.mV[VX]),
                 mBoxHandleSize[handle_index] + llabs(delta.mV[VY]),
                 mBoxHandleSize[handle_index] + llabs(delta.mV[VZ]));
             gBox.render();
         }
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
     else
     {

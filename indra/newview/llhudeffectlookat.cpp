@@ -748,20 +748,20 @@ void LLHUDEffectLookAt::render()
                 }
             }
 
-            gGL.pushMatrix();
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             hud_render_utf8text(name, position, *fontp, LLFontGL::NORMAL, LLFontGL::DROP_SHADOW, -0.5f * fontp->getWidthF32(name), 3.0f, lookAtColor, false);
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         }
 
         // render crosshair
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
 
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.pushMatrix();
-        gGL.translatef(target.mV[VX], target.mV[VY], target.mV[VZ]);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, target.mV[VX], target.mV[VY], target.mV[VZ]);
         // <FS:Ansariel> FIRE-16912: Draw lines for lookat targets; by Ayamo Nozaki
         //gGL.scalef(0.3f, 0.3f, 0.3f);
-        gGL.scalef(0.1f, 0.1f, 0.1f);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 0.1f, 0.1f, 0.1f);
         // </FS:Ansariel>
         gGL.begin(LLRender::LINES);
         {
@@ -790,7 +790,7 @@ void LLHUDEffectLookAt::render()
             }
             // </FS:Ansariel>
         } gGL.end();
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 

@@ -2378,7 +2378,21 @@ bool sGuardCheck = []() { const char* e = getenv("LL_VK_MATRIX_GUARD_CHECK"); re
 
 namespace
 {
-inline LLRender::eMatrixMode mode_of(Kind kind) { return (LLRender::eMatrixMode)kind; }
+inline LLRender::eMatrixMode mode_of(Kind kind)
+{
+    if (kind == Kind::CurrentTexture)
+    {
+        // as LLRender::matrixMode(MM_TEXTURE) does: the matrix of the active texture unit (the shaders use texture matrices 0-3)
+        U32 tex_index = gGL.getCurrentTexUnitIndex();
+        if (tex_index > 3)
+        {
+            LL_WARNS_ONCE() << "Attempted to assign matrix mode out of bounds: texture unit " << tex_index << LL_ENDL;
+            tex_index = 0;
+        }
+        return (LLRender::eMatrixMode)(LLRender::MM_TEXTURE0 + tex_index);
+    }
+    return (LLRender::eMatrixMode)kind;
+}
 
 struct Site { const char* mFile; int mLine; };
 std::vector<Site> gSites;
