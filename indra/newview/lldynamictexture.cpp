@@ -205,8 +205,7 @@ bool LLViewerDynamicTexture::updateAllInstances()
     llassert(bake_target.getWidth() >= (U32) LLAvatarAppearanceDefines::SCRATCH_TEX_WIDTH);
     llassert(bake_target.getHeight() >= (U32) LLAvatarAppearanceDefines::SCRATCH_TEX_HEIGHT);
 
-    preview_target.bindTarget();
-    preview_target.clear();
+    RenderPassScope pass_208(preview_target, RenderPass::LoadOp::Clear);
 
     LLGLSLShader::unbind();
     LLVertexBuffer::unbind();
@@ -255,22 +254,22 @@ bool LLViewerDynamicTexture::updateAllInstances()
             update_func(dynamicTexture, preview_target, LLPipeline::MAX_PREVIEW_WIDTH, LLPipeline::MAX_PREVIEW_WIDTH);
         }
     }
-    preview_target.flush();
+    pass_208.end();
 
     // ORDER_LAST is baked skin preview, ORDER_RESET resets appearance parameters and does not render.
-    bake_target.bindTarget();
-    bake_target.clear();
-
-    result = false;
-    ret = false;
-    for (S32 order = ORDER_LAST; order < ORDER_COUNT; ++order)
     {
-        for (LLViewerDynamicTexture* dynamicTexture : LLViewerDynamicTexture::sInstances[order])
+        RenderPassScope pass(bake_target, RenderPass::LoadOp::Clear);
+
+        result = false;
+        ret = false;
+        for (S32 order = ORDER_LAST; order < ORDER_COUNT; ++order)
         {
-            update_func(dynamicTexture, bake_target, LLAvatarAppearanceDefines::SCRATCH_TEX_WIDTH, LLAvatarAppearanceDefines::SCRATCH_TEX_HEIGHT);
+            for (LLViewerDynamicTexture* dynamicTexture : LLViewerDynamicTexture::sInstances[order])
+            {
+                update_func(dynamicTexture, bake_target, LLAvatarAppearanceDefines::SCRATCH_TEX_WIDTH, LLAvatarAppearanceDefines::SCRATCH_TEX_HEIGHT);
+            }
         }
     }
-    bake_target.flush();
 
     gGL.flush();
 

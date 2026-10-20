@@ -362,8 +362,7 @@ void LLSceneMonitor::compare()
         generateDitheringTexture(width, height);
     }
 
-    mDiff->bindTarget();
-    mDiff->clear();
+    RenderPassScope pass_365(*mDiff, RenderPass::LoadOp::Clear);
 
     gTwoTextureCompareProgram.bind();
 
@@ -379,7 +378,7 @@ void LLSceneMonitor::compare()
 
     gl_rect_2d_simple_tex(width, height);
 
-    mDiff->flush();
+    pass_365.end();
 
     gTwoTextureCompareProgram.unbind();
 

@@ -876,18 +876,17 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
             // horizontal
             gGaussianProgram.uniform2f(direction, 1.f, 0.f);
             gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
-            mRenderTarget.bindTarget();
+            RenderPassScope pass_879(mRenderTarget);
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-            mRenderTarget.flush();
+            pass_879.end();
 
             // vertical
             gGaussianProgram.uniform2f(direction, 0.f, 1.f);
             gGL.getTexUnit(diffuseChannel)->bind(&mRenderTarget);
-            screen_rt->bindTarget();
+            RenderPassScope pass(*screen_rt);
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-            screen_rt->flush();
         }
 
 
@@ -899,7 +898,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         for (int i = 0; i < mMipChain.size(); ++i)
         {
             LL_PROFILE_GPU_ZONE("probe mip");
-            mMipChain[i].bindTarget();
+            RenderPassScope pass(mMipChain[i]);
             if (i == 0)
             {
                 gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
@@ -931,7 +930,6 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                 //}
                 mTexture->unbind();
             }
-            mMipChain[i].flush();
         }
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
@@ -943,7 +941,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
     if (face == 5)
     {
-        mMipChain[0].bindTarget();
+        RenderPassScope pass(mMipChain[0]);
         static LLStaticHashedString sSourceIdx("sourceIdx");
 
         if (isRadiancePass())
@@ -1041,7 +1039,6 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
             gIrradianceGenProgram.unbind();
         }
 
-        mMipChain[0].flush();
     }
 }
 

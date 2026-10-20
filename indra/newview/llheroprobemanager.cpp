@@ -363,18 +363,18 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
             // horizontal
             gGaussianProgram.uniform2f(direction, 1.f, 0.f);
             gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
-            mRenderTarget.bindTarget();
+            RenderPassScope pass_366(mRenderTarget);
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-            mRenderTarget.flush();
+            pass_366.end();
 
             // vertical
             gGaussianProgram.uniform2f(direction, 0.f, 1.f);
             gGL.getTexUnit(diffuseChannel)->bind(&mRenderTarget);
-            screen_rt->bindTarget();
+            RenderPassScope pass_375(*screen_rt);
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-            screen_rt->flush();
+            pass_375.end();
             gGaussianProgram.unbind();
         }
 
@@ -387,7 +387,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
         for (int i = 0; i < mMipChain.size(); ++i)
         {
             LL_PROFILE_GPU_ZONE("hero probe mip");
-            mMipChain[i].bindTarget();
+            RenderPassScope pass(mMipChain[i]);
             if (i == 0)
             {
                 gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
@@ -420,7 +420,6 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
 
                 mTexture->unbind();
             }
-            mMipChain[i].flush();
         }
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
@@ -442,7 +441,7 @@ void LLHeroProbeManager::generateRadiance(LLReflectionMap* probe)
     // Unlike the reflectionmap manager, all probes are considered "realtime" for hero probes.
     sourceIdx += 1;
     {
-        mMipChain[0].bindTarget();
+        RenderPassScope pass(mMipChain[0]);
         static LLStaticHashedString sSourceIdx("sourceIdx");
 
         {
@@ -495,7 +494,6 @@ void LLHeroProbeManager::generateRadiance(LLReflectionMap* probe)
             gHeroRadianceGenProgram.unbind();
         }
 
-        mMipChain[0].flush();
     }
 }
 

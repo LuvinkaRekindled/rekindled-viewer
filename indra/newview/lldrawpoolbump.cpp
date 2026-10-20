@@ -917,7 +917,7 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
 
         // generate normal map in empty texture
         {
-            sRenderTarget.bindTarget();
+            RenderPassScope pass_920(sRenderTarget);
 
             LLRenderState::DepthScope depth(false);
             LLRenderState::CullScope cull(false);
@@ -960,7 +960,7 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
 
             gGL.flush();
 
-            sRenderTarget.flush();
+            pass_920.end();
             sRenderTarget.releaseColorAttachment();
 
             if (shader)

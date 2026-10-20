@@ -1233,7 +1233,7 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
         gGL.setColorMask(true, true);
 
         // just in case we downres textures, bind downresmap and copy program
-        gPipeline.mDownResMap.bindTarget();
+        RenderPassScope pass(gPipeline.mDownResMap);
         gCopyProgram.bind();
         gPipeline.mScreenTriangleVB->setBuffer();
 
@@ -1267,7 +1267,6 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
         }
 
         gCopyProgram.unbind();
-        gPipeline.mDownResMap.flush();
     }
 
     return create_timer.getElapsedTimeF32();

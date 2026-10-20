@@ -38,6 +38,8 @@ enum class LoadOp : U8 { Load, Clear };                 // what the pass starts 
 
 void begin(LLRenderTarget& target, LoadOp load, U32 clear_mask, const char* file, int line);
 void end(LLRenderTarget& target, const char* file, int line);
+void suspend(LLRenderTarget& target, const char* file, int line);       // ends the pass on the target (flush) ...
+void resume(LLRenderTarget& target, const char* file, int line);        // ... and takes it up again (bindTarget): the pass of a caller that a callee has to interrupt
 
 // before the present: LL_VK_PASS_CHECK=1 reports a target that is still bound
 void frameEnd();
@@ -55,6 +57,17 @@ public:
     {
         RenderPass::begin(target, load, clear_mask, file, line);
     }
+    // a scope whose pass begins later (begin(): the pass crosses a block or a function: the scope is declared where it ends)
+    RenderPassScope() : mTarget(nullptr), mFile(nullptr), mLine(0) {}
+    void begin(LLRenderTarget& target, RenderPass::LoadOp load = RenderPass::LoadOp::Load, U32 clear_mask = 0xFFFFFFFF,
+               const char* file = __builtin_FILE(), int line = __builtin_LINE())
+    {
+        end();
+        mTarget = &target;
+        mFile = file;
+        mLine = line;
+        RenderPass::begin(target, load, clear_mask, file, line);
+    }
     ~RenderPassScope() { end(); }
     RenderPassScope(const RenderPassScope&) = delete;
     RenderPassScope& operator=(const RenderPassScope&) = delete;
@@ -69,6 +82,34 @@ public:
         }
     }
     LLRenderTarget* target() const { return mTarget; }
+
+private:
+    LLRenderTarget* mTarget;
+    const char* mFile;
+    int mLine;
+};
+
+// the pass on a target is interrupted for the lifetime of this object (or until resume()): the idiom flush(); ...other passes...; bindTarget();
+class RenderPassSuspend
+{
+public:
+    explicit RenderPassSuspend(LLRenderTarget& target, const char* file = __builtin_FILE(), int line = __builtin_LINE())
+        : mTarget(&target), mFile(file), mLine(line)
+    {
+        RenderPass::suspend(target, file, line);
+    }
+    ~RenderPassSuspend() { resume(); }
+    RenderPassSuspend(const RenderPassSuspend&) = delete;
+    RenderPassSuspend& operator=(const RenderPassSuspend&) = delete;
+
+    void resume()
+    {
+        if (mTarget)
+        {
+            RenderPass::resume(*mTarget, mFile, mLine);
+            mTarget = nullptr;
+        }
+    }
 
 private:
     LLRenderTarget* mTarget;
