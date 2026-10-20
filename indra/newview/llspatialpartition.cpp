@@ -138,11 +138,15 @@ LLSpatialGroup::~LLSpatialGroup()
     clearDrawMap();
 }
 
+U32 LLSpatialGroup::sDrawMapsCleared = 0;
+
 void LLSpatialGroup::clearDrawMap()
 {
+    ++mDrawMapSerial;
     // <FS> the draw infos go: builders on the async pool may be reading them, and the main view's render map may point to them
     if (!mDrawMap.empty())
     {
+        ++sDrawMapsCleared;
         LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
     }
     mDrawMap.clear();

@@ -4004,9 +4004,90 @@ static bool shadow_cascade_skips_avatar(const LLVOAvatar* avatar, const ShadowCa
 
 static void count_shadow_batch(const LLDrawInfo* info); // <FS> defined below
 
+// <FS> S1 phase 0 (LL_VK_SCENE_STATS=1): how much of what the main view draws is the same draw info set as on the previous frame (the hit rate a retained record would get), and how much of it
+// could be retained at all (no rigged avatar, no texture matrix). Counters only: nothing here changes what is drawn.
+namespace
+{
+struct SceneStats
+{
+    U64 mFrames = 0, mGroups = 0, mGroupsHit = 0, mInfos = 0, mInfosHit = 0, mRetainable = 0, mRetainableHit = 0, mRigged = 0, mTexMatrix = 0, mAlphaInfos = 0, mCleared = 0, mTris = 0, mTrisHit = 0;
+    U32 mFirstFrame = 0;
+};
+SceneStats sSceneStats;
+bool scene_stats_on()
+{
+    static const bool on = getenv("LL_VK_SCENE_STATS") != nullptr;
+    return on;
+}
+void scene_stats_group(LLSpatialGroup* group)
+{
+    SceneStats& s = sSceneStats;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (group->mSceneSeenFrame == frame)
+    {
+        return;         // this frame's main view sorted twice (the early sort and the refill): count a group once a frame
+    }
+    group->mSceneSeenFrame = frame;
+    const bool hit = group->mSceneSeenSerial == group->mDrawMapSerial;
+    group->mSceneSeenSerial = group->mDrawMapSerial;
+    bool any = false;
+    for (auto& entry : group->mDrawMap)
+    {
+        const bool alpha = entry.first == LLRenderPass::PASS_ALPHA || entry.first == LLRenderPass::PASS_ALPHA_RIGGED;
+        for (LLDrawInfo* info : entry.second)
+        {
+            any = true;
+            ++s.mInfos;
+            s.mTris += info->mCount / 3;
+            if (hit) { ++s.mInfosHit; s.mTrisHit += info->mCount / 3; }
+            if (alpha) { ++s.mAlphaInfos; }
+            const bool rigged = info->mAvatar.notNull();
+            const bool texmat = info->mTextureMatrix != nullptr;
+            if (rigged) { ++s.mRigged; }
+            if (texmat) { ++s.mTexMatrix; }
+            if (!rigged && !texmat && !alpha)
+            {
+                ++s.mRetainable;
+                if (hit) { ++s.mRetainableHit; }
+            }
+        }
+    }
+    if (any)
+    {
+        ++s.mGroups;
+        if (hit) { ++s.mGroupsHit; }
+    }
+}
+void scene_stats_frame()
+{
+    SceneStats& s = sSceneStats;
+    static U32 last_frame = ~0u;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (frame == last_frame)
+    {
+        return;
+    }
+    last_frame = frame;
+    s.mCleared += LLSpatialGroup::sDrawMapsCleared;
+    LLSpatialGroup::sDrawMapsCleared = 0;
+    ++s.mFrames;
+    if (s.mFrames >= 600)
+    {
+        const double n = (double)s.mFrames;
+        LL_INFOS("VkScene") << "main view per frame over " << s.mFrames << " frames: " << s.mGroups / n << " groups with draw infos (" << 100.0 * s.mGroupsHit / std::max<U64>(1, s.mGroups) << "% unchanged since the previous frame), "
+                            << s.mInfos / n << " draw infos (" << 100.0 * s.mInfosHit / std::max<U64>(1, s.mInfos) << "% in unchanged groups), " << s.mTris / n << " triangles ("
+                            << 100.0 * s.mTrisHit / std::max<U64>(1, s.mTris) << "% in unchanged groups) | retainable (no rigged avatar, no texture matrix, not alpha): " << s.mRetainable / n << " infos ("
+                            << 100.0 * s.mRetainable / std::max<U64>(1, s.mInfos) << "% of all, " << 100.0 * s.mRetainableHit / std::max<U64>(1, s.mRetainable) << "% of them unchanged) | rigged " << s.mRigged / n
+                            << ", with a texture matrix " << s.mTexMatrix / n << ", alpha " << s.mAlphaInfos / n << " | draw maps cleared (group rebuilds) " << s.mCleared / n << " per frame" << LL_ENDL;
+        s = SceneStats();
+    }
+}
+}
+
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    const bool scene_stats = scene_stats_on() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot;
 
     assertInitialized();
     sVolumeSAFrame = 0.f; //ZK LBG
@@ -4099,6 +4180,11 @@ void LLPipeline::postSort(LLCamera &camera)
             }
         }
 
+        if (scene_stats)
+        {
+            scene_stats_group(group);
+        }
+
         if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("Collect Alpha groups");
@@ -4137,6 +4223,11 @@ void LLPipeline::postSort(LLCamera &camera)
             }
         }
     }
+    }
+
+    if (scene_stats)
+    {
+        scene_stats_frame();
     }
 
     /*bool use_transform_feedback = gTransformPositionProgram.mProgramObject && !mMeshDirtyGroup.empty();
