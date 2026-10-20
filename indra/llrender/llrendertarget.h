@@ -31,6 +31,7 @@
 
 #include "llgl.h"
 #include "llrender.h"
+#include "llrenderpass.h"        // F3.5a: RenderPassScope
 
 /*
  Wrapper around OpenGL framebuffer objects for use in render-to-texture
@@ -126,12 +127,12 @@ public:
     //  If an LLRenderTarget is currently bound, stores a reference to that LLRenderTarget
     //  and restores previous binding on flush() (maintains a stack of Render Targets)
     //  Asserts that this target is not currently bound in the stack
-    void bindTarget();
+    void bindTarget(const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
     //clear render targer, clears depth buffer if present,
     //uses scissor rect if in copy-to-texture mode
     // asserts that this target is currently bound
-    void clear(U32 mask = 0xFFFFFFFF);
+    void clear(U32 mask = 0xFFFFFFFF, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
     //get applied viewport
     void getViewport(S32* viewport);
@@ -157,7 +158,7 @@ public:
     // call bindTarget once, do all your rendering, call flush once
     // If an LLRenderTarget was bound when bindTarget was called, binds that RenderTarget for rendering (maintains RT stack)
     // asserts  that this target is currently bound
-    void flush();
+    void flush(const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
     //Returns TRUE if target is ready to be rendered into.
     //That is, if the target has been allocated with at least
@@ -168,6 +169,9 @@ public:
     bool isBoundInStack() const;
 
     static LLRenderTarget* getCurrentBoundTarget() { return sBoundTarget; }
+
+    // F3.5a (llrenderpass.h): LL_VK_PASS_CHECK=1 reports a target that is still bound at the end of the frame
+    static void checkFrameEnd();
 
     // *HACK
     void swapFBORefs(LLRenderTarget& other);
@@ -183,6 +187,18 @@ protected:
     std::vector<U32> mInternalFormat;
     U32 mFBO;
     LLRenderTarget* mPreviousRT = nullptr;
+
+    // F3.5a: where the pass was begun (bindTarget's call site), the draw count at that moment, the counters of the entry points and the pass check
+    const char* mBindFile = nullptr;
+    int mBindLine = 0;
+    unsigned long long mBindDraw = 0;
+    void bindImpl(const char* file, int line, bool restore);
+    void noteBind(const char* file, int line);
+    void noteFlush(const char* file, int line);
+    void noteClear(const char* file, int line);
+    void noteRelease();
+    static unsigned stackDepth();
+    bool boundInStackBounded() const;
 
     U32 mDepth;
     bool mUseDepth;

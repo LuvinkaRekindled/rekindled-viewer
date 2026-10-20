@@ -1865,6 +1865,7 @@ void swap()
     LL_PROFILE_GPU_ZONE("swap");
     if (gDisplaySwapBuffers)
     {
+        RenderPass::frameEnd(); // <FS> F3.5a: a render target still bound at the end of the frame (LL_VK_PASS_CHECK=1)
         LLRenderMatrix::checkFrameEnd(); // <FS> F3.3: matrix stacks that are not empty at the end of the frame (LL_VK_MATRIX_GUARD_CHECK=1)
         LLVkMirror::presentFrame(); // <FS>
         gViewerWindow->getWindow()->swapBuffers();

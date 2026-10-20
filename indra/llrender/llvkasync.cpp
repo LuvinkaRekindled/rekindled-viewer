@@ -8,6 +8,7 @@
 #if defined(LL_VULKAN)
 
 #include "llvkasync.h"
+#include "llrenderpass.h"
 #include "llglheaders.h"
 #include "llvkgl.h"
 #include "llvkmirror.h"
@@ -499,17 +500,23 @@ void uniformRange(void* program, U32 cls, U32 offset, U32 size, const void* data
     struct A { void* mProgram; U32 mClass; U32 mOffset; U32 mSize; U32 mPad; } a = { program, cls, offset, size, 0 };
     uniAppend(CMD_UNIFORM_RANGE, &a, sizeof(a), data, size);
 }
+static unsigned long long gDrawSeq = 0;
+unsigned long long drawSeq() { return gDrawSeq; }
 unsigned long long frontStart(int id)
 {
     if (!isMainThread())
     {
         return 0;
     }
+    if (id == FP_DRAW)
+    {
+        ++gDrawSeq;
+    }
     const unsigned long long n = ++gFrontCalls[id];
     return (n & 15) == 0 ? (__rdtsc() | 1) : 0;
 }
 void frontStop(int id, unsigned long long t0) { gFrontTicks[id] += (__rdtsc() - t0) * 16; }
-void frontNote(int id) { if (isMainThread()) { ++gFrontCalls[id]; } }
+void frontNote(int id) { if (isMainThread()) { ++gFrontCalls[id]; if (id == FP_DRAW) { ++gDrawSeq; } } }
 
 bool mainProducer()
 {
@@ -1084,6 +1091,8 @@ std::string opStatsReport(size_t frames)
             gFrontTicks[i] = 0;
         }
         out += "| ";
+        out += RenderPass::report(frames);                  // F3.5a: render targets of the producer, bind / clear sites
+        out += LLVk::Renderer::instance().takePassReport(frames);      // F3.5a: render passes of the worker
     }
     {
         // the plain calls still pushed one by one (candidates for typed records), most frequent first
