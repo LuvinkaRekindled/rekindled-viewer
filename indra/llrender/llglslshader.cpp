@@ -909,7 +909,7 @@ bool LLGLSLShader::createShader()
 #endif // DEBUG_SHADER_INCLUDES
 
         //compile new source
-        vector< pair<string, GLenum> >::iterator fileIter = mShaderFiles.begin();
+        vector< pair<string, ShaderStage> >::iterator fileIter = mShaderFiles.begin();
         for (; fileIter != mShaderFiles.end(); fileIter++)
         {
             U32 shaderhandle = LLShaderMgr::instance()->loadShaderFile((*fileIter).first, mShaderLevel, (*fileIter).second, &mDefines, mFeatures.mIndexedTextureChannels);
@@ -1556,9 +1556,9 @@ bool LLGLSLShader::link(bool suppress_errors)
         s.mSource = it->second.mSource;
         switch (it->second.mType)
         {
-        case GL_VERTEX_SHADER: s.mStage = LLVk::StageSource::Vertex; break;
-        case GL_FRAGMENT_SHADER: s.mStage = LLVk::StageSource::Fragment; break;
-        case GL_GEOMETRY_SHADER: s.mStage = LLVk::StageSource::Geometry; break;
+        case ShaderStage::Vertex: s.mStage = LLVk::StageSource::Vertex; break;
+        case ShaderStage::Fragment: s.mStage = LLVk::StageSource::Fragment; break;
+        case ShaderStage::Geometry: s.mStage = LLVk::StageSource::Geometry; break;
         default: continue;
         }
         stages.push_back(std::move(s));
@@ -2653,7 +2653,7 @@ LLUUID LLGLSLShader::hash()
     for (const auto& shdr_pair : mShaderFiles)
     {
         hash_obj.update(shdr_pair.first);
-        hash_obj.update(&shdr_pair.second, sizeof(GLenum));
+        hash_obj.update(&shdr_pair.second, sizeof(ShaderStage));
     }
     for (const auto& define_pair : mDefines)
     {

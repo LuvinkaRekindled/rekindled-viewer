@@ -369,7 +369,7 @@ bool LLShaderMgr::attachShaderFeatures(LLGLSLShader * shader)
 //============================================================================
 // Load Shader
 
-U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level, GLenum type, std::map<std::string, std::string>* defines, S32 texture_index_channels)
+U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level, ShaderStage type, std::map<std::string, std::string>* defines, S32 texture_index_channels)
 {
 
 // endsure work-around for missing GLSL funcs gets propogated to feature shader files (e.g. srgbF.glsl)
@@ -407,13 +407,13 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
     if (shader_level == -1)
     {
         // use "error" fallback
-        if (type == GL_VERTEX_SHADER)
+        if (type == ShaderStage::Vertex)
         {
             open_file_name = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "shaders/errorV.glsl");
         }
         else
         {
-            llassert(type == GL_FRAGMENT_SHADER);  // type must be vertex or fragment shader
+            llassert(type == ShaderStage::Fragment);  // type must be vertex or fragment shader
             open_file_name = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "shaders/errorF.glsl");
         }
 
@@ -513,7 +513,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         else
         {
             // OpenGL 3.2 had GLSL version 1.50.  anything after that the version numbers match.
-            if (type == GL_GEOMETRY_SHADER || minor_version >= 50)
+            if (type == ShaderStage::Geometry || minor_version >= 50)
             {
                 //set version to 1.50
                 shader_code_text[shader_code_count++] = strdup("#version 150\n");
@@ -532,7 +532,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         }
     }
 
-    if (type == GL_FRAGMENT_SHADER)
+    if (type == ShaderStage::Fragment)
     {
         extra_code_text[extra_code_count++] = strdup("#define FRAGMENT_SHADER 1\n");
     }
@@ -563,8 +563,8 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         extra_code_text[extra_code_count++] = strdup( "#define IS_AMD_CARD 1\n" );
     }
 
-    const bool pull_material = defines && defines->find("LL_BINDLESS_MATERIAL") != defines->end() && type == GL_FRAGMENT_SHADER;
-    if (defines && defines->find("LL_BINDLESS_DIFFUSE") != defines->end() && type == GL_FRAGMENT_SHADER)
+    const bool pull_material = defines && defines->find("LL_BINDLESS_MATERIAL") != defines->end() && type == ShaderStage::Fragment;
+    if (defines && defines->find("LL_BINDLESS_DIFFUSE") != defines->end() && type == ShaderStage::Fragment)
     {
         // <FS> render packets (Vulkan mirror only): the draw's texture comes from the bindless table (set 2), by the slot the vertex shader passes on, instead of tex0..texN
         extra_code_text[extra_code_count++] = strdup("#define HAS_DIFFUSE_LOOKUP\n");
@@ -590,7 +590,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_specular;\n");
         extra_code_text[extra_code_count++] = strdup("#endif\n");
     }
-    else if (texture_index_channels > 0 && type == GL_FRAGMENT_SHADER)
+    else if (texture_index_channels > 0 && type == ShaderStage::Fragment)
     {
         //use specified number of texture channels for indexed texture rendering
 
@@ -842,10 +842,10 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
     if (ret)
     {
         // Add shader file to map
-        if (type == GL_VERTEX_SHADER) {
+        if (type == ShaderStage::Vertex) {
             mVertexShaderObjects[filename] = ret;
         }
-        else if (type == GL_FRAGMENT_SHADER) {
+        else if (type == ShaderStage::Fragment) {
             mFragmentShaderObjects[filename] = ret;
         }
         shader_level = try_gpu_class;

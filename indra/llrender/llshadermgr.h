@@ -370,7 +370,7 @@ public:
     virtual void initAttribsAndUniforms(void);
 
     bool attachShaderFeatures(LLGLSLShader * shader);
-    U32 loadShaderFile(const std::string& filename, S32 & shader_level, GLenum type, std::map<std::string, std::string>* defines = NULL, S32 texture_index_channels = -1);
+    U32 loadShaderFile(const std::string& filename, S32 & shader_level, ShaderStage type, std::map<std::string, std::string>* defines = NULL, S32 texture_index_channels = -1);
 
     // Implemented in the application to actually point to the shader directory.
     virtual std::string getShaderDirPrefix(void) = 0; // Pure Virtual
@@ -408,7 +408,7 @@ public:
     // each program can also be compiled through the Vulkan path once it has linked. Disables the shader cache.
     struct RecordedShader
     {
-        GLenum mType = 0;
+        ShaderStage mType = ShaderStage::Vertex;
         std::string mFile;
         std::string mSource;
     };
