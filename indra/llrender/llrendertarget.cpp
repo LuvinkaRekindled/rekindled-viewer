@@ -399,7 +399,7 @@ void LLRenderTarget::bindTarget(const char* file, int line)
 }
 
 // restore: the flush of a nested pass puts the pass it interrupted back (it keeps the bind site and the draw count of its own bindTarget)
-void LLRenderTarget::bindImpl(const char* file, int line, bool restore, U32 clear_mask, const F32* clear_color)
+void LLRenderTarget::bindImpl(const char* file, int line, bool restore, ClearBits clear_mask, const F32* clear_color)
 {
     LL_PROFILE_GPU_ZONE("bindTarget");
     if (!restore)
@@ -415,12 +415,12 @@ void LLRenderTarget::bindImpl(const char* file, int line, bool restore, U32 clea
     // the target, its colour attachment count and the viewport are one record
     sCurFBO = mFBO;
     // the load op: a clear that came with the bind is part of the same record (what bindTarget(); clear(); did as two)
-    const U32 clears = clear_mask && !restore ? ((GL_COLOR_BUFFER_BIT | (mUseDepth ? GL_DEPTH_BUFFER_BIT : 0)) & clear_mask) : 0;
-    if (clears)
+    const ClearBits clears = !restore ? ((ClearBits::Color | (mUseDepth ? ClearBits::Depth : ClearBits::None)) & clear_mask) : ClearBits::None;
+    if (hasBits(clears, ClearBits::All))
     {
         sBoundTarget = this;
         noteClear(file, line);
-        LLVkAsync::passBegin(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY, (clears & GL_COLOR_BUFFER_BIT) != 0, (clears & GL_DEPTH_BUFFER_BIT) != 0, clear_color);
+        LLVkAsync::passBegin(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY, hasBits(clears, ClearBits::Color), hasBits(clears, ClearBits::Depth), clear_color);
     }
     else
     {
@@ -436,16 +436,15 @@ void LLRenderTarget::bindImpl(const char* file, int line, bool restore, U32 clea
     sBoundTarget = this;
 }
 
-void LLRenderTarget::clear(U32 mask_in, const char* file, int line)
+void LLRenderTarget::clear(ClearBits mask_in, const char* file, int line)
 {
     LL_PROFILE_GPU_ZONE("clear");
     noteClear(file, line);
     llassert(mFBO);
-    U32 mask = GL_COLOR_BUFFER_BIT;
+    ClearBits mask = ClearBits::Color;
     if (mUseDepth)
     {
-        mask |= GL_DEPTH_BUFFER_BIT;
-
+        mask = mask | ClearBits::Depth;
     }
     if (mFBO)
     {
@@ -833,7 +832,7 @@ void LLRenderTarget::checkFrameEnd()
 namespace RenderPass
 {
 
-void begin(LLRenderTarget& target, LoadOp load, U32 clear_mask, const F32* clear_color, const char* file, int line)
+void begin(LLRenderTarget& target, LoadOp load, ClearBits clear_mask, const F32* clear_color, const char* file, int line)
 {
     if (load == LoadOp::Clear)
     {

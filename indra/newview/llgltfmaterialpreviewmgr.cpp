@@ -426,7 +426,7 @@ bool LLGLTFPreviewTexture::render()
     if (!mShouldRender) { return false; }
 
     gGL.setClearColor(0, 0, 0, 0);
-    gGL.clearBuffers(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    gGL.clearBuffers(ClearBits::Color | ClearBits::Depth);
 
     LLRenderState::DepthScope(false);       // F3.2: an unnamed temporary (as before): it is destroyed at once and restores, so it has no lasting effect
     LLRenderState::StencilScope stencil(false);
@@ -500,7 +500,7 @@ bool LLGLTFPreviewTexture::render()
         // Alpha blend rendering
 
         RenderPassScope pass(screen);
-        gGL.clearBuffers(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        gGL.clearBuffers(ClearBits::Color | ClearBits::Depth);
 
         LLGLSLShader& shader = gDeferredPBRAlphaProgram;
 

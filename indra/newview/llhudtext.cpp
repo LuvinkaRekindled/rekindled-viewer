@@ -125,7 +125,7 @@ void LLHUDText::render()
     if (!mOnHUDAttachment && sDisplayText)
     {
         // <FS:minerjr> [FIRE-35019] Add LLHUDNameTag background to floating text and hover highlights
-        //LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
+        //LLGLDepthTest gls_depth(true, false);
         // If the current text object is highighed and the use hover highlight feature is enabled, then 
         // disable writing to the depth buffer
         static LLCachedControl<bool> mbUseHoverHighlight(gSavedSettings, "FSHudTextUseHoverHighlight");

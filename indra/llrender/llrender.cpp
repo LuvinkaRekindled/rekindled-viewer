@@ -1110,7 +1110,7 @@ void LLRender::syncMatrices()
             }
             // </FS>
 
-            shader->uniformMatrix4fv(name[MM_MODELVIEW], 1, GL_FALSE, glm::value_ptr(mat));
+            shader->uniformMatrix4fv(name[MM_MODELVIEW], 1, false, glm::value_ptr(mat));
             shader->mMatHash[MM_MODELVIEW] = mMatHash[MM_MODELVIEW];
 
             //update normal matrix
@@ -1132,12 +1132,12 @@ void LLRender::syncMatrices()
                     norm[8], norm[9], norm[10]
                 };
 
-                shader->uniformMatrix3fv(LLShaderMgr::NORMAL_MATRIX, 1, GL_FALSE, norm_mat);
+                shader->uniformMatrix3fv(LLShaderMgr::NORMAL_MATRIX, 1, false, norm_mat);
             }
 
             if (inv_mdv_loc > -1)
             {
-                shader->uniformMatrix4fv(LLShaderMgr::INVERSE_MODELVIEW_MATRIX, 1, GL_FALSE, glm::value_ptr(cached_inv_mdv));
+                shader->uniformMatrix4fv(LLShaderMgr::INVERSE_MODELVIEW_MATRIX, 1, false, glm::value_ptr(cached_inv_mdv));
             }
 
             //update MVP matrix
@@ -1155,7 +1155,7 @@ void LLRender::syncMatrices()
                     cached_mvp_proj_hash = mMatHash[MM_PROJECTION];
                 }
 
-                shader->uniformMatrix4fv(LLShaderMgr::MODELVIEW_PROJECTION_MATRIX, 1, GL_FALSE, glm::value_ptr(cached_mvp));
+                shader->uniformMatrix4fv(LLShaderMgr::MODELVIEW_PROJECTION_MATRIX, 1, false, glm::value_ptr(cached_mvp));
             }
         }
 
@@ -1176,10 +1176,10 @@ void LLRender::syncMatrices()
             // Used by some full screen effects - such as full screen lights, glow, etc.
             if (shader->getUniformLocation(LLShaderMgr::IDENTITY_MATRIX))
             {
-                shader->uniformMatrix4fv(LLShaderMgr::IDENTITY_MATRIX, 1, GL_FALSE, glm::value_ptr(glm::identity<glm::mat4>()));
+                shader->uniformMatrix4fv(LLShaderMgr::IDENTITY_MATRIX, 1, false, glm::value_ptr(glm::identity<glm::mat4>()));
             }
 
-            shader->uniformMatrix4fv(name[MM_PROJECTION], 1, GL_FALSE, glm::value_ptr(mat));
+            shader->uniformMatrix4fv(name[MM_PROJECTION], 1, false, glm::value_ptr(mat));
             shader->mMatHash[MM_PROJECTION] = mMatHash[MM_PROJECTION];
 
             if (!mvp_done)
@@ -1197,7 +1197,7 @@ void LLRender::syncMatrices()
                         cached_mvp_proj_hash = mMatHash[MM_PROJECTION];
                     }
 
-                    shader->uniformMatrix4fv(LLShaderMgr::MODELVIEW_PROJECTION_MATRIX, 1, GL_FALSE, glm::value_ptr(cached_mvp));
+                    shader->uniformMatrix4fv(LLShaderMgr::MODELVIEW_PROJECTION_MATRIX, 1, false, glm::value_ptr(cached_mvp));
                 }
             }
         }
@@ -1206,7 +1206,7 @@ void LLRender::syncMatrices()
         {
             if (mMatHash[i] != shader->mMatHash[i])
             {
-                shader->uniformMatrix4fv(name[i], 1, GL_FALSE, glm::value_ptr(mMatrix[i][mMatIdx[i]]));
+                shader->uniformMatrix4fv(name[i], 1, false, glm::value_ptr(mMatrix[i][mMatIdx[i]]));
                 shader->mMatHash[i] = mMatHash[i];
             }
         }
@@ -1448,9 +1448,9 @@ void LLRender::setColorMask(bool writeColorR, bool writeColorG, bool writeColorB
     }
 }
 
-void LLRender::clearBuffers(U32 gl_buffer_mask)
+void LLRender::clearBuffers(ClearBits mask)
 {
-    LLVkTarget::clear((gl_buffer_mask & GL_COLOR_BUFFER_BIT) != 0, (gl_buffer_mask & GL_DEPTH_BUFFER_BIT) != 0, mClearColor);
+    LLVkTarget::clear(hasBits(mask, ClearBits::Color), hasBits(mask, ClearBits::Depth), mClearColor);
 }
 
 void LLRender::setClearColor(F32 r, F32 g, F32 b, F32 a)

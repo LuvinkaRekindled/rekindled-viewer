@@ -211,7 +211,7 @@ void display_startup()
     }
 
 
-    gGL.clearBuffers(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // | GL_STENCIL_BUFFER_BIT);
+    gGL.clearBuffers(ClearBits::Depth | ClearBits::Color); // | ClearBits::Stencil);
     LLGLSUIDefault gls_ui;
     gPipeline.disableLights();
 
@@ -228,7 +228,7 @@ void display_startup()
     if (gViewerWindow && gViewerWindow->getWindow())
     gViewerWindow->getWindow()->swapBuffers();
 
-    gGL.clearBuffers(GL_DEPTH_BUFFER_BIT);
+    gGL.clearBuffers(ClearBits::Depth);
 }
 
 void display_update_camera()
@@ -567,7 +567,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LL_DEBUGS("Window") << "Resizing window" << LL_ENDL;
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Resize Window");
         gGL.flush();
-        gGL.clearBuffers(GL_COLOR_BUFFER_BIT);
+        gGL.clearBuffers(ClearBits::Color);
         LLVkMirror::endFrame(); // <FS>
         gViewerWindow->getWindow()->swapBuffers();
         LLPipeline::refreshCachedSettings();
@@ -899,7 +899,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         if (LLViewerDynamicTexture::updateAllInstances())
         {
             gGL.setColorMask(true, true);
-            gGL.clearBuffers(GL_DEPTH_BUFFER_BIT);
+            gGL.clearBuffers(ClearBits::Depth);
         }
     }
 
@@ -1061,7 +1061,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 gViewerWindow->setup3DViewport();
 
             }
-            gGL.clearBuffers(GL_DEPTH_BUFFER_BIT);
+            gGL.clearBuffers(ClearBits::Depth);
         }
 
         //////////////////////////////////////
@@ -1167,7 +1167,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         if(gUseWireframe)
         {
             gGL.setClearColor(0.5f, 0.5f, 0.5f, 0.f);
-            gGL.clearBuffers(GL_COLOR_BUFFER_BIT);
+            gGL.clearBuffers(ClearBits::Color);
         }
 
         LLAppViewer::instance()->pingMainloopTimeout("Display:RenderStart");
@@ -1182,7 +1182,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         //  {
         //      gGL.getTexUnit(0)->bindWhite();
 
-        //      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
+        //      glColorMask(false, false, false, true);
         //      gGL.loadIdentity();
 
         //      LLRect floater_rect = frontmost_floaterp->calcScreenRect();
@@ -1204,7 +1204,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         //          gGL.vertex3f(floater_3d_rect.mRight, floater_3d_rect.mBottom, 0.f);
         //      }
         //      gGL.end();
-        //      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        //      glColorMask(true, true, true, true);
         //  }
         //  gGL.popMatrix();
         //}
@@ -1489,7 +1489,7 @@ void display_cube_face()
     gGL.setClearColor(0.f, 0.f, 0.f, 0.f);
     gPipeline.generateSunShadow(*LLViewerCamera::getInstance());
 
-    gGL.clearBuffers(GL_DEPTH_BUFFER_BIT); // | GL_STENCIL_BUFFER_BIT);
+    gGL.clearBuffers(ClearBits::Depth); // | ClearBits::Stencil);
 
     {
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
@@ -2325,7 +2325,7 @@ void render_ui_2d()
 
                     LLRect clip_rect(last_rect);
 
-                    gGL.clearBuffers(GL_COLOR_BUFFER_BIT);
+                    gGL.clearBuffers(ClearBits::Color);
 
                     { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); draw_widgets(); }
                 }

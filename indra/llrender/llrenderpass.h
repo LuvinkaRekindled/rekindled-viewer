@@ -27,6 +27,7 @@
 #define LL_LLRENDERPASS_H
 
 #include "stdtypes.h"
+#include "llrenderformat.h"
 #include <string>
 
 class LLRenderTarget;
@@ -40,12 +41,12 @@ enum class LoadOp : U8 { Load, Clear };                 // what the pass starts 
 struct Clear
 {
     F32 mColor[4];
-    U32 mMask;
-    Clear(F32 r, F32 g, F32 b, F32 a, U32 mask = 0xFFFFFFFF) : mMask(mask) { mColor[0] = r; mColor[1] = g; mColor[2] = b; mColor[3] = a; }
+    ClearBits mMask;
+    Clear(F32 r, F32 g, F32 b, F32 a, ClearBits mask = ClearBits::All) : mMask(mask) { mColor[0] = r; mColor[1] = g; mColor[2] = b; mColor[3] = a; }
 };
 
 // clear_color null: clear to the renderer's current clear colour (LLRender::setClearColor); load Load: no clear
-void begin(LLRenderTarget& target, LoadOp load, U32 clear_mask, const F32* clear_color, const char* file, int line);
+void begin(LLRenderTarget& target, LoadOp load, ClearBits clear_mask, const F32* clear_color, const char* file, int line);
 void end(LLRenderTarget& target, const char* file, int line);
 void suspend(LLRenderTarget& target, const char* file, int line);       // ends the pass on the target (flush) ...
 void resume(LLRenderTarget& target, const char* file, int line);        // ... and takes it up again (bindTarget): the pass of a caller that a callee has to interrupt
@@ -60,7 +61,7 @@ std::string report(size_t frames);
 class RenderPassScope
 {
 public:
-    explicit RenderPassScope(LLRenderTarget& target, RenderPass::LoadOp load = RenderPass::LoadOp::Load, U32 clear_mask = 0xFFFFFFFF,
+    explicit RenderPassScope(LLRenderTarget& target, RenderPass::LoadOp load = RenderPass::LoadOp::Load, ClearBits clear_mask = ClearBits::All,
                              const char* file = __builtin_FILE(), int line = __builtin_LINE())
         : mTarget(&target), mFile(file), mLine(line)
     {
@@ -74,7 +75,7 @@ public:
     }
     // a scope whose pass begins later (begin(): the pass crosses a block or a function: the scope is declared where it ends)
     RenderPassScope() : mTarget(nullptr), mFile(nullptr), mLine(0) {}
-    void begin(LLRenderTarget& target, RenderPass::LoadOp load = RenderPass::LoadOp::Load, U32 clear_mask = 0xFFFFFFFF,
+    void begin(LLRenderTarget& target, RenderPass::LoadOp load = RenderPass::LoadOp::Load, ClearBits clear_mask = ClearBits::All,
                const char* file = __builtin_FILE(), int line = __builtin_LINE())
     {
         end();

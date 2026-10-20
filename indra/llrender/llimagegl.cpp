@@ -892,7 +892,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     //      (some rendering issues while core profile is enabled are acceptable at this point in time)
                     if (!LLRender::sGLCoreProfile)
                     {
-                        LLVkTex::paramI(edit_name, mTarget, GL_GENERATE_MIPMAP, GL_TRUE);
+                        LLVkTex::paramI(edit_name, mTarget, GL_GENERATE_MIPMAP, true);
                     }
 
                     LLImageGL::setManualImage(edit_name, mTarget, 0, mFormatInternal,

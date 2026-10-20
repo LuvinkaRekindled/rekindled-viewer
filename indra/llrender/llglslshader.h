@@ -222,10 +222,10 @@ public:
     void uniform4fv(U32 index, U32 count, const F32* v);
     void uniform4uiv(U32 index, U32 count, const U32* v);
     void uniform2i(const LLStaticHashedString& uniform, S32 i, S32 j);
-    void uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, const F32* v);
-    void uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, const F32* v);
-    void uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose, const F32* v);
-    void uniformMatrix4fv(U32 index, U32 count, GLboolean transpose, const F32* v);
+    void uniformMatrix2fv(U32 index, U32 count, bool transpose, const F32* v);
+    void uniformMatrix3fv(U32 index, U32 count, bool transpose, const F32* v);
+    void uniformMatrix3x4fv(U32 index, U32 count, bool transpose, const F32* v);
+    void uniformMatrix4fv(U32 index, U32 count, bool transpose, const F32* v);
     void uniform1i(const LLStaticHashedString& uniform, S32 i);
     void uniform1iv(const LLStaticHashedString& uniform, U32 count, const S32* v);
     void uniform4iv(const LLStaticHashedString& uniform, U32 count, const S32* v);
@@ -238,9 +238,9 @@ public:
     void uniform3fv(const LLStaticHashedString& uniform, U32 count, const F32* v);
     void uniform4fv(const LLStaticHashedString& uniform, U32 count, const F32* v);
     void uniform4uiv(const LLStaticHashedString& uniform, U32 count, const U32* v);
-    void uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const F32* v);
-    void uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const F32* v);
-    void uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const F32* v);
+    void uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v);
+    void uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v);
+    void uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v);
 
     void setMinimumAlpha(F32 minimum);
 
@@ -346,7 +346,7 @@ public:
     void mirrorBind();
     void mirrorScalar(S32 location, int kind, std::initializer_list<double> values);   // kind 0: float, 1: int
     void mirrorVector(S32 location, int kind, U32 components, U32 count, const void* data);
-    void mirrorMatrix(S32 location, U32 columns, U32 rows, GLboolean transpose, U32 count, const F32* data);
+    void mirrorMatrix(S32 location, U32 columns, U32 rows, bool transpose, U32 count, const F32* data);
     // F2.5 (LL_VK_UNIFORMREC): this shader's copy of the program's uniform class blocks; a write is resolved to a byte range, compared with the copy and sent as the bytes that changed
     struct VkUni { U8 mClass = 0; U32 mOffset = 0; U32 mArraySize = 0; };
     std::vector<VkUni> mVkUni;                  // by the program's own uniform index

@@ -1185,7 +1185,7 @@ bool LLImagePreviewSculpted::render()
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-    gGL.clearBuffers(GL_DEPTH_BUFFER_BIT);
+    gGL.clearBuffers(ClearBits::Depth);
 
     LLVector3 target_pos(0, 0, 0);
 

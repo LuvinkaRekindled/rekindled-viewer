@@ -132,7 +132,7 @@ public:
     //clear render targer, clears depth buffer if present,
     //uses scissor rect if in copy-to-texture mode
     // asserts that this target is currently bound
-    void clear(U32 mask = 0xFFFFFFFF, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void clear(ClearBits mask = ClearBits::All, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
     //get applied viewport
     void getViewport(S32* viewport);
@@ -177,7 +177,7 @@ public:
     void swapFBORefs(LLRenderTarget& other);
 
     static LLRenderTarget* sBoundTarget;        // the innermost open pass (the top of the stack of open passes, which lives in llrendertarget.cpp: F3.5d)
-    friend void RenderPass::begin(LLRenderTarget&, RenderPass::LoadOp, U32, const F32*, const char*, int);
+    friend void RenderPass::begin(LLRenderTarget&, RenderPass::LoadOp, ClearBits, const F32*, const char*, int);
     // the number of colour attachments draws write to on the current target (the rest are not written until the target is bound again)
     static void setCurrentDrawBufferCount(S32 count);
 
@@ -192,7 +192,7 @@ protected:
     const char* mBindFile = nullptr;
     int mBindLine = 0;
     unsigned long long mBindDraw = 0;
-    void bindImpl(const char* file, int line, bool restore, U32 clear_mask = 0, const F32* clear_color = nullptr);
+    void bindImpl(const char* file, int line, bool restore, ClearBits clear_mask = ClearBits::None, const F32* clear_color = nullptr);
     void noteBind(const char* file, int line);
     void noteFlush(const char* file, int line);
     void noteClear(const char* file, int line);

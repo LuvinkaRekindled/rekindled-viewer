@@ -89,7 +89,7 @@ void LLDrawPoolWLSky::endDeferredPass(S32 pass)
     moon_shader  = nullptr;
 
     // clear the depth buffer so haze shaders can use unwritten depth as a mask
-    gGL.clearBuffers(GL_DEPTH_BUFFER_BIT);
+    gGL.clearBuffers(ClearBits::Depth);
 }
 
 void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLocal, LLGLSLShader * shader) const
@@ -168,7 +168,7 @@ void LLDrawPoolWLSky::renderSkyHazeDeferred(const LLVector3& camPosLocal, F32 ca
             rot.setRot(0.f, hdri_rotation*DEG_TO_RAD, 0.f);
 
             sky_shader->uniform1f(LLShaderMgr::SKY_HDR_SCALE, powf(2.f, hdri_exposure));
-            sky_shader->uniformMatrix3fv(LLShaderMgr::DEFERRED_ENV_MAT, 1, GL_FALSE, (F32*) rot.mMatrix);
+            sky_shader->uniformMatrix3fv(LLShaderMgr::DEFERRED_ENV_MAT, 1, false, (F32*) rot.mMatrix);
             sky_shader->uniform1f(hdri_split_screen, gCubeSnapshot ? 1.f : hdri_split);
         }
         else
