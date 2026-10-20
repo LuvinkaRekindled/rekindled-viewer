@@ -28,7 +28,7 @@
 
 #include "linden_common.h"
 
-#include "llgl.h"
+#include "llpluginmediaformat.h"      // the numbers of the texture format messages
 #include "llplugininstance.h"
 #include "llpluginmessage.h"
 #include "llpluginmessageclasses.h"
@@ -182,9 +182,9 @@ void mediaPluginExample::receiveMessage(const char* message_string)
                 message.setValueS32("default_width", 1024);
                 message.setValueS32("default_height", 1024);
                 message.setValueS32("depth", mDepth);
-                message.setValueU32("internalformat", GL_RGB);
-                message.setValueU32("format", GL_RGBA);
-                message.setValueU32("type", GL_UNSIGNED_BYTE);
+                message.setValueU32("internalformat", WIRE_RGB);
+                message.setValueU32("format", WIRE_RGBA);
+                message.setValueU32("type", WIRE_UNSIGNED_BYTE);
                 message.setValueBoolean("coords_opengl", true);
                 sendMessage(message);
             }

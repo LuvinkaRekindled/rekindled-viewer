@@ -366,7 +366,7 @@ struct LLWindowWin32::LLWindowWin32Thread : public LL::ThreadPool
     // Call from main thread
     bool wakeAndDestroy();
 
-    void glReady()
+    void windowReady()
     {
         mGLReady = true;
     }
@@ -1388,7 +1388,7 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
     // until after some graphics setup. See SL-20177. -Cosmic,2023-09-18
     mWindowThread->post([=]()
     {
-        mWindowThread->glReady();
+        mWindowThread->windowReady();
     });
 
     if (auto_show)
