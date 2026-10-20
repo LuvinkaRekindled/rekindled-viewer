@@ -1683,7 +1683,7 @@ void LLPipeline::generateBrdfLut(bool allocate)
     {
         mPbrBrdfLut.allocate(512, 512, GL_RG16F);
     }
-    mPbrBrdfLut.bindTarget();
+    RenderPassScope pass(mPbrBrdfLut);
 
     if (gDeferredGenBrdfLutProgram.isComplete())
     {
@@ -1704,7 +1704,6 @@ void LLPipeline::generateBrdfLut(bool allocate)
     }
 
     gDeferredGenBrdfLutProgram.unbind();
-    mPbrBrdfLut.flush();
 }
 
 void LLPipeline::createLUTBuffers()
@@ -1773,11 +1772,11 @@ void LLPipeline::createLUTBuffers()
     generateBrdfLut(true);
 
     mExposureMap.allocate(1, 1, GL_R16F);
-    mExposureMap.bindTarget();
+    RenderPassScope pass_1775(mExposureMap);
     gGL.setClearColor(1, 1, 1, 0);
     mExposureMap.clear();
     gGL.setClearColor(0, 0, 0, 0);
-    mExposureMap.flush();
+    pass_1775.end();
 
     mLuminanceMap.allocate(256, 256, GL_R16F, false, LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_AUTO);
 
@@ -9662,7 +9661,7 @@ static LLTrace::BlockTimerStatHandle FTM_RENDER_BLOOM("Bloom");
 
 void LLPipeline::visualizeBuffers(LLRenderTarget* src, LLRenderTarget* dst, U32 bufferIndex)
 {
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
     gDeferredBufferVisualProgram.bind();
     gDeferredBufferVisualProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_BILINEAR, bufferIndex);
 
@@ -9675,7 +9674,6 @@ void LLPipeline::visualizeBuffers(LLRenderTarget* src, LLRenderTarget* dst, U32 
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     gDeferredBufferVisualProgram.unbind();
-    dst->flush();
 }
 
 void LLPipeline::generateLuminance(LLRenderTarget* src, LLRenderTarget* dst)
@@ -9684,7 +9682,7 @@ void LLPipeline::generateLuminance(LLRenderTarget* src, LLRenderTarget* dst)
     {
         LL_PROFILE_GPU_ZONE("luminance sample");
 
-        dst->bindTarget();
+        RenderPassScope pass_9686(*dst);
 
         LLRenderState::DepthScope depth(false, false);
 
@@ -9717,7 +9715,7 @@ void LLPipeline::generateLuminance(LLRenderTarget* src, LLRenderTarget* dst)
 
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-        dst->flush();
+        pass_9686.end();
 
         // note -- unbind AFTER the glGenerateMipMap so time in generatemipmap can be profiled under "Luminance"
         // also note -- keep an eye on the performance of glGenerateMipmap, might need to replace it with a mip generation shader
@@ -9733,17 +9731,16 @@ void LLPipeline::generateExposure(LLRenderTarget* src, LLRenderTarget* dst, bool
         if (use_history)
         {
             // copy last frame's exposure into mLastExposure
-            mLastExposure.bindTarget();
+            RenderPassScope pass(mLastExposure);
             gCopyProgram.bind();
             gGL.getTexUnit(0)->bind(dst);
 
             mScreenTriangleVB->setBuffer();
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-            mLastExposure.flush();
         }
 
-        dst->bindTarget();
+        RenderPassScope pass(*dst);
 
         LLRenderState::DepthScope depth(false, false);
 
@@ -9834,7 +9831,6 @@ void LLPipeline::generateExposure(LLRenderTarget* src, LLRenderTarget* dst, bool
             gGL.getTexUnit(channel)->unbind(mLastExposure.getUsage());
         }
         shader->unbind();
-        dst->flush();
     }
 }
 
@@ -9844,7 +9840,7 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_co
 {
     LL_PROFILE_GPU_ZONE("tonemap");
 
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
     // gamma correct lighting
     {
         static LLCachedControl<bool> buildNoPost(gSavedSettings, "RenderDisablePostProcessing", false);
@@ -9906,14 +9902,13 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_co
         gGL.getTexUnit(channel)->unbind(src->getUsage());
         shader->unbind();
     }
-    dst->flush();
 }
 
 void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst)
 {
     LL_PROFILE_GPU_ZONE("gamma correct");
 
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
     // gamma correct lighting
     {
         LLRenderState::DepthScope depth(false, false);
@@ -9934,7 +9929,6 @@ void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst)
 
         shader.unbind();
     }
-    dst->flush();
 }
 
 void LLPipeline::copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget* dst)
@@ -9947,8 +9941,7 @@ void LLPipeline::copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget*
 
         LLRenderTarget& depth_src = mRT->deferredScreen;
 
-        dst->bindTarget();
-        dst->clear();
+        RenderPassScope pass(*dst, RenderPass::LoadOp::Clear);
         gCopyDepthProgram.bind();
 
         S32 diff_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DIFFUSE_MAP);
@@ -9960,7 +9953,6 @@ void LLPipeline::copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget*
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-        dst->flush();
     }
 }
 
@@ -9969,8 +9961,7 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
     LL_PROFILE_GPU_ZONE("glow generate");
     if (sRenderGlow)
     {
-        mGlow[2].bindTarget();
-        mGlow[2].clear();
+        RenderPassScope pass(mGlow[2], RenderPass::LoadOp::Clear);
 
         gGlowExtractProgram.bind();
         F32 maxAlpha = RenderGlowMaxExtractAlpha;
@@ -10012,7 +10003,7 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
             mScreenTriangleVB->setBuffer();
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-            mGlow[2].flush();
+            pass.end();
         }
 
         gGlowExtractProgram.unbind();
@@ -10036,8 +10027,7 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
 
         for (S32 i = 0; i < kernel; i++)
         {
-            mGlow[i % 2].bindTarget();
-            mGlow[i % 2].clear();
+            RenderPassScope pass(mGlow[i % 2], RenderPass::LoadOp::Clear);
 
             if (i == 0)
             {
@@ -10060,7 +10050,6 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
             mScreenTriangleVB->setBuffer();
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-            mGlow[i % 2].flush();
         }
 
         gGlowProgram.unbind();
@@ -10068,9 +10057,7 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
     }
     else // !sRenderGlow, skip the glow ping-pong and just clear the result target
     {
-        mGlow[1].bindTarget();
-        mGlow[1].clear();
-        mGlow[1].flush();
+        RenderPassScope pass(mGlow[1], RenderPass::LoadOp::Clear);
     }
 }
 
@@ -10244,7 +10231,7 @@ void LLPipeline::renderAvatarVelocity()
         program.uniform1f(tolerance_s, 0.004f);
     };
 
-    mAvatarVelocityMap.bindTarget();
+    RenderPassScope pass_10235(mAvatarVelocityMap);
     gGL.setClearColor(0.f, 0.f, 0.f, 0.f);
     mAvatarVelocityMap.clear();
     gGL.setColorMask(true, true);
@@ -10534,7 +10521,7 @@ void LLPipeline::renderAvatarVelocity()
     }
     LLViewerJointMesh::sVelocityDraws.clear();
 
-    mAvatarVelocityMap.flush();
+    pass_10235.end();
     mAvatarVelocityDrawn = true;
     gGL.setColorMask(true, false);
     gGLLastMatrix = NULL;
@@ -10563,7 +10550,7 @@ void LLPipeline::visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool 
     {
         return;
     }
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
     gAvatarVelocityDebugProgram.bind();
     gAvatarVelocityDebugProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT, 0);
     static LLStaticHashedString show_flag_s("show_flag");
@@ -10571,7 +10558,6 @@ void LLPipeline::visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool 
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     gAvatarVelocityDebugProgram.unbind();
-    dst->flush();
 }
 
 // <FS> RenderBufferVisualization 9: the ray scene's geometry records and material table, traced from the eye (rtMaterialDebugF.glsl); RenderRTMaterialDebug picks what is shown
@@ -10583,7 +10569,7 @@ void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
     }
     static LLCachedControl<S32> mode(gSavedSettings, "RenderRTMaterialDebug", 1);
     static LLStaticHashedString mode_s("rt_debug_mode");
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
     bindDeferredShader(gRtMaterialDebugProgram);
     const S32 live_view = LLVkMirror::rtDebugView();        // rt-debug.txt view=N overrides the setting (changed while running, no restart)
     gRtMaterialDebugProgram.uniform1i(mode_s, llclamp(live_view > 0 ? live_view : (S32)mode, 1, 16));
@@ -10594,7 +10580,6 @@ void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
     unbindDeferredShader(gRtMaterialDebugProgram);
-    dst->flush();
 }
 
 S32 rrDebugMode();      // the test switch of ray reconstruction (below)
@@ -10626,25 +10611,26 @@ LLRenderTarget* LLPipeline::accumulateSunShadow(LLRenderTarget* light)
     const glm::mat4 prev_view_from_view = glm::make_mat4(gGLLastModelView) * inv_view;
     static LLStaticHashedString prev_clip_s("prev_clip_from_view"), prev_view_s("prev_view_from_view"), res_s("render_res"), len_s("history_len"), use_s("use_history"), vel_s("use_velocity");
 
-    out.bindTarget();
-    bindDeferredShader(gShadowAccumProgram, light);
-    gShadowAccumProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &prev, false, LLTexUnit::TFO_BILINEAR, 1);
-    const bool velocity = mAvatarVelocityDrawn && mAvatarVelocityMap.isComplete();
-    gShadowAccumProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, velocity ? &mAvatarVelocityMap : light, false, LLTexUnit::TFO_POINT, 0);
-    gShadowAccumProgram.uniformMatrix4fv(prev_clip_s, 1, GL_FALSE, glm::value_ptr(prev_clip_from_view));
-    gShadowAccumProgram.uniformMatrix4fv(prev_view_s, 1, GL_FALSE, glm::value_ptr(prev_view_from_view));
-    gShadowAccumProgram.uniform2f(res_s, (F32)out.getWidth(), (F32)out.getHeight());
-    gShadowAccumProgram.uniform1f(len_s, (F32)llclamp(history_setting(), 2, 32));
-    gShadowAccumProgram.uniform1f(use_s, have_history ? 1.f : 0.f);
-    gShadowAccumProgram.uniform1f(vel_s, velocity ? 1.f : 0.f);
     {
-        LLRenderState::BlendScope blend(false);
-        LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
-        mScreenTriangleVB->setBuffer();
-        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        RenderPassScope pass(out);
+        bindDeferredShader(gShadowAccumProgram, light);
+        gShadowAccumProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &prev, false, LLTexUnit::TFO_BILINEAR, 1);
+        const bool velocity = mAvatarVelocityDrawn && mAvatarVelocityMap.isComplete();
+        gShadowAccumProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, velocity ? &mAvatarVelocityMap : light, false, LLTexUnit::TFO_POINT, 0);
+        gShadowAccumProgram.uniformMatrix4fv(prev_clip_s, 1, GL_FALSE, glm::value_ptr(prev_clip_from_view));
+        gShadowAccumProgram.uniformMatrix4fv(prev_view_s, 1, GL_FALSE, glm::value_ptr(prev_view_from_view));
+        gShadowAccumProgram.uniform2f(res_s, (F32)out.getWidth(), (F32)out.getHeight());
+        gShadowAccumProgram.uniform1f(len_s, (F32)llclamp(history_setting(), 2, 32));
+        gShadowAccumProgram.uniform1f(use_s, have_history ? 1.f : 0.f);
+        gShadowAccumProgram.uniform1f(vel_s, velocity ? 1.f : 0.f);
+        {
+            LLRenderState::BlendScope blend(false);
+            LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        }
+        unbindDeferredShader(gShadowAccumProgram);
     }
-    unbindDeferredShader(gShadowAccumProgram);
-    out.flush();
     mShadowAccumIndex = write;
     mShadowAccumFrame = frame + 1;
     return &out;
@@ -10659,7 +10645,7 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     const glm::mat4 to_cur = glm::mat4(glm::dmat4(mViewProjCur) * inv_scene);
     const glm::mat4 to_prev = glm::mat4(glm::dmat4(mViewProjPrevValid ? mViewProjPrev : mViewProjCur) * inv_scene);
 
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
     LLRenderState::DepthScope depth(false, false);
     gMotionVectorProgram.bind();
     gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
@@ -10679,7 +10665,6 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     gMotionVectorProgram.unbind();
-    dst->flush();
 }
 
 // <FS> test switch, read from D:/claude/rr-debug.txt about once a second (one number): 0 normal, 1 no ray reconstruction (the picture is only stretched), 2 / 3 / 4 show the diffuse albedo /
@@ -10719,7 +10704,7 @@ void LLPipeline::generateRRReflectionMotion(LLRenderTarget* dst)
     const glm::mat4 inv_scene_f = glm::mat4(inv_scene);
     static LLStaticHashedString inv_scene_s("inv_scene"), cur_s("view_proj_cur"), prev_s("view_proj_prev"), cam_s("cam_pos"), v2w_s("view_to_world"), res_s("render_res");
 
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
     bindDeferredShader(gRRReflMotionProgram);
     gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mMotionMap, false, LLTexUnit::TFO_POINT, 0);
     gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mRRHitDist, false, LLTexUnit::TFO_POINT, 0);
@@ -10736,27 +10721,26 @@ void LLPipeline::generateRRReflectionMotion(LLRenderTarget* dst)
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
     unbindDeferredShader(gRRReflMotionProgram);
-    dst->flush();
 }
 
 void LLPipeline::extractRRHitDistance(LLRenderTarget* screen)
 {
     LL_PROFILE_GPU_ZONE("rr hit distance");
     static LLStaticHashedString clear_s("clear_only");
-    screen->flush();
+    RenderPassSuspend suspend(*screen);      // the caller's pass on the screen target is suspended here and resumed below
     LLRenderState::DepthScope depth(false, false);
     LLRenderState::BlendScope blend(false);
 
-    mRRHitDist.bindTarget();
+    RenderPassScope pass_10737(mRRHitDist);
     gRRHitDistProgram.bind();
     gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, screen, false, LLTexUnit::TFO_POINT);
     gRRHitDistProgram.uniform1f(clear_s, 0.f);
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-    mRRHitDist.flush();
+    pass_10737.end();
 
     // the glow amount starts at zero again: only the alpha of the lit picture is written, with 0
-    screen->bindTarget();
+    suspend.resume();
     gGL.setColorMask(false, true);
     gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRRHitDist, false, LLTexUnit::TFO_POINT);
     gRRHitDistProgram.uniform1f(clear_s, 1.f);
@@ -10779,7 +10763,7 @@ void LLPipeline::generateRRGuides(LLRenderTarget* dst)
     const glm::mat3 view_to_world = glm::mat3(glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview)));
     static LLStaticHashedString view_to_world_s("view_to_world");
 
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
     bindDeferredShader(gRRGuidesProgram);
     gRRGuidesProgram.uniformMatrix3fv(view_to_world_s, 1, GL_FALSE, glm::value_ptr(view_to_world));
     {
@@ -10789,7 +10773,6 @@ void LLPipeline::generateRRGuides(LLRenderTarget* dst)
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
     unbindDeferredShader(gRRGuidesProgram);
-    dst->flush();
 }
 
 bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction)
@@ -10876,7 +10859,7 @@ void LLPipeline::applyCAS(LLRenderTarget* src, LLRenderTarget* dst)
     }
 
     // Bind setup:
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
 
     sharpen_shader->bind();
 
@@ -10906,7 +10889,6 @@ void LLPipeline::applyCAS(LLRenderTarget* src, LLRenderTarget* dst)
 
     sharpen_shader->unbind();
 
-    dst->flush();
 }
 
 void LLPipeline::applyFXAA(LLRenderTarget* src, LLRenderTarget* dst)
@@ -10924,8 +10906,7 @@ void LLPipeline::applyFXAA(LLRenderTarget* src, LLRenderTarget* dst)
             S32 height = dst->getHeight();
 
             // bake out texture2D with RGBL for FXAA shader
-            mFXAAMap.bindTarget();
-            mFXAAMap.clear(GL_COLOR_BUFFER_BIT);
+            RenderPassScope pass_10913(mFXAAMap, RenderPass::LoadOp::Clear, GL_COLOR_BUFFER_BIT);
 
             LLGLSLShader* shader = &gGlowCombineFXAAProgram;
             shader->bind();
@@ -10945,9 +10926,9 @@ void LLPipeline::applyFXAA(LLRenderTarget* src, LLRenderTarget* dst)
             shader->disableTexture(LLShaderMgr::DEFERRED_DIFFUSE, src->getUsage());
             shader->unbind();
 
-            mFXAAMap.flush();
+            pass_10913.end();
 
-            dst->bindTarget();
+            RenderPassScope pass(*dst);
 
             static LLCachedControl<U32> aa_quality(gSavedSettings, "RenderFSAASamples", 0U);
             U32 fsaa_quality = std::clamp(aa_quality(), 0U, 3U);
@@ -10987,7 +10968,6 @@ void LLPipeline::applyFXAA(LLRenderTarget* src, LLRenderTarget* dst)
             }
 
             shader->unbind();
-            dst->flush();
         }
         else {
             copyRenderTarget(src, dst);
@@ -11023,8 +11003,7 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
             LLRenderTarget& dest = mFXAAMap;
             LLGLSLShader& edge_shader = gSMAAEdgeDetectProgram[fsaa_quality];
 
-            dest.bindTarget();
-            dest.clear(GL_COLOR_BUFFER_BIT);
+            RenderPassScope pass_11011(dest, RenderPass::LoadOp::Clear, GL_COLOR_BUFFER_BIT);
 
             edge_shader.bind();
             edge_shader.uniform4fv(sSmaaRTMetrics, 1, rt_metrics);
@@ -11054,7 +11033,7 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
             edge_shader.unbind();
-            dest.flush();
+            pass_11011.end();
 
             gGL.getTexUnit(channel)->bindWhiteFast();
         }
@@ -11066,8 +11045,7 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
             LLRenderTarget& dest = mSMAABlendBuffer;
             LLGLSLShader& blend_weights_shader = gSMAABlendWeightsProgram[fsaa_quality];
 
-            dest.bindTarget();
-            dest.clear(GL_COLOR_BUFFER_BIT);
+            RenderPassScope pass_11054(dest, RenderPass::LoadOp::Clear, GL_COLOR_BUFFER_BIT);
 
             blend_weights_shader.bind();
             blend_weights_shader.uniform4fv(sSmaaRTMetrics, 1, rt_metrics);
@@ -11105,7 +11083,7 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
             //    glStencilFunc(GL_ALWAYS, 0, 0xFF);
             //}
             blend_weights_shader.unbind();
-            dest.flush();
+            pass_11054.end();
             gGL.getTexUnit(edge_tex_channel)->bindWhiteFast();
             gGL.getTexUnit(area_tex_channel)->bindWhiteFast();
             gGL.getTexUnit(search_tex_channel)->bindWhiteFast();
@@ -11142,8 +11120,7 @@ void LLPipeline::applySMAA(LLRenderTarget* src, LLRenderTarget* dst)
             LLRenderTarget* bound_target = dst;
             LLGLSLShader& blend_shader = gSMAANeighborhoodBlendProgram[fsaa_quality];
 
-            bound_target->bindTarget();
-            bound_target->clear(GL_COLOR_BUFFER_BIT);
+            RenderPassScope pass_11130(*bound_target, RenderPass::LoadOp::Clear, GL_COLOR_BUFFER_BIT);
 
             blend_shader.bind();
             blend_shader.uniform4fv(sSmaaRTMetrics, 1, rt_metrics);
@@ -11164,7 +11141,7 @@ void LLPipeline::applySMAA(LLRenderTarget* src, LLRenderTarget* dst)
             mScreenTriangleVB->setBuffer();
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-            bound_target->flush();
+            pass_11130.end();
             blend_shader.unbind();
             gGL.getTexUnit(diffuse_channel)->bindWhiteFast();
             gGL.getTexUnit(blend_channel)->bindWhiteFast();
@@ -11180,7 +11157,7 @@ void LLPipeline::copyRenderTarget(LLRenderTarget* src, LLRenderTarget* dst)
 {
 
     LL_PROFILE_GPU_ZONE("copyRenderTarget");
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
 
     gDeferredPostNoDoFProgram.bind();
 
@@ -11194,7 +11171,6 @@ void LLPipeline::copyRenderTarget(LLRenderTarget* src, LLRenderTarget* dst)
 
     gDeferredPostNoDoFProgram.unbind();
 
-    dst->flush();
 }
 
 void LLPipeline::combineGlow(LLRenderTarget* src, LLRenderTarget* dst)
@@ -11202,7 +11178,7 @@ void LLPipeline::combineGlow(LLRenderTarget* src, LLRenderTarget* dst)
     LL_PROFILE_GPU_ZONE("glow combine");
 
     // Go ahead and do our glow combine here in our destination.  We blit this later into the front buffer.
-    dst->bindTarget();
+    RenderPassScope pass(*dst);
 
     {
 
@@ -11215,7 +11191,6 @@ void LLPipeline::combineGlow(LLRenderTarget* src, LLRenderTarget* dst)
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
 
-    dst->flush();
 }
 
 // <FS:Beq> updated Vignette code (based on original Exo Vignette)
@@ -11224,7 +11199,7 @@ bool LLPipeline::renderVignette(LLRenderTarget* src, LLRenderTarget* dst)
     if (RenderVignette.mV[0] > 0.f)
     {
         LL_PROFILE_GPU_ZONE("Vignette");
-        dst->bindTarget();
+        RenderPassScope pass_11210(*dst);
         LLGLSLShader *shader = &gPostVignetteProgram;
 
         // bind the progam and output to screentriangle VBO
@@ -11255,7 +11230,7 @@ bool LLPipeline::renderVignette(LLRenderTarget* src, LLRenderTarget* dst)
 
         shader->disableTexture(LLShaderMgr::DEFERRED_DIFFUSE, src->getUsage());
         shader->unbind();
-        dst->flush();
+        pass_11210.end();
         return true;
     }
     else
@@ -11394,7 +11369,7 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
 
     }
     LL_PROFILE_GPU_ZONE("Snapshot Frame");
-    dst->bindTarget();
+    RenderPassScope pass_11381(*dst);
     LLGLSLShader *shader = &gPostSnapshotFrameProgram;
 
     // bind the program and output to screentriangle VBO
@@ -11440,7 +11415,7 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
 
     shader->disableTexture(LLShaderMgr::DEFERRED_DIFFUSE, src->getUsage());
     shader->unbind();
-    dst->flush();
+    pass_11381.end();
 
     if (show_frame && show_guides && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
     {
@@ -11593,7 +11568,7 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
             F32 adj_COF = CameraMaxCoF / screen_to_target_scale_factor;
             // </FS:Beq>
             { // build diffuse+bloom+CoF
-                mRT->deferredLight.bindTarget();
+                RenderPassScope pass(mRT->deferredLight);
 
                 gDeferredCoFProgram.bind();
 
@@ -11620,14 +11595,13 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
                 mScreenTriangleVB->setBuffer();
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
                 gDeferredCoFProgram.unbind();
-                mRT->deferredLight.flush();
             }
 
             U32 dof_width = (U32)(mRT->screen.getWidth() * CameraDoFResScale);
             U32 dof_height = (U32)(mRT->screen.getHeight() * CameraDoFResScale);
 
             { // perform DoF sampling at half-res (preserve alpha channel)
-                src->bindTarget();
+                RenderPassScope pass_11614(*src);
                 gGL.setViewport(0, 0, dof_width, dof_height);
 
                 gGL.setColorMask(true, false);
@@ -11647,13 +11621,13 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
 
                 gDeferredPostProgram.unbind();
 
-                src->flush();
+                pass_11614.end();
                 gGL.setColorMask(true, true);
             }
 
             { // combine result based on alpha
 
-                dst->bindTarget();
+                RenderPassScope pass(*dst);
                 gGL.setViewport(0, 0, dst->getWidth(), dst->getHeight());
 
                 gDeferredDoFCombineProgram.bind();
@@ -11674,7 +11648,6 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
 
                 gDeferredDoFCombineProgram.unbind();
 
-                dst->flush();
             }
         }
         else
@@ -11749,7 +11722,7 @@ void LLPipeline::renderFinalize()
             {
                 // the alpha of the picture is the glow amount (read by the glow passes): ray reconstruction does not give it back, so the render size alpha is stretched over the output's
                 LL_PROFILE_GPU_ZONE("rr alpha");
-                mRRHdr.bindTarget();
+                RenderPassScope pass_11736(mRRHdr);
                 gGL.setColorMask(false, true);
                 gDeferredPostNoDoFProgram.bind();
                 gDeferredPostNoDoFProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRT->screen);
@@ -11757,7 +11730,7 @@ void LLPipeline::renderFinalize()
                 mScreenTriangleVB->setBuffer();
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
                 gDeferredPostNoDoFProgram.unbind();
-                mRRHdr.flush();
+                pass_11736.end();
                 gGL.setColorMask(true, true);
                 post_ping = &mRRPing;
                 post_pong = &mRRPong;
@@ -12702,6 +12675,7 @@ void LLPipeline::renderDeferredLighting()
 
     LLRenderTarget *screen_target         = &mRT->screen;
     LLRenderTarget* deferred_light_target = &mRT->deferredLight;
+    RenderPassScope screen_pass;        // F3.5b: the pass on the screen target crosses blocks (begun before the atmospherics, ended after the post-deferred geometry) and is suspended by extractRRHitDistance
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("deferred");
@@ -12748,7 +12722,7 @@ void LLPipeline::renderDeferredLighting()
         if ((RenderDeferredSSAO && !gCubeSnapshot) || RenderShadowDetail > 0)
         {
             LL_PROFILE_GPU_ZONE("sun program");
-            deferred_light_target->bindTarget();
+            RenderPassScope pass(*deferred_light_target);
             {  // paint shadow/SSAO light map (direct lighting lightmap)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - sun shadow");
                 LL_CPU_ZONE("lighting: sun shadow");
@@ -12784,7 +12758,6 @@ void LLPipeline::renderDeferredLighting()
 
                 unbindDeferredShader(sun_shader);
             }
-            deferred_light_target->flush();
         }
 
         LLRenderTarget* accumulated = (RenderDeferredSSAO && !gCubeSnapshot) ? accumulateSunShadow(deferred_light_target) : nullptr;       // <FS> the blur reads the accumulated sun shadow when there is one
@@ -12796,7 +12769,7 @@ void LLPipeline::renderDeferredLighting()
             LL_CPU_ZONE("lighting: soften shadow");
             LL_PROFILE_GPU_ZONE("soften shadow");
             // blur lightmap
-            screen_target->bindTarget();
+            RenderPassScope pass_12784(*screen_target);
             gGL.setClearColor(1, 1, 1, 1);
             screen_target->clear(GL_COLOR_BUFFER_BIT);
             gGL.setClearColor(0, 0, 0, 0);
@@ -12833,12 +12806,12 @@ void LLPipeline::renderDeferredLighting()
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
 
-            screen_target->flush();
+            pass_12784.end();
             unbindDeferredShader(gDeferredBlurLightProgram);
 
             bindDeferredShader(gDeferredBlurLightProgram, screen_target);
 
-            deferred_light_target->bindTarget();
+            RenderPassScope pass_12827(*deferred_light_target);
 
             gDeferredBlurLightProgram.uniform2f(sDelta, 0.f, 1.f);
 
@@ -12848,11 +12821,11 @@ void LLPipeline::renderDeferredLighting()
                 mScreenTriangleVB->setBuffer();
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
-            deferred_light_target->flush();
+            pass_12827.end();
             unbindDeferredShader(gDeferredBlurLightProgram);
         }
 
-        screen_target->bindTarget();
+        screen_pass.begin(*screen_target);
         // clear color buffer here - zeroing alpha (glow) is important or it will accumulate against sky
         gGL.setClearColor(0, 0, 0, 0);
         screen_target->clear(GL_COLOR_BUFFER_BIT);
@@ -13388,7 +13361,7 @@ void LLPipeline::renderDeferredLighting()
         popRenderTypeMask();
     }
 
-    screen_target->flush();
+    screen_pass.end();
 
     if (!gCubeSnapshot)
     {
@@ -13424,8 +13397,8 @@ void LLPipeline::doAtmospherics()
             LLRenderTarget& depth_src = gPipeline.mRT->deferredScreen;
             LLRenderTarget& dst = gPipeline.mWaterDis;
 
-            mRT->screen.flush();
-            dst.bindTarget();
+            RenderPassSuspend suspend(mRT->screen);      // the caller's pass on the screen target is interrupted for the depth copy
+            RenderPassScope pass_13415(dst);
             gCopyDepthProgram.bind();
 
             S32 diff_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DIFFUSE_MAP);
@@ -13438,8 +13411,8 @@ void LLPipeline::doAtmospherics()
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-            dst.flush();
-            mRT->screen.bindTarget();
+            pass_13415.end();
+            suspend.resume();
         }
 
         LLRenderState::BlendScope blend(true);
@@ -13488,8 +13461,8 @@ void LLPipeline::doWaterHaze()
             LLRenderTarget& depth_src = gPipeline.mRT->deferredScreen;
             LLRenderTarget& dst = gPipeline.mWaterDis;
 
-            mRT->screen.flush();
-            dst.bindTarget();
+            RenderPassSuspend suspend(mRT->screen);      // the caller's pass on the screen target is interrupted for the depth copy
+            RenderPassScope pass_13480(dst);
             gCopyDepthProgram.bind();
 
             S32 diff_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DIFFUSE_MAP);
@@ -13502,8 +13475,8 @@ void LLPipeline::doWaterHaze()
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-            dst.flush();
-            mRT->screen.bindTarget();
+            pass_13480.end();
+            suspend.resume();
         }
 
         LLRenderState::BlendScope blend(true);
@@ -13556,12 +13529,12 @@ void LLPipeline::doWaterHaze()
 
 void LLPipeline::doWaterExclusionMask()
 {
-    mWaterExclusionMask.bindTarget();
+    RenderPassScope pass_13548(mWaterExclusionMask);
     gGL.setClearColor(1, 1, 1, 1);
     mWaterExclusionMask.clear();
     mWaterExclusionPool->render();
 
-    mWaterExclusionMask.flush();
+    pass_13548.end();
     gGL.setClearColor(0, 0, 0, 0);
 }
 
@@ -15444,12 +15417,12 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 set_last_projection(prep.mLastProj);
             }
 
+            RenderPassScope shadow_pass;        // F3.5b: begun and ended under the same condition, with the shadow rendering between
             const bool cascade_unused = rt_sun_cascades_unused();       // <FS> ray tracing only mode: the shadow map is never read, nothing is drawn into it
             if (!cascade_unused)
             {
-                mRT->shadow[j].bindTarget();
+                shadow_pass.begin(mRT->shadow[j], RenderPass::LoadOp::Clear);
                 mRT->shadow[j].getViewport(gGLViewport);
-                mRT->shadow[j].clear();
             }
 
             {
@@ -15480,7 +15453,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
             if (!cascade_unused)
             {
-                mRT->shadow[j].flush();
+                shadow_pass.end();
             }
 
             if (!gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_SHADOW_FRUSTA) && !gCubeSnapshot)
@@ -15594,12 +15567,11 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
                 if (!rt_sun_cascades_unused())
                 {
-                    mRT->shadow[j].bindTarget();
+                    RenderPassScope pass(mRT->shadow[j]);
                     {
                         LLRenderState::DepthScope depth(true);
                         mRT->shadow[j].clear();
                     }
-                    mRT->shadow[j].flush();
                 }
 
                 mShadowError.mV[j] = 0.f;
@@ -16215,7 +16187,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
                 //
 
-                mSpotShadow[i].bindTarget();
+                RenderPassScope pass(mSpotShadow[i]);
                 mSpotShadow[i].getViewport(gGLViewport);
                 mSpotShadow[i].clear();
 
@@ -16229,7 +16201,6 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
                 RenderSpotLight = nullptr;
 
-                mSpotShadow[i].flush();
             }
         }
     }
@@ -16308,55 +16279,55 @@ void LLPipeline::profileAvatar(LLVOAvatar* avatar, bool profile_attachments)
 
     LLGLSLShader* cur_shader = LLGLSLShader::sCurBoundShaderPtr;
 
-    mRT->deferredScreen.bindTarget();
-    mRT->deferredScreen.clear();
-
-    if (!profile_attachments)
     {
-        // profile entire avatar all at once and readback asynchronously
-        avatar->placeProfileQuery();
+        RenderPassScope pass(mRT->deferredScreen, RenderPass::LoadOp::Clear);
 
-        LLTimer cpu_timer;
-
-        generateImpostor(avatar, false, true);
-
-        avatar->mCPURenderTime = (F32)cpu_timer.getElapsedTimeF32() * 1000.f;
-
-        avatar->readProfileQuery(5); // allow up to 5 frames of latency
-    }
-    else
-    {
-        // profile attachments one at a time
-        LLVOAvatar::attachment_map_t::iterator iter;
-        LLVOAvatar::attachment_map_t::iterator begin = avatar->mAttachmentPoints.begin();
-        LLVOAvatar::attachment_map_t::iterator end = avatar->mAttachmentPoints.end();
-
-        for (iter = begin;
-            iter != end;
-            ++iter)
+        if (!profile_attachments)
         {
-            LLViewerJointAttachment* attachment = iter->second;
-            for (LLViewerJointAttachment::attachedobjs_vec_t::iterator attachment_iter = attachment->mAttachedObjects.begin();
-                attachment_iter != attachment->mAttachedObjects.end();
-                ++attachment_iter)
+            // profile entire avatar all at once and readback asynchronously
+            avatar->placeProfileQuery();
+
+            LLTimer cpu_timer;
+
+            generateImpostor(avatar, false, true);
+
+            avatar->mCPURenderTime = (F32)cpu_timer.getElapsedTimeF32() * 1000.f;
+
+            avatar->readProfileQuery(5); // allow up to 5 frames of latency
+        }
+        else
+        {
+            // profile attachments one at a time
+            LLVOAvatar::attachment_map_t::iterator iter;
+            LLVOAvatar::attachment_map_t::iterator begin = avatar->mAttachmentPoints.begin();
+            LLVOAvatar::attachment_map_t::iterator end = avatar->mAttachmentPoints.end();
+
+            for (iter = begin;
+                iter != end;
+                ++iter)
             {
-                LLViewerObject* attached_object = attachment_iter->get();
-                if (attached_object)
+                LLViewerJointAttachment* attachment = iter->second;
+                for (LLViewerJointAttachment::attachedobjs_vec_t::iterator attachment_iter = attachment->mAttachedObjects.begin();
+                    attachment_iter != attachment->mAttachedObjects.end();
+                    ++attachment_iter)
                 {
-                    // use gDebugProgram to do the GPU queries
-                    gDebugProgram.clearStats();
-                    gDebugProgram.placeProfileQuery(true);
+                    LLViewerObject* attached_object = attachment_iter->get();
+                    if (attached_object)
+                    {
+                        // use gDebugProgram to do the GPU queries
+                        gDebugProgram.clearStats();
+                        gDebugProgram.placeProfileQuery(true);
 
-                    generateImpostor(avatar, false, true, attached_object);
-                    gDebugProgram.readProfileQuery(true, true);
+                        generateImpostor(avatar, false, true, attached_object);
+                        gDebugProgram.readProfileQuery(true, true);
 
-                    attached_object->mGPURenderTime = gDebugProgram.mTimeElapsed / 1000000.f;
+                        attached_object->mGPURenderTime = gDebugProgram.mTimeElapsed / 1000000.f;
+                    }
                 }
             }
         }
-    }
 
-    mRT->deferredScreen.flush();
+    }
 
     if (cur_shader)
     {
@@ -16530,6 +16501,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     U32 resY = 0;
     U32 resX = 0;
 
+    RenderPassScope impostor_pass;      // F3.5b: begun below (not for the preview avatar), ended after the avatar is drawn
     if (!preview_avatar)
     {
         const LLVector4a* ext = avatar->mDrawable->getSpatialExtents();
@@ -16604,7 +16576,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
                 avatar->mImpostor.resize(resX, resY);
             }
 
-            avatar->mImpostor.bindTarget();
+            impostor_pass.begin(avatar->mImpostor);
         }
     }
 
@@ -16716,7 +16688,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
     if (!preview_avatar && !for_profile)
     {
-        avatar->mImpostor.flush();
+        impostor_pass.end();
         avatar->setImpostorDim(tdim);
     }
 
@@ -17098,9 +17070,7 @@ void LLPipeline::skipRenderingShadows()
 
     for (S32 j = 0; j < 4; j++)
     {
-        mRT->shadow[j].bindTarget();
-        mRT->shadow[j].clear();
-        mRT->shadow[j].flush();
+        RenderPassScope pass(mRT->shadow[j], RenderPass::LoadOp::Clear);
     }
 }
 

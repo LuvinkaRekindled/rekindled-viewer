@@ -88,7 +88,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     gGL.getTexUnit(0)->clear();
     stop_glerror();
 
-    scratch_target.bindTarget();
+    RenderPassScope pass_91(scratch_target);
     gGL.setClearColor(0, 0, 0, 0);
     scratch_target.clear();
 
@@ -274,7 +274,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     gGL.generateMipmap(tex.getGLTexture()->getTexName(), GL_TEXTURE_2D);
     stop_glerror();
 
-    scratch_target.flush();
+    pass_91.end();
 
     LLGLSLShader::unbind();
 

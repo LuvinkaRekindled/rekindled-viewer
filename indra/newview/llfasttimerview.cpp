@@ -541,237 +541,238 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
     //render charts
     gGL.getTexUnit(0)->bindWhite();
 
-    buffer.bindTarget();
-
-    for (std::set<std::string>::iterator iter = chart_names.begin(); iter != chart_names.end(); ++iter)
     {
-        std::string label = *iter;
+        RenderPassScope pass(buffer);
 
-        LLSD::Real max_time = 0.0;
-        LLSD::Integer max_calls = 0;
-        LLSD::Real max_execution = 0.0;
-
-        std::vector<LLSD::Real> cur_execution;
-        std::vector<LLSD::Real> cur_times;
-        std::vector<LLSD::Integer> cur_calls;
-
-        std::vector<LLSD::Real> base_execution;
-        std::vector<LLSD::Real> base_times;
-        std::vector<LLSD::Integer> base_calls;
-
-        for (U32 i = 0; i < cur_data.size(); ++i)
+        for (std::set<std::string>::iterator iter = chart_names.begin(); iter != chart_names.end(); ++iter)
         {
-            LLSD::Real time = cur_data[i][label]["Time"].asReal();
-            LLSD::Integer calls = cur_data[i][label]["Calls"].asInteger();
+            std::string label = *iter;
 
-            LLSD::Real execution = 0.0;
-            if (calls > 0)
+            LLSD::Real max_time = 0.0;
+            LLSD::Integer max_calls = 0;
+            LLSD::Real max_execution = 0.0;
+
+            std::vector<LLSD::Real> cur_execution;
+            std::vector<LLSD::Real> cur_times;
+            std::vector<LLSD::Integer> cur_calls;
+
+            std::vector<LLSD::Real> base_execution;
+            std::vector<LLSD::Real> base_times;
+            std::vector<LLSD::Integer> base_calls;
+
+            for (U32 i = 0; i < cur_data.size(); ++i)
             {
-                execution = time/calls;
-                cur_execution.push_back(execution);
-                cur_times.push_back(time);
+                LLSD::Real time = cur_data[i][label]["Time"].asReal();
+                LLSD::Integer calls = cur_data[i][label]["Calls"].asInteger();
+
+                LLSD::Real execution = 0.0;
+                if (calls > 0)
+                {
+                    execution = time/calls;
+                    cur_execution.push_back(execution);
+                    cur_times.push_back(time);
+                }
+
+                cur_calls.push_back(calls);
             }
 
-            cur_calls.push_back(calls);
-        }
-
-        for (U32 i = 0; i < base_data.size(); ++i)
-        {
-            LLSD::Real time = base_data[i][label]["Time"].asReal();
-            LLSD::Integer calls = base_data[i][label]["Calls"].asInteger();
-
-            LLSD::Real execution = 0.0;
-            if (calls > 0)
+            for (U32 i = 0; i < base_data.size(); ++i)
             {
-                execution = time/calls;
-                base_execution.push_back(execution);
-                base_times.push_back(time);
+                LLSD::Real time = base_data[i][label]["Time"].asReal();
+                LLSD::Integer calls = base_data[i][label]["Calls"].asInteger();
+
+                LLSD::Real execution = 0.0;
+                if (calls > 0)
+                {
+                    execution = time/calls;
+                    base_execution.push_back(execution);
+                    base_times.push_back(time);
+                }
+
+                base_calls.push_back(calls);
             }
 
-            base_calls.push_back(calls);
-        }
+            std::sort(base_calls.begin(), base_calls.end());
+            std::sort(base_times.begin(), base_times.end());
+            std::sort(base_execution.begin(), base_execution.end());
 
-        std::sort(base_calls.begin(), base_calls.end());
-        std::sort(base_times.begin(), base_times.end());
-        std::sort(base_execution.begin(), base_execution.end());
+            std::sort(cur_calls.begin(), cur_calls.end());
+            std::sort(cur_times.begin(), cur_times.end());
+            std::sort(cur_execution.begin(), cur_execution.end());
 
-        std::sort(cur_calls.begin(), cur_calls.end());
-        std::sort(cur_times.begin(), cur_times.end());
-        std::sort(cur_execution.begin(), cur_execution.end());
-
-        //remove outliers
-        const U32 OUTLIER_CUTOFF = 512;
-        if (base_times.size() > OUTLIER_CUTOFF)
-        {
-            ll_remove_outliers(base_times, 1.f);
-        }
-
-        if (base_execution.size() > OUTLIER_CUTOFF)
-        {
-            ll_remove_outliers(base_execution, 1.f);
-        }
-
-        if (cur_times.size() > OUTLIER_CUTOFF)
-        {
-            ll_remove_outliers(cur_times, 1.f);
-        }
-
-        if (cur_execution.size() > OUTLIER_CUTOFF)
-        {
-            ll_remove_outliers(cur_execution, 1.f);
-        }
-
-
-        max_time = llmax(base_times.empty() ? 0.0 : *base_times.rbegin(), cur_times.empty() ? 0.0 : *cur_times.rbegin());
-        max_calls = llmax(base_calls.empty() ? 0 : *base_calls.rbegin(), cur_calls.empty() ? 0 : *cur_calls.rbegin());
-        max_execution = llmax(base_execution.empty() ? 0.0 : *base_execution.rbegin(), cur_execution.empty() ? 0.0 : *cur_execution.rbegin());
-
-
-        LLVector3 last_p;
-
-        //====================================
-        // basic
-        //====================================
-        buffer.clear();
-
-        last_p.clear();
-
-        LLRenderState::CullScope cull(false);
-
-        LLVector3 base_col(0, 0.7f, 0.f);
-        LLVector3 cur_col(1.f, 0.f, 0.f);
-
-        gGL.setSceneBlendType(LLRender::BT_ADD);
-
-        gGL.color3fv(base_col.mV);
-        for (U32 i = 0; i < base_times.size(); ++i)
-        {
-            gGL.begin(LLRender::TRIANGLE_STRIP);
-            gGL.vertex3fv(last_p.mV);
-            gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
-            last_p.set((F32)i/(F32) base_times.size(), (F32)(base_times[i]/max_time), 0.f);
-            gGL.vertex3fv(last_p.mV);
-            gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
-            gGL.end();
-        }
-
-        gGL.flush();
-
-
-        last_p.clear();
-        {
-            LLRenderState::BlendScope blend(true);
-
-            gGL.color3fv(cur_col.mV);
-            for (U32 i = 0; i < cur_times.size(); ++i)
+            //remove outliers
+            const U32 OUTLIER_CUTOFF = 512;
+            if (base_times.size() > OUTLIER_CUTOFF)
             {
-                gGL.begin(LLRender::TRIANGLE_STRIP);
-                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
-                gGL.vertex3fv(last_p.mV);
-                last_p.set((F32) i / (F32) cur_times.size(), (F32)(cur_times[i]/max_time), 0.f);
-                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
-                gGL.vertex3fv(last_p.mV);
-                gGL.end();
+                ll_remove_outliers(base_times, 1.f);
             }
 
-            gGL.flush();
-        }
+            if (base_execution.size() > OUTLIER_CUTOFF)
+            {
+                ll_remove_outliers(base_execution, 1.f);
+            }
 
-        saveChart(label, "time", scratch);
+            if (cur_times.size() > OUTLIER_CUTOFF)
+            {
+                ll_remove_outliers(cur_times, 1.f);
+            }
 
-        //======================================
-        // calls
-        //======================================
-        buffer.clear();
+            if (cur_execution.size() > OUTLIER_CUTOFF)
+            {
+                ll_remove_outliers(cur_execution, 1.f);
+            }
 
-        last_p.clear();
 
-        gGL.color3fv(base_col.mV);
-        for (U32 i = 0; i < base_calls.size(); ++i)
-        {
-            gGL.begin(LLRender::TRIANGLE_STRIP);
-            gGL.vertex3fv(last_p.mV);
-            gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
-            last_p.set((F32) i / (F32) base_calls.size(), (F32)base_calls[i]/max_calls, 0.f);
-            gGL.vertex3fv(last_p.mV);
-            gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
-            gGL.end();
-        }
+            max_time = llmax(base_times.empty() ? 0.0 : *base_times.rbegin(), cur_times.empty() ? 0.0 : *cur_times.rbegin());
+            max_calls = llmax(base_calls.empty() ? 0 : *base_calls.rbegin(), cur_calls.empty() ? 0 : *cur_calls.rbegin());
+            max_execution = llmax(base_execution.empty() ? 0.0 : *base_execution.rbegin(), cur_execution.empty() ? 0.0 : *cur_execution.rbegin());
 
-        gGL.flush();
 
-        {
-            LLRenderState::BlendScope blend(true);
-            gGL.color3fv(cur_col.mV);
+            LLVector3 last_p;
+
+            //====================================
+            // basic
+            //====================================
+            buffer.clear();
+
             last_p.clear();
 
-            for (U32 i = 0; i < cur_calls.size(); ++i)
+            LLRenderState::CullScope cull(false);
+
+            LLVector3 base_col(0, 0.7f, 0.f);
+            LLVector3 cur_col(1.f, 0.f, 0.f);
+
+            gGL.setSceneBlendType(LLRender::BT_ADD);
+
+            gGL.color3fv(base_col.mV);
+            for (U32 i = 0; i < base_times.size(); ++i)
             {
                 gGL.begin(LLRender::TRIANGLE_STRIP);
-                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
                 gGL.vertex3fv(last_p.mV);
-                last_p.set((F32) i / (F32) cur_calls.size(), (F32) cur_calls[i]/max_calls, 0.f);
                 gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
+                last_p.set((F32)i/(F32) base_times.size(), (F32)(base_times[i]/max_time), 0.f);
                 gGL.vertex3fv(last_p.mV);
+                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
                 gGL.end();
-
             }
 
             gGL.flush();
-        }
 
-        saveChart(label, "calls", scratch);
 
-        //======================================
-        // execution
-        //======================================
-        buffer.clear();
+            last_p.clear();
+            {
+                LLRenderState::BlendScope blend(true);
 
-        gGL.color3fv(base_col.mV);
-        U32 count = 0;
-        U32 total_count = static_cast<U32>(base_execution.size());
+                gGL.color3fv(cur_col.mV);
+                for (U32 i = 0; i < cur_times.size(); ++i)
+                {
+                    gGL.begin(LLRender::TRIANGLE_STRIP);
+                    gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
+                    gGL.vertex3fv(last_p.mV);
+                    last_p.set((F32) i / (F32) cur_times.size(), (F32)(cur_times[i]/max_time), 0.f);
+                    gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
+                    gGL.vertex3fv(last_p.mV);
+                    gGL.end();
+                }
 
-        last_p.clear();
+                gGL.flush();
+            }
 
-        for (std::vector<LLSD::Real>::iterator iter = base_execution.begin(); iter != base_execution.end(); ++iter)
-        {
-            gGL.begin(LLRender::TRIANGLE_STRIP);
-            gGL.vertex3fv(last_p.mV);
-            gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
-            last_p.set((F32)count/(F32)total_count, (F32)(*iter/max_execution), 0.f);
-            gGL.vertex3fv(last_p.mV);
-            gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
-            gGL.end();
-            count++;
-        }
+            saveChart(label, "time", scratch);
 
-        last_p.clear();
+            //======================================
+            // calls
+            //======================================
+            buffer.clear();
 
-        {
-            LLRenderState::BlendScope blend(true);
-            gGL.color3fv(cur_col.mV);
-            count = 0;
-            total_count = static_cast<U32>(cur_execution.size());
+            last_p.clear();
 
-            for (std::vector<LLSD::Real>::iterator iter = cur_execution.begin(); iter != cur_execution.end(); ++iter)
+            gGL.color3fv(base_col.mV);
+            for (U32 i = 0; i < base_calls.size(); ++i)
             {
                 gGL.begin(LLRender::TRIANGLE_STRIP);
-                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
                 gGL.vertex3fv(last_p.mV);
+                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
+                last_p.set((F32) i / (F32) base_calls.size(), (F32)base_calls[i]/max_calls, 0.f);
+                gGL.vertex3fv(last_p.mV);
+                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
+                gGL.end();
+            }
+
+            gGL.flush();
+
+            {
+                LLRenderState::BlendScope blend(true);
+                gGL.color3fv(cur_col.mV);
+                last_p.clear();
+
+                for (U32 i = 0; i < cur_calls.size(); ++i)
+                {
+                    gGL.begin(LLRender::TRIANGLE_STRIP);
+                    gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
+                    gGL.vertex3fv(last_p.mV);
+                    last_p.set((F32) i / (F32) cur_calls.size(), (F32) cur_calls[i]/max_calls, 0.f);
+                    gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
+                    gGL.vertex3fv(last_p.mV);
+                    gGL.end();
+
+                }
+
+                gGL.flush();
+            }
+
+            saveChart(label, "calls", scratch);
+
+            //======================================
+            // execution
+            //======================================
+            buffer.clear();
+
+            gGL.color3fv(base_col.mV);
+            U32 count = 0;
+            U32 total_count = static_cast<U32>(base_execution.size());
+
+            last_p.clear();
+
+            for (std::vector<LLSD::Real>::iterator iter = base_execution.begin(); iter != base_execution.end(); ++iter)
+            {
+                gGL.begin(LLRender::TRIANGLE_STRIP);
+                gGL.vertex3fv(last_p.mV);
+                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
                 last_p.set((F32)count/(F32)total_count, (F32)(*iter/max_execution), 0.f);
-                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
                 gGL.vertex3fv(last_p.mV);
+                gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
                 gGL.end();
                 count++;
             }
 
-            gGL.flush();
+            last_p.clear();
+
+            {
+                LLRenderState::BlendScope blend(true);
+                gGL.color3fv(cur_col.mV);
+                count = 0;
+                total_count = static_cast<U32>(cur_execution.size());
+
+                for (std::vector<LLSD::Real>::iterator iter = cur_execution.begin(); iter != cur_execution.end(); ++iter)
+                {
+                    gGL.begin(LLRender::TRIANGLE_STRIP);
+                    gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
+                    gGL.vertex3fv(last_p.mV);
+                    last_p.set((F32)count/(F32)total_count, (F32)(*iter/max_execution), 0.f);
+                    gGL.vertex3f(last_p.mV[0], 0.f, 0.f);
+                    gGL.vertex3fv(last_p.mV);
+                    gGL.end();
+                    count++;
+                }
+
+                gGL.flush();
+            }
+
+            saveChart(label, "execution", scratch);
         }
 
-        saveChart(label, "execution", scratch);
     }
-
-    buffer.flush();
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);

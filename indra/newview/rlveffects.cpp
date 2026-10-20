@@ -333,9 +333,10 @@ void RlvSphereEffect::setShaderUniforms(LLGLSLShader* pShader)
 
 void RlvSphereEffect::renderPass(LLGLSLShader* pShader, const LLShaderEffectParams* pParams) const
 {
+    RenderPassScope pass;       // F3.5b: only when there is a destination buffer
     if (pParams->m_pDstBuffer)
     {
-        pParams->m_pDstBuffer->bindTarget();
+        pass.begin(*pParams->m_pDstBuffer);
     }
     else
     {
@@ -366,10 +367,7 @@ void RlvSphereEffect::renderPass(LLGLSLShader* pShader, const LLShaderEffectPara
     pShader->disableTexture(LLShaderMgr::DEFERRED_DIFFUSE, pParams->m_pSrcBuffer->getUsage());
     pShader->disableTexture(LLShaderMgr::DEFERRED_DEPTH, gPipeline.mRT->deferredScreen.getUsage());
 
-    if (pParams->m_pDstBuffer)
-    {
-        pParams->m_pDstBuffer->flush();
-    }
+    pass.end();
 }
 
 LLTrace::BlockTimerStatHandle FTM_RLV_EFFECT_SPHERE("Post-process (RLVa sphere)");

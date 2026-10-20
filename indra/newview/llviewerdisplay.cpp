@@ -1222,9 +1222,10 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         gGL.setColorMask(true, true);
 
+        RenderPassScope world_pass;     // F3.5b: the world pass on the deferred screen target: begun here, ended after the render flush below
         {
         LL_CPU_ZONE("display: deferredScreen bind + clear");
-        gPipeline.mRT->deferredScreen.bindTarget();
+        world_pass.begin(gPipeline.mRT->deferredScreen);
         if (gUseWireframe)
         {
             constexpr F32 g = 0.5f;
@@ -1312,7 +1313,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLAppViewer::instance()->pingMainloopTimeout("Display:RenderFlush");
 
         LLRenderTarget &rt = (gPipeline.sRenderDeferred ? gPipeline.mRT->deferredScreen : gPipeline.mRT->screen);
-        { LL_CPU_ZONE("display: deferredScreen flush"); rt.flush(); }
+        (void)rt;
+        { LL_CPU_ZONE("display: deferredScreen flush"); world_pass.end(); }
 
         if (LLPipeline::sRenderDeferred)
         {
@@ -1523,22 +1525,23 @@ void display_cube_face()
 
     gGL.setColorMask(true, true);
 
-    gPipeline.mRT->deferredScreen.bindTarget();
-    if (gUseWireframe)
     {
-        gGL.setClearColor(0.5f, 0.5f, 0.5f, 1.f);
+        RenderPassScope pass(gPipeline.mRT->deferredScreen);
+        if (gUseWireframe)
+        {
+            gGL.setClearColor(0.5f, 0.5f, 0.5f, 1.f);
+        }
+        else
+        {
+            gGL.setClearColor(1.f, 0.f, 1.f, 1.f);
+        }
+        gPipeline.mRT->deferredScreen.clear();
+
+        LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
+
+        gPipeline.renderGeomDeferred(*LLViewerCamera::getInstance());
+
     }
-    else
-    {
-        gGL.setClearColor(1.f, 0.f, 1.f, 1.f);
-    }
-    gPipeline.mRT->deferredScreen.clear();
-
-    LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
-
-    gPipeline.renderGeomDeferred(*LLViewerCamera::getInstance());
-
-    gPipeline.mRT->deferredScreen.flush();
 
     gPipeline.renderDeferredLighting();
 
@@ -2308,44 +2311,45 @@ void render_ui_2d()
             LLView::sIsRectDirty = false;
             LLRect t_rect;
 
-            gPipeline.mUIScreen.bindTarget();
-            gGL.setColorMask(true, true);
             {
-                constexpr S32 pad = 8;
+                RenderPassScope pass(gPipeline.mUIScreen);
+                gGL.setColorMask(true, true);
+                {
+                    constexpr S32 pad = 8;
 
-                LLView::sDirtyRect.mLeft -= pad;
-                LLView::sDirtyRect.mRight += pad;
-                LLView::sDirtyRect.mBottom -= pad;
-                LLView::sDirtyRect.mTop += pad;
+                    LLView::sDirtyRect.mLeft -= pad;
+                    LLView::sDirtyRect.mRight += pad;
+                    LLView::sDirtyRect.mBottom -= pad;
+                    LLView::sDirtyRect.mTop += pad;
 
-                LLRenderState::ScissorScope scissor(true);
-                static LLRect last_rect = LLView::sDirtyRect;
+                    LLRenderState::ScissorScope scissor(true);
+                    static LLRect last_rect = LLView::sDirtyRect;
 
-                //union with last rect to avoid mouse poop
-                last_rect.unionWith(LLView::sDirtyRect);
+                    //union with last rect to avoid mouse poop
+                    last_rect.unionWith(LLView::sDirtyRect);
 
-                t_rect = LLView::sDirtyRect;
-                LLView::sDirtyRect = last_rect;
-                last_rect = t_rect;
+                    t_rect = LLView::sDirtyRect;
+                    LLView::sDirtyRect = last_rect;
+                    last_rect = t_rect;
 
-                // <FS:Ansariel> Factor out instance() call
-                //last_rect.mLeft = LLRect::tCoordType(last_rect.mLeft / LLUI::getScaleFactor().mV[0]);
-                //last_rect.mRight = LLRect::tCoordType(last_rect.mRight / LLUI::getScaleFactor().mV[0]);
-                //last_rect.mTop = LLRect::tCoordType(last_rect.mTop / LLUI::getScaleFactor().mV[1]);
-                //last_rect.mBottom = LLRect::tCoordType(last_rect.mBottom / LLUI::getScaleFactor().mV[1]);
-                last_rect.mLeft = LLRect::tCoordType(last_rect.mLeft / ui_scale_factor.mV[0]);
-                last_rect.mRight = LLRect::tCoordType(last_rect.mRight / ui_scale_factor.mV[0]);
-                last_rect.mTop = LLRect::tCoordType(last_rect.mTop / ui_scale_factor.mV[1]);
-                last_rect.mBottom = LLRect::tCoordType(last_rect.mBottom / ui_scale_factor.mV[1]);
+                    // <FS:Ansariel> Factor out instance() call
+                    //last_rect.mLeft = LLRect::tCoordType(last_rect.mLeft / LLUI::getScaleFactor().mV[0]);
+                    //last_rect.mRight = LLRect::tCoordType(last_rect.mRight / LLUI::getScaleFactor().mV[0]);
+                    //last_rect.mTop = LLRect::tCoordType(last_rect.mTop / LLUI::getScaleFactor().mV[1]);
+                    //last_rect.mBottom = LLRect::tCoordType(last_rect.mBottom / LLUI::getScaleFactor().mV[1]);
+                    last_rect.mLeft = LLRect::tCoordType(last_rect.mLeft / ui_scale_factor.mV[0]);
+                    last_rect.mRight = LLRect::tCoordType(last_rect.mRight / ui_scale_factor.mV[0]);
+                    last_rect.mTop = LLRect::tCoordType(last_rect.mTop / ui_scale_factor.mV[1]);
+                    last_rect.mBottom = LLRect::tCoordType(last_rect.mBottom / ui_scale_factor.mV[1]);
 
-                LLRect clip_rect(last_rect);
+                    LLRect clip_rect(last_rect);
 
-                gGL.clearBuffers(GL_COLOR_BUFFER_BIT);
+                    gGL.clearBuffers(GL_COLOR_BUFFER_BIT);
 
-                { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); draw_widgets(); }
+                    { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); draw_widgets(); }
+                }
+
             }
-
-            gPipeline.mUIScreen.flush();
             gGL.setColorMask(true, false);
 
             LLView::sDirtyRect = t_rect;

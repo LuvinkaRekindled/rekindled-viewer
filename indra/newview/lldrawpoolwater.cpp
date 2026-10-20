@@ -124,7 +124,7 @@ void LLDrawPoolWater::beginPostDeferredPass(S32 pass)
         LLRenderTarget& depth_src = gPipeline.mRT->deferredScreen;
         LLRenderTarget& dst = gPipeline.mWaterDis;
 
-        dst.bindTarget();
+        RenderPassScope pass(dst);
         gCopyDepthProgram.bind();
 
         S32 diff_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DIFFUSE_MAP);
@@ -136,7 +136,6 @@ void LLDrawPoolWater::beginPostDeferredPass(S32 pass)
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-        dst.flush();
     }
 }
 

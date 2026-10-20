@@ -845,6 +845,16 @@ void end(LLRenderTarget& target, const char* file, int line)
     target.flush(file, line);
 }
 
+void suspend(LLRenderTarget& target, const char* file, int line)
+{
+    target.flush(file, line);
+}
+
+void resume(LLRenderTarget& target, const char* file, int line)
+{
+    target.bindTarget(file, line);
+}
+
 void frameEnd()
 {
     LLRenderTarget::checkFrameEnd();

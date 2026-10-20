@@ -1014,7 +1014,7 @@ F32 shader_timer_benchmark(std::vector<LLRenderTarget> & dest, TextureHolder & t
 
     {
         ShaderProfileHelper initProfile;
-        dest[0].bindTarget();
+        RenderPassScope pass(dest[0]);
         gBenchmarkProgram.bind();
         for (S32 c = 0; c < samples; ++c)
         {
@@ -1026,7 +1026,6 @@ F32 shader_timer_benchmark(std::vector<LLRenderTarget> & dest, TextureHolder & t
             }
         }
         gBenchmarkProgram.unbind();
-        dest[0].flush();
     }
 
     F32 ms = gBenchmarkProgram.mTimeElapsed / 1000000.f;
@@ -1109,9 +1108,8 @@ F32 gpu_benchmark()
             delete[] pixels;
             return -1.f;
         }
-        dest[i].bindTarget();
-        dest[i].clear();
-        dest[i].flush();
+        RenderPassScope pass_1111(dest[i], RenderPass::LoadOp::Clear);
+        pass_1111.end();
 
         if (!texHolder.bind(i))
         {

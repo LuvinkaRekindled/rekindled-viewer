@@ -6221,6 +6221,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     F32 original_fov = LLViewerCamera::getInstance()->getView();
 
     LLRenderTarget scratch_space;
+    RenderPassScope scratch_pass;       // F3.5b: begun when the scratch target is bound for the snapshot, ended where it was flushed
 
     // Lambda to restore deferred if needed when finished or in the case of early return
     auto restore_deferred = [&]()
@@ -6231,7 +6232,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
             LLViewerCamera::getInstance()->setViewNoBroadcast(original_fov);
             LLViewerCamera::getInstance()->setViewHeightInPixels(mWorldViewRectRaw.getHeight());
             LLViewerCamera::getInstance()->setAspect(getWorldViewAspectRatio());
-            scratch_space.flush();
+            scratch_pass.end();
             scratch_space.release();
             gPipeline.allocateScreenBuffer(original_width, original_height);
         }
@@ -6270,7 +6271,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                     mWorldViewRectRaw.set(0, image_height, image_width, 0);
                     LLViewerCamera::getInstance()->setViewHeightInPixels( mWorldViewRectRaw.getHeight() );
                     LLViewerCamera::getInstance()->setAspect( getWorldViewAspectRatio() );
-                    scratch_space.bindTarget();
+                    scratch_pass.begin(scratch_space);
                 }
                 else
                 {
@@ -6592,6 +6593,7 @@ bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_
     S32 original_height = LLPipeline::sRenderDeferred ? gPipeline.mRT->deferredScreen.getHeight() : gViewerWindow->getWorldViewHeightRaw();
 
     LLRenderTarget scratch_space;
+    RenderPassScope scratch_pass;       // F3.5b: begun when the scratch target is bound for the snapshot, ended where it was flushed
     U32 color_fmt = GL_RGBA;
     if (scratch_space.allocate(image_width, image_height, color_fmt, true))
     {
@@ -6599,7 +6601,7 @@ bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_
         {
             mWorldViewRectRaw.set(0, image_height, image_width, 0);
 
-            scratch_space.bindTarget();
+            scratch_pass.begin(scratch_space);
         }
         else
         {
@@ -6666,7 +6668,7 @@ bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_
 
     gPipeline.resetDrawOrders();
     mWorldViewRectRaw = window_rect;
-    scratch_space.flush();
+    scratch_pass.end();
     scratch_space.release();
     gPipeline.allocateScreenBuffer(original_width, original_height);
 
