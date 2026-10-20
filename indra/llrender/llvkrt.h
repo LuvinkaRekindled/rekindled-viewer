@@ -101,8 +101,22 @@ bool active();
 bool init(VkDescriptorSetLayout set_layout);
 void shutdown();
 
-// One caster draw of a shadow pass (shadow packets). Several passes of a frame name the same casters: the repeats are dropped.
-void noteCaster(const Caster& c);
+// A handle on the group a caster was filed under (S2, resident casters): kept by the caller, so that the next frames' notes of an unchanged caster skip the lookups (noteAgain).
+// It names the group by its address and row; the key is kept to catch an address that was reused by another group.
+struct CasterRef
+{
+    void* mGroup = nullptr;
+    U32 mRow = ~0u;
+    U32 mVb = 0, mIb = 0, mMatrixId = 0;
+};
+
+// One caster draw of a shadow pass (shadow packets). Several passes of a frame name the same casters: the repeats are dropped. ref: filled with the handle of the group.
+void noteCaster(const Caster& c, CasterRef* ref = nullptr);
+// The note of a caster the group already knows (same buffers as at the last full note, same model matrix: the caller checks): sets the pass stamp and the first-of-the-frame bookkeeping.
+// False when the handle does not name the group any more (it expired and was erased): the caller notes the caster in full.
+bool noteAgain(const CasterRef& ref, U32 pass);
+// a pass rendered this frame (the pass stamps of the groups are read against it) even though all its casters were named by an earlier pass of the frame
+void passRendered(U32 pass);
 
 // Builds what the casters noted since the last call need (a budget per call), then the top-level structure for this view: the instances are transformed into eye space
 // (view * model), the space the lighting shaders work in. Recorded into the current frame outside any render pass. view: 16 floats column-major.

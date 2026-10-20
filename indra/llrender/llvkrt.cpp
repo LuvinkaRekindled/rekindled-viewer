@@ -1444,7 +1444,46 @@ void updateMaterials(const LLVkBridge::RtMaterialDef* defs, U32 count)
     }
 }
 
-void noteCaster(const Caster& c)
+bool noteAgain(const CasterRef& ref, U32 pass)
+{
+    if (!sInit || sFailed)
+    {
+        return false;
+    }
+    Group* g = (Group*)ref.mGroup;
+    if (!g || ref.mRow >= sSeenRows.size() || sSeenRows[ref.mRow].mGroup != g || g->mId != ref.mRow || g->mKey.mVb != ref.mVb || g->mKey.mIb != ref.mIb || g->mKey.mMatrixId != ref.mMatrixId)
+    {
+        return false;
+    }
+    ++sStats.mCasters;
+    const U32 p = std::min<U32>(pass, kPasses - 1);
+    const U64 frame_tag = Context::instance().getFrameNumber() + 1;
+    sSeenRows[ref.mRow].mSeen[p] = frame_tag;
+    sPassFrame[p] = frame_tag;
+    if (g->mNotedTag != frame_tag)
+    {
+        if (sNotedListTag != frame_tag)
+        {
+            sNotedListTag = frame_tag;
+            sNotedList.clear();
+        }
+        sNotedList.push_back(g);
+        g->mMoving = false;                     // the caller saw the matrix unchanged
+        g->mNotedTag = frame_tag;
+        g->mBlas->mLastSeen = sSceneCalls;
+    }
+    return true;
+}
+
+void passRendered(U32 pass)
+{
+    if (sInit && !sFailed)
+    {
+        sPassFrame[std::min<U32>(pass, kPasses - 1)] = Context::instance().getFrameNumber() + 1;
+    }
+}
+
+void noteCaster(const Caster& c, CasterRef* ref)
 {
     if (!sInit || sFailed || c.mCount < 3)
     {
@@ -1485,6 +1524,14 @@ void noteCaster(const Caster& c)
         mark_dirty(it->second);
     }
     Group& g = it->second;
+    if (ref)
+    {
+        ref->mGroup = &g;
+        ref->mRow = g.mId;
+        ref->mVb = key.mVb;
+        ref->mIb = key.mIb;
+        ref->mMatrixId = key.mMatrixId;
+    }
     const U32 pass = std::min<U32>(c.mPass, kPasses - 1);
     const U64 frame_tag = Context::instance().getFrameNumber() + 1;
     sSeenRows[g.mId].mSeen[pass] = frame_tag;

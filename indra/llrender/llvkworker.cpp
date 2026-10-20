@@ -2468,6 +2468,7 @@ void create_buffers(S32 n, U32* buffers)
 }
 
 static U64 sPacketBufferGeneration = 0;      // <FS> bumped when a buffer entry goes: the packet records' lookup cache starts over
+static void res_buffer_gone(U32 name);       // <FS> S2: the resident fragments' cached pointers to it are dropped
 
 void destroy_buffers(S32 n, const U32* buffers)
 {
@@ -2479,6 +2480,7 @@ void destroy_buffers(S32 n, const U32* buffers)
         {
             release_storage(it->second);
             buf_forget(it->first);
+            res_buffer_gone(it->first);
             sGL.mBuffers.erase(it);
             ++sPacketBufferGeneration;
         }
@@ -3646,7 +3648,8 @@ static void buffer_info_of(const Buf& b, BufferInfo& out)
     }
 }
 
-static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha = nullptr)
+static void note_rt_caster_ref(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, LLVk::Rt::CasterRef* ref);
+static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha = nullptr, LLVk::Rt::CasterRef* ref = nullptr)
 {
     Rt::Caster c;
     c.mVb = vb;
@@ -3671,7 +3674,12 @@ static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf&
     }
     buffer_info_of(vbuf, c.mVi);
     buffer_info_of(ibuf, c.mIi);
-    Rt::noteCaster(c);
+    Rt::noteCaster(c, ref);
+}
+
+static void note_rt_caster_ref(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, LLVk::Rt::CasterRef* ref)
+{
+    note_rt_caster(pass, vb, ib, vbuf, ibuf, first, count, matrix_id, kind, model, nullptr, ref);
 }
 
 // a rigged caster draw for the ray scene: skinned on the GPU into a copy of its vertices (Rt::noteSkinned)
@@ -4621,7 +4629,11 @@ static void on_object_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h,
 // only tells the worker what changed (RETAIN_RESIDENT / RELEASE, kinds 14 / 12), the region matrices (15) and which pass to draw (16).
 struct ResGpu32 { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
 static_assert(sizeof(ResGpu32) == 32, "resident entry");
-struct ResPair { U32 mVb = 0, mIb = 0; Buf* mPvb = nullptr; Buf* mPib = nullptr; U64 mGen = ~0ull, mEvb = 0, mMvb = 0, mEib = 0, mMib = 0; bool mOk = false; };
+struct ResPair
+{
+    U32 mVb = 0, mIb = 0; Buf* mPvb = nullptr; Buf* mPib = nullptr; U64 mGen = ~0ull, mEvb = 0, mMvb = 0, mEib = 0, mMib = 0; bool mOk = false;
+    U64 mNote[6] = {};                                          // epoch, moves, version of both buffers at the last full ray note (the cheap note is valid while they are the same)
+};
 struct ResFrag
 {
     std::vector<U32> mSlots;                                    // the table slot of each entry
@@ -4629,7 +4641,14 @@ struct ResFrag
     std::vector<U32> mPairOf;                                   // per entry: index into mPairs
     std::vector<ResPair> mPairs;
     F32 mBounds[4] = {};                                        // the sphere (the table copy is write-combined memory: never read back by the CPU)
+    std::vector<LLVk::Rt::CasterRef> mRefs;                     // ray scene: the group each entry was filed under (LL_VK_SCENE_RAYFAST)
+    std::vector<U32> mRefMat;                                   // the matrix version of the entry's region slot at its last full note
+    U64 mNoteFrame = ~0ull;                                     // the frame a pass of which noted this fragment (the other passes of the frame need not)
+    size_t mCullIndex = 0;                                      // its row in sRes.mCull
 };
+// one row per fragment, contiguous, for the sphere test of the ray notes (a sweep over 5,000 fragments must not touch their scattered nodes): centre in region space, radius, the region matrix slot
+struct ResCullItem { F32 mC[3]; F32 mR; U32 mSlot; U32 mId; ResFrag* mFrag; };
+static std::unordered_multimap<U32, struct ResPair*> sResPairByName;     // the fragments' buffer pairs by the names of their buffers (to drop their cached pointers when a buffer goes)
 static const U32 kResCapacity = 131072;
 static const U32 kResMatrixSlots = 256;
 static struct ResState
@@ -4643,8 +4662,11 @@ static struct ResState
     std::vector<U32> mFree;
     std::vector<std::pair<U32, U64>> mRetired;                  // slot, frame it was given up (reusable once the frames in flight are done)
     std::unordered_map<U32, ResFrag> mFrags;
+    std::vector<ResCullItem> mCull;
     U64 mRefreshFrame = ~0ull;
+    U64 mRefreshNs = 0;
     std::vector<F32> mMatrixCpu = std::vector<F32>(16 * 256, 0.f);     // the region matrices as sent (the ray notes read them: the table copy is write-combined)
+    std::vector<U32> mMatrixVersion = std::vector<U32>(256, 1);         // bumped when a slot's matrix changes value (a region shift)
     U64 mPasses = 0, mDrawn = 0, mReport = 0, mOverflow = 0, mUnresolved = 0, mRecheck = 0;
 } sRes;
 
@@ -4769,6 +4791,44 @@ static void res_write_entries(ResFrag& f, size_t pair_index)
     }
 }
 
+static void res_buffer_gone(U32 name)
+{
+    auto range = sResPairByName.equal_range(name);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        ResPair* p = it->second;
+        if (p->mVb == name) { p->mPvb = nullptr; }
+        if (p->mIb == name) { p->mPib = nullptr; }
+        p->mOk = false;
+        p->mGen = ~0ull;
+        p->mNote[0] = ~0ull;                // the cheap note is not valid until a full one
+    }
+}
+
+// the pair's buffers, found (again) if the cached pointer was dropped, and usable by the ray scene
+static bool res_pair_ready(ResPair& p)
+{
+    if (!p.mPvb)
+    {
+        auto v = sGL.mBuffers.find(p.mVb);
+        if (v == sGL.mBuffers.end())
+        {
+            return false;
+        }
+        p.mPvb = &v->second;
+    }
+    if (!p.mPib)
+    {
+        auto i = sGL.mBuffers.find(p.mIb);
+        if (i == sGL.mBuffers.end())
+        {
+            return false;
+        }
+        p.mPib = &i->second;
+    }
+    return p.mPvb->mVk.valid() && p.mPib->mVk.valid() && p.mPvb->mVk.mAddress && p.mPib->mVk.mAddress;
+}
+
 static void res_release(U32 id)
 {
     auto it = sRes.mFrags.find(id);
@@ -4776,11 +4836,33 @@ static void res_release(U32 id)
     {
         return;
     }
+    for (ResPair& p : it->second.mPairs)
+    {
+        for (U32 name : { p.mVb, p.mIb })
+        {
+            auto range = sResPairByName.equal_range(name);
+            for (auto m = range.first; m != range.second; ++m)
+            {
+                if (m->second == &p)
+                {
+                    sResPairByName.erase(m);
+                    break;
+                }
+            }
+        }
+    }
     const U64 frame = Context::instance().getFrameNumber();
     for (U32 slot : it->second.mSlots)
     {
         sRes.mT[slot].mCount = 0;
         sRes.mRetired.push_back({ slot, frame });
+    }
+    if (!it->second.mSlots.empty())
+    {
+        const size_t index = it->second.mCullIndex;
+        sRes.mCull[index] = sRes.mCull.back();
+        sRes.mCull[index].mFrag->mCullIndex = index;
+        sRes.mCull.pop_back();
     }
     sRes.mFrags.erase(it);
 }
@@ -4797,6 +4879,8 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     ResFrag f;
     memcpy(f.mBounds, h.mViewProj, sizeof(f.mBounds));
     f.mEntries.assign(entries, entries + h.mEntries);
+    f.mRefs.assign(h.mEntries, LLVk::Rt::CasterRef());
+    f.mRefMat.assign(h.mEntries, 0);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         U32 slot;
@@ -4839,6 +4923,17 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         sRes.mT[slot].mModel = e.mMatrix;
     }
     ResFrag& stored = sRes.mFrags[h.mFragment] = std::move(f);
+    for (ResPair& p : stored.mPairs)
+    {
+        sResPairByName.emplace(p.mVb, &p);
+        sResPairByName.emplace(p.mIb, &p);
+    }
+    if (!stored.mSlots.empty())
+    {
+        ResCullItem item = { { stored.mBounds[0], stored.mBounds[1], stored.mBounds[2] }, stored.mBounds[3], stored.mEntries[0].mMatrix, h.mFragment, &stored };
+        stored.mCullIndex = sRes.mCull.size();
+        sRes.mCull.push_back(item);
+    }
     for (size_t k = 0; k < stored.mPairs.size(); ++k)
     {
         if (res_pair_check(stored.mPairs[k]) == 1)
@@ -4856,6 +4951,8 @@ static void res_refresh(U64 frame)
         return;
     }
     sRes.mRefreshFrame = frame;
+    const auto t_refresh = std::chrono::steady_clock::now();
+    struct RefreshTimer { std::chrono::steady_clock::time_point mT; ~RefreshTimer() { sRes.mRefreshNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mT).count(); } } refresh_timer = { t_refresh };
     res_reclaim(frame);
     U64 unresolved = 0;
     const bool pending = !sPendingBufs.empty();
@@ -4899,6 +4996,13 @@ static void res_matrices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blo
     }
     const U32 n = std::min<U32>(h.mMatrices, kResMatrixSlots);
     memcpy(sRes.mM, blob, 64 * (size_t)n);
+    for (U32 s = 0; s < n; ++s)
+    {
+        if (memcmp(sRes.mMatrixCpu.data() + 16 * (size_t)s, blob + 64 * (size_t)s, 64) != 0)
+        {
+            ++sRes.mMatrixVersion[s];
+        }
+    }
     memcpy(sRes.mMatrixCpu.data(), blob, 64 * (size_t)n);
 }
 
@@ -5016,7 +5120,6 @@ static bool res_cull_pipeline()
     return true;
 }
 
-static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha);
 // kind 17 (ray shadows): the casters of a cascade pass for the ray scene, from the resident fragments: the same frustum test as the GPU cull, on the CPU, per fragment (its entries share its bounds)
 static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -5024,46 +5127,88 @@ static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         return;
     }
-    res_refresh(Context::instance().getFrameNumber());
+    static const bool fast = getenv("LL_VK_SCENE_RAYFAST") && getenv("LL_VK_SCENE_RAYFAST")[0] == '1';
+    const U64 frame_now = Context::instance().getFrameNumber();
+    if (fast)
+    {
+        // nothing reads the table's addresses in ray shadow mode (nothing is drawn): the pairs are checked when they are named, and dropped by res_buffer_gone; only the slots are given back
+        res_reclaim(frame_now);
+    }
+    else
+    {
+        res_refresh(frame_now);
+    }
+    if (fast)
+    {
+        Rt::passRendered(h.mPass);      // the groups' stamps for this pass are read against it, whichever fragments it ends up naming
+    }
     static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
     const F32* planes = (const F32*)blob;
-    static U64 passes = 0, noted = 0, fragments_in = 0;
-    for (auto& kv : sRes.mFrags)
+    static U64 passes = 0, noted = 0, fragments_in = 0, again = 0, full = 0;
+    static U64 ns_refresh = 0, ns_sweep = 0, ns_notes = 0;
+    static const bool timed = getenv("LL_VK_SCENE_TIMES") != nullptr;
+    const auto t_start = std::chrono::steady_clock::now();
+    for (const ResCullItem& item : sRes.mCull)
     {
-        const ResFrag& f = kv.second;
-        if (f.mSlots.empty())
-        {
-            continue;
-        }
-        // the sphere (all entries of a fragment carry the same one); the centre is in region space: add the entry's region matrix translation
-        const F32* b = f.mBounds;
-        const F32* m0 = f.mEntries[0].mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)f.mEntries[0].mMatrix : nullptr;
-        const F32 c[3] = { b[0] + (m0 ? m0[12] : 0.f), b[1] + (m0 ? m0[13] : 0.f), b[2] + (m0 ? m0[14] : 0.f) };
+        // the sphere: the centre is in region space, add the region matrix translation
+        const F32* m0 = item.mSlot ? sRes.mMatrixCpu.data() + 16 * (size_t)item.mSlot : nullptr;
+        const F32 c[3] = { item.mC[0] + (m0 ? m0[12] : 0.f), item.mC[1] + (m0 ? m0[13] : 0.f), item.mC[2] + (m0 ? m0[14] : 0.f) };
         bool inside = true;
         for (U32 p = 0; p < plane_count && inside; ++p)
         {
-            inside = planes[4 * p] * c[0] + planes[4 * p + 1] * c[1] + planes[4 * p + 2] * c[2] + planes[4 * p + 3] >= -b[3];
+            inside = planes[4 * p] * c[0] + planes[4 * p + 1] * c[1] + planes[4 * p + 2] * c[2] + planes[4 * p + 3] >= -item.mR;
         }
         if (!inside)
         {
             continue;
         }
+        ResFrag& f = *item.mFrag;
+        if (fast && f.mNoteFrame == frame_now)
+        {
+            continue;                   // an earlier pass of this frame named it (the pass stamp of that pass keeps its groups alive)
+        }
         ++fragments_in;
+        f.mNoteFrame = frame_now;
         for (size_t i = 0; i < f.mEntries.size(); ++i)
         {
-            const ResPair& pair = f.mPairs[f.mPairOf[i]];
-            if (!pair.mOk)
+            ResPair& pair = f.mPairs[f.mPairOf[i]];
+            if (fast ? !res_pair_ready(pair) : !pair.mOk)
             {
                 continue;
             }
             const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+            if (fast)
+            {
+                // the cheap note: the group was filed at a full note, and nothing it was made from changed since (buffers: epoch, moves, version; the region matrix: its version)
+                const U64 stamp[6] = { pair.mPvb->mEpoch, pair.mPvb->mMoves, pair.mPvb->mVersion, pair.mPib->mEpoch, pair.mPib->mMoves, pair.mPib->mVersion };
+                if (f.mRefs[i].mGroup && f.mRefMat[i] == sRes.mMatrixVersion[e.mMatrix] && memcmp(stamp, pair.mNote, sizeof(stamp)) == 0 && Rt::noteAgain(f.mRefs[i], h.mPass))
+                {
+                    ++again;
+                    ++noted;
+                    continue;
+                }
+                ++full;
+                note_rt_caster_ref(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, &f.mRefs[i]);
+                f.mRefMat[i] = sRes.mMatrixVersion[e.mMatrix];
+                memcpy(pair.mNote, stamp, sizeof(stamp));
+                ++noted;
+                continue;
+            }
             note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, nullptr);
             ++noted;
         }
     }
-    if (++passes % 2400 == 0)
+    if (timed)
     {
-        LL_INFOS("VkScene") << "resident ray notes: " << passes << " passes, " << noted << " casters named, " << fragments_in << " fragments inside the frustum" << LL_ENDL;
+        ns_notes += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t_start).count();
+    }
+    if (++passes % 600 == 0 && timed)
+    {
+        LL_INFOS("VkScene") << "resident ray notes, worker time per pass: sweep + notes " << (double)ns_notes / 1000.0 / passes << " us, refresh " << (double)sRes.mRefreshNs / 1000.0 / passes << " us (once a frame)" << LL_ENDL;
+    }
+    if (passes % 2400 == 0)
+    {
+        LL_INFOS("VkScene") << "resident ray notes: " << passes << " passes, " << noted << " casters named (" << again << " cheap, " << full << " full), " << fragments_in << " fragments inside the frustum" << LL_ENDL;
     }
 }
 
