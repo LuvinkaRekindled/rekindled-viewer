@@ -1323,7 +1323,7 @@ void LLReflectionMapManager::updateUniforms()
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("rmmsu - update buffer");
-        gGL.bufferData(mUBO, GL_UNIFORM_BUFFER, sizeof(ReflectionProbeData), &mProbeData, GL_STREAM_DRAW);
+        gGL.bufferData(mUBO, BufferKind::Uniform, sizeof(ReflectionProbeData), &mProbeData);
     }
 
 #if 0

@@ -14,6 +14,7 @@
 #if defined(LL_VULKAN)
 
 #include "linden_common.h"
+#include "llrenderformat.h"
 
 namespace LLVkFormat
 {

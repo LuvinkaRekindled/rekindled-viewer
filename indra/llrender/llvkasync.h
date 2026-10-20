@@ -16,6 +16,7 @@
 #if defined(LL_VULKAN)
 
 #include "linden_common.h"
+#include "llrenderformat.h"
 
 #include <functional>
 #include <string>
@@ -64,21 +65,21 @@ namespace LLVkAsync
         Impl* mImpl;
     };
     // one vertex attribute: kind 0 is glVertexAttribPointer, kind 1 glVertexAttribIPointer (same layout the coalesced run uses)
-    struct VertexAttrib { U32 mKind; U32 mIndex; S32 mSize; U32 mType; S32 mStride; U32 mNormalized; const void* mPointer; };
+    struct VertexAttrib { U32 mKind; U32 mIndex; S32 mSize; ComponentType mType; S32 mStride; U32 mNormalized; const void* mPointer; };
     // the vertex array state of LLVertexBuffer::setBuffer(): optional array buffer bind, the attribute pointers, optional index buffer bind (played in that order).
     // Only on the main producer (see mainProducer()); one record, played by the worker through the same functions the separate calls reach.
     // a texture bind with its unit (LLTexUnit): replaces a held glActiveTexture + glBindTexture pair
     void bindTextureUnit(U32 unit, U32 texture);
     // draws (LLVertexBuffer): the same records glDrawRangeElements / glDrawArrays queue, written without the call coalescer in between
-    void drawRangeElements(U32 mode, U32 start, U32 end, S32 count, U32 type, const void* indices);
-    void drawArrays(U32 mode, S32 first, S32 count);
+    void drawRangeElements(PrimitiveMode mode, U32 start, U32 end, S32 count, ComponentType type, const void* indices);
+    void drawArrays(PrimitiveMode mode, S32 first, S32 count);
     // F3.1 immediate mode: one draw whose vertices travel inside the record (non-indexed). `mask` says which attribute locations are supplied (bit = attribute location:
     // SCRATCH_POSITION always, SCRATCH_TEXCOORD0, SCRATCH_COLOR); the others read the constant attribute. The bytes are `count` positions (4 floats, 3 used), then `count` texcoords
     // (2 floats) when SCRATCH_TEXCOORD0 is set, then `count` colours (4 normalized bytes) when SCRATCH_COLOR is set. The worker copies them into the frame's vertex scratch.
     enum ScratchAttr : U32 { SCRATCH_POSITION = 1u << 0, SCRATCH_TEXCOORD0 = 1u << 2, SCRATCH_COLOR = 1u << 6 };
-    void drawScratch(U32 mode, S32 count, U32 mask, const void* positions, const void* texcoords, const void* colors);
+    void drawScratch(PrimitiveMode mode, S32 count, U32 mask, const void* positions, const void* texcoords, const void* colors);
     // buffer storage by name (LLVertexBuffer): (re)specify a buffer / write a range of it, without binding it first. target only says vertex or index.
-    void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage);
+    void bufferData(U32 name, BufferKind kind, S64 size, const void* data);
     void bufferSubData(U32 name, S64 offset, S64 size, const void* data);
     // the vertex buffer pool gives a buffer name to another owner (or takes it back): what the name held is not what it will hold; the arena's epoch moves on
     void bufferRecycle(U32 name);

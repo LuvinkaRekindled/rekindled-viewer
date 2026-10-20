@@ -65,6 +65,10 @@ Transfer transfer(U32 gl_format, U32 gl_type)
     return t;
 }
 
+static_assert((int)BK_VERTEX == (int)BufferKind::Vertex && (int)BK_INDEX == (int)BufferKind::Index && (int)BK_UNIFORM == (int)BufferKind::Uniform, "BufferKind");
+static_assert((int)T_U8 == (int)ComponentType::U8 && (int)T_U16 == (int)ComponentType::U16 && (int)T_U32 == (int)ComponentType::U32 && (int)T_F32 == (int)ComponentType::F32 && (int)T_F16 == (int)ComponentType::F16, "ComponentType");
+static_assert((int)TOP_POINTS == (int)PrimitiveMode::Points && (int)TOP_TRIANGLES == (int)PrimitiveMode::Triangles && (int)TOP_TRIANGLE_FAN == (int)PrimitiveMode::TriangleFan && (int)TOP_OTHER == (int)PrimitiveMode::Other, "PrimitiveMode");
+
 Topology topology(U32 gl)
 {
     switch (gl)

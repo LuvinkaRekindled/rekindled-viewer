@@ -183,7 +183,7 @@ void Asset::uploadTransforms()
         gGL.genBuffers(1, &mNodesUBO);
     }
 
-    gGL.bufferData(mNodesUBO, GL_UNIFORM_BUFFER, glmp.size() * sizeof(F32), glmp.data(), GL_STREAM_DRAW);
+    gGL.bufferData(mNodesUBO, BufferKind::Uniform, glmp.size() * sizeof(F32), glmp.data());
 }
 
 void Asset::uploadMaterials()
@@ -230,7 +230,7 @@ void Asset::uploadMaterials()
         gGL.genBuffers(1, &mMaterialsUBO);
     }
 
-    gGL.bufferData(mMaterialsUBO, GL_UNIFORM_BUFFER, md.size() * sizeof(vec4), md.data(), GL_STREAM_DRAW);
+    gGL.bufferData(mMaterialsUBO, BufferKind::Uniform, md.size() * sizeof(vec4), md.data());
 }
 
 S32 Asset::lineSegmentIntersect(const LLVector4a& start, const LLVector4a& end,
