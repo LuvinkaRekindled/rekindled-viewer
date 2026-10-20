@@ -428,9 +428,9 @@ bool LLGLTFPreviewTexture::render()
     gGL.setClearColor(0, 0, 0, 0);
     gGL.clearBuffers(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    LLGLDepthTest(GL_FALSE);
-    LLGLDisable stencil(GL_STENCIL_TEST);
-    LLGLDisable scissor(GL_SCISSOR_TEST);
+    LLRenderState::DepthScope(false);       // F3.2: an unnamed temporary (as before): it is destroyed at once and restores, so it has no lasting effect
+    LLRenderState::StencilScope stencil(false);
+    LLRenderState::ScissorScope scissor(false);
     SetTemporarily<bool> no_dof(&LLPipeline::RenderDepthOfField, false);
     SetTemporarily<bool> no_glow(&LLPipeline::sRenderGlow, false);
     SetTemporarily<bool> no_ssr(&LLPipeline::RenderScreenSpaceReflections, false);
@@ -542,7 +542,7 @@ bool LLGLTFPreviewTexture::render()
     gDeferredPostNoDoFProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, mBoundTarget, true);
 
     {
-        LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
+        LLRenderState::DepthScope depth_test(true, true, LLRenderState::CompareOp::Always);
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }

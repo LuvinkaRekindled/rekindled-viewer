@@ -298,7 +298,7 @@ void LLHUDObject::renderAll()
     gUIProgram.bind();
     gGL.color4f(1, 1, 1, 1);
 
-    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+    LLRenderState::DepthScope depth(false, false);
 
     LLHUDObject *hud_objp;
 

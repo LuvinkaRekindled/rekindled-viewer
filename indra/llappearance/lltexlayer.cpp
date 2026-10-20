@@ -378,7 +378,7 @@ bool LLTexLayerSet::render( S32 x, S32 y, S32 width, S32 height, LLRenderTarget*
     }
 
     LLGLSUIDefault gls_ui;
-    LLGLDepthTest gls_depth(GL_FALSE, GL_FALSE);
+    LLRenderState::DepthScope gls_depth(false, false);
     gGL.setColorMask(true, true);
 
     // clear buffer area to ensure we don't pick up UI elements

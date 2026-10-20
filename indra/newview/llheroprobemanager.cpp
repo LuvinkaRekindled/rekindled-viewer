@@ -331,9 +331,9 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
     sourceIdx += 1;
 
     gGL.setColorMask(true, true);
-    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
-    LLGLDisable cull(GL_CULL_FACE);
-    LLGLDisable blend(GL_BLEND);
+    LLRenderState::DepthScope depth(false, false);
+    LLRenderState::CullScope cull(false);
+    LLRenderState::BlendScope blend(false);
 
     // downsample to placeholder map
     {

@@ -662,7 +662,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
             return;
         }
 
-        LLGLDisable cull_face(ds == 1 ? GL_CULL_FACE : 0);
+        LLRenderState::CullScope cull_face(false, ds == 1);
 
         bool opaque = !(variant & LLGLSLShader::GLTFVariant::ALPHA_BLEND);
         bool rigged = variant & LLGLSLShader::GLTFVariant::RIGGED;
@@ -1073,8 +1073,8 @@ void GLTFSceneManager::renderDebug()
     gGL.pushMatrix();
     gGL.loadMatrix(gGLModelView);
 
-    LLGLDisable cullface(GL_CULL_FACE);
-    LLGLEnable blend(GL_BLEND);
+    LLRenderState::CullScope cullface(false);
+    LLRenderState::BlendScope blend(true);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
     gPipeline.disableLights();
@@ -1096,8 +1096,8 @@ void GLTFSceneManager::renderDebug()
 
         for (U32 i = 0; i < 2; ++i)
         {
-            LLGLDepthTest depth(GL_TRUE, i == 0 ? GL_FALSE : GL_TRUE, i == 0 ? GL_GREATER : GL_LEQUAL);
-            LLGLState blend(GL_BLEND, i == 0 ? GL_TRUE : GL_FALSE);
+            LLRenderState::DepthScope depth(true, i == 0 ? false : true, i == 0 ? LLRenderState::CompareOp::Greater : LLRenderState::CompareOp::LessEqual);
+            LLRenderState::BlendScope blend(i == 0 ? true : false);
 
             for (auto& obj : mObjects)
             {

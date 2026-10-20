@@ -1589,7 +1589,7 @@ bool    LLPreviewAnimation::render()
         avatarp->updateLOD();
 
         LLVertexBuffer::unbind();
-        LLGLDepthTest gls_depth(GL_TRUE);
+        LLRenderState::DepthScope gls_depth(true);
 
         LLFace* face = avatarp->mDrawable->getFace(0);
         if (face)

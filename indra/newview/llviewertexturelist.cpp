@@ -1229,7 +1229,7 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
     const bool can_render = gViewerWindow && gViewerWindow->getWindow()->getVisible() && !gViewerWindow->getWindow()->getMinimized();
     if (can_render && !mDownScaleQueue.empty() && gPipeline.mDownResMap.isComplete())
     {
-        LLGLDisable blend(GL_BLEND);
+        LLRenderState::BlendScope blend(false);
         gGL.setColorMask(true, true);
 
         // just in case we downres textures, bind downresmap and copy program

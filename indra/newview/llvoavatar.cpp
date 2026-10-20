@@ -1769,7 +1769,7 @@ void LLVOAvatar::calculateSpatialExtents(LLVector4a& newMin, LLVector4a& newMax)
 void render_sphere_and_line(const LLVector3& begin_pos, const LLVector3& end_pos, F32 sphere_scale, const LLVector3& occ_color, const LLVector3& visible_color)
 {
     // Unoccluded bone portions
-    LLGLDepthTest normal_depth(GL_TRUE);
+    LLRenderState::DepthScope normal_depth(true);
 
     // Draw line segment for unoccluded joint
     gGL.diffuseColor3f(visible_color[0], visible_color[1], visible_color[2]);
@@ -1786,7 +1786,7 @@ void render_sphere_and_line(const LLVector3& begin_pos, const LLVector3& end_pos
     gSphere.renderGGL();
     gGL.popMatrix();
 
-    LLGLDepthTest depth_under(GL_TRUE, GL_FALSE, GL_GREATER);
+    LLRenderState::DepthScope depth_under(true, false, LLRenderState::CompareOp::Greater);
 
     // Occluded bone portions
     gGL.diffuseColor3f(occ_color[0], occ_color[1], occ_color[2]);
@@ -1867,7 +1867,7 @@ void drawBoxOutline(const LLVector4a& pos, const LLVector4a& size);
 
 void LLVOAvatar::renderBones(const std::string &selected_joint)
 {
-    LLGLEnable blend(GL_BLEND);
+    LLRenderState::BlendScope blend(true);
 
     avatar_joint_list_t::iterator iter = mSkeleton.begin();
     avatar_joint_list_t::iterator end = mSkeleton.end();
@@ -2027,7 +2027,7 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
 
 void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selected_joints)
 {
-    LLGLEnable blend(GL_BLEND);
+    LLRenderState::BlendScope blend(true);
 
     avatar_joint_list_t::iterator iter = mSkeleton.begin();
     avatar_joint_list_t::iterator end = mSkeleton.end();
@@ -6623,7 +6623,7 @@ U32 LLVOAvatar::renderSkinned()
 
         if (!LLDrawPoolAvatar::sSkipTransparent || LLPipeline::sImpostorRender)
         {
-            LLGLState blend(GL_BLEND, !mIsDummy);
+            LLRenderState::BlendScope blend(!mIsDummy);
             num_indices += renderTransparent(first_pass);
         }
 
@@ -6734,7 +6734,7 @@ U32 LLVOAvatar::renderImpostor(LLColor4U color, S32 diffuse_channel)
 
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_IMPOSTORS))
     {
-        LLGLEnable blend(GL_BLEND);
+        LLRenderState::BlendScope blend(true);
         gGL.setSceneBlendType(LLRender::BT_ADD);
         gGL.getTexUnit(diffuse_channel)->unbind(LLTexUnit::TT_TEXTURE);
 
