@@ -36,6 +36,7 @@ namespace LLVkState
         bool mDepthMask;                    // the depth write mask as the viewer set it (mDepth.mDepthWrite is mask AND test); clears and glGet answers read it
         bool mViewportSet;                  // a viewport was ever set (the worker keeps the target's own until then)
         bool mScissorOn;
+        bool mDepthReadOnly;                // F3.5c: declared by the viewer (DepthReadOnlyScope): the depth attachment is read-only for the draws of this stage
         bool operator==(const Block& o) const;
     };
 
@@ -49,6 +50,7 @@ namespace LLVkState
     void setStencilTest(bool on);
     void setPolygonOffsetFill(bool on);
     void setDepthClamp(bool on);
+    void setDepthReadOnly(bool on);
     void setBlendFunc(LLRenderState::BlendFactor src_rgb, LLRenderState::BlendFactor dst_rgb, LLRenderState::BlendFactor src_a, LLRenderState::BlendFactor dst_a);
     void setDepthMask(bool flag);
     void setColorMask(bool r, bool g, bool b, bool a);

@@ -60,7 +60,7 @@ void recomputeDepthWrite()
 
 bool Block::operator==(const Block& o) const
 {
-    return mDepthMask == o.mDepthMask && mRaster == o.mRaster && mDepth == o.mDepth && mBlend == o.mBlend && mViewportSet == o.mViewportSet && mScissorOn == o.mScissorOn
+    return mDepthMask == o.mDepthMask && mRaster == o.mRaster && mDepth == o.mDepth && mBlend == o.mBlend && mViewportSet == o.mViewportSet && mDepthReadOnly == o.mDepthReadOnly && mScissorOn == o.mScissorOn
         && memcmp(mViewport, o.mViewport, sizeof(mViewport)) == 0 && memcmp(mScissor, o.mScissor, sizeof(mScissor)) == 0;
 }
 
@@ -92,6 +92,7 @@ void reset()
     memset(b.mScissor, 0, sizeof(b.mScissor));
     b.mViewportSet = false;
     b.mScissorOn = false;
+    b.mDepthReadOnly = false;
 }
 
 namespace
@@ -270,6 +271,12 @@ void setPolygonOffsetFill(bool on)
     C().mBlock.mRaster.mDepthBias = on;
 }
 
+void setDepthReadOnly(bool on)
+{
+    CTX_CALL();
+    C().mBlock.mDepthReadOnly = on;
+}
+
 void setDepthClamp(bool on)
 {
     CTX_CALL();
@@ -415,7 +422,7 @@ void adoptChanges(const Context* seed, const Context* final)
     ADOPT(mBlock.mDepth.mFail) ADOPT(mBlock.mDepth.mDepthFail) ADOPT(mBlock.mDepth.mPass) ADOPT(mBlock.mDepth.mCompareMask) ADOPT(mBlock.mDepth.mWriteMask) ADOPT(mBlock.mDepth.mReference)
     ADOPT(mBlock.mBlend.mEnable) ADOPT(mBlock.mBlend.mSrcColor) ADOPT(mBlock.mBlend.mDstColor) ADOPT(mBlock.mBlend.mColorOp) ADOPT(mBlock.mBlend.mSrcAlpha)
     ADOPT(mBlock.mBlend.mDstAlpha) ADOPT(mBlock.mBlend.mAlphaOp) ADOPT(mBlock.mBlend.mWriteMask)
-    ADOPT(mBlock.mDepthMask) ADOPT(mBlock.mViewportSet) ADOPT(mBlock.mScissorOn)
+    ADOPT(mBlock.mDepthMask) ADOPT(mBlock.mViewportSet) ADOPT(mBlock.mScissorOn) ADOPT(mBlock.mDepthReadOnly)
     ADOPT(mBlock.mViewport[0]) ADOPT(mBlock.mViewport[1]) ADOPT(mBlock.mViewport[2]) ADOPT(mBlock.mViewport[3])
     ADOPT(mBlock.mScissor[0]) ADOPT(mBlock.mScissor[1]) ADOPT(mBlock.mScissor[2]) ADOPT(mBlock.mScissor[3])
     ADOPT(mCullOn) ADOPT(mCullFace)
@@ -435,6 +442,7 @@ std::string describeDifference(const Block& a, const Block& b)
     if (ra.mLineWidth != rb.mLineWidth) note("lineWidth");
     if (ra.mDepthBias != rb.mDepthBias || ra.mBiasConstant != rb.mBiasConstant || ra.mBiasSlope != rb.mBiasSlope) note("polygonOffset");
     if (ra.mDepthClamp != rb.mDepthClamp) note("depthClamp");
+    if (a.mDepthReadOnly != b.mDepthReadOnly) note("depthReadOnly");
     const DepthStencilState& da = a.mDepth;
     const DepthStencilState& db = b.mDepth;
     if (da.mDepthTest != db.mDepthTest) note("depthTest");
@@ -505,6 +513,7 @@ void toRenderer(const Block& b, bool has_depth, RasterState& rs, DepthStencilSta
     ds.mDepthTest = b.mDepth.mDepthTest && has_depth;
     ds.mDepthWrite = b.mDepth.mDepthWrite && has_depth;
     ds.mDepthOp = b.mDepth.mDepthOp;
+    ds.mDeclaredRO = b.mDepthReadOnly && has_depth;
     ds.mStencilTest = false;        // the mirror's depth images carry no stencil yet (F1.1 step 4)
     bs = b.mBlend;
 }
@@ -715,6 +724,7 @@ U32 read(Kind kind)
     case Kind::Depth:
         return packDepth(b.mDepth.mDepthTest, b.mDepthMask, LLVkState::fromVk(b.mDepth.mDepthOp));
     case Kind::DepthTest: return b.mDepth.mDepthTest;
+    case Kind::DepthReadOnly: return b.mDepthReadOnly;
     default: return 0;
     }
 }
@@ -741,6 +751,7 @@ U32 exchange(Kind kind, U32 value, const char* file, int line)
     case Kind::PolygonOffset: LLVkState::setPolygonOffsetFill(value != 0); break;
     case Kind::DepthClamp: LLVkState::setDepthClamp(value != 0); break;
     case Kind::DepthTest: LLVkState::setDepthTest(value != 0); break;
+    case Kind::DepthReadOnly: LLVkState::setDepthReadOnly(value != 0); break;
     case Kind::Cull:
         if ((old & 1) != (value & 1))
         {

@@ -12675,6 +12675,7 @@ void LLPipeline::renderDeferredLighting()
 
     LLRenderTarget *screen_target         = &mRT->screen;
     LLRenderTarget* deferred_light_target = &mRT->deferredLight;
+    LLRenderState::DepthReadOnlyScope lighting_depth_read_only{LLRenderState::Keep{}};      // F3.5c: the lighting stage samples the depth and writes none: enabled where it starts, disabled before the geometry that writes it
     RenderPassScope screen_pass;        // F3.5b: the pass on the screen target crosses blocks (begun before the atmospherics, ended after the post-deferred geometry) and is suspended by extractRRHitDistance
 
     {
@@ -12770,6 +12771,7 @@ void LLPipeline::renderDeferredLighting()
             LL_PROFILE_GPU_ZONE("soften shadow");
             // blur lightmap
             RenderPassScope pass_12784(*screen_target);
+            LLRenderState::DepthReadOnlyScope blur_depth_read_only(true);      // F3.5c: the blur samples the depth
             gGL.setClearColor(1, 1, 1, 1);
             screen_target->clear(GL_COLOR_BUFFER_BIT);
             gGL.setClearColor(0, 0, 0, 0);
@@ -12826,6 +12828,7 @@ void LLPipeline::renderDeferredLighting()
         }
 
         screen_pass.begin(*screen_target);
+        lighting_depth_read_only.setEnabled(true);
         // clear color buffer here - zeroing alpha (glow) is important or it will accumulate against sky
         gGL.setClearColor(0, 0, 0, 0);
         screen_target->clear(GL_COLOR_BUFFER_BIT);
@@ -13321,6 +13324,8 @@ void LLPipeline::renderDeferredLighting()
         extractRRHitDistance(screen_target);
         mRRHitDistPending = false;
     }
+
+    lighting_depth_read_only.setEnabled(false);
 
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLRenderState::BlendScope blend(false);

@@ -266,6 +266,8 @@ void LLDrawPoolAvatar::renderPostDeferred(S32 pass)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
     is_post_deferred_render = true;
+    // F3.5c: the avatar alpha samples the depth buffer; it writes none here (a draw that does is reported by the worker's declared-depth check)
+    LLRenderState::DepthReadOnlyScope depth_read_only(true, !LLPipeline::sImpostorRender);
     if (LLPipeline::sImpostorRender)
     { //HACK for impostors so actual pass ends up being proper pass
         render(0);

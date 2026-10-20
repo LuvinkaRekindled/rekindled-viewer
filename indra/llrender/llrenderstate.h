@@ -45,6 +45,7 @@ enum class Kind : U8
     Cull,               // bit 0: culling on, bits 1-2: CullFace (never None in a stored value)
     Depth,              // bit 0: depth test, bit 1: depth write mask, bits 2-4: CompareOp
     DepthTest,          // 0 / 1   (the depth test alone: write mask and function untouched)
+    DepthReadOnly,      // 0 / 1   (F3.5c: the draws of this stage see the depth attachment read-only: it is sampled, never written; the pass takes the read-only layout)
     Count
 };
 
@@ -120,6 +121,7 @@ using StencilScope = FlagScope<Kind::Stencil>;
 using PolygonOffsetScope = FlagScope<Kind::PolygonOffset>;
 using DepthClampScope = FlagScope<Kind::DepthClamp>;
 using DepthTestScope = FlagScope<Kind::DepthTest>;
+using DepthReadOnlyScope = FlagScope<Kind::DepthReadOnly>;       // F3.5c: DepthReadOnlyScope ro(true);  the stage samples the depth buffer it tests against and writes no depth
 
 // culling on or off; 'face' None leaves the face that is set (LLGLEnable(GL_CULL_FACE) never changed it)
 class CullScope
