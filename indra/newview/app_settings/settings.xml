@@ -2612,17 +2612,6 @@
       <key>Value</key>
       <real>3.0</real>
     </map>
-    <key>FSVulkanProbe</key>
-    <map>
-      <key>Comment</key>
-      <string>EXPERIMENTAL: open a separate window that is drawn with Vulkan every frame (only in builds made with USE_VULKAN). Used for Vulkan bring-up; does not affect the normal OpenGL rendering.</string>
-      <key>Persist</key>
-      <integer>0</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
     <key>FSGpuZoneTimers</key>
     <map>
       <key>Comment</key>

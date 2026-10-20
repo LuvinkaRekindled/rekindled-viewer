@@ -39,7 +39,6 @@ set(llrender_SOURCE_FILES
     llvkbridge.cpp
     llvkworker.cpp
     llvkformat.cpp
-    llvkprobe.cpp
     llvkrenderer.cpp
     llvkrt.cpp
     llvkshader.cpp
@@ -89,7 +88,6 @@ set(llrender_HEADER_FILES
     llvksubstream.h
     llvkbridge.h
     llvkworker.h
-    llvkprobe.h
     llvkrenderer.h
     llvkrt.h
     llvkshader.h

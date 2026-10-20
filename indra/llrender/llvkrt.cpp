@@ -1847,8 +1847,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             {
                 Group& g = *row.mGroup;
                 const Key dead_key = g.mKey;
-                static const bool keep_old_leak = getenv("LL_VK_RT_NAMELEAK") != nullptr;      // A/B switch: the old behaviour (opaque groups of the material mode never left the table)
-                if (dead_key.mKind == 1 || (dead_key.mKind == 0 && sDbg.mMats && !keep_old_leak))     // the same groups that were added to sNameGroups (the material mode adds opaque ones too)
+                if (dead_key.mKind == 1 || (dead_key.mKind == 0 && sDbg.mMats))     // the same groups that were added to sNameGroups (the material mode adds opaque ones too)
                 {
                     for (U32 name : { dead_key.mVb, dead_key.mIb })
                     {
