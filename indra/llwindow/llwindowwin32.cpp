@@ -996,10 +996,10 @@ void LLWindowWin32::close()
     }
 
     // Clean up remaining GL state
-    if (gGLManager.mInited)
+    if (gDeviceCaps.mInited)
     {
         LL_INFOS("Window") << "Cleaning up GL" << LL_ENDL;
-        gGLManager.shutdownGL();
+        gDeviceCaps.shutdownGL();
     }
 
     // Restore gamma to the system values.
@@ -1209,7 +1209,7 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
     }
     mRefreshRate = current_refresh;
 
-    gGLManager.shutdownGL();
+    gDeviceCaps.shutdownGL();
     if (fullscreen)
     {
         mFullscreen = true;
@@ -1359,8 +1359,8 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
 
     {
         // <FS> native-vk: no pixel format and no OpenGL context at all. Vulkan presents into this window.
-        LLVkMirror::setMainWindow(mWindowHandle);
-        if (!gGLManager.initGL())
+        LLVkBridge::setMainWindow(mWindowHandle);
+        if (!gDeviceCaps.initGL())
         {
             LLError::LLUserWarningMsg::show(mCallbacks->translateString("MBVideoDrvErr"), 8/*LAST_EXEC_GRAPHICS_INIT*/);
             close();
@@ -1516,7 +1516,7 @@ void LLWindowWin32::recreateWindow(RECT window_rect, DWORD dw_ex_style, DWORD dw
 
 void* LLWindowWin32::createSharedContext()
 {
-    // <FS> native-vk: there is no OpenGL context to share. The texture and media upload threads (LLImageGLThread, LLVertexBuffer's) only start when they get
+    // <FS> native-vk: there is no OpenGL context to share. The texture and media upload threads (LLImageTexThread, LLVertexBuffer's) only start when they get
     // a context from here, so a dummy token keeps them running (makeContextCurrent and destroySharedContext ignore it).
     return (void*)1;
 }
@@ -3266,7 +3266,7 @@ bool LLWindowWin32::setGamma(const F32 gamma)
     //Get the previous gamma ramp to restore later.
     if (!mCustomGammaSet)
     {
-        if (!gGLManager.mIsIntel) // skip for Intel GPUs (see SL-11341)
+        if (!gDeviceCaps.mIsIntel) // skip for Intel GPUs (see SL-11341)
         {
             LL_DEBUGS("Window") << "Getting the previous gamma ramp to restore later" << LL_ENDL;
             if (!GetDeviceGammaRamp(mhDC, mPrevGammaRamp))
@@ -4793,7 +4793,7 @@ void LLWindowWin32::LLWindowWin32Thread::checkDXMem()
 {
     if (!mGLReady || mGotGLBuffer) { return; }
 
-    if ((gGLManager.mHasAMDAssociations || gGLManager.mHasNVXGpuMemoryInfo) && gGLManager.mVRAM != 0)
+    if ((gDeviceCaps.mHasAMDAssociations || gDeviceCaps.mHasNVXGpuMemoryInfo) && gDeviceCaps.mVRAM != 0)
     { // OpenGL already told us the memory budget, don't ask DX
         mGotGLBuffer = true;
         return;
@@ -4832,14 +4832,14 @@ void LLWindowWin32::LLWindowWin32Thread::checkDXMem()
 
                     // Alternatively use GetDesc from below to get adapter's memory
                     UINT64 budget_mb = info.Budget / (1024 * 1024);
-                    if (gGLManager.mIsIntel)
+                    if (gDeviceCaps.mIsIntel)
                     {
                         U32Megabytes phys_mb = gSysMemory.getPhysicalMemoryKB();
                         LL_WARNS() << "Physical memory: " << phys_mb << " MB" << LL_ENDL;
 
                         if (phys_mb > 0)
                         {
-                            if (gGLManager.mIsIntel)
+                            if (gDeviceCaps.mIsIntel)
                             {
                                 // Intel uses 'shared' vram, cap it to 25% of total memory
                                 // Todo: consider a way of detecting integrated Intel and AMD
@@ -4858,15 +4858,15 @@ void LLWindowWin32::LLWindowWin32Thread::checkDXMem()
                             budget_mb = llmin(budget_mb, (UINT64)2048);
                         }
                     }
-                    if (gGLManager.mVRAM < (S32)budget_mb)
+                    if (gDeviceCaps.mVRAM < (S32)budget_mb)
                     {
-                        gGLManager.mVRAM = (S32)budget_mb;
-                        LL_INFOS("RenderInit") << "New VRAM Budget (DX9): " << gGLManager.mVRAM << " MB" << LL_ENDL;
+                        gDeviceCaps.mVRAM = (S32)budget_mb;
+                        LL_INFOS("RenderInit") << "New VRAM Budget (DX9): " << gDeviceCaps.mVRAM << " MB" << LL_ENDL;
                     }
                     else
                     {
                         LL_INFOS("RenderInit") << "VRAM Budget (DX9): " << budget_mb
-                            << " MB, current (WMI): " << gGLManager.mVRAM << " MB" << LL_ENDL;
+                            << " MB, current (WMI): " << gDeviceCaps.mVRAM << " MB" << LL_ENDL;
                     }
                 }
 

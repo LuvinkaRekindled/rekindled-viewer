@@ -684,7 +684,7 @@ LLFontGlyphInfo* LLFontFreetype::addGlyphFromFont(const LLFontFreetype *fontp, l
         llassert(false);
     }
 
-    LLImageGL *image_gl = mFontBitmapCachep->getImageGL(bitmap_glyph_type, bitmap_num);
+    LLImageTex *image_gl = mFontBitmapCachep->getImageGL(bitmap_glyph_type, bitmap_num);
     LLImageRaw *image_raw = mFontBitmapCachep->getImageRaw(bitmap_glyph_type, bitmap_num);
     if (image_gl && image_raw)
     {
@@ -832,9 +832,9 @@ void LLFontFreetype::resetBitmapCache()
     }
 }
 
-void LLFontFreetype::destroyGL()
+void LLFontFreetype::destroyResources()
 {
-    mFontBitmapCachep->destroyGL();
+    mFontBitmapCachep->destroyResources();
 }
 
 const std::string &LLFontFreetype::getName() const

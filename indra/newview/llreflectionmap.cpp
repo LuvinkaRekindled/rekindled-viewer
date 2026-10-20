@@ -346,7 +346,7 @@ bool LLReflectionMap::isRelevant() const
 void LLReflectionMap::doOcclusion(const LLVector4a& eye)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    if (LLGLSLShader::sProfileEnabled)
+    if (LLShaderProgram::sProfileEnabled)
     {
         return;
     }
@@ -378,10 +378,10 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
     { // query was previously issued, check it and only issue a new query
         // if previous query is available
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rmdo - glGetQueryObject");
-        if (gGL.queryReady(mOcclusionQuery))
+        if (gRender.queryReady(mOcclusionQuery))
         {
             do_query = true;
-            const U64 result = gGL.queryResult(mOcclusionQuery);
+            const U64 result = gRender.queryResult(mOcclusionQuery);
             mOccluded = result == 0;
             mOcclusionPendingFrames = 0;
         }
@@ -394,16 +394,16 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
     if (do_query)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rmdo - push query");
-        gGL.beginQuery(LLRender::QUERY_ANY_SAMPLES, mOcclusionQuery);
+        gRender.beginQuery(LLRender::QUERY_ANY_SAMPLES, mOcclusionQuery);
 
-        LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+        LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
 
         shader->uniform3fv(LLShaderMgr::BOX_CENTER, 1, mOrigin.getF32ptr());
         shader->uniform3f(LLShaderMgr::BOX_SIZE, mRadius, mRadius, mRadius);
 
         gPipeline.mCubeVB->drawRange(LLRender::TRIANGLE_FAN, 0, 7, 8, get_box_fan_indices(LLViewerCamera::getInstance(), mOrigin));
 
-        gGL.endQuery(LLRender::QUERY_ANY_SAMPLES);
+        gRender.endQuery(LLRender::QUERY_ANY_SAMPLES);
     }
 #endif
 }

@@ -742,18 +742,18 @@ void send_viewer_stats(bool include_preferences)
     system["serial_number"] = LLAppViewer::instance()->getSerialNumber();
     std::string gpu_desc = llformat(
         "%-6s Class %d ",
-        gGLManager.mGLVendorShort.substr(0,6).c_str(),
+        gDeviceCaps.mVendorShort.substr(0,6).c_str(),
         (S32)LLFeatureManager::getInstance()->getGPUClass())
-        + gGLManager.getRawGLString();
+        + gDeviceCaps.getRawDeviceString();
 
     system["gpu"] = gpu_desc;
     system["gpu_class"] = (S32)LLFeatureManager::getInstance()->getGPUClass();
     system["gpu_memory_bandwidth"] = LLFeatureManager::getInstance()->getGPUMemoryBandwidth();
-    system["gpu_vendor"] = gGLManager.mGLVendorShort;
-    system["gpu_version"] = gGLManager.mDriverVersionVendorString;
-    system["opengl_version"] = gGLManager.mGLVersionString;
+    system["gpu_vendor"] = gDeviceCaps.mVendorShort;
+    system["gpu_version"] = gDeviceCaps.mDriverVersionVendorString;
+    system["opengl_version"] = gDeviceCaps.mApiVersionString;
 
-    gGLManager.asLLSD(system["gl"]);
+    gDeviceCaps.asLLSD(system["gl"]);
 
 
     S32 shader_level = 0;

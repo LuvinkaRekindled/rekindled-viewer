@@ -2272,7 +2272,7 @@ void LLVOAvatarSelf::getLocalTextureByteCount(S32* gl_bytes) const
                 {
                     S32 bytes = (S32)image_gl->getWidth() * image_gl->getHeight() * image_gl->getComponents();
 
-                    if (image_gl->hasGLTexture())
+                    if (image_gl->hasImageTexture())
                     {
                         *gl_bytes += bytes;
                     }
@@ -2559,7 +2559,7 @@ bool LLVOAvatarSelf::getHasMissingParts() const
 
             // Check for the case that texture is defined but not sufficiently loaded to display anything.
             const LLViewerTexture* baked_img = getImage( texture_data.mTextureIndex, 0 );
-            if (!baked_img || !baked_img->hasGLTexture())
+            if (!baked_img || !baked_img->hasImageTexture())
             {
                 if (do_warn)
                 {
@@ -3478,7 +3478,7 @@ void LLVOAvatarSelf::deleteScratchTextures()
         it != end_it;
         ++it)
     {
-        LLImageGL::deleteTextures(1, (U32 *)it->second );
+        LLImageTex::deleteTextures(1, (U32 *)it->second );
         stop_glerror();
     }
 

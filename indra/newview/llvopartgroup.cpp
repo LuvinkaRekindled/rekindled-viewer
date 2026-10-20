@@ -51,13 +51,13 @@ void LLVOPartGroup::initClass()
 }
 
 //static
-void LLVOPartGroup::restoreGL()
+void LLVOPartGroup::restoreResources()
 {
 
 }
 
 //static
-void LLVOPartGroup::destroyGL()
+void LLVOPartGroup::destroyResources()
 {
 }
 

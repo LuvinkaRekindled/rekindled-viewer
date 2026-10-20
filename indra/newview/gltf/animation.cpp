@@ -395,7 +395,7 @@ Skin::~Skin()
 {
     if (mUBO)
     {
-        gGL.deleteBuffers(1, &mUBO);
+        gRender.deleteBuffers(1, &mUBO);
     }
 }
 
@@ -408,7 +408,7 @@ void Skin::uploadMatrixPalette(Asset& asset)
 
     if (mUBO == 0)
     {
-        gGL.genBuffers(1, &mUBO);
+        gRender.genBuffers(1, &mUBO);
     }
 
     size_t joint_count = llmin<size_t>(max_joints, mJoints.size());
@@ -452,7 +452,7 @@ void Skin::uploadMatrixPalette(Asset& asset)
         mp[idx + 11] = m[14];
     }
 
-    gGL.bufferData(mUBO, BufferKind::Uniform, glmp.size() * sizeof(F32), glmp.data());
+    gRender.bufferData(mUBO, BufferKind::Uniform, glmp.size() * sizeof(F32), glmp.data());
 }
 
 bool Skin::prep(Asset& asset)

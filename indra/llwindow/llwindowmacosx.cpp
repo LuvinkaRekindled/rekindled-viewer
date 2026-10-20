@@ -79,7 +79,7 @@ void LLWindowMacOSX::setUseMultGL(bool use_mult_gl)
 
     sUseMultGL = use_mult_gl;
 
-    if (gGLManager.mInited)
+    if (gDeviceCaps.mInited)
     {
         CGLContextObj ctx = CGLGetCurrentContext();
         //enable multi-threaded OpenGL (whether or not sUseMultGL actually changed)
@@ -223,7 +223,7 @@ LLWindowMacOSX::LLWindowMacOSX(LLWindowCallbacks* callbacks,
             makeWindowOrderFront(mWindow);
         }
 
-        if (!gGLManager.initGL())
+        if (!gDeviceCaps.initGL())
         {
             setupFailure(
                 "Second Life is unable to run because your video card drivers\n"
@@ -753,7 +753,7 @@ bool LLWindowMacOSX::createContext(int x, int y, int width, int height, int bits
         // Get the view instead.
         mGLView = createOpenGLView(mWindow, mFSAASamples, enable_vsync);
         mContext = getCGLContextObj(mGLView);
-        gGLManager.mVRAM = getVramSize(mGLView);
+        gDeviceCaps.mVRAM = getVramSize(mGLView);
 
         if(!mPixelFormat)
         {
@@ -842,7 +842,7 @@ void LLWindowMacOSX::destroyContext()
     }
 
     // Clean up remaining GL state before blowing away window
-    gGLManager.shutdownGL();
+    gDeviceCaps.shutdownGL();
 
     // Clean up the pixel format
     if(mPixelFormat != NULL)

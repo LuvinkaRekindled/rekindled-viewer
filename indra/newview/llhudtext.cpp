@@ -324,7 +324,7 @@ void LLHUDText::renderText()
         }
     }
     /// Reset the default color to white.  The renderer expects this to be the default.
-    gGL.color4f(1.0f, 1.0f, 1.0f, 1.0f);
+    gRender.color4f(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 void LLHUDText::setString(const std::string &text_utf8)

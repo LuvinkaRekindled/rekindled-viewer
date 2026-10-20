@@ -82,7 +82,7 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
     float currentRadius = MAX_SPHERE_RADIUS - PULSE_AMPLITUDE * pulseFactor;
 
     LLGLSUIDefault gls_ui;
-    gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
+    gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);
 
@@ -99,13 +99,13 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
             LLRenderState::DepthScope gls_depth(false);
             LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             {
-                gGL.color4fv(color.mV);
-                gGL.diffuseColor4fv(color.mV);
+                gRender.color4fv(color.mV);
+                gRender.diffuseColor4fv(color.mV);
 
                 LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, currentRadius, currentRadius, currentRadius);
 
                 gSphere.render();
-                gGL.flush();
+                gRender.flush();
             }
             LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
@@ -120,7 +120,7 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
 static void renderStaticSphere(const LLVector3& joint_world_position, const LLColor4& color = LLColor4(1.f, 1.f, 0.f, .6f), float radius=0.01f)
 {
     LLGLSUIDefault gls_ui;
-    gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
+    gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);
 
@@ -137,13 +137,13 @@ static void renderStaticSphere(const LLVector3& joint_world_position, const LLCo
             LLRenderState::DepthScope gls_depth(false);
             LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             {
-                gGL.color4fv(color.mV);
-                gGL.diffuseColor4fv(color.mV);
+                gRender.color4fv(color.mV);
+                gRender.diffuseColor4fv(color.mV);
 
                 LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, radius, radius, radius);
 
                 gSphere.render();
-                gGL.flush();
+                gRender.flush();
             }
             LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
@@ -598,13 +598,13 @@ void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& no
         LLRenderState::DepthScope gls_depth(false);
 
         constexpr int segments = 64;
-        gGL.setLineWidth(6.0f); // Set the desired line thickness
+        gRender.setLineWidth(6.0f); // Set the desired line thickness
 
         // Compute a scale factor that already factors in the radius.
         float scale = radius;
         scale *= (mManipulatorScales.mV[VX] + mManipulatorScales.mV[VY] +
                   mManipulatorScales.mV[VZ] + mManipulatorScales.mV[VW]) / 4.0f;
-        gGL.diffuseColor4fv(normal_color.mV);
+        gRender.diffuseColor4fv(normal_color.mV);
         LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale, scale, scale);
 
         // Rotate the unit circle so its normal (0,0,1) aligns with mCenterToCamNorm.
@@ -622,17 +622,17 @@ void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& no
         }
 
         // Draw a unit circle in the XY plane (which is now rotated correctly).
-        gGL.begin(LLRender::LINE_LOOP);
+        gRender.begin(LLRender::LINE_LOOP);
         for (int i = 0; i < segments; i++)
         {
             float theta = 2.0f * 3.14159f * i / segments;
             // Use a unit circle here.
             LLVector3 offset(cosf(theta), sinf(theta), 0.f);
-            gGL.vertex3fv(offset.mV);
+            gRender.vertex3fv(offset.mV);
         }
-        gGL.end();
+        gRender.end();
 
-        gGL.setLineWidth(1.0f); // Reset the line width.
+        gRender.setLineWidth(1.0f); // Reset the line width.
     }
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
@@ -649,13 +649,13 @@ void FSManipRotateJoint::renderCenterSphere(const F32 radius, const LLColor4& no
         if (mManipPart == LL_ROT_GENERAL || mHighlightedPart == LL_ROT_GENERAL)
         {
             mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, 1.f, 1.f, SELECTED_MANIPULATOR_SCALE), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-            gGL.diffuseColor4fv(highlight_color.mV);
+            gRender.diffuseColor4fv(highlight_color.mV);
             scale *= mManipulatorScales.mV[VW];
         }
         else
         {
             // no part selected, just a semi transp white sphere
-            gGL.diffuseColor4fv(normal_color.mV);
+            gRender.diffuseColor4fv(normal_color.mV);
             // Use an average of the manipulator scales when no specific part is selected
             scale *= (mManipulatorScales.mV[VX] + mManipulatorScales.mV[VY] + mManipulatorScales.mV[VZ] + mManipulatorScales.mV[VW]) / 4.0f;
         }
@@ -663,7 +663,7 @@ void FSManipRotateJoint::renderCenterSphere(const F32 radius, const LLColor4& no
         LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale, scale, scale);
         gSphere.render();
 
-        gGL.flush();
+        gRender.flush();
     }
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
@@ -699,7 +699,7 @@ void FSManipRotateJoint::render()
 
     // Setup GL state.
     LLGLSUIDefault gls_ui;
-    gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
+    gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);
 
@@ -770,27 +770,27 @@ void FSManipRotateJoint::renderAxes(const LLVector3& agent_space_center, F32 siz
 
     LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)rot_mat.mMatrix);
 
-    gGL.begin(LLRender::LINES);
+    gRender.begin(LLRender::LINES);
 
     // X-axis (Red)
     LLColor4 color(getUserEditColor(VX));
-    gGL.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VALPHA]);
-    gGL.vertex3f(-size, 0.0f, 0.0f);
-    gGL.vertex3f(size, 0.0f, 0.0f);
+    gRender.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VALPHA]);
+    gRender.vertex3f(-size, 0.0f, 0.0f);
+    gRender.vertex3f(size, 0.0f, 0.0f);
 
     // Y-axis (Green)
     color.setVec(getUserEditColor(VY));
-    gGL.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VALPHA]);
-    gGL.vertex3f(0.0f, -size, 0.0f);
-    gGL.vertex3f(0.0f, size, 0.0f);
+    gRender.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VALPHA]);
+    gRender.vertex3f(0.0f, -size, 0.0f);
+    gRender.vertex3f(0.0f, size, 0.0f);
 
     // Z-axis (Blue)
     color.setVec(getUserEditColor(VZ));
-    gGL.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VALPHA]);
-    gGL.vertex3f(0.0f, 0.0f, -size);
-    gGL.vertex3f(0.0f, 0.0f, size);
+    gRender.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VALPHA]);
+    gRender.vertex3f(0.0f, 0.0f, -size);
+    gRender.vertex3f(0.0f, 0.0f, size);
 
-    gGL.end();
+    gRender.end();
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
@@ -883,7 +883,7 @@ void FSManipRotateJoint::renderNameXYZ(const LLQuaternion& rot)
         const LLVector2& display_scale = gViewerWindow->getDisplayScale();
 
         LLColor4 backgroudColor = getUserEditColor(VALPHA, 0.7f);
-        gGL.color4f(backgroudColor.mV[VX], backgroudColor.mV[VY], backgroudColor.mV[VZ], backgroudColor.mV[VALPHA]);
+        gRender.color4f(backgroudColor.mV[VX], backgroudColor.mV[VY], backgroudColor.mV[VZ], backgroudColor.mV[VALPHA]);
 
         imagep->draw(
             (S32)((window_center_x - 150) * display_scale.mV[VX]),

@@ -580,15 +580,15 @@ void GLTFSceneManager::render(bool opaque, bool rigged, bool unlit)
     U8 variant = 0;
     if (rigged)
     {
-        variant |= LLGLSLShader::GLTFVariant::RIGGED;
+        variant |= LLShaderProgram::GLTFVariant::RIGGED;
     }
     if (!opaque)
     {
-        variant |= LLGLSLShader::GLTFVariant::ALPHA_BLEND;
+        variant |= LLShaderProgram::GLTFVariant::ALPHA_BLEND;
     }
     if (unlit)
     {
-        variant |= LLGLSLShader::GLTFVariant::UNLIT;
+        variant |= LLShaderProgram::GLTFVariant::UNLIT;
     }
 
     render(variant);
@@ -603,12 +603,12 @@ void GLTFSceneManager::render(U8 variant)
     // into buckets by material and shader.
 
     // HACK -- implicitly render multi-uv variant
-    if (!(variant & LLGLSLShader::GLTFVariant::MULTI_UV))
+    if (!(variant & LLShaderProgram::GLTFVariant::MULTI_UV))
     {
-        render((U8) (variant | LLGLSLShader::GLTFVariant::MULTI_UV));
+        render((U8) (variant | LLShaderProgram::GLTFVariant::MULTI_UV));
     }
 
-    bool rigged = variant & LLGLSLShader::GLTFVariant::RIGGED;
+    bool rigged = variant & LLShaderProgram::GLTFVariant::RIGGED;
 
     for (U32 i = 0; i < mObjects.size(); ++i)
     {
@@ -626,7 +626,7 @@ void GLTFSceneManager::render(U8 variant)
 
         // provide a modelview matrix that goes from asset to camera space
         // (matrix palettes are in asset space)
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
         LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, mat.getF32ptr());
 
         render(*asset, variant);
@@ -664,8 +664,8 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
         LLRenderState::CullScope cull_face(false, ds == 1);
 
-        bool opaque = !(variant & LLGLSLShader::GLTFVariant::ALPHA_BLEND);
-        bool rigged = variant & LLGLSLShader::GLTFVariant::RIGGED;
+        bool opaque = !(variant & LLShaderProgram::GLTFVariant::ALPHA_BLEND);
+        bool rigged = variant & LLShaderProgram::GLTFVariant::RIGGED;
 
         bool shader_bound = false;
 
@@ -689,17 +689,17 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
                 if (!rigged)
                 {
-                    gGL.bindUniformBlock(LLGLSLShader::UB_GLTF_NODES, asset.mNodesUBO);
+                    gRender.bindUniformBlock(LLShaderProgram::UB_GLTF_NODES, asset.mNodesUBO);
                 }
 
-                gGL.bindUniformBlock(LLGLSLShader::UB_GLTF_MATERIALS, asset.mMaterialsUBO);
+                gRender.bindUniformBlock(LLShaderProgram::UB_GLTF_MATERIALS, asset.mMaterialsUBO);
 
                 for (U32 i = 0; i < TEXTURE_TYPE_COUNT; ++i)
                 {
                     mLastTexture[i] = -2;
                 }
 
-                gGL.syncMatrices();
+                gRender.syncMatrices();
                 shader_bound = true;
             }
 
@@ -717,7 +717,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
             else
             {
                 LLFetchedGLTFMaterial::sDefault.bind();
-                LLGLSLShader::sCurBoundShaderPtr->uniform1i(LLShaderMgr::GLTF_MATERIAL_ID, -1);
+                LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::GLTF_MATERIAL_ID, -1);
             }
 
             for (auto& pdata : batches[i].mPrimitives)
@@ -732,11 +732,11 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
                     LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gltfdc - bind skin");
                     llassert(node.mSkin != INVALID_INDEX);
                     Skin& skin = asset.mSkins[node.mSkin];
-                    gGL.bindUniformBlock(LLGLSLShader::UB_GLTF_JOINTS, skin.mUBO);
+                    gRender.bindUniformBlock(LLShaderProgram::UB_GLTF_JOINTS, skin.mUBO);
                 }
                 else
                 {
-                    LLGLSLShader::sCurBoundShaderPtr->uniform1i(LLShaderMgr::GLTF_NODE_ID, pdata.mNodeIndex);
+                    LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::GLTF_NODE_ID, pdata.mNodeIndex);
                 }
 
                 {
@@ -767,7 +767,7 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
         LLShaderMgr::EMISSIVE_MAP
     };
 
-    S32 channel = LLGLSLShader::sCurBoundShaderPtr->getTextureChannel(uniform[(U8)type_idx]);
+    S32 channel = LLShaderProgram::sCurBoundShaderPtr->getTextureChannel(uniform[(U8)type_idx]);
 
     if (channel > -1)
     {
@@ -779,31 +779,31 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
             if (tex)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gl bind texture");
-                gGL.bindTextureSlot(channel, tex->getTexName());
+                gRender.bindTextureSlot(channel, tex->getTexName());
 
                 if (channel != -1 && texture.mSampler != -1)
                 { // set sampler state
                     Sampler& sampler = asset.mSamplers[texture.mSampler];
-                    gGL.setTexWrap(tex->getTexName(), textureWrapFromGLTF(sampler.mWrapS), textureWrapFromGLTF(sampler.mWrapT));
-                    gGL.setTexFilter(tex->getTexName(), true, textureFilterFromGLTF(sampler.mMagFilter));
+                    gRender.setTexWrap(tex->getTexName(), textureWrapFromGLTF(sampler.mWrapS), textureWrapFromGLTF(sampler.mWrapT));
+                    gRender.setTexFilter(tex->getTexName(), true, textureFilterFromGLTF(sampler.mMagFilter));
 
                     // NOTE: do not set min filter.  Always respect client preference for min filter
                 }
                 else
                 {
                     // set default sampler state
-                    gGL.setTexWrap(tex->getTexName(), TextureWrap::Repeat, TextureWrap::Repeat);
-                    gGL.setTexFilter(tex->getTexName(), true, TextureFilter::Linear);
+                    gRender.setTexWrap(tex->getTexName(), TextureWrap::Repeat, TextureWrap::Repeat);
+                    gRender.setTexFilter(tex->getTexName(), true, TextureFilter::Linear);
                 }
             }
             else
             {
-                gGL.bindTextureSlot(channel, fallback->getTexName());
+                gRender.bindTextureSlot(channel, fallback->getTexName());
             }
         }
         else
         {
-            gGL.bindTextureSlot(channel, fallback->getTexName());
+            gRender.bindTextureSlot(channel, fallback->getTexName());
         }
     }
 }
@@ -812,7 +812,7 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
 void GLTFSceneManager::bind(Asset& asset, Material& material)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_GLTF;
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
 
     bindTexture(asset, TextureType::BASE_COLOR, material.mPbrMetallicRoughness.mBaseColorTexture, LLViewerFetchedTexture::sWhiteImagep);
 
@@ -1011,7 +1011,7 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
             // draw bounding box of mesh primitives
             if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_BBOXES))
             {
-                gGL.color3f(0.f, 1.f, 1.f);
+                gRender.color3f(0.f, 1.f, 1.f);
 
                 for (auto& primitive : mesh.mPrimitives)
                 {
@@ -1027,8 +1027,8 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
 #if 1
             if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_RAYCAST))
             {
-                gGL.flush();
-                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
+                gRender.flush();
+                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
 
                 // convert raycast to node local space
                 vec4 local_start = node.mAssetMatrixInv * start;
@@ -1045,8 +1045,8 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
                     }
                 }
 
-                gGL.flush();
-                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                gRender.flush();
+                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
             }
 #endif
             LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
@@ -1069,12 +1069,12 @@ void GLTFSceneManager::renderDebug()
     gDebugProgram.bind();
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
 
     LLRenderState::CullScope cullface(false);
     LLRenderState::BlendScope blend(true);
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
+    gRender.getTexUnit(0)->bindWhite();
     gPipeline.disableLights();
 
     for (auto& obj : mObjects)
@@ -1115,40 +1115,40 @@ void GLTFSceneManager::renderDebug()
                     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                     LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, glm::value_ptr(node.mAssetMatrix));
                     // render x-axis red, y-axis green, z-axis blue
-                    gGL.color4f(1.f, 0.f, 0.f, 0.5f);
-                    gGL.begin(LLRender::LINES);
-                    gGL.vertex3f(0.f, 0.f, 0.f);
-                    gGL.vertex3f(1.f, 0.f, 0.f);
-                    gGL.end();
-                    gGL.flush();
+                    gRender.color4f(1.f, 0.f, 0.f, 0.5f);
+                    gRender.begin(LLRender::LINES);
+                    gRender.vertex3f(0.f, 0.f, 0.f);
+                    gRender.vertex3f(1.f, 0.f, 0.f);
+                    gRender.end();
+                    gRender.flush();
 
-                    gGL.color4f(0.f, 1.f, 0.f, 0.5f);
-                    gGL.begin(LLRender::LINES);
-                    gGL.vertex3f(0.f, 0.f, 0.f);
-                    gGL.vertex3f(0.f, 1.f, 0.f);
-                    gGL.end();
-                    gGL.flush();
+                    gRender.color4f(0.f, 1.f, 0.f, 0.5f);
+                    gRender.begin(LLRender::LINES);
+                    gRender.vertex3f(0.f, 0.f, 0.f);
+                    gRender.vertex3f(0.f, 1.f, 0.f);
+                    gRender.end();
+                    gRender.flush();
 
-                    gGL.begin(LLRender::LINES);
-                    gGL.color4f(0.f, 0.f, 1.f, 0.5f);
-                    gGL.vertex3f(0.f, 0.f, 0.f);
-                    gGL.vertex3f(0.f, 0.f, 1.f);
-                    gGL.end();
-                    gGL.flush();
+                    gRender.begin(LLRender::LINES);
+                    gRender.color4f(0.f, 0.f, 1.f, 0.5f);
+                    gRender.vertex3f(0.f, 0.f, 0.f);
+                    gRender.vertex3f(0.f, 0.f, 1.f);
+                    gRender.end();
+                    gRender.flush();
 
                     // render path to child nodes cyan
-                    gGL.color4f(0.f, 1.f, 1.f, 0.5f);
-                    gGL.begin(LLRender::LINES);
+                    gRender.color4f(0.f, 1.f, 1.f, 0.5f);
+                    gRender.begin(LLRender::LINES);
                     for (auto& child_idx : node.mChildren)
                     {
                         Node& child = asset->mNodes[child_idx];
-                        gGL.vertex3f(0.f, 0.f, 0.f);
+                        gRender.vertex3f(0.f, 0.f, 0.f);
 
 
-                        gGL.vertex3fv(glm::value_ptr(child.mMatrix[3]));
+                        gRender.vertex3fv(glm::value_ptr(child.mMatrix[3]));
                     }
-                    gGL.end();
-                    gGL.flush();
+                    gRender.end();
+                    gRender.flush();
                     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
 
@@ -1178,9 +1178,9 @@ void GLTFSceneManager::renderDebug()
                 Node* node = &asset->mNodes[node_hit];
                 Primitive* primitive = &asset->mMeshes[node->mMesh].mPrimitives[primitive_hit];
 
-                gGL.flush();
-                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
-                gGL.color3f(1, 0, 1);
+                gRender.flush();
+                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                gRender.color3f(1, 0, 1);
                 drawBoxOutline(intersection, LLVector4a(0.1f, 0.1f, 0.1f, 0.f));
 
                 LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, glm::value_ptr(node->mAssetMatrix));
@@ -1188,8 +1188,8 @@ void GLTFSceneManager::renderDebug()
                 auto* listener = (LLVolumeOctreeListener*)primitive->mOctree->getListener(0);
                 drawBoxOutline(listener->mBounds[0], listener->mBounds[1]);
 
-                gGL.flush();
-                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                gRender.flush();
+                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
                 LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
         }

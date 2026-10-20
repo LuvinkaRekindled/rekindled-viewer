@@ -30,7 +30,7 @@ namespace LLVkTarget
     void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* dst, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 }
 
-namespace LLVkGL
+namespace LLVkWorker
 {
     void target_attach(unsigned fbo, unsigned slot, unsigned texture);
     // makes 'fbo' the target draws go to (0: the back buffer); draw_buffers: colour attachments written (0: none, -1: the back buffer)

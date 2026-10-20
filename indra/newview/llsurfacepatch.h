@@ -85,7 +85,7 @@ public:
 
     void updateCameraDistanceRegion( const LLVector3 &pos_region);
     void updateVisibility();
-    void updateGL();
+    void updateResources();
 
     void dirtyZ(); // Dirty the z values of this patch
     void setHasReceivedData();

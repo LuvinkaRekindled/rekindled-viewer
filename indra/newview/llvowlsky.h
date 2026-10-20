@@ -51,8 +51,8 @@ public:
     void drawFsSky(void); // fullscreen sky for advanced atmo
     void resetVertexBuffers(void);
 
-    void cleanupGL();
-    void restoreGL();
+    void cleanupResources();
+    void restoreResources();
 
 private:
 

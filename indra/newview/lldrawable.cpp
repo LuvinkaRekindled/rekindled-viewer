@@ -170,7 +170,7 @@ void LLDrawable::initClass()
 
 void LLDrawable::destroy()
 {
-    if (gDebugGL)
+    if (gDebugRender)
     {
         gPipeline.checkReferences(this);
     }

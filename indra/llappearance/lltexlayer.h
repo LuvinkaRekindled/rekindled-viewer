@@ -297,7 +297,7 @@ class LLTexLayerStaticImageList : public LLSingleton<LLTexLayerStaticImageList>
     LLSINGLETON(LLTexLayerStaticImageList);
     ~LLTexLayerStaticImageList();
 public:
-    LLGLTexture*        getTexture(const std::string& file_name, bool is_mask);
+    LLBaseTexture*        getTexture(const std::string& file_name, bool is_mask);
     LLImageTGA*         getImageTGA(const std::string& file_name);
     void                deleteCachedImages();
     void                dumpByteCount() const;
@@ -305,7 +305,7 @@ protected:
     bool                loadImageRaw(const std::string& file_name, LLImageRaw* image_raw);
 private:
     LLStringTable       mImageNames;
-    typedef std::map<const char*, LLPointer<LLGLTexture> > texture_map_t;
+    typedef std::map<const char*, LLPointer<LLBaseTexture> > texture_map_t;
     texture_map_t       mStaticImageList;
     typedef std::map<const char*, LLPointer<LLImageTGA> > image_tga_map_t;
     image_tga_map_t     mStaticImageListTGA;

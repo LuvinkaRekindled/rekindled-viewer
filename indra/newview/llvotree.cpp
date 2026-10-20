@@ -330,7 +330,7 @@ U32 LLVOTree::processUpdateMessage(LLMessageSystem *mesgsys,
     //  Load Species-Specific data
     //
     static const S32 MAX_TREE_TEXTURE_VIRTURE_SIZE_RESET_INTERVAL = 32 ; //frames.
-    mTreeImagep = LLViewerTextureManager::getFetchedTexture(sSpeciesTable[mSpecies]->mTextureID, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+    mTreeImagep = LLViewerTextureManager::getFetchedTexture(sSpeciesTable[mSpecies]->mTextureID, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
     mTreeImagep->setMaxVirtualSizeResetInterval(MAX_TREE_TEXTURE_VIRTURE_SIZE_RESET_INTERVAL); //allow to wait for at most 16 frames to reset virtual size.
 
     mBranchLength = sSpeciesTable[mSpecies]->mBranchLength;
@@ -889,7 +889,7 @@ void LLVOTree::updateMesh()
 
     // Translate to tree base  HACK - adjustment in Z plants tree underground
     const LLVector3 &pos_region = getPositionRegion();
-    //gGL.translatef(pos_agent.mV[VX], pos_agent.mV[VY], pos_agent.mV[VZ] - 0.1f);
+    //gRender.translatef(pos_agent.mV[VX], pos_agent.mV[VY], pos_agent.mV[VZ] - 0.1f);
     LLMatrix4 trans_mat;
     trans_mat.setTranslation(pos_region.mV[VX], pos_region.mV[VY], pos_region.mV[VZ] - 0.1f);
     trans_mat *= matrix;

@@ -87,7 +87,7 @@ public:
     static void             dumpTotalByteCount();
     const std::string       dumpTextureInfo() const;
     virtual void            restoreGLTexture();
-    virtual void            destroyGLTexture();
+    virtual void            destroyImageTexture();
 private:
     LLViewerTexLayerSet*    getViewerTexLayerSet()
         { return dynamic_cast<LLViewerTexLayerSet*> (mTexLayerSet); }

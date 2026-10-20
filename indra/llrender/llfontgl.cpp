@@ -85,9 +85,9 @@ void LLFontGL::reset()
     mFontFreetype->reset(sVertDPI, sHorizDPI);
 }
 
-void LLFontGL::destroyGL()
+void LLFontGL::destroyResources()
 {
-    mFontFreetype->destroyGL();
+    mFontFreetype->destroyResources();
 }
 
 // <FS:Ansariel> Optional tabular numeric font rendering
@@ -187,9 +187,9 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
         }
     }
 
-    gGL.pushUIMatrix();
+    gRender.pushUIMatrix();
 
-    gGL.loadUIIdentity();
+    gRender.loadUIIdentity();
 
     LLVector2 origin(floorf(sCurOrigin.mX*sScaleX), floorf(sCurOrigin.mY*sScaleY));
 
@@ -213,7 +213,7 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
     F32 cur_x, cur_y, cur_render_x, cur_render_y;
 
     // Not guaranteed to be set correctly
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
     cur_x = ((F32)x * sScaleX) + origin.mV[VX];
     cur_y = ((F32)y * sScaleY) + origin.mV[VY];
@@ -324,18 +324,18 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
             // otherwise the queued glyphs will be taken from wrong textures.
             if (glyph_count > 0)
             {
-                gGL.begin(LLRender::TRIANGLES);
+                gRender.begin(LLRender::TRIANGLES);
                 {
-                    gGL.vertexBatchPreTransformed(vertices, uvs, colors, glyph_count * 6);
+                    gRender.vertexBatchPreTransformed(vertices, uvs, colors, glyph_count * 6);
                 }
-                gGL.end();
+                gRender.end();
                 // </FS:Ansariel>
                 glyph_count = 0;
             }
 
             bitmap_entry = next_bitmap_entry;
-            LLImageGL* font_image = font_bitmap_cache->getImageGL(bitmap_entry.first, bitmap_entry.second);
-            gGL.getTexUnit(0)->bind(font_image);
+            LLImageTex* font_image = font_bitmap_cache->getImageGL(bitmap_entry.first, bitmap_entry.second);
+            gRender.getTexUnit(0)->bind(font_image);
 
             // For some reason it's not enough to compare by bitmap_entry.
             // Issue hits emojis, japenese and chinese glyphs, only on first run.
@@ -374,11 +374,11 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
 
         if (glyph_count >= GLYPH_BATCH_SIZE)
         {
-            gGL.begin(LLRender::TRIANGLES);
+            gRender.begin(LLRender::TRIANGLES);
             {
-                gGL.vertexBatchPreTransformed(vertices, uvs, colors, glyph_count * 6);
+                gRender.vertexBatchPreTransformed(vertices, uvs, colors, glyph_count * 6);
             }
-            gGL.end();
+            gRender.end();
 
             glyph_count = 0;
         }
@@ -412,11 +412,11 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
         cur_render_y = cur_y;
     }
 
-    gGL.begin(LLRender::TRIANGLES);
+    gRender.begin(LLRender::TRIANGLES);
     {
-        gGL.vertexBatchPreTransformed(vertices, uvs, colors, glyph_count * 6);
+        gRender.vertexBatchPreTransformed(vertices, uvs, colors, glyph_count * 6);
     }
-    gGL.end();
+    gRender.end();
 
 
     if (right_x)
@@ -429,13 +429,13 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
     {
         F32 descender = (F32)llfloor(mFontFreetype->getDescenderHeight());
 
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
         // specify color, otherwise it will use last one (Ex: white for emojis)
-        gGL.color4ubv(text_color.mV);
-        gGL.begin(LLRender::LINES);
-        gGL.vertex2f(start_x, cur_y - descender);
-        gGL.vertex2f(cur_x, cur_y - descender);
-        gGL.end();
+        gRender.color4ubv(text_color.mV);
+        gRender.begin(LLRender::LINES);
+        gRender.vertex2f(start_x, cur_y - descender);
+        gRender.vertex2f(cur_x, cur_y - descender);
+        gRender.end();
     }
 
     if (draw_ellipses)
@@ -456,7 +456,7 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
                 use_color);
     }
 
-    gGL.popUIMatrix();
+    gRender.popUIMatrix();
 
     return chars_drawn;
 }
@@ -994,7 +994,7 @@ void LLFontGL::destroyAllGL()
 {
     if (sFontRegistry)
     {
-        sFontRegistry->destroyGL();
+        sFontRegistry->destroyResources();
     }
 }
 

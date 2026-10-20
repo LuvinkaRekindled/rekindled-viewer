@@ -456,7 +456,7 @@ void LLManip::renderGuidelines(bool draw_x, bool draw_y, bool draw_z)
 
         const F32 LINE_ALPHA = 0.33f;
 
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
         LLUI::setLineWidth(1.5f);
 
         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
@@ -465,40 +465,40 @@ void LLManip::renderGuidelines(bool draw_x, bool draw_y, bool draw_z)
         if (draw_x)
         {
             // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
-            //gGL.color4f(1.f, 0.f, 0.f, LINE_ALPHA);
+            //gRender.color4f(1.f, 0.f, 0.f, LINE_ALPHA);
             color.setVec(getUserEditColor(VX, LINE_ALPHA));
-            gGL.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VW]);
+            gRender.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VW]);
             // </FS:AR> [FIRE-36909]
-            gGL.begin(LLRender::LINES);
-            gGL.vertex3f( -region_size, 0.f, 0.f );
-            gGL.vertex3f(  region_size, 0.f, 0.f );
-            gGL.end();
+            gRender.begin(LLRender::LINES);
+            gRender.vertex3f( -region_size, 0.f, 0.f );
+            gRender.vertex3f(  region_size, 0.f, 0.f );
+            gRender.end();
         }
 
         if (draw_y)
         {
             // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
-            //gGL.color4f(0.f, 1.f, 0.f, LINE_ALPHA);
+            //gRender.color4f(0.f, 1.f, 0.f, LINE_ALPHA);
             color.setVec(getUserEditColor(VY, LINE_ALPHA));
-            gGL.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VW]);
+            gRender.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VW]);
             // </FS:AR> [FIRE-36909]
-            gGL.begin(LLRender::LINES);
-            gGL.vertex3f( 0.f, -region_size, 0.f );
-            gGL.vertex3f( 0.f,  region_size, 0.f );
-            gGL.end();
+            gRender.begin(LLRender::LINES);
+            gRender.vertex3f( 0.f, -region_size, 0.f );
+            gRender.vertex3f( 0.f,  region_size, 0.f );
+            gRender.end();
         }
 
         if (draw_z)
         {
             // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
-            //gGL.color4f(0.f, 0.f, 1.f, LINE_ALPHA);
+            //gRender.color4f(0.f, 0.f, 1.f, LINE_ALPHA);
             color.setVec(getUserEditColor(VZ, LINE_ALPHA));
-            gGL.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VW]);
+            gRender.color4f(color.mV[VX], color.mV[VY], color.mV[VZ], color.mV[VW]);
             // </FS:AR> [FIRE-36909]
-            gGL.begin(LLRender::LINES);
-            gGL.vertex3f( 0.f, 0.f, -region_size );
-            gGL.vertex3f( 0.f, 0.f,  region_size );
-            gGL.end();
+            gRender.begin(LLRender::LINES);
+            gRender.vertex3f( 0.f, 0.f, -region_size );
+            gRender.vertex3f( 0.f, 0.f,  region_size );
+            gRender.end();
         }
         LLUI::setLineWidth(1.0f);
     }
@@ -522,8 +522,8 @@ void LLManip::renderXYZ(const LLVector3 &vec)
         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
         LLColor4 backgroudColor = getUserEditColor(VALPHA, 0.7f);
 
-        //gGL.color4f(0.f, 0.f, 0.f, 0.7f);
-        gGL.color4f(backgroudColor.mV[VX], backgroudColor.mV[VY], backgroudColor.mV[VZ], backgroudColor.mV[VALPHA]);
+        //gRender.color4f(0.f, 0.f, 0.f, 0.7f);
+        gRender.color4f(backgroudColor.mV[VX], backgroudColor.mV[VY], backgroudColor.mV[VZ], backgroudColor.mV[VALPHA]);
 
         //imagep->draw(
         //    (S32)((window_center_x - 115) * display_scale.mV[VX]),

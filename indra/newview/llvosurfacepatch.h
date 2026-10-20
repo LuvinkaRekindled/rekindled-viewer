@@ -51,7 +51,7 @@ public:
     virtual U32 getPartitionType() const;
 
     /*virtual*/ LLDrawable* createDrawable(LLPipeline *pipeline);
-    /*virtual*/ void        updateGL();
+    /*virtual*/ void        updateResources();
     /*virtual*/ bool        updateGeometry(LLDrawable *drawable);
     /*virtual*/ bool        updateLOD();
     /*virtual*/ void        updateFaceSize(S32 idx);

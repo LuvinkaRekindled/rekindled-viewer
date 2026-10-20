@@ -222,11 +222,11 @@ namespace
             //}
             // sBugSplatSender->setAttribute(WCSTR(L"OS"), WCSTR(LLOSInfo::instance().getOSStringSimple())); // In case we ever stop using email for this
             // sBugSplatSender->setAttribute(WCSTR(L"AppState"), WCSTR(LLStartUp::getStartupStateString()));
-            // sBugSplatSender->setAttribute(WCSTR(L"GLVendor"), WCSTR(gGLManager.mGLVendor));
-            // sBugSplatSender->setAttribute(WCSTR(L"GLVersion"), WCSTR(gGLManager.mGLVersionString));
-            // sBugSplatSender->setAttribute(WCSTR(L"GPUVersion"), WCSTR(gGLManager.mDriverVersionVendorString));
-            // sBugSplatSender->setAttribute(WCSTR(L"GLRenderer"), WCSTR(gGLManager.mGLRenderer));
-            // sBugSplatSender->setAttribute(WCSTR(L"VRAM"), WCSTR(STRINGIZE(gGLManager.mVRAM)));
+            // sBugSplatSender->setAttribute(WCSTR(L"GLVendor"), WCSTR(gDeviceCaps.mVendorString));
+            // sBugSplatSender->setAttribute(WCSTR(L"GLVersion"), WCSTR(gDeviceCaps.mApiVersionString));
+            // sBugSplatSender->setAttribute(WCSTR(L"GPUVersion"), WCSTR(gDeviceCaps.mDriverVersionVendorString));
+            // sBugSplatSender->setAttribute(WCSTR(L"GLRenderer"), WCSTR(gDeviceCaps.mDeviceString));
+            // sBugSplatSender->setAttribute(WCSTR(L"VRAM"), WCSTR(STRINGIZE(gDeviceCaps.mVRAM)));
             // sBugSplatSender->setAttribute(WCSTR(L"RAM"), WCSTR(STRINGIZE(gSysMemory.getPhysicalMemoryKB().value())));
 
             auto fatal_message = LLError::getFatalMessage();
@@ -658,7 +658,7 @@ int APIENTRY WINMAIN(HINSTANCE hInstance,
         }
 #endif
 
-        gGLActive = true;
+        gRenderActive = true;
 
         viewer_app_ptr->cleanup();
 

@@ -105,12 +105,12 @@ U32 LLViewerJoint::render( F32 pixelArea, bool first_pass, bool is_dummy )
                     triangle_count += drawShape( pixelArea, first_pass, is_dummy );
                 }
                 // second pass writes to z buffer only
-                gGL.setColorMask(false, false);
+                gRender.setColorMask(false, false);
                 {
                     triangle_count += drawShape( pixelArea, false, is_dummy  );
                 }
                 // third past respects z buffer and writes color
-                gGL.setColorMask(true, false);
+                gRender.setColorMask(true, false);
                 {
                     LLRenderState::DepthScope gls_depth(true, false);
                     triangle_count += drawShape( pixelArea, false, is_dummy  );
@@ -119,13 +119,13 @@ U32 LLViewerJoint::render( F32 pixelArea, bool first_pass, bool is_dummy )
             else
             {
                 // Render Inside (no Z buffer write)
-                gGL.setCullFace(LLRenderState::CullFace::Front);
+                gRender.setCullFace(LLRenderState::CullFace::Front);
                 {
                     LLRenderState::DepthScope gls_depth(true, false);
                     triangle_count += drawShape( pixelArea, first_pass, is_dummy  );
                 }
                 // Render Outside (write to the Z buffer)
-                gGL.setCullFace(LLRenderState::CullFace::Back);
+                gRender.setCullFace(LLRenderState::CullFace::Back);
                 {
                     triangle_count += drawShape( pixelArea, false, is_dummy  );
                 }

@@ -1688,7 +1688,7 @@ LLViewerMediaImpl::LLViewerMediaImpl(     const LLUUID& texture_id,
     }
 
     mMainQueue = LL::WorkQueue::getInstance("mainloop");
-    mTexUpdateQueue = LL::WorkQueue::getInstance("LLImageGL"); // Share work queue with tex loader.
+    mTexUpdateQueue = LL::WorkQueue::getInstance("LLImageTex"); // Share work queue with tex loader.
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -3042,7 +3042,7 @@ void LLViewerMediaImpl::update()
     if (preMediaTexUpdate(media_tex, data, data_width, data_height, x_pos, y_pos, width, height))
     {
         // Push update to worker thread
-        auto main_queue = LLImageGLThread::sEnabledMedia ? mMainQueue.lock() : nullptr;
+        auto main_queue = LLImageTexThread::sEnabledMedia ? mMainQueue.lock() : nullptr;
         if (main_queue)
         {
             mTextureUpdatePending = true;
@@ -3053,14 +3053,14 @@ void LLViewerMediaImpl::update()
                 [=, this]() // work done on update worker thread
                 {
 #if LL_IMAGEGL_THREAD_CHECK
-                    media_tex->getGLTexture()->mActiveThread = LLThread::currentID();
+                    media_tex->getImageTexture()->mActiveThread = LLThread::currentID();
 #endif
                     doMediaTexUpdate(media_tex, data, data_width, data_height, x_pos, y_pos, width, height, true);
                 },
                 [=, this]() // callback to main thread
                 {
 #if LL_IMAGEGL_THREAD_CHECK
-                    media_tex->getGLTexture()->mActiveThread = LLThread::currentID();
+                    media_tex->getImageTexture()->mActiveThread = LLThread::currentID();
 #endif
                     mTextureUpdatePending = false;
                     media_tex->unref();
@@ -3139,7 +3139,7 @@ void LLViewerMediaImpl::doMediaTexUpdate(LLViewerMediaTexture* media_tex, U8* da
     // -Cosmic,2023-04-04
     // Allocate GL texture based on LLImageRaw but do NOT copy to GL
     U32 tex_name = 0;
-    if (!media_tex->createGLTexture(0, raw, 0, true, LLGLTexture::OTHER, true, &tex_name))
+    if (!media_tex->createImageTexture(0, raw, 0, true, LLBaseTexture::OTHER, true, &tex_name))
     {
         LL_WARNS("Media") << "Failed to create media texture" << LL_ENDL;
     }
@@ -3149,11 +3149,11 @@ void LLViewerMediaImpl::doMediaTexUpdate(LLViewerMediaTexture* media_tex, U8* da
 
     if (sync)
     {
-        media_tex->getGLTexture()->syncToMainThread(tex_name);
+        media_tex->getImageTexture()->syncToMainThread(tex_name);
     }
     else
     {
-        media_tex->getGLTexture()->syncTexName(tex_name);
+        media_tex->getImageTexture()->syncTexName(tex_name);
     }
 
     // release the data pointer before freeing raw so LLImageRaw destructor doesn't
@@ -3202,7 +3202,7 @@ LLViewerMediaTexture* LLViewerMediaImpl::updateMediaImage()
         int texture_depth = mMediaSource->getTextureDepth();
 
         // MEDIAOPT: check to see if size actually changed before doing work
-        media_tex->destroyGLTexture();
+        media_tex->destroyImageTexture();
 
         // MEDIAOPT: seems insane that we actually have to make an imageraw then
         // immediately discard it
@@ -3217,7 +3217,7 @@ LLViewerMediaTexture* LLViewerMediaImpl::updateMediaImage()
             componentTypeFromGL(mMediaSource->getTextureFormatType()));
 
         int discard_level = 0;
-        if (!media_tex->createGLTexture(discard_level, raw))
+        if (!media_tex->createImageTexture(discard_level, raw))
         {
             LL_WARNS("Media") << "Failed to create media texture" << LL_ENDL;
         }

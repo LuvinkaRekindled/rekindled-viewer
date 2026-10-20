@@ -1007,7 +1007,7 @@ bool LLVOAvatar::isFullyTextured() const
             {
                 continue; // nonexistent mesh OK
             }
-            if (mesh->hasGLTexture())
+            if (mesh->hasImageTexture())
             {
                 continue; // Mesh exists and has a baked texture.
             }
@@ -1054,7 +1054,7 @@ void LLVOAvatar::deleteLayerSetCaches(bool clearAll)
         }
         if (mBakedTextureDatas[i].mMaskTexName)
         {
-            LLImageGL::deleteTextures(1, (U32*)&(mBakedTextureDatas[i].mMaskTexName));
+            LLImageTex::deleteTextures(1, (U32*)&(mBakedTextureDatas[i].mMaskTexName));
             mBakedTextureDatas[i].mMaskTexName = 0 ;
         }
     }
@@ -1223,7 +1223,7 @@ void LLVOAvatar::dumpBakedStatus()
 }
 
 //static
-void LLVOAvatar::restoreGL()
+void LLVOAvatar::restoreResources()
 {
     if (!isAgentAvatarValid()) return;
 
@@ -1238,7 +1238,7 @@ void LLVOAvatar::restoreGL()
 }
 
 //static
-void LLVOAvatar::destroyGL()
+void LLVOAvatar::destroyResources()
 {
     deleteCachedImages();
 
@@ -1772,12 +1772,12 @@ void render_sphere_and_line(const LLVector3& begin_pos, const LLVector3& end_pos
     LLRenderState::DepthScope normal_depth(true);
 
     // Draw line segment for unoccluded joint
-    gGL.diffuseColor3f(visible_color[0], visible_color[1], visible_color[2]);
+    gRender.diffuseColor3f(visible_color[0], visible_color[1], visible_color[2]);
 
-    gGL.begin(LLRender::LINES);
-    gGL.vertex3fv(begin_pos.mV);
-    gGL.vertex3fv(end_pos.mV);
-    gGL.end();
+    gRender.begin(LLRender::LINES);
+    gRender.vertex3fv(begin_pos.mV);
+    gRender.vertex3fv(end_pos.mV);
+    gRender.end();
 
 
     // Draw sphere representing joint pos
@@ -1789,12 +1789,12 @@ void render_sphere_and_line(const LLVector3& begin_pos, const LLVector3& end_pos
     LLRenderState::DepthScope depth_under(true, false, LLRenderState::CompareOp::Greater);
 
     // Occluded bone portions
-    gGL.diffuseColor3f(occ_color[0], occ_color[1], occ_color[2]);
+    gRender.diffuseColor3f(occ_color[0], occ_color[1], occ_color[2]);
 
-    gGL.begin(LLRender::LINES);
-    gGL.vertex3fv(begin_pos.mV);
-    gGL.vertex3fv(end_pos.mV);
-    gGL.end();
+    gRender.begin(LLRender::LINES);
+    gRender.vertex3fv(begin_pos.mV);
+    gRender.vertex3fv(end_pos.mV);
+    gRender.end();
 
     // Draw sphere representing joint pos
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
@@ -1944,7 +1944,7 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
 
 
     // draw joint space bounding boxes of rigged attachments in yellow
-    gGL.color3f(1.f, 1.f, 0.f);
+    gRender.color3f(1.f, 1.f, 0.f);
     for (S32 joint_num = 0; joint_num < LL_CHARACTER_MAX_ANIMATED_JOINTS; joint_num++)
     {
         LLJoint* joint = getJoint(joint_num);
@@ -1982,7 +1982,7 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
     }
 
     // draw world space attachment rigged bounding boxes in cyan
-    gGL.color3f(0.f, 1.f, 1.f);
+    gRender.color3f(0.f, 1.f, 1.f);
     for (attachment_map_t::iterator iter = mAttachmentPoints.begin();
          iter != mAttachmentPoints.end();
          ++iter)
@@ -2068,9 +2068,9 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getXform()->getWorldMatrix().mMatrix[0][0]);
 
-        gGL.diffuseColor3f( 1.f, 0.f, 1.f );
+        gRender.diffuseColor3f( 1.f, 0.f, 1.f );
 
-        gGL.begin(LLRender::LINES);
+        gRender.begin(LLRender::LINES);
 
         LLVector3 v[] =
         {
@@ -2084,47 +2084,47 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
         };
 
         //sides
-        gGL.vertex3fv(v[0].mV);
-        gGL.vertex3fv(v[2].mV);
+        gRender.vertex3fv(v[0].mV);
+        gRender.vertex3fv(v[2].mV);
 
-        gGL.vertex3fv(v[0].mV);
-        gGL.vertex3fv(v[3].mV);
+        gRender.vertex3fv(v[0].mV);
+        gRender.vertex3fv(v[3].mV);
 
-        gGL.vertex3fv(v[1].mV);
-        gGL.vertex3fv(v[2].mV);
+        gRender.vertex3fv(v[1].mV);
+        gRender.vertex3fv(v[2].mV);
 
-        gGL.vertex3fv(v[1].mV);
-        gGL.vertex3fv(v[3].mV);
+        gRender.vertex3fv(v[1].mV);
+        gRender.vertex3fv(v[3].mV);
 
 
         //top
-        gGL.vertex3fv(v[0].mV);
-        gGL.vertex3fv(v[4].mV);
+        gRender.vertex3fv(v[0].mV);
+        gRender.vertex3fv(v[4].mV);
 
-        gGL.vertex3fv(v[1].mV);
-        gGL.vertex3fv(v[4].mV);
+        gRender.vertex3fv(v[1].mV);
+        gRender.vertex3fv(v[4].mV);
 
-        gGL.vertex3fv(v[2].mV);
-        gGL.vertex3fv(v[4].mV);
+        gRender.vertex3fv(v[2].mV);
+        gRender.vertex3fv(v[4].mV);
 
-        gGL.vertex3fv(v[3].mV);
-        gGL.vertex3fv(v[4].mV);
+        gRender.vertex3fv(v[3].mV);
+        gRender.vertex3fv(v[4].mV);
 
 
         //bottom
-        gGL.vertex3fv(v[0].mV);
-        gGL.vertex3fv(v[5].mV);
+        gRender.vertex3fv(v[0].mV);
+        gRender.vertex3fv(v[5].mV);
 
-        gGL.vertex3fv(v[1].mV);
-        gGL.vertex3fv(v[5].mV);
+        gRender.vertex3fv(v[1].mV);
+        gRender.vertex3fv(v[5].mV);
 
-        gGL.vertex3fv(v[2].mV);
-        gGL.vertex3fv(v[5].mV);
+        gRender.vertex3fv(v[2].mV);
+        gRender.vertex3fv(v[5].mV);
 
-        gGL.vertex3fv(v[3].mV);
-        gGL.vertex3fv(v[5].mV);
+        gRender.vertex3fv(v[3].mV);
+        gRender.vertex3fv(v[5].mV);
 
-        gGL.end();
+        gRender.end();
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
@@ -2135,7 +2135,7 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
 
 
     // // draw joint space bounding boxes of rigged attachments in yellow
-    // gGL.color3f(1.f, 1.f, 0.f);
+    // gRender.color3f(1.f, 1.f, 0.f);
     // for (S32 joint_num = 0; joint_num < LL_CHARACTER_MAX_ANIMATED_JOINTS; joint_num++)
     // {
     //     LLJoint* joint = getJoint(joint_num);
@@ -2153,8 +2153,8 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
     //             // Ignore bounding box of HUD joints
     //             continue;
     //         }
-    //         gGL.pushMatrix();
-    //         gGL.multMatrix(&joint->getXform()->getWorldMatrix().mMatrix[0][0]);
+    //         gRender.pushMatrix();
+    //         gRender.multMatrix(&joint->getXform()->getWorldMatrix().mMatrix[0][0]);
 
     //         LLVector4a pos;
     //         LLVector4a size;
@@ -2168,12 +2168,12 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
 
     //         drawBoxOutline(pos, size);
 
-    //         gGL.popMatrix();
+    //         gRender.popMatrix();
     //     }
     // }
 
     // draw world space attachment rigged bounding boxes in cyan
-    // gGL.color3f(0.f, 1.f, 1.f);
+    // gRender.color3f(0.f, 1.f, 1.f);
     // for (attachment_map_t::iterator iter = mAttachmentPoints.begin();
     //      iter != mAttachmentPoints.end();
     //      ++iter)
@@ -2268,9 +2268,9 @@ void LLVOAvatar::renderJoints()
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getXform()->getWorldMatrix().mMatrix[0][0]);
 
-        gGL.diffuseColor3f( 1.f, 0.f, 1.f );
+        gRender.diffuseColor3f( 1.f, 0.f, 1.f );
 
-        gGL.begin(LLRender::LINES);
+        gRender.begin(LLRender::LINES);
 
         LLVector3 v[] =
         {
@@ -2284,47 +2284,47 @@ void LLVOAvatar::renderJoints()
         };
 
         //sides
-        gGL.vertex3fv(v[0].mV);
-        gGL.vertex3fv(v[2].mV);
+        gRender.vertex3fv(v[0].mV);
+        gRender.vertex3fv(v[2].mV);
 
-        gGL.vertex3fv(v[0].mV);
-        gGL.vertex3fv(v[3].mV);
+        gRender.vertex3fv(v[0].mV);
+        gRender.vertex3fv(v[3].mV);
 
-        gGL.vertex3fv(v[1].mV);
-        gGL.vertex3fv(v[2].mV);
+        gRender.vertex3fv(v[1].mV);
+        gRender.vertex3fv(v[2].mV);
 
-        gGL.vertex3fv(v[1].mV);
-        gGL.vertex3fv(v[3].mV);
+        gRender.vertex3fv(v[1].mV);
+        gRender.vertex3fv(v[3].mV);
 
 
         //top
-        gGL.vertex3fv(v[0].mV);
-        gGL.vertex3fv(v[4].mV);
+        gRender.vertex3fv(v[0].mV);
+        gRender.vertex3fv(v[4].mV);
 
-        gGL.vertex3fv(v[1].mV);
-        gGL.vertex3fv(v[4].mV);
+        gRender.vertex3fv(v[1].mV);
+        gRender.vertex3fv(v[4].mV);
 
-        gGL.vertex3fv(v[2].mV);
-        gGL.vertex3fv(v[4].mV);
+        gRender.vertex3fv(v[2].mV);
+        gRender.vertex3fv(v[4].mV);
 
-        gGL.vertex3fv(v[3].mV);
-        gGL.vertex3fv(v[4].mV);
+        gRender.vertex3fv(v[3].mV);
+        gRender.vertex3fv(v[4].mV);
 
 
         //bottom
-        gGL.vertex3fv(v[0].mV);
-        gGL.vertex3fv(v[5].mV);
+        gRender.vertex3fv(v[0].mV);
+        gRender.vertex3fv(v[5].mV);
 
-        gGL.vertex3fv(v[1].mV);
-        gGL.vertex3fv(v[5].mV);
+        gRender.vertex3fv(v[1].mV);
+        gRender.vertex3fv(v[5].mV);
 
-        gGL.vertex3fv(v[2].mV);
-        gGL.vertex3fv(v[5].mV);
+        gRender.vertex3fv(v[2].mV);
+        gRender.vertex3fv(v[5].mV);
 
-        gGL.vertex3fv(v[3].mV);
-        gGL.vertex3fv(v[5].mV);
+        gRender.vertex3fv(v[3].mV);
+        gRender.vertex3fv(v[5].mV);
 
-        gGL.end();
+        gRender.end();
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
@@ -3070,12 +3070,12 @@ LLViewerFetchedTexture *LLVOAvatar::getBakedTextureImage(const U8 te, const LLUU
             LL_DEBUGS("Avatar") << avString() << "get old-bake image from host " << uuid << LL_ENDL;
             LLHost host = getObjectHost();
             result = LLViewerTextureManager::getFetchedTexture(
-                uuid, FTT_HOST_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, host);
+                uuid, FTT_HOST_BAKE, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, host);
             // </FS:Ansariel> [Legacy Bake]
         }
         LL_DEBUGS("Avatar") << avString() << "get server-bake image from URL " << url << LL_ENDL;
         result = LLViewerTextureManager::getFetchedTextureFromUrl(
-            url, FTT_SERVER_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, uuid);
+            url, FTT_SERVER_BAKE, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, uuid);
         if (result->isMissingAsset())
         {
             result->setIsMissingAsset(false);
@@ -6636,21 +6636,21 @@ U32 LLVOAvatar::renderTransparent(bool first_pass)
     U32 num_indices = 0;
     if( isWearingWearableType( LLWearableType::WT_SKIRT ) && (isUIAvatar() || isTextureVisible(TEX_SKIRT_BAKED)) )
     {
-        gGL.flush();
+        gRender.flush();
         LLViewerJoint* skirt_mesh = getViewerJoint(MESH_ID_SKIRT);
         if (skirt_mesh)
         {
             num_indices += skirt_mesh->render(mAdjustedPixelArea, false);
         }
         first_pass = false;
-        gGL.flush();
+        gRender.flush();
     }
 
     if (!isSelf() || gAgent.needsRenderHead() || LLPipeline::sShadowRender)
     {
         if (LLPipeline::sImpostorRender)
         {
-            gGL.flush();
+            gRender.flush();
         }
 
         if (isTextureVisible(TEX_HEAD_BAKED))
@@ -6673,7 +6673,7 @@ U32 LLVOAvatar::renderTransparent(bool first_pass)
         }
         if (LLPipeline::sImpostorRender)
         {
-            gGL.flush();
+            gRender.flush();
         }
     }
 
@@ -6735,47 +6735,47 @@ U32 LLVOAvatar::renderImpostor(LLColor4U color, S32 diffuse_channel)
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_IMPOSTORS))
     {
         LLRenderState::BlendScope blend(true);
-        gGL.setSceneBlendType(LLRender::BT_ADD);
-        gGL.getTexUnit(diffuse_channel)->bindWhite();
+        gRender.setSceneBlendType(LLRender::BT_ADD);
+        gRender.getTexUnit(diffuse_channel)->bindWhite();
 
-        gGL.begin(LLRender::LINES);
-        gGL.color4f(1.f,1.f,1.f,1.f);
+        gRender.begin(LLRender::LINES);
+        gRender.color4f(1.f,1.f,1.f,1.f);
         F32 thickness = llmax(F32(5.0f-5.0f*(gFrameTimeSeconds-mLastImpostorUpdateFrameTime)),1.0f);
-        gGL.setLineWidth(thickness); // <FS> Line width OGL core profile fix by Rye Mutt
-        gGL.vertex3fv((pos+left-up).mV);
-        gGL.vertex3fv((pos-left-up).mV);
-        gGL.vertex3fv((pos-left-up).mV);
-        gGL.vertex3fv((pos-left+up).mV);
-        gGL.vertex3fv((pos-left+up).mV);
-        gGL.vertex3fv((pos+left+up).mV);
-        gGL.vertex3fv((pos+left+up).mV);
-        gGL.vertex3fv((pos+left-up).mV);
-        gGL.end();
-        gGL.flush();
+        gRender.setLineWidth(thickness); // <FS> Line width OGL core profile fix by Rye Mutt
+        gRender.vertex3fv((pos+left-up).mV);
+        gRender.vertex3fv((pos-left-up).mV);
+        gRender.vertex3fv((pos-left-up).mV);
+        gRender.vertex3fv((pos-left+up).mV);
+        gRender.vertex3fv((pos-left+up).mV);
+        gRender.vertex3fv((pos+left+up).mV);
+        gRender.vertex3fv((pos+left+up).mV);
+        gRender.vertex3fv((pos+left-up).mV);
+        gRender.end();
+        gRender.flush();
     }
     {
-    gGL.flush();
+    gRender.flush();
 
-    gGL.color4ubv(color.mV);
-    gGL.getTexUnit(diffuse_channel)->bind(&mImpostor);
-    gGL.begin(LLRender::TRIANGLES);
+    gRender.color4ubv(color.mV);
+    gRender.getTexUnit(diffuse_channel)->bind(&mImpostor);
+    gRender.begin(LLRender::TRIANGLES);
     {
-        gGL.texCoord2f(0.f, 0.f);
-        gGL.vertex3fv((pos + left - up).mV);
-        gGL.texCoord2f(1.f, 0.f);
-        gGL.vertex3fv((pos - left - up).mV);
-        gGL.texCoord2f(1.f, 1.f);
-        gGL.vertex3fv((pos - left + up).mV);
+        gRender.texCoord2f(0.f, 0.f);
+        gRender.vertex3fv((pos + left - up).mV);
+        gRender.texCoord2f(1.f, 0.f);
+        gRender.vertex3fv((pos - left - up).mV);
+        gRender.texCoord2f(1.f, 1.f);
+        gRender.vertex3fv((pos - left + up).mV);
 
-        gGL.texCoord2f(0.f, 0.f);
-        gGL.vertex3fv((pos + left - up).mV);
-        gGL.texCoord2f(1.f, 1.f);
-        gGL.vertex3fv((pos - left + up).mV);
-        gGL.texCoord2f(0.f, 1.f);
-        gGL.vertex3fv((pos + left + up).mV);
+        gRender.texCoord2f(0.f, 0.f);
+        gRender.vertex3fv((pos + left - up).mV);
+        gRender.texCoord2f(1.f, 1.f);
+        gRender.vertex3fv((pos - left + up).mV);
+        gRender.texCoord2f(0.f, 1.f);
+        gRender.vertex3fv((pos + left + up).mV);
     }
-    gGL.end();
-    gGL.flush();
+    gRender.end();
+    gRender.flush();
     }
 
     return 6;
@@ -6949,7 +6949,7 @@ void LLVOAvatar::releaseOldTextures()
             if (imagep)
             {
                 current_texture_mem += imagep->getTextureMemory();
-                if (imagep->getTextureState() == LLGLTexture::NO_DELETE)
+                if (imagep->getTextureState() == LLBaseTexture::NO_DELETE)
                 {
                     // This will allow the texture to be deleted if not in use.
                     imagep->forceActive();
@@ -6999,11 +6999,11 @@ void LLVOAvatar::updateTextures()
         layer_baked.push_back(isTextureDefined(mBakedTextureDatas[i].mTextureIndex));
         // bind the texture so that they'll be decoded slightly
         // inefficient, we can short-circuit this if we have to
-        if (render_avatar && !gGLManager.mIsDisabled)
+        if (render_avatar && !gDeviceCaps.mIsDisabled)
         {
             if (layer_baked[i] && !mBakedTextureDatas[i].mIsLoaded)
             {
-                gGL.getTexUnit(0)->bind(getImage( mBakedTextureDatas[i].mTextureIndex, 0 ));
+                gRender.getTexUnit(0)->bind(getImage( mBakedTextureDatas[i].mTextureIndex, 0 ));
             }
         }
     }
@@ -8748,7 +8748,7 @@ LLDrawable *LLVOAvatar::createDrawable(LLPipeline *pipeline)
 }
 
 
-void LLVOAvatar::updateGL()
+void LLVOAvatar::updateResources()
 {
     if (mMeshTexturesDirty)
     {
@@ -11464,7 +11464,7 @@ void LLVOAvatar::applyParsedAppearanceMessage(LLAppearanceMessageContents& conte
             //LL_DEBUGS("Avatar") << avString() << " baked_index " << (S32) baked_index << " using mLastTextureID " << mBakedTextureDatas[baked_index].mLastTextureID << LL_ENDL;
             LL_DEBUGS("Avatar") << avString() << "sb " << (S32) isUsingServerBakes() << " baked_index " << (S32) baked_index << " using mLastTextureID " << mBakedTextureDatas[baked_index].mLastTextureID << LL_ENDL;
             setTEImage(mBakedTextureDatas[baked_index].mTextureIndex,
-                LLViewerTextureManager::getFetchedTexture(mBakedTextureDatas[baked_index].mLastTextureID, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+                LLViewerTextureManager::getFetchedTexture(mBakedTextureDatas[baked_index].mLastTextureID, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
         }
         else
         {
@@ -11774,19 +11774,19 @@ void LLVOAvatar::onBakedTextureMasksLoaded( bool success, LLViewerFetchedTexture
             }
 
             U32 gl_name;
-            LLImageGL::generateTextures(1, &gl_name );
+            LLImageTex::generateTextures(1, &gl_name );
             stop_glerror();
 
-            gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, gl_name);
+            gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, gl_name);
             stop_glerror();
 
-            LLImageGL::setManualImage(
+            LLImageTex::setManualImage(
                 gl_name, TextureTarget::Tex2D, 0, TexelFormat::Alpha8,
                 aux_src->getWidth(), aux_src->getHeight(),
                 PixelFormat::Alpha, ComponentType::U8, aux_src->getData());
             stop_glerror();
 
-            gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+            gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
 
             /* if( id == head_baked->getID() )
                  if (self->mBakedTextureDatas[BAKED_HEAD].mTexLayerSet)
@@ -11811,7 +11811,7 @@ void LLVOAvatar::onBakedTextureMasksLoaded( bool success, LLViewerFetchedTexture
                         maskData->mLastDiscardLevel = discard_level;
                         if (self->mBakedTextureDatas[baked_index].mMaskTexName)
                         {
-                            LLImageGL::deleteTextures(1, &(self->mBakedTextureDatas[baked_index].mMaskTexName));
+                            LLImageTex::deleteTextures(1, &(self->mBakedTextureDatas[baked_index].mMaskTexName));
                         }
                         self->mBakedTextureDatas[baked_index].mMaskTexName = gl_name;
                         found_texture_id = true;
@@ -13817,23 +13817,23 @@ void LLVOAvatar::placeProfileQuery()
 {
     if (mGPUTimerQuery == 0)
     {
-        gGL.genQueries(1, &mGPUTimerQuery);
+        gRender.genQueries(1, &mGPUTimerQuery);
     }
 
-    gGL.beginQuery(LLRender::QUERY_TIME_ELAPSED, mGPUTimerQuery);
+    gRender.beginQuery(LLRender::QUERY_TIME_ELAPSED, mGPUTimerQuery);
 }
 
 void LLVOAvatar::readProfileQuery(S32 retries)
 {
     if (!mGPUProfilePending)
     {
-        gGL.endQuery(LLRender::QUERY_TIME_ELAPSED);
+        gRender.endQuery(LLRender::QUERY_TIME_ELAPSED);
         mGPUProfilePending = true;
     }
 
-    if (gGL.queryReady(mGPUTimerQuery) || --retries <= 0)
+    if (gRender.queryReady(mGPUTimerQuery) || --retries <= 0)
     { // query available, readback result
-        const U64 time_elapsed = gGL.queryResult(mGPUTimerQuery);
+        const U64 time_elapsed = gRender.queryResult(mGPUTimerQuery);
         mGPURenderTime = time_elapsed / 1000000.f;
         mGPUProfilePending = false;
 

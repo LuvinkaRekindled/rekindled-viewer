@@ -641,7 +641,7 @@ void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components,
     {
         mDirty[u.mClass] = true;      // the viewer re-sends the same values before most draws: only real changes cost an upload
     }
-    if (LLVkMirror::gPhaseTiming) note_uniform_write(mName, u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
+    if (LLVkBridge::gPhaseTiming) note_uniform_write(mName, u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
 }
 
 void Program::writeRange(U32 cls, U32 offset, U32 size, const U8* data)
@@ -751,7 +751,7 @@ void Program::setMatricesAt(size_t uniform_index, const F32* data, U32 columns, 
     {
         mDirty[u.mClass] = true;
     }
-    if (LLVkMirror::gPhaseTiming) note_uniform_write(mName, u, changed, count * columns * 16);
+    if (LLVkBridge::gPhaseTiming) note_uniform_write(mName, u, changed, count * columns * 16);
 }
 
 S32 Program::findSampler(const std::string& name) const
@@ -1405,7 +1405,7 @@ bool Renderer::init()
 
 void Renderer::gpuZone(const char* name, bool begin)
 {
-    if (!LLVkMirror::gPhaseTiming)
+    if (!LLVkBridge::gPhaseTiming)
     {
         return;
     }
@@ -2493,7 +2493,7 @@ void Renderer::beginRenderingIfNeeded()
     mDrawStamps = false;
     mSerialPass = true;
     mDrawStampCount = 0;
-    if (LLVkMirror::gPhaseTiming)
+    if (LLVkBridge::gPhaseTiming)
     {
         // LL_VK_DRAW_STAMPS: 0 none, 1 (default) the passes of avatar impostors (four colour attachments and depth, up to 1024 per side, not the 343x343 probe faces), 2 every pass
         static const U64 draw_stamp_mode = []() { const char* e = getenv("LL_VK_DRAW_STAMPS"); return e && e[0] ? (U64)atoi(e) : 1ull; }();
@@ -3101,8 +3101,8 @@ Image* Renderer::resolveTexture(size_t k, bool depth_ro, Image* depth_root)
 
 void Renderer::applyState()
 {
-    LLVkMirror::noteRendererThread();
-    long long lap_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
+    LLVkBridge::noteRendererThread();
+    long long lap_t = LLVkBridge::gPhaseTiming ? LLVkBridge::phaseNow() : 0;
     mDiagChanged = false;
     // 1. A texture that is also the depth attachment is a feedback loop. Reading it while depth writes are off is
     //    legal with a read-only depth layout (the viewer's lighting passes do this); with writes on it cannot work.
@@ -3226,10 +3226,10 @@ void Renderer::applyState()
         }
     }
 
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_TEX, lap_t);
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_TEX, lap_t);
     // 3. pass
     beginRenderingIfNeeded();
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_PASS, lap_t);
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_PASS, lap_t);
 
     // 3. pipeline
     PipelineKey key;
@@ -3252,7 +3252,7 @@ void Renderer::applyState()
         mBoundPipeline = pipeline;
         mDiagChanged = true;
     }
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_PIPE, lap_t);
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_PIPE, lap_t);
 
     // 4. dynamic state (only what changed since it was last recorded)
     const Image* ref = mColorCount ? mColorTargets[0] : mDepthTarget;
@@ -3337,7 +3337,7 @@ void Renderer::applyState()
         mAppliedColorCount = mColorCount;
     }
     mStateApplied = true;
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_DYN, lap_t);
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_DYN, lap_t);
 
     // 5. vertex input
     if (mUseVertexInput)
@@ -3433,12 +3433,12 @@ void Renderer::applyState()
         }
     }
 
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_VI, lap_t);
-    LLVkMirror::gLastLap = 301;
-    LLVkMirror::gDbg[0] = (unsigned long long)mProgram;
-    LLVkMirror::gDbg[1] = mSlot;
-    LLVkMirror::gDbg[2] = (unsigned long long)mCmd;
-    LLVkMirror::gDbg[3] = (unsigned long long)mRing[mSlot].mMapped;
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_VI, lap_t);
+    LLVkBridge::gLastLap = 301;
+    LLVkBridge::gDbg[0] = (unsigned long long)mProgram;
+    LLVkBridge::gDbg[1] = mSlot;
+    LLVkBridge::gDbg[2] = (unsigned long long)mCmd;
+    LLVkBridge::gDbg[3] = (unsigned long long)mRing[mSlot].mMapped;
     // 5b. <FS> bindless programs: the slot of each sampler's texture is written into the loose uniform block (copied to the ring below); no descriptors are pushed
     if (mProgram->mBindless)
     {
@@ -3483,7 +3483,7 @@ void Renderer::applyState()
             mRtBoundOffset = rt_offset;
         }
     }
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_SAMP, lap_t);
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_SAMP, lap_t);
     // 6. loose uniforms, class by class: copy a class's shadow into the ring when it changed (or on its first use this frame)
     const U64 frame_number = Context::instance().getFrameNumber();
     const U64 ring_key = sRingEpochOff ? frame_number : mRingEpoch;
@@ -3494,9 +3494,9 @@ void Renderer::applyState()
         {
             continue;
         }
-        LLVkMirror::gLastLap = 302;
+        LLVkBridge::gLastLap = 302;
         const U32 ring_offset = allocUniform((U32)shadow.size());
-        LLVkMirror::gLastLap = 303;
+        LLVkBridge::gLastLap = 303;
         if (ring_offset == 0xFFFFFFFFu)
         {
             mDrawBlocked = true;
@@ -3504,7 +3504,7 @@ void Renderer::applyState()
         }
         mProgram->mRingOffset[k] = ring_offset;
         mDiagChanged = true;
-        if (LLVkMirror::gPhaseTiming)
+        if (LLVkBridge::gPhaseTiming)
         {
             UniformCopyStat& us = mUniformCopies[mProgram];
             ++us.mCopies;
@@ -3531,13 +3531,13 @@ void Renderer::applyState()
         mProgram->mRingFrame[k] = ring_key;
         mProgram->mDirty[k] = false;
     }
-    LLVkMirror::gLastLap = 304;
+    LLVkBridge::gLastLap = 304;
     VkDescriptorSet set0 = mSet0[mSlot];
     if (mUbo[0] || mUbo[1] || mUbo[2] || mUbo[3])
     {
         set0 = uboSet();
     }
-    LLVkMirror::gLastLap = 305;
+    LLVkBridge::gLastLap = 305;
     bool offsets_changed = !mSet0Bound || mAppliedSet0 != set0;
     for (U32 k = 0; k < UC_COUNT; ++k)
     {
@@ -3555,7 +3555,7 @@ void Renderer::applyState()
         mSet0Bound = true;
     }
 
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_UNI, lap_t);
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_UNI, lap_t);
     // 7. textures, pushed for exactly the samplers the program declares
     if (!mProgram->mBindless && !mProgram->mInfo.mSamplers.empty())
     {
@@ -3595,7 +3595,7 @@ void Renderer::applyState()
             vkCmdPushDescriptorSetKHR(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 1, n, writes);
         }
     }
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_PUSH, lap_t);
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_PUSH, lap_t);
 }
 
 void Renderer::setUniformBuffer(U32 index, VkBuffer buffer, VkDeviceSize range)
@@ -3686,7 +3686,7 @@ std::string Renderer::describeSlot(U32 slot) const
     snprintf(buf, sizeof(buf), "slot %u: %s, given to its image %lld frames ago, %u descriptor writes, last used %lld frames ago, pins %u, image %ux%u format %u mips %u layers %u layout %u, view id %llu, %s",
              slot, s.mActive ? "active" : "FREE", (long long)(frame - s.mCreatedFrame), s.mDbgWrites, (long long)(frame - s.mLastUsed), s.mPins, s.mDbgW, s.mDbgH, s.mDbgFormat, s.mDbgMips, s.mDbgLayers, s.mDbgLayout,
              (unsigned long long)s.mKey.mViewId, dead ? "image DESTROYED" : "image alive");
-    return std::string(buf) + ", image handle " + std::to_string((unsigned long long)s.mDbgImage) + ": " + Context::instance().describeBinding(s.mDbgImage) + " | " + LLVkGL::describe_texture_of_view(s.mKey.mViewId);
+    return std::string(buf) + ", image handle " + std::to_string((unsigned long long)s.mDbgImage) + ": " + Context::instance().describeBinding(s.mDbgImage) + " | " + LLVkWorker::describe_texture_of_view(s.mKey.mViewId);
 }
 
 std::string Renderer::auditBindless() const
@@ -3943,7 +3943,7 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
         mDrawBlocked = false;
         return false;
     }
-    long long cmd_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
+    long long cmd_t = LLVkBridge::gPhaseTiming ? LLVkBridge::phaseNow() : 0;
     startPendingQuery();
     noteDraw(1, vertex_count, first_vertex, 0);
     const U32 stamp_tag = mDrawStamps ? drawTag("vertices", vertex_count, first_vertex, 0) : 0u;
@@ -3960,7 +3960,7 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
     {
         Context::instance().gpuStamp(stamp_tag);
     }
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_CMD, cmd_t);
     ++mDrawCount;
     ++mModCount;
     return true;
@@ -4027,8 +4027,8 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         mDrawBlocked = false;
         return false;
     }
-    long long cmd_t = LLVkMirror::gPhaseTiming ? LLVkMirror::phaseNow() : 0;
-    if (LLVkMirror::gPhaseTiming && LLVkMirror::onMainThread())
+    long long cmd_t = LLVkBridge::gPhaseTiming ? LLVkBridge::phaseNow() : 0;
+    if (LLVkBridge::gPhaseTiming && LLVkBridge::onMainThread())
     {
         ++mDrawDiag.mDraws;
         if (!mDiagChanged)
@@ -4067,7 +4067,7 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
     {
         Context::instance().gpuStamp(stamp_tag);
     }
-    LLVkMirror::phaseLap(LLVkMirror::PH_A_CMD, cmd_t);
+    LLVkBridge::phaseLap(LLVkBridge::PH_A_CMD, cmd_t);
     ++mDrawCount;
     ++mModCount;
     return true;
@@ -4122,7 +4122,7 @@ bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>
     {
         return false;
     }
-    if (LLVkMirror::gPhaseTiming)
+    if (LLVkBridge::gPhaseTiming)
     {
         Context::instance().gpuStamp(Context::stampTag("external (DLSS)"));
     }
@@ -4286,7 +4286,7 @@ bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32
 bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, VkDeviceSize bytes, void (*fill)(void* ctx, U8* dst, VkDeviceSize bytes), void* fill_ctx)
 {
     const auto t_start = std::chrono::steady_clock::now();
-    LLVkMirror::noteRendererThread();
+    LLVkBridge::noteRendererThread();
     ++mModCount;
     Context& ctx = Context::instance();
     const FormatInfo fi = formatInfo(image.mFormat);

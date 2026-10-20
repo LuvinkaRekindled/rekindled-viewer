@@ -105,12 +105,12 @@ void LLTexLayerParamAlpha::getCacheByteCount(S32* gl_bytes)
 
     for (LLTexLayerParamAlpha* instance : sInstances)
     {
-        LLGLTexture* tex = instance->mCachedProcessedTexture;
+        LLBaseTexture* tex = instance->mCachedProcessedTexture;
         if (tex)
         {
             S32 bytes = (S32)tex->getWidth() * tex->getHeight() * tex->getComponents();
 
-            if (tex->hasGLTexture())
+            if (tex->hasImageTexture())
             {
                 *gl_bytes += bytes;
             }
@@ -295,14 +295,14 @@ bool LLTexLayerParamAlpha::render(S32 x, S32 y, S32 width, S32 height)
     }
 
     LLTexLayerParamAlphaInfo *info = (LLTexLayerParamAlphaInfo *)getInfo();
-    gGL.flush();
+    gRender.flush();
     if (info->mMultiplyBlend)
     {
-        gGL.blendFunc(LLRender::BF_DEST_ALPHA, LLRender::BF_ZERO); // Multiplication: approximates a min() function
+        gRender.blendFunc(LLRender::BF_DEST_ALPHA, LLRender::BF_ZERO); // Multiplication: approximates a min() function
     }
     else
     {
-        gGL.setSceneBlendType(LLRender::BT_ADD);  // Addition: approximates a max() function
+        gRender.setSceneBlendType(LLRender::BT_ADD);  // Addition: approximates a max() function
     }
 
     if (!info->mStaticImageFileName.empty() && !mStaticImageInvalid)
@@ -356,18 +356,18 @@ bool LLTexLayerParamAlpha::render(S32 x, S32 y, S32 width, S32 height)
                 // Create the GL texture, and then hang onto it for future use.
                 if (mNeedsCreateTexture)
                 {
-                    if (!mCachedProcessedTexture->createGLTexture(0, mStaticImageRaw))
+                    if (!mCachedProcessedTexture->createImageTexture(0, mStaticImageRaw))
                     {
                         LL_WARNS() << "Failed to create GL texture for image: " << mCachedProcessedTexture->getID() << LL_ENDL;
                     }
                     mNeedsCreateTexture = false;
-                    gGL.getTexUnit(0)->bind(mCachedProcessedTexture);
+                    gRender.getTexUnit(0)->bind(mCachedProcessedTexture);
                     mCachedProcessedTexture->setAddressMode(LLTexUnit::TAM_CLAMP);
                 }
 
-                gGL.getTexUnit(0)->bind(mCachedProcessedTexture);
+                gRender.getTexUnit(0)->bind(mCachedProcessedTexture);
                 gl_rect_2d_simple_tex(width, height);
-                gGL.getTexUnit(0)->bindWhite();
+                gRender.getTexUnit(0)->bindWhite();
                 stop_glerror();
             }
         }
@@ -381,8 +381,8 @@ bool LLTexLayerParamAlpha::render(S32 x, S32 y, S32 width, S32 height)
     }
     else
     {
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.color4f(0.f, 0.f, 0.f, effective_weight);
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.color4f(0.f, 0.f, 0.f, effective_weight);
         gl_rect_2d_simple(width, height);
     }
 

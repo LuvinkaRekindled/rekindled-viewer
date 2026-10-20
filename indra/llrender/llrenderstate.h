@@ -3,7 +3,7 @@
  * @brief F3.2: the render state vocabulary of the pass code: typed values and scoped guards (no GL, no Vulkan in this header).
  *
  * The state itself is the producer's block (llvkstate.h, LLVkState::Block). A guard saves the block's field when it is made, changes it when the
- * requested value differs (after gGL.flush(): pending immediate-mode vertices belong to the old state) and puts the saved value back when it
+ * requested value differs (after gRender.flush(): pending immediate-mode vertices belong to the old state) and puts the saved value back when it
  * goes out of scope. There is no second copy of "what the state is" (LLGLState's map, LLGLDepthTest's statics): the block is the only truth, so a
  * path that set the state some other way (a render target, LLRender::setScissor ...) cannot leave a stale value for a guard to restore.
  *

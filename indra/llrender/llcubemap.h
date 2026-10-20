@@ -74,7 +74,7 @@ public:
 
     U32 getGLName();
 
-    void destroyGL();
+    void destroyResources();
 
 public:
     static bool sUseCubeMaps;
@@ -83,7 +83,7 @@ protected:
     friend class LLTexUnit;
     ~LLCubeMap();
     TextureTarget mTargets[6];
-    LLPointer<LLImageGL> mImages[6];
+    LLPointer<LLImageTex> mImages[6];
     LLPointer<LLImageRaw> mRawImages[6];
     S32 mTextureStage;
     S32 mMatrixStage;

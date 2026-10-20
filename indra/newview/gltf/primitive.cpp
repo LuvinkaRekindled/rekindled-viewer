@@ -402,7 +402,7 @@ bool Primitive::prep(Asset& asset)
 
     if (!mWeights.empty())
     {
-        mShaderVariant |= LLGLSLShader::GLTFVariant::RIGGED;
+        mShaderVariant |= LLShaderProgram::GLTFVariant::RIGGED;
         mask |= LLVertexBuffer::MAP_WEIGHT4;
         mask |= LLVertexBuffer::MAP_JOINT;
     }
@@ -440,13 +440,13 @@ bool Primitive::prep(Asset& asset)
 
         if (material.mUnlit.mPresent)
         { // material uses KHR_materials_unlit
-            mShaderVariant |= LLGLSLShader::GLTFVariant::UNLIT;
+            mShaderVariant |= LLShaderProgram::GLTFVariant::UNLIT;
             unlit = true;
         }
 
         if (material.isMultiUV())
         {
-            mShaderVariant |= LLGLSLShader::GLTFVariant::MULTI_UV;
+            mShaderVariant |= LLShaderProgram::GLTFVariant::MULTI_UV;
         }
     }
 
@@ -457,7 +457,7 @@ bool Primitive::prep(Asset& asset)
         if (mMode == Mode::POINTS || mMode == Mode::LINES || mMode == Mode::LINE_LOOP || mMode == Mode::LINE_STRIP)
         { //no normals and no surfaces, this primitive is unlit
             mTangents.clear();
-            mShaderVariant |= LLGLSLShader::GLTFVariant::UNLIT;
+            mShaderVariant |= LLShaderProgram::GLTFVariant::UNLIT;
             unlit = true;
         }
         else
@@ -528,7 +528,7 @@ bool Primitive::prep(Asset& asset)
         Material& material = asset.mMaterials[mMaterial];
         if (material.mAlphaMode == Material::AlphaMode::BLEND)
         {
-            mShaderVariant |= LLGLSLShader::GLTFVariant::ALPHA_BLEND;
+            mShaderVariant |= LLShaderProgram::GLTFVariant::ALPHA_BLEND;
         }
     }
 

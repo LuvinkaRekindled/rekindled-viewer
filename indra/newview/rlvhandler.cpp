@@ -2176,8 +2176,8 @@ ERlvCmdRet RlvBehaviourHandler<RLV_BHVR_SETSPHERE>::onCommand(const RlvCommand& 
     //          LLRenderTarget::sUseFBO = true;
     //          LLPipeline::sUseDepthTexture = true;
 
-    //          gPipeline.releaseGLBuffers();
-    //          gPipeline.createGLBuffers();
+    //          gPipeline.releaseRenderBuffers();
+    //          gPipeline.createRenderBuffers();
     //          gPipeline.resetVertexBuffers();
     //          LLViewerShaderMgr::instance()->setShaders();
     //      }
@@ -2185,8 +2185,8 @@ ERlvCmdRet RlvBehaviourHandler<RLV_BHVR_SETSPHERE>::onCommand(const RlvCommand& 
             if (!gPipeline.mRT->deferredLight.isComplete())
             {
                 // In case of deferred with no shadows, no ambient occlusion, no depth of field, and no antialiasing
-                gPipeline.releaseGLBuffers();
-                gPipeline.createGLBuffers();
+                gPipeline.releaseRenderBuffers();
+                gPipeline.createRenderBuffers();
                 RLV_ASSERT(gPipeline.mRT->deferredLight.isComplete());
             }
         }
@@ -2414,7 +2414,7 @@ void RlvBehaviourModifierHandler<RLV_MODIFIER_SETCAM_TEXTURE>::onValueChange() c
         if (pBhvrModifier->hasValue())
         {
             RLV_INFOS << "Toggling diffuse textures for @setcam_textures" << RLV_ENDL;
-            LLViewerFetchedTexture::sDefaultDiffuseImagep = LLViewerTextureManager::getFetchedTexture(pBhvrModifier->getValue<LLUUID>(), FTT_DEFAULT, MIPMAP_YES, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+            LLViewerFetchedTexture::sDefaultDiffuseImagep = LLViewerTextureManager::getFetchedTexture(pBhvrModifier->getValue<LLUUID>(), FTT_DEFAULT, MIPMAP_YES, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
             gObjectList.setAllObjectDefaultTextures(LLRender::DIFFUSE_MAP, true);
             gObjectList.setAllObjectPBRDefaultTextures(pBhvrModifier->getValue<LLUUID>(), true);
         }

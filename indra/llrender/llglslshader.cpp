@@ -61,34 +61,34 @@ using std::pair;
 using std::make_pair;
 using std::string;
 
-U32 LLGLSLShader::sCurBoundShader = 0;
-LLGLSLShader* LLGLSLShader::sCurBoundShaderPtr = NULL;
-S32 LLGLSLShader::sIndexedTextureChannels = 0;
-U32 LLGLSLShader::sMaxGLTFMaterials = 0;
-U32 LLGLSLShader::sMaxGLTFNodes = 0;
-bool LLGLSLShader::sProfileEnabled = false;
-bool LLGLSLShader::sCanProfile = true;
-std::set<LLGLSLShader*> LLGLSLShader::sInstances;
-LLGLSLShader::defines_map_t LLGLSLShader::sGlobalDefines;
-U64 LLGLSLShader::sTotalTimeElapsed = 0;
-U32 LLGLSLShader::sTotalTrianglesDrawn = 0;
-U64 LLGLSLShader::sTotalSamplesDrawn = 0;
-U32 LLGLSLShader::sTotalBinds = 0;
-boost::json::value LLGLSLShader::sDefaultStats;
+U32 LLShaderProgram::sCurBoundShader = 0;
+LLShaderProgram* LLShaderProgram::sCurBoundShaderPtr = NULL;
+S32 LLShaderProgram::sIndexedTextureChannels = 0;
+U32 LLShaderProgram::sMaxGLTFMaterials = 0;
+U32 LLShaderProgram::sMaxGLTFNodes = 0;
+bool LLShaderProgram::sProfileEnabled = false;
+bool LLShaderProgram::sCanProfile = true;
+std::set<LLShaderProgram*> LLShaderProgram::sInstances;
+LLShaderProgram::defines_map_t LLShaderProgram::sGlobalDefines;
+U64 LLShaderProgram::sTotalTimeElapsed = 0;
+U32 LLShaderProgram::sTotalTrianglesDrawn = 0;
+U64 LLShaderProgram::sTotalSamplesDrawn = 0;
+U32 LLShaderProgram::sTotalBinds = 0;
+boost::json::value LLShaderProgram::sDefaultStats;
 
 //UI shader -- declared here so llui_libtest will link properly
-LLGLSLShader    gUIProgram;
-LLGLSLShader    gSolidColorProgram;
+LLShaderProgram    gUIProgram;
+LLShaderProgram    gSolidColorProgram;
 
-// NOTE: Keep gShaderConsts* and LLGLSLShader::ShaderConsts_e in sync!
-const std::string gShaderConstsKey[LLGLSLShader::NUM_SHADER_CONSTS] =
+// NOTE: Keep gShaderConsts* and LLShaderProgram::ShaderConsts_e in sync!
+const std::string gShaderConstsKey[LLShaderProgram::NUM_SHADER_CONSTS] =
 {
       "LL_SHADER_CONST_CLOUD_MOON_DEPTH"
     , "LL_SHADER_CONST_STAR_DEPTH"
 };
 
-// NOTE: Keep gShaderConsts* and LLGLSLShader::ShaderConsts_e in sync!
-const std::string gShaderConstsVal[LLGLSLShader::NUM_SHADER_CONSTS] =
+// NOTE: Keep gShaderConsts* and LLShaderProgram::ShaderConsts_e in sync!
+const std::string gShaderConstsVal[LLShaderProgram::NUM_SHADER_CONSTS] =
 {
       "0.99998" // SHADER_CONST_CLOUD_MOON_DEPTH // SL-14113
     , "0.99999" // SHADER_CONST_STAR_DEPTH       // SL-14113
@@ -105,7 +105,7 @@ bool shouldChange(const LLVector4& v1, const LLVector4& v2)
 //===============================
 
 //static
-void LLGLSLShader::initProfile()
+void LLShaderProgram::initProfile()
 {
     sProfileEnabled = true;
     sTotalTimeElapsed = 0;
@@ -122,20 +122,20 @@ void LLGLSLShader::initProfile()
 
 struct LLGLSLShaderCompareTimeElapsed
 {
-    bool operator()(const LLGLSLShader* const& lhs, const LLGLSLShader* const& rhs)
+    bool operator()(const LLShaderProgram* const& lhs, const LLShaderProgram* const& rhs)
     {
         return lhs->mTimeElapsed < rhs->mTimeElapsed;
     }
 };
 
 //static
-void LLGLSLShader::finishProfile(boost::json::value& statsv)
+void LLShaderProgram::finishProfile(boost::json::value& statsv)
 {
     sProfileEnabled = false;
 
     if (! statsv.is_null())
     {
-        std::vector<LLGLSLShader*> sorted(sInstances.begin(), sInstances.end());
+        std::vector<LLShaderProgram*> sorted(sInstances.begin(), sInstances.end());
         std::sort(sorted.begin(), sorted.end(), LLGLSLShaderCompareTimeElapsed());
 
         auto& stats = statsv.as_object();
@@ -186,7 +186,7 @@ void LLGLSLShader::finishProfile(boost::json::value& statsv)
     }
 }
 
-void LLGLSLShader::clearStats()
+void LLShaderProgram::clearStats()
 {
     mTrianglesDrawn = 0;
     mTimeElapsed = 0;
@@ -194,7 +194,7 @@ void LLGLSLShader::clearStats()
     mBinds = 0;
 }
 
-void LLGLSLShader::dumpStats(boost::json::object& stats)
+void LLShaderProgram::dumpStats(boost::json::object& stats)
 {
     stats.emplace("name", mName);
     auto filesit = stats.emplace("files", boost::json::array_kind).first;
@@ -234,7 +234,7 @@ void LLGLSLShader::dumpStats(boost::json::object& stats)
 }
 
 //static
-void LLGLSLShader::startProfile()
+void LLShaderProgram::startProfile()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     if (sProfileEnabled && sCurBoundShaderPtr)
@@ -245,7 +245,7 @@ void LLGLSLShader::startProfile()
 }
 
 //static
-void LLGLSLShader::stopProfile()
+void LLShaderProgram::stopProfile()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -255,7 +255,7 @@ void LLGLSLShader::stopProfile()
     }
 }
 
-void LLGLSLShader::placeProfileQuery(bool for_runtime)
+void LLShaderProgram::placeProfileQuery(bool for_runtime)
 {
     if (sProfileEnabled || for_runtime)
     {
@@ -276,7 +276,7 @@ void LLGLSLShader::placeProfileQuery(bool for_runtime)
     }
 }
 
-bool LLGLSLShader::readProfileQuery(bool for_runtime, bool force_read)
+bool LLShaderProgram::readProfileQuery(bool for_runtime, bool force_read)
 {
     if ((sProfileEnabled || for_runtime) && sCanProfile)
     {
@@ -328,7 +328,7 @@ bool LLGLSLShader::readProfileQuery(bool for_runtime, bool force_read)
 
 
 
-LLGLSLShader::LLGLSLShader()
+LLShaderProgram::LLShaderProgram()
     : mProgramObject(0),
     mAttributeMask(0),
     mTotalUniformSize(0),
@@ -344,11 +344,11 @@ LLGLSLShader::LLGLSLShader()
 
 }
 
-LLGLSLShader::~LLGLSLShader()
+LLShaderProgram::~LLShaderProgram()
 {
 }
 
-void LLGLSLShader::unload()
+void LLShaderProgram::unload()
 {
     mShaderFiles.clear();
     mDefines.clear();
@@ -357,7 +357,7 @@ void LLGLSLShader::unload()
     unloadInternal();
 }
 
-void LLGLSLShader::unloadInternal()
+void LLShaderProgram::unloadInternal()
 {
     sInstances.erase(this);
     mirrorDestroy();
@@ -386,9 +386,9 @@ void LLGLSLShader::unloadInternal()
 }
 
 #if defined(LL_VULKAN)
-void LLGLSLShader::mirrorDestroy()
+void LLShaderProgram::mirrorDestroy()
 {
-    if (!mVkProgram && !mVkProgramPending && !LLVkMirror::isReady()) return;   // cheap exit when the mirror is off
+    if (!mVkProgram && !mVkProgramPending && !LLVkBridge::isReady()) return;   // cheap exit when the mirror is off
     if (LLVkAsync::gEnabled)
     {
         // the worker destroys them after everything queued for them so far
@@ -404,7 +404,7 @@ void LLGLSLShader::mirrorDestroy()
         }
         return;
     }
-    std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
+    std::lock_guard<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock());
     for (LLVk::Program** p : { &mVkProgram, &mVkProgramPending })
     {
         if (*p)
@@ -417,7 +417,7 @@ void LLGLSLShader::mirrorDestroy()
 }
 
 // the program's own uniform index behind a location (a sampler is returned as ~index), -1 when unknown
-S32 LLGLSLShader::vkTwinOf(S32 location) const
+S32 LLShaderProgram::vkTwinOf(S32 location) const
 {
     if (location < 0)
     {
@@ -426,7 +426,7 @@ S32 LLGLSLShader::vkTwinOf(S32 location) const
     return location >= SAMPLER_LOCATION_BASE ? ~(S32)(location - SAMPLER_LOCATION_BASE) : (S32)location;
 }
 
-void LLGLSLShader::mirrorScalar(S32 location, int kind, std::initializer_list<double> values)
+void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list<double> values)
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram) return;
@@ -453,8 +453,8 @@ void LLGLSLShader::mirrorScalar(S32 location, int kind, std::initializer_list<do
         }
     }
     const bool async = LLVkAsync::gEnabled;
-    LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
-    std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
+    LLVkBridge::PhaseTimer phase_timer(LLVkBridge::PH_UNIFORM);
+    std::unique_lock<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock(), std::defer_lock);
     if (!async)
     {
         mirror_lock.lock();
@@ -525,7 +525,7 @@ void LLGLSLShader::mirrorScalar(S32 location, int kind, std::initializer_list<do
     }
 }
 
-void LLGLSLShader::mirrorVector(S32 location, int kind, U32 components, U32 count, const void* data)
+void LLShaderProgram::mirrorVector(S32 location, int kind, U32 components, U32 count, const void* data)
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram || !data) return;
@@ -539,8 +539,8 @@ void LLGLSLShader::mirrorVector(S32 location, int kind, U32 components, U32 coun
         }
     }
     const bool async = LLVkAsync::gEnabled;
-    LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
-    std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
+    LLVkBridge::PhaseTimer phase_timer(LLVkBridge::PH_UNIFORM);
+    std::unique_lock<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock(), std::defer_lock);
     if (!async)
     {
         mirror_lock.lock();
@@ -567,7 +567,7 @@ void LLGLSLShader::mirrorVector(S32 location, int kind, U32 components, U32 coun
     mVkProgram->setFloatsAt((size_t)twin, reinterpret_cast<const F32*>(data), components, count);
 }
 
-void LLGLSLShader::mirrorMatrix(S32 location, U32 columns, U32 rows, bool transpose, U32 count, const F32* data)
+void LLShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool transpose, U32 count, const F32* data)
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram || !data) return;
@@ -581,8 +581,8 @@ void LLGLSLShader::mirrorMatrix(S32 location, U32 columns, U32 rows, bool transp
         }
     }
     const bool async = LLVkAsync::gEnabled;
-    LLVkMirror::PhaseTimer phase_timer(LLVkMirror::PH_UNIFORM);
-    std::unique_lock<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock(), std::defer_lock);
+    LLVkBridge::PhaseTimer phase_timer(LLVkBridge::PH_UNIFORM);
+    std::unique_lock<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock(), std::defer_lock);
     if (!async)
     {
         mirror_lock.lock();
@@ -684,7 +684,7 @@ static inline bool vkDiffCopy(U8* dst, const F32* src, U32 floats)
     }
 }
 
-bool LLGLSLShader::uniformValueChanged(S32 location, const LLVector4& value, bool force)
+bool LLShaderProgram::uniformValueChanged(S32 location, const LLVector4& value, bool force)
 {
     if (LLVkAsync::gUniformRec == 2)
     {
@@ -700,7 +700,7 @@ bool LLGLSLShader::uniformValueChanged(S32 location, const LLVector4& value, boo
 }
 
 // a range of this shader's copy of a class block changed: it goes to the worker (or, before the queue runs, straight into the program)
-void LLGLSLShader::vkSendRange(U32 cls, U32 offset, U32 size)
+void LLShaderProgram::vkSendRange(U32 cls, U32 offset, U32 size)
 {
     const U8* bytes = &mVkShadow[cls][offset];
     if (LLVkAsync::gEnabled)
@@ -717,7 +717,7 @@ void LLGLSLShader::vkSendRange(U32 cls, U32 offset, U32 size)
     }
 }
 
-bool LLGLSLShader::vkWriteFloats(S32 twin, const F32* data, U32 components, U32 count)
+bool LLShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U32 count)
 {
     if ((size_t)twin >= mVkUni.size())
     {
@@ -761,7 +761,7 @@ bool LLGLSLShader::vkWriteFloats(S32 twin, const F32* data, U32 components, U32 
     return true;
 }
 
-bool LLGLSLShader::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 rows, bool transpose, U32 count)
+bool LLShaderProgram::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 rows, bool transpose, U32 count)
 {
     if ((size_t)twin >= mVkUni.size())
     {
@@ -808,7 +808,7 @@ bool LLGLSLShader::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 row
 }
 
 // the program has been built (link()) and the viewer-side mapping is done: it becomes the one draws use, and its samplers get their texture units
-void LLGLSLShader::mirrorCreate()
+void LLShaderProgram::mirrorCreate()
 {
     if (!mVkProgramPending)
     {
@@ -820,7 +820,7 @@ void LLGLSLShader::mirrorCreate()
     const LLVk::ProgramInfo& pi = mVkProgram->getInfo();
 
     // F2.5: this shader's copy of the class blocks starts as the program built them (initial values from the shader text)
-    static_assert(LLVk::UC_COUNT == 5, "LLGLSLShader::mVkShadow");
+    static_assert(LLVk::UC_COUNT == 5, "LLShaderProgram::mVkShadow");
     mVkUni.clear();
     mVkUni.reserve(pi.mUniforms.size());
     for (const LLVk::LooseUniform& lu : pi.mUniforms)
@@ -859,14 +859,14 @@ void LLGLSLShader::mirrorCreate()
     }
 }
 #else
-void LLGLSLShader::mirrorDestroy() {}
-void LLGLSLShader::mirrorCreate() {}
-void LLGLSLShader::mirrorScalar(S32, int, std::initializer_list<double>) {}
-void LLGLSLShader::mirrorVector(S32, int, U32, U32, const void*) {}
-void LLGLSLShader::mirrorMatrix(S32, U32, U32, bool, U32, const F32*) {}
+void LLShaderProgram::mirrorDestroy() {}
+void LLShaderProgram::mirrorCreate() {}
+void LLShaderProgram::mirrorScalar(S32, int, std::initializer_list<double>) {}
+void LLShaderProgram::mirrorVector(S32, int, U32, U32, const void*) {}
+void LLShaderProgram::mirrorMatrix(S32, U32, U32, bool, U32, const F32*) {}
 #endif
 
-bool LLGLSLShader::createShader()
+bool LLShaderProgram::createShader()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -884,7 +884,7 @@ bool LLGLSLShader::createShader()
     llassert_always(!mShaderFiles.empty());
 
 #if LL_DARWIN
-    if(!gGLManager.mIsApple)
+    if(!gDeviceCaps.mIsApple)
     {
         // work-around missing mix(vec3,vec3,bvec3)
         mDefines["OLD_SELECT"] = "1";
@@ -955,7 +955,7 @@ bool LLGLSLShader::createShader()
     }
     else if (mFeatures.mIndexedTextureChannels > 0)
     { //override texture channels for indexed texture rendering
-        llassert(mFeatures.mIndexedTextureChannels == LLGLSLShader::sIndexedTextureChannels); // these numbers must always match
+        llassert(mFeatures.mIndexedTextureChannels == LLShaderProgram::sIndexedTextureChannels); // these numbers must always match
         bind();
         S32 channel_count = mFeatures.mIndexedTextureChannels;
 
@@ -1056,7 +1056,7 @@ bool LLGLSLShader::createShader()
 }
 
 
-bool LLGLSLShader::attachVertexObject(std::string object_path)
+bool LLShaderProgram::attachVertexObject(std::string object_path)
 {
     if (LLShaderMgr::instance()->mVertexShaderObjects.count(object_path) > 0)
     {
@@ -1071,7 +1071,7 @@ bool LLGLSLShader::attachVertexObject(std::string object_path)
     }
 }
 
-bool LLGLSLShader::attachFragmentObject(std::string object_path)
+bool LLShaderProgram::attachFragmentObject(std::string object_path)
 {
     if(mUsingBinaryProgram)
         return true;
@@ -1089,7 +1089,7 @@ bool LLGLSLShader::attachFragmentObject(std::string object_path)
     }
 }
 
-void LLGLSLShader::attachObject(U32 object)
+void LLShaderProgram::attachObject(U32 object)
 {
     if(mUsingBinaryProgram)
         return;
@@ -1105,7 +1105,7 @@ void LLGLSLShader::attachObject(U32 object)
     }
 }
 
-void LLGLSLShader::attachObjects(U32* objects, S32 count)
+void LLShaderProgram::attachObjects(U32* objects, S32 count)
 {
     if(mUsingBinaryProgram)
         return;
@@ -1116,7 +1116,7 @@ void LLGLSLShader::attachObjects(U32* objects, S32 count)
     }
 }
 
-bool LLGLSLShader::mapAttributes()
+bool LLShaderProgram::mapAttributes()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1196,7 +1196,7 @@ static GlslType glsl_type(const std::string& t)
     return it == map.end() ? GlslType() : it->second;
 }
 
-void LLGLSLShader::mapUniform(S32 index)
+void LLShaderProgram::mapUniform(S32 index)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1257,27 +1257,27 @@ void LLGLSLShader::mapUniform(S32 index)
     }
 }
 
-void LLGLSLShader::clearPermutations()
+void LLShaderProgram::clearPermutations()
 {
     mDefines.clear();
 }
 
-void LLGLSLShader::addPermutation(std::string name, std::string value)
+void LLShaderProgram::addPermutation(std::string name, std::string value)
 {
     mDefines[name] = value;
 }
 
-void LLGLSLShader::addConstant(const LLGLSLShader::eShaderConsts shader_const)
+void LLShaderProgram::addConstant(const LLShaderProgram::eShaderConsts shader_const)
 {
     addPermutation(gShaderConstsKey[shader_const], gShaderConstsVal[shader_const]);
 }
 
-void LLGLSLShader::removePermutation(std::string name)
+void LLShaderProgram::removePermutation(std::string name)
 {
     mDefines.erase(name);
 }
 
-S32 LLGLSLShader::mapUniformTextureChannel(S32 location, bool is_sampler, S32 size)
+S32 LLShaderProgram::mapUniformTextureChannel(S32 location, bool is_sampler, S32 size)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1307,7 +1307,7 @@ S32 LLGLSLShader::mapUniformTextureChannel(S32 location, bool is_sampler, S32 si
     return -1;
 }
 
-bool LLGLSLShader::mapUniforms()
+bool LLShaderProgram::mapUniforms()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1484,7 +1484,7 @@ bool LLGLSLShader::mapUniforms()
 }
 
 
-bool LLGLSLShader::link(bool suppress_errors)
+bool LLShaderProgram::link(bool suppress_errors)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1520,8 +1520,8 @@ bool LLGLSLShader::link(bool suppress_errors)
     std::string error;
     auto build = [&]()
     {
-        std::lock_guard<LLVkMirror::Mutex> mirror_lock(LLVkMirror::lock());
-        if (!LLVkMirror::ensureReady())
+        std::lock_guard<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock());
+        if (!LLVkBridge::ensureReady())
         {
             error = "the Vulkan side is not ready";
             return;
@@ -1565,14 +1565,14 @@ bool LLGLSLShader::link(bool suppress_errors)
     return true;
 }
 
-void LLGLSLShader::bind()
+void LLShaderProgram::bind()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SHADER_BIND);
 
     llassert_always(mProgramObject != 0);
 
-    gGL.flush();
+    gRender.flush();
 
     if (sCurBoundShader != mProgramObject)  // Don't re-bind current shader
     {
@@ -1598,14 +1598,14 @@ void LLGLSLShader::bind()
     llassert_always(sCurBoundShader == mProgramObject);
 }
 
-void LLGLSLShader::bind(U8 variant)
+void LLShaderProgram::bind(U8 variant)
 {
-    llassert_always(mGLTFVariants.size() == LLGLSLShader::NUM_GLTF_VARIANTS);
-    llassert_always(variant < LLGLSLShader::NUM_GLTF_VARIANTS);
+    llassert_always(mGLTFVariants.size() == LLShaderProgram::NUM_GLTF_VARIANTS);
+    llassert_always(variant < LLShaderProgram::NUM_GLTF_VARIANTS);
     mGLTFVariants[variant].bind();
 }
 
-void LLGLSLShader::bind(bool rigged)
+void LLShaderProgram::bind(bool rigged)
 {
     if (rigged)
     {
@@ -1618,10 +1618,10 @@ void LLGLSLShader::bind(bool rigged)
     }
 }
 
-void LLGLSLShader::unbind(void)
+void LLShaderProgram::unbind(void)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-    gGL.flush();
+    gRender.flush();
     LLVertexBuffer::unbind();
 
     if (sCurBoundShaderPtr)
@@ -1632,7 +1632,7 @@ void LLGLSLShader::unbind(void)
     sCurBoundShader = 0;
     sCurBoundShaderPtr = NULL;
 #if defined(LL_VULKAN)
-    if (LLVkMirror::isReady())
+    if (LLVkBridge::isReady())
     {
         if (LLVkAsync::gEnabled)
         {
@@ -1646,7 +1646,7 @@ void LLGLSLShader::unbind(void)
 #endif
 }
 
-S32 LLGLSLShader::bindTexture(const std::string& uniform, LLTexture* texture, LLTexUnit::eTextureType mode)
+S32 LLShaderProgram::bindTexture(const std::string& uniform, LLTexture* texture, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1656,7 +1656,7 @@ S32 LLGLSLShader::bindTexture(const std::string& uniform, LLTexture* texture, LL
     return bindTexture(channel, texture, mode);
 }
 
-S32 LLGLSLShader::bindTexture(S32 uniform, LLTexture* texture, LLTexUnit::eTextureType mode)
+S32 LLShaderProgram::bindTexture(S32 uniform, LLTexture* texture, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1671,13 +1671,13 @@ S32 LLGLSLShader::bindTexture(S32 uniform, LLTexture* texture, LLTexUnit::eTextu
 
     if (uniform > -1)
     {
-        gGL.getTexUnit(uniform)->bindFast(texture);
+        gRender.getTexUnit(uniform)->bindFast(texture);
     }
 
     return uniform;
 }
 
-S32 LLGLSLShader::bindTexture(S32 uniform, LLRenderTarget* texture, bool depth, LLTexUnit::eTextureFilterOptions mode, U32 index)
+S32 LLShaderProgram::bindTexture(S32 uniform, LLRenderTarget* texture, bool depth, LLTexUnit::eTextureFilterOptions mode, U32 index)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1693,20 +1693,20 @@ S32 LLGLSLShader::bindTexture(S32 uniform, LLRenderTarget* texture, bool depth, 
     if (uniform > -1)
     {
         if (depth) {
-            gGL.getTexUnit(uniform)->bind(texture, true);
+            gRender.getTexUnit(uniform)->bind(texture, true);
         }
         else {
             bool has_mips = mode == LLTexUnit::TFO_TRILINEAR || mode == LLTexUnit::TFO_ANISOTROPIC;
-            gGL.getTexUnit(uniform)->bindManual(texture->getUsage(), texture->getTexture(index), has_mips);
+            gRender.getTexUnit(uniform)->bindManual(texture->getUsage(), texture->getTexture(index), has_mips);
         }
 
-        gGL.getTexUnit(uniform)->setTextureFilteringOption(mode);
+        gRender.getTexUnit(uniform)->setTextureFilteringOption(mode);
     }
 
     return uniform;
 }
 
-S32 LLGLSLShader::bindTexture(const std::string& uniform, LLRenderTarget* texture, bool depth, LLTexUnit::eTextureFilterOptions mode)
+S32 LLShaderProgram::bindTexture(const std::string& uniform, LLRenderTarget* texture, bool depth, LLTexUnit::eTextureFilterOptions mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1716,7 +1716,7 @@ S32 LLGLSLShader::bindTexture(const std::string& uniform, LLRenderTarget* textur
     return bindTexture(channel, texture, depth, mode);
 }
 
-S32 LLGLSLShader::unbindTexture(const std::string& uniform, LLTexUnit::eTextureType mode)
+S32 LLShaderProgram::unbindTexture(const std::string& uniform, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1726,7 +1726,7 @@ S32 LLGLSLShader::unbindTexture(const std::string& uniform, LLTexUnit::eTextureT
     return unbindTexture(channel);
 }
 
-S32 LLGLSLShader::unbindTexture(S32 uniform, LLTexUnit::eTextureType mode)
+S32 LLShaderProgram::unbindTexture(S32 uniform, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1741,18 +1741,18 @@ S32 LLGLSLShader::unbindTexture(S32 uniform, LLTexUnit::eTextureType mode)
 
     if (uniform > -1)
     {
-        gGL.getTexUnit(uniform)->unbindFast(mode);
+        gRender.getTexUnit(uniform)->unbindFast(mode);
     }
 
     return uniform;
 }
 
-S32 LLGLSLShader::getTextureChannel(S32 uniform) const
+S32 LLShaderProgram::getTextureChannel(S32 uniform) const
 {
     return mTexture[uniform];
 }
 
-S32 LLGLSLShader::enableTexture(S32 uniform, LLTexUnit::eTextureType mode)
+S32 LLShaderProgram::enableTexture(S32 uniform, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1771,7 +1771,7 @@ S32 LLGLSLShader::enableTexture(S32 uniform, LLTexUnit::eTextureType mode)
     return index;
 }
 
-S32 LLGLSLShader::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
+S32 LLShaderProgram::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1789,7 +1789,7 @@ S32 LLGLSLShader::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
         return index;
     }
 
-    LLTexUnit* tex_unit = gGL.getTexUnit(index);
+    LLTexUnit* tex_unit = gRender.getTexUnit(index);
     if (!tex_unit)
     {
         // Invalid texture unit
@@ -1800,12 +1800,12 @@ S32 LLGLSLShader::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
     LLTexUnit::eTextureType curr_type = tex_unit->getCurrType();
     if (curr_type != LLTexUnit::TT_NONE)
     {
-        if (gDebugGL && curr_type != mode)
+        if (gDebugRender && curr_type != mode)
         {
             if (gDebugSession)
             {
                 gFailLog << "Texture channel " << index << " texture type corrupted. Expected: " << mode << ", Found: " << curr_type << std::endl;
-                ll_fail("LLGLSLShader::disableTexture failed");
+                ll_fail("LLShaderProgram::disableTexture failed");
             }
             else
             {
@@ -1818,7 +1818,7 @@ S32 LLGLSLShader::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
     return index;
 }
 
-void LLGLSLShader::uniform1i(U32 index, S32 x)
+void LLShaderProgram::uniform1i(U32 index, S32 x)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -1842,19 +1842,19 @@ void LLGLSLShader::uniform1i(U32 index, S32 x)
     }
 }
 
-void LLGLSLShader::uniform1fAt(S32 location, F32 v)
+void LLShaderProgram::uniform1fAt(S32 location, F32 v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorScalar(location, 0, {(double)(v)});
 }
 
-void LLGLSLShader::uniform4fvAt(S32 location, S32 count, const F32* v)
+void LLShaderProgram::uniform4fvAt(S32 location, S32 count, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorVector(location, 0, 4, count, v);
 }
 
-void LLGLSLShader::uniform1f(U32 index, F32 x)
+void LLShaderProgram::uniform1f(U32 index, F32 x)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -1879,7 +1879,7 @@ void LLGLSLShader::uniform1f(U32 index, F32 x)
     }
 }
 
-void LLGLSLShader::fastUniform1f(U32 index, F32 x)
+void LLShaderProgram::fastUniform1f(U32 index, F32 x)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -1890,7 +1890,7 @@ void LLGLSLShader::fastUniform1f(U32 index, F32 x)
     mirrorScalar(mUniform[index], 0, {(double)(x)});
 }
 
-void LLGLSLShader::uniform2f(U32 index, F32 x, F32 y)
+void LLShaderProgram::uniform2f(U32 index, F32 x, F32 y)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -1916,7 +1916,7 @@ void LLGLSLShader::uniform2f(U32 index, F32 x, F32 y)
     }
 }
 
-void LLGLSLShader::uniform3f(U32 index, F32 x, F32 y, F32 z)
+void LLShaderProgram::uniform3f(U32 index, F32 x, F32 y, F32 z)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -1942,7 +1942,7 @@ void LLGLSLShader::uniform3f(U32 index, F32 x, F32 y, F32 z)
     }
 }
 
-void LLGLSLShader::uniform4f(U32 index, F32 x, F32 y, F32 z, F32 w)
+void LLShaderProgram::uniform4f(U32 index, F32 x, F32 y, F32 z, F32 w)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -1968,7 +1968,7 @@ void LLGLSLShader::uniform4f(U32 index, F32 x, F32 y, F32 z, F32 w)
     }
 }
 
-void LLGLSLShader::uniform1iv(U32 index, U32 count, const S32* v)
+void LLShaderProgram::uniform1iv(U32 index, U32 count, const S32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -1994,7 +1994,7 @@ void LLGLSLShader::uniform1iv(U32 index, U32 count, const S32* v)
     }
 }
 
-void LLGLSLShader::uniform4iv(U32 index, U32 count, const S32* v)
+void LLShaderProgram::uniform4iv(U32 index, U32 count, const S32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2020,7 +2020,7 @@ void LLGLSLShader::uniform4iv(U32 index, U32 count, const S32* v)
 }
 
 
-void LLGLSLShader::uniform1fv(U32 index, U32 count, const F32* v)
+void LLShaderProgram::uniform1fv(U32 index, U32 count, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2046,7 +2046,7 @@ void LLGLSLShader::uniform1fv(U32 index, U32 count, const F32* v)
     }
 }
 
-void LLGLSLShader::uniform2fv(U32 index, U32 count, const F32* v)
+void LLShaderProgram::uniform2fv(U32 index, U32 count, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2072,7 +2072,7 @@ void LLGLSLShader::uniform2fv(U32 index, U32 count, const F32* v)
     }
 }
 
-void LLGLSLShader::uniform3fv(U32 index, U32 count, const F32* v)
+void LLShaderProgram::uniform3fv(U32 index, U32 count, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2098,7 +2098,7 @@ void LLGLSLShader::uniform3fv(U32 index, U32 count, const F32* v)
     }
 }
 
-void LLGLSLShader::uniform4fv(U32 index, U32 count, const F32* v)
+void LLShaderProgram::uniform4fv(U32 index, U32 count, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2125,7 +2125,7 @@ void LLGLSLShader::uniform4fv(U32 index, U32 count, const F32* v)
     }
 }
 
-void LLGLSLShader::uniform4uiv(U32 index, U32 count, const U32* v)
+void LLShaderProgram::uniform4uiv(U32 index, U32 count, const U32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2152,7 +2152,7 @@ void LLGLSLShader::uniform4uiv(U32 index, U32 count, const U32* v)
     }
 }
 
-void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, bool transpose, const F32* v)
+void LLShaderProgram::uniformMatrix2fv(U32 index, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2174,7 +2174,7 @@ void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, bool transpose, const 
     }
 }
 
-void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, bool transpose, const F32* v)
+void LLShaderProgram::uniformMatrix3fv(U32 index, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2196,7 +2196,7 @@ void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, bool transpose, const 
     }
 }
 
-void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, bool transpose, const F32* v)
+void LLShaderProgram::uniformMatrix3x4fv(U32 index, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2218,7 +2218,7 @@ void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, bool transpose, cons
     }
 }
 
-void LLGLSLShader::uniformMatrix4fv(U32 index, U32 count, bool transpose, const F32* v)
+void LLShaderProgram::uniformMatrix4fv(U32 index, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2240,7 +2240,7 @@ void LLGLSLShader::uniformMatrix4fv(U32 index, U32 count, bool transpose, const 
     }
 }
 
-S32 LLGLSLShader::getUniformLocation(const LLStaticHashedString& uniform)
+S32 LLShaderProgram::getUniformLocation(const LLStaticHashedString& uniform)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -2257,7 +2257,7 @@ S32 LLGLSLShader::getUniformLocation(const LLStaticHashedString& uniform)
     return ret;
 }
 
-S32 LLGLSLShader::getUniformLocation(U32 index)
+S32 LLShaderProgram::getUniformLocation(U32 index)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -2275,7 +2275,7 @@ S32 LLGLSLShader::getUniformLocation(U32 index)
     return ret;
 }
 
-S32 LLGLSLShader::getAttribLocation(U32 attrib)
+S32 LLShaderProgram::getAttribLocation(U32 attrib)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -2289,7 +2289,7 @@ S32 LLGLSLShader::getAttribLocation(U32 attrib)
     }
 }
 
-void LLGLSLShader::uniform1i(const LLStaticHashedString& uniform, S32 v)
+void LLShaderProgram::uniform1i(const LLStaticHashedString& uniform, S32 v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2305,7 +2305,7 @@ void LLGLSLShader::uniform1i(const LLStaticHashedString& uniform, S32 v)
     }
 }
 
-void LLGLSLShader::uniform1iv(const LLStaticHashedString& uniform, U32 count, const S32* v)
+void LLShaderProgram::uniform1iv(const LLStaticHashedString& uniform, U32 count, const S32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2322,7 +2322,7 @@ void LLGLSLShader::uniform1iv(const LLStaticHashedString& uniform, U32 count, co
     }
 }
 
-void LLGLSLShader::uniform4iv(const LLStaticHashedString& uniform, U32 count, const S32* v)
+void LLShaderProgram::uniform4iv(const LLStaticHashedString& uniform, U32 count, const S32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2339,7 +2339,7 @@ void LLGLSLShader::uniform4iv(const LLStaticHashedString& uniform, U32 count, co
     }
 }
 
-void LLGLSLShader::uniform2i(const LLStaticHashedString& uniform, S32 i, S32 j)
+void LLShaderProgram::uniform2i(const LLStaticHashedString& uniform, S32 i, S32 j)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2356,7 +2356,7 @@ void LLGLSLShader::uniform2i(const LLStaticHashedString& uniform, S32 i, S32 j)
 }
 
 
-void LLGLSLShader::uniform1f(const LLStaticHashedString& uniform, F32 v)
+void LLShaderProgram::uniform1f(const LLStaticHashedString& uniform, F32 v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2372,7 +2372,7 @@ void LLGLSLShader::uniform1f(const LLStaticHashedString& uniform, F32 v)
     }
 }
 
-void LLGLSLShader::uniform2f(const LLStaticHashedString& uniform, F32 x, F32 y)
+void LLShaderProgram::uniform2f(const LLStaticHashedString& uniform, F32 x, F32 y)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2389,7 +2389,7 @@ void LLGLSLShader::uniform2f(const LLStaticHashedString& uniform, F32 x, F32 y)
 
 }
 
-void LLGLSLShader::uniform3f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z)
+void LLShaderProgram::uniform3f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2405,7 +2405,7 @@ void LLGLSLShader::uniform3f(const LLStaticHashedString& uniform, F32 x, F32 y, 
     }
 }
 
-void LLGLSLShader::uniform4f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z, F32 w)
+void LLShaderProgram::uniform4f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z, F32 w)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2421,7 +2421,7 @@ void LLGLSLShader::uniform4f(const LLStaticHashedString& uniform, F32 x, F32 y, 
     }
 }
 
-void LLGLSLShader::uniform1fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
+void LLShaderProgram::uniform1fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2437,7 +2437,7 @@ void LLGLSLShader::uniform1fv(const LLStaticHashedString& uniform, U32 count, co
     }
 }
 
-void LLGLSLShader::uniform2fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
+void LLShaderProgram::uniform2fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2453,7 +2453,7 @@ void LLGLSLShader::uniform2fv(const LLStaticHashedString& uniform, U32 count, co
     }
 }
 
-void LLGLSLShader::uniform3fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
+void LLShaderProgram::uniform3fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2469,7 +2469,7 @@ void LLGLSLShader::uniform3fv(const LLStaticHashedString& uniform, U32 count, co
     }
 }
 
-void LLGLSLShader::uniform4fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
+void LLShaderProgram::uniform4fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2486,7 +2486,7 @@ void LLGLSLShader::uniform4fv(const LLStaticHashedString& uniform, U32 count, co
     }
 }
 
-void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, const U32* v)
+void LLShaderProgram::uniform4uiv(const LLStaticHashedString& uniform, U32 count, const U32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2503,7 +2503,7 @@ void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, c
     }
 }
 
-void LLGLSLShader::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
+void LLShaderProgram::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2517,7 +2517,7 @@ void LLGLSLShader::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 cou
     }
 }
 
-void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
+void LLShaderProgram::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2531,7 +2531,7 @@ void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 cou
     }
 }
 
-void LLGLSLShader::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
+void LLShaderProgram::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2544,7 +2544,7 @@ void LLGLSLShader::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 c
 }
 
 
-void LLGLSLShader::vertexAttrib4f(U32 index, F32 x, F32 y, F32 z, F32 w)
+void LLShaderProgram::vertexAttrib4f(U32 index, F32 x, F32 y, F32 z, F32 w)
 {
     if (mAttribute[index] > 0)
     {
@@ -2552,7 +2552,7 @@ void LLGLSLShader::vertexAttrib4f(U32 index, F32 x, F32 y, F32 z, F32 w)
     }
 }
 
-void LLGLSLShader::vertexAttrib4fv(U32 index, F32* v)
+void LLShaderProgram::vertexAttrib4fv(U32 index, F32* v)
 {
     if (mAttribute[index] > 0)
     {
@@ -2560,14 +2560,14 @@ void LLGLSLShader::vertexAttrib4fv(U32 index, F32* v)
     }
 }
 
-void LLGLSLShader::setMinimumAlpha(F32 minimum)
+void LLShaderProgram::setMinimumAlpha(F32 minimum)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-    gGL.flush();
+    gRender.flush();
     uniform1f(LLShaderMgr::MINIMUM_ALPHA, minimum);
 }
 
-void LLShaderUniforms::apply(LLGLSLShader* shader)
+void LLShaderUniforms::apply(LLShaderProgram* shader)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     for (auto& uniform : mIntegers)
@@ -2591,7 +2591,7 @@ void LLShaderUniforms::apply(LLGLSLShader* shader)
     }
 }
 
-LLUUID LLGLSLShader::hash()
+LLUUID LLShaderProgram::hash()
 {
     HBXXH128 hash_obj;
     hash_obj.update(mName);
@@ -2608,21 +2608,21 @@ LLUUID LLGLSLShader::hash()
         hash_obj.update(define_pair.second);
 
     }
-    for (const auto& define_pair : LLGLSLShader::sGlobalDefines)
+    for (const auto& define_pair : LLShaderProgram::sGlobalDefines)
     {
         hash_obj.update(define_pair.first);
         hash_obj.update(define_pair.second);
 
     }
     hash_obj.update(&mFeatures, sizeof(LLShaderFeatures));
-    hash_obj.update(gGLManager.mGLVendor);
-    hash_obj.update(gGLManager.mGLRenderer);
-    hash_obj.update(gGLManager.mGLVersionString);
+    hash_obj.update(gDeviceCaps.mVendorString);
+    hash_obj.update(gDeviceCaps.mDeviceString);
+    hash_obj.update(gDeviceCaps.mApiVersionString);
     return hash_obj.digest();
 }
 
 #if LL_PROFILER_ENABLE_RENDER_DOC
-void LLGLSLShader::setLabel(const char* label) {
+void LLShaderProgram::setLabel(const char* label) {
     (void)label;        // nothing to label: a program is not a GL object any more
 }
 #endif

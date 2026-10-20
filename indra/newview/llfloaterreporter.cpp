@@ -811,8 +811,8 @@ LLSD LLFloaterReporter::gatherReport()
             LLVersionInfo::instance().getShortVersion().c_str(),
             platform,
             gSysCPU.getFamily().c_str(),
-            gGLManager.mGLRenderer.c_str(),
-            gGLManager.mDriverVersionVendorString.c_str());
+            gDeviceCaps.mDeviceString.c_str(),
+            gDeviceCaps.mDriverVersionVendorString.c_str());
 
     // only send a screenshot ID if we're asked to and the email is
     // going to LL - Estate Owners cannot see the screenshot asset
@@ -931,7 +931,7 @@ void LLFloaterReporter::takeScreenshot(bool use_prev_screenshot)
     // store in the image list so it doesn't try to fetch from the server
     LLPointer<LLViewerFetchedTexture> image_in_list =
         LLViewerTextureManager::getFetchedTexture(mResourceDatap->mAssetInfo.mUuid);
-    image_in_list->createGLTexture(0, mImageRaw, 0, true, LLGLTexture::OTHER);
+    image_in_list->createImageTexture(0, mImageRaw, 0, true, LLBaseTexture::OTHER);
 
     // the texture picker then uses that texture
     LLTextureCtrl* texture = getChild<LLTextureCtrl>("screenshot");

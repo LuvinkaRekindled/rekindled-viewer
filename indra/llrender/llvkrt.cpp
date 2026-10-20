@@ -50,7 +50,7 @@ constexpr VkDeviceSize kGeomBytesBase = 2u << 20;           // per call: the geo
 constexpr VkDeviceSize kGeomBytesMats = 4u << 20;           // the same with the material tables on (LL_VK_RT_MATERIALS=1): a record for every geometry
 constexpr U32 kMatCap = 16384;                              // rows of the material table (the viewer's registry has the same capacity)
 constexpr VkDeviceSize kMatBytes = 96ull * kMatCap;
-constexpr U32 kPinCap = 32768;                              // pin indices (a pin = a texture with a permanent bindless slot, see LLVkGL::rtPinAcquire)
+constexpr U32 kPinCap = 32768;                              // pin indices (a pin = a texture with a permanent bindless slot, see LLVkWorker::rtPinAcquire)
 constexpr VkDeviceSize kPinBytes = 4ull * kPinCap;          // the pin table of a call's region: slot by pin index
 
 // one geometry (index range) of an alpha masked structure as the ray query shader reads it (llvkshader.cpp declares the same struct, LLRtGeom)
@@ -141,7 +141,7 @@ struct Group
     U64 mCandTag = 0;                   // the scene call tag it was last considered in
     bool mSkip = false;                 // left out of this scene call
     Blas* mBlas = nullptr;              // its structure (sBlas nodes keep their place)
-    LLVkGL::BufferInfo mVi, mIi;        // the buffers as of the latest note
+    LLVkWorker::BufferInfo mVi, mIi;        // the buffers as of the latest note
     U64 mNotedTag = 0;                  // frame tag of the latest note
     F32 mPrevModel[16] = {};            // the matrix of the note before
     bool mMoving = false;               // the matrix changed between the last two notes
@@ -270,15 +270,15 @@ struct DebugSwitches
     S32 mHitQ = -1;                 // live (hitq=N, -1 = not set: the preference FSVkMirrorQuality decides): how a hit of the traced glossy mirror is lit, 0 flat diffuse, 1 the main pass lighting at the hit (normal map, roughness / metallic / specular map, probes at the hit)
     S32 mWaterRt = 0;               // live (waterrt=N, 0 by default: the preference FSVkRTWater asks for 1; needs LL_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
     S32 mView = 0;                  // live (view=N): the ray scene material debug view mode (RenderRTMaterialDebug) the viewer shows, 0 = the setting decides
-    bool mGate = true;              // live (gate=0/1): avatars still loading and masked casters without texture data are not named (the viewer asks through LLVkMirror::rtLoadingGates)
-    bool mBodyName = true;          // live (bodyname=0/1): the viewer names the body meshes of the last frames again before the scene call (LLVkMirror::rtBodyRename)
+    bool mGate = true;              // live (gate=0/1): avatars still loading and masked casters without texture data are not named (the viewer asks through LLVkBridge::rtLoadingGates)
+    bool mBodyName = true;          // live (bodyname=0/1): the viewer names the body meshes of the last frames again before the scene call (LLVkBridge::rtBodyRename)
     F32 mSkinReach = kSkinReach;    // live (skinreach=N metres): skinned vertices farther than this from their avatar are dropped (the guard of the skinning pass)
     bool mBBox = false;             // one line per build/refit of a structure with a matrix of its own (CPU-visible data only) into <work>/rt-bbox.log: bounding box, largest coordinate (stage C step 0)
 };
 DebugSwitches sDbg;
 std::atomic<S32> sViewLive{0};
 std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1};
-std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkMirror)
+std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkBridge)
 std::chrono::steady_clock::time_point sDbgRead;
 
 void read_debug_switches()
@@ -403,7 +403,7 @@ struct SkinDraw
     bool mDead = false;                 // not named for a while: its output is freed (a structure built over it still lists it)
     F32 mAvatarPos[3] = {};
     AlphaInfo mAlpha;
-    LLVkGL::BufferInfo mVi, mIi;
+    LLVkWorker::BufferInfo mVi, mIi;
     U64 mNotedTag = 0, mSkinnedTag = 0;
     U64 mMarkedTag = 0;                 // frame in which its buffers were marked as in use for the records (once per frame, not per scene call)
     U32 mRecCalls = 0, mRecBad = 0;     // debug (avlog): scene calls that built an alpha test / material record for this draw, and how many of them had to reject its candidates
@@ -522,7 +522,7 @@ RowLog sRecLog, sMatLog;
 RegionState sRecRegion[Context::FRAMES_IN_FLIGHT * kCalls], sMatRegion[Context::FRAMES_IN_FLIGHT * kCalls];
 std::vector<GpuMaterial> sMatRows;              // by viewer id (row 0 unused); slots are patched in at every frame
 std::vector<std::array<U32, 8>> sMatPins;       // pin indices of each material row's textures: 4 diffuse, normal, specular, emissive, unused (0 = none)
-std::vector<U32> sPinSlots;                     // the pin table: bindless slot by pin index (written by LLVkGL's pin code through setPinSlot)
+std::vector<U32> sPinSlots;                     // the pin table: bindless slot by pin index (written by LLVkWorker's pin code through setPinSlot)
 RowLog sPinLog;
 RegionState sPinRegion[Context::FRAMES_IN_FLIGHT * kCalls];
 std::vector<std::array<U32, 4>> sRecPins;       // pin indices of the texture names of each record row (all zero for rows without pins)
@@ -657,7 +657,7 @@ void release_row(size_t row)
         {
             if (pin)
             {
-                LLVkGL::rtPinRelease(pin);
+                LLVkWorker::rtPinRelease(pin);
                 ++sStats.mPinsDropped;
                 pin = 0;
             }
@@ -1384,7 +1384,7 @@ void setPinSlot(U32 index, U32 slot)
     }
 }
 
-void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count)
+void updateMaterials(const LLVkBridge::RtMaterialDef* defs, U32 count)
 {
     if (!sInit || !sMatsInit)
     {
@@ -1392,7 +1392,7 @@ void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count)
     }
     for (U32 i = 0; i < count; ++i)
     {
-        const LLVkMirror::RtMaterialDef& d = defs[i];
+        const LLVkBridge::RtMaterialDef& d = defs[i];
         if (d.mId == 0 || d.mId >= kMatCap)
         {
             continue;
@@ -1410,7 +1410,7 @@ void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count)
         m.mMetallic = d.mMetallic;
         m.mRoughness = d.mRoughness;
         m.mFlags = d.mFlags;
-        if (!(d.mFlags & LLVkMirror::RTM_GLTF))
+        if (!(d.mFlags & LLVkBridge::RTM_GLTF))
         {
             // legacy materials have no emissive colour here: the slots carry the specular colour (rgb, in place of the emissive colour) and the specular exponent / 255 (in the pad of the params),
             // which the lit hits of the traced mirror need (softenLightF.glsl: spec.rgb = specular map x colour, glossiness = exponent x normal map alpha, like the G-buffer pass)
@@ -1423,14 +1423,14 @@ void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count)
         std::array<U32, 8> fresh = {};
         for (int k = 0; k < 7; ++k)
         {
-            fresh[k] = names[k] ? LLVkGL::rtPinAcquire(names[k]) : 0u;
+            fresh[k] = names[k] ? LLVkWorker::rtPinAcquire(names[k]) : 0u;
             sStats.mPinsHeld += names[k] ? 1 : 0;
         }
         for (U32 old_pin : sMatPins[d.mId])
         {
             if (old_pin)
             {
-                LLVkGL::rtPinRelease(old_pin);
+                LLVkWorker::rtPinRelease(old_pin);
                 ++sStats.mPinsDropped;
             }
         }
@@ -1724,7 +1724,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     read_debug_switches();
     if (sDbg.mPreflush)
     {
-        LLVkGL::flushPendingBufferWrites();
+        LLVkWorker::flushPendingBufferWrites();
     }
     if (sDbg.mSingle)
     {
@@ -1884,7 +1884,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     std::vector<SkinDraw*> skin_job_draws;      // the draw behind each job (null for the skin test copies), for the probe
     const bool skin_on = sDbg.mSkinTest && ensure_skin_pipeline();
     U64 tris_budget = max_tris;
-    LLVkGL::BufferInfo vi, ii;
+    LLVkWorker::BufferInfo vi, ii;
     VkDeviceSize scratch_total = 0;
     // Which groups may need work: never built, or named this frame with changed buffers or new ranges. Everything else is left alone (the scan does no lookups for the many
     // groups that did not change). Nearest first (the distance of the object's origin in eye space): while a scene loads the budget goes to what is around the camera.
@@ -2010,7 +2010,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             vi = g.mVi;
             ii = g.mIi;
         }
-        else if (!LLVkGL::getBufferInfo(g.mKey.mVb, vi) || !LLVkGL::getBufferInfo(g.mKey.mIb, ii))
+        else if (!LLVkWorker::getBufferInfo(g.mKey.mVb, vi) || !LLVkWorker::getBufferInfo(g.mKey.mIb, ii))
         {
             ++sStats.mNoData;
             continue;
@@ -2101,8 +2101,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         job.mFresh = fresh;
         job.mKey = g.mKey;
         job.mBlas = &b;
-        LLVkGL::markBufferUsed(g.mKey.mVb);         // the build reads them when the GPU gets here: a CPU rewrite in place before that would tear the data
-        LLVkGL::markBufferUsed(g.mKey.mIb);
+        LLVkWorker::markBufferUsed(g.mKey.mVb);         // the build reads them when the GPU gets here: a CPU rewrite in place before that would tear the data
+        LLVkWorker::markBufferUsed(g.mKey.mIb);
         // skin test: the structure is built from the compute pass output (a copy of the vertex buffer), not from the buffer itself
         VkDeviceAddress vertex_address = vi.mAddress;
         bool force_build = false;
@@ -2527,8 +2527,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             {
                 // a draw named some frames (or the slot before this scene call's tag) ago: its buffers must still be the ones it was named with (a buffer that was made again, moved or given up has a new epoch or address: the avatar's
                 // meshes are rebuilt while it loads, and a structure over indices of a range that now holds something else is a spike in the shadow)
-                LLVkGL::BufferInfo vi_now, ii_now;
-                const bool known = LLVkGL::getBufferInfo(d.mVb, vi_now) && LLVkGL::getBufferInfo(d.mIb, ii_now);
+                LLVkWorker::BufferInfo vi_now, ii_now;
+                const bool known = LLVkWorker::getBufferInfo(d.mVb, vi_now) && LLVkWorker::getBufferInfo(d.mIb, ii_now);
                 const bool same_content = known && vi_now.mEpoch == d.mVi.mEpoch && ii_now.mEpoch == d.mIi.mEpoch && vi_now.mSize == d.mVi.mSize && ii_now.mSize == d.mIi.mSize;
                 const bool same_place = same_content && vi_now.mAddress == d.mVi.mAddress && ii_now.mAddress == d.mIi.mAddress;
                 if (!same_place)
@@ -2654,8 +2654,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         U64 prims = 0;
         for (SkinDraw* d : cur)
         {
-            LLVkGL::markBufferUsed(d->mVb);         // the compute pass and the build read them when the GPU gets here
-            LLVkGL::markBufferUsed(d->mIb);
+            LLVkWorker::markBufferUsed(d->mVb);         // the compute pass and the build read them when the GPU gets here
+            LLVkWorker::markBufferUsed(d->mIb);
             if (d->mNotedTag != 0 && d->mNotedTag + 2 >= av_tag && d->mSkinnedTag != av_tag)
             {
                 d->mSkinnedTag = av_tag;
@@ -2953,13 +2953,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         if (g.mKey.mKind == 1 || (g.mKey.mKind == 0 && sDbg.mMats))
         {
             const std::vector<Range>& set = job ? job->mSet : b.mBuilt;
-            LLVkGL::BufferInfo lvi, lii;
+            LLVkWorker::BufferInfo lvi, lii;
             if (g.mNotedTag == scan_tag)
             {
                 lvi = g.mVi;
                 lii = g.mIi;
             }
-            else if (!LLVkGL::getBufferInfo(g.mKey.mVb, lvi) || !LLVkGL::getBufferInfo(g.mKey.mIb, lii))
+            else if (!LLVkWorker::getBufferInfo(g.mKey.mVb, lvi) || !LLVkWorker::getBufferInfo(g.mKey.mIb, lii))
             {
                 ++sStats.mNoData;
                 drop_entry(g, 5);
@@ -3036,7 +3036,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 {
                     if (names[i][k])
                     {
-                        pins[i][k] = LLVkGL::rtPinAcquire(names[i][k]);
+                        pins[i][k] = LLVkWorker::rtPinAcquire(names[i][k]);
                         ++sStats.mPinsHeld;
                         any = true;
                     }
@@ -3136,7 +3136,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     else
     {
         // a watched buffer (the alpha records hold its address) changed its storage since the last call: look at the records of the masked groups again
-        const U64 topology = LLVkGL::bufferTopologyVersion();
+        const U64 topology = LLVkWorker::bufferTopologyVersion();
         if (topology != sTopoSeen)
         {
             sTopoSeen = topology;
@@ -3145,8 +3145,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             {
                 if ((gp->mKey.mKind == 1 || (gp->mKey.mKind == 0 && sDbg.mMats)) && gp->mSlot != ~0u && !gp->mDirty)
                 {
-                    LLVkGL::BufferInfo tvi, tii;
-                    if (!LLVkGL::getBufferInfo(gp->mKey.mVb, tvi) || !LLVkGL::getBufferInfo(gp->mKey.mIb, tii) || tvi.mAddress != gp->mCacheVb || tii.mAddress != gp->mCacheIb)
+                    LLVkWorker::BufferInfo tvi, tii;
+                    if (!LLVkWorker::getBufferInfo(gp->mKey.mVb, tvi) || !LLVkWorker::getBufferInfo(gp->mKey.mIb, tii) || tvi.mAddress != gp->mCacheVb || tii.mAddress != gp->mCacheIb)
                     {
                         ++sStats.mDirtyWhy[4];
                         mark_dirty(*gp);
@@ -3154,7 +3154,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 }
             };
             std::vector<unsigned> changed_names;
-            if (LLVkGL::takeTopologyChanges(changed_names))
+            if (LLVkWorker::takeTopologyChanges(changed_names))
             {
                 for (unsigned name : changed_names)
                 {
@@ -3319,7 +3319,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         if (pins_on)
         {
             // the pinned textures: those that changed are looked at again, the pin table (slot by pin index) gets what changed since this region was written; its address is in the header
-            LLVkGL::rtPinUpdate();
+            LLVkWorker::rtPinUpdate();
             const U64 pa = mat_table_address + kMatBytes;
             const U32 words[2] = { (U32)pa, (U32)(pa >> 32) };
             memcpy(table[0].mUv, words, sizeof(words));
@@ -3459,7 +3459,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 avatar_skipped(a, kv.first, "geometry table full");
                 continue;
             }
-            std::vector<LLVkGL::BufferInfo> vis(a.mBuiltIdx.size()), iis(a.mBuiltIdx.size());
+            std::vector<LLVkWorker::BufferInfo> vis(a.mBuiltIdx.size()), iis(a.mBuiltIdx.size());
             std::vector<char> usable(a.mBuiltIdx.size(), 1);
             for (size_t k = 0; k < a.mBuiltIdx.size(); ++k)
             {
@@ -3477,7 +3477,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 }
                 else if (ok)
                 {
-                    ok = LLVkGL::getBufferInfo(d.mVb, vis[k]) && LLVkGL::getBufferInfo(d.mIb, iis[k]) && vis[k].mEpoch == d.mVi.mEpoch && iis[k].mEpoch == d.mIi.mEpoch;
+                    ok = LLVkWorker::getBufferInfo(d.mVb, vis[k]) && LLVkWorker::getBufferInfo(d.mIb, iis[k]) && vis[k].mEpoch == d.mVi.mEpoch && iis[k].mEpoch == d.mIi.mEpoch;
                 }
                 ok = ok && vis[k].mAddress && iis[k].mAddress;
                 if (!ok)
@@ -3508,8 +3508,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 if (d.mMarkedTag != av_tag)
                 {
                     d.mMarkedTag = av_tag;
-                    LLVkGL::markBufferUsed(d.mVb);  // the alpha test reads texcoords, colours and indices while the lighting runs
-                    LLVkGL::markBufferUsed(d.mIb);
+                    LLVkWorker::markBufferUsed(d.mVb);  // the alpha test reads texcoords, colours and indices while the lighting runs
+                    LLVkWorker::markBufferUsed(d.mIb);
                 }
                 const U64 pa = d.mOut.mAddress - 16ull * d.mVertexFirst, ia = iis[k].mAddress, va = vis[k].mAddress;
                 rec.mPositions[0] = (U32)pa;
@@ -4227,7 +4227,7 @@ std::string report(double frames)
     const double scenes = std::max<double>(1.0, (double)s.mScenes);
     const double f = std::max(1.0, frames);
     unsigned long long pin_total = 0, pin_resolves = 0, pin_events = 0;
-    LLVkGL::rtPinCounts(pin_total, pin_resolves, pin_events);
+    LLVkWorker::rtPinCounts(pin_total, pin_resolves, pin_events);
     char buf[3600];
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "

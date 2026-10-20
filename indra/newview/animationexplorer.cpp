@@ -258,26 +258,26 @@ void AnimationExplorer::draw()
     {
         mAnimationPreview->requestUpdate();
 
-        gGL.color3f(1.0f, 1.0f, 1.0f);
-        gGL.getTexUnit(0)->bind(mAnimationPreview);
-        gGL.begin(LLRender::TRIANGLES);
+        gRender.color3f(1.0f, 1.0f, 1.0f);
+        gRender.getTexUnit(0)->bind(mAnimationPreview);
+        gRender.begin(LLRender::TRIANGLES);
         {
-            gGL.texCoord2f(0.0f, 1.0f);
-            gGL.vertex2i(r.mLeft, r.mTop);
-            gGL.texCoord2f(0.0f, 0.0f);
-            gGL.vertex2i(r.mLeft, r.mBottom);
-            gGL.texCoord2f(1.0f, 0.0f);
-            gGL.vertex2i(r.mRight, r.mBottom);
+            gRender.texCoord2f(0.0f, 1.0f);
+            gRender.vertex2i(r.mLeft, r.mTop);
+            gRender.texCoord2f(0.0f, 0.0f);
+            gRender.vertex2i(r.mLeft, r.mBottom);
+            gRender.texCoord2f(1.0f, 0.0f);
+            gRender.vertex2i(r.mRight, r.mBottom);
 
-            gGL.texCoord2f(0.0f, 1.0f);
-            gGL.vertex2i(r.mLeft, r.mTop);
-            gGL.texCoord2f(1.0f, 0.0f);
-            gGL.vertex2i(r.mRight, r.mBottom);
-            gGL.texCoord2f(1.0f, 1.0f);
-            gGL.vertex2i(r.mRight, r.mTop);
+            gRender.texCoord2f(0.0f, 1.0f);
+            gRender.vertex2i(r.mLeft, r.mTop);
+            gRender.texCoord2f(1.0f, 0.0f);
+            gRender.vertex2i(r.mRight, r.mBottom);
+            gRender.texCoord2f(1.0f, 1.0f);
+            gRender.vertex2i(r.mRight, r.mTop);
         }
-        gGL.end();
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.end();
+        gRender.getTexUnit(0)->bindWhite();
     }
 
     // update tiems and "Still playing" status in the list once every few seconds

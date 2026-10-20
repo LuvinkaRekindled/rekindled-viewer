@@ -33,7 +33,7 @@
 
 class LLFace;
 class LLColor4;
-class LLGLSLShader;
+class LLShaderProgram;
 
 class LLDrawPoolAlpha final: public LLRenderPass
 {
@@ -72,18 +72,18 @@ public:
     static bool sShowDebugAlphaRigged;
 
 private:
-    LLGLSLShader* target_shader;
+    LLShaderProgram* target_shader;
 
     // setup by beginFooPass, [0] is static variant, [1] is rigged variant
-    LLGLSLShader* simple_shader = nullptr;
+    LLShaderProgram* simple_shader = nullptr;
     bool mFringePending = false;                        // <FS> the rigged alpha was split: its soft part is still to be drawn after the static alpha
     bool mFringePass = false;                           // <FS> drawing that soft part
     F32 mDepthCutoff = 0.f;                             // <FS> alpha cutoff of the depth only pass of the rigged alpha, 0 outside of it
-    std::vector<LLGLSLShader*> mDepthCutoffShaders;     // <FS> the shaders that drew in it (they get the usual cutoff back)
-    LLGLSLShader* fullbright_shader = nullptr;
-    LLGLSLShader* emissive_shader = nullptr;
-    LLGLSLShader* pbr_emissive_shader = nullptr;
-    LLGLSLShader* pbr_shader = nullptr;
+    std::vector<LLShaderProgram*> mDepthCutoffShaders;     // <FS> the shaders that drew in it (they get the usual cutoff back)
+    LLShaderProgram* fullbright_shader = nullptr;
+    LLShaderProgram* emissive_shader = nullptr;
+    LLShaderProgram* pbr_emissive_shader = nullptr;
+    LLShaderProgram* pbr_shader = nullptr;
 
     void drawEmissive(LLDrawInfo* draw);
     void renderEmissives(std::vector<LLDrawInfo*>& emissives);

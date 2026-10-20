@@ -234,9 +234,9 @@ public:
     void run() override
     {
         mWindow->makeContextCurrent(mContext);
-        gGL.init(false);
+        gRender.init(false);
         mQueue->runUntilClose();
-        gGL.shutdown();
+        gRender.shutdown();
         mWindow->destroySharedContext(mContext);
     }
 
@@ -283,16 +283,16 @@ static void delete_buffers(S32 count, U32* buffers)
     // synchronization issues with the GPU
     static std::vector<U32> sFreeList[4];
 
-    if (gGLManager.mInited)
+    if (gDeviceCaps.mInited)
     {
-        U32 idx = LLImageGL::sFrameCount % 4;
+        U32 idx = LLImageTex::sFrameCount % 4;
 
         for (S32 i = 0; i < count; ++i)
         {
             sFreeList[idx].push_back(buffers[i]);
         }
 
-        idx = (LLImageGL::sFrameCount + 3) % 4;
+        idx = (LLImageTex::sFrameCount + 3) % 4;
 
         if (!sFreeList[idx].empty())
         {
@@ -602,11 +602,11 @@ void LLVertexBufferData::drawWithMatrix()
 
     if (mTexName)
     {
-        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mTexName);
+        gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mTexName);
     }
     else
     {
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
     }
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
@@ -635,11 +635,11 @@ void LLVertexBufferData::draw()
 
     if (mTexName)
     {
-        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mTexName);
+        gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mTexName);
     }
     else
     {
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
     }
 
     mVB->setBuffer();
@@ -657,8 +657,8 @@ U64 LLVertexBuffer::getBytesAllocated()
 //============================================================================
 //
 //static
-U32 LLVertexBuffer::sGLRenderBuffer = 0;
-U32 LLVertexBuffer::sGLRenderIndices = 0;
+U32 LLVertexBuffer::sRenderBufferId = 0;
+U32 LLVertexBuffer::sRenderIndicesId = 0;
 U32 LLVertexBuffer::sLastMask = 0;
 U64 LLVertexBuffer::sDrawCalls = 0;
 U32 LLVertexBuffer::sVertexCount = 0;
@@ -718,20 +718,20 @@ const PrimitiveMode LLVertexBuffer::sPrimitive[LLRender::NUM_MODES] =
 void LLVertexBuffer::drawArrays(U32 mode, const std::vector<LLVector3>& pos)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
-    gGL.begin(mode);
+    gRender.begin(mode);
     for (auto& v : pos)
     {
-        gGL.vertex3fv(v.mV);
+        gRender.vertex3fv(v.mV);
     }
-    gGL.end();
-    gGL.flush();
+    gRender.end();
+    gRender.flush();
 }
 
 //static
 void LLVertexBuffer::drawElements(U32 mode, const LLVector4a* pos, const LLVector2* tc, U32 num_indices, const U16* indicesp)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
-    llassert(LLGLSLShader::sCurBoundShaderPtr != NULL);
+    llassert(LLShaderProgram::sCurBoundShaderPtr != NULL);
 
     // <FS:Beq> FIRE-29679 trap empty calls that cause crashes when rezzing in OpenSim.
     if(pos == nullptr || indicesp == nullptr )
@@ -751,19 +751,19 @@ void LLVertexBuffer::drawElements(U32 mode, const LLVector4a* pos, const LLVecto
 
     STOP_GLERROR;
 
-    gGL.syncMatrices();
+    gRender.syncMatrices();
 
     unbind();
 
-    gGL.begin(mode);
+    gRender.begin(mode);
 
     if (tc != nullptr)
     {
         for (U32 i = 0; i < num_indices; ++i)
         {
             U16 idx = indicesp[i];
-            gGL.texCoord2fv(tc[idx].mV);
-            gGL.vertex3fv(pos[idx].getF32ptr());
+            gRender.texCoord2fv(tc[idx].mV);
+            gRender.vertex3fv(pos[idx].getF32ptr());
         }
     }
     else
@@ -771,16 +771,16 @@ void LLVertexBuffer::drawElements(U32 mode, const LLVector4a* pos, const LLVecto
         for (U32 i = 0; i < num_indices; ++i)
         {
             U16 idx = indicesp[i];
-            gGL.vertex3fv(pos[idx].getF32ptr());
+            gRender.vertex3fv(pos[idx].getF32ptr());
         }
     }
-    gGL.end();
-    gGL.flush();
+    gRender.end();
+    gRender.flush();
 }
 
 bool LLVertexBuffer::validateRange(U32 start, U32 end, U32 count, U32 indices_offset) const
 {
-    if (!gDebugGL)
+    if (!gDebugRender)
     {
         return true;
     }
@@ -824,7 +824,7 @@ bool LLVertexBuffer::validateRange(U32 start, U32 end, U32 count, U32 indices_of
             }
         }
 
-        LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+        LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
 
         if (shader && shader->mFeatures.mIndexedTextureChannels > 1)
         {
@@ -868,9 +868,9 @@ void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indi
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_DRAW);
     ++sDrawCalls;
     llassert(validateRange(start, end, count, indices_offset));
-    llassert(mGLBuffer == sGLRenderBuffer);
-    llassert(mGLIndices == sGLRenderIndices);
-    gGL.syncMatrices();
+    llassert(mVertexBufferId == sRenderBufferId);
+    llassert(mIndexBufferId == sRenderIndicesId);
+    gRender.syncMatrices();
     LLVkAsync::drawRangeElements(sPrimitive[mode], start, end, count, mIndicesType, (const void*)(indices_offset * (size_t) mIndicesStride));
 }
 
@@ -893,10 +893,10 @@ void LLVertexBuffer::drawArrays(U32 mode, U32 first, U32 count) const
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_DRAW);
     ++sDrawCalls;
     llassert(first + count <= mNumVerts);
-    llassert(mGLBuffer == sGLRenderBuffer);
-    llassert(mGLIndices == sGLRenderIndices);
+    llassert(mVertexBufferId == sRenderBufferId);
+    llassert(mIndexBufferId == sRenderIndicesId);
 
-    gGL.syncMatrices();
+    gRender.syncMatrices();
     LLVkAsync::drawArrays(sPrimitive[mode], first, count);
 }
 
@@ -905,7 +905,7 @@ void LLVertexBuffer::initClass(LLWindow* window)
 {
     llassert(sVBOPool == nullptr);
 
-    if (gGLManager.mIsApple)
+    if (gDeviceCaps.mIsApple)
     {
         LL_INFOS() << "VBO Pooling Disabled" << LL_ENDL;
         sVBOPool = new LLAppleVBOPool();
@@ -931,23 +931,23 @@ void LLVertexBuffer::initClass(LLWindow* window)
 void LLVertexBuffer::drawNoAttributes(U32 mode, U32 first, U32 count)
 {
     ++sDrawCalls;
-    gGL.syncMatrices();
+    gRender.syncMatrices();
     LLVkAsync::drawArrays(sPrimitive[mode], first, count);
 }
 
 //static
 void LLVertexBuffer::forgetBoundBuffers()
 {
-    sGLRenderBuffer = 0;
-    sGLRenderIndices = 0;
+    sRenderBufferId = 0;
+    sRenderIndicesId = 0;
 }
 
 //static
 void LLVertexBuffer::unbind()
 {
     LLVkAsync::drawBindingClear();
-    sGLRenderBuffer = 0;
-    sGLRenderIndices = 0;
+    sRenderBufferId = 0;
+    sRenderIndicesId = 0;
 }
 
 //static
@@ -1085,11 +1085,11 @@ void LLVertexBuffer::genBuffer(U32 size)
     if (sVBOPool)
     {
         llassert(mSize == 0);
-        llassert(mGLBuffer == 0);
+        llassert(mVertexBufferId == 0);
         llassert(mMappedData == nullptr);
 
         mSize = size;
-        sVBOPool->allocate(BufferKind::Vertex, mSize, mGLBuffer, mMappedData);
+        sVBOPool->allocate(BufferKind::Vertex, mSize, mVertexBufferId, mMappedData);
     }
 }
 
@@ -1101,16 +1101,16 @@ void LLVertexBuffer::genIndices(U32 size)
     if (sVBOPool)
     {
         llassert(mIndicesSize == 0);
-        llassert(mGLIndices == 0);
+        llassert(mIndexBufferId == 0);
         llassert(mMappedIndexData == nullptr);
         mIndicesSize = size;
-        sVBOPool->allocate(BufferKind::Index, mIndicesSize, mGLIndices, mMappedIndexData);
+        sVBOPool->allocate(BufferKind::Index, mIndicesSize, mIndexBufferId, mMappedIndexData);
     }
 }
 
 bool LLVertexBuffer::createGLBuffer(U32 size)
 {
-    if (mGLBuffer || mMappedData)
+    if (mVertexBufferId || mMappedData)
     {
         destroyGLBuffer();
     }
@@ -1133,7 +1133,7 @@ bool LLVertexBuffer::createGLBuffer(U32 size)
 
 bool LLVertexBuffer::createGLIndices(U32 size)
 {
-    if (mGLIndices)
+    if (mIndexBufferId)
     {
         destroyGLIndices();
     }
@@ -1156,34 +1156,34 @@ bool LLVertexBuffer::createGLIndices(U32 size)
 
 void LLVertexBuffer::destroyGLBuffer()
 {
-    if (mGLBuffer || mMappedData)
+    if (mVertexBufferId || mMappedData)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         //llassert(sVBOPool);
         if (sVBOPool)
         {
-            sVBOPool->free(BufferKind::Vertex, mSize, mGLBuffer, mMappedData);
+            sVBOPool->free(BufferKind::Vertex, mSize, mVertexBufferId, mMappedData);
         }
 
         mSize = 0;
-        mGLBuffer = 0;
+        mVertexBufferId = 0;
         mMappedData = nullptr;
     }
 }
 
 void LLVertexBuffer::destroyGLIndices()
 {
-    if (mGLIndices || mMappedIndexData)
+    if (mIndexBufferId || mMappedIndexData)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         //llassert(sVBOPool);
         if (sVBOPool)
         {
-            sVBOPool->free(BufferKind::Index, mIndicesSize, mGLIndices, mMappedIndexData);
+            sVBOPool->free(BufferKind::Index, mIndicesSize, mIndexBufferId, mMappedIndexData);
         }
 
         mIndicesSize = 0;
-        mGLIndices = 0;
+        mIndexBufferId = 0;
         mMappedIndexData = nullptr;
     }
 }
@@ -1270,7 +1270,7 @@ U8* LLVertexBuffer::mapVertexBuffer(LLVertexBuffer::AttributeType type, U32 inde
         count = mNumVerts - index;
     }
 
-    if (!gGLManager.mIsApple)
+    if (!gDeviceCaps.mIsApple)
     {
         U32 start = mOffsets[type] + sTypeSize[type] * index;
         U32 end = start + sTypeSize[type] * count-1;
@@ -1307,7 +1307,7 @@ U8* LLVertexBuffer::mapIndexBuffer(U32 index, S32 count)
         count = mNumIndices-index;
     }
 
-    if (!gGLManager.mIsApple)
+    if (!gDeviceCaps.mIsApple)
     {
         U32 start = sizeof(U16) * index;
         U32 end = start + sizeof(U16) * count-1;
@@ -1356,7 +1356,7 @@ void LLVertexBuffer::flush_vbo(BufferKind target, U32 start, U32 end, void* data
         {
             U32 tend = llmin(i + block_size, end);
             U32 size = tend - i + 1;
-            LLVkAsync::bufferSubData(target == BufferKind::Vertex ? mGLBuffer : mGLIndices, i, size, (U8*)data + (i - start));
+            LLVkAsync::bufferSubData(target == BufferKind::Vertex ? mVertexBufferId : mIndexBufferId, i, size, (U8*)data + (i - start));
         }
     }
 }
@@ -1631,9 +1631,9 @@ void LLVertexBuffer::setBuffer()
     llassert(mMappedIndexRegions.empty());
 
     // a shader must be bound
-    llassert(LLGLSLShader::sCurBoundShaderPtr);
+    llassert(LLShaderProgram::sCurBoundShaderPtr);
 
-    U32 data_mask = LLGLSLShader::sCurBoundShaderPtr->mAttributeMask;
+    U32 data_mask = LLShaderProgram::sCurBoundShaderPtr->mAttributeMask;
 
     // this Vertex Buffer must provide all necessary attributes for currently bound shader
     llassert_msg((data_mask & mTypeMask) == data_mask,
@@ -1642,10 +1642,10 @@ void LLVertexBuffer::setBuffer()
 
     // the binding of the next draws is the whole thing (this buffer, the bound shader's attributes): it is worked out when the buffers or the mask are not those of the binding the
     // producer holds, and reused while this buffer's layout, buffers and mask are the same (the cache)
-    if (sGLRenderBuffer != mGLBuffer || sGLRenderIndices != mGLIndices || sLastMask != data_mask)
+    if (sRenderBufferId != mVertexBufferId || sRenderIndicesId != mIndexBufferId || sLastMask != data_mask)
     {
         const VkBindCache* c = mVkBindCache;
-        const bool cache_hit = c && c->mNumVerts == mNumVerts && c->mTypeMask == mTypeMask && c->mMask == data_mask && c->mArray == mGLBuffer && c->mElem == mGLIndices;
+        const bool cache_hit = c && c->mNumVerts == mNumVerts && c->mTypeMask == mTypeMask && c->mMask == data_mask && c->mArray == mVertexBufferId && c->mElem == mIndexBufferId;
         if (cache_hit)
         {
             LLVkAsync::drawBindingSet(c->mBinding);
@@ -1656,7 +1656,7 @@ void LLVertexBuffer::setBuffer()
             sAttribSink = &sink;
             setupVertexBuffer();
             sAttribSink = nullptr;
-            LLVkAsync::drawBinding(mGLBuffer, mGLIndices, sink.mAttribs, sink.mCount);
+            LLVkAsync::drawBinding(mVertexBufferId, mIndexBufferId, sink.mAttribs, sink.mCount);
             if (!mVkBindCache)
             {
                 mVkBindCache = new VkBindCache();
@@ -1664,12 +1664,12 @@ void LLVertexBuffer::setBuffer()
             mVkBindCache->mNumVerts = mNumVerts;
             mVkBindCache->mTypeMask = mTypeMask;
             mVkBindCache->mMask = data_mask;
-            mVkBindCache->mArray = mGLBuffer;
-            mVkBindCache->mElem = mGLIndices;
+            mVkBindCache->mArray = mVertexBufferId;
+            mVkBindCache->mElem = mIndexBufferId;
             LLVkAsync::drawBindingGet(mVkBindCache->mBinding);
         }
-        sGLRenderBuffer = mGLBuffer;
-        sGLRenderIndices = mGLIndices;
+        sRenderBufferId = mVertexBufferId;
+        sRenderIndicesId = mIndexBufferId;
         sLastMask = data_mask;
     }
 }
@@ -1681,7 +1681,7 @@ void LLVertexBuffer::setupVertexBuffer()
     STOP_GLERROR;
     U8* base = nullptr;
 
-    U32 data_mask = LLGLSLShader::sCurBoundShaderPtr->mAttributeMask;
+    U32 data_mask = LLShaderProgram::sCurBoundShaderPtr->mAttributeMask;
 
     if (data_mask & MAP_NORMAL)
     {

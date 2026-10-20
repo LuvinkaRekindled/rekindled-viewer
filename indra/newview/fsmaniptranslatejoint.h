@@ -59,8 +59,8 @@ public:
     void setReferenceFrame(const E_PoserReferenceFrame frame) { mReferenceFrame = frame; };
 
     static U32  getGridTexName();
-    static void destroyGL();
-    static void restoreGL();
+    static void destroyResources();
+    static void restoreResources();
     bool        handleMouseDown(S32 x, S32 y, MASK mask) override;
     bool        handleMouseUp(S32 x, S32 y, MASK mask) override;
     bool        handleHover(S32 x, S32 y, MASK mask) override;

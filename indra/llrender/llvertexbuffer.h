@@ -266,13 +266,13 @@ public:
     U8* getMappedData() const               { return mMappedData; }
     U8* getMappedIndices() const            { return mMappedIndexData; }
     U32 getOffset(AttributeType type) const { return mOffsets[type]; }
-    U32 getGLBuffer() const                 { return mGLBuffer; }       // <FS> GL names and index format (render packets)
-    U32 getGLIndices() const                { return mGLIndices; }
+    U32 getVertexBufferId() const                 { return mVertexBufferId; }       // <FS> GL names and index format (render packets)
+    U32 getIndexBufferId() const                { return mIndexBufferId; }
     ComponentType getIndicesType() const    { return mIndicesType; }
     U32 getIndicesStride() const            { return mIndicesStride; }
 
     // these functions assume (and assert on) the current VBO being bound
-    // Detailed error checking can be enabled by setting gDebugGL to true
+    // Detailed error checking can be enabled by setting gDebugRender to true
     void draw(U32 mode, U32 count, U32 indices_offset) const;
     void drawArrays(U32 mode, U32 offset, U32 count) const;
     void drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indices_offset) const;
@@ -291,8 +291,8 @@ public:
     void clone(LLVertexBuffer& target) const;
 
 protected:
-    U32     mGLBuffer = 0;      // GL VBO handle
-    U32     mGLIndices = 0;     // GL IBO handle
+    U32     mVertexBufferId = 0;      // GL VBO handle
+    U32     mIndexBufferId = 0;     // GL IBO handle
     U32     mNumVerts = 0;      // Number of vertices allocated
     U32     mNumIndices = 0;    // Number of indices allocated
     ComponentType mIndicesType = ComponentType::U16; // type of indices in index buffer
@@ -341,8 +341,8 @@ public:
     static U64 getBytesAllocated();
     static const U32 sTypeSize[TYPE_MAX];
     static const PrimitiveMode sPrimitive[LLRender::NUM_MODES];
-    static U32 sGLRenderBuffer;
-    static U32 sGLRenderIndices;
+    static U32 sRenderBufferId;
+    static U32 sRenderIndicesId;
     static U32 sLastMask;
     static U32 sVertexCount;
 };

@@ -330,7 +330,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
     // Unlike the reflectionmap manager, all probes are considered "realtime" for hero probes.
     sourceIdx += 1;
 
-    gGL.setColorMask(true, true);
+    gRender.setColorMask(true, true);
     LLRenderState::DepthScope depth(false, false);
     LLRenderState::CullScope cull(false);
     LLRenderState::BlendScope blend(false);
@@ -343,7 +343,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
 
-        gGL.flush();
+        gRender.flush();
         U32 res = mProbeResolution * 2;
 
         static LLStaticHashedString resScale("resScale");
@@ -362,7 +362,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
 
             // horizontal
             gGaussianProgram.uniform2f(direction, 1.f, 0.f);
-            gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
+            gRender.getTexUnit(diffuseChannel)->bind(screen_rt);
             RenderPassScope pass_366(mRenderTarget);
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -370,7 +370,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
 
             // vertical
             gGaussianProgram.uniform2f(direction, 0.f, 1.f);
-            gGL.getTexUnit(diffuseChannel)->bind(&mRenderTarget);
+            gRender.getTexUnit(diffuseChannel)->bind(&mRenderTarget);
             RenderPassScope pass_375(*screen_rt);
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -390,14 +390,14 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
             RenderPassScope pass(mMipChain[i]);
             if (i == 0)
             {
-                gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
+                gRender.getTexUnit(diffuseChannel)->bind(screen_rt);
             }
             else
             {
-                gGL.getTexUnit(diffuseChannel)->bind(&(mMipChain[i - 1]));
+                gRender.getTexUnit(diffuseChannel)->bind(&(mMipChain[i - 1]));
             }
 
-            gGL.getTexUnit(depthChannel)->bind(depth_rt, true);
+            gRender.getTexUnit(depthChannel)->bind(depth_rt, true);
 
             gReflectionMipProgram.uniform1f(resScale, 1.f / (mProbeResolution * 2));
             gReflectionMipProgram.uniform1f(znear, probe->getNearClip());
@@ -416,7 +416,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
                 LL_PROFILE_GPU_ZONE("hero probe mip copy");
                 mTexture->bind(0);
 
-                gGL.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, mip, 0, 0, sourceIdx * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                gRender.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, mip, 0, 0, sourceIdx * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
 
                 mTexture->unbind();
             }
@@ -425,7 +425,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-        gGL.getTexUnit(diffuseChannel)->bindWhite();
+        gRender.getTexUnit(diffuseChannel)->bindWhite();
         gReflectionMipProgram.unbind();
     }
 }
@@ -479,15 +479,15 @@ void LLHeroProbeManager::generateRadiance(LLReflectionMap* probe)
                     frame.getOpenGLRotation(mat);
                     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, mat);
 
-                    mVertexBuffer->drawArrays(gGL.TRIANGLE_STRIP, 0, 4);
+                    mVertexBuffer->drawArrays(gRender.TRIANGLE_STRIP, 0, 4);
 
-                    gGL.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, i, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                    gRender.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, i, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
                 }
 
                 if (i != mMipChain.size() - 1)
                 {
                     res /= 2;
-                    gGL.setViewport(0, 0, res, res);
+                    gRender.setViewport(0, 0, res, res);
                 }
             }
 
@@ -508,7 +508,7 @@ void LLHeroProbeManager::updateUniforms()
     LL_PROFILE_GPU_ZONE("hpmu - uniforms")
 
     LLMatrix4a modelview;
-    modelview.loadu(gGLModelView);
+    modelview.loadu(gRenderModelView);
     LLVector4a oa; // scratch space for transformed origin
     oa.set(0, 0, 0, 0);
     mHeroData.heroProbeCount = 1;

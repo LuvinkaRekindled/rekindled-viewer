@@ -78,194 +78,194 @@ S32 clamp_terrain_mapping(S32 mapping)
 }
 
 //utility shaders
-LLGLSLShader    gOcclusionProgram;
-LLGLSLShader    gSkinnedOcclusionProgram;
-LLGLSLShader    gOcclusionCubeProgram;
-LLGLSLShader    gGlowCombineProgram;
-LLGLSLShader    gReflectionMipProgram;
-LLGLSLShader    gGaussianProgram;
-LLGLSLShader    gRadianceGenProgram;
-LLGLSLShader    gHeroRadianceGenProgram;
-LLGLSLShader    gIrradianceGenProgram;
-LLGLSLShader    gGlowCombineFXAAProgram;
-LLGLSLShader    gTwoTextureCompareProgram;
-LLGLSLShader    gOneTextureFilterProgram;
-LLGLSLShader    gDebugProgram;
-LLGLSLShader    gSkinnedDebugProgram;
-LLGLSLShader    gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
-LLGLSLShader    gSkinnedNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
-LLGLSLShader    gClipProgram;
-LLGLSLShader    gAlphaMaskProgram;
-LLGLSLShader    gBenchmarkProgram;
-LLGLSLShader    gReflectionProbeDisplayProgram;
-LLGLSLShader    gCopyProgram;
-LLGLSLShader    gCopyDepthProgram;
-LLGLSLShader    gPBRTerrainBakeProgram;
-LLGLSLShader    gDrawColorProgram;
+LLShaderProgram    gOcclusionProgram;
+LLShaderProgram    gSkinnedOcclusionProgram;
+LLShaderProgram    gOcclusionCubeProgram;
+LLShaderProgram    gGlowCombineProgram;
+LLShaderProgram    gReflectionMipProgram;
+LLShaderProgram    gGaussianProgram;
+LLShaderProgram    gRadianceGenProgram;
+LLShaderProgram    gHeroRadianceGenProgram;
+LLShaderProgram    gIrradianceGenProgram;
+LLShaderProgram    gGlowCombineFXAAProgram;
+LLShaderProgram    gTwoTextureCompareProgram;
+LLShaderProgram    gOneTextureFilterProgram;
+LLShaderProgram    gDebugProgram;
+LLShaderProgram    gSkinnedDebugProgram;
+LLShaderProgram    gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
+LLShaderProgram    gSkinnedNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
+LLShaderProgram    gClipProgram;
+LLShaderProgram    gAlphaMaskProgram;
+LLShaderProgram    gBenchmarkProgram;
+LLShaderProgram    gReflectionProbeDisplayProgram;
+LLShaderProgram    gCopyProgram;
+LLShaderProgram    gCopyDepthProgram;
+LLShaderProgram    gPBRTerrainBakeProgram;
+LLShaderProgram    gDrawColorProgram;
 
 //object shaders
-LLGLSLShader        gObjectPreviewProgram;
-LLGLSLShader        gSkinnedObjectPreviewProgram;
-LLGLSLShader        gPhysicsPreviewProgram;
-LLGLSLShader        gObjectFullbrightAlphaMaskProgram;
-LLGLSLShader        gObjectBumpProgram;
-LLGLSLShader        gSkinnedObjectBumpProgram;
-LLGLSLShader        gObjectAlphaMaskNoColorProgram;
+LLShaderProgram        gObjectPreviewProgram;
+LLShaderProgram        gSkinnedObjectPreviewProgram;
+LLShaderProgram        gPhysicsPreviewProgram;
+LLShaderProgram        gObjectFullbrightAlphaMaskProgram;
+LLShaderProgram        gObjectBumpProgram;
+LLShaderProgram        gSkinnedObjectBumpProgram;
+LLShaderProgram        gObjectAlphaMaskNoColorProgram;
 
 //environment shaders
-LLGLSLShader        gWaterProgram;
-LLGLSLShader        gUnderWaterProgram;
+LLShaderProgram        gWaterProgram;
+LLShaderProgram        gUnderWaterProgram;
 
 //interface shaders
-LLGLSLShader        gHighlightProgram;
-LLGLSLShader        gSkinnedHighlightProgram;
-LLGLSLShader        gHighlightNormalProgram;
-LLGLSLShader        gHighlightSpecularProgram;
+LLShaderProgram        gHighlightProgram;
+LLShaderProgram        gSkinnedHighlightProgram;
+LLShaderProgram        gHighlightNormalProgram;
+LLShaderProgram        gHighlightSpecularProgram;
 
-LLGLSLShader        gDeferredHighlightProgram;
+LLShaderProgram        gDeferredHighlightProgram;
 
-LLGLSLShader        gPathfindingProgram;
-LLGLSLShader        gPathfindingNoNormalsProgram;
+LLShaderProgram        gPathfindingProgram;
+LLShaderProgram        gPathfindingNoNormalsProgram;
 
 //avatar shader handles
-LLGLSLShader        gAvatarProgram;
-LLGLSLShader        gImpostorProgram;
+LLShaderProgram        gAvatarProgram;
+LLShaderProgram        gImpostorProgram;
 
 // Effects Shaders
-LLGLSLShader            gGlowProgram;
-LLGLSLShader            gGlowExtractProgram;
-LLGLSLShader            gPostScreenSpaceReflectionProgram;
-LLGLSLShader            gPostVignetteProgram;   // <FS:CR> Import Vignette from Exodus
-LLGLSLShader            gPostSnapshotFrameProgram;   // <FS:Beq/> Add Snapshot frame guide
+LLShaderProgram            gGlowProgram;
+LLShaderProgram            gGlowExtractProgram;
+LLShaderProgram            gPostScreenSpaceReflectionProgram;
+LLShaderProgram            gPostVignetteProgram;   // <FS:CR> Import Vignette from Exodus
+LLShaderProgram            gPostSnapshotFrameProgram;   // <FS:Beq/> Add Snapshot frame guide
 
 // Deferred rendering shaders
-LLGLSLShader            gDeferredImpostorProgram;
-LLGLSLShader            gDeferredDiffuseProgram;
-LLGLSLShader            gDeferredDiffuseAlphaMaskProgram;
-LLGLSLShader            gDeferredSkinnedDiffuseAlphaMaskProgram;
-LLGLSLShader            gDeferredNonIndexedDiffuseAlphaMaskProgram;
-LLGLSLShader            gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
-LLGLSLShader            gDeferredSkinnedDiffuseProgram;
-LLGLSLShader            gDeferredSkinnedBumpProgram;
-LLGLSLShader            gDeferredBumpProgram;
-LLGLSLShader            gDeferredTerrainProgram;
-LLGLSLShader            gDeferredTreeProgram;
-LLGLSLShader            gDeferredTreeShadowProgram;
-LLGLSLShader            gDeferredSkinnedTreeShadowProgram;
-LLGLSLShader            gDeferredAvatarProgram;
-LLGLSLShader            gDeferredAvatarAlphaProgram;
-LLGLSLShader            gDeferredLightProgram;
-LLGLSLShader            gDeferredMultiLightProgram[16];
-LLGLSLShader            gDeferredSpotLightProgram;
-LLGLSLShader            gDeferredMultiSpotLightProgram;
-LLGLSLShader            gDeferredSunProgram;
-LLGLSLShader            gDeferredSunProbeProgram;
-LLGLSLShader            gHazeProgram;
-LLGLSLShader            gHazeWaterProgram;
-LLGLSLShader            gDeferredBlurLightProgram;
-LLGLSLShader            gDeferredSoftenProgram;
-LLGLSLShader            gDeferredShadowProgram;
-LLGLSLShader            gDeferredSkinnedShadowProgram;
-LLGLSLShader            gDeferredShadowCubeProgram;
-LLGLSLShader            gDeferredShadowPullProgram;
-LLGLSLShader            gDeferredShadowAlphaPullProgram;
-LLGLSLShader            gDeferredShadowSkinPullProgram;
-LLGLSLShader            gDeferredDiffusePullProgram;
-LLGLSLShader            gDeferredMaterialPullProgram[16];
-LLGLSLShader            gDeferredShadowAlphaMaskProgram;
-LLGLSLShader            gDeferredSkinnedShadowAlphaMaskProgram;
-LLGLSLShader            gDeferredShadowGLTFAlphaMaskProgram;
-LLGLSLShader            gDeferredSkinnedShadowGLTFAlphaMaskProgram;
-LLGLSLShader            gDeferredShadowGLTFAlphaBlendProgram;
-LLGLSLShader            gDeferredSkinnedShadowGLTFAlphaBlendProgram;
-LLGLSLShader            gDeferredShadowFullbrightAlphaMaskProgram;
-LLGLSLShader            gDeferredSkinnedShadowFullbrightAlphaMaskProgram;
-LLGLSLShader            gDeferredAvatarShadowProgram;
-LLGLSLShader            gDeferredAvatarAlphaShadowProgram;
-LLGLSLShader            gDeferredAvatarAlphaMaskShadowProgram;
-LLGLSLShader            gDeferredAlphaProgram;
-LLGLSLShader            gHUDAlphaProgram;
-LLGLSLShader            gDeferredSkinnedAlphaProgram;
-LLGLSLShader            gDeferredAlphaImpostorProgram;
-LLGLSLShader            gDeferredSkinnedAlphaImpostorProgram;
-LLGLSLShader            gDeferredAvatarEyesProgram;
-LLGLSLShader            gDeferredFullbrightProgram;
-LLGLSLShader            gHUDFullbrightProgram;
-LLGLSLShader            gDeferredFullbrightAlphaMaskProgram;
-LLGLSLShader            gHUDFullbrightAlphaMaskProgram;
-LLGLSLShader            gDeferredFullbrightAlphaMaskAlphaProgram;
-LLGLSLShader            gHUDFullbrightAlphaMaskAlphaProgram;
-LLGLSLShader            gDeferredEmissiveProgram;
-LLGLSLShader            gDeferredSkinnedEmissiveProgram;
-LLGLSLShader            gDeferredPostProgram;
-LLGLSLShader            gDeferredCoFProgram;
-LLGLSLShader            gDeferredDoFCombineProgram;
-LLGLSLShader            gDeferredPostTonemapProgram;
-LLGLSLShader            gNoPostTonemapProgram;
-LLGLSLShader            gDeferredPostTonemapGammaCorrectProgram;
-LLGLSLShader            gNoPostTonemapGammaCorrectProgram;
-LLGLSLShader            gDeferredPostTonemapLegacyGammaCorrectProgram;
-LLGLSLShader            gNoPostTonemapLegacyGammaCorrectProgram;
-LLGLSLShader            gDeferredPostGammaCorrectProgram;
-LLGLSLShader            gLegacyPostGammaCorrectProgram;
-LLGLSLShader            gExposureProgram;
-LLGLSLShader            gExposureProgramNoFade;
-LLGLSLShader            gLuminanceProgram;
-LLGLSLShader            gMotionVectorProgram;
-LLGLSLShader            gAvatarVelocityProgram;         // <FS> avatar motion vectors: rigged draws
-LLGLSLShader            gAvatarBodyVelocityProgram;     // <FS> avatar motion vectors: the avatar's own body meshes
-LLGLSLShader            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
-LLGLSLShader            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
-LLGLSLShader            gShadowAccumProgram;            // <FS> temporal accumulation of the ray traced sun shadow
-LLGLSLShader            gRRHitDistProgram;              // <FS> DLSS ray reconstruction: the hit distance of the traced reflections out of the alpha of the lit picture
-LLGLSLShader            gRRReflMotionProgram;           // <FS> DLSS ray reconstruction: motion vectors of what the traced reflections show
-LLGLSLShader            gRRGuidesProgram;               // <FS> DLSS ray reconstruction: diffuse / specular albedo and normal + roughness from the G-buffer
-LLGLSLShader            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
-LLGLSLShader            gRtMaterialDebugProgram;        // <FS> debug view of the ray scene's material table (RenderBufferVisualization 9)
-LLGLSLShader            gFXAAProgram[4];
-LLGLSLShader            gSMAAEdgeDetectProgram[4];
-LLGLSLShader            gSMAABlendWeightsProgram[4];
-LLGLSLShader            gSMAANeighborhoodBlendProgram[4];
-LLGLSLShader            gCASProgram;
-LLGLSLShader            gCASLegacyGammaProgram;
-LLGLSLShader            gDeferredPostNoDoFProgram;
-LLGLSLShader            gDeferredPostNoDoFNoiseProgram;
-LLGLSLShader            gDeferredWLSkyProgram;
-LLGLSLShader            gEnvironmentMapProgram;
-LLGLSLShader            gDeferredWLCloudProgram;
-LLGLSLShader            gDeferredWLSunProgram;
-LLGLSLShader            gDeferredWLMoonProgram;
-LLGLSLShader            gDeferredStarProgram;
-LLGLSLShader            gDeferredFullbrightShinyProgram;
-LLGLSLShader            gHUDFullbrightShinyProgram;
-LLGLSLShader            gDeferredSkinnedFullbrightShinyProgram;
-LLGLSLShader            gDeferredSkinnedFullbrightProgram;
-LLGLSLShader            gDeferredSkinnedFullbrightAlphaMaskProgram;
-LLGLSLShader            gDeferredSkinnedFullbrightAlphaMaskAlphaProgram;
-LLGLSLShader            gNormalMapGenProgram;
-LLGLSLShader            gDeferredGenBrdfLutProgram;
-LLGLSLShader            gDeferredBufferVisualProgram;
+LLShaderProgram            gDeferredImpostorProgram;
+LLShaderProgram            gDeferredDiffuseProgram;
+LLShaderProgram            gDeferredDiffuseAlphaMaskProgram;
+LLShaderProgram            gDeferredSkinnedDiffuseAlphaMaskProgram;
+LLShaderProgram            gDeferredNonIndexedDiffuseAlphaMaskProgram;
+LLShaderProgram            gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
+LLShaderProgram            gDeferredSkinnedDiffuseProgram;
+LLShaderProgram            gDeferredSkinnedBumpProgram;
+LLShaderProgram            gDeferredBumpProgram;
+LLShaderProgram            gDeferredTerrainProgram;
+LLShaderProgram            gDeferredTreeProgram;
+LLShaderProgram            gDeferredTreeShadowProgram;
+LLShaderProgram            gDeferredSkinnedTreeShadowProgram;
+LLShaderProgram            gDeferredAvatarProgram;
+LLShaderProgram            gDeferredAvatarAlphaProgram;
+LLShaderProgram            gDeferredLightProgram;
+LLShaderProgram            gDeferredMultiLightProgram[16];
+LLShaderProgram            gDeferredSpotLightProgram;
+LLShaderProgram            gDeferredMultiSpotLightProgram;
+LLShaderProgram            gDeferredSunProgram;
+LLShaderProgram            gDeferredSunProbeProgram;
+LLShaderProgram            gHazeProgram;
+LLShaderProgram            gHazeWaterProgram;
+LLShaderProgram            gDeferredBlurLightProgram;
+LLShaderProgram            gDeferredSoftenProgram;
+LLShaderProgram            gDeferredShadowProgram;
+LLShaderProgram            gDeferredSkinnedShadowProgram;
+LLShaderProgram            gDeferredShadowCubeProgram;
+LLShaderProgram            gDeferredShadowPullProgram;
+LLShaderProgram            gDeferredShadowAlphaPullProgram;
+LLShaderProgram            gDeferredShadowSkinPullProgram;
+LLShaderProgram            gDeferredDiffusePullProgram;
+LLShaderProgram            gDeferredMaterialPullProgram[16];
+LLShaderProgram            gDeferredShadowAlphaMaskProgram;
+LLShaderProgram            gDeferredSkinnedShadowAlphaMaskProgram;
+LLShaderProgram            gDeferredShadowGLTFAlphaMaskProgram;
+LLShaderProgram            gDeferredSkinnedShadowGLTFAlphaMaskProgram;
+LLShaderProgram            gDeferredShadowGLTFAlphaBlendProgram;
+LLShaderProgram            gDeferredSkinnedShadowGLTFAlphaBlendProgram;
+LLShaderProgram            gDeferredShadowFullbrightAlphaMaskProgram;
+LLShaderProgram            gDeferredSkinnedShadowFullbrightAlphaMaskProgram;
+LLShaderProgram            gDeferredAvatarShadowProgram;
+LLShaderProgram            gDeferredAvatarAlphaShadowProgram;
+LLShaderProgram            gDeferredAvatarAlphaMaskShadowProgram;
+LLShaderProgram            gDeferredAlphaProgram;
+LLShaderProgram            gHUDAlphaProgram;
+LLShaderProgram            gDeferredSkinnedAlphaProgram;
+LLShaderProgram            gDeferredAlphaImpostorProgram;
+LLShaderProgram            gDeferredSkinnedAlphaImpostorProgram;
+LLShaderProgram            gDeferredAvatarEyesProgram;
+LLShaderProgram            gDeferredFullbrightProgram;
+LLShaderProgram            gHUDFullbrightProgram;
+LLShaderProgram            gDeferredFullbrightAlphaMaskProgram;
+LLShaderProgram            gHUDFullbrightAlphaMaskProgram;
+LLShaderProgram            gDeferredFullbrightAlphaMaskAlphaProgram;
+LLShaderProgram            gHUDFullbrightAlphaMaskAlphaProgram;
+LLShaderProgram            gDeferredEmissiveProgram;
+LLShaderProgram            gDeferredSkinnedEmissiveProgram;
+LLShaderProgram            gDeferredPostProgram;
+LLShaderProgram            gDeferredCoFProgram;
+LLShaderProgram            gDeferredDoFCombineProgram;
+LLShaderProgram            gDeferredPostTonemapProgram;
+LLShaderProgram            gNoPostTonemapProgram;
+LLShaderProgram            gDeferredPostTonemapGammaCorrectProgram;
+LLShaderProgram            gNoPostTonemapGammaCorrectProgram;
+LLShaderProgram            gDeferredPostTonemapLegacyGammaCorrectProgram;
+LLShaderProgram            gNoPostTonemapLegacyGammaCorrectProgram;
+LLShaderProgram            gDeferredPostGammaCorrectProgram;
+LLShaderProgram            gLegacyPostGammaCorrectProgram;
+LLShaderProgram            gExposureProgram;
+LLShaderProgram            gExposureProgramNoFade;
+LLShaderProgram            gLuminanceProgram;
+LLShaderProgram            gMotionVectorProgram;
+LLShaderProgram            gAvatarVelocityProgram;         // <FS> avatar motion vectors: rigged draws
+LLShaderProgram            gAvatarBodyVelocityProgram;     // <FS> avatar motion vectors: the avatar's own body meshes
+LLShaderProgram            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
+LLShaderProgram            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
+LLShaderProgram            gShadowAccumProgram;            // <FS> temporal accumulation of the ray traced sun shadow
+LLShaderProgram            gRRHitDistProgram;              // <FS> DLSS ray reconstruction: the hit distance of the traced reflections out of the alpha of the lit picture
+LLShaderProgram            gRRReflMotionProgram;           // <FS> DLSS ray reconstruction: motion vectors of what the traced reflections show
+LLShaderProgram            gRRGuidesProgram;               // <FS> DLSS ray reconstruction: diffuse / specular albedo and normal + roughness from the G-buffer
+LLShaderProgram            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
+LLShaderProgram            gRtMaterialDebugProgram;        // <FS> debug view of the ray scene's material table (RenderBufferVisualization 9)
+LLShaderProgram            gFXAAProgram[4];
+LLShaderProgram            gSMAAEdgeDetectProgram[4];
+LLShaderProgram            gSMAABlendWeightsProgram[4];
+LLShaderProgram            gSMAANeighborhoodBlendProgram[4];
+LLShaderProgram            gCASProgram;
+LLShaderProgram            gCASLegacyGammaProgram;
+LLShaderProgram            gDeferredPostNoDoFProgram;
+LLShaderProgram            gDeferredPostNoDoFNoiseProgram;
+LLShaderProgram            gDeferredWLSkyProgram;
+LLShaderProgram            gEnvironmentMapProgram;
+LLShaderProgram            gDeferredWLCloudProgram;
+LLShaderProgram            gDeferredWLSunProgram;
+LLShaderProgram            gDeferredWLMoonProgram;
+LLShaderProgram            gDeferredStarProgram;
+LLShaderProgram            gDeferredFullbrightShinyProgram;
+LLShaderProgram            gHUDFullbrightShinyProgram;
+LLShaderProgram            gDeferredSkinnedFullbrightShinyProgram;
+LLShaderProgram            gDeferredSkinnedFullbrightProgram;
+LLShaderProgram            gDeferredSkinnedFullbrightAlphaMaskProgram;
+LLShaderProgram            gDeferredSkinnedFullbrightAlphaMaskAlphaProgram;
+LLShaderProgram            gNormalMapGenProgram;
+LLShaderProgram            gDeferredGenBrdfLutProgram;
+LLShaderProgram            gDeferredBufferVisualProgram;
 // [RLVa:KB] - @setsphere
-LLGLSLShader            gRlvSphereProgram;
+LLShaderProgram            gRlvSphereProgram;
 // [/RLVa:KB]
 
 // Deferred materials shaders
-LLGLSLShader            gDeferredMaterialProgram[LLMaterial::SHADER_COUNT*2];
-LLGLSLShader            gHUDPBROpaqueProgram;
-LLGLSLShader            gPBRGlowProgram;
-LLGLSLShader            gPBRGlowSkinnedProgram;
-LLGLSLShader            gDeferredPBROpaqueProgram;
-LLGLSLShader            gDeferredSkinnedPBROpaqueProgram;
-LLGLSLShader            gHUDPBRAlphaProgram;
-LLGLSLShader            gDeferredPBRAlphaProgram;
-LLGLSLShader            gDeferredSkinnedPBRAlphaProgram;
-LLGLSLShader            gDeferredPBRTerrainProgram[TERRAIN_PAINT_TYPE_COUNT];
+LLShaderProgram            gDeferredMaterialProgram[LLMaterial::SHADER_COUNT*2];
+LLShaderProgram            gHUDPBROpaqueProgram;
+LLShaderProgram            gPBRGlowProgram;
+LLShaderProgram            gPBRGlowSkinnedProgram;
+LLShaderProgram            gDeferredPBROpaqueProgram;
+LLShaderProgram            gDeferredSkinnedPBROpaqueProgram;
+LLShaderProgram            gHUDPBRAlphaProgram;
+LLShaderProgram            gDeferredPBRAlphaProgram;
+LLShaderProgram            gDeferredSkinnedPBRAlphaProgram;
+LLShaderProgram            gDeferredPBRTerrainProgram[TERRAIN_PAINT_TYPE_COUNT];
 
-LLGLSLShader            gGLTFPBRMetallicRoughnessProgram;
+LLShaderProgram            gGLTFPBRMetallicRoughnessProgram;
 
 
 //helper for making a rigged variant of a given shader
-static bool make_rigged_variant(LLGLSLShader& shader, LLGLSLShader& riggedShader)
+static bool make_rigged_variant(LLShaderProgram& shader, LLShaderProgram& riggedShader)
 {
     riggedShader.mName = llformat("Skinned %s", shader.mName.c_str());
     riggedShader.mFeatures = shader.mFeatures;
@@ -281,7 +281,7 @@ static bool make_rigged_variant(LLGLSLShader& shader, LLGLSLShader& riggedShader
     return riggedShader.createShader();
 }
 
-static void add_common_permutations(LLGLSLShader* shader)
+static void add_common_permutations(LLShaderProgram* shader)
 {
     static LLCachedControl<bool> emissive(gSavedSettings, "RenderEnableEmissiveBuffer", false);
 
@@ -292,7 +292,7 @@ static void add_common_permutations(LLGLSLShader* shader)
 }
 
 
-static bool make_gltf_variant(LLGLSLShader& shader, LLGLSLShader& variant, bool alpha_blend, bool rigged, bool unlit, bool multi_uv, bool use_sun_shadow)
+static bool make_gltf_variant(LLShaderProgram& shader, LLShaderProgram& variant, bool alpha_blend, bool rigged, bool unlit, bool multi_uv, bool use_sun_shadow)
 {
     variant.mName = shader.mName.c_str();
     variant.mFeatures = shader.mFeatures;
@@ -303,16 +303,16 @@ static bool make_gltf_variant(LLGLSLShader& shader, LLGLSLShader& variant, bool 
     variant.mDefines = shader.mDefines;    // NOTE: Must come before addPermutation
 
     U32 node_size = 16 * 3;
-    U32 max_nodes = gGLManager.mMaxUniformBlockSize / node_size;
+    U32 max_nodes = gDeviceCaps.mMaxUniformBlockSize / node_size;
     variant.addPermutation("MAX_NODES_PER_GLTF_OBJECT", std::to_string(max_nodes));
 
     U32 material_size = 16 * 12;
-    U32 max_materials = gGLManager.mMaxUniformBlockSize / material_size;
-    LLGLSLShader::sMaxGLTFMaterials = max_materials;
+    U32 max_materials = gDeviceCaps.mMaxUniformBlockSize / material_size;
+    LLShaderProgram::sMaxGLTFMaterials = max_materials;
 
     variant.addPermutation("MAX_MATERIALS_PER_GLTF_OBJECT", std::to_string(max_materials));
 
-    U32 max_vec4s = gGLManager.mMaxUniformBlockSize / 16;
+    U32 max_vec4s = gDeviceCaps.mMaxUniformBlockSize / 16;
     variant.addPermutation("MAX_UBO_VEC4S", std::to_string(max_vec4s));
 
     if (rigged)
@@ -366,17 +366,17 @@ static bool make_gltf_variant(LLGLSLShader& shader, LLGLSLShader& variant, bool 
     }
 }
 
-static bool make_gltf_variants(LLGLSLShader& shader, bool use_sun_shadow)
+static bool make_gltf_variants(LLShaderProgram& shader, bool use_sun_shadow)
 {
     shader.mFeatures.mGLTF = true;
-    shader.mGLTFVariants.resize(LLGLSLShader::NUM_GLTF_VARIANTS);
+    shader.mGLTFVariants.resize(LLShaderProgram::NUM_GLTF_VARIANTS);
 
-    for (U32 i = 0; i < LLGLSLShader::NUM_GLTF_VARIANTS; ++i)
+    for (U32 i = 0; i < LLShaderProgram::NUM_GLTF_VARIANTS; ++i)
     {
-        bool alpha_blend = i & LLGLSLShader::GLTFVariant::ALPHA_BLEND;
-        bool rigged = i & LLGLSLShader::GLTFVariant::RIGGED;
-        bool unlit = i & LLGLSLShader::GLTFVariant::UNLIT;
-        bool multi_uv = i & LLGLSLShader::GLTFVariant::MULTI_UV;
+        bool alpha_blend = i & LLShaderProgram::GLTFVariant::ALPHA_BLEND;
+        bool rigged = i & LLShaderProgram::GLTFVariant::RIGGED;
+        bool unlit = i & LLShaderProgram::GLTFVariant::UNLIT;
+        bool multi_uv = i & LLShaderProgram::GLTFVariant::MULTI_UV;
 
         if (!make_gltf_variant(shader, shader.mGLTFVariants[i], alpha_blend, rigged, unlit, multi_uv, use_sun_shadow))
         {
@@ -390,10 +390,10 @@ static bool make_gltf_variants(LLGLSLShader& shader, bool use_sun_shadow)
 #ifdef SHOW_ASSERT
 // return true if there are no redundant shaders in the given vector
 // also checks for redundant variants
-static bool no_redundant_shaders(const std::vector<LLGLSLShader*>& shaders)
+static bool no_redundant_shaders(const std::vector<LLShaderProgram*>& shaders)
 {
     std::set<std::string> names;
-    for (LLGLSLShader* shader : shaders)
+    for (LLShaderProgram* shader : shaders)
     {
         if (names.find(shader->mName) != names.end())
         {
@@ -553,7 +553,7 @@ void LLViewerShaderMgr::setShaders()
 
     mShaderList.clear();
 
-    if (!gGLManager.mHasRequirements)
+    if (!gDeviceCaps.mHasRequirements)
     {
         // Viewer will show 'hardware requirements' warning later
         LL_INFOS("ShaderLoading") << "Not supported hardware/software" << LL_ENDL;
@@ -586,12 +586,12 @@ void LLViewerShaderMgr::setShaders()
     // when using indexed texture rendering, leave some texture units available for shadow and reflection maps
     static LLCachedControl<S32> reserved_texture_units(gSavedSettings, "RenderReservedTextureIndices", 14);
 
-    LLGLSLShader::sIndexedTextureChannels = 4;
+    LLShaderProgram::sIndexedTextureChannels = 4;
     if (const char* channels = getenv("LL_VK_INDEXED_CHANNELS"))      // test switch: 1 = every draw one texture, no per-vertex texture index
     {
-        LLGLSLShader::sIndexedTextureChannels = llclamp<S32>(atoi(channels), 1, 4);
+        LLShaderProgram::sIndexedTextureChannels = llclamp<S32>(atoi(channels), 1, 4);
     }
-        //llclamp<S32>(max_texture_index, 1, gGLManager.mNumTextureImageUnits-reserved_texture_units);
+        //llclamp<S32>(max_texture_index, 1, gDeviceCaps.mNumTextureImageUnits-reserved_texture_units);
 
     reentrance = true;
 
@@ -600,7 +600,7 @@ void LLViewerShaderMgr::setShaders()
     mFragmentShaderObjects.clear();
 
     initAttribsAndUniforms();
-    gPipeline.releaseGLBuffers();
+    gPipeline.releaseRenderBuffers();
 
     unloadShaders();
 
@@ -614,7 +614,7 @@ void LLViewerShaderMgr::setShaders()
 
     // Shaders
     LL_INFOS("ShaderLoading") << "\n~~~~~~~~~~~~~~~~~~\n Loading Shaders:\n~~~~~~~~~~~~~~~~~~" << LL_ENDL;
-    LL_INFOS("ShaderLoading") << llformat("Using GLSL %d.%d", gGLManager.mGLSLVersionMajor, gGLManager.mGLSLVersionMinor) << LL_ENDL;
+    LL_INFOS("ShaderLoading") << llformat("Using GLSL %d.%d", gDeviceCaps.mShaderLangMajor, gDeviceCaps.mShaderLangMinor) << LL_ENDL;
 
     for (S32 i = 0; i < SHADER_COUNT; i++)
     {
@@ -624,7 +624,7 @@ void LLViewerShaderMgr::setShaders()
 
     LLVertexBuffer::unbind();
 
-    llassert((gGLManager.mGLSLVersionMajor > 1 || gGLManager.mGLSLVersionMinor >= 10));
+    llassert((gDeviceCaps.mShaderLangMajor > 1 || gDeviceCaps.mShaderLangMinor >= 10));
 
 
     S32 light_class = 3;
@@ -666,7 +666,7 @@ void LLViewerShaderMgr::setShaders()
         LLError::setDefaultLevel(LLError::LEVEL_DEBUG);
         loadBasicShaders();
         LLError::setDefaultLevel(lvl);
-        gGLManager.printGLInfoString();
+        gDeviceCaps.printGLInfoString();
         LL_ERRS() << "Unable to load basic shader " << shader_name << ", verify graphics driver installed and current." << LL_ENDL;
         reentrance = false; // For hygiene only, re-try probably helps nothing
         return;
@@ -753,7 +753,7 @@ void LLViewerShaderMgr::setShaders()
     {
         gViewerWindow->setCursor(UI_CURSOR_ARROW);
     }
-    gPipeline.createGLBuffers();
+    gPipeline.createRenderBuffers();
 
     finalizeShaderList();
 
@@ -762,9 +762,9 @@ void LLViewerShaderMgr::setShaders()
 
 void LLViewerShaderMgr::unloadShaders()
 {
-    while (!LLGLSLShader::sInstances.empty())
+    while (!LLShaderProgram::sInstances.empty())
     {
-        LLGLSLShader* shader = *(LLGLSLShader::sInstances.begin());
+        LLShaderProgram* shader = *(LLShaderProgram::sInstances.begin());
         shader->unload();
     }
 
@@ -791,7 +791,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     // Work around driver crashes on older Macs when using deferred rendering
     // NORSPEC-59
     //
-    if (gGLManager.mIsMobileGF)
+    if (gDeviceCaps.mIsMobileGF)
         sum_lights_class = 3;
 #endif
 
@@ -817,7 +817,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     shaders.push_back( make_pair( "avatar/avatarSkinV.glsl",                1 ) );
     shaders.push_back( make_pair( "avatar/objectSkinV.glsl",                1 ) );
     shaders.push_back( make_pair( "deferred/textureUtilV.glsl",             1 ) );
-    if (gGLManager.mGLSLVersionMajor >= 2 || gGLManager.mGLSLVersionMinor >= 30)
+    if (gDeviceCaps.mShaderLangMajor >= 2 || gDeviceCaps.mShaderLangMinor >= 30)
     {
         shaders.push_back( make_pair( "objects/indexedTextureV.glsl",           1 ) );
     }
@@ -838,7 +838,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
 
     bool mirrors = gSavedSettings.getBOOL("RenderMirrors");
 
-    bool has_reflection_probes = gSavedSettings.getBOOL("RenderReflectionsEnabled") && gGLManager.mGLVersion > 3.99f;
+    bool has_reflection_probes = gSavedSettings.getBOOL("RenderReflectionsEnabled") && gDeviceCaps.mApiVersionNumber > 3.99f;
 
     S32 probe_level = llclamp(gSavedSettings.getS32("RenderReflectionProbeLevel"), 0, 3);
 
@@ -849,7 +849,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         attribs["SUN_SHADOW"] = "1";
 
         // <FS> ray query sun shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md): 1 replace the cascades, 2 split screen, 3 disagreement map
-        if (const U32 rt_mode = LLVkMirror::rtShadowMode())
+        if (const U32 rt_mode = LLVkBridge::rtShadowMode())
         {
             attribs["LL_RT_SHADOWS"] = std::to_string(rt_mode);
         }
@@ -886,7 +886,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         attribs["TERRAIN_PBR_DETAIL"] = llformat("%d", detail);
     }
 
-    LLGLSLShader::sGlobalDefines = attribs;
+    LLShaderProgram::sGlobalDefines = attribs;
 
     // We no longer have to bind the shaders to global glhandles, they are automatically added to a map now.
     for (U32 i = 0; i < shaders.size(); i++)
@@ -905,9 +905,9 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     shaders.clear();
     S32 ch = 1;
 
-    if (gGLManager.mGLSLVersionMajor > 1 || gGLManager.mGLSLVersionMinor >= 30)
+    if (gDeviceCaps.mShaderLangMajor > 1 || gDeviceCaps.mShaderLangMinor >= 30)
     { //use indexed texture rendering for GLSL >= 1.30
-        ch = llmax(LLGLSLShader::sIndexedTextureChannels, 1);
+        ch = llmax(LLShaderProgram::sIndexedTextureChannels, 1);
     }
 
 
@@ -947,7 +947,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
 }
 
 // <FS> ray traced reflections (rtReflection in shadowUtil.glsl): the programs that use it see them as the permutation LL_RT_REFLECTIONS. The device is not up yet when the water is configured
-// (LLVkMirror::rtShadowMode() still says 0), so the launcher's environment is the early answer: ray shadows on and the material table on.
+// (LLVkBridge::rtShadowMode() still says 0), so the launcher's environment is the early answer: ray shadows on and the material table on.
 static bool rt_reflections_possible()
 {
     const char* rt_env = getenv("LL_VK_RT_SHADOWS");
@@ -985,7 +985,7 @@ bool LLViewerShaderMgr::loadShadersWater()
         gWaterProgram.mShaderFiles.clear();
         gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", ShaderStage::Vertex));
         gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterF.glsl", ShaderStage::Fragment));
-        // (the device is not up yet when the water is configured: LLVkMirror::rtShadowMode() still says 0; the launcher's environment is the early answer. The ray traced reflection (rtReflection in shadowUtil.glsl) needs the scene and the material table; the program's own files only see the permutations, the global defines such as SUN_SHADOW reach the library files only)
+        // (the device is not up yet when the water is configured: LLVkBridge::rtShadowMode() still says 0; the launcher's environment is the early answer. The ray traced reflection (rtReflection in shadowUtil.glsl) needs the scene and the material table; the program's own files only see the permutations, the global defines such as SUN_SHADOW reach the library files only)
         const bool rt_water_reflections_possible = use_sun_shadow && rt_reflections_possible();
         gWaterProgram.clearPermutations();
         if (rt_water_reflections_possible)
@@ -1002,7 +1002,7 @@ bool LLViewerShaderMgr::loadShadersWater()
             gWaterProgram.addPermutation("HAS_SUN_SHADOW", "1");
         }
 
-        gWaterProgram.mShaderGroup = LLGLSLShader::SG_WATER;
+        gWaterProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gWaterProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         success = gWaterProgram.createShader();
         llassert(success);
@@ -1018,7 +1018,7 @@ bool LLViewerShaderMgr::loadShadersWater()
         gUnderWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", ShaderStage::Vertex));
         gUnderWaterProgram.mShaderFiles.push_back(make_pair("environment/underWaterF.glsl", ShaderStage::Fragment));
         gUnderWaterProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
-        gUnderWaterProgram.mShaderGroup = LLGLSLShader::SG_WATER;
+        gUnderWaterProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gUnderWaterProgram.clearPermutations();
         if (LLPipeline::sRenderTransparentWater)
         {
@@ -1170,7 +1170,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowAlphaPullProgram.unload();
         gDeferredShadowSkinPullProgram.unload();
         gDeferredDiffusePullProgram.unload();
-        for (LLGLSLShader& pull : gDeferredMaterialPullProgram)
+        for (LLShaderProgram& pull : gDeferredMaterialPullProgram)
         {
             pull.unload();
         }
@@ -1294,7 +1294,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffuseProgram.mShaderFiles.clear();
         gDeferredDiffuseProgram.mShaderFiles.push_back(make_pair("deferred/diffuseV.glsl", ShaderStage::Vertex));
         gDeferredDiffuseProgram.mShaderFiles.push_back(make_pair("deferred/diffuseIndexedF.glsl", ShaderStage::Fragment));
-        gDeferredDiffuseProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gDeferredDiffuseProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gDeferredDiffuseProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredDiffuseProgram);
         success = make_rigged_variant(gDeferredDiffuseProgram, gDeferredSkinnedDiffuseProgram);
@@ -1307,7 +1307,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffuseAlphaMaskProgram.mShaderFiles.clear();
         gDeferredDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseV.glsl", ShaderStage::Vertex));
         gDeferredDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskIndexedF.glsl", ShaderStage::Fragment));
-        gDeferredDiffuseAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gDeferredDiffuseAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gDeferredDiffuseAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredDiffuseAlphaMaskProgram);
         success = make_rigged_variant(gDeferredDiffuseAlphaMaskProgram, gDeferredSkinnedDiffuseAlphaMaskProgram);
@@ -1532,7 +1532,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        LLGLSLShader* shader = &gDeferredPBRAlphaProgram;
+        LLShaderProgram* shader = &gDeferredPBRAlphaProgram;
         shader->mName = "Deferred PBR Alpha Shader";
 
         shader->mFeatures.calculatesLighting = false;
@@ -1585,7 +1585,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        LLGLSLShader* shader = &gHUDPBRAlphaProgram;
+        LLShaderProgram* shader = &gHUDPBRAlphaProgram;
         shader->mName = "HUD PBR Alpha Shader";
 
         shader->mFeatures.hasSrgb = true;
@@ -1612,7 +1612,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         const S32 mapping = clamp_terrain_mapping(gSavedSettings.getS32("RenderTerrainPBRPlanarSampleCount"));
         for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
         {
-            LLGLSLShader* shader = &gDeferredPBRTerrainProgram[paint_type];
+            LLShaderProgram* shader = &gDeferredPBRTerrainProgram[paint_type];
             shader->mName = llformat("Deferred PBR Terrain Shader %d %s %s",
                     detail,
                     (paint_type == TERRAIN_PAINT_TYPE_PBR_PAINTMAP ? "paintmap" : "heightmap-with-noise"),
@@ -1844,7 +1844,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         for (int i = 0; i < 3 && success; ++i)
         {
-            LLGLSLShader* shader = nullptr;
+            LLShaderProgram* shader = nullptr;
             bool rigged = (i == 1);
             bool hud = (i == 2);
 
@@ -1875,7 +1875,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasGamma = true;
             shader->mFeatures.hasShadows = use_sun_shadow;
             shader->mFeatures.hasReflectionProbes = true;
-            shader->mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+            shader->mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
 
             shader->mShaderFiles.clear();
             shader->mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", ShaderStage::Vertex));
@@ -1915,7 +1915,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        LLGLSLShader* shaders[] = {
+        LLShaderProgram* shaders[] = {
             &gDeferredAlphaImpostorProgram,
             &gDeferredSkinnedAlphaImpostorProgram
         };
@@ -1923,7 +1923,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         for (int i = 0; i < 2 && success; ++i)
         {
             bool rigged = i == 1;
-            LLGLSLShader* shader = shaders[i];
+            LLShaderProgram* shader = shaders[i];
 
             shader->mName = rigged ? "Skinned Deferred Alpha Impostor Shader" : "Deferred Alpha Impostor Shader";
 
@@ -1935,7 +1935,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.isAlphaLighting = true;
             shader->mFeatures.hasShadows = use_sun_shadow;
             shader->mFeatures.hasReflectionProbes = true;
-            shader->mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+            shader->mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
 
             shader->mShaderFiles.clear();
             shader->mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", ShaderStage::Vertex));
@@ -2001,7 +2001,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightProgram.mFeatures.hasGamma = true;
         gDeferredFullbrightProgram.mFeatures.hasAtmospherics = true;
         gDeferredFullbrightProgram.mFeatures.hasSrgb = true;
-        gDeferredFullbrightProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gDeferredFullbrightProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gDeferredFullbrightProgram.mShaderFiles.clear();
         gDeferredFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
         gDeferredFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
@@ -2021,7 +2021,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightProgram.mFeatures.hasGamma = true;
         gHUDFullbrightProgram.mFeatures.hasAtmospherics = true;
         gHUDFullbrightProgram.mFeatures.hasSrgb = true;
-        gHUDFullbrightProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gHUDFullbrightProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gHUDFullbrightProgram.mShaderFiles.clear();
         gHUDFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
         gHUDFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
@@ -2042,7 +2042,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightAlphaMaskProgram.mFeatures.hasGamma = true;
         gDeferredFullbrightAlphaMaskProgram.mFeatures.hasAtmospherics = true;
         gDeferredFullbrightAlphaMaskProgram.mFeatures.hasSrgb = true;
-        gDeferredFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gDeferredFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gDeferredFullbrightAlphaMaskProgram.mShaderFiles.clear();
         gDeferredFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
         gDeferredFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
@@ -2064,7 +2064,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightAlphaMaskProgram.mFeatures.hasGamma = true;
         gHUDFullbrightAlphaMaskProgram.mFeatures.hasAtmospherics = true;
         gHUDFullbrightAlphaMaskProgram.mFeatures.hasSrgb = true;
-        gHUDFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gHUDFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gHUDFullbrightAlphaMaskProgram.mShaderFiles.clear();
         gHUDFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
         gHUDFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
@@ -2087,7 +2087,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightAlphaMaskAlphaProgram.mFeatures.hasAtmospherics = true;
         gDeferredFullbrightAlphaMaskAlphaProgram.mFeatures.hasSrgb = true;
         gDeferredFullbrightAlphaMaskAlphaProgram.mFeatures.isDeferred = true;
-        gDeferredFullbrightAlphaMaskAlphaProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gDeferredFullbrightAlphaMaskAlphaProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gDeferredFullbrightAlphaMaskAlphaProgram.mShaderFiles.clear();
         gDeferredFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
         gDeferredFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
@@ -2111,7 +2111,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightAlphaMaskAlphaProgram.mFeatures.hasAtmospherics = true;
         gHUDFullbrightAlphaMaskAlphaProgram.mFeatures.hasSrgb = true;
         gHUDFullbrightAlphaMaskAlphaProgram.mFeatures.isDeferred = true;
-        gHUDFullbrightAlphaMaskAlphaProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gHUDFullbrightAlphaMaskAlphaProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gHUDFullbrightAlphaMaskAlphaProgram.mShaderFiles.clear();
         gHUDFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
         gHUDFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
@@ -2134,7 +2134,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightShinyProgram.mFeatures.hasAtmospherics = true;
         gDeferredFullbrightShinyProgram.mFeatures.hasGamma = true;
         gDeferredFullbrightShinyProgram.mFeatures.hasSrgb = true;
-        gDeferredFullbrightShinyProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gDeferredFullbrightShinyProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gDeferredFullbrightShinyProgram.mShaderFiles.clear();
         gDeferredFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyV.glsl", ShaderStage::Vertex));
         gDeferredFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
@@ -2155,7 +2155,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightShinyProgram.mFeatures.hasAtmospherics = true;
         gHUDFullbrightShinyProgram.mFeatures.hasGamma = true;
         gHUDFullbrightShinyProgram.mFeatures.hasSrgb = true;
-        gHUDFullbrightShinyProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gHUDFullbrightShinyProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gHUDFullbrightShinyProgram.mShaderFiles.clear();
         gHUDFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyV.glsl", ShaderStage::Vertex));
         gHUDFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
@@ -2176,7 +2176,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredEmissiveProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredEmissiveProgram.mFeatures.hasGamma = true;
         gDeferredEmissiveProgram.mFeatures.hasAtmospherics = true;
-        gDeferredEmissiveProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gDeferredEmissiveProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
         gDeferredEmissiveProgram.mShaderFiles.clear();
         gDeferredEmissiveProgram.mShaderFiles.push_back(make_pair("deferred/emissiveV.glsl", ShaderStage::Vertex));
         gDeferredEmissiveProgram.mShaderFiles.push_back(make_pair("deferred/emissiveF.glsl", ShaderStage::Fragment));
@@ -2257,7 +2257,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gHazeWaterProgram.mName = "Water Haze Shader";
         gHazeWaterProgram.mShaderFiles.clear();
-        gHazeWaterProgram.mShaderGroup           = LLGLSLShader::SG_WATER;
+        gHazeWaterProgram.mShaderGroup           = LLShaderProgram::SG_WATER;
         gHazeWaterProgram.mFeatures.hasSrgb                = true;
         gHazeWaterProgram.mFeatures.calculatesAtmospherics = true;
         gHazeWaterProgram.mFeatures.hasAtmospherics        = true;
@@ -2324,7 +2324,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> Render packets: the shadow program that reads vertices and indices by address. Not needed to run: if it cannot be made the packets stay off.
-    if (success && LLVkMirror::shadowPacketsAvailable())
+    if (success && LLVkBridge::shadowPacketsAvailable())
     {
         gDeferredShadowPullProgram.mName = "Deferred Shadow Pull Shader";
         gDeferredShadowPullProgram.mFeatures.isDeferred = true;
@@ -2341,7 +2341,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> ... and the one for the alpha masked casters, which needs the device to index sampled images at run time. Also optional.
-    if (success && LLVkMirror::shadowAlphaPacketsAvailable())
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
     {
         gDeferredShadowAlphaPullProgram.mName = "Deferred Shadow Alpha Pull Shader";
         gDeferredShadowAlphaPullProgram.mFeatures.isDeferred = true;
@@ -2358,7 +2358,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> ... and the one for rigged casters
-    if (success && LLVkMirror::shadowPacketsAvailable())
+    if (success && LLVkBridge::shadowPacketsAvailable())
     {
         gDeferredShadowSkinPullProgram.mName = "Deferred Shadow Skin Pull Shader";
         gDeferredShadowSkinPullProgram.mFeatures.isDeferred = true;
@@ -2375,7 +2375,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> The deferred diffuse pass from render packets (same fragment shader as gDeferredDiffuseProgram, the diffuse lookup from the bindless table). Optional.
-    if (success && LLVkMirror::shadowAlphaPacketsAvailable())
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
     {
         gDeferredDiffusePullProgram.mName = "Deferred Diffuse Pull Shader";
         gDeferredDiffusePullProgram.mFeatures.hasSrgb = true;
@@ -2393,12 +2393,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> ... and the materials passes: the unskinned programs of the 12 deferred passes (alpha mode in bits 0-1, specular map bit 2, normal map bit 3). Optional too.
-    if (success && LLVkMirror::shadowAlphaPacketsAvailable())
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
     {
         static const U32 pull_indices[] = { 0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15 };
         for (U32 i : pull_indices)
         {
-            LLGLSLShader& pull = gDeferredMaterialPullProgram[i];
+            LLShaderProgram& pull = gDeferredMaterialPullProgram[i];
             pull.mName = llformat("Material Pull Shader %d", i);
             pull.mShaderFiles.clear();
             pull.mShaderFiles.push_back(make_pair("deferred/materialPullV.glsl", ShaderStage::Vertex));
@@ -2443,7 +2443,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredShadowFullbrightAlphaMaskProgram.mName = "Deferred Shadow Fullbright Alpha Mask Shader";
-        gDeferredShadowFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gDeferredShadowFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
 
         gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.clear();
         gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskV.glsl", ShaderStage::Vertex));
@@ -2464,7 +2464,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredShadowAlphaMaskProgram.mName = "Deferred Shadow Alpha Mask Shader";
-        gDeferredShadowAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gDeferredShadowAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
 
         gDeferredShadowAlphaMaskProgram.mShaderFiles.clear();
         gDeferredShadowAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskV.glsl", ShaderStage::Vertex));
@@ -2688,7 +2688,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkMotion") << "the avatar velocity program (rigged) did not compile: no avatar motion vectors" << LL_ENDL;
         }
 
-        if (LLVkMirror::shadowPacketsAvailable())
+        if (LLVkBridge::shadowPacketsAvailable())
         {
             gAvatarVelocityPullProgram.mName = "Avatar Velocity (rigged, packets)";
             gAvatarVelocityPullProgram.mShaderFiles.clear();
@@ -2703,7 +2703,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
         }
 
-        if (LLVkMirror::shadowPacketsAvailable())
+        if (LLVkBridge::shadowPacketsAvailable())
         {
             gObjectVelocityPullProgram.mName = "Object Velocity (packets)";
             gObjectVelocityPullProgram.mShaderFiles.clear();
@@ -2791,7 +2791,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkMotion") << "the avatar velocity debug program did not compile" << LL_ENDL;
         }
 
-        if (LLVkMirror::rtShadowMode() && getenv("LL_VK_RT_MATERIALS") && getenv("LL_VK_RT_MATERIALS")[0] == '1')
+        if (LLVkBridge::rtShadowMode() && getenv("LL_VK_RT_MATERIALS") && getenv("LL_VK_RT_MATERIALS")[0] == '1')
         {
             gRtMaterialDebugProgram.mName = "Ray Scene Material Debug";
             gRtMaterialDebugProgram.mFeatures.isDeferred = true;
@@ -2936,7 +2936,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         llassert(success);
     }
 
-    if (success && gGLManager.mGLVersion > 3.9f)
+    if (success && gDeviceCaps.mApiVersionNumber > 3.9f)
     {
         std::vector<std::pair<std::string, std::string>> quality_levels = { {"12", "Low"},
                                                                              {"23", "Medium"},
@@ -2956,7 +2956,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
                 gFXAAProgram[i].clearPermutations();
                 gFXAAProgram[i].addPermutation("FXAA_QUALITY__PRESET", quality_pair.first);
-                if (gGLManager.mGLVersion > 3.9)
+                if (gDeviceCaps.mApiVersionNumber > 3.9)
                 {
                     gFXAAProgram[i].addPermutation("FXAA_GLSL_400", "1");
                 }
@@ -2989,7 +2989,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
     }
 
-    if (gGLManager.mGLVersion > 3.15f && success)
+    if (gDeviceCaps.mApiVersionNumber > 3.15f && success)
     {
         std::vector<std::pair<std::string, std::string>> quality_levels = { {"SMAA_PRESET_LOW", "Low"},
                                                                              {"SMAA_PRESET_MEDIUM", "Medium"},
@@ -3000,9 +3000,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         for (const auto& smaa_pair : quality_levels)
         {
             std::map<std::string, std::string> defines;
-            if (gGLManager.mGLVersion >= 4.f)
+            if (gDeviceCaps.mApiVersionNumber >= 4.f)
                 defines.emplace("SMAA_GLSL_4", "1");
-            else if (gGLManager.mGLVersion >= 3.1f)
+            else if (gDeviceCaps.mApiVersionNumber >= 3.1f)
                 defines.emplace("SMAA_GLSL_3", "1");
             else
                 defines.emplace("SMAA_GLSL_2", "1");
@@ -3101,7 +3101,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
     }
 
-    if (success && gGLManager.mGLVersion > 4.05f)
+    if (success && gDeviceCaps.mApiVersionNumber > 4.05f)
     {
         gCASProgram.mName = "Contrast Adaptive Sharpening Shader";
         gCASProgram.mFeatures.hasSrgb = true;
@@ -3119,7 +3119,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
     }
 
-    if (success && gGLManager.mGLVersion > 4.05f)
+    if (success && gDeviceCaps.mApiVersionNumber > 4.05f)
     {
         gCASLegacyGammaProgram.mName = "Contrast Adaptive Sharpening Legacy Gamma Shader";
         gCASLegacyGammaProgram.mFeatures.hasSrgb = true;
@@ -3219,7 +3219,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gEnvironmentMapProgram.mShaderFiles.push_back(make_pair("deferred/skyV.glsl", ShaderStage::Vertex));
         gEnvironmentMapProgram.mShaderFiles.push_back(make_pair("deferred/skyF.glsl", ShaderStage::Fragment));
         gEnvironmentMapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gEnvironmentMapProgram.mShaderGroup = LLGLSLShader::SG_SKY;
+        gEnvironmentMapProgram.mShaderGroup = LLShaderProgram::SG_SKY;
 
         success = gEnvironmentMapProgram.createShader();
         llassert(success);
@@ -3237,7 +3237,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLSkyProgram.mShaderFiles.push_back(make_pair("deferred/skyV.glsl", ShaderStage::Vertex));
         gDeferredWLSkyProgram.mShaderFiles.push_back(make_pair("deferred/skyF.glsl", ShaderStage::Fragment));
         gDeferredWLSkyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredWLSkyProgram.mShaderGroup = LLGLSLShader::SG_SKY;
+        gDeferredWLSkyProgram.mShaderGroup = LLShaderProgram::SG_SKY;
 
         add_common_permutations(&gDeferredWLSkyProgram);
 
@@ -3257,8 +3257,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLCloudProgram.mShaderFiles.push_back(make_pair("deferred/cloudsV.glsl", ShaderStage::Vertex));
         gDeferredWLCloudProgram.mShaderFiles.push_back(make_pair("deferred/cloudsF.glsl", ShaderStage::Fragment));
         gDeferredWLCloudProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredWLCloudProgram.mShaderGroup = LLGLSLShader::SG_SKY;
-        gDeferredWLCloudProgram.addConstant( LLGLSLShader::SHADER_CONST_CLOUD_MOON_DEPTH ); // SL-14113
+        gDeferredWLCloudProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gDeferredWLCloudProgram.addConstant( LLShaderProgram::SHADER_CONST_CLOUD_MOON_DEPTH ); // SL-14113
 
         add_common_permutations(&gDeferredWLCloudProgram);
 
@@ -3278,7 +3278,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLSunProgram.mShaderFiles.push_back(make_pair("deferred/sunDiscV.glsl", ShaderStage::Vertex));
         gDeferredWLSunProgram.mShaderFiles.push_back(make_pair("deferred/sunDiscF.glsl", ShaderStage::Fragment));
         gDeferredWLSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredWLSunProgram.mShaderGroup = LLGLSLShader::SG_SKY;
+        gDeferredWLSunProgram.mShaderGroup = LLShaderProgram::SG_SKY;
 
         add_common_permutations(&gDeferredWLSunProgram);
 
@@ -3299,8 +3299,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLMoonProgram.mShaderFiles.push_back(make_pair("deferred/moonV.glsl", ShaderStage::Vertex));
         gDeferredWLMoonProgram.mShaderFiles.push_back(make_pair("deferred/moonF.glsl", ShaderStage::Fragment));
         gDeferredWLMoonProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredWLMoonProgram.mShaderGroup = LLGLSLShader::SG_SKY;
-        gDeferredWLMoonProgram.addConstant( LLGLSLShader::SHADER_CONST_CLOUD_MOON_DEPTH ); // SL-14113
+        gDeferredWLMoonProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gDeferredWLMoonProgram.addConstant( LLShaderProgram::SHADER_CONST_CLOUD_MOON_DEPTH ); // SL-14113
 
         add_common_permutations(&gDeferredWLMoonProgram);
 
@@ -3315,8 +3315,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredStarProgram.mShaderFiles.push_back(make_pair("deferred/starsV.glsl", ShaderStage::Vertex));
         gDeferredStarProgram.mShaderFiles.push_back(make_pair("deferred/starsF.glsl", ShaderStage::Fragment));
         gDeferredStarProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredStarProgram.mShaderGroup = LLGLSLShader::SG_SKY;
-        gDeferredStarProgram.addConstant( LLGLSLShader::SHADER_CONST_STAR_DEPTH ); // SL-14113
+        gDeferredStarProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gDeferredStarProgram.addConstant( LLShaderProgram::SHADER_CONST_STAR_DEPTH ); // SL-14113
 
         add_common_permutations(&gDeferredStarProgram);
 
@@ -3331,7 +3331,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNormalMapGenProgram.mShaderFiles.push_back(make_pair("deferred/normgenV.glsl", ShaderStage::Vertex));
         gNormalMapGenProgram.mShaderFiles.push_back(make_pair("deferred/normgenF.glsl", ShaderStage::Fragment));
         gNormalMapGenProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gNormalMapGenProgram.mShaderGroup = LLGLSLShader::SG_SKY;
+        gNormalMapGenProgram.mShaderGroup = LLShaderProgram::SG_SKY;
         success = gNormalMapGenProgram.createShader();
     }
 
@@ -3398,7 +3398,7 @@ bool LLViewerShaderMgr::loadShadersObject()
         success = success && gObjectBumpProgram.createShader();
         if (success)
         { //lldrawpoolbump assumes "texture0" has channel 0 and "texture1" has channel 1
-            LLGLSLShader* shader[] = { &gObjectBumpProgram, &gSkinnedObjectBumpProgram };
+            LLShaderProgram* shader[] = { &gObjectBumpProgram, &gSkinnedObjectBumpProgram };
             for (int i = 0; i < 2; ++i)
             {
                 shader[i]->bind();
@@ -3713,8 +3713,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         for (S32 variant = 0; variant < NORMAL_DEBUG_SHADER_COUNT; ++variant)
         {
-            LLGLSLShader& shader = gNormalDebugProgram[variant];
-            LLGLSLShader& skinned_shader = gSkinnedNormalDebugProgram[variant];
+            LLShaderProgram& shader = gNormalDebugProgram[variant];
+            LLShaderProgram& skinned_shader = gSkinnedNormalDebugProgram[variant];
             shader.mName = "Normal Debug Shader";
             shader.mShaderFiles.clear();
             shader.mShaderFiles.push_back(make_pair("interface/normaldebugV.glsl", ShaderStage::Vertex));
@@ -3809,7 +3809,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         if (success)
         {
-            LLGLSLShader* shader = &gPBRTerrainBakeProgram;
+            LLShaderProgram* shader = &gPBRTerrainBakeProgram;
             U32 bit_depth = gSavedSettings.getU32("TerrainPaintBitDepth");
             // LLTerrainPaintMap currently uses an RGB8 texture internally
             bit_depth = llclamp(bit_depth, 1, 8);
@@ -3872,7 +3872,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
         success = gGaussianProgram.createShader();
     }
 
-    if (success && gGLManager.mHasCubeMapArray)
+    if (success && gDeviceCaps.mHasCubeMapArray)
     {
         gRadianceGenProgram.mName = "Radiance Gen Shader";
         gRadianceGenProgram.mShaderFiles.clear();
@@ -3883,7 +3883,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
         success = gRadianceGenProgram.createShader();
     }
 
-    if (success && gGLManager.mHasCubeMapArray)
+    if (success && gDeviceCaps.mHasCubeMapArray)
     {
         gHeroRadianceGenProgram.mName = "Hero Radiance Gen Shader";
         gHeroRadianceGenProgram.mShaderFiles.clear();
@@ -3895,7 +3895,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
         success                              = gHeroRadianceGenProgram.createShader();
     }
 
-    if (success && gGLManager.mHasCubeMapArray)
+    if (success && gDeviceCaps.mHasCubeMapArray)
     {
         gIrradianceGenProgram.mName = "Irradiance Gen Shader";
         gIrradianceGenProgram.mShaderFiles.clear();
@@ -3920,7 +3920,7 @@ std::string LLViewerShaderMgr::getShaderDirPrefix(void)
     return gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "shaders", "class");
 }
 
-void LLViewerShaderMgr::updateShaderUniforms(LLGLSLShader * shader)
+void LLViewerShaderMgr::updateShaderUniforms(LLShaderProgram * shader)
 {
     LLEnvironment::instance().updateShaderUniforms(shader);
 }

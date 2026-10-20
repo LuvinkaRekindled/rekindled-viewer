@@ -1962,7 +1962,7 @@ struct TextureApplyFunctor : public LLSelectedTEFunctor
         }
         else // not an inventory item
         {
-            objectp->setTEImage(te, LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+            objectp->setTEImage(te, LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
         }
 
         return true;
@@ -2025,7 +2025,7 @@ bool LLSelectMgr::selectionSetImage(const LLUUID& imageid, bool isPBR)
     //          // Texture picker defaults aren't inventory items
     //          // * Don't need to worry about permissions for them
     //          // * Can just apply the texture and be done with it.
-    //          objectp->setTEImage(te, LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+    //          objectp->setTEImage(te, LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
     //      }
 
     //      return true;
@@ -2447,7 +2447,7 @@ bool LLSelectMgr::selectionRevertTextures()
                     }
                     else
                     {
-                        object->setTEImage(te, LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+                        object->setTEImage(te, LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
 
                     }
                 }
@@ -6525,7 +6525,7 @@ void LLSelectMgr::processForceObjectSelect(LLMessageSystem* msg, void**)
     LLSelectMgr::getInstance()->highlightObjectAndFamily(objects);
 }
 
-extern F32  gGLModelView[16];
+extern F32  gRenderModelView[16];
 
 void LLSelectMgr::updateSilhouettes()
 {
@@ -6536,7 +6536,7 @@ void LLSelectMgr::updateSilhouettes()
 
     if (!mSilhouetteImagep)
     {
-        mSilhouetteImagep = LLViewerTextureManager::getFetchedTextureFromFile("silhouette.j2c", FTT_LOCAL_FILE, true, LLGLTexture::BOOST_UI);
+        mSilhouetteImagep = LLViewerTextureManager::getFetchedTextureFromFile("silhouette.j2c", FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_UI);
     }
 
     mHighlightedObjects->cleanupNodes();
@@ -6810,7 +6810,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         return;
     }
 
-    gGL.getTexUnit(0)->bind(mSilhouetteImagep);
+    gRender.getTexUnit(0)->bind(mSilhouetteImagep);
     LLGLSPipelineSelection gls_select;
     LLRenderState::BlendScope blend(true);
     LLRenderState::DepthScope gls_depth(true, false);
@@ -6828,12 +6828,12 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
         F32 depth = llmax(1.f, hud_bbox.getExtentLocal().mV[VX] * 1.1f);
         // <FS:Ansariel> Performance improvement
-        //gGL.ortho(-0.5f * LLViewerCamera::getInstance()->getAspect(), 0.5f * LLViewerCamera::getInstance()->getAspect(), -0.5f, 0.5f, 0.f, depth);
+        //gRender.ortho(-0.5f * LLViewerCamera::getInstance()->getAspect(), 0.5f * LLViewerCamera::getInstance()->getAspect(), -0.5f, 0.5f, 0.f, depth);
         LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -0.5f * aspect, 0.5f * aspect, -0.5f, 0.5f, 0.f, depth);
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        gGL.pushUIMatrix();
-        gGL.loadUIIdentity();
+        gRender.pushUIMatrix();
+        gRender.loadUIIdentity();
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, OGL_TO_CFR_ROTATION);        // Load Cory's favorite reference frame
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, -hud_bbox.getCenterLocal().mV[VX] + (depth *0.5f), 0.f, 0.f);
@@ -6850,7 +6850,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
 
     auto renderMeshSelection_f = [fogCfx, wireframe_selection](LLSelectNode* node, LLViewerObject* objectp, LLColor4 hlColor)
     {
-        LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+        LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
 
         if (shader)
         {
@@ -6864,7 +6864,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         if (!is_hud_object)
         {
             LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, gGLModelView);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, gRenderModelView);
         }
 
         if (objectp->mDrawable->isActive())
@@ -6893,7 +6893,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
             }
         }
 
-        gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
+        gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
 
         S32 num_tes = llmin((S32)objectp->getNumTEs(), (S32)objectp->getNumFaces()); // avatars have TEs but no faces
         for (S32 te = 0; te < num_tes; ++te)
@@ -6907,8 +6907,8 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-        gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
-        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
+        gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
+        gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
 
         if (shader)
         {
@@ -7040,11 +7040,11 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-        gGL.popUIMatrix();
+        gRender.popUIMatrix();
         stop_glerror();
     }
 
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
 }
 
 void LLSelectMgr::generateSilhouette(LLSelectNode* nodep, const LLVector3& view_point)
@@ -7518,7 +7518,7 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
     }
 
 
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
 
     if (shader)
     { //use UI program for selection highlights (texture color modulated by vertex color)
@@ -7526,13 +7526,13 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
     }
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    gGL.pushUIMatrix();
-    gGL.loadUIIdentity();
+    gRender.pushUIMatrix();
+    gRender.loadUIIdentity();
 
     if (!is_hud_object)
     {
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, gGLModelView);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, gRenderModelView);
     }
 
 
@@ -7565,32 +7565,32 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
 
         if (LLSelectMgr::sRenderHiddenSelections) // && gFloaterTools && gFloaterTools->getVisible())
         {
-            gGL.flush();
-            gGL.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
+            gRender.flush();
+            gRender.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
 
             LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::GreaterEqual);
-            gGL.flush();
-            gGL.begin(LLRender::LINES);
+            gRender.flush();
+            gRender.begin(LLRender::LINES);
             {
-                gGL.color4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.4f);
+                gRender.color4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.4f);
 
                 for(S32 i = 0; i < mSilhouetteVertices.size(); i += 2)
                 {
                     u_coord += u_divisor * LLSelectMgr::sHighlightUScale;
-                    gGL.texCoord2f( u_coord, v_coord );
-                    gGL.vertex3fv( mSilhouetteVertices[i].mV);
+                    gRender.texCoord2f( u_coord, v_coord );
+                    gRender.vertex3fv( mSilhouetteVertices[i].mV);
                     u_coord += u_divisor * LLSelectMgr::sHighlightUScale;
-                    gGL.texCoord2f( u_coord, v_coord );
-                    gGL.vertex3fv(mSilhouetteVertices[i+1].mV);
+                    gRender.texCoord2f( u_coord, v_coord );
+                    gRender.vertex3fv(mSilhouetteVertices[i+1].mV);
                 }
             }
-            gGL.end();
+            gRender.end();
             u_coord = fmod(animationTime * LLSelectMgr::sHighlightUAnim, 1.f);
         }
 
-        gGL.flush();
-        gGL.setSceneBlendType(LLRender::BT_ALPHA);
-        gGL.begin(LLRender::TRIANGLES);
+        gRender.flush();
+        gRender.setSceneBlendType(LLRender::BT_ALPHA);
+        gRender.begin(LLRender::TRIANGLES);
         {
             for(S32 i = 0; i < mSilhouetteVertices.size(); i+=2)
             {
@@ -7616,33 +7616,33 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
                 v[3] = mSilhouetteVertices[i+1];
                 tc[3].set(u_coord,v_coord);
 
-                gGL.color4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.0f); //LLSelectMgr::sHighlightAlpha);
-                gGL.texCoord2fv(tc[0].mV);
-                gGL.vertex3fv( v[0].mV );
+                gRender.color4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.0f); //LLSelectMgr::sHighlightAlpha);
+                gRender.texCoord2fv(tc[0].mV);
+                gRender.vertex3fv( v[0].mV );
 
-                gGL.color4f(color.mV[VRED]*2, color.mV[VGREEN]*2, color.mV[VBLUE]*2, LLSelectMgr::sHighlightAlpha);
-                gGL.texCoord2fv( tc[1].mV );
-                gGL.vertex3fv( v[1].mV );
+                gRender.color4f(color.mV[VRED]*2, color.mV[VGREEN]*2, color.mV[VBLUE]*2, LLSelectMgr::sHighlightAlpha);
+                gRender.texCoord2fv( tc[1].mV );
+                gRender.vertex3fv( v[1].mV );
 
-                gGL.color4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.0f); //LLSelectMgr::sHighlightAlpha);
-                gGL.texCoord2fv( tc[2].mV );
-                gGL.vertex3fv( v[2].mV );
+                gRender.color4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.0f); //LLSelectMgr::sHighlightAlpha);
+                gRender.texCoord2fv( tc[2].mV );
+                gRender.vertex3fv( v[2].mV );
 
-                gGL.vertex3fv( v[2].mV );
+                gRender.vertex3fv( v[2].mV );
 
-                gGL.color4f(color.mV[VRED]*2, color.mV[VGREEN]*2, color.mV[VBLUE]*2, LLSelectMgr::sHighlightAlpha);
-                gGL.texCoord2fv( tc[1].mV );
-                gGL.vertex3fv( v[1].mV );
+                gRender.color4f(color.mV[VRED]*2, color.mV[VGREEN]*2, color.mV[VBLUE]*2, LLSelectMgr::sHighlightAlpha);
+                gRender.texCoord2fv( tc[1].mV );
+                gRender.vertex3fv( v[1].mV );
 
-                gGL.texCoord2fv( tc[3].mV );
-                gGL.vertex3fv( v[3].mV );
+                gRender.texCoord2fv( tc[3].mV );
+                gRender.vertex3fv( v[3].mV );
             }
         }
-        gGL.end();
-        gGL.flush();
+        gRender.end();
+        gRender.flush();
     }
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-    gGL.popUIMatrix();
+    gRender.popUIMatrix();
 
     if (shader)
     {

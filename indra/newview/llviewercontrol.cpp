@@ -142,7 +142,7 @@ std::string gLastRunVersion;
 
 extern bool gResizeScreenTexture;
 extern bool gResizeShadowTexture;
-extern bool gDebugGL;
+extern bool gDebugRender;
 
 // <FS:Ansariel> FIRE-6809: Quickly moving the bandwidth slider has no effect
 class BandwidthUpdater : public LLEventTimer
@@ -263,8 +263,8 @@ bool handleSetShaderChanged(const LLSD& newvalue)
 // </FS:Ansariel>
 {
     // changing shader level may invalidate existing cached bump maps, as the shader type determines the format of the bump map it expects - clear and repopulate the bump cache
-    gBumpImageList.destroyGL();
-    gBumpImageList.restoreGL();
+    gBumpImageList.destroyResources();
+    gBumpImageList.restoreResources();
 
     if (gPipeline.isInit())
     {
@@ -317,8 +317,8 @@ bool handleRenderTransparentWaterChanged(const LLSD& newvalue)
     if (gPipeline.isInit())
     {
         gPipeline.updateRenderTransparentWater();
-        gPipeline.releaseGLBuffers();
-        gPipeline.createGLBuffers();
+        gPipeline.releaseRenderBuffers();
+        gPipeline.createRenderBuffers();
         LLViewerShaderMgr::instance()->setShaders();
     }
     LLWorld::getInstance()->updateWaterObjects();
@@ -342,8 +342,8 @@ static bool handleReleaseGLBufferChanged(const LLSD& newvalue)
 {
     if (gPipeline.isInit())
     {
-        gPipeline.releaseGLBuffers();
-        gPipeline.createGLBuffers();
+        gPipeline.releaseRenderBuffers();
+        gPipeline.createRenderBuffers();
     }
     return true;
 }
@@ -379,22 +379,22 @@ static bool handleLUTBufferChanged(const LLSD& newvalue)
 
 static bool handleAnisotropicChanged(const LLSD& newvalue)
 {
-    LLImageGL::sGlobalUseAnisotropic = newvalue.asBoolean();
-    LLImageGL::dirtyTexOptions();
+    LLImageTex::sGlobalUseAnisotropic = newvalue.asBoolean();
+    LLImageTex::dirtyTexOptions();
     return true;
 }
 
 // <FS> Vulkan present mode: follows FSVkPresentMode, and the Vertical Sync preference while that is 0
 static bool handleVkPresentModeChanged(const LLSD& newvalue)
 {
-    LLVkMirror::setPresentPreference((S32)newvalue.asInteger(), gSavedSettings.getBOOL("RenderVSyncEnable"));
+    LLVkBridge::setPresentPreference((S32)newvalue.asInteger(), gSavedSettings.getBOOL("RenderVSyncEnable"));
     return true;
 }
 
 static bool handleVSyncChanged(const LLSD& newvalue)
 {
     LLPerfStats::tunables.vsyncEnabled = newvalue.asBoolean();
-    LLVkMirror::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), newvalue.asBoolean()); // <FS>
+    LLVkBridge::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), newvalue.asBoolean()); // <FS>
     if (gViewerWindow && gViewerWindow->getWindow())
     {
         gViewerWindow->getWindow()->toggleVSync(newvalue.asBoolean());
@@ -591,8 +591,8 @@ static bool handleReflectionProbeDetailChanged(const LLSD& newvalue)
         LLPipeline::refreshCachedSettings();
         gPipeline.mReflectionMapManager.reset();
         gPipeline.mHeroProbeManager.reset();
-        gPipeline.releaseGLBuffers();
-        gPipeline.createGLBuffers();
+        gPipeline.releaseRenderBuffers();
+        gPipeline.createRenderBuffers();
         LLViewerShaderMgr::instance()->setShaders();
     }
     return true;
@@ -607,7 +607,7 @@ static bool handleReflectionProbeCountChanged(const LLSD& newvalue)
 #if LL_DARWIN
 static bool handleAppleUseMultGLChanged(const LLSD& newvalue)
 {
-    if (gGLManager.mInited)
+    if (gDeviceCaps.mInited)
     {
         LLWindowMacOSX::setUseMultGL(newvalue.asBoolean());
     }
@@ -621,8 +621,8 @@ static bool handleHeroProbeResolutionChanged(const LLSD &newvalue)
     {
         LLPipeline::refreshCachedSettings();
         gPipeline.mHeroProbeManager.reset();
-        gPipeline.releaseGLBuffers();
-        gPipeline.createGLBuffers();
+        gPipeline.releaseRenderBuffers();
+        gPipeline.createRenderBuffers();
     }
     return true;
 }

@@ -754,26 +754,26 @@ void LLHUDEffectLookAt::render()
         }
 
         // render crosshair
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, target.mV[VX], target.mV[VY], target.mV[VZ]);
         // <FS:Ansariel> FIRE-16912: Draw lines for lookat targets; by Ayamo Nozaki
-        //gGL.scalef(0.3f, 0.3f, 0.3f);
+        //gRender.scalef(0.3f, 0.3f, 0.3f);
         LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 0.1f, 0.1f, 0.1f);
         // </FS:Ansariel>
-        gGL.begin(LLRender::LINES);
+        gRender.begin(LLRender::LINES);
         {
             LLColor3 color = (*mAttentions)[mTargetType].mColor;
-            gGL.color3f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE]);
-            gGL.vertex3f(-1.f, 0.f, 0.f);
-            gGL.vertex3f(1.f, 0.f, 0.f);
+            gRender.color3f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE]);
+            gRender.vertex3f(-1.f, 0.f, 0.f);
+            gRender.vertex3f(1.f, 0.f, 0.f);
 
-            gGL.vertex3f(0.f, -1.f, 0.f);
-            gGL.vertex3f(0.f, 1.f, 0.f);
+            gRender.vertex3f(0.f, -1.f, 0.f);
+            gRender.vertex3f(0.f, 1.f, 0.f);
 
-            gGL.vertex3f(0.f, 0.f, -1.f);
-            gGL.vertex3f(0.f, 0.f, 1.f);
+            gRender.vertex3f(0.f, 0.f, -1.f);
+            gRender.vertex3f(0.f, 0.f, 1.f);
 
             // <FS:Ansariel> FIRE-16912: Draw lines for lookat targets; by Ayamo Nozaki
             static LLCachedControl<bool> lookAtLines(gSavedSettings, "ExodusLookAtLines", false);
@@ -784,11 +784,11 @@ void LLHUDEffectLookAt::render()
             {
                 LLVector3 dist = ((mSourceObject->getWorldPosition()) - mTargetPos) * 10.f;
 
-                gGL.vertex3f(0.f, 0.f, 0.f);
-                gGL.vertex3f(dist.mV[VX], dist.mV[VY], dist.mV[VZ] + 0.5f);
+                gRender.vertex3f(0.f, 0.f, 0.f);
+                gRender.vertex3f(dist.mV[VX], dist.mV[VY], dist.mV[VZ] + 0.5f);
             }
             // </FS:Ansariel>
-        } gGL.end();
+        } gRender.end();
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }

@@ -118,12 +118,12 @@ namespace
             }
             else
             {
-                img = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+                img = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
             }
         }
         if (img)
         {
-            img->setBoostLevel(LLGLTexture::BOOST_PREVIEW);
+            img->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
             img->forceToSaveRawImage(0);
         }
     };
@@ -236,8 +236,8 @@ struct GLTFPreviewModel
     ~GLTFPreviewModel()
     {
         // No model matrix necromancy
-        llassert(gGLLastMatrix != &mModelMatrix);
-        gGLLastMatrix = nullptr;
+        llassert(gRenderLastMatrix != &mModelMatrix);
+        gRenderLastMatrix = nullptr;
     }
     LLPointer<LLDrawInfo> mDrawInfo;
     LLMatrix4 mModelMatrix; // Referenced by mDrawInfo
@@ -380,7 +380,7 @@ PreviewSphere& get_preview_sphere(LLPointer<LLFetchedGLTFMaterial>& material, co
 }
 
 // Final, direct modifications to shader constants, just before render
-void fixup_shader_constants(LLGLSLShader& shader)
+void fixup_shader_constants(LLShaderProgram& shader)
 {
     // Sunlight intensity of 0 no matter what
     shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, 1);
@@ -393,7 +393,7 @@ void fixup_shader_constants(LLGLSLShader& shader)
         const S32 channel = shader.getTextureChannel(LLShaderMgr::DEFERRED_SHADOW0+i);
         if (channel != -1)
         {
-            gGL.getTexUnit(channel)->bind(LLViewerFetchedTexture::sWhiteImagep, true);
+            gRender.getTexUnit(channel)->bind(LLViewerFetchedTexture::sWhiteImagep, true);
         }
     }
 }
@@ -425,8 +425,8 @@ bool LLGLTFPreviewTexture::render()
 
     if (!mShouldRender) { return false; }
 
-    gGL.setClearColor(0, 0, 0, 0);
-    gGL.clearBuffers(ClearBits::Color | ClearBits::Depth);
+    gRender.setClearColor(0, 0, 0, 0);
+    gRender.clearBuffers(ClearBits::Color | ClearBits::Depth);
 
     LLRenderState::DepthScope(false);       // F3.2: an unnamed temporary (as before): it is destroyed at once and restores, so it has no lasting effect
     LLRenderState::StencilScope stencil(false);
@@ -478,7 +478,7 @@ bool LLGLTFPreviewTexture::render()
     // Override lights to ensure the sun is always shining from a certain direction (low graphics)
     // See also force_sun_direction_high_graphics and fixup_shader_constants
     {
-        LLLightState* light = gGL.getLight(0);
+        LLLightState* light = gRender.getLight(0);
         light->setPosition(light_dir);
         constexpr bool sun_up = true;
         light->setSunPrimary(sun_up);
@@ -487,7 +487,7 @@ bool LLGLTFPreviewTexture::render()
     LLRenderTarget& screen = gPipeline.mAuxillaryRT.screen;
 
     // *HACK: Force reset of the model matrix
-    gGLLastMatrix = nullptr;
+    gRenderLastMatrix = nullptr;
 
 #if 0
     if (mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_OPAQUE || mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK)
@@ -500,9 +500,9 @@ bool LLGLTFPreviewTexture::render()
         // Alpha blend rendering
 
         RenderPassScope pass(screen);
-        gGL.clearBuffers(ClearBits::Color | ClearBits::Depth);
+        gRender.clearBuffers(ClearBits::Color | ClearBits::Depth);
 
-        LLGLSLShader& shader = gDeferredPBRAlphaProgram;
+        LLShaderProgram& shader = gDeferredPBRAlphaProgram;
 
         gPipeline.bindDeferredShader(shader);
         fixup_shader_constants(shader);

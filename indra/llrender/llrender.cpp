@@ -51,19 +51,19 @@
 #include "llvkbuf.h"
 #include "llvktarget.h"
 
-thread_local LLRender gGL;
+thread_local LLRender gRender;
 
 // Handy copies of last good GL matrices
-F32 gGLModelView[16];
-F32 gGLLastModelView[16];
+F32 gRenderModelView[16];
+F32 gRenderLastModelView[16];
 F32 gGLLastProjection[16];
-F32 gGLProjection[16];
+F32 gRenderProjection[16];
 
 // transform from last frame's camera space to this frame's camera space (and inverse)
 glm::mat4 gGLDeltaModelView;
 glm::mat4 gGLInverseDeltaModelView;
 
-S32 gGLViewport[4];
+S32 gRenderViewport[4];
 
 
 U32 LLRender::sUICalls = 0;
@@ -154,7 +154,7 @@ void LLTexUnit::refreshState(void)
     // We set dirty to true so that the tex unit knows to ignore caching
     // and we reset the cached tex unit state
 
-    gGL.flush();
+    gRender.flush();
 
 
     if (mCurrTexType != TT_NONE)
@@ -179,7 +179,7 @@ void LLTexUnit::clear()
     }
 }
 
-void LLTexUnit::applyTexOptions(LLImageGL* gl_tex)
+void LLTexUnit::applyTexOptions(LLImageTex* gl_tex)
 {
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
@@ -192,7 +192,7 @@ void LLTexUnit::applyTexOptions(LLImageGL* gl_tex)
 
 void LLTexUnit::bindFast(LLTexture* texture)
 {
-    LLImageGL* gl_tex = texture->getGLTexture();
+    LLImageTex* gl_tex = texture->getImageTexture();
     texture->setActive();
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
@@ -203,7 +203,7 @@ void LLTexUnit::bindFast(LLTexture* texture)
         texture->forceImmediateUpdate();
         gl_tex->forceUpdateBindStats();
         // <FS> the update may just have made the texture: bind that one (the name read before it was 0, which drew the face white for the frame the texture appeared in)
-        if (LLImageGL* updated = texture->getGLTexture())
+        if (LLImageTex* updated = texture->getImageTexture())
         {
             gl_tex = updated;
             mCurrTexture = gl_tex->getTexName();
@@ -226,7 +226,7 @@ void LLTexUnit::bindFast(LLTexture* texture)
 
 U32 LLTexUnit::prepareFast(LLTexture* texture)
 {
-    LLImageGL* gl_tex = texture->getGLTexture();
+    LLImageTex* gl_tex = texture->getImageTexture();
     if (gl_tex->mTexOptionsDirty)
     {
         // the options are set on the bound texture: the full path
@@ -241,7 +241,7 @@ U32 LLTexUnit::prepareFast(LLTexture* texture)
         texture->forceImmediateUpdate();
         gl_tex->forceUpdateBindStats();
         // <FS> the update may just have made the texture: its name now, not the 0 read before (the face was drawn white for the frame it appeared in)
-        if (LLImageGL* updated = texture->getGLTexture())
+        if (LLImageTex* updated = texture->getImageTexture())
         {
             name = updated->getTexName();
         }
@@ -260,11 +260,11 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
     stop_glerror();
     if (mIndex >= 0)
     {
-        gGL.flush();
+        gRender.flush();
 
-        LLImageGL* gl_tex = NULL ;
+        LLImageTex* gl_tex = NULL ;
 
-        if (texture != NULL && (gl_tex = texture->getGLTexture()))
+        if (texture != NULL && (gl_tex = texture->getImageTexture()))
         {
             if (gl_tex->getTexName()) //if texture exists
             {
@@ -318,7 +318,7 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
     return true;
 }
 
-bool LLTexUnit::bind(LLImageGL* texture, bool for_rendering, bool forceBind, S32 usename)
+bool LLTexUnit::bind(LLImageTex* texture, bool for_rendering, bool forceBind, S32 usename)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
     stop_glerror();
@@ -334,9 +334,9 @@ bool LLTexUnit::bind(LLImageGL* texture, bool for_rendering, bool forceBind, S32
 
     if(!texname)
     {
-        if(LLImageGL::sDefaultGLTexture && LLImageGL::sDefaultGLTexture->getTexName())
+        if(LLImageTex::sDefaultGLTexture && LLImageTex::sDefaultGLTexture->getTexName())
         {
-            return bind(LLImageGL::sDefaultGLTexture) ;
+            return bind(LLImageTex::sDefaultGLTexture) ;
         }
         stop_glerror();
         return false ;
@@ -344,7 +344,7 @@ bool LLTexUnit::bind(LLImageGL* texture, bool for_rendering, bool forceBind, S32
 
     if ((mCurrTexture != texname) || forceBind)
     {
-        gGL.flush();
+        gRender.flush();
         stop_glerror();
         stop_glerror();
         mCurrTexType = texture->getTarget();
@@ -373,7 +373,7 @@ bool LLTexUnit::bind(LLCubeMap* cubeMap)
 {
     if (mIndex < 0) return false;
 
-    gGL.flush();
+    gRender.flush();
 
     if (cubeMap == NULL)
     {
@@ -412,7 +412,7 @@ bool LLTexUnit::bind(LLRenderTarget* renderTarget, bool bindDepth)
 {
     if (mIndex < 0) return false;
 
-    gGL.flush();
+    gRender.flush();
 
     if (bindDepth)
     {
@@ -440,7 +440,7 @@ bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const c
 
     if(mCurrTexture != texture)
     {
-        gGL.flush();
+        gRender.flush();
 
         if (type != TT_NONE)
         {
@@ -461,7 +461,7 @@ void LLTexUnit::bindWhite(const char* file, int line)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
     if (mIndex < 0) return;
-    gGL.flush();
+    gRender.flush();
     sNextFile = file;
     sNextLine = line;
     if (mCurrTexType != TT_TEXTURE && mCurrTexType != TT_NONE)
@@ -488,7 +488,7 @@ void LLTexUnit::bindNone(eTextureType type)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
     if (mIndex < 0) return;
-    gGL.flush();
+    gRender.flush();
     mCurrTexture = 0;
     ll_bindTexUnit(mIndex, 0);
 }
@@ -504,7 +504,7 @@ void LLTexUnit::unbind(eTextureType type, const char* file, int line)
 
     //always flush for consistency
     //   some code paths assume unbind always flushes (it is the boundary between a textured and an untextured immediate batch)
-    gGL.flush();
+    gRender.flush();
 
     // Disabled caching of binding state.
     if (mCurrTexType == type)
@@ -550,7 +550,7 @@ void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_OPTIONS);
     if (mIndex < 0 || mCurrTexture == 0) return;
 
-    gGL.flush();
+    gRender.flush();
 
     setTextureAddressModeFast(mode, mCurrTexType);
 }
@@ -587,7 +587,7 @@ void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions optio
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_OPTIONS);
     if (mIndex < 0 || mCurrTexture == 0 || mCurrTexType == LLTexUnit::TT_MULTISAMPLE_TEXTURE) return;
 
-    gGL.flush();
+    gRender.flush();
 
     setTextureFilteringOptionFast(option, mCurrTexType);
 }
@@ -610,11 +610,11 @@ void LLTexUnit::applyFilteringOption(U32 tex_name, eTextureType tex_type, LLTexU
         p.add(LLVkFormat::setMinFilter(has_mips ? TextureFilter::NearestMipNearest : TextureFilter::Nearest));
     }
 
-    if (gGLManager.mHasAnisotropic)
+    if (gDeviceCaps.mHasAnisotropic)
     {
-        if (LLImageGL::sGlobalUseAnisotropic && option == TFO_ANISOTROPIC)
+        if (LLImageTex::sGlobalUseAnisotropic && option == TFO_ANISOTROPIC)
         {
-            p.add(LLVkFormat::setAnisotropy(gGLManager.mMaxAnisotropy));
+            p.add(LLVkFormat::setAnisotropy(gDeviceCaps.mMaxAnisotropy));
         }
         else
         {
@@ -668,7 +668,7 @@ void LLLightState::setDiffuse(const LLColor4& diffuse)
 {
     if (mDiffuse != diffuse)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mDiffuse = diffuse;
     }
 }
@@ -677,7 +677,7 @@ void LLLightState::setDiffuseB(const LLColor4& diffuse)
 {
     if (mDiffuseB != diffuse)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mDiffuseB = diffuse;
     }
 }
@@ -686,7 +686,7 @@ void LLLightState::setSunPrimary(bool v)
 {
     if (mSunIsPrimary != v)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mSunIsPrimary = v;
     }
 }
@@ -695,7 +695,7 @@ void LLLightState::setSize(F32 v)
 {
     if (mSize != v)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mSize = v;
     }
 }
@@ -704,7 +704,7 @@ void LLLightState::setFalloff(F32 v)
 {
     if (mFalloff != v)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mFalloff = v;
     }
 }
@@ -713,7 +713,7 @@ void LLLightState::setAmbient(const LLColor4& ambient)
 {
     if (mAmbient != ambient)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mAmbient = ambient;
     }
 }
@@ -722,7 +722,7 @@ void LLLightState::setSpecular(const LLColor4& specular)
 {
     if (mSpecular != specular)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mSpecular = specular;
     }
 }
@@ -730,11 +730,11 @@ void LLLightState::setSpecular(const LLColor4& specular)
 void LLLightState::setPosition(const LLVector4& position)
 {
     //always set position because modelview matrix may have changed
-    ++gGL.mLightHash;
+    ++gRender.mLightHash;
     mPosition = position;
     //transform position by current modelview matrix
     glm::vec4 pos(position);
-    pos = gGL.getModelviewMatrix() * pos;
+    pos = gRender.getModelviewMatrix() * pos;
     mPosition.set(glm::value_ptr(pos));
 }
 
@@ -743,7 +743,7 @@ void LLLightState::setConstantAttenuation(const F32& atten)
     if (mConstantAtten != atten)
     {
         mConstantAtten = atten;
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
     }
 }
 
@@ -751,7 +751,7 @@ void LLLightState::setLinearAttenuation(const F32& atten)
 {
     if (mLinearAtten != atten)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mLinearAtten = atten;
     }
 }
@@ -760,7 +760,7 @@ void LLLightState::setQuadraticAttenuation(const F32& atten)
 {
     if (mQuadraticAtten != atten)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mQuadraticAtten = atten;
     }
 }
@@ -769,7 +769,7 @@ void LLLightState::setSpotExponent(const F32& exponent)
 {
     if (mSpotExponent != exponent)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mSpotExponent = exponent;
     }
 }
@@ -778,7 +778,7 @@ void LLLightState::setSpotCutoff(const F32& cutoff)
 {
     if (mSpotCutoff != cutoff)
     {
-        ++gGL.mLightHash;
+        ++gRender.mLightHash;
         mSpotCutoff = cutoff;
     }
 }
@@ -786,11 +786,11 @@ void LLLightState::setSpotCutoff(const F32& cutoff)
 void LLLightState::setSpotDirection(const LLVector3& direction)
 {
     //always set direction because modelview matrix may have changed
-    ++gGL.mLightHash;
+    ++gRender.mLightHash;
 
     //transform direction by current modelview matrix
     glm::vec3 dir(direction);
-    const glm::mat3 mat(gGL.getModelviewMatrix());
+    const glm::mat3 mat(gRender.getModelviewMatrix());
     dir = mat * dir;
 
     mSpotDirection.set(glm::value_ptr(dir));
@@ -848,8 +848,8 @@ LLRender::~LLRender()
 
 bool LLRender::init(bool needs_vertex_buffer)
 {
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    gGL.setAmbientLightColor(LLColor4::black);
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
+    gRender.setAmbientLightColor(LLColor4::black);
 
     LLVkState::setCullFace(LLRenderState::CullFace::Back);
 
@@ -914,7 +914,7 @@ void LLRender::refreshState(void)
 
 void LLRender::syncLightState()
 {
-    LLGLSLShader *shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram *shader = LLShaderProgram::sCurBoundShaderPtr;
 
     if (!shader)
     {
@@ -979,7 +979,7 @@ void LLRender::syncMatrices()
         LLShaderMgr::TEXTURE_MATRIX3,
     };
 
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
 
     static glm::mat4 cached_mvp;
     static glm::mat4 cached_inv_mdv;
@@ -1661,7 +1661,7 @@ void LLRender::beginList(std::list<LLVertexBufferData> *list)
     {
         LL_ERRS() << "beginList called while another list is open." << LL_ENDL;
     }
-    llassert(LLGLSLShader::sCurBoundShaderPtr == &gUIProgram);
+    llassert(LLShaderProgram::sCurBoundShaderPtr == &gUIProgram);
     flush();
     sBufferDataList = list;
 }
@@ -1691,7 +1691,7 @@ void LLRender::begin(const U32& mode)
         }
         else if (mCount != 0)
         {
-            LL_ERRS() << "gGL.begin() called redundantly." << LL_ENDL;
+            LL_ERRS() << "gRender.begin() called redundantly." << LL_ENDL;
         }
 
         mMode = mode;
@@ -1758,7 +1758,7 @@ void note(bool has_texcoord, U32 count, const char* tex_file, int tex_line)
     if (kind)
     {
         const char* writer = sSlotWriter[0] ? sSlotWriter[0] : "nobody";
-        const std::string shader = LLGLSLShader::sCurBoundShaderPtr ? LLGLSLShader::sCurBoundShaderPtr->mName : std::string("?");
+        const std::string shader = LLShaderProgram::sCurBoundShaderPtr ? LLShaderProgram::sCurBoundShaderPtr->mName : std::string("?");
         std::string site;
         if (sSlotFile[0])
         {
@@ -1807,7 +1807,7 @@ void LLRender::flush()
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
         LLVkAsync::FrontLap front_lap(LLVkAsync::FP_FLUSH);
-        llassert_always(LLGLSLShader::sCurBoundShaderPtr != nullptr);
+        llassert_always(LLShaderProgram::sCurBoundShaderPtr != nullptr);
 
         if (!mUIOffset.empty())
         {
@@ -1843,7 +1843,7 @@ void LLRender::flush()
 
             LLVertexBuffer *vb;
 
-            U32 attribute_mask = LLGLSLShader::sCurBoundShaderPtr->mAttributeMask;
+            U32 attribute_mask = LLShaderProgram::sCurBoundShaderPtr->mAttributeMask;
 
             if (sBufferDataList)
             {
@@ -1853,7 +1853,7 @@ void LLRender::flush()
                     vb,
                     mMode,
                     count,
-                    gGL.getTexUnit(0)->mCurrTexture,
+                    gRender.getTexUnit(0)->mCurrTexture,
                     mMatrix[MM_MODELVIEW][mMatIdx[MM_MODELVIEW]],
                     mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]],
                     mMatrix[MM_TEXTURE0][mMatIdx[MM_TEXTURE0]]
@@ -1872,7 +1872,7 @@ void LLRender::flush()
                 TexUnitVerify::note(mBatchHasTexCoord, count, mBatchTexFile, mBatchTexLine);
                 LLVkAsync::FrontLap draw_lap(LLVkAsync::FP_DRAW);
                 ++LLVertexBuffer::sDrawCalls;
-                gGL.syncMatrices();
+                gRender.syncMatrices();
                 LLVkAsync::drawScratch(LLVertexBuffer::sPrimitive[mMode], (S32)count, (attribute_mask & immediate_mask) | LLVertexBuffer::MAP_VERTEX,
                                        mVerticesp.get(), mTexcoordsp.get(), mColorsp.get());
             }
@@ -1896,10 +1896,10 @@ LLVertexBuffer* LLRender::genBuffer(U32 attribute_mask, S32 count)
     // Non-Apple path uses glBufferSubData inside setXxxData, so the VBO
     // must already be bound. On Apple, the VBO is lazily created in
     // _unmapBuffer (LLAppleVBOPool); calling setBuffer() here would bind
-    // mGLBuffer == 0 and then setupVertexBuffer would issue
+    // mVertexBufferId == 0 and then setupVertexBuffer would issue
     // glVertexAttribIPointer with a non-null offset against no bound
     // GL_ARRAY_BUFFER -> GL_INVALID_OPERATION in core profile.
-    if (!gGLManager.mIsApple)
+    if (!gDeviceCaps.mIsApple)
     {
         vb->setBuffer();
     }
@@ -2094,7 +2094,7 @@ void LLRender::texCoord2fv(const F32* tc, const char* file, int line)
 
 void LLRender::color4ub(const U8& r, const U8& g, const U8& b, const U8& a)
 {
-    if (!LLGLSLShader::sCurBoundShaderPtr || LLGLSLShader::sCurBoundShaderPtr->mAttributeMask & LLVertexBuffer::MAP_COLOR)
+    if (!LLShaderProgram::sCurBoundShaderPtr || LLShaderProgram::sCurBoundShaderPtr->mAttributeMask & LLVertexBuffer::MAP_COLOR)
     {
         mColorsp[mCount] = LLColor4U(r,g,b,a);
     }
@@ -2133,7 +2133,7 @@ void LLRender::color3fv(const F32* c)
 
 void LLRender::diffuseColor3f(F32 r, F32 g, F32 b)
 {
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2144,7 +2144,7 @@ void LLRender::diffuseColor3f(F32 r, F32 g, F32 b)
 
 void LLRender::diffuseColor3fv(const F32* c)
 {
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2155,7 +2155,7 @@ void LLRender::diffuseColor3fv(const F32* c)
 
 void LLRender::diffuseColor4f(F32 r, F32 g, F32 b, F32 a)
 {
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2166,7 +2166,7 @@ void LLRender::diffuseColor4f(F32 r, F32 g, F32 b, F32 a)
 
 void LLRender::diffuseColor4fv(const F32* c)
 {
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2177,7 +2177,7 @@ void LLRender::diffuseColor4fv(const F32* c)
 
 void LLRender::diffuseColor4ubv(const U8* c)
 {
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2188,7 +2188,7 @@ void LLRender::diffuseColor4ubv(const U8* c)
 
 void LLRender::diffuseColor4ub(U8 r, U8 g, U8 b, U8 a)
 {
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2228,17 +2228,17 @@ void LLRender::debugTexUnits(void)
 
 glm::mat4 get_current_modelview()
 {
-    return glm::make_mat4(gGLModelView);
+    return glm::make_mat4(gRenderModelView);
 }
 
 glm::mat4 get_current_projection()
 {
-    return glm::make_mat4(gGLProjection);
+    return glm::make_mat4(gRenderProjection);
 }
 
 glm::mat4 get_last_modelview()
 {
-    return glm::make_mat4(gGLLastModelView);
+    return glm::make_mat4(gRenderLastModelView);
 }
 
 glm::mat4 get_last_projection()
@@ -2257,17 +2257,17 @@ void copy_matrix(const glm::mat4& src, F32* dst)
 
 void set_current_modelview(const glm::mat4& mat)
 {
-    copy_matrix(mat, gGLModelView);
+    copy_matrix(mat, gRenderModelView);
 }
 
 void set_current_projection(const glm::mat4& mat)
 {
-    copy_matrix(mat, gGLProjection);
+    copy_matrix(mat, gRenderProjection);
 }
 
 void set_last_modelview(const glm::mat4& mat)
 {
-    copy_matrix(mat, gGLLastModelView);
+    copy_matrix(mat, gRenderLastModelView);
 }
 
 void set_last_projection(const glm::mat4& mat)
@@ -2332,22 +2332,22 @@ struct Site { const char* mFile; int mLine; };
 std::vector<Site> gSites;
 }
 
-void push(Kind kind) { gGL.pushMatrixOf(mode_of(kind)); }
-void pop(Kind kind) { gGL.popMatrixOf(mode_of(kind)); }
-void set(Kind kind, const glm::mat4& m) { gGL.setMatrixOf(mode_of(kind), m); }
-void load(Kind kind, const F32* m) { gGL.setMatrixOf(mode_of(kind), glm::make_mat4(m)); }
-void multiply(Kind kind, const glm::mat4& m) { gGL.multMatrixOf(mode_of(kind), m); }
-void multiply(Kind kind, const F32* m) { gGL.multMatrixOf(mode_of(kind), glm::make_mat4(m)); }
-void identity(Kind kind) { gGL.loadIdentityOf(mode_of(kind)); }
-void translate(Kind kind, const glm::vec3& v) { gGL.translateOf(mode_of(kind), v); }
-void translate(Kind kind, F32 x, F32 y, F32 z) { gGL.translateOf(mode_of(kind), glm::vec3(x, y, z)); }
-void rotate(Kind kind, F32 degrees, const glm::vec3& axis) { gGL.rotateOf(mode_of(kind), degrees, axis); }
-void rotate(Kind kind, F32 degrees, F32 x, F32 y, F32 z) { gGL.rotateOf(mode_of(kind), degrees, glm::vec3(x, y, z)); }
-void scale(Kind kind, const glm::vec3& v) { gGL.scaleOf(mode_of(kind), v); }
-void scale(Kind kind, F32 x, F32 y, F32 z) { gGL.scaleOf(mode_of(kind), glm::vec3(x, y, z)); }
-void ortho(Kind kind, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar) { gGL.orthoOf(mode_of(kind), left, right, bottom, top, zNear, zFar); }
-const glm::mat4& get(Kind kind) { return gGL.matrixOf(mode_of(kind)); }
-U32 depth(Kind kind) { return gGL.matrixDepth(mode_of(kind)); }
+void push(Kind kind) { gRender.pushMatrixOf(mode_of(kind)); }
+void pop(Kind kind) { gRender.popMatrixOf(mode_of(kind)); }
+void set(Kind kind, const glm::mat4& m) { gRender.setMatrixOf(mode_of(kind), m); }
+void load(Kind kind, const F32* m) { gRender.setMatrixOf(mode_of(kind), glm::make_mat4(m)); }
+void multiply(Kind kind, const glm::mat4& m) { gRender.multMatrixOf(mode_of(kind), m); }
+void multiply(Kind kind, const F32* m) { gRender.multMatrixOf(mode_of(kind), glm::make_mat4(m)); }
+void identity(Kind kind) { gRender.loadIdentityOf(mode_of(kind)); }
+void translate(Kind kind, const glm::vec3& v) { gRender.translateOf(mode_of(kind), v); }
+void translate(Kind kind, F32 x, F32 y, F32 z) { gRender.translateOf(mode_of(kind), glm::vec3(x, y, z)); }
+void rotate(Kind kind, F32 degrees, const glm::vec3& axis) { gRender.rotateOf(mode_of(kind), degrees, axis); }
+void rotate(Kind kind, F32 degrees, F32 x, F32 y, F32 z) { gRender.rotateOf(mode_of(kind), degrees, glm::vec3(x, y, z)); }
+void scale(Kind kind, const glm::vec3& v) { gRender.scaleOf(mode_of(kind), v); }
+void scale(Kind kind, F32 x, F32 y, F32 z) { gRender.scaleOf(mode_of(kind), glm::vec3(x, y, z)); }
+void ortho(Kind kind, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar) { gRender.orthoOf(mode_of(kind), left, right, bottom, top, zNear, zFar); }
+const glm::mat4& get(Kind kind) { return gRender.matrixOf(mode_of(kind)); }
+U32 depth(Kind kind) { return gRender.matrixDepth(mode_of(kind)); }
 
 void warnUnbalanced(Kind kind, U32 expected_depth, U32 found_depth, const char* file, int line)
 {
@@ -2375,7 +2375,7 @@ void checkFrameEnd()
     static U32 last[6] = { 0, 0, 0, 0, 0, 0 };
     for (int k = 0; k < 6; ++k)
     {
-        const U32 d = gGL.matrixDepth((LLRender::eMatrixMode)k);
+        const U32 d = gRender.matrixDepth((LLRender::eMatrixMode)k);
         if (d != last[k])
         {
             LL_WARNS("MatrixGuard") << "matrix " << k << " (0 modelview, 1 projection, 2-5 texture): stack depth at the end of the frame is " << d << " (was " << last[k] << ")" << LL_ENDL;

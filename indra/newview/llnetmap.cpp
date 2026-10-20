@@ -380,13 +380,13 @@ void LLNetMap::draw()
     F32 rotation = 0;
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    gGL.pushUIMatrix();
+    gRender.pushUIMatrix();
 
-    LLVector3 offset = gGL.getUITranslation();
-    LLVector3 scale = gGL.getUIScale();
+    LLVector3 offset = gRender.getUITranslation();
+    LLVector3 scale = gRender.getUIScale();
 
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-    gGL.loadUIIdentity();
+    gRender.loadUIIdentity();
 
     LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale.mV[0], scale.mV[1], scale.mV[2]);
     LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, offset.mV[0], offset.mV[1], offset.mV[2]);
@@ -394,12 +394,12 @@ void LLNetMap::draw()
     {
         LLLocalClipRect clip(getLocalRect());
         {
-            gGL.getTexUnit(0)->bindWhite();
+            gRender.getTexUnit(0)->bindWhite();
 
 
             // Draw background rectangle
             LLColor4 background_color = mBackgroundColor.get();
-            gGL.color4fv( background_color.mV );
+            gRender.color4fv( background_color.mV );
             gl_rect_2d(0, getRect().getHeight(), getRect().getWidth(), 0);
         }
 
@@ -449,16 +449,16 @@ void LLNetMap::draw()
 
             if (regionp == gAgent.getRegion())
             {
-                gGL.color4f(1.f, 1.f, 1.f, 1.f);
+                gRender.color4f(1.f, 1.f, 1.f, 1.f);
             }
             else
             {
-                gGL.color4f(0.8f, 0.8f, 0.8f, 1.f);
+                gRender.color4f(0.8f, 0.8f, 0.8f, 1.f);
             }
 
             if (!regionp->isAlive())
             {
-                gGL.color4f(1.f, 0.5f, 0.5f, 1.f);
+                gRender.color4f(1.f, 0.5f, 0.5f, 1.f);
             }
 
             // <FS> [FIRE-35147] OpenSim regions can be greater than 256x256 and need to be accounted for
@@ -482,26 +482,26 @@ void LLNetMap::draw()
                         if (pRegionImage.isNull())
                             continue;
 
-                        if (pRegionImage->hasGLTexture())
+                        if (pRegionImage->hasImageTexture())
                         {
-                            gGL.getTexUnit(0)->bind(pRegionImage);
-                            gGL.begin(LLRender::TRIANGLES);
+                            gRender.getTexUnit(0)->bind(pRegionImage);
+                            gRender.begin(LLRender::TRIANGLES);
                             {
-                                gGL.texCoord2f(0.f, 1.f);
-                                gGL.vertex2f(local_left, local_top);
-                                gGL.texCoord2f(0.f, 0.f);
-                                gGL.vertex2f(local_left, local_bottom);
-                                gGL.texCoord2f(1.f, 0.f);
-                                gGL.vertex2f(local_right, local_bottom);
+                                gRender.texCoord2f(0.f, 1.f);
+                                gRender.vertex2f(local_left, local_top);
+                                gRender.texCoord2f(0.f, 0.f);
+                                gRender.vertex2f(local_left, local_bottom);
+                                gRender.texCoord2f(1.f, 0.f);
+                                gRender.vertex2f(local_right, local_bottom);
 
-                                gGL.texCoord2f(0.f, 1.f);
-                                gGL.vertex2f(local_left, local_top);
-                                gGL.texCoord2f(1.f, 0.f);
-                                gGL.vertex2f(local_right, local_bottom);
-                                gGL.texCoord2f(1.f, 1.f);
-                                gGL.vertex2f(local_right, local_top);
+                                gRender.texCoord2f(0.f, 1.f);
+                                gRender.vertex2f(local_left, local_top);
+                                gRender.texCoord2f(1.f, 0.f);
+                                gRender.vertex2f(local_right, local_bottom);
+                                gRender.texCoord2f(1.f, 1.f);
+                                gRender.vertex2f(local_right, local_top);
                             }
-                            gGL.end();
+                            gRender.end();
                         }
                         pRegionImage->setBoostLevel(LLViewerTexture::BOOST_MAP_VISIBLE);
                     }
@@ -511,26 +511,26 @@ void LLNetMap::draw()
             else
             {
                 // Draw using texture.
-                gGL.getTexUnit(0)->bind(regionp->getLand().getSTexture());
-                gGL.begin(LLRender::TRIANGLES);
+                gRender.getTexUnit(0)->bind(regionp->getLand().getSTexture());
+                gRender.begin(LLRender::TRIANGLES);
                 {
-                    gGL.texCoord2f(0.f, 1.f);
-                    gGL.vertex2f(left, top);
-                    gGL.texCoord2f(0.f, 0.f);
-                    gGL.vertex2f(left, bottom);
-                    gGL.texCoord2f(1.f, 0.f);
-                    gGL.vertex2f(right, bottom);
+                    gRender.texCoord2f(0.f, 1.f);
+                    gRender.vertex2f(left, top);
+                    gRender.texCoord2f(0.f, 0.f);
+                    gRender.vertex2f(left, bottom);
+                    gRender.texCoord2f(1.f, 0.f);
+                    gRender.vertex2f(right, bottom);
 
-                    gGL.texCoord2f(0.f, 1.f);
-                    gGL.vertex2f(left, top);
-                    gGL.texCoord2f(1.f, 0.f);
-                    gGL.vertex2f(right, bottom);
-                    gGL.texCoord2f(1.f, 1.f);
-                    gGL.vertex2f(right, top);
+                    gRender.texCoord2f(0.f, 1.f);
+                    gRender.vertex2f(left, top);
+                    gRender.texCoord2f(1.f, 0.f);
+                    gRender.vertex2f(right, bottom);
+                    gRender.texCoord2f(1.f, 1.f);
+                    gRender.vertex2f(right, top);
                 }
-                gGL.end();
+                gRender.end();
             }
-            gGL.flush();
+            gRender.flush();
         }
 
         // Redraw object layer periodically
@@ -606,33 +606,33 @@ void LLNetMap::draw()
         map_center_agent.mV[VX] *= scale_pixels_per_meter;
         map_center_agent.mV[VY] *= scale_pixels_per_meter;
 
-//      gGL.getTexUnit(0)->bind(mObjectImagep);
+//      gRender.getTexUnit(0)->bind(mObjectImagep);
         F32 image_half_width = 0.5f*mObjectMapPixels;
         F32 image_half_height = 0.5f*mObjectMapPixels;
 
 // [SL:KB] - Patch: World-MinimapOverlay | Checked: 2012-07-26 (Catznip-3.3)
         if (s_fShowObjects)
         {
-            gGL.color4f(1.f, 1.f, 1.f, 1.f);
-            gGL.getTexUnit(0)->bind(mObjectImagep);
+            gRender.color4f(1.f, 1.f, 1.f, 1.f);
+            gRender.getTexUnit(0)->bind(mObjectImagep);
 // [/SL:KB]
-            gGL.begin(LLRender::TRIANGLES);
+            gRender.begin(LLRender::TRIANGLES);
             {
-                gGL.texCoord2f(0.f, 1.f);
-                gGL.vertex2f(map_center_agent.mV[VX] - image_half_width, image_half_height + map_center_agent.mV[VY]);
-                gGL.texCoord2f(0.f, 0.f);
-                gGL.vertex2f(map_center_agent.mV[VX] - image_half_width, map_center_agent.mV[VY] - image_half_height);
-                gGL.texCoord2f(1.f, 0.f);
-                gGL.vertex2f(image_half_width + map_center_agent.mV[VX], map_center_agent.mV[VY] - image_half_height);
+                gRender.texCoord2f(0.f, 1.f);
+                gRender.vertex2f(map_center_agent.mV[VX] - image_half_width, image_half_height + map_center_agent.mV[VY]);
+                gRender.texCoord2f(0.f, 0.f);
+                gRender.vertex2f(map_center_agent.mV[VX] - image_half_width, map_center_agent.mV[VY] - image_half_height);
+                gRender.texCoord2f(1.f, 0.f);
+                gRender.vertex2f(image_half_width + map_center_agent.mV[VX], map_center_agent.mV[VY] - image_half_height);
 
-                gGL.texCoord2f(0.f, 1.f);
-                gGL.vertex2f(map_center_agent.mV[VX] - image_half_width, image_half_height + map_center_agent.mV[VY]);
-                gGL.texCoord2f(1.f, 0.f);
-                gGL.vertex2f(image_half_width + map_center_agent.mV[VX], map_center_agent.mV[VY] - image_half_height);
-                gGL.texCoord2f(1.f, 1.f);
-                gGL.vertex2f(image_half_width + map_center_agent.mV[VX], image_half_height + map_center_agent.mV[VY]);
+                gRender.texCoord2f(0.f, 1.f);
+                gRender.vertex2f(map_center_agent.mV[VX] - image_half_width, image_half_height + map_center_agent.mV[VY]);
+                gRender.texCoord2f(1.f, 0.f);
+                gRender.vertex2f(image_half_width + map_center_agent.mV[VX], map_center_agent.mV[VY] - image_half_height);
+                gRender.texCoord2f(1.f, 1.f);
+                gRender.vertex2f(image_half_width + map_center_agent.mV[VX], image_half_height + map_center_agent.mV[VY]);
             }
-            gGL.end();
+            gRender.end();
 // [SL:KB] - Patch: World-MinimapOverlay | Checked: 2012-07-26 (Catznip-3.3)
         }
 // [/SL:KB]
@@ -644,23 +644,23 @@ void LLNetMap::draw()
             map_center_agent.mV[VX] *= mScale / region_width;
             map_center_agent.mV[VY] *= mScale / region_width;
 
-            gGL.color4f(1.f, 1.f, 1.f, 1.f);
-            gGL.getTexUnit(0)->bind(mParcelImagep);
-            gGL.begin(LLRender::TRIANGLES);
-                gGL.texCoord2f(0.f, 1.f);
-                gGL.vertex2f(map_center_agent.mV[VX] - image_half_width, image_half_height + map_center_agent.mV[VY]);
-                gGL.texCoord2f(0.f, 0.f);
-                gGL.vertex2f(map_center_agent.mV[VX] - image_half_width, map_center_agent.mV[VY] - image_half_height);
-                gGL.texCoord2f(1.f, 0.f);
-                gGL.vertex2f(image_half_width + map_center_agent.mV[VX], map_center_agent.mV[VY] - image_half_height);
+            gRender.color4f(1.f, 1.f, 1.f, 1.f);
+            gRender.getTexUnit(0)->bind(mParcelImagep);
+            gRender.begin(LLRender::TRIANGLES);
+                gRender.texCoord2f(0.f, 1.f);
+                gRender.vertex2f(map_center_agent.mV[VX] - image_half_width, image_half_height + map_center_agent.mV[VY]);
+                gRender.texCoord2f(0.f, 0.f);
+                gRender.vertex2f(map_center_agent.mV[VX] - image_half_width, map_center_agent.mV[VY] - image_half_height);
+                gRender.texCoord2f(1.f, 0.f);
+                gRender.vertex2f(image_half_width + map_center_agent.mV[VX], map_center_agent.mV[VY] - image_half_height);
 
-                gGL.texCoord2f(0.f, 1.f);
-                gGL.vertex2f(map_center_agent.mV[VX] - image_half_width, image_half_height + map_center_agent.mV[VY]);
-                gGL.texCoord2f(1.f, 0.f);
-                gGL.vertex2f(image_half_width + map_center_agent.mV[VX], map_center_agent.mV[VY] - image_half_height);
-                gGL.texCoord2f(1.f, 1.f);
-                gGL.vertex2f(image_half_width + map_center_agent.mV[VX], image_half_height + map_center_agent.mV[VY]);
-            gGL.end();
+                gRender.texCoord2f(0.f, 1.f);
+                gRender.vertex2f(map_center_agent.mV[VX] - image_half_width, image_half_height + map_center_agent.mV[VY]);
+                gRender.texCoord2f(1.f, 0.f);
+                gRender.vertex2f(image_half_width + map_center_agent.mV[VX], map_center_agent.mV[VY] - image_half_height);
+                gRender.texCoord2f(1.f, 1.f);
+                gRender.vertex2f(image_half_width + map_center_agent.mV[VX], image_half_height + map_center_agent.mV[VY]);
+            gRender.end();
         }
 // [/SL:KB]
 
@@ -912,11 +912,11 @@ void LLNetMap::draw()
         const F32 arc_end = (horiz_fov / 2.0f) + F_PI_BY_TWO;
         const S32 steps = llmax(1, (S32)((horiz_fov * steps_per_radian) + 0.5f));
 
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
 
         // <FS:Ansariel> Draw pick radius; from Ayamo Nozaki (Exodus Viewer)
         static LLUIColor pick_radius_color = LLUIColorTable::instance().getColor("MapPickRadiusColor", map_frustum_color());
-        gGL.color4fv((pick_radius_color()).mV);
+        gRender.color4fv((pick_radius_color()).mV);
         gl_circle_2d((F32)local_mouse_x, (F32)local_mouse_y, mDotRadius * fsMinimapPickScale, 32, true);
         // </FS:Ansariel>
 
@@ -939,7 +939,7 @@ void LLNetMap::draw()
     }
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-    gGL.popUIMatrix();
+    gRender.popUIMatrix();
 
     LLUICtrl::draw();
 }

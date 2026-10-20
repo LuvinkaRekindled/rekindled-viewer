@@ -205,9 +205,9 @@ void LLViewerJointMesh::uploadJointMatrices()
     F32 mat[45*4];
     computeJointPalette(mat, true);
         stop_glerror();
-        if (LLGLSLShader::sCurBoundShaderPtr)
+        if (LLShaderProgram::sCurBoundShaderPtr)
         {
-            LLGLSLShader::sCurBoundShaderPtr->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, mat);
+            LLShaderProgram::sCurBoundShaderPtr->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, mat);
         }
         stop_glerror();
 }
@@ -221,7 +221,7 @@ static bool rt_body_log_wanted()
 
 void LLViewerJointMesh::noteRecentBodyMeshes()
 {
-    if (!LLVkMirror::rtShadowMode())
+    if (!LLVkBridge::rtShadowMode())
     {
         return;
     }
@@ -297,19 +297,19 @@ void LLViewerJointMesh::noteRayShadow()
     }
     LLVertexBuffer* buff = mFace ? mFace->getVertexBuffer() : nullptr;
     LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;
-    if (!buff || !drawable || !mMesh || !buff->getGLBuffer() || !buff->getGLIndices() || buff->getIndicesType() != ComponentType::U16
+    if (!buff || !drawable || !mMesh || !buff->getVertexBufferId() || !buff->getIndexBufferId() || buff->getIndicesType() != ComponentType::U16
         || !buff->hasDataType(LLVertexBuffer::TYPE_VERTEX) || buff->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || mMesh->mFaceVertexCount == 0 || mMesh->mFaceIndexCount < 3)
     {
         return;
     }
     LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(drawable->getVObj().get());
-    if (!avatar || (!avatar->isFullyLoaded() && LLVkMirror::rtLoadingGates()))
+    if (!avatar || (!avatar->isFullyLoaded() && LLVkBridge::rtLoadingGates()))
     {
         return;                             // (an avatar still loading in is not traced until it is loaded)
     }
-    LLVkMirror::ShadowBodyEntry e = {};
-    e.mVertexBuffer = buff->getGLBuffer();
-    e.mIndexBuffer = buff->getGLIndices();
+    LLVkBridge::ShadowBodyEntry e = {};
+    e.mVertexBuffer = buff->getVertexBufferId();
+    e.mIndexBuffer = buff->getIndexBufferId();
     e.mFirstIndex = mMesh->mFaceIndexOffset;
     e.mIndexCount = mMesh->mFaceIndexCount;
     e.mVertexFirst = mMesh->mFaceVertexOffset;
@@ -349,8 +349,8 @@ void LLViewerJointMesh::noteRayShadow()
             }
             if (masked && tex)
             {
-                e.mAlphaFlags = LLVkMirror::ALPHA_TREE | LLVkMirror::ALPHA_NO_INDEX | LLVkMirror::ALPHA_HAS_TEXCOORD;
-                e.mTexture = gGL.getTexUnit(0)->prepareFast(tex);
+                e.mAlphaFlags = LLVkBridge::ALPHA_TREE | LLVkBridge::ALPHA_NO_INDEX | LLVkBridge::ALPHA_HAS_TEXCOORD;
+                e.mTexture = gRender.getTexUnit(0)->prepareFast(tex);
                 e.mCutoff = 0.5f;
             }
             e.mTexcoordOffset = buff->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
@@ -391,7 +391,7 @@ void LLViewerJointMesh::noteRayShadow()
         const LLMatrix4 joint_to_world = getWorldMatrix();
         memcpy(e.mModel, joint_to_world.mMatrix, sizeof(e.mModel));
     }
-    LLVkMirror::ShadowPacketsHeader header;
+    LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 4;
     header.mEntries = 1;
     header.mPaletteFloats = (U32)palette.size();
@@ -401,7 +401,7 @@ void LLViewerJointMesh::noteRayShadow()
     {
         memcpy(blob.data() + sizeof(e), palette.data(), palette.size() * sizeof(F32));
     }
-    LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+    LLVkBridge::shadowPackets(header, blob.data(), blob.size());
 }
 
 
@@ -433,7 +433,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         !mFace->getVertexBuffer() ||
         mMesh->getNumFaces() == 0 ||
         mMesh->mFaceVertexCount == 0 ||
-        LLGLSLShader::sCurBoundShaderPtr == NULL)
+        LLShaderProgram::sCurBoundShaderPtr == NULL)
     {
         return 0;
     }
@@ -441,7 +441,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     U32 triangle_count = 0;
 
     // the ray scene wants the avatars every frame: named by the shadow passes (which the far sun cascades run only every few frames) and by the main view
-    if (LLVkMirror::rtShadowMode()
+    if (LLVkBridge::rtShadowMode()
         && (LLDrawPoolAvatar::sShadowPass == LLDrawPoolAvatar::SHADOW_PASS_AVATAR_OPAQUE || (LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)))
     {
         noteRayShadow();
@@ -504,9 +504,9 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     // setup current color
     //----------------------------------------------------------------
     if (is_dummy)
-        gGL.diffuseColor4fv(LLVOAvatar::getDummyColor().mV);
+        gRender.diffuseColor4fv(LLVOAvatar::getDummyColor().mV);
     else
-        gGL.diffuseColor4fv(mColor.mV);
+        gRender.diffuseColor4fv(mColor.mV);
 
     stop_glerror();
 
@@ -519,35 +519,35 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     LLViewerTexLayerSet *layerset = dynamic_cast<LLViewerTexLayerSet*>(mLayerSet);
     if (mTestImageName)
     {
-        gGL.getTexUnit(diffuse_channel)->bindManual(LLTexUnit::TT_TEXTURE, mTestImageName);
+        gRender.getTexUnit(diffuse_channel)->bindManual(LLTexUnit::TT_TEXTURE, mTestImageName);
 
         if (mIsTransparent)
         {
-            gGL.diffuseColor4f(1.f, 1.f, 1.f, 1.f);
+            gRender.diffuseColor4f(1.f, 1.f, 1.f, 1.f);
         }
         else
         {
-            gGL.diffuseColor4f(0.7f, 0.6f, 0.3f, 1.f);
+            gRender.diffuseColor4f(0.7f, 0.6f, 0.3f, 1.f);
         }
     }
     else if( !is_dummy && layerset )
     {
         if( layerset->hasComposite() )
         {
-            gGL.getTexUnit(diffuse_channel)->bind(layerset->getViewerComposite());
+            gRender.getTexUnit(diffuse_channel)->bind(layerset->getViewerComposite());
         }
         else
         {
-            gGL.getTexUnit(diffuse_channel)->bind(LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT));
+            gRender.getTexUnit(diffuse_channel)->bind(LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT));
         }
     }
     else if ( !is_dummy && mTexture.notNull() )
     {
-        gGL.getTexUnit(diffuse_channel)->bind(mTexture);
+        gRender.getTexUnit(diffuse_channel)->bind(mTexture);
     }
     else
     {
-        gGL.getTexUnit(diffuse_channel)->bind(LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT));
+        gRender.getTexUnit(diffuse_channel)->bind(LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT));
     }
 
     U32 start = mMesh->mFaceVertexOffset;

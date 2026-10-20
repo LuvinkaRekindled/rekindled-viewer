@@ -42,7 +42,7 @@ LLRenderSphere gSphere;
 void LLRenderSphere::render()
 {
     renderGGL();
-    gGL.flush();
+    gRender.flush();
 }
 
 inline LLVector3 polar_to_cart(F32 latitude, F32 longitude)
@@ -103,27 +103,27 @@ void LLRenderSphere::renderGGL()
     }
 
 
-    if (LLGLSLShader::sCurBoundShaderPtr->mAttributeMask == LLVertexBuffer::MAP_VERTEX)
+    if (LLShaderProgram::sCurBoundShaderPtr->mAttributeMask == LLVertexBuffer::MAP_VERTEX)
     { // shader expects only vertex positions in vertex buffer, use fast path
         mVertexBuffer->setBuffer();
         mVertexBuffer->drawRange(LLRender::TRIANGLES, 0, mVertexBuffer->getNumVerts(), mVertexBuffer->getNumIndices(), 0);
     }
     else
     { //shader wants colors in the vertex stream, use slow path
-        gGL.begin(LLRender::TRIANGLES);
+        gRender.begin(LLRender::TRIANGLES);
         for (S32 lat_i = 0; lat_i < LATITUDE_SLICES; lat_i++)
         {
             for (S32 lon_i = 0; lon_i < LONGITUDE_SLICES; lon_i++)
             {
-                gGL.vertex3fv(mSpherePoints[lat_i][lon_i].mV);
-                gGL.vertex3fv(mSpherePoints[lat_i][lon_i + 1].mV);
-                gGL.vertex3fv(mSpherePoints[lat_i + 1][lon_i].mV);
+                gRender.vertex3fv(mSpherePoints[lat_i][lon_i].mV);
+                gRender.vertex3fv(mSpherePoints[lat_i][lon_i + 1].mV);
+                gRender.vertex3fv(mSpherePoints[lat_i + 1][lon_i].mV);
 
-                gGL.vertex3fv(mSpherePoints[lat_i + 1][lon_i].mV);
-                gGL.vertex3fv(mSpherePoints[lat_i][lon_i + 1].mV);
-                gGL.vertex3fv(mSpherePoints[lat_i + 1][lon_i + 1].mV);
+                gRender.vertex3fv(mSpherePoints[lat_i + 1][lon_i].mV);
+                gRender.vertex3fv(mSpherePoints[lat_i][lon_i + 1].mV);
+                gRender.vertex3fv(mSpherePoints[lat_i + 1][lon_i + 1].mV);
             }
         }
-        gGL.end();
+        gRender.end();
     }
 }

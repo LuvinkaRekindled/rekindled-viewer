@@ -133,13 +133,13 @@ bool stop_gloderror()
 
 LLViewerFetchedTexture* bindMaterialDiffuseTexture(const LLImportMaterial& material)
 {
-    LLViewerFetchedTexture *texture = LLViewerTextureManager::getFetchedTexture(material.getDiffuseMap(), FTT_DEFAULT, true, LLGLTexture::BOOST_PREVIEW);
+    LLViewerFetchedTexture *texture = LLViewerTextureManager::getFetchedTexture(material.getDiffuseMap(), FTT_DEFAULT, true, LLBaseTexture::BOOST_PREVIEW);
 
     if (texture)
     {
         if (texture->getDiscardLevel() > -1)
         {
-            gGL.getTexUnit(0)->bind(texture, true);
+            gRender.getTexUnit(0)->bind(texture, true);
             return texture;
         }
     }
@@ -251,7 +251,7 @@ LLModelPreview::LLModelPreview(S32 width, S32 height, LLFloater* fmp)
     mBuildBorderMode = GLOD_BORDER_UNLOCK;
     mBuildOperator = GLOD_OPERATOR_EDGE_COLLAPSE;
     // </FS:Beq>
-    mUVGuideTexture = LLViewerTextureManager::getFetchedTextureFromFile(gSavedSettings.getString("FSMeshPreviewUVGuideFile"), FTT_LOCAL_FILE, true, LLGLTexture::BOOST_PREVIEW); // <FS:Beq> - Add UV guide overlay to pmesh preview
+    mUVGuideTexture = LLViewerTextureManager::getFetchedTextureFromFile(gSavedSettings.getString("FSMeshPreviewUVGuideFile"), FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_PREVIEW); // <FS:Beq> - Add UV guide overlay to pmesh preview
 
     for (U32 i = 0; i < LLModel::NUM_LODS; ++i)
     {
@@ -1723,7 +1723,7 @@ void LLModelPreview::genGlodLODs(S32 which_lod, U32 decimation, bool enforce_tri
 
     LLVertexBuffer::unbind();
 
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
 
     if (shader)
     {
@@ -4247,7 +4247,7 @@ U32 LLModelPreview::loadTextures(LLImportMaterial& material, LLHandle<LLModelPre
         material.mOpaqueData = new LLPointer< LLViewerFetchedTexture >;
         LLPointer< LLViewerFetchedTexture >& tex = (*reinterpret_cast< LLPointer< LLViewerFetchedTexture > * >(material.mOpaqueData));
 
-        tex = LLViewerTextureManager::getFetchedTextureFromUrl("file://" + LLURI::unescape(material.mDiffuseMapFilename), FTT_LOCAL_FILE, true, LLGLTexture::BOOST_PREVIEW);
+        tex = LLViewerTextureManager::getFetchedTextureFromUrl("file://" + LLURI::unescape(material.mDiffuseMapFilename), FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_PREVIEW);
         if (tex->getDiscardLevel() < tex->getMaxDiscardLevel())
         {
             // file was loaded previosly, reload image to get potential changes
@@ -4359,7 +4359,7 @@ bool LLModelPreview::render()
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
-        gGL.color4fv(canvas_col().mV); // <FS:Beq/> restore changes removed by the lab
+        gRender.color4fv(canvas_col().mV); // <FS:Beq/> restore changes removed by the lab
         gl_rect_2d_simple(width, height);
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
@@ -4571,7 +4571,7 @@ bool LLModelPreview::render()
     stop_glerror();
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    gGL.color4fv(edge_col().mV); // <FS:Beq/> restore changes removed by the lab
+    gRender.color4fv(edge_col().mV); // <FS:Beq/> restore changes removed by the lab
 
     if (!mBaseModel.empty() && mVertexBuffer[LLModel::NUM_LODS].empty())
     {
@@ -4639,7 +4639,7 @@ bool LLModelPreview::render()
                             const std::string& binding = instance.mModel->mMaterialList[i];
                             const LLImportMaterial& material = instance.mMaterial[binding];
 
-                            gGL.diffuseColor4fv(material.mDiffuseColor.mV);
+                            gRender.diffuseColor4fv(material.mDiffuseColor.mV);
 
                             // Find the tex for this material, bind it, and add it to our set
                             //
@@ -4657,34 +4657,34 @@ bool LLModelPreview::render()
                         {
                             if (mUVGuideTexture->getDiscardLevel() > -1)
                             {
-                                gGL.getTexUnit(0)->bind(mUVGuideTexture, true);
+                                gRender.getTexUnit(0)->bind(mUVGuideTexture, true);
                             }
                         }
-                        gGL.diffuseColor4fv(base_col().mV); // <FS:Beq/> restore changes removed by the lab
+                        gRender.diffuseColor4fv(base_col().mV); // <FS:Beq/> restore changes removed by the lab
 
                     }
                     // </FS:Beq>
                     else
                     {
-                        gGL.diffuseColor4fv(base_col().mV); // <FS:Beq/> restore changes removed by the lab
+                        gRender.diffuseColor4fv(base_col().mV); // <FS:Beq/> restore changes removed by the lab
                     }
 
                     // Zero this variable for an obligatory buffer initialization
                     // See https://github.com/secondlife/viewer/issues/912
-                    LLVertexBuffer::sGLRenderBuffer = 0;
+                    LLVertexBuffer::sRenderBufferId = 0;
                     LLVertexBuffer* buffer = mVertexBuffer[mPreviewLOD][model][i];
                     buffer->setBuffer();
                     buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
 
-                    gGL.getTexUnit(0)->bindWhite();
-                    gGL.diffuseColor4fv(edge_col().mV); // <FS:Beq/> restore changes removed by the lab
+                    gRender.getTexUnit(0)->bindWhite();
+                    gRender.diffuseColor4fv(edge_col().mV); // <FS:Beq/> restore changes removed by the lab
                     if (show_edges)
                     {
-                        gGL.setLineWidth(edge_width()); // <FS:Beq/> restore changes removed by the lab
-                        gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
+                        gRender.setLineWidth(edge_width()); // <FS:Beq/> restore changes removed by the lab
+                        gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
                         buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
-                        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-                        gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
+                        gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                        gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
                     }
                     buffer->unmapBuffer();
                 }
@@ -4693,23 +4693,23 @@ bool LLModelPreview::render()
 
             if (show_physics)
             {
-                gGL.clearBuffers(ClearBits::Depth);
+                gRender.clearBuffers(ClearBits::Depth);
 
                 for (U32 pass = 0; pass < 2; pass++)
                 {
                     if (pass == 0)
                     { //depth only pass
-                        gGL.setColorMask(false, false);
+                        gRender.setColorMask(false, false);
                     }
                     else
                     {
-                        gGL.setColorMask(true, true);
+                        gRender.setColorMask(true, true);
                     }
 
                     //enable alpha blending on second pass but not first pass
                     LLRenderState::BlendScope blend(pass);
 
-                    gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+                    gRender.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
 
                     for (LLMeshUploadThread::instance_list_t::iterator iter = mUploadData.begin(); iter != mUploadData.end(); ++iter)
                     {
@@ -4774,7 +4774,7 @@ bool LLModelPreview::render()
                                             hull_colors.push_back(LLColor4U(rand() % 128 + 127, rand() % 128 + 127, rand() % 128 + 127, 128));
                                         }
 
-                                        gGL.diffuseColor4ubv(hull_colors[i].mV);
+                                        gRender.diffuseColor4ubv(hull_colors[i].mV);
                                         LLVertexBuffer::drawArrays(LLRender::TRIANGLES, physics.mMesh[i].mPositions);
 
                                         if (physics_explode > 0.f)
@@ -4796,26 +4796,26 @@ bool LLModelPreview::render()
                             {
                                 for (size_t i = 0; i < num_models; ++i)
                                 {
-                                    gGL.getTexUnit(0)->bindWhite();
-                                    gGL.diffuseColor4fv(phys_fill_col().mV); // <FS:Beq/> restore changes removed by the lab
+                                    gRender.getTexUnit(0)->bindWhite();
+                                    gRender.diffuseColor4fv(phys_fill_col().mV); // <FS:Beq/> restore changes removed by the lab
 
                                     // Zero this variable for an obligatory buffer initialization
                                     // See https://github.com/secondlife/viewer/issues/912
-                                    LLVertexBuffer::sGLRenderBuffer = 0;
+                                    LLVertexBuffer::sRenderBufferId = 0;
                                     LLVertexBuffer* buffer = mVertexBuffer[LLModel::LOD_PHYSICS][model][i];
                                     buffer->setBuffer();
                                     buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
                                     // <FS:Beq> restore changes removed by the lab
-                                    // gGL.diffuseColor4fv(PREVIEW_PSYH_EDGE_COL.mV);
-                                    // gGL.setLineWidth(PREVIEW_PSYH_EDGE_WIDTH); // <FS> Line width OGL core profile fix by Rye Mutt
-                                    gGL.diffuseColor4fv(phys_edge_col().mV);
-                                    gGL.setLineWidth(phys_edge_width());
+                                    // gRender.diffuseColor4fv(PREVIEW_PSYH_EDGE_COL.mV);
+                                    // gRender.setLineWidth(PREVIEW_PSYH_EDGE_WIDTH); // <FS> Line width OGL core profile fix by Rye Mutt
+                                    gRender.diffuseColor4fv(phys_edge_col().mV);
+                                    gRender.setLineWidth(phys_edge_width());
                                     // </FS:Beq>
-                                    gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
+                                    gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
                                     buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
 
-                                    gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-                                    gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
+                                    gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                                    gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
 
                                     buffer->unmapBuffer();
                                 }
@@ -4828,18 +4828,18 @@ bool LLModelPreview::render()
                     if (mHasDegenerate)
                     {
                         // <FS:Beq> restore older functionality lost in lab importer
-                        // gGL.setLineWidth(PREVIEW_DEG_EDGE_WIDTH); // <FS> Line width OGL core profile fix by Rye Mutt
+                        // gRender.setLineWidth(PREVIEW_DEG_EDGE_WIDTH); // <FS> Line width OGL core profile fix by Rye Mutt
                         // glPointSize(PREVIEW_DEG_POINT_SIZE);
                         // gPipeline.enableLightsFullbright();
-                        gGL.setLineWidth(deg_edge_width());
-                        gGL.setPointSize(deg_point_size());
+                        gRender.setLineWidth(deg_edge_width());
+                        gRender.setPointSize(deg_point_size());
                         // gPipeline.enableLightsFullbright(); // This may need to be restored when I fined the cause of the black rendering
                         // </FS:Beq>
                         //show degenerate triangles
                         LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
                         LLRenderState::CullScope cull(false);
 
-                        // gGL.diffuseColor4f(1.f, 0.f, 0.f, 1.f); // <FS:Beq/> restore proper functionality
+                        // gRender.diffuseColor4f(1.f, 0.f, 0.f, 1.f); // <FS:Beq/> restore proper functionality
                         const LLVector4a scale(0.5f);
 
                         for (LLMeshUploadThread::instance_list_t::iterator iter = mUploadData.begin(); iter != mUploadData.end(); ++iter)
@@ -4873,7 +4873,7 @@ bool LLModelPreview::render()
                                     {
                                         // Zero this variable for an obligatory buffer initialization
                                         // See https://github.com/secondlife/viewer/issues/912
-                                        LLVertexBuffer::sGLRenderBuffer = 0;
+                                        LLVertexBuffer::sRenderBufferId = 0;
                                         LLVertexBuffer* buffer = mVertexBuffer[LLModel::LOD_PHYSICS][model][v];
                                         buffer->setBuffer();
                                         LLStrider<LLVector3> pos_strider;
@@ -4892,12 +4892,12 @@ bool LLModelPreview::render()
                                             if (ll_is_degenerate(v1, v2, v3))
                                             {
                                                 // <FS:Beq> restore (configurable) coloured overlay
-                                                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-                                                gGL.diffuseColor4fv(deg_fill_col().mV);
+                                                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                                                gRender.diffuseColor4fv(deg_fill_col().mV);
                                                 buffer->draw(LLRender::TRIANGLES, 3, i);
-                                                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
-                                                gGL.diffuseColor3fv(deg_edge_col().mV);
-                                                gGL.color3fv(deg_edge_col().mV);
+                                                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                                                gRender.diffuseColor3fv(deg_edge_col().mV);
+                                                gRender.color3fv(deg_edge_col().mV);
                                                 // </FS:Beq>
                                                 buffer->draw(LLRender::LINE_LOOP, 3, i);
                                                 buffer->draw(LLRender::POINTS, 3, i);
@@ -4911,10 +4911,10 @@ bool LLModelPreview::render()
 
                             LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                         }
-                        gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
-                        gGL.setPointSize(1.f);
+                        gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
+                        gRender.setPointSize(1.f);
                         gPipeline.enableLightsPreview();
-                        gGL.setSceneBlendType(LLRender::BT_ALPHA);
+                        gRender.setSceneBlendType(LLRender::BT_ALPHA);
                     }
                 }
             }
@@ -4996,7 +4996,7 @@ bool LLModelPreview::render()
                             model->mSkinInfo.updateHash();
                             LLRenderPass::uploadMatrixPalette(mPreviewAvatar, &model->mSkinInfo);
 
-                            gGL.getTexUnit(0)->bindWhite();
+                            gRender.getTexUnit(0)->bindWhite();
 
                             if (show_textures)
                             {
@@ -5006,7 +5006,7 @@ bool LLModelPreview::render()
                                     const std::string& binding = instance.mModel->mMaterialList[i];
                                     const LLImportMaterial& material = instance.mMaterial[binding];
 
-                                    gGL.diffuseColor4fv(material.mDiffuseColor.mV);
+                                    gRender.diffuseColor4fv(material.mDiffuseColor.mV);
 
                                     // Find the tex for this material, bind it, and add it to our set
                                     //
@@ -5020,30 +5020,30 @@ bool LLModelPreview::render()
                             else
                             {
                                 // <FS:Beq> restore behaviour removed by lab
-                                //gGL.diffuseColor4fv(PREVIEW_BASE_COL.mV);
-                                gGL.diffuseColor4fv(base_col().mV);
+                                //gRender.diffuseColor4fv(PREVIEW_BASE_COL.mV);
+                                gRender.diffuseColor4fv(base_col().mV);
                             }
 
                             // Zero this variable for an obligatory buffer initialization
                             // See https://github.com/secondlife/viewer/issues/912
-                            LLVertexBuffer::sGLRenderBuffer = 0;
+                            LLVertexBuffer::sRenderBufferId = 0;
                             LLVertexBuffer* buffer = mVertexBuffer[mPreviewLOD][model][i];
                             buffer->setBuffer();
                             buffer->draw(LLRender::TRIANGLES, buffer->getNumIndices(), 0);
 
                             if (show_edges)
                             {
-                                gGL.getTexUnit(0)->bindWhite();
+                                gRender.getTexUnit(0)->bindWhite();
                                 // <FS:Beq> restore behaviour removed by lab
-                                // gGL.diffuseColor4fv(PREVIEW_EDGE_COL.mV);
-                                // gGL.setLineWidth(PREVIEW_EDGE_WIDTH);
-                                gGL.diffuseColor4fv(edge_col().mV);
-                                gGL.setLineWidth(edge_width());
+                                // gRender.diffuseColor4fv(PREVIEW_EDGE_COL.mV);
+                                // gRender.setLineWidth(PREVIEW_EDGE_WIDTH);
+                                gRender.diffuseColor4fv(edge_col().mV);
+                                gRender.setLineWidth(edge_width());
                                 // </FS:Beq>
-                                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
+                                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
                                 buffer->draw(LLRender::TRIANGLES, buffer->getNumIndices(), 0);
-                                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-                                gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
+                                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                                gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
                             }
                         }
                     }
@@ -5052,7 +5052,7 @@ bool LLModelPreview::render()
 
             if (show_joint_positions)
             {
-                LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+                LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
                 if (shader)
                 {
                     gDebugProgram.bind();
@@ -5091,22 +5091,22 @@ bool LLModelPreview::render()
 void LLModelPreview::renderGroundPlane(float z_offset)
 {   // Not necesarilly general - beware - but it seems to meet the needs of LLModelPreview::render
 
-    gGL.diffuseColor3f( 1.0f, 0.0f, 1.0f );
+    gRender.diffuseColor3f( 1.0f, 0.0f, 1.0f );
 
-    gGL.begin(LLRender::LINES);
-    gGL.vertex3fv(mGroundPlane[0].mV);
-    gGL.vertex3fv(mGroundPlane[1].mV);
+    gRender.begin(LLRender::LINES);
+    gRender.vertex3fv(mGroundPlane[0].mV);
+    gRender.vertex3fv(mGroundPlane[1].mV);
 
-    gGL.vertex3fv(mGroundPlane[1].mV);
-    gGL.vertex3fv(mGroundPlane[2].mV);
+    gRender.vertex3fv(mGroundPlane[1].mV);
+    gRender.vertex3fv(mGroundPlane[2].mV);
 
-    gGL.vertex3fv(mGroundPlane[2].mV);
-    gGL.vertex3fv(mGroundPlane[3].mV);
+    gRender.vertex3fv(mGroundPlane[2].mV);
+    gRender.vertex3fv(mGroundPlane[3].mV);
 
-    gGL.vertex3fv(mGroundPlane[3].mV);
-    gGL.vertex3fv(mGroundPlane[0].mV);
+    gRender.vertex3fv(mGroundPlane[3].mV);
+    gRender.vertex3fv(mGroundPlane[0].mV);
 
-    gGL.end();
+    gRender.end();
 }
 
 

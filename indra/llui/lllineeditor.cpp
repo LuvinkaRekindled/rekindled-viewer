@@ -2176,7 +2176,7 @@ void LLLineEditor::draw()
 
             S32 pxBottom = (S32)(text_bottom + mGLFont->getDescenderHeight());
 
-            gGL.color4ub(255, 0, 0, 200);
+            gRender.color4ub(255, 0, 0, 200);
             while (pxStart + 1 < pxEnd)
             {
                 gl_line_2d(pxStart, pxBottom, pxStart + 2, pxBottom - 2);

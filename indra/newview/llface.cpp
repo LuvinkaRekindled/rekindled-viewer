@@ -186,7 +186,7 @@ void LLFace::init(LLDrawable* drawablep, LLViewerObject* objp)
 
 void LLFace::destroy()
 {
-    if (gDebugGL)
+    if (gDebugRender)
     {
         gPipeline.checkReferences(this);
     }
@@ -543,7 +543,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
 
     if (mGeomCount > 0 && mIndicesCount > 0)
     {
-        gGL.getTexUnit(0)->bind(imagep);
+        gRender.getTexUnit(0)->bind(imagep);
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         if (mDrawablep->isActive())
@@ -555,7 +555,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
             LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mDrawablep->getRegion()->mRenderMatrix.mMatrix);
         }
 
-        gGL.diffuseColor4fv(color.mV);
+        gRender.diffuseColor4fv(color.mV);
 
         if (mDrawablep->isState(LLDrawable::RIGGED))
         {
@@ -568,7 +568,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
                 {
                     // called when selecting a face during edit of a mesh object
                     LLRenderState::PolygonOffsetScope offset(true);
-                    gGL.setPolygonOffset(-1.f, -1.f);
+                    gRender.setPolygonOffset(-1.f, -1.f);
                     LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) volume->getRelativeXform().mMatrix);
                     const LLVolumeFace& vol_face = rigged->getVolumeFace(getTEOffset());
                     // <FS:Ansariel> Use a vbo for the static LLVertexBuffer::drawArray/Element functions; by Drake Arconis/Shyotl Kuhr
@@ -579,7 +579,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
                     //  glEnableClientState(GL_TEXTURE_COORD_ARRAY);
                     //  glTexCoordPointer(2, GL_FLOAT, 8, vol_face.mTexCoords);
                     //}
-                    //gGL.syncMatrices();
+                    //gRender.syncMatrices();
                     //glDrawElements(GL_TRIANGLES, vol_face.mNumIndices, GL_UNSIGNED_SHORT, vol_face.mIndices);
                     //glDisableClientState(GL_TEXTURE_COORD_ARRAY);
                     LLVertexBuffer::drawElements(LLRender::TRIANGLES, vol_face.mPositions, vol_face.mTexCoords, vol_face.mNumIndices, vol_face.mIndices);
@@ -645,35 +645,35 @@ void LLFace::renderOneWireframe(const LLColor4 &color, F32 fogCfx, bool wirefram
 {
     if (bRenderHiddenSelections)
     {
-        gGL.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
+        gRender.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
         LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::GreaterEqual);
         if (shader)
         {
-            gGL.diffuseColor4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.4f);
+            gRender.diffuseColor4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.4f);
             renderFace(mDrawablep, this);
         }
         else
         {
-            gGL.flush();
+            gRender.flush();
             {
-                gGL.diffuseColor4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.4f);
+                gRender.diffuseColor4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.4f);
                 renderFace(mDrawablep, this);
             }
         }
     }
 
-    gGL.flush();
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    gRender.flush();
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
-    gGL.diffuseColor4f(color.mV[VRED] * 2, color.mV[VGREEN] * 2, color.mV[VBLUE] * 2, color.mV[VALPHA]);
+    gRender.diffuseColor4f(color.mV[VRED] * 2, color.mV[VGREEN] * 2, color.mV[VBLUE] * 2, color.mV[VALPHA]);
 
     {
         LLRenderState::BlendScope depth(false, !wireframe_selection);
 
         // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
-        gGL.setPolygonOffset(3.f, 3.f);
-        gGL.setLineWidth(5.f); // <FS> Line width OGL core profile fix by Rye Mutt
-        gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
+        gRender.setPolygonOffset(3.f, 3.f);
+        gRender.setLineWidth(5.f); // <FS> Line width OGL core profile fix by Rye Mutt
+        gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
         renderFace(mDrawablep, this);
     }
 }
@@ -1288,7 +1288,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
     if (face_index < 0 || face_index >= volume.getNumVolumeFaces())
     {
-        if (gDebugGL)
+        if (gDebugRender)
         {
             LL_WARNS() << "Face index is out of bounds!" << LL_ENDL;
             LL_WARNS() << "Attempt get volume face out of range!"
@@ -1328,7 +1328,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
     {
         if (num_indices + mIndicesIndex > mVertexBuffer->getNumIndices())
         {
-            if (gDebugGL)
+            if (gDebugRender)
             {
                 LL_WARNS() << "Index buffer overflow!" << LL_ENDL;
                 LL_WARNS() << "Indices Count: " << mIndicesCount
@@ -1344,7 +1344,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
         if (num_vertices + (U32)mGeomIndex > mVertexBuffer->getNumVerts())
         {
-            if (gDebugGL)
+            if (gDebugRender)
             {
                 LL_WARNS() << "Vertex buffer overflow!" << LL_ENDL;
                 llassert(no_debug_assert);
@@ -1683,7 +1683,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                     break;
                     case BE_BRIGHTNESS:
                     case BE_DARKNESS:
-                    if( mTexture[LLRender::DIFFUSE_MAP].notNull() && mTexture[LLRender::DIFFUSE_MAP]->hasGLTexture())
+                    if( mTexture[LLRender::DIFFUSE_MAP].notNull() && mTexture[LLRender::DIFFUSE_MAP]->hasImageTexture())
                     {
                         // Offset by approximately one texel
                         S32 cur_discard = mTexture[LLRender::DIFFUSE_MAP]->getDiscardLevel();
@@ -2112,7 +2112,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
             S32* vp = (S32*) &val;
             *vp = index;
 
-            llassert(index < LLGLSLShader::sIndexedTextureChannels);
+            llassert(index < LLShaderProgram::sIndexedTextureChannels);
 
             LLVector4Logical mask;
             mask.clear();

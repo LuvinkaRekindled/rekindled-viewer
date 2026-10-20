@@ -37,7 +37,7 @@ class LLImageRaw;
 //this the parent for the class LLViewerTexture
 //through the following virtual functions, the class LLViewerTexture can be reached from /llrender.
 //
-class LLGLTexture : public LLTexture
+class LLBaseTexture : public LLTexture
 {
 public:
     enum
@@ -87,13 +87,13 @@ public:
     } LLGLTextureState;
 
 protected:
-    virtual ~LLGLTexture();
-    LOG_CLASS(LLGLTexture);
+    virtual ~LLBaseTexture();
+    LOG_CLASS(LLBaseTexture);
 
 public:
-    LLGLTexture(bool usemipmaps = true);
-    LLGLTexture(const LLImageRaw* raw, bool usemipmaps) ;
-    LLGLTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps) ;
+    LLBaseTexture(bool usemipmaps = true);
+    LLBaseTexture(const LLImageRaw* raw, bool usemipmaps) ;
+    LLBaseTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps) ;
 
     virtual void dump();    // debug info to LL_INFOS()
 
@@ -109,35 +109,35 @@ public:
     S32 getFullWidth() const { return mFullWidth; }
     S32 getFullHeight() const { return mFullHeight; }
 
-    void generateGLTexture() ;
-    void destroyGLTexture() ;
+    void generateImageTexture() ;
+    void destroyImageTexture() ;
 
     //---------------------------------------------------------------------------------------------
-    //functions to access LLImageGL
+    //functions to access LLImageTex
     //---------------------------------------------------------------------------------------------
     /*virtual*/S32         getWidth(S32 discard_level = -1) const;
     /*virtual*/S32         getHeight(S32 discard_level = -1) const;
 
-    bool       hasGLTexture() const ;
+    bool       hasImageTexture() const ;
     U32   getTexName() const ;
-    bool       createGLTexture() ;
+    bool       createImageTexture() ;
 
     // Create a GL Texture from an image raw
     // discard_level - mip level, 0 for highest resultion mip
     // imageraw - the image to copy from
     // usename - explicit GL name override
     // to_create - set to false to force gl texture to not be created
-    // category - LLGLTexture category for this LLGLTexture
+    // category - LLBaseTexture category for this LLBaseTexture
     // defer_copy - set to true to allocate GL texture but NOT initialize with imageraw data
     // tex_name - if not null, will be set to the GL name of the texture created
-    bool       createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true, S32 category = LLGLTexture::OTHER, bool defer_copy = false, U32* tex_name = nullptr);
+    bool       createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true, S32 category = LLBaseTexture::OTHER, bool defer_copy = false, U32* tex_name = nullptr);
 
     void       setFilteringOption(LLTexUnit::eTextureFilterOptions option);
     void       setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format = ComponentType::None, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void       setAddressMode(LLTexUnit::eTextureAddressMode mode);
     bool       setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name = 0);
     bool       setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name = 0);
-    void       setGLTextureCreated (bool initialized);
+    void       setImageTextureCreated (bool initialized);
     void       setCategory(S32 category) ;
     void       setTexName(U32); // for forcing w/ externally created textures only
     void       setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target);
@@ -160,11 +160,11 @@ public:
     bool       isJustBound()const ;
     void       forceUpdateBindStats(void) const;
 
-    bool       isGLTextureCreated() const ;
+    bool       isImageTextureCreated() const ;
     LLGLTextureState getTextureState() const { return mTextureState; }
 
     //---------------------------------------------------------------------------------------------
-    //end of functions to access LLImageGL
+    //end of functions to access LLImageTex
     //---------------------------------------------------------------------------------------------
 
     //-----------------
@@ -183,7 +183,7 @@ protected:
     void setTexelsPerImage();
 
 public:
-    /*virtual*/ LLImageGL* getGLTexture() const ;
+    /*virtual*/ LLImageTex* getImageTexture() const ;
 
 protected:
     S32 mBoostLevel;                // enum describing priority level
@@ -198,7 +198,7 @@ protected:
     mutable S8  mNeedsGLTexture;
 
     //GL texture
-    LLPointer<LLImageGL> mGLTexturep ;
+    LLPointer<LLImageTex> mImageTexp ;
     S8 mDontDiscard;            // Keep full res version of this image (for UI, etc)
 
 protected:

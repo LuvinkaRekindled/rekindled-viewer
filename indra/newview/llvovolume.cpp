@@ -67,7 +67,7 @@
 #include "llworld.h"
 #include "llselectmgr.h"
 #include "pipeline.h"
-#include "llvkmirror.h"     // <FS> LLVkMirror::readbackAffordable (sculpt maps)
+#include "llvkmirror.h"     // <FS> LLVkBridge::readbackAffordable (sculpt maps)
 #include "llsdutil.h"
 #include "llmatrix4a.h"
 #include "llmediaentry.h"
@@ -1021,7 +1021,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
         {
             F32 area = (F32) camera->getScreenPixelArea();
             vsize = area;
-            imagep->setBoostLevel(LLGLTexture::BOOST_HUD);
+            imagep->setBoostLevel(LLBaseTexture::BOOST_HUD);
             face->setPixelArea(area); // treat as full screen
             face->setVirtualSize(vsize);
         }
@@ -1123,7 +1123,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
     {
         LLLightImageParams* params = getLightImageParams();
         LLUUID id = params->getLightTexture();
-        mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE);
+        mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE);
         if (mLightTexture.notNull())
         {
             F32 rad = getLightRadius();
@@ -1194,7 +1194,7 @@ bool LLVOVolume::setMaterial(const U8 material)
 void LLVOVolume::setTexture(const S32 face)
 {
     llassert(face < getNumTEs());
-    gGL.getTexUnit(0)->bind(getTEImage(face));
+    gRender.getTexUnit(0)->bind(getTEImage(face));
 }
 
 void LLVOVolume::setScale(const LLVector3 &scale, bool damped)
@@ -1349,7 +1349,7 @@ bool LLVOVolume::setVolume(const LLVolumeParams &params_in, const S32 detail, bo
 
     if (is404)
     {
-        setIcon(LLViewerTextureManager::getFetchedTextureFromFile("icons/Inv_Mesh.png", FTT_LOCAL_FILE, true, LLGLTexture::BOOST_UI));
+        setIcon(LLViewerTextureManager::getFetchedTextureFromFile("icons/Inv_Mesh.png", FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_UI));
         //render prim proxy when mesh loading attempts give up
         volume_params.setSculptID(LLUUID::null, LL_SCULPT_TYPE_NONE);
 
@@ -1447,7 +1447,7 @@ void LLVOVolume::updateSculptTexture()
             LLUUID id = sculpt_params->getSculptTexture();
             if (id.notNull())
             {
-                mSculptTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_SCULPTED, LLViewerTexture::LOD_TEXTURE);
+                mSculptTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_SCULPTED, LLViewerTexture::LOD_TEXTURE);
                 mSculptTexture->forceToSaveRawImage(0, F32_MAX);
                 mSculptTexture->setKnownDrawSize(256, 256);
             }
@@ -1585,7 +1585,7 @@ void LLVOVolume::sculpt()
             // last resort, read back from GL
             // <FS> A read back waits for the render worker to replay everything queued before it: in a burst (a plaza of sculpts, a flood of texture uploads) that was 15 s of frozen main thread.
             // When the worker is far behind the sculpt is left as it is and tried again in a later frame (updateTextures sees mSculptDeferred).
-            if (!LLVkMirror::readbackAffordable())
+            if (!LLVkBridge::readbackAffordable())
             {
                 mSculptDeferred = true;
                 return;
@@ -3638,7 +3638,7 @@ LLViewerTexture* LLVOVolume::getLightTexture()
     {
         if (mLightTexture.isNull() || id != mLightTexture->getID())
         {
-            mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE);
+            mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE);
         }
     }
     else
@@ -5176,7 +5176,7 @@ bool LLVOVolume::lineSegmentIntersect(const LLVector4a& start, const LLVector4a&
                     }
                 }
 
-                bool no_texture = !face->getTexture() || !face->getTexture()->hasGLTexture();
+                bool no_texture = !face->getTexture() || !face->getTexture()->hasImageTexture();
                 bool mask       = no_texture ? false : face->getTexture()->getMask(face->surfaceToTexture(tc, p, n));
                 if (face &&
                     (ignore_alpha || pick_transparent || no_texture || mask))
@@ -5849,8 +5849,8 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         info->mEnd == facep->getGeomIndex()-1 &&
         (LLPipeline::sTextureBindTest || draw_vec[idx]->mTexture == tex || batchable) &&
 #if LL_DARWIN
-        info->mEnd - draw_vec[idx]->mStart + facep->getGeomCount() <= (U32) gGLManager.mGLMaxVertexRange &&
-        info->mCount + facep->getIndicesCount() <= (U32) gGLManager.mGLMaxIndexRange &&
+        info->mEnd - draw_vec[idx]->mStart + facep->getGeomCount() <= (U32) gDeviceCaps.mVertexRangeLimit &&
+        info->mCount + facep->getIndicesCount() <= (U32) gDeviceCaps.mIndexRangeLimit &&
 #endif
         info->mMaterialID == mat_id &&
         info->mFullbright == fullbright &&
@@ -6745,7 +6745,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
 
     LLViewerTexture* last_tex = NULL;
 
-    S32 texture_index_channels = LLGLSLShader::sIndexedTextureChannels;
+    S32 texture_index_channels = LLShaderProgram::sIndexedTextureChannels;
 
     bool flexi = false;
 

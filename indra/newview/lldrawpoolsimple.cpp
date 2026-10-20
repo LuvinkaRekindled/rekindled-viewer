@@ -45,17 +45,17 @@ static LLTrace::BlockTimerStatHandle FTM_RENDER_GRASS_DEFERRED("Deferred Grass")
 void LLDrawPoolGlow::renderPostDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    LLGLSLShader* shader = &gDeferredEmissiveProgram;
+    LLShaderProgram* shader = &gDeferredEmissiveProgram;
 
     LLRenderState::BlendScope blend(true);
-    gGL.flush();
+    gRender.flush();
     /// Get rid of z-fighting with non-glow pass.
     LLRenderState::PolygonOffsetScope polyOffset(true);
-    gGL.setPolygonOffset(-1.0f, -1.0f);
-    gGL.setSceneBlendType(LLRender::BT_ADD);
+    gRender.setPolygonOffset(-1.0f, -1.0f);
+    gRender.setSceneBlendType(LLRender::BT_ADD);
 
     LLRenderState::DepthScope depth(true, false);
-    gGL.setColorMask(false, true);
+    gRender.setColorMask(false, true);
 
     //first pass -- static objects
     shader->bind();
@@ -66,8 +66,8 @@ void LLDrawPoolGlow::renderPostDeferred(S32 pass)
     shader->bind();
     pushRiggedBatches(LLRenderPass::PASS_GLOW_RIGGED, true, true);
 
-    gGL.setColorMask(true, false);
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    gRender.setColorMask(true, false);
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
 }
 
 LLDrawPoolSimple::LLDrawPoolSimple() :
@@ -134,7 +134,7 @@ static LLTrace::BlockTimerStatHandle FTM_RENDER_ALPHA_MASK_DEFERRED("Deferred Al
 void LLDrawPoolAlphaMask::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_ALPHA_MASK_DEFERRED);
-    LLGLSLShader* shader = &gDeferredDiffuseAlphaMaskProgram;
+    LLShaderProgram* shader = &gDeferredDiffuseAlphaMaskProgram;
 
     //render static
     shader->bind();
@@ -175,7 +175,7 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_FULLBRIGHT);
 
-    LLGLSLShader* shader = nullptr;
+    LLShaderProgram* shader = nullptr;
     if (LLPipeline::sRenderingHUDs)
     {
         shader = &gHUDFullbrightProgram;
@@ -185,7 +185,7 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
         shader = &gDeferredFullbrightProgram;
     }
 
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
     // render static
     shader->bind();
@@ -207,7 +207,7 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     LL::GLTFSceneManager::instance().render(true, false, true);
     LL::GLTFSceneManager::instance().render(true, true, true);
 
-    LLGLSLShader* shader = nullptr;
+    LLShaderProgram* shader = nullptr;
     if (LLPipeline::sRenderingHUDs)
     {
         shader = &gHUDFullbrightAlphaMaskProgram;

@@ -397,7 +397,7 @@ F32 logExceptionBenchmark()
     __except (msc_exception_filter(GetExceptionCode(), GetExceptionInformation()))
     {
         // HACK - ensure that profiling is disabled
-        LLGLSLShader::finishProfile();
+        LLShaderProgram::finishProfile();
 
         // convert to C++ styled exception
         char integer_string[32];
@@ -427,7 +427,7 @@ bool checkRDNA35()
 
     for (const auto& gpu_name : rdna35GPUs)
     {
-        if (gGLManager.getRawGLString().find(gpu_name) != std::string::npos)
+        if (gDeviceCaps.getRawDeviceString().find(gpu_name) != std::string::npos)
         {
             LL_WARNS("RenderInit") << "Detected AMD RDNA3.5 GPU (" << gpu_name << ")." << LL_ENDL;
             return true;
@@ -448,7 +448,7 @@ bool LLFeatureManager::loadGPUClass()
     // As a result, we filter out these GPUs for shader profiling.
     // - Geenz 11/11/2025
 
-    if (gGLManager.getRawGLString().find("Radeon") != std::string::npos && checkRDNA35() && gGLManager.mDriverVersionVendorString.find("25.") != std::string::npos)
+    if (gDeviceCaps.getRawDeviceString().find("Radeon") != std::string::npos && checkRDNA35() && gDeviceCaps.mDriverVersionVendorString.find("25.") != std::string::npos)
     {
         LL_WARNS("RenderInit") << "Detected AMD RDNA3.5 GPU on a known bad driver; disabling benchmark and occlusion culling to prevent freezes." << LL_ENDL;
         gSavedSettings.setBOOL("SkipBenchmark", true);
@@ -467,9 +467,9 @@ bool LLFeatureManager::loadGPUClass()
             gbps = -1.0f;
             // <FS> no OpenGL: the GL benchmark is gone. The Vulkan device measured its own memory bandwidth at start-up (large device-local copies, read + write);
             // not measured (0) stays "could not bench" as before.
-            if (gGLManager.mMemoryBandwidthGBps > 0.f)
+            if (gDeviceCaps.mMemoryBandwidthGBps > 0.f)
             {
-                gbps = gGLManager.mMemoryBandwidthGBps;
+                gbps = gDeviceCaps.mMemoryBandwidthGBps;
             }
             LL_INFOS("RenderInit") << "GPU memory bandwidth " << gbps << " GB/s (Vulkan copy measurement)" << LL_ENDL;
             // </FS:ND>
@@ -508,7 +508,7 @@ bool LLFeatureManager::loadGPUClass()
         }
         else if ((gbps <= class1_gbps*4.f)
                  // Cap silicon's GPUs at med+ as they have high throughput, low capability
-                 || gGLManager.mIsApple)
+                 || gDeviceCaps.mIsApple)
         {
             mGPUClass = GPU_CLASS_3;
         }
@@ -542,7 +542,7 @@ bool LLFeatureManager::loadGPUClass()
     }
 
     // defaults
-    mGPUString = gGLManager.getRawGLString();
+    mGPUString = gDeviceCaps.getRawDeviceString();
     mGPUSupported = true;
 
     return true; // indicates that a gpu value was established
@@ -701,15 +701,15 @@ void LLFeatureManager::applyBaseMasks()
     }
 
     // now all those wacky ones
-    if (gGLManager.mIsNVIDIA)
+    if (gDeviceCaps.mIsNVIDIA)
     {
         maskFeatures("NVIDIA");
     }
-    if (gGLManager.mIsAMD)
+    if (gDeviceCaps.mIsAMD)
     {
         maskFeatures("AMD");
     }
-    if (gGLManager.mIsIntel)
+    if (gDeviceCaps.mIsIntel)
     {
         maskFeatures("Intel");
 
@@ -721,7 +721,7 @@ void LLFeatureManager::applyBaseMasks()
 #endif
 
         // check against 3.33 to avoid applying this fallback twice
-        if (gGLManager.mGLVersion < TARGET_GL_VERSION && gGLManager.mGLVersion > 3.33f)
+        if (gDeviceCaps.mApiVersionNumber < TARGET_GL_VERSION && gDeviceCaps.mApiVersionNumber > 3.33f)
         {
             // if we don't have OpenGL 4.6 on intel, set it to OpenGL 3.3
             // we also want to trigger the GL3 fallbacks on these chipsets
@@ -732,14 +732,14 @@ void LLFeatureManager::applyBaseMasks()
             // https://www.intel.com/content/www/us/en/support/articles/000005524/graphics.html
             // this will disable things like reflection probes, HDR, FXAA and SMAA
             LL_INFOS("RenderInit") << "Applying Intel integrated pre-Haswell fallback.  Downgrading feature usage to OpenGL 3.3" << LL_ENDL;
-            gGLManager.mGLVersion = llmin(gGLManager.mGLVersion, 3.33f);
-            gGLManager.mGLVersionString += " 3.3 fallback";  // for ViewerStats reporting
+            gDeviceCaps.mApiVersionNumber = llmin(gDeviceCaps.mApiVersionNumber, 3.33f);
+            gDeviceCaps.mApiVersionString += " 3.3 fallback";  // for ViewerStats reporting
             // and select GLSL version for OpenGL 3.2
-            gGLManager.mGLSLVersionMajor = 3;
-            gGLManager.mGLSLVersionMinor = 20;
+            gDeviceCaps.mShaderLangMajor = 3;
+            gDeviceCaps.mShaderLangMinor = 20;
         }
     }
-    if (gGLManager.mIsApple)
+    if (gDeviceCaps.mIsApple)
     {
         maskFeatures("AppleGPU");
     }
@@ -747,38 +747,38 @@ void LLFeatureManager::applyBaseMasks()
     {
         maskFeatures("NonAppleGPU");
     }
-    if (gGLManager.mGLVersion < 3.f)
+    if (gDeviceCaps.mApiVersionNumber < 3.f)
     {
         maskFeatures("OpenGLPre30");
     }
-    if (gGLManager.mNumTextureImageUnits <= 8)
+    if (gDeviceCaps.mNumTextureImageUnits <= 8)
     {
         maskFeatures("TexUnit8orLess");
     }
-    if (gGLManager.mNumTextureImageUnits <= 16)
+    if (gDeviceCaps.mNumTextureImageUnits <= 16)
     {
         maskFeatures("TexUnit16orLess");
     }
-    if (gGLManager.mVRAM > 512)
+    if (gDeviceCaps.mVRAM > 512)
     {
         maskFeatures("VRAMGT512");
     }
-    if (gGLManager.mVRAM < 2048)
+    if (gDeviceCaps.mVRAM < 2048)
     {
         maskFeatures("VRAMLT2GB");
     }
-    if (gGLManager.mGLVersion < 3.99f)
+    if (gDeviceCaps.mApiVersionNumber < 3.99f)
     {
         maskFeatures("GL3");
 
         // make sure to disable background context activity in GL3 mode
-        LLImageGLThread::sEnabledMedia = false;
-        LLImageGLThread::sEnabledTextures = false;
+        LLImageTexThread::sEnabledMedia = false;
+        LLImageTexThread::sEnabledTextures = false;
 
         // Make extra sure that vintage mode also gets enabled.
         gSavedSettings.setBOOL("RenderDisableVintageMode", false);
     }
-    if (gGLManager.mMaxVaryingVectors <= 16)
+    if (gDeviceCaps.mMaxVaryingVectors <= 16)
     {
         maskFeatures("VaryingVectors16orLess");
     }

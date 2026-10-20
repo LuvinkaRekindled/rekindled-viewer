@@ -83,7 +83,7 @@ namespace LLVkAsync
     void bufferSubData(U32 name, S64 offset, S64 size, const void* data);
     // the vertex buffer pool gives a buffer name to another owner (or takes it back): what the name held is not what it will hold; the arena's epoch moves on
     void bufferRecycle(U32 name);
-    // LLGLSLShader::bind(): unbinds the vertex and index buffers, binds the program (null: unchanged) and enables / disables vertex attribute arrays (bit masks of attribute locations)
+    // LLShaderProgram::bind(): unbinds the vertex and index buffers, binds the program (null: unchanged) and enables / disables vertex attribute arrays (bit masks of attribute locations)
     void shaderBind(void* program);
     // render targets (LLRenderTarget): attach a texture to a framebuffer by name (then bind restore_fbo again), and make a framebuffer current with its draw buffers and viewport
     void framebufferAttach(U32 fbo, U32 slot, U32 texture);
@@ -161,7 +161,7 @@ namespace LLVkAsync
         }
         return p;
     }
-    // the draw context of the calling producer: LLGLSLShader::bind/unbind and LLVertexBuffer::setBuffer/unbind write it (only when gDrawRec != 0)
+    // the draw context of the calling producer: LLShaderProgram::bind/unbind and LLVertexBuffer::setBuffer/unbind write it (only when gDrawRec != 0)
     void drawProgram(void* program);                                                             // the program of the next draws (null: none)
     void drawBindingClear();                                                                     // no buffers bound
     void drawBinding(U32 array_buffer, U32 elem_buffer, const VertexAttrib* attribs, U32 count); // the whole binding for the bound shader's attributes (GL type numbers as in setArrayState)
@@ -190,14 +190,14 @@ namespace LLVkAsync
         CMD_UPSCALE, CMD_PROGRAM_BIND, CMD_UNIFORM_SCALAR, CMD_UNIFORM_VECTOR, CMD_UNIFORM_MATRIX, CMD_SAMPLER_UNIT, CMD_PROGRAM_DESTROY,
         CMD_SYNC, CMD_STOP, CMD_WRAP,
         CMD_BUFFER_DATA, CMD_BUFFER_SUBDATA,       // named buffer storage (bufferData / bufferSubData)
-        CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (LLVkMirror::shadowPackets)
+        CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (LLVkBridge::shadowPackets)
         CMD_TEX_PARAMS,                            // texture parameters of the bound texture, several in one record (LLTexUnit sampler state)
         CMD_FBO_ATTACH, CMD_TARGET_STATE,          // render target commands (framebufferAttach, targetState)
         CMD_TEX_SLOTS,                             // texture ids that changed since the last draw, when something other than a draw comes first (a draw record carries them itself)
         CMD_GPU_ZONE,                              // a named GPU timing zone begins or ends here in the command stream (FSGpuZoneTimers)
         CMD_UNIFORM_BATCH,                         // loose uniform writes that were pending when something other than a draw came first (a draw carries them inside its own record)
         CMD_BUFFER_RECYCLE,                        // a pooled buffer name changes hands (bufferRecycle)
-        CMD_RT_SCENE,                              // the ray tracing scene of the frame is built from the casters named so far (LLVkMirror::rtScene)
+        CMD_RT_SCENE,                              // the ray tracing scene of the frame is built from the casters named so far (LLVkBridge::rtScene)
         CMD_STATE,                                 // F1.1: the render state block (LLVkState::Block) changed since the last one written
         CMD_TEX_IMAGE, CMD_TEX_PARAMS_ID, CMD_TEX_OP,  // F1.2: texture edits that name their texture (llvktex.h): image data, parameters, small operations
         CMD_UNIFORM_BLOCK,                         // F1.3: a buffer becomes the contents of a numbered uniform block (llvkbuf.h)
@@ -209,7 +209,7 @@ namespace LLVkAsync
         CMD_UNIFORM_RANGE,                         // F2.5: inside a uniform batch: bytes of a program's class block (uniformRange)
         CMD_PASS,                                  // F3.5d: a render pass begins: target, colour attachment count and the load op (clear) in one record (passBegin)
         CMD_DRAW_SCRATCH,                          // F3.1: a non-indexed draw with its vertices inline (immediate mode: LLRender::flush); no vertex binding, the worker supplies the vertex scratch
-        // program bind + vertex buffer unbind + attribute array enables (LLGLSLShader::bind)
+        // program bind + vertex buffer unbind + attribute array enables (LLShaderProgram::bind)
     };
 
     // frame boundaries: the main thread may be at most two frames ahead of the worker
@@ -226,7 +226,7 @@ namespace LLVkAsync
     // occlusion query results published by the worker; false: ask the worker (sync call)
     bool query_get(int kind, unsigned id, unsigned pname, void* params);
 
-    // shader program commands (LLGLSLShader's mirror calls)
+    // shader program commands (LLShaderProgram's mirror calls)
     void programBind(void* program);
     void programDestroy(void* program);
     void samplerUnit(void* program, unsigned sampler_index, unsigned unit);

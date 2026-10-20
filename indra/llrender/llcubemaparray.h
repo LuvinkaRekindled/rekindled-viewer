@@ -59,7 +59,7 @@ public:
 
     U32 getGLName();
 
-    void destroyGL();
+    void destroyResources();
 
     // get width of cubemaps in array (they're cubes, so this is also the height)
     U32 getWidth() const { return mWidth; }
@@ -70,7 +70,7 @@ public:
 protected:
     friend class LLTexUnit;
     ~LLCubeMapArray();
-    LLPointer<LLImageGL> mImage;
+    LLPointer<LLImageTex> mImage;
     U32 mWidth = 0;
     U32 mCount = 0;
     S32 mTextureStage;

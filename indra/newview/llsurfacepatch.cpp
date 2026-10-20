@@ -1023,7 +1023,7 @@ bool LLSurfacePatch::updateTexture()
     }
 }
 
-void LLSurfacePatch::updateGL()
+void LLSurfacePatch::updateResources()
 {
     LL_PROFILE_ZONE_SCOPED;
     F32 meters_per_grid = getSurface()->getMetersPerGrid();

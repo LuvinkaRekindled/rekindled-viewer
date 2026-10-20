@@ -219,7 +219,7 @@ bool LLLocalBitmap::updateSelf(EUpdateType optional_firstupdate)
                     LLPointer<LLViewerFetchedTexture> texture = new LLViewerFetchedTexture
                         ("file://"+mFilename, FTT_LOCAL_FILE, mWorldID, LL_LOCAL_USE_MIPMAPS);
 
-                    if (!texture->createGLTexture(LL_LOCAL_DISCARD_LEVEL, raw_image))
+                    if (!texture->createImageTexture(LL_LOCAL_DISCARD_LEVEL, raw_image))
                     {
                         LL_WARNS() << "Failed to create GL texture for local bitmap: " << mFilename << " " << mWorldID << LL_ENDL;
                     }

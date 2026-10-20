@@ -37,7 +37,7 @@
 class LLImageRaw;
 class LLSpatialGroup;
 class LLDrawInfo;
-class LLGLSLShader;
+class LLShaderProgram;
 class LLViewerFetchedTexture;
 
 class LLDrawPoolBump : public LLRenderPass
@@ -67,8 +67,8 @@ public:
     void renderBump(U32 pass = LLRenderPass::PASS_BUMP);
     void endBump(U32 pass = LLRenderPass::PASS_BUMP);
 
-    static void bindCubeMap(LLGLSLShader* shader, S32 shader_level, S32& diffuse_channel, S32& cube_channel);
-    static void unbindCubeMap(LLGLSLShader* shader, S32 shader_level, S32& diffuse_channel, S32& cube_channel);
+    static void bindCubeMap(LLShaderProgram* shader, S32 shader_level, S32& diffuse_channel, S32& cube_channel);
+    static void unbindCubeMap(LLShaderProgram* shader, S32 shader_level, S32& diffuse_channel, S32& cube_channel);
 
     virtual S32 getNumDeferredPasses() override;
     /*virtual*/ void renderDeferred(S32 pass) override;
@@ -112,8 +112,8 @@ public:
     static void addstandard();
 
     static void shutdown();
-    static void restoreGL();
-    static void destroyGL();
+    static void restoreResources();
+    static void destroyResources();
 };
 
 extern LLStandardBumpmap gStandardBumpmapList[TEM_BUMPMAP_COUNT];
@@ -132,8 +132,8 @@ public:
     void        init();
     void        shutdown();
     void            clear();
-    void        destroyGL();
-    void        restoreGL();
+    void        destroyResources();
+    void        restoreResources();
     void        updateImages();
 
 

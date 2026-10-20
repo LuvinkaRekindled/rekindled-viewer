@@ -89,18 +89,18 @@ U32 LLViewerJointAttachment::drawShape( F32 pixelArea, bool first_pass, bool is_
     {
         LLRenderState::CullScope cull_face(false);
 
-        gGL.color4f(1.f, 1.f, 1.f, 1.f);
-        gGL.begin(LLRender::TRIANGLES);
+        gRender.color4f(1.f, 1.f, 1.f, 1.f);
+        gRender.begin(LLRender::TRIANGLES);
         {
-            gGL.vertex3f(-0.1f, 0.1f, 0.f);
-            gGL.vertex3f(-0.1f, -0.1f, 0.f);
-            gGL.vertex3f(0.1f, -0.1f, 0.f);
+            gRender.vertex3f(-0.1f, 0.1f, 0.f);
+            gRender.vertex3f(-0.1f, -0.1f, 0.f);
+            gRender.vertex3f(0.1f, -0.1f, 0.f);
 
-            gGL.vertex3f(-0.1f, 0.1f, 0.f);
-            gGL.vertex3f(0.1f, -0.1f, 0.f);
-            gGL.vertex3f(0.1f, 0.1f, 0.f);
+            gRender.vertex3f(-0.1f, 0.1f, 0.f);
+            gRender.vertex3f(0.1f, -0.1f, 0.f);
+            gRender.vertex3f(0.1f, 0.1f, 0.f);
         }
-        gGL.end();
+        gRender.end();
     }
     return 0;
 }

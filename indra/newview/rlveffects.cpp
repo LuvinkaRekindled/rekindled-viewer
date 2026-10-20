@@ -104,9 +104,9 @@ void RlvOverlayEffect::setImage(const LLUUID& idTexture)
         return;
 
     clearImage();
-    m_pImage = LLViewerTextureManager::getFetchedTexture(idTexture, FTT_DEFAULT, MIPMAP_YES, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+    m_pImage = LLViewerTextureManager::getFetchedTexture(idTexture, FTT_DEFAULT, MIPMAP_YES, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
     m_nImageOrigBoost = m_pImage->getBoostLevel();
-    m_pImage->setBoostLevel(LLGLTexture::BOOST_PREVIEW);
+    m_pImage->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
     m_pImage->forceToSaveRawImage(0);
 }
 
@@ -129,16 +129,16 @@ void RlvOverlayEffect::run(const LLVisualEffectParams*)
         const LLVector2& displayScale = gViewerWindow->getDisplayScale();
         LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, displayScale.mV[VX], displayScale.mV[VY], 1.f);
 
-        gGL.getTexUnit(0)->bind(m_pImage);
+        gRender.getTexUnit(0)->bind(m_pImage);
         const LLColor3 col = m_Color.get();
-        gGL.color4f(col.mV[0], col.mV[1], col.mV[2], llclamp(m_nAlpha.get(), 0.0f, 1.0f));
+        gRender.color4f(col.mV[0], col.mV[1], col.mV[2], llclamp(m_nAlpha.get(), 0.0f, 1.0f));
 
         gl_rect_2d_simple_tex(nWidth, nHeight);
 
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-        gGL.flush();
+        gRender.flush();
         gViewerWindow->setup3DRender();
 
         gUIProgram.unbind();
@@ -296,7 +296,7 @@ ERlvCmdRet RlvSphereEffect::onValueMaxChanged(const LLUUID& idRlvObj, const boos
     return RLV_RET_SUCCESS;
 }
 
-void RlvSphereEffect::setShaderUniforms(LLGLSLShader* pShader)
+void RlvSphereEffect::setShaderUniforms(LLShaderProgram* pShader)
 {
     pShader->uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)gPipeline.mRT->screen.getWidth(), (F32)gPipeline.mRT->screen.getHeight());
     pShader->uniform1i(LLShaderMgr::RLV_EFFECT_MODE, llclamp((int)m_eMode, 0, (int)ESphereMode::Count));
@@ -331,7 +331,7 @@ void RlvSphereEffect::setShaderUniforms(LLGLSLShader* pShader)
     pShader->uniform4fv(LLShaderMgr::RLV_EFFECT_PARAM4, 1, glm::value_ptr(effectParams));
 }
 
-void RlvSphereEffect::renderPass(LLGLSLShader* pShader, const LLShaderEffectParams* pParams) const
+void RlvSphereEffect::renderPass(LLShaderProgram* pShader, const LLShaderEffectParams* pParams) const
 {
     RenderPassScope pass;       // F3.5b: only when there is a destination buffer
     if (pParams->m_pDstBuffer)
@@ -340,11 +340,11 @@ void RlvSphereEffect::renderPass(LLGLSLShader* pShader, const LLShaderEffectPara
     }
     else
     {
-        gGLViewport[0] = gViewerWindow->getWorldViewRectRaw().mLeft;
-        gGLViewport[1] = gViewerWindow->getWorldViewRectRaw().mBottom;
-        gGLViewport[2] = gViewerWindow->getWorldViewRectRaw().getWidth();
-        gGLViewport[3] = gViewerWindow->getWorldViewRectRaw().getHeight();
-        gGL.setViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
+        gRenderViewport[0] = gViewerWindow->getWorldViewRectRaw().mLeft;
+        gRenderViewport[1] = gViewerWindow->getWorldViewRectRaw().mBottom;
+        gRenderViewport[2] = gViewerWindow->getWorldViewRectRaw().getWidth();
+        gRenderViewport[3] = gViewerWindow->getWorldViewRectRaw().getHeight();
+        gRender.setViewport(gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3]);
     }
     RLV_ASSERT_DBG(pParams->m_pSrcBuffer);
 
@@ -352,13 +352,13 @@ void RlvSphereEffect::renderPass(LLGLSLShader* pShader, const LLShaderEffectPara
     if (nDiffuseChannel > -1)
     {
         pParams->m_pSrcBuffer->bindTexture(0, nDiffuseChannel);
-        gGL.getTexUnit(nDiffuseChannel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+        gRender.getTexUnit(nDiffuseChannel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
     }
 
     S32 nDepthChannel = pShader->enableTexture(LLShaderMgr::DEFERRED_DEPTH, gPipeline.mRT->deferredScreen.getUsage());
     if (nDepthChannel > -1)
     {
-        gGL.getTexUnit(nDepthChannel)->bind(&gPipeline.mRT->deferredScreen, true);
+        gRender.getTexUnit(nDepthChannel)->bind(&gPipeline.mRT->deferredScreen, true);
     }
 
     gPipeline.mScreenTriangleVB->setBuffer();

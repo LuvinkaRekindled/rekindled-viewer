@@ -869,29 +869,29 @@ void LLFloaterModelPreview::onLODParamCommit(S32 lod, bool enforce_tri_limit)
 
 void LLFloaterModelPreview::draw3dPreview()
 {
-    gGL.color3f(1.f, 1.f, 1.f);
+    gRender.color3f(1.f, 1.f, 1.f);
 
-    gGL.getTexUnit(0)->bind(mModelPreview);
+    gRender.getTexUnit(0)->bind(mModelPreview);
 
-    gGL.begin(LLRender::TRIANGLES);
+    gRender.begin(LLRender::TRIANGLES);
     {
-        gGL.texCoord2f(0.f, 1.f);
-        gGL.vertex2i(mPreviewRect.mLeft + 1, mPreviewRect.mTop - 1);
-        gGL.texCoord2f(0.f, 0.f);
-        gGL.vertex2i(mPreviewRect.mLeft + 1, mPreviewRect.mBottom + 1);
-        gGL.texCoord2f(1.f, 0.f);
-        gGL.vertex2i(mPreviewRect.mRight - 1, mPreviewRect.mBottom + 1);
+        gRender.texCoord2f(0.f, 1.f);
+        gRender.vertex2i(mPreviewRect.mLeft + 1, mPreviewRect.mTop - 1);
+        gRender.texCoord2f(0.f, 0.f);
+        gRender.vertex2i(mPreviewRect.mLeft + 1, mPreviewRect.mBottom + 1);
+        gRender.texCoord2f(1.f, 0.f);
+        gRender.vertex2i(mPreviewRect.mRight - 1, mPreviewRect.mBottom + 1);
 
-        gGL.texCoord2f(1.f, 0.f);
-        gGL.vertex2i(mPreviewRect.mRight - 1, mPreviewRect.mBottom + 1);
-        gGL.texCoord2f(1.f, 1.f);
-        gGL.vertex2i(mPreviewRect.mRight - 1, mPreviewRect.mTop - 1);
-        gGL.texCoord2f(0.f, 1.f);
-        gGL.vertex2i(mPreviewRect.mLeft + 1, mPreviewRect.mTop - 1);
+        gRender.texCoord2f(1.f, 0.f);
+        gRender.vertex2i(mPreviewRect.mRight - 1, mPreviewRect.mBottom + 1);
+        gRender.texCoord2f(1.f, 1.f);
+        gRender.vertex2i(mPreviewRect.mRight - 1, mPreviewRect.mTop - 1);
+        gRender.texCoord2f(0.f, 1.f);
+        gRender.vertex2i(mPreviewRect.mLeft + 1, mPreviewRect.mTop - 1);
     }
-    gGL.end();
+    gRender.end();
 
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
 }
 
 //-----------------------------------------------------------------------------

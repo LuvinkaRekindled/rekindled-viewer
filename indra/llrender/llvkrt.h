@@ -3,7 +3,7 @@
  * @brief Ray tracing scene for the native Vulkan renderer: bottom-level structures per vertex/index buffer pair, a top-level structure per frame, and the descriptor
  *        set shaders trace against (inline ray queries). See doc/vulkan/PLAN-rt-shadows.md.
  *
- * Worker thread only, like the buffer table it reads (LLVkGL::getBufferInfo).
+ * Worker thread only, like the buffer table it reads (LLVkWorker::getBufferInfo).
  */
 
 #ifndef LL_LLVKRT_H
@@ -57,7 +57,7 @@ struct Caster
     const F32* mModel = nullptr;
     const AlphaInfo* mAlpha = nullptr;   // kind 1
     U32 mPass = 0;                       // shadow pass (0-3 sun cascades, 4-5 spot, 6 other)
-    LLVkGL::BufferInfo mVi, mIi;         // where the vertex and index buffers live now (the handler has them at hand: no lookups later)
+    LLVkWorker::BufferInfo mVi, mIi;         // where the vertex and index buffers live now (the handler has them at hand: no lookups later)
 };
 
 // A rigged caster draw (kind 2 shadow packets): its vertices are bind pose, skinned by a compute pass every frame into a copy the avatar's structure is built from.
@@ -79,14 +79,14 @@ struct SkinCaster
     U32 mKind = 0;                      // 0 = opaque, 1 = alpha masked (mAlpha)
     U32 mMode = 0;                      // how the vertices are skinned: 0 = weight4 array + palette, 1 = avatar body (one weight float per vertex, palette of 15 joints), 2 = rigid under mModel
     const AlphaInfo* mAlpha = nullptr;
-    LLVkGL::BufferInfo mVi, mIi;
+    LLVkWorker::BufferInfo mVi, mIi;
 };
 void noteSkinned(const SkinCaster& c);
 
 // the ray scene keeps a table of materials (LL_VK_RT_MATERIALS=1): the viewer's definitions (kind 10 records) are stored here, and every geometry of the scene gets a record that names its material
 bool materialsOn();
-void updateMaterials(const LLVkMirror::RtMaterialDef* defs, U32 count);
-// the bindless slot of a pinned texture (by pin index, see LLVkGL::rtPinAcquire) changed: the GPU reads it from the pin table
+void updateMaterials(const LLVkBridge::RtMaterialDef* defs, U32 count);
+// the bindless slot of a pinned texture (by pin index, see LLVkWorker::rtPinAcquire) changed: the GPU reads it from the pin table
 void setPinSlot(U32 index, U32 slot);
 
 // the slot of a texture (by GL name) in this frame's bindless table

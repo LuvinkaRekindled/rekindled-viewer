@@ -577,28 +577,28 @@ void LLFloaterBvhPreview::draw()
         if (!mUseOwnAvatar)
         {
         // </FS>
-        gGL.color3f(1.f, 1.f, 1.f);
-        gGL.getTexUnit(0)->bind(mAnimPreview);
+        gRender.color3f(1.f, 1.f, 1.f);
+        gRender.getTexUnit(0)->bind(mAnimPreview);
 
-        gGL.begin(LLRender::TRIANGLES);
+        gRender.begin(LLRender::TRIANGLES);
         {
-            gGL.texCoord2f(0.f, 1.f);
-            gGL.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
-            gGL.texCoord2f(0.f, 0.f);
-            gGL.vertex2i(PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
-            gGL.texCoord2f(1.f, 0.f);
-            gGL.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
+            gRender.texCoord2f(0.f, 1.f);
+            gRender.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
+            gRender.texCoord2f(0.f, 0.f);
+            gRender.vertex2i(PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
+            gRender.texCoord2f(1.f, 0.f);
+            gRender.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
 
-            gGL.texCoord2f(0.f, 1.f);
-            gGL.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
-            gGL.texCoord2f(1.f, 0.f);
-            gGL.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
-            gGL.texCoord2f(1.f, 1.f);
-            gGL.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
+            gRender.texCoord2f(0.f, 1.f);
+            gRender.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
+            gRender.texCoord2f(1.f, 0.f);
+            gRender.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
+            gRender.texCoord2f(1.f, 1.f);
+            gRender.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
         }
-        gGL.end();
+        gRender.end();
 
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
         // <FS> Preview on own avatar
         //LLVOAvatar* avatarp = mAnimPreview->getDummyAvatar();
         }
@@ -1550,8 +1550,8 @@ bool    LLPreviewAnimation::render()
     gUIProgram.bind();
 
     LLGLSUIDefault def;
-    gGL.getTexUnit(0)->bindWhite();
-    gGL.color4f(0.15f, 0.2f, 0.3f, 1.f);
+    gRender.getTexUnit(0)->bindWhite();
+    gRender.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
     gl_rect_2d_simple( mFullWidth, mFullHeight );
 
@@ -1559,7 +1559,7 @@ bool    LLPreviewAnimation::render()
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-    gGL.flush();
+    gRender.flush();
 
     LLVector3 target_pos = avatarp->mRoot->getWorldPosition();
 
@@ -1597,7 +1597,7 @@ bool    LLPreviewAnimation::render()
         }
     }
 
-    gGL.color4f(1,1,1,1);
+    gRender.color4f(1,1,1,1);
     return true;
 }
 

@@ -67,7 +67,7 @@ public:
 // ============= Structure for caching shader uniforms ===============
 namespace LLVk { class Program; }
 
-class LLGLSLShader;
+class LLShaderProgram;
 
 class LLShaderUniforms
 {
@@ -123,7 +123,7 @@ public:
         mVector3s.push_back({ index, LLVector3(value) });
     }
 
-    void apply(LLGLSLShader* shader);
+    void apply(LLShaderProgram* shader);
 
 
     std::vector<IntSetting> mIntegers;
@@ -131,10 +131,10 @@ public:
     std::vector<VectorSetting> mVectors;
     std::vector<Vector3Setting> mVector3s;
 };
-class LLGLSLShader
+class LLShaderProgram
 {
 public:
-    // NOTE: Keep gShaderConsts and LLGLSLShader::ShaderConsts_e in sync!
+    // NOTE: Keep gShaderConsts and LLShaderProgram::ShaderConsts_e in sync!
     enum eShaderConsts
     {
         SHADER_CONST_CLOUD_MOON_DEPTH
@@ -162,15 +162,15 @@ public:
     };
 
 
-    static std::set<LLGLSLShader*> sInstances;
+    static std::set<LLShaderProgram*> sInstances;
     static bool sProfileEnabled;
     static bool sCanProfile;
 
-    LLGLSLShader();
-    ~LLGLSLShader();
+    LLShaderProgram();
+    ~LLShaderProgram();
 
     static U32 sCurBoundShader;
-    static LLGLSLShader* sCurBoundShaderPtr;
+    static LLShaderProgram* sCurBoundShaderPtr;
     static S32 sIndexedTextureChannels;
 
     static U32 sMaxGLTFMaterials;
@@ -262,7 +262,7 @@ public:
     }
     void removePermutation(std::string name);
 
-    void addConstant(const LLGLSLShader::eShaderConsts shader_const);
+    void addConstant(const LLShaderProgram::eShaderConsts shader_const);
 
     //enable/disable texture channel for specified uniform
     //if given texture uniform is active in the shader,
@@ -320,7 +320,7 @@ public:
     S32 mTotalUniformSize;
     S32 mActiveTextureChannels;
     S32 mShaderLevel;
-    S32 mShaderGroup; // see LLGLSLShader::eGroup
+    S32 mShaderGroup; // see LLShaderProgram::eGroup
     bool mUniformsDirty;
     LLShaderFeatures mFeatures;
     std::vector< std::pair< std::string, ShaderStage > > mShaderFiles;
@@ -374,7 +374,7 @@ public:
     static U32 sTotalBinds;
 
     // this pointer should be set to whichever shader represents this shader's rigged variant
-    LLGLSLShader* mRiggedVariant = nullptr;
+    LLShaderProgram* mRiggedVariant = nullptr;
 
     // variants for use by GLTF renderer
     // bit 0 = alpha mode blend (1) or opaque (0)
@@ -391,7 +391,7 @@ public:
 
     constexpr static U8 NUM_GLTF_VARIANTS = 16;
 
-    std::vector<LLGLSLShader> mGLTFVariants;
+    std::vector<LLShaderProgram> mGLTFVariants;
 
     //helper to bind GLTF variant
     void bind(U8 variant);
@@ -413,11 +413,11 @@ private:
 };
 
 //UI shader (declared here so llui_libtest will link properly)
-extern LLGLSLShader         gUIProgram;
+extern LLShaderProgram         gUIProgram;
 //output vec4(color.rgb,color.a*tex0[tc0].a)
-extern LLGLSLShader         gSolidColorProgram;
+extern LLShaderProgram         gSolidColorProgram;
 //Alpha mask shader (declared here so llappearance can access properly)
-extern LLGLSLShader         gAlphaMaskProgram;
+extern LLShaderProgram         gAlphaMaskProgram;
 
 #if LL_PROFILER_ENABLE_RENDER_DOC
 #define LL_SET_SHADER_LABEL(shader) shader.setLabel(#shader)

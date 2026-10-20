@@ -46,12 +46,12 @@
 #include <algorithm>
 #include <string>
 
-namespace LLVkGL
+namespace LLVkWorker
 {
 
 bool gActive = false;
 bool gOwn = false;      // LL_VK_OWN: the mirror owns the GL resources (see llvkgl.h)
-LLVkMirror::Mutex gMutex;
+LLVkBridge::Mutex gMutex;
 
 // CPU time spent inside the translator's draw/clear hooks (the cost of recording the work into Vulkan), in ticks of the performance counter
 static long long gHookTicks = 0;
@@ -62,7 +62,7 @@ namespace
 struct HookTimer
 {
     LARGE_INTEGER mStart;
-    const bool mOn = LLVkMirror::gPhaseTiming;      // the total only goes into the LL_VK_PHASES report: no clock reads (two per draw) otherwise
+    const bool mOn = LLVkBridge::gPhaseTiming;      // the total only goes into the LL_VK_PHASES report: no clock reads (two per draw) otherwise
     HookTimer() { if (mOn) QueryPerformanceCounter(&mStart); }
     ~HookTimer()
     {
@@ -503,7 +503,7 @@ struct GLState
 };
 
 // never destroyed: the viewer's own statics (gPipeline's render targets, the textures of the image lists) release their GL objects when the process exits, after this file's statics would
-// be gone, and every one of those calls lands here (the shutdown of the mirror itself is LLVkMirror::shutdown). A destroyed map under that call was the crash at exit.
+// be gone, and every one of those calls lands here (the shutdown of the mirror itself is LLVkBridge::shutdown). A destroyed map under that call was the crash at exit.
 GLState& sGL = *new GLState;
 
 // <FS> flat lookup of the entries of sGL.mTextures / mBuffers by GL name (the names are small integers from the viewer's name pools). A hash lookup for every sampler of
@@ -853,14 +853,14 @@ void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z,
         unsigned depth_held = 0;
         if (unlocked)
         {
-            depth_held = LLVkGL::gMutex.releaseAll();
+            depth_held = LLVkWorker::gMutex.releaseAll();
         }
         const auto t_conv = std::chrono::steady_clock::now();
         const bool converted = convert_pixels(fm, tr, src, w, h, d, alignment, row_length, texels);
         LLVkAsync::noteTexWorker((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_conv).count(), 0, 0, 0);
         if (unlocked)
         {
-            LLVkGL::gMutex.reacquire(depth_held);
+            LLVkWorker::gMutex.reacquire(depth_held);
             // the texture may have been deleted or replaced while the lock was free
             auto it = sGL.mTextures.find(name);
             if (it == sGL.mTextures.end() || it->second.mImage.mImage != handle)
@@ -966,7 +966,7 @@ Image* read_image(U32 fbo)
 {
     if (fbo == 0)
     {
-        return LLVkMirror::backbufferColor();
+        return LLVkBridge::backbufferColor();
     }
     auto it = sGL.mFbos.find(fbo);
     if (it == sGL.mFbos.end())
@@ -1005,8 +1005,8 @@ bool sync_target()
     }
     if (sDrawFbo == 0)
     {
-        Image* color = LLVkMirror::backbufferColor();
-        Image* depth = LLVkMirror::backbufferDepth();
+        Image* color = LLVkBridge::backbufferColor();
+        Image* depth = LLVkBridge::backbufferDepth();
         if (!color)
         {
             return false;
@@ -1632,8 +1632,8 @@ void sync_uniform_blocks(Renderer& r, std::vector<U32>& used_buffers)
 // common work before a draw; returns false if the draw cannot be mirrored
 bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
 {
-    LLVkMirror::gLastLap = 200;
-    if (!LLVkMirror::inFrame())
+    LLVkBridge::gLastLap = 200;
+    if (!LLVkBridge::inFrame())
     {
         ++sStats.mNotInFrame;
         return false;
@@ -1646,14 +1646,14 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
         ++sStats.mNoProgram;
         return false;
     }
-    if (LLVkMirror::benchPhasesActive())
+    if (LLVkBridge::benchPhasesActive())
     {
-        LLVkMirror::benchPass(program->getName().c_str());
+        LLVkBridge::benchPass(program->getName().c_str());
     }
     sDbgMatch = !sDbgFilter.empty() && program->getName().find(sDbgFilter) != std::string::npos;
-    LLVkMirror::gLastLap = 201;
+    LLVkBridge::gLastLap = 201;
     {
-        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_TARGET);
+        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_TARGET);
         if (!sync_target())
         {
             ++sDrawsSkipped;
@@ -1662,17 +1662,17 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
             return false;
         }
     }
-    LLVkMirror::gLastLap = 202;
+    LLVkBridge::gLastLap = 202;
     {
-        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_STATE);
+        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_STATE);
         sync_draw_state(r, sHasDepth);
     }
-    LLVkMirror::gLastLap = 203;
+    LLVkBridge::gLastLap = 203;
     {
-        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_TEX);
+        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_TEX);
         sync_textures(r, *program);
     }
-    LLVkMirror::gLastLap = 204;
+    LLVkBridge::gLastLap = 204;
     if (debugShadersEnabled() && program->hasUniform("ll_dbg_mode"))
     {
         S32 mode = 0, sampler = 0;
@@ -1692,7 +1692,7 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
     }
     if (sStatsEnabled)
     {
-        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_STATS);
+        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_STATS);
         std::string key = program->getName() + " -> ";
         if (sDrawFbo == 0) key += "SCREEN";
         for (U32 tname : sCurTargets) key += std::to_string(tname) + " ";
@@ -1745,11 +1745,11 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
         sStats.mBackbufferEvents.push_back(e);
     }
     {
-        LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_UBO);
+        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_UBO);
         sync_uniform_blocks(r, used_buffers);
     }
-    LLVkMirror::gLastLap = 205;
-    LLVkMirror::PhaseTimer phase(LLVkMirror::PH_D_VERTEX);
+    LLVkBridge::gLastLap = 205;
+    LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_VERTEX);
     if (!build_vertex_input(r, *program, vi, used_buffers))
     {
         ++sDrawsSkipped;
@@ -2268,7 +2268,7 @@ static void copy_to_texture(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 y
 {
     Tex* t = edit_texture();
     Image* src = read_image(source_fbo);
-    if (!t || !t->mImage.valid() || !src || !LLVkMirror::inFrame())
+    if (!t || !t->mImage.valid() || !src || !LLVkBridge::inFrame())
     {
         return;
     }
@@ -2655,7 +2655,7 @@ void uniform_block_bind(unsigned index, unsigned buffer)
 // CMD_DRAW2: the draw names its program and carries its vertex binding when it changed; the binding is written into the vertex input state the draw functions read
 void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
 {
-    if (LLVkMirror::isReady())
+    if (LLVkBridge::isReady())
     {
         Renderer& r = Renderer::instance();
         if (r.getProgram() != (Program*)program)
@@ -2709,7 +2709,7 @@ U32 sDcLogged = 0;
 
 void dc_log(const char* what, const std::string& detail)
 {
-    Program* p = LLVkMirror::isReady() ? Renderer::instance().getProgram() : nullptr;
+    Program* p = LLVkBridge::isReady() ? Renderer::instance().getProgram() : nullptr;
     const std::string name = p ? p->getName() : std::string("(none)");
     ++sDc.mBadPerProgram[name];
     if (sDcLogged++ < 30)
@@ -2721,7 +2721,7 @@ void dc_log(const char* what, const std::string& detail)
 
 void uniform_check()
 {
-    if (!LLVkMirror::isReady())
+    if (!LLVkBridge::isReady())
     {
         return;
     }
@@ -2774,7 +2774,7 @@ void probe_note(U32 vb_name, U32 ib_name, const Buf& vb, const Buf& ib, U32 firs
 void draw_arrays(unsigned topo, int first, int count)
 {
     HookTimer hook_timer;
-    LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
+    LLVkBridge::PhaseTimer draw_phase(LLVkBridge::PH_DRAW);
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache;
     VertexInput& vi = vi_cache;
@@ -2788,14 +2788,14 @@ void draw_arrays(unsigned topo, int first, int count)
     }
     Renderer& r = Renderer::instance();
     ensure_buffers_current(used, 0);
-    LLVkMirror::gLastLap = 210;
-    LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
+    LLVkBridge::gLastLap = 210;
+    LLVkBridge::PhaseTimer apply_phase(LLVkBridge::PH_D_APPLY);
     r.setVertexInput(vi);
     r.setTopology(topology((LLVkFormat::Topology)topo));
-    LLVkMirror::gLastLap = 211;
+    LLVkBridge::gLastLap = 211;
     if (r.draw((U32)count, (U32)first))
     {
-        if (LLVkMirror::gPhaseTiming)
+        if (LLVkBridge::gPhaseTiming)
         {
             ++sPhaseProgramDraws[r.getProgram()->getName()];
             ++sPhaseTargetDraws[r.describeTarget()];
@@ -2820,7 +2820,7 @@ void draw_arrays(unsigned topo, int first, int count)
 void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
 {
     HookTimer hook_timer;
-    LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
+    LLVkBridge::PhaseTimer draw_phase(LLVkBridge::PH_DRAW);
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache;
     VertexInput& vi = vi_cache;
@@ -2840,12 +2840,12 @@ void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
         return;
     }
     Renderer& r = Renderer::instance();
-    LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
+    LLVkBridge::PhaseTimer apply_phase(LLVkBridge::PH_D_APPLY);
     r.setVertexInput(vi);
     r.setTopology(topology((LLVkFormat::Topology)topo));
     if (r.draw((U32)count, 0))
     {
-        if (LLVkMirror::gPhaseTiming)
+        if (LLVkBridge::gPhaseTiming)
         {
             ++sPhaseProgramDraws[r.getProgram()->getName()];
             ++sPhaseTargetDraws[r.describeTarget()];
@@ -2868,7 +2868,7 @@ void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
 void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsigned type, const void* indices)
 {
     HookTimer hook_timer;
-    LLVkMirror::PhaseTimer draw_phase(LLVkMirror::PH_DRAW);
+    LLVkBridge::PhaseTimer draw_phase(LLVkBridge::PH_DRAW);
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache;
     VertexInput& vi = vi_cache;
@@ -2986,13 +2986,13 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
         }
     }
     ensure_buffers_current(used, vao.mElementBuffer);
-    LLVkMirror::PhaseTimer apply_phase(LLVkMirror::PH_D_APPLY);
+    LLVkBridge::PhaseTimer apply_phase(LLVkBridge::PH_D_APPLY);
     r.setVertexInput(vi);
     r.setTopology(topology((LLVkFormat::Topology)topo));
     r.setIndexBuffer(eit->second.mVk.mBuffer, eit->second.mArena.mOffset, itype);
     if (r.drawIndexed((U32)count, (U32)((U64)indices / index_bytes), 0))
     {
-        if (LLVkMirror::gPhaseTiming)
+        if (LLVkBridge::gPhaseTiming)
         {
             ++sPhaseProgramDraws[r.getProgram()->getName()];
             ++sPhaseTargetDraws[r.describeTarget()];
@@ -3712,7 +3712,7 @@ static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf&
 }
 
 // a rigged caster draw for the ray scene: skinned on the GPU into a copy of its vertices (Rt::noteSkinned)
-static void note_rt_skinned(U32 pass, const LLVkMirror::ShadowSkinEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
+static void note_rt_skinned(U32 pass, const LLVkBridge::ShadowSkinEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
 {
     Rt::SkinCaster c;
     c.mAvatarId = e.mAvatarId;
@@ -3747,15 +3747,15 @@ static void note_rt_skinned(U32 pass, const LLVkMirror::ShadowSkinEntry& e, cons
 }
 
 // the same for a rigged alpha masked draw: the structure of its avatar gets a geometry with the alpha test
-static void note_rt_skinned_alpha(U32 pass, const LLVkMirror::ShadowAlphaEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
+static void note_rt_skinned_alpha(U32 pass, const LLVkBridge::ShadowAlphaEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
 {
     Rt::AlphaInfo alpha;
-    alpha.mFlags = e.mFlags & (31u | LLVkMirror::ALPHA_HARD);
+    alpha.mFlags = e.mFlags & (31u | LLVkBridge::ALPHA_HARD);
     alpha.mTexcoordOffset = e.mTexcoordOffset;
     alpha.mColorOffset = e.mColorOffset;
     memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
     alpha.mCutoff = e.mCutoff;
-    if (e.mFlags & LLVkMirror::ALPHA_HARD)
+    if (e.mFlags & LLVkBridge::ALPHA_HARD)
     {
         memcpy(alpha.mUv, e.mUv, sizeof(alpha.mUv));         // the glTF texture transform
     }
@@ -3788,17 +3788,17 @@ static void note_rt_skinned_alpha(U32 pass, const LLVkMirror::ShadowAlphaEntry& 
 }
 
 // the worker side of a record of casters the old path draws (kind 5): nothing is drawn, the ray scene gets them (opaque, or with the alpha test and the texture transform)
-static void on_rt_only_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+static void on_rt_only_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!Rt::active() || h.mEntries == 0)
     {
         return;
     }
-    const LLVkMirror::ShadowAlphaEntry* entries = (const LLVkMirror::ShadowAlphaEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowAlphaEntry) * h.mEntries);
+    const LLVkBridge::ShadowAlphaEntry* entries = (const LLVkBridge::ShadowAlphaEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowAlphaEntry) * h.mEntries);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkMirror::ShadowAlphaEntry& e = entries[i];
+        const LLVkBridge::ShadowAlphaEntry& e = entries[i];
         Buf* vb = packet_buffer(e.mVertexBuffer);
         Buf* ib = packet_buffer(e.mIndexBuffer);
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
@@ -3806,7 +3806,7 @@ static void on_rt_only_packets(const LLVkMirror::ShadowPacketsHeader& h, const U
             continue;
         }
         const F32* model = e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr;
-        if (e.mFlags & LLVkMirror::ALPHA_RAY_ONLY)
+        if (e.mFlags & LLVkBridge::ALPHA_RAY_ONLY)
         {
             Rt::AlphaInfo info;
             if (Rt::materialsOn())
@@ -3834,14 +3834,14 @@ static void on_rt_only_packets(const LLVkMirror::ShadowPacketsHeader& h, const U
 }
 
 // the worker side of kinds 6 and 7: rigged draws of the main view, only named to the ray scene (palettes are copied into the frame's scratch memory the scene call reads)
-static void on_rigged_note_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!Rt::active() || h.mEntries == 0 || h.mPaletteFloats == 0)
     {
         return;
     }
     const bool alpha_entries = h.mKind == 7;
-    const size_t entry_bytes = alpha_entries ? sizeof(LLVkMirror::ShadowAlphaEntry) : sizeof(LLVkMirror::ShadowSkinEntry);
+    const size_t entry_bytes = alpha_entries ? sizeof(LLVkBridge::ShadowAlphaEntry) : sizeof(LLVkBridge::ShadowSkinEntry);
     const F32* matrices = (const F32*)(blob + entry_bytes * h.mEntries);
     Renderer& r = Renderer::instance();
     Renderer::ScratchAlloc palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
@@ -3854,7 +3854,7 @@ static void on_rigged_note_packets(const LLVkMirror::ShadowPacketsHeader& h, con
     {
         if (alpha_entries)
         {
-            const LLVkMirror::ShadowAlphaEntry& e = ((const LLVkMirror::ShadowAlphaEntry*)blob)[i];
+            const LLVkBridge::ShadowAlphaEntry& e = ((const LLVkBridge::ShadowAlphaEntry*)blob)[i];
             Buf* vb = packet_buffer(e.mVertexBuffer);
             Buf* ib = packet_buffer(e.mIndexBuffer);
             // debug: why a rigged alpha entry of the main view is turned away here (counted, logged about once in 600 packets)
@@ -3885,7 +3885,7 @@ static void on_rigged_note_packets(const LLVkMirror::ShadowPacketsHeader& h, con
             {
                 ++why[5];
             }
-            if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress || !(e.mFlags & LLVkMirror::ALPHA_RIGGED))
+            if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress || !(e.mFlags & LLVkBridge::ALPHA_RIGGED))
             {
                 continue;
             }
@@ -3893,7 +3893,7 @@ static void on_rigged_note_packets(const LLVkMirror::ShadowPacketsHeader& h, con
         }
         else
         {
-            const LLVkMirror::ShadowSkinEntry& e = ((const LLVkMirror::ShadowSkinEntry*)blob)[i];
+            const LLVkBridge::ShadowSkinEntry& e = ((const LLVkBridge::ShadowSkinEntry*)blob)[i];
             Buf* vb = packet_buffer(e.mVertexBuffer);
             Buf* ib = packet_buffer(e.mIndexBuffer);
             if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
@@ -3906,14 +3906,14 @@ static void on_rigged_note_packets(const LLVkMirror::ShadowPacketsHeader& h, con
 }
 
 // the worker side of a record of the body meshes of avatars (kind 4): nothing is drawn, the ray scene skins them on the GPU
-static void on_body_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+static void on_body_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!Rt::active() || h.mEntries == 0)
     {
         return;
     }
-    const LLVkMirror::ShadowBodyEntry* entries = (const LLVkMirror::ShadowBodyEntry*)blob;
-    const F32* palette_source = (const F32*)(blob + sizeof(LLVkMirror::ShadowBodyEntry) * h.mEntries);
+    const LLVkBridge::ShadowBodyEntry* entries = (const LLVkBridge::ShadowBodyEntry*)blob;
+    const F32* palette_source = (const F32*)(blob + sizeof(LLVkBridge::ShadowBodyEntry) * h.mEntries);
     Renderer& r = Renderer::instance();
     Renderer::ScratchAlloc palettes;
     if (h.mPaletteFloats)
@@ -3927,7 +3927,7 @@ static void on_body_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* 
     }
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkMirror::ShadowBodyEntry& e = entries[i];
+        const LLVkBridge::ShadowBodyEntry& e = entries[i];
         Buf* vb = packet_buffer(e.mVertexBuffer);
         Buf* ib = packet_buffer(e.mIndexBuffer);
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
@@ -3982,7 +3982,7 @@ static void on_body_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* 
 }
 
 // the worker side of a record of alpha masked casters (shadowAlphaPullV.glsl / shadowAlphaPullF.glsl): the entries also name their textures
-static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     struct AlphaGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mFirst, mCount, mModel, mFlags; U32 mSlots[2]; F32 mCutoff; U32 mPad; U32 mWeights[2]; U32 mPalette[2]; };
     static_assert(sizeof(AlphaGpu) == 80, "alpha packet entry");
@@ -4002,8 +4002,8 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
         ++sStats.mNoProgram;
         return;
     }
-    const LLVkMirror::ShadowAlphaEntry* entries = (const LLVkMirror::ShadowAlphaEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowAlphaEntry) * h.mEntries);
+    const LLVkBridge::ShadowAlphaEntry* entries = (const LLVkBridge::ShadowAlphaEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowAlphaEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(AlphaGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
     if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
@@ -4025,7 +4025,7 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
     }
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkMirror::ShadowAlphaEntry& e = entries[i];
+        const LLVkBridge::ShadowAlphaEntry& e = entries[i];
         AlphaGpu& g = out[i];
         memset(&g, 0, sizeof(g));
         Buf* vb = packet_buffer(e.mVertexBuffer);
@@ -4034,7 +4034,7 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
         }
-        if (Rt::active() && !(e.mFlags & LLVkMirror::ALPHA_RIGGED))
+        if (Rt::active() && !(e.mFlags & LLVkBridge::ALPHA_RIGGED))
         {
             Rt::AlphaInfo alpha;
             alpha.mFlags = e.mFlags & 31u;      // fullbright, tree, one texture, texcoords, colours: the bits mean the same in the ray query shader
@@ -4052,13 +4052,13 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
         g.mIndices[0] = (U32)ia;
         g.mIndices[1] = (U32)(ia >> 32);
         U32 flags = e.mFlags;
-        if (flags & LLVkMirror::ALPHA_HAS_TEXCOORD)
+        if (flags & LLVkBridge::ALPHA_HAS_TEXCOORD)
         {
             const U64 a = pa + e.mTexcoordOffset;
             g.mTexcoords[0] = (U32)a;
             g.mTexcoords[1] = (U32)(a >> 32);
         }
-        if (flags & LLVkMirror::ALPHA_HAS_COLOR)
+        if (flags & LLVkBridge::ALPHA_HAS_COLOR)
         {
             const U64 a = pa + e.mColorOffset;
             g.mColors[0] = (U32)a;
@@ -4068,7 +4068,7 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
         g.mCount = e.mIndexCount;
         g.mModel = e.mMatrix;
         g.mFlags = flags;
-        if (flags & LLVkMirror::ALPHA_RIGGED)
+        if (flags & LLVkBridge::ALPHA_RIGGED)
         {
             if (!palettes.mAddress)
             {
@@ -4154,7 +4154,7 @@ static void on_shadow_alpha_packets(const LLVkMirror::ShadowPacketsHeader& h, co
 }
 
 // the worker side of a record of deferred geometry draws (diffusePullV.glsl): the draw's matrices are in the record, its textures get slots in the bindless table
-static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     struct GeoGpu
     {
@@ -4182,8 +4182,8 @@ static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
         ++sStats.mNoProgram;
         return;
     }
-    const LLVkMirror::GeoEntry* entries = (const LLVkMirror::GeoEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::GeoEntry) * h.mEntries);
+    const LLVkBridge::GeoEntry* entries = (const LLVkBridge::GeoEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::GeoEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(GeoGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(176 * (size_t)std::max<U32>(h.mMatrices, 1));
     if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
@@ -4195,7 +4195,7 @@ static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
     GeoGpu* out = (GeoGpu*)table.mPtr;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkMirror::GeoEntry& e = entries[i];
+        const LLVkBridge::GeoEntry& e = entries[i];
         GeoGpu& g = out[i];
         memset(&g, 0, sizeof(g));
         Buf* vb = packet_buffer(e.mVertexBuffer);
@@ -4306,7 +4306,7 @@ static void on_geometry_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
 }
 
 // the worker side of a record of rigged untextured casters (shadowSkinPullV.glsl)
-static void on_shadow_skin_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     struct SkinGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mWeights[2]; U32 mPalette[2]; U32 mFirst, mJoints, mModel, mPad; };
     static_assert(sizeof(SkinGpu) == 48, "skin packet entry");
@@ -4326,8 +4326,8 @@ static void on_shadow_skin_packets(const LLVkMirror::ShadowPacketsHeader& h, con
         ++sStats.mNoProgram;
         return;
     }
-    const LLVkMirror::ShadowSkinEntry* entries = (const LLVkMirror::ShadowSkinEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowSkinEntry) * h.mEntries);
+    const LLVkBridge::ShadowSkinEntry* entries = (const LLVkBridge::ShadowSkinEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowSkinEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(SkinGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
     Renderer::ScratchAlloc palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
@@ -4341,7 +4341,7 @@ static void on_shadow_skin_packets(const LLVkMirror::ShadowPacketsHeader& h, con
     SkinGpu* out = (SkinGpu*)table.mPtr;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkMirror::ShadowSkinEntry& e = entries[i];
+        const LLVkBridge::ShadowSkinEntry& e = entries[i];
         SkinGpu& g = out[i];
         memset(&g, 0, sizeof(g));
         Buf* vb = packet_buffer(e.mVertexBuffer);
@@ -4424,7 +4424,7 @@ static void on_shadow_skin_packets(const LLVkMirror::ShadowPacketsHeader& h, con
 
 // <FS> Avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6): the worker side of a record of rigged draws for the velocity pass (kind 8, avatarVelocityPullV.glsl). Entries as kind 2
 // (ShadowSkinEntry; no model matrices), then the palettes of this frame, then the palettes of the frame before, at the same offsets. The viewer sets the other uniforms the normal way.
-static void on_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     struct VelocityGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mWeights[2]; U32 mPalette[2]; U32 mPrevPalette[2]; U32 mFirst, mJoints; };
     static_assert(sizeof(VelocityGpu) == 48, "velocity packet entry");
@@ -4444,8 +4444,8 @@ static void on_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
         ++sStats.mNoProgram;
         return;
     }
-    const LLVkMirror::ShadowSkinEntry* entries = (const LLVkMirror::ShadowSkinEntry*)blob;
-    const F32* palette_data = (const F32*)(blob + sizeof(LLVkMirror::ShadowSkinEntry) * h.mEntries);
+    const LLVkBridge::ShadowSkinEntry* entries = (const LLVkBridge::ShadowSkinEntry*)blob;
+    const F32* palette_data = (const F32*)(blob + sizeof(LLVkBridge::ShadowSkinEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(VelocityGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc palettes = r.allocVertexScratch(8 * (size_t)h.mPaletteFloats);      // this frame's, then last frame's
     if (!table.mPtr || !palettes.mPtr || !table.mAddress || !palettes.mAddress)
@@ -4458,7 +4458,7 @@ static void on_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
     VelocityGpu* out = (VelocityGpu*)table.mPtr;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkMirror::ShadowSkinEntry& e = entries[i];
+        const LLVkBridge::ShadowSkinEntry& e = entries[i];
         VelocityGpu& g = out[i];
         memset(&g, 0, sizeof(g));
         Buf* vb = packet_buffer(e.mVertexBuffer);
@@ -4541,7 +4541,7 @@ static void on_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h, const 
 
 // <FS> Avatar motion vectors, step 1b (doc/vulkan/PLAN-ray-tracing.md, item 6): the worker side of a record of draws that move as a whole (kind 9, objectVelocityPullV.glsl). Entries as the static
 // shadow casters (ShadowPacketEntry), then the model matrices of this frame (mMatrices of them, 16 floats), then the ones of the frame before (same numbers).
-static void on_object_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+static void on_object_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     struct ObjectGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
     static_assert(sizeof(ObjectGpu) == 32, "object velocity packet entry");
@@ -4561,8 +4561,8 @@ static void on_object_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h,
         ++sStats.mNoProgram;
         return;
     }
-    const LLVkMirror::ShadowPacketEntry* entries = (const LLVkMirror::ShadowPacketEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowPacketEntry) * h.mEntries);
+    const LLVkBridge::ShadowPacketEntry* entries = (const LLVkBridge::ShadowPacketEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowPacketEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(ObjectGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(128 * (size_t)h.mMatrices);      // this frame's, then last frame's
     if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
@@ -4575,7 +4575,7 @@ static void on_object_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h,
     ObjectGpu* out = (ObjectGpu*)table.mPtr;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkMirror::ShadowPacketEntry& e = entries[i];
+        const LLVkBridge::ShadowPacketEntry& e = entries[i];
         ObjectGpu& g = out[i];
         memset(&g, 0, sizeof(g));
         Buf* vb = packet_buffer(e.mVertexBuffer);
@@ -4652,9 +4652,9 @@ static void on_object_velocity_packets(const LLVkMirror::ShadowPacketsHeader& h,
     sDrawsTotal += h.mEntries;
 }
 
-// <FS> Render packets: the worker side of LLVkMirror::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
+// <FS> Render packets: the worker side of LLVkBridge::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
-void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
+void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (h.mKind == 1)
     {
@@ -4668,7 +4668,7 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     }
     if (h.mKind == 10)
     {
-        Rt::updateMaterials((const LLVkMirror::RtMaterialDef*)blob, h.mEntries);
+        Rt::updateMaterials((const LLVkBridge::RtMaterialDef*)blob, h.mEntries);
         return;
     }
     if (h.mKind == 8)
@@ -4719,8 +4719,8 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
         ++sStats.mNoProgram;
         return;
     }
-    const LLVkMirror::ShadowPacketEntry* entries = (const LLVkMirror::ShadowPacketEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkMirror::ShadowPacketEntry) * h.mEntries);
+    const LLVkBridge::ShadowPacketEntry* entries = (const LLVkBridge::ShadowPacketEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowPacketEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(PacketGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
     if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
@@ -4759,7 +4759,7 @@ void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& h, const U8* blob)
     U32 last_vb = 0, last_ib = 0;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkMirror::ShadowPacketEntry& e = entries[i];
+        const LLVkBridge::ShadowPacketEntry& e = entries[i];
         PacketGpu& g = out[i];
         memset(&g, 0, sizeof(g));
         Buf* vb = lookup(e.mVertexBuffer);
@@ -4998,8 +4998,8 @@ static void packet_texture_prefetch(U32 name, U32 stage)
     }
 }
 
-// <FS> Ray query shadows: the viewer asks for the frame's scene before the lighting that samples the sun shadow (LLVkMirror::rtScene)
-void on_rt_scene(const LLVkMirror::RtSceneArgs& args)
+// <FS> Ray query shadows: the viewer asks for the frame's scene before the lighting that samples the sun shadow (LLVkBridge::rtScene)
+void on_rt_scene(const LLVkBridge::RtSceneArgs& args)
 {
     if (!Rt::active())
     {
@@ -5017,7 +5017,7 @@ void on_rt_scene(const LLVkMirror::RtSceneArgs& args)
 void clear_target(bool color, bool depth, const float* rgba)
 {
     HookTimer hook_timer;
-    if (!LLVkMirror::inFrame() || !sync_target())
+    if (!LLVkBridge::inFrame() || !sync_target())
     {
         return;
     }
@@ -5045,7 +5045,7 @@ namespace
 // what the translator currently holds in Vulkan, for the benchmark log
 std::string resource_summary()
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
+    std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
     U64 tex_bytes = 0, rt_bytes = 0, buf_bytes = 0, unused_mip_bytes = 0;
     U32 tex_count = 0, rt_count = 0, views = 0, buf_count = 0;
     for (auto& kv : sGL.mTextures)
@@ -5095,14 +5095,14 @@ namespace { void drain_query_results(); }
 // which a later frame reuses)
 void before_end_frame()
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
+    std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
     flush_buffer_updates(true);
     probe_run();
 }
 
 void after_frame()
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(gMutex);
+    std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
     if (LLVkAsync::gEnabled)
     {
         drain_query_results();
@@ -5130,9 +5130,9 @@ void after_frame()
             static U32 frames = 0;
             static U64 draws_at_start = 0;
             static LARGE_INTEGER t_start = {};
-            if (!LLVkMirror::gPhaseTiming)
+            if (!LLVkBridge::gPhaseTiming)
             {
-                LLVkMirror::gPhaseTiming = true;
+                LLVkBridge::gPhaseTiming = true;
                 QueryPerformanceCounter(&t_start);
             }
             if (++frames >= 600)
@@ -5142,12 +5142,12 @@ void after_frame()
                 QueryPerformanceCounter(&now);
                 const double wall_ms = (double)(now.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
                 std::string text;
-                for (int p = 0; p < LLVkMirror::PH_COUNT; ++p)
+                for (int p = 0; p < LLVkBridge::PH_COUNT; ++p)
                 {
                     char buf[64];
-                    snprintf(buf, sizeof(buf), "%s %.2f | ", LLVkMirror::phaseName(p), (double)LLVkMirror::gPhaseTicks[p] * 1000.0 / (double)freq.QuadPart / frames);
+                    snprintf(buf, sizeof(buf), "%s %.2f | ", LLVkBridge::phaseName(p), (double)LLVkBridge::gPhaseTicks[p] * 1000.0 / (double)freq.QuadPart / frames);
                     text += buf;
-                    LLVkMirror::gPhaseTicks[p] = 0;
+                    LLVkBridge::gPhaseTicks[p] = 0;
                 }
                 LL_INFOS("VkPhases") << frames << " frames, " << wall_ms / frames << " ms/frame wall, " << (sDrawsTotal - draws_at_start) / frames
                                      << " draws/frame; CPU ms/frame by phase: " << text << LL_ENDL;
@@ -5529,7 +5529,7 @@ void destroy_queries(S32 n, const U32* ids)
 
 void query_begin(unsigned kind, unsigned id)
 {
-    if (!queries_on() || !LLVkMirror::inFrame() || !Renderer::instance().isReady())
+    if (!queries_on() || !LLVkBridge::inFrame() || !Renderer::instance().isReady())
     {
         if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
         return;
@@ -5571,7 +5571,7 @@ void query_end(unsigned kind)
         return;
     }
     auto it = sQueries.find(act->second);
-    if (it != sQueries.end() && LLVkMirror::inFrame())
+    if (it != sQueries.end() && LLVkBridge::inFrame())
     {
         if (it->second.mOcc) Renderer::instance().queryEnd();
         else if (it->second.mTime) Renderer::instance().queryTimestamp(act->second, true);
@@ -5805,7 +5805,7 @@ bool fetch_rect_cached(Image& view, S32 x, S32 y, S32 w, S32 h, std::vector<U8>&
     }
     if (sReadCache.mImage != &view || sReadCache.mMip != mip || sReadCache.mLayer != layer || sReadCache.mEpoch != r.modificationCount())
     {
-        if (LLVkMirror::inFrame() && !r.flushAndRestart(1))
+        if (LLVkBridge::inFrame() && !r.flushAndRestart(1))
         {
             return false;
         }
@@ -5944,7 +5944,7 @@ void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Tr
         return;
     }
     Renderer& r = Renderer::instance();
-    if (LLVkMirror::inFrame() && !r.flushAndRestart(2))
+    if (LLVkBridge::inFrame() && !r.flushAndRestart(2))
     {
         return;
     }
@@ -5994,7 +5994,7 @@ void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, voi
         }
         return;
     }
-    if (LLVkMirror::inFrame() && !r.flushAndRestart(3))
+    if (LLVkBridge::inFrame() && !r.flushAndRestart(3))
     {
         return;
     }
@@ -6005,7 +6005,7 @@ void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, voi
     }
 }
 
-void on_upscale(const LLVkMirror::UpscaleArgs& a)
+void on_upscale(const LLVkBridge::UpscaleArgs& a)
 {
     static U32 failures = 0;
     if (!gActive || !LLVkDlss::ready())
@@ -6097,7 +6097,7 @@ void on_upscale(const LLVkMirror::UpscaleArgs& a)
 }
 
 
-} // namespace LLVkGL
+} // namespace LLVkWorker
 
 #endif // LL_VULKAN
 

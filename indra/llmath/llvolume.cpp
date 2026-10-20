@@ -102,7 +102,7 @@ constexpr F32 SKEW_MAX  =  0.95f;
 constexpr F32 SCULPT_MIN_AREA = 0.002f;
 constexpr S32 SCULPT_MIN_AREA_DETAIL = 1;
 
-bool gDebugGL = false; // See settings.xml "RenderDebugGL"
+bool gDebugRender = false; // See settings.xml "RenderDebugGL"
 
 // <FS:ND> Cache for Triangles/LOD estimation
 struct TrianglesPerLODCache
@@ -5963,7 +5963,7 @@ void LLVolumeFace::createOctree(F32 scaler, const LLVector4a& center, const LLVe
     LLVolumeOctreeRebound rebound;
     rebound.traverse(mOctree);
 
-    if (gDebugGL)
+    if (gDebugRender)
     {
         LLVolumeOctreeValidate validate;
         validate.traverse(mOctree);

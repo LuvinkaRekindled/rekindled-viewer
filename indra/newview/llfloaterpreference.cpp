@@ -2263,7 +2263,7 @@ void LLFloaterPreference::refreshEnabledState()
     // <FS:Ansariel> Expose max texture VRAM setting
     auto max_texmem = getChild<LLSliderCtrl>("RenderMaxVRAMBudget");
     max_texmem->setMinValue(MIN_VRAM_BUDGET);
-    max_texmem->setMaxValue((F32)gGLManager.mVRAM);
+    max_texmem->setMaxValue((F32)gDeviceCaps.mVRAM);
     // </FS:Ansariel>
     // <FS:minerjr> [FIRE-35198] Limit VRAM texture usage UI control reverts to default value
     static LLCachedControl<U32> max_vram_budget(gSavedSettings, "RenderMaxVRAMBudget", 0); // Get the same VRAM value that is used for the Bias calcuation
