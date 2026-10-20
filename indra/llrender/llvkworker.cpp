@@ -28,6 +28,9 @@
 #include "llvkformat.h"
 #include "llvkdlss.h"
 #include "llvkrt.h"
+#include <glslang/Public/ShaderLang.h>
+#include <glslang/Public/ResourceLimits.h>
+#include <glslang/SPIRV/GlslangToSpv.h>
 
 #include <chrono>
 #include "llvkworker.h"
@@ -4612,6 +4615,483 @@ static void on_object_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h,
     sDrawsTotal += h.mEntries;
 }
 
+
+// <FS> S2 resident fragments (doc/vulkan/S2-handoff.md): the entries of static groups live in a GPU table (the same 32 byte entries the packet shader reads, plus a bounding sphere each), kept by
+// slot; a compute pass tests every entry against the cascade's frustum planes and writes the draw commands (vertex count 0 for the culled ones); the draw is one indirect record. The main thread
+// only tells the worker what changed (RETAIN_RESIDENT / RELEASE, kinds 14 / 12), the region matrices (15) and which pass to draw (16).
+struct ResGpu32 { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
+static_assert(sizeof(ResGpu32) == 32, "resident entry");
+struct ResPair { U32 mVb = 0, mIb = 0; Buf* mPvb = nullptr; Buf* mPib = nullptr; U64 mGen = ~0ull, mEvb = 0, mMvb = 0, mEib = 0, mMib = 0; bool mOk = false; };
+struct ResFrag
+{
+    std::vector<U32> mSlots;                                    // the table slot of each entry
+    std::vector<LLVkBridge::ShadowPacketEntry> mEntries;
+    std::vector<U32> mPairOf;                                   // per entry: index into mPairs
+    std::vector<ResPair> mPairs;
+};
+static const U32 kResCapacity = 131072;
+static const U32 kResMatrixSlots = 256;
+static struct ResState
+{
+    Buffer mTable, mBounds, mModels;
+    ResGpu32* mT = nullptr;
+    F32* mB = nullptr;
+    F32* mM = nullptr;
+    bool mReady = false, mFailed = false;
+    U32 mHigh = 0;                                              // slots used so far (the cull covers 0..mHigh)
+    std::vector<U32> mFree;
+    std::vector<std::pair<U32, U64>> mRetired;                  // slot, frame it was given up (reusable once the frames in flight are done)
+    std::unordered_map<U32, ResFrag> mFrags;
+    U64 mRefreshFrame = ~0ull;
+    U64 mPasses = 0, mDrawn = 0, mReport = 0, mOverflow = 0, mUnresolved = 0, mRecheck = 0;
+} sRes;
+
+static bool res_init()
+{
+    if (sRes.mReady)
+    {
+        return true;
+    }
+    if (sRes.mFailed)
+    {
+        return false;
+    }
+    Context& ctx = Context::instance();
+    const auto& caps = ctx.getCaps();
+    sRes.mFailed = true;
+    if (!caps.mBufferDeviceAddress || !caps.mMultiDrawIndirect || !caps.mDrawIndirectFirstInstance)
+    {
+        LL_WARNS("VkScene") << "resident shadow entries: the device lacks buffer addresses or first-instance indirect draws" << LL_ENDL;
+        return false;
+    }
+    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    if (!ctx.createBuffer((VkDeviceSize)sizeof(ResGpu32) * kResCapacity, usage, Context::Memory::UploadDevice, sRes.mTable)
+        || !ctx.createBuffer(16ull * kResCapacity, usage, Context::Memory::UploadDevice, sRes.mBounds)
+        || !ctx.createBuffer(64ull * kResMatrixSlots, usage, Context::Memory::UploadDevice, sRes.mModels)
+        || !sRes.mTable.mMapped || !sRes.mBounds.mMapped || !sRes.mModels.mMapped || !sRes.mTable.mAddress || !sRes.mBounds.mAddress || !sRes.mModels.mAddress)
+    {
+        LL_WARNS("VkScene") << "resident shadow entries: the tables could not be created" << LL_ENDL;
+        return false;
+    }
+    sRes.mT = (ResGpu32*)sRes.mTable.mMapped;
+    sRes.mB = (F32*)sRes.mBounds.mMapped;
+    sRes.mM = (F32*)sRes.mModels.mMapped;
+    memset(sRes.mT, 0, sizeof(ResGpu32) * kResCapacity);
+    memset(sRes.mB, 0, 16ull * kResCapacity);
+    memset(sRes.mM, 0, 64ull * kResMatrixSlots);
+    for (U32 i = 0; i < kResMatrixSlots; ++i)
+    {
+        sRes.mM[16 * i] = sRes.mM[16 * i + 5] = sRes.mM[16 * i + 10] = sRes.mM[16 * i + 15] = 1.f;
+    }
+    sRes.mFailed = false;
+    sRes.mReady = true;
+    LL_INFOS("VkScene") << "resident shadow entries: tables ready (" << kResCapacity << " entries)" << LL_ENDL;
+    return true;
+}
+
+static void res_reclaim(U64 frame)
+{
+    const U64 lag = (U64)Context::frameCount() + 1;
+    size_t keep = 0;
+    for (size_t i = 0; i < sRes.mRetired.size(); ++i)
+    {
+        if (frame >= sRes.mRetired[i].second + lag)
+        {
+            sRes.mFree.push_back(sRes.mRetired[i].first);
+        }
+        else
+        {
+            sRes.mRetired[keep++] = sRes.mRetired[i];
+        }
+    }
+    sRes.mRetired.resize(keep);
+}
+
+// 0: nothing changed, 1: the pair has other addresses now (or lost them), 2: not there (yet)
+static int res_pair_check(ResPair& p)
+{
+    if (p.mGen != sPacketBufferGeneration)
+    {
+        auto v = sGL.mBuffers.find(p.mVb);
+        auto i = sGL.mBuffers.find(p.mIb);
+        p.mPvb = v == sGL.mBuffers.end() ? nullptr : &v->second;
+        p.mPib = i == sGL.mBuffers.end() ? nullptr : &i->second;
+        p.mGen = sPacketBufferGeneration;
+        p.mOk = false;
+        if (!p.mPvb || !p.mPib)
+        {
+            return 2;
+        }
+        // looked up again: the recorded versions decide below
+        p.mEvb = ~0ull;
+    }
+    if (!p.mPvb || !p.mPib || !p.mPvb->mVk.valid() || !p.mPib->mVk.valid() || !p.mPvb->mVk.mAddress || !p.mPib->mVk.mAddress)
+    {
+        const bool was = p.mOk;
+        p.mOk = false;
+        return was ? 1 : 2;
+    }
+    if (p.mOk && p.mEvb == p.mPvb->mEpoch && p.mMvb == p.mPvb->mMoves && p.mEib == p.mPib->mEpoch && p.mMib == p.mPib->mMoves)
+    {
+        return 0;
+    }
+    p.mEvb = p.mPvb->mEpoch; p.mMvb = p.mPvb->mMoves; p.mEib = p.mPib->mEpoch; p.mMib = p.mPib->mMoves;
+    p.mOk = true;
+    return 1;
+}
+
+static void res_write_entries(ResFrag& f, size_t pair_index)
+{
+    const ResPair& p = f.mPairs[pair_index];
+    for (size_t i = 0; i < f.mEntries.size(); ++i)
+    {
+        if (f.mPairOf[i] != pair_index)
+        {
+            continue;
+        }
+        const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+        ResGpu32& g = sRes.mT[f.mSlots[i]];
+        if (!p.mOk)
+        {
+            g.mCount = 0;
+            continue;
+        }
+        const U64 pa = (U64)p.mPvb->mVk.mAddress, ia = (U64)p.mPib->mVk.mAddress;
+        g.mPositions[0] = (U32)pa; g.mPositions[1] = (U32)(pa >> 32);
+        g.mIndices[0] = (U32)ia; g.mIndices[1] = (U32)(ia >> 32);
+        g.mFirst = e.mFirstIndex;
+        g.mModel = e.mMatrix;
+        g.mPad = 0;
+        g.mCount = e.mIndexCount;           // last: a count of 0 is a culled entry
+    }
+}
+
+static void res_release(U32 id)
+{
+    auto it = sRes.mFrags.find(id);
+    if (it == sRes.mFrags.end())
+    {
+        return;
+    }
+    const U64 frame = Context::instance().getFrameNumber();
+    for (U32 slot : it->second.mSlots)
+    {
+        sRes.mT[slot].mCount = 0;
+        sRes.mRetired.push_back({ slot, frame });
+    }
+    sRes.mFrags.erase(it);
+}
+
+static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!res_init())
+    {
+        return;
+    }
+    res_release(h.mFragment);
+    res_reclaim(Context::instance().getFrameNumber());
+    const LLVkBridge::ShadowPacketEntry* entries = (const LLVkBridge::ShadowPacketEntry*)blob;
+    ResFrag f;
+    f.mEntries.assign(entries, entries + h.mEntries);
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        U32 slot;
+        if (!sRes.mFree.empty())
+        {
+            slot = sRes.mFree.back();
+            sRes.mFree.pop_back();
+        }
+        else if (sRes.mHigh < kResCapacity)
+        {
+            slot = sRes.mHigh++;
+        }
+        else
+        {
+            if (sRes.mOverflow++ == 0)
+            {
+                LL_WARNS("VkScene") << "resident shadow entries: the table is full (" << kResCapacity << " entries): the rest are not drawn" << LL_ENDL;
+            }
+            for (U32 s : f.mSlots) { sRes.mRetired.push_back({ s, Context::instance().getFrameNumber() }); }
+            return;
+        }
+        f.mSlots.push_back(slot);
+        const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+        size_t k = 0;
+        while (k < f.mPairs.size() && !(f.mPairs[k].mVb == e.mVertexBuffer && f.mPairs[k].mIb == e.mIndexBuffer))
+        {
+            ++k;
+        }
+        if (k == f.mPairs.size())
+        {
+            ResPair p;
+            p.mVb = e.mVertexBuffer;
+            p.mIb = e.mIndexBuffer;
+            f.mPairs.push_back(p);
+        }
+        f.mPairOf.push_back((U32)k);
+        sRes.mT[slot].mCount = 0;
+        F32* b = sRes.mB + 4 * (size_t)slot;
+        memcpy(b, h.mViewProj, 4 * sizeof(F32));
+        sRes.mT[slot].mModel = e.mMatrix;
+    }
+    ResFrag& stored = sRes.mFrags[h.mFragment] = std::move(f);
+    for (size_t k = 0; k < stored.mPairs.size(); ++k)
+    {
+        if (res_pair_check(stored.mPairs[k]) == 1)
+        {
+            res_write_entries(stored, k);
+        }
+    }
+}
+
+// once a frame: the pairs whose buffers moved (or appeared) get their entries written again; every buffer a resident entry reads counts as used this frame (the buffer rename path asks)
+static void res_refresh(U64 frame)
+{
+    if (sRes.mRefreshFrame == frame)
+    {
+        return;
+    }
+    sRes.mRefreshFrame = frame;
+    res_reclaim(frame);
+    U64 unresolved = 0;
+    const bool pending = !sPendingBufs.empty();
+    bool flush = false;
+    for (auto& kv : sRes.mFrags)
+    {
+        ResFrag& f = kv.second;
+        for (size_t k = 0; k < f.mPairs.size(); ++k)
+        {
+            ResPair& p = f.mPairs[k];
+            const int c = res_pair_check(p);
+            if (c == 1)
+            {
+                res_write_entries(f, k);
+                ++sRes.mRecheck;
+            }
+            if (p.mOk)
+            {
+                p.mPvb->mLastUseFrame = frame;
+                p.mPib->mLastUseFrame = frame;
+                flush = flush || (pending && (p.mPvb->mPending || p.mPib->mPending));
+            }
+            else
+            {
+                ++unresolved;
+            }
+        }
+    }
+    sRes.mUnresolved = unresolved;
+    if (flush)
+    {
+        flush_buffer_updates();     // data written by the main thread this frame is recorded before anything reads it
+    }
+}
+
+static void res_matrices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!res_init())
+    {
+        return;
+    }
+    const U32 n = std::min<U32>(h.mMatrices, kResMatrixSlots);
+    memcpy(sRes.mM, blob, 64 * (size_t)n);
+}
+
+namespace
+{
+const char* kCullShader = R"GLSL(#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(local_size_x = 64) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Table { uint t[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Bounds { vec4 b[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Models { mat4 m[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Params { vec4 planes[6]; uint count; uint planeCount; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Cmds { uint c[]; };
+layout(push_constant) uniform PC { uvec2 table; uvec2 bounds; uvec2 models; uvec2 params; uvec2 cmds; } pc;
+void main()
+{
+    Params p = Params(pc.params);
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= p.count) return;
+    Table tb = Table(pc.table);
+    Bounds bd = Bounds(pc.bounds);
+    Models md = Models(pc.models);
+    Cmds cm = Cmds(pc.cmds);
+    uint count = tb.t[i * 8u + 5u];
+    uint model = tb.t[i * 8u + 6u];
+    bool visible = count != 0u;
+    if (visible)
+    {
+        vec4 b = bd.b[i];
+        vec3 c = (md.m[model] * vec4(b.xyz, 1.0)).xyz;
+        for (uint k = 0u; k < p.planeCount; ++k)
+        {
+            if (dot(p.planes[k].xyz, c) + p.planes[k].w < -b.w) { visible = false; break; }
+        }
+    }
+    cm.c[i * 4u + 0u] = visible ? count : 0u;
+    cm.c[i * 4u + 1u] = visible ? 1u : 0u;
+    cm.c[i * 4u + 2u] = 0u;
+    cm.c[i * 4u + 3u] = i;
+}
+)GLSL";
+struct CullPipe { VkShaderModule mModule = VK_NULL_HANDLE; VkPipelineLayout mLayout = VK_NULL_HANDLE; VkPipeline mPipe = VK_NULL_HANDLE; bool mTried = false; } sCullPipe;
+}
+
+static bool res_cull_pipeline()
+{
+    if (sCullPipe.mPipe != VK_NULL_HANDLE)
+    {
+        return true;
+    }
+    if (sCullPipe.mTried)
+    {
+        return false;
+    }
+    sCullPipe.mTried = true;
+    static const bool glslang_ready = glslang::InitializeProcess();
+    if (!glslang_ready)
+    {
+        return false;
+    }
+    glslang::TShader shader(EShLangCompute);
+    const char* strings[1] = { kCullShader };
+    shader.setStrings(strings, 1);
+    shader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientVulkan, 100);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_6);
+    const EShMessages msgs = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+    if (!shader.parse(GetDefaultResources(), 450, ECoreProfile, false, false, msgs))
+    {
+        LL_WARNS("VkScene") << "resident cull: compile failed: " << shader.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    glslang::TProgram program;
+    program.addShader(&shader);
+    if (!program.link(msgs))
+    {
+        LL_WARNS("VkScene") << "resident cull: link failed: " << program.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    std::vector<unsigned int> spirv;
+    spv::SpvBuildLogger logger;
+    glslang::SpvOptions options;
+    options.validate = false;
+    glslang::GlslangToSpv(*program.getIntermediate(EShLangCompute), spirv, &logger, &options);
+    if (spirv.empty())
+    {
+        LL_WARNS("VkScene") << "resident cull: no SPIR-V: " << logger.getAllMessages() << LL_ENDL;
+        return false;
+    }
+    VkDevice dev = Context::instance().getDevice();
+    VkShaderModuleCreateInfo mi = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    mi.codeSize = spirv.size() * sizeof(unsigned int);
+    mi.pCode = spirv.data();
+    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 40 };
+    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &pcr;
+    if (vkCreateShaderModule(dev, &mi, nullptr, &sCullPipe.mModule) != VK_SUCCESS || vkCreatePipelineLayout(dev, &li, nullptr, &sCullPipe.mLayout) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkComputePipelineCreateInfo pi = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    pi.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    pi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pi.stage.module = sCullPipe.mModule;
+    pi.stage.pName = "main";
+    pi.layout = sCullPipe.mLayout;
+    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &sCullPipe.mPipe) != VK_SUCCESS)
+    {
+        sCullPipe.mPipe = VK_NULL_HANDLE;
+        return false;
+    }
+    LL_INFOS("VkScene") << "resident cull pipeline ready" << LL_ENDL;
+    return true;
+}
+
+void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob);
+// kind 16: cull the resident entries against the pass's planes on the GPU, then draw the commands it wrote with the packet program (already bound by the viewer: the same one as kind 0)
+static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!res_init() || !res_cull_pipeline())
+    {
+        return;
+    }
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (!program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    {
+        ++sStats.mNoProgram;
+        return;
+    }
+    const U64 frame_now = Context::instance().getFrameNumber();
+    res_refresh(frame_now);
+    const U32 n = sRes.mHigh;
+    if (n == 0 || sRes.mFrags.empty())
+    {
+        return;
+    }
+    Renderer::ScratchAlloc params = r.allocVertexScratch(112);
+    Renderer::ScratchAlloc commands = r.allocVertexScratch(16ull * n);
+    if (!params.mPtr || !commands.mPtr || !params.mAddress || !commands.mAddress)
+    {
+        return;
+    }
+    static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
+    memcpy(params.mPtr, blob, 96);
+    ((U32*)params.mPtr)[24] = n;
+    ((U32*)params.mPtr)[25] = plane_count;
+    const U64 ta = (U64)sRes.mTable.mAddress, ba = (U64)sRes.mBounds.mAddress, ma = (U64)sRes.mModels.mAddress, pa = (U64)params.mAddress, ca = (U64)commands.mAddress;
+    const U32 push[10] = { (U32)ta, (U32)(ta >> 32), (U32)ba, (U32)(ba >> 32), (U32)ma, (U32)(ma >> 32), (U32)pa, (U32)(pa >> 32), (U32)ca, (U32)(ca >> 32) };
+    r.recordExternal({}, [&](VkCommandBuffer cmd) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sCullPipe.mPipe);
+        vkCmdPushConstants(cmd, sCullPipe.mLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push);
+        vkCmdDispatch(cmd, (n + 63) / 64, 1, 1);
+        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        mb.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        mb.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+        mb.dstStageMask = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
+        mb.dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        di.memoryBarrierCount = 1;
+        di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &di);
+    });
+
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<U32> used_cache;
+    VertexInput& vi = vi_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used_cache.clear();
+    const S32 table_words[2] = { (S32)(U32)ta, (S32)(U32)(ta >> 32) };
+    const S32 models_words[2] = { (S32)(U32)ma, (S32)(U32)(ma >> 32) };
+    program->setInts("ll_packet_table", table_words, 2);
+    program->setInts("ll_packet_models", models_words, 2);
+    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+    if (!prepare_draw(vi, used_cache))
+    {
+        return;
+    }
+    r.setVertexInput(vi);
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    if (r.drawPackets(nullptr, n, commands.mBuffer, commands.mOffset))
+    {
+        sDraws += n;
+        sDrawsTotal += n;
+    }
+    ++sRes.mPasses;
+    sRes.mDrawn += n;
+    if (sRes.mPasses - sRes.mReport >= 2400)
+    {
+        sRes.mReport = sRes.mPasses;
+        LL_INFOS("VkScene") << "resident shadow entries: " << sRes.mFrags.size() << " fragments, " << n << " table slots (" << sRes.mFree.size() << " free, " << sRes.mRetired.size() << " retired), "
+            << sRes.mUnresolved << " buffer pairs unresolved, " << sRes.mRecheck << " pair re-resolves, " << sRes.mPasses << " passes drawn, " << sRes.mOverflow << " overflows" << LL_ENDL;
+    }
+}
+
 // <FS> S1 retained fragments: the table id -> entries (kinds 11-13 of LLVkBridge::shadowPackets). Ordered with the draws by the queue, so a release never overtakes a pass that uses it.
 static std::unordered_map<U32, std::vector<LLVkBridge::ShadowPacketEntry>> sShadowFragments;
 static U64 sFragmentMissing = 0;
@@ -4620,6 +5100,9 @@ void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     typedef LLVkBridge::ShadowPacketEntry Entry;
+    if (h.mKind == 14) { res_retain(h, blob); return; }
+    if (h.mKind == 15) { res_matrices(h, blob); return; }
+    if (h.mKind == 16) { res_draw(h, blob); return; }
     if (h.mKind == 11)
     {
         sShadowFragments[h.mFragment].assign((const Entry*)blob, (const Entry*)blob + h.mEntries);
@@ -4631,6 +5114,7 @@ static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const 
         for (U32 i = 0; i < h.mEntries; ++i)
         {
             sShadowFragments.erase(ids[i]);
+            res_release(ids[i]);
         }
         return;
     }
@@ -4680,7 +5164,7 @@ static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const 
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if (h.mKind >= 11 && h.mKind <= 13)
+    if (h.mKind >= 11 && h.mKind <= 16)
     {
         on_shadow_fragments(h, blob);
         return;

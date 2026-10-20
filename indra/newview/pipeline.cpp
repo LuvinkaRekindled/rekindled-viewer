@@ -5284,6 +5284,11 @@ struct LLSceneFragment
     std::vector<const LLMatrix4*> mMatrices;
     std::vector<U32> mMatrixIds;                        // rt_matrix_id of each
     std::vector<LLDrawInfo*> mFallback;                 // draws the packet layout cannot take
+    // S2: resident = all its matrices are region matrices (static geometry): the worker culls it on the GPU. mSlots: the region matrix slot of each of mMatrices; mBounds: sphere (centre in region space)
+    bool mResident = false;
+    bool mResidentSent = false;
+    std::vector<U32> mSlots;
+    F32 mBounds[4] = {};
 };
 
 namespace
@@ -5293,9 +5298,10 @@ bool scene_env(const char* name)
     const char* e = getenv(name);
     return e && e[0] == '1';
 }
+bool scene_resident_on();
 bool scene_fragments_use()
 {
-    static const bool on = scene_env("LL_VK_SCENE_FRAGMENTS");
+    static const bool on = scene_env("LL_VK_SCENE_FRAGMENTS") || scene_env("LL_VK_SCENE_RESIDENT");
     return on;
 }
 bool scene_verify_on()
@@ -5304,6 +5310,16 @@ bool scene_verify_on()
     return on;
 }
 
+bool scene_resident_on()
+{
+    static const bool on = scene_env("LL_VK_SCENE_RESIDENT");
+    return on;
+}
+// region render matrices get a slot each (the worker keeps their values by slot, sent with every pass); slot 0 is the identity
+std::vector<const LLMatrix4*> sSlotMatrix(1, nullptr);
+std::unordered_map<const LLMatrix4*, U32> sRegionSlot;
+std::unordered_set<LLSceneFragment*> sResidentFragments;
+std::vector<LLSceneFragment*> sPendingResident;     // built, not yet told to the worker
 std::mutex sFragmentReleaseLock;
 std::vector<U32> sFragmentReleases;         // ids of fragments gone (groups destroyed or rebuilt), told to the worker with the next pass
 U32 sNextFragmentId = 1;
@@ -5315,6 +5331,7 @@ struct FragmentStats
 {
     U64 mPasses = 0, mGroups = 0, mReused = 0, mBuilt = 0, mBufferChanged = 0, mRetains = 0, mReleases = 0, mEntries = 0, mFallback = 0;
     U64 mChecked = 0, mMismatch[FC_NUM] = {}, mViewsChecked = 0, mViewCount = 0, mViewContent = 0, mViewFallback = 0;
+    U64 mResPasses = 0, mResRetains = 0, mResPassed = 0, mResBuilder = 0, mResMissing = 0;
     U32 mLastReport = 0;
 } sFragStats;
 }
@@ -5329,6 +5346,19 @@ void ll_scene_fragment_free(LLSceneFragment*& fragment)
     {
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
         sFragmentReleases.push_back(fragment->mId);
+    }
+    if (fragment->mResident)
+    {
+        sResidentFragments.erase(fragment);
+        if (!fragment->mResidentSent)
+        {
+            auto it = std::find(sPendingResident.begin(), sPendingResident.end(), fragment);
+            if (it != sPendingResident.end())
+            {
+                *it = sPendingResident.back();
+                sPendingResident.pop_back();
+            }
+        }
     }
     delete fragment;
     fragment = nullptr;
@@ -5397,6 +5427,50 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
             f.mEntries.push_back(entry);
         }
     }
+    f.mResident = false;
+    f.mSlots.clear();
+    if (scene_resident_on() && !f.mEntries.empty() && f.mFallback.empty() && !group->isDead())
+    {
+        bool all_region = true;
+        for (size_t k = 0; k < f.mMatrices.size() && all_region; ++k)
+        {
+            all_region = (f.mMatrixIds[k] & 0x80000000u) != 0;
+            if (all_region)
+            {
+                auto it = sRegionSlot.find(f.mMatrices[k]);
+                if (it == sRegionSlot.end() && sSlotMatrix.size() < 250)
+                {
+                    it = sRegionSlot.emplace(f.mMatrices[k], (U32)sSlotMatrix.size()).first;
+                    sSlotMatrix.push_back(f.mMatrices[k]);
+                }
+                if (it == sRegionSlot.end())
+                {
+                    all_region = false;
+                }
+                else
+                {
+                    f.mSlots.push_back(it->second);
+                }
+            }
+        }
+        const LLVector4a* bounds = group->getBounds();
+        const F32 radius = bounds[1].getLength3().getF32();
+        if (all_region && radius > 0.f && radius < 1.0e5f)
+        {
+            F32 centre[3] = { bounds[0].getF32ptr()[0], bounds[0].getF32ptr()[1], bounds[0].getF32ptr()[2] };
+            if (!f.mMatrices.empty())
+            {
+                // the group's bounds are in agent space, the geometry in region space: the region matrix is a translation (row 3 in the viewer's row vector convention)
+                for (int a = 0; a < 3; ++a)
+                {
+                    centre[a] -= f.mMatrices[0]->mMatrix[3][a];
+                }
+            }
+            f.mBounds[0] = centre[0]; f.mBounds[1] = centre[1]; f.mBounds[2] = centre[2];
+            f.mBounds[3] = radius * 1.1f + 1.f;
+            f.mResident = true;
+        }
+    }
 }
 
 // the fragment of a group, current: made again when the draw info set changed (the serial) or a buffer it names has another id (an event the plan lists as "buffer reallocated without a rebuild")
@@ -5427,7 +5501,21 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     f->mSerial = group->mDrawMapSerial;
     scene_fragment_fill(group, *f);
     ++sFragStats.mBuilt;
+    if (f->mResident)
+    {
+        sResidentFragments.insert(f);
+        sPendingResident.push_back(f);
+    }
     return f;
+}
+
+// the end of a group rebuild (main thread): its fragment is made now, so the worker's table follows the rebuilds and nothing has to look at the group again
+void ll_scene_fragment_build(LLSpatialGroup* group)
+{
+    if (scene_resident_on() && !group->isDead() && !group->mDrawMap.empty())
+    {
+        scene_fragment_ensure(group);
+    }
 }
 
 struct SceneGather
@@ -5472,9 +5560,12 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g)
     std::unordered_map<const void*, U32> matrix_numbers;
     const bool verify = scene_verify_on();
     LLSceneFragment fresh;
-    for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
+    // resident mode: the render map job already picked the groups the worker does not hold (mSceneGroups); the rest are culled on the GPU
+    LLSpatialGroup* const* group_list = scene_resident_on() ? result.mSceneGroups.data() : result.beginVisibleGroups();
+    const size_t group_count = scene_resident_on() ? result.mSceneGroups.size() : (size_t)(result.endVisibleGroups() - result.beginVisibleGroups());
+    for (size_t gi = 0; gi < group_count; ++gi)
     {
-        LLSpatialGroup* group = *i;
+        LLSpatialGroup* group = group_list[gi];
         if (group->isDead() || (LLPipeline::RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > LLPipeline::RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
         {
             continue;
@@ -5499,7 +5590,7 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g)
         }
         g.mFallback.insert(g.mFallback.end(), f->mFallback.begin(), f->mFallback.end());
         sFragStats.mFallback += f->mFallback.size();
-        if (f->mEntries.empty())
+        if (f->mEntries.empty() || (f->mResident && scene_resident_on()))
         {
             continue;
         }
@@ -5564,7 +5655,136 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g)
         LL_INFOS("VkScene") << "fragments (shadow kind 0), totals: " << s.mPasses << " passes, " << s.mGroups << " group visits (" << s.mReused << " reused, " << s.mBuilt << " built, " << s.mBufferChanged
             << " rebuilt because a buffer id changed under the same serial), " << s.mRetains << " retained, " << s.mReleases << " released, " << s.mEntries << " entries and " << s.mFallback
             << " fallback draws served | verify: " << s.mChecked << " fragments checked, mismatches by cause (" << causes << "); " << s.mViewsChecked
-            << " cascade lists compared with the builder's: " << s.mViewCount << " differ in count, " << s.mViewContent << " in content, " << s.mViewFallback << " in fallback draws" << LL_ENDL;
+            << " cascade lists compared with the builder's: " << s.mViewCount << " differ in count, " << s.mViewContent << " in content, " << s.mViewFallback << " in fallback draws"
+            << " | resident: " << s.mResPasses << " passes, " << sResidentFragments.size() << " fragments live, " << s.mResRetains << " sent; coverage check: " << s.mResBuilder << " builder entries, "
+            << s.mResMissing << " not covered, " << s.mResPassed << " resident entries passing the frustum test" << LL_ENDL;
+    }
+}
+
+
+// S2: one cascade's resident casters. Tells the worker about the fragments made since the last pass, the region matrices (by slot), then names the pass: the worker culls every resident entry
+// against the frustum planes on the GPU and draws the survivors. With LL_VK_SCENE_VERIFY=1 the same test is made here, on the CPU, and every entry the builder found must be covered
+// (by a resident entry that passes, or by the fragments gathered for the pass); extras are counted.
+static void scene_frustum_planes(const glm::mat4& vp, F32 planes[6][4])
+{
+    auto row = [&](int r) { return glm::vec4(vp[0][r], vp[1][r], vp[2][r], vp[3][r]); };
+    const glm::vec4 r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+    const glm::vec4 p[6] = { r3 + r0, r3 - r0, r3 + r1, r3 - r1, r3 + r2, r3 - r2 };
+    for (int i = 0; i < 6; ++i)
+    {
+        const F32 len = glm::length(glm::vec3(p[i]));
+        const F32 inv = len > 0.f ? 1.f / len : 1.f;
+        for (int c = 0; c < 4; ++c)
+        {
+            planes[i][c] = p[i][c] * inv;
+        }
+    }
+}
+
+static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPipeline::ShadowStaticBuild* source, const SceneGather& gather)
+{
+    for (LLSceneFragment* f : sPendingResident)
+    {
+        std::vector<LLVkBridge::ShadowPacketEntry> entries = f->mEntries;
+        for (LLVkBridge::ShadowPacketEntry& e : entries)
+        {
+            e.mMatrix = e.mMatrix ? f->mSlots[e.mMatrix - 1] : 0;
+        }
+        LLVkBridge::ShadowPacketsHeader header;
+        header.mKind = 14;
+        header.mEntries = (U32)entries.size();
+        header.mFragment = f->mId;
+        memcpy(header.mViewProj, f->mBounds, sizeof(f->mBounds));
+        LLVkBridge::shadowPackets(header, entries.data(), entries.size() * sizeof(entries[0]));
+        f->mResidentSent = true;
+        f->mSent = true;
+        ++sFragStats.mResRetains;
+    }
+    sPendingResident.clear();
+
+    // the region matrices by slot: a slot whose region is gone is the identity
+    std::unordered_set<const LLMatrix4*> live;
+    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    {
+        live.insert(&region->mRenderMatrix);
+    }
+    std::vector<F32> matrices(16 * sSlotMatrix.size(), 0.f);
+    for (size_t k = 0; k < sSlotMatrix.size(); ++k)
+    {
+        F32* m = matrices.data() + 16 * k;
+        if (k && sSlotMatrix[k] && live.count(sSlotMatrix[k]))
+        {
+            memcpy(m, (const F32*)sSlotMatrix[k]->mMatrix, 16 * sizeof(F32));
+        }
+        else
+        {
+            m[0] = m[5] = m[10] = m[15] = 1.f;
+        }
+    }
+    {
+        LLVkBridge::ShadowPacketsHeader header;
+        header.mKind = 15;
+        header.mMatrices = (U32)sSlotMatrix.size();
+        LLVkBridge::shadowPackets(header, matrices.data(), matrices.size() * sizeof(F32));
+    }
+
+    F32 planes[6][4];
+    scene_frustum_planes(view_proj, planes);
+    {
+        LLVkBridge::ShadowPacketsHeader header;
+        header.mKind = 16;
+        header.mPass = pass;
+        memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
+        LLVkBridge::shadowPackets(header, planes, sizeof(planes));
+    }
+    ++sFragStats.mResPasses;
+
+    if (source && scene_verify_on())
+    {
+        static const U32 side_planes = scene_env("LL_VK_SCENE_NEARFAR") ? 6 : 4;
+        struct Key { U32 a, b, c, d; bool operator==(const Key& o) const { return a == o.a && b == o.b && c == o.c && d == o.d; } };
+        struct KeyHash { size_t operator()(const Key& k) const { return ((size_t)k.a * 73856093u) ^ ((size_t)k.b * 19349663u) ^ ((size_t)k.c * 83492791u) ^ ((size_t)k.d * 2654435761u); } };
+        std::unordered_set<Key, KeyHash> covered;
+        for (const LLSceneFragment* f : sResidentFragments)
+        {
+            for (const LLVkBridge::ShadowPacketEntry& e : f->mEntries)
+            {
+                F32 c[3] = { f->mBounds[0], f->mBounds[1], f->mBounds[2] };
+                if (e.mMatrix)
+                {
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        c[a] += f->mMatrices[e.mMatrix - 1]->mMatrix[3][a];
+                    }
+                }
+                bool inside = true;
+                for (U32 p = 0; p < side_planes && inside; ++p)
+                {
+                    inside = planes[p][0] * c[0] + planes[p][1] * c[1] + planes[p][2] * c[2] + planes[p][3] >= -f->mBounds[3];
+                }
+                if (inside)
+                {
+                    covered.insert({ e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount });
+                    ++sFragStats.mResPassed;
+                }
+            }
+        }
+        for (const LLSceneFragment* f : gather.mFragments)
+        {
+            for (const LLVkBridge::ShadowPacketEntry& e : f->mEntries)
+            {
+                covered.insert({ e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount });
+            }
+        }
+        for (const LLVkBridge::ShadowPacketEntry& e : source->mEntries)
+        {
+            ++sFragStats.mResBuilder;
+            if (!covered.count({ e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount }) && sFragStats.mResMissing++ < 8)
+            {
+                LL_WARNS("VkScene") << "resident verify: a builder entry is covered by no resident or gathered fragment: vb " << e.mVertexBuffer << " ib " << e.mIndexBuffer << " first " << e.mFirstIndex
+                    << " count " << e.mIndexCount << " matrix id " << std::hex << e.mMatrixId << std::dec << LL_ENDL;
+            }
+        }
     }
 }
 
@@ -5817,6 +6037,16 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f))
         {
             continue;
+        }
+
+        if (scene_resident_on() && !group->mDrawMap.empty())
+        {
+            // S2: a group with a current resident fragment is culled and drawn from the worker's table; the others stay on the per-pass list
+            const LLSceneFragment* fragment = group->mSceneFragment;
+            if (!(fragment && fragment->mSerial == group->mDrawMapSerial && fragment->mResident))
+            {
+                result.mSceneGroups.push_back(group);
+            }
         }
 
         for (LLSpatialGroup::draw_map_t::iterator j = group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
@@ -14507,9 +14737,13 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 const bool use = scene_fragments_use();
                 SceneGather gather;
                 scene_gather(result, use, gather);
-                if (source && scene_verify_on())
+                if (source && scene_verify_on() && !scene_resident_on())
                 {
                     scene_verify_view(gather, *source);
+                }
+                if (use && scene_resident_on())
+                {
+                    scene_resident_pass(gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView), shadow_pass_index(), source, gather);
                 }
                 if (use)
                 {
