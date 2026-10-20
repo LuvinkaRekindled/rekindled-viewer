@@ -186,11 +186,11 @@ bool LLGLTexture::createGLTexture(S32 discard_level, const LLImageRaw* imageraw,
     return ret ;
 }
 
-void LLGLTexture::setExplicitFormat(LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format, bool swap_bytes)
+void LLGLTexture::setExplicitFormat(LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format, bool swap_bytes, const char* file, int line)
 {
     llassert(mGLTexturep.notNull()) ;
 
-    mGLTexturep->setExplicitFormat(internal_format, primary_format, type_format, swap_bytes) ;
+    mGLTexturep->setExplicitFormat(internal_format, primary_format, type_format, swap_bytes, file, line) ;
 }
 void LLGLTexture::setAddressMode(LLTexUnit::eTextureAddressMode mode)
 {

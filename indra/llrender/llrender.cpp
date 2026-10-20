@@ -1498,9 +1498,14 @@ void LLRender::setStencilMask(U32 mask)
     LLVkState::setStencilMask(mask);
 }
 
-void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data)
+void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* data, const char* file, int line)
 {
-    LLVkTarget::readPixels(LLRenderTarget::sCurFBO, x, y, width, height, gl_format, gl_type, data);
+    LLVkTarget::readPixels(LLRenderTarget::sCurFBO, x, y, width, height, format, type, data, file, line);
+}
+
+void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data, const char* file, int line)
+{
+    LLVkTarget::readPixels(LLRenderTarget::sCurFBO, x, y, width, height, gl_format, gl_type, data, file, line);
 }
 
 void LLRender::genQueries(S32 count, U32* ids)
@@ -1573,9 +1578,14 @@ void LLRender::texParameteri(U32 texture, U32 gl_target, U32 gl_pname, S32 param
     LLVkTex::paramI(texture, gl_target, gl_pname, param);
 }
 
-void LLRender::texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data)
+void LLRender::texImage2D(U32 texture, U32 gl_target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* data, const char* file, int line)
 {
-    LLVkTex::image2D(texture, gl_target, level, internal_format, width, height, border, gl_format, gl_type, data);
+    LLVkTex::image2D(texture, gl_target, level, internal_format, width, height, format, type, data, file, line);
+}
+
+void LLRender::texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data, const char* file, int line)
+{
+    LLVkTex::image2D(texture, gl_target, level, internal_format, width, height, border, gl_format, gl_type, data, file, line);
 }
 
 U32 LLRender::getError()
@@ -1609,9 +1619,14 @@ void LLRender::getTexLevelParameteriv(U32 texture, U32 gl_target, S32 level, U32
     *result = LLVkTex::levelParameter(texture, gl_target, level, gl_pname);
 }
 
-void LLRender::getTexImage(U32 texture, U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels)
+void LLRender::getTexImage(U32 texture, U32 gl_target, S32 level, PixelFormat format, ComponentType type, void* pixels, const char* file, int line)
 {
-    LLVkTex::getImage(texture, gl_target, level, gl_format, gl_type, pixels);
+    LLVkTex::getImage(texture, gl_target, level, format, type, pixels, file, line);
+}
+
+void LLRender::getTexImage(U32 texture, U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels, const char* file, int line)
+{
+    LLVkTex::getImage(texture, gl_target, level, gl_format, gl_type, pixels, file, line);
 }
 
 void LLRender::setSceneBlendType(eBlendType type)

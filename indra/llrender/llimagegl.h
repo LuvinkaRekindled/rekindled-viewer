@@ -121,7 +121,7 @@ public:
     LLImageGL(const LLImageRaw* imageraw, bool usemipmaps = true, bool allow_compression = true);
 
     // For wrapping textures created via GL elsewhere with our API only. Use with caution.
-    LLImageGL(LLGLuint mTexName, U32 components, LLGLenum target, LLGLint  formatInternal, LLGLenum formatPrimary, LLGLenum formatType, LLTexUnit::eTextureAddressMode addressMode);
+    LLImageGL(LLGLuint mTexName, U32 components, LLGLenum target, LLGLint  formatInternal, LLGLenum formatPrimary, LLGLenum formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
 protected:
     virtual ~LLImageGL();
@@ -137,7 +137,7 @@ public:
     void setAllowCompression(bool allow) { mAllowCompression = allow; }
 
     // the texture is named: nothing is bound or read from the unit state
-    static void setManualImage(U32 texname, U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void *pixels, bool allow_compression = true);
+    static void setManualImage(U32 texname, U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void *pixels, bool allow_compression = true, const char* file = __builtin_FILE(), int line = __builtin_LINE());       // file/line: LL_VK_FORMAT_VERIFY
 
     bool createGLTexture() ;
     bool createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true,
@@ -161,7 +161,7 @@ public:
     void destroyGLTexture();
     void forceToInvalidateGLTexture();
 
-    void setExplicitFormat(LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format = 0, bool swap_bytes = false);
+    void setExplicitFormat(LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format = 0, bool swap_bytes = false, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void setComponents(S8 ncomponents) { mComponents = ncomponents; }
 
     S32  getDiscardLevel() const        { return mCurrentDiscardLevel; }

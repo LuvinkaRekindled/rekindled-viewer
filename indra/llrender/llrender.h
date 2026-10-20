@@ -479,7 +479,8 @@ public:
     void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask);
     void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass);
     void setStencilMask(U32 mask);
-    void readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data);
+    void readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void readPixels(S32 x, S32 y, S32 width, S32 height, U32 gl_format, U32 gl_type, void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     // queries (llvkquery.h): occlusion counts and GPU timers around draws; the kinds are the ones LLVkQuery::Kind names
     enum QueryKind { QUERY_ANY_SAMPLES = 0, QUERY_SAMPLES_PASSED = 1, QUERY_TIME_ELAPSED = 2, QUERY_PRIMITIVES_GENERATED = 3 };
     void genQueries(S32 count, U32* ids);
@@ -496,14 +497,16 @@ public:
     void copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);
     void generateMipmap(U32 texture, U32 gl_target);
     void texParameteri(U32 texture, U32 gl_target, U32 gl_pname, S32 param);
-    void texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data);
+    void texImage2D(U32 texture, U32 gl_target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void texImage2D(U32 texture, U32 gl_target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 gl_format, U32 gl_type, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     U32 getError();
     void bindTextureSlot(S32 unit, U32 gl_target, U32 id);     // raw slot write, bypasses the LLTexUnit cache (as the old direct call did)
     void deleteTextures(S32 count, const U32* ids);
     F32 getLineWidth() const { return mLineWidth; }
     void setScissor(S32 x, S32 y, S32 width, S32 height);
     void getTexLevelParameteriv(U32 texture, U32 gl_target, S32 level, U32 gl_pname, S32* result);
-    void getTexImage(U32 texture, U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels);
+    void getTexImage(U32 texture, U32 gl_target, S32 level, PixelFormat format, ComponentType type, void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void getTexImage(U32 texture, U32 gl_target, S32 level, U32 gl_format, U32 gl_type, void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void setSceneBlendType(eBlendType type);
 
     // applies blend func to both color and alpha
