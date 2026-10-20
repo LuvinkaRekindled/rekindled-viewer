@@ -243,7 +243,6 @@ void LLDrawPoolBump::bindCubeMap(LLGLSLShader* shader, S32 shader_level, S32& di
                 cube_map->enable(cube_channel);
             }
             gGL.getTexUnit(cube_channel)->bind(cube_map);
-            gGL.getTexUnit(0)->activate();
         }
         else
         {
@@ -320,7 +319,6 @@ void LLDrawPoolBump::beginFullbrightShiny()
         diffuse_channel = shader->enableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
 
         gGL.getTexUnit(cube_channel)->bind(cube_map);
-        gGL.getTexUnit(0)->activate();
     }
 
     {
@@ -588,7 +586,6 @@ void LLDrawPoolBump::renderDeferred(S32 pass)
         LLGLSLShader::sCurBoundShaderPtr->disableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
         LLGLSLShader::sCurBoundShaderPtr->disableTexture(LLViewerShaderMgr::BUMP_MAP);
         LLGLSLShader::sCurBoundShaderPtr->unbind();
-        gGL.getTexUnit(0)->activate();
     }
 
     shiny = false;
@@ -1038,16 +1035,14 @@ void LLRenderPass::pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_te
         {
             if (shiny)
             {
-                gGL.getTexUnit(0)->activate();
             }
             else
             {
-                gGL.getTexUnit(0)->activate();
-                LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*) params.mTextureMatrix->mMatrix);
+                LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*) params.mTextureMatrix->mMatrix);
                 gPipeline.mTextureMatrixOps++;
             }
 
-            LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*) params.mTextureMatrix->mMatrix);      // both branches above left the texture matrix of unit 0 as the current one
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*) params.mTextureMatrix->mMatrix);      // both branches above left the texture matrix of unit 0 as the current one
             gPipeline.mTextureMatrixOps++;
 
             tex_setup = true;
@@ -1073,13 +1068,11 @@ void LLRenderPass::pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_te
     {
         if (shiny)
         {
-            gGL.getTexUnit(0)->activate();
         }
         else
         {
-            gGL.getTexUnit(0)->activate();
         }
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::CurrentTexture);      // both branches above made the texture matrix of unit 0 the current one
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Texture0);      // both branches above made the texture matrix of unit 0 the current one
     }
 }
 

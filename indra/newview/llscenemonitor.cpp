@@ -371,20 +371,11 @@ void LLSceneMonitor::compare()
     gTwoTextureCompareProgram.uniform1f(sDitherScaleS, mDitherScaleS);
     gTwoTextureCompareProgram.uniform1f(sDitherScaleT, mDitherScaleT);
 
-    gGL.getTexUnit(0)->activate();
-    gGL.getTexUnit(0)->enable(LLTexUnit::TT_TEXTURE);
     gGL.getTexUnit(0)->bind(mFrames[0]);
-    gGL.getTexUnit(0)->activate();
 
-    gGL.getTexUnit(1)->activate();
-    gGL.getTexUnit(1)->enable(LLTexUnit::TT_TEXTURE);
     gGL.getTexUnit(1)->bind(mFrames[1]);
-    gGL.getTexUnit(1)->activate();
 
-    gGL.getTexUnit(2)->activate();
-    gGL.getTexUnit(2)->enable(LLTexUnit::TT_TEXTURE);
     gGL.getTexUnit(2)->bind(mDitheringTexture);
-    gGL.getTexUnit(2)->activate();
 
     gl_rect_2d_simple_tex(width, height);
 

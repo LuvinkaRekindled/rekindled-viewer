@@ -168,7 +168,6 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
         return 0;
     }
 
-    gGL.getTexUnit(0)->enable(LLTexUnit::TT_TEXTURE);
 
     S32 scaled_max_pixels = max_pixels == S32_MAX ? S32_MAX : llceil((F32)max_pixels * sScaleX);
 

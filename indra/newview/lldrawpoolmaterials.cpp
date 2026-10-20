@@ -313,9 +313,8 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         //not batching textures or batch has only 1 texture -- might need a texture matrix
         if (params.mTextureMatrix)
         {
-            gGL.getTexUnit(0)->activate();
 
-            LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*)params.mTextureMatrix->mMatrix);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*)params.mTextureMatrix->mMatrix);
             gPipeline.mTextureMatrixOps++;
 
             tex_setup = true;
@@ -331,8 +330,7 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
 
         if (tex_setup)
         {
-            gGL.getTexUnit(0)->activate();
-            LLRenderMatrix::identity(LLRenderMatrix::Kind::CurrentTexture);      // tex_setup: the texture matrix of unit 0 was made the current one above
+            LLRenderMatrix::identity(LLRenderMatrix::Kind::Texture0);      // tex_setup: the texture matrix of unit 0 was made the current one above
         }
     };
 

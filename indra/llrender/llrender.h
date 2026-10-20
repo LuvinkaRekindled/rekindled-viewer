@@ -221,6 +221,9 @@ public:
     // Warning: this stays set for the bound texture forever,
     // make sure you want to permanently change the address mode  for the bound texture.
     void setTextureAddressMode(eTextureAddressMode mode);
+    // F3.4: the sampler parameters of a texture by name (no unit involved); flush first like the unit forms
+    static void applyAddressMode(U32 tex_name, eTextureType tex_type, eTextureAddressMode mode);
+    static void applyFilteringOption(U32 tex_name, eTextureType tex_type, eTextureFilterOptions option, bool has_mips);
     // MUST already be active and bound
     void setTextureAddressModeFast(eTextureAddressMode mode, eTextureType tex_type);
 
@@ -247,7 +250,6 @@ protected:
     eTextureType        mCurrTexType;
     bool                mHasMipMaps;
 
-    void debugTextureUnit(void);
     GLint getTextureSource(eTextureBlendSrc src);
     GLint getTextureSourceType(eTextureBlendSrc src, bool isAlpha = false);
 };
@@ -524,7 +526,6 @@ public:
 
     U32 getCurrentTexUnitIndex(void) const { return mCurrTextureUnitIndex; }
 
-    bool verifyTexUnitActive(U32 unitToVerify);
 
     void debugTexUnits(void);
 

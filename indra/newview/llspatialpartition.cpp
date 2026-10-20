@@ -2869,7 +2869,7 @@ void renderTexelDensity(LLDrawable* drawable)
         checkerboard_matrix.initScale(LLVector3((F32)texturep->getWidth(discard_level) / 8.f, (F32)texturep->getHeight(discard_level) / 8.f, 1.f));
 
         gGL.getTexUnit(0)->bind(LLViewerTexture::sCheckerBoardImagep, true);
-        LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*)&checkerboard_matrix.mMatrix);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*)&checkerboard_matrix.mMatrix);
 
         if (buffer && (facep->getGeomCount() >= 3))
         {
@@ -2881,7 +2881,7 @@ void renderTexelDensity(LLDrawable* drawable)
             buffer->drawRange(LLRender::TRIANGLES, start, end, count, offset);
         }
 
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::CurrentTexture);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Texture0);
     }
 
     //S32 num_textures = llmax(1, (S32)params->mTextureList.size());
