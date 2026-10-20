@@ -467,14 +467,10 @@ public:
     void clearBuffers(U32 gl_buffer_mask);
     void setClearColor(F32 r, F32 g, F32 b, F32 a);
     void setViewport(S32 x, S32 y, S32 width, S32 height);
-    void setCullFace(U32 gl_face);
     void setCullFace(LLRenderState::CullFace face);       // F3.2: typed (llrenderstate.h)
     void setPolygonOffset(F32 factor, F32 units);
-    void setPolygonMode(U32 gl_face, U32 gl_mode);     // GL_FRONT_AND_BACK, GL_LINE / GL_FILL / GL_POINT
     void setPolygonMode(LLRenderState::PolygonMode mode);
     void setPointSize(F32 size);
-    void setStencilFunc(U32 gl_func, S32 ref, U32 mask);
-    void setStencilOp(U32 gl_sfail, U32 gl_dpfail, U32 gl_dppass);
     void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask);
     void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass);
     void setStencilMask(U32 mask);

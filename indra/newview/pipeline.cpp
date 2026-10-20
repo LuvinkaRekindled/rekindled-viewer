@@ -5824,7 +5824,6 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
         LLVertexBuffer::unbind();
 
-        LLGLState::checkStates();
 
         if (LLViewerShaderMgr::instance()->mShaderLevel[LLViewerShaderMgr::SHADER_DEFERRED] > 1)
         {
@@ -5883,7 +5882,6 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                     LLVertexBuffer::unbind();
                     note_pool_draws(gCubeSnapshot, false, cur_type, LLVertexBuffer::sDrawCalls - pool_draws_before);
 
-                    LLGLState::checkStates();
                 }
             }
             else
@@ -6058,7 +6056,6 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
     if (gDebugGL || gDebugPipeline)
     {
-        LLGLState::checkStates(GL_FALSE);
     }
 
     // turn off atmospherics and water haze for low detail reflection probe
@@ -6123,7 +6120,6 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
                 if (gDebugGL || gDebugPipeline)
                 {
-                    LLGLState::checkStates(GL_FALSE);
                 }
             }
         }
@@ -11699,7 +11695,6 @@ void LLPipeline::renderFinalize()
 {
     llassert(!gCubeSnapshot);
     LLVertexBuffer::unbind();
-    LLGLState::checkStates();
 
     assertInitialized();
 
@@ -11985,7 +11980,6 @@ void LLPipeline::renderFinalize()
 
     LLVertexBuffer::unbind();
 
-    LLGLState::checkStates();
 
     // flush calls made to "addTrianglesDrawn" so far to stats machinery
     recordTrianglesDrawn();
@@ -16390,7 +16384,6 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("generateImpostor");
-    LLGLState::checkStates();
 
     static LLCullResult result;
     result.clear();
@@ -16769,7 +16762,6 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     }
 
     LLVertexBuffer::unbind();
-    LLGLState::checkStates();
 }
 
 bool LLPipeline::hasRenderBatches(const U32 type) const

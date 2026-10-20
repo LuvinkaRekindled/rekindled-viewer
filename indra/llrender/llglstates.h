@@ -32,28 +32,6 @@
 
 //----------------------------------------------------------------------------
 
-class LLGLDepthTest
-{
-    // Enabled by default
-public:
-    LLGLDepthTest(GLboolean depth_enabled, GLboolean write_enabled = GL_TRUE, GLenum depth_func = GL_LEQUAL, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-
-    ~LLGLDepthTest();
-
-    void checkState();
-
-private:
-    // F3.2a: saves and restores the block's depth fields (the machinery of LLRenderState::DepthScope). sShadow is the old shadow copy of "what GL has",
-    // no longer read for any decision: it is kept only for the LL_VK_STATE_GUARD_CHECK drift report, and goes away with the class.
-    U32 mSaved;
-    U32 mSet;
-    const char* mFile;
-    int mLine;
-    static U32 sShadow;     // packed like LLRenderState::Kind::Depth; defaults: no test, write mask on, GL_LESS
-};
-
-//----------------------------------------------------------------------------
-
 class LLGLSDefault
 {
 protected:

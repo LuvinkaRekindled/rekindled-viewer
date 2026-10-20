@@ -200,7 +200,6 @@ void display_startup()
     // Required for HTML update in login screen
     static S32 frame_count = 0;
 
-    LLGLState::checkStates();
 
     if (frame_count++ > 1) // make sure we have rendered a frame first
     {
@@ -211,7 +210,6 @@ void display_startup()
         LL_DEBUGS("Window") << "First display_startup frame" << LL_ENDL;
     }
 
-    LLGLState::checkStates();
 
     gGL.clearBuffers(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // | GL_STENCIL_BUFFER_BIT);
     LLGLSUIDefault gls_ui;
@@ -225,7 +223,6 @@ void display_startup()
 
     LLVertexBuffer::unbind();
 
-    LLGLState::checkStates();
 
     LLVkMirror::endFrame(); // <FS>
     if (gViewerWindow && gViewerWindow->getWindow())
@@ -598,7 +595,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     LLVertexBuffer::unbind();
 
-    LLGLState::checkStates();
 
     gPipeline.disableLights();
 
@@ -675,7 +671,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     }
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:CheckStates");
-    LLGLState::checkStates();
 
     //////////////////////////////////////////////////////////
     //
@@ -988,7 +983,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         }
         gDepthDirty = false;
 
-        LLGLState::checkStates();
 
         static LLCullResult result;
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
@@ -1027,7 +1021,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             }
         }
 
-        LLGLState::checkStates();
 
         LLAppViewer::instance()->pingMainloopTimeout("Display:Swap");
 
@@ -1042,7 +1035,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             gGL.setColorMask(true, true);
             gGL.setClearColor(0.f, 0.f, 0.f, 0.f);
 
-            LLGLState::checkStates();
 
             if (!for_snapshot)
             {
@@ -1055,7 +1047,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
                 LLVertexBuffer::unbind();
 
-                LLGLState::checkStates();
 
                 glm::mat4 proj = get_current_projection();
                 glm::mat4 mod = get_current_modelview();
@@ -1071,7 +1062,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 gGL.loadMatrix(glm::value_ptr(mod));
                 gViewerWindow->setup3DViewport();
 
-                LLGLState::checkStates();
             }
             gGL.clearBuffers(GL_DEPTH_BUFFER_BIT);
         }
@@ -1113,7 +1103,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             }
         }
 
-        LLGLState::checkStates();
 
         ///////////////////////////////////
         //
@@ -1168,7 +1157,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         LLSceneMonitor::getInstance()->fetchQueryResult();
 
-        LLGLState::checkStates();
 
         LLPipeline::sUseOcclusion = occlusion;
 
@@ -1231,7 +1219,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             LLPipeline::sUnderWaterRender = false;
         }
 // </FS:CR> Aurora Sim
-        LLGLState::checkStates();
 
         stop_glerror();
 
@@ -1785,7 +1772,6 @@ void render_ui(F32 zoom_factor, int subfield)
     LLPerfStats::RecordSceneTime T ( LLPerfStats::StatType_t::RENDER_UI ); // render time capture - Primary UI stat can have HUD time overlap (TODO)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI; //LL_RECORD_BLOCK_TIME(FTM_RENDER_UI);
     LL_PROFILE_GPU_ZONE("ui");
-    LLGLState::checkStates();
 
     glm::mat4 saved_view = get_current_modelview();
 
@@ -1816,7 +1802,6 @@ void render_ui(F32 zoom_factor, int subfield)
     LLUnjitteredScope unjittered_ui;
 
     {
-        LLGLState::checkStates();
 
 
         LL_PROFILE_ZONE_NAMED_CATEGORY_UI("HUD");
@@ -1827,10 +1812,8 @@ void render_ui(F32 zoom_factor, int subfield)
             LLVfxManager::instance().runEffect(EVisualEffect::RlvOverlay);
         }
 // [/RLVa:KB]
-        LLGLState::checkStates();
         { LL_CPU_ZONE("display: render_hud_attachments"); render_hud_attachments(); }
 
-        LLGLState::checkStates();
 
         LLGLSDefault gls_default;
         LLGLSUIDefault gls_ui;
@@ -1844,9 +1827,7 @@ void render_ui(F32 zoom_factor, int subfield)
             if (!gDisconnected)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_UI("UI 3D"); //LL_RECORD_BLOCK_TIME(FTM_RENDER_UI_3D);
-                LLGLState::checkStates();
                 { LL_CPU_ZONE("ui: render_ui_3d"); render_ui_3d(); }
-                LLGLState::checkStates();
             }
             else
             {

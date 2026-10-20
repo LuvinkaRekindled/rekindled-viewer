@@ -15,6 +15,7 @@
  *
  * LL_VK_STATE_GUARD_CHECK=1: when a guard is destroyed the block must still hold what the guard set; if not, something changed the state while the guard
  * was alive (and the guard puts back its saved value over it). The first occurrence per guard site is logged with the file and line of the constructor.
+ * (The old LLGLState / LLGLEnable / LLGLDisable / LLGLDepthTest classes and their GL-number setters are gone: F3.2e.)
  */
 
 #ifndef LL_LLRENDERSTATE_H
@@ -30,6 +31,7 @@ enum class CullFace : U8 { None, Back, Front, FrontAndBack };           // None:
 enum class PolygonMode : U8 { Fill, Line, Point };
 enum class CompareOp : U8 { Never, Less, Equal, LessEqual, Greater, NotEqual, GreaterEqual, Always };
 enum class StencilOp : U8 { Keep, Zero, Replace, IncrClamp, DecrClamp, Invert, IncrWrap, DecrWrap };
+enum class BlendFactor : U8 { Zero, One, SrcColor, OneMinusSrcColor, SrcAlpha, OneMinusSrcAlpha, DstAlpha, OneMinusDstAlpha, DstColor, OneMinusDstColor, SrcAlphaSaturate };
 
 // ---- the machinery behind the guards (llvkstate.cpp) ----
 // a guarded field of the block, with its value packed into a U32
@@ -49,16 +51,12 @@ enum class Kind : U8
 extern bool sGuardCheck;                                                                    // LL_VK_STATE_GUARD_CHECK=1
 U32 read(Kind kind);                                                                     // the field now
 U32 exchange(Kind kind, U32 value, const char* file = nullptr, int line = 0);                   // flush if it changes, set it, return what it was (file/line: LL_VK_STATE_WHY)
-extern bool sLegacy;                                                                        // LL_VK_STATE_LEGACY=1 (A/B diagnostic): the guards decide from a shadow copy that only guards write, like the old classes did
-bool legacyGet(Kind kind);                                                                  // the shadow copy of a capability (bit 0)
-void legacySet(Kind kind, bool on);
 extern bool sWhy;                                                                           // LL_VK_STATE_WHY=1: which writers cause the CMD_STATE records (top 15 per 600 frames in the log)
 extern bool sInGuard;
 void noteWriter(const char* file, int line, int kind);                                      // kind: Kind value, -1 any
 void noteDirect(const char* what);                                                          // a direct LLVkState setter
 void leave(Kind kind, U32 saved, U32 set, const char* file, int line);                      // check (when sGuardCheck), then put 'saved' back if the guard changed anything
 
-void reportDrift(const char* what, Kind kind, U32 legacy, U32 block, const char* file, int line);       // a legacy class (LLGLState, LLGLDepthTest) disagrees with the block (check mode)
 void whyEmit(const std::string& diff);                                                      // llvkstate: a CMD_STATE record is written
 std::string guardReport();                                                                  // for the state stats line
 

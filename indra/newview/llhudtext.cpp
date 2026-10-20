@@ -760,7 +760,6 @@ void LLHUDText::markDead()
 
 void LLHUDText::renderAllHUD()
 {
-    LLGLState::checkStates();
 
     {
         LLRenderState::DepthScope depth(false, false);
@@ -775,7 +774,6 @@ void LLHUDText::renderAllHUD()
 
     LLVertexBuffer::unbind();
 
-    LLGLState::checkStates();
 }
 
 void LLHUDText::shiftAll(const LLVector3& offset)
