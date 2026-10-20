@@ -370,7 +370,7 @@ public:
     virtual void initAttribsAndUniforms(void);
 
     bool attachShaderFeatures(LLGLSLShader * shader);
-    GLuint loadShaderFile(const std::string& filename, S32 & shader_level, GLenum type, std::map<std::string, std::string>* defines = NULL, S32 texture_index_channels = -1);
+    U32 loadShaderFile(const std::string& filename, S32 & shader_level, GLenum type, std::map<std::string, std::string>* defines = NULL, S32 texture_index_channels = -1);
 
     // Implemented in the application to actually point to the shader directory.
     virtual std::string getShaderDirPrefix(void) = 0; // Pure Virtual
@@ -385,8 +385,8 @@ public:
 
 public:
     // Map of shader names to compiled
-    std::map<std::string, GLuint> mVertexShaderObjects;
-    std::map<std::string, GLuint> mFragmentShaderObjects;
+    std::map<std::string, U32> mVertexShaderObjects;
+    std::map<std::string, U32> mFragmentShaderObjects;
 
     //global (reserved slot) shader parameters
     std::vector<std::string> mReservedAttribs;
@@ -395,7 +395,7 @@ public:
 
     struct ProgramBinaryData
     {
-        GLsizei mBinaryLength = 0;
+        S32 mBinaryLength = 0;
         GLenum mBinaryFormat = 0;
         F32 mLastUsedTime = 0.0;
     };
@@ -413,8 +413,8 @@ public:
         std::string mSource;
     };
     bool mRecordShaderSources = false;
-    GLuint mNextShaderObject = 0;       // a shader object is a recorded source text (mRecordedShaders) under a handle allocated here
-    std::map<GLuint, RecordedShader> mRecordedShaders;
+    U32 mNextShaderObject = 0;       // a shader object is a recorded source text (mRecordedShaders) under a handle allocated here
+    std::map<U32, RecordedShader> mRecordedShaders;
 
 protected:
 

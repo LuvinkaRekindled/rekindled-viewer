@@ -331,7 +331,7 @@ void LLPostProcess::viewOrthogonal(unsigned int width, unsigned int height)
 {
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.f, (GLfloat) width , (GLfloat) height , 0.f, -1.f, 1.f);
+    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.f, (F32) width , (F32) height , 0.f, -1.f, 1.f);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 }
@@ -350,7 +350,7 @@ void LLPostProcess::changeOrthogonal(unsigned int width, unsigned int height)
 
 void LLPostProcess::createTexture(LLPointer<LLImageGL>& texture, unsigned int width, unsigned int height)
 {
-    std::vector<GLubyte> data(width * height * 4, 0) ;
+    std::vector<U8> data(width * height * 4, 0) ;
 
     texture = new LLImageGL(false) ;
     if(texture->createGLTexture())
@@ -365,10 +365,10 @@ void LLPostProcess::createTexture(LLPointer<LLImageGL>& texture, unsigned int wi
 
 void LLPostProcess::createNoiseTexture(LLPointer<LLImageGL>& texture)
 {
-    std::vector<GLubyte> buffer(NOISE_SIZE * NOISE_SIZE);
+    std::vector<U8> buffer(NOISE_SIZE * NOISE_SIZE);
     for (unsigned int i = 0; i < NOISE_SIZE; i++){
         for (unsigned int k = 0; k < NOISE_SIZE; k++){
-            buffer[(i * NOISE_SIZE) + k] = (GLubyte)((double) rand() / ((double) RAND_MAX + 1.f) * 255.f);
+            buffer[(i * NOISE_SIZE) + k] = (U8)((double) rand() / ((double) RAND_MAX + 1.f) * 255.f);
         }
     }
 

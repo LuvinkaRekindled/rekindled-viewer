@@ -298,7 +298,7 @@ ERlvCmdRet RlvSphereEffect::onValueMaxChanged(const LLUUID& idRlvObj, const boos
 
 void RlvSphereEffect::setShaderUniforms(LLGLSLShader* pShader)
 {
-    pShader->uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)gPipeline.mRT->screen.getWidth(), (GLfloat)gPipeline.mRT->screen.getHeight());
+    pShader->uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)gPipeline.mRT->screen.getWidth(), (F32)gPipeline.mRT->screen.getHeight());
     pShader->uniform1i(LLShaderMgr::RLV_EFFECT_MODE, llclamp((int)m_eMode, 0, (int)ESphereMode::Count));
     // Pass the sphere origin to the shader
     LLVector4 posSphereOrigin;
@@ -324,7 +324,7 @@ void RlvSphereEffect::setShaderUniforms(LLGLSLShader* pShader)
 
     // Pass dist extend
     int eDistExtend = (int)m_eDistExtend;
-    pShader->uniform2f(LLShaderMgr::RLV_EFFECT_PARAM3, (GLfloat)(eDistExtend & (int)ESphereDistExtend::Min), (GLfloat)(eDistExtend & (int)ESphereDistExtend::Max));
+    pShader->uniform2f(LLShaderMgr::RLV_EFFECT_PARAM3, (F32)(eDistExtend & (int)ESphereDistExtend::Min), (F32)(eDistExtend & (int)ESphereDistExtend::Max));
 
     // Pass effect params
     const glm::vec4 effectParams(glm::make_vec4(m_Params.get().mV));

@@ -369,7 +369,7 @@ bool LLShaderMgr::attachShaderFeatures(LLGLSLShader * shader)
 //============================================================================
 // Load Shader
 
-GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level, GLenum type, std::map<std::string, std::string>* defines, S32 texture_index_channels)
+U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level, GLenum type, std::map<std::string, std::string>* defines, S32 texture_index_channels)
 {
 
 // endsure work-around for missing GLSL funcs gets propogated to feature shader files (e.g. srgbF.glsl)
@@ -469,10 +469,10 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
 
     //we can't have any lines longer than 1024 characters
     //or any shaders longer than 4096 lines... deal - DaveP
-    GLchar buff[1024];
-    GLchar *extra_code_text[1024];
-    GLchar *shader_code_text[4096 + LL_ARRAY_SIZE(extra_code_text)] = { NULL };
-    GLuint extra_code_count = 0, shader_code_count = 0;
+    char buff[1024];
+    char *extra_code_text[1024];
+    char *shader_code_text[4096 + LL_ARRAY_SIZE(extra_code_text)] = { NULL };
+    U32 extra_code_count = 0, shader_code_count = 0;
     BOOST_STATIC_ASSERT(LL_ARRAY_SIZE(extra_code_text) < LL_ARRAY_SIZE(shader_code_text));
 
 
@@ -554,7 +554,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
         for (auto iter = defines->begin(); iter != defines->end(); ++iter)
         {
             std::string define = "#define " + iter->first + " " + iter->second + "\n";
-            extra_code_text[extra_code_count++] = (GLchar *) strdup(define.c_str());
+            extra_code_text[extra_code_count++] = (char *) strdup(define.c_str());
         }
     }
 
@@ -696,7 +696,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
 
     unsigned char flags = flag_write_to_out_of_extra_block_area;
 
-    GLuint out_of_extra_block_counter = 0, start_shader_code = shader_code_count, file_lines_count = 0;
+    U32 out_of_extra_block_counter = 0, start_shader_code = shader_code_count, file_lines_count = 0;
 
 #define TOUCH_SHADERS 0
 
@@ -724,7 +724,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
             if(!(flag_write_to_out_of_extra_block_area & flags))
             {
                 //shift
-                for(GLuint to = start_shader_code, from = extra_code_count + start_shader_code;
+                for(U32 to = start_shader_code, from = extra_code_count + start_shader_code;
                     from < shader_code_count; ++to, ++from)
                 {
                     shader_code_text[to] = shader_code_text[from];
@@ -734,7 +734,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
             }
 
             //copy extra code
-            for(GLuint n = 0; n < extra_code_count
+            for(U32 n = 0; n < extra_code_count
                 && shader_code_count < (LL_ARRAY_SIZE(shader_code_text) - LL_ARRAY_SIZE(extra_code_text)); ++n)
             {
                 shader_code_text[shader_code_count++] = extra_code_text[n];
@@ -768,11 +768,11 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
                 replace("uniform float env_intensity;", "flat in float env_intensity;");
                 replace("uniform vec4 specular_color;", "flat in vec4 specular_color;");
                 replace("uniform float minimum_alpha;", "flat in float minimum_alpha;");
-                shader_code_text[shader_code_count] = (GLchar *)strdup(fixed.c_str());
+                shader_code_text[shader_code_count] = (char *)strdup(fixed.c_str());
             }
             else
             {
-                shader_code_text[shader_code_count] = (GLchar *)strdup((char *)buff);
+                shader_code_text[shader_code_count] = (char *)strdup((char *)buff);
             }
 
             if(flag_write_to_out_of_extra_block_area & flags)
@@ -794,7 +794,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
 
     if(!(flag_extra_block_marker_was_found & flags))
     {
-        for(GLuint n = start_shader_code; n < extra_code_count + start_shader_code; ++n)
+        for(U32 n = start_shader_code; n < extra_code_count + start_shader_code; ++n)
         {
             shader_code_text[n] = extra_code_text[n - start_shader_code];
         }
@@ -817,12 +817,12 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     fclose(file);
 
     // <FS> F1.5: a shader object is its source text (stage, file name, text) under a handle of our own; the program build compiles the objects attached to a program together
-    GLuint ret = ++mNextShaderObject;
+    U32 ret = ++mNextShaderObject;
     {
         RecordedShader rec;
         rec.mType = type;
         rec.mFile = filename;
-        for (GLuint i = 0; i < shader_code_count; ++i)
+        for (U32 i = 0; i < shader_code_count; ++i)
         {
             if (shader_code_text[i])
             {
@@ -833,7 +833,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     }
 
     //free memory
-    for (GLuint i = 0; i < shader_code_count; i++)
+    for (U32 i = 0; i < shader_code_count; i++)
     {
         free(shader_code_text[i]);
     }

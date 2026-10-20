@@ -792,7 +792,7 @@ void LLViewerOctreeGroup::checkStates()
 //-------------------------------------------------------------------------------------------
 std::set<U32> LLOcclusionCullingGroup::sPendingQueries;
 
-static std::queue<GLuint> sFreeQueries;
+static std::queue<U32> sFreeQueries;
 
 #define QUERY_POOL_SIZE 1024
 
@@ -803,7 +803,7 @@ U32 LLOcclusionCullingGroup::getNewOcclusionQueryObjectName()
     if (sFreeQueries.empty())
     {
         //seed 1024 query names into the free query pool
-        GLuint queries[1024];
+        U32 queries[1024];
         gGL.genQueries(1024, queries);
         for (int i = 0; i < 1024; ++i)
         {
@@ -812,12 +812,12 @@ U32 LLOcclusionCullingGroup::getNewOcclusionQueryObjectName()
     }
 
     // pull from pool
-    GLuint ret = sFreeQueries.front();
+    U32 ret = sFreeQueries.front();
     sFreeQueries.pop();
     return ret;
 }
 
-void LLOcclusionCullingGroup::releaseOcclusionQueryObjectName(GLuint name)
+void LLOcclusionCullingGroup::releaseOcclusionQueryObjectName(U32 name)
 {
     if (name != 0)
     {

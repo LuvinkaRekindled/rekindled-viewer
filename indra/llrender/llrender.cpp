@@ -86,7 +86,7 @@ static const GLenum sGLTextureType[] =
     GL_TEXTURE_3D
 };
 
-static const GLint sGLAddressMode[] =
+static const S32 sGLAddressMode[] =
 {
     GL_REPEAT,
     GL_MIRRORED_REPEAT,
@@ -128,7 +128,7 @@ static const char* sSlotFile[LL_NUM_TEXTURE_LAYERS];          // the call site o
 static int sSlotLine[LL_NUM_TEXTURE_LAYERS];
 static const char* sNextFile = nullptr;                       // set by those functions just before they write the slot
 static int sNextLine = 0;
-static inline void ll_bindTexUnit_impl(S32 unit_index, GLenum target, GLuint texture, const char* who)
+static inline void ll_bindTexUnit_impl(S32 unit_index, GLenum target, U32 texture, const char* who)
 {
     (void)target;       // a unit holds a texture: its dimension is the texture's own
     if (unit_index >= 0 && unit_index < (S32)LL_NUM_TEXTURE_LAYERS)
@@ -224,7 +224,7 @@ void LLTexUnit::bindFast(LLTexture* texture)
     }
 }
 
-GLuint LLTexUnit::prepareFast(LLTexture* texture)
+U32 LLTexUnit::prepareFast(LLTexture* texture)
 {
     LLImageGL* gl_tex = texture->getGLTexture();
     if (gl_tex->mTexOptionsDirty)
@@ -234,7 +234,7 @@ GLuint LLTexUnit::prepareFast(LLTexture* texture)
         return gl_tex->getTexName();
     }
     texture->setActive();
-    GLuint name = gl_tex->getTexName();
+    U32 name = gl_tex->getTexName();
     if (!name)
     {
         //if deleted, will re-generate it immediately
@@ -563,8 +563,8 @@ struct TexParams
     LLVkAsync::TexParam mE[8];
     U32 mN = 0;
     TexParams(GLenum target, U32 id) : mTarget(target), mId(id) {}
-    void i(GLenum pname, GLint v) { mE[mN++] = { (U32)pname, 0, (S32)v, 0.f }; }
-    void f(GLenum pname, GLfloat v) { mE[mN++] = { (U32)pname, 1, 0, v }; }
+    void i(GLenum pname, S32 v) { mE[mN++] = { (U32)pname, 0, (S32)v, 0.f }; }
+    void f(GLenum pname, F32 v) { mE[mN++] = { (U32)pname, 1, 0, v }; }
     ~TexParams() { LLVkTex::params(mId, mTarget, mE, mN); }
 };
 
@@ -651,7 +651,7 @@ void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions o
     applyFilteringOption(mCurrTexture, tex_type, option, mHasMipMaps);
 }
 
-GLint LLTexUnit::getTextureSource(eTextureBlendSrc src)
+S32 LLTexUnit::getTextureSource(eTextureBlendSrc src)
 {
     switch(src)
     {
@@ -689,7 +689,7 @@ GLint LLTexUnit::getTextureSource(eTextureBlendSrc src)
     }
 }
 
-GLint LLTexUnit::getTextureSourceType(eTextureBlendSrc src, bool isAlpha)
+S32 LLTexUnit::getTextureSourceType(eTextureBlendSrc src, bool isAlpha)
 {
     switch(src)
     {
@@ -1767,7 +1767,7 @@ void LLRender::endList()
     }
 }
 
-void LLRender::begin(const GLuint& mode)
+void LLRender::begin(const U32& mode)
 {
     if (mode != mMode)
     {
@@ -2030,7 +2030,7 @@ void LLRender::resetStriders(S32 count)
     mCount = 0;
 }
 
-void LLRender::vertex3f(const GLfloat& x, const GLfloat& y, const GLfloat& z)
+void LLRender::vertex3f(const F32& x, const F32& y, const F32& z)
 {
     //the range of mVerticesp, mColorsp and mTexcoordsp is [0, 4095]
     if (mCount > 2048)
@@ -2139,27 +2139,27 @@ void LLRender::vertexBatchPreTransformed(LLVector4a* verts, LLVector2* uvs, LLCo
     }
 }
 
-void LLRender::vertex2i(const GLint& x, const GLint& y)
+void LLRender::vertex2i(const S32& x, const S32& y)
 {
-    vertex3f((GLfloat) x, (GLfloat) y, 0);
+    vertex3f((F32) x, (F32) y, 0);
 }
 
-void LLRender::vertex2f(const GLfloat& x, const GLfloat& y)
+void LLRender::vertex2f(const F32& x, const F32& y)
 {
     vertex3f(x,y,0);
 }
 
-void LLRender::vertex2fv(const GLfloat* v)
+void LLRender::vertex2fv(const F32* v)
 {
     vertex3f(v[0], v[1], 0);
 }
 
-void LLRender::vertex3fv(const GLfloat* v)
+void LLRender::vertex3fv(const F32* v)
 {
     vertex3f(v[0], v[1], v[2]);
 }
 
-void LLRender::texCoord2f(const GLfloat& x, const GLfloat& y, const char* file, int line)
+void LLRender::texCoord2f(const F32& x, const F32& y, const char* file, int line)
 {
     if (!mBatchHasTexCoord)
     {
@@ -2170,17 +2170,17 @@ void LLRender::texCoord2f(const GLfloat& x, const GLfloat& y, const char* file, 
     mTexcoordsp[mCount] = LLVector2(x,y);
 }
 
-void LLRender::texCoord2i(const GLint& x, const GLint& y, const char* file, int line)
+void LLRender::texCoord2i(const S32& x, const S32& y, const char* file, int line)
 {
-    texCoord2f((GLfloat) x, (GLfloat) y, file, line);
+    texCoord2f((F32) x, (F32) y, file, line);
 }
 
-void LLRender::texCoord2fv(const GLfloat* tc, const char* file, int line)
+void LLRender::texCoord2fv(const F32* tc, const char* file, int line)
 {
     texCoord2f(tc[0], tc[1], file, line);
 }
 
-void LLRender::color4ub(const GLubyte& r, const GLubyte& g, const GLubyte& b, const GLubyte& a)
+void LLRender::color4ub(const U8& r, const U8& g, const U8& b, const U8& a)
 {
     if (!LLGLSLShader::sCurBoundShaderPtr || LLGLSLShader::sCurBoundShaderPtr->mAttributeMask & LLVertexBuffer::MAP_COLOR)
     {
@@ -2191,30 +2191,30 @@ void LLRender::color4ub(const GLubyte& r, const GLubyte& g, const GLubyte& b, co
         diffuseColor4ub(r,g,b,a);
     }
 }
-void LLRender::color4ubv(const GLubyte* c)
+void LLRender::color4ubv(const U8* c)
 {
     color4ub(c[0], c[1], c[2], c[3]);
 }
 
-void LLRender::color4f(const GLfloat& r, const GLfloat& g, const GLfloat& b, const GLfloat& a)
+void LLRender::color4f(const F32& r, const F32& g, const F32& b, const F32& a)
 {
-    color4ub((GLubyte) (llclamp(r, 0.f, 1.f)*255),
-        (GLubyte) (llclamp(g, 0.f, 1.f)*255),
-        (GLubyte) (llclamp(b, 0.f, 1.f)*255),
-        (GLubyte) (llclamp(a, 0.f, 1.f)*255));
+    color4ub((U8) (llclamp(r, 0.f, 1.f)*255),
+        (U8) (llclamp(g, 0.f, 1.f)*255),
+        (U8) (llclamp(b, 0.f, 1.f)*255),
+        (U8) (llclamp(a, 0.f, 1.f)*255));
 }
 
-void LLRender::color4fv(const GLfloat* c)
+void LLRender::color4fv(const F32* c)
 {
     color4f(c[0],c[1],c[2],c[3]);
 }
 
-void LLRender::color3f(const GLfloat& r, const GLfloat& g, const GLfloat& b)
+void LLRender::color3f(const F32& r, const F32& g, const F32& b)
 {
     color4f(r,g,b,1);
 }
 
-void LLRender::color3fv(const GLfloat* c)
+void LLRender::color3fv(const F32* c)
 {
     color4f(c[0],c[1],c[2],1);
 }

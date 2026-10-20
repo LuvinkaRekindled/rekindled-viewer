@@ -569,7 +569,7 @@ void LLRenderPass::applyModelMatrix(const LLMatrix4* model_matrix)
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
         if (model_matrix)
         {
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*) model_matrix->mMatrix);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) model_matrix->mMatrix);
         }
         gPipeline.mMatrixOpCount++;
     }
@@ -613,7 +613,7 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
                 if (params.mTextureMatrix)
                 {
                     tex_setup = true;
-                    LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*) params.mTextureMatrix->mMatrix);
+                    LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*) params.mTextureMatrix->mMatrix);
                     gPipeline.mTextureMatrixOps++;
                 }
             }
@@ -1159,7 +1159,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
     LLGLSLShader::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
         count,
         false,
-        (GLfloat*)&(mpc.mGLMp[0]));
+        (F32*)&(mpc.mGLMp[0]));
 
     return true;
 }
@@ -1195,7 +1195,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
         LLGLSLShader::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
             count,
             false,
-            (GLfloat*)&(mpc.mGLMp[0]));
+            (F32*)&(mpc.mGLMp[0]));
     }
 
     return !skipLastSkin;
@@ -1233,7 +1233,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
         LLGLSLShader::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
             count,
             false,
-            (GLfloat*)&(mpc.mGLMp[0]));
+            (F32*)&(mpc.mGLMp[0]));
     }
 
     return !skipLastSkin;
@@ -1243,7 +1243,7 @@ void setup_texture_matrix(LLDrawInfo& params)
 {
     if (params.mTextureMatrix)
     { //special case implementation of texture animation here because of special handling of textures for PBR batches
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*)params.mTextureMatrix->mMatrix);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*)params.mTextureMatrix->mMatrix);
         gPipeline.mTextureMatrixOps++;
     }
 }

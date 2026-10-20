@@ -177,8 +177,8 @@ void LLImageGL::checkTexSize(bool forced) const
 {
     if ((forced || gDebugGL) && mTarget == GL_TEXTURE_2D)
     {
-        GLint texname;
-        texname = (GLint)mTexName;
+        S32 texname;
+        texname = (S32)mTexName;
         bool error = false;
         if (texname != mTexName)
         {
@@ -832,7 +832,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         S32 w = getWidth();
         S32 h = getHeight();
         LLImageGL::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h,
-            mFormatPrimary, mFormatType, (GLvoid*)data_in, mAllowCompression);
+            mFormatPrimary, mFormatType, (void*)data_in, mAllowCompression);
     }
     else if (mUseMipMaps)
     {
@@ -855,14 +855,14 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                 }
                 if (is_compressed)
                 {
-                    GLsizei tex_size = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
-                    LLVkTex::compressedImage2D(edit_name, mTarget, gl_level, mFormatPrimary, w, h, 0, tex_size, (GLvoid *)data_in);
+                    S32 tex_size = (S32)dataFormatBytes(mFormatPrimary, w, h);
+                    LLVkTex::compressedImage2D(edit_name, mTarget, gl_level, mFormatPrimary, w, h, 0, tex_size, (void *)data_in);
                     stop_glerror();
                 }
                 else
                 {
 
-                    LLImageGL::setManualImage(edit_name, mTarget, gl_level, mFormatInternal, w, h, mFormatPrimary, GL_UNSIGNED_BYTE, (GLvoid*)data_in, mAllowCompression);
+                    LLImageGL::setManualImage(edit_name, mTarget, gl_level, mFormatInternal, w, h, mFormatPrimary, GL_UNSIGNED_BYTE, (void*)data_in, mAllowCompression);
                     if (gl_level == 0)
                     {
                         analyzeAlpha(data_in, w, h);
@@ -1028,15 +1028,15 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         S32 h = getHeight();
         if (is_compressed)
         {
-            GLsizei tex_size = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
-            LLVkTex::compressedImage2D(edit_name, mTarget, 0, mFormatPrimary, w, h, 0, tex_size, (GLvoid *)data_in);
+            S32 tex_size = (S32)dataFormatBytes(mFormatPrimary, w, h);
+            LLVkTex::compressedImage2D(edit_name, mTarget, 0, mFormatPrimary, w, h, 0, tex_size, (void *)data_in);
             stop_glerror();
         }
         else
         {
 
             LLImageGL::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h,
-                         mFormatPrimary, mFormatType, (GLvoid *)data_in, mAllowCompression);
+                         mFormatPrimary, mFormatType, (void *)data_in, mAllowCompression);
             analyzeAlpha(data_in, w, h);
 
             updatePickMask(w, h, data_in);
@@ -1305,7 +1305,7 @@ void LLImageGL::updateClass()
 
     if (!sFreeList[idx].empty())
     {
-        free_tex_images((GLsizei) sFreeList[idx].size(), sFreeList[idx].data());
+        free_tex_images((S32) sFreeList[idx].size(), sFreeList[idx].data());
         LLVkTex::destroy((S32)sFreeList[idx].size(), sFreeList[idx].data());
         sFreeList[idx].resize(0);
     }
@@ -1337,7 +1337,7 @@ void LLImageGL::setManualImage(U32 texname, U32 target, S32 miplevel, S32 intfor
         {
             if (pixformat == GL_ALPHA)
             { //GL_ALPHA is deprecated, convert to RGBA
-                const GLint mask[] = { GL_ZERO, GL_ZERO, GL_ZERO, GL_RED };
+                const S32 mask[] = { GL_ZERO, GL_ZERO, GL_ZERO, GL_RED };
                 LLVkTex::swizzle(texname, GL_TEXTURE_2D, mask);
                 pixformat = GL_RED;
                 intformat = GL_R8;
@@ -1345,7 +1345,7 @@ void LLImageGL::setManualImage(U32 texname, U32 target, S32 miplevel, S32 intfor
 
             if (pixformat == GL_LUMINANCE)
             { //GL_LUMINANCE is deprecated, convert to GL_RGBA
-                const GLint mask[] = { GL_RED, GL_RED, GL_RED, GL_ONE };
+                const S32 mask[] = { GL_RED, GL_RED, GL_RED, GL_ONE };
                 LLVkTex::swizzle(texname, GL_TEXTURE_2D, mask);
                 pixformat = GL_RED;
                 intformat = GL_R8;
@@ -1353,7 +1353,7 @@ void LLImageGL::setManualImage(U32 texname, U32 target, S32 miplevel, S32 intfor
 
             if (pixformat == GL_LUMINANCE_ALPHA)
             { //GL_LUMINANCE_ALPHA is deprecated, convert to RGBA
-                const GLint mask[] = { GL_RED, GL_RED, GL_RED, GL_GREEN };
+                const S32 mask[] = { GL_RED, GL_RED, GL_RED, GL_GREEN };
                 LLVkTex::swizzle(texname, GL_TEXTURE_2D, mask);
                 pixformat = GL_RG;
                 intformat = GL_RG8;
@@ -1524,7 +1524,7 @@ bool LLImageGL::createGLTexture()
 
     if(mTexName)
     {
-        LLImageGL::deleteTextures(1, (reinterpret_cast<GLuint*>(&mTexName))) ;
+        LLImageGL::deleteTextures(1, (reinterpret_cast<U32*>(&mTexName))) ;
         mTexName = 0;
     }
 
@@ -1680,8 +1680,8 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
         return setImage(data_in, data_hasmips);
     }
 
-    GLuint old_texname = mTexName;
-    GLuint new_texname = 0;
+    U32 old_texname = mTexName;
+    U32 new_texname = 0;
     if (usename != 0)
     {
         llassert(main_thread);
@@ -1867,7 +1867,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
             return false ;
         }
 
-        LLVkTex::getCompressedImage(mTexName, mTarget, gl_discard, (GLvoid*)(imageraw->getData()));
+        LLVkTex::getCompressedImage(mTexName, mTarget, gl_discard, (void*)(imageraw->getData()));
         //stop_glerror();
     }
     else
@@ -1889,7 +1889,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
             return false ;
         }
 
-        LLVkTex::getImage(mTexName, GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (GLvoid*)(imageraw->getData()));
+        LLVkTex::getImage(mTexName, GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (void*)(imageraw->getData()));
         //stop_glerror();
     }
 
@@ -2175,10 +2175,10 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
     {
         llassert(w % 2 == 0);
         llassert(h % 2 == 0);
-        const GLubyte* rowstart = ((const GLubyte*) data_in) + mAlphaOffset;
+        const U8* rowstart = ((const U8*) data_in) + mAlphaOffset;
         for (U32 y = 0; y < h; y += 2)
         {
-            const GLubyte* current = rowstart;
+            const U8* current = rowstart;
             for (U32 x = 0; x < w; x += 2)
             {
                 const U32 s1 = current[0];
@@ -2208,7 +2208,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
     }
     else
     {
-        const GLubyte* current = ((const GLubyte*) data_in) + mAlphaOffset;
+        const U8* current = ((const U8*) data_in) + mAlphaOffset;
         for (U32 i = 0; i < length; i++)
         {
             const U32 s1 = *current;

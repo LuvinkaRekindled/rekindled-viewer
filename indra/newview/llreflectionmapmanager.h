@@ -86,18 +86,18 @@ public:
         //  [i][1] - index into "refNeighbor" for probes that intersect this probe
         //  [i][2] - number of probes  that intersect this probe, or -1 for no neighbors
         //  [i][3] - priority (probe type stored in sign bit - positive for spheres, negative for boxes)
-        GLint refIndex[LL_MAX_REFLECTION_PROBE_COUNT][4];
+        S32 refIndex[LL_MAX_REFLECTION_PROBE_COUNT][4];
 
         // list of neighbor indices
-        GLint refNeighbor[4096];
+        S32 refNeighbor[4096];
 
-        GLint refBucket[256][4]; // lookup table for which index to start with for the given Z depth
+        S32 refBucket[256][4]; // lookup table for which index to start with for the given Z depth
         // numbrer of active refmaps
-        GLint refmapCount;
+        S32 refmapCount;
 
-        GLint heroShape;
-        GLint heroMipCount;
-        GLint heroProbeCount;
+        S32 heroShape;
+        S32 heroMipCount;
+        S32 heroProbeCount;
     };
 
     // allocate an environment map of the given resolution
@@ -165,8 +165,8 @@ public:
     U32 probeMemory();
 
     // glDeleteQueries is expensive, so we maintain a pool of queries
-    GLuint allocateQuery();
-    void recycleQuery(GLuint query);
+    U32 allocateQuery();
+    void recycleQuery(U32 query);
 
 private:
     friend class LLPipeline;
@@ -194,7 +194,7 @@ private:
     // bind UBO used for rendering
     void setUniforms();
 
-    std::deque<GLuint>                                    mQueryPool;
+    std::deque<U32>                                    mQueryPool;
 
     // render target for cube snapshots
     // used to generate mipmaps without doing a copy-to-texture

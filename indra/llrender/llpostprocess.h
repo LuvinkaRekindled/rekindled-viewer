@@ -45,7 +45,7 @@ public:
     } QuadType;
 
     /// GLSL Shader Encapsulation Struct
-    typedef LLStaticStringTable<GLuint> glslUniforms;
+    typedef LLStaticStringTable<U32> glslUniforms;
 
     struct PostProcessTweaks : public LLSD {
         inline PostProcessTweaks() : LLSD(LLSD::emptyMap())

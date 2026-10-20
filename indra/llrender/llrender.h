@@ -180,7 +180,7 @@ public:
     //  -
     void bindFast(LLTexture* texture);
     // <FS> render packets: the effects of bindFast() on the texture (marks it in use, regenerates a deleted one, applies changed options) without binding it; returns its GL name
-    GLuint prepareFast(LLTexture* texture);
+    U32 prepareFast(LLTexture* texture);
     // <FS> binds the image on this unit and sends its address mode and filtering options (what bindFast does when they are dirty)
     void applyTexOptions(LLImageGL* gl_tex);
 
@@ -243,8 +243,8 @@ protected:
     eTextureType        mCurrTexType;
     bool                mHasMipMaps;
 
-    GLint getTextureSource(eTextureBlendSrc src);
-    GLint getTextureSourceType(eTextureBlendSrc src, bool isAlpha = false);
+    S32 getTextureSource(eTextureBlendSrc src);
+    S32 getTextureSourceType(eTextureBlendSrc src, bool isAlpha = false);
 };
 
 class LLLightState
@@ -429,27 +429,27 @@ public:
     void beginList(std::list<LLVertexBufferData> *list);
     void endList();
 
-    void begin(const GLuint& mode);
+    void begin(const U32& mode);
     void end();
 
     U8 getMode() const { return mMode; }
 
-    void vertex2i(const GLint& x, const GLint& y);
-    void vertex2f(const GLfloat& x, const GLfloat& y);
-    void vertex3f(const GLfloat& x, const GLfloat& y, const GLfloat& z);
-    void vertex2fv(const GLfloat* v);
-    void vertex3fv(const GLfloat* v);
+    void vertex2i(const S32& x, const S32& y);
+    void vertex2f(const F32& x, const F32& y);
+    void vertex3f(const F32& x, const F32& y, const F32& z);
+    void vertex2fv(const F32* v);
+    void vertex3fv(const F32* v);
 
-    void texCoord2i(const GLint& x, const GLint& y, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void texCoord2f(const GLfloat& x, const GLfloat& y, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void texCoord2fv(const GLfloat* tc, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void texCoord2i(const S32& x, const S32& y, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void texCoord2f(const F32& x, const F32& y, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void texCoord2fv(const F32* tc, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
-    void color4ub(const GLubyte& r, const GLubyte& g, const GLubyte& b, const GLubyte& a);
-    void color4f(const GLfloat& r, const GLfloat& g, const GLfloat& b, const GLfloat& a);
-    void color4fv(const GLfloat* c);
-    void color3f(const GLfloat& r, const GLfloat& g, const GLfloat& b);
-    void color3fv(const GLfloat* c);
-    void color4ubv(const GLubyte* c);
+    void color4ub(const U8& r, const U8& g, const U8& b, const U8& a);
+    void color4f(const F32& r, const F32& g, const F32& b, const F32& a);
+    void color4fv(const F32* c);
+    void color3f(const F32& r, const F32& g, const F32& b);
+    void color3fv(const F32* c);
+    void color4ubv(const U8* c);
 
     void diffuseColor3f(F32 r, F32 g, F32 b);
     void diffuseColor3fv(const F32* c);
@@ -526,9 +526,9 @@ public:
 
     struct Vertex
     {
-        GLfloat v[3];
-        GLubyte c[4];
-        GLfloat uv[2];
+        F32 v[3];
+        U8 c[4];
+        F32 uv[2];
     };
 
 public:

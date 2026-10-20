@@ -1054,7 +1054,7 @@ void LLVOAvatar::deleteLayerSetCaches(bool clearAll)
         }
         if (mBakedTextureDatas[i].mMaskTexName)
         {
-            LLImageGL::deleteTextures(1, (GLuint*)&(mBakedTextureDatas[i].mMaskTexName));
+            LLImageGL::deleteTextures(1, (U32*)&(mBakedTextureDatas[i].mMaskTexName));
             mBakedTextureDatas[i].mMaskTexName = 0 ;
         }
     }

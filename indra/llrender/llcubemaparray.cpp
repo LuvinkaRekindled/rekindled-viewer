@@ -121,10 +121,10 @@ LLCubeMapArray::LLCubeMapArray(LLCubeMapArray& lhs, U32 width, U32 count) : mTex
         U32 src_resolution = lhs.mWidth;
         U32 dst_resolution = mWidth;
         {
-            GLint components = GL_RGB;
+            S32 components = GL_RGB;
             if (mImage->getComponents() == 4)
                 components = GL_RGBA;
-            // GLint format = GL_RGB; // <FS:Beq/> unused
+            // S32 format = GL_RGB; // <FS:Beq/> unused
 
             // Handle different resolutions by scaling the image
             LLPointer<LLImageRaw> src_image = new LLImageRaw(lhs.mWidth, lhs.mWidth, lhs.mImage->getComponents());
@@ -209,7 +209,7 @@ void LLCubeMapArray::unbind()
     mTextureStage = -1;
 }
 
-GLuint LLCubeMapArray::getGLName()
+U32 LLCubeMapArray::getGLName()
 {
     return mImage->getTexName();
 }

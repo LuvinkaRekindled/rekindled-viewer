@@ -140,7 +140,7 @@ public:
     U32 mPriority = 0;
 
     // occlusion culling state
-    GLuint mOcclusionQuery = 0;
+    U32 mOcclusionQuery = 0;
     bool mOccluded = false;
     U32 mOcclusionPendingFrames = 0;
 
