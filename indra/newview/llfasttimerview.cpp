@@ -533,11 +533,11 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
     //allocate raw scratch space
     LLPointer<LLImageRaw> scratch = new LLImageRaw(1024, 512, 3);
 
-    gGL.pushMatrix();
-    gGL.loadIdentity();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.loadIdentity();
-    gGL.ortho(-0.05f, 1.05f, -0.05f, 1.05f, -1.0f, 1.0f);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -0.05f, 1.05f, -0.05f, 1.05f, -1.0f, 1.0f);
 
     //render charts
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
@@ -774,9 +774,9 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
 
     buffer.flush();
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 //static

@@ -7531,20 +7531,20 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
     }
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     gGL.pushUIMatrix();
     gGL.loadUIIdentity();
 
     if (!is_hud_object)
     {
-        gGL.loadIdentity();
-        gGL.multMatrix(gGLModelView);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, gGLModelView);
     }
 
 
     if (drawable->isActive())
     {
-        gGL.multMatrix((F32*) objectp->getRenderMatrix().mMatrix);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) objectp->getRenderMatrix().mMatrix);
     }
 
     LLVolume *volume = objectp->getVolume();
@@ -7647,7 +7647,7 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
         gGL.end();
         gGL.flush();
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     gGL.popUIMatrix();
 
     if (shader)

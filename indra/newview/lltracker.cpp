@@ -532,17 +532,17 @@ void LLTracker::drawBeacon(LLVector3 pos_agent, std::string direction, LLColor4 
     LLColor4 c_col, col_next, col_edge, col_edge_next;
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     if ("DOWN" == direction)
     {
-        gGL.translatef(pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
         draw_shockwave(1024.f, gRenderStartTime.getElapsedTimeF32(), 32, fogged_color);
         height = MAX_HEIGHT - pos_agent.mV[2];
     }
     else
     {
-        gGL.translatef(pos_agent.mV[0], pos_agent.mV[1], 0);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], 0);
         height = pos_agent.mV[2];
     }
 
@@ -639,7 +639,7 @@ void LLTracker::drawBeacon(LLVector3 pos_agent, std::string direction, LLColor4 
     }
 
     gGL.end();
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 // static

@@ -87,34 +87,34 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
     LLRenderState::BlendScope gl_blend(true);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
 
         // Translate to the joint's position
-        gGL.translatef(joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
-        gGL.pushMatrix();
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         {
             gDebugProgram.bind();
 
             LLRenderState::CullScope cull_face(true);
             LLRenderState::DepthScope gls_depth(false);
-            gGL.pushMatrix();
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             {
                 gGL.color4fv(color.mV);
                 gGL.diffuseColor4fv(color.mV);
 
-                gGL.scalef(currentRadius, currentRadius, currentRadius);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, currentRadius, currentRadius, currentRadius);
 
                 gSphere.render();
                 gGL.flush();
             }
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
             gUIProgram.bind();
         }
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     // Check for OpenGL errors
     GLenum err;
@@ -132,34 +132,34 @@ static void renderStaticSphere(const LLVector3& joint_world_position, const LLCo
     LLRenderState::BlendScope gl_blend(true);
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
 
         // Translate to the joint's position
-        gGL.translatef(joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
-        gGL.pushMatrix();
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         {
             gDebugProgram.bind();
 
             LLRenderState::CullScope cull_face(true);
             LLRenderState::DepthScope gls_depth(false);
-            gGL.pushMatrix();
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             {
                 gGL.color4fv(color.mV);
                 gGL.diffuseColor4fv(color.mV);
 
-                gGL.scalef(radius, radius, radius);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, radius, radius, radius);
 
                 gSphere.render();
                 gGL.flush();
             }
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
             gUIProgram.bind();
         }
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     // Check for OpenGL errors
     GLenum err;
@@ -498,12 +498,12 @@ void FSManipRotateJoint::updateManipulatorScale(EManipPart part, LLVector4& scal
 // Render a single ring using the given parameters and pass index (for multi-pass rendering).
 void FSManipRotateJoint::renderRingPass(const RingRenderParams& params, float radius, float width, int pass)
 {
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         // If an extra rotation is specified, apply it.
         if (params.extraRotateAngle != 0.f)
         {
-            gGL.rotatef(params.extraRotateAngle, params.extraRotateAxis.mV[VX], params.extraRotateAxis.mV[VY], params.extraRotateAxis.mV[VZ]);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, params.extraRotateAngle, params.extraRotateAxis.mV[VX], params.extraRotateAxis.mV[VY], params.extraRotateAxis.mV[VZ]);
         }
         // Get the appropriate scale value from mManipulatorScales.
         float scaleVal = 1.f;
@@ -524,10 +524,10 @@ void FSManipRotateJoint::renderRingPass(const RingRenderParams& params, float ra
             default:
                 break;
         }
-        gGL.scalef(scaleVal, scaleVal, scaleVal);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scaleVal, scaleVal, scaleVal);
         gl_ring(radius, width, getUserEditColor(params.scaleIndex), getUserEditColor(params.scaleIndex, 0.3f), CIRCLE_STEPS, pass);
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 /**
@@ -548,15 +548,15 @@ void FSManipRotateJoint::renderManipulatorRings(const LLVector3& agent_space_cen
     // Translate to the joint's position
     const auto joint_world_position = mJoint->getWorldPosition();
     gDebugProgram.bind();
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLRenderState::CullScope cull_face(true);
         LLRenderState::DepthScope gls_depth(false);        
         // F3.2: LLGLEnable clip_plane0(GL_CLIP_PLANE0) had no effect on the render state block (never mapped); dropped
-        gGL.translatef(joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
 
         LLMatrix4 rot_mat(rotation);
-        gGL.multMatrix((GLfloat*)rot_mat.mMatrix);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)rot_mat.mMatrix);
 
         for (int pass = 0; pass < 2; ++pass)
         {
@@ -578,15 +578,15 @@ void FSManipRotateJoint::renderManipulatorRings(const LLVector3& agent_space_cen
                 {
                     static const auto roll_color = LLColor4(1.f, 0.65f, 0.0f, 0.4f);
                     updateManipulatorScale(mManipPart, mManipulatorScales);
-                    gGL.pushMatrix();
+                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                     {
                         // Cancel the rotation applied earlier:
                         LLMatrix4 inv_rot_mat(rotation);
                         inv_rot_mat.invert();
-                        gGL.multMatrix((GLfloat*)inv_rot_mat.mMatrix);
+                        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)inv_rot_mat.mMatrix);
                         renderCenterCircle( mRadiusMeters*1.2f, roll_color, roll_color );
                     }
-                    gGL.popMatrix();
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
             }
             else
@@ -600,13 +600,13 @@ void FSManipRotateJoint::renderManipulatorRings(const LLVector3& agent_space_cen
             }
         }
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     gUIProgram.bind();
 }
 
 void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& normal_color, const LLColor4& highlight_color)
 {
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLRenderState::CullScope cull_face(true);
         LLRenderState::DepthScope gls_depth(false);
@@ -619,7 +619,7 @@ void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& no
         scale *= (mManipulatorScales.mV[VX] + mManipulatorScales.mV[VY] +
                   mManipulatorScales.mV[VZ] + mManipulatorScales.mV[VW]) / 4.0f;
         gGL.diffuseColor4fv(normal_color.mV);
-        gGL.scalef(scale, scale, scale);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale, scale, scale);
 
         // Rotate the unit circle so its normal (0,0,1) aligns with mCenterToCamNorm.
         LLVector3 defaultNormal(0.f, 0.f, 1.f);
@@ -632,7 +632,7 @@ void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& no
 
         if (rotationAxis.magVec() > 0.001f)
         {
-            gGL.rotatef(angle, rotationAxis.mV[VX], rotationAxis.mV[VY], rotationAxis.mV[VZ]);
+            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle, rotationAxis.mV[VX], rotationAxis.mV[VY], rotationAxis.mV[VZ]);
         }
 
         // Draw a unit circle in the XY plane (which is now rotated correctly).
@@ -648,12 +648,12 @@ void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& no
 
         gGL.setLineWidth(1.0f); // Reset the line width.
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void FSManipRotateJoint::renderCenterSphere(const F32 radius, const LLColor4& normal_color, const LLColor4& highlight_color)
 {
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLRenderState::CullScope cull_face(true);
         LLRenderState::DepthScope gls_depth(false);
@@ -674,12 +674,12 @@ void FSManipRotateJoint::renderCenterSphere(const F32 radius, const LLColor4& no
             scale *= (mManipulatorScales.mV[VX] + mManipulatorScales.mV[VY] + mManipulatorScales.mV[VZ] + mManipulatorScales.mV[VW]) / 4.0f;
         }
 
-        gGL.scalef(scale, scale, scale);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale, scale, scale);
         gSphere.render();
 
         gGL.flush();
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 /**
@@ -778,12 +778,12 @@ void FSManipRotateJoint::renderAxes(const LLVector3& agent_space_center, F32 siz
     LLRenderState::CullScope cull_face(true);
     // F3.2: LLGLEnable clip_plane0(GL_CLIP_PLANE0) had no effect on the render state block (never mapped); dropped
     LLRenderState::DepthScope gls_depth(false);
-    gGL.pushMatrix();
-    gGL.translatef(agent_space_center.mV[VX], agent_space_center.mV[VY], agent_space_center.mV[VZ]);
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, agent_space_center.mV[VX], agent_space_center.mV[VY], agent_space_center.mV[VZ]);
 
     LLMatrix4 rot_mat(rotation);
 
-    gGL.multMatrix((GLfloat*)rot_mat.mMatrix);
+    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)rot_mat.mMatrix);
 
     gGL.begin(LLRender::LINES);
 
@@ -807,7 +807,7 @@ void FSManipRotateJoint::renderAxes(const LLVector3& agent_space_center, F32 siz
 
     gGL.end();
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 //static
@@ -891,7 +891,7 @@ void FSManipRotateJoint::renderNameXYZ(const LLQuaternion& rot)
         mLastEuler[i] += rawDelta;
     }
 
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLUIImagePtr imagep = LLUI::getUIImage("Rounded_Square");
         gViewerWindow->setup2DRender();
@@ -974,7 +974,7 @@ void FSManipRotateJoint::renderNameXYZ(const LLQuaternion& rot)
         renderTextWithShadow(current_joint_str, window_center_x - 130.f, base_y, LLColor4(1.f, 0.1f, 1.f, 1.f));
         renderTextWithShadow(current_part_str, window_center_x + 30.f, base_y, LLColor4(1.f, 1.f, .1f, 1.f));
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     gViewerWindow->setup3DRender();
 }

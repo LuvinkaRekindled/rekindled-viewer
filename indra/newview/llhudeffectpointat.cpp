@@ -366,9 +366,9 @@ void LLHUDEffectPointAt::render()
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
 
         LLVector3 target = mTargetPos + mSourceObject->getRenderPosition();
-        gGL.pushMatrix();
-        gGL.translatef(target.mV[VX], target.mV[VY], target.mV[VZ]);
-        gGL.scalef(0.3f, 0.3f, 0.3f);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, target.mV[VX], target.mV[VY], target.mV[VZ]);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 0.3f, 0.3f, 0.3f);
         gGL.begin(LLRender::LINES);
         {
             gGL.color3f(1.f, 0.f, 0.f);
@@ -381,7 +381,7 @@ void LLHUDEffectPointAt::render()
             gGL.vertex3f(0.f, 0.f, -1.f);
             gGL.vertex3f(0.f, 0.f, 1.f);
         } gGL.end();
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 

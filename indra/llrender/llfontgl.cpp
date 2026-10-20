@@ -196,7 +196,7 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
 
     // Depth translation, so that floating text appears 'in-world'
     // and is correctly occluded.
-    gGL.translatef(0.f,0.f,sCurDepth);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, 0.f,0.f,sCurDepth);
 
     S32 chars_drawn = 0;
     S32 i;

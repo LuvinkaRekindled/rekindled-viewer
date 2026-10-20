@@ -68,10 +68,10 @@ void gl_state_for_2d(S32 width, S32 height)
     F32 window_height = (F32) height;//gViewerWindow->getWindowHeight();
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.loadIdentity();
-    gGL.ortho(0.0f, llmax(window_width, 1.f), 0.0f, llmax(window_height,1.f), -1.0f, 1.0f);
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, llmax(window_width, 1.f), 0.0f, llmax(window_height,1.f), -1.0f, 1.0f);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.loadIdentity();
+    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
     stop_glerror();
 }
 

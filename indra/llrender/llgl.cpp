@@ -427,7 +427,7 @@ void rotate_quat(LLQuaternion& rotation)
 {
     F32 angle_radians, x, y, z;
     rotation.getAngleAxis(&angle_radians, &x, &y, &z);
-    gGL.rotatef(angle_radians * RAD_TO_DEG, x, y, z);
+    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 }
 
 // <FS> native-vk: there is no OpenGL error state; these stay as the viewer's error-check points
@@ -624,8 +624,8 @@ void LLGLUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
     suffix = glm::row(suffix, 2, cplane);
     glm::mat4 newP = suffix * P;
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(newP));
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(newP));
     gGLObliqueProjectionInverse = LLMatrix4(glm::value_ptr(glm::transpose(glm::inverse(newP))));
     gGL.matrixMode(LLRender::MM_MODELVIEW);
 }

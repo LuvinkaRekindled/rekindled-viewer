@@ -417,6 +417,7 @@ public:
     void orthoOf(eMatrixMode mode, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar);
     const glm::mat4& matrixOf(eMatrixMode mode) const { return mMatrix[mode][mMatIdx[mode]]; }
     U32 matrixDepth(eMatrixMode mode) const { return mMatIdx[mode]; }
+    eMatrixMode rawMatrixMode() const { return mMatrixMode; }      // the hidden current mode (LL_VK_MATRIX_GUARD_CHECK compares it with the matrix a migrated call names)
     eMatrixMode getMatrixMode();
 
     const glm::mat4& getModelviewMatrix();

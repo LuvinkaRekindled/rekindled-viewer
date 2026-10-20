@@ -185,44 +185,44 @@ void setup_transforms_bbox(LLBBox bbox)
 {
     // translate to center
     LLVector3 center = bbox.getCenterAgent();
-    gGL.translatef(center.mV[VX], center.mV[VY], center.mV[VZ]);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
 
     // rotate
     LLQuaternion rotation = bbox.getRotation();
     F32 angle_radians, x, y, z;
     rotation.getAngleAxis(&angle_radians, &x, &y, &z);
     gGL.flush();
-    gGL.rotatef(angle_radians * RAD_TO_DEG, x, y, z);
+    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
     // scale
     LLVector3 scale = bbox.getMaxLocal() - bbox.getMinLocal();
-    gGL.scalef(scale.mV[VX], scale.mV[VY], scale.mV[VZ]);
+    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale.mV[VX], scale.mV[VY], scale.mV[VZ]);
 }
 
 void render_bbox(LLBBox bbox)
 {
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     setup_transforms_bbox(bbox);
 
     gGL.flush();
     gBox.render();
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void render_cone_bbox(LLBBox bbox)
 {
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     setup_transforms_bbox(bbox);
 
     gGL.flush();
     gCone.render();
 
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 // the selection bbox isn't axis aligned, so we must construct one

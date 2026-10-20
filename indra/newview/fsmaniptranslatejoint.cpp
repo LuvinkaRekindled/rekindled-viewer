@@ -716,7 +716,7 @@ void FSManipTranslateJoint::render()
         return;
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLRenderState::DepthScope gls_depth(true, false);
         renderGuidelines();
@@ -724,7 +724,7 @@ void FSManipTranslateJoint::render()
     {
         renderTranslationHandles();
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     renderText();
 }
@@ -808,14 +808,14 @@ void FSManipTranslateJoint::renderTranslationHandles()
     mConeSize = mArrowLengthMeters / 4.f;
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
-        gGL.translatef(selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);
 
         F32 angle_radians, x, y, z;
         grid_rotation.getAngleAxis(&angle_radians, &x, &y, &z);
 
-        gGL.rotatef(angle_radians * RAD_TO_DEG, x, y, z);
+        LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
         LLQuaternion invRotation = grid_rotation;
         invRotation.conjQuat();
@@ -854,10 +854,10 @@ void FSManipTranslateJoint::renderTranslationHandles()
             if ((mManipPart == LL_NO_PART || mManipPart == LL_YZ_PLANE) && llabs(relative_camera_dir.mV[VX]) > MIN_PLANE_MANIP_DOT_PRODUCT)
             {
                 // render YZ plane manipulator
-                gGL.pushMatrix();
-                gGL.scalef(mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
-                gGL.translatef(0.f, mPlaneManipOffsetMeters, mPlaneManipOffsetMeters);
-                gGL.scalef(mPlaneScales.mV[VX], mPlaneScales.mV[VX], mPlaneScales.mV[VX]);
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
+                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, 0.f, mPlaneManipOffsetMeters, mPlaneManipOffsetMeters);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneScales.mV[VX], mPlaneScales.mV[VX], mPlaneScales.mV[VX]);
                 if (mHighlightedPart == LL_YZ_PLANE)
                 {
                     color1.setVec(getUserEditColor(VY));
@@ -902,16 +902,16 @@ void FSManipTranslateJoint::renderTranslationHandles()
                 }
                 gGL.end();
                 gGL.setLineWidth(1.0f);
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
 
             if ((mManipPart == LL_NO_PART || mManipPart == LL_XZ_PLANE) && llabs(relative_camera_dir.mV[VY]) > MIN_PLANE_MANIP_DOT_PRODUCT)
             {
                 // render XZ plane manipulator
-                gGL.pushMatrix();
-                gGL.scalef(mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
-                gGL.translatef(mPlaneManipOffsetMeters, 0.f, mPlaneManipOffsetMeters);
-                gGL.scalef(mPlaneScales.mV[VY], mPlaneScales.mV[VY], mPlaneScales.mV[VY]);
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
+                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, mPlaneManipOffsetMeters, 0.f, mPlaneManipOffsetMeters);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneScales.mV[VY], mPlaneScales.mV[VY], mPlaneScales.mV[VY]);
                 if (mHighlightedPart == LL_XZ_PLANE)
                 {
                     color1.setVec(getUserEditColor(VZ));
@@ -958,14 +958,14 @@ void FSManipTranslateJoint::renderTranslationHandles()
                 gGL.end();
                 gGL.setLineWidth(1.0f);
 
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
 
             if ((mManipPart == LL_NO_PART || mManipPart == LL_XY_PLANE) && llabs(relative_camera_dir.mV[VZ]) > MIN_PLANE_MANIP_DOT_PRODUCT)
             {
                 // render XY plane manipulator
-                gGL.pushMatrix();
-                gGL.scalef(mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
+                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
 
 /*                            Y
                               ^
@@ -976,13 +976,13 @@ void FSManipTranslateJoint::renderTranslationHandles()
                               v2__v__v3 > X
 */
                     LLVector3 v0,v1,v2,v3;
-                    gGL.translatef(mPlaneManipOffsetMeters, mPlaneManipOffsetMeters, 0.f);
+                    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, mPlaneManipOffsetMeters, mPlaneManipOffsetMeters, 0.f);
                     v0 = LLVector3(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), 0.f);
                     v1 = LLVector3(mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f), 0.f);
                     v2 = LLVector3(mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), 0.f);
                     v3 = LLVector3(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f), mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), 0.f);
 
-                    gGL.scalef(mPlaneScales.mV[VZ], mPlaneScales.mV[VZ], mPlaneScales.mV[VZ]);
+                    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneScales.mV[VZ], mPlaneScales.mV[VZ], mPlaneScales.mV[VZ]);
                     if (mHighlightedPart == LL_XY_PLANE)
                     {
                         color1.setVec(getUserEditColor(VX));
@@ -1031,7 +1031,7 @@ void FSManipTranslateJoint::renderTranslationHandles()
                     gGL.end();
                     gGL.setLineWidth(1.0f);
 
-                gGL.popMatrix();
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
         }
         {
@@ -1096,7 +1096,7 @@ void FSManipTranslateJoint::renderTranslationHandles()
             }
         }
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 void FSManipTranslateJoint::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_size, F32 arrow_size, F32 handle_size, bool reverse_direction)
@@ -1107,7 +1107,7 @@ void FSManipTranslateJoint::renderArrow(S32 which_arrow, S32 selected_arrow, F32
     for (S32 pass = 1; pass <= 2; pass++)
     {
         LLRenderState::DepthScope gls_depth(true, false, pass == 1 ? LLRenderState::CompareOp::LessEqual : LLRenderState::CompareOp::Greater);
-        gGL.pushMatrix();
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         S32 index = ARROW_TO_AXIS[which_arrow]; // red, red, green, blue
 
@@ -1146,8 +1146,8 @@ void FSManipTranslateJoint::renderArrow(S32 which_arrow, S32 selected_arrow, F32
             gGL.setLineWidth(1.0f);
         }
 
-        gGL.translatef(vec.mV[VX], vec.mV[VY], vec.mV[VZ]);
-        gGL.scalef(handle_size, handle_size, handle_size);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, vec.mV[VX], vec.mV[VY], vec.mV[VZ]);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, handle_size, handle_size, handle_size);
 
         F32 rot = 0.0f;
         LLVector3 axis;
@@ -1172,12 +1172,12 @@ void FSManipTranslateJoint::renderArrow(S32 which_arrow, S32 selected_arrow, F32
         }
 
         gGL.diffuseColor4fv(color.mV);
-        gGL.rotatef(rot, axis.mV[VX], axis.mV[VY], axis.mV[VZ]);
-        gGL.scalef(mArrowScales.mV[index], mArrowScales.mV[index], mArrowScales.mV[index] * 1.5f);
+        LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, rot, axis.mV[VX], axis.mV[VY], axis.mV[VZ]);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mArrowScales.mV[index], mArrowScales.mV[index], mArrowScales.mV[index] * 1.5f);
 
         gCone.render();
 
-        gGL.popMatrix();
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 }
 

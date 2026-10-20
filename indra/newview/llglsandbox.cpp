@@ -147,7 +147,7 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
 
     // save drawing mode
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
 
     // <FS:Ansariel> Use faster LLCachedControls
     //bool limit_select_distance = gSavedSettings.getBOOL("LimitSelectDistance");
@@ -299,7 +299,7 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
 
     // restore drawing mode
     gGL.matrixMode(LLRender::MM_PROJECTION);
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
 
     // restore camera
@@ -322,18 +322,18 @@ void LLWind::renderVectors()
 // </FS:CR> Aurora Sim
 
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-    gGL.pushMatrix();
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLVector3 origin_agent;
     origin_agent = gAgent.getPosAgentFromGlobal(mOriginGlobal);
-    gGL.translatef(origin_agent.mV[VX], origin_agent.mV[VY], gAgent.getPositionAgent().mV[VZ] + WIND_RELATIVE_ALTITUDE);
+    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, origin_agent.mV[VX], origin_agent.mV[VY], gAgent.getPositionAgent().mV[VZ] + WIND_RELATIVE_ALTITUDE);
     for (j = 0; j < mSize; j++)
     {
         for (i = 0; i < mSize; i++)
         {
             x = mVelX[i + j*mSize] * WIND_SCALE_HACK;
             y = mVelY[i + j*mSize] * WIND_SCALE_HACK;
-            gGL.pushMatrix();
-            gGL.translatef((F32)i * region_width_meters/mSize, (F32)j * region_width_meters/mSize, 0.f);
+            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)i * region_width_meters/mSize, (F32)j * region_width_meters/mSize, 0.f);
             gGL.color3f(0.f, 1.f, 0.f);
             gGL.begin(LLRender::POINTS);
                 gGL.vertex3f(0.f, 0.f, 0.f);
@@ -343,10 +343,10 @@ void LLWind::renderVectors()
                 gGL.vertex3f(x * 0.1f, y * 0.1f, 0.f);
                 gGL.vertex3f(x, y, 0.f);
             gGL.end();
-            gGL.popMatrix();
+            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         }
     }
-    gGL.popMatrix();
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
 
