@@ -179,6 +179,7 @@ struct DepthStencilState
     bool mDepthTest = false;
     bool mDepthWrite = true;
     VkCompareOp mDepthOp = VK_COMPARE_OP_LESS;
+    bool mDeclaredRO = false;       // F3.5c: the viewer declared the depth attachment read-only for these draws (not part of the pipeline: operator== ignores it)
     bool mStencilTest = false;
     VkCompareOp mStencilOp = VK_COMPARE_OP_ALWAYS;
     VkStencilOp mFail = VK_STENCIL_OP_KEEP;
@@ -582,6 +583,16 @@ private:
     struct BarrierStat { U32 mCount = 0; U32 mEndedPass = 0; };
     std::unordered_map<std::string, BarrierStat> mBarrierStats;
     std::unordered_map<const Image*, U32> mBarrierPerImage;
+    std::unordered_map<std::string, U32> mBarrierWho;       // F3.5c': transitions by the pass that needed them: image | layouts | cause | program | GPU zone | the pass's target
+    // F3.5c: the depth use of each producer pass segment (between two target changes) that has a depth attachment: draws that write it, draws in read-only depth, the rest, how many worker passes it took (LL_VK_PHASES)
+    struct PassUse { U32 mSegments = 0; U64 mWorkerPasses = 0, mWrites = 0, mRO = 0, mPlain = 0; U32 mMixed = 0; };
+    std::unordered_map<std::string, PassUse> mPassUse;
+    std::string mPUKey;
+    U64 mPassBeginsTotal = 0, mPUStartBegins = 0, mPUWrites = 0, mPURO = 0, mPUPlain = 0;
+    void finishPassUse();
+    // F3.5c: the declared read-only depth against what the worker infers (LL_VK_DEPTHRO_VERIFY=1 or LL_VK_PHASES), by program: agree, declared but the draw writes depth, samples the depth with nothing declared
+    struct DeclStat { U64 mAgree = 0, mDeclaredOnly = 0, mViolation = 0, mMissing = 0; };
+    std::unordered_map<const Program*, DeclStat> mDeclStats;
     bool mBarrierEndedPass = false;                 // the transition being made had to end a render pass first
     // F3.5a: render pass counters (plain increments on the worker, read by takePassReport)
     U64 mPassBegins = 0, mPassBeginsClear = 0, mPassBeginsDepthOnly = 0, mPassBeginsDepthRO = 0, mPassesEmpty = 0, mPassDrawsTotal = 0;

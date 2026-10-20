@@ -1936,6 +1936,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
 
 void Renderer::endFrame()
 {
+    finishPassUse();
     flushPendingClear();
     endRendering(PE_FRAME);
     // descriptors that draws of this frame asked for (render packet textures: bindlessTouch only queues them, a flush comes with the next draw of a bindless program) are written before
@@ -1996,6 +1997,7 @@ void Renderer::setRenderTarget(Image* const* colors, U32 color_count, Image* dep
     {
         return;
     }
+    finishPassUse();
     flushPendingClear();
     endRendering(PE_TARGET);
     mColorCount = std::min<U32>(color_count, 8);
@@ -2195,6 +2197,13 @@ void Renderer::noteBarrier(const Image& image, VkImageLayout from, VkImageLayout
         ++st.mEndedPass;
     }
     ++mBarrierPerImage[&image];
+    {
+        // F3.5c': who needed this transition: the draw's program, the viewer's GPU zone (when FSGpuZoneTimers is on) and the target of the pass that is being set up
+        std::string who = image_kind(image) + " | " + layout_name(from) + ">" + layout_name(to) + " | " + mBarrierCause + " | " + (mProgram ? mProgram->mName : std::string("(no program)"));
+        who += mZoneStack.empty() ? std::string(" | (no zone)") : " | " + Context::stampTagName(mZoneStack.back());
+        who += " | into " + describeTarget();
+        ++mBarrierWho[who];
+    }
     mBarrierEndedPass = false;
 }
 
@@ -2298,9 +2307,78 @@ std::string Renderer::takeBarrierReport(size_t frames)
         }
         gUniformChangeStats.clear();
     }
+    {
+        // F3.5c': the transitions of the images with the most of them (the scene colour, the main depth) by the pass that needed them, per frame
+        std::vector<std::pair<std::string, U32>> who(mBarrierWho.begin(), mBarrierWho.end());
+        std::sort(who.begin(), who.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        out += " | transitions by who needed them (image | layouts | cause | program | zone | the pass's target: per frame):";
+        for (size_t i = 0; i < who.size() && i < 40; ++i)
+        {
+            snprintf(buf, sizeof(buf), " [%.1f] ", (double)who[i].second / f);
+            out += buf + who[i].first + ";";
+        }
+        // the same by program only (the fourth field), all rows
+        std::map<std::string, U32> by_program;
+        for (const auto& kv : mBarrierWho)
+        {
+            size_t pos = 0;
+            for (int k = 0; k < 3 && pos != std::string::npos; ++k)
+            {
+                pos = kv.first.find(" | ", pos);
+                pos = pos == std::string::npos ? pos : pos + 3;
+            }
+            if (pos != std::string::npos)
+            {
+                const size_t end = kv.first.find(" | ", pos);
+                by_program[kv.first.substr(pos, end == std::string::npos ? std::string::npos : end - pos)] += kv.second;
+            }
+        }
+        std::vector<std::pair<std::string, U32>> bp(by_program.begin(), by_program.end());
+        std::sort(bp.begin(), bp.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        out += " | transitions by program (all rows, per frame):";
+        for (size_t i = 0; i < bp.size() && i < 25; ++i)
+        {
+            snprintf(buf, sizeof(buf), " [%s: %.1f]", bp[i].first.c_str(), (double)bp[i].second / f);
+            out += buf;
+        }
+        mBarrierWho.clear();
+        // F3.5c: producer pass segments with a depth attachment: how often per frame, how many worker passes they took, draws that write / are read-only / plain, segments that were mixed (these are the ones that split)
+        std::vector<std::pair<std::string, PassUse>> pu(mPassUse.begin(), mPassUse.end());
+        std::sort(pu.begin(), pu.end(), [](const auto& a, const auto& b) { return a.second.mSegments > b.second.mSegments; });
+        out += " | depth use per producer pass segment (target | first program: segments, worker passes, draws writing / read-only / plain, mixed segments; per frame):";
+        for (size_t i = 0; i < pu.size() && i < 40; ++i)
+        {
+            const PassUse& u = pu[i].second;
+            snprintf(buf, sizeof(buf), " [%.2f seg, %.2f passes, %.0f/%.0f/%.0f draws, %.2f mixed] ", (double)u.mSegments / f, (double)u.mWorkerPasses / f, (double)u.mWrites / f, (double)u.mRO / f, (double)u.mPlain / f, (double)u.mMixed / f);
+            out += pu[i].first;
+            out += buf;
+            out += ";";
+        }
+        mPassUse.clear();
+    }
     mBarrierStats.clear();
     mBarrierPerImage.clear();
     return out;
+}
+
+void Renderer::finishPassUse()
+{
+    if (mPUKey.empty())
+    {
+        return;
+    }
+    PassUse& u = mPassUse[mPUKey];
+    ++u.mSegments;
+    u.mWorkerPasses += mPassBeginsTotal - mPUStartBegins;
+    u.mWrites += mPUWrites;
+    u.mRO += mPURO;
+    u.mPlain += mPUPlain;
+    if (mPUWrites && mPURO)
+    {
+        ++u.mMixed;
+    }
+    mPUKey.clear();
+    mPUWrites = mPURO = mPUPlain = 0;
 }
 
 // F3.5a: the render pass counters of the worker since the last call, per frame (always counted: plain increments), appended to the VkOps line
@@ -2328,6 +2406,31 @@ std::string Renderer::takePassReport(size_t frames)
         mPassBeginAfter[i] = 0;
     }
     mDepthROFlips[0] = mDepthROFlips[1] = 0;
+    if (!mDeclStats.empty())
+    {
+        // F3.5c: declared read-only depth against the inference, by program (per frame): agree (declared and the draw samples depth), declared only (declared, the draw does not sample it), VIOLATION (declared and the draw writes depth: the declaration is ignored), MISSING (the draw samples depth, nothing declared)
+        std::vector<std::pair<U64, const Program*>> rows;
+        U64 agree = 0, only = 0, viol = 0, miss = 0;
+        for (const auto& kv : mDeclStats)
+        {
+            agree += kv.second.mAgree;
+            only += kv.second.mDeclaredOnly;
+            viol += kv.second.mViolation;
+            miss += kv.second.mMissing;
+            rows.push_back({ kv.second.mViolation * 1000000ull + kv.second.mMissing * 1000ull + kv.second.mAgree + kv.second.mDeclaredOnly, kv.first });
+        }
+        std::sort(rows.rbegin(), rows.rend());
+        snprintf(buf, sizeof(buf), "declared read-only depth per frame: agree %.1f, declared only %.1f, VIOLATIONS %.1f, MISSING %.1f; by program (agree/only/violations/missing):", (double)agree / f, (double)only / f, (double)viol / f, (double)miss / f);
+        out += buf;
+        for (size_t i = 0; i < rows.size() && i < 24; ++i)
+        {
+            const DeclStat& d = mDeclStats[rows[i].second];
+            snprintf(buf, sizeof(buf), " [%s: %.1f/%.1f/%.1f/%.1f]", rows[i].second->mName.c_str(), (double)d.mAgree / f, (double)d.mDeclaredOnly / f, (double)d.mViolation / f, (double)d.mMissing / f);
+            out += buf;
+        }
+        out += " | ";
+        mDeclStats.clear();
+    }
     return out;
 }
 
@@ -2372,6 +2475,7 @@ void Renderer::beginRenderingIfNeeded()
     }
     mInBegin = true;
     ++mPassBegins;
+    ++mPassBeginsTotal;
     ++mPassBeginAfter[mLastPassEnd];
     mPassDrawStart = mDrawCount;
     if (mPendingClear)
@@ -3037,6 +3141,36 @@ void Renderer::applyState()
     }
     bool depth_ro = depth_sampled && !mDepthStencil.mDepthWrite;
     {
+        // F3.5c: the viewer's declaration (DepthReadOnlyScope) against the inference
+        static const bool decl_verify = getenv("LL_VK_PHASES") != nullptr || getenv("LL_VK_DEPTHRO_VERIFY") != nullptr;
+        if (decl_verify && depth_root && mProgram)
+        {
+            DeclStat& ds = mDeclStats[mProgram];
+            if (mDepthStencil.mDeclaredRO)
+            {
+                if (mDepthStencil.mDepthWrite) { ++ds.mViolation; } else if (depth_ro) { ++ds.mAgree; } else { ++ds.mDeclaredOnly; }
+            }
+            else if (depth_ro)
+            {
+                ++ds.mMissing;
+            }
+        }
+        if (depth_root && mProgram && (mDepthStencil.mDeclaredRO ? mDepthStencil.mDepthWrite : depth_ro))
+        {
+            // always on (a rare path): a draw that samples the depth it is attached to with no declaration (the inference still decides, F3.5c), or that writes depth under a declaration (the declaration is ignored)
+            static std::unordered_set<const Program*> warned_missing, warned_violation;
+            if ((mDepthStencil.mDeclaredRO ? warned_violation : warned_missing).insert(mProgram).second)
+            {
+                LL_WARNS("DepthRO") << (mDepthStencil.mDeclaredRO ? "a draw writes depth under a DepthReadOnlyScope (declaration ignored): program " : "a draw samples the depth attachment with no DepthReadOnlyScope (inferred): program ")
+                    << mProgram->mName << ", pass target " << describeTarget() << LL_ENDL;
+            }
+        }
+        if (mDepthStencil.mDeclaredRO && !mDepthStencil.mDepthWrite)
+        {
+            depth_ro = true;        // declared: the pass takes the read-only layout whether or not this draw samples the depth
+        }
+    }
+    {
         // C9: a draw that neither writes depth nor reads the depth buffer works in either layout, so it keeps the one the pass is in (it used to force the
         // writable layout, which ended the pass and turned the layout back and forth around every draw that samples the depth: about 50 times a frame in a busy scene)
         static const bool sticky = getenv("LL_VK_STICKY_DEPTH") == nullptr || getenv("LL_VK_STICKY_DEPTH")[0] != '0';
@@ -3061,6 +3195,18 @@ void Renderer::applyState()
     if (depth_ro)
     {
         mDepthRORoot = depth_root;
+    }
+    {
+        static const bool pu_diag = getenv("LL_VK_PHASES") != nullptr;
+        if (pu_diag && depth_root && mProgram)
+        {
+            if (mPUKey.empty())
+            {
+                mPUKey = describeTarget() + " | " + mProgram->mName;
+                mPUStartBegins = mPassBeginsTotal;
+            }
+            if (mDepthStencil.mDepthWrite) { ++mPUWrites; } else if (depth_ro) { ++mPURO; } else { ++mPUPlain; }
+        }
     }
 
     // 2. textures must be in a sampling layout before a pass is (re)started

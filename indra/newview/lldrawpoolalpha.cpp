@@ -365,6 +365,8 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
                                  : (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: static (post water)" : "alpha: static (pre water)"));
         // the soft part: drawn a little farther than the depth only pass wrote the same triangles, so that what wrote depth there fails the strict test
         LLRenderState::PolygonOffsetScope fringe_offset(true, fringe);
+        // F3.5c: this alpha pass writes no depth (unless write_depth): its draws sample the depth buffer (soft particles, water fog) and the pass takes the read-only depth layout
+        LLRenderState::DepthReadOnlyScope depth_read_only(true, !write_depth);
         if (fringe)
         {
             gGL.setPolygonOffset(1.f, 8.f);
