@@ -40,28 +40,27 @@ namespace LLVkState
     };
 
     // the producer's context (main thread only: the calls below are ignored from other threads, and counted)
-    // set* take the GL values the viewer's calls carry today; they translate once, here
     void reset();
-    void setEnable(U32 cap, bool on);
-    void setBlendFunc(U32 src_rgb, U32 dst_rgb, U32 src_a, U32 dst_a);
-    void setDepthFunc(U32 func);
+    // the capabilities of the block, one setter each (the guards of llrenderstate.h are the callers)
+    void setBlendEnable(bool on);
+    void setDepthTest(bool on);
+    void setCullEnable(bool on);
+    void setScissorTest(bool on);
+    void setStencilTest(bool on);
+    void setPolygonOffsetFill(bool on);
+    void setDepthClamp(bool on);
+    void setBlendFunc(LLRenderState::BlendFactor src_rgb, LLRenderState::BlendFactor dst_rgb, LLRenderState::BlendFactor src_a, LLRenderState::BlendFactor dst_a);
     void setDepthMask(bool flag);
     void setColorMask(bool r, bool g, bool b, bool a);
-    void setCullFace(U32 mode);
     void setPolygonOffset(F32 factor, F32 units);
-    void setPolygonMode(U32 mode);
     void setLineWidth(F32 width);
-    void setStencilFunc(U32 func, S32 ref, U32 mask);
-    void setStencilOp(U32 sfail, U32 dpfail, U32 dppass);
     void setStencilMask(U32 mask);
-    // F3.2: the same setters with typed values (llrenderstate.h); the GL-number ones above go away with the last GL-named user
+    // typed values (llrenderstate.h)
     void setCullFace(LLRenderState::CullFace face);                       // None: no change
     void setPolygonMode(LLRenderState::PolygonMode mode);
     void setDepthFunc(LLRenderState::CompareOp op);
     void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask);
     void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass);
-    // what the block holds for a GL capability (0 / 1), -1 when the block does not hold it (LLGLState reads this instead of keeping its own map)
-    int capability(U32 cap);
     void setViewport(S32 x, S32 y, S32 w, S32 h);
     void setScissor(S32 x, S32 y, S32 w, S32 h);
     // a setter call arrived on a thread other than the main producer: it is not written to the context (the old path still sees it)

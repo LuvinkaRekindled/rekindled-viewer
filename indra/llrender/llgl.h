@@ -155,7 +155,6 @@ public:
     std::string mGLRenderer;
 
 private:
-    void initGLStates();
 };
 
 extern LLGLManager gGLManager;
@@ -192,130 +191,8 @@ void clear_glerror();
 // Note: U32's are GLEnum's...
 //
 
-// This is a class for GL state management
-
-/*
-    GL STATE MANAGEMENT DESCRIPTION
-
-    LLGLState and its two subclasses, LLGLEnable and LLGLDisable, manage the current
-    enable/disable states of the GL to prevent redundant setting of state within a
-    render path or the accidental corruption of what state the next path expects.
-
-    Essentially, wherever you would call glEnable set a state and then
-    subsequently reset it by calling glDisable (or vice versa), make an instance of
-    LLGLEnable with the state you want to set, and assume it will be restored to its
-    original state when that instance of LLGLEnable is destroyed.  It is good practice
-    to exploit stack frame controls for optimal setting/unsetting and readability of
-    code.  In llglstates.h, there are a collection of helper classes that define groups
-    of enables/disables that can cause multiple states to be set with the creation of
-    one instance.
-
-    Sample usage:
-
-    //disable lighting for rendering hud objects
-    //INCORRECT USAGE
-    LLGLEnable blend(GL_BLEND);
-    renderHUD();
-    LLGLDisable blend(GL_BLEND);
-
-    //CORRECT USAGE
-    {
-        LLGLEnable blend(GL_BLEND);
-        renderHUD();
-    }
-
-    If a state is to be set on a conditional, the following mechanism
-    is useful:
-
-    {
-        LLGLEnable blend(blend_hud ? GL_GL_BLEND: 0);
-        renderHUD();
-    }
-
-    A LLGLState initialized with a parameter of 0 does nothing.
-
-    LLGLState works by maintaining a map of the current GL states, and ignoring redundant
-    enables/disables.  If a redundant call is attempted, it becomes a noop, otherwise,
-    it is set in the constructor and reset in the destructor.
-
-    For debugging GL state corruption, running with debug enabled will trigger asserts
-    if the existing GL state does not match the expected GL state.
-
-*/
-
-class LLGLState
-{
-public:
-    static void initClass();
-    static void restoreGL();
-
-    static void resetTextureStates();
-    static void dumpStates();
-
-    // make sure GL blend function, GL states, and GL color mask match
-    // what we expect
-    //  writeAlpha - whether or not writing to alpha channel is expected
-    static void checkStates(GLboolean writeAlpha = GL_TRUE);
-
-protected:
-    static std::unordered_map<LLGLenum, LLGLboolean> sStateMap;
-    static bool currentState(LLGLenum state);       // F3.2a: the block's value (the map only for capabilities the block does not hold)
-
-public:
-    enum { CURRENT_STATE = -2, DISABLED_STATE = 0, ENABLED_STATE = 1 };
-    LLGLState(LLGLenum state, S32 enabled = CURRENT_STATE, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    ~LLGLState();
-    void setEnabled(S32 enabled);
-    void enable() { setEnabled(ENABLED_STATE); }
-    void disable() { setEnabled(DISABLED_STATE); }
-protected:
-    LLGLenum mState;
-    bool mWasEnabled;
-    bool mIsEnabled;
-    const char* mFile = nullptr;      // where it was made (LL_VK_STATE_WHY / the guard check)
-    int mLine = 0;
-};
-
-// New LLGLState class wrappers that don't depend on actual GL flags.
-class LLGLEnableBlending : public LLGLState
-{
-public:
-    LLGLEnableBlending(bool enable);
-};
-
-class LLGLEnableAlphaReject : public LLGLState
-{
-public:
-    LLGLEnableAlphaReject(bool enable);
-};
-
-// Enable with functor
-class LLGLEnableFunc : LLGLState
-{
-public:
-    LLGLEnableFunc(LLGLenum state, bool enable, std::function<void()> func)
-        : LLGLState(state, enable)
-    {
-        if (enable)
-        {
-            func();
-        }
-    }
-};
-
-/// TODO: Being deprecated.
-class LLGLEnable : public LLGLState
-{
-public:
-    LLGLEnable(LLGLenum state, const char* file = __builtin_FILE(), int line = __builtin_LINE()) : LLGLState(state, ENABLED_STATE, file, line) {}
-};
-
-/// TODO: Being deprecated.
-class LLGLDisable : public LLGLState
-{
-public:
-    LLGLDisable(LLGLenum state, const char* file = __builtin_FILE(), int line = __builtin_LINE()) : LLGLState(state, DISABLED_STATE, file, line) {}
-};
+// Render state (blend, cull, depth, scissor, stencil, polygon offset) is set with the typed guards of llrenderstate.h; the old LLGLState / LLGLEnable / LLGLDisable /
+// LLGLDepthTest classes are gone (F3.2e).
 
 /*
   Store and modify projection matrix to create an oblique

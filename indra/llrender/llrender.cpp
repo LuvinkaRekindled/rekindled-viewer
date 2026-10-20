@@ -90,20 +90,20 @@ static const GLint sGLAddressMode[] =
 
 const U32 immediate_mask = LLVertexBuffer::MAP_VERTEX | LLVertexBuffer::MAP_COLOR | LLVertexBuffer::MAP_TEXCOORD0;
 
-static const GLenum sGLBlendFactor[] =
+static const LLRenderState::BlendFactor sBlendFactor[] =
 {
-    GL_ONE,
-    GL_ZERO,
-    GL_DST_COLOR,
-    GL_SRC_COLOR,
-    GL_ONE_MINUS_DST_COLOR,
-    GL_ONE_MINUS_SRC_COLOR,
-    GL_DST_ALPHA,
-    GL_SRC_ALPHA,
-    GL_ONE_MINUS_DST_ALPHA,
-    GL_ONE_MINUS_SRC_ALPHA,
+    LLRenderState::BlendFactor::One,
+    LLRenderState::BlendFactor::Zero,
+    LLRenderState::BlendFactor::DstColor,
+    LLRenderState::BlendFactor::SrcColor,
+    LLRenderState::BlendFactor::OneMinusDstColor,
+    LLRenderState::BlendFactor::OneMinusSrcColor,
+    LLRenderState::BlendFactor::DstAlpha,
+    LLRenderState::BlendFactor::SrcAlpha,
+    LLRenderState::BlendFactor::OneMinusDstAlpha,
+    LLRenderState::BlendFactor::OneMinusSrcAlpha,
 
-    GL_ZERO // 'BF_UNDEF'
+    LLRenderState::BlendFactor::Zero // 'BF_UNDEF'
 };
 
 LLTexUnit::LLTexUnit(S32 index)
@@ -1454,11 +1454,6 @@ void LLRender::setViewport(S32 x, S32 y, S32 width, S32 height)
     LLVkState::setViewport(x, y, width, height);
 }
 
-void LLRender::setCullFace(U32 gl_face)
-{
-    LLVkState::setCullFace(gl_face);
-}
-
 void LLRender::setCullFace(LLRenderState::CullFace face)
 {
     LLVkState::setCullFace(face);
@@ -1469,12 +1464,6 @@ void LLRender::setPolygonOffset(F32 factor, F32 units)
     LLVkState::setPolygonOffset(factor, units);
 }
 
-void LLRender::setPolygonMode(U32 gl_face, U32 gl_mode)
-{
-    (void)gl_face;
-    LLVkState::setPolygonMode(gl_mode);
-}
-
 void LLRender::setPolygonMode(LLRenderState::PolygonMode mode)
 {
     LLVkState::setPolygonMode(mode);
@@ -1483,16 +1472,6 @@ void LLRender::setPolygonMode(LLRenderState::PolygonMode mode)
 void LLRender::setPointSize(F32 size)
 {
     (void)size;         // nothing reads a point size
-}
-
-void LLRender::setStencilFunc(U32 gl_func, S32 ref, U32 mask)
-{
-    LLVkState::setStencilFunc(gl_func, ref, mask);
-}
-
-void LLRender::setStencilOp(U32 gl_sfail, U32 gl_dpfail, U32 gl_dppass)
-{
-    LLVkState::setStencilOp(gl_sfail, gl_dpfail, gl_dppass);
 }
 
 void LLRender::setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask)
@@ -1666,7 +1645,7 @@ void LLRender::blendFunc(eBlendFactor sfactor, eBlendFactor dfactor)
         mCurrBlendColorDFactor = dfactor;
         mCurrBlendAlphaDFactor = dfactor;
         flush();
-        LLVkState::setBlendFunc(sGLBlendFactor[sfactor], sGLBlendFactor[dfactor], sGLBlendFactor[sfactor], sGLBlendFactor[dfactor]);
+        LLVkState::setBlendFunc(sBlendFactor[sfactor], sBlendFactor[dfactor], sBlendFactor[sfactor], sBlendFactor[dfactor]);
     }
 }
 
@@ -1688,8 +1667,8 @@ void LLRender::blendFunc(eBlendFactor color_sfactor, eBlendFactor color_dfactor,
         mCurrBlendAlphaDFactor = alpha_dfactor;
         flush();
 
-        LLVkState::setBlendFunc(sGLBlendFactor[color_sfactor], sGLBlendFactor[color_dfactor],
-                                sGLBlendFactor[alpha_sfactor], sGLBlendFactor[alpha_dfactor]);
+        LLVkState::setBlendFunc(sBlendFactor[color_sfactor], sBlendFactor[color_dfactor],
+                                sBlendFactor[alpha_sfactor], sBlendFactor[alpha_dfactor]);
     }
 }
 

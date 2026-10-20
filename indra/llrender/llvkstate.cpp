@@ -45,60 +45,6 @@ Context gCtx;                           // the main producer's
 thread_local Context* tlsCtx = nullptr;   // the context a sub-stream thread writes (null: the main producer's, subject to the owner rule below)
 inline Context& C() { return tlsCtx ? *tlsCtx : gCtx; }
 
-VkCompareOp compareOp(U32 f)
-{
-    switch (f)
-    {
-    case GL_NEVER: return VK_COMPARE_OP_NEVER;
-    case GL_LESS: return VK_COMPARE_OP_LESS;
-    case GL_EQUAL: return VK_COMPARE_OP_EQUAL;
-    case GL_LEQUAL: return VK_COMPARE_OP_LESS_OR_EQUAL;
-    case GL_GREATER: return VK_COMPARE_OP_GREATER;
-    case GL_NOTEQUAL: return VK_COMPARE_OP_NOT_EQUAL;
-    case GL_GEQUAL: return VK_COMPARE_OP_GREATER_OR_EQUAL;
-    default: return VK_COMPARE_OP_ALWAYS;
-    }
-}
-
-VkBlendFactor blendFactor(U32 f)
-{
-    switch (f)
-    {
-    case GL_ZERO: return VK_BLEND_FACTOR_ZERO;
-    case GL_ONE: return VK_BLEND_FACTOR_ONE;
-    case GL_SRC_COLOR: return VK_BLEND_FACTOR_SRC_COLOR;
-    case GL_ONE_MINUS_SRC_COLOR: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-    case GL_SRC_ALPHA: return VK_BLEND_FACTOR_SRC_ALPHA;
-    case GL_ONE_MINUS_SRC_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    case GL_DST_ALPHA: return VK_BLEND_FACTOR_DST_ALPHA;
-    case GL_ONE_MINUS_DST_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
-    case GL_DST_COLOR: return VK_BLEND_FACTOR_DST_COLOR;
-    case GL_ONE_MINUS_DST_COLOR: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
-    case GL_SRC_ALPHA_SATURATE: return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
-    default:
-        if (C().mUnknownFactor++ == 0)
-        {
-            LL_WARNS("VkState") << "unsupported blend factor 0x" << std::hex << f << std::dec << LL_ENDL;
-        }
-        return VK_BLEND_FACTOR_ONE;
-    }
-}
-
-VkStencilOp stencilOp(U32 op)
-{
-    switch (op)
-    {
-    case 0: return VK_STENCIL_OP_ZERO;                  // GL_ZERO
-    case 0x1E01: return VK_STENCIL_OP_REPLACE;
-    case 0x1E02: return VK_STENCIL_OP_INCREMENT_AND_CLAMP;
-    case 0x1E03: return VK_STENCIL_OP_DECREMENT_AND_CLAMP;
-    case 0x150A: return VK_STENCIL_OP_INVERT;
-    case 0x8507: return VK_STENCIL_OP_INCREMENT_AND_WRAP;
-    case 0x8508: return VK_STENCIL_OP_DECREMENT_AND_WRAP;
-    default: return VK_STENCIL_OP_KEEP;                 // GL_KEEP
-    }
-}
-
 void recomputeCull()
 {
     C().mBlock.mRaster.mCull = C().mCullOn ? C().mCullFace : VK_CULL_MODE_NONE;
@@ -177,45 +123,6 @@ inline bool ownThread(const char* what)
 #define CTX_CALL() if (!ownThread(__func__)) return; ++C().mCalls; if (LLRenderState::sWhy && !LLRenderState::sInGuard && !tlsCtx) LLRenderState::noteDirect(__func__)
 static bool scissor_trace_now();
 
-void setEnable(U32 cap, bool on)
-{
-    CTX_CALL();
-    Block& b = C().mBlock;
-    switch (cap)
-    {
-    case GL_BLEND: b.mBlend.mEnable = on; break;
-    case GL_DEPTH_TEST: b.mDepth.mDepthTest = on; recomputeDepthWrite(); break;
-    case GL_CULL_FACE: C().mCullOn = on; recomputeCull(); break;
-    case GL_SCISSOR_TEST:
-        b.mScissorOn = on;
-        if (scissor_trace_now())
-        {
-            LL_INFOS("ScissorTrace") << "frame " << LLFrameTimer::getFrameCount() << " scissor test " << (on ? "on" : "off") << (tlsCtx ? " [sub-stream]" : " [main]") << LL_ENDL;
-        }
-        break;
-    case GL_STENCIL_TEST: b.mDepth.mStencilTest = on; break;
-    case GL_POLYGON_OFFSET_FILL: b.mRaster.mDepthBias = on; break;
-    case GL_DEPTH_CLAMP: b.mRaster.mDepthClamp = on; break;
-    default: break;                         // other capabilities do not change what a draw does here
-    }
-}
-
-void setBlendFunc(U32 src_rgb, U32 dst_rgb, U32 src_a, U32 dst_a)
-{
-    CTX_CALL();
-    BlendState& bs = C().mBlock.mBlend;
-    bs.mSrcColor = blendFactor(src_rgb);
-    bs.mDstColor = blendFactor(dst_rgb);
-    bs.mSrcAlpha = blendFactor(src_a);
-    bs.mDstAlpha = blendFactor(dst_a);
-}
-
-void setDepthFunc(U32 func)
-{
-    CTX_CALL();
-    C().mBlock.mDepth.mDepthOp = compareOp(func);
-}
-
 void setDepthMask(bool flag)
 {
     CTX_CALL();
@@ -230,13 +137,6 @@ void setColorMask(bool r, bool g, bool b, bool a)
         | (b ? VK_COLOR_COMPONENT_B_BIT : 0) | (a ? VK_COLOR_COMPONENT_A_BIT : 0);
 }
 
-void setCullFace(U32 mode)
-{
-    CTX_CALL();
-    C().mCullFace = mode == GL_FRONT ? VK_CULL_MODE_FRONT_BIT : (mode == GL_FRONT_AND_BACK ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_BACK_BIT);
-    recomputeCull();
-}
-
 void setPolygonOffset(F32 factor, F32 units)
 {
     CTX_CALL();
@@ -244,34 +144,10 @@ void setPolygonOffset(F32 factor, F32 units)
     C().mBlock.mRaster.mBiasConstant = units;
 }
 
-void setPolygonMode(U32 mode)
-{
-    CTX_CALL();
-    C().mBlock.mRaster.mPolygonMode = mode == GL_LINE ? VK_POLYGON_MODE_LINE : (mode == GL_POINT ? VK_POLYGON_MODE_POINT : VK_POLYGON_MODE_FILL);
-}
-
 void setLineWidth(F32 width)
 {
     CTX_CALL();
     C().mBlock.mRaster.mLineWidth = width;
-}
-
-void setStencilFunc(U32 func, S32 ref, U32 mask)
-{
-    CTX_CALL();
-    DepthStencilState& ds = C().mBlock.mDepth;
-    ds.mStencilOp = compareOp(func);
-    ds.mReference = (U32)ref;
-    ds.mCompareMask = mask;
-}
-
-void setStencilOp(U32 sfail, U32 dpfail, U32 dppass)
-{
-    CTX_CALL();
-    DepthStencilState& ds = C().mBlock.mDepth;
-    ds.mFail = stencilOp(sfail);
-    ds.mDepthFail = stencilOp(dpfail);
-    ds.mPass = stencilOp(dppass);
 }
 
 void setStencilMask(U32 mask)
@@ -330,6 +206,88 @@ VkStencilOp toVk(LLRenderState::StencilOp op)
     default: return VK_STENCIL_OP_KEEP;
     }
 }
+
+VkBlendFactor toVk(LLRenderState::BlendFactor f)
+{
+    using LLRenderState::BlendFactor;
+    switch (f)
+    {
+    case BlendFactor::Zero: return VK_BLEND_FACTOR_ZERO;
+    case BlendFactor::One: return VK_BLEND_FACTOR_ONE;
+    case BlendFactor::SrcColor: return VK_BLEND_FACTOR_SRC_COLOR;
+    case BlendFactor::OneMinusSrcColor: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    case BlendFactor::SrcAlpha: return VK_BLEND_FACTOR_SRC_ALPHA;
+    case BlendFactor::OneMinusSrcAlpha: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    case BlendFactor::DstAlpha: return VK_BLEND_FACTOR_DST_ALPHA;
+    case BlendFactor::OneMinusDstAlpha: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    case BlendFactor::DstColor: return VK_BLEND_FACTOR_DST_COLOR;
+    case BlendFactor::OneMinusDstColor: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+    case BlendFactor::SrcAlphaSaturate: return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
+    default: return VK_BLEND_FACTOR_ONE;
+    }
+}
+}
+
+void setBlendEnable(bool on)
+{
+    CTX_CALL();
+    C().mBlock.mBlend.mEnable = on;
+}
+
+void setDepthTest(bool on)
+{
+    CTX_CALL();
+    C().mBlock.mDepth.mDepthTest = on;
+    recomputeDepthWrite();
+}
+
+void setCullEnable(bool on)
+{
+    CTX_CALL();
+    C().mCullOn = on;
+    recomputeCull();
+}
+
+void setScissorTest(bool on)
+{
+    CTX_CALL();
+    C().mBlock.mScissorOn = on;
+    if (scissor_trace_now())
+    {
+        LL_INFOS("ScissorTrace") << "frame " << LLFrameTimer::getFrameCount() << " scissor test " << (on ? "on" : "off") << (tlsCtx ? " [sub-stream]" : " [main]") << LL_ENDL;
+    }
+}
+
+void setStencilTest(bool on)
+{
+    CTX_CALL();
+    C().mBlock.mDepth.mStencilTest = on;
+}
+
+void setPolygonOffsetFill(bool on)
+{
+    CTX_CALL();
+    C().mBlock.mRaster.mDepthBias = on;
+}
+
+void setDepthClamp(bool on)
+{
+    CTX_CALL();
+    C().mBlock.mRaster.mDepthClamp = on;
+}
+
+void setBlendFunc(LLRenderState::BlendFactor src_rgb, LLRenderState::BlendFactor dst_rgb, LLRenderState::BlendFactor src_a, LLRenderState::BlendFactor dst_a)
+{
+    CTX_CALL();
+    BlendState& bs = C().mBlock.mBlend;
+    bs.mSrcColor = toVk(src_rgb);
+    bs.mDstColor = toVk(dst_rgb);
+    bs.mSrcAlpha = toVk(src_a);
+    bs.mDstAlpha = toVk(dst_a);
+}
+
+namespace
+{
 }
 
 void setCullFace(LLRenderState::CullFace face)
@@ -373,22 +331,6 @@ void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfai
     ds.mFail = toVk(sfail);
     ds.mDepthFail = toVk(dpfail);
     ds.mPass = toVk(dppass);
-}
-
-int capability(U32 cap)
-{
-    const Block& b = C().mBlock;
-    switch (cap)
-    {
-    case GL_BLEND: return b.mBlend.mEnable;
-    case GL_DEPTH_TEST: return b.mDepth.mDepthTest;
-    case GL_CULL_FACE: return C().mCullOn;
-    case GL_SCISSOR_TEST: return b.mScissorOn;
-    case GL_STENCIL_TEST: return b.mDepth.mStencilTest;
-    case GL_POLYGON_OFFSET_FILL: return b.mRaster.mDepthBias;
-    case GL_DEPTH_CLAMP: return b.mRaster.mDepthClamp;
-    default: return -1;
-    }
 }
 
 void setViewport(S32 x, S32 y, S32 w, S32 h)
@@ -753,24 +695,6 @@ void whyEmit(const std::string& diff)
     }
 }
 
-void reportDrift(const char* what, Kind k, U32 legacy, U32 block, const char* file, int line)
-{
-    warn(what, k, legacy, block, legacy, file, line);
-}
-
-bool sLegacy = []() { const char* e = getenv("LL_VK_STATE_LEGACY"); return e && e[0] == '1'; }();
-// the old classes' belief of "what GL has" (defaults of GL), written only by guards and the old classes: LL_VK_STATE_LEGACY=1 makes the guards decide from it
-static U32 gShadow[(int)Kind::Count] = { 0, 0, 0, 0, 0, packCull(false, CullFace::Back), packDepth(false, true, CompareOp::Less), 0 };
-
-bool legacyGet(Kind kind)
-{
-    return (gShadow[(int)kind] & 1) != 0;
-}
-
-void legacySet(Kind kind, bool on)
-{
-    gShadow[(int)kind] = (gShadow[(int)kind] & ~1u) | (on ? 1u : 0u);
-}
 
 U32 read(Kind kind)
 {
@@ -798,7 +722,7 @@ U32 read(Kind kind)
 U32 exchange(Kind kind, U32 value, const char* file, int line)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_GLSTATE);
-    const U32 old = sLegacy ? gShadow[(int)kind] : read(kind);
+    const U32 old = read(kind);
     if (kind == Kind::Cull && !(value & 6))
     {
         value |= old & 6;                       // face None: keep the face
@@ -811,16 +735,16 @@ U32 exchange(Kind kind, U32 value, const char* file, int line)
     sInGuard = true;
     switch (kind)
     {
-    case Kind::Blend: LLVkState::setEnable(GL_BLEND, value != 0); break;
-    case Kind::Scissor: LLVkState::setEnable(GL_SCISSOR_TEST, value != 0); break;
-    case Kind::Stencil: LLVkState::setEnable(GL_STENCIL_TEST, value != 0); break;
-    case Kind::PolygonOffset: LLVkState::setEnable(GL_POLYGON_OFFSET_FILL, value != 0); break;
-    case Kind::DepthClamp: LLVkState::setEnable(GL_DEPTH_CLAMP, value != 0); break;
-    case Kind::DepthTest: LLVkState::setEnable(GL_DEPTH_TEST, value != 0); break;
+    case Kind::Blend: LLVkState::setBlendEnable(value != 0); break;
+    case Kind::Scissor: LLVkState::setScissorTest(value != 0); break;
+    case Kind::Stencil: LLVkState::setStencilTest(value != 0); break;
+    case Kind::PolygonOffset: LLVkState::setPolygonOffsetFill(value != 0); break;
+    case Kind::DepthClamp: LLVkState::setDepthClamp(value != 0); break;
+    case Kind::DepthTest: LLVkState::setDepthTest(value != 0); break;
     case Kind::Cull:
         if ((old & 1) != (value & 1))
         {
-            LLVkState::setEnable(GL_CULL_FACE, (value & 1) != 0);
+            LLVkState::setCullEnable((value & 1) != 0);
         }
         if ((old & 6) != (value & 6))
         {
@@ -830,7 +754,7 @@ U32 exchange(Kind kind, U32 value, const char* file, int line)
     case Kind::Depth:
         if ((old & 1) != (value & 1))
         {
-            LLVkState::setEnable(GL_DEPTH_TEST, (value & 1) != 0);
+            LLVkState::setDepthTest((value & 1) != 0);
         }
         if ((old & 28) != (value & 28))
         {
@@ -844,10 +768,6 @@ U32 exchange(Kind kind, U32 value, const char* file, int line)
     default: break;
     }
     sInGuard = false;
-    if (sLegacy)
-    {
-        gShadow[(int)kind] = value;
-    }
     if (sWhy)
     {
         noteWriter(file ? file : "?", line, (int)kind);

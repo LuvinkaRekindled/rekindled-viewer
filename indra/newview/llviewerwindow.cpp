@@ -7188,7 +7188,6 @@ void LLViewerWindow::restoreGL(const std::string& progress_message)
         gGLManager.mIsDisabled = false;
 
         initGLDefaults();
-        LLGLState::restoreGL();
 
         // for future support of non-square pixels, and fonts that are properly stretched
         //LLFontGL::destroyDefaultFonts();
