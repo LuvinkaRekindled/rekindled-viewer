@@ -5139,7 +5139,7 @@ static void build_shadow_static(LLCullResult& result, const U32* list, size_t co
                 continue;
             }
             const LLVertexBuffer* vb = params->mVertexBuffer.get();
-            if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+            if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16
                 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
             {
                 out.mFallback.push_back(params);        // a layout the shader does not read: drawn the old way
@@ -5236,7 +5236,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                     continue;       // nothing to draw, or no palette: the old path draws nothing either
                 }
                 const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+                if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
                     || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || params->mSkinInfo.isNull())
                 {
                     fallback.push_back(params);
@@ -9155,7 +9155,7 @@ void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
 static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf = false)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
-    if (!p.mCount || rigged != (p.mAvatar != nullptr) || (p.mGLTFMaterial && !allow_gltf) || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+    if (!p.mCount || rigged != (p.mAvatar != nullptr) || (p.mGLTFMaterial && !allow_gltf) || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
     {
         return false;
@@ -9180,7 +9180,7 @@ static int shadow_alpha_fallback_reason(const LLDrawInfo& p, bool batch_textures
     {
         return 1;
     }
-    if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+    if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
     {
         return 2;
     }
@@ -10296,7 +10296,7 @@ void LLPipeline::renderAvatarVelocity()
                         continue;
                     }
                 }
-                if (use_packets && vb->getGLBuffer() && vb->getGLIndices() && vb->getIndicesType() == GL_UNSIGNED_SHORT && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0)
+                if (use_packets && vb->getGLBuffer() && vb->getGLIndices() && vb->getIndicesType() == ComponentType::U16 && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0)
                 {
                     auto it = palette_offsets.find(mpc.mGLMp.data());
                     if (it == palette_offsets.end())
@@ -10442,7 +10442,7 @@ void LLPipeline::renderAvatarVelocity()
                         continue;
                     }
                     const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                    if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+                    if (!vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16
                         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
                     {
                         ++object_unfit;
@@ -12325,7 +12325,7 @@ static void rt_name_rigged_main_view()
                 LLDrawInfo* params = *i;
                 LLCullResult::increment_iterator(i, end);
                 const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                if (!params->mCount || !params->mAvatar || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+                if (!params->mCount || !params->mAvatar || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
                     || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || params->mSkinInfo.isNull())
                 {
                     continue;
@@ -14294,7 +14294,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         auto add = [&](LLDrawInfo* params, U32 flags, F32 cutoff, LLViewerTexture* tex, const LLMatrix4* anim, const LLGLTFMaterial::TextureTransform* khr)
         {
             const LLVertexBuffer* vb = params->mVertexBuffer.get();
-            if (!params->mCount || params->mAvatar || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+            if (!params->mCount || params->mAvatar || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16
                 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
             {
                 return false;
@@ -14465,7 +14465,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     LLVertexBuffer* vb = face->getVertexBuffer();
                     LLDrawable* drawable = face->getDrawable();
                     LLViewerRegion* region = drawable ? drawable->getRegion() : nullptr;
-                    if (!vb || !region || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT || vb->getNumIndices() == 0
+                    if (!vb || !region || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16 || vb->getNumIndices() == 0
                         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !tex)
                     {
                         continue;

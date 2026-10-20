@@ -667,7 +667,7 @@ bool LLRenderPass::deferredPacketsEnabled()
 static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
-    if (!p.mCount || p.mAvatar || p.mGLTFMaterial || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != GL_UNSIGNED_SHORT
+    if (!p.mCount || p.mAvatar || p.mGLTFMaterial || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0
         || !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
     {
@@ -1062,7 +1062,7 @@ void LLShadowDrawStats::endStaticPass()
             ++mBadNames;
         }
         pairs.insert(((U64)vb->getGLBuffer() << 32) | vb->getGLIndices());
-        if (vb->getIndicesType() != GL_UNSIGNED_SHORT)
+        if (vb->getIndicesType() != ComponentType::U16)
         {
             ++mWideIndices;
         }

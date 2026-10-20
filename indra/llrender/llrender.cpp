@@ -1543,9 +1543,9 @@ void LLRender::deleteBuffers(S32 count, const U32* ids)
     LLVkBuf::destroy(count, ids);
 }
 
-void LLRender::bufferData(U32 buffer, U32 gl_target, S64 size, const void* data, U32 gl_usage)
+void LLRender::bufferData(U32 buffer, BufferKind kind, S64 size, const void* data)
 {
-    LLVkBuf::setData(buffer, gl_target, size, data, gl_usage);
+    LLVkBuf::setData(buffer, kind, size, data);
 }
 
 void LLRender::bindUniformBlock(U32 binding, U32 id)
@@ -1961,7 +1961,7 @@ void LLRender::flush()
                 LLVkAsync::FrontLap draw_lap(LLVkAsync::FP_DRAW);
                 ++LLVertexBuffer::sDrawCalls;
                 gGL.syncMatrices();
-                LLVkAsync::drawScratch(LLVertexBuffer::sGLMode[mMode], (S32)count, (attribute_mask & immediate_mask) | LLVertexBuffer::MAP_VERTEX,
+                LLVkAsync::drawScratch(LLVertexBuffer::sPrimitive[mMode], (S32)count, (attribute_mask & immediate_mask) | LLVertexBuffer::MAP_VERTEX,
                                        mVerticesp.get(), mTexcoordsp.get(), mColorsp.get());
             }
         }

@@ -303,7 +303,7 @@ void LLViewerJointMesh::noteRayShadow()
     }
     LLVertexBuffer* buff = mFace ? mFace->getVertexBuffer() : nullptr;
     LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;
-    if (!buff || !drawable || !mMesh || !buff->getGLBuffer() || !buff->getGLIndices() || buff->getIndicesType() != GL_UNSIGNED_SHORT
+    if (!buff || !drawable || !mMesh || !buff->getGLBuffer() || !buff->getGLIndices() || buff->getIndicesType() != ComponentType::U16
         || !buff->hasDataType(LLVertexBuffer::TYPE_VERTEX) || buff->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || mMesh->mFaceVertexCount == 0 || mMesh->mFaceIndexCount < 3)
     {
         return;

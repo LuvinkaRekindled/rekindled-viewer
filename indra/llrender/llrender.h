@@ -490,7 +490,7 @@ public:
     U64 queryResult(U32 id);
     void genBuffers(S32 count, U32* ids);
     void deleteBuffers(S32 count, const U32* ids);
-    void bufferData(U32 buffer, U32 gl_target, S64 size, const void* data, U32 gl_usage);     // names the buffer: nothing is bound
+    void bufferData(U32 buffer, BufferKind kind, S64 size, const void* data);     // names the buffer: nothing is bound
     void bindUniformBlock(U32 binding, U32 id);
     void copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);     // source_fbo: the render target read from (0: the back buffer)
     void copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);

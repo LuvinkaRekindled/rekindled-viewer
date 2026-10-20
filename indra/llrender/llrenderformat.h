@@ -21,4 +21,9 @@ constexpr ClearBits operator|(ClearBits a, ClearBits b) { return (ClearBits)((U3
 constexpr ClearBits operator&(ClearBits a, ClearBits b) { return (ClearBits)((U32)a & (U32)b); }
 constexpr bool hasBits(ClearBits mask, ClearBits bits) { return ((U32)mask & (U32)bits) != 0; }
 
+// F3.6d: buffers, vertex data and draws. The values equal LLVkFormat::BufKind / PType / Topology (the producer's records carry them as they are).
+enum class BufferKind : U8 { Vertex = 0, Index = 1, Uniform = 2 };
+enum class ComponentType : U8 { None = 0, U8, S8, U16, S16, U32, S32, F32, F16 };        // vertex attribute and index component types
+enum class PrimitiveMode : U8 { Points = 0, Lines, LineStrip, Triangles, TriangleStrip, TriangleFan, Other };
+
 #endif

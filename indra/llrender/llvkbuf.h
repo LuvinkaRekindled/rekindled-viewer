@@ -23,7 +23,7 @@ namespace LLVkBuf
     void create(S32 count, U32* ids);
     void destroy(S32 count, const U32* ids);
     // (re)specifies the storage of a buffer and optionally fills it (target says what the contents are for: vertex, index or uniform data)
-    void setData(U32 id, U32 target, S64 size, const void* data, U32 usage);
+    void setData(U32 id, BufferKind kind, S64 size, const void* data);
     // makes a buffer the contents of a numbered uniform block (what the shaders' named blocks read)
     void bindUniformBlock(U32 binding, U32 id);
     // a vertex attribute that has no array (the shader reads this constant); the worker keeps one value per location

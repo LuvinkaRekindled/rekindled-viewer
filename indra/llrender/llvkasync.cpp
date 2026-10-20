@@ -653,7 +653,7 @@ void drawBinding(U32 array_buffer, U32 elem_buffer, const VertexAttrib* given, U
         a.mSize = e.mSize;
         a.mStride = e.mStride;
         a.mOffset = (U64)e.mPointer;
-        a.mType = (U8)LLVkFormat::componentType(e.mType);
+        a.mType = (U8)e.mType;
         a.mNormalized = (e.mKind == 0 && e.mNormalized != 0) ? 1 : 0;
         a.mInteger = e.mKind == 1 ? 1 : 0;
         b.mPresent |= 1u << e.mIndex;
@@ -709,10 +709,9 @@ namespace
     struct NamedBufArgs { U32 mName; U32 mTarget; U32 mUsage; U32 mPad; S64 mOffset; S64 mSize; };
 }
 
-void bufferData(U32 name, U32 target, S64 size, const void* data, U32 usage)
+void bufferData(U32 name, BufferKind buffer_kind, S64 size, const void* data)
 {
-    (void)usage;            // the storage the worker picks does not depend on the GL usage hint
-    const U32 kind = LLVkFormat::bufKind(target);
+    const U32 kind = (U32)buffer_kind;
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts)
@@ -833,9 +832,9 @@ static void inlineDrawApply()
     d.mDirty = false;
 }
 
-void drawRangeElements(U32 gl_mode, U32 start, U32 end, S32 count, U32 gl_type, const void* indices)
+void drawRangeElements(PrimitiveMode primitive, U32 start, U32 end, S32 count, ComponentType component, const void* indices)
 {
-    const U32 mode = LLVkFormat::topology(gl_mode), type = LLVkFormat::componentType(gl_type);
+    const U32 mode = (U32)primitive, type = (U32)component;
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);       // inline mode (before the queue starts): the draw is made here
@@ -850,9 +849,9 @@ void drawRangeElements(U32 gl_mode, U32 start, U32 end, S32 count, U32 gl_type, 
     writeDraw(0, mode, start, end, count, type, indices);
 }
 
-void drawArrays(U32 gl_mode, S32 first, S32 count)
+void drawArrays(PrimitiveMode primitive, S32 first, S32 count)
 {
-    const U32 mode = LLVkFormat::topology(gl_mode);
+    const U32 mode = (U32)primitive;
     if (!gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
@@ -867,9 +866,9 @@ void drawArrays(U32 gl_mode, S32 first, S32 count)
     writeDraw(1, mode, (U32)first, 0, count, 0, nullptr);
 }
 
-void drawScratch(U32 gl_mode, S32 count, U32 mask, const void* positions, const void* texcoords, const void* colors)
+void drawScratch(PrimitiveMode primitive, S32 count, U32 mask, const void* positions, const void* texcoords, const void* colors)
 {
-    const U32 mode = LLVkFormat::topology(gl_mode);
+    const U32 mode = (U32)primitive;
     const size_t n = (size_t)std::max<S32>(count, 0);
     const void* const pieces[3] = { positions, (mask & SCRATCH_TEXCOORD0) ? texcoords : nullptr, (mask & SCRATCH_COLOR) ? colors : nullptr };
     const size_t bytes[3] = { n * 16, (mask & SCRATCH_TEXCOORD0) ? n * 8 : 0, (mask & SCRATCH_COLOR) ? n * 4 : 0 };
@@ -1991,9 +1990,9 @@ void destroy(S32 count, const U32* ids)
     LLVkAsync::resourceDestroy(LLVkAsync::RES_BUFFER, count, ids);
 }
 
-void setData(U32 id, U32 target, S64 size, const void* data, U32 usage)
+void setData(U32 id, BufferKind kind, S64 size, const void* data)
 {
-    LLVkAsync::bufferData(id, target, size, data, usage);
+    LLVkAsync::bufferData(id, kind, size, data);
 }
 
 void setConstantAttribute(U32 location, F32 x, F32 y, F32 z, F32 w)

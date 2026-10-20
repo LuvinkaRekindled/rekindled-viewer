@@ -268,7 +268,7 @@ public:
     U32 getOffset(AttributeType type) const { return mOffsets[type]; }
     U32 getGLBuffer() const                 { return mGLBuffer; }       // <FS> GL names and index format (render packets)
     U32 getGLIndices() const                { return mGLIndices; }
-    U32 getIndicesType() const              { return mIndicesType; }
+    ComponentType getIndicesType() const    { return mIndicesType; }
     U32 getIndicesStride() const            { return mIndicesStride; }
 
     // these functions assume (and assert on) the current VBO being bound
@@ -295,7 +295,7 @@ protected:
     U32     mGLIndices = 0;     // GL IBO handle
     U32     mNumVerts = 0;      // Number of vertices allocated
     U32     mNumIndices = 0;    // Number of indices allocated
-    U32     mIndicesType = GL_UNSIGNED_SHORT; // type of indices in index buffer
+    ComponentType mIndicesType = ComponentType::U16; // type of indices in index buffer
     U32     mIndicesStride = 2;     // size of each index in bytes
     U32     mOffsets[TYPE_MAX]; // byte offsets into mMappedData of each attribute
 
@@ -321,7 +321,7 @@ private:
     friend class LLNavShapeVBOManager;
     friend class LLNavMeshVBOManager;
 
-    void flush_vbo(GLenum target, U32 start, U32 end, void* data, U8* dst);
+    void flush_vbo(BufferKind target, U32 start, U32 end, void* data, U8* dst);
 
     LLVertexBuffer(U32 typemask, U32 usage)
         : LLVertexBuffer(typemask)
@@ -340,7 +340,7 @@ public:
 
     static U64 getBytesAllocated();
     static const U32 sTypeSize[TYPE_MAX];
-    static const U32 sGLMode[LLRender::NUM_MODES];
+    static const PrimitiveMode sPrimitive[LLRender::NUM_MODES];
     static U32 sGLRenderBuffer;
     static U32 sGLRenderIndices;
     static U32 sLastMask;
