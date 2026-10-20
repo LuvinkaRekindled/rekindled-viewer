@@ -151,6 +151,7 @@ void LLSpatialGroup::clearDrawMap()
         LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
     }
     mDrawMap.clear();
+    ll_scene_fragment_free(mSceneFragment);     // <FS> S2: the retained entries of the draw infos go with them (the worker's table follows)
 }
 
 bool LLSpatialGroup::isHUDGroup() const
@@ -344,6 +345,7 @@ void LLSpatialGroup::rebuildGeom()
     if (!isDead())
     {
         getSpatialPartition()->rebuildGeom(this);
+        ll_scene_fragment_build(this);
 
         if (hasState(LLSpatialGroup::MESH_DIRTY))
         {
@@ -4211,6 +4213,7 @@ void LLCullResult::clear()
     mVisibleBridgeSize = 0;
     mVisibleBridgeEnd = &mVisibleBridge[0];
 
+    mSceneGroups.clear();
 
     for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)
     {

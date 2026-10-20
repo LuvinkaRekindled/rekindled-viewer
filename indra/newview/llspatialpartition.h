@@ -80,6 +80,8 @@ void render_hull_with_outline(LLModel::PhysicsMesh& mesh, const LLColor4& color,
 */
 struct LLSceneFragment;
 void ll_scene_fragment_free(LLSceneFragment*& fragment);        // pipeline.cpp (S1)
+class LLSpatialGroup;
+void ll_scene_fragment_build(LLSpatialGroup* group);            // pipeline.cpp (S2): after a group's rebuild
 
 class LLDrawInfo final : public LLRefCount
 {
@@ -566,6 +568,10 @@ public:
     U32 getRenderMapSize(U32 type)  { return mRenderMapSize[type]; }
 
     void assertDrawMapsEmpty();
+
+    // <FS> S2: the visible groups whose static shadow casters are not resident on the worker (no current resident fragment): the only ones the main thread still names per pass.
+    // Filled by the shadow render map job (shadowPrepRenderMap) when LL_VK_SCENE_RESIDENT=1.
+    std::vector<LLSpatialGroup*> mSceneGroups;
 
 private:
 
