@@ -33,16 +33,20 @@ mat4 getSkinnedTransform()
     mat4 ret;
     // a NaN or out-of-range weight (the vertex data is rewritten every update) turned into an index far outside the palette: the read then lands in memory that is not ours (device lost)
     float wx = weight.x;
-    if (!(wx >= 0.0 && wx <= 13.999))
+    // The palette holds 15 joints (slots 0-14). A body mesh can use all 15 (the right wrist of a mesh with its ancestor entries is joint 14, weight 14.0 for its pure vertices): the
+    // limit used to be 13.999, which sent every vertex of joint 14 to joint 0 (the stretched spike from the right hand). The blend partner of joint 14 is joint 14 itself
+    // (weight 14.x does not occur), so no read goes past slot 14 of a row (slot 45 would be outside the array).
+    if (!(wx >= 0.0 && wx <= 14.0))
     {
         wx = 0.0;
     }
     int i = int(floor(wx));
+    int n = min(i + 1, 14);
     float x = fract(wx);
 
-    ret[0] = mix(matrixPalette[i+0], matrixPalette[i+1], x);
-    ret[1] = mix(matrixPalette[i+15],matrixPalette[i+16], x);
-    ret[2] = mix(matrixPalette[i+30],matrixPalette[i+31], x);
+    ret[0] = mix(matrixPalette[i+0], matrixPalette[n+0], x);
+    ret[1] = mix(matrixPalette[i+15],matrixPalette[n+15], x);
+    ret[2] = mix(matrixPalette[i+30],matrixPalette[n+30], x);
     ret[3] = vec4(0,0,0,1);
 
     return ret;

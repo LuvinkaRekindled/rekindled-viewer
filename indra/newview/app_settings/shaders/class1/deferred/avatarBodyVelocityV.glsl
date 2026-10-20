@@ -45,16 +45,17 @@ vec3 skinPosition(vec4 p, vec4 a0, vec4 a1, vec4 a2, vec4 b0, vec4 b1, vec4 b2, 
 void main()
 {
     float wx = weight.x;
-    if (!(wx >= 0.0 && wx <= 13.999))          // NaN or out-of-range: an index outside the palette reads memory that is not ours
+    if (!(wx >= 0.0 && wx <= 14.0))            // NaN or out-of-range: an index outside the palette reads memory that is not ours (slots 0-14: see avatarSkinV.glsl)
     {
         wx = 0.0;
     }
     int i = int(floor(wx));
+    int n = min(i + 1, 14);
     float x = fract(wx);
     vec4 p = vec4(position, 1.0);
 
-    vec3 world_cur = skinPosition(p, matrixPalette[i], matrixPalette[i + 15], matrixPalette[i + 30], matrixPalette[i + 1], matrixPalette[i + 16], matrixPalette[i + 31], x);
-    vec3 world_prev = skinPosition(p, matrixPalettePrev[i], matrixPalettePrev[i + 15], matrixPalettePrev[i + 30], matrixPalettePrev[i + 1], matrixPalettePrev[i + 16], matrixPalettePrev[i + 31], x);
+    vec3 world_cur = skinPosition(p, matrixPalette[i], matrixPalette[i + 15], matrixPalette[i + 30], matrixPalette[n], matrixPalette[n + 15], matrixPalette[n + 30], x);
+    vec3 world_prev = skinPosition(p, matrixPalettePrev[i], matrixPalettePrev[i + 15], matrixPalettePrev[i + 30], matrixPalettePrev[n], matrixPalettePrev[n + 15], matrixPalettePrev[n + 30], x);
 
     vary_clip = projection_matrix * (modelview_matrix * vec4(world_cur, 1.0));
     vary_cur = view_proj_cur * vec4(world_cur, 1.0);
