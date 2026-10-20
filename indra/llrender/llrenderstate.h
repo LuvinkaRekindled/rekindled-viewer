@@ -42,6 +42,7 @@ enum class Kind : U8
     DepthClamp,         // 0 / 1
     Cull,               // bit 0: culling on, bits 1-2: CullFace (never None in a stored value)
     Depth,              // bit 0: depth test, bit 1: depth write mask, bits 2-4: CompareOp
+    DepthTest,          // 0 / 1   (the depth test alone: write mask and function untouched)
     Count
 };
 
@@ -120,6 +121,7 @@ using ScissorScope = FlagScope<Kind::Scissor>;
 using StencilScope = FlagScope<Kind::Stencil>;
 using PolygonOffsetScope = FlagScope<Kind::PolygonOffset>;
 using DepthClampScope = FlagScope<Kind::DepthClamp>;
+using DepthTestScope = FlagScope<Kind::DepthTest>;
 
 // culling on or off; 'face' None leaves the face that is set (LLGLEnable(GL_CULL_FACE) never changed it)
 class CullScope

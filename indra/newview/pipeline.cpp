@@ -2913,8 +2913,8 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     if (sReflectionProbesEnabled && sUseOcclusion > 1 && !LLPipeline::sShadowRender && !gCubeSnapshot)
     {
         gGL.setColorMask(false, false);
-        LLGLDepthTest depth(GL_TRUE, GL_FALSE);
-        LLGLDisable cull(GL_CULL_FACE);
+        LLRenderState::DepthScope depth(true, false);
+        LLRenderState::CullScope cull(false);
 
         gOcclusionCubeProgram.bind();
 
@@ -2934,8 +2934,8 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     if (sReflectionProbesEnabled && sUseOcclusion > 1 && !LLPipeline::sShadowRender && !gCubeSnapshot)
     {
         gGL.setColorMask(false, false);
-        LLGLDepthTest depth(GL_TRUE, GL_FALSE);
-        LLGLDisable cull(GL_CULL_FACE);
+        LLRenderState::DepthScope depth(true, false);
+        LLRenderState::CullScope cull(false);
 
         gOcclusionCubeProgram.bind();
 
@@ -2958,11 +2958,11 @@ void LLPipeline::doOcclusion(LLCamera& camera)
 
         gGL.setColorMask(false, false);
 
-        LLGLDisable blend(GL_BLEND);
+        LLRenderState::BlendScope blend(false);
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-        LLGLDepthTest depth(GL_TRUE, GL_FALSE);
+        LLRenderState::DepthScope depth(true, false);
 
-        LLGLDisable cull(GL_CULL_FACE);
+        LLRenderState::CullScope cull(false);
 
         gOcclusionCubeProgram.bind();
 
@@ -5567,7 +5567,7 @@ void render_hud_elements()
 
     gUIProgram.bind();
     gGL.color4f(1, 1, 1, 1);
-    LLGLDepthTest depth(GL_TRUE, GL_FALSE);
+    LLRenderState::DepthScope depth(true, false);
 
     if (!LLPipeline::sReflectionRender && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
     {
@@ -5800,7 +5800,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("deferred pools");
 
-        LLGLEnable cull(GL_CULL_FACE);
+        LLRenderState::CullScope cull(true);
 
         for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
         {
@@ -6028,7 +6028,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
     U32 cur_type = 0;
 
-    LLGLEnable cull(GL_CULL_FACE);
+    LLRenderState::CullScope cull(true);
 
     bool done_atmospherics = LLPipeline::sRenderingHUDs; //skip atmospherics on huds
     bool done_water_haze = done_atmospherics;
@@ -6169,7 +6169,7 @@ void LLPipeline::renderGeomShadow(LLCamera& camera)
     LL_PROFILE_GPU_ZONE("renderGeomShadow");
     U32 cur_type = 0;
 
-    LLGLEnable cull(GL_CULL_FACE);
+    LLRenderState::CullScope cull(true);
 
     LLVertexBuffer::unbind();
 
@@ -6292,10 +6292,10 @@ void LLPipeline::renderSnapshotGuidesOverlay()
         return;
     }
 
-    LLGLDisable depth(GL_DEPTH_TEST);
-    LLGLDisable cull(GL_CULL_FACE);
-    LLGLDisable stencil(GL_STENCIL_TEST);
-    LLGLEnable blend(GL_BLEND);
+    LLRenderState::DepthTestScope depth(false);
+    LLRenderState::CullScope cull(false);
+    LLRenderState::StencilScope stencil(false);
+    LLRenderState::BlendScope blend(true);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 
     LLGLSLShader* ui_shader = &gUIProgram;
@@ -6601,7 +6601,7 @@ void LLPipeline::renderFocusPoint()
         gDebugProgram.bind();
         LLVector3 focus_point = sLastFocusPoint;
         F32 size = 0.02f;
-        LLGLDepthTest gls_depth(GL_FALSE);
+        LLRenderState::DepthScope gls_depth(false);
         gGL.pushMatrix();
         gGL.translatef(focus_point.mV[VX], focus_point.mV[VY], focus_point.mV[VZ]);
            
@@ -6644,10 +6644,10 @@ void LLPipeline::renderPhysicsDisplay()
     gGL.flush();
     gDebugProgram.bind();
 
-    LLGLEnable polygon_offset_line(GL_POLYGON_OFFSET_LINE);
+    // F3.2: LLGLEnable polygon_offset_line(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
     gGL.setPolygonOffset(3.f, 3.f);
     gGL.setLineWidth(3.f);
-    LLGLEnable blend(GL_BLEND);
+    LLRenderState::BlendScope blend(true);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 
     for (int pass = 0; pass < 3; ++pass)
@@ -6656,7 +6656,7 @@ void LLPipeline::renderPhysicsDisplay()
         // pass 1 - depth write disabled, color write enabled, fill
         // pass 2 - depth write disabled, color write enabled, wireframe
         gGL.setColorMask(pass >= 1, false);
-        LLGLDepthTest depth(GL_TRUE, pass == 0);
+        LLRenderState::DepthScope depth(true, pass == 0);
 
         bool wireframe = (pass == 2);
 
@@ -6734,7 +6734,7 @@ void LLPipeline::renderDebug()
                         gGL.setColorMask(false, false);
                         llPathingLibInstance->renderSimpleShapeCapsuleID( gGL, id, pos, rot );
                         gGL.setColorMask(true, false);
-                        LLGLEnable blend(GL_BLEND);
+                        LLRenderState::BlendScope blend(true);
                         gPathfindingProgram.uniform1f(sAlphaScale, 0.90f);
                         llPathingLibInstance->renderSimpleShapeCapsuleID( gGL, id, pos, rot );
                         gPathfindingProgram.bind();
@@ -6774,12 +6774,12 @@ void LLPipeline::renderDebug()
                     {
                         gGL.flush();
                         gGL.setLineWidth(2.0f); // <FS> Line width OGL core profile fix by Rye Mutt
-                        LLGLEnable cull(GL_CULL_FACE);
-                        LLGLDisable blend(GL_BLEND);
+                        LLRenderState::CullScope cull(true);
+                        LLRenderState::BlendScope blend(false);
 
                         if ( pathfindingConsole->isRenderWorld() )
                         {
-                            LLGLEnable blend(GL_BLEND);
+                            LLRenderState::BlendScope blend(true);
                             gPathfindingProgram.uniform1f(sAlphaScale, 0.66f);
                             llPathingLibInstance->renderNavMesh();
                         }
@@ -6817,7 +6817,7 @@ void LLPipeline::renderDebug()
 
                         gGL.setColorMask(true, false);
                         //render the bookends
-                        LLGLEnable blend(GL_BLEND);
+                        LLRenderState::BlendScope blend(true);
                         gPathfindingProgram.uniform1f(sAlphaScale, 0.90f);
                         llPathingLibInstance->renderPathBookend( gGL, LLPathingLib::LLPL_START );
                         llPathingLibInstance->renderPathBookend( gGL, LLPathingLib::LLPL_END );
@@ -6826,7 +6826,7 @@ void LLPipeline::renderDebug()
 
                     if ( pathfindingConsole->isRenderWaterPlane() )
                     {
-                        LLGLEnable blend(GL_BLEND);
+                        LLRenderState::BlendScope blend(true);
                         gPathfindingProgram.uniform1f(sAlphaScale, 0.90f);
                         llPathingLibInstance->renderSimpleShapes( gGL, gAgent.getRegion()->getWaterHeight() );
                     }
@@ -6850,13 +6850,13 @@ void LLPipeline::renderDebug()
                             }
 
                             //turn off backface culling for volumes so they are visible when camera is inside volume
-                            LLGLDisable cull(i >= 2 ? GL_CULL_FACE : 0);
+                            LLRenderState::CullScope cull(false, i >= 2);
 
                             gGL.flush();
                             gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
 
                             //get rid of some z-fighting
-                            LLGLEnable polyOffset(GL_POLYGON_OFFSET_FILL);
+                            LLRenderState::PolygonOffsetScope polyOffset(true);
                             gGL.setPolygonOffset(1.0f, 1.0f);
 
                             //render to depth first to avoid blending artifacts
@@ -6867,18 +6867,18 @@ void LLPipeline::renderDebug()
                             //get rid of some z-fighting
                             gGL.setPolygonOffset(0.f, 0.f);
 
-                            LLGLEnable blend(GL_BLEND);
+                            LLRenderState::BlendScope blend(true);
 
                             {
                                 gPathfindingProgram.uniform1f(sAmbiance, ambiance);
 
                                 { //draw solid overlay
-                                    LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
+                                    LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::LessEqual);
                                     llPathingLibInstance->renderNavMeshShapesVBO( render_order[i] );
                                     gGL.flush();
                                 }
 
-                                LLGLEnable lineOffset(GL_POLYGON_OFFSET_LINE);
+                                // F3.2: LLGLEnable lineOffset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
                                 gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
 
                                 F32 offset = gSavedSettings.getF32("PathfindingLineOffset");
@@ -6887,8 +6887,8 @@ void LLPipeline::renderDebug()
                                 {
                                     gPathfindingProgram.uniform1f(sTint, gSavedSettings.getF32("PathfindingXRayTint"));
                                     gPathfindingProgram.uniform1f(sAlphaScale, gSavedSettings.getF32("PathfindingXRayOpacity"));
-                                    LLGLEnable blend(GL_BLEND);
-                                    LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_GREATER);
+                                    LLRenderState::BlendScope blend(true);
+                                    LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Greater);
 
                                     gGL.setPolygonOffset(offset, -offset);
 
@@ -6913,7 +6913,7 @@ void LLPipeline::renderDebug()
                                     gPathfindingProgram.uniform1f(sAlphaScale, 1.f);
 
                                     gGL.setLineWidth(gSavedSettings.getF32("PathfindingLineWidth")); // <FS> Line width OGL core profile fix by Rye Mutt
-                                    LLGLDisable blendOut(GL_BLEND);
+                                    LLRenderState::BlendScope blendOut(false);
                                     llPathingLibInstance->renderNavMeshShapesVBO( render_order[i] );
                                     gGL.flush();
                                     gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
@@ -6930,17 +6930,17 @@ void LLPipeline::renderDebug()
                     {   //render navmesh xray
                         F32 ambiance = gSavedSettings.getF32("PathfindingAmbiance");
 
-                        LLGLEnable lineOffset(GL_POLYGON_OFFSET_LINE);
-                        LLGLEnable polyOffset(GL_POLYGON_OFFSET_FILL);
+                        // F3.2: LLGLEnable lineOffset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
+                        LLRenderState::PolygonOffsetScope polyOffset(true);
 
                         F32 offset = gSavedSettings.getF32("PathfindingLineOffset");
                         gGL.setPolygonOffset(offset, -offset);
 
-                        LLGLEnable blend(GL_BLEND);
-                        LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_GREATER);
+                        LLRenderState::BlendScope blend(true);
+                        LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Greater);
                         gGL.flush();
                         gGL.setLineWidth(2.0f); // <FS> Line width OGL core profile fix by Rye Mutt
-                        LLGLEnable cull(GL_CULL_FACE);
+                        LLRenderState::CullScope cull(true);
 
                         gPathfindingProgram.uniform1f(sTint, gSavedSettings.getF32("PathfindingXRayTint"));
                         gPathfindingProgram.uniform1f(sAlphaScale, gSavedSettings.getF32("PathfindingXRayOpacity"));
@@ -6991,7 +6991,7 @@ void LLPipeline::renderDebug()
         gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep, true);
 
         gGL.setPointSize(8.f);
-        LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS);
+        LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
 
         gGL.begin(LLRender::POINTS);
         for (std::list<DebugBlip>::iterator iter = mDebugBlips.begin(); iter != mDebugBlips.end(); )
@@ -7072,7 +7072,7 @@ void LLPipeline::renderDebug()
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCCLUSION))
     { //render visible selected group occlusion geometry
         gDebugProgram.bind();
-        LLGLDepthTest depth(GL_TRUE, GL_FALSE);
+        LLRenderState::DepthScope depth(true, false);
         gGL.diffuseColor3f(1,0,1);
         for (std::set<LLSpatialGroup*>::iterator iter = visible_selected_groups.begin(); iter != visible_selected_groups.end(); ++iter)
         {
@@ -7105,8 +7105,8 @@ void LLPipeline::renderDebug()
         bindDeferredShader(gReflectionProbeDisplayProgram, NULL);
         mScreenTriangleVB->setBuffer();
 
-        LLGLEnable blend(GL_BLEND);
-        LLGLDepthTest depth(GL_FALSE);
+        LLRenderState::BlendScope blend(true);
+        LLRenderState::DepthScope depth(false);
 
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
@@ -7152,9 +7152,9 @@ void LLPipeline::renderDebug()
     {
         LLVertexBuffer::unbind();
 
-        LLGLEnable blend(GL_BLEND);
-        LLGLDepthTest depth(true, false);
-        LLGLDisable cull(GL_CULL_FACE);
+        LLRenderState::BlendScope blend(true);
+        LLRenderState::DepthScope depth(true, false);
+        LLRenderState::CullScope cull(false);
 
         gGL.color4f(1,1,1,1);
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
@@ -9696,7 +9696,7 @@ void LLPipeline::generateLuminance(LLRenderTarget* src, LLRenderTarget* dst)
 
         dst->bindTarget();
 
-        LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+        LLRenderState::DepthScope depth(false, false);
 
         gLuminanceProgram.bind();
 
@@ -9755,7 +9755,7 @@ void LLPipeline::generateExposure(LLRenderTarget* src, LLRenderTarget* dst, bool
 
         dst->bindTarget();
 
-        LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+        LLRenderState::DepthScope depth(false, false);
 
         LLGLSLShader* shader;
         if (use_history)
@@ -9859,7 +9859,7 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_co
     {
         static LLCachedControl<bool> buildNoPost(gSavedSettings, "RenderDisablePostProcessing", false);
 
-        LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+        LLRenderState::DepthScope depth(false, false);
 
         // Apply gamma correction to the frame here.
 
@@ -9926,7 +9926,7 @@ void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst)
     dst->bindTarget();
     // gamma correct lighting
     {
-        LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+        LLRenderState::DepthScope depth(false, false);
 
         static LLCachedControl<bool> buildNoPost(gSavedSettings, "RenderDisablePostProcessing", false);
         static LLCachedControl<bool> should_auto_adjust(gSavedSettings, "RenderSkyAutoAdjustLegacy", false);
@@ -9953,7 +9953,7 @@ void LLPipeline::copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget*
     if (RenderScreenSpaceReflections && !gCubeSnapshot)
     {
         LL_PROFILE_GPU_ZONE("ssr copy");
-        LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS);
+        LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
 
         LLRenderTarget& depth_src = mRT->deferredScreen;
 
@@ -10010,7 +10010,7 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
         }
 
         {
-            LLGLEnable blend_on(GL_BLEND);
+            LLRenderState::BlendScope blend_on(true);
 
             gGL.setSceneBlendType(LLRender::BT_ADD_WITH_ALPHA);
 
@@ -10258,9 +10258,9 @@ void LLPipeline::renderAvatarVelocity()
     gGL.setClearColor(0.f, 0.f, 0.f, 0.f);
     mAvatarVelocityMap.clear();
     gGL.setColorMask(true, true);
-    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
-    LLGLDisable blend(GL_BLEND);
-    LLGLEnable cull(GL_CULL_FACE);
+    LLRenderState::DepthScope depth(false, false);
+    LLRenderState::BlendScope blend(false);
+    LLRenderState::CullScope cull(true);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.loadMatrix(gGLModelView);
     gGLLastMatrix = NULL;
@@ -10599,8 +10599,8 @@ void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
     const S32 live_view = LLVkMirror::rtDebugView();        // rt-debug.txt view=N overrides the setting (changed while running, no restart)
     gRtMaterialDebugProgram.uniform1i(mode_s, llclamp(live_view > 0 ? live_view : (S32)mode, 1, 16));
     {
-        LLGLDisable   blend(GL_BLEND);
-        LLGLDepthTest depth(GL_FALSE, GL_FALSE, GL_ALWAYS);
+        LLRenderState::BlendScope blend(false);
+        LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
@@ -10649,8 +10649,8 @@ LLRenderTarget* LLPipeline::accumulateSunShadow(LLRenderTarget* light)
     gShadowAccumProgram.uniform1f(use_s, have_history ? 1.f : 0.f);
     gShadowAccumProgram.uniform1f(vel_s, velocity ? 1.f : 0.f);
     {
-        LLGLDisable   blend(GL_BLEND);
-        LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_ALWAYS);
+        LLRenderState::BlendScope blend(false);
+        LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
@@ -10671,7 +10671,7 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     const glm::mat4 to_prev = glm::mat4(glm::dmat4(mViewProjPrevValid ? mViewProjPrev : mViewProjCur) * inv_scene);
 
     dst->bindTarget();
-    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+    LLRenderState::DepthScope depth(false, false);
     gMotionVectorProgram.bind();
     gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
     // <FS> avatar motion vectors: the avatar pixels take their own vector (the target is only valid when the pass ran this frame)
@@ -10741,8 +10741,8 @@ void LLPipeline::generateRRReflectionMotion(LLRenderTarget* dst)
     gRRReflMotionProgram.uniformMatrix3fv(v2w_s, 1, GL_FALSE, glm::value_ptr(view_to_world));
     gRRReflMotionProgram.uniform2f(res_s, (F32)dst->getWidth(), (F32)dst->getHeight());
     {
-        LLGLDisable   blend(GL_BLEND);
-        LLGLDepthTest depth(GL_FALSE, GL_FALSE, GL_ALWAYS);
+        LLRenderState::BlendScope blend(false);
+        LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
@@ -10755,8 +10755,8 @@ void LLPipeline::extractRRHitDistance(LLRenderTarget* screen)
     LL_PROFILE_GPU_ZONE("rr hit distance");
     static LLStaticHashedString clear_s("clear_only");
     screen->flush();
-    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
-    LLGLDisable blend(GL_BLEND);
+    LLRenderState::DepthScope depth(false, false);
+    LLRenderState::BlendScope blend(false);
 
     mRRHitDist.bindTarget();
     gRRHitDistProgram.bind();
@@ -10794,8 +10794,8 @@ void LLPipeline::generateRRGuides(LLRenderTarget* dst)
     bindDeferredShader(gRRGuidesProgram);
     gRRGuidesProgram.uniformMatrix3fv(view_to_world_s, 1, GL_FALSE, glm::value_ptr(view_to_world));
     {
-        LLGLDisable   blend(GL_BLEND);
-        LLGLDepthTest depth(GL_FALSE, GL_FALSE, GL_ALWAYS);
+        LLRenderState::BlendScope blend(false);
+        LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
@@ -10948,7 +10948,7 @@ void LLPipeline::applyFXAA(LLRenderTarget* src, LLRenderTarget* dst)
             }
 
             {
-                LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
+                LLRenderState::DepthScope depth_test(true, true, LLRenderState::CompareOp::Always);
                 mScreenTriangleVB->setBuffer();
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
@@ -10989,7 +10989,7 @@ void LLPipeline::applyFXAA(LLRenderTarget* src, LLRenderTarget* dst)
                 2.f / width * scale_x, 2.f / height * scale_y);
 
             {
-                LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
+                LLRenderState::DepthScope depth_test(true, true, LLRenderState::CompareOp::Always);
                 S32 depth_channel = shader->getTextureChannel(LLShaderMgr::DEFERRED_DEPTH);
                 gGL.getTexUnit(depth_channel)->bind(&mRT->deferredScreen, true);
 
@@ -11023,7 +11023,7 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
 
         float rt_metrics[] = { 1.f / width, 1.f / height, (float)width, (float)height };
 
-        LLGLDepthTest    depth(GL_FALSE, GL_FALSE);
+        LLRenderState::DepthScope depth(false, false);
 
         static LLCachedControl<bool> use_sample(gSavedSettings, "RenderSMAAUseSample", false);
         //static LLCachedControl<bool> use_stencil(gSavedSettings, "RenderSMAAUseStencil", true);
@@ -11141,7 +11141,7 @@ void LLPipeline::applySMAA(LLRenderTarget* src, LLRenderTarget* dst)
 
         float rt_metrics[] = { 1.f / width, 1.f / height, (float)width, (float)height };
 
-        LLGLDepthTest    depth(GL_FALSE, GL_FALSE);
+        LLRenderState::DepthScope depth(false, false);
 
         static LLCachedControl<bool> use_sample(gSavedSettings, "RenderSMAAUseSample", false);
         //static LLCachedControl<bool> use_stencil(gSavedSettings, "RenderSMAAUseStencil", true);
@@ -11485,7 +11485,7 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
 
         if (sDoFEnabled) // <FS:Beq/> // FIRE-32023 Render focus point
         {
-            LLGLDisable blend(GL_BLEND);
+            LLRenderState::BlendScope blend(false);
 
             // depth of field focal plane calculations
             static F32 current_distance = 16.f;
@@ -11707,9 +11707,9 @@ void LLPipeline::renderFinalize()
     LL_PROFILE_GPU_ZONE("renderFinalize");
 
     gGL.color4f(1, 1, 1, 1);
-    LLGLDepthTest depth(GL_FALSE);
-    LLGLDisable blend(GL_BLEND);
-    LLGLDisable cull(GL_CULL_FACE);
+    LLRenderState::DepthScope depth(false);
+    LLRenderState::BlendScope blend(false);
+    LLRenderState::CullScope cull(false);
 
     enableLightsFullbright();
 
@@ -11959,7 +11959,7 @@ void LLPipeline::renderFinalize()
     }
 
     {
-        LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
+        LLRenderState::DepthScope depth_test(true, true, LLRenderState::CompareOp::Always);
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
@@ -12730,8 +12730,8 @@ void LLPipeline::renderDeferredLighting()
         // draw a cube around every light
         LLVertexBuffer::unbind();
 
-        LLGLEnable cull(GL_CULL_FACE);
-        LLGLEnable blend(GL_BLEND);
+        LLRenderState::CullScope cull(true);
+        LLRenderState::BlendScope blend(true);
 
         glm::mat4 mat = get_current_modelview();
 
@@ -12790,8 +12790,8 @@ void LLPipeline::renderDeferredLighting()
                 }
 
                 {
-                    LLGLDisable   blend(GL_BLEND);
-                    LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_ALWAYS);
+                    LLRenderState::BlendScope blend(false);
+                    LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
                     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
                 }
 
@@ -12840,8 +12840,8 @@ void LLPipeline::renderDeferredLighting()
             gDeferredBlurLightProgram.uniform1f(sKernScale, blur_size * (kern_length / 2.f - 0.5f));
 
             {
-                LLGLDisable   blend(GL_BLEND);
-                LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_ALWAYS);
+                LLRenderState::BlendScope blend(false);
+                LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
                 mScreenTriangleVB->setBuffer();
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
@@ -12856,8 +12856,8 @@ void LLPipeline::renderDeferredLighting()
             gDeferredBlurLightProgram.uniform2f(sDelta, 0.f, 1.f);
 
             {
-                LLGLDisable   blend(GL_BLEND);
-                LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_ALWAYS);
+                LLRenderState::BlendScope blend(false);
+                LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
                 mScreenTriangleVB->setBuffer();
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
@@ -13075,8 +13075,8 @@ void LLPipeline::renderDeferredLighting()
             }
 
             {
-                LLGLDepthTest depth(GL_FALSE);
-                LLGLDisable   blend(GL_BLEND);
+                LLRenderState::DepthScope depth(false);
+                LLRenderState::BlendScope blend(false);
 
                 // full screen blit
                 mScreenTriangleVB->setBuffer();
@@ -13126,7 +13126,7 @@ void LLPipeline::renderDeferredLighting()
 
                 mCubeVB->setBuffer();
 
-                LLGLDepthTest depth(GL_TRUE, GL_FALSE);
+                LLRenderState::DepthScope depth(true, false);
                 // mNearbyLights already includes distance calculation and excludes muted avatars.
                 // It is calculated from mLights
                 // mNearbyLights also provides fade value to gracefully fade-out out of range lights
@@ -13236,7 +13236,7 @@ void LLPipeline::renderDeferredLighting()
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - projectors");
                 LL_CPU_ZONE("lighting: projectors");
                 LL_PROFILE_GPU_ZONE("projectors");
-                LLGLDepthTest depth(GL_TRUE, GL_FALSE);
+                LLRenderState::DepthScope depth(true, false);
                 bindDeferredShader(gDeferredSpotLightProgram);
 
                 mCubeVB->setBuffer();
@@ -13278,7 +13278,7 @@ void LLPipeline::renderDeferredLighting()
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - fullscreen lights");
                 LL_CPU_ZONE("lighting: fullscreen lights");
-                LLGLDepthTest depth(GL_FALSE);
+                LLRenderState::DepthScope depth(false);
                 LL_PROFILE_GPU_ZONE("fullscreen lights");
 
                 U32 count = 0;
@@ -13363,7 +13363,7 @@ void LLPipeline::renderDeferredLighting()
     }
 
     {  // render non-deferred geometry (alpha, fullbright, glow)
-        LLGLDisable blend(GL_BLEND);
+        LLRenderState::BlendScope blend(false);
 
         pushRenderTypeMask();
         andRenderTypeMask(LLPipeline::RENDER_TYPE_ALPHA,
@@ -13431,7 +13431,7 @@ void LLPipeline::doAtmospherics()
     {
         {
             // copy depth buffer for use in haze shader (use water displacement map as temp storage)
-            LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS);
+            LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
 
             LLRenderTarget& src = gPipeline.mRT->screen;
             LLRenderTarget& depth_src = gPipeline.mRT->deferredScreen;
@@ -13455,7 +13455,7 @@ void LLPipeline::doAtmospherics()
             mRT->screen.bindTarget();
         }
 
-        LLGLEnable blend(GL_BLEND);
+        LLRenderState::BlendScope blend(true);
         gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_SOURCE_ALPHA, LLRender::BF_ZERO, LLRender::BF_SOURCE_ALPHA);
         gGL.setColorMask(true, true);
 
@@ -13471,7 +13471,7 @@ void LLPipeline::doAtmospherics()
 
         haze_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
 
-        LLGLDepthTest depth(GL_FALSE);
+        LLRenderState::DepthScope depth(false);
 
         // full screen blit
         mScreenTriangleVB->setBuffer();
@@ -13495,7 +13495,7 @@ void LLPipeline::doWaterHaze()
     {
         // copy depth buffer for use in haze shader (use water displacement map as temp storage)
         {
-            LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS);
+            LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
 
             LLRenderTarget& src = gPipeline.mRT->screen;
             LLRenderTarget& depth_src = gPipeline.mRT->deferredScreen;
@@ -13519,7 +13519,7 @@ void LLPipeline::doWaterHaze()
             mRT->screen.bindTarget();
         }
 
-        LLGLEnable blend(GL_BLEND);
+        LLRenderState::BlendScope blend(true);
         gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_SOURCE_ALPHA, LLRender::BF_ZERO, LLRender::BF_SOURCE_ALPHA);
 
         gGL.setColorMask(true, true);
@@ -13539,7 +13539,7 @@ void LLPipeline::doWaterHaze()
 
         if (LLPipeline::sUnderWaterRender)
         {
-            LLGLDepthTest depth(GL_FALSE);
+            LLRenderState::DepthScope depth(false);
 
             // full screen blit
             mScreenTriangleVB->setBuffer();
@@ -13548,8 +13548,8 @@ void LLPipeline::doWaterHaze()
         else
         {
             //render water patches like LLDrawPoolWater does
-            LLGLDepthTest depth(GL_TRUE, GL_FALSE);
-            LLGLDisable   cull(GL_CULL_FACE);
+            LLRenderState::DepthScope depth(true, false);
+            LLRenderState::CullScope cull(false);
 
             gGLLastMatrix = NULL;
             gGL.loadMatrix(gGLModelView);
@@ -14063,12 +14063,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // <FS> a sun cascade pass in a ray-only mode: names the casters, draws nothing (see rt_sun_cascades_unused)
     const bool rt_skip = rt_sun_cascades_unused() && shadow_pass_index() < 4;
 
-    LLGLEnable cull(GL_CULL_FACE);
+    LLRenderState::CullScope cull(true);
 
     //enable depth clamping if available
-    LLGLEnable clamp_depth(depth_clamp ? GL_DEPTH_CLAMP : 0);
+    LLRenderState::DepthClampScope clamp_depth(true, depth_clamp);
 
-    LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_LESS);
+    LLRenderState::DepthScope depth_test(true, true, LLRenderState::CompareOp::Less);
 
     {
         // <FS> the cull and the sort: done by the parallel preparation when `prepared` (what is left of them is the pools and the sky)
@@ -15616,7 +15616,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 {
                     mRT->shadow[j].bindTarget();
                     {
-                        LLGLDepthTest depth(GL_TRUE);
+                        LLRenderState::DepthScope depth(true);
                         mRT->shadow[j].clear();
                     }
                     mRT->shadow[j].flush();
@@ -16678,7 +16678,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
             LLRenderTarget::setCurrentDrawBufferCount(1);
         }
 
-        LLGLDisable blend(GL_BLEND);
+        LLRenderState::BlendScope blend(false);
 
         // <FS> FIRE-34340-2 RLV silhouettes need a solid color baked into the impostor too
         if (visually_muted || too_complex || rlv_silhouette)
@@ -16693,7 +16693,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
 
-        LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_GREATER);
+        LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Greater);
 
         gGL.flush();
 
@@ -17124,7 +17124,7 @@ void LLPipeline::restoreHiddenObject( const LLUUID& id )
 
 void LLPipeline::skipRenderingShadows()
 {
-    LLGLDepthTest depth(GL_TRUE);
+    LLRenderState::DepthScope depth(true);
 
     for (S32 j = 0; j < 4; j++)
     {

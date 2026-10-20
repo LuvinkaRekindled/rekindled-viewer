@@ -512,7 +512,7 @@ static int kindOfCap(LLGLenum state)
 {
     using LLRenderState::Kind;
     return (int)(state == GL_BLEND ? Kind::Blend : state == GL_SCISSOR_TEST ? Kind::Scissor : state == GL_STENCIL_TEST ? Kind::Stencil
-        : state == GL_POLYGON_OFFSET_FILL ? Kind::PolygonOffset : state == GL_DEPTH_CLAMP ? Kind::DepthClamp : state == GL_CULL_FACE ? Kind::Cull : state == GL_DEPTH_TEST ? Kind::Depth : Kind::Count);
+        : state == GL_POLYGON_OFFSET_FILL ? Kind::PolygonOffset : state == GL_DEPTH_CLAMP ? Kind::DepthClamp : state == GL_CULL_FACE ? Kind::Cull : state == GL_DEPTH_TEST ? Kind::DepthTest : Kind::Count);
 }
 
 static void legacyShadow(LLGLenum state, bool on)
@@ -559,7 +559,7 @@ LLGLState::LLGLState(LLGLenum state, S32 enabled, const char* file, int line) :
             {
                 using LLRenderState::Kind;
                 const Kind kind = state == GL_BLEND ? Kind::Blend : state == GL_SCISSOR_TEST ? Kind::Scissor : state == GL_STENCIL_TEST ? Kind::Stencil
-                    : state == GL_POLYGON_OFFSET_FILL ? Kind::PolygonOffset : state == GL_DEPTH_CLAMP ? Kind::DepthClamp : state == GL_CULL_FACE ? Kind::Cull : Kind::Depth;
+                    : state == GL_POLYGON_OFFSET_FILL ? Kind::PolygonOffset : state == GL_DEPTH_CLAMP ? Kind::DepthClamp : state == GL_CULL_FACE ? Kind::Cull : Kind::DepthTest;
                 // for cull the value is bit 0 (on); for GL_DEPTH_TEST it is the depth test, bit 0 of 'depth'
                 LLRenderState::reportDrift("LLGLState map differs from the block", kind, legacy, (U32)in_block, file, line);
             }
