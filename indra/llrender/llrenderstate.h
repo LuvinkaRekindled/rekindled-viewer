@@ -47,10 +47,18 @@ enum class Kind : U8
 
 extern bool sGuardCheck;                                                                    // LL_VK_STATE_GUARD_CHECK=1
 U32 read(Kind kind);                                                                     // the field now
-U32 exchange(Kind kind, U32 value);                                                             // flush if it changes, set it, return what it was
+U32 exchange(Kind kind, U32 value, const char* file = nullptr, int line = 0);                   // flush if it changes, set it, return what it was (file/line: LL_VK_STATE_WHY)
+extern bool sLegacy;                                                                        // LL_VK_STATE_LEGACY=1 (A/B diagnostic): the guards decide from a shadow copy that only guards write, like the old classes did
+bool legacyGet(Kind kind);                                                                  // the shadow copy of a capability (bit 0)
+void legacySet(Kind kind, bool on);
+extern bool sWhy;                                                                           // LL_VK_STATE_WHY=1: which writers cause the CMD_STATE records (top 15 per 600 frames in the log)
+extern bool sInGuard;
+void noteWriter(const char* file, int line, int kind);                                      // kind: Kind value, -1 any
+void noteDirect(const char* what);                                                          // a direct LLVkState setter
 void leave(Kind kind, U32 saved, U32 set, const char* file, int line);                      // check (when sGuardCheck), then put 'saved' back if the guard changed anything
 
 void reportDrift(const char* what, Kind kind, U32 legacy, U32 block, const char* file, int line);       // a legacy class (LLGLState, LLGLDepthTest) disagrees with the block (check mode)
+void whyEmit(const std::string& diff);                                                      // llvkstate: a CMD_STATE record is written
 std::string guardReport();                                                                  // for the state stats line
 
 constexpr U32 packCull(bool on, CullFace face) { return (on ? 1u : 0u) | ((U32)face << 1); }
@@ -70,7 +78,7 @@ public:
     {
         if (mActive)
         {
-            mSaved = exchange(K, on ? 1u : 0u);
+            mSaved = exchange(K, on ? 1u : 0u, file, line);
             mSet = on ? 1u : 0u;
         }
     }
@@ -92,7 +100,7 @@ public:
     {
         if (mActive)
         {
-            exchange(K, on ? 1u : 0u);
+            exchange(K, on ? 1u : 0u, mFile, mLine);
             mSet = on ? 1u : 0u;
         }
     }
@@ -122,7 +130,7 @@ public:
     {
         if (mActive)
         {
-            mSaved = exchange(Kind::Cull, packCull(on, face));
+            mSaved = exchange(Kind::Cull, packCull(on, face), file, line);
             mSet = packCull(on, face == CullFace::None ? (CullFace)(mSaved >> 1) : face);
         }
     }
@@ -157,7 +165,7 @@ public:
         if (mActive)
         {
             mSet = packDepth(test, test && write, op);
-            mSaved = exchange(Kind::Depth, mSet);
+            mSaved = exchange(Kind::Depth, mSet, file, line);
         }
     }
     DepthScope(const DepthScope&) = delete;

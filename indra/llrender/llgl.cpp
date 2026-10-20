@@ -508,14 +508,42 @@ void LLGLState::checkStates(GLboolean writeAlpha)
 // F3.2a: what the viewer has set is what the producer's block holds; sStateMap is now only the answer for capabilities the block does not hold (and the old
 // shadow copy that LL_VK_STATE_GUARD_CHECK compares with the block). Before this, a state changed through a LLRenderState guard (or any direct setter) left the
 // map stale and the next LLGLState believed the old value.
+static int kindOfCap(LLGLenum state)
+{
+    using LLRenderState::Kind;
+    return (int)(state == GL_BLEND ? Kind::Blend : state == GL_SCISSOR_TEST ? Kind::Scissor : state == GL_STENCIL_TEST ? Kind::Stencil
+        : state == GL_POLYGON_OFFSET_FILL ? Kind::PolygonOffset : state == GL_DEPTH_CLAMP ? Kind::DepthClamp : state == GL_CULL_FACE ? Kind::Cull : state == GL_DEPTH_TEST ? Kind::Depth : Kind::Count);
+}
+
+static void legacyShadow(LLGLenum state, bool on)
+{
+    if (LLRenderState::sLegacy)
+    {
+        const int k = kindOfCap(state);
+        if (k < (int)LLRenderState::Kind::Count && k != (int)LLRenderState::Kind::Depth)
+        {
+            LLRenderState::legacySet((LLRenderState::Kind)k, on);
+        }
+    }
+}
+
 bool LLGLState::currentState(LLGLenum state)
 {
+    if (LLRenderState::sLegacy)
+    {
+        const int k = kindOfCap(state);
+        if (k < (int)LLRenderState::Kind::Count && k != (int)LLRenderState::Kind::Depth)
+        {
+            return LLRenderState::legacyGet((LLRenderState::Kind)k);
+        }
+        return sStateMap[state] == GL_TRUE;
+    }
     const int in_block = LLVkState::capability(state);
     return in_block >= 0 ? in_block != 0 : sStateMap[state] == GL_TRUE;
 }
 
 LLGLState::LLGLState(LLGLenum state, S32 enabled, const char* file, int line) :
-    mState(state), mWasEnabled(false), mIsEnabled(false)
+    mState(state), mWasEnabled(false), mIsEnabled(false), mFile(file), mLine(line)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_GLSTATE);
@@ -556,12 +584,16 @@ void LLGLState::setEnabled(S32 enabled)
         gGL.flush();
         LLVkState::setEnable(mState, true);
         sStateMap[mState] = GL_TRUE;
+        legacyShadow(mState, true);
+        LLRenderState::noteWriter(mFile, mLine, kindOfCap(mState));
     }
     else if (enabled == DISABLED_STATE && currentState(mState))
     {
         gGL.flush();
         LLVkState::setEnable(mState, false);
         sStateMap[mState] = GL_FALSE;
+        legacyShadow(mState, false);
+        LLRenderState::noteWriter(mFile, mLine, kindOfCap(mState));
     }
     mIsEnabled = enabled;
 }
@@ -585,6 +617,8 @@ LLGLState::~LLGLState()
                 LLVkState::setEnable(mState, false);
                 sStateMap[mState] = GL_FALSE;
             }
+            legacyShadow(mState, mWasEnabled);
+            LLRenderState::noteWriter(mFile, mLine, kindOfCap(mState));
         }
     }
 }
@@ -819,7 +853,7 @@ LLGLDepthTest::LLGLDepthTest(GLboolean depth_enabled, GLboolean write_enabled, G
 
     // always disable depth writes if depth testing is disabled (the GL spec requires it; the proper way to write depth with testing off is the test on with GL_ALWAYS)
     mSet = LLRenderState::packDepth(depth_enabled != 0, depth_enabled != 0 && write_enabled != 0, depth_op_of(depth_func));
-    mSaved = LLRenderState::exchange(LLRenderState::Kind::Depth, mSet);
+    mSaved = LLRenderState::exchange(LLRenderState::Kind::Depth, mSet, file, line);
     sShadow = mSet;
 }
 
