@@ -201,14 +201,19 @@ public:
 
     // Manually binds a texture to the texture unit
     // (automatically enables the tex unit for the given texture type)
-    bool bindManual(eTextureType type, U32 texture, bool hasMips = false);
+    bool bindManual(eTextureType type, U32 texture, bool hasMips = false, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+
+    // F3.4: the intent of unbind(TT_TEXTURE) before an untextured draw: the unit holds the white texture
+    void bindWhite();
+    // F3.4: the unit holds no texture of that type (slot 0)
+    void bindNone(eTextureType type);
 
     // Unbinds the currently bound texture of the given type
     // (only if there's a texture of the given type currently bound)
-    void unbind(eTextureType type);
+    void unbind(eTextureType type, const char* file = __builtin_FILE(), int line = __builtin_LINE());      // file and line: LL_VK_TEXUNIT_VERIFY names the site that last wrote unit 0
 
     // Fast but unsafe version of unbind
-    void unbindFast(eTextureType type);
+    void unbindFast(eTextureType type, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
     // Sets the addressing mode used to sample the texture
     // Warning: this stays set for the bound texture forever,
@@ -438,9 +443,9 @@ public:
     void vertex2fv(const GLfloat* v);
     void vertex3fv(const GLfloat* v);
 
-    void texCoord2i(const GLint& x, const GLint& y);
-    void texCoord2f(const GLfloat& x, const GLfloat& y);
-    void texCoord2fv(const GLfloat* tc);
+    void texCoord2i(const GLint& x, const GLint& y, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void texCoord2f(const GLfloat& x, const GLfloat& y, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void texCoord2fv(const GLfloat* tc, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
     void color4ub(const GLubyte& r, const GLubyte& g, const GLubyte& b, const GLubyte& a);
     void color4f(const GLfloat& r, const GLfloat& g, const GLfloat& b, const GLfloat& a);
@@ -554,6 +559,9 @@ private:
 
     bool            mDirty;
     U32             mCount;
+    const char*     mBatchTexFile = nullptr;        // F3.4: where the first texCoord call of the batch came from (LL_VK_TEXUNIT_VERIFY)
+    int             mBatchTexLine = 0;
+    bool            mBatchHasTexCoord = false;     // F3.4: a texCoord call since the last flush (an untextured batch gets white from its draw record)
     U32             mMode;
     U32             mCurrTextureUnitIndex;
     F32             mClearColor[4] = { 0.f, 0.f, 0.f, 0.f };     // the colour clearBuffers() clears to

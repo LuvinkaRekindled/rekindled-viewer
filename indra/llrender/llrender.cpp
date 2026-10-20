@@ -41,6 +41,10 @@
 #include "glm/gtc/type_ptr.hpp"
 #include "llvkstate.h"
 #include "llrendermatrix.h"
+#include "llframetimer.h"
+#include <algorithm>
+#include <map>
+#include <vector>
 #include "llvktex.h"
 #include "llvkquery.h"
 #include "llvkcontext.h"
@@ -118,11 +122,27 @@ LLTexUnit::LLTexUnit(S32 index)
 
 //static
 // <FS> F1.2: a texture bind is a slot write (the typed record carries the unit); the active unit is only the producer's own bookkeeping for the helpers that act on 'the bound texture'
-static inline void ll_bindTexUnit(S32 unit_index, GLenum target, GLuint texture)
+static U32 sSlotId[LL_NUM_TEXTURE_LAYERS];                    // F3.4: what the producer wrote to each slot last (0 until the first write)
+static const char* sSlotWriter[LL_NUM_TEXTURE_LAYERS];        // and which LLTexUnit function wrote it
+static const char* sSlotFile[LL_NUM_TEXTURE_LAYERS];          // the call site of unbind / bindManual that wrote it (file, line)
+static int sSlotLine[LL_NUM_TEXTURE_LAYERS];
+static const char* sNextFile = nullptr;                       // set by those functions just before they write the slot
+static int sNextLine = 0;
+static inline void ll_bindTexUnit_impl(S32 unit_index, GLenum target, GLuint texture, const char* who)
 {
     (void)target;       // a unit holds a texture: its dimension is the texture's own
+    if (unit_index >= 0 && unit_index < (S32)LL_NUM_TEXTURE_LAYERS)
+    {
+        sSlotId[unit_index] = texture;
+        sSlotWriter[unit_index] = who;
+        sSlotFile[unit_index] = sNextFile;
+        sSlotLine[unit_index] = sNextLine;
+        sNextFile = nullptr;
+        sNextLine = 0;
+    }
     LLVkTex::bindSlot(unit_index, texture);
 }
+#define ll_bindTexUnit(unit, target, texture) ll_bindTexUnit_impl(unit, target, texture, __func__)
 
 U32 LLTexUnit::getInternalType(eTextureType type)
 {
@@ -443,8 +463,10 @@ bool LLTexUnit::bind(LLRenderTarget* renderTarget, bool bindDepth)
     return true;
 }
 
-bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips)
+bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const char* file, int line)
 {
+    sNextFile = file;
+    sNextLine = line;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_MANUAL);
     if (mIndex < 0)
     {
@@ -464,8 +486,28 @@ bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips)
     return true;
 }
 
-void LLTexUnit::unbind(eTextureType type)
+void LLTexUnit::bindWhite()
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
+    if (mIndex < 0) return;
+    gGL.flush();
+    mCurrTexture = 0;
+    ll_bindTexUnit(mIndex, GL_TEXTURE_2D, sWhiteTexture);
+}
+
+void LLTexUnit::bindNone(eTextureType type)
+{
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
+    if (mIndex < 0) return;
+    gGL.flush();
+    mCurrTexture = 0;
+    ll_bindTexUnit(mIndex, sGLTextureType[type], 0);
+}
+
+void LLTexUnit::unbind(eTextureType type, const char* file, int line)
+{
+    sNextFile = file;
+    sNextLine = line;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
     stop_glerror();
 
@@ -493,8 +535,10 @@ void LLTexUnit::unbind(eTextureType type)
     }
 }
 
-void LLTexUnit::unbindFast(eTextureType type)
+void LLTexUnit::unbindFast(eTextureType type, const char* file, int line)
 {
+    sNextFile = file;
+    sNextLine = line;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
     activate();
 
@@ -1563,6 +1607,11 @@ U32 LLRender::getError()
 void LLRender::bindTextureSlot(S32 unit, U32 gl_target, U32 id)
 {
     (void)gl_target;
+    if (unit >= 0 && unit < (S32)LL_NUM_TEXTURE_LAYERS)
+    {
+        sSlotId[unit] = id;
+        sSlotWriter[unit] = "bindTextureSlot";
+    }
     LLVkTex::bindSlot(unit, id);
 }
 
@@ -1787,6 +1836,91 @@ void LLRender::end()
     }
 }
 
+// ---- F3.4a: LL_VK_TEXUNIT_VERIFY=1 -----------------------------------------------------------------------------------------------------------------------------------
+// At every immediate-mode (scratch) draw: what would "an untextured batch (no texCoord call since the last flush) samples white from its own draw record" change?
+//   A: untextured batch and unit 0 holds something that is not white  -> today this draw depends on an unbind that did not happen (the rule would change its picture: it would get white)
+//   B: batch with texture coordinates and unit 0 holds white           -> the draw wants white and gets it by an explicit unbind today: needs LLTexUnit::bindWhite() once the unbinds go
+// Reported every 600 frames (tag TexUnitVerify), by the shader that draws and the LLTexUnit function that last wrote unit 0.
+namespace TexUnitVerify
+{
+static const bool sOn = []() { const char* e = getenv("LL_VK_TEXUNIT_VERIFY"); return e && e[0] == '1'; }();
+struct Key { std::string mShader; std::string mWriter; char mKind; };
+static std::map<std::string, U64> sCounts;
+static U64 sBatches = 0, sUntextured = 0, sTextured = 0, sA = 0, sB = 0;
+static U32 sLastReport = 0;
+
+void note(bool has_texcoord, U32 count, const char* tex_file, int tex_line)
+{
+    if (!sOn)
+    {
+        return;
+    }
+    ++sBatches;
+    const bool white = sSlotId[0] == LLTexUnit::sWhiteTexture;
+    char kind = 0;
+    if (!has_texcoord)
+    {
+        ++sUntextured;
+        if (!white)
+        {
+            ++sA;
+            kind = 'A';
+        }
+    }
+    else
+    {
+        ++sTextured;
+        if (white)
+        {
+            ++sB;
+            kind = 'B';
+        }
+    }
+    if (kind)
+    {
+        const char* writer = sSlotWriter[0] ? sSlotWriter[0] : "nobody";
+        const std::string shader = LLGLSLShader::sCurBoundShaderPtr ? LLGLSLShader::sCurBoundShaderPtr->mName : std::string("?");
+        std::string site;
+        if (sSlotFile[0])
+        {
+            const char* base = strrchr(sSlotFile[0], '\\');
+            site = std::string(" at ") + (base ? base + 1 : sSlotFile[0]) + ":" + std::to_string(sSlotLine[0]);
+        }
+        std::string tex_site;
+        if (has_texcoord && tex_file)
+        {
+            const char* tb = strrchr(tex_file, '\\');
+            tex_site = std::string(", first texCoord at ") + (tb ? tb + 1 : tex_file) + ":" + std::to_string(tex_line);
+        }
+        sCounts[std::string(1, kind) + " " + shader + tex_site + " / last write of unit 0 by " + writer + site + (kind == 'A' ? (" (texture " + std::to_string(sSlotId[0]) + ")") : std::string())] += 1;
+    }
+    (void)count;
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (frame - sLastReport >= 600)
+    {
+        if (sLastReport)
+        {
+            std::vector<std::pair<U64, std::string>> v;
+            for (auto& e : sCounts)
+            {
+                v.push_back({ e.second, e.first });
+            }
+            std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            std::string lines;
+            for (size_t i = 0; i < v.size() && i < 12; ++i)
+            {
+                lines += "\n   " + std::to_string(v[i].first) + "  " + v[i].second;
+            }
+            LL_INFOS("TexUnitVerify") << "immediate batches in " << (frame - sLastReport) << " frames: " << sBatches << " (untextured " << sUntextured << ", with texture coordinates " << sTextured
+                << "); A (untextured, unit 0 not white) " << sA << ", B (textured, unit 0 white) " << sB << lines << LL_ENDL;
+        }
+        sCounts.clear();
+        sBatches = sUntextured = sTextured = sA = sB = 0;
+        sLastReport = frame;
+    }
+}
+}
+
 void LLRender::flush()
 {
     STOP_GLERROR;
@@ -1856,6 +1990,7 @@ void LLRender::flush()
                 {
                     LL_WARNS_ONCE("Vulkan") << "immediate mode: the bound shader reads attributes (mask 0x" << std::hex << attribute_mask << std::dec << ") that immediate vertices do not have: they read the constant value" << LL_ENDL;
                 }
+                TexUnitVerify::note(mBatchHasTexCoord, count, mBatchTexFile, mBatchTexLine);
                 LLVkAsync::FrontLap draw_lap(LLVkAsync::FP_DRAW);
                 ++LLVertexBuffer::sDrawCalls;
                 gGL.syncMatrices();
@@ -1870,6 +2005,7 @@ void LLRender::flush()
         }
 
         resetStriders(count);
+        mBatchHasTexCoord = false;
     }
 }
 
@@ -1987,6 +2123,7 @@ void LLRender::vertexBatchPreTransformed(LLVector4a* verts, S32 vert_count)
 
 void LLRender::vertexBatchPreTransformed(LLVector4a* verts, LLVector2* uvs, S32 vert_count)
 {
+    mBatchHasTexCoord = true;
     if (mCount + vert_count > 4094)
     {
         //  LL_WARNS() << "GL immediate mode overflow.  Some geometry not drawn." << LL_ENDL;
@@ -2011,6 +2148,7 @@ void LLRender::vertexBatchPreTransformed(LLVector4a* verts, LLVector2* uvs, S32 
 
 void LLRender::vertexBatchPreTransformed(LLVector4a* verts, LLVector2* uvs, LLColor4U* colors, S32 vert_count)
 {
+    mBatchHasTexCoord = true;
     if (mCount + vert_count > 4094)
     {
         //  LL_WARNS() << "GL immediate mode overflow.  Some geometry not drawn." << LL_ENDL;
@@ -2054,19 +2192,25 @@ void LLRender::vertex3fv(const GLfloat* v)
     vertex3f(v[0], v[1], v[2]);
 }
 
-void LLRender::texCoord2f(const GLfloat& x, const GLfloat& y)
+void LLRender::texCoord2f(const GLfloat& x, const GLfloat& y, const char* file, int line)
 {
+    if (!mBatchHasTexCoord)
+    {
+        mBatchTexFile = file;
+        mBatchTexLine = line;
+    }
+    mBatchHasTexCoord = true;
     mTexcoordsp[mCount] = LLVector2(x,y);
 }
 
-void LLRender::texCoord2i(const GLint& x, const GLint& y)
+void LLRender::texCoord2i(const GLint& x, const GLint& y, const char* file, int line)
 {
-    texCoord2f((GLfloat) x, (GLfloat) y);
+    texCoord2f((GLfloat) x, (GLfloat) y, file, line);
 }
 
-void LLRender::texCoord2fv(const GLfloat* tc)
+void LLRender::texCoord2fv(const GLfloat* tc, const char* file, int line)
 {
-    texCoord2f(tc[0], tc[1]);
+    texCoord2f(tc[0], tc[1], file, line);
 }
 
 void LLRender::color4ub(const GLubyte& r, const GLubyte& g, const GLubyte& b, const GLubyte& a)
