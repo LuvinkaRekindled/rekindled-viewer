@@ -13763,7 +13763,6 @@ void LLPipeline::unbindDeferredShader(LLGLSLShader &shader)
     unbindReflectionProbes(shader);
 
     gGL.getTexUnit(0)->bindWhite();
-    gGL.getTexUnit(0)->activate();
     shader.unbind();
 }
 
@@ -13862,7 +13861,6 @@ void LLPipeline::unbindReflectionProbes(LLGLSLShader& shader)
         mReflectionMapManager.mTexture->unbind();
         if (channel == 0)
         {
-            gGL.getTexUnit(channel)->enable(LLTexUnit::TT_TEXTURE);
         }
     }
 }
@@ -14736,7 +14734,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
         renderGLTFObjects(LLRenderPass::PASS_GLTF_PBR, false, rigged);
 
-        gGL.getTexUnit(0)->enable(LLTexUnit::TT_TEXTURE);
     }
 
     if (LLPipeline::sUseOcclusion > 1)

@@ -595,7 +595,6 @@ void LLDrawPoolAvatar::endDeferredRigid()
     sShaderLevel = mShaderLevel;
     sVertexProgram->disableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
     sVertexProgram->unbind();
-    gGL.getTexUnit(0)->activate();
 }
 
 
@@ -635,11 +634,9 @@ void LLDrawPoolAvatar::endSkinned()
     sRenderingSkinned = false;
     sVertexProgram->disableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
     sVertexProgram->disableTexture(LLViewerShaderMgr::BUMP_MAP);
-    gGL.getTexUnit(0)->activate();
     sVertexProgram->unbind();
     sShaderLevel = mShaderLevel;
 
-    gGL.getTexUnit(0)->activate();
 }
 
 void LLDrawPoolAvatar::beginDeferredSkinned()
@@ -653,7 +650,6 @@ void LLDrawPoolAvatar::beginDeferredSkinned()
     sVertexProgram->bind();
     sVertexProgram->setMinimumAlpha(LLDrawPoolAvatar::sMinimumAlpha);
     sDiffuseChannel = sVertexProgram->enableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
-    gGL.getTexUnit(0)->activate();
 }
 
 void LLDrawPoolAvatar::endDeferredSkinned()
@@ -668,7 +664,6 @@ void LLDrawPoolAvatar::endDeferredSkinned()
 
     sShaderLevel = mShaderLevel;
 
-    gGL.getTexUnit(0)->activate();
 }
 
 void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)

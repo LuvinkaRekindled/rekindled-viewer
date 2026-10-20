@@ -1543,7 +1543,7 @@ void LLManipTranslate::renderSnapGuides()
         F32 sz = mGridSizeMeters;
         F32 tiles = sz;
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::CurrentTexture);
+        LLRenderMatrix::push(LLRenderMatrix::Kind::Texture0);
         usc = 1.0f/usc;
         vsc = 1.0f/vsc;
 
@@ -1556,8 +1556,8 @@ void LLManipTranslate::renderSnapGuides()
             vsc *= 0.5f;
         }
 
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::CurrentTexture, usc, vsc, 1.0f);
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::CurrentTexture, u, v, 0);
+        LLRenderMatrix::scale(LLRenderMatrix::Kind::Texture0, usc, vsc, 1.0f);
+        LLRenderMatrix::translate(LLRenderMatrix::Kind::Texture0, u, v, 0);
 
         float a = line_alpha;
 
@@ -1586,7 +1586,7 @@ void LLManipTranslate::renderSnapGuides()
                     gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
                     renderGrid(u,v,tiles,1,1,1,a);
 
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::CurrentTexture);
+                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Texture0);
                     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
 

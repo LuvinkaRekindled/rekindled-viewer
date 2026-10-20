@@ -1820,8 +1820,6 @@ S32 LLGLSLShader::enableTexture(S32 uniform, LLTexUnit::eTextureType mode)
     S32 index = mTexture[uniform];
     if (index != -1)
     {
-        gGL.getTexUnit(index)->activate();
-        gGL.getTexUnit(index)->enable(mode);
     }
     return index;
 }

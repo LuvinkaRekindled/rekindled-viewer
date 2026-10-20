@@ -221,7 +221,6 @@ void LLDrawPool::renderPostDeferred(S32 pass)
 void LLDrawPool::endRenderPass( S32 pass )
 {
     //make sure channel 0 is active channel
-    gGL.getTexUnit(0)->activate();
 }
 
 //virtual
@@ -614,8 +613,7 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
                 if (params.mTextureMatrix)
                 {
                     tex_setup = true;
-                    gGL.getTexUnit(0)->activate();
-                    LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*) params.mTextureMatrix->mMatrix);
+                    LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*) params.mTextureMatrix->mMatrix);
                     gPipeline.mTextureMatrixOps++;
                 }
             }
@@ -1245,8 +1243,7 @@ void setup_texture_matrix(LLDrawInfo& params)
 {
     if (params.mTextureMatrix)
     { //special case implementation of texture animation here because of special handling of textures for PBR batches
-        gGL.getTexUnit(0)->activate();
-        LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*)params.mTextureMatrix->mMatrix);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*)params.mTextureMatrix->mMatrix);
         gPipeline.mTextureMatrixOps++;
     }
 }

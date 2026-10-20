@@ -587,8 +587,6 @@ void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
 
     gGL.flush();
 
-    activate();
-
     setTextureAddressModeFast(mode, mCurrTexType);
 }
 
@@ -605,15 +603,20 @@ struct TexParams
     ~TexParams() { LLVkTex::params(mId, mTarget, mE, mN); }
 };
 
-void LLTexUnit::setTextureAddressModeFast(eTextureAddressMode mode, eTextureType tex_type)
+void LLTexUnit::applyAddressMode(U32 tex_name, eTextureType tex_type, eTextureAddressMode mode)
 {
-    TexParams p(sGLTextureType[tex_type], mCurrTexture);
+    TexParams p(sGLTextureType[tex_type], tex_name);
     p.i(GL_TEXTURE_WRAP_S, sGLAddressMode[mode]);
     p.i(GL_TEXTURE_WRAP_T, sGLAddressMode[mode]);
     if (tex_type == TT_CUBE_MAP || tex_type == TT_CUBE_MAP_ARRAY || tex_type == TT_TEXTURE_3D)
     {
         p.i(GL_TEXTURE_WRAP_R, sGLAddressMode[mode]);
     }
+}
+
+void LLTexUnit::setTextureAddressModeFast(eTextureAddressMode mode, eTextureType tex_type)
+{
+    applyAddressMode(mCurrTexture, tex_type, mode);
 }
 
 void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions option)
@@ -626,9 +629,9 @@ void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions optio
     setTextureFilteringOptionFast(option, mCurrTexType);
 }
 
-void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions option, eTextureType tex_type)
+void LLTexUnit::applyFilteringOption(U32 tex_name, eTextureType tex_type, LLTexUnit::eTextureFilterOptions option, bool has_mips)
 {
-    TexParams p(sGLTextureType[tex_type], mCurrTexture);
+    TexParams p(sGLTextureType[tex_type], tex_name);
     if (option == TFO_POINT)
     {
         p.i(GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -638,13 +641,13 @@ void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions o
         p.i(GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
 
-    if (option >= TFO_TRILINEAR && mHasMipMaps)
+    if (option >= TFO_TRILINEAR && has_mips)
     {
         p.i(GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     }
     else if (option >= TFO_BILINEAR)
     {
-        if (mHasMipMaps)
+        if (has_mips)
         {
             p.i(GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
         }
@@ -655,7 +658,7 @@ void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions o
     }
     else
     {
-        if (mHasMipMaps)
+        if (has_mips)
         {
             p.i(GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
         }
@@ -676,6 +679,11 @@ void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions o
             p.f(GL_TEXTURE_MAX_ANISOTROPY, 1.f);
         }
     }
+}
+
+void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions option, eTextureType tex_type)
+{
+    applyFilteringOption(mCurrTexture, tex_type, option, mHasMipMaps);
 }
 
 GLint LLTexUnit::getTextureSource(eTextureBlendSrc src)
@@ -756,17 +764,6 @@ GLint LLTexUnit::getTextureSourceType(eTextureBlendSrc src, bool isAlpha)
 
 // Useful for debugging that you've manually assigned a texture operation to the correct
 // texture unit based on the currently set active texture in opengl.
-void LLTexUnit::debugTextureUnit(void)
-{
-    if (mIndex < 0) return;
-
-    const GLint activeTexture = GL_TEXTURE0 + (GLint)gGL.mCurrTextureUnitIndex;
-    if ((GL_TEXTURE0 + mIndex) != activeTexture)
-    {
-        U32 set_unit = (activeTexture - GL_TEXTURE0);
-        LL_WARNS() << "Incorrect Texture Unit!  Expected: " << set_unit << " Actual: " << mIndex << LL_ENDL;
-    }
-}
 
 LLLightState::LLLightState(S32 index)
 : mIndex(index),
@@ -1781,18 +1778,6 @@ void LLRender::setLineWidth(F32 line_width)
 }
 // </FS>
 
-bool LLRender::verifyTexUnitActive(U32 unitToVerify)
-{
-    if (mCurrTextureUnitIndex == unitToVerify)
-    {
-        return true;
-    }
-    else
-    {
-        LL_WARNS() << "TexUnit currently active: " << mCurrTextureUnitIndex << " (expecting " << unitToVerify << ")" << LL_ENDL;
-        return false;
-    }
-}
 
 void LLRender::clearErrors()
 {
@@ -2473,21 +2458,7 @@ bool sGuardCheck = []() { const char* e = getenv("LL_VK_MATRIX_GUARD_CHECK"); re
 
 namespace
 {
-inline LLRender::eMatrixMode mode_of(Kind kind)
-{
-    if (kind == Kind::CurrentTexture)
-    {
-        // as LLRender::matrixMode(MM_TEXTURE) does: the matrix of the active texture unit (the shaders use texture matrices 0-3)
-        U32 tex_index = gGL.getCurrentTexUnitIndex();
-        if (tex_index > 3)
-        {
-            LL_WARNS_ONCE() << "Attempted to assign matrix mode out of bounds: texture unit " << tex_index << LL_ENDL;
-            tex_index = 0;
-        }
-        return (LLRender::eMatrixMode)(LLRender::MM_TEXTURE0 + tex_index);
-    }
-    return (LLRender::eMatrixMode)kind;
-}
+inline LLRender::eMatrixMode mode_of(Kind kind) { return (LLRender::eMatrixMode)kind; }
 
 struct Site { const char* mFile; int mLine; };
 std::vector<Site> gSites;

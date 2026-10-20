@@ -76,9 +76,7 @@ static U64 sTextureBytes = 0;
 // asserts that no currently tracked alloc exists
 void LLImageGLMemory::alloc_tex_image(U32 width, U32 height, U32 intformat, U32 count)
 {
-    U32 texUnit = gGL.getCurrentTexUnitIndex();
-    llassert(texUnit == 0); // allocations should always be done on tex unit 0
-    U32 texName = gGL.getTexUnit(texUnit)->getCurrTexture();
+    U32 texName = gGL.getTexUnit(0)->getCurrTexture();      // allocations are always done on tex unit 0
     U64 size = LLImageGL::dataFormatBytes(intformat, width, height);
     size *= count;
 
@@ -124,9 +122,7 @@ void LLImageGLMemory::free_tex_images(U32 count, const U32* texNames)
 // track texture free on currently bound texture
 void LLImageGLMemory::free_cur_tex_image()
 {
-    U32 texUnit = gGL.getCurrentTexUnitIndex();
-    llassert(texUnit == 0); // frees should always be done on tex unit 0
-    U32 texName = gGL.getTexUnit(texUnit)->getCurrTexture();
+    U32 texName = gGL.getTexUnit(0)->getCurrTexture();      // frees are always done on tex unit 0
     free_tex_image(texName);
 }
 
@@ -1942,9 +1938,11 @@ void LLImageGL::setAddressMode(LLTexUnit::eTextureAddressMode mode)
         mAddressMode = mode;
     }
 
-    if (gGL.getTexUnit(gGL.getCurrentTexUnitIndex())->getCurrTexture() == mTexName)
+    if (mTexName != 0)
     {
-        gGL.getTexUnit(gGL.getCurrentTexUnitIndex())->setTextureAddressMode(mode);
+        // the sampler parameters belong to the texture: no texture unit is involved (they used to be applied only when the image was bound on the active unit)
+        gGL.flush();
+        LLTexUnit::applyAddressMode(mTexName, getTarget(), mode);
         mTexOptionsDirty = false;
     }
 }
@@ -1957,9 +1955,10 @@ void LLImageGL::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
         mFilterOption = option;
     }
 
-    if (mTexName != 0 && gGL.getTexUnit(gGL.getCurrentTexUnitIndex())->getCurrTexture() == mTexName)
+    if (mTexName != 0)
     {
-        gGL.getTexUnit(gGL.getCurrentTexUnitIndex())->setTextureFilteringOption(option);
+        gGL.flush();
+        LLTexUnit::applyFilteringOption(mTexName, getTarget(), option, mHasMipMaps);
         mTexOptionsDirty = false;
         stop_glerror();
     }
