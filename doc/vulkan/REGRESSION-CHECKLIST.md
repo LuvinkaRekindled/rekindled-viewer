@@ -27,3 +27,16 @@ Items 2-6 and 8-12 passed. Items 1 (snapshot reflections and DLSS) and 7 (black 
 - **4 Upload preview: pass for the image preview.** Build > Upload > Image with `burst_0.png` shows the image correctly (1024x512 uploaded size). Cancelled, nothing uploaded. Separate observation, not part of this item: the same dialog's "Preview image as" list offers Hair / Female Head / Female Upper Body / ... / Sculpted Prim; choosing Female Upper Body left the preview pane empty (no error in the log). Whether that worked before F1 is unknown (no baseline run); Adam's view is that this dialog has no 3D/body preview, so it was not pursued. A mesh upload preview was not tested (no file).
 - **5 Media: pass.** Content > Search > Web loads search.secondlife.com in the floater (page draws, no black rectangle) and scrolls with the wheel.
 - Side notes: the viewer throttles to about 8 fps while it is not the foreground window (frame pacing p50 122 ms, back to 38 ms when focused): not a regression. An unrelated avatar IM arrived during the run and was left unanswered.
+
+## Added after Foundation F (2026-10-20): the paths F3.4-F5 touched
+Run `<work>\run-viewer-guardcheck.bat` (the guard checks and `LL_VK_FORMAT_VERIFY=1` on), then grep `Firestorm.log` for `WARNING` lines of `PassCheck`, `StateGuard`, `MatrixGuard`, `DepthRO` and for `FormatVerify` lines with `store=None` on `image2D` / `setManualImage` (a dropped upload). Each item names what to look at.
+13. **Uploads and previews**: upload an image and a texture with an alpha channel (preview floater: colours, not swapped), an animation or mesh upload preview, the object texture picker (thumbnails).
+14. **Snapshots**: colour, depth, depth 24 bit (if enabled), a 360 / cube snapshot, an HUD-less snapshot, a snapshot larger than the window.
+15. **Appearance bakes**: change clothes, wait for the bake (the avatar's own baked textures: alpha masks, tattoos), the morph slider preview (`LLTexLayer` readback).
+16. **Media**: a web media prim and the login page (BGRA frames, sub rectangle updates), a video if one is available.
+17. **Probes and mirrors**: walk around a reflective scene, a mirror, the hero probe (R11G11B10F), water reflections; look for a cube face that does not update.
+18. **glTF**: a glTF material / mesh with a sampler that is not repeat / linear (wrap and filter come from the file).
+19. **Minimap and fonts**: object layer dots, parcel layer, a long chat line in a rarely used glyph set (font bitmap pages update with sub rectangles).
+20. **Terrain paint and dynamic textures**: paint terrain (framebuffer sub image copy), the avatar impostor, a texture preview of a baked texture.
+21. **Texture compression** (Preferences > Graphics > Advanced > Compress textures, restart): one session with it on (the generic compressed storage path).
+22. **Sim change**: teleport between a busy sim and a quiet one twice; note the frame time after each (open: the cumulative CPU cost, see `POST-F-REVIEW.md`).

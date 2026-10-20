@@ -38,7 +38,6 @@
 
 #include "llviewerdisplay.h"
 #include "llgpuzonetimer.h"
-#include "llvkprobe.h"
 #include "llvkbridge.h"
 
 #include "fsyspath.h"
@@ -547,13 +546,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLVkBridge::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
     }
 
-    // <FS> Vulkan bring-up probe (does nothing unless built with USE_VULKAN and FSVulkanProbe is on)
-    {
-        static LLCachedControl<bool> vulkan_probe(gSavedSettings, "FSVulkanProbe", false);
-        LLVkProbe::setEnabled(vulkan_probe);
-        LLVkProbe::frame();
-    }
-    // </FS>
 
     LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Render");
     LL_PROFILE_GPU_ZONE("Render");

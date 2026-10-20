@@ -1,4 +1,4 @@
-# F3: the viewer's pass code onto the typed API (plan, 2026-10-19)
+# F3: the viewer's pass code onto the typed API (plan, 2026-10-19; **finished 2026-10-20**: F3.0-F3.6g, the status sections are in F3-2 ... F3-6 design docs; renames since then: see POST-F-REVIEW.md)
 
 Part of `PLAN-gpu-scene.md` (Foundation F), after F2.7 (`F2-draw-records.md`). F2 made the **stream and the worker** typed: a draw is one record (program, vertex binding, texture ids, uniform ranges), state is a block, resources are ids. What is still GL-shaped is the **vocabulary the viewer's pass code speaks** and a few front-end mechanisms behind it. F3 moves that, pass family by pass family. Counts below are from the code today (2026-10-19).
 

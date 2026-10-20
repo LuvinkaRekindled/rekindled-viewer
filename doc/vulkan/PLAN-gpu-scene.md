@@ -33,9 +33,9 @@ Measured surface (calls per file; the whole of it is in `llrender`, only 40-odd 
 - **F0 inventory (read-only):** every GL-shaped call site and every reader of GL names (the 40 outside `llrender`), the uniform class table for all 209 programs, the list of per-draw values read by the pull shaders and by the alpha shaders. Output: the table that S0 and the `Materials` layout need.
 - **F1 handles + context + state blocks** behind the existing class APIs, producing the typed records next to the old stream (both can run; verify mode compares draw counts and state ids).
 - **F2 executor for typed records** (replaces `on_gl*` for draws, state, targets, textures, buffers); programs/uniform classes; resource lifetime commands.
-- **F3 move the world passes over** (sky, terrain, objects, avatars, water, post, DLSS) pass by pass, comparing pictures with the old path (kept until F5).
-- **F4 readbacks, queries, snapshots, media textures** natively.
-- **F5 delete** `llvkgl*`, `llvkasync*`, the GL parts of `llvkmirror*`, `gen_llvkgl.py`, the GL stubs (about 10k lines). Gate: no GL-shaped code left, same pictures, fps not lower.
+- **F3 move the world passes over** (**DONE 2026-10-20**: F3.0-F3.6g, see `F3-plan.md`) (sky, terrain, objects, avatars, water, post, DLSS) pass by pass, comparing pictures with the old path (kept until F5).
+- **F4 readbacks, queries, snapshots, media textures** natively. **DONE 2026-10-20** (queries / readbacks F1.6; typed pixel data F3.6e; pixel store as values and copy / read sources as values F4.1 / F4.2; media protocol numbers kept as an external protocol: `F4-readbacks-design.md`).
+- **F5 delete** `llvkgl*`, `llvkasync*`, the GL parts of `llvkmirror*`, `gen_llvkgl.py`, the GL stubs (about 10k lines). Gate: no GL-shaped code left, same pictures, fps not lower. **DONE 2026-10-20 in a different shape** (`F5-delete-design.md`, `POST-F-REVIEW.md`): those files were the typed executor by then (0 GL tokens since F2) and stay, renamed (`llvkworker`, `llvkbridge`, `llvkasync`); deleted: the GL header, extension pointers, GL error helpers, the GL-era benchmark / mirror windows / verify paths; the viewer code names no GL symbol (whole-tree gate 45 = GLOD + non-Windows window code).
 Because the viewer keeps running on the old path until F3 passes are moved one by one, this is not the "broken viewer for weeks" big-bang of `PLAN-n1-native-backend.md`; it keeps that plan's design and its checkpoints, with the old path as the reference.
 
 ## Architecture
