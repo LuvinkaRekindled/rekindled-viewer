@@ -239,7 +239,7 @@ bool LLVisualParamHint::render()
 
     gUIProgram.bind();
 
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     //LLGLState::verify(true);
     mBackgroundp->draw(0, 0, mFullWidth, mFullHeight);
 
@@ -333,7 +333,7 @@ void LLVisualParamHint::draw(F32 alpha)
 
     gRender.color4f(1.f, 1.f, 1.f, alpha);
 
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gRender.begin(LLRender::TRIANGLES);
     {
         gRender.texCoord2i(0, 1);

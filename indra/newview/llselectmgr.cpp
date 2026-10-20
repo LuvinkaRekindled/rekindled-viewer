@@ -6811,7 +6811,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
     }
 
     gRender.getTexUnit(0)->bind(mSilhouetteImagep);
-    LLGLSPipelineSelection gls_select;
+    LLRenderPresetPipelineSelection gls_select;
     LLRenderState::BlendScope blend(true);
     LLRenderState::DepthScope gls_depth(true, false);
 
@@ -7041,7 +7041,6 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gRender.popUIMatrix();
-        stop_glerror();
     }
 
     gRender.getTexUnit(0)->bindWhite();

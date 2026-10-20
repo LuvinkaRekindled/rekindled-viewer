@@ -666,7 +666,7 @@ void LLViewerShaderMgr::setShaders()
         LLError::setDefaultLevel(LLError::LEVEL_DEBUG);
         loadBasicShaders();
         LLError::setDefaultLevel(lvl);
-        gDeviceCaps.printGLInfoString();
+        gDeviceCaps.printDeviceInfoString();
         LL_ERRS() << "Unable to load basic shader " << shader_name << ", verify graphics driver installed and current." << LL_ENDL;
         reentrance = false; // For hygiene only, re-try probably helps nothing
         return;

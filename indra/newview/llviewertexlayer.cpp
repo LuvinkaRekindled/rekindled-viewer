@@ -94,9 +94,9 @@ S8 LLViewerTexLayerSetBuffer::getType() const
 }
 
 //virtual
-void LLViewerTexLayerSetBuffer::restoreGLTexture()
+void LLViewerTexLayerSetBuffer::restoreImageTexture()
 {
-    LLViewerDynamicTexture::restoreGLTexture() ;
+    LLViewerDynamicTexture::restoreImageTexture() ;
 }
 
 //virtual
@@ -624,10 +624,9 @@ void LLViewerTexLayerSetBuffer::doUpload(LLRenderTarget* bound_target)
     // Get the COLOR information from our texture
     U8* baked_color_data = new U8[ mFullWidth * mFullHeight * 4 ];
     gRender.readPixels(mOrigin.mX, mOrigin.mY, mFullWidth, mFullHeight, PixelFormat::RGBA, ComponentType::U8, baked_color_data );
-    stop_glerror();
 
     // Get the MASK information from our texture
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     LLPointer<LLImageRaw> baked_mask_image = new LLImageRaw(mFullWidth, mFullHeight, 1 );
     U8* baked_mask_data = baked_mask_image->getData();
     layer_set->gatherMorphMaskAlpha(baked_mask_data,

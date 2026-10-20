@@ -250,7 +250,7 @@ public:
     void        markMoved(LLDrawable *drawablep, bool damped_motion = false);
     void        markShift(LLDrawable *drawablep);
     void        markTextured(LLDrawable *drawablep);
-    void        markGLRebuild(LLRenderUpdate* glu);
+    void        markRenderRebuild(LLRenderUpdate* glu);
     void        markRebuild(LLSpatialGroup* group);
     void        markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags flag = LLDrawable::REBUILD_ALL);
     void        markPartitionMove(LLDrawable* drawablep);

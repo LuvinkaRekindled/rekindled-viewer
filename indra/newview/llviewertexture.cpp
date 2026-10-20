@@ -460,10 +460,9 @@ void LLViewerTextureManager::init()
 
 void LLViewerTextureManager::cleanup()
 {
-    stop_glerror();
 
     delete gTextureManagerBridgep;
-    LLImageTex::sDefaultGLTexture = NULL;
+    LLImageTex::sDefaultImageTexture = NULL;
     LLViewerTexture::sNullImagep = NULL;
     LLViewerTexture::sBlackImagep = NULL;
     LLViewerTexture::sCheckerBoardImagep = NULL;
@@ -486,7 +485,7 @@ void LLViewerTextureManager::cleanup()
 // static
 void LLViewerTexture::initClass()
 {
-    LLImageTex::sDefaultGLTexture = LLViewerFetchedTexture::sDefaultImagep->getImageTexture();
+    LLImageTex::sDefaultImageTexture = LLViewerFetchedTexture::sDefaultImagep->getImageTexture();
 
     if (sInvisiprimTexture1.isNull())
     {
@@ -879,7 +878,6 @@ bool LLViewerTexture::bindDefaultImage(S32 stage)
     {
         LL_WARNS() << "LLViewerTexture::bindDefaultImage failed." << LL_ENDL;
     }
-    stop_glerror();
 
     LLTexturePipelineTester* tester = (LLTexturePipelineTester*)LLMetricPerformanceTesterBasic::getTester(sTesterName);
     if (tester)
@@ -923,7 +921,7 @@ void LLViewerTexture::addTextureStats(F32 virtual_size, bool needs_gltexture) co
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     if(needs_gltexture)
     {
-        mNeedsGLTexture = true;
+        mNeedsImageTexture = true;
     }
 
     virtual_size = llmin(virtual_size, LLViewerFetchedTexture::sMaxVirtualSize);
@@ -1397,7 +1395,7 @@ void LLViewerFetchedTexture::setForSculpt()
 
 bool LLViewerFetchedTexture::isForSculptOnly() const
 {
-    return mForSculpt && !mNeedsGLTexture;
+    return mForSculpt && !mNeedsImageTexture;
 }
 
 bool LLViewerFetchedTexture::isDeleted()

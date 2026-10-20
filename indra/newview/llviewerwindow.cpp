@@ -2188,7 +2188,7 @@ std::string LLViewerWindow::getLastSnapshotDir()
     return sSnapshotDir;
 }
 
-void LLViewerWindow::initGLDefaults()
+void LLViewerWindow::initRenderDefaults()
 {
     // RN: Need this for translation and stretch manip.
     gBox.prerender();
@@ -2648,31 +2648,26 @@ void LLViewerWindow::shutdownViews()
     gHUDView = NULL;
 }
 
-void LLViewerWindow::shutdownGL()
+void LLViewerWindow::shutdownRenderDevice()
 {
     //--------------------------------------------------------
     // Shutdown GL cleanly.  Order is very important here.
     //--------------------------------------------------------
     LLFontGL::destroyDefaultFonts();
     SUBSYSTEM_CLEANUP(LLFontManager);
-    stop_glerror();
 
     gSky.cleanup();
-    stop_glerror();
 
     LL_INFOS() << "Cleaning up pipeline" << LL_ENDL;
     gPipeline.cleanup();
-    stop_glerror();
 
     //MUST clean up pipeline before cleaning up wearables
     LL_INFOS() << "Cleaning up wearables" << LL_ENDL;
     LLWearableList::instance().cleanup() ;
 
     gTextureList.shutdown();
-    stop_glerror();
 
     gBumpImageList.shutdown();
-    stop_glerror();
 
     LLWorldMapView::cleanupTextures();
 
@@ -2686,7 +2681,6 @@ void LLViewerWindow::shutdownGL()
 
     LL_INFOS() << "Stopping GL during shutdown" << LL_ENDL;
     stopGL();
-    stop_glerror();
 
     gRender.shutdown();
 
@@ -2695,7 +2689,7 @@ void LLViewerWindow::shutdownGL()
     LL_INFOS() << "LLVertexBuffer cleaned." << LL_ENDL ;
 }
 
-// shutdownViews() and shutdownGL() need to be called first
+// shutdownViews() and shutdownRenderDevice() need to be called first
 LLViewerWindow::~LLViewerWindow()
 {
     LL_INFOS() << "Destroying Window" << LL_ENDL;
@@ -2969,7 +2963,6 @@ void LLViewerWindow::draw()
 //#if LL_DEBUG
     LLView::sIsDrawing = true;
 //#endif
-    stop_glerror();
 
     LLUI::setLineWidth(1.f);
 
@@ -3139,7 +3132,6 @@ void LLViewerWindow::draw()
         if( fsShowMouselookInstructions && (gAgentCamera.cameraMouselook() || LLFloaterCamera::inFreeCameraMode()) )
         {
             drawMouselookInstructions();
-            stop_glerror();
         }
 
         // Draw all nested UI views.
@@ -5113,7 +5105,7 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
 
 
 // Draws the selection outlines for the currently selected objects
-// Must be called after displayObjects is called, which sets the mGLName parameter
+// Must be called after displayObjects is called, which sets the mTextureHandle parameter
 // NOTE: This function gets called 3 times:
 //  render_ui_3d:           false, false, true
 //  render_hud_elements:    false, false, false
@@ -5150,7 +5142,6 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
     {
         LLSelectMgr::getInstance()->renderSilhouettes(for_hud);
 
-        stop_glerror();
 
         // <FS:Beq> Additions to display/tools in edit mode
         if (LLToolMgr::getInstance()->inEdit() && selection->getSelectType() != SELECT_TYPE_HUD)
@@ -5339,7 +5330,6 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
             LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
             LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-            stop_glerror();
         }
     }
 }
@@ -6488,7 +6478,6 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                 }
             }
             output_buffer_offset_x += subimage_x_offset;
-            stop_glerror();
         }
         output_buffer_offset_y += subimage_y_offset;
     }
@@ -6646,7 +6635,6 @@ bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_
         PixelFormat::RGB, ComponentType::U8,
         raw->getData()
     );
-    stop_glerror();
 
     gDisplaySwapBuffers = false;
     gDepthDirty = true;
@@ -7115,24 +7103,18 @@ void LLViewerWindow::stopGL()
         LLAppViewer::getTextureFetch()->pause();
 
         gSky.destroyResources();
-        stop_glerror();
 
         LLManipTranslate::destroyResources() ;
-        stop_glerror();
 
         gBumpImageList.destroyResources();
-        stop_glerror();
 
         LLFontGL::destroyAllGL();
-        stop_glerror();
 
         LLVOAvatar::destroyResources();
-        stop_glerror();
 
         LLVOPartGroup::destroyResources();
 
         LLViewerDynamicTexture::destroyResources();
-        stop_glerror();
 
         if (gPipeline.isInit())
         {
@@ -7147,10 +7129,8 @@ void LLViewerWindow::stopGL()
         }
 
         gTextureList.destroyResources();
-        stop_glerror();
 
         gDeviceCaps.mIsDisabled = true;
-        stop_glerror();
 
         //unload shader's
         while (LLShaderProgram::sInstances.size())
@@ -7180,7 +7160,7 @@ void LLViewerWindow::restoreResources(const std::string& progress_message)
         LL_INFOS() << "Restoring GL..." << LL_ENDL;
         gDeviceCaps.mIsDisabled = false;
 
-        initGLDefaults();
+        initRenderDefaults();
 
         // for future support of non-square pixels, and fonts that are properly stretched
         //LLFontGL::destroyDefaultFonts();
@@ -7205,7 +7185,7 @@ void LLViewerWindow::restoreResources(const std::string& progress_message)
 
         if (!progress_message.empty())
         {
-            gRestoreGLTimer.reset();
+            gRestoreResourcesTimer.reset();
             gRestoreResources = true;
             setShowProgress(true,true);
             setProgressString(progress_message);

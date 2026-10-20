@@ -588,11 +588,11 @@ private:
 
 extern F32 gRenderModelView[16];
 extern F32 gRenderLastModelView[16];
-extern F32 gGLLastProjection[16];
+extern F32 gRenderLastProjection[16];
 extern F32 gRenderProjection[16];
 extern S32 gRenderViewport[4];
-extern glm::mat4 gGLDeltaModelView;
-extern glm::mat4 gGLInverseDeltaModelView;
+extern glm::mat4 gRenderDeltaModelView;
+extern glm::mat4 gRenderInverseDeltaModelView;
 
 extern thread_local LLRender gRender;
 

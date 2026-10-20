@@ -4343,7 +4343,7 @@ bool LLModelPreview::render()
     S32 width = getWidth();
     S32 height = getHeight();
 
-    LLGLSUIDefault def;
+    LLRenderPresetUIDefault def;
     LLRenderState::BlendScope no_blend(false);
     LLRenderState::CullScope cull(true);
     LLRenderState::DepthScope depth(false); // SL-12781 disable z-buffer to render background color
@@ -4568,7 +4568,6 @@ bool LLModelPreview::render()
 
     LLViewerCamera::getInstance()->setPerspective(false, mOrigin.mX, mOrigin.mY, width, height, false, z_near, z_far);
 
-    stop_glerror();
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     gRender.color4fv(edge_col().mV); // <FS:Beq/> restore changes removed by the lab

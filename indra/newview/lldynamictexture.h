@@ -74,7 +74,7 @@ public:
     virtual bool render();
     virtual void postRender(bool success);
 
-    virtual void restoreGLTexture() {}
+    virtual void restoreImageTexture() {}
     virtual void destroyImageTexture() {}
 
     static bool updateAllInstances();

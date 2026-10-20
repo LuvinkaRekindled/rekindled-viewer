@@ -63,14 +63,12 @@ bool ui_point_in_rect(S32 x, S32 y, S32 left, S32 top, S32 right, S32 bottom)
 // orthographic projection, etc.
 void gl_state_for_2d(S32 width, S32 height)
 {
-    stop_glerror();
     F32 window_width = (F32) width;//gViewerWindow->getWindowWidth();
     F32 window_height = (F32) height;//gViewerWindow->getWindowHeight();
 
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, llmax(window_width, 1.f), 0.0f, llmax(window_height,1.f), -1.0f, 1.0f);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-    stop_glerror();
 }
 
 
@@ -162,7 +160,6 @@ void gl_rect_2d( const LLRect& rect, const LLColor4& color, bool filled )
 // and along the bottom it has height "lines".
 void gl_drop_shadow(S32 left, S32 top, S32 right, S32 bottom, const LLColor4 &start_color, S32 lines)
 {
-    stop_glerror();
     gRender.getTexUnit(0)->bindWhite();
 
     // HACK: Overlap with the rectangle by a single pixel.
@@ -239,7 +236,6 @@ void gl_drop_shadow(S32 left, S32 top, S32 right, S32 bottom, const LLColor4 &st
     gRender.vertex2i(right, top);
 
     gRender.end();
-    stop_glerror();
 }
 
 void gl_line_2d(S32 x1, S32 y1, S32 x2, S32 y2 )
@@ -361,7 +357,6 @@ void gl_draw_scaled_image_with_border(S32 x, S32 y, S32 border_width, S32 border
 
 void gl_draw_scaled_image_with_border(S32 x, S32 y, S32 width, S32 height, LLTexture* image, const LLColor4& color, bool solid_color, const LLRectf& uv_outer_rect, const LLRectf& center_rect, bool scale_inner)
 {
-    stop_glerror();
 
     if (NULL == image)
     {

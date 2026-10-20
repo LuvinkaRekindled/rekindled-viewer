@@ -264,7 +264,7 @@ void LLHUDEffectBeam::render()
         return;
     }
 
-    LLGLSPipelineAlpha gls_pipeline_alpha;
+    LLRenderPresetPipelineAlpha gls_pipeline_alpha;
     gRender.getTexUnit(0)->bindWhite();
 
 

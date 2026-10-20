@@ -204,12 +204,10 @@ void LLViewerJointMesh::uploadJointMatrices()
 {
     F32 mat[45*4];
     computeJointPalette(mat, true);
-        stop_glerror();
         if (LLShaderProgram::sCurBoundShaderPtr)
         {
             LLShaderProgram::sCurBoundShaderPtr->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, mat);
         }
-        stop_glerror();
 }
 
 static bool rt_body_log_wanted()
@@ -498,7 +496,6 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
 
     S32 diffuse_channel = LLDrawPoolAvatar::sDiffuseChannel;
 
-    stop_glerror();
 
     //----------------------------------------------------------------
     // setup current color
@@ -508,7 +505,6 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     else
         gRender.diffuseColor4fv(mColor.mV);
 
-    stop_glerror();
 
 
     //----------------------------------------------------------------

@@ -310,7 +310,7 @@ void LLViewerDynamicTexture::restoreResources()
              iter != LLViewerDynamicTexture::sInstances[order].end(); ++iter)
         {
             LLViewerDynamicTexture *dynamicTexture = *iter;
-            dynamicTexture->restoreGLTexture() ;
+            dynamicTexture->restoreImageTexture() ;
         }
     }
 }

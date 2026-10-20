@@ -72,7 +72,7 @@
 
 
 bool gDebugSession = false;
-bool gDebugGLSession = false;
+bool gDebugRenderSession = false;
 bool gClothRipple = false;
 bool gHeadlessClient = false;
 bool gNonInteractive = false;
@@ -162,9 +162,9 @@ LLDeviceCaps::LLDeviceCaps() :
 {
 }
 
-// <FS> there is no OpenGL context at all. The strings the viewer reads with glGetString are the ones made from the Vulkan device in initGLNoGL.
+// <FS> there is no OpenGL context at all. The strings the viewer reads with glGetString are the ones made from the Vulkan device in initFromDevice.
 
-static std::string sNoGLVendor, sNoGLRenderer, sNoGLVersion, sNoGLGlsl, sNoGLExtensions;
+static std::string sDeviceVendor, sDeviceRenderer, sDeviceVersion, sDeviceGlsl, sDeviceExtensions;
 
 // F3.6g: the capability strings the viewer reports (F3.6: typed, no GL enum numbers)
 enum class InfoString : U8 { Vendor, Renderer, Version, ShadingLanguage, Extensions };
@@ -173,11 +173,11 @@ static const char* gl_info_string(InfoString which)
 {
     switch (which)
     {
-    case InfoString::Vendor: return sNoGLVendor.c_str();
-    case InfoString::Renderer: return sNoGLRenderer.c_str();
-    case InfoString::Version: return sNoGLVersion.c_str();
-    case InfoString::ShadingLanguage: return sNoGLGlsl.c_str();
-    case InfoString::Extensions: return sNoGLExtensions.c_str();
+    case InfoString::Vendor: return sDeviceVendor.c_str();
+    case InfoString::Renderer: return sDeviceRenderer.c_str();
+    case InfoString::Version: return sDeviceVersion.c_str();
+    case InfoString::ShadingLanguage: return sDeviceGlsl.c_str();
+    case InfoString::Extensions: return sDeviceExtensions.c_str();
     default: return "";
     }
 }
@@ -186,14 +186,14 @@ static const char* gl_info_string(InfoString which)
 // Global initialization for GL
 //---------------------------------------------------------------------
 // return false if unable (or unwilling due to old drivers) to init GL
-bool LLDeviceCaps::initGL()
+bool LLDeviceCaps::initRenderDevice()
 {
     LL_INFOS("RenderInit") << "Initializing the graphics device (Vulkan, no OpenGL)" << LL_ENDL;
     if (mInited)
     {
         LL_ERRS("RenderInit") << "Calling init on LLDeviceCaps after already initialized!" << LL_ENDL;
     }
-    return initGLNoGL();
+    return initFromDevice();
 }
 
 void LLDeviceCaps::getGLInfo(LLSD& info)
@@ -213,7 +213,7 @@ void LLDeviceCaps::getGLInfo(LLSD& info)
     }
 
 #if !LL_MESA_HEADLESS
-    std::string all_exts = sNoGLExtensions;
+    std::string all_exts = sDeviceExtensions;
     boost::char_separator<char> sep(" ");
     boost::tokenizer<boost::char_separator<char> > tok(all_exts, sep);
     for(boost::tokenizer<boost::char_separator<char> >::iterator i = tok.begin(); i != tok.end(); ++i)
@@ -241,7 +241,7 @@ std::string LLDeviceCaps::getGLInfoString()
     }
 
 #if !LL_MESA_HEADLESS
-    std::string all_exts= sNoGLExtensions;
+    std::string all_exts= sDeviceExtensions;
     LLStringUtil::replaceChar(all_exts, ' ', '\n');
     info_str += std::string("GL_EXTENSIONS:\n") + all_exts + std::string("\n");
 #endif
@@ -249,7 +249,7 @@ std::string LLDeviceCaps::getGLInfoString()
     return info_str;
 }
 
-void LLDeviceCaps::printGLInfoString()
+void LLDeviceCaps::printDeviceInfoString()
 {
     if (gHeadlessClient)
     {
@@ -265,7 +265,7 @@ void LLDeviceCaps::printGLInfoString()
     }
 
 #if !LL_MESA_HEADLESS
-    std::string all_exts= sNoGLExtensions;
+    std::string all_exts= sDeviceExtensions;
     LLStringUtil::replaceChar(all_exts, ' ', '\n');
     LL_DEBUGS("RenderInit") << "GL_EXTENSIONS:\n" << all_exts << LL_ENDL;
 #endif
@@ -313,7 +313,7 @@ void LLDeviceCaps::asLLSD(LLSD& info)
     info["gl_renderer"] = mDeviceString;
 }
 
-void LLDeviceCaps::shutdownGL()
+void LLDeviceCaps::shutdownRenderDevice()
 {
     if (mInited)
     {
@@ -326,8 +326,8 @@ void LLDeviceCaps::shutdownGL()
 #include "llvkstate.h"
 #endif
 
-// <FS> LL_VK_NOGL start-up: what initGL and initExtensions work out from a GL context, worked out from the Vulkan device instead
-bool LLDeviceCaps::initGLNoGL()
+// <FS> LL_VK_NOGL start-up: what initRenderDevice and initExtensions work out from a GL context, worked out from the Vulkan device instead
+bool LLDeviceCaps::initFromDevice()
 {
     LL_INFOS("RenderInit") << "Initializing without OpenGL (LL_VK_NOGL): the renderer is Vulkan only" << LL_ENDL;
 
@@ -339,11 +339,11 @@ bool LLDeviceCaps::initGLNoGL()
     }
     const std::string& vendor = dev.mVendor;
     const std::string& renderer = dev.mRenderer;
-    sNoGLVendor = vendor;
-    sNoGLRenderer = renderer;
-    sNoGLVersion = dev.mVersion;
-    sNoGLGlsl = "4.60";
-    sNoGLExtensions = "GL_EXT_texture_filter_anisotropic GL_ARB_texture_cube_map_array GL_ARB_buffer_storage GL_ARB_multi_draw_indirect";
+    sDeviceVendor = vendor;
+    sDeviceRenderer = renderer;
+    sDeviceVersion = dev.mVersion;
+    sDeviceGlsl = "4.60";
+    sDeviceExtensions = "GL_EXT_texture_filter_anisotropic GL_ARB_texture_cube_map_array GL_ARB_buffer_storage GL_ARB_multi_draw_indirect";
 
     mVendorString = vendor;
     LLStringUtil::toUpper(mVendorString);
@@ -407,9 +407,9 @@ bool LLDeviceCaps::initGLNoGL()
     mRayTracingEnabled = dev.mRayTracingEnabled;
     mHasRayReconstruction = dev.mRayReconstruction;
 
-    LL_INFOS("RenderInit") << "GL_VENDOR:     " << sNoGLVendor << LL_ENDL;
-    LL_INFOS("RenderInit") << "GL_RENDERER:   " << sNoGLRenderer << LL_ENDL;
-    LL_INFOS("RenderInit") << "GL_VERSION:    " << sNoGLVersion << " (reported to the viewer)" << LL_ENDL;
+    LL_INFOS("RenderInit") << "GL_VENDOR:     " << sDeviceVendor << LL_ENDL;
+    LL_INFOS("RenderInit") << "GL_RENDERER:   " << sDeviceRenderer << LL_ENDL;
+    LL_INFOS("RenderInit") << "GL_VERSION:    " << sDeviceVersion << " (reported to the viewer)" << LL_ENDL;
     LL_INFOS("RenderInit") << "VRAM:          " << mVRAM << " MB" << LL_ENDL;
     LL_INFOS("RenderInit") << "limits:        texture " << mTextureSizeLimit << ", units " << mNumTextureImageUnits << ", samples " << mMaxSamples << " (color texture " << mMaxColorTextureSamples
         << ", depth texture " << mMaxDepthTextureSamples << ", integer " << mMaxIntegerSamples << "), sample mask words " << mMaxSampleMaskWords << ", varying vectors " << mMaxVaryingVectors
@@ -428,22 +428,6 @@ void rotate_quat(LLQuaternion& rotation)
 }
 
 // <FS> native-vk: there is no OpenGL error state; these stay as the viewer's error-check points
-void flush_glerror()
-{
-}
-
-void log_glerror()
-{
-}
-
-void assert_glerror()
-{
-}
-
-void clear_glerror()
-{
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 
 void parse_gl_version( S32* major, S32* minor, S32* release, std::string* vendor_specific, std::string* version_string )
@@ -577,7 +561,7 @@ void parse_glsl_version(S32& major, S32& minor)
     LLStringUtil::convertToS32(minor_str, minor);
 }
 
-LLGLUserClipPlane::LLGLUserClipPlane(const LLPlane& p, const glm::mat4& modelview, const glm::mat4& projection, bool apply)
+LLRenderUserClipPlane::LLRenderUserClipPlane(const LLPlane& p, const glm::mat4& modelview, const glm::mat4& projection, bool apply)
 {
     mApply = apply;
 
@@ -591,7 +575,7 @@ LLGLUserClipPlane::LLGLUserClipPlane(const LLPlane& p, const glm::mat4& modelvie
     }
 }
 
-void LLGLUserClipPlane::disable()
+void LLRenderUserClipPlane::disable()
 {
     if (mApply)
     {
@@ -600,7 +584,7 @@ void LLGLUserClipPlane::disable()
     mApply = false;
 }
 
-void LLGLUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
+void LLRenderUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
 {
     const glm::mat4& P = mProjection;
     const glm::mat4& M = mModelview;
@@ -623,23 +607,23 @@ void LLGLUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
     gRenderObliqueProjectionInverse = LLMatrix4(glm::value_ptr(glm::transpose(glm::inverse(newP))));
 }
 
-LLGLUserClipPlane::~LLGLUserClipPlane()
+LLRenderUserClipPlane::~LLRenderUserClipPlane()
 {
     disable();
 }
 
-LLGLSquashToFarClip::LLGLSquashToFarClip()
+LLRenderSquashToFarClip::LLRenderSquashToFarClip()
 {
     glm::mat4 proj = get_current_projection();
     setProjectionMatrix(proj, 0);
 }
 
-LLGLSquashToFarClip::LLGLSquashToFarClip(const glm::mat4& P, U32 layer)
+LLRenderSquashToFarClip::LLRenderSquashToFarClip(const glm::mat4& P, U32 layer)
 {
     setProjectionMatrix(P, layer);
 }
 
-void LLGLSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
+void LLRenderSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
 {
     F32 depth = 0.99999f - 0.0001f * layer;
 
@@ -652,7 +636,7 @@ void LLGLSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
 
 }
 
-LLGLSquashToFarClip::~LLGLSquashToFarClip()
+LLRenderSquashToFarClip::~LLRenderSquashToFarClip()
 {
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
@@ -661,25 +645,25 @@ LLGLSquashToFarClip::~LLGLSquashToFarClip()
 
 
 
-LLGLSPipelineSkyBox::LLGLSPipelineSkyBox()
+LLRenderPresetPipelineSkyBox::LLRenderPresetPipelineSkyBox()
 : mCullFace(false)
 , mSquashClip()
 {
 }
 
-LLGLSPipelineSkyBox::~LLGLSPipelineSkyBox()
+LLRenderPresetPipelineSkyBox::~LLRenderPresetPipelineSkyBox()
 {
 }
 
-LLGLSPipelineDepthTestSkyBox::LLGLSPipelineDepthTestSkyBox(bool depth_test, bool depth_write)
-: LLGLSPipelineSkyBox()
+LLRenderPresetPipelineDepthTestSkyBox::LLRenderPresetPipelineDepthTestSkyBox(bool depth_test, bool depth_write)
+: LLRenderPresetPipelineSkyBox()
 , mDepth(depth_test, depth_write, LLRenderState::CompareOp::LessEqual)
 {
 
 }
 
-LLGLSPipelineBlendSkyBox::LLGLSPipelineBlendSkyBox(bool depth_test, bool depth_write)
-: LLGLSPipelineDepthTestSkyBox(depth_test, depth_write)
+LLRenderPresetPipelineBlendSkyBox::LLRenderPresetPipelineBlendSkyBox(bool depth_test, bool depth_write)
+: LLRenderPresetPipelineDepthTestSkyBox(depth_test, depth_write)
 , mBlend(true)
 {
     gRender.setSceneBlendType(LLRender::BT_ALPHA);

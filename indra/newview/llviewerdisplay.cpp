@@ -195,7 +195,7 @@ void display_startup()
     LLTexUnit::sWhiteTexture = LLViewerFetchedTexture::sWhiteImagep->getTexName();
     }
 
-    LLGLSDefault gls_default;
+    LLRenderPresetDefault gls_default;
 
     // Required for HTML update in login screen
     static S32 frame_count = 0;
@@ -212,7 +212,7 @@ void display_startup()
 
 
     gRender.clearBuffers(ClearBits::Depth | ClearBits::Color); // | ClearBits::Stencil);
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gPipeline.disableLights();
 
     if (gViewerWindow)
@@ -590,7 +590,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         for_snapshot = false;
     }
 
-    LLGLSDefault gls_default;
+    LLRenderPresetDefault gls_default;
     LLRenderState::DepthScope gls_depth(true, true, LLRenderState::CompareOp::LessEqual);
 
     LLVertexBuffer::unbind();
@@ -609,18 +609,14 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         // Clean up memory the pools may have allocated
         if (rebuild)
         {
-            stop_glerror();
             { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
-            stop_glerror();
         }
 
         // <FS:ND> FIRE-15789; Make sure there's not backlog for thousands and thousands of beam objects
         LLHUDObject::renderAllForTimer();
         // </FS:ND>
 
-        stop_glerror();
         gViewerWindow->returnEmptyPicks();
-        stop_glerror();
 
         // We still need to update the teleport progress (to get changes done
         // in TP states, else the sim does not get the messages signaling the
@@ -723,7 +719,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     //
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:TextureStats");
-    stop_glerror();
 
     LLImageTex::updateStats(gFrameTimeSeconds);
 
@@ -778,7 +773,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     if (gRestoreResources)
     {
         LLAppViewer::instance()->pingMainloopTimeout("Display:RestoreGL");
-        F32 percent_done = gRestoreGLTimer.getElapsedTimeF32() * 100.f / RESTORE_GL_TIME;
+        F32 percent_done = gRestoreResourcesTimer.getElapsedTimeF32() * 100.f / RESTORE_GL_TIME;
         if( percent_done > 100.f )
         {
             gViewerWindow->setShowProgress(false,false);
@@ -873,16 +868,13 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     //
     //
     LLAppViewer::instance()->pingMainloopTimeout("Display:RenderSetup");
-    stop_glerror();
 
     ///////////////////////////////////////
     //
     // Slam lighting parameters back to our defaults.
     // Note that these are not the same as GL defaults...
 
-    stop_glerror();
     gRender.setAmbientLightColor(LLColor4::white);
-    stop_glerror();
 
     /////////////////////////////////////
     //
@@ -931,9 +923,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             gPipeline.toggleRenderType(LLPipeline::RENDER_TYPE_HUD_PARTICLES);
         }
 
-        stop_glerror();
         { LL_CPU_ZONE("display: display_update_camera"); display_update_camera(); }
-        stop_glerror();
 
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Env Update");
@@ -946,7 +936,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("HUD Update");
             LLHUDManager::getInstance()->updateEffects();
             { LL_CPU_ZONE("display: HUD objects update"); LLHUDObject::updateAll(); }
-            stop_glerror();
         }
 
         {
@@ -961,12 +950,10 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 LL_CPU_ZONE("display: updateGeom");
                 gPipeline.updateGeom(max_geom_update_time);
             }
-            stop_glerror();
         }
 
         { LL_CPU_ZONE("display: updateResources"); gPipeline.updateResources(); }
 
-        stop_glerror();
 
         LLAppViewer::instance()->pingMainloopTimeout("Display:Cull");
 
@@ -993,7 +980,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             LL_CPU_ZONE("display: updateCull");
             gPipeline.updateCull(*LLViewerCamera::getInstance(), result);
         }
-        stop_glerror();
 
         // <FS> The sort of the main view runs before the shadow passes (and the impostors): what it builds (the render map, the rebuilt groups) does not depend on them, and the packet
         // builders of the deferred passes can start on the async pool while the main thread draws the shadows. The pool face lists, which the shadow passes reset and refill for
@@ -1139,7 +1125,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 LL_CPU_ZONE("display: stateSort");
                 gPipeline.stateSort(camera, result); // <FS:Ansariel> Factor out calls to getInstance
             }
-            stop_glerror();
 
             if (rebuild)
             {
@@ -1149,7 +1134,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 //
                 //
                 { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
-                stop_glerror();
             }
         }
 
@@ -1218,7 +1202,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         }
 // </FS:CR> Aurora Sim
 
-        stop_glerror();
 
         gRender.setColorMask(true, true);
 
@@ -1336,7 +1319,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:FrameStats");
 
-    stop_glerror();
 
     { LL_CPU_ZONE("display: display_stats"); display_stats(); }
 
@@ -1444,7 +1426,7 @@ void display_cube_face()
 
     bool rebuild = false;
 
-    LLGLSDefault gls_default;
+    LLRenderPresetDefault gls_default;
     LLRenderState::DepthScope gls_depth(true, true, LLRenderState::CompareOp::LessEqual);
 
     LLVertexBuffer::unbind();
@@ -1503,7 +1485,6 @@ void display_cube_face()
             //
             //
             { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
-            stop_glerror();
         }
     }
 
@@ -1791,8 +1772,8 @@ void render_ui(F32 zoom_factor, int subfield)
         { LL_CPU_ZONE("display: render_hud_attachments"); render_hud_attachments(); }
 
 
-        LLGLSDefault gls_default;
-        LLGLSUIDefault gls_ui;
+        LLRenderPresetDefault gls_default;
+        LLRenderPresetUIDefault gls_ui;
         {
             gPipeline.disableLights();
         }
@@ -1910,7 +1891,7 @@ void renderCoordinateAxes()
 
 void draw_axes()
 {
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bindWhite();
     // A vertical white line at origin
     LLVector3 v = gAgent.getPositionAgent();
@@ -1976,7 +1957,7 @@ static void drawChatRangeSpheres()
 void render_ui_3d()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
-    LLGLSPipeline gls_pipeline;
+    LLRenderPresetPipeline gls_pipeline;
 
     //////////////////////////////////////
     //
@@ -1993,7 +1974,6 @@ void render_ui_3d()
 
     // Debugging stuff goes before the UI.
 
-    stop_glerror();
 
     gUIProgram.bind();
     gRender.color4f(1.f, 1.f, 1.f, 1.f);
@@ -2028,7 +2008,6 @@ void render_ui_3d()
         LLHUDObject::renderAllForTimer();
     }
 
-    stop_glerror();
 }
 
 #if LL_WINDOWS
@@ -2234,7 +2213,7 @@ static void draw_widgets()
 void render_ui_2d()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
 
     /////////////////////////////////////////////////////////////
     //
@@ -2264,7 +2243,6 @@ void render_ui_2d()
         LLFontGL::sCurOrigin.mY -= ll_round((F32)gViewerWindow->getWindowHeightScaled() * (F32)pos_y / zoom_factor);
     }
 
-    stop_glerror();
 
     // render outline for HUD
     if (isAgentAvatarValid() && gAgentCamera.mHUDCurZoom < 0.98f)
@@ -2281,7 +2259,6 @@ void render_ui_2d()
         gl_rect_2d(-half_width, half_height, half_width, -half_height, false);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gUIProgram.unbind();
-        stop_glerror();
     }
 
 
@@ -2413,7 +2390,7 @@ void render_disconnected_background()
 
     if (gDisconnectedImagep)
     {
-        LLGLSUIDefault gls_ui;
+        LLRenderPresetUIDefault gls_ui;
         gViewerWindow->setup2DRender();
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         {

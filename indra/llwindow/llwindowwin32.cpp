@@ -999,7 +999,7 @@ void LLWindowWin32::close()
     if (gDeviceCaps.mInited)
     {
         LL_INFOS("Window") << "Cleaning up GL" << LL_ENDL;
-        gDeviceCaps.shutdownGL();
+        gDeviceCaps.shutdownRenderDevice();
     }
 
     // Restore gamma to the system values.
@@ -1209,7 +1209,7 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
     }
     mRefreshRate = current_refresh;
 
-    gDeviceCaps.shutdownGL();
+    gDeviceCaps.shutdownRenderDevice();
     if (fullscreen)
     {
         mFullscreen = true;
@@ -1360,7 +1360,7 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
     {
         // <FS> native-vk: no pixel format and no OpenGL context at all. Vulkan presents into this window.
         LLVkBridge::setMainWindow(mWindowHandle);
-        if (!gDeviceCaps.initGL())
+        if (!gDeviceCaps.initRenderDevice())
         {
             LLError::LLUserWarningMsg::show(mCallbacks->translateString("MBVideoDrvErr"), 8/*LAST_EXEC_GRAPHICS_INIT*/);
             close();

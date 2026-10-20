@@ -429,14 +429,13 @@ LLWindowSDL::LLWindowSDL(LLWindowCallbacks* callbacks,
     // Create the GL context and set it up for windowed or fullscreen, as appropriate.
     if(createContext(x, y, width, height, 32, fullscreen, enable_vsync))
     {
-        gDeviceCaps.initGL();
+        gDeviceCaps.initRenderDevice();
 
         //start with arrow cursor
         initCursors(useLegacyCursors); // <FS:LO> Legacy cursor setting from main program
         setCursor( UI_CURSOR_ARROW );
     }
 
-    stop_glerror();
 
     // Stash an object pointer for OSMessageBox()
     gWindowImplementation = this;
@@ -927,14 +926,13 @@ bool LLWindowSDL::switchContext(bool fullscreen, const LLCoordScreen &size, bool
     bool result = true;
 
     LL_INFOS() << "switchContext, fullscreen=" << fullscreen << LL_ENDL;
-    stop_glerror();
     if(needsRebuild)
     {
         destroyContext();
         result = createContext(0, 0, size.mX, size.mY, 0, fullscreen, enable_vsync);
         if (result)
         {
-            gDeviceCaps.initGL();
+            gDeviceCaps.initRenderDevice();
 
             //start with arrow cursor
             initCursors(mUseLegacyCursors); // <FS:LO> Legacy cursor setting from main program
@@ -942,7 +940,6 @@ bool LLWindowSDL::switchContext(bool fullscreen, const LLCoordScreen &size, bool
         }
     }
 
-    stop_glerror();
 
     return result;
 }
@@ -960,8 +957,8 @@ void LLWindowSDL::destroyContext()
 #endif // LL_X11
 
     // Clean up remaining GL state before blowing away window
-    LL_INFOS() << "shutdownGL begins" << LL_ENDL;
-    gDeviceCaps.shutdownGL();
+    LL_INFOS() << "shutdownRenderDevice begins" << LL_ENDL;
+    gDeviceCaps.shutdownRenderDevice();
     LL_INFOS() << "SDL_QuitSS/VID begins" << LL_ENDL;
     SDL_QuitSubSystem(SDL_INIT_VIDEO);  // *FIX: this might be risky...
 

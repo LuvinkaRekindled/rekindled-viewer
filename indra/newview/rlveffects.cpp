@@ -123,7 +123,7 @@ void RlvOverlayEffect::run(const LLVisualEffectParams*)
         m_pImage->setKnownDrawSize(nWidth, nHeight);
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLGLSUIDefault glsUI;
+        LLRenderPresetUIDefault glsUI;
         gViewerWindow->setup2DRender();
 
         const LLVector2& displayScale = gViewerWindow->getDisplayScale();

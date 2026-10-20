@@ -293,7 +293,7 @@ void LLHUDObject::updateAll()
 // static
 void LLHUDObject::renderAll()
 {
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
 
     gUIProgram.bind();
     gRender.color4f(1, 1, 1, 1);

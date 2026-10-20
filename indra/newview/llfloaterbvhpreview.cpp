@@ -1549,7 +1549,7 @@ bool    LLPreviewAnimation::render()
 
     gUIProgram.bind();
 
-    LLGLSUIDefault def;
+    LLRenderPresetUIDefault def;
     gRender.getTexUnit(0)->bindWhite();
     gRender.color4f(0.15f, 0.2f, 0.3f, 1.f);
 

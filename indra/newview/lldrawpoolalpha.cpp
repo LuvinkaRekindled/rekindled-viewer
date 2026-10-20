@@ -279,7 +279,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
 {
     gPipeline.enableLightsDynamic();
 
-    LLGLSPipelineAlpha gls_pipeline_alpha;
+    LLRenderPresetPipelineAlpha gls_pipeline_alpha;
 
     //enable writing to alpha for emissive effects
     gRender.setColorMask(true, true);
@@ -941,7 +941,6 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 
                     params.mVertexBuffer->setBuffer();
                     params.mVertexBuffer->drawRange(LLRender::TRIANGLES, params.mStart, params.mEnd, params.mCount, params.mOffset);
-                    stop_glerror();
 
                     if (reset_minimum_alpha)
                     {

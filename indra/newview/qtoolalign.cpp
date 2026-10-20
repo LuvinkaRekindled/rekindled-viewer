@@ -370,7 +370,7 @@ void QToolAlign::render()
         mBBox = get_selection_axis_aligned_bbox();
 
         // Draw bounding box
-        LLGLSUIDefault gls_ui;
+        LLRenderPresetUIDefault gls_ui;
         LLRenderState::BlendScope gl_blend(true);
         // F3.2: LLGLEnable(GL_ALPHA_TEST) had no effect on the render state block (never mapped); dropped
         LLRenderState::DepthScope gls_depth(false);

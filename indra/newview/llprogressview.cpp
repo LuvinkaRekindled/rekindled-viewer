@@ -286,7 +286,7 @@ void LLProgressView::drawStartTexture(F32 alpha)
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     if (gStartTexture)
     {
-        LLGLSUIDefault gls_ui;
+        LLRenderPresetUIDefault gls_ui;
         gRender.getTexUnit(0)->bind(gStartTexture.get());
         gRender.color4f(1.f, 1.f, 1.f, alpha);
         F32 image_aspect = (F32)gStartImageWidth / (F32)gStartImageHeight;

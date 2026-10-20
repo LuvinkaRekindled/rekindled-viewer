@@ -76,7 +76,7 @@ void LLBaseTexture::init()
 
     mTextureState = NO_DELETE ;
     mDontDiscard = false;
-    mNeedsGLTexture = false ;
+    mNeedsImageTexture = false ;
 }
 
 void LLBaseTexture::cleanup()

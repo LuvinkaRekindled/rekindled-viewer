@@ -120,7 +120,7 @@ void LLShaderProgram::initProfile()
 }
 
 
-struct LLGLSLShaderCompareTimeElapsed
+struct LLShaderProgramCompareTimeElapsed
 {
     bool operator()(const LLShaderProgram* const& lhs, const LLShaderProgram* const& rhs)
     {
@@ -136,7 +136,7 @@ void LLShaderProgram::finishProfile(boost::json::value& statsv)
     if (! statsv.is_null())
     {
         std::vector<LLShaderProgram*> sorted(sInstances.begin(), sInstances.end());
-        std::sort(sorted.begin(), sorted.end(), LLGLSLShaderCompareTimeElapsed());
+        std::sort(sorted.begin(), sorted.end(), LLShaderProgramCompareTimeElapsed());
 
         auto& stats = statsv.as_object();
         auto shadersit = stats.emplace("shaders", boost::json::array_kind).first;
@@ -362,7 +362,6 @@ void LLShaderProgram::unloadInternal()
     sInstances.erase(this);
     mirrorDestroy();
 
-    stop_glerror();
     mAttribute.clear();
     mTexture.clear();
     mUniform.clear();
@@ -382,7 +381,6 @@ void LLShaderProgram::unloadInternal()
         mSamplesQuery = 0;
     }
 
-    stop_glerror();
 }
 
 #if defined(LL_VULKAN)
@@ -1061,7 +1059,6 @@ bool LLShaderProgram::attachVertexObject(std::string object_path)
     if (LLShaderMgr::instance()->mVertexShaderObjects.count(object_path) > 0)
     {
         mAttachedObjects.push_back(LLShaderMgr::instance()->mVertexShaderObjects[object_path]);
-        stop_glerror();
         return true;
     }
     else
@@ -1079,7 +1076,6 @@ bool LLShaderProgram::attachFragmentObject(std::string object_path)
     if (LLShaderMgr::instance()->mFragmentShaderObjects.count(object_path) > 0)
     {
         mAttachedObjects.push_back(LLShaderMgr::instance()->mFragmentShaderObjects[object_path]);
-        stop_glerror();
         return true;
     }
     else
@@ -1097,7 +1093,6 @@ void LLShaderProgram::attachObject(U32 object)
     if (object != 0)
     {
         mAttachedObjects.push_back(object);
-        stop_glerror();
     }
     else
     {
@@ -2511,9 +2506,7 @@ void LLShaderProgram::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 
 
     if (location >= 0)
     {
-        stop_glerror();
         mirrorMatrix(location, 3, 3, transpose, count, v);
-        stop_glerror();
     }
 }
 
@@ -2525,9 +2518,7 @@ void LLShaderProgram::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 
 
     if (location >= 0)
     {
-        stop_glerror();
         mirrorMatrix(location, 4, 4, transpose, count, v);
-        stop_glerror();
     }
 }
 

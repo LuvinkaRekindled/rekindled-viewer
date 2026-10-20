@@ -49,7 +49,7 @@
 
 extern bool gDebugRender;
 extern bool gDebugSession;
-extern bool gDebugGLSession;
+extern bool gDebugRenderSession;
 extern llofstream gFailLog;
 
 #define LL_GL_ERRS LL_ERRS("RenderState")
@@ -68,9 +68,9 @@ class LLDeviceCaps
 public:
     LLDeviceCaps();
 
-    bool initGL();
-    bool initGLNoGL();     // <FS> LL_VK_NOGL: everything comes from the Vulkan device
-    void shutdownGL();
+    bool initRenderDevice();
+    bool initFromDevice();     // <FS> LL_VK_NOGL: everything comes from the Vulkan device
+    void shutdownRenderDevice();
 
 #if LL_WINDOWS
 #endif
@@ -142,7 +142,7 @@ public:
     U32 mVRAM; // VRAM in MB
     S32 mVRAMDetected; // <FS:Beq/> The amount detected/reported by the OS/Drivers. If different to mVRAM there is an override in place.
     std::string getGLInfoString();
-    void printGLInfoString();
+    void printDeviceInfoString();
     void getGLInfo(LLSD& info);
 
     void asLLSD(LLSD& info);
@@ -164,28 +164,6 @@ class LLMatrix4;
 
 void rotate_quat(LLQuaternion& rotation);
 
-void flush_glerror(); // Flush GL errors when we know we're handling them correctly.
-
-void log_glerror();
-void assert_glerror();
-
-void clear_glerror();
-
-
-# define stop_glerror() assert_glerror()
-# define llglassertok() assert_glerror()
-
-// stop_glerror is still needed on OS X but has performance implications
-// use macro below to conditionally add stop_glerror to non-release builds
-// on OS X
-#if LL_DARWIN && !LL_RELEASE_FOR_DOWNLOAD
-#define STOP_GLERROR stop_glerror()
-#else
-#define STOP_GLERROR
-#endif
-
-#define llglassertok_always() assert_glerror()
-
 ////////////////////////
 //
 // Note: U32's are GLEnum's...
@@ -206,12 +184,12 @@ void clear_glerror();
   Does not stack.
   Caches inverse of projection matrix used in gRenderObliqueProjectionInverse
 */
-class LLGLUserClipPlane
+class LLRenderUserClipPlane
 {
 public:
 
-    LLGLUserClipPlane(const LLPlane& plane, const glm::mat4& modelview, const glm::mat4& projection, bool apply = true);
-    ~LLGLUserClipPlane();
+    LLRenderUserClipPlane(const LLPlane& plane, const glm::mat4& modelview, const glm::mat4& projection, bool apply = true);
+    ~LLRenderUserClipPlane();
 
     void setPlane(F32 a, F32 b, F32 c, F32 d);
     void disable();
@@ -230,15 +208,15 @@ private:
   Saves/restores matrix mode around projection manipulation.
   Does not stack.
 */
-class LLGLSquashToFarClip
+class LLRenderSquashToFarClip
 {
 public:
-    LLGLSquashToFarClip();
-    LLGLSquashToFarClip(const glm::mat4& projection, U32 layer = 0);
+    LLRenderSquashToFarClip();
+    LLRenderSquashToFarClip(const glm::mat4& projection, U32 layer = 0);
 
     void setProjectionMatrix(glm::mat4 projection, U32 layer);
 
-    ~LLGLSquashToFarClip();
+    ~LLRenderSquashToFarClip();
 };
 
 /*

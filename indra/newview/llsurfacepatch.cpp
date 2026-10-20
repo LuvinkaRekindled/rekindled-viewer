@@ -1010,7 +1010,7 @@ bool LLSurfacePatch::updateTexture()
                 if (mVObjp)
                 {
                     mVObjp->dirtyGeom();
-                    gPipeline.markGLRebuild(mVObjp);
+                    gPipeline.markRenderRebuild(mVObjp);
                     return !mSTexUpdate;
                 }
             }

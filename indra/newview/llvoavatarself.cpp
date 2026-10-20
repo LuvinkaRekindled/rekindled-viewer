@@ -3479,7 +3479,6 @@ void LLVOAvatarSelf::deleteScratchTextures()
         ++it)
     {
         LLImageTex::deleteTextures(1, (U32 *)it->second );
-        stop_glerror();
     }
 
     if( sScratchTexBytes.value() )

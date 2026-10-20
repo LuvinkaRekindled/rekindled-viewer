@@ -491,7 +491,6 @@ void LLFloaterImagePreview::draw()
 
                 gRender.getTexUnit(0)->unbind(mImagep->getTarget()) ;
                 gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mImagep->getTexName());
-                stop_glerror();
 
                 gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
 
@@ -540,7 +539,6 @@ void LLFloaterImagePreview::draw()
 
             gRender.getTexUnit(0)->bindWhite();
 
-            stop_glerror();
         }
         else
         {
@@ -976,7 +974,7 @@ bool LLImagePreviewAvatar::render()
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
 
-    LLGLSUIDefault def;
+    LLRenderPresetUIDefault def;
     gRender.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
     gUIProgram.bind();
@@ -999,7 +997,6 @@ bool LLImagePreviewAvatar::render()
         LLVector3::z_axis,                                                                  // up
         target_pos + (mCameraOffset  * av_rot) );                                           // point of interest
 
-    stop_glerror();
 
     LLViewerCamera::getInstance()->setAspect((F32)mFullWidth / mFullHeight);
     LLViewerCamera::getInstance()->setView(LLViewerCamera::getInstance()->getDefaultFOV() / mCameraZoom);
@@ -1163,7 +1160,7 @@ void LLImagePreviewSculpted::setPreviewTarget(LLImageRaw* imagep, F32 distance)
 bool LLImagePreviewSculpted::render()
 {
     mNeedsUpdate = false;
-    LLGLSUIDefault def;
+    LLRenderPresetUIDefault def;
     LLRenderState::BlendScope no_blend(false);
     LLRenderState::CullScope cull(true);
     LLRenderState::DepthScope depth(true);
@@ -1198,7 +1195,6 @@ bool LLImagePreviewSculpted::render()
         LLVector3::z_axis,                                                                  // up
         target_pos + (mCameraOffset  * av_rot) );                                           // point of interest
 
-    stop_glerror();
 
     LLViewerCamera::getInstance()->setAspect((F32) mFullWidth / mFullHeight);
     LLViewerCamera::getInstance()->setView(LLViewerCamera::getInstance()->getDefaultFOV() / mCameraZoom);

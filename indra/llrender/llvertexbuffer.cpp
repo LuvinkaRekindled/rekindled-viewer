@@ -220,10 +220,10 @@ bool GLWorkQueue::isClosed()
 
 #include "llwindow.h"
 
-class LLGLWorkerThread : public LLThread
+class LLRenderWorkerThread : public LLThread
 {
 public:
-    LLGLWorkerThread(const std::string& name, GLWorkQueue* queue, LLWindow* window)
+    LLRenderWorkerThread(const std::string& name, GLWorkQueue* queue, LLWindow* window)
         : LLThread(name)
     {
         mWindow = window;
@@ -246,7 +246,7 @@ public:
 };
 
 
-static LLGLWorkerThread* sVBOThread[THREAD_COUNT];
+static LLRenderWorkerThread* sVBOThread[THREAD_COUNT];
 static GLWorkQueue* sQueue = nullptr;
 
 #endif
@@ -330,7 +330,6 @@ public:
     void allocate(BufferKind type, U32 size, U32& name, U8*& data) override
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
-        STOP_GLERROR;
         llassert(type == BufferKind::Vertex || type == BufferKind::Index);
         llassert(name == 0); // non zero name indicates a gl name that wasn't freed
         llassert(data == nullptr);  // non null data indicates a buffer that wasn't freed
@@ -343,7 +342,6 @@ public:
             // ON OS X, we don't allocate a VBO until the last possible moment
             // in unmapBuffer
             data = (U8*) ll_aligned_malloc_16(size);
-            STOP_GLERROR;
         }
     }
 
@@ -359,12 +357,10 @@ public:
         }
 
         mAllocated -= size;
-        STOP_GLERROR;
         if (name)
         {
             delete_buffers(1, &name);
         }
-        STOP_GLERROR;
     }
 };
 
@@ -376,7 +372,7 @@ public:
     struct Entry
     {
         U8* mData;
-        U32 mGLName;
+        U32 mTextureHandle;
         Time mAge;
     };
 
@@ -451,7 +447,7 @@ public:
 
             std::list<Entry>& entries = iter->second;
             Entry& entry = entries.back();
-            name = entry.mGLName;
+            name = entry.mTextureHandle;
             data = entry.mData;
 
             entries.pop_back();
@@ -533,7 +529,7 @@ public:
                     LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("vbo cache timeout");
                     auto& entry = entries.back();
                     ll_aligned_free_16(entry.mData);
-                    delete_buffers(1, &entry.mGLName);
+                    delete_buffers(1, &entry.mTextureHandle);
                     llassert(mReserved >= iter->first);
                     mReserved -= iter->first;
                     entries.pop_back();
@@ -569,7 +565,7 @@ public:
             for (auto& entry : entries.second)
             {
                 ll_aligned_free_16(entry.mData);
-                delete_buffers(1, &entry.mGLName);
+                delete_buffers(1, &entry.mTextureHandle);
             }
         }
 
@@ -578,7 +574,7 @@ public:
             for (auto& entry : entries.second)
             {
                 ll_aligned_free_16(entry.mData);
-                delete_buffers(1, &entry.mGLName);
+                delete_buffers(1, &entry.mTextureHandle);
             }
         }
 
@@ -749,7 +745,6 @@ void LLVertexBuffer::drawElements(U32 mode, const LLVector4a* pos, const LLVecto
     }
     // </FS:Ansariel>
 
-    STOP_GLERROR;
 
     gRender.syncMatrices();
 
@@ -921,7 +916,7 @@ void LLVertexBuffer::initClass(LLWindow* window)
 
     for (int i = 0; i < THREAD_COUNT; ++i)
     {
-        sVBOThread[i] = new LLGLWorkerThread("VBO Worker", sQueue, window);
+        sVBOThread[i] = new LLRenderWorkerThread("VBO Worker", sQueue, window);
         sVBOThread[i]->start();
     }
 #endif
@@ -1377,7 +1372,6 @@ void LLVertexBuffer::_mapBuffer()
 
 void LLVertexBuffer::_unmapBuffer()
 {
-    STOP_GLERROR;
     if (!mMapped)
     {
         return;
@@ -1618,7 +1612,6 @@ static inline void ll_attribIPointer(U32 index, S32 size, ComponentType type, S3
 void LLVertexBuffer::setBuffer()
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SET_BUFFER);
-    STOP_GLERROR;
 
     if (mMapped)
     {
@@ -1678,7 +1671,6 @@ void LLVertexBuffer::setBuffer()
 // virtual (default)
 void LLVertexBuffer::setupVertexBuffer()
 {
-    STOP_GLERROR;
     U8* base = nullptr;
 
     U32 data_mask = LLShaderProgram::sCurBoundShaderPtr->mAttributeMask;
@@ -1774,7 +1766,6 @@ void LLVertexBuffer::setupVertexBuffer()
         void* ptr = (void*)(base + mOffsets[TYPE_VERTEX]);
         ll_attribPointer(loc, 3, ComponentType::F32, false, LLVertexBuffer::sTypeSize[TYPE_VERTEX], ptr);
     }
-    STOP_GLERROR;
 }
 
 void LLVertexBuffer::setPositionData(const LLVector4a* data)

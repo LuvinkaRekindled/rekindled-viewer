@@ -1847,7 +1847,7 @@ void LLEnvironment::updateCloudScroll()
 }
 
 // static
-void LLEnvironment::updateGLVariablesForSettings(LLShaderUniforms* uniforms, const LLSettingsBase::ptr_t &psetting)
+void LLEnvironment::updateRenderVariablesForSettings(LLShaderUniforms* uniforms, const LLSettingsBase::ptr_t &psetting)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1879,7 +1879,7 @@ void LLEnvironment::updateSettingsUniforms()
 {
     if (mCurrentEnvironment->getWater())
     {
-        updateGLVariablesForSettings(mWaterUniforms, mCurrentEnvironment->getWater());
+        updateRenderVariablesForSettings(mWaterUniforms, mCurrentEnvironment->getWater());
     }
     else
     {
@@ -1887,7 +1887,7 @@ void LLEnvironment::updateSettingsUniforms()
     }
     if (mCurrentEnvironment->getSky())
     {
-        updateGLVariablesForSettings(mSkyUniforms, mCurrentEnvironment->getSky());
+        updateRenderVariablesForSettings(mSkyUniforms, mCurrentEnvironment->getSky());
     }
     else
     {

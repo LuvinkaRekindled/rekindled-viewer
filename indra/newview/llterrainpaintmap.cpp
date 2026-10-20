@@ -86,7 +86,6 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
         return false;
     }
     gRender.getTexUnit(0)->clear();
-    stop_glerror();
 
     RenderPassScope pass_91(scratch_target, RenderPass::Clear(0, 0, 0, 0));
 
@@ -270,7 +269,6 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
         LL_WARNS() << "Failed to copy framebuffer to paintmap" << LL_ENDL;
     }
     gRender.generateMipmap(tex.getImageTexture()->getTexName());
-    stop_glerror();
 
     pass_91.end();
 

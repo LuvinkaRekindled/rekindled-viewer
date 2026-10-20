@@ -57,7 +57,7 @@ public:
     void bind(S32 stage);
     void unbind();
 
-    U32 getGLName();
+    U32 getTextureHandle();
 
     void destroyResources();
 

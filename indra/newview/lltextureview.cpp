@@ -193,7 +193,7 @@ void LLTextureBar::draw()
     S32 bottom = top + 6;
     LLColor4 clr;
 
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
 
     // Name, pixel_area, requested pixel area, decode priority
     std::string uuid_str;
@@ -328,7 +328,7 @@ void LLTextureBar::draw()
 
 
     {
-        LLGLSUIDefault gls_ui;
+        LLRenderPresetUIDefault gls_ui;
         // draw the image size at the end
         {
             std::string num_str = llformat("%3dx%3d (%2d) %7d", mImagep->getWidth(), mImagep->getHeight(),
@@ -403,7 +403,7 @@ void LLAvatarTexBar::draw()
     const S32 l_offset = 3;
 
     //----------------------------------------------------------------------------
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     LLColor4 color;
 
     U32 line_num = 1;
@@ -556,7 +556,7 @@ void LLGLTexMemBar::draw()
    F64 render_bytes_alloc = LLRenderTarget::sBytesAllocated / 1024.0 / 512.0;
 
     //----------------------------------------------------------------------------
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     LLColor4 text_color(1.f, 1.f, 1.f, 0.75f);
     LLColor4 color;
 
@@ -845,7 +845,7 @@ bool LLGLTexSizeBar::handleHover(S32 x, S32 y, MASK mask, bool set_pick_size)
 }
 void LLGLTexSizeBar::draw()
 {
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
 
     if(LLImageTex::sCurTexSizeBar == mIndex)
     {

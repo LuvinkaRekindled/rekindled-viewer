@@ -2584,7 +2584,6 @@ void LLVOAvatar::buildCharacter()
     processAnimationStateChanges();
 
     mIsBuilt = true;
-    stop_glerror();
 
     mMeshValid = true;
 }
@@ -2740,7 +2739,7 @@ void LLVOAvatar::resetSkeleton(bool reset_animations)
         // applyParsedAppearanceMessage, but with alternative default
         // (jellydoll) params
         setCompositeUpdatesEnabled( false );
-        gPipeline.markGLRebuild(this);
+        gPipeline.markRenderRebuild(this);
         applyDefaultParams();
         setCompositeUpdatesEnabled( true );
         updateMeshTextures();
@@ -7412,7 +7411,6 @@ void LLVOAvatar::processAnimationStateChanges()
     }
     // </FS:PP>
 
-    stop_glerror();
 }
 
 
@@ -10996,7 +10994,7 @@ void LLVOAvatar::onFirstTEMessageReceived()
         }
 
         mMeshTexturesDirty = true;
-        gPipeline.markGLRebuild(this);
+        gPipeline.markRenderRebuild(this);
 
         mFirstAppearanceMessageTimer.reset();
         mFullyLoadedTimer.reset();
@@ -11490,7 +11488,7 @@ void LLVOAvatar::applyParsedAppearanceMessage(LLAppearanceMessageContents& conte
     }
 
     setCompositeUpdatesEnabled( false );
-    gPipeline.markGLRebuild(this);
+    gPipeline.markRenderRebuild(this);
 
     // Apply visual params
     if( num_params > 1)
@@ -11775,16 +11773,13 @@ void LLVOAvatar::onBakedTextureMasksLoaded( bool success, LLViewerFetchedTexture
 
             U32 gl_name;
             LLImageTex::generateTextures(1, &gl_name );
-            stop_glerror();
 
             gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, gl_name);
-            stop_glerror();
 
             LLImageTex::setManualImage(
                 gl_name, TextureTarget::Tex2D, 0, TexelFormat::Alpha8,
                 aux_src->getWidth(), aux_src->getHeight(),
                 PixelFormat::Alpha, ComponentType::U8, aux_src->getData());
-            stop_glerror();
 
             gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
 

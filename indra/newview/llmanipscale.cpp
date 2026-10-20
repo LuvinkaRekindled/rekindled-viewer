@@ -220,7 +220,7 @@ LLManipScale::~LLManipScale()
 
 void LLManipScale::render()
 {
-    LLGLSUIDefault gls_ui;
+    LLRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);
