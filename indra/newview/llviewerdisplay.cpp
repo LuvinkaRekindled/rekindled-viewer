@@ -594,7 +594,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     }
 
     LLGLSDefault gls_default;
-    LLGLDepthTest gls_depth(GL_TRUE, GL_TRUE, GL_LEQUAL);
+    LLRenderState::DepthScope gls_depth(true, true, LLRenderState::CompareOp::LessEqual);
 
     LLVertexBuffer::unbind();
 
@@ -1468,7 +1468,7 @@ void display_cube_face()
     bool rebuild = false;
 
     LLGLSDefault gls_default;
-    LLGLDepthTest gls_depth(GL_TRUE, GL_TRUE, GL_LEQUAL);
+    LLRenderState::DepthScope gls_depth(true, true, LLRenderState::CompareOp::LessEqual);
 
     LLVertexBuffer::unbind();
 
@@ -1975,8 +1975,8 @@ static void renderChatRangeSphere(const LLVector3& center, F32 radius, const LLC
     {
         gGL.translatef(center.mV[VX], center.mV[VY], center.mV[VZ]);
         gDebugProgram.bind();
-        LLGLEnable blend(GL_BLEND);
-        LLGLDepthTest depth(GL_TRUE, GL_TRUE);
+        LLRenderState::BlendScope blend(true);
+        LLRenderState::DepthScope depth(true, true);
         gGL.color4fv(color.mV);
         gGL.diffuseColor4fv(color.mV);
         gGL.pushMatrix();
@@ -2344,7 +2344,7 @@ void render_ui_2d()
                 LLView::sDirtyRect.mBottom -= pad;
                 LLView::sDirtyRect.mTop += pad;
 
-                LLGLEnable scissor(GL_SCISSOR_TEST);
+                LLRenderState::ScissorScope scissor(true);
                 static LLRect last_rect = LLView::sDirtyRect;
 
                 //union with last rect to avoid mouse poop
@@ -2377,8 +2377,8 @@ void render_ui_2d()
             LLView::sDirtyRect = t_rect;
         }
 
-        LLGLDisable cull(GL_CULL_FACE);
-        LLGLDisable blend(GL_BLEND);
+        LLRenderState::CullScope cull(false);
+        LLRenderState::BlendScope blend(false);
         S32 width = gViewerWindow->getWindowWidthScaled();
         S32 height = gViewerWindow->getWindowHeightScaled();
         gGL.getTexUnit(0)->bind(&gPipeline.mUIScreen);

@@ -598,7 +598,7 @@ using LLVkState::C;
 
 const char* kindName(Kind k)
 {
-    static const char* const names[(int)Kind::Count] = { "blend", "scissor test", "stencil test", "polygon offset", "depth clamp", "cull (bit 0 on, bits 1-2 face)", "depth (bit 0 test, bit 1 write, bits 2-4 func)" };
+    static const char* const names[(int)Kind::Count] = { "blend", "scissor test", "stencil test", "polygon offset", "depth clamp", "cull (bit 0 on, bits 1-2 face)", "depth (bit 0 test, bit 1 write, bits 2-4 func)", "depth test" };
     return names[(int)k];
 }
 
@@ -652,7 +652,7 @@ U32 gLastDump = 0;
 
 const char* fieldOfKind(int kind)
 {
-    static const char* const names[(int)Kind::Count] = { "blendEnable", "scissorTest", "stencil", "polygonOffset", "depthClamp", "cull", "depth" };
+    static const char* const names[(int)Kind::Count] = { "blendEnable", "scissorTest", "stencil", "polygonOffset", "depthClamp", "cull", "depth", "depth" };
     return kind >= 0 && kind < (int)Kind::Count ? names[kind] : nullptr;
 }
 
@@ -760,7 +760,7 @@ void reportDrift(const char* what, Kind k, U32 legacy, U32 block, const char* fi
 
 bool sLegacy = []() { const char* e = getenv("LL_VK_STATE_LEGACY"); return e && e[0] == '1'; }();
 // the old classes' belief of "what GL has" (defaults of GL), written only by guards and the old classes: LL_VK_STATE_LEGACY=1 makes the guards decide from it
-static U32 gShadow[(int)Kind::Count] = { 0, 0, 0, 0, 0, packCull(false, CullFace::Back), packDepth(false, true, CompareOp::Less) };
+static U32 gShadow[(int)Kind::Count] = { 0, 0, 0, 0, 0, packCull(false, CullFace::Back), packDepth(false, true, CompareOp::Less), 0 };
 
 bool legacyGet(Kind kind)
 {
@@ -790,6 +790,7 @@ U32 read(Kind kind)
     }
     case Kind::Depth:
         return packDepth(b.mDepth.mDepthTest, b.mDepthMask, LLVkState::fromVk(b.mDepth.mDepthOp));
+    case Kind::DepthTest: return b.mDepth.mDepthTest;
     default: return 0;
     }
 }
@@ -815,6 +816,7 @@ U32 exchange(Kind kind, U32 value, const char* file, int line)
     case Kind::Stencil: LLVkState::setEnable(GL_STENCIL_TEST, value != 0); break;
     case Kind::PolygonOffset: LLVkState::setEnable(GL_POLYGON_OFFSET_FILL, value != 0); break;
     case Kind::DepthClamp: LLVkState::setEnable(GL_DEPTH_CLAMP, value != 0); break;
+    case Kind::DepthTest: LLVkState::setEnable(GL_DEPTH_TEST, value != 0); break;
     case Kind::Cull:
         if ((old & 1) != (value & 1))
         {
