@@ -28,7 +28,7 @@
 #include "indra_constants.h"
 
 #include "llwindowmesaheadless.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 
 #define MESA_CHANNEL_TYPE GL_UNSIGNED_SHORT
 #define MESA_CHANNEL_SIZE 2

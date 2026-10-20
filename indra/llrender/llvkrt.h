@@ -12,7 +12,7 @@
 #if defined(LL_VULKAN)
 
 #include "llvkcontext.h"
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 
 #include <string>
 

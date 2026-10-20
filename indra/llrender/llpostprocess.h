@@ -29,8 +29,8 @@
 
 #include <map>
 #include <fstream>
-#include "llgl.h"
-#include "llglheaders.h"
+#include "lldevicecaps.h"
+#include "llrenderheaders.h"
 #include "llstaticstringtable.h"
 
 class LLPostProcess

@@ -18,10 +18,10 @@ set(llrender_SOURCE_FILES
     llfontgl.cpp
     llfontvertexbuffer.cpp
     llfontregistry.cpp
-    llgl.cpp
-    llglslshader.cpp
-    llgltexture.cpp
-    llimagegl.cpp
+    lldevicecaps.cpp
+    llshaderprogram.cpp
+    llbasetexture.cpp
+    llimagetex.cpp
     llpostprocess.cpp
     llrender.cpp
     llrender2dutils.cpp
@@ -36,8 +36,8 @@ set(llrender_SOURCE_FILES
     llvkcontext.cpp
     llvkdlss.cpp
     llvkasync.cpp
-    llvkmirror.cpp
-    llvkgl.cpp
+    llvkbridge.cpp
+    llvkworker.cpp
     llvkformat.cpp
     llvkprobe.cpp
     llvkrenderer.cpp
@@ -45,7 +45,7 @@ set(llrender_SOURCE_FILES
     llvkshader.cpp
     llvkstate.cpp
     llvkvma.cpp
-    llglcommonfunc.cpp
+    llrendercommonfunc.cpp
     )
     
 set(llrender_HEADER_FILES
@@ -59,13 +59,13 @@ set(llrender_HEADER_FILES
     llfontfreetypesvg.h
     llfontbitmapcache.h
     llfontregistry.h
-    llgl.h
-    llglheaders.h
-    llglslshader.h
-    llglstates.h
-    llgltexture.h
+    lldevicecaps.h
+    llrenderheaders.h
+    llshaderprogram.h
+    llrenderpresets.h
+    llbasetexture.h
     llgltypes.h
-    llimagegl.h
+    llimagetex.h
     llpostprocess.h
     llrender.h
     llrendermatrix.h
@@ -87,8 +87,8 @@ set(llrender_HEADER_FILES
     llvkasync.h
     llvkzones.h
     llvksubstream.h
-    llvkmirror.h
-    llvkgl.h
+    llvkbridge.h
+    llvkworker.h
     llvkprobe.h
     llvkrenderer.h
     llvkrt.h
@@ -96,7 +96,7 @@ set(llrender_HEADER_FILES
     llvkstate.h
     llvktex.h
     llvkformat.h
-    llglcommonfunc.h
+    llrendercommonfunc.h
     )
 
 list(APPEND llrender_SOURCE_FILES ${llrender_HEADER_FILES})

@@ -1,5 +1,5 @@
 /**
- * @file llglheaders.h
+ * @file llrenderheaders.h
  * @brief LLGL definitions
  *
  * $LicenseInfo:firstyear=2001&license=viewerlgpl$
@@ -36,6 +36,6 @@
 #endif
 
 // the Vulkan render thread's shared header (the resource tables of the typed command records)
-#include "llvkgl.h"
+#include "llvkworker.h"
 
 #endif // LL_LLGLHEADERS_H

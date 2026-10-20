@@ -40,7 +40,7 @@
 
 #include "lldrawpoolavatar.h"
 #include "lldrawpoolbump.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "lllightconstants.h"
 #include "llsky.h"

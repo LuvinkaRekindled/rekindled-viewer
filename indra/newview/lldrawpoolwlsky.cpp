@@ -33,8 +33,8 @@
 #include "llimage.h"
 #include "llrender.h"
 #include "llenvironment.h"
-#include "llglslshader.h"
-#include "llgl.h"
+#include "llshaderprogram.h"
+#include "lldevicecaps.h"
 
 #include "llviewerregion.h"
 #include "llviewershadermgr.h"

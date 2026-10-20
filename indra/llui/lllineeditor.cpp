@@ -34,7 +34,7 @@
 #include "lltexteditor.h"
 #include "llmath.h"
 #include "llfontgl.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "lltimer.h"
 
 #include "llcalc.h"

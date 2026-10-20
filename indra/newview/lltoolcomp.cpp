@@ -29,7 +29,7 @@
 #include "lltoolcomp.h"
 
 #include "llfloaterreg.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "indra_constants.h"
 
 #include "llmanip.h"

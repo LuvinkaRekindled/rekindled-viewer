@@ -34,7 +34,7 @@
 #include "m3math.h"
 #include "m4math.h"
 #include "v4math.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llrender.h"
 
 #include "llcubemap.h"

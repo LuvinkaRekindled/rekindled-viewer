@@ -38,7 +38,7 @@
 #include "llrender.h"
 #include "llrect.h"
 #include "lldir.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llsd.h"
 
 // Project includes

@@ -27,7 +27,7 @@
 #ifndef LL_LLCUBEMAP_H
 #define LL_LLCUBEMAP_H
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 
 #include <vector>
 

@@ -30,7 +30,7 @@
 
 // library includes
 #include "llmath.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "v4color.h"
 #include "llprimitive.h"
@@ -58,7 +58,7 @@
 #include "llworld.h"
 #include "pipeline.h"
 #include "lldrawable.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "lltrans.h"
 #include "llvoavatarself.h"
 #include "llhudrender.h"

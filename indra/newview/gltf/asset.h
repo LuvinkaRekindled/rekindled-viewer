@@ -34,7 +34,7 @@
 #include "boost/json.hpp"
 #include "common.h"
 #include "../llviewertexture.h"
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 
 extern F32SecondsImplicit       gFrameTimeSeconds;
 

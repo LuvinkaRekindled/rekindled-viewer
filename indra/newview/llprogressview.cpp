@@ -30,13 +30,13 @@
 
 #include "indra_constants.h"
 #include "llmath.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "llui.h"
 #include "llfontgl.h"
 #include "lltimer.h"
 #include "lltextbox.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 
 #include "llagent.h"
 #include "llbutton.h"

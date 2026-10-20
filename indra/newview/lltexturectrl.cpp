@@ -66,7 +66,7 @@
 #include "llviewerwindow.h"
 #include "llviewerobject.h"
 #include "llviewercontrol.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "lluictrlfactory.h"
 #include "lltrans.h"
 

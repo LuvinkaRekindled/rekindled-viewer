@@ -40,7 +40,7 @@
 #include "llvoavatarself.h"
 #include "llrendersphere.h"
 #include "llselectmgr.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llhudrender.h"
 #include "llresmgr.h"
 #include "llviewerwindow.h"

@@ -28,7 +28,7 @@
 
 #include "llhudicon.h"
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 
 #include "llviewerobject.h"

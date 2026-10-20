@@ -32,8 +32,8 @@
 // Library includes
 #include "llmath.h"
 #include "llerror.h"
-#include "llgl.h"
-#include "llglheaders.h"
+#include "lldevicecaps.h"
+#include "llrenderheaders.h"
 #include "llhost.h"
 #include "llimage.h"
 #include "llimagebmp.h"
@@ -46,7 +46,7 @@
 #include "llnotificationsutil.h"
 
 // viewer includes
-#include "llimagegl.h"
+#include "llimagetex.h"
 #include "lldrawpool.h"
 #include "lltexturefetch.h"
 #include "llviewertexturelist.h"
@@ -63,7 +63,7 @@
 #include "lltexturecache.h"
 #include "llviewerwindow.h"
 #include "llwindow.h"
-#include "llvkmirror.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
+#include "llvkbridge.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
 ///////////////////////////////////////////////////////////////////////////////
 
 // statics

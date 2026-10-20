@@ -30,7 +30,7 @@
 
 #include "llmath.h"
 #include "v3math.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "llprimitive.h"
 #include "llview.h"
@@ -52,7 +52,7 @@
 #include "llworld.h"        // for LLWorld::getInstance()
 #include "llresmgr.h"
 #include "pipeline.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "lluiimage.h"
 #include "llviewerregion.h" // <FS:CR> Aurora Sim
 

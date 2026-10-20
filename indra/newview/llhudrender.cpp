@@ -29,12 +29,12 @@
 #include "llhudrender.h"
 
 #include "llrender.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llviewercamera.h"
 #include "v3math.h"
 #include "llquaternion.h"
 #include "llfontgl.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llviewerwindow.h"
 #include "llui.h"
 

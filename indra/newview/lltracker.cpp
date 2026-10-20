@@ -29,7 +29,7 @@
 // library includes
 #include "llcoord.h"
 #include "llfontgl.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "llinventory.h"
 #include "llinventorydefines.h"

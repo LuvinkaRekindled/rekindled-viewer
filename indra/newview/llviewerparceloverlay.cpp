@@ -31,7 +31,7 @@
 // indra includes
 #include "llparcel.h"
 #include "llfloaterreg.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "lluicolor.h"
 #include "v4color.h"
@@ -47,7 +47,7 @@
 #include "llviewertexturelist.h"
 #include "llselectmgr.h"
 #include "llfloatertools.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "pipeline.h"
 
 

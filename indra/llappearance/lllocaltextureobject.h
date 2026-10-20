@@ -28,7 +28,7 @@
 #define LL_LOCALTEXTUREOBJECT_H
 
 #include "llpointer.h"
-#include "llgltexture.h"
+#include "llbasetexture.h"
 
 class LLTexLayer;
 class LLTexLayerTemplate;

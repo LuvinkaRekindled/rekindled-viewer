@@ -30,7 +30,7 @@
 #include "lldrawpoolbump.h"
 #include "llface.h"
 #include "llflexibleobject.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llrendersphere.h"
 #include "llviewerobject.h"
 #include "llagent.h"

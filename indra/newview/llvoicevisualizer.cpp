@@ -31,7 +31,7 @@
 //----------------------------------------------------------------------
 #include "llviewerprecompiledheaders.h"
 #include "llviewercontrol.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llsphere.h"
 #include "llvoicevisualizer.h"
 #include "llviewercamera.h"

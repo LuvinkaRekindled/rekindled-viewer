@@ -33,7 +33,7 @@
 #include "llpreeditor.h"
 
 #include "llerror.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llstring.h"
 #include "lldir.h"
 #include "indra_constants.h"

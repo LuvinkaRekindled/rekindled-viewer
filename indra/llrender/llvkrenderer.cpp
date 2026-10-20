@@ -16,9 +16,9 @@
 #include <tracy/TracyVulkan.hpp>
 #endif
 #include "llvkasync.h"
-#include "llvkgl.h"
+#include "llvkworker.h"
 #include "llvkdlss.h"
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 #include "llvkrt.h"
 
 #if defined(LL_VULKAN)
@@ -1050,7 +1050,7 @@ VkPipeline Program::getPipeline(const PipelineKey& key)
 
 Renderer& Renderer::instance()
 {
-    static Renderer* sRenderer = new Renderer;      // never destroyed (see sGL in llvkgl.cpp): late releases at process exit still reach it
+    static Renderer* sRenderer = new Renderer;      // never destroyed (see sGL in llvkworker.cpp): late releases at process exit still reach it
     return *sRenderer;
 }
 

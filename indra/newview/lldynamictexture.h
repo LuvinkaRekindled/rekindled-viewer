@@ -28,7 +28,7 @@
 #define LL_LLDYNAMICTEXTURE_H
 
 #include "llcamera.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llcoord.h"
 #include "llviewertexture.h"
 #include "llcamera.h"

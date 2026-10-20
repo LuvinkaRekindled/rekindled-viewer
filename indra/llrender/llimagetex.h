@@ -1,5 +1,5 @@
 /**
- * @file llimagegl.h
+ * @file llimagetex.h
  * @brief Object for managing images and their textures
  *
  * $LicenseInfo:firstyear=2001&license=viewerlgpl$

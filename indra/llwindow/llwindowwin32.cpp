@@ -40,13 +40,13 @@
 #include "llerror.h"
 #include "llexception.h"
 #include "llfasttimer.h"
-#include "llgl.h"
-#include "llvkmirror.h"     // <FS> LL_VK_NOGL: the main window is handed to Vulkan
+#include "lldevicecaps.h"
+#include "llvkbridge.h"     // <FS> LL_VK_NOGL: the main window is handed to Vulkan
 #include "llstring.h"
 #include "lldir.h"
 #include "llsdutil.h"
 #include "llsys.h"
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 #include "llthreadsafequeue.h"
 #include "stringize.h"
 #include "llframetimer.h"

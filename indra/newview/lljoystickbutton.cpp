@@ -44,7 +44,7 @@
 #include "llviewerwindow.h"
 #include "llmoveview.h"
 
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 
 static LLDefaultChildRegistry::Register<LLJoystickAgentSlide> r1("joystick_slide");
 static LLDefaultChildRegistry::Register<LLJoystickAgentTurn> r2("joystick_turn");

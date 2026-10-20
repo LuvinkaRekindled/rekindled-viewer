@@ -53,7 +53,7 @@
 #include "llspatialpartition.h"
 #include "llnotificationsutil.h"
 #include "raytrace.h"
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 
 extern LLPipeline gPipeline;
 

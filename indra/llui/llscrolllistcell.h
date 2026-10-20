@@ -34,7 +34,7 @@
 #include "lluistring.h"
 #include "v4color.h"
 #include "llui.h"
-#include "llgltexture.h"
+#include "llbasetexture.h"
 
 class LLCheckBoxCtrl;
 class LLSD;

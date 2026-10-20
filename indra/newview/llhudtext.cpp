@@ -35,7 +35,7 @@
 #include "llcriticaldamp.h"
 #include "lldrawable.h"
 #include "llfontgl.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llhudrender.h"
 #include "llui.h"
 #include "llviewercamera.h"

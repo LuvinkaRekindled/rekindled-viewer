@@ -29,10 +29,10 @@
 //-----------------------------------------------------------------------------
 #include "llavatarjoint.h"
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llrender.h"
 #include "llmath.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llavatarappearance.h"
 
 const F32 DEFAULT_AVATAR_JOINT_LOD = 0.0f;

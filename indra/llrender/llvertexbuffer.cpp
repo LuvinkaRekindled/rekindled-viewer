@@ -30,7 +30,7 @@
 #include "llsys.h"
 #include "llvertexbuffer.h"
 // #include "llrender.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #if defined(LL_VULKAN)
 #include "llvkasync.h"
 #include "llvkbuf.h"
@@ -38,7 +38,7 @@
 #include "llrender.h"
 #include "llvector4a.h"
 #include "llshadermgr.h"
-#include "llglslshader.h"
+#include "llshaderprogram.h"
 #include "llmemory.h"
 #include <glm/gtc/type_ptr.hpp>
 

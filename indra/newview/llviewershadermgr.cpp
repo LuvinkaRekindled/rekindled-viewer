@@ -44,7 +44,7 @@
 
 #include "llfile.h"
 #include "llviewerwindow.h"
-#include "llvkmirror.h"
+#include "llvkbridge.h"
 #include "llwindow.h"
 
 #include "lljoint.h"

@@ -35,7 +35,7 @@
 #include "llcachename.h"
 #include "llavatarnamecache.h"
 #include "lldbstrings.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llmediaentry.h"
 #include "llrender.h"
 #include "llnotifications.h"
@@ -110,7 +110,7 @@
 #include "llworld.h"
 // </FS:CR> Aurora Sim
 #include "fsareasearch.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llinventoryobserver.h"
 #include "fscommon.h"
 

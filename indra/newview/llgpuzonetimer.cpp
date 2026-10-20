@@ -13,7 +13,7 @@
 #include <unordered_map>
 
 #include "llfasttimer.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llvkzones.h"
 #include "llviewercontrol.h"
 

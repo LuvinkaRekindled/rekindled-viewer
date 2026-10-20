@@ -26,7 +26,7 @@
 
 #pragma once
 
-#include "llgl.h"
+#include "lldevicecaps.h"
 
 #include <vector>
 

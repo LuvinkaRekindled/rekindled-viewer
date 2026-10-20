@@ -40,7 +40,7 @@
 #include "v4math.h"
 #include "llstrider.h"
 #include "llpointer.h"
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 #include "llrenderstate.h"
 #include "llrenderformat.h"
 #include "llrendermatrix.h"

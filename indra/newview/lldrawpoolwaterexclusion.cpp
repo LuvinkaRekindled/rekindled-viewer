@@ -30,7 +30,7 @@
 #include "lldrawpoolwaterexclusion.h"
 #include "llviewershadermgr.h"
 #include "pipeline.h"
-#include "llglcommonfunc.h"
+#include "llrendercommonfunc.h"
 #include "llvoavatar.h"
 #include "lldrawpoolwater.h"
 

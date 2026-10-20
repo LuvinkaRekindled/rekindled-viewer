@@ -73,7 +73,7 @@
 #include "lltracethreadrecorder.h"
 #include "llviewerwindow.h"
 #include "llviewerdisplay.h"
-#include "llvkmirror.h" // <FS> Vulkan mirror
+#include "llvkbridge.h" // <FS> Vulkan mirror
 #include "llviewermedia.h"
 #include "llviewerparcelaskplay.h"
 #include "llviewerparcelmedia.h"

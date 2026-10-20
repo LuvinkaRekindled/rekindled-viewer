@@ -30,7 +30,7 @@
 
 #include "llcoord.h"
 #include "llfontregistry.h"
-#include "llimagegl.h"
+#include "llimagetex.h"
 #include "llpointer.h"
 #include "llrect.h"
 #include "v2math.h"

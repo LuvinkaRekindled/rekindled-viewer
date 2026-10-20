@@ -33,7 +33,7 @@
 // [/SL:KB]
 #include "llviewercontrol.h"
 #include "lldrawable.h"
-#include "llgl.h"
+#include "lldevicecaps.h"
 #include "llhudtext.h"
 #include "llrender.h"
 #include "llvoavatarself.h"
@@ -45,7 +45,7 @@
 #include "llface.h"
 #include "llvoavatar.h"
 
-#include "llglheaders.h"
+#include "llrenderheaders.h"
 
 extern LLPipeline gPipeline;
 // <FS:Ansariel> Moved to header file
