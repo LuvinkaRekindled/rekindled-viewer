@@ -50,7 +50,29 @@ Main thread zones per frame (loop interval 17.3 ms with the zone timers on; incl
 | UI | 1.9 | `render_ui` 1.11, widgets 0.75 (menu stack 0.65, main view 0.74, floaters 0.48, people panel 0.32), name tags 0.17 |
 | `renderGeomDeferred` | 1.3 | |
 | `updateCull` | 0.9 | partition cull 133 calls |
-| textures | 1.4 | `updateImages` 0.5, fetch dispatch 0.49, decode priority 0.43 (208 textures per frame) |
+| textures | 0.5 | `updateImages` 0.53 (fetch dispatch 0.49 and decode priority 0.43 are NESTED inside it: the first version of this table added them up as 1.4, wrong) |
 | the rest | | `updateGeom` 0.33, particles 0.23, network 0.2, probes + snapshots 0.23 ... |
-**Reading:** a flat profile with no wedge; no single item is worth more than 1.9 ms. Candidates by size and risk: (a) textures 1.4 ms: per-frame sweeps over the texture list (priority, fetch dispatch, update): time slice them (every other frame, or only the textures whose state changed): quality risk low, measurable with the zones; (b) UI 1.9 ms: the widget draw as a sub-stream was built and parked (mode 1 gain 0.9 ms; mode 2 corrupts the heap, see `F2-start.md`); (c) avatars about 4.4 ms together: the serial tail of the motion batch (`completeDeferredMotionUpdate`) and the attachment loop; (d) shadows + sort + lighting (about 7.5 ms): these are the world passes the retained-records / GPU scene plan moves off the main thread (`PLAN-retained-records.md`, `PLAN-gpu-scene.md` S slices): the only route to a big gain, a project, not a slice.
+**Reading:** a flat profile with no wedge; no single item is worth more than 1.9 ms. Candidates by size and risk: (a) textures 0.5 ms (corrected: the three zones are nested): the per-frame sweeps over the texture list could be time sliced, a small gain; (b) UI 1.9 ms: the widget draw as a sub-stream was built and parked (mode 1 gain 0.9 ms; mode 2 corrupts the heap, see `F2-start.md`); (c) avatars about 4.4 ms together: the serial tail of the motion batch (`completeDeferredMotionUpdate`) and the attachment loop; (d) shadows + sort + lighting (about 7.5 ms): these are the world passes the retained-records / GPU scene plan moves off the main thread (`PLAN-retained-records.md`, `PLAN-gpu-scene.md` S slices): the only route to a big gain, a project, not a slice.
 Picture judged by eye: `f8a1-london-b.png` (crowd, name tags, wings, shadows, street: complete).
+
+## What the GPU scene (S slices) takes, and what stays on the main thread (London, same zones)
+`PLAN-gpu-scene.md`: the scene's own table counts shadows, sort / cull and the G-buffer pass lists as "gone from the main thread"; S2 = sun shadow casters, S1-S3 = no per-frame lists (stateSort, updateCull) and the G-buffer, S4 = moving objects / avatars as instance deltas, S5 = the alpha pass. Counting only what those slices name:
+| Zone (London, ms of the 17.3 loop) | Slice | |
+|---|---|---|
+| `generateSunShadow` 2.9 | S2 | gone |
+| `stateSort (early)` 2.4 + `updateCull` 0.9 | S1 / S3 | gone (no per-frame lists, GPU culling) |
+| `renderGeomDeferred` 1.3 | S3 | gone |
+| post-deferred geometry 1.65 (alpha 1.0) inside `renderDeferredLighting` | S5 | gone |
+| moved-drawable upkeep (`updateMove*`, octree partition move, bridge move: about 1.5, inside idle / updateGeom) | S4 | mostly gone (instance deltas replace it) |
+| **taken: about 9.1 ms of `display()`'s 12.3, plus most of the 1.5 upkeep** | | |
+**What is left on the main thread (about 8 ms of the 17.3 loop, about 7 ms of the real 15.5 ms frame):**
+| Left | ms | Notes |
+|---|---|---|
+| `gObjectList.update` | 3.2 | avatar motion batch 1.9 (pool blend plus the serial `completeDeferredMotionUpdate`), `idleUpdate` of avatars 1.0 (the attachment loop 1.07 is in here or next to it), animated textures 0.28: the plan keeps "object updates, avatar logic and animation" on the CPU |
+| UI | 1.1 (`render_ui`; widgets 0.75, menu stack 0.65, floaters 0.48, people panel 0.32) | stays (UI is not in the scene); the sub-stream was built and parked (0.9 ms, mode 2 corrupts the heap) |
+| lighting set-up (what is left of `renderDeferredLighting`: local lights 0.36, soften, the light passes' records) | about 1.0 | screen space passes: not in S |
+| `updateImages` | 0.5 | texture sweeps |
+| `updateGeom` | 0.33 | geometry generation (job pool candidate) |
+| idle: particles 0.23, `updateUI` 0.23, network 0.22, apparent angles 0.21, `updateMove` 0.14 | about 1.0 | |
+| probes + snapshots 0.23, HUD attachments 0.15 | 0.4 | |
+So after S the main thread at London would be about 7-8 ms (about 125-140 fps if the worker keeps up), and **nearly half of that (3.2 object list + the attachment / avatar upkeep, about 4.4 ms with the avatar related zones) is avatars and object updates**: the biggest independent target and the one S does not touch. Independent of S and worth doing before it (each also helps after it): (1) the avatar serial tail (motion batch completion, attachment loop): about 2.5 ms; (2) UI widget draw as a sub-stream (0.9 ms, needs the mode 2 heap corruption found); (3) lighting set-up about 1.0 ms; (4) `updateGeom` / texture sweeps 0.8 ms. Not worth doing before S (it removes them): stateSort / postSort / cull, shadow prep and packets, `renderGeomDeferred` / pool record building, alpha sorting, the moved-drawable upkeep, and anything in the render classes (queue writing, uniforms, draw calls: 2.9 ms) that belongs to those passes.
