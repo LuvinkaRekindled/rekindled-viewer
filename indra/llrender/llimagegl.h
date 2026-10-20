@@ -164,7 +164,7 @@ public:
     void destroyGLTexture();
     void forceToInvalidateGLTexture();
 
-    void setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format = ComponentType::None, bool swap_bytes = false, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format = ComponentType::None, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void setComponents(S8 ncomponents) { mComponents = ncomponents; }
 
     S32  getDiscardLevel() const        { return mCurrentDiscardLevel; }
@@ -305,7 +305,6 @@ private:
     TexelFormat   mFormatInternal; // how the texture stores texels (was the GL internal format)
     PixelFormat   mFormatPrimary;  // the client pixel data layout (was the GL format)
     ComponentType mFormatType;
-    bool     mFormatSwapBytes;// if true, use glPixelStorei(GL_UNPACK_SWAP_BYTES, 1)
 
     bool mExternalTexture;
 

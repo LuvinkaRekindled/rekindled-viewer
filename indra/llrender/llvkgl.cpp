@@ -475,10 +475,6 @@ struct Fbo
 // state that belongs to one GL context (the viewer has a texture worker thread with its own, sharing objects)
 struct PerContext
 {
-    U32 mPixelUnpackBuffer = 0;
-    S32 mUnpackAlignment = 4;
-    S32 mUnpackRowLength = 0;
-    U32 mPixelPackBuffer = 0;
 };
 thread_local PerContext sCtxTls;
 thread_local PerContext* sCtxOverride = nullptr;      // set on the async worker: the context of the thread whose call is being replayed
@@ -643,9 +639,8 @@ Tex* edit_texture()
     return nullptr;         // every texture edit names its texture (LLVkTex)
 }
 
-inline U32 edit_unpack_buffer() { return tlsEditPS ? tlsEditPS->mUnpackBuffer : sCtx.mPixelUnpackBuffer; }
-inline S32 edit_unpack_alignment() { return tlsEditPS ? tlsEditPS->mAlignment : sCtx.mUnpackAlignment; }
-inline S32 edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength : sCtx.mUnpackRowLength; }
+inline S32 edit_unpack_alignment() { return tlsEditPS ? tlsEditPS->mAlignment : 1; }
+inline S32 edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength : 0; }
 
 //-----------------------------------------------------------------------------------------------------
 // textures
@@ -807,21 +802,6 @@ bool grow_levels(Tex& t)
     return true;
 }
 
-// source of client pixel data: either a pointer or an offset into the bound pixel unpack buffer
-const void* pixel_source(const void* pixels)
-{
-    if (edit_unpack_buffer())
-    {
-        auto it = sGL.mBuffers.find(edit_unpack_buffer());
-        if (it == sGL.mBuffers.end() || !it->second.mVk.mMapped)
-        {
-            return nullptr;
-        }
-        return (const U8*)it->second.mVk.mMapped + (size_t)(U64)pixels;
-    }
-    return pixels;
-}
-
 void upload_converted(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels);
 
 void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, LLVkFormat::Transfer tr, const void* pixels)
@@ -840,7 +820,7 @@ void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z,
         ++t.mValidLevels;       // levels are normally defined in order, level 0 first
         pin_touch(t);
     }
-    const void* src = pixel_source(pixels);
+    const void* src = pixels;
     if (!src)
     {
         return;     // nothing to upload (allocation only)
@@ -869,7 +849,7 @@ void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z,
         const U32 alignment = (U32)edit_unpack_alignment(), row_length = (U32)edit_unpack_row_length();
         const VkImage handle = t.mImage.mImage;
         const U32 name = tlsEditTex;
-        const bool unlocked = (U64)w * h * d >= 16384 && !edit_unpack_buffer() && !LLVkAsync::gEnabled;      // (the worker does not take the lock)
+        const bool unlocked = (U64)w * h * d >= 16384 && !LLVkAsync::gEnabled;      // (the worker does not take the lock)
         unsigned depth_held = 0;
         if (unlocked)
         {
@@ -2174,7 +2154,7 @@ void edit_image2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 wi
     {
         return;
     }
-    if (level == 0 && !pixel_source(pixels) && t->mImage.valid() && t->mImage.mLayout == VK_IMAGE_LAYOUT_UNDEFINED)
+    if (level == 0 && !pixels && t->mImage.valid() && t->mImage.mLayout == VK_IMAGE_LAYOUT_UNDEFINED)
     {
         t->mImage.mZeroOnFirstUse = true;       // allocation only: GL would hand back zeros
     }
@@ -2192,7 +2172,7 @@ void edit_image3D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 wi
     {
         return;
     }
-    if (level == 0 && !pixel_source(pixels) && t->mImage.valid() && t->mImage.mLayout == VK_IMAGE_LAYOUT_UNDEFINED)
+    if (level == 0 && !pixels && t->mImage.valid() && t->mImage.mLayout == VK_IMAGE_LAYOUT_UNDEFINED)
     {
         t->mImage.mZeroOnFirstUse = true;
     }
@@ -2228,7 +2208,7 @@ void edit_compressed2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S
     {
         return;
     }
-    const void* src = pixel_source(data);
+    const void* src = data;
     if (src && t->mImage.valid() && level > 0 && (U32)level >= t->mLevels)
     {
         grow_levels(*t);
@@ -2507,8 +2487,6 @@ void destroy_buffers(S32 n, const U32* buffers)
         }
         if (sBound.mArrayBuffer == buffers[i]) sBound.mArrayBuffer = 0;
         if (sBound.mElementBuffer == buffers[i]) sBound.mElementBuffer = 0;
-        if (sCtx.mPixelUnpackBuffer == buffers[i]) sCtx.mPixelUnpackBuffer = 0;
-        if (sCtx.mPixelPackBuffer == buffers[i]) sCtx.mPixelPackBuffer = 0;
     }
 }
 
@@ -5750,21 +5728,6 @@ namespace
 
 U32 pack_alignment() { return 1; }        // readbacks hand back tightly packed rows
 
-// where a pack operation writes: the bound pixel pack buffer (the pointer is then an offset) or client memory
-U8* pack_destination(void* pixels)
-{
-    if (sCtx.mPixelPackBuffer)
-    {
-        auto it = sGL.mBuffers.find(sCtx.mPixelPackBuffer);
-        if (it == sGL.mBuffers.end() || !it->second.mVk.valid() || !it->second.mVk.mMapped)
-        {
-            return nullptr;
-        }
-        return (U8*)it->second.mVk.mMapped + (size_t)(uintptr_t)pixels;
-    }
-    return (U8*)pixels;
-}
-
 U16 float_to_half_bits(float f)
 {
     U32 x;
@@ -5939,7 +5902,7 @@ bool query_value(unsigned id, bool want_result, unsigned long long& value)
 
 void read_pixels(unsigned fbo, int x, int y, int width, int height, LLVkFormat::Transfer tr, void* pixels)
 {
-    U8* dst = pack_destination(pixels);
+    U8* dst = (U8*)pixels;
     Image* img = read_image(fbo);
     std::vector<U8> texels;
     VkFormat fmt = VK_FORMAT_UNDEFINED;
@@ -5974,7 +5937,7 @@ void read_pixels(unsigned fbo, int x, int y, int width, int height, LLVkFormat::
 void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Transfer tr, void* pixels)
 {
     EditScope s(id);
-    U8* dst = pack_destination(pixels);
+    U8* dst = (U8*)pixels;
     Tex* t = edit_texture();
     if (!dst || !t || !t->mImage.valid() || level < 0 || (U32)level >= t->mImage.mMipLevels)
     {
@@ -6012,7 +5975,7 @@ void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Tr
 void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, void* img)
 {
     EditScope s(id);
-    U8* dst = pack_destination(img);
+    U8* dst = (U8*)img;
     Tex* t = edit_texture();
     if (!dst || !t || !t->mImage.valid() || level < 0 || (U32)level >= t->mImage.mMipLevels)
     {
@@ -6041,18 +6004,6 @@ void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, voi
         memcpy(dst, blocks.data(), blocks.size());
     }
 }
-
-LLVkTex::PixelStore inline_pixel_store()
-{
-    LLVkTex::PixelStore ps;
-    ps.mAlignment = sCtx.mUnpackAlignment;
-    ps.mRowLength = sCtx.mUnpackRowLength;
-    ps.mUnpackBuffer = sCtx.mPixelUnpackBuffer;
-    return ps;
-}
-
-
-
 
 void on_upscale(const LLVkMirror::UpscaleArgs& a)
 {

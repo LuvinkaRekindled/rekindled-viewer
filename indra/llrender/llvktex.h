@@ -21,12 +21,11 @@
 
 namespace LLVkTex
 {
-    // the unpack state an upload reads, taken from the producer when the record is written
+    // how the client pixels of an upload are laid out (F4: values of the call, no thread state): rows are tightly packed (alignment 1), a row is mRowLength texels when that is not 0 (a sub rectangle of a larger image)
     struct PixelStore
     {
-        S32 mAlignment = 4;
+        S32 mAlignment = 1;
         S32 mRowLength = 0;
-        U32 mUnpackBuffer = 0;      // a pixel unpack buffer is bound: the 'pixels' pointer is an offset into it
     };
 
     // the records (llvkasync.cpp writes and reads them)
@@ -37,15 +36,12 @@ namespace LLVkTex
     // ---- handles: the producer allocates the id, the worker makes and destroys the texture in stream order ----
     void create(S32 count, U32* ids);
     void destroy(S32 count, const U32* ids);
-    // the unpack state the next uploads of this thread carry (producer-side only: no record)
-    void setUnpackAlignment(S32 alignment);
-    void setUnpackRowLength(S32 row_length);
 
     // ---- producer (any thread; the calling thread's pixel-store state applies) ----
     // F3.6e: typed (TexelFormat = how the texture stores texels, PixelFormat + ComponentType = how the client data is laid out). file/line name the call site (LL_VK_FORMAT_VERIFY)
     void image2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void image3D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void subImage2D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void subImage2D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, S32 row_length = 0, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void subImage3D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void compressedImage2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 image_size, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     // sampler and level parameters (wrap, filter, anisotropy, levels, compare, swizzle): written as one record
@@ -84,8 +80,6 @@ namespace LLVkGL
     int tex_level_parameter(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Level q);
     void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Transfer tr, void* out);
     void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, void* out);
-    // the calling thread's unpack state in inline mode (before the queue starts)
-    LLVkTex::PixelStore inline_pixel_store();
 }
 
 #endif // LL_VULKAN

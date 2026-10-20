@@ -85,10 +85,10 @@ S8 LLViewerDynamicTexture::getType() const
 void LLViewerDynamicTexture::generateGLTexture()
 {
     LLViewerTexture::generateGLTexture() ;
-    generateGLTexture(TexelFormat::None, PixelFormat::None, ComponentType::None, false);
+    generateGLTexture(TexelFormat::None, PixelFormat::None, ComponentType::None);
 }
 
-void LLViewerDynamicTexture::generateGLTexture(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, bool swap_bytes)
+void LLViewerDynamicTexture::generateGLTexture(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format)
 {
     if (mComponents < 1 || mComponents > 4)
     {
@@ -98,7 +98,7 @@ void LLViewerDynamicTexture::generateGLTexture(TexelFormat internal_format, Pixe
     LLPointer<LLImageRaw> raw_image = new LLImageRaw(mFullWidth, mFullHeight, mComponents);
     if (internal_format != TexelFormat::None)
     {
-        setExplicitFormat(internal_format, primary_format, type_format, swap_bytes);
+        setExplicitFormat(internal_format, primary_format, type_format);
     }
     createGLTexture(0, raw_image, 0, true, LLGLTexture::DYNAMIC_TEX);
     setAddressMode((mClamp) ? LLTexUnit::TAM_CLAMP : LLTexUnit::TAM_WRAP);

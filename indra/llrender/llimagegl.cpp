@@ -604,7 +604,6 @@ void LLImageGL::init(bool usemipmaps, bool allow_compression)
     mFormatInternal = TexelFormat::None;
     mFormatPrimary = PixelFormat::None;
     mFormatType = ComponentType::U8;
-    mFormatSwapBytes = false;
 
 #ifdef DEBUG_MISS
     mMissed = false;
@@ -708,7 +707,6 @@ void LLImageGL::dump()
             << " mFormatInternal " << S32(mFormatInternal)
             << " mFormatPrimary " << S32(mFormatPrimary)
             << " mFormatType " << S32(mFormatType)
-            << " mFormatSwapBytes " << S32(mFormatSwapBytes)
             << " mHasExplicitFormat " << S32(mHasExplicitFormat)
 #if DEBUG_MISS
             << " mMissed " << mMissed
@@ -752,7 +750,7 @@ F32 LLImageGL::getTimePassedSinceLastBound()
     return sLastFrameTime - mLastBindTime ;
 }
 
-void LLImageGL::setExplicitFormat( TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, bool swap_bytes, const char* file, int line )
+void LLImageGL::setExplicitFormat( TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, const char* file, int line )
 {
     LLVkFormat::noteFormat("setExplicitFormat", file, line, (U8)internal_format, (U8)primary_format, (U8)(type_format == ComponentType::None ? ComponentType::U8 : type_format));
     // Note: must be called before createTexture()
@@ -764,7 +762,6 @@ void LLImageGL::setExplicitFormat( TexelFormat internal_format, PixelFormat prim
         mFormatType = ComponentType::U8;
     else
         mFormatType = type_format;
-    mFormatSwapBytes = swap_bytes;
 
     calcAlphaChannelOffsetAndStride() ;
 }
@@ -1210,8 +1207,6 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
         }
 
 
-        LLVkTex::setUnpackRowLength(data_width);
-        stop_glerror();
 
 
         const U8* sub_datap = datap + (y_pos * data_width + x_pos) * getComponents();
@@ -1227,7 +1222,7 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
             // setManualImage? Maybe because it only gets called with the
             // dimensions of the full image?  Or because the image is never
             // compressed?
-            LLVkTex::subImage2D(tex_name, mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap);
+            LLVkTex::subImage2D(tex_name, mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap, data_width);
         }
         else
         {
@@ -1237,8 +1232,6 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
         stop_glerror();
 
 
-        LLVkTex::setUnpackRowLength(0);
-        stop_glerror();
         mGLTextureCreated = true;
     }
     return true;
