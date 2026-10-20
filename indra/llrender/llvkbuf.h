@@ -42,9 +42,6 @@ namespace LLVkWorker
     void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding);
     // F2.6: a draw record's texture slot: the unit holds this texture (no target)
     void slot_set(unsigned unit, unsigned name);
-    // F2.5 verify: after a draw's uniform writes were applied, the current program's real class blocks are compared with the producer's range writes
-    void uniform_check();
-    std::string draw_check_report();        // counts since the last call
 }
 
 #endif // LL_VULKAN

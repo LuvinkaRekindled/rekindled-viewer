@@ -119,9 +119,7 @@ namespace LLVkAsync
 
     // ---- F2.4: the draw record (doc/vulkan/F2-draw-records.md) ----
     // F2.4: the draw record (doc/vulkan/F2-draw-records.md): a draw names its program and carries its vertex binding, the texture ids and the uniform writes that changed
-    // F2.5: LL_VK_UNIFORMREC: 0 per-uniform records and a value cache per shader (old), 1 verify (old + the producer's class blocks, range writes go to a second copy the worker
-    // compares with the real one at every draw), 2 range writes only (the producer keeps a copy of each program's class blocks, resolves uniforms to byte ranges, sends the changed bytes)
-    extern int gUniformRec;
+    // F2.5: the main producer keeps a copy of each program's class blocks, resolves uniforms to byte ranges and sends the changed bytes (uniformRange); other producers (a sub-stream) send per-uniform records
     bool mainOnlyProducer();            // the main thread, not inside a sub-stream: the only producer that owns the shaders' class block copies
     void uniformRange(void* program, U32 cls, U32 offset, U32 size, const void* data);
     // where the vertex attributes of a draw come from, as values: the buffers and, for each shader attribute location that is read from an array, how

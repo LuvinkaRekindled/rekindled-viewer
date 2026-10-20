@@ -861,7 +861,7 @@ void LLShaderMgr::initShaderCache(bool enabled, const LLUUID& old_cache_version,
     LL_PROFILE_ZONE_SCOPED;
     LL_INFOS("ShaderMgr") << "Initializing shader cache" << LL_ENDL;
 
-    mRecordShaderSources = getenv("LL_VK_SHADER_CHECK") != nullptr || LLVkBridge::isRequested();
+    mRecordShaderSources = getenv("LL_VK_SHADER_CHECK") != nullptr || true;
     if (mRecordShaderSources)
     {
         enabled = false;    // cached binaries would skip loadShaderFile, so there would be no source to check

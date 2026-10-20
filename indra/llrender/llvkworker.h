@@ -22,11 +22,8 @@ namespace LLVkWorker
     // every mirror entry point of the inline mode (before the queue starts) runs under this lock
     extern LLVkBridge::Mutex gMutex;
 
-    // CPU time this thread spent inside real OpenGL calls (ticks of the performance counter); read by the benchmark
-    inline thread_local long long gGlTicks = 0;
 
     // true when the mirror owns the resources
-    extern bool gOwn;
 
     // names for the resources the producer creates: handed out on the calling thread, created on the worker (LLVkAsync::resourceCreate)
     void own_gen(int kind, S32 n, U32* out);

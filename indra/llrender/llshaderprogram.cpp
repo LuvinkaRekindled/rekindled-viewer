@@ -428,7 +428,7 @@ void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram) return;
-    if (LLVkAsync::gUniformRec == 2 && LLVkAsync::mainOnlyProducer())
+    if (LLVkAsync::mainOnlyProducer())
     {
         // range writes: the copy of the class block does the comparing (samplers and unknown locations take the long way below)
         const S32 twin = vkTwinOf(location);
@@ -465,7 +465,7 @@ void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list
     if (twin < 0)
     {
         // a sampler: the integer is the texture unit it now reads
-        if (LLVkAsync::gUniformRec == 2 && async)
+        if (async)
         {
             // (the value cache does not filter these any more: only a changed unit is a record)
             const size_t si = (size_t)(~twin);
@@ -500,13 +500,10 @@ void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list
             ++n;
         }
     }
-    if (LLVkAsync::gUniformRec != 0 && (!async || LLVkAsync::mainOnlyProducer()))
+    if ((!async || LLVkAsync::mainOnlyProducer()))
     {
         vkWriteFloats(twin, kind == 0 ? f : reinterpret_cast<const F32*>(i), n, 1);
-        if (LLVkAsync::gUniformRec == 2)
-        {
-            return;
-        }
+        return;
     }
     if (async)
     {
@@ -527,7 +524,7 @@ void LLShaderProgram::mirrorVector(S32 location, int kind, U32 components, U32 c
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram || !data) return;
-    if (LLVkAsync::gUniformRec == 2 && LLVkAsync::mainOnlyProducer())
+    if (LLVkAsync::mainOnlyProducer())
     {
         const S32 twin = vkTwinOf(location);
         if (twin >= 0)
@@ -549,13 +546,10 @@ void LLShaderProgram::mirrorVector(S32 location, int kind, U32 components, U32 c
         return;     // unknown, or a sampler array (units are fixed at link time)
     }
     (void)kind;     // floats and ints are copied bit for bit
-    if (LLVkAsync::gUniformRec != 0 && (!async || LLVkAsync::mainOnlyProducer()))
+    if ((!async || LLVkAsync::mainOnlyProducer()))
     {
         vkWriteFloats(twin, reinterpret_cast<const F32*>(data), components, count);
-        if (LLVkAsync::gUniformRec == 2)
-        {
-            return;
-        }
+        return;
     }
     if (async)
     {
@@ -569,7 +563,7 @@ void LLShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool tra
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram || !data) return;
-    if (LLVkAsync::gUniformRec == 2 && LLVkAsync::mainOnlyProducer())
+    if (LLVkAsync::mainOnlyProducer())
     {
         const S32 twin = vkTwinOf(location);
         if (twin >= 0)
@@ -590,13 +584,10 @@ void LLShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool tra
     {
         return;
     }
-    if (LLVkAsync::gUniformRec != 0 && (!async || LLVkAsync::mainOnlyProducer()))
+    if ((!async || LLVkAsync::mainOnlyProducer()))
     {
         vkWriteMatrix(twin, data, columns, rows, transpose != false, count);
-        if (LLVkAsync::gUniformRec == 2)
-        {
-            return;
-        }
+        return;
     }
     if (transpose)
     {
@@ -684,16 +675,7 @@ static inline bool vkDiffCopy(U8* dst, const F32* src, U32 floats)
 
 bool LLShaderProgram::uniformValueChanged(S32 location, const LLVector4& value, bool force)
 {
-    if (LLVkAsync::gUniformRec == 2)
-    {
-        return true;
-    }
-    const auto it = mValue.find(location);
-    if (!force && it != mValue.end() && !shouldChange(it->second, value))
-    {
-        return false;
-    }
-    mValue[location] = value;
+    // (the class block copy compares the values: nothing is filtered here any more)
     return true;
 }
 
@@ -704,10 +686,6 @@ void LLShaderProgram::vkSendRange(U32 cls, U32 offset, U32 size)
     if (LLVkAsync::gEnabled)
     {
         LLVkAsync::uniformRange(mVkProgram, cls, offset, size, bytes);
-    }
-    else if (LLVkAsync::gUniformRec == 1)
-    {
-        mVkProgram->writeRangeVerify(cls, offset, size, bytes);       // (the caller holds the mirror lock)
     }
     else
     {
