@@ -85,8 +85,6 @@ namespace LLVkAsync
     void bufferRecycle(U32 name);
     // LLGLSLShader::bind(): unbinds the vertex and index buffers, binds the program (null: unchanged) and enables / disables vertex attribute arrays (bit masks of attribute locations)
     void shaderBind(void* program);
-    // one texture parameter (wrap, filter, anisotropy ...), see LLVkTex::params
-    struct TexParam { U32 mPname; U32 mIsFloat; S32 mInt; F32 mFloat; };
     // render targets (LLRenderTarget): attach a texture to a framebuffer by name (then bind restore_fbo again), and make a framebuffer current with its draw buffers and viewport
     void framebufferAttach(U32 fbo, U32 slot, U32 texture);
     // a query begins / ends in the command stream (llvkquery.h; kind is an LLVkQuery::Kind)

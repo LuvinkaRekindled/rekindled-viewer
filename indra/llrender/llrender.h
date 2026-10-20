@@ -228,7 +228,7 @@ public:
     // MUST already be active and bound
     void setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions option, eTextureType tex_type);
 
-    static U32 getInternalType(eTextureType type);
+    static TextureTarget getInternalType(eTextureType type);
 
     U32 getCurrTexture(void) { return mCurrTexture; }
 
@@ -492,18 +492,21 @@ public:
     void deleteBuffers(S32 count, const U32* ids);
     void bufferData(U32 buffer, BufferKind kind, S64 size, const void* data);     // names the buffer: nothing is bound
     void bindUniformBlock(U32 binding, U32 id);
-    void copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);     // source_fbo: the render target read from (0: the back buffer)
-    void copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);
-    void generateMipmap(U32 texture, U32 gl_target);
-    void texParameteri(U32 texture, U32 gl_target, U32 gl_pname, S32 param);
-    void texImage2D(U32 texture, U32 gl_target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void copyTexSubImage2D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);     // source_fbo: the render target read from (0: the back buffer)
+    void copyTexSubImage3D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);
+    void generateMipmap(U32 texture);
+    // F3.6f: sampler settings of one texture, by name (a setting acts on the texture whatever its dimension): typed, no GL parameter numbers
+    void setTexFilter(U32 texture, bool mag, TextureFilter filter);
+    void setTexWrap(U32 texture, TextureWrap s, TextureWrap t);
+    void setTexCompare(U32 texture, bool on, LLRenderState::CompareOp func = LLRenderState::CompareOp::LessEqual);        // on: compare the reference to the texture with func (depth textures); off: plain sampling
+    void texImage2D(U32 texture, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     U32 getError();
-    void bindTextureSlot(S32 unit, U32 gl_target, U32 id);     // raw slot write, bypasses the LLTexUnit cache (as the old direct call did)
+    void bindTextureSlot(S32 unit, U32 id);     // raw slot write, bypasses the LLTexUnit cache (as the old direct call did)
     void deleteTextures(S32 count, const U32* ids);
     F32 getLineWidth() const { return mLineWidth; }
     void setScissor(S32 x, S32 y, S32 width, S32 height);
-    void getTexLevelParameteriv(U32 texture, U32 gl_target, S32 level, U32 gl_pname, S32* result);
-    void getTexImage(U32 texture, U32 gl_target, S32 level, PixelFormat format, ComponentType type, void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void getTexLevelParameteriv(U32 texture, TextureTarget target, S32 level, LevelQuery query, S32* result);
+    void getTexImage(U32 texture, TextureTarget target, S32 level, PixelFormat format, ComponentType type, void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void setSceneBlendType(eBlendType type);
 
     // applies blend func to both color and alpha

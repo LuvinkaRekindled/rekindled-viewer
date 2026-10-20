@@ -76,21 +76,21 @@ bool LLRender::sClassicMode = false;
 
 static thread_local std::list<LLVertexBufferData> *sBufferDataList = nullptr;
 
-static const GLenum sGLTextureType[] =
+static const TextureTarget sTextureTarget[] =
 {
-    GL_TEXTURE_2D,
-    GL_TEXTURE_RECTANGLE,
-    GL_TEXTURE_CUBE_MAP,
-    GL_TEXTURE_CUBE_MAP_ARRAY,
-    GL_TEXTURE_2D_MULTISAMPLE,
-    GL_TEXTURE_3D
+    TextureTarget::Tex2D,
+    TextureTarget::Rect,
+    TextureTarget::Cube,
+    TextureTarget::CubeArray,
+    TextureTarget::Multisample2D,
+    TextureTarget::Tex3D
 };
 
-static const S32 sGLAddressMode[] =
+static const TextureWrap sTextureWrap[] =
 {
-    GL_REPEAT,
-    GL_MIRRORED_REPEAT,
-    GL_CLAMP_TO_EDGE
+    TextureWrap::Repeat,
+    TextureWrap::MirroredRepeat,
+    TextureWrap::ClampToEdge
 };
 
 const U32 immediate_mask = LLVertexBuffer::MAP_VERTEX | LLVertexBuffer::MAP_COLOR | LLVertexBuffer::MAP_TEXCOORD0;
@@ -128,9 +128,9 @@ static const char* sSlotFile[LL_NUM_TEXTURE_LAYERS];          // the call site o
 static int sSlotLine[LL_NUM_TEXTURE_LAYERS];
 static const char* sNextFile = nullptr;                       // set by those functions just before they write the slot
 static int sNextLine = 0;
-static inline void ll_bindTexUnit_impl(S32 unit_index, GLenum target, U32 texture, const char* who)
+static inline void ll_bindTexUnit_impl(S32 unit_index, U32 texture, const char* who)
 {
-    (void)target;       // a unit holds a texture: its dimension is the texture's own
+    // a unit holds a texture: its dimension is the texture's own
     if (unit_index >= 0 && unit_index < (S32)LL_NUM_TEXTURE_LAYERS)
     {
         sSlotId[unit_index] = texture;
@@ -142,11 +142,11 @@ static inline void ll_bindTexUnit_impl(S32 unit_index, GLenum target, U32 textur
     }
     LLVkTex::bindSlot(unit_index, texture);
 }
-#define ll_bindTexUnit(unit, target, texture) ll_bindTexUnit_impl(unit, target, texture, __func__)
+#define ll_bindTexUnit(unit, texture) ll_bindTexUnit_impl(unit, texture, __func__)
 
-U32 LLTexUnit::getInternalType(eTextureType type)
+TextureTarget LLTexUnit::getInternalType(eTextureType type)
 {
-    return sGLTextureType[type];
+    return sTextureTarget[type];
 }
 
 void LLTexUnit::refreshState(void)
@@ -159,11 +159,11 @@ void LLTexUnit::refreshState(void)
 
     if (mCurrTexType != TT_NONE)
     {
-        ll_bindTexUnit(mIndex, sGLTextureType[mCurrTexType], mCurrTexture);
+        ll_bindTexUnit(mIndex, mCurrTexture);
     }
     else
     {
-        ll_bindTexUnit(mIndex, GL_TEXTURE_2D, 0);
+        ll_bindTexUnit(mIndex, 0);
     }
 }
 
@@ -183,7 +183,7 @@ void LLTexUnit::applyTexOptions(LLImageGL* gl_tex)
 {
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
-    ll_bindTexUnit(mIndex, sGLTextureType[gl_tex->getTarget()], mCurrTexture);
+    ll_bindTexUnit(mIndex, mCurrTexture);
     mHasMipMaps = gl_tex->mHasMipMaps;
     gl_tex->mTexOptionsDirty = false;
     setTextureAddressModeFast(gl_tex->mAddressMode, gl_tex->getTarget());
@@ -214,7 +214,7 @@ void LLTexUnit::bindFast(LLTexture* texture)
             texture->bindDefaultImage(mIndex);
         }
     }
-    ll_bindTexUnit(mIndex, sGLTextureType[gl_tex->getTarget()], mCurrTexture);
+    ll_bindTexUnit(mIndex, mCurrTexture);
     mHasMipMaps = gl_tex->mHasMipMaps;
     if (gl_tex->mTexOptionsDirty)
     {
@@ -273,7 +273,7 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
                 {
                     mCurrTexType = gl_tex->getTarget();
                     mCurrTexture = gl_tex->getTexName();
-                    ll_bindTexUnit(mIndex, sGLTextureType[gl_tex->getTarget()], mCurrTexture);
+                    ll_bindTexUnit(mIndex, mCurrTexture);
                     if(gl_tex->updateBindStats())
                     {
                         texture->setActive() ;
@@ -350,7 +350,7 @@ bool LLTexUnit::bind(LLImageGL* texture, bool for_rendering, bool forceBind, S32
         mCurrTexType = texture->getTarget();
         stop_glerror();
         mCurrTexture = texname;
-        ll_bindTexUnit(mIndex, sGLTextureType[texture->getTarget()], mCurrTexture);
+        ll_bindTexUnit(mIndex, mCurrTexture);
         stop_glerror();
         texture->updateBindStats();
         mHasMipMaps = texture->mHasMipMaps;
@@ -387,7 +387,7 @@ bool LLTexUnit::bind(LLCubeMap* cubeMap)
         {
             mCurrTexType = LLTexUnit::TT_CUBE_MAP;
             mCurrTexture = cubeMap->mImages[0]->getTexName();
-            ll_bindTexUnit(mIndex, GL_TEXTURE_CUBE_MAP, mCurrTexture);
+            ll_bindTexUnit(mIndex, mCurrTexture);
             mHasMipMaps = cubeMap->mImages[0]->mHasMipMaps;
             cubeMap->mImages[0]->updateBindStats();
             if (cubeMap->mImages[0]->mTexOptionsDirty)
@@ -447,7 +447,7 @@ bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const c
             mCurrTexType = type;
         }
         mCurrTexture = texture;
-        ll_bindTexUnit(mIndex, sGLTextureType[type], texture);
+        ll_bindTexUnit(mIndex, texture);
         mHasMipMaps = hasMips;
     }
     return true;
@@ -471,7 +471,7 @@ void LLTexUnit::bindWhite(const char* file, int line)
         ++sWhiteOverSites[std::string(base ? base + 1 : (file ? file : "?")) + ":" + std::to_string(line) + " held type " + std::to_string((int)mCurrTexType)];
     }
     mCurrTexture = 0;
-    ll_bindTexUnit(mIndex, GL_TEXTURE_2D, sWhiteTexture);
+    ll_bindTexUnit(mIndex, sWhiteTexture);
 }
 
 void LLTexUnit::bindWhiteFast(const char* file, int line)
@@ -481,7 +481,7 @@ void LLTexUnit::bindWhiteFast(const char* file, int line)
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
     if (mIndex < 0) return;
     mCurrTexture = 0;
-    ll_bindTexUnit(mIndex, GL_TEXTURE_2D, sWhiteTexture);
+    ll_bindTexUnit(mIndex, sWhiteTexture);
 }
 
 void LLTexUnit::bindNone(eTextureType type)
@@ -490,7 +490,7 @@ void LLTexUnit::bindNone(eTextureType type)
     if (mIndex < 0) return;
     gGL.flush();
     mCurrTexture = 0;
-    ll_bindTexUnit(mIndex, sGLTextureType[type], 0);
+    ll_bindTexUnit(mIndex, 0);
 }
 
 void LLTexUnit::unbind(eTextureType type, const char* file, int line)
@@ -513,11 +513,11 @@ void LLTexUnit::unbind(eTextureType type, const char* file, int line)
 
         if (type == LLTexUnit::TT_TEXTURE)
         {
-            ll_bindTexUnit(mIndex, sGLTextureType[type], sWhiteTexture);
+            ll_bindTexUnit(mIndex, sWhiteTexture);
         }
         else
         {
-            ll_bindTexUnit(mIndex, sGLTextureType[type], 0);
+            ll_bindTexUnit(mIndex, 0);
         }
         stop_glerror();
     }
@@ -536,11 +536,11 @@ void LLTexUnit::unbindFast(eTextureType type, const char* file, int line)
 
         if (type == LLTexUnit::TT_TEXTURE)
         {
-            ll_bindTexUnit(mIndex, sGLTextureType[type], sWhiteTexture);
+            ll_bindTexUnit(mIndex, sWhiteTexture);
         }
         else
         {
-            ll_bindTexUnit(mIndex, sGLTextureType[type], 0);
+            ll_bindTexUnit(mIndex, 0);
         }
     }
 }
@@ -558,24 +558,22 @@ void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
 // <FS> F1.2: the sampler parameters of one texture are written as one record that names the texture
 struct TexParams
 {
-    GLenum mTarget;
     U32 mId;
-    LLVkAsync::TexParam mE[8];
+    LLVkFormat::Setting mE[8];
     U32 mN = 0;
-    TexParams(GLenum target, U32 id) : mTarget(target), mId(id) {}
-    void i(GLenum pname, S32 v) { mE[mN++] = { (U32)pname, 0, (S32)v, 0.f }; }
-    void f(GLenum pname, F32 v) { mE[mN++] = { (U32)pname, 1, 0, v }; }
-    ~TexParams() { LLVkTex::params(mId, mTarget, mE, mN); }
+    explicit TexParams(U32 id) : mId(id) {}
+    void add(const LLVkFormat::Setting& s) { mE[mN++] = s; }
+    ~TexParams() { LLVkTex::params(mId, mE, mN); }
 };
 
 void LLTexUnit::applyAddressMode(U32 tex_name, eTextureType tex_type, eTextureAddressMode mode)
 {
-    TexParams p(sGLTextureType[tex_type], tex_name);
-    p.i(GL_TEXTURE_WRAP_S, sGLAddressMode[mode]);
-    p.i(GL_TEXTURE_WRAP_T, sGLAddressMode[mode]);
+    TexParams p(tex_name);
+    p.add(LLVkFormat::setWrapS(sTextureWrap[mode]));
+    p.add(LLVkFormat::setWrapT(sTextureWrap[mode]));
     if (tex_type == TT_CUBE_MAP || tex_type == TT_CUBE_MAP_ARRAY || tex_type == TT_TEXTURE_3D)
     {
-        p.i(GL_TEXTURE_WRAP_R, sGLAddressMode[mode]);
+        p.add(LLVkFormat::setWrapR(sTextureWrap[mode]));
     }
 }
 
@@ -596,52 +594,31 @@ void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions optio
 
 void LLTexUnit::applyFilteringOption(U32 tex_name, eTextureType tex_type, LLTexUnit::eTextureFilterOptions option, bool has_mips)
 {
-    TexParams p(sGLTextureType[tex_type], tex_name);
-    if (option == TFO_POINT)
-    {
-        p.i(GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    }
-    else
-    {
-        p.i(GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    }
+    TexParams p(tex_name);
+    p.add(LLVkFormat::setMagFilter(option == TFO_POINT ? TextureFilter::Nearest : TextureFilter::Linear));
 
     if (option >= TFO_TRILINEAR && has_mips)
     {
-        p.i(GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        p.add(LLVkFormat::setMinFilter(TextureFilter::LinearMipLinear));
     }
     else if (option >= TFO_BILINEAR)
     {
-        if (has_mips)
-        {
-            p.i(GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
-        }
-        else
-        {
-            p.i(GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        }
+        p.add(LLVkFormat::setMinFilter(has_mips ? TextureFilter::LinearMipNearest : TextureFilter::Linear));
     }
     else
     {
-        if (has_mips)
-        {
-            p.i(GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
-        }
-        else
-        {
-            p.i(GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        }
+        p.add(LLVkFormat::setMinFilter(has_mips ? TextureFilter::NearestMipNearest : TextureFilter::Nearest));
     }
 
     if (gGLManager.mHasAnisotropic)
     {
         if (LLImageGL::sGlobalUseAnisotropic && option == TFO_ANISOTROPIC)
         {
-            p.f(GL_TEXTURE_MAX_ANISOTROPY, gGLManager.mMaxAnisotropy);
+            p.add(LLVkFormat::setAnisotropy(gGLManager.mMaxAnisotropy));
         }
         else
         {
-            p.f(GL_TEXTURE_MAX_ANISOTROPY, 1.f);
+            p.add(LLVkFormat::setAnisotropy(1.f));
         }
     }
 }
@@ -1553,29 +1530,48 @@ void LLRender::bindUniformBlock(U32 binding, U32 id)
     LLVkBuf::bindUniformBlock(binding, id);
 }
 
-void LLRender::copyTexSubImage2D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
+void LLRender::copyTexSubImage2D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
 {
-    LLVkTex::copySubImage(texture, gl_target, level, xoffset, yoffset, 0, x, y, width, height, source_fbo);
+    LLVkTex::copySubImage(texture, target, level, xoffset, yoffset, 0, x, y, width, height, source_fbo);
 }
 
-void LLRender::copyTexSubImage3D(U32 texture, U32 gl_target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
+void LLRender::copyTexSubImage3D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
 {
-    LLVkTex::copySubImage(texture, gl_target, level, xoffset, yoffset, zoffset, x, y, width, height, source_fbo);
+    LLVkTex::copySubImage(texture, target, level, xoffset, yoffset, zoffset, x, y, width, height, source_fbo);
 }
 
-void LLRender::generateMipmap(U32 texture, U32 gl_target)
+void LLRender::generateMipmap(U32 texture)
 {
-    LLVkTex::generateMipmap(texture, gl_target);
+    LLVkTex::generateMipmap(texture);
 }
 
-void LLRender::texParameteri(U32 texture, U32 gl_target, U32 gl_pname, S32 param)
+void LLRender::setTexFilter(U32 texture, bool mag, TextureFilter filter)
 {
-    LLVkTex::paramI(texture, gl_target, gl_pname, param);
+    LLVkTex::set(texture, mag ? LLVkFormat::setMagFilter(filter) : LLVkFormat::setMinFilter(filter));
 }
 
-void LLRender::texImage2D(U32 texture, U32 gl_target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* data, const char* file, int line)
+void LLRender::setTexWrap(U32 texture, TextureWrap s, TextureWrap t)
 {
-    LLVkTex::image2D(texture, gl_target, level, internal_format, width, height, format, type, data, file, line);
+    const LLVkFormat::Setting settings[2] = { LLVkFormat::setWrapS(s), LLVkFormat::setWrapT(t) };
+    LLVkTex::params(texture, settings, 2);
+}
+
+void LLRender::setTexCompare(U32 texture, bool on, LLRenderState::CompareOp func)
+{
+    if (on)
+    {
+        const LLVkFormat::Setting settings[2] = { LLVkFormat::setCompareMode(true), LLVkFormat::setCompareFunc(func) };
+        LLVkTex::params(texture, settings, 2);
+    }
+    else
+    {
+        LLVkTex::set(texture, LLVkFormat::setCompareMode(false));
+    }
+}
+
+void LLRender::texImage2D(U32 texture, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* data, const char* file, int line)
+{
+    LLVkTex::image2D(texture, target, level, internal_format, width, height, format, type, data, file, line);
 }
 
 U32 LLRender::getError()
@@ -1583,9 +1579,8 @@ U32 LLRender::getError()
     return 0;       // there are no GL errors
 }
 
-void LLRender::bindTextureSlot(S32 unit, U32 gl_target, U32 id)
+void LLRender::bindTextureSlot(S32 unit, U32 id)
 {
-    (void)gl_target;
     if (unit >= 0 && unit < (S32)LL_NUM_TEXTURE_LAYERS)
     {
         sSlotId[unit] = id;
@@ -1604,14 +1599,14 @@ void LLRender::setScissor(S32 x, S32 y, S32 width, S32 height)
     LLVkState::setScissor(x, y, width, height);
 }
 
-void LLRender::getTexLevelParameteriv(U32 texture, U32 gl_target, S32 level, U32 gl_pname, S32* result)
+void LLRender::getTexLevelParameteriv(U32 texture, TextureTarget target, S32 level, LevelQuery query, S32* result)
 {
-    *result = LLVkTex::levelParameter(texture, gl_target, level, gl_pname);
+    *result = LLVkTex::levelParameter(texture, target, level, query);
 }
 
-void LLRender::getTexImage(U32 texture, U32 gl_target, S32 level, PixelFormat format, ComponentType type, void* pixels, const char* file, int line)
+void LLRender::getTexImage(U32 texture, TextureTarget target, S32 level, PixelFormat format, ComponentType type, void* pixels, const char* file, int line)
 {
-    LLVkTex::getImage(texture, gl_target, level, format, type, pixels, file, line);
+    LLVkTex::getImage(texture, target, level, format, type, pixels, file, line);
 }
 
 void LLRender::setSceneBlendType(eBlendType type)

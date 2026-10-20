@@ -1119,7 +1119,7 @@ F32 gpu_benchmark()
             delete[] pixels;
             return -1.f;
         }
-        LLImageGL::setManualImage(texHolder.name(i), GL_TEXTURE_2D, 0, TexelFormat::RGBA8, res,res,PixelFormat::RGBA, ComponentType::U8, pixels);
+        LLImageGL::setManualImage(texHolder.name(i), TextureTarget::Tex2D, 0, TexelFormat::RGBA8, res,res,PixelFormat::RGBA, ComponentType::U8, pixels);
         // disable mipmaps and use point filtering to cause cache misses
         gGL.getTexUnit(0)->setHasMipMaps(false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);

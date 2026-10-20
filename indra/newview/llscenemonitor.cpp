@@ -313,7 +313,7 @@ void LLSceneMonitor::capture()
 
         gGL.getTexUnit(0)->bind(&cur_target);
         // copy the content of the main frame buffer (source 0) into the capture target's texture
-        gGL.copyTexSubImage2D(cur_target.getTexture(), GL_TEXTURE_2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight(), 0);
+        gGL.copyTexSubImage2D(cur_target.getTexture(), TextureTarget::Tex2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight(), 0);
 
         mDiffState = NEED_DIFF;
     }

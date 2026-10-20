@@ -79,6 +79,15 @@ static_assert((int)S_RGBA8 == (int)TexelFormat::RGBA8 && (int)S_LUM_ALPHA8 == (i
 static_assert((int)C_R == (int)PixelFormat::R && (int)C_RGB == (int)PixelFormat::RGB && (int)C_RGBA == (int)PixelFormat::RGBA && (int)C_BGRA == (int)PixelFormat::BGRA
               && (int)C_LUM_ALPHA == (int)PixelFormat::LumAlpha && (int)C_ALPHA == (int)PixelFormat::Alpha && (int)C_DEPTH == (int)PixelFormat::Depth, "PixelFormat");
 
+static_assert((int)DIM_2D == (int)TextureTarget::Tex2D && (int)DIM_CUBE == (int)TextureTarget::Cube && (int)DIM_CUBE_ARRAY == (int)TextureTarget::CubeArray && (int)DIM_2D_ARRAY == (int)TextureTarget::Array2D
+              && (int)DIM_3D == (int)TextureTarget::Tex3D && (int)DIM_MS == (int)TextureTarget::Multisample2D && (int)DIM_OTHER == (int)TextureTarget::Rect, "TextureTarget");
+static_assert((int)F_NEAREST == (int)TextureFilter::Nearest && (int)F_LINEAR_MIP_NEAREST == (int)TextureFilter::LinearMipNearest && (int)F_LINEAR_MIP_LINEAR == (int)TextureFilter::LinearMipLinear
+              && (int)F_NEAREST_MIP_LINEAR == (int)TextureFilter::NearestMipLinear, "TextureFilter");
+static_assert((int)W_REPEAT == (int)TextureWrap::Repeat && (int)W_CLAMP_EDGE == (int)TextureWrap::ClampToEdge && (int)W_MIRRORED_REPEAT == (int)TextureWrap::MirroredRepeat && (int)W_CLAMP_BORDER == (int)TextureWrap::ClampToBorder, "TextureWrap");
+static_assert((int)CMP_NEVER == (int)LLRenderState::CompareOp::Never && (int)CMP_LESS == (int)LLRenderState::CompareOp::Less && (int)CMP_LEQUAL == (int)LLRenderState::CompareOp::LessEqual && (int)CMP_GEQUAL == (int)LLRenderState::CompareOp::GreaterEqual && (int)CMP_ALWAYS == (int)LLRenderState::CompareOp::Always, "LLRenderState::CompareOp");
+static_assert((int)SW_R == (int)TextureSwizzle::R && (int)SW_A == (int)TextureSwizzle::A && (int)SW_ZERO == (int)TextureSwizzle::Zero && (int)SW_ONE == (int)TextureSwizzle::One, "TextureSwizzle");
+static_assert((int)LQ_WIDTH == (int)LevelQuery::Width && (int)LQ_DEPTH == (int)LevelQuery::Depth && (int)LQ_COMPRESSED == (int)LevelQuery::Compressed && (int)LQ_COMPRESSED_SIZE == (int)LevelQuery::CompressedSize, "LevelQuery");
+
 Topology topology(U32 gl)
 {
     switch (gl)
@@ -272,6 +281,16 @@ Setting setting(U32 pname, bool is_float, S32 i, F32 f)
 // the plugin protocol (GL numbers on the wire, until F4 media)
 }
 
+TextureFilter textureFilterFromGLTF(S32 v)
+{
+    return (TextureFilter)LLVkFormat::setting(0x2801, false, v, 0.f).mValue;        // TEXTURE_MIN_FILTER: the same table for min and mag
+}
+
+TextureWrap textureWrapFromGLTF(S32 v)
+{
+    return (TextureWrap)LLVkFormat::setting(0x2802, false, v, 0.f).mValue;
+}
+
 TexelFormat texelFormatFromGL(S32 gl)
 {
     return (TexelFormat)LLVkFormat::store(gl);
@@ -337,6 +356,22 @@ void noteFormat(const char* what, const char* file, int line, U8 store, U8 comps
     }
 }
 
+void noteKey(const char* what, int a, int b, int c, int d, float f)
+{
+    if (!formatVerify())
+    {
+        return;
+    }
+    static std::mutex mutex;
+    static std::unordered_set<std::string> seen;
+    std::string key = std::string(what) + " " + std::to_string(a) + " " + std::to_string(b) + " " + std::to_string(c) + " " + std::to_string(d) + " " + std::to_string(f);
+    std::lock_guard<std::mutex> lock(mutex);
+    if (seen.insert(key).second)
+    {
+        LL_INFOS("FormatVerify") << "key " << key << LL_ENDL;
+    }
+}
+
 // The migration tables: each GL number the old code used and the typed value that replaced it. Logs a mismatch with the pair named.
 void verifyTables()
 {
@@ -361,6 +396,31 @@ void verifyTables()
     LLVK_PIXEL(GL_RGBA, RGBA); LLVK_PIXEL(GL_RGB, RGB); LLVK_PIXEL(GL_BGRA, BGRA); LLVK_PIXEL(GL_RED, R); LLVK_PIXEL(GL_RG, RG); LLVK_PIXEL(GL_ALPHA, Alpha); LLVK_PIXEL(GL_LUMINANCE, Lum);
     LLVK_PIXEL(GL_LUMINANCE_ALPHA, LumAlpha); LLVK_PIXEL(GL_DEPTH_COMPONENT, Depth);
     LLVK_CTYPE(GL_UNSIGNED_BYTE, U8); LLVK_CTYPE(GL_BYTE, S8); LLVK_CTYPE(GL_UNSIGNED_SHORT, U16); LLVK_CTYPE(GL_SHORT, S16); LLVK_CTYPE(GL_UNSIGNED_INT, U32); LLVK_CTYPE(GL_INT, S32); LLVK_CTYPE(GL_FLOAT, F32);
+    // F3.6f: targets, settings, swizzles, level queries (the GL tokens the old code used)
+    auto targ = [&](const char* n, U32 gl, TextureTarget t) { const Target a = target(gl), b = target(t); if (a.mDim != b.mDim || a.mFace != b.mFace) { ++bad; LL_WARNS("FormatVerify") << "target table: " << n << " decodes to dim " << (S32)a.mDim << " face " << (S32)a.mFace << ", typed dim " << (S32)b.mDim << " face " << (S32)b.mFace << LL_ENDL; } };
+    auto sett = [&](const char* n, U32 pname, S32 v, Setting typed) { const Setting a = setting(pname, false, v, 0.f); if (a.mParam != typed.mParam || a.mValue != typed.mValue || a.mInt != typed.mInt) { ++bad; LL_WARNS("FormatVerify") << "setting table: " << n << " decodes to param " << (S32)a.mParam << " value " << (S32)a.mValue << ", typed " << (S32)typed.mParam << " value " << (S32)typed.mValue << LL_ENDL; } };
+    auto swz = [&](const char* n, S32 gl, TextureSwizzle t) { if (swizzle(gl) != (Swizzle)t) { ++bad; LL_WARNS("FormatVerify") << "swizzle table: " << n << LL_ENDL; } };
+    auto lvl = [&](const char* n, U32 gl, LevelQuery q) { if (level(gl) != (Level)q) { ++bad; LL_WARNS("FormatVerify") << "level table: " << n << LL_ENDL; } };
+#define LLVK_TARGET(gl, t) targ(#gl, gl, TextureTarget::t)
+    LLVK_TARGET(GL_TEXTURE_2D, Tex2D); LLVK_TARGET(GL_TEXTURE_RECTANGLE, Rect); LLVK_TARGET(GL_TEXTURE_CUBE_MAP, Cube); LLVK_TARGET(GL_TEXTURE_CUBE_MAP_ARRAY, CubeArray); LLVK_TARGET(GL_TEXTURE_2D_MULTISAMPLE, Multisample2D);
+    LLVK_TARGET(GL_TEXTURE_3D, Tex3D); LLVK_TARGET(GL_TEXTURE_CUBE_MAP_POSITIVE_X, CubeFacePX); LLVK_TARGET(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, CubeFaceNX); LLVK_TARGET(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, CubeFacePY);
+    LLVK_TARGET(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, CubeFaceNY); LLVK_TARGET(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, CubeFacePZ); LLVK_TARGET(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, CubeFaceNZ);
+#undef LLVK_TARGET
+    sett("MIN nearest", GL_TEXTURE_MIN_FILTER, GL_NEAREST, setMinFilter(TextureFilter::Nearest)); sett("MIN linear", GL_TEXTURE_MIN_FILTER, GL_LINEAR, setMinFilter(TextureFilter::Linear));
+    sett("MIN n_m_n", GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST, setMinFilter(TextureFilter::NearestMipNearest)); sett("MIN l_m_n", GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST, setMinFilter(TextureFilter::LinearMipNearest));
+    sett("MIN l_m_l", GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR, setMinFilter(TextureFilter::LinearMipLinear));
+    sett("MAG nearest", GL_TEXTURE_MAG_FILTER, GL_NEAREST, setMagFilter(TextureFilter::Nearest)); sett("MAG linear", GL_TEXTURE_MAG_FILTER, GL_LINEAR, setMagFilter(TextureFilter::Linear));
+    sett("WRAP_S repeat", GL_TEXTURE_WRAP_S, GL_REPEAT, setWrapS(TextureWrap::Repeat)); sett("WRAP_S mirror", GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT, setWrapS(TextureWrap::MirroredRepeat));
+    sett("WRAP_S clamp", GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE, setWrapS(TextureWrap::ClampToEdge)); sett("WRAP_T repeat", GL_TEXTURE_WRAP_T, GL_REPEAT, setWrapT(TextureWrap::Repeat));
+    sett("WRAP_T mirror", GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT, setWrapT(TextureWrap::MirroredRepeat)); sett("WRAP_T clamp", GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE, setWrapT(TextureWrap::ClampToEdge));
+    sett("WRAP_R repeat", GL_TEXTURE_WRAP_R, GL_REPEAT, setWrapR(TextureWrap::Repeat)); sett("WRAP_R mirror", GL_TEXTURE_WRAP_R, GL_MIRRORED_REPEAT, setWrapR(TextureWrap::MirroredRepeat));
+    sett("WRAP_R clamp", GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE, setWrapR(TextureWrap::ClampToEdge));
+    sett("COMPARE_MODE on", GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE, setCompareMode(true)); sett("COMPARE_MODE off", GL_TEXTURE_COMPARE_MODE, GL_NONE, setCompareMode(false));
+    sett("COMPARE_FUNC lequal", GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL, setCompareFunc(LLRenderState::CompareOp::LessEqual));
+    sett("BASE_LEVEL", GL_TEXTURE_BASE_LEVEL, 3, setBaseLevel(3)); sett("MAX_LEVEL", GL_TEXTURE_MAX_LEVEL, 5, setMaxLevel(5));
+    swz("ZERO", GL_ZERO, TextureSwizzle::Zero); swz("ONE", GL_ONE, TextureSwizzle::One); swz("RED", GL_RED, TextureSwizzle::R); swz("GREEN", GL_GREEN, TextureSwizzle::G);
+    lvl("WIDTH", GL_TEXTURE_WIDTH, LevelQuery::Width); lvl("HEIGHT", GL_TEXTURE_HEIGHT, LevelQuery::Height); lvl("COMPRESSED", GL_TEXTURE_COMPRESSED, LevelQuery::Compressed);
+    lvl("COMPRESSED_IMAGE_SIZE", GL_TEXTURE_COMPRESSED_IMAGE_SIZE, LevelQuery::CompressedSize);
 #undef LLVK_TEXEL
 #undef LLVK_PIXEL
 #undef LLVK_CTYPE
