@@ -44,11 +44,9 @@
 #endif
 
 // attaching a texture to a target: a slot (colour attachment index, or the depth slot) of the target names the texture
-static void ll_fboAttach(U32 fbo, GLenum attachment, GLenum textarget, U32 texture, U32 restore)
+static void ll_fboAttach(U32 fbo, U32 slot, U32 texture)
 {
-    (void)textarget;
-    (void)restore;
-    LLVkTarget::attach(fbo, attachment == GL_DEPTH_ATTACHMENT ? LLVkTarget::DEPTH_SLOT : (U32)(attachment - GL_COLOR_ATTACHMENT0), texture);
+    LLVkTarget::attach(fbo, slot, texture);
 }
 
 LLRenderTarget* LLRenderTarget::sBoundTarget = NULL;
@@ -106,7 +104,7 @@ void LLRenderTarget::resize(U32 resx, U32 resy)
     if (mDepth)
     {
         gGL.getTexUnit(0)->bindManual(mUsage, mDepth);
-        U32 internal_type = LLTexUnit::getInternalType(mUsage);
+        TextureTarget internal_type = LLTexUnit::getInternalType(mUsage);
         LLImageGL::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
 
         sBytesAllocated += pix_diff*4;
@@ -155,7 +153,7 @@ bool LLRenderTarget::allocate(U32 resx, U32 resy, TexelFormat color_fmt, bool de
 
     if (mDepth)
     {
-        ll_fboAttach(mFBO, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), mDepth, sCurFBO);
+        ll_fboAttach(mFBO, LLVkTarget::DEPTH_SLOT, mDepth);
     }
 
     return addColorAttachment(color_fmt, file, line);
@@ -186,7 +184,7 @@ void LLRenderTarget::setColorAttachment(LLImageGL* img, LLGLuint use_name)
 
     mTex.push_back(use_name);
 
-    ll_fboAttach(mFBO, GL_COLOR_ATTACHMENT0, LLTexUnit::getInternalType(mUsage), use_name, sCurFBO);
+    ll_fboAttach(mFBO, 0, use_name);
     stop_glerror();
 
 }
@@ -198,7 +196,7 @@ void LLRenderTarget::releaseColorAttachment()
     llassert(mTex.size() == 1); //cannot use releaseColorAttachment with LLRenderTarget managed color targets
     llassert(mFBO != 0);  // mFBO must be valid
 
-    ll_fboAttach(mFBO, GL_COLOR_ATTACHMENT0, LLTexUnit::getInternalType(mUsage), 0, sCurFBO);
+    ll_fboAttach(mFBO, 0, 0);
 
     mTex.clear();
 }
@@ -270,7 +268,7 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
 
     if (mFBO)
     {
-        ll_fboAttach(mFBO, GL_COLOR_ATTACHMENT0+offset, LLTexUnit::getInternalType(mUsage), tex, sCurFBO);
+        ll_fboAttach(mFBO, offset, tex);
 
     }
 
@@ -293,7 +291,7 @@ bool LLRenderTarget::allocateDepth()
     LLImageGL::generateTextures(1, &mDepth);
     gGL.getTexUnit(0)->bindManual(mUsage, mDepth);
 
-    U32 internal_type = LLTexUnit::getInternalType(mUsage);
+    TextureTarget internal_type = LLTexUnit::getInternalType(mUsage);
     stop_glerror();
     clear_glerror();
     LLImageGL::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
@@ -326,7 +324,7 @@ void LLRenderTarget::shareDepthBuffer(LLRenderTarget& target)
 
     if (mDepth)
     {
-        ll_fboAttach(target.mFBO, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), mDepth, sCurFBO);
+        ll_fboAttach(target.mFBO, LLVkTarget::DEPTH_SLOT, mDepth);
 
 
         target.mUseDepth = true;
@@ -352,7 +350,7 @@ void LLRenderTarget::release()
     {
         if (mUseDepth)
         { //detach shared depth buffer
-            ll_fboAttach(mFBO, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), 0, sCurFBO);
+            ll_fboAttach(mFBO, LLVkTarget::DEPTH_SLOT, 0);
             mUseDepth = false;
         }
     }
@@ -365,7 +363,7 @@ void LLRenderTarget::release()
         for (z = mTex.size() - 1; z >= 1; z--)
         {
             sBytesAllocated -= mResX*mResY*4;
-            ll_fboAttach(mFBO, static_cast<GLenum>(GL_COLOR_ATTACHMENT0+z), LLTexUnit::getInternalType(mUsage), 0, sCurFBO);
+            ll_fboAttach(mFBO, static_cast<U32>(z), 0);
             LLImageGL::deleteTextures(1, &mTex[z]);
         }
     }
@@ -514,7 +512,7 @@ void LLRenderTarget::flush(const char* file, int line)
     {
         LL_PROFILE_GPU_ZONE("rt generate mipmaps");
         bindTexture(0, 0, LLTexUnit::TFO_TRILINEAR);
-        LLVkTex::generateMipmap(mTex[0], GL_TEXTURE_2D);
+        LLVkTex::generateMipmap(mTex[0]);
     }
 
     sTargetStack.erase(std::remove(sTargetStack.begin(), sTargetStack.end(), this), sTargetStack.end());

@@ -11781,7 +11781,7 @@ void LLVOAvatar::onBakedTextureMasksLoaded( bool success, LLViewerFetchedTexture
             stop_glerror();
 
             LLImageGL::setManualImage(
-                gl_name, GL_TEXTURE_2D, 0, TexelFormat::Alpha8,
+                gl_name, TextureTarget::Tex2D, 0, TexelFormat::Alpha8,
                 aux_src->getWidth(), aux_src->getHeight(),
                 PixelFormat::Alpha, ComponentType::U8, aux_src->getData());
             stop_glerror();

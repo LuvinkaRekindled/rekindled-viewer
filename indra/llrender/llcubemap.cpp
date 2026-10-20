@@ -52,12 +52,12 @@ LLCubeMap::LLCubeMap(bool init_as_srgb)
       mMatrixStage(0),
       mIssRGB(init_as_srgb)
 {
-    mTargets[0] = GL_TEXTURE_CUBE_MAP_NEGATIVE_X;
-    mTargets[1] = GL_TEXTURE_CUBE_MAP_POSITIVE_X;
-    mTargets[2] = GL_TEXTURE_CUBE_MAP_NEGATIVE_Y;
-    mTargets[3] = GL_TEXTURE_CUBE_MAP_POSITIVE_Y;
-    mTargets[4] = GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
-    mTargets[5] = GL_TEXTURE_CUBE_MAP_POSITIVE_Z;
+    mTargets[0] = TextureTarget::CubeFaceNX;
+    mTargets[1] = TextureTarget::CubeFacePX;
+    mTargets[2] = TextureTarget::CubeFaceNY;
+    mTargets[3] = TextureTarget::CubeFacePY;
+    mTargets[4] = TextureTarget::CubeFaceNZ;
+    mTargets[5] = TextureTarget::CubeFacePZ;
 }
 
 LLCubeMap::~LLCubeMap()
@@ -221,7 +221,7 @@ void LLCubeMap::initEnvironmentMap(const std::vector<LLPointer<LLImageRaw> >& ra
     enableTexture(0);
     bind();
     mImages[0]->setFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
-    LLVkTex::generateMipmap(mImages[0]->getTexName(), GL_TEXTURE_CUBE_MAP);
+    LLVkTex::generateMipmap(mImages[0]->getTexName());
     gGL.getTexUnit(0)->clear();
     disable();
 }
@@ -237,7 +237,7 @@ void LLCubeMap::generateMipMaps()
     mImages[0]->setFilteringOption(LLTexUnit::TFO_BILINEAR);
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("cmgmm - glGenerateMipmap");
-        LLVkTex::generateMipmap(mImages[0]->getTexName(), GL_TEXTURE_CUBE_MAP);
+        LLVkTex::generateMipmap(mImages[0]->getTexName());
     }
     gGL.getTexUnit(0)->clear();
     disable();

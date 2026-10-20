@@ -779,33 +779,31 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
             if (tex)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gl bind texture");
-                gGL.bindTextureSlot(channel, GL_TEXTURE_2D, tex->getTexName());
+                gGL.bindTextureSlot(channel, tex->getTexName());
 
                 if (channel != -1 && texture.mSampler != -1)
                 { // set sampler state
                     Sampler& sampler = asset.mSamplers[texture.mSampler];
-                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sampler.mWrapS);
-                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sampler.mWrapT);
-                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.mMagFilter);
+                    gGL.setTexWrap(tex->getTexName(), textureWrapFromGLTF(sampler.mWrapS), textureWrapFromGLTF(sampler.mWrapT));
+                    gGL.setTexFilter(tex->getTexName(), true, textureFilterFromGLTF(sampler.mMagFilter));
 
                     // NOTE: do not set min filter.  Always respect client preference for min filter
                 }
                 else
                 {
                     // set default sampler state
-                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-                    gGL.texParameteri(tex->getTexName(), GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    gGL.setTexWrap(tex->getTexName(), TextureWrap::Repeat, TextureWrap::Repeat);
+                    gGL.setTexFilter(tex->getTexName(), true, TextureFilter::Linear);
                 }
             }
             else
             {
-                gGL.bindTextureSlot(channel, GL_TEXTURE_2D, fallback->getTexName());
+                gGL.bindTextureSlot(channel, fallback->getTexName());
             }
         }
         else
         {
-            gGL.bindTextureSlot(channel, GL_TEXTURE_2D, fallback->getTexName());
+            gGL.bindTextureSlot(channel, fallback->getTexName());
         }
     }
 }

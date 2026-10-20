@@ -269,7 +269,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     {
         LL_WARNS() << "Failed to copy framebuffer to paintmap" << LL_ENDL;
     }
-    gGL.generateMipmap(tex.getGLTexture()->getTexName(), GL_TEXTURE_2D);
+    gGL.generateMipmap(tex.getGLTexture()->getTexName());
     stop_glerror();
 
     pass_91.end();

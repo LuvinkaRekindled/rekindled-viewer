@@ -301,7 +301,7 @@ void LLGLTexture::setTexName(LLGLuint texName)
     return mGLTexturep->setTexName(texName);
 }
 
-void LLGLTexture::setTarget(const LLGLenum target, const LLTexUnit::eTextureType bind_target)
+void LLGLTexture::setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target)
 {
     llassert(mGLTexturep.notNull());
     return mGLTexturep->setTarget(target, bind_target);

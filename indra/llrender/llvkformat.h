@@ -15,6 +15,7 @@
 
 #include "linden_common.h"
 #include "llrenderformat.h"
+#include "llrenderstate.h"
 
 namespace LLVkFormat
 {
@@ -25,7 +26,15 @@ namespace LLVkFormat
         U8 mDim = DIM_OTHER;
         S8 mFace = -1;          // 0-5 when the target named one face of a cube map, else -1
     };
-    Target target(U32 gl_target);
+    Target target(U32 gl_target);               // (F3.6f: the typed form below is what the producer uses; this one stays for the migration tables)
+    inline Target target(TextureTarget t)
+    {
+        Target r;
+        const U8 v = (U8)t;
+        r.mDim = v >= 8 ? (U8)DIM_CUBE : v;
+        r.mFace = v >= 8 ? (S8)(v - 8) : (S8)-1;
+        return r;
+    }
 
     // ---- client pixel data: components and component type ----
     enum Comps : U8 { C_NONE = 0, C_R, C_RG, C_RGB, C_BGR, C_RGBA, C_BGRA, C_LUM, C_LUM_ALPHA, C_ALPHA, C_DEPTH };
@@ -69,6 +78,8 @@ namespace LLVkFormat
     bool formatVerify();
     void noteFormat(const char* what, const char* file, int line, U8 store, U8 comps, U8 type);
     void verifyTables();
+    // F3.6f: the same for the decoded targets, settings, swizzles and level queries (one line per distinct combination: LL_VK_FORMAT_VERIFY)
+    void noteKey(const char* what, int a = 0, int b = 0, int c = 0, int d = 0, float f = 0.f);
 
     // ---- sampler and level settings ----
     enum Param : U8
@@ -89,9 +100,19 @@ namespace LLVkFormat
         S32 mInt = 0;           // levels
         F32 mFloat = 0.f;       // anisotropy
     };
-    // a setting as the viewer states it (GL parameter name, value as an integer or a float)
+    // a setting as the viewer states it (F3.6f: typed builders; setting(U32 ...) decodes GL numbers for the migration tables and glTF files only)
     Setting setting(U32 gl_pname, bool is_float, S32 int_value, F32 float_value);
     Swizzle swizzle(S32 gl_value);
+    inline Setting setMinFilter(TextureFilter f) { Setting s; s.mParam = P_MIN_FILTER; s.mValue = (U8)f; return s; }
+    inline Setting setMagFilter(TextureFilter f) { Setting s; s.mParam = P_MAG_FILTER; s.mValue = (U8)f; return s; }
+    inline Setting setWrapS(TextureWrap w) { Setting s; s.mParam = P_WRAP_S; s.mValue = (U8)w; return s; }
+    inline Setting setWrapT(TextureWrap w) { Setting s; s.mParam = P_WRAP_T; s.mValue = (U8)w; return s; }
+    inline Setting setWrapR(TextureWrap w) { Setting s; s.mParam = P_WRAP_R; s.mValue = (U8)w; return s; }
+    inline Setting setCompareMode(bool on) { Setting s; s.mParam = P_COMPARE_MODE; s.mValue = on ? 1 : 0; return s; }
+    inline Setting setCompareFunc(LLRenderState::CompareOp f) { Setting s; s.mParam = P_COMPARE_FUNC; s.mValue = (U8)f; return s; }
+    inline Setting setAnisotropy(F32 a) { Setting s; s.mParam = P_ANISOTROPY; s.mFloat = a; return s; }
+    inline Setting setBaseLevel(S32 l) { Setting s; s.mParam = P_BASE_LEVEL; s.mInt = l; return s; }
+    inline Setting setMaxLevel(S32 l) { Setting s; s.mParam = P_MAX_LEVEL; s.mInt = l; return s; }
 
     // ---- what a level query asks for ----
     enum Level : U8 { LQ_NONE = 0, LQ_WIDTH, LQ_HEIGHT, LQ_DEPTH, LQ_COMPRESSED, LQ_COMPRESSED_SIZE };

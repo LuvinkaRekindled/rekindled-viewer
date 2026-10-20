@@ -46,14 +46,14 @@
 using namespace LLImageGLMemory;
 
 // MUST match order of OpenGL face-layers
-GLenum LLCubeMapArray::sTargets[6] =
+TextureTarget LLCubeMapArray::sTargets[6] =
 {
-    GL_TEXTURE_CUBE_MAP_POSITIVE_X,
-    GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
-    GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
-    GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
-    GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
-    GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
+    TextureTarget::CubeFacePX,
+    TextureTarget::CubeFaceNX,
+    TextureTarget::CubeFacePY,
+    TextureTarget::CubeFaceNY,
+    TextureTarget::CubeFacePZ,
+    TextureTarget::CubeFaceNZ
 };
 
 LLVector3 LLCubeMapArray::sLookVecs[6] =
@@ -128,10 +128,10 @@ LLCubeMapArray::LLCubeMapArray(LLCubeMapArray& lhs, U32 width, U32 count) : mTex
 
             // Handle different resolutions by scaling the image
             LLPointer<LLImageRaw> src_image = new LLImageRaw(lhs.mWidth, lhs.mWidth, lhs.mImage->getComponents());
-            LLVkTex::getImage(mImage->getTexName(), GL_TEXTURE_CUBE_MAP_ARRAY, 0, components, ComponentType::U8, src_image->getData());
+            LLVkTex::getImage(mImage->getTexName(), TextureTarget::CubeArray, 0, components, ComponentType::U8, src_image->getData());
 
             LLPointer<LLImageRaw> scaled_image = src_image->scaled(mWidth, mWidth);
-            LLVkTex::subImage3D(mImage->getTexName(), GL_TEXTURE_CUBE_MAP_ARRAY, 0, 0, 0, i, mWidth, mWidth, 1, components, ComponentType::U8, scaled_image->getData());
+            LLVkTex::subImage3D(mImage->getTexName(), TextureTarget::CubeArray, 0, 0, 0, i, mWidth, mWidth, 1, components, ComponentType::U8, scaled_image->getData());
         }
     }
 }
@@ -169,7 +169,7 @@ void LLCubeMapArray::allocate(U32 resolution, U32 components, U32 count, bool us
     U32 mip_resolution = resolution;
     while (mip_resolution >= 1)
     {
-        LLVkTex::image3D(texname, GL_TEXTURE_CUBE_MAP_ARRAY, mip, format, mip_resolution, mip_resolution, count * 6,
+        LLVkTex::image3D(texname, TextureTarget::CubeArray, mip, format, mip_resolution, mip_resolution, count * 6,
             PixelFormat::RGBA, ComponentType::U8, nullptr);
 
         if (!use_mips)

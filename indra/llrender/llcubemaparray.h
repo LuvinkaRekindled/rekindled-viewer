@@ -38,7 +38,7 @@ public:
     LLCubeMapArray();
     LLCubeMapArray(LLCubeMapArray& lhs, U32 width, U32 count);
 
-    static GLenum sTargets[6];
+    static TextureTarget sTargets[6];
 
     // look and up vectors for each cube face (agent space)
     static LLVector3 sLookVecs[6];

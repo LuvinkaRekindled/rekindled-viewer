@@ -385,8 +385,6 @@ static LLPipelineListener sPipelineListener;
 
 static thread_local LLCullResult* sCull = NULL; // <FS> per thread: the parallel shadow cascade preparation culls into several results at once
 
-void validate_framebuffer_object();
-
 // Add color attachments for deferred rendering
 // target -- RenderTarget to add attachments to
 bool addDeferredAttachments(LLRenderTarget& target, bool for_impostor = false)
@@ -1212,8 +1210,7 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
                 gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
                 gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
 
-                gGL.texParameteri(shadow_target->getDepth(), GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
-                gGL.texParameteri(shadow_target->getDepth(), GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+                gGL.setTexCompare(shadow_target->getDepth(), true, LLRenderState::CompareOp::LessEqual);
             }
         }
     }
@@ -1229,8 +1226,7 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
                 gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
                 gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
 
-                gGL.texParameteri(shadow_target->getDepth(), GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
-                gGL.texParameteri(shadow_target->getDepth(), GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+                gGL.setTexCompare(shadow_target->getDepth(), true, LLRenderState::CompareOp::LessEqual);
             }
         }
     }
@@ -1763,8 +1759,8 @@ void LLPipeline::createLUTBuffers()
         LLImageGL::setManualImage(mLightFunc, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, pix_format, lightResX, lightResY, PixelFormat::R, ComponentType::F32, ls, false);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
-        gGL.texParameteri(mLightFunc, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        gGL.texParameteri(mLightFunc, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        gGL.setTexFilter(mLightFunc, true, TextureFilter::Linear);
+        gGL.setTexFilter(mLightFunc, false, TextureFilter::Nearest);
 
         delete [] ls;
     }
@@ -9622,33 +9618,6 @@ void apply_cube_face_rotation(U32 face)
     }
 }
 
-void validate_framebuffer_object()
-{
-    GLenum status;
-    status = GL_FRAMEBUFFER_COMPLETE;       // a render target has no completeness state of its own any more
-    switch(status)
-    {
-        case GL_FRAMEBUFFER_COMPLETE:
-            //framebuffer OK, no error.
-            break;
-        case GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
-            // frame buffer not OK: probably means unsupported depth buffer format
-            LL_ERRS() << "Framebuffer Incomplete Missing Attachment." << LL_ENDL;
-            break;
-        case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
-            // frame buffer not OK: probably means unsupported depth buffer format
-            LL_ERRS() << "Framebuffer Incomplete Attachment." << LL_ENDL;
-            break;
-        case GL_FRAMEBUFFER_UNSUPPORTED:
-            /* choose different formats */
-            LL_ERRS() << "Framebuffer unsupported." << LL_ENDL;
-            break;
-        default:
-            LL_ERRS() << "Unknown framebuffer status." << LL_ENDL;
-            break;
-    }
-}
-
 void LLPipeline::bindScreenToTexture()
 {
 
@@ -13699,7 +13668,7 @@ void LLPipeline::unbindDeferredShader(LLGLSLShader &shader)
     {
         if (shader.disableTexture(LLShaderMgr::DEFERRED_SHADOW0+i) > -1)
         {
-            gGL.texParameteri(LLTexUnit::sWhiteTexture, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);     // as before: the unit's texture is the white one once disabled
+            gGL.setTexCompare(LLTexUnit::sWhiteTexture, false);     // as before: the unit's texture is the white one once disabled
         }
     }
 
@@ -13707,7 +13676,7 @@ void LLPipeline::unbindDeferredShader(LLGLSLShader &shader)
     {
         if (shader.disableTexture(LLShaderMgr::DEFERRED_SHADOW0+i) > -1)
         {
-            gGL.texParameteri(LLTexUnit::sWhiteTexture, GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);     // as before: the unit's texture is the white one once disabled
+            gGL.setTexCompare(LLTexUnit::sWhiteTexture, false);     // as before: the unit's texture is the white one once disabled
         }
     }
 

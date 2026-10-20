@@ -124,7 +124,7 @@ public:
     LLImageGL(const LLImageRaw* imageraw, bool usemipmaps = true, bool allow_compression = true);
 
     // For wrapping textures created via GL elsewhere with our API only. Use with caution.
-    LLImageGL(LLGLuint mTexName, U32 components, LLGLenum target, TexelFormat formatInternal, PixelFormat formatPrimary, ComponentType formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    LLImageGL(LLGLuint mTexName, U32 components, TextureTarget target, TexelFormat formatInternal, PixelFormat formatPrimary, ComponentType formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
 protected:
     virtual ~LLImageGL();
@@ -140,7 +140,7 @@ public:
     void setAllowCompression(bool allow) { mAllowCompression = allow; }
 
     // the texture is named: nothing is bound or read from the unit state
-    static void setManualImage(U32 texname, U32 target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void *pixels, bool allow_compression = true, const char* file = __builtin_FILE(), int line = __builtin_LINE());       // file/line: LL_VK_FORMAT_VERIFY
+    static void setManualImage(U32 texname, TextureTarget target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void *pixels, bool allow_compression = true, const char* file = __builtin_FILE(), int line = __builtin_LINE());       // file/line: LL_VK_FORMAT_VERIFY
 
     bool createGLTexture() ;
     bool createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true,
@@ -194,7 +194,7 @@ public:
 
     bool getIsResident(bool test_now = false); // not const
 
-    void setTarget(const LLGLenum target, const LLTexUnit::eTextureType bind_target);
+    void setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target);
 
     LLTexUnit::eTextureType getTarget(void) const { return mBindTarget; }
     bool isGLTextureCreated(void) const { return mGLTextureCreated ; }
@@ -223,7 +223,7 @@ public:
     void setFilteringOption(LLTexUnit::eTextureFilterOptions option);
     LLTexUnit::eTextureFilterOptions getFilteringOption(void) const { return mFilterOption; }
 
-    LLGLenum getTexTarget()const { return mTarget; }
+    TextureTarget getTexTarget()const { return mTarget; }
 
     void init(bool usemipmaps, bool allow_compression);
     virtual void cleanup(); // Clean up the LLImageGL so it can be reinitialized.  Be careful when using this in derived class destructors
@@ -277,7 +277,7 @@ private:
     bool mAllowCompression;
 
 protected:
-    LLGLenum mTarget;       // Normally GL_TEXTURE2D, sometimes something else (ex. cube maps)
+    TextureTarget mTarget;       // Normally GL_TEXTURE2D, sometimes something else (ex. cube maps)
     LLTexUnit::eTextureType mBindTarget;    // Normally TT_TEXTURE, sometimes something else (ex. cube maps)
     bool mHasMipMaps;
     S32 mMipLevels;

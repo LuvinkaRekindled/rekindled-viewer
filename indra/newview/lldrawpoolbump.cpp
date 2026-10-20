@@ -909,7 +909,7 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
 
         gGL.getTexUnit(0)->bind(bump);
 
-        LLImageGL::setManualImage(dst_img->getTexName(), GL_TEXTURE_2D, 0, TexelFormat::RGBA8, dst_img->getWidth(), dst_img->getHeight(), PixelFormat::RGBA, ComponentType::U8, nullptr, false);
+        LLImageGL::setManualImage(dst_img->getTexName(), TextureTarget::Tex2D, 0, TexelFormat::RGBA8, dst_img->getWidth(), dst_img->getHeight(), PixelFormat::RGBA, ComponentType::U8, nullptr, false);
 
         LLGLuint tex_name = dst_img->getTexName();
         // point render target at empty buffer
@@ -971,7 +971,7 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
 
         // generate mipmap
         gGL.getTexUnit(0)->bind(bump);
-        gGL.generateMipmap(bump->getGLTexture()->getTexName(), GL_TEXTURE_2D);
+        gGL.generateMipmap(bump->getGLTexture()->getTexName());
         gGL.getTexUnit(0)->bindWhite();
     }
 

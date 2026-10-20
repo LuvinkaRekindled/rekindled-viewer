@@ -175,7 +175,7 @@ U32* LLImageGL::sManualScratch = nullptr;
 
 void LLImageGL::checkTexSize(bool forced) const
 {
-    if ((forced || gDebugGL) && mTarget == GL_TEXTURE_2D)
+    if ((forced || gDebugGL) && mTarget == TextureTarget::Tex2D)
     {
         S32 texname;
         texname = (S32)mTexName;
@@ -196,8 +196,8 @@ void LLImageGL::checkTexSize(bool forced) const
         }
         stop_glerror() ;
         LLGLint x = 0, y = 0 ;
-        x = LLVkTex::levelParameter(mTexName, mTarget, 0, GL_TEXTURE_WIDTH);
-        y = LLVkTex::levelParameter(mTexName, mTarget, 0, GL_TEXTURE_HEIGHT);
+        x = LLVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Width);
+        y = LLVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Height);
         stop_glerror() ;
         llcallstacks << "w: " << x << " h: " << y << llcallstacksendl ;
 
@@ -519,7 +519,7 @@ LLImageGL::LLImageGL(const LLImageRaw* imageraw, bool usemipmaps/* = true*/, boo
 LLImageGL::LLImageGL(
     LLGLuint texName,
     U32 components,
-    LLGLenum target,
+    TextureTarget target,
     TexelFormat formatInternal,
     PixelFormat formatPrimary,
     ComponentType formatType,
@@ -587,7 +587,7 @@ void LLImageGL::init(bool usemipmaps, bool allow_compression)
 
     mAllowCompression = allow_compression;
 
-    mTarget = GL_TEXTURE_2D;
+    mTarget = TextureTarget::Tex2D;
     mBindTarget = LLTexUnit::TT_TEXTURE;
     mHasMipMaps = false;
     mMipLevels = -1;
@@ -897,7 +897,6 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     //      (some rendering issues while core profile is enabled are acceptable at this point in time)
                     if (!LLRender::sGLCoreProfile)
                     {
-                        LLVkTex::paramI(edit_name, mTarget, GL_GENERATE_MIPMAP, true);
                     }
 
                     LLImageGL::setManualImage(edit_name, mTarget, 0, mFormatInternal,
@@ -913,7 +912,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     if (LLRender::sGLCoreProfile)
                     {
                         LL_PROFILE_GPU_ZONE("generate mip map");
-                        LLVkTex::generateMipmap(edit_name, mTarget);
+                        LLVkTex::generateMipmap(edit_name);
                     }
                     stop_glerror();
                 }
@@ -1094,7 +1093,7 @@ bool should_stagger_image_set(bool compressed)
 
 // Equivalent to calling glSetSubImage2D(target, miplevel, x_offset, y_offset, width, height, pixformat, pixtype, src), assuming the total width of the image is data_width
 // However, instead there are multiple calls to glSetSubImage2D on smaller slices of the image
-void sub_image_lines(U32 texname, U32 target, S32 miplevel, S32 x_offset, S32 y_offset, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const U8* src, S32 data_width)
+void sub_image_lines(U32 texname, TextureTarget target, S32 miplevel, S32 x_offset, S32 y_offset, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const U8* src, S32 data_width)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -1256,7 +1255,7 @@ bool LLImageGL::setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y_
 {
     if (gGL.getTexUnit(0)->bind(this, false, true))
     {
-        LLVkTex::copySubImage(mTexName, GL_TEXTURE_2D, 0, fb_x, fb_y, 0, x_pos, y_pos, width, height, LLRenderTarget::sCurFBO);
+        LLVkTex::copySubImage(mTexName, TextureTarget::Tex2D, 0, fb_x, fb_y, 0, x_pos, y_pos, width, height, LLRenderTarget::sCurFBO);
         mGLTextureCreated = true;
         stop_glerror();
         return true;
@@ -1332,7 +1331,7 @@ void LLImageGL::deleteTextures(S32 numTextures, const U32 *textures)
 
 // static
 // static
-void LLImageGL::setManualImage(U32 texname, U32 target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void* pixels, bool allow_compression, const char* file, int line)
+void LLImageGL::setManualImage(U32 texname, TextureTarget target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void* pixels, bool allow_compression, const char* file, int line)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     LLVkFormat::noteFormat("setManualImage", file, line, (U8)intformat, (U8)pixformat, (U8)pixtype);
@@ -1343,24 +1342,24 @@ void LLImageGL::setManualImage(U32 texname, U32 target, S32 miplevel, TexelForma
         {
             if (pixformat == PixelFormat::Alpha)
             { //alpha only formats are deprecated, convert to R8 with a swizzle
-                const S32 mask[] = { GL_ZERO, GL_ZERO, GL_ZERO, GL_RED };
-                LLVkTex::swizzle(texname, GL_TEXTURE_2D, mask);
+                const TextureSwizzle mask[] = { TextureSwizzle::Zero, TextureSwizzle::Zero, TextureSwizzle::Zero, TextureSwizzle::R };
+                LLVkTex::swizzle(texname, mask);
                 pixformat = PixelFormat::R;
                 intformat = TexelFormat::R8;
             }
 
             if (pixformat == PixelFormat::Lum)
             { //luminance is deprecated, convert to R8 with a swizzle
-                const S32 mask[] = { GL_RED, GL_RED, GL_RED, GL_ONE };
-                LLVkTex::swizzle(texname, GL_TEXTURE_2D, mask);
+                const TextureSwizzle mask[] = { TextureSwizzle::R, TextureSwizzle::R, TextureSwizzle::R, TextureSwizzle::One };
+                LLVkTex::swizzle(texname, mask);
                 pixformat = PixelFormat::R;
                 intformat = TexelFormat::R8;
             }
 
             if (pixformat == PixelFormat::LumAlpha)
             { //luminance alpha is deprecated, convert to RG8 with a swizzle
-                const S32 mask[] = { GL_RED, GL_RED, GL_RED, GL_GREEN };
-                LLVkTex::swizzle(texname, GL_TEXTURE_2D, mask);
+                const TextureSwizzle mask[] = { TextureSwizzle::R, TextureSwizzle::R, TextureSwizzle::R, TextureSwizzle::G };
+                LLVkTex::swizzle(texname, mask);
                 pixformat = PixelFormat::RG;
                 intformat = TexelFormat::RG8;
             }
@@ -1660,8 +1659,8 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
         LLImageGL::generateTextures(1, &new_texname);
         {
             gGL.getTexUnit(0)->bind(this, false, false, new_texname);
-            LLVkTex::paramI(new_texname, LLTexUnit::getInternalType(mBindTarget), GL_TEXTURE_BASE_LEVEL, 0);
-            LLVkTex::paramI(new_texname, LLTexUnit::getInternalType(mBindTarget), GL_TEXTURE_MAX_LEVEL, mMaxDiscardLevel - discard_level);
+            const LLVkFormat::Setting levels[2] = { LLVkFormat::setBaseLevel(0), LLVkFormat::setMaxLevel(mMaxDiscardLevel - discard_level) };
+            LLVkTex::params(new_texname, levels, 2);
         }
     }
 
@@ -1780,7 +1779,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     //checkTexSize() ;
 
     LLGLint glwidth = 0;
-    glwidth = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, GL_TEXTURE_WIDTH);
+    glwidth = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::Width);
     if (glwidth == 0)
     {
         // No mip data smaller than current discard level
@@ -1810,7 +1809,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     LLGLint is_compressed = 0;
     if (compressed_ok)
     {
-        is_compressed = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, GL_TEXTURE_COMPRESSED);
+        is_compressed = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::Compressed);
     }
 
     LLImageDataLock lock(imageraw);
@@ -1818,7 +1817,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     if (is_compressed)
     {
         LLGLint glbytes;
-        glbytes = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, GL_TEXTURE_COMPRESSED_IMAGE_SIZE);
+        glbytes = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::CompressedSize);
         if(!imageraw->allocateDataSize(width, height, ncomponents, glbytes))
         {
             constexpr S64 MAX_GL_BYTES = 2048 * 2048;
@@ -1857,7 +1856,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
             return false ;
         }
 
-        LLVkTex::getImage(mTexName, GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (void*)(imageraw->getData()));
+        LLVkTex::getImage(mTexName, TextureTarget::Tex2D, gl_discard, mFormatPrimary, mFormatType, (void*)(imageraw->getData()));
         //stop_glerror();
     }
 
@@ -2021,7 +2020,7 @@ bool LLImageGL::getIsAlphaMask() const
     return mIsMask;
 }
 
-void LLImageGL::setTarget(const LLGLenum target, const LLTexUnit::eTextureType bind_target)
+void LLImageGL::setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target)
 {
     mTarget = target;
     mBindTarget = bind_target;
@@ -2361,7 +2360,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
-    if (mTarget != GL_TEXTURE_2D
+    if (mTarget != TextureTarget::Tex2D
         || mFormatInternal == TexelFormat::None // not initialized
         )
     {
@@ -2399,7 +2398,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
             { // generate mipmaps if needed
                 LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("scaleDown - glGenerateMipmap");
                 gGL.getTexUnit(0)->bind(this);
-                LLVkTex::generateMipmap(mTexName, mTarget);
+                LLVkTex::generateMipmap(mTexName);
                 gGL.getTexUnit(0)->bindWhite();
             }
         }

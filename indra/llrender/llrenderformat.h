@@ -42,6 +42,22 @@ enum class TexelFormat : U8
 // PixelFormat: the component layout of client pixel data (was the GL format: GL_RGBA, GL_RED ...). ComponentType (F3.6d) is its component type.
 enum class PixelFormat : U8 { None = 0, R, RG, RGB, BGR, RGBA, BGRA, Lum, LumAlpha, Alpha, Depth };
 
+// F3.6f: texture targets, sampler settings, level queries. Values equal LLVkFormat::Dim (+ 8 + face for a cube map face) / Filter / Wrap / Swizzle / Level (static_asserts in llvkformat.cpp).
+// The compare function of a depth texture is CompareOp (llrenderstate.h).
+enum class TextureTarget : U8
+{
+    Tex2D = 0, Cube = 1, CubeArray = 2, Array2D = 3, Tex3D = 4, Multisample2D = 5, Rect = 7,
+    CubeFacePX = 8, CubeFaceNX, CubeFacePY, CubeFaceNY, CubeFacePZ, CubeFaceNZ
+};
+enum class TextureFilter : U8 { Nearest = 0, Linear, NearestMipNearest, LinearMipNearest, NearestMipLinear, LinearMipLinear };
+enum class TextureWrap : U8 { Repeat = 0, ClampToEdge, MirroredRepeat, ClampToBorder };
+enum class TextureSwizzle : U8 { R = 0, G, B, A, Zero, One };
+enum class LevelQuery : U8 { None = 0, Width, Height, Depth, Compressed, CompressedSize };
+
+// glTF files carry GL numbers for their sampler settings (they are file format values): decoded in llvkformat.cpp
+TextureFilter textureFilterFromGLTF(S32 value);
+TextureWrap textureWrapFromGLTF(S32 value);
+
 // The media plugin protocol still carries GL numbers on the wire (llpluginclassmedia, media_plugins: separate processes): these decode them (llvkformat.cpp). F4 (media) replaces the protocol values.
 TexelFormat texelFormatFromGL(S32 gl_internal_format);
 PixelFormat pixelFormatFromGL(U32 gl_format);
