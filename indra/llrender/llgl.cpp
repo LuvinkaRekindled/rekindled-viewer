@@ -166,23 +166,20 @@ LLGLManager::LLGLManager() :
 
 static std::string sNoGLVendor, sNoGLRenderer, sNoGLVersion, sNoGLGlsl, sNoGLExtensions;
 
-const U8* ll_nogl_string(GLenum name)
-{
-    switch (name)
-    {
-    case GL_VENDOR: return (const U8*)sNoGLVendor.c_str();
-    case GL_RENDERER: return (const U8*)sNoGLRenderer.c_str();
-    case GL_VERSION: return (const U8*)sNoGLVersion.c_str();
-    case GL_SHADING_LANGUAGE_VERSION: return (const U8*)sNoGLGlsl.c_str();
-    case GL_EXTENSIONS: return (const U8*)sNoGLExtensions.c_str();
-    default: return (const U8*)"";
-    }
-}
+// F3.6g: the capability strings the viewer reports (F3.6: typed, no GL enum numbers)
+enum class InfoString : U8 { Vendor, Renderer, Version, ShadingLanguage, Extensions };
 
-// glGetString where this file talks to GL directly (the part before the mirror's wrappers apply)
-static const char* gl_info_string(GLenum name)
+static const char* gl_info_string(InfoString which)
 {
-    return (const char*)ll_nogl_string(name);
+    switch (which)
+    {
+    case InfoString::Vendor: return sNoGLVendor.c_str();
+    case InfoString::Renderer: return sNoGLRenderer.c_str();
+    case InfoString::Version: return sNoGLVersion.c_str();
+    case InfoString::ShadingLanguage: return sNoGLGlsl.c_str();
+    case InfoString::Extensions: return sNoGLExtensions.c_str();
+    default: return "";
+    }
 }
 
 //---------------------------------------------------------------------
@@ -210,9 +207,9 @@ void LLGLManager::getGLInfo(LLSD& info)
     }
     else
     {
-        info["GLInfo"]["GLVendor"] = ll_safe_string(gl_info_string(GL_VENDOR));
-        info["GLInfo"]["GLRenderer"] = ll_safe_string(gl_info_string(GL_RENDERER));
-        info["GLInfo"]["GLVersion"] = ll_safe_string(gl_info_string(GL_VERSION));
+        info["GLInfo"]["GLVendor"] = ll_safe_string(gl_info_string(InfoString::Vendor));
+        info["GLInfo"]["GLRenderer"] = ll_safe_string(gl_info_string(InfoString::Renderer));
+        info["GLInfo"]["GLVersion"] = ll_safe_string(gl_info_string(InfoString::Version));
     }
 
 #if !LL_MESA_HEADLESS
@@ -238,9 +235,9 @@ std::string LLGLManager::getGLInfoString()
     }
     else
     {
-        info_str += std::string("GL_VENDOR      ") + ll_safe_string(gl_info_string(GL_VENDOR)) + std::string("\n");
-        info_str += std::string("GL_RENDERER    ") + ll_safe_string(gl_info_string(GL_RENDERER)) + std::string("\n");
-        info_str += std::string("GL_VERSION     ") + ll_safe_string(gl_info_string(GL_VERSION)) + std::string("\n");
+        info_str += std::string("GL_VENDOR      ") + ll_safe_string(gl_info_string(InfoString::Vendor)) + std::string("\n");
+        info_str += std::string("GL_RENDERER    ") + ll_safe_string(gl_info_string(InfoString::Renderer)) + std::string("\n");
+        info_str += std::string("GL_VERSION     ") + ll_safe_string(gl_info_string(InfoString::Version)) + std::string("\n");
     }
 
 #if !LL_MESA_HEADLESS
@@ -262,9 +259,9 @@ void LLGLManager::printGLInfoString()
     }
     else
     {
-        LL_INFOS("RenderInit") << "GL_VENDOR:     " << ll_safe_string(gl_info_string(GL_VENDOR)) << LL_ENDL;
-        LL_INFOS("RenderInit") << "GL_RENDERER:   " << ll_safe_string(gl_info_string(GL_RENDERER)) << LL_ENDL;
-        LL_INFOS("RenderInit") << "GL_VERSION:    " << ll_safe_string(gl_info_string(GL_VERSION)) << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_VENDOR:     " << ll_safe_string(gl_info_string(InfoString::Vendor)) << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_RENDERER:   " << ll_safe_string(gl_info_string(InfoString::Renderer)) << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_VERSION:    " << ll_safe_string(gl_info_string(InfoString::Version)) << LL_ENDL;
     }
 
 #if !LL_MESA_HEADLESS
@@ -283,7 +280,7 @@ std::string LLGLManager::getRawGLString()
     }
     else
     {
-        gl_string = ll_safe_string(gl_info_string(GL_VENDOR)) + " " + ll_safe_string(gl_info_string(GL_RENDERER));
+        gl_string = ll_safe_string(gl_info_string(InfoString::Vendor)) + " " + ll_safe_string(gl_info_string(InfoString::Renderer));
     }
     return gl_string;
 }
@@ -454,7 +451,7 @@ void parse_gl_version( S32* major, S32* minor, S32* release, std::string* vendor
     // GL_VERSION returns a null-terminated string with the format:
     // <major>.<minor>[.<release>] [<vendor specific>]
 
-    const char* version = gl_info_string(GL_VERSION);
+    const char* version = gl_info_string(InfoString::Version);
     *major = 0;
     *minor = 0;
     *release = 0;
@@ -537,7 +534,7 @@ void parse_glsl_version(S32& major, S32& minor)
     // GL_SHADING_LANGUAGE_VERSION returns a null-terminated string with the format:
     // <major>.<minor>[.<release>] [<vendor specific>]
 
-    const char* version = gl_info_string(GL_SHADING_LANGUAGE_VERSION);
+    const char* version = gl_info_string(InfoString::ShadingLanguage);
     major = 0;
     minor = 0;
 

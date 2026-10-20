@@ -62,8 +62,7 @@ LLSprite::LLSprite(const LLUUID &image_uuid) :
     mPosition(0.0f, 0.0f, 0.0f),
     mFollow(true),
     mUseCameraUp(true),
-    mColor(0.5f, 0.5f, 0.5f, 1.0f),
-    mTexMode(GL_REPLACE)
+    mColor(0.5f, 0.5f, 0.5f, 1.0f)
 {
     setSize(1.0f, 1.0f);
 }
@@ -274,11 +273,6 @@ void LLSprite::setFollow(const bool follow)
 void LLSprite::setUseCameraUp(const bool use_up)
 {
     mUseCameraUp = use_up;
-}
-
-void LLSprite::setTexMode(const LLGLenum mode)
-{
-    mTexMode = mode;
 }
 
 void LLSprite::setColor(const LLColor4 &color)

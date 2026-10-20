@@ -911,7 +911,7 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
 
         LLImageGL::setManualImage(dst_img->getTexName(), TextureTarget::Tex2D, 0, TexelFormat::RGBA8, dst_img->getWidth(), dst_img->getHeight(), PixelFormat::RGBA, ComponentType::U8, nullptr, false);
 
-        LLGLuint tex_name = dst_img->getTexName();
+        U32 tex_name = dst_img->getTexName();
         // point render target at empty buffer
         sRenderTarget.setColorAttachment(bump->getGLTexture(), tex_name);
 

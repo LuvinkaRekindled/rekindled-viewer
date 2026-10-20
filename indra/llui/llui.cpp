@@ -402,28 +402,28 @@ LLVector2 LLUI::getWindowSize()
     return LLVector2(window_rect.mX / getScaleFactor().mV[VX], window_rect.mY / getScaleFactor().mV[VY]);
 }
 
-void LLUI::screenPointToGL(S32 screen_x, S32 screen_y, S32 *gl_x, S32 *gl_y)
+void LLUI::screenPointToPixels(S32 screen_x, S32 screen_y, S32 *gl_x, S32 *gl_y)
 {
     *gl_x = ll_round((F32)screen_x * getScaleFactor().mV[VX]);
     *gl_y = ll_round((F32)screen_y * getScaleFactor().mV[VY]);
 }
 
-void LLUI::glPointToScreen(S32 gl_x, S32 gl_y, S32 *screen_x, S32 *screen_y)
+void LLUI::pixelsPointToScreen(S32 gl_x, S32 gl_y, S32 *screen_x, S32 *screen_y)
 {
     *screen_x = ll_round((F32)gl_x / getScaleFactor().mV[VX]);
     *screen_y = ll_round((F32)gl_y / getScaleFactor().mV[VY]);
 }
 
-void LLUI::screenRectToGL(const LLRect& screen, LLRect *gl)
+void LLUI::screenRectToPixels(const LLRect& screen, LLRect *gl)
 {
-    screenPointToGL(screen.mLeft, screen.mTop, &gl->mLeft, &gl->mTop);
-    screenPointToGL(screen.mRight, screen.mBottom, &gl->mRight, &gl->mBottom);
+    screenPointToPixels(screen.mLeft, screen.mTop, &gl->mLeft, &gl->mTop);
+    screenPointToPixels(screen.mRight, screen.mBottom, &gl->mRight, &gl->mBottom);
 }
 
-void LLUI::glRectToScreen(const LLRect& gl, LLRect *screen)
+void LLUI::pixelsRectToScreen(const LLRect& gl, LLRect *screen)
 {
-    glPointToScreen(gl.mLeft, gl.mTop, &screen->mLeft, &screen->mTop);
-    glPointToScreen(gl.mRight, gl.mBottom, &screen->mRight, &screen->mBottom);
+    pixelsPointToScreen(gl.mLeft, gl.mTop, &screen->mLeft, &screen->mTop);
+    pixelsPointToScreen(gl.mRight, gl.mBottom, &screen->mRight, &screen->mBottom);
 }
 
 

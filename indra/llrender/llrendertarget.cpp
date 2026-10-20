@@ -159,7 +159,7 @@ bool LLRenderTarget::allocate(U32 resx, U32 resy, TexelFormat color_fmt, bool de
     return addColorAttachment(color_fmt, file, line);
 }
 
-void LLRenderTarget::setColorAttachment(LLImageGL* img, LLGLuint use_name)
+void LLRenderTarget::setColorAttachment(LLImageGL* img, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     llassert(img != nullptr); // img must not be null

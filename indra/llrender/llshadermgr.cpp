@@ -380,14 +380,6 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
     }
 #endif
 
-    GLenum error = GL_NO_ERROR;
-
-    error = GL_NO_ERROR;
-    if (error != GL_NO_ERROR)
-    {
-        LL_SHADER_LOADING_WARNS() << "GL ERROR entering loadShaderFile(): " << error << " for file: " << filename << LL_ENDL;
-    }
-
     if (filename.empty())
     {
         LL_WARNS("ShaderLoading") << "tried loading empty filename" << LL_ENDL;

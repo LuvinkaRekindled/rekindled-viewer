@@ -124,7 +124,7 @@ public:
     LLImageGL(const LLImageRaw* imageraw, bool usemipmaps = true, bool allow_compression = true);
 
     // For wrapping textures created via GL elsewhere with our API only. Use with caution.
-    LLImageGL(LLGLuint mTexName, U32 components, TextureTarget target, TexelFormat formatInternal, PixelFormat formatPrimary, ComponentType formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    LLImageGL(U32 mTexName, U32 components, TextureTarget target, TexelFormat formatInternal, PixelFormat formatPrimary, ComponentType formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
 protected:
     virtual ~LLImageGL();
@@ -144,20 +144,20 @@ public:
 
     bool createGLTexture() ;
     bool createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true,
-        S32 category = sMaxCategories-1, bool defer_copy = false, LLGLuint* tex_name = nullptr);
-    bool createGLTexture(S32 discard_level, const U8* data, bool data_hasmips = false, S32 usename = 0, bool defer_copy = false, LLGLuint* tex_name = nullptr);
+        S32 category = sMaxCategories-1, bool defer_copy = false, U32* tex_name = nullptr);
+    bool createGLTexture(S32 discard_level, const U8* data, bool data_hasmips = false, S32 usename = 0, bool defer_copy = false, U32* tex_name = nullptr);
     void setImage(const LLImageRaw* imageraw);
     bool setImage(const U8* data_in, bool data_hasmips = false, S32 usename = 0);
     // *TODO: This function may not work if the textures is compressed (i.e.
     // RenderCompressTextures is 0). Partial image updates do not work on
     // compressed textures.
-    bool setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update = false, LLGLuint use_name = 0);
-    bool setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update = false, LLGLuint use_name = 0);
+    bool setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update = false, U32 use_name = 0);
+    bool setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update = false, U32 use_name = 0);
     bool setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y_pos, S32 width, S32 height);
 
     // wait for gl commands to finish on current thread and push
     // a lambda to main thread to swap mNewTexName and mTexName
-    void syncToMainThread(LLGLuint new_tex_name);
+    void syncToMainThread(U32 new_tex_name);
 
     // Read back a raw image for this discard level, if it exists
     bool readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compressed_ok) const;
@@ -188,7 +188,7 @@ public:
     ComponentType getFormatType() const { return mFormatType; }
 
     bool getHasGLTexture() const { return mTexName != 0; }
-    LLGLuint getTexName() const { return mTexName; }
+    U32 getTexName() const { return mTexName; }
 
     bool getIsAlphaMask() const;
 
@@ -269,7 +269,7 @@ private:
     S8   mAlphaOffset ;
 
     bool     mGLTextureCreated ;
-    LLGLuint mTexName;
+    U32 mTexName;
     U16      mWidth;
     U16      mHeight;
     S8       mCurrentDiscardLevel;
@@ -282,7 +282,7 @@ protected:
     bool mHasMipMaps;
     S32 mMipLevels;
 
-    LLGLboolean mIsResident;
+    bool mIsResident;
 
     S8 mComponents;
     S8 mMaxDiscardLevel;
@@ -356,7 +356,7 @@ public:
     void setTexName(U32 texName) { mTexName = texName; }
 
     //similar to setTexName, but will call deleteTextures on mTexName if mTexName is not 0 or texname
-    void syncTexName(LLGLuint texname);
+    void syncTexName(U32 texname);
 
     //for debug use: show texture size distribution
     //----------------------------------------

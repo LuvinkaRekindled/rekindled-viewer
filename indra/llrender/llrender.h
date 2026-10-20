@@ -244,8 +244,6 @@ protected:
     eTextureType        mCurrTexType;
     bool                mHasMipMaps;
 
-    S32 getTextureSource(eTextureBlendSrc src);
-    S32 getTextureSourceType(eTextureBlendSrc src, bool isAlpha = false);
 };
 
 class LLLightState
@@ -500,7 +498,6 @@ public:
     void setTexWrap(U32 texture, TextureWrap s, TextureWrap t);
     void setTexCompare(U32 texture, bool on, LLRenderState::CompareOp func = LLRenderState::CompareOp::LessEqual);        // on: compare the reference to the texture with func (depth textures); off: plain sampling
     void texImage2D(U32 texture, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    U32 getError();
     void bindTextureSlot(S32 unit, U32 id);     // raw slot write, bypasses the LLTexUnit cache (as the old direct call did)
     void deleteTextures(S32 count, const U32* ids);
     F32 getLineWidth() const { return mLineWidth; }

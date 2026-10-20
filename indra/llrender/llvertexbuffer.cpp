@@ -847,7 +847,7 @@ bool LLVertexBuffer::validateRange(U32 start, U32 end, U32 count, U32 indices_of
 
 #if LL_PROFILER_ENABLE_RENDER_DOC
 void LLVertexBuffer::setLabel(const char* label) {
-    LL_LABEL_OBJECT_GL(GL_BUFFER, mGLBuffer, strlen(label), label);
+    (void)label;        // nothing to label: a buffer is not a GL object any more
 }
 #endif
 

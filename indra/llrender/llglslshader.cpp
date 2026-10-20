@@ -54,7 +54,6 @@
 
  // Print-print list of shader included source files that are linked together via glAttachShader()
  // i.e. On macOS / OSX the AMD GLSL linker will display an error if a varying is left in an undefined state.
-#define DEBUG_SHADER_INCLUDES 0
 
 // Lots of STL stuff in here, using namespace std to keep things more readable
 using std::vector;
@@ -904,9 +903,6 @@ bool LLGLSLShader::createShader()
 
     if (!mUsingBinaryProgram)
     {
-#if DEBUG_SHADER_INCLUDES
-        fprintf(stderr, "--- %s ---\n", mName.c_str());
-#endif // DEBUG_SHADER_INCLUDES
 
         //compile new source
         vector< pair<string, ShaderStage> >::iterator fileIter = mShaderFiles.begin();
@@ -1059,35 +1055,12 @@ bool LLGLSLShader::createShader()
     return success;
 }
 
-#if DEBUG_SHADER_INCLUDES
-void dumpAttachObject(const char* func_name, U32 program_object, const std::string& object_path)
-{
-    char* info_log;
-    S32      info_len_expect = 0;
-    S32      info_len_actual = 0;
-
-    glGetShaderiv(program_object, GL_INFO_LOG_LENGTH, , &info_len_expect);
-    fprintf(stderr, " * %-20s(), log size: %d, %s\n", func_name, info_len_expect, object_path.c_str());
-
-    if (info_len_expect > 0)
-    {
-        fprintf(stderr, " ========== %s() ========== \n", func_name);
-        info_log = new char[info_len_expect];
-        glGetProgramInfoLog(program_object, info_len_expect, &info_len_actual, info_log);
-        fprintf(stderr, "%s\n", info_log);
-        delete[] info_log;
-    }
-}
-#endif // DEBUG_SHADER_INCLUDES
 
 bool LLGLSLShader::attachVertexObject(std::string object_path)
 {
     if (LLShaderMgr::instance()->mVertexShaderObjects.count(object_path) > 0)
     {
         mAttachedObjects.push_back(LLShaderMgr::instance()->mVertexShaderObjects[object_path]);
-#if DEBUG_SHADER_INCLUDES
-        dumpAttachObject("attachVertexObject", mProgramObject, object_path);
-#endif // DEBUG_SHADER_INCLUDES
         stop_glerror();
         return true;
     }
@@ -1106,9 +1079,6 @@ bool LLGLSLShader::attachFragmentObject(std::string object_path)
     if (LLShaderMgr::instance()->mFragmentShaderObjects.count(object_path) > 0)
     {
         mAttachedObjects.push_back(LLShaderMgr::instance()->mFragmentShaderObjects[object_path]);
-#if DEBUG_SHADER_INCLUDES
-        dumpAttachObject("attachFragmentObject", mProgramObject, object_path);
-#endif // DEBUG_SHADER_INCLUDES
         stop_glerror();
         return true;
     }
@@ -1127,10 +1097,6 @@ void LLGLSLShader::attachObject(U32 object)
     if (object != 0)
     {
         mAttachedObjects.push_back(object);
-#if DEBUG_SHADER_INCLUDES
-        std::string object_path("???");
-        dumpAttachObject("attachObject", mProgramObject, object_path);
-#endif // DEBUG_SHADER_INCLUDES
         stop_glerror();
     }
     else
@@ -1205,23 +1171,29 @@ bool LLGLSLShader::mapAttributes()
     return false;
 }
 
-// the GL enum of a GLSL type name (what the mapping below tests for samplers)
-static GLenum glsl_type_enum(const std::string& t)
+// what the uniform mapping needs of a GLSL type name: how many floats / ints one element takes (a multiple of the array size), and whether it is a texture the shader samples
+struct GlslType
 {
-    static const std::unordered_map<std::string, GLenum> map = {
-        { "float", 0x1406 }, { "vec2", 0x8B50 }, { "vec3", 0x8B51 }, { "vec4", 0x8B52 },
-        { "int", 0x1404 }, { "ivec2", 0x8B53 }, { "ivec3", 0x8B54 }, { "ivec4", 0x8B55 },
-        { "bool", 0x8B56 }, { "bvec2", 0x8B57 }, { "bvec3", 0x8B58 }, { "bvec4", 0x8B59 },
-        { "mat2", 0x8B5A }, { "mat3", 0x8B5B }, { "mat4", 0x8B5C },
-        { "mat2x3", 0x8B65 }, { "mat2x4", 0x8B66 }, { "mat3x2", 0x8B67 }, { "mat3x4", 0x8B68 }, { "mat4x2", 0x8B69 }, { "mat4x3", 0x8B6A },
-        { "uint", 0x1405 }, { "uvec2", 0x8DC6 }, { "uvec3", 0x8DC7 }, { "uvec4", 0x8DC8 },
-        { "sampler1D", 0x8B5D }, { "sampler2D", 0x8B5E }, { "sampler3D", 0x8B5F }, { "samplerCube", 0x8B60 },
-        { "sampler1DShadow", 0x8B61 }, { "sampler2DShadow", 0x8B62 }, { "sampler2DRect", 0x8B63 }, { "sampler2DRectShadow", 0x8B64 },
-        { "sampler2DArray", 0x8DC1 }, { "sampler2DArrayShadow", 0x8DC4 }, { "samplerCubeShadow", 0x8DC5 },
-        { "samplerCubeArray", 0x900C }, { "sampler2DMS", 0x9108 },
+    S32 mScale = 1;
+    bool mSampler = false;
+};
+
+static GlslType glsl_type(const std::string& t)
+{
+    static const std::unordered_map<std::string, GlslType> map = {
+        { "vec2", { 2, false } }, { "vec3", { 3, false } }, { "vec4", { 4, false } },
+        { "ivec2", { 2, false } }, { "ivec3", { 3, false } }, { "ivec4", { 4, false } },
+        { "bvec2", { 2, false } }, { "bvec3", { 3, false } }, { "bvec4", { 4, false } },
+        { "uvec2", { 2, false } }, { "uvec3", { 3, false } }, { "uvec4", { 4, false } },
+        { "mat2", { 4, false } }, { "mat3", { 9, false } }, { "mat4", { 16, false } },
+        { "mat2x3", { 6, false } }, { "mat2x4", { 8, false } }, { "mat3x2", { 6, false } }, { "mat3x4", { 12, false } }, { "mat4x2", { 8, false } }, { "mat4x3", { 12, false } },
+        // the samplers that take a texture channel (the 1D .. rectangle shadow range, the multisample and cube array samplers of the GL numbering; array / cube shadow samplers did not)
+        { "sampler1D", { 1, true } }, { "sampler2D", { 1, true } }, { "sampler3D", { 1, true } }, { "samplerCube", { 1, true } },
+        { "sampler1DShadow", { 1, true } }, { "sampler2DShadow", { 1, true } }, { "sampler2DRect", { 1, true } }, { "sampler2DRectShadow", { 1, true } },
+        { "samplerCubeArray", { 1, true } }, { "sampler2DMS", { 1, true } },
     };
     auto it = map.find(t);
-    return it == map.end() ? 0x1406 : it->second;
+    return it == map.end() ? GlslType() : it->second;
 }
 
 void LLGLSLShader::mapUniform(S32 index)
@@ -1238,7 +1210,7 @@ void LLGLSLShader::mapUniform(S32 index)
         return;
     }
     const ActiveUniform& active = mActiveUniforms[index];
-    const GLenum type = glsl_type_enum(active.mType);
+    const GlslType type = glsl_type(active.mType);
     S32 size = active.mSize;
     char name[1024];        /* Flawfinder: ignore */
     strncpy(name, active.mName.c_str(), sizeof(name) - 1);
@@ -1246,30 +1218,7 @@ void LLGLSLShader::mapUniform(S32 index)
 
     if (size > 0)
     {
-        switch (type)
-        {
-        case GL_FLOAT_VEC2: size *= 2; break;
-        case GL_FLOAT_VEC3: size *= 3; break;
-        case GL_FLOAT_VEC4: size *= 4; break;
-        case GL_INT_VEC2: size *= 2; break;
-        case GL_INT_VEC3: size *= 3; break;
-        case GL_INT_VEC4: size *= 4; break;
-        case GL_UNSIGNED_INT_VEC2: size *= 2; break;
-        case GL_UNSIGNED_INT_VEC3: size *= 3; break;
-        case GL_UNSIGNED_INT_VEC4: size *= 4; break;
-        case GL_BOOL_VEC2: size *= 2; break;
-        case GL_BOOL_VEC3: size *= 3; break;
-        case GL_BOOL_VEC4: size *= 4; break;
-        case GL_FLOAT_MAT2: size *= 4; break;
-        case GL_FLOAT_MAT3: size *= 9; break;
-        case GL_FLOAT_MAT4: size *= 16; break;
-        case GL_FLOAT_MAT2x3: size *= 6; break;
-        case GL_FLOAT_MAT2x4: size *= 8; break;
-        case GL_FLOAT_MAT3x2: size *= 6; break;
-        case GL_FLOAT_MAT3x4: size *= 12; break;
-        case GL_FLOAT_MAT4x2: size *= 8; break;
-        case GL_FLOAT_MAT4x3: size *= 12; break;
-        }
+        size *= type.mScale;
         mTotalUniformSize += size;
     }
 
@@ -1297,7 +1246,7 @@ void LLGLSLShader::mapUniform(S32 index)
             {
                 //found it
                 mUniform[i] = location;
-                mTexture[i] = mapUniformTextureChannel(location, type, size);
+                mTexture[i] = mapUniformTextureChannel(location, type.mSampler, size);
                 if (mTexture[i] != -1)
                 {
                     LL_DEBUGS("GLSLTextureChannels") << name << " assigned to texture channel " << mTexture[i] << LL_ENDL;
@@ -1328,13 +1277,11 @@ void LLGLSLShader::removePermutation(std::string name)
     mDefines.erase(name);
 }
 
-S32 LLGLSLShader::mapUniformTextureChannel(S32 location, GLenum type, S32 size)
+S32 LLGLSLShader::mapUniformTextureChannel(S32 location, bool is_sampler, S32 size)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
-    if ((type >= GL_SAMPLER_1D && type <= GL_SAMPLER_2D_RECT_SHADOW) ||
-        type == GL_SAMPLER_2D_MULTISAMPLE ||
-        type == GL_SAMPLER_CUBE_MAP_ARRAY)
+    if (is_sampler)
     {   //this here is a texture
         S32 ret = mActiveTextureChannels;
         if (size == 1)
@@ -2676,6 +2623,6 @@ LLUUID LLGLSLShader::hash()
 
 #if LL_PROFILER_ENABLE_RENDER_DOC
 void LLGLSLShader::setLabel(const char* label) {
-    LL_LABEL_OBJECT_GL(GL_PROGRAM, mProgramObject, strlen(label), label);
+    (void)label;        // nothing to label: a program is not a GL object any more
 }
 #endif

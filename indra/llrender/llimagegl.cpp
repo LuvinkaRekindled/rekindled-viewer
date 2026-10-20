@@ -195,7 +195,7 @@ void LLImageGL::checkTexSize(bool forced) const
             }
         }
         stop_glerror() ;
-        LLGLint x = 0, y = 0 ;
+        S32 x = 0, y = 0 ;
         x = LLVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Width);
         y = LLVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Height);
         stop_glerror() ;
@@ -517,7 +517,7 @@ LLImageGL::LLImageGL(const LLImageRaw* imageraw, bool usemipmaps/* = true*/, boo
 }
 
 LLImageGL::LLImageGL(
-    LLGLuint texName,
+    U32 texName,
     U32 components,
     TextureTarget target,
     TexelFormat formatInternal,
@@ -1145,14 +1145,14 @@ void sub_image_lines(U32 texname, TextureTarget target, S32 miplevel, S32 x_offs
     }
 }
 
-bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update /* = false */, LLGLuint use_name)
+bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update /* = false */, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     if (!width || !height)
     {
         return true;
     }
-    LLGLuint tex_name = use_name != 0 ? use_name : mTexName;
+    U32 tex_name = use_name != 0 ? use_name : mTexName;
     if (0 == tex_name)
     {
         // *TODO: Re-enable warning?  Ran into thread locking issues? DK 2011-02-18
@@ -1244,7 +1244,7 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
     return true;
 }
 
-bool LLImageGL::setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update /* = false */, LLGLuint use_name)
+bool LLImageGL::setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update /* = false */, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     return setSubImage(imageraw->getData(), imageraw->getWidth(), imageraw->getHeight(), x_pos, y_pos, width, height, force_fast_update, use_name);
@@ -1507,7 +1507,7 @@ bool LLImageGL::createGLTexture()
     return true ;
 }
 
-bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename/*=0*/, bool to_create, S32 category, bool defer_copy, LLGLuint* tex_name)
+bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename/*=0*/, bool to_create, S32 category, bool defer_copy, U32* tex_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     checkActiveThread();
@@ -1606,7 +1606,7 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
     return createGLTexture(discard_level, rawdata, false, usename, defer_copy, tex_name);
 }
 
-bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_hasmips, S32 usename, bool defer_copy, LLGLuint* tex_name)
+bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_hasmips, S32 usename, bool defer_copy, U32* tex_name)
 // Call with void data, vmem is allocated but unitialized
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -1721,7 +1721,7 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
     return true;
 }
 
-void LLImageGL::syncToMainThread(LLGLuint new_tex_name)
+void LLImageGL::syncToMainThread(U32 new_tex_name)
 {
     LL_PROFILE_ZONE_SCOPED;
     llassert(!on_main_thread());
@@ -1742,7 +1742,7 @@ void LLImageGL::syncToMainThread(LLGLuint new_tex_name)
 }
 
 
-void LLImageGL::syncTexName(LLGLuint texname)
+void LLImageGL::syncTexName(U32 texname)
 {
     if (texname != 0)
     {
@@ -1778,7 +1778,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     //debug code, leave it there commented.
     //checkTexSize() ;
 
-    LLGLint glwidth = 0;
+    S32 glwidth = 0;
     glwidth = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::Width);
     if (glwidth == 0)
     {
@@ -1806,7 +1806,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
         LL_ERRS() << llformat("LLImageGL::readBackRaw: bogus params: %d x %d x %d",width,height,ncomponents) << LL_ENDL;
     }
 
-    LLGLint is_compressed = 0;
+    S32 is_compressed = 0;
     if (compressed_ok)
     {
         is_compressed = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::Compressed);
@@ -1816,7 +1816,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
 
     if (is_compressed)
     {
-        LLGLint glbytes;
+        S32 glbytes;
         glbytes = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::CompressedSize);
         if(!imageraw->allocateDataSize(width, height, ncomponents, glbytes))
         {

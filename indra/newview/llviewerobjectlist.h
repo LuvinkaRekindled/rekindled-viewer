@@ -47,12 +47,12 @@ class LLVOCacheEntry;
 const U32 CLOSE_BIN_SIZE = 10;
 const U32 NUM_BINS = 128;
 
-// GL name = position in object list + GL_NAME_INDEX_OFFSET so that
+// GL name = position in object list + PICK_NAME_INDEX_OFFSET so that
 // we can have special numbers like zero.
-const U32 GL_NAME_LAND = 0;
-const U32 GL_NAME_PARCEL_WALL = 1;
+const U32 PICK_NAME_LAND = 0;
+const U32 PICK_NAME_PARCEL_WALL = 1;
 
-const U32 GL_NAME_INDEX_OFFSET = 10;
+const U32 PICK_NAME_INDEX_OFFSET = 10;
 
 class LLViewerObjectList
 {

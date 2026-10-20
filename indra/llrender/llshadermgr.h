@@ -396,7 +396,7 @@ public:
     struct ProgramBinaryData
     {
         S32 mBinaryLength = 0;
-        GLenum mBinaryFormat = 0;
+        S32 mBinaryFormat = 0;
         F32 mLastUsedTime = 0.0;
     };
     std::map<LLUUID, ProgramBinaryData> mShaderBinaryCache;
