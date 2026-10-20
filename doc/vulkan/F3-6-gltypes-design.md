@@ -1,0 +1,38 @@
+# F3.6: GL types and constants out of the viewer's code (design, 2026-10-20)
+
+Part of `F3-plan.md` (after F3.5, 0159f6d7). Like F3.2-F3.4 this is a **vocabulary change**: the viewer's code states what it means (a pixel format, a buffer kind, a shader stage) with typed values, and the numbers of OpenGL appear only where they are decoded (`llvkformat.cpp`, the `llvk*` internals that F5 deletes). Method as before: measure, one sub-step per category, a grep gate per sub-step, same-session counters and a picture, one commit per step.
+
+## What is GL-shaped (measured 2026-10-20: newview, llui, llrender, llappearance, llimage, llwindow ... without `llvk*`, `llglheaders.h`; comments excluded)
+- **`gl*()` function calls: 24** (`glGetIntegerv` 6, `glPointToScreen` / `glRectToScreen` (viewer functions, not GL), window code (`llwindowsdl*.cpp`, `llwindowwin32.cpp`)): nothing to do in F3.6 beyond the window code, which is platform code (decided in F5 with the window's GL context).
+- **GL scalar type names: 572 uses, 47 files** (`GLfloat` 220, `GLint` 144, `GLuint` 97, `GLubyte` 30, `GLenum` 40, `GLboolean` 18, `GLsizei` 9, `GLchar` 8, `GLvoid` 7, `GLuint64` 3): mostly `llglslshader.cpp/.h` (uniform signatures), `pipeline.cpp`, `llrender.cpp/.h`, `llimagegl.cpp`, `llvertexbuffer.cpp`, `llshadermgr`.
+- **GL constants: 1,140 uses of 202 distinct `GL_*` tokens in 54 files.** By family:
+  - shader stages `GL_VERTEX_SHADER` 145 / `GL_FRAGMENT_SHADER` 149 / `GL_GEOMETRY_SHADER` 3 / the `_ARB` forms 12: 309, nearly all in `llviewershadermgr.cpp` (295 lines of the file), `llshadermgr`, `llglslshader`;
+  - clear masks `GL_COLOR_BUFFER_BIT` 23 / `GL_DEPTH_BUFFER_BIT` 21 (the pass clears of F3.5 and `LLRender::clearBuffers`);
+  - `GL_TRUE` / `GL_FALSE` 39;
+  - buffer kinds and usage: `GL_ARRAY_BUFFER` 25, `GL_ELEMENT_ARRAY_BUFFER` 14, `GL_UNIFORM_BUFFER` 4, `GL_STREAM_DRAW` 4 (nearly all in `llvertexbuffer.cpp`);
+  - vertex / index / pixel component types `GL_UNSIGNED_BYTE` 39, `GL_FLOAT` 24, `GL_UNSIGNED_SHORT` 19, `GL_UNSIGNED_INT` 8 ...;
+  - pixel formats `GL_RGBA` 63, `GL_RGB` 33, `GL_ALPHA` 22, `GL_RED` 16, `GL_LUMINANCE*`, `GL_RG`, `GL_DEPTH_COMPONENT`, internal formats `GL_RGBA16F` 16, `GL_RGBA8` 9, `GL_RGB16F` 8, `GL_R16F`, `GL_R8`, `GL_RG16F`, `GL_R11F_G11F_B10F`, the S3TC family (24, one file), sRGB variants;
+  - texture targets `GL_TEXTURE_2D` 44, `GL_TEXTURE_CUBE_MAP_ARRAY` 9, `GL_TEXTURE_CUBE_MAP` 4, `GL_TEXTURE_RECTANGLE` 3 and parameters (`GL_TEXTURE_MIN_FILTER` ... 25), `GL_CLAMP_TO_EDGE`, `GL_LINEAR`, `GL_NEAREST`, `GL_REPEAT`;
+  - the rest: capability queries and strings (`GL_VENDOR`, `GL_RENDERER`, `GL_VERSION`, `GL_EXTENSIONS`: 33, `llgl.cpp`: the "what does the device offer" code, F4/F5 with the capability report), `GL_NO_ERROR` 6, `GL_FRAMEBUFFER_COMPLETE` 3, `GL_COLOR_ATTACHMENT0` / `GL_DEPTH_ATTACHMENT` 13 (the target code), blend factors 6.
+- Top files by GL token: `llviewershadermgr.cpp` 295, `llimagegl.cpp` 196, `pipeline.cpp` 122, `llvertexbuffer.cpp` 81, `llrender.cpp` 55, `llgl.h` 42, `llgl.cpp` 35, `llglslshader.cpp` 26, `llrendertarget.cpp` 26.
+
+## Target
+- The viewer code (everything but `llvk*`, `llvkformat.cpp` and the window code) contains no `GL_*` constant, no `GL*` type name and no `gl*()` call. `LLVkFormat` (`llvkformat.h/.cpp`) stays the one decoder from numbers to typed values until the numbers are gone too (F5).
+- Typed values where the type matters, plain C++ types where it does not: **scalar types** become `F32 / S32 / U32 / U8 / U64 / char / void` (same types, only the names); **booleans** become `bool`; **families** become enums in one header (`llrenderformat.h`, no GL, like `llrenderstate.h`): `ShaderStage`, `ClearBits`, `BufferKind` / `BufferUsage`, `ComponentType`, `PixelFormat` (client data layout) and `TexelFormat` (internal storage), `TextureKind` (what `LLTexUnit::eTextureType` already is), `SamplerParam` values. The GL numbers of the typed values are not the values of the enumerators: a conversion table in `llvkformat.cpp` (the producer's records already carry `LLVkFormat` types).
+- The classes keep their APIs; the call sites change their arguments (`allocate(w, h, GL_RGBA16F)` becomes `allocate(w, h, TexelFormat::RGBA16F)`), by script per family, build errors find the rest.
+
+## Steps (each its own commit; grep gate; same-session beach counters unchanged; 0 warnings of the guard checks; Adam's hand test list as for F3.5)
+- **F3.6a scalar type names** (`<work>\f36a-migrate.py`): `GLfloat GLint GLuint GLubyte GLsizei GLchar GLvoid GLuint64 ...` become `F32 S32 U32 U8 S32 char void U64`: pure renames of the same C++ types (513 uses, 47 files). `GLenum` (40) and `GLboolean` (18) wait for their families (F3.6b-f / F3.6c).
+- **F3.6b shader stages** (309 uses): `ShaderStage::Vertex / Fragment / Geometry`.
+- **F3.6c clear masks and booleans** (`GL_COLOR_BUFFER_BIT` / `GL_DEPTH_BUFFER_BIT`, `GL_TRUE` / `GL_FALSE`, `GLboolean`): `ClearBits::Color | Depth` (the arguments of `RenderPass::Clear`, `LLRenderTarget::clear`, `LLRender::clearBuffers`), `bool`.
+- **F3.6d buffers and vertex data** (`llvertexbuffer`, `llvkbuf` users): `BufferKind`, `BufferUsage`, `ComponentType` (vertex attribute and index types, `getIndicesType()`).
+- **F3.6e pixel formats** (`LLImageGL`, `LLRenderTarget::allocate`, the post-process and probe code): `PixelFormat`, `TexelFormat`, component types; the S3TC family stays inside `llimagegl.cpp` until it is a `TexelFormat`.
+- **F3.6f texture targets, sampler parameters, attachments** (`GL_TEXTURE_2D` ..., `GL_TEXTURE_MIN_FILTER` ..., `GL_COLOR_ATTACHMENT0`).
+- **F3.6g the rest**: error codes, framebuffer status, blend factors (`LLRender::eBlendFactor` already exists), the capability strings (`llgl.cpp`: decided with the capability report), `GLenum` leftovers, the grep gate for the whole of the viewer code.
+- **`bindManual` raw names** (39 sites, raw texture names): see F3.4; the `LLImageGL` / `LLRenderTarget` texture name accessors (`getTexName()`, `getTexture()`) return ids that are not GL names already; what remains is the type name `LLGLuint` and the `bindManual(type, U32 name)` entry that takes a number instead of an image. Measure the sites when F3.6e is done.
+
+## Gates
+Build clean; **no counter change** at the beach (this is vocabulary: `bindTarget`, `clear`, passes, transitions, records per frame as in `f35d2-beach`: 37 binds, 16 clears, 54.5 passes, 143 transitions); 0 guard / PassCheck warnings; a picture of the beach by eye; the grep gate of the family; the doc and the memory note. Hand test (Adam): textures of every kind (uploads, previews, snapshots, 360, media, probes) after F3.6e, because the formats are what a wrong table entry breaks (a texture drawn black or with swapped channels).
+
+## Status 2026-10-20: F3.6a done (GL scalar type names renamed)
+`<work>\f36a-migrate.py`: `GLfloat GLint GLuint GLubyte GLsizei GLchar GLvoid GLuint64` became `F32 S32 U32 U8 S32 char void U64` (same C++ types: 513 uses in 47 files, outside `llvk*` and `llglheaders.h`). Left: `GLenum` 40, `GLboolean` 18 (their families, F3.6b-f / F3.6c), 0 of the others. Build clean (first try). Beach run `f36a1-beach` (no phases, all guard checks, `LL_VK_DEPTHRO_VERIFY`): bindTarget 37.1 and clear 16.0 per frame as in `f35d2-beach`, 0 PassCheck / StateGuard / MatrixGuard warnings, no `unknown command`, the only `DepthRO` warning is the known avatar alpha violation, frame pacing 9.1 ms (this run was at another time of day: the scene is not the one of the F3.5 runs, the worker pass count 57.5 is the scene); picture judged by eye (`f36a1-beach-b.png`: complete). A pure rename: no speed claim.

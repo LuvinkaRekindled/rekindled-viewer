@@ -1137,7 +1137,7 @@ void LLFastTimerView::drawLineGraph()
                 break;
             }
             gGL.vertex2f(x,y);
-            gGL.vertex2f(x,(GLfloat)mGraphRect.mBottom);
+            gGL.vertex2f(x,(F32)mGraphRect.mBottom);
         }
         gGL.end();
 

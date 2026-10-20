@@ -255,14 +255,14 @@ static GLWorkQueue* sQueue = nullptr;
 // Pool of reusable VertexBuffer state
 
 // batch calls to glGenBuffers
-static GLuint gen_buffer()
+static U32 gen_buffer()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
 
-    GLuint ret = 0;
+    U32 ret = 0;
     constexpr U32 pool_size = 4096;
 
-    thread_local static GLuint sNamePool[pool_size];
+    thread_local static U32 sNamePool[pool_size];
     thread_local static U32 sIndex = 0;
 
     if (sIndex == 0)
@@ -276,12 +276,12 @@ static GLuint gen_buffer()
     return ret;
 }
 
-static void delete_buffers(S32 count, GLuint* buffers)
+static void delete_buffers(S32 count, U32* buffers)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
     // wait a few frames before actually deleting the buffers to avoid
     // synchronization issues with the GPU
-    static std::vector<GLuint> sFreeList[4];
+    static std::vector<U32> sFreeList[4];
 
     if (gGLManager.mInited)
     {
@@ -310,8 +310,8 @@ class LLVBOPool
 {
     public:
     virtual ~LLVBOPool() = default;
-    virtual void allocate(GLenum type, U32 size, GLuint& name, U8*& data) = 0;
-    virtual void free(GLenum type, U32 size, GLuint name, U8* data) = 0;
+    virtual void allocate(GLenum type, U32 size, U32& name, U8*& data) = 0;
+    virtual void free(GLenum type, U32 size, U32 name, U8* data) = 0;
     virtual U64 getVramBytesUsed() = 0;
 };
 
@@ -327,7 +327,7 @@ public:
         return mAllocated;
     }
 
-    void allocate(GLenum type, U32 size, GLuint& name, U8*& data) override
+    void allocate(GLenum type, U32 size, U32& name, U8*& data) override
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         STOP_GLERROR;
@@ -347,7 +347,7 @@ public:
         }
     }
 
-    void free(GLenum type, U32 size, GLuint name, U8* data) override
+    void free(GLenum type, U32 size, U32 name, U8* data) override
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         llassert(type == GL_ARRAY_BUFFER || type == GL_ELEMENT_ARRAY_BUFFER);
@@ -376,7 +376,7 @@ public:
     struct Entry
     {
         U8* mData;
-        GLuint mGLName;
+        U32 mGLName;
         Time mAge;
     };
 
@@ -414,7 +414,7 @@ public:
         size += block_size - (size % block_size);
     }
 
-    void allocate(GLenum type, U32 size, GLuint& name, U8*& data) override
+    void allocate(GLenum type, U32 size, U32& name, U8*& data) override
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         llassert(type == GL_ARRAY_BUFFER || type == GL_ELEMENT_ARRAY_BUFFER);
@@ -468,7 +468,7 @@ public:
         clean();
     }
 
-    void free(GLenum type, U32 size, GLuint name, U8* data) override
+    void free(GLenum type, U32 size, U32 name, U8* data) override
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
         llassert(type == GL_ARRAY_BUFFER || type == GL_ELEMENT_ARRAY_BUFFER);
@@ -1590,7 +1590,7 @@ namespace
 }
 #endif
 
-static inline void ll_attribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer)
+static inline void ll_attribPointer(U32 index, S32 size, GLenum type, GLboolean normalized, S32 stride, const void* pointer)
 {
 #if defined(LL_VULKAN)
     if (sAttribSink)
@@ -1602,7 +1602,7 @@ static inline void ll_attribPointer(GLuint index, GLint size, GLenum type, GLboo
 #endif
 }
 
-static inline void ll_attribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer)
+static inline void ll_attribIPointer(U32 index, S32 size, GLenum type, S32 stride, const void* pointer)
 {
 #if defined(LL_VULKAN)
     if (sAttribSink)

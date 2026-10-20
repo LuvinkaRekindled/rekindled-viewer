@@ -1038,11 +1038,11 @@ void LLRenderPass::pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_te
             }
             else
             {
-                LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*) params.mTextureMatrix->mMatrix);
+                LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*) params.mTextureMatrix->mMatrix);
                 gPipeline.mTextureMatrixOps++;
             }
 
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*) params.mTextureMatrix->mMatrix);      // both branches above left the texture matrix of unit 0 as the current one
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*) params.mTextureMatrix->mMatrix);      // both branches above left the texture matrix of unit 0 as the current one
             gPipeline.mTextureMatrixOps++;
 
             tex_setup = true;

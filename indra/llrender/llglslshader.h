@@ -151,7 +151,7 @@ public:
         SG_COUNT
     } eGroup;
 
-    enum UniformBlock : GLuint
+    enum UniformBlock : U32
     {
         UB_REFLECTION_PROBES,   // "ReflectionProbes"
         UB_GLTF_JOINTS,         // "GLTFJoints"
@@ -168,7 +168,7 @@ public:
     LLGLSLShader();
     ~LLGLSLShader();
 
-    static GLuint sCurBoundShader;
+    static U32 sCurBoundShader;
     static LLGLSLShader* sCurBoundShaderPtr;
     static S32 sIndexedTextureChannels;
 
@@ -198,60 +198,60 @@ public:
     bool createShader();
     bool attachFragmentObject(std::string object);
     bool attachVertexObject(std::string object);
-    void attachObject(GLuint object);
-    void attachObjects(GLuint* objects = NULL, S32 count = 0);
+    void attachObject(U32 object);
+    void attachObjects(U32* objects = NULL, S32 count = 0);
     bool mapAttributes();
     bool mapUniforms();
-    void mapUniform(GLint index);
-    void uniform1i(U32 index, GLint i);
-    void uniform1f(U32 index, GLfloat v);
+    void mapUniform(S32 index);
+    void uniform1i(U32 index, S32 i);
+    void uniform1f(U32 index, F32 v);
 
     // <FS> set a uniform by a location the caller already looked up (the current program must be this shader)
     static void uniform1fAt(S32 location, F32 v);
     static void uniform4fvAt(S32 location, S32 count, const F32* v);
-    void fastUniform1f(U32 index, GLfloat v);
-    void uniform2f(U32 index, GLfloat x, GLfloat y);
-    void uniform3f(U32 index, GLfloat x, GLfloat y, GLfloat z);
-    void uniform4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
-    void uniform1iv(U32 index, U32 count, const GLint* i);
-    void uniform4iv(U32 index, U32 count, const GLint* i);
-    void uniform1fv(U32 index, U32 count, const GLfloat* v);
-    void uniform2fv(U32 index, U32 count, const GLfloat* v);
-    void uniform3fv(U32 index, U32 count, const GLfloat* v);
-    void uniform4fv(U32 index, U32 count, const GLfloat* v);
-    void uniform4uiv(U32 index, U32 count, const GLuint* v);
-    void uniform2i(const LLStaticHashedString& uniform, GLint i, GLint j);
-    void uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, const GLfloat* v);
-    void uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, const GLfloat* v);
-    void uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose, const GLfloat* v);
-    void uniformMatrix4fv(U32 index, U32 count, GLboolean transpose, const GLfloat* v);
-    void uniform1i(const LLStaticHashedString& uniform, GLint i);
-    void uniform1iv(const LLStaticHashedString& uniform, U32 count, const GLint* v);
-    void uniform4iv(const LLStaticHashedString& uniform, U32 count, const GLint* v);
-    void uniform1f(const LLStaticHashedString& uniform, GLfloat v);
-    void uniform2f(const LLStaticHashedString& uniform, GLfloat x, GLfloat y);
-    void uniform3f(const LLStaticHashedString& uniform, GLfloat x, GLfloat y, GLfloat z);
-    void uniform4f(const LLStaticHashedString& uniform, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
-    void uniform1fv(const LLStaticHashedString& uniform, U32 count, const GLfloat* v);
-    void uniform2fv(const LLStaticHashedString& uniform, U32 count, const GLfloat* v);
-    void uniform3fv(const LLStaticHashedString& uniform, U32 count, const GLfloat* v);
-    void uniform4fv(const LLStaticHashedString& uniform, U32 count, const GLfloat* v);
-    void uniform4uiv(const LLStaticHashedString& uniform, U32 count, const GLuint* v);
-    void uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const GLfloat* v);
-    void uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const GLfloat* v);
-    void uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const GLfloat* v);
+    void fastUniform1f(U32 index, F32 v);
+    void uniform2f(U32 index, F32 x, F32 y);
+    void uniform3f(U32 index, F32 x, F32 y, F32 z);
+    void uniform4f(U32 index, F32 x, F32 y, F32 z, F32 w);
+    void uniform1iv(U32 index, U32 count, const S32* i);
+    void uniform4iv(U32 index, U32 count, const S32* i);
+    void uniform1fv(U32 index, U32 count, const F32* v);
+    void uniform2fv(U32 index, U32 count, const F32* v);
+    void uniform3fv(U32 index, U32 count, const F32* v);
+    void uniform4fv(U32 index, U32 count, const F32* v);
+    void uniform4uiv(U32 index, U32 count, const U32* v);
+    void uniform2i(const LLStaticHashedString& uniform, S32 i, S32 j);
+    void uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, const F32* v);
+    void uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, const F32* v);
+    void uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose, const F32* v);
+    void uniformMatrix4fv(U32 index, U32 count, GLboolean transpose, const F32* v);
+    void uniform1i(const LLStaticHashedString& uniform, S32 i);
+    void uniform1iv(const LLStaticHashedString& uniform, U32 count, const S32* v);
+    void uniform4iv(const LLStaticHashedString& uniform, U32 count, const S32* v);
+    void uniform1f(const LLStaticHashedString& uniform, F32 v);
+    void uniform2f(const LLStaticHashedString& uniform, F32 x, F32 y);
+    void uniform3f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z);
+    void uniform4f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z, F32 w);
+    void uniform1fv(const LLStaticHashedString& uniform, U32 count, const F32* v);
+    void uniform2fv(const LLStaticHashedString& uniform, U32 count, const F32* v);
+    void uniform3fv(const LLStaticHashedString& uniform, U32 count, const F32* v);
+    void uniform4fv(const LLStaticHashedString& uniform, U32 count, const F32* v);
+    void uniform4uiv(const LLStaticHashedString& uniform, U32 count, const U32* v);
+    void uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const F32* v);
+    void uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const F32* v);
+    void uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const F32* v);
 
     void setMinimumAlpha(F32 minimum);
 
-    void vertexAttrib4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
-    void vertexAttrib4fv(U32 index, GLfloat* v);
+    void vertexAttrib4f(U32 index, F32 x, F32 y, F32 z, F32 w);
+    void vertexAttrib4fv(U32 index, F32* v);
 
-    //GLint getUniformLocation(const std::string& uniform);
-    GLint getUniformLocation(const LLStaticHashedString& uniform);
-    GLint getUniformLocation(U32 index);
+    //S32 getUniformLocation(const std::string& uniform);
+    S32 getUniformLocation(const LLStaticHashedString& uniform);
+    S32 getUniformLocation(U32 index);
 
-    GLint getAttribLocation(U32 attrib);
-    GLint mapUniformTextureChannel(GLint location, GLenum type, GLint size);
+    S32 getAttribLocation(U32 attrib);
+    S32 mapUniformTextureChannel(S32 location, GLenum type, S32 size);
 
     void clearPermutations();
     void addPermutation(std::string name, std::string value);
@@ -297,25 +297,25 @@ public:
     U32 mMatHash[LLRender::NUM_MATRIX_MODES];
     U32 mLightHash;
 
-    GLuint mProgramObject;
+    U32 mProgramObject;
 #if LL_RELEASE_WITH_DEBUG_INFO
     struct attr_name
     {
-        GLint loc;
+        S32 loc;
         const char* name;
-        void operator = (GLint _loc) { loc = _loc; }
-        operator GLint () { return loc; }
+        void operator = (S32 _loc) { loc = _loc; }
+        operator S32 () { return loc; }
     };
     std::vector<attr_name> mAttribute; //lookup table of attribute enum to attribute channel
 #else
-    std::vector<GLint> mAttribute; //lookup table of attribute enum to attribute channel
+    std::vector<S32> mAttribute; //lookup table of attribute enum to attribute channel
 #endif
     U32 mAttributeMask;  //mask of which reserved attributes are set (lines up with LLVertexBuffer::getTypeMask())
-    std::vector<GLint> mUniform;   //lookup table of uniform enum to uniform location
-    LLStaticStringTable<GLint> mUniformMap; //lookup map of uniform name to uniform location
-    typedef std::unordered_map<GLint, LLVector4> uniform_value_map_t;
+    std::vector<S32> mUniform;   //lookup table of uniform enum to uniform location
+    LLStaticStringTable<S32> mUniformMap; //lookup map of uniform name to uniform location
+    typedef std::unordered_map<S32, LLVector4> uniform_value_map_t;
     uniform_value_map_t mValue; //lookup map of uniform location to last known value
-    std::vector<GLint> mTexture;
+    std::vector<S32> mTexture;
     S32 mTotalUniformSize;
     S32 mActiveTextureChannels;
     S32 mShaderLevel;
@@ -334,18 +334,18 @@ public:
     // the twin's uniforms (>= 0: index into its uniform list) or samplers (< 0: ~index into its sampler list)
     LLVk::Program* mVkProgram = nullptr;
     LLVk::Program* mVkProgramPending = nullptr;     // built by link(); becomes mVkProgram once the viewer-side mapping is done (mirrorCreate)
-    std::vector<GLuint> mAttachedObjects;           // the shader objects (source texts) the program is built from
+    std::vector<U32> mAttachedObjects;           // the shader objects (source texts) the program is built from
     // a uniform location is the program's own uniform index (>= 0), or SAMPLER_LOCATION_BASE + the sampler index
-    static constexpr GLint SAMPLER_LOCATION_BASE = 0x40000000;
-    S32 vkTwinOf(GLint location) const;
-    struct ActiveUniform { std::string mName; std::string mType; GLint mSize; GLint mLocation; };
+    static constexpr S32 SAMPLER_LOCATION_BASE = 0x40000000;
+    S32 vkTwinOf(S32 location) const;
+    struct ActiveUniform { std::string mName; std::string mType; S32 mSize; S32 mLocation; };
     std::vector<ActiveUniform> mActiveUniforms;     // what the program reports as active: its loose uniforms, then its samplers
     void mirrorCreate();
     void mirrorDestroy();
     void mirrorBind();
-    void mirrorScalar(GLint location, int kind, std::initializer_list<double> values);   // kind 0: float, 1: int
-    void mirrorVector(GLint location, int kind, U32 components, U32 count, const void* data);
-    void mirrorMatrix(GLint location, U32 columns, U32 rows, GLboolean transpose, U32 count, const GLfloat* data);
+    void mirrorScalar(S32 location, int kind, std::initializer_list<double> values);   // kind 0: float, 1: int
+    void mirrorVector(S32 location, int kind, U32 components, U32 count, const void* data);
+    void mirrorMatrix(S32 location, U32 columns, U32 rows, GLboolean transpose, U32 count, const F32* data);
     // F2.5 (LL_VK_UNIFORMREC): this shader's copy of the program's uniform class blocks; a write is resolved to a byte range, compared with the copy and sent as the bytes that changed
     struct VkUni { U8 mClass = 0; U32 mOffset = 0; U32 mArraySize = 0; };
     std::vector<VkUni> mVkUni;                  // by the program's own uniform index
@@ -355,7 +355,7 @@ public:
     bool vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 rows, bool transpose, U32 count);
     void vkSendRange(U32 cls, U32 offset, U32 size);
     // the value cache the setters used to keep per shader (a hash map): true when the value must be written; with range writes the class block copy does the comparing and this is always true
-    bool uniformValueChanged(GLint location, const LLVector4& value, bool force = false);
+    bool uniformValueChanged(S32 location, const LLVector4& value, bool force = false);
 
     //statistics for profiling shader performance
     bool mProfilePending = false;

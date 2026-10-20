@@ -113,7 +113,7 @@ const std::array<std::string,5> LLModelPreview::sSuffixVarNames
 // <FS:Beq> More flexible LOD generation
 bool stop_gloderror()
 {
-    GLuint error = glodGetError();
+    U32 error = glodGetError();
 
     if (error != GLOD_NO_ERROR)
     {
@@ -1958,7 +1958,7 @@ void LLModelPreview::genGlodLODs(S32 which_lod, U32 decimation, bool enforce_tri
         {
             LLModel* base = mBaseModel[mdl_idx];
 
-            GLint patch_count = 0;
+            S32 patch_count = 0;
             glodGetObjectParameteriv(mObject[base], GLOD_NUM_PATCHES, &patch_count);
             stop_gloderror();
 
@@ -1970,11 +1970,11 @@ void LLModelPreview::genGlodLODs(S32 which_lod, U32 decimation, bool enforce_tri
             mModel[lod][mdl_idx]->mLabel = name;
             mModel[lod][mdl_idx]->mSubmodelID = base->mSubmodelID;
 
-            GLint* sizes = new GLint[patch_count * 2];
+            S32* sizes = new S32[patch_count * 2];
             glodGetObjectParameteriv(mObject[base], GLOD_PATCH_SIZES, sizes);
             stop_gloderror();
 
-            GLint* names = new GLint[patch_count];
+            S32* names = new S32[patch_count];
             glodGetObjectParameteriv(mObject[base], GLOD_PATCH_NAMES, names);
             stop_gloderror();
 
@@ -1982,7 +1982,7 @@ void LLModelPreview::genGlodLODs(S32 which_lod, U32 decimation, bool enforce_tri
 
             LLModel* target_model = mModel[lod][mdl_idx];
 
-            for (GLint i = 0; i < patch_count; ++i)
+            for (S32 i = 0; i < patch_count; ++i)
             {
                 type_mask = mVertexBuffer[5][base][i]->getTypeMask();
 
@@ -4623,7 +4623,7 @@ bool LLModelPreview::render()
 
                 LLMatrix4 mat = instance.mTransform;
 
-                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mat.mMatrix);
+                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mat.mMatrix);
 
                 auto num_models = mVertexBuffer[mPreviewLOD][model].size();
                 for (size_t i = 0; i < num_models; ++i)
@@ -4722,7 +4722,7 @@ bool LLModelPreview::render()
                         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                         LLMatrix4 mat = instance.mTransform;
 
-                        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mat.mMatrix);
+                        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mat.mMatrix);
 
 
                         bool render_mesh = true;
@@ -4853,7 +4853,7 @@ bool LLModelPreview::render()
                             LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                             LLMatrix4 mat = instance.mTransform;
 
-                            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mat.mMatrix);
+                            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mat.mMatrix);
 
 
                             LLPhysicsDecomp* decomp = gMeshRepo.mDecompThread;

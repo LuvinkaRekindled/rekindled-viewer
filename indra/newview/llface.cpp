@@ -548,11 +548,11 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         if (mDrawablep->isActive())
         {
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mDrawablep->getRenderMatrix().mMatrix);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mDrawablep->getRenderMatrix().mMatrix);
         }
         else
         {
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)mDrawablep->getRegion()->mRenderMatrix.mMatrix);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mDrawablep->getRegion()->mRenderMatrix.mMatrix);
         }
 
         gGL.diffuseColor4fv(color.mV);
@@ -1484,7 +1484,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
             if (shiny_in_alpha)
             {
-                static const GLfloat SHININESS_TO_ALPHA[4] =
+                static const F32 SHININESS_TO_ALPHA[4] =
                 {
                     0.0000f,
                     0.25f,

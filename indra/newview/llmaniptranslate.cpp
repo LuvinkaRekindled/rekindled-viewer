@@ -173,7 +173,7 @@ void LLManipTranslate::restoreGL()
         return ;
     }
 
-    GLuint* d = new GLuint[rez*rez];
+    U32* d = new U32[rez*rez];
 
     gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, sGridTex->getTexName(), true);
     gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
@@ -1675,7 +1675,7 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
     static const U32 types[] = { LLRenderPass::PASS_SIMPLE, LLRenderPass::PASS_ALPHA, LLRenderPass::PASS_FULLBRIGHT, LLRenderPass::PASS_SHINY };
     static const U32 num_types = LL_ARRAY_SIZE(types);
 
-    GLuint stencil_mask = 0xFFFFFFFF;
+    U32 stencil_mask = 0xFFFFFFFF;
     //stencil in volumes
 
     gGL.flush();

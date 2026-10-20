@@ -191,7 +191,7 @@ void LLViewerJointMesh::computeJointPalette(F32* mat, bool with_modelview)
     }
 
     // the palette
-        memset(mat, 0, sizeof(GLfloat)*45*4);
+        memset(mat, 0, sizeof(F32)*45*4);
 
         for (joint_num = 0; joint_num < num_joints; joint_num++)
         {
@@ -201,14 +201,14 @@ void LLViewerJointMesh::computeJointPalette(F32* mat, bool with_modelview)
             {
                 F32* vector = gJointMatUnaligned[joint_num].mMatrix[axis];
                 U32 offset = LL_CHARACTER_MAX_JOINTS_PER_MESH*axis+joint_num;
-                memcpy(mat+offset*4, vector, sizeof(GLfloat)*4);
+                memcpy(mat+offset*4, vector, sizeof(F32)*4);
             }
         }
 }
 
 void LLViewerJointMesh::uploadJointMatrices()
 {
-    GLfloat mat[45*4];
+    F32 mat[45*4];
     computeJointPalette(mat, true);
         stop_glerror();
         if (LLGLSLShader::sCurBoundShaderPtr)
@@ -577,7 +577,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     {
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLMatrix4 jointToWorld = getWorldMatrix();
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)jointToWorld.mMatrix);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)jointToWorld.mMatrix);
         buff->setBuffer();
         buff->drawRange(LLRender::TRIANGLES, start, end, count, offset);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);

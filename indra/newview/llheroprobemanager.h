@@ -42,9 +42,9 @@ struct HeroProbeData
 {
     LLMatrix4 heroBox;
     LLVector4 heroSphere;
-    GLint     heroShape;
-    GLint     heroMipCount;
-    GLint     heroProbeCount;
+    S32     heroShape;
+    S32     heroMipCount;
+    S32     heroProbeCount;
 };
 
 class alignas(16) LLHeroProbeManager

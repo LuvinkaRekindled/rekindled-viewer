@@ -57,7 +57,7 @@ public:
     void bind(S32 stage);
     void unbind();
 
-    GLuint getGLName();
+    U32 getGLName();
 
     void destroyGL();
 

@@ -581,21 +581,21 @@ U32 LLReflectionMapManager::probeMemory()
     return (mDynamicProbeCount * 6 * (mProbeResolution * mProbeResolution) * 4) / 1024 / 1024 + (mDynamicProbeCount * 6 * (LL_IRRADIANCE_MAP_RESOLUTION * LL_IRRADIANCE_MAP_RESOLUTION) * 4) / 1024 / 1024;
 }
 
-GLuint LLReflectionMapManager::allocateQuery()
+U32 LLReflectionMapManager::allocateQuery()
 {
     if (mQueryPool.empty())
     {
-        GLuint query;
+        U32 query;
         gGL.genQueries(1, &query);
         return query;
     }
 
-    GLuint query = mQueryPool.front();
+    U32 query = mQueryPool.front();
     mQueryPool.pop_front();
     return query;
 }
 
-void LLReflectionMapManager::recycleQuery(GLuint query)
+void LLReflectionMapManager::recycleQuery(U32 query)
 {
     mQueryPool.push_back(query);
 }
@@ -916,7 +916,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
             res /= 2;
 
-            GLint mip = i - (static_cast<GLint>(mMipChain.size()) - mips);
+            S32 mip = i - (static_cast<S32>(mMipChain.size()) - mips);
 
             if (mip >= 0)
             {
@@ -966,7 +966,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                 static LLStaticHashedString sWidth("u_width");
 
                 gRadianceGenProgram.uniform1f(sRoughness, (F32)i / (F32)(mMipChain.size() - 1));
-                gRadianceGenProgram.uniform1f(sMipLevel, (GLfloat)i);
+                gRadianceGenProgram.uniform1f(sMipLevel, (F32)i);
                 gRadianceGenProgram.uniform1i(sWidth, mProbeResolution);
 
                 for (int cf = 0; cf < 6; ++cf)
@@ -1241,7 +1241,7 @@ void LLReflectionMapManager::updateUniforms()
                     break;
                 }
 
-                GLint idx = neighbor->mProbeIndex;
+                S32 idx = neighbor->mProbeIndex;
                 if (idx == -1 || neighbor->mOccluded || neighbor->mCubeIndex == -1)
                 {
                     continue;
@@ -1643,8 +1643,8 @@ void LLReflectionMapManager::cleanupQueryPool()
     if (!mQueryPool.empty())
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("cleanup query pool");
-        std::vector<GLuint> queries(mQueryPool.begin(), mQueryPool.end());
-        gGL.deleteQueries(static_cast<GLsizei>(queries.size()), queries.data());
+        std::vector<U32> queries(mQueryPool.begin(), mQueryPool.end());
+        gGL.deleteQueries(static_cast<S32>(queries.size()), queries.data());
         mQueryPool.clear();
     }
 }

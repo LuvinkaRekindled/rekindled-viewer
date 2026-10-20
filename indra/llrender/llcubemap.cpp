@@ -243,7 +243,7 @@ void LLCubeMap::generateMipMaps()
     disable();
 }
 
-GLuint LLCubeMap::getGLName()
+U32 LLCubeMap::getGLName()
 {
     return mImages[0]->getTexName();
 }

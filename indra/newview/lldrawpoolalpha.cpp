@@ -547,7 +547,7 @@ bool LLDrawPoolAlpha::TexSetup(LLDrawInfo* draw, bool use_material)
         if (draw->mTextureMatrix)
         {
             tex_setup = true;
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*)draw->mTextureMatrix->mMatrix);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*)draw->mTextureMatrix->mMatrix);
             gPipeline.mTextureMatrixOps++;
         }
     }
@@ -596,7 +596,7 @@ bool LLDrawPoolAlpha::TexSetup(LLDrawInfo* draw, bool use_material)
                 if (draw->mTextureMatrix)
                 {
                     tex_setup = true;
-                    LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*)draw->mTextureMatrix->mMatrix);
+                    LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*)draw->mTextureMatrix->mMatrix);
                     gPipeline.mTextureMatrixOps++;
                 }
             }

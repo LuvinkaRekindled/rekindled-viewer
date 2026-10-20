@@ -202,14 +202,14 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     F32 lastMinimumAlpha = 0.f;
     LLVector4 lastSpecular = LLVector4(0, 0, 0, 0);
 
-    GLint intensity = mShader->getUniformLocation(LLShaderMgr::ENVIRONMENT_INTENSITY);
-    GLint brightness = mShader->getUniformLocation(LLShaderMgr::EMISSIVE_BRIGHTNESS);
-    GLint minAlpha = mShader->getUniformLocation(LLShaderMgr::MINIMUM_ALPHA);
-    GLint specular = mShader->getUniformLocation(LLShaderMgr::SPECULAR_COLOR);
+    S32 intensity = mShader->getUniformLocation(LLShaderMgr::ENVIRONMENT_INTENSITY);
+    S32 brightness = mShader->getUniformLocation(LLShaderMgr::EMISSIVE_BRIGHTNESS);
+    S32 minAlpha = mShader->getUniformLocation(LLShaderMgr::MINIMUM_ALPHA);
+    S32 specular = mShader->getUniformLocation(LLShaderMgr::SPECULAR_COLOR);
 
-    GLint diffuseChannel = mShader->enableTexture(LLShaderMgr::DIFFUSE_MAP);
-    GLint specChannel = mShader->enableTexture(LLShaderMgr::SPECULAR_MAP);
-    GLint normChannel = mShader->enableTexture(LLShaderMgr::BUMP_MAP);
+    S32 diffuseChannel = mShader->enableTexture(LLShaderMgr::DIFFUSE_MAP);
+    S32 specChannel = mShader->enableTexture(LLShaderMgr::SPECULAR_MAP);
+    S32 normChannel = mShader->enableTexture(LLShaderMgr::BUMP_MAP);
 
     LLTexture* lastNormalMap = nullptr;
     LLTexture* lastSpecMap = nullptr;
@@ -314,7 +314,7 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         if (params.mTextureMatrix)
         {
 
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (GLfloat*)params.mTextureMatrix->mMatrix);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*)params.mTextureMatrix->mMatrix);
             gPipeline.mTextureMatrixOps++;
 
             tex_setup = true;

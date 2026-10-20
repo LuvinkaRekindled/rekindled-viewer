@@ -409,7 +409,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
             res /= 2;
 
             llassert(mMipChain.size() <= size_t(S32_MAX));
-            GLint mip = i - (S32(mMipChain.size()) - mips);
+            S32 mip = i - (S32(mMipChain.size()) - mips);
 
             if (mip >= 0)
             {
@@ -466,7 +466,7 @@ void LLHeroProbeManager::generateRadiance(LLReflectionMap* probe)
                 static LLStaticHashedString sStrength("probe_strength");
 
                 gHeroRadianceGenProgram.uniform1f(sRoughness, (F32) i / (F32) (mMipChain.size() - 1));
-                gHeroRadianceGenProgram.uniform1f(sMipLevel, (GLfloat)i);
+                gHeroRadianceGenProgram.uniform1f(sMipLevel, (F32)i);
                 gHeroRadianceGenProgram.uniform1i(sWidth, mProbeResolution);
                 gHeroRadianceGenProgram.uniform1f(sStrength, 1);
 

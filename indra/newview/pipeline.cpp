@@ -831,12 +831,12 @@ void LLPipeline::resizeScreenTexture()
 {
     if (gPipeline.shadersLoaded())
     {
-        GLuint resX = gViewerWindow->getWorldViewWidthRaw();
-        GLuint resY = gViewerWindow->getWorldViewHeightRaw();
+        U32 resX = gViewerWindow->getWorldViewWidthRaw();
+        U32 resY = gViewerWindow->getWorldViewHeightRaw();
 
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
-        GLuint scaledResX = resX;
-        GLuint scaledResY = resY;
+        U32 scaledResX = resX;
+        U32 scaledResY = resY;
         if ( (RenderResolutionDivisor > 1) && (RenderResolutionDivisor < resX) && (RenderResolutionDivisor < resY) )
         {
             scaledResX /= RenderResolutionDivisor;
@@ -844,8 +844,8 @@ void LLPipeline::resizeScreenTexture()
         }
         else if (RenderResolutionMultiplier > 0.f && RenderResolutionMultiplier < 1.f)
         {
-            scaledResX = (GLuint)(scaledResX * RenderResolutionMultiplier);
-            scaledResY = (GLuint)(scaledResY * RenderResolutionMultiplier);
+            scaledResX = (U32)(scaledResX * RenderResolutionMultiplier);
+            scaledResY = (U32)(scaledResY * RenderResolutionMultiplier);
         }
 // [/SL:KB]
 
@@ -977,8 +977,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     else if (RenderResolutionMultiplier > 0.f && RenderResolutionMultiplier < 1.f)
     {
-        resX = (GLuint)(resX * RenderResolutionMultiplier);
-        resY = (GLuint)(resY * RenderResolutionMultiplier);
+        resX = (U32)(resX * RenderResolutionMultiplier);
+        resY = (U32)(resY * RenderResolutionMultiplier);
     }
 // [/SL:KB]
 
@@ -989,7 +989,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     if (!mRT->deferredScreen.allocate(resX, resY, GL_RGBA, true)) return false;
     if (!addDeferredAttachments(mRT->deferredScreen)) return false;
 
-    GLuint screenFormat = hdr ? GL_RGBA16F : GL_RGBA;
+    U32 screenFormat = hdr ? GL_RGBA16F : GL_RGBA;
 
     if (!mRT->screen.allocate(resX, resY, GL_RGBA16F)) return false;
 
@@ -1540,8 +1540,8 @@ void LLPipeline::createGLBuffers()
 
     stop_glerror();
 
-    GLuint resX = gViewerWindow->getWorldViewWidthRaw();
-    GLuint resY = gViewerWindow->getWorldViewHeightRaw();
+    U32 resX = gViewerWindow->getWorldViewWidthRaw();
+    U32 resY = gViewerWindow->getWorldViewHeightRaw();
 
     // allocate screen space glow buffers
     const U32 glow_res = llmax(1, llmin(512, 1 << gSavedSettings.getS32("RenderGlowResolutionPow")));
@@ -9877,7 +9877,7 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_co
 
         shader->bindTexture(LLShaderMgr::EXPOSURE_MAP, &mExposureMap);
 
-        shader->uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)src->getWidth(), (GLfloat)src->getHeight());
+        shader->uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)src->getWidth(), (F32)src->getHeight());
 
         static LLCachedControl<F32> exposure(gSavedSettings, "RenderExposure", 1.f);
 
@@ -9919,7 +9919,7 @@ void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst)
 
         shader.bind();
         shader.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT);
-        shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)src->getWidth(), (GLfloat)src->getHeight());
+        shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)src->getWidth(), (F32)src->getHeight());
 
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -9983,8 +9983,8 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
                 gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
             }
             gGlowExtractProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES,
-                                          (GLfloat)mGlow[2].getWidth(),
-                                          (GLfloat)mGlow[2].getHeight());
+                                          (F32)mGlow[2].getWidth(),
+                                          (F32)mGlow[2].getHeight());
         }
 
         {
@@ -11214,8 +11214,8 @@ bool LLPipeline::renderVignette(LLRenderTarget* src, LLRenderTarget* dst)
 
         shader->uniform2f(
             LLShaderMgr::DEFERRED_SCREEN_RES,
-            (GLfloat)dst->getWidth(),
-            (GLfloat)dst->getHeight());
+            (F32)dst->getWidth(),
+            (F32)dst->getHeight());
         shader->uniform3fv(
             LLShaderMgr::RENDER_VIGNETTE,
             1,
@@ -11384,16 +11384,16 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
 
     shader->uniform2f(
         LLShaderMgr::DEFERRED_SCREEN_RES,
-        (GLfloat)dst->getWidth(),
-        (GLfloat)dst->getHeight());
+        (F32)dst->getWidth(),
+        (F32)dst->getHeight());
 
     // Assuming frame_rect is a static or accessible variable containing the frame dimensions
     shader->uniform4f(
         LLShaderMgr::SNAPSHOT_FRAME_RECT,
-        (GLfloat)left,
-        (GLfloat)top,
-        (GLfloat)right,
-        (GLfloat)bottom);
+        (F32)left,
+        (F32)top,
+        (F32)right,
+        (F32)bottom);
 
     shader->uniform3fv(
         LLShaderMgr::SNAPSHOT_BORDER_COLOR,
@@ -11402,7 +11402,7 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
 
     shader->uniform1f(
         LLShaderMgr::SNAPSHOT_BORDER_THICKNESS,
-        (GLfloat)border_thickness);
+        (F32)border_thickness);
 
     // Guides are rendered in a later UI pass; no additional uniforms required here.
 
@@ -11574,7 +11574,7 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
 
                 gDeferredCoFProgram.uniform1f(LLShaderMgr::DEFERRED_DEPTH_CUTOFF, RenderEdgeDepthCutoff);
                 gDeferredCoFProgram.uniform1f(LLShaderMgr::DEFERRED_NORM_CUTOFF, RenderEdgeNormCutoff);
-                gDeferredCoFProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)dst->getWidth(), (GLfloat)dst->getHeight());
+                gDeferredCoFProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)dst->getWidth(), (F32)dst->getHeight());
                 gDeferredCoFProgram.uniform1f(LLShaderMgr::DOF_FOCAL_DISTANCE, -subject_distance / 1000.f);
                 gDeferredCoFProgram.uniform1f(LLShaderMgr::DOF_BLUR_CONSTANT, blur_constant);
                 // <FS:Beq> FIRE-13989 DOF should be equivalent in all resolutions of the same rendered image
@@ -11606,7 +11606,7 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
                 gDeferredPostProgram.bind();
                 gDeferredPostProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRT->deferredLight, LLTexUnit::TFO_POINT);
 
-                gDeferredPostProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)dst->getWidth(), (GLfloat)dst->getHeight());
+                gDeferredPostProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)dst->getWidth(), (F32)dst->getHeight());
                 // <FS:Beq> FIRE-13989 DOF should be equivalent in all resolutions of the same rendered image
                 // gDeferredPostProgram.uniform1f(LLShaderMgr::DOF_MAX_COF, CameraMaxCoF);
                 gDeferredPostProgram.uniform1f(LLShaderMgr::DOF_MAX_COF, adj_COF);
@@ -11631,7 +11631,7 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
                 gDeferredDoFCombineProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, LLTexUnit::TFO_POINT);
                 gDeferredDoFCombineProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &mRT->deferredLight, LLTexUnit::TFO_POINT);
 
-                gDeferredDoFCombineProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)dst->getWidth(), (GLfloat)dst->getHeight());
+                gDeferredDoFCombineProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)dst->getWidth(), (F32)dst->getHeight());
                 // <FS:Beq> FIRE-13989 DOF should be equivalent in all resolutions of the same rendered image
                 // gDeferredDoFCombineProgram.uniform1f(LLShaderMgr::DOF_MAX_COF, CameraMaxCoF);
                 gDeferredDoFCombineProgram.uniform1f(LLShaderMgr::DOF_MAX_COF, adj_COF);
@@ -11902,7 +11902,7 @@ void LLPipeline::renderFinalize()
     gDeferredPostNoDoFNoiseProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, sourceBuffer);
     gDeferredPostNoDoFNoiseProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
 
-    gDeferredPostNoDoFNoiseProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)sourceBuffer->getWidth(), (GLfloat)sourceBuffer->getHeight());
+    gDeferredPostNoDoFNoiseProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)sourceBuffer->getWidth(), (F32)sourceBuffer->getHeight());
 
     {
         // <FS> selection outlines and other overlays test against this depth after the upscale: with the camera jitter in it they flicker (see the shader). Only while one is shown.
@@ -12163,7 +12163,7 @@ void LLPipeline::bindDeferredShader(LLGLSLShader& shader, LLRenderTarget* light_
     F32 screen_to_target_scale_factor = (F32)gViewerWindow->getWindowHeightRaw() / deferred_target->getHeight();
     //shader.uniform1f(LLShaderMgr::DEFERRED_SSAO_RADIUS, RenderSSAOScale);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSAO_RADIUS, RenderSSAOScale / screen_to_target_scale_factor);
-    //shader.uniform1f(LLShaderMgr::DEFERRED_SSAO_MAX_RADIUS, (GLfloat)RenderSSAOMaxScale);
+    //shader.uniform1f(LLShaderMgr::DEFERRED_SSAO_MAX_RADIUS, (F32)RenderSSAOMaxScale);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSAO_MAX_RADIUS, RenderSSAOMaxScale / screen_to_target_scale_factor);
     // </FS:WW>
 
@@ -12186,7 +12186,7 @@ void LLPipeline::bindDeferredShader(LLGLSLShader& shader, LLRenderTarget* light_
     F32 shadow_bias_error = RenderShadowBiasError * fabsf(LLViewerCamera::getInstance()->getOrigin().mV[2])/3000.f;
     F32 shadow_bias       = RenderShadowBias + shadow_bias_error;
 
-    shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)deferred_target->getWidth(), (GLfloat)deferred_target->getHeight());
+    shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)deferred_target->getWidth(), (F32)deferred_target->getHeight());
     shader.uniform1f(LLShaderMgr::DEFERRED_NEAR_CLIP, LLViewerCamera::getInstance()->getNear()*2.f);
     shader.uniform1f (LLShaderMgr::DEFERRED_SHADOW_OFFSET, RenderShadowOffset); //*shadow_offset_error);
     shader.uniform1f(LLShaderMgr::DEFERRED_SHADOW_BIAS, shadow_bias);
@@ -12195,8 +12195,8 @@ void LLPipeline::bindDeferredShader(LLGLSLShader& shader, LLRenderTarget* light_
 
     shader.uniform3fv(LLShaderMgr::DEFERRED_SUN_DIR, 1, mTransformedSunDir.mV);
     shader.uniform3fv(LLShaderMgr::DEFERRED_MOON_DIR, 1, mTransformedMoonDir.mV);
-    shader.uniform2f(LLShaderMgr::DEFERRED_SHADOW_RES, (GLfloat)mRT->shadow[0].getWidth(), (GLfloat)mRT->shadow[0].getHeight());
-    shader.uniform2f(LLShaderMgr::DEFERRED_PROJ_SHADOW_RES, (GLfloat)mSpotShadow[0].getWidth(), (GLfloat)mSpotShadow[0].getHeight());
+    shader.uniform2f(LLShaderMgr::DEFERRED_SHADOW_RES, (F32)mRT->shadow[0].getWidth(), (F32)mRT->shadow[0].getHeight());
+    shader.uniform2f(LLShaderMgr::DEFERRED_PROJ_SHADOW_RES, (F32)mSpotShadow[0].getWidth(), (F32)mSpotShadow[0].getHeight());
     shader.uniform1f(LLShaderMgr::DEFERRED_DEPTH_CUTOFF, RenderEdgeDepthCutoff);
     shader.uniform1f(LLShaderMgr::DEFERRED_NORM_CUTOFF, RenderEdgeNormCutoff);
 
@@ -12730,8 +12730,8 @@ void LLPipeline::renderDeferredLighting()
                 mScreenTriangleVB->setBuffer();
 
                 sun_shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES,
-                                              (GLfloat)deferred_light_target->getWidth(),
-                                              (GLfloat)deferred_light_target->getHeight());
+                                              (F32)deferred_light_target->getWidth(),
+                                              (F32)deferred_light_target->getHeight());
 
                 if (LLVkMirror::rtShadowMode())
                 {
@@ -12997,9 +12997,9 @@ void LLPipeline::renderDeferredLighting()
                 soften_shader.uniform1i(rt_hit_light_count_s, hit_lights);
                 if (hit_lights > 0)
                 {
-                    soften_shader.uniform4fv(rt_hit_light_pos_s, hit_lights, (GLfloat*)hit_light_pos);
-                    soften_shader.uniform4fv(rt_hit_light_col_s, hit_lights, (GLfloat*)hit_light_col);
-                    soften_shader.uniform4fv(rt_hit_light_dir_s, hit_lights, (GLfloat*)hit_light_dir);
+                    soften_shader.uniform4fv(rt_hit_light_pos_s, hit_lights, (F32*)hit_light_pos);
+                    soften_shader.uniform4fv(rt_hit_light_col_s, hit_lights, (F32*)hit_light_col);
+                    soften_shader.uniform4fv(rt_hit_light_dir_s, hit_lights, (F32*)hit_light_dir);
                 }
                 soften_shader.uniform1i(rt_hit_spot_s, hit_spot ? 1 : 0);
                 if (hit_spot)
@@ -13255,8 +13255,8 @@ void LLPipeline::renderDeferredLighting()
                         U32 idx = count - 1;
                         bindDeferredShader(gDeferredMultiLightProgram[idx]);
                         gDeferredMultiLightProgram[idx].uniform1i(LLShaderMgr::MULTI_LIGHT_COUNT, count);
-                        gDeferredMultiLightProgram[idx].uniform4fv(LLShaderMgr::MULTI_LIGHT, count, (GLfloat*)light);
-                        gDeferredMultiLightProgram[idx].uniform4fv(LLShaderMgr::MULTI_LIGHT_COL, count, (GLfloat*)col);
+                        gDeferredMultiLightProgram[idx].uniform4fv(LLShaderMgr::MULTI_LIGHT, count, (F32*)light);
+                        gDeferredMultiLightProgram[idx].uniform4fv(LLShaderMgr::MULTI_LIGHT_COL, count, (F32*)col);
                         gDeferredMultiLightProgram[idx].uniform1f(LLShaderMgr::MULTI_LIGHT_FAR_Z, far_z);
                         gDeferredMultiLightProgram[idx].uniform1i(LLShaderMgr::CLASSIC_MODE, (psky->canAutoAdjust()) ? 1 : 0);
                         far_z = 0.f;
@@ -13792,24 +13792,24 @@ void LLPipeline::bindReflectionProbes(LLGLSLShader& shader)
     }
 
 
-    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_ITR_COUNT, (GLfloat)RenderScreenSpaceReflectionIterations);
+    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_ITR_COUNT, (F32)RenderScreenSpaceReflectionIterations);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_DIST_BIAS, RenderScreenSpaceReflectionDistanceBias);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_RAY_STEP, RenderScreenSpaceReflectionRayStep);
-    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_GLOSSY_SAMPLES, (GLfloat)RenderScreenSpaceReflectionGlossySamples);
+    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_GLOSSY_SAMPLES, (F32)RenderScreenSpaceReflectionGlossySamples);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_REJECT_BIAS, RenderScreenSpaceReflectionDepthRejectBias);
     mPoissonOffset++;
 
     if (mPoissonOffset > 128 - RenderScreenSpaceReflectionGlossySamples)
         mPoissonOffset = 0;
 
-    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_NOISE_SINE, (GLfloat)mPoissonOffset);
+    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_NOISE_SINE, (F32)mPoissonOffset);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_ADAPTIVE_STEP_MULT, RenderScreenSpaceReflectionAdaptiveStepMultiplier);
 
     // <FS> the improved reflection trace: bit 0 water, bit 1 other glossy surfaces (live, read every time the probes are bound)
     static LLCachedControl<bool> ssr_water_trace(gSavedSettings, "FSSSRWaterTrace", true);
     static LLCachedControl<bool> ssr_surface_trace(gSavedSettings, "FSSSRSurfaceTrace", false);
     static LLCachedControl<bool> ssr_water_adaptive(gSavedSettings, "FSWaterTraceAdaptive", true);     // <FS> bit 2: the water ray takes fewer, uneven steps (finer near the surface, coarser far away)
-    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_TRACE_MODE, (GLfloat)((ssr_water_trace ? 1 : 0) | (ssr_surface_trace ? 2 : 0) | (ssr_water_adaptive ? 4 : 0)));
+    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_TRACE_MODE, (F32)((ssr_water_trace ? 1 : 0) | (ssr_surface_trace ? 2 : 0) | (ssr_water_adaptive ? 4 : 0)));
 
     channel = shader.enableTexture(LLShaderMgr::SCENE_DEPTH);
     if (channel > -1)
@@ -15116,7 +15116,7 @@ struct CascadeReuse
 {
     bool mValid = false;
     U64 mFrame = 0;
-    GLuint mTexture = 0;
+    U32 mTexture = 0;
     glm::mat4 mView;
     glm::mat4 mProj;
     F32 mError = 0.f;
@@ -16535,7 +16535,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
         F32 ogl_mat[16];
         camera.getOpenGLTransform(ogl_mat);
-        glm::mat4 mat = glm::make_mat4((GLfloat*) OGL_TO_CFR_ROTATION) * glm::make_mat4(ogl_mat);
+        glm::mat4 mat = glm::make_mat4((F32*) OGL_TO_CFR_ROTATION) * glm::make_mat4(ogl_mat);
 
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(mat));
         set_current_modelview(mat);

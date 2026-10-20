@@ -554,7 +554,7 @@ void FSManipRotateJoint::renderManipulatorRings(const LLVector3& agent_space_cen
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
 
         LLMatrix4 rot_mat(rotation);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)rot_mat.mMatrix);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)rot_mat.mMatrix);
 
         for (int pass = 0; pass < 2; ++pass)
         {
@@ -581,7 +581,7 @@ void FSManipRotateJoint::renderManipulatorRings(const LLVector3& agent_space_cen
                         // Cancel the rotation applied earlier:
                         LLMatrix4 inv_rot_mat(rotation);
                         inv_rot_mat.invert();
-                        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)inv_rot_mat.mMatrix);
+                        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)inv_rot_mat.mMatrix);
                         renderCenterCircle( mRadiusMeters*1.2f, roll_color, roll_color );
                     }
                     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
@@ -780,7 +780,7 @@ void FSManipRotateJoint::renderAxes(const LLVector3& agent_space_center, F32 siz
 
     LLMatrix4 rot_mat(rotation);
 
-    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (GLfloat*)rot_mat.mMatrix);
+    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)rot_mat.mMatrix);
 
     gGL.begin(LLRender::LINES);
 

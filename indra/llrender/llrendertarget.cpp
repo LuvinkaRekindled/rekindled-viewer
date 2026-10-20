@@ -44,7 +44,7 @@
 #endif
 
 // attaching a texture to a target: a slot (colour attachment index, or the depth slot) of the target names the texture
-static void ll_fboAttach(GLuint fbo, GLenum attachment, GLenum textarget, GLuint texture, GLuint restore)
+static void ll_fboAttach(U32 fbo, GLenum attachment, GLenum textarget, U32 texture, U32 restore)
 {
     (void)textarget;
     (void)restore;

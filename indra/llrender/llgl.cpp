@@ -166,16 +166,16 @@ LLGLManager::LLGLManager() :
 
 static std::string sNoGLVendor, sNoGLRenderer, sNoGLVersion, sNoGLGlsl, sNoGLExtensions;
 
-const GLubyte* ll_nogl_string(GLenum name)
+const U8* ll_nogl_string(GLenum name)
 {
     switch (name)
     {
-    case GL_VENDOR: return (const GLubyte*)sNoGLVendor.c_str();
-    case GL_RENDERER: return (const GLubyte*)sNoGLRenderer.c_str();
-    case GL_VERSION: return (const GLubyte*)sNoGLVersion.c_str();
-    case GL_SHADING_LANGUAGE_VERSION: return (const GLubyte*)sNoGLGlsl.c_str();
-    case GL_EXTENSIONS: return (const GLubyte*)sNoGLExtensions.c_str();
-    default: return (const GLubyte*)"";
+    case GL_VENDOR: return (const U8*)sNoGLVendor.c_str();
+    case GL_RENDERER: return (const U8*)sNoGLRenderer.c_str();
+    case GL_VERSION: return (const U8*)sNoGLVersion.c_str();
+    case GL_SHADING_LANGUAGE_VERSION: return (const U8*)sNoGLGlsl.c_str();
+    case GL_EXTENSIONS: return (const U8*)sNoGLExtensions.c_str();
+    default: return (const U8*)"";
     }
 }
 
