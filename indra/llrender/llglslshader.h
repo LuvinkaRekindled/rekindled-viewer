@@ -29,6 +29,7 @@
 
 #include "llgl.h"
 #include "llrender.h"
+#include "llrenderformat.h"
 #include "llstaticstringtable.h"
 #include <boost/json.hpp>
 #include <unordered_map>
@@ -322,7 +323,7 @@ public:
     S32 mShaderGroup; // see LLGLSLShader::eGroup
     bool mUniformsDirty;
     LLShaderFeatures mFeatures;
-    std::vector< std::pair< std::string, GLenum > > mShaderFiles;
+    std::vector< std::pair< std::string, ShaderStage > > mShaderFiles;
     std::string mName;
     typedef std::map<std::string, std::string> defines_map_t; //NOTE: this must be an ordered map to maintain hash consistency
     defines_map_t mDefines;

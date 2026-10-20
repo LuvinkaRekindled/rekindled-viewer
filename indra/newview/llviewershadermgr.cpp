@@ -891,8 +891,8 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     // We no longer have to bind the shaders to global glhandles, they are automatically added to a map now.
     for (U32 i = 0; i < shaders.size(); i++)
     {
-        // Note usage of GL_VERTEX_SHADER
-        if (loadShaderFile(shaders[i].first, shaders[i].second, GL_VERTEX_SHADER, &attribs) == 0)
+        // Note usage of ShaderStage::Vertex
+        if (loadShaderFile(shaders[i].first, shaders[i].second, ShaderStage::Vertex, &attribs) == 0)
         {
             LL_WARNS("Shader") << "Failed to load basic vertex shader " << i << ": " << shaders[i].first << LL_ENDL;
             return shaders[i].first;
@@ -935,8 +935,8 @@ std::string LLViewerShaderMgr::loadBasicShaders()
 
     for (U32 i = 0; i < shaders.size(); i++)
     {
-        // Note usage of GL_FRAGMENT_SHADER
-        if (loadShaderFile(shaders[i].first, shaders[i].second, GL_FRAGMENT_SHADER, &attribs, index_channels[i]) == 0)
+        // Note usage of ShaderStage::Fragment
+        if (loadShaderFile(shaders[i].first, shaders[i].second, ShaderStage::Fragment, &attribs, index_channels[i]) == 0)
         {
             LL_WARNS("Shader") << "Failed to load fragment shader " << shaders[i].first << LL_ENDL;
             return shaders[i].first;
@@ -983,8 +983,8 @@ bool LLViewerShaderMgr::loadShadersWater()
         gWaterProgram.mFeatures.hasTonemap = true;
         gWaterProgram.mFeatures.hasShadows = use_sun_shadow;
         gWaterProgram.mShaderFiles.clear();
-        gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", GL_VERTEX_SHADER));
-        gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterF.glsl", GL_FRAGMENT_SHADER));
+        gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", ShaderStage::Vertex));
+        gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterF.glsl", ShaderStage::Fragment));
         // (the device is not up yet when the water is configured: LLVkMirror::rtShadowMode() still says 0; the launcher's environment is the early answer. The ray traced reflection (rtReflection in shadowUtil.glsl) needs the scene and the material table; the program's own files only see the permutations, the global defines such as SUN_SHADOW reach the library files only)
         const bool rt_water_reflections_possible = use_sun_shadow && rt_reflections_possible();
         gWaterProgram.clearPermutations();
@@ -1015,8 +1015,8 @@ bool LLViewerShaderMgr::loadShadersWater()
         gUnderWaterProgram.mFeatures.calculatesAtmospherics = true;
         gUnderWaterProgram.mFeatures.hasAtmospherics = true;
         gUnderWaterProgram.mShaderFiles.clear();
-        gUnderWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", GL_VERTEX_SHADER));
-        gUnderWaterProgram.mShaderFiles.push_back(make_pair("environment/underWaterF.glsl", GL_FRAGMENT_SHADER));
+        gUnderWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", ShaderStage::Vertex));
+        gUnderWaterProgram.mShaderFiles.push_back(make_pair("environment/underWaterF.glsl", ShaderStage::Fragment));
         gUnderWaterProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         gUnderWaterProgram.mShaderGroup = LLGLSLShader::SG_WATER;
         gUnderWaterProgram.clearPermutations();
@@ -1072,8 +1072,8 @@ bool LLViewerShaderMgr::loadShadersEffects()
     {
         gGlowProgram.mName = "Glow Shader (Post)";
         gGlowProgram.mShaderFiles.clear();
-        gGlowProgram.mShaderFiles.push_back(make_pair("effects/glowV.glsl", GL_VERTEX_SHADER));
-        gGlowProgram.mShaderFiles.push_back(make_pair("effects/glowF.glsl", GL_FRAGMENT_SHADER));
+        gGlowProgram.mShaderFiles.push_back(make_pair("effects/glowV.glsl", ShaderStage::Vertex));
+        gGlowProgram.mShaderFiles.push_back(make_pair("effects/glowF.glsl", ShaderStage::Fragment));
         gGlowProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
         success = gGlowProgram.createShader();
         if (!success)
@@ -1089,8 +1089,8 @@ bool LLViewerShaderMgr::loadShadersEffects()
 
         gGlowExtractProgram.mName = llformat("Glow Extract Shader (Post)%s", glow_noise_label.c_str());
         gGlowExtractProgram.mShaderFiles.clear();
-        gGlowExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractV.glsl", GL_VERTEX_SHADER));
-        gGlowExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractF.glsl", GL_FRAGMENT_SHADER));
+        gGlowExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractV.glsl", ShaderStage::Vertex));
+        gGlowExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractF.glsl", ShaderStage::Fragment));
         gGlowExtractProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
 
         if (use_glow_noise)
@@ -1110,8 +1110,8 @@ bool LLViewerShaderMgr::loadShadersEffects()
     {
         gPostVignetteProgram.mName = "Vignette Post";
         gPostVignetteProgram.mShaderFiles.clear();
-        gPostVignetteProgram.mShaderFiles.push_back(make_pair("post/exoPostBaseV.glsl", GL_VERTEX_SHADER));
-        gPostVignetteProgram.mShaderFiles.push_back(make_pair("post/exoVignetteF.glsl", GL_FRAGMENT_SHADER));
+        gPostVignetteProgram.mShaderFiles.push_back(make_pair("post/exoPostBaseV.glsl", ShaderStage::Vertex));
+        gPostVignetteProgram.mShaderFiles.push_back(make_pair("post/exoVignetteF.glsl", ShaderStage::Fragment));
         gPostVignetteProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
         success = gPostVignetteProgram.createShader();
     }
@@ -1121,8 +1121,8 @@ bool LLViewerShaderMgr::loadShadersEffects()
     {
         gPostSnapshotFrameProgram.mName = "Snapshot Frame Post";
         gPostSnapshotFrameProgram.mShaderFiles.clear();
-        gPostSnapshotFrameProgram.mShaderFiles.push_back(make_pair("post/exoPostBaseV.glsl", GL_VERTEX_SHADER));
-        gPostSnapshotFrameProgram.mShaderFiles.push_back(make_pair("post/snapshotFrameF.glsl", GL_FRAGMENT_SHADER));
+        gPostSnapshotFrameProgram.mShaderFiles.push_back(make_pair("post/exoPostBaseV.glsl", ShaderStage::Vertex));
+        gPostSnapshotFrameProgram.mShaderFiles.push_back(make_pair("post/snapshotFrameF.glsl", ShaderStage::Fragment));
         gPostSnapshotFrameProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
         success = gPostSnapshotFrameProgram.createShader();
     }
@@ -1280,8 +1280,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredHighlightProgram.mName = "Deferred Highlight Shader";
         gDeferredHighlightProgram.mShaderFiles.clear();
-        gDeferredHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", GL_VERTEX_SHADER));
-        gDeferredHighlightProgram.mShaderFiles.push_back(make_pair("deferred/highlightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", ShaderStage::Vertex));
+        gDeferredHighlightProgram.mShaderFiles.push_back(make_pair("deferred/highlightF.glsl", ShaderStage::Fragment));
         gDeferredHighlightProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         add_common_permutations(&gDeferredHighlightProgram);
         success = gDeferredHighlightProgram.createShader();
@@ -1292,8 +1292,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffuseProgram.mName = "Deferred Diffuse Shader";
         gDeferredDiffuseProgram.mFeatures.hasSrgb = true;
         gDeferredDiffuseProgram.mShaderFiles.clear();
-        gDeferredDiffuseProgram.mShaderFiles.push_back(make_pair("deferred/diffuseV.glsl", GL_VERTEX_SHADER));
-        gDeferredDiffuseProgram.mShaderFiles.push_back(make_pair("deferred/diffuseIndexedF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredDiffuseProgram.mShaderFiles.push_back(make_pair("deferred/diffuseV.glsl", ShaderStage::Vertex));
+        gDeferredDiffuseProgram.mShaderFiles.push_back(make_pair("deferred/diffuseIndexedF.glsl", ShaderStage::Fragment));
         gDeferredDiffuseProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gDeferredDiffuseProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredDiffuseProgram);
@@ -1305,8 +1305,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredDiffuseAlphaMaskProgram.mName = "Deferred Diffuse Alpha Mask Shader";
         gDeferredDiffuseAlphaMaskProgram.mShaderFiles.clear();
-        gDeferredDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseV.glsl", GL_VERTEX_SHADER));
-        gDeferredDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskIndexedF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseV.glsl", ShaderStage::Vertex));
+        gDeferredDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskIndexedF.glsl", ShaderStage::Fragment));
         gDeferredDiffuseAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gDeferredDiffuseAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredDiffuseAlphaMaskProgram);
@@ -1318,8 +1318,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredNonIndexedDiffuseAlphaMaskProgram.mName = "Deferred Diffuse Non-Indexed Alpha Mask Shader";
         gDeferredNonIndexedDiffuseAlphaMaskProgram.mShaderFiles.clear();
-        gDeferredNonIndexedDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseV.glsl", GL_VERTEX_SHADER));
-        gDeferredNonIndexedDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredNonIndexedDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseV.glsl", ShaderStage::Vertex));
+        gDeferredNonIndexedDiffuseAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskF.glsl", ShaderStage::Fragment));
         gDeferredNonIndexedDiffuseAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredNonIndexedDiffuseAlphaMaskProgram);
         success = gDeferredNonIndexedDiffuseAlphaMaskProgram.createShader();
@@ -1330,8 +1330,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mName = "Deferred Diffuse Non-Indexed Alpha Mask No Color Shader";
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderFiles.clear();
-        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("deferred/diffuseNoColorV.glsl", GL_VERTEX_SHADER));
-        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskNoColorF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("deferred/diffuseNoColorV.glsl", ShaderStage::Vertex));
+        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskNoColorF.glsl", ShaderStage::Fragment));
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram);
         success = gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.createShader();
@@ -1342,8 +1342,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredBumpProgram.mName = "Deferred Bump Shader";
         gDeferredBumpProgram.mShaderFiles.clear();
-        gDeferredBumpProgram.mShaderFiles.push_back(make_pair("deferred/bumpV.glsl", GL_VERTEX_SHADER));
-        gDeferredBumpProgram.mShaderFiles.push_back(make_pair("deferred/bumpF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredBumpProgram.mShaderFiles.push_back(make_pair("deferred/bumpV.glsl", ShaderStage::Vertex));
+        gDeferredBumpProgram.mShaderFiles.push_back(make_pair("deferred/bumpF.glsl", ShaderStage::Fragment));
         gDeferredBumpProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredBumpProgram);
         success = make_rigged_variant(gDeferredBumpProgram, gDeferredSkinnedBumpProgram);
@@ -1379,8 +1379,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             U32 alpha_mode = i & 0x3;
 
             gDeferredMaterialProgram[i].mShaderFiles.clear();
-            gDeferredMaterialProgram[i].mShaderFiles.push_back(make_pair("deferred/materialV.glsl", GL_VERTEX_SHADER));
-            gDeferredMaterialProgram[i].mShaderFiles.push_back(make_pair("deferred/materialF.glsl", GL_FRAGMENT_SHADER));
+            gDeferredMaterialProgram[i].mShaderFiles.push_back(make_pair("deferred/materialV.glsl", ShaderStage::Vertex));
+            gDeferredMaterialProgram[i].mShaderFiles.push_back(make_pair("deferred/materialF.glsl", ShaderStage::Fragment));
             gDeferredMaterialProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
             gDeferredMaterialProgram[i].clearPermutations();
@@ -1450,8 +1450,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPBROpaqueProgram.mFeatures.hasSrgb = true;
 
         gDeferredPBROpaqueProgram.mShaderFiles.clear();
-        gDeferredPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueV.glsl", GL_VERTEX_SHADER));
-        gDeferredPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueV.glsl", ShaderStage::Vertex));
+        gDeferredPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueF.glsl", ShaderStage::Fragment));
         gDeferredPBROpaqueProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredPBROpaqueProgram.clearPermutations();
 
@@ -1473,8 +1473,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gGLTFPBRMetallicRoughnessProgram.mFeatures.hasSrgb = true;
 
             gGLTFPBRMetallicRoughnessProgram.mShaderFiles.clear();
-            gGLTFPBRMetallicRoughnessProgram.mShaderFiles.push_back(make_pair("gltf/pbrmetallicroughnessV.glsl", GL_VERTEX_SHADER));
-            gGLTFPBRMetallicRoughnessProgram.mShaderFiles.push_back(make_pair("gltf/pbrmetallicroughnessF.glsl", GL_FRAGMENT_SHADER));
+            gGLTFPBRMetallicRoughnessProgram.mShaderFiles.push_back(make_pair("gltf/pbrmetallicroughnessV.glsl", ShaderStage::Vertex));
+            gGLTFPBRMetallicRoughnessProgram.mShaderFiles.push_back(make_pair("gltf/pbrmetallicroughnessF.glsl", ShaderStage::Fragment));
             gGLTFPBRMetallicRoughnessProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             gGLTFPBRMetallicRoughnessProgram.clearPermutations();
 
@@ -1498,8 +1498,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gPBRGlowProgram.mName = " PBR Glow Shader";
         gPBRGlowProgram.mFeatures.hasSrgb = true;
         gPBRGlowProgram.mShaderFiles.clear();
-        gPBRGlowProgram.mShaderFiles.push_back(make_pair("deferred/pbrglowV.glsl", GL_VERTEX_SHADER));
-        gPBRGlowProgram.mShaderFiles.push_back(make_pair("deferred/pbrglowF.glsl", GL_FRAGMENT_SHADER));
+        gPBRGlowProgram.mShaderFiles.push_back(make_pair("deferred/pbrglowV.glsl", ShaderStage::Vertex));
+        gPBRGlowProgram.mShaderFiles.push_back(make_pair("deferred/pbrglowF.glsl", ShaderStage::Fragment));
         gPBRGlowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gPBRGlowProgram);
@@ -1517,8 +1517,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDPBROpaqueProgram.mName = "HUD PBR Opaque Shader";
         gHUDPBROpaqueProgram.mFeatures.hasSrgb = true;
         gHUDPBROpaqueProgram.mShaderFiles.clear();
-        gHUDPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueV.glsl", GL_VERTEX_SHADER));
-        gHUDPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueF.glsl", GL_FRAGMENT_SHADER));
+        gHUDPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueV.glsl", ShaderStage::Vertex));
+        gHUDPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueF.glsl", ShaderStage::Fragment));
         gHUDPBROpaqueProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gHUDPBROpaqueProgram.clearPermutations();
         gHUDPBROpaqueProgram.addPermutation("IS_HUD", "1");
@@ -1547,8 +1547,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
 
         shader->mShaderFiles.clear();
-        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaV.glsl", GL_VERTEX_SHADER));
-        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", GL_FRAGMENT_SHADER));
+        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaV.glsl", ShaderStage::Vertex));
+        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", ShaderStage::Fragment));
 
         shader->clearPermutations();
 
@@ -1591,8 +1591,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.hasSrgb = true;
 
         shader->mShaderFiles.clear();
-        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaV.glsl", GL_VERTEX_SHADER));
-        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", GL_FRAGMENT_SHADER));
+        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaV.glsl", ShaderStage::Vertex));
+        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", ShaderStage::Fragment));
 
         shader->clearPermutations();
 
@@ -1626,8 +1626,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.isPBRTerrain = true;
 
             shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("deferred/pbrterrainV.glsl", GL_VERTEX_SHADER));
-            shader->mShaderFiles.push_back(make_pair("deferred/pbrterrainF.glsl", GL_FRAGMENT_SHADER));
+            shader->mShaderFiles.push_back(make_pair("deferred/pbrterrainV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/pbrterrainF.glsl", ShaderStage::Fragment));
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             shader->addPermutation("TERRAIN_PBR_DETAIL", llformat("%d", detail));
             shader->addPermutation("TERRAIN_PAINT_TYPE", llformat("%d", paint_type));
@@ -1644,8 +1644,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredTreeProgram.mName = "Deferred Tree Shader";
         gDeferredTreeProgram.mShaderFiles.clear();
-        gDeferredTreeProgram.mShaderFiles.push_back(make_pair("deferred/treeV.glsl", GL_VERTEX_SHADER));
-        gDeferredTreeProgram.mShaderFiles.push_back(make_pair("deferred/treeF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredTreeProgram.mShaderFiles.push_back(make_pair("deferred/treeV.glsl", ShaderStage::Vertex));
+        gDeferredTreeProgram.mShaderFiles.push_back(make_pair("deferred/treeF.glsl", ShaderStage::Fragment));
         gDeferredTreeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredTreeProgram);
@@ -1657,8 +1657,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredTreeShadowProgram.mName = "Deferred Tree Shadow Shader";
         gDeferredTreeShadowProgram.mShaderFiles.clear();
-        gDeferredTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowV.glsl", GL_VERTEX_SHADER));
-        gDeferredTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowV.glsl", ShaderStage::Vertex));
+        gDeferredTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowF.glsl", ShaderStage::Fragment));
         gDeferredTreeShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredTreeShadowProgram.mRiggedVariant = &gDeferredSkinnedTreeShadowProgram;
         success = gDeferredTreeShadowProgram.createShader();
@@ -1670,8 +1670,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSkinnedTreeShadowProgram.mName = "Deferred Skinned Tree Shadow Shader";
         gDeferredSkinnedTreeShadowProgram.mShaderFiles.clear();
         gDeferredSkinnedTreeShadowProgram.mFeatures.hasObjectSkinning = true;
-        gDeferredSkinnedTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowSkinnedV.glsl", GL_VERTEX_SHADER));
-        gDeferredSkinnedTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredSkinnedTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowSkinnedV.glsl", ShaderStage::Vertex));
+        gDeferredSkinnedTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowF.glsl", ShaderStage::Fragment));
         gDeferredSkinnedTreeShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredSkinnedTreeShadowProgram.createShader();
         llassert(success);
@@ -1682,8 +1682,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredImpostorProgram.mName = "Deferred Impostor Shader";
         gDeferredImpostorProgram.mFeatures.hasSrgb = true;
         gDeferredImpostorProgram.mShaderFiles.clear();
-        gDeferredImpostorProgram.mShaderFiles.push_back(make_pair("deferred/impostorV.glsl", GL_VERTEX_SHADER));
-        gDeferredImpostorProgram.mShaderFiles.push_back(make_pair("deferred/impostorF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredImpostorProgram.mShaderFiles.push_back(make_pair("deferred/impostorV.glsl", ShaderStage::Vertex));
+        gDeferredImpostorProgram.mShaderFiles.push_back(make_pair("deferred/impostorF.glsl", ShaderStage::Fragment));
         gDeferredImpostorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredImpostorProgram);
@@ -1701,8 +1701,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredLightProgram.mFeatures.hasSrgb = true;
 
         gDeferredLightProgram.mShaderFiles.clear();
-        gDeferredLightProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", GL_VERTEX_SHADER));
-        gDeferredLightProgram.mShaderFiles.push_back(make_pair("deferred/pointLightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredLightProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", ShaderStage::Vertex));
+        gDeferredLightProgram.mShaderFiles.push_back(make_pair("deferred/pointLightF.glsl", ShaderStage::Fragment));
         gDeferredLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         gDeferredLightProgram.clearPermutations();
@@ -1725,8 +1725,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
             gDeferredMultiLightProgram[i].clearPermutations();
             gDeferredMultiLightProgram[i].mShaderFiles.clear();
-            gDeferredMultiLightProgram[i].mShaderFiles.push_back(make_pair("deferred/multiPointLightV.glsl", GL_VERTEX_SHADER));
-            gDeferredMultiLightProgram[i].mShaderFiles.push_back(make_pair("deferred/multiPointLightF.glsl", GL_FRAGMENT_SHADER));
+            gDeferredMultiLightProgram[i].mShaderFiles.push_back(make_pair("deferred/multiPointLightV.glsl", ShaderStage::Vertex));
+            gDeferredMultiLightProgram[i].mShaderFiles.push_back(make_pair("deferred/multiPointLightF.glsl", ShaderStage::Fragment));
             gDeferredMultiLightProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             gDeferredMultiLightProgram[i].addPermutation("LIGHT_COUNT", llformat("%d", i+1));
 
@@ -1747,8 +1747,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSpotLightProgram.mFeatures.hasShadows = true;
 
         gDeferredSpotLightProgram.clearPermutations();
-        gDeferredSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", GL_VERTEX_SHADER));
-        gDeferredSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", ShaderStage::Vertex));
+        gDeferredSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", ShaderStage::Fragment));
         gDeferredSpotLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredSpotLightProgram);
@@ -1768,8 +1768,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredMultiSpotLightProgram.clearPermutations();
         gDeferredMultiSpotLightProgram.addPermutation("MULTI_SPOTLIGHT", "1");
         gDeferredMultiSpotLightProgram.mShaderFiles.clear();
-        gDeferredMultiSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/multiPointLightV.glsl", GL_VERTEX_SHADER));
-        gDeferredMultiSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredMultiSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/multiPointLightV.glsl", ShaderStage::Vertex));
+        gDeferredMultiSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", ShaderStage::Fragment));
         gDeferredMultiSpotLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredMultiSpotLightProgram);
@@ -1797,8 +1797,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSunProgram.mFeatures.hasAmbientOcclusion = use_ao;
 
         gDeferredSunProgram.mShaderFiles.clear();
-        gDeferredSunProgram.mShaderFiles.push_back(make_pair("deferred/sunLightV.glsl", GL_VERTEX_SHADER));
-        gDeferredSunProgram.mShaderFiles.push_back(make_pair(fragment, GL_FRAGMENT_SHADER));
+        gDeferredSunProgram.mShaderFiles.push_back(make_pair("deferred/sunLightV.glsl", ShaderStage::Vertex));
+        gDeferredSunProgram.mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
         gDeferredSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredSunProgram);
@@ -1814,8 +1814,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSunProbeProgram.mFeatures.hasShadows = true;
 
         gDeferredSunProbeProgram.mShaderFiles.clear();
-        gDeferredSunProbeProgram.mShaderFiles.push_back(make_pair("deferred/sunLightV.glsl", GL_VERTEX_SHADER));
-        gDeferredSunProbeProgram.mShaderFiles.push_back(make_pair("deferred/sunLightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredSunProbeProgram.mShaderFiles.push_back(make_pair("deferred/sunLightV.glsl", ShaderStage::Vertex));
+        gDeferredSunProbeProgram.mShaderFiles.push_back(make_pair("deferred/sunLightF.glsl", ShaderStage::Fragment));
         gDeferredSunProbeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredSunProbeProgram);
@@ -1830,8 +1830,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredBlurLightProgram.mFeatures.isDeferred = true;
 
         gDeferredBlurLightProgram.mShaderFiles.clear();
-        gDeferredBlurLightProgram.mShaderFiles.push_back(make_pair("deferred/blurLightV.glsl", GL_VERTEX_SHADER));
-        gDeferredBlurLightProgram.mShaderFiles.push_back(make_pair("deferred/blurLightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredBlurLightProgram.mShaderFiles.push_back(make_pair("deferred/blurLightV.glsl", ShaderStage::Vertex));
+        gDeferredBlurLightProgram.mShaderFiles.push_back(make_pair("deferred/blurLightF.glsl", ShaderStage::Fragment));
         gDeferredBlurLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredBlurLightProgram);
@@ -1878,8 +1878,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
 
             shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", GL_VERTEX_SHADER));
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", GL_FRAGMENT_SHADER));
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
 
             shader->clearPermutations();
             shader->addPermutation("USE_VERTEX_COLOR", "1");
@@ -1938,8 +1938,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
 
             shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", GL_VERTEX_SHADER));
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", GL_FRAGMENT_SHADER));
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
 
             shader->clearPermutations();
             shader->addPermutation("USE_INDEXED_TEX", "1");
@@ -1984,8 +1984,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarEyesProgram.mFeatures.hasShadows = true;
 
         gDeferredAvatarEyesProgram.mShaderFiles.clear();
-        gDeferredAvatarEyesProgram.mShaderFiles.push_back(make_pair("deferred/avatarEyesV.glsl", GL_VERTEX_SHADER));
-        gDeferredAvatarEyesProgram.mShaderFiles.push_back(make_pair("deferred/diffuseF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredAvatarEyesProgram.mShaderFiles.push_back(make_pair("deferred/avatarEyesV.glsl", ShaderStage::Vertex));
+        gDeferredAvatarEyesProgram.mShaderFiles.push_back(make_pair("deferred/diffuseF.glsl", ShaderStage::Fragment));
         gDeferredAvatarEyesProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredAvatarEyesProgram);
@@ -2003,8 +2003,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightProgram.mFeatures.hasSrgb = true;
         gDeferredFullbrightProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gDeferredFullbrightProgram.mShaderFiles.clear();
-        gDeferredFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", GL_VERTEX_SHADER));
-        gDeferredFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
+        gDeferredFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
         gDeferredFullbrightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredFullbrightProgram);
@@ -2023,8 +2023,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightProgram.mFeatures.hasSrgb = true;
         gHUDFullbrightProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gHUDFullbrightProgram.mShaderFiles.clear();
-        gHUDFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", GL_VERTEX_SHADER));
-        gHUDFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", GL_FRAGMENT_SHADER));
+        gHUDFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
+        gHUDFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
         gHUDFullbrightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gHUDFullbrightProgram.clearPermutations();
         gHUDFullbrightProgram.addPermutation("IS_HUD", "1");
@@ -2044,8 +2044,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightAlphaMaskProgram.mFeatures.hasSrgb = true;
         gDeferredFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gDeferredFullbrightAlphaMaskProgram.mShaderFiles.clear();
-        gDeferredFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", GL_VERTEX_SHADER));
-        gDeferredFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
+        gDeferredFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
         gDeferredFullbrightAlphaMaskProgram.clearPermutations();
         gDeferredFullbrightAlphaMaskProgram.addPermutation("HAS_ALPHA_MASK","1");
         gDeferredFullbrightAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -2066,8 +2066,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightAlphaMaskProgram.mFeatures.hasSrgb = true;
         gHUDFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gHUDFullbrightAlphaMaskProgram.mShaderFiles.clear();
-        gHUDFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", GL_VERTEX_SHADER));
-        gHUDFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", GL_FRAGMENT_SHADER));
+        gHUDFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
+        gHUDFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
         gHUDFullbrightAlphaMaskProgram.clearPermutations();
         gHUDFullbrightAlphaMaskProgram.addPermutation("HAS_ALPHA_MASK", "1");
         gHUDFullbrightAlphaMaskProgram.addPermutation("IS_HUD", "1");
@@ -2089,8 +2089,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightAlphaMaskAlphaProgram.mFeatures.isDeferred = true;
         gDeferredFullbrightAlphaMaskAlphaProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gDeferredFullbrightAlphaMaskAlphaProgram.mShaderFiles.clear();
-        gDeferredFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", GL_VERTEX_SHADER));
-        gDeferredFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
+        gDeferredFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
         gDeferredFullbrightAlphaMaskAlphaProgram.clearPermutations();
         gDeferredFullbrightAlphaMaskAlphaProgram.addPermutation("HAS_ALPHA_MASK", "1");
         gDeferredFullbrightAlphaMaskAlphaProgram.addPermutation("IS_ALPHA", "1");
@@ -2113,8 +2113,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightAlphaMaskAlphaProgram.mFeatures.isDeferred = true;
         gHUDFullbrightAlphaMaskAlphaProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gHUDFullbrightAlphaMaskAlphaProgram.mShaderFiles.clear();
-        gHUDFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", GL_VERTEX_SHADER));
-        gHUDFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", GL_FRAGMENT_SHADER));
+        gHUDFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
+        gHUDFullbrightAlphaMaskAlphaProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
         gHUDFullbrightAlphaMaskAlphaProgram.clearPermutations();
         gHUDFullbrightAlphaMaskAlphaProgram.addPermutation("HAS_ALPHA_MASK", "1");
         gHUDFullbrightAlphaMaskAlphaProgram.addPermutation("IS_ALPHA", "1");
@@ -2136,8 +2136,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightShinyProgram.mFeatures.hasSrgb = true;
         gDeferredFullbrightShinyProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gDeferredFullbrightShinyProgram.mShaderFiles.clear();
-        gDeferredFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyV.glsl", GL_VERTEX_SHADER));
-        gDeferredFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyV.glsl", ShaderStage::Vertex));
+        gDeferredFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
         gDeferredFullbrightShinyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredFullbrightShinyProgram.mFeatures.hasReflectionProbes = true;
 
@@ -2157,8 +2157,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightShinyProgram.mFeatures.hasSrgb = true;
         gHUDFullbrightShinyProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gHUDFullbrightShinyProgram.mShaderFiles.clear();
-        gHUDFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyV.glsl", GL_VERTEX_SHADER));
-        gHUDFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", GL_FRAGMENT_SHADER));
+        gHUDFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyV.glsl", ShaderStage::Vertex));
+        gHUDFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
         gHUDFullbrightShinyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gHUDFullbrightShinyProgram.mFeatures.hasReflectionProbes = true;
         gHUDFullbrightShinyProgram.clearPermutations();
@@ -2178,8 +2178,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredEmissiveProgram.mFeatures.hasAtmospherics = true;
         gDeferredEmissiveProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
         gDeferredEmissiveProgram.mShaderFiles.clear();
-        gDeferredEmissiveProgram.mShaderFiles.push_back(make_pair("deferred/emissiveV.glsl", GL_VERTEX_SHADER));
-        gDeferredEmissiveProgram.mShaderFiles.push_back(make_pair("deferred/emissiveF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredEmissiveProgram.mShaderFiles.push_back(make_pair("deferred/emissiveV.glsl", ShaderStage::Vertex));
+        gDeferredEmissiveProgram.mShaderFiles.push_back(make_pair("deferred/emissiveF.glsl", ShaderStage::Fragment));
         gDeferredEmissiveProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredEmissiveProgram);
@@ -2204,8 +2204,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         gDeferredSoftenProgram.clearPermutations();
         add_common_permutations(&gDeferredSoftenProgram);
-        gDeferredSoftenProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", GL_VERTEX_SHADER));
-        gDeferredSoftenProgram.mShaderFiles.push_back(make_pair("deferred/softenLightF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredSoftenProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", ShaderStage::Vertex));
+        gDeferredSoftenProgram.mShaderFiles.push_back(make_pair("deferred/softenLightF.glsl", ShaderStage::Fragment));
 
         gDeferredSoftenProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
@@ -2241,8 +2241,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHazeProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
 
         gHazeProgram.clearPermutations();
-        gHazeProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", GL_VERTEX_SHADER));
-        gHazeProgram.mShaderFiles.push_back(make_pair("deferred/hazeF.glsl", GL_FRAGMENT_SHADER));
+        gHazeProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", ShaderStage::Vertex));
+        gHazeProgram.mShaderFiles.push_back(make_pair("deferred/hazeF.glsl", ShaderStage::Fragment));
 
         add_common_permutations(&gHazeProgram);
 
@@ -2267,8 +2267,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHazeWaterProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
 
         gHazeWaterProgram.clearPermutations();
-        gHazeWaterProgram.mShaderFiles.push_back(make_pair("deferred/waterHazeV.glsl", GL_VERTEX_SHADER));
-        gHazeWaterProgram.mShaderFiles.push_back(make_pair("deferred/waterHazeF.glsl", GL_FRAGMENT_SHADER));
+        gHazeWaterProgram.mShaderFiles.push_back(make_pair("deferred/waterHazeV.glsl", ShaderStage::Vertex));
+        gHazeWaterProgram.mShaderFiles.push_back(make_pair("deferred/waterHazeF.glsl", ShaderStage::Fragment));
 
         add_common_permutations(&gHazeWaterProgram);
 
@@ -2283,8 +2283,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredShadowProgram.mName = "Deferred Shadow Shader";
         gDeferredShadowProgram.mShaderFiles.clear();
-        gDeferredShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowV.glsl", GL_VERTEX_SHADER));
-        gDeferredShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowV.glsl", ShaderStage::Vertex));
+        gDeferredShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
         gDeferredShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredShadowProgram.mRiggedVariant = &gDeferredSkinnedShadowProgram;
         success = gDeferredShadowProgram.createShader();
@@ -2298,8 +2298,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSkinnedShadowProgram.mFeatures.hasShadows = true;
         gDeferredSkinnedShadowProgram.mFeatures.hasObjectSkinning = true;
         gDeferredSkinnedShadowProgram.mShaderFiles.clear();
-        gDeferredSkinnedShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowSkinnedV.glsl", GL_VERTEX_SHADER));
-        gDeferredSkinnedShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredSkinnedShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowSkinnedV.glsl", ShaderStage::Vertex));
+        gDeferredSkinnedShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
         gDeferredSkinnedShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredSkinnedShadowProgram);
@@ -2315,8 +2315,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowCubeProgram.mFeatures.isDeferred = true;
         gDeferredShadowCubeProgram.mFeatures.hasShadows = true;
         gDeferredShadowCubeProgram.mShaderFiles.clear();
-        gDeferredShadowCubeProgram.mShaderFiles.push_back(make_pair("deferred/shadowCubeV.glsl", GL_VERTEX_SHADER));
-        gDeferredShadowCubeProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowCubeProgram.mShaderFiles.push_back(make_pair("deferred/shadowCubeV.glsl", ShaderStage::Vertex));
+        gDeferredShadowCubeProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
         // gDeferredShadowCubeProgram.addPermutation("DEPTH_CLAMP", "1");
         gDeferredShadowCubeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredShadowCubeProgram.createShader();
@@ -2330,8 +2330,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowPullProgram.mFeatures.isDeferred = true;
         gDeferredShadowPullProgram.mFeatures.hasShadows = true;
         gDeferredShadowPullProgram.mShaderFiles.clear();
-        gDeferredShadowPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowPullV.glsl", GL_VERTEX_SHADER));
-        gDeferredShadowPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowPullV.glsl", ShaderStage::Vertex));
+        gDeferredShadowPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
         gDeferredShadowPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gDeferredShadowPullProgram.createShader())
         {
@@ -2347,8 +2347,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowAlphaPullProgram.mFeatures.isDeferred = true;
         gDeferredShadowAlphaPullProgram.mFeatures.hasShadows = true;
         gDeferredShadowAlphaPullProgram.mShaderFiles.clear();
-        gDeferredShadowAlphaPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaPullV.glsl", GL_VERTEX_SHADER));
-        gDeferredShadowAlphaPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaPullF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowAlphaPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaPullV.glsl", ShaderStage::Vertex));
+        gDeferredShadowAlphaPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaPullF.glsl", ShaderStage::Fragment));
         gDeferredShadowAlphaPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gDeferredShadowAlphaPullProgram.createShader())
         {
@@ -2364,8 +2364,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowSkinPullProgram.mFeatures.isDeferred = true;
         gDeferredShadowSkinPullProgram.mFeatures.hasShadows = true;
         gDeferredShadowSkinPullProgram.mShaderFiles.clear();
-        gDeferredShadowSkinPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowSkinPullV.glsl", GL_VERTEX_SHADER));
-        gDeferredShadowSkinPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowSkinPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowSkinPullV.glsl", ShaderStage::Vertex));
+        gDeferredShadowSkinPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
         gDeferredShadowSkinPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gDeferredShadowSkinPullProgram.createShader())
         {
@@ -2380,8 +2380,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffusePullProgram.mName = "Deferred Diffuse Pull Shader";
         gDeferredDiffusePullProgram.mFeatures.hasSrgb = true;
         gDeferredDiffusePullProgram.mShaderFiles.clear();
-        gDeferredDiffusePullProgram.mShaderFiles.push_back(make_pair("deferred/diffusePullV.glsl", GL_VERTEX_SHADER));
-        gDeferredDiffusePullProgram.mShaderFiles.push_back(make_pair("deferred/diffuseIndexedF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredDiffusePullProgram.mShaderFiles.push_back(make_pair("deferred/diffusePullV.glsl", ShaderStage::Vertex));
+        gDeferredDiffusePullProgram.mShaderFiles.push_back(make_pair("deferred/diffuseIndexedF.glsl", ShaderStage::Fragment));
         gDeferredDiffusePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredDiffusePullProgram.addPermutation("LL_BINDLESS_DIFFUSE", "1");
         add_common_permutations(&gDeferredDiffusePullProgram);
@@ -2401,8 +2401,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LLGLSLShader& pull = gDeferredMaterialPullProgram[i];
             pull.mName = llformat("Material Pull Shader %d", i);
             pull.mShaderFiles.clear();
-            pull.mShaderFiles.push_back(make_pair("deferred/materialPullV.glsl", GL_VERTEX_SHADER));
-            pull.mShaderFiles.push_back(make_pair("deferred/materialF.glsl", GL_FRAGMENT_SHADER));
+            pull.mShaderFiles.push_back(make_pair("deferred/materialPullV.glsl", ShaderStage::Vertex));
+            pull.mShaderFiles.push_back(make_pair("deferred/materialF.glsl", ShaderStage::Fragment));
             pull.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             pull.clearPermutations();
             if (i & 0x8)
@@ -2446,8 +2446,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
 
         gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.clear();
-        gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskV.glsl", GL_VERTEX_SHADER));
-        gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskV.glsl", ShaderStage::Vertex));
+        gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskF.glsl", ShaderStage::Fragment));
 
         gDeferredShadowFullbrightAlphaMaskProgram.clearPermutations();
         gDeferredShadowFullbrightAlphaMaskProgram.addPermutation("DEPTH_CLAMP", "1");
@@ -2467,8 +2467,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
 
         gDeferredShadowAlphaMaskProgram.mShaderFiles.clear();
-        gDeferredShadowAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskV.glsl", GL_VERTEX_SHADER));
-        gDeferredShadowAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskV.glsl", ShaderStage::Vertex));
+        gDeferredShadowAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskF.glsl", ShaderStage::Fragment));
         gDeferredShadowAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = make_rigged_variant(gDeferredShadowAlphaMaskProgram, gDeferredSkinnedShadowAlphaMaskProgram);
         success = success && gDeferredShadowAlphaMaskProgram.createShader();
@@ -2480,8 +2480,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredShadowGLTFAlphaMaskProgram.mName = "Deferred GLTF Shadow Alpha Mask Shader";
         gDeferredShadowGLTFAlphaMaskProgram.mShaderFiles.clear();
-        gDeferredShadowGLTFAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaMaskV.glsl", GL_VERTEX_SHADER));
-        gDeferredShadowGLTFAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaMaskF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowGLTFAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaMaskV.glsl", ShaderStage::Vertex));
+        gDeferredShadowGLTFAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaMaskF.glsl", ShaderStage::Fragment));
         gDeferredShadowGLTFAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredShadowGLTFAlphaMaskProgram.clearPermutations();
 
@@ -2496,8 +2496,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredShadowGLTFAlphaBlendProgram.mName = "Deferred GLTF Shadow Alpha Blend Shader";
         gDeferredShadowGLTFAlphaBlendProgram.mShaderFiles.clear();
-        gDeferredShadowGLTFAlphaBlendProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaMaskV.glsl", GL_VERTEX_SHADER));
-        gDeferredShadowGLTFAlphaBlendProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaBlendF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredShadowGLTFAlphaBlendProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaMaskV.glsl", ShaderStage::Vertex));
+        gDeferredShadowGLTFAlphaBlendProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaBlendF.glsl", ShaderStage::Fragment));
         gDeferredShadowGLTFAlphaBlendProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredShadowGLTFAlphaBlendProgram.clearPermutations();
 
@@ -2514,8 +2514,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarShadowProgram.mFeatures.hasSkinning = true;
 
         gDeferredAvatarShadowProgram.mShaderFiles.clear();
-        gDeferredAvatarShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarShadowV.glsl", GL_VERTEX_SHADER));
-        gDeferredAvatarShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarShadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredAvatarShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarShadowV.glsl", ShaderStage::Vertex));
+        gDeferredAvatarShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarShadowF.glsl", ShaderStage::Fragment));
         gDeferredAvatarShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarShadowProgram.createShader();
         llassert(success);
@@ -2526,8 +2526,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarAlphaShadowProgram.mName = "Deferred Avatar Alpha Shadow Shader";
         gDeferredAvatarAlphaShadowProgram.mFeatures.hasSkinning = true;
         gDeferredAvatarAlphaShadowProgram.mShaderFiles.clear();
-        gDeferredAvatarAlphaShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaShadowV.glsl", GL_VERTEX_SHADER));
-        gDeferredAvatarAlphaShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaShadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredAvatarAlphaShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaShadowV.glsl", ShaderStage::Vertex));
+        gDeferredAvatarAlphaShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaShadowF.glsl", ShaderStage::Fragment));
         gDeferredAvatarAlphaShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarAlphaShadowProgram.createShader();
         llassert(success);
@@ -2537,8 +2537,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarAlphaMaskShadowProgram.mName = "Deferred Avatar Alpha Mask Shadow Shader";
         gDeferredAvatarAlphaMaskShadowProgram.mFeatures.hasSkinning  = true;
         gDeferredAvatarAlphaMaskShadowProgram.mShaderFiles.clear();
-        gDeferredAvatarAlphaMaskShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaShadowV.glsl", GL_VERTEX_SHADER));
-        gDeferredAvatarAlphaMaskShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaMaskShadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredAvatarAlphaMaskShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaShadowV.glsl", ShaderStage::Vertex));
+        gDeferredAvatarAlphaMaskShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaMaskShadowF.glsl", ShaderStage::Fragment));
         gDeferredAvatarAlphaMaskShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarAlphaMaskShadowProgram.createShader();
         llassert(success);
@@ -2554,8 +2554,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredTerrainProgram.mFeatures.hasGamma = true;
 
         gDeferredTerrainProgram.mShaderFiles.clear();
-        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainV.glsl", GL_VERTEX_SHADER));
-        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainV.glsl", ShaderStage::Vertex));
+        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainF.glsl", ShaderStage::Fragment));
 
         add_common_permutations(&gDeferredTerrainProgram);
 
@@ -2569,8 +2569,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarProgram.mName = "Deferred Avatar Shader";
         gDeferredAvatarProgram.mFeatures.hasSkinning = true;
         gDeferredAvatarProgram.mShaderFiles.clear();
-        gDeferredAvatarProgram.mShaderFiles.push_back(make_pair("deferred/avatarV.glsl", GL_VERTEX_SHADER));
-        gDeferredAvatarProgram.mShaderFiles.push_back(make_pair("deferred/avatarF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredAvatarProgram.mShaderFiles.push_back(make_pair("deferred/avatarV.glsl", ShaderStage::Vertex));
+        gDeferredAvatarProgram.mShaderFiles.push_back(make_pair("deferred/avatarF.glsl", ShaderStage::Fragment));
         gDeferredAvatarProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         gDeferredAvatarProgram.clearPermutations();
@@ -2597,8 +2597,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarAlphaProgram.mFeatures.hasReflectionProbes = true;
 
         gDeferredAvatarAlphaProgram.mShaderFiles.clear();
-        gDeferredAvatarAlphaProgram.mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", GL_VERTEX_SHADER));
-        gDeferredAvatarAlphaProgram.mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredAvatarAlphaProgram.mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", ShaderStage::Vertex));
+        gDeferredAvatarAlphaProgram.mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
 
         gDeferredAvatarAlphaProgram.clearPermutations();
         gDeferredAvatarAlphaProgram.addPermutation("USE_DIFFUSE_TEX", "1");
@@ -2627,8 +2627,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gExposureProgram.mShaderFiles.clear();
         gExposureProgram.clearPermutations();
         gExposureProgram.addPermutation("USE_LAST_EXPOSURE", "1");
-        gExposureProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gExposureProgram.mShaderFiles.push_back(make_pair("deferred/exposureF.glsl", GL_FRAGMENT_SHADER));
+        gExposureProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gExposureProgram.mShaderFiles.push_back(make_pair("deferred/exposureF.glsl", ShaderStage::Fragment));
         gExposureProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gExposureProgram.createShader();
         llassert(success);
@@ -2641,8 +2641,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gExposureProgramNoFade.mFeatures.isDeferred = true;
         gExposureProgramNoFade.mShaderFiles.clear();
         gExposureProgramNoFade.clearPermutations();
-        gExposureProgramNoFade.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gExposureProgramNoFade.mShaderFiles.push_back(make_pair("deferred/exposureF.glsl", GL_FRAGMENT_SHADER));
+        gExposureProgramNoFade.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gExposureProgramNoFade.mShaderFiles.push_back(make_pair("deferred/exposureF.glsl", ShaderStage::Fragment));
         gExposureProgramNoFade.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gExposureProgramNoFade.createShader();
         llassert(success);
@@ -2653,8 +2653,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gLuminanceProgram.mName = "Luminance";
         gLuminanceProgram.mShaderFiles.clear();
         gLuminanceProgram.clearPermutations();
-        gLuminanceProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gLuminanceProgram.mShaderFiles.push_back(make_pair("deferred/luminanceF.glsl", GL_FRAGMENT_SHADER));
+        gLuminanceProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gLuminanceProgram.mShaderFiles.push_back(make_pair("deferred/luminanceF.glsl", ShaderStage::Fragment));
         gLuminanceProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gLuminanceProgram.createShader();
         llassert(success);
@@ -2665,8 +2665,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gMotionVectorProgram.mName = "Motion Vectors";
         gMotionVectorProgram.mShaderFiles.clear();
         gMotionVectorProgram.clearPermutations();
-        gMotionVectorProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gMotionVectorProgram.mShaderFiles.push_back(make_pair("deferred/motionVectorsF.glsl", GL_FRAGMENT_SHADER));
+        gMotionVectorProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gMotionVectorProgram.mShaderFiles.push_back(make_pair("deferred/motionVectorsF.glsl", ShaderStage::Fragment));
         gMotionVectorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gMotionVectorProgram.createShader();
         llassert(success);
@@ -2680,8 +2680,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAvatarVelocityProgram.mShaderFiles.clear();
         gAvatarVelocityProgram.clearPermutations();
         gAvatarVelocityProgram.addPermutation("MAX_JOINTS_PER_MESH_OBJECT", max_joints);
-        gAvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityV.glsl", GL_VERTEX_SHADER));
-        gAvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+        gAvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityV.glsl", ShaderStage::Vertex));
+        gAvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", ShaderStage::Fragment));
         gAvatarVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gAvatarVelocityProgram.createShader())
         {
@@ -2693,8 +2693,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gAvatarVelocityPullProgram.mName = "Avatar Velocity (rigged, packets)";
             gAvatarVelocityPullProgram.mShaderFiles.clear();
             gAvatarVelocityPullProgram.clearPermutations();
-            gAvatarVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityPullV.glsl", GL_VERTEX_SHADER));
-            gAvatarVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+            gAvatarVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityPullV.glsl", ShaderStage::Vertex));
+            gAvatarVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", ShaderStage::Fragment));
             gAvatarVelocityPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (!gAvatarVelocityPullProgram.createShader())
             {
@@ -2708,8 +2708,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gObjectVelocityPullProgram.mName = "Object Velocity (packets)";
             gObjectVelocityPullProgram.mShaderFiles.clear();
             gObjectVelocityPullProgram.clearPermutations();
-            gObjectVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/objectVelocityPullV.glsl", GL_VERTEX_SHADER));
-            gObjectVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+            gObjectVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/objectVelocityPullV.glsl", ShaderStage::Vertex));
+            gObjectVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", ShaderStage::Fragment));
             gObjectVelocityPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (!gObjectVelocityPullProgram.createShader())
             {
@@ -2721,8 +2721,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAvatarBodyVelocityProgram.mName = "Avatar Velocity (body)";
         gAvatarBodyVelocityProgram.mShaderFiles.clear();
         gAvatarBodyVelocityProgram.clearPermutations();
-        gAvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarBodyVelocityV.glsl", GL_VERTEX_SHADER));
-        gAvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+        gAvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarBodyVelocityV.glsl", ShaderStage::Vertex));
+        gAvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", ShaderStage::Fragment));
         gAvatarBodyVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gAvatarBodyVelocityProgram.createShader())
         {
@@ -2733,8 +2733,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gShadowAccumProgram.mFeatures.isDeferred = true;
         gShadowAccumProgram.mShaderFiles.clear();
         gShadowAccumProgram.clearPermutations();
-        gShadowAccumProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gShadowAccumProgram.mShaderFiles.push_back(make_pair("deferred/shadowAccumF.glsl", GL_FRAGMENT_SHADER));
+        gShadowAccumProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gShadowAccumProgram.mShaderFiles.push_back(make_pair("deferred/shadowAccumF.glsl", ShaderStage::Fragment));
         gShadowAccumProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gShadowAccumProgram);
         if (!gShadowAccumProgram.createShader())
@@ -2747,8 +2747,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gRRGuidesProgram.mFeatures.hasFullGBuffer = true;
         gRRGuidesProgram.mShaderFiles.clear();
         gRRGuidesProgram.clearPermutations();
-        gRRGuidesProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gRRGuidesProgram.mShaderFiles.push_back(make_pair("deferred/rrGuidesF.glsl", GL_FRAGMENT_SHADER));
+        gRRGuidesProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gRRGuidesProgram.mShaderFiles.push_back(make_pair("deferred/rrGuidesF.glsl", ShaderStage::Fragment));
         gRRGuidesProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gRRGuidesProgram);
         if (!gRRGuidesProgram.createShader())
@@ -2760,8 +2760,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gRRReflMotionProgram.mFeatures.isDeferred = true;
         gRRReflMotionProgram.mShaderFiles.clear();
         gRRReflMotionProgram.clearPermutations();
-        gRRReflMotionProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gRRReflMotionProgram.mShaderFiles.push_back(make_pair("deferred/rrReflMotionF.glsl", GL_FRAGMENT_SHADER));
+        gRRReflMotionProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gRRReflMotionProgram.mShaderFiles.push_back(make_pair("deferred/rrReflMotionF.glsl", ShaderStage::Fragment));
         gRRReflMotionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gRRReflMotionProgram);
         if (!gRRReflMotionProgram.createShader())
@@ -2772,8 +2772,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gRRHitDistProgram.mName = "Ray Reconstruction Hit Distance";
         gRRHitDistProgram.mShaderFiles.clear();
         gRRHitDistProgram.clearPermutations();
-        gRRHitDistProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gRRHitDistProgram.mShaderFiles.push_back(make_pair("deferred/rrHitDistF.glsl", GL_FRAGMENT_SHADER));
+        gRRHitDistProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gRRHitDistProgram.mShaderFiles.push_back(make_pair("deferred/rrHitDistF.glsl", ShaderStage::Fragment));
         gRRHitDistProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gRRHitDistProgram.createShader())
         {
@@ -2783,8 +2783,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAvatarVelocityDebugProgram.mName = "Avatar Velocity Debug";
         gAvatarVelocityDebugProgram.mShaderFiles.clear();
         gAvatarVelocityDebugProgram.clearPermutations();
-        gAvatarVelocityDebugProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gAvatarVelocityDebugProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityDebugF.glsl", GL_FRAGMENT_SHADER));
+        gAvatarVelocityDebugProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gAvatarVelocityDebugProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityDebugF.glsl", ShaderStage::Fragment));
         gAvatarVelocityDebugProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gAvatarVelocityDebugProgram.createShader())
         {
@@ -2797,8 +2797,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gRtMaterialDebugProgram.mFeatures.isDeferred = true;
             gRtMaterialDebugProgram.mShaderFiles.clear();
             gRtMaterialDebugProgram.clearPermutations();
-            gRtMaterialDebugProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-            gRtMaterialDebugProgram.mShaderFiles.push_back(make_pair("deferred/rtMaterialDebugF.glsl", GL_FRAGMENT_SHADER));
+            gRtMaterialDebugProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+            gRtMaterialDebugProgram.mShaderFiles.push_back(make_pair("deferred/rtMaterialDebugF.glsl", ShaderStage::Fragment));
             gRtMaterialDebugProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             add_common_permutations(&gRtMaterialDebugProgram);
             if (!gRtMaterialDebugProgram.createShader())
@@ -2815,8 +2815,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostGammaCorrectProgram.mFeatures.isDeferred = true;
         gDeferredPostGammaCorrectProgram.mShaderFiles.clear();
         gDeferredPostGammaCorrectProgram.clearPermutations();
-        gDeferredPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredGammaCorrect.glsl", GL_FRAGMENT_SHADER));
+        gDeferredPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredGammaCorrect.glsl", ShaderStage::Fragment));
         gDeferredPostGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostGammaCorrectProgram.createShader();
         llassert(success);
@@ -2830,8 +2830,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gLegacyPostGammaCorrectProgram.mShaderFiles.clear();
         gLegacyPostGammaCorrectProgram.clearPermutations();
         gLegacyPostGammaCorrectProgram.addPermutation("LEGACY_GAMMA", "1");
-        gLegacyPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gLegacyPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredGammaCorrect.glsl", GL_FRAGMENT_SHADER));
+        gLegacyPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gLegacyPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredGammaCorrect.glsl", ShaderStage::Fragment));
         gLegacyPostGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gLegacyPostGammaCorrectProgram.createShader();
         llassert(success);
@@ -2845,8 +2845,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostTonemapProgram.mFeatures.hasTonemap = true;
         gDeferredPostTonemapProgram.mShaderFiles.clear();
         gDeferredPostTonemapProgram.clearPermutations();
-        gDeferredPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        gDeferredPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gDeferredPostTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapProgram.createShader();
         llassert(success);
@@ -2861,8 +2861,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNoPostTonemapProgram.mShaderFiles.clear();
         gNoPostTonemapProgram.clearPermutations();
         gNoPostTonemapProgram.addPermutation("NO_POST", "1");
-        gNoPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gNoPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        gNoPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gNoPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gNoPostTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapProgram.createShader();
         llassert(success);
@@ -2877,8 +2877,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.clear();
         gDeferredPostTonemapGammaCorrectProgram.clearPermutations();
         gDeferredPostTonemapGammaCorrectProgram.addPermutation("GAMMA_CORRECT", "1");
-        gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gDeferredPostTonemapGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapGammaCorrectProgram.createShader();
         llassert(success);
@@ -2894,8 +2894,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNoPostTonemapGammaCorrectProgram.clearPermutations();
         gNoPostTonemapGammaCorrectProgram.addPermutation("GAMMA_CORRECT", "1");
         gNoPostTonemapGammaCorrectProgram.addPermutation("NO_POST", "1");
-        gNoPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gNoPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        gNoPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gNoPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gNoPostTonemapGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapGammaCorrectProgram.createShader();
         llassert(success);
@@ -2911,8 +2911,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostTonemapLegacyGammaCorrectProgram.clearPermutations();
         gDeferredPostTonemapLegacyGammaCorrectProgram.addPermutation("GAMMA_CORRECT", "1");
         gDeferredPostTonemapLegacyGammaCorrectProgram.addPermutation("LEGACY_GAMMA", "1");
-        gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapLegacyGammaCorrectProgram.createShader();
         llassert(success);
@@ -2929,8 +2929,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNoPostTonemapLegacyGammaCorrectProgram.addPermutation("NO_POST", "1");
         gNoPostTonemapLegacyGammaCorrectProgram.addPermutation("GAMMA_CORRECT", "1");
         gNoPostTonemapLegacyGammaCorrectProgram.addPermutation("LEGACY_GAMMA", "1");
-        gNoPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gNoPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        gNoPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gNoPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gNoPostTonemapLegacyGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapLegacyGammaCorrectProgram.createShader();
         llassert(success);
@@ -2951,8 +2951,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gFXAAProgram[i].mName = llformat("FXAA Shader (%s)", quality_pair.second.c_str());
                 gFXAAProgram[i].mFeatures.isDeferred = true;
                 gFXAAProgram[i].mShaderFiles.clear();
-                gFXAAProgram[i].mShaderFiles.push_back(make_pair("deferred/postDeferredV.glsl", GL_VERTEX_SHADER));
-                gFXAAProgram[i].mShaderFiles.push_back(make_pair("deferred/fxaaF.glsl", GL_FRAGMENT_SHADER));
+                gFXAAProgram[i].mShaderFiles.push_back(make_pair("deferred/postDeferredV.glsl", ShaderStage::Vertex));
+                gFXAAProgram[i].mShaderFiles.push_back(make_pair("deferred/fxaaF.glsl", ShaderStage::Fragment));
 
                 gFXAAProgram[i].clearPermutations();
                 gFXAAProgram[i].addPermutation("FXAA_QUALITY__PRESET", quality_pair.first);
@@ -3019,10 +3019,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gSMAAEdgeDetectProgram[i].addPermutations(defines);
 
                 gSMAAEdgeDetectProgram[i].mShaderFiles.clear();
-                gSMAAEdgeDetectProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAAEdgeDetectF.glsl", GL_FRAGMENT_SHADER_ARB));
-                gSMAAEdgeDetectProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAAEdgeDetectV.glsl", GL_VERTEX_SHADER_ARB));
-                gSMAAEdgeDetectProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", GL_FRAGMENT_SHADER_ARB));
-                gSMAAEdgeDetectProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", GL_VERTEX_SHADER_ARB));
+                gSMAAEdgeDetectProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAAEdgeDetectF.glsl", ShaderStage::Fragment));
+                gSMAAEdgeDetectProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAAEdgeDetectV.glsl", ShaderStage::Vertex));
+                gSMAAEdgeDetectProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", ShaderStage::Fragment));
+                gSMAAEdgeDetectProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", ShaderStage::Vertex));
                 gSMAAEdgeDetectProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
                 success = gSMAAEdgeDetectProgram[i].createShader();
                 // llassert(success);
@@ -3045,10 +3045,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gSMAABlendWeightsProgram[i].addPermutations(defines);
 
                 gSMAABlendWeightsProgram[i].mShaderFiles.clear();
-                gSMAABlendWeightsProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAABlendWeightsF.glsl", GL_FRAGMENT_SHADER_ARB));
-                gSMAABlendWeightsProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAABlendWeightsV.glsl", GL_VERTEX_SHADER_ARB));
-                gSMAABlendWeightsProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", GL_FRAGMENT_SHADER_ARB));
-                gSMAABlendWeightsProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", GL_VERTEX_SHADER_ARB));
+                gSMAABlendWeightsProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAABlendWeightsF.glsl", ShaderStage::Fragment));
+                gSMAABlendWeightsProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAABlendWeightsV.glsl", ShaderStage::Vertex));
+                gSMAABlendWeightsProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", ShaderStage::Fragment));
+                gSMAABlendWeightsProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", ShaderStage::Vertex));
                 gSMAABlendWeightsProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
                 success = gSMAABlendWeightsProgram[i].createShader();
                 // llassert(success);
@@ -3071,10 +3071,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gSMAANeighborhoodBlendProgram[i].addPermutations(defines);
 
                 gSMAANeighborhoodBlendProgram[i].mShaderFiles.clear();
-                gSMAANeighborhoodBlendProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAANeighborhoodBlendF.glsl", GL_FRAGMENT_SHADER_ARB));
-                gSMAANeighborhoodBlendProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAANeighborhoodBlendV.glsl", GL_VERTEX_SHADER_ARB));
-                gSMAANeighborhoodBlendProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", GL_FRAGMENT_SHADER_ARB));
-                gSMAANeighborhoodBlendProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", GL_VERTEX_SHADER_ARB));
+                gSMAANeighborhoodBlendProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAANeighborhoodBlendF.glsl", ShaderStage::Fragment));
+                gSMAANeighborhoodBlendProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAANeighborhoodBlendV.glsl", ShaderStage::Vertex));
+                gSMAANeighborhoodBlendProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", ShaderStage::Fragment));
+                gSMAANeighborhoodBlendProgram[i].mShaderFiles.push_back(make_pair("deferred/SMAA.glsl", ShaderStage::Vertex));
                 gSMAANeighborhoodBlendProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
                 success = gSMAANeighborhoodBlendProgram[i].createShader();
                 // llassert(success);
@@ -3106,8 +3106,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gCASProgram.mName = "Contrast Adaptive Sharpening Shader";
         gCASProgram.mFeatures.hasSrgb = true;
         gCASProgram.mShaderFiles.clear();
-        gCASProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gCASProgram.mShaderFiles.push_back(make_pair("deferred/CASF.glsl", GL_FRAGMENT_SHADER));
+        gCASProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gCASProgram.mShaderFiles.push_back(make_pair("deferred/CASF.glsl", ShaderStage::Fragment));
         gCASProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCASProgram.createShader();
         // llassert(success);
@@ -3124,8 +3124,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gCASLegacyGammaProgram.mName = "Contrast Adaptive Sharpening Legacy Gamma Shader";
         gCASLegacyGammaProgram.mFeatures.hasSrgb = true;
         gCASLegacyGammaProgram.mShaderFiles.clear();
-        gCASLegacyGammaProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gCASLegacyGammaProgram.mShaderFiles.push_back(make_pair("deferred/CASF.glsl", GL_FRAGMENT_SHADER));
+        gCASLegacyGammaProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gCASLegacyGammaProgram.mShaderFiles.push_back(make_pair("deferred/CASF.glsl", ShaderStage::Fragment));
         gCASLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gCASLegacyGammaProgram.clearPermutations();
         gCASLegacyGammaProgram.addPermutation("GAMMA_CORRECT", "1");
@@ -3145,8 +3145,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostProgram.mName = "Deferred Post Shader";
         gDeferredPostProgram.mFeatures.isDeferred = true;
         gDeferredPostProgram.mShaderFiles.clear();
-        gDeferredPostProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredPostProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredPostProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredPostProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredF.glsl", ShaderStage::Fragment));
         gDeferredPostProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostProgram.createShader();
         llassert(success);
@@ -3157,8 +3157,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredCoFProgram.mName = "Deferred CoF Shader";
         gDeferredCoFProgram.mShaderFiles.clear();
         gDeferredCoFProgram.mFeatures.isDeferred = true;
-        gDeferredCoFProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredCoFProgram.mShaderFiles.push_back(make_pair("deferred/cofF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredCoFProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredCoFProgram.mShaderFiles.push_back(make_pair("deferred/cofF.glsl", ShaderStage::Fragment));
         gDeferredCoFProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredCoFProgram.createShader();
         llassert(success);
@@ -3169,8 +3169,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDoFCombineProgram.mName = "Deferred DoFCombine Shader";
         gDeferredDoFCombineProgram.mFeatures.isDeferred = true;
         gDeferredDoFCombineProgram.mShaderFiles.clear();
-        gDeferredDoFCombineProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredDoFCombineProgram.mShaderFiles.push_back(make_pair("deferred/dofCombineF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredDoFCombineProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredDoFCombineProgram.mShaderFiles.push_back(make_pair("deferred/dofCombineF.glsl", ShaderStage::Fragment));
         gDeferredDoFCombineProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredDoFCombineProgram.createShader();
         llassert(success);
@@ -3181,8 +3181,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostNoDoFProgram.mName = "Deferred Post NoDoF Shader";
         gDeferredPostNoDoFProgram.mFeatures.isDeferred = true;
         gDeferredPostNoDoFProgram.mShaderFiles.clear();
-        gDeferredPostNoDoFProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredPostNoDoFProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoDoFF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredPostNoDoFProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredPostNoDoFProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoDoFF.glsl", ShaderStage::Fragment));
         gDeferredPostNoDoFProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostNoDoFProgram.createShader();
         llassert(success);
@@ -3193,8 +3193,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostNoDoFNoiseProgram.mName = "Deferred Post NoDoF Noise Shader";
         gDeferredPostNoDoFNoiseProgram.mFeatures.isDeferred = true;
         gDeferredPostNoDoFNoiseProgram.mShaderFiles.clear();
-        gDeferredPostNoDoFNoiseProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredPostNoDoFNoiseProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoDoFF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredPostNoDoFNoiseProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredPostNoDoFNoiseProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoDoFF.glsl", ShaderStage::Fragment));
 
         gDeferredPostNoDoFNoiseProgram.clearPermutations();
         gDeferredPostNoDoFNoiseProgram.addPermutation("HAS_NOISE", "1");
@@ -3216,8 +3216,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gEnvironmentMapProgram.clearPermutations();
         gEnvironmentMapProgram.addPermutation("HAS_HDRI", "1");
         add_common_permutations(&gEnvironmentMapProgram);
-        gEnvironmentMapProgram.mShaderFiles.push_back(make_pair("deferred/skyV.glsl", GL_VERTEX_SHADER));
-        gEnvironmentMapProgram.mShaderFiles.push_back(make_pair("deferred/skyF.glsl", GL_FRAGMENT_SHADER));
+        gEnvironmentMapProgram.mShaderFiles.push_back(make_pair("deferred/skyV.glsl", ShaderStage::Vertex));
+        gEnvironmentMapProgram.mShaderFiles.push_back(make_pair("deferred/skyF.glsl", ShaderStage::Fragment));
         gEnvironmentMapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gEnvironmentMapProgram.mShaderGroup = LLGLSLShader::SG_SKY;
 
@@ -3234,8 +3234,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLSkyProgram.mFeatures.hasGamma = true;
         gDeferredWLSkyProgram.mFeatures.hasSrgb = true;
 
-        gDeferredWLSkyProgram.mShaderFiles.push_back(make_pair("deferred/skyV.glsl", GL_VERTEX_SHADER));
-        gDeferredWLSkyProgram.mShaderFiles.push_back(make_pair("deferred/skyF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredWLSkyProgram.mShaderFiles.push_back(make_pair("deferred/skyV.glsl", ShaderStage::Vertex));
+        gDeferredWLSkyProgram.mShaderFiles.push_back(make_pair("deferred/skyF.glsl", ShaderStage::Fragment));
         gDeferredWLSkyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLSkyProgram.mShaderGroup = LLGLSLShader::SG_SKY;
 
@@ -3254,8 +3254,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLCloudProgram.mFeatures.hasGamma = true;
         gDeferredWLCloudProgram.mFeatures.hasSrgb = true;
 
-        gDeferredWLCloudProgram.mShaderFiles.push_back(make_pair("deferred/cloudsV.glsl", GL_VERTEX_SHADER));
-        gDeferredWLCloudProgram.mShaderFiles.push_back(make_pair("deferred/cloudsF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredWLCloudProgram.mShaderFiles.push_back(make_pair("deferred/cloudsV.glsl", ShaderStage::Vertex));
+        gDeferredWLCloudProgram.mShaderFiles.push_back(make_pair("deferred/cloudsF.glsl", ShaderStage::Fragment));
         gDeferredWLCloudProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLCloudProgram.mShaderGroup = LLGLSLShader::SG_SKY;
         gDeferredWLCloudProgram.addConstant( LLGLSLShader::SHADER_CONST_CLOUD_MOON_DEPTH ); // SL-14113
@@ -3275,8 +3275,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLSunProgram.mFeatures.hasAtmospherics = true;
         gDeferredWLSunProgram.mFeatures.hasSrgb = true;
         gDeferredWLSunProgram.mShaderFiles.clear();
-        gDeferredWLSunProgram.mShaderFiles.push_back(make_pair("deferred/sunDiscV.glsl", GL_VERTEX_SHADER));
-        gDeferredWLSunProgram.mShaderFiles.push_back(make_pair("deferred/sunDiscF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredWLSunProgram.mShaderFiles.push_back(make_pair("deferred/sunDiscV.glsl", ShaderStage::Vertex));
+        gDeferredWLSunProgram.mShaderFiles.push_back(make_pair("deferred/sunDiscF.glsl", ShaderStage::Fragment));
         gDeferredWLSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLSunProgram.mShaderGroup = LLGLSLShader::SG_SKY;
 
@@ -3296,8 +3296,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLMoonProgram.mFeatures.hasSrgb = true;
 
         gDeferredWLMoonProgram.mShaderFiles.clear();
-        gDeferredWLMoonProgram.mShaderFiles.push_back(make_pair("deferred/moonV.glsl", GL_VERTEX_SHADER));
-        gDeferredWLMoonProgram.mShaderFiles.push_back(make_pair("deferred/moonF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredWLMoonProgram.mShaderFiles.push_back(make_pair("deferred/moonV.glsl", ShaderStage::Vertex));
+        gDeferredWLMoonProgram.mShaderFiles.push_back(make_pair("deferred/moonF.glsl", ShaderStage::Fragment));
         gDeferredWLMoonProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLMoonProgram.mShaderGroup = LLGLSLShader::SG_SKY;
         gDeferredWLMoonProgram.addConstant( LLGLSLShader::SHADER_CONST_CLOUD_MOON_DEPTH ); // SL-14113
@@ -3312,8 +3312,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredStarProgram.mName = "Deferred Star Program";
         gDeferredStarProgram.mShaderFiles.clear();
-        gDeferredStarProgram.mShaderFiles.push_back(make_pair("deferred/starsV.glsl", GL_VERTEX_SHADER));
-        gDeferredStarProgram.mShaderFiles.push_back(make_pair("deferred/starsF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredStarProgram.mShaderFiles.push_back(make_pair("deferred/starsV.glsl", ShaderStage::Vertex));
+        gDeferredStarProgram.mShaderFiles.push_back(make_pair("deferred/starsF.glsl", ShaderStage::Fragment));
         gDeferredStarProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredStarProgram.mShaderGroup = LLGLSLShader::SG_SKY;
         gDeferredStarProgram.addConstant( LLGLSLShader::SHADER_CONST_STAR_DEPTH ); // SL-14113
@@ -3328,8 +3328,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gNormalMapGenProgram.mName = "Normal Map Generation Program";
         gNormalMapGenProgram.mShaderFiles.clear();
-        gNormalMapGenProgram.mShaderFiles.push_back(make_pair("deferred/normgenV.glsl", GL_VERTEX_SHADER));
-        gNormalMapGenProgram.mShaderFiles.push_back(make_pair("deferred/normgenF.glsl", GL_FRAGMENT_SHADER));
+        gNormalMapGenProgram.mShaderFiles.push_back(make_pair("deferred/normgenV.glsl", ShaderStage::Vertex));
+        gNormalMapGenProgram.mShaderFiles.push_back(make_pair("deferred/normgenF.glsl", ShaderStage::Fragment));
         gNormalMapGenProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gNormalMapGenProgram.mShaderGroup = LLGLSLShader::SG_SKY;
         success = gNormalMapGenProgram.createShader();
@@ -3339,8 +3339,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredGenBrdfLutProgram.mName = "Brdf Gen Shader";
         gDeferredGenBrdfLutProgram.mShaderFiles.clear();
-        gDeferredGenBrdfLutProgram.mShaderFiles.push_back(make_pair("deferred/genbrdflutV.glsl", GL_VERTEX_SHADER));
-        gDeferredGenBrdfLutProgram.mShaderFiles.push_back(make_pair("deferred/genbrdflutF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredGenBrdfLutProgram.mShaderFiles.push_back(make_pair("deferred/genbrdflutV.glsl", ShaderStage::Vertex));
+        gDeferredGenBrdfLutProgram.mShaderFiles.push_back(make_pair("deferred/genbrdflutF.glsl", ShaderStage::Fragment));
         gDeferredGenBrdfLutProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredGenBrdfLutProgram.createShader();
     }
@@ -3348,8 +3348,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success) {
         gPostScreenSpaceReflectionProgram.mName = "Screen Space Reflection Post";
         gPostScreenSpaceReflectionProgram.mShaderFiles.clear();
-        gPostScreenSpaceReflectionProgram.mShaderFiles.push_back(make_pair("deferred/screenSpaceReflPostV.glsl", GL_VERTEX_SHADER));
-        gPostScreenSpaceReflectionProgram.mShaderFiles.push_back(make_pair("deferred/screenSpaceReflPostF.glsl", GL_FRAGMENT_SHADER));
+        gPostScreenSpaceReflectionProgram.mShaderFiles.push_back(make_pair("deferred/screenSpaceReflPostV.glsl", ShaderStage::Vertex));
+        gPostScreenSpaceReflectionProgram.mShaderFiles.push_back(make_pair("deferred/screenSpaceReflPostF.glsl", ShaderStage::Fragment));
         gPostScreenSpaceReflectionProgram.mFeatures.hasScreenSpaceReflections = true;
         gPostScreenSpaceReflectionProgram.mFeatures.isDeferred                = true;
         gPostScreenSpaceReflectionProgram.mShaderLevel = 3;
@@ -3359,8 +3359,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success) {
         gDeferredBufferVisualProgram.mName = "Deferred Buffer Visualization Shader";
         gDeferredBufferVisualProgram.mShaderFiles.clear();
-        gDeferredBufferVisualProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gDeferredBufferVisualProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredVisualizeBuffers.glsl", GL_FRAGMENT_SHADER));
+        gDeferredBufferVisualProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gDeferredBufferVisualProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredVisualizeBuffers.glsl", ShaderStage::Fragment));
         gDeferredBufferVisualProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredBufferVisualProgram);
@@ -3373,8 +3373,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gRlvSphereProgram.mName = "RLVa Sphere Post Processing Shader";
         gRlvSphereProgram.mFeatures.isDeferred = true;
         gRlvSphereProgram.mShaderFiles.clear();
-        gRlvSphereProgram.mShaderFiles.push_back(make_pair("deferred/rlvV.glsl", GL_VERTEX_SHADER));
-        gRlvSphereProgram.mShaderFiles.push_back(make_pair("deferred/rlvF.glsl", GL_FRAGMENT_SHADER));
+        gRlvSphereProgram.mShaderFiles.push_back(make_pair("deferred/rlvV.glsl", ShaderStage::Vertex));
+        gRlvSphereProgram.mShaderFiles.push_back(make_pair("deferred/rlvF.glsl", ShaderStage::Fragment));
         gRlvSphereProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gRlvSphereProgram.createShader();
     }
@@ -3391,8 +3391,8 @@ bool LLViewerShaderMgr::loadShadersObject()
     {
         gObjectBumpProgram.mName = "Bump Shader";
         gObjectBumpProgram.mShaderFiles.clear();
-        gObjectBumpProgram.mShaderFiles.push_back(make_pair("objects/bumpV.glsl", GL_VERTEX_SHADER));
-        gObjectBumpProgram.mShaderFiles.push_back(make_pair("objects/bumpF.glsl", GL_FRAGMENT_SHADER));
+        gObjectBumpProgram.mShaderFiles.push_back(make_pair("objects/bumpV.glsl", ShaderStage::Vertex));
+        gObjectBumpProgram.mShaderFiles.push_back(make_pair("objects/bumpF.glsl", ShaderStage::Fragment));
         gObjectBumpProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = make_rigged_variant(gObjectBumpProgram, gSkinnedObjectBumpProgram);
         success = success && gObjectBumpProgram.createShader();
@@ -3419,8 +3419,8 @@ bool LLViewerShaderMgr::loadShadersObject()
         gObjectAlphaMaskNoColorProgram.mFeatures.hasLighting = true;
         gObjectAlphaMaskNoColorProgram.mFeatures.hasAlphaMask = true;
         gObjectAlphaMaskNoColorProgram.mShaderFiles.clear();
-        gObjectAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("objects/simpleNoColorV.glsl", GL_VERTEX_SHADER));
-        gObjectAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("objects/simpleF.glsl", GL_FRAGMENT_SHADER));
+        gObjectAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("objects/simpleNoColorV.glsl", ShaderStage::Vertex));
+        gObjectAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("objects/simpleF.glsl", ShaderStage::Fragment));
         gObjectAlphaMaskNoColorProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gObjectAlphaMaskNoColorProgram.createShader();
     }
@@ -3430,8 +3430,8 @@ bool LLViewerShaderMgr::loadShadersObject()
         gImpostorProgram.mName = "Impostor Shader";
         gImpostorProgram.mFeatures.hasSrgb = true;
         gImpostorProgram.mShaderFiles.clear();
-        gImpostorProgram.mShaderFiles.push_back(make_pair("objects/impostorV.glsl", GL_VERTEX_SHADER));
-        gImpostorProgram.mShaderFiles.push_back(make_pair("objects/impostorF.glsl", GL_FRAGMENT_SHADER));
+        gImpostorProgram.mShaderFiles.push_back(make_pair("objects/impostorV.glsl", ShaderStage::Vertex));
+        gImpostorProgram.mShaderFiles.push_back(make_pair("objects/impostorF.glsl", ShaderStage::Fragment));
         gImpostorProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gImpostorProgram.createShader();
     }
@@ -3440,8 +3440,8 @@ bool LLViewerShaderMgr::loadShadersObject()
     {
         gObjectPreviewProgram.mName = "Object Preview Shader";
         gObjectPreviewProgram.mShaderFiles.clear();
-        gObjectPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewV.glsl", GL_VERTEX_SHADER));
-        gObjectPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewF.glsl", GL_FRAGMENT_SHADER));
+        gObjectPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewV.glsl", ShaderStage::Vertex));
+        gObjectPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewF.glsl", ShaderStage::Fragment));
         gObjectPreviewProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = make_rigged_variant(gObjectPreviewProgram, gSkinnedObjectPreviewProgram);
         success = gObjectPreviewProgram.createShader();
@@ -3458,8 +3458,8 @@ bool LLViewerShaderMgr::loadShadersObject()
         gPhysicsPreviewProgram.mFeatures.hasAtmospherics = false;
         gPhysicsPreviewProgram.mFeatures.hasLighting = false;
         gPhysicsPreviewProgram.mShaderFiles.clear();
-        gPhysicsPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewPhysicsV.glsl", GL_VERTEX_SHADER));
-        gPhysicsPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewPhysicsF.glsl", GL_FRAGMENT_SHADER));
+        gPhysicsPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewPhysicsV.glsl", ShaderStage::Vertex));
+        gPhysicsPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewPhysicsF.glsl", ShaderStage::Fragment));
         gPhysicsPreviewProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gPhysicsPreviewProgram.createShader();
         gPhysicsPreviewProgram.mFeatures.hasLighting = false;
@@ -3490,8 +3490,8 @@ bool LLViewerShaderMgr::loadShadersAvatar()
         gAvatarProgram.mFeatures.hasLighting = true;
         gAvatarProgram.mFeatures.hasAlphaMask = true;
         gAvatarProgram.mShaderFiles.clear();
-        gAvatarProgram.mShaderFiles.push_back(make_pair("avatar/avatarV.glsl", GL_VERTEX_SHADER));
-        gAvatarProgram.mShaderFiles.push_back(make_pair("avatar/avatarF.glsl", GL_FRAGMENT_SHADER));
+        gAvatarProgram.mShaderFiles.push_back(make_pair("avatar/avatarV.glsl", ShaderStage::Vertex));
+        gAvatarProgram.mShaderFiles.push_back(make_pair("avatar/avatarF.glsl", ShaderStage::Fragment));
         gAvatarProgram.mShaderLevel = mShaderLevel[SHADER_AVATAR];
         success = gAvatarProgram.createShader();
 
@@ -3524,8 +3524,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gHighlightProgram.mName = "Highlight Shader";
         gHighlightProgram.mShaderFiles.clear();
-        gHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", GL_VERTEX_SHADER));
-        gHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", GL_FRAGMENT_SHADER));
+        gHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", ShaderStage::Vertex));
+        gHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
         gHighlightProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = make_rigged_variant(gHighlightProgram, gSkinnedHighlightProgram);
         success = success && gHighlightProgram.createShader();
@@ -3535,8 +3535,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gHighlightNormalProgram.mName = "Highlight Normals Shader";
         gHighlightNormalProgram.mShaderFiles.clear();
-        gHighlightNormalProgram.mShaderFiles.push_back(make_pair("interface/highlightNormV.glsl", GL_VERTEX_SHADER));
-        gHighlightNormalProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", GL_FRAGMENT_SHADER));
+        gHighlightNormalProgram.mShaderFiles.push_back(make_pair("interface/highlightNormV.glsl", ShaderStage::Vertex));
+        gHighlightNormalProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
         gHighlightNormalProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gHighlightNormalProgram.createShader();
     }
@@ -3545,8 +3545,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gHighlightSpecularProgram.mName = "Highlight Spec Shader";
         gHighlightSpecularProgram.mShaderFiles.clear();
-        gHighlightSpecularProgram.mShaderFiles.push_back(make_pair("interface/highlightSpecV.glsl", GL_VERTEX_SHADER));
-        gHighlightSpecularProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", GL_FRAGMENT_SHADER));
+        gHighlightSpecularProgram.mShaderFiles.push_back(make_pair("interface/highlightSpecV.glsl", ShaderStage::Vertex));
+        gHighlightSpecularProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
         gHighlightSpecularProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gHighlightSpecularProgram.createShader();
     }
@@ -3555,8 +3555,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gUIProgram.mName = "UI Shader";
         gUIProgram.mShaderFiles.clear();
-        gUIProgram.mShaderFiles.push_back(make_pair("interface/uiV.glsl", GL_VERTEX_SHADER));
-        gUIProgram.mShaderFiles.push_back(make_pair("interface/uiF.glsl", GL_FRAGMENT_SHADER));
+        gUIProgram.mShaderFiles.push_back(make_pair("interface/uiV.glsl", ShaderStage::Vertex));
+        gUIProgram.mShaderFiles.push_back(make_pair("interface/uiF.glsl", ShaderStage::Fragment));
         gUIProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gUIProgram.createShader();
     }
@@ -3565,8 +3565,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gPathfindingProgram.mName = "Pathfinding Shader";
         gPathfindingProgram.mShaderFiles.clear();
-        gPathfindingProgram.mShaderFiles.push_back(make_pair("interface/pathfindingV.glsl", GL_VERTEX_SHADER));
-        gPathfindingProgram.mShaderFiles.push_back(make_pair("interface/pathfindingF.glsl", GL_FRAGMENT_SHADER));
+        gPathfindingProgram.mShaderFiles.push_back(make_pair("interface/pathfindingV.glsl", ShaderStage::Vertex));
+        gPathfindingProgram.mShaderFiles.push_back(make_pair("interface/pathfindingF.glsl", ShaderStage::Fragment));
         gPathfindingProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gPathfindingProgram.createShader();
     }
@@ -3575,8 +3575,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gPathfindingNoNormalsProgram.mName = "PathfindingNoNormals Shader";
         gPathfindingNoNormalsProgram.mShaderFiles.clear();
-        gPathfindingNoNormalsProgram.mShaderFiles.push_back(make_pair("interface/pathfindingNoNormalV.glsl", GL_VERTEX_SHADER));
-        gPathfindingNoNormalsProgram.mShaderFiles.push_back(make_pair("interface/pathfindingF.glsl", GL_FRAGMENT_SHADER));
+        gPathfindingNoNormalsProgram.mShaderFiles.push_back(make_pair("interface/pathfindingNoNormalV.glsl", ShaderStage::Vertex));
+        gPathfindingNoNormalsProgram.mShaderFiles.push_back(make_pair("interface/pathfindingF.glsl", ShaderStage::Fragment));
         gPathfindingNoNormalsProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gPathfindingNoNormalsProgram.createShader();
     }
@@ -3585,8 +3585,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gGlowCombineProgram.mName = "Glow Combine Shader";
         gGlowCombineProgram.mShaderFiles.clear();
-        gGlowCombineProgram.mShaderFiles.push_back(make_pair("interface/glowcombineV.glsl", GL_VERTEX_SHADER));
-        gGlowCombineProgram.mShaderFiles.push_back(make_pair("interface/glowcombineF.glsl", GL_FRAGMENT_SHADER));
+        gGlowCombineProgram.mShaderFiles.push_back(make_pair("interface/glowcombineV.glsl", ShaderStage::Vertex));
+        gGlowCombineProgram.mShaderFiles.push_back(make_pair("interface/glowcombineF.glsl", ShaderStage::Fragment));
         gGlowCombineProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gGlowCombineProgram.createShader();
         if (success)
@@ -3602,8 +3602,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gGlowCombineFXAAProgram.mName = "Glow CombineFXAA Shader";
         gGlowCombineFXAAProgram.mShaderFiles.clear();
-        gGlowCombineFXAAProgram.mShaderFiles.push_back(make_pair("interface/glowcombineFXAAV.glsl", GL_VERTEX_SHADER));
-        gGlowCombineFXAAProgram.mShaderFiles.push_back(make_pair("interface/glowcombineFXAAF.glsl", GL_FRAGMENT_SHADER));
+        gGlowCombineFXAAProgram.mShaderFiles.push_back(make_pair("interface/glowcombineFXAAV.glsl", ShaderStage::Vertex));
+        gGlowCombineFXAAProgram.mShaderFiles.push_back(make_pair("interface/glowcombineFXAAF.glsl", ShaderStage::Fragment));
         gGlowCombineFXAAProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gGlowCombineFXAAProgram.createShader();
         if (success)
@@ -3620,8 +3620,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gTwoTextureCompareProgram.mName = "Two Texture Compare Shader";
         gTwoTextureCompareProgram.mShaderFiles.clear();
-        gTwoTextureCompareProgram.mShaderFiles.push_back(make_pair("interface/twotexturecompareV.glsl", GL_VERTEX_SHADER));
-        gTwoTextureCompareProgram.mShaderFiles.push_back(make_pair("interface/twotexturecompareF.glsl", GL_FRAGMENT_SHADER));
+        gTwoTextureCompareProgram.mShaderFiles.push_back(make_pair("interface/twotexturecompareV.glsl", ShaderStage::Vertex));
+        gTwoTextureCompareProgram.mShaderFiles.push_back(make_pair("interface/twotexturecompareF.glsl", ShaderStage::Fragment));
         gTwoTextureCompareProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gTwoTextureCompareProgram.createShader();
         if (success)
@@ -3637,8 +3637,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gOneTextureFilterProgram.mName = "One Texture Filter Shader";
         gOneTextureFilterProgram.mShaderFiles.clear();
-        gOneTextureFilterProgram.mShaderFiles.push_back(make_pair("interface/onetexturefilterV.glsl", GL_VERTEX_SHADER));
-        gOneTextureFilterProgram.mShaderFiles.push_back(make_pair("interface/onetexturefilterF.glsl", GL_FRAGMENT_SHADER));
+        gOneTextureFilterProgram.mShaderFiles.push_back(make_pair("interface/onetexturefilterV.glsl", ShaderStage::Vertex));
+        gOneTextureFilterProgram.mShaderFiles.push_back(make_pair("interface/onetexturefilterF.glsl", ShaderStage::Fragment));
         gOneTextureFilterProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gOneTextureFilterProgram.createShader();
         if (success)
@@ -3653,8 +3653,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gSolidColorProgram.mName = "Solid Color Shader";
         gSolidColorProgram.mShaderFiles.clear();
-        gSolidColorProgram.mShaderFiles.push_back(make_pair("interface/solidcolorV.glsl", GL_VERTEX_SHADER));
-        gSolidColorProgram.mShaderFiles.push_back(make_pair("interface/solidcolorF.glsl", GL_FRAGMENT_SHADER));
+        gSolidColorProgram.mShaderFiles.push_back(make_pair("interface/solidcolorV.glsl", ShaderStage::Vertex));
+        gSolidColorProgram.mShaderFiles.push_back(make_pair("interface/solidcolorF.glsl", ShaderStage::Fragment));
         gSolidColorProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gSolidColorProgram.createShader();
         if (success)
@@ -3669,8 +3669,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gOcclusionProgram.mName = "Occlusion Shader";
         gOcclusionProgram.mShaderFiles.clear();
-        gOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionV.glsl", GL_VERTEX_SHADER));
-        gOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", GL_FRAGMENT_SHADER));
+        gOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionV.glsl", ShaderStage::Vertex));
+        gOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", ShaderStage::Fragment));
         gOcclusionProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         gOcclusionProgram.mRiggedVariant = &gSkinnedOcclusionProgram;
         success = gOcclusionProgram.createShader();
@@ -3681,8 +3681,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gSkinnedOcclusionProgram.mName = "Skinned Occlusion Shader";
         gSkinnedOcclusionProgram.mFeatures.hasObjectSkinning = true;
         gSkinnedOcclusionProgram.mShaderFiles.clear();
-        gSkinnedOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionSkinnedV.glsl", GL_VERTEX_SHADER));
-        gSkinnedOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", GL_FRAGMENT_SHADER));
+        gSkinnedOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionSkinnedV.glsl", ShaderStage::Vertex));
+        gSkinnedOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", ShaderStage::Fragment));
         gSkinnedOcclusionProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gSkinnedOcclusionProgram.createShader();
     }
@@ -3691,8 +3691,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gOcclusionCubeProgram.mName = "Occlusion Cube Shader";
         gOcclusionCubeProgram.mShaderFiles.clear();
-        gOcclusionCubeProgram.mShaderFiles.push_back(make_pair("interface/occlusionCubeV.glsl", GL_VERTEX_SHADER));
-        gOcclusionCubeProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", GL_FRAGMENT_SHADER));
+        gOcclusionCubeProgram.mShaderFiles.push_back(make_pair("interface/occlusionCubeV.glsl", ShaderStage::Vertex));
+        gOcclusionCubeProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", ShaderStage::Fragment));
         gOcclusionCubeProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gOcclusionCubeProgram.createShader();
     }
@@ -3701,8 +3701,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gDebugProgram.mName = "Debug Shader";
         gDebugProgram.mShaderFiles.clear();
-        gDebugProgram.mShaderFiles.push_back(make_pair("interface/debugV.glsl", GL_VERTEX_SHADER));
-        gDebugProgram.mShaderFiles.push_back(make_pair("interface/debugF.glsl", GL_FRAGMENT_SHADER));
+        gDebugProgram.mShaderFiles.push_back(make_pair("interface/debugV.glsl", ShaderStage::Vertex));
+        gDebugProgram.mShaderFiles.push_back(make_pair("interface/debugF.glsl", ShaderStage::Fragment));
         gDebugProgram.mRiggedVariant = &gSkinnedDebugProgram;
         gDebugProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = make_rigged_variant(gDebugProgram, gSkinnedDebugProgram);
@@ -3717,14 +3717,14 @@ bool LLViewerShaderMgr::loadShadersInterface()
             LLGLSLShader& skinned_shader = gSkinnedNormalDebugProgram[variant];
             shader.mName = "Normal Debug Shader";
             shader.mShaderFiles.clear();
-            shader.mShaderFiles.push_back(make_pair("interface/normaldebugV.glsl", GL_VERTEX_SHADER));
+            shader.mShaderFiles.push_back(make_pair("interface/normaldebugV.glsl", ShaderStage::Vertex));
             // *NOTE: Geometry shaders have a reputation for being slow.
             // Consider using compute shaders instead, which have a reputation
             // for being fast. This geometry shader in particular seems to run
             // fine on my machine, but I won't vouch for this in
             // performance-critical areas.  -Cosmic,2023-09-28
-            shader.mShaderFiles.push_back(make_pair("interface/normaldebugG.glsl", GL_GEOMETRY_SHADER));
-            shader.mShaderFiles.push_back(make_pair("interface/normaldebugF.glsl", GL_FRAGMENT_SHADER));
+            shader.mShaderFiles.push_back(make_pair("interface/normaldebugG.glsl", ShaderStage::Geometry));
+            shader.mShaderFiles.push_back(make_pair("interface/normaldebugF.glsl", ShaderStage::Fragment));
             shader.mRiggedVariant = &skinned_shader;
             shader.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
             if (variant == NORMAL_DEBUG_SHADER_WITH_TANGENTS)
@@ -3740,8 +3740,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gClipProgram.mName = "Clip Shader";
         gClipProgram.mShaderFiles.clear();
-        gClipProgram.mShaderFiles.push_back(make_pair("interface/clipV.glsl", GL_VERTEX_SHADER));
-        gClipProgram.mShaderFiles.push_back(make_pair("interface/clipF.glsl", GL_FRAGMENT_SHADER));
+        gClipProgram.mShaderFiles.push_back(make_pair("interface/clipV.glsl", ShaderStage::Vertex));
+        gClipProgram.mShaderFiles.push_back(make_pair("interface/clipF.glsl", ShaderStage::Fragment));
         gClipProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gClipProgram.createShader();
     }
@@ -3750,8 +3750,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gBenchmarkProgram.mName = "Benchmark Shader";
         gBenchmarkProgram.mShaderFiles.clear();
-        gBenchmarkProgram.mShaderFiles.push_back(make_pair("interface/benchmarkV.glsl", GL_VERTEX_SHADER));
-        gBenchmarkProgram.mShaderFiles.push_back(make_pair("interface/benchmarkF.glsl", GL_FRAGMENT_SHADER));
+        gBenchmarkProgram.mShaderFiles.push_back(make_pair("interface/benchmarkV.glsl", ShaderStage::Vertex));
+        gBenchmarkProgram.mShaderFiles.push_back(make_pair("interface/benchmarkF.glsl", ShaderStage::Fragment));
         gBenchmarkProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gBenchmarkProgram.createShader();
     }
@@ -3766,8 +3766,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gReflectionProbeDisplayProgram.mFeatures.hasGamma = true;
         gReflectionProbeDisplayProgram.mFeatures.isDeferred = true;
         gReflectionProbeDisplayProgram.mShaderFiles.clear();
-        gReflectionProbeDisplayProgram.mShaderFiles.push_back(make_pair("interface/reflectionprobeV.glsl", GL_VERTEX_SHADER));
-        gReflectionProbeDisplayProgram.mShaderFiles.push_back(make_pair("interface/reflectionprobeF.glsl", GL_FRAGMENT_SHADER));
+        gReflectionProbeDisplayProgram.mShaderFiles.push_back(make_pair("interface/reflectionprobeV.glsl", ShaderStage::Vertex));
+        gReflectionProbeDisplayProgram.mShaderFiles.push_back(make_pair("interface/reflectionprobeF.glsl", ShaderStage::Fragment));
         gReflectionProbeDisplayProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gReflectionProbeDisplayProgram.createShader();
     }
@@ -3776,8 +3776,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gCopyProgram.mName = "Copy Shader";
         gCopyProgram.mShaderFiles.clear();
-        gCopyProgram.mShaderFiles.push_back(make_pair("interface/copyV.glsl", GL_VERTEX_SHADER));
-        gCopyProgram.mShaderFiles.push_back(make_pair("interface/copyF.glsl", GL_FRAGMENT_SHADER));
+        gCopyProgram.mShaderFiles.push_back(make_pair("interface/copyV.glsl", ShaderStage::Vertex));
+        gCopyProgram.mShaderFiles.push_back(make_pair("interface/copyF.glsl", ShaderStage::Fragment));
         gCopyProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gCopyProgram.createShader();
     }
@@ -3786,8 +3786,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gCopyDepthProgram.mName = "Copy Depth Shader";
         gCopyDepthProgram.mShaderFiles.clear();
-        gCopyDepthProgram.mShaderFiles.push_back(make_pair("interface/copyV.glsl", GL_VERTEX_SHADER));
-        gCopyDepthProgram.mShaderFiles.push_back(make_pair("interface/copyF.glsl", GL_FRAGMENT_SHADER));
+        gCopyDepthProgram.mShaderFiles.push_back(make_pair("interface/copyV.glsl", ShaderStage::Vertex));
+        gCopyDepthProgram.mShaderFiles.push_back(make_pair("interface/copyF.glsl", ShaderStage::Fragment));
         gCopyDepthProgram.clearPermutations();
         gCopyDepthProgram.addPermutation("COPY_DEPTH", "1");
         gCopyDepthProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
@@ -3798,8 +3798,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gDrawColorProgram.mName = "Draw Color Shader";
         gDrawColorProgram.mShaderFiles.clear();
-        gDrawColorProgram.mShaderFiles.push_back(make_pair("objects/simpleNoAtmosV.glsl", GL_VERTEX_SHADER));
-        gDrawColorProgram.mShaderFiles.push_back(make_pair("objects/simpleColorF.glsl", GL_FRAGMENT_SHADER));
+        gDrawColorProgram.mShaderFiles.push_back(make_pair("objects/simpleNoAtmosV.glsl", ShaderStage::Vertex));
+        gDrawColorProgram.mShaderFiles.push_back(make_pair("objects/simpleColorF.glsl", ShaderStage::Fragment));
         gDrawColorProgram.clearPermutations();
         gDrawColorProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gDrawColorProgram.createShader();
@@ -3817,8 +3817,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
             shader->mFeatures.isPBRTerrain = true;
 
             shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("interface/pbrTerrainBakeV.glsl", GL_VERTEX_SHADER));
-            shader->mShaderFiles.push_back(make_pair("interface/pbrTerrainBakeF.glsl", GL_FRAGMENT_SHADER));
+            shader->mShaderFiles.push_back(make_pair("interface/pbrTerrainBakeV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("interface/pbrTerrainBakeF.glsl", ShaderStage::Fragment));
             shader->mShaderLevel = mShaderLevel[SHADER_INTERFACE];
             const U32 value_range = (1 << bit_depth) - 1;
             shader->addPermutation("TERRAIN_PAINT_PRECISION", llformat("%d", value_range));
@@ -3838,8 +3838,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gAlphaMaskProgram.mName = "Alpha Mask Shader";
         gAlphaMaskProgram.mShaderFiles.clear();
-        gAlphaMaskProgram.mShaderFiles.push_back(make_pair("interface/alphamaskV.glsl", GL_VERTEX_SHADER));
-        gAlphaMaskProgram.mShaderFiles.push_back(make_pair("interface/alphamaskF.glsl", GL_FRAGMENT_SHADER));
+        gAlphaMaskProgram.mShaderFiles.push_back(make_pair("interface/alphamaskV.glsl", ShaderStage::Vertex));
+        gAlphaMaskProgram.mShaderFiles.push_back(make_pair("interface/alphamaskF.glsl", ShaderStage::Fragment));
         gAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gAlphaMaskProgram.createShader();
     }
@@ -3852,8 +3852,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gReflectionMipProgram.mFeatures.hasAtmospherics = true;
         gReflectionMipProgram.mFeatures.calculatesAtmospherics = true;
         gReflectionMipProgram.mShaderFiles.clear();
-        gReflectionMipProgram.mShaderFiles.push_back(make_pair("interface/splattexturerectV.glsl", GL_VERTEX_SHADER));
-        gReflectionMipProgram.mShaderFiles.push_back(make_pair("interface/reflectionmipF.glsl", GL_FRAGMENT_SHADER));
+        gReflectionMipProgram.mShaderFiles.push_back(make_pair("interface/splattexturerectV.glsl", ShaderStage::Vertex));
+        gReflectionMipProgram.mShaderFiles.push_back(make_pair("interface/reflectionmipF.glsl", ShaderStage::Fragment));
         gReflectionMipProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gReflectionMipProgram.createShader();
     }
@@ -3866,8 +3866,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gGaussianProgram.mFeatures.hasAtmospherics = true;
         gGaussianProgram.mFeatures.calculatesAtmospherics = true;
         gGaussianProgram.mShaderFiles.clear();
-        gGaussianProgram.mShaderFiles.push_back(make_pair("interface/splattexturerectV.glsl", GL_VERTEX_SHADER));
-        gGaussianProgram.mShaderFiles.push_back(make_pair("interface/gaussianF.glsl", GL_FRAGMENT_SHADER));
+        gGaussianProgram.mShaderFiles.push_back(make_pair("interface/splattexturerectV.glsl", ShaderStage::Vertex));
+        gGaussianProgram.mShaderFiles.push_back(make_pair("interface/gaussianF.glsl", ShaderStage::Fragment));
         gGaussianProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gGaussianProgram.createShader();
     }
@@ -3876,8 +3876,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gRadianceGenProgram.mName = "Radiance Gen Shader";
         gRadianceGenProgram.mShaderFiles.clear();
-        gRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenV.glsl", GL_VERTEX_SHADER));
-        gRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenF.glsl", GL_FRAGMENT_SHADER));
+        gRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenV.glsl", ShaderStage::Vertex));
+        gRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenF.glsl", ShaderStage::Fragment));
         gRadianceGenProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         gRadianceGenProgram.addPermutation("PROBE_FILTER_SAMPLES", "32");
         success = gRadianceGenProgram.createShader();
@@ -3887,8 +3887,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gHeroRadianceGenProgram.mName = "Hero Radiance Gen Shader";
         gHeroRadianceGenProgram.mShaderFiles.clear();
-        gHeroRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenV.glsl", GL_VERTEX_SHADER));
-        gHeroRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenF.glsl", GL_FRAGMENT_SHADER));
+        gHeroRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenV.glsl", ShaderStage::Vertex));
+        gHeroRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenF.glsl", ShaderStage::Fragment));
         gHeroRadianceGenProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         gHeroRadianceGenProgram.addPermutation("HERO_PROBES", "1");
         gHeroRadianceGenProgram.addPermutation("PROBE_FILTER_SAMPLES", "4");
@@ -3899,8 +3899,8 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gIrradianceGenProgram.mName = "Irradiance Gen Shader";
         gIrradianceGenProgram.mShaderFiles.clear();
-        gIrradianceGenProgram.mShaderFiles.push_back(make_pair("interface/irradianceGenV.glsl", GL_VERTEX_SHADER));
-        gIrradianceGenProgram.mShaderFiles.push_back(make_pair("interface/irradianceGenF.glsl", GL_FRAGMENT_SHADER));
+        gIrradianceGenProgram.mShaderFiles.push_back(make_pair("interface/irradianceGenV.glsl", ShaderStage::Vertex));
+        gIrradianceGenProgram.mShaderFiles.push_back(make_pair("interface/irradianceGenF.glsl", ShaderStage::Fragment));
         gIrradianceGenProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gIrradianceGenProgram.createShader();
     }
