@@ -101,7 +101,7 @@ namespace LLVkAsync
     void gpuZone(const char* name, bool begin);
 
     // ---- F2.5 measure first: main-thread cost per front-end entry point (counted with LL_VK_OPSTATS, every 16th call timed; reported in the VkOps "worker operations" line) ----
-    enum FrontPoint { FP_SHADER_BIND, FP_UNIFORM, FP_UNIFORM_MATRIX, FP_UNIFORM_SENT, FP_TEXUNIT_BIND, FP_BLEND, FP_GLSTATE, FP_SET_BUFFER, FP_DRAW, FP_SYNC_MATRICES, FP_FLUSH, FP_COUNT };
+    enum FrontPoint { FP_SHADER_BIND, FP_UNIFORM, FP_UNIFORM_MATRIX, FP_UNIFORM_SENT, FP_TEXUNIT_BIND, FP_BLEND, FP_GLSTATE, FP_SET_BUFFER, FP_DRAW, FP_SYNC_MATRICES, FP_FLUSH, FP_MATRIX_STACK, FP_MATRIX_LOAD, FP_MATRIX_XFORM, FP_MATRIX_MODE, FP_COUNT };
     extern bool gFrontStats;
     unsigned long long frontStart(int id);                 // counts the call (main thread only); returns a timestamp when this call is timed, else 0
     void frontStop(int id, unsigned long long t0);

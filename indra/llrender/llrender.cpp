@@ -40,6 +40,7 @@
 #endif
 #include "glm/gtc/type_ptr.hpp"
 #include "llvkstate.h"
+#include "llrendermatrix.h"
 #include "llvktex.h"
 #include "llvkquery.h"
 #include "llvkcontext.h"
@@ -1189,55 +1190,60 @@ void LLRender::syncMatrices()
     STOP_GLERROR;
 }
 
-void LLRender::translatef(const GLfloat& x, const GLfloat& y, const GLfloat& z)
+void LLRender::translateOf(eMatrixMode mode, const glm::vec3& v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_XFORM);
     flush();
 
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::translate(mMatrix[mMatrixMode][mMatIdx[mMatrixMode]], glm::vec3(x, y, z));
-        mMatHash[mMatrixMode]++;
+        mMatrix[mode][mMatIdx[mode]] = glm::translate(mMatrix[mode][mMatIdx[mode]], v);
+        mMatHash[mode]++;
     }
 }
 
-void LLRender::scalef(const GLfloat& x, const GLfloat& y, const GLfloat& z)
+void LLRender::scaleOf(eMatrixMode mode, const glm::vec3& v)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_XFORM);
     flush();
 
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::scale(mMatrix[mMatrixMode][mMatIdx[mMatrixMode]], glm::vec3(x, y, z));
-        mMatHash[mMatrixMode]++;
+        mMatrix[mode][mMatIdx[mode]] = glm::scale(mMatrix[mode][mMatIdx[mode]], v);
+        mMatHash[mode]++;
     }
 }
 
-void LLRender::ortho(F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar)
+void LLRender::orthoOf(eMatrixMode mode, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_LOAD);
     flush();
 
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] *= glm::ortho(left, right, bottom, top, zNear, zFar);
-        mMatHash[mMatrixMode]++;
+        mMatrix[mode][mMatIdx[mode]] *= glm::ortho(left, right, bottom, top, zNear, zFar);
+        mMatHash[mode]++;
     }
 }
 
-void LLRender::rotatef(const GLfloat& a, const GLfloat& x, const GLfloat& y, const GLfloat& z)
+void LLRender::rotateOf(eMatrixMode mode, F32 degrees, const glm::vec3& axis)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_XFORM);
     flush();
 
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::rotate(mMatrix[mMatrixMode][mMatIdx[mMatrixMode]], glm::radians(a), glm::vec3(x,y,z));
-        mMatHash[mMatrixMode]++;
+        mMatrix[mode][mMatIdx[mode]] = glm::rotate(mMatrix[mode][mMatIdx[mode]], glm::radians(degrees), axis);
+        mMatHash[mode]++;
     }
 }
 
-void LLRender::pushMatrix()
+void LLRender::pushMatrixOf(eMatrixMode mode)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_STACK);
     flush();
 
     {
-        if (mMatIdx[mMatrixMode] < LL_MATRIX_STACK_DEPTH-1)
+        if (mMatIdx[mode] < LL_MATRIX_STACK_DEPTH-1)
         {
-            mMatrix[mMatrixMode][mMatIdx[mMatrixMode]+1] = mMatrix[mMatrixMode][mMatIdx[mMatrixMode]];
-            ++mMatIdx[mMatrixMode];
+            mMatrix[mode][mMatIdx[mode]+1] = mMatrix[mode][mMatIdx[mode]];
+            ++mMatIdx[mode];
         }
         else
         {
@@ -1246,14 +1252,15 @@ void LLRender::pushMatrix()
     }
 }
 
-void LLRender::popMatrix()
+void LLRender::popMatrixOf(eMatrixMode mode)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_STACK);
     flush();
     {
-        if (mMatIdx[mMatrixMode] > 0)
+        if (mMatIdx[mode] > 0)
         {
-            --mMatIdx[mMatrixMode];
-            mMatHash[mMatrixMode]++;
+            --mMatIdx[mode];
+            mMatHash[mode]++;
         }
         else
         {
@@ -1262,26 +1269,88 @@ void LLRender::popMatrix()
     }
 }
 
-void LLRender::loadMatrix(const GLfloat* m)
+void LLRender::setMatrixOf(eMatrixMode mode, const glm::mat4& m)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_LOAD);
     flush();
     {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::make_mat4((GLfloat*) m);
-        mMatHash[mMatrixMode]++;
+        mMatrix[mode][mMatIdx[mode]] = m;
+        mMatHash[mode]++;
     }
+}
+
+void LLRender::multMatrixOf(eMatrixMode mode, const glm::mat4& m)
+{
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_LOAD);
+    flush();
+    {
+        mMatrix[mode][mMatIdx[mode]] *= m;
+        mMatHash[mode]++;
+    }
+}
+
+void LLRender::loadIdentityOf(eMatrixMode mode)
+{
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_LOAD);
+    flush();
+
+    {
+        llassert_always(mode < NUM_MATRIX_MODES) ;
+
+        mMatrix[mode][mMatIdx[mode]] = glm::identity<glm::mat4>();
+        mMatHash[mode]++;
+    }
+}
+
+// the old calls: the same operations on the current matrix mode
+void LLRender::translatef(const GLfloat& x, const GLfloat& y, const GLfloat& z)
+{
+    translateOf(mMatrixMode, glm::vec3(x, y, z));
+}
+
+void LLRender::scalef(const GLfloat& x, const GLfloat& y, const GLfloat& z)
+{
+    scaleOf(mMatrixMode, glm::vec3(x, y, z));
+}
+
+void LLRender::ortho(F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar)
+{
+    orthoOf(mMatrixMode, left, right, bottom, top, zNear, zFar);
+}
+
+void LLRender::rotatef(const GLfloat& a, const GLfloat& x, const GLfloat& y, const GLfloat& z)
+{
+    rotateOf(mMatrixMode, a, glm::vec3(x, y, z));
+}
+
+void LLRender::pushMatrix()
+{
+    pushMatrixOf(mMatrixMode);
+}
+
+void LLRender::popMatrix()
+{
+    popMatrixOf(mMatrixMode);
+}
+
+void LLRender::loadMatrix(const GLfloat* m)
+{
+    setMatrixOf(mMatrixMode, glm::make_mat4((GLfloat*) m));
 }
 
 void LLRender::multMatrix(const GLfloat* m)
 {
-    flush();
-    {
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] *= glm::make_mat4(m);
-        mMatHash[mMatrixMode]++;
-    }
+    multMatrixOf(mMatrixMode, glm::make_mat4(m));
+}
+
+void LLRender::loadIdentity()
+{
+    loadIdentityOf(mMatrixMode);
 }
 
 void LLRender::matrixMode(eMatrixMode mode)
 {
+    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_MODE);
     if (mode == MM_TEXTURE)
     {
         U32 tex_index = gGL.getCurrentTexUnitIndex();
@@ -1310,18 +1379,6 @@ LLRender::eMatrixMode LLRender::getMatrixMode()
     return mMatrixMode;
 }
 
-
-void LLRender::loadIdentity()
-{
-    flush();
-
-    {
-        llassert_always(mMatrixMode < NUM_MATRIX_MODES) ;
-
-        mMatrix[mMatrixMode][mMatIdx[mMatrixMode]] = glm::identity<glm::mat4>();
-        mMatHash[mMatrixMode]++;
-    }
-}
 
 const glm::mat4& LLRender::getModelviewMatrix()
 {
@@ -2310,4 +2367,71 @@ glm::vec3 mul_mat4_vec3(const glm::mat4& mat, const glm::vec3& vec)
     res.div(q);
     return glm::make_vec3(res.getF32ptr());
 #endif
+}
+
+
+// ---- F3.3: the named-matrix operations of llrendermatrix.h ----
+namespace LLRenderMatrix
+{
+
+bool sGuardCheck = []() { const char* e = getenv("LL_VK_MATRIX_GUARD_CHECK"); return e && e[0] == '1'; }();
+
+namespace
+{
+inline LLRender::eMatrixMode mode_of(Kind kind) { return (LLRender::eMatrixMode)kind; }
+}
+
+void push(Kind kind) { gGL.pushMatrixOf(mode_of(kind)); }
+void pop(Kind kind) { gGL.popMatrixOf(mode_of(kind)); }
+void set(Kind kind, const glm::mat4& m) { gGL.setMatrixOf(mode_of(kind), m); }
+void multiply(Kind kind, const glm::mat4& m) { gGL.multMatrixOf(mode_of(kind), m); }
+void identity(Kind kind) { gGL.loadIdentityOf(mode_of(kind)); }
+void translate(Kind kind, const glm::vec3& v) { gGL.translateOf(mode_of(kind), v); }
+void rotate(Kind kind, F32 degrees, const glm::vec3& axis) { gGL.rotateOf(mode_of(kind), degrees, axis); }
+void scale(Kind kind, const glm::vec3& v) { gGL.scaleOf(mode_of(kind), v); }
+void ortho(Kind kind, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar) { gGL.orthoOf(mode_of(kind), left, right, bottom, top, zNear, zFar); }
+const glm::mat4& get(Kind kind) { return gGL.matrixOf(mode_of(kind)); }
+U32 depth(Kind kind) { return gGL.matrixDepth(mode_of(kind)); }
+
+namespace
+{
+struct Site { const char* mFile; int mLine; };
+std::vector<Site> gSites;
+}
+
+void warnUnbalanced(Kind kind, U32 expected_depth, U32 found_depth, const char* file, int line)
+{
+    for (const Site& s : gSites)
+    {
+        if (s.mLine == line && s.mFile == file)
+        {
+            return;
+        }
+    }
+    if (gSites.size() < 100)
+    {
+        gSites.push_back({ file, line });
+        LL_WARNS("MatrixGuard") << "matrix " << (int)kind << " (0 modelview, 1 projection, 2-5 texture): the stack is " << found_depth << " deep at the end of the scope, the scope left it " << expected_depth
+            << " deep (an unbalanced push or pop inside it), scope made at " << (file ? file : "?") << ":" << line << LL_ENDL;
+    }
+}
+
+void checkFrameEnd()
+{
+    if (!sGuardCheck)
+    {
+        return;
+    }
+    static U32 last[6] = { 0, 0, 0, 0, 0, 0 };
+    for (int k = 0; k < 6; ++k)
+    {
+        const U32 d = gGL.matrixDepth((LLRender::eMatrixMode)k);
+        if (d != last[k])
+        {
+            LL_WARNS("MatrixGuard") << "matrix " << k << " (0 modelview, 1 projection, 2-5 texture): stack depth at the end of the frame is " << d << " (was " << last[k] << ")" << LL_ENDL;
+            last[k] = d;
+        }
+    }
+}
+
 }

@@ -42,6 +42,7 @@
 #include "llpointer.h"
 #include "llglheaders.h"
 #include "llrenderstate.h"
+#include "llrendermatrix.h"
 #include "llmatrix4a.h"
 #include "glm/mat4x4.hpp"
 #include <boost/align/aligned_allocator.hpp>
@@ -404,6 +405,18 @@ public:
     void loadIdentity();
     void multMatrix(const GLfloat* m);
     void matrixMode(eMatrixMode mode);
+    // F3.3 (llrendermatrix.h): the same operations on a named matrix; the calls above act on the current matrix mode through these
+    void pushMatrixOf(eMatrixMode mode);
+    void popMatrixOf(eMatrixMode mode);
+    void setMatrixOf(eMatrixMode mode, const glm::mat4& m);
+    void multMatrixOf(eMatrixMode mode, const glm::mat4& m);
+    void loadIdentityOf(eMatrixMode mode);
+    void translateOf(eMatrixMode mode, const glm::vec3& v);
+    void rotateOf(eMatrixMode mode, F32 degrees, const glm::vec3& axis);
+    void scaleOf(eMatrixMode mode, const glm::vec3& v);
+    void orthoOf(eMatrixMode mode, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar);
+    const glm::mat4& matrixOf(eMatrixMode mode) const { return mMatrix[mode][mMatIdx[mode]]; }
+    U32 matrixDepth(eMatrixMode mode) const { return mMatIdx[mode]; }
     eMatrixMode getMatrixMode();
 
     const glm::mat4& getModelviewMatrix();
