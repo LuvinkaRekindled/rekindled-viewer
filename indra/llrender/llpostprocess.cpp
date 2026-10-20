@@ -319,7 +319,7 @@ void LLPostProcess::doEffects(void)
 void LLPostProcess::copyFrameBuffer(U32 & texture, unsigned int width, unsigned int height)
 {
     gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture);
-    LLVkTex::copyImage2D(texture, TextureTarget::Rect, 0, TexelFormat::RGBA8, 0, 0, width, height, LLRenderTarget::sCurFBO);
+    LLVkTex::copyImage2D(texture, TextureTarget::Rect, 0, TexelFormat::RGBA8, 0, 0, width, height, LLRenderTarget::currentId());
 }
 
 void LLPostProcess::drawOrthoQuad(unsigned int width, unsigned int height, QuadType type)

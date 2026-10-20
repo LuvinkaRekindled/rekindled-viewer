@@ -169,6 +169,10 @@ public:
     bool isBoundInStack() const;
 
     static LLRenderTarget* getCurrentBoundTarget() { return sBoundTarget; }
+    // F4.2: where a copy or a readback takes its pixels from is a value: the target of the innermost open pass (null: the back buffer). What the producer records is its id.
+    static U32 idOf(const LLRenderTarget* target) { return target ? target->mFBO : 0; }
+    static U32 currentId(const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    static void checkSource(const LLRenderTarget* named, const char* file, int line);        // LL_VK_PASS_CHECK: a copy that names its source (it must be the frame buffer that is current)      // LL_VK_PASS_CHECK: warns when the stack of open passes and sCurFBO disagree
 
     // F3.5a (llrenderpass.h): LL_VK_PASS_CHECK=1 reports a target that is still bound at the end of the frame
     static void checkFrameEnd();

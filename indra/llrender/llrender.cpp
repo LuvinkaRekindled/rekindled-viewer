@@ -1399,7 +1399,7 @@ void LLRender::setStencilMask(U32 mask)
 
 void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* data, const char* file, int line)
 {
-    LLVkTarget::readPixels(LLRenderTarget::sCurFBO, x, y, width, height, format, type, data, file, line);
+    LLVkTarget::readPixels(LLRenderTarget::currentId(file, line), x, y, width, height, format, type, data, file, line);
 }
 
 void LLRender::genQueries(S32 count, U32* ids)
@@ -1452,14 +1452,14 @@ void LLRender::bindUniformBlock(U32 binding, U32 id)
     LLVkBuf::bindUniformBlock(binding, id);
 }
 
-void LLRender::copyTexSubImage2D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
+void LLRender::copyTexSubImage2D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, const LLRenderTarget* source)
 {
-    LLVkTex::copySubImage(texture, target, level, xoffset, yoffset, 0, x, y, width, height, source_fbo);
+    LLVkTex::copySubImage(texture, target, level, xoffset, yoffset, 0, x, y, width, height, LLRenderTarget::idOf(source));
 }
 
-void LLRender::copyTexSubImage3D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
+void LLRender::copyTexSubImage3D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, const LLRenderTarget* source)
 {
-    LLVkTex::copySubImage(texture, target, level, xoffset, yoffset, zoffset, x, y, width, height, source_fbo);
+    LLVkTex::copySubImage(texture, target, level, xoffset, yoffset, zoffset, x, y, width, height, LLRenderTarget::idOf(source));
 }
 
 void LLRender::generateMipmap(U32 texture)

@@ -477,6 +477,7 @@ public:
     void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask);
     void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass);
     void setStencilMask(U32 mask);
+    // reads the colour attachment of the target of the innermost open pass (the back buffer when none is bound)
     void readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     // queries (llvkquery.h): occlusion counts and GPU timers around draws; the kinds are the ones LLVkQuery::Kind names
     enum QueryKind { QUERY_ANY_SAMPLES = 0, QUERY_SAMPLES_PASSED = 1, QUERY_TIME_ELAPSED = 2, QUERY_PRIMITIVES_GENERATED = 3 };
@@ -490,8 +491,8 @@ public:
     void deleteBuffers(S32 count, const U32* ids);
     void bufferData(U32 buffer, BufferKind kind, S64 size, const void* data);     // names the buffer: nothing is bound
     void bindUniformBlock(U32 binding, U32 id);
-    void copyTexSubImage2D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);     // source_fbo: the render target read from (0: the back buffer)
-    void copyTexSubImage3D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo);
+    void copyTexSubImage2D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, const LLRenderTarget* source);     // source_fbo: the render target read from (0: the back buffer)
+    void copyTexSubImage3D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, const LLRenderTarget* source);
     void generateMipmap(U32 texture);
     // F3.6f: sampler settings of one texture, by name (a setting acts on the texture whatever its dimension): typed, no GL parameter numbers
     void setTexFilter(U32 texture, bool mag, TextureFilter filter);
