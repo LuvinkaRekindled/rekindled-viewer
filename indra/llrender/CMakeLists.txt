@@ -68,6 +68,7 @@ set(llrender_HEADER_FILES
     llimagegl.h
     llpostprocess.h
     llrender.h
+    llrendermatrix.h
     llrenderstate.h
     llrender2dutils.h
     llrendernavprim.h

@@ -182,7 +182,7 @@ unsigned long long gOpStatCalls[OP_STAT_SLOTS] = {};
 unsigned long long gOpStatTsc0 = 0;
 unsigned long long gFrontCalls[FP_COUNT] = {};
 unsigned long long gFrontTicks[FP_COUNT] = {};
-const char* const kFrontNames[FP_COUNT] = { "LLGLSLShader::bind", "uniform*", "uniformMatrix*", "uniform writes sent (count only)", "LLTexUnit::bind", "blendFunc", "state guards", "setBuffer", "draw*", "syncMatrices (contains uniformMatrix)", "LLRender::flush (contains draw*)" };
+const char* const kFrontNames[FP_COUNT] = { "LLGLSLShader::bind", "uniform*", "uniformMatrix*", "uniform writes sent (count only)", "LLTexUnit::bind", "blendFunc", "state guards", "setBuffer", "draw*", "syncMatrices (contains uniformMatrix)", "LLRender::flush (contains draw*)", "matrix push/pop (contains flush)", "matrix set/mult/identity/ortho (contains flush)", "matrix translate/rotate/scale (contains flush)", "matrixMode" };
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 1); }
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
