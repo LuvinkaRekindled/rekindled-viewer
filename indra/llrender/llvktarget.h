@@ -28,7 +28,6 @@ namespace LLVkTarget
     void clear(bool color, bool depth, const F32* rgba);
     // reads a rectangle of colour attachment 0 of 'target' (0: the back buffer) into dst, rows tightly packed (GL format / type pairs as for texture uploads); returns when the data is there
     void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* dst, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, void* dst, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 }
 
 namespace LLVkGL

@@ -3070,12 +3070,12 @@ LLViewerFetchedTexture *LLVOAvatar::getBakedTextureImage(const U8 te, const LLUU
             LL_DEBUGS("Avatar") << avString() << "get old-bake image from host " << uuid << LL_ENDL;
             LLHost host = getObjectHost();
             result = LLViewerTextureManager::getFetchedTexture(
-                uuid, FTT_HOST_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, host);
+                uuid, FTT_HOST_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, host);
             // </FS:Ansariel> [Legacy Bake]
         }
         LL_DEBUGS("Avatar") << avString() << "get server-bake image from URL " << url << LL_ENDL;
         result = LLViewerTextureManager::getFetchedTextureFromUrl(
-            url, FTT_SERVER_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, uuid);
+            url, FTT_SERVER_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, uuid);
         if (result->isMissingAsset())
         {
             result->setIsMissingAsset(false);
@@ -11781,9 +11781,9 @@ void LLVOAvatar::onBakedTextureMasksLoaded( bool success, LLViewerFetchedTexture
             stop_glerror();
 
             LLImageGL::setManualImage(
-                gl_name, GL_TEXTURE_2D, 0, GL_ALPHA8,
+                gl_name, GL_TEXTURE_2D, 0, TexelFormat::Alpha8,
                 aux_src->getWidth(), aux_src->getHeight(),
-                GL_ALPHA, GL_UNSIGNED_BYTE, aux_src->getData());
+                PixelFormat::Alpha, ComponentType::U8, aux_src->getData());
             stop_glerror();
 
             gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);

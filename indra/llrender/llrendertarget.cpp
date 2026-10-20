@@ -99,7 +99,7 @@ void LLRenderTarget::resize(U32 resx, U32 resy)
     for (U32 i = 0; i < mTex.size(); ++i)
     { //resize color attachments
         gGL.getTexUnit(0)->bindManual(mUsage, mTex[i]);
-        LLImageGL::setManualImage(mTex[i], LLTexUnit::getInternalType(mUsage), 0, mInternalFormat[i], mResX, mResY, GL_RGBA, GL_UNSIGNED_BYTE, NULL, false);
+        LLImageGL::setManualImage(mTex[i], LLTexUnit::getInternalType(mUsage), 0, mInternalFormat[i], mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
         sBytesAllocated += pix_diff*4;
     }
 
@@ -107,14 +107,14 @@ void LLRenderTarget::resize(U32 resx, U32 resy)
     {
         gGL.getTexUnit(0)->bindManual(mUsage, mDepth);
         U32 internal_type = LLTexUnit::getInternalType(mUsage);
-        LLImageGL::setManualImage(mDepth, internal_type, 0, GL_DEPTH_COMPONENT24, mResX, mResY, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL, false);
+        LLImageGL::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
 
         sBytesAllocated += pix_diff*4;
     }
 }
 
 
-bool LLRenderTarget::allocate(U32 resx, U32 resy, U32 color_fmt, bool depth, LLTexUnit::eTextureType usage, LLTexUnit::eTextureMipGeneration generateMipMaps, const char* file, int line)
+bool LLRenderTarget::allocate(U32 resx, U32 resy, TexelFormat color_fmt, bool depth, LLTexUnit::eTextureType usage, LLTexUnit::eTextureMipGeneration generateMipMaps, const char* file, int line)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     llassert(usage == LLTexUnit::TT_TEXTURE);
@@ -203,13 +203,13 @@ void LLRenderTarget::releaseColorAttachment()
     mTex.clear();
 }
 
-bool LLRenderTarget::addColorAttachment(U32 color_fmt, const char* file, int line)
+bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file, int line)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     llassert(!isBoundInStack());
-    LLVkFormat::noteFormat("RT.color", file, line, LLVkFormat::store((S32)color_fmt), 0, 0);
+    LLVkFormat::noteFormat("RT.color", file, line, (U8)color_fmt, 0, 0);
 
-    if (color_fmt == 0)
+    if (color_fmt == TexelFormat::None)
     {
         return true;
     }
@@ -237,7 +237,7 @@ bool LLRenderTarget::addColorAttachment(U32 color_fmt, const char* file, int lin
 
     {
         clear_glerror();
-        LLImageGL::setManualImage(tex, LLTexUnit::getInternalType(mUsage), 0, color_fmt, mResX, mResY, GL_RGBA, GL_UNSIGNED_BYTE, NULL, false);
+        LLImageGL::setManualImage(tex, LLTexUnit::getInternalType(mUsage), 0, color_fmt, mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
     }
 
     sBytesAllocated += mResX*mResY*4;
@@ -296,7 +296,7 @@ bool LLRenderTarget::allocateDepth()
     U32 internal_type = LLTexUnit::getInternalType(mUsage);
     stop_glerror();
     clear_glerror();
-    LLImageGL::setManualImage(mDepth, internal_type, 0, GL_DEPTH_COMPONENT24, mResX, mResY, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL, false);
+    LLImageGL::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
     gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
 
     sBytesAllocated += mResX*mResY*4;

@@ -72,16 +72,16 @@ void load_exr(const std::string& filename)
         U32 texName = 0;
         LLImageGL::generateTextures(1, &texName);
 
-        gEXRImage = new LLImageGL(texName, 4, GL_TEXTURE_2D, GL_RGB16F, GL_RGB16F, GL_FLOAT, LLTexUnit::TAM_CLAMP);
+        gEXRImage = new LLImageGL(texName, 4, GL_TEXTURE_2D, TexelFormat::RGBA16F, PixelFormat::RGBA, ComponentType::F32, LLTexUnit::TAM_CLAMP);
         gEXRImage->setHasMipMaps(true);
         gEXRImage->setUseMipMaps(true);
         gEXRImage->setFilteringOption(LLTexUnit::TFO_TRILINEAR);
 
         gGL.getTexUnit(0)->bind(gEXRImage);
 
-        gGL.texImage2D(texName, GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGBA, GL_FLOAT, out);
+        gGL.texImage2D(texName, GL_TEXTURE_2D, 0, TexelFormat::RGBA16F, width, height, PixelFormat::RGBA, ComponentType::F32, out);
 
-        LLImageGLMemory::alloc_tex_image(width, height, GL_RGB16F, 1);
+        LLImageGLMemory::alloc_tex_image(width, height, TexelFormat::RGBA16F, 1);
 
         free(out); // release memory of image data
 
@@ -274,7 +274,7 @@ void LLReflectionMapManager::update()
 
     if (!mRenderTarget.isComplete())
     {
-        U32 color_fmt = render_hdr ? GL_R11F_G11F_B10F : GL_RGB8;
+        TexelFormat color_fmt = render_hdr ? TexelFormat::R11G11B10F : TexelFormat::RGB8;
         U32 targetRes = mProbeResolution * 4; // super sample
         mRenderTarget.allocate(targetRes, targetRes, color_fmt, true);
     }
@@ -287,7 +287,7 @@ void LLReflectionMapManager::update()
         mMipChain.resize(count);
         for (U32 i = 0; i < count; ++i)
         {
-            mMipChain[i].allocate(res, res, render_hdr ? GL_R11F_G11F_B10F : GL_RGB8);
+            mMipChain[i].allocate(res, res, render_hdr ? TexelFormat::R11G11B10F : TexelFormat::RGB8);
             res /= 2;
         }
     }

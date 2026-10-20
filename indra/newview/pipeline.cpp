@@ -391,9 +391,9 @@ void validate_framebuffer_object();
 // target -- RenderTarget to add attachments to
 bool addDeferredAttachments(LLRenderTarget& target, bool for_impostor = false)
 {
-    U32 orm = GL_RGBA;
-    U32 norm = GL_RGBA16;
-    U32 emissive = GL_RGB16F;
+    TexelFormat orm = TexelFormat::RGBA8;
+    TexelFormat norm = TexelFormat::RGBA16;
+    TexelFormat emissive = TexelFormat::RGBA16F;
     // <FS:Beq> FIRE-34483 additional fix
     if (target.getNumTextures() > 1)
     {
@@ -407,8 +407,8 @@ bool addDeferredAttachments(LLRenderTarget& target, bool for_impostor = false)
 
     if (!hdr)
     {
-        norm = GL_RGB10_A2;
-        emissive = GL_RGB;
+        norm = TexelFormat::RGB10A2;
+        emissive = TexelFormat::RGB8;
     }
 
     bool valid = true;
@@ -986,12 +986,12 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     bool ssao = RenderDeferredSSAO;
 
     //allocate deferred rendering color buffers
-    if (!mRT->deferredScreen.allocate(resX, resY, GL_RGBA, true)) return false;
+    if (!mRT->deferredScreen.allocate(resX, resY, TexelFormat::RGBA8, true)) return false;
     if (!addDeferredAttachments(mRT->deferredScreen)) return false;
 
-    U32 screenFormat = hdr ? GL_RGBA16F : GL_RGBA;
+    TexelFormat screenFormat = hdr ? TexelFormat::RGBA16F : TexelFormat::RGBA8;
 
-    if (!mRT->screen.allocate(resX, resY, GL_RGBA16F)) return false;
+    if (!mRT->screen.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
 
     mRT->deferredScreen.shareDepthBuffer(mRT->screen);
 
@@ -1005,7 +1005,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         {
             for (LLRenderTarget& t : mShadowAccum)
             {
-                if (!t.allocate(resX, resY, GL_RGBA16F) || !t.addColorAttachment(GL_RGBA16F))
+                if (!t.allocate(resX, resY, TexelFormat::RGBA16F) || !t.addColorAttachment(TexelFormat::RGBA16F))
                 {
                     t.release();
                 }
@@ -1031,7 +1031,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         if (RenderUIBuffer)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("UIBuffer"); // <FS:Beq/> improve Tracy scoping 
-            if (!mUIScreen.allocate(resX, resY, GL_RGBA))
+            if (!mUIScreen.allocate(resX, resY, TexelFormat::RGBA8))
             {
                 return false;
             }
@@ -1040,11 +1040,11 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         if (RenderFSAAType > 0)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("FSAABuffer"); // <FS:Beq/> improve Tracy scoping 
-            if (!mFXAAMap.allocate(resX, resY, GL_RGBA)) return false;
+            if (!mFXAAMap.allocate(resX, resY, TexelFormat::RGBA8)) return false;
             if (RenderFSAAType == 2)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("SMAABuffer"); // <FS:Beq/> improve Tracy scoping 
-                if (!mSMAABlendBuffer.allocate(resX, resY, GL_RGBA, false)) return false;
+                if (!mSMAABlendBuffer.allocate(resX, resY, TexelFormat::RGBA8, false)) return false;
             }
         }
         else
@@ -1069,9 +1069,9 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         if (sDLSS)
         {
             // motion vectors at the render size; the upscaled picture at the window size
-            if (!mMotionMap.allocate(resX, resY, GL_RG16F)) return false;
-            if (!mAvatarVelocityMap.allocate(resX, resY, GL_RGBA16F)) return false;
-            if (!mUpscaledMap.allocate(window_res_x, window_res_y, GL_RGBA)) return false;
+            if (!mMotionMap.allocate(resX, resY, TexelFormat::RG16F)) return false;
+            if (!mAvatarVelocityMap.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
+            if (!mUpscaledMap.allocate(window_res_x, window_res_y, TexelFormat::RGBA8)) return false;
         }
         else
         {
@@ -1084,8 +1084,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         {
             // <FS> ray reconstruction (the albedos are 16 bit: linear 8 bit bands in the darks): the guides at the render size, its output and the post chain that follows at the window size. The chain is 16 bit
             // too: it used to run at the render size before the upscale, whose temporal averaging hid the 8 bit steps of dark gradients; after the upscale nothing hides them
-            if (!mRRGuides.allocate(resX, resY, GL_RGBA16F) || !mRRGuides.addColorAttachment(GL_RGBA16F) || !mRRGuides.addColorAttachment(GL_RGBA16F)
-                || !mRRHitDist.allocate(resX, resY, GL_R16F) || !mRRReflMotion.allocate(resX, resY, GL_RG16F) || !mRRHdr.allocate(window_res_x, window_res_y, GL_RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, GL_RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, GL_RGBA16F))
+            if (!mRRGuides.allocate(resX, resY, TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F)
+                || !mRRHitDist.allocate(resX, resY, TexelFormat::R16F) || !mRRReflMotion.allocate(resX, resY, TexelFormat::RG16F) || !mRRHdr.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F))
             {
                 LL_WARNS("VkDlss") << "the ray reconstruction targets could not be made: ray reconstruction stays off" << LL_ENDL;
                 mRRGuides.release();
@@ -1107,30 +1107,30 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         }
 
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("mPostMapBuffer"); // <FS:Beq/> improve Tracy scoping 
-        mPostPingMap.allocate(resX, resY, GL_RGBA);
-        mPostPongMap.allocate(resX, resY, GL_RGBA);
+        mPostPingMap.allocate(resX, resY, TexelFormat::RGBA8);
+        mPostPongMap.allocate(resX, resY, TexelFormat::RGBA8);
         } // <FS:Beq/> improve Tracy scoping 
         // The water exclusion mask needs its own depth buffer so we can take care of the problem of multiple water planes.
         // Should we ever make water not just a plane, it also aids with that as well as the water planes will be rendered into the mask.
         // Why do we do this? Because it saves us some janky logic in the exclusion shader when we generate the mask.
         // Regardless, this should always only be an R8 texture unless we choose to start having multiple kinds of exclusion that 8 bits can't handle.
         // - Geenz 2025-02-06
-        bool success = mWaterExclusionMask.allocate(resX, resY, GL_R8, true);
+        bool success = mWaterExclusionMask.allocate(resX, resY, TexelFormat::R8, true);
 
         assert(success);
 
         // used to scale down textures
         // See LLViwerTextureList::updateImagesCreateTextures and LLImageGL::scaleDown
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("DownResBuffer");// <FS:Beq/> create an independent preview screen target
-        mDownResMap.allocate(1024, 1024, GL_RGBA);
+        mDownResMap.allocate(1024, 1024, TexelFormat::RGBA8);
         }// <FS:Beq/> create an independent preview screen target
 
         // <FS:Beq> create an independent preview screen target
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("PreviewScreenBuffer");
-        mPreviewScreen.allocate(MAX_PREVIEW_WIDTH, MAX_PREVIEW_HEIGHT, GL_RGBA, true); 
+        mPreviewScreen.allocate(MAX_PREVIEW_WIDTH, MAX_PREVIEW_HEIGHT, TexelFormat::RGBA8, true); 
         } // </FS:Beq>
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("BakeMapBuffer");// <FS:Beq/> create an independent preview screen target
-        mBakeMap.allocate(LLAvatarAppearanceDefines::SCRATCH_TEX_WIDTH, LLAvatarAppearanceDefines::SCRATCH_TEX_HEIGHT, GL_RGBA);
+        mBakeMap.allocate(LLAvatarAppearanceDefines::SCRATCH_TEX_WIDTH, LLAvatarAppearanceDefines::SCRATCH_TEX_HEIGHT, TexelFormat::RGBA8);
         }// <FS:Beq/> create an independent preview screen target
     }
     //HACK make screenbuffer allocations start failing after 30 seconds
@@ -1162,7 +1162,7 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
     { //allocate 4 sun shadow maps
         for (U32 i = 0; i < 4; i++)
         {
-            if (!mRT->shadow[i].allocate(sun_shadow_map_width, sun_shadow_map_height, 0, true))
+            if (!mRT->shadow[i].allocate(sun_shadow_map_width, sun_shadow_map_height, TexelFormat::None, true))
             {
                 return false;
             }
@@ -1187,7 +1187,7 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
             U32 spot_shadow_map_height = height;
             for (U32 i = 0; i < 2; i++)
             {
-                if (!mSpotShadow[i].allocate(spot_shadow_map_width, spot_shadow_map_height, 0, true))
+                if (!mSpotShadow[i].allocate(spot_shadow_map_width, spot_shadow_map_height, TexelFormat::None, true))
                 {
                     return false;
                 }
@@ -1546,7 +1546,7 @@ void LLPipeline::createGLBuffers()
     // allocate screen space glow buffers
     const U32 glow_res = llmax(1, llmin(512, 1 << gSavedSettings.getS32("RenderGlowResolutionPow")));
     const bool glow_hdr = gSavedSettings.getBOOL("RenderGlowHDR");
-    const U32 glow_color_fmt = glow_hdr ? GL_RGBA16F : GL_RGBA;
+    const TexelFormat glow_color_fmt = glow_hdr ? TexelFormat::RGBA16F : TexelFormat::RGBA8;
     for (U32 i = 0; i < 3; i++)
     {
         mGlow[i].allocate(512, glow_res, glow_color_fmt);
@@ -1576,7 +1576,7 @@ void LLPipeline::createGLBuffers()
         LLImageGL::generateTextures(1, &mNoiseMap);
 
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mNoiseMap);
-        LLImageGL::setManualImage(mNoiseMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGB16F, noiseRes, noiseRes, GL_RGB, GL_FLOAT, noise, false);
+        LLImageGL::setManualImage(mNoiseMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, TexelFormat::RGBA16F, noiseRes, noiseRes, PixelFormat::RGB, ComponentType::F32, noise, false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
 
@@ -1591,7 +1591,7 @@ void LLPipeline::createGLBuffers()
 
         LLImageGL::generateTextures(1, &mTrueNoiseMap);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mTrueNoiseMap);
-        LLImageGL::setManualImage(mTrueNoiseMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGB16F, noiseRes, noiseRes, GL_RGB,GL_FLOAT, noise, false);
+        LLImageGL::setManualImage(mTrueNoiseMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, TexelFormat::RGBA16F, noiseRes, noiseRes, PixelFormat::RGB,ComponentType::F32, noise, false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
 
@@ -1607,8 +1607,8 @@ void LLPipeline::createGLBuffers()
 
         LLImageGL::generateTextures(1, &mSMAAAreaMap);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mSMAAAreaMap);
-        LLImageGL::setManualImage(mSMAAAreaMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RG8, AREATEX_WIDTH, AREATEX_HEIGHT, GL_RG,
-            GL_UNSIGNED_BYTE, tempBuffer.data(), false);
+        LLImageGL::setManualImage(mSMAAAreaMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, TexelFormat::RG8, AREATEX_WIDTH, AREATEX_HEIGHT, PixelFormat::RG,
+            ComponentType::U8, tempBuffer.data(), false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
     }
@@ -1625,8 +1625,8 @@ void LLPipeline::createGLBuffers()
 
         LLImageGL::generateTextures(1, &mSMAASearchMap);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mSMAASearchMap);
-        LLImageGL::setManualImage(mSMAASearchMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_R8, SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT,
-            GL_RED, GL_UNSIGNED_BYTE, tempBuffer.data(), false);
+        LLImageGL::setManualImage(mSMAASearchMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, TexelFormat::R8, SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT,
+            PixelFormat::R, ComponentType::U8, tempBuffer.data(), false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
     }
@@ -1638,28 +1638,28 @@ void LLPipeline::createGLBuffers()
         static LLCachedControl<std::string> sample_path(gSavedSettings, "SamplePath", "");
         if (gDirUtilp->fileExists(sample_path()) && png_image->load(sample_path()) && png_image->decode(raw_image, 0.0f))
         {
-            U32 format = 0;
+            PixelFormat format = PixelFormat::None;
             switch (raw_image->getComponents())
             {
             case 1:
-                format = GL_RED;
+                format = PixelFormat::R;
                 break;
             case 2:
-                format = GL_RG;
+                format = PixelFormat::RG;
                 break;
             case 3:
-                format = GL_RGB;
+                format = PixelFormat::RGB;
                 break;
             case 4:
-                format = GL_RGBA;
+                format = PixelFormat::RGBA;
                 break;
             default:
                 return;
             };
             LLImageGL::generateTextures(1, &mSMAASampleMap);
             gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mSMAASampleMap);
-            LLImageGL::setManualImage(mSMAASampleMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGB, raw_image->getWidth(),
-                raw_image->getHeight(), format, GL_UNSIGNED_BYTE, raw_image->getData(), false);
+            LLImageGL::setManualImage(mSMAASampleMap, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, TexelFormat::RGB8, raw_image->getWidth(),
+                raw_image->getHeight(), format, ComponentType::U8, raw_image->getData(), false);
             stop_glerror();
             gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
             gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
@@ -1681,7 +1681,7 @@ void LLPipeline::generateBrdfLut(bool allocate)
     LL_INFOS("RTMaterials") << "BRDF lookup generation, allocate " << allocate << ", program complete " << gDeferredGenBrdfLutProgram.isComplete() << LL_ENDL;
     if (allocate)
     {
-        mPbrBrdfLut.allocate(512, 512, GL_RG16F);
+        mPbrBrdfLut.allocate(512, 512, TexelFormat::RG16F);
     }
     RenderPassScope pass(mPbrBrdfLut);
 
@@ -1749,18 +1749,18 @@ void LLPipeline::createLUTBuffers()
             }
         }
 
-        U32 pix_format = GL_R16F;
+        TexelFormat pix_format = TexelFormat::R16F;
 #if LL_DARWIN
         if(!gGLManager.mIsApple)
         {
             // Need to work around limited precision with 10.6.8 and older drivers
             //
-            pix_format = GL_R32F;
+            pix_format = TexelFormat::R32F;
         }
 #endif
         LLImageGL::generateTextures(1, &mLightFunc);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mLightFunc);
-        LLImageGL::setManualImage(mLightFunc, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, pix_format, lightResX, lightResY, GL_RED, GL_FLOAT, ls, false);
+        LLImageGL::setManualImage(mLightFunc, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, pix_format, lightResX, lightResY, PixelFormat::R, ComponentType::F32, ls, false);
         gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
         gGL.texParameteri(mLightFunc, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1771,13 +1771,13 @@ void LLPipeline::createLUTBuffers()
 
     generateBrdfLut(true);
 
-    mExposureMap.allocate(1, 1, GL_R16F);
+    mExposureMap.allocate(1, 1, TexelFormat::R16F);
     RenderPassScope pass_1775(mExposureMap, RenderPass::Clear(1, 1, 1, 0));
     pass_1775.end();
 
-    mLuminanceMap.allocate(256, 256, GL_R16F, false, LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_AUTO);
+    mLuminanceMap.allocate(256, 256, TexelFormat::R16F, false, LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_AUTO);
 
-    mLastExposure.allocate(1, 1, GL_R16F);
+    mLastExposure.allocate(1, 1, TexelFormat::R16F);
 }
 
 
@@ -16554,7 +16554,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
         {
             if (!avatar->mImpostor.isComplete())
             {
-                avatar->mImpostor.allocate(resX, resY, GL_RGBA, true);
+                avatar->mImpostor.allocate(resX, resY, TexelFormat::RGBA8, true);
 
                 if (LLPipeline::sRenderDeferred)
                 {

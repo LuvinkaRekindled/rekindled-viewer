@@ -672,8 +672,8 @@ public:
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
-                                     LLGLint internal_format = 0,
-                                     LLGLenum primary_format = 0,
+                                     TexelFormat internal_format = TexelFormat::None,
+                                     PixelFormat primary_format = PixelFormat::None,
                                      LLHost request_from_host = LLHost()
                                      );
 
@@ -682,8 +682,8 @@ public:
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
-                                     LLGLint internal_format = 0,
-                                     LLGLenum primary_format = 0,
+                                     TexelFormat internal_format = TexelFormat::None,
+                                     PixelFormat primary_format = PixelFormat::None,
                                      const LLUUID& force_id = LLUUID::null
                                      );
 
@@ -692,8 +692,8 @@ public:
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
-                                     LLGLint internal_format = 0,
-                                     LLGLenum primary_format = 0,
+                                     TexelFormat internal_format = TexelFormat::None,
+                                     PixelFormat primary_format = PixelFormat::None,
                                      const LLUUID& force_id = LLUUID::null
                                      );
 

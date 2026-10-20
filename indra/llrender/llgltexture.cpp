@@ -186,7 +186,7 @@ bool LLGLTexture::createGLTexture(S32 discard_level, const LLImageRaw* imageraw,
     return ret ;
 }
 
-void LLGLTexture::setExplicitFormat(LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format, bool swap_bytes, const char* file, int line)
+void LLGLTexture::setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, bool swap_bytes, const char* file, int line)
 {
     llassert(mGLTexturep.notNull()) ;
 
@@ -321,7 +321,7 @@ S32Bytes LLGLTexture::getTextureMemory() const
     return mGLTexturep->mTextureMemory ;
 }
 
-LLGLenum LLGLTexture::getPrimaryFormat() const
+PixelFormat LLGLTexture::getPrimaryFormat() const
 {
     llassert(mGLTexturep.notNull()) ;
 

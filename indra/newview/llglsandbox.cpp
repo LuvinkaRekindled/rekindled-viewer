@@ -1101,7 +1101,7 @@ F32 gpu_benchmark()
     for (U32 i = 0; i < count; ++i)
     {
         //allocate render targets and textures
-        if (!dest[i].allocate(res, res, GL_RGBA))
+        if (!dest[i].allocate(res, res, TexelFormat::RGBA8))
         {
             LL_WARNS("Benchmark") << "Failed to allocate render target." << LL_ENDL;
             // abandon the benchmark test
@@ -1119,7 +1119,7 @@ F32 gpu_benchmark()
             delete[] pixels;
             return -1.f;
         }
-        LLImageGL::setManualImage(texHolder.name(i), GL_TEXTURE_2D, 0, GL_RGBA, res,res,GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        LLImageGL::setManualImage(texHolder.name(i), GL_TEXTURE_2D, 0, TexelFormat::RGBA8, res,res,PixelFormat::RGBA, ComponentType::U8, pixels);
         // disable mipmaps and use point filtering to cause cache misses
         gGL.getTexUnit(0)->setHasMipMaps(false);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);

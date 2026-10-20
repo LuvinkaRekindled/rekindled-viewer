@@ -872,7 +872,7 @@ public:
             S32 x_raw = (S32)llround(coord.mX * gViewerWindow->getWindowWidthRaw() / (F32) gViewerWindow->getWindowWidthScaled());
             S32 y_raw = (S32)llround(coord.mY * gViewerWindow->getWindowHeightRaw() / (F32) gViewerWindow->getWindowHeightScaled());
 
-            gGL.readPixels(x_raw, y_raw, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, color);
+            gGL.readPixels(x_raw, y_raw, 1, 1, PixelFormat::RGBA, ComponentType::U8, color);
             addText(xpos, ypos, llformat("Pixel <%1d, %1d> R:%1d G:%1d B:%1d A:%1d", x_raw, y_raw, color[0], color[1], color[2], color[3]));
             ypos += y_inc;
         }
@@ -6245,8 +6245,8 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
             (image_width > window_width || image_height > window_height) && LLPipeline::sRenderDeferred && !show_ui)
         {
             // <FS:Ansariel> FIRE-15667: 24bit depth maps
-            //U32 color_fmt = type == LLSnapshotModel::SNAPSHOT_TYPE_DEPTH ? GL_DEPTH_COMPONENT : GL_RGBA;
-            U32 color_fmt = (type == LLSnapshotModel::SNAPSHOT_TYPE_DEPTH || type == LLSnapshotModel::SNAPSHOT_TYPE_DEPTH24) ? GL_DEPTH_COMPONENT : GL_RGBA;
+            //TexelFormat color_fmt = type == LLSnapshotModel::SNAPSHOT_TYPE_DEPTH ? TexelFormat::Depth : TexelFormat::RGBA8;
+            TexelFormat color_fmt = (type == LLSnapshotModel::SNAPSHOT_TYPE_DEPTH || type == LLSnapshotModel::SNAPSHOT_TYPE_DEPTH24) ? TexelFormat::Depth : TexelFormat::RGBA8;
             // </FS:Ansariel>
             if (scratch_space.allocate(image_width, image_height, color_fmt, true))
             {
@@ -6422,7 +6422,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                             gGL.readPixels(
                                      subimage_x_offset, out_y + subimage_y_offset,
                                      read_width, 1,
-                                     GL_RGB, GL_UNSIGNED_BYTE,
+                                     PixelFormat::RGB, ComponentType::U8,
                                      raw->getData() + output_buffer_offset
                                      );
                         }
@@ -6433,7 +6433,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                             gGL.readPixels(
                                          subimage_x_offset, out_y + subimage_y_offset,
                                          read_width, 1,
-                                         GL_DEPTH_COMPONENT, GL_FLOAT,
+                                         PixelFormat::Depth, ComponentType::F32,
                                          depth_line_buffer->getData()// current output pixel is beginning of buffer...
                                          );
 
@@ -6467,7 +6467,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                             gGL.readPixels(
                                          subimage_x_offset, out_y + subimage_y_offset,
                                          read_width, 1,
-                                         GL_DEPTH_COMPONENT, GL_FLOAT,
+                                         PixelFormat::Depth, ComponentType::F32,
                                          depth_line_buffer->getData()// current output pixel is beginning of buffer...
                                          );
 
@@ -6594,7 +6594,7 @@ bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_
 
     LLRenderTarget scratch_space;
     RenderPassScope scratch_pass;       // F3.5b: begun when the scratch target is bound for the snapshot, ended where it was flushed
-    U32 color_fmt = GL_RGBA;
+    TexelFormat color_fmt = TexelFormat::RGBA8;
     if (scratch_space.allocate(image_width, image_height, color_fmt, true))
     {
         if (gPipeline.allocateScreenBuffer(image_width, image_height))
@@ -6643,7 +6643,7 @@ bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_
         0, 0,
         image_width,
         image_height,
-        GL_RGB, GL_UNSIGNED_BYTE,
+        PixelFormat::RGB, ComponentType::U8,
         raw->getData()
     );
     stop_glerror();

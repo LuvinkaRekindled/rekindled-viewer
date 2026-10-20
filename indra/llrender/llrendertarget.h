@@ -43,7 +43,7 @@
     ...
 
     //allocate a 256x256 RGBA render target with depth buffer
-    target.allocate(256,256,GL_RGBA,TRUE);
+    target.allocate(256,256,TexelFormat::RGBA8,TRUE);
 
     //render to contents of offscreen buffer
     target.bindTarget();
@@ -78,10 +78,10 @@ public:
     //multiple calls will release previously allocated resources
     // resX - width
     // resY - height
-    // color_fmt - GL color format (e.g. GL_RGB)
+    // color_fmt - how the colour attachment stores texels (e.g. TexelFormat::RGB8; None: no colour attachment)
     // depth - if true, allocate a depth buffer
     // usage - deprecated, should always be TT_TEXTURE
-    bool allocate(U32 resx, U32 resy, U32 color_fmt, bool depth = false, LLTexUnit::eTextureType usage = LLTexUnit::TT_TEXTURE, LLTexUnit::eTextureMipGeneration generateMipMaps = LLTexUnit::TMG_NONE, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    bool allocate(U32 resx, U32 resy, TexelFormat color_fmt, bool depth = false, LLTexUnit::eTextureType usage = LLTexUnit::TT_TEXTURE, LLTexUnit::eTextureMipGeneration generateMipMaps = LLTexUnit::TMG_NONE, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
     //resize existing attachments to use new resolution and color format
     // CAUTION: if the GL runs out of memory attempting to resize, this render target will be undefined
@@ -109,7 +109,7 @@ public:
 
     //add color buffer attachment
     //limit of 4 color attachments per render target
-    bool addColorAttachment(U32 color_fmt, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    bool addColorAttachment(TexelFormat color_fmt, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
     //allocate a depth texture
     bool allocateDepth();
@@ -185,7 +185,7 @@ protected:
     U32 mResX;
     U32 mResY;
     std::vector<U32> mTex;
-    std::vector<U32> mInternalFormat;
+    std::vector<TexelFormat> mInternalFormat;
     U32 mFBO;
 
     // F3.5a: where the pass was begun (bindTarget's call site), the draw count at that moment, the counters of the entry points and the pass check

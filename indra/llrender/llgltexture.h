@@ -133,7 +133,7 @@ public:
     bool       createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true, S32 category = LLGLTexture::OTHER, bool defer_copy = false, LLGLuint* tex_name = nullptr);
 
     void       setFilteringOption(LLTexUnit::eTextureFilterOptions option);
-    void       setExplicitFormat(LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format = 0, bool swap_bytes = false, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void       setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format = ComponentType::None, bool swap_bytes = false, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void       setAddressMode(LLTexUnit::eTextureAddressMode mode);
     bool       setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, LLGLuint use_name = 0);
     bool       setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, LLGLuint use_name = 0);
@@ -148,7 +148,7 @@ public:
     S8         getComponents() const;
     bool       getBoundRecently() const;
     S32Bytes   getTextureMemory() const ;
-    LLGLenum   getPrimaryFormat() const;
+    PixelFormat getPrimaryFormat() const;
     bool       getIsAlphaMask() const ;
     LLTexUnit::eTextureType getTarget(void) const ;
 // [RLVa:KB] - Checked: RLVa-2.2 (@setoverlay)

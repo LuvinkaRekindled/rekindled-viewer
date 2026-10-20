@@ -796,7 +796,7 @@ void LLBumpImageList::onSourceStandardLoaded( bool success, LLViewerFetchedTextu
         {
             generateNormalMapFromAlpha(src, nrm_image);
         }
-        src_vi->setExplicitFormat(GL_RGBA, GL_RGBA);
+        src_vi->setExplicitFormat(TexelFormat::RGBA8, PixelFormat::RGBA);
         {
             if (!src_vi->createGLTexture(src_vi->getDiscardLevel(), nrm_image))
             {
@@ -895,7 +895,7 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
         //convert to normal map
         LL_PROFILE_ZONE_NAMED("bil - create normal map");
 
-        bump->setExplicitFormat(GL_RGBA, GL_RGBA);
+        bump->setExplicitFormat(TexelFormat::RGBA8, PixelFormat::RGBA);
 
         LLImageGL* src_img = src->getGLTexture();
         LLImageGL* dst_img = bump->getGLTexture();
@@ -909,7 +909,7 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
 
         gGL.getTexUnit(0)->bind(bump);
 
-        LLImageGL::setManualImage(dst_img->getTexName(), GL_TEXTURE_2D, 0, dst_img->getPrimaryFormat(), dst_img->getWidth(), dst_img->getHeight(), GL_RGBA, GL_UNSIGNED_BYTE, nullptr, false);
+        LLImageGL::setManualImage(dst_img->getTexName(), GL_TEXTURE_2D, 0, TexelFormat::RGBA8, dst_img->getWidth(), dst_img->getHeight(), PixelFormat::RGBA, ComponentType::U8, nullptr, false);
 
         LLGLuint tex_name = dst_img->getTexName();
         // point render target at empty buffer

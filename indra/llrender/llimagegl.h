@@ -53,7 +53,7 @@ class LLWindow;
 
 namespace LLImageGLMemory
 {
-    void alloc_tex_image(U32 width, U32 height, U32 intformat, U32 count);
+    void alloc_tex_image(U32 width, U32 height, TexelFormat intformat, U32 count);
     void free_tex_image(U32 texName);
     void free_tex_images(U32 count, const U32* texNames);
     void free_cur_tex_image();
@@ -91,9 +91,12 @@ public:
     static void deleteTextures(S32 numTextures, const U32 *textures);
 
     // Size calculation
-    static S32 dataFormatBits(S32 dataformat);
-    static S64 dataFormatBytes(S32 dataformat, S32 width, S32 height);
-    static S32 dataFormatComponents(S32 dataformat);
+    // (F3.6e) texel formats: bits a texel takes in memory; pixel formats: client data of 8 bit components
+    static S32 dataFormatBits(TexelFormat dataformat);
+    static S32 dataFormatBits(PixelFormat dataformat);
+    static S64 dataFormatBytes(TexelFormat dataformat, S32 width, S32 height);
+    static S64 dataFormatBytes(PixelFormat dataformat, S32 width, S32 height);
+    static S32 dataFormatComponents(PixelFormat dataformat);
 
     bool updateBindStats() const ;
     F32 getTimePassedSinceLastBound();
@@ -121,7 +124,7 @@ public:
     LLImageGL(const LLImageRaw* imageraw, bool usemipmaps = true, bool allow_compression = true);
 
     // For wrapping textures created via GL elsewhere with our API only. Use with caution.
-    LLImageGL(LLGLuint mTexName, U32 components, LLGLenum target, LLGLint  formatInternal, LLGLenum formatPrimary, LLGLenum formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    LLImageGL(LLGLuint mTexName, U32 components, LLGLenum target, TexelFormat formatInternal, PixelFormat formatPrimary, ComponentType formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
 protected:
     virtual ~LLImageGL();
@@ -137,7 +140,7 @@ public:
     void setAllowCompression(bool allow) { mAllowCompression = allow; }
 
     // the texture is named: nothing is bound or read from the unit state
-    static void setManualImage(U32 texname, U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void *pixels, bool allow_compression = true, const char* file = __builtin_FILE(), int line = __builtin_LINE());       // file/line: LL_VK_FORMAT_VERIFY
+    static void setManualImage(U32 texname, U32 target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void *pixels, bool allow_compression = true, const char* file = __builtin_FILE(), int line = __builtin_LINE());       // file/line: LL_VK_FORMAT_VERIFY
 
     bool createGLTexture() ;
     bool createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true,
@@ -161,7 +164,7 @@ public:
     void destroyGLTexture();
     void forceToInvalidateGLTexture();
 
-    void setExplicitFormat(LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format = 0, bool swap_bytes = false, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    void setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format = ComponentType::None, bool swap_bytes = false, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void setComponents(S8 ncomponents) { mComponents = ncomponents; }
 
     S32  getDiscardLevel() const        { return mCurrentDiscardLevel; }
@@ -181,8 +184,8 @@ public:
     bool getBoundRecently() const;
     bool isJustBound() const;
     bool getHasExplicitFormat() const { return mHasExplicitFormat; }
-    LLGLenum getPrimaryFormat() const { return mFormatPrimary; }
-    LLGLenum getFormatType() const { return mFormatType; }
+    PixelFormat getPrimaryFormat() const { return mFormatPrimary; }
+    ComponentType getFormatType() const { return mFormatType; }
 
     bool getHasGLTexture() const { return mTexName != 0; }
     LLGLuint getTexName() const { return mTexName; }
@@ -249,6 +252,7 @@ private:
     U32 createPickMask(S32 pWidth, S32 pHeight);
     void freePickMask();
     bool isCompressed();
+    S64 formatBytes(S32 w, S32 h) const;     // bytes of one level of w x h in the format the data is in (block compressed: the texel format)
 
     LLPointer<LLImageRaw> mSaveData; // used for destroyGL/restoreGL
     LL::WorkQueue::weak_t mMainQueue;
@@ -298,9 +302,9 @@ private:
     LLTexUnit::eTextureAddressMode      mAddressMode;   // Defaults to TAM_WRAP
     LLTexUnit::eTextureFilterOptions    mFilterOption;  // Defaults to TFO_ANISOTROPIC
 
-    LLGLint  mFormatInternal; // = GL internalformat
-    LLGLenum mFormatPrimary;  // = GL format (pixel data format)
-    LLGLenum mFormatType;
+    TexelFormat   mFormatInternal; // how the texture stores texels (was the GL internal format)
+    PixelFormat   mFormatPrimary;  // the client pixel data layout (was the GL format)
+    ComponentType mFormatType;
     bool     mFormatSwapBytes;// if true, use glPixelStorei(GL_UNPACK_SWAP_BYTES, 1)
 
     bool mExternalTexture;

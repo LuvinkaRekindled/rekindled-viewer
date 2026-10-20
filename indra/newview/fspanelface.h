@@ -777,7 +777,7 @@ public:
     {
     public:
         static void getFace(class LLFace*& face_to_return, bool& identical_face);
-        static void getImageFormat(LLGLenum& image_format_to_return, bool& identical_face, bool& missing_asset);
+        static void getImageFormat(PixelFormat& image_format_to_return, bool& identical_face, bool& missing_asset);
         static void getTexId(LLUUID& id, bool& identical);
         static void getObjectScaleS(F32& scale_s, bool& identical);
         static void getObjectScaleT(F32& scale_t, bool& identical);

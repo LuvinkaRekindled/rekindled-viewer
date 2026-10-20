@@ -5708,21 +5708,21 @@ S32 LLViewerObject::setTETexture(const U8 te, const LLUUID& uuid)
 {
     // Invalid host == get from the agent's sim
     LLViewerFetchedTexture *image = LLViewerTextureManager::getFetchedTexture(
-        uuid, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, LLHost());
+        uuid, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, LLHost());
         return setTETextureCore(te, image);
 }
 
 S32 LLViewerObject::setTENormalMap(const U8 te, const LLUUID& uuid)
 {
     LLViewerFetchedTexture *image = (uuid == LLUUID::null) ? NULL : LLViewerTextureManager::getFetchedTexture(
-        uuid, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, LLHost());
+        uuid, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, LLHost());
     return setTENormalMapCore(te, image);
 }
 
 S32 LLViewerObject::setTESpecularMap(const U8 te, const LLUUID& uuid)
 {
     LLViewerFetchedTexture *image = (uuid == LLUUID::null) ? NULL : LLViewerTextureManager::getFetchedTexture(
-        uuid, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, LLHost());
+        uuid, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, LLHost());
     return setTESpecularMapCore(te, image);
 }
 
@@ -6121,17 +6121,17 @@ LLViewerTexture *LLViewerObject::getTEImage(const U8 face) const
 bool LLViewerObject::isImageAlphaBlended(const U8 te) const
 {
     LLViewerTexture* image = getTEImage(te);
-    LLGLenum format = image ? image->getPrimaryFormat() : GL_RGB;
+    PixelFormat format = image ? image->getPrimaryFormat() : PixelFormat::RGB;
     switch (format)
     {
-        case GL_RGBA:
-        case GL_ALPHA:
+        case PixelFormat::RGBA:
+        case PixelFormat::Alpha:
         {
             return true;
         }
         break;
 
-        case GL_RGB: break;
+        case PixelFormat::RGB: break;
         default:
         {
             LL_WARNS() << "Unexpected tex format in LLViewerObject::isImageAlphaBlended...returning no alpha." << LL_ENDL;
