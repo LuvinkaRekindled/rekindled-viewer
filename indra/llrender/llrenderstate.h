@@ -10,7 +10,7 @@
  *   BlendScope blend(true);                         was: LLGLEnable blend(GL_BLEND);
  *   CullScope cull(false);                          was: LLGLDisable cull(GL_CULL_FACE);
  *   BlendScope blend(enabled);                      was: LLGLState blend(GL_BLEND, enabled);
- *   DepthScope depth(true, false, CompareOp::Less); was: LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_LESS);
+ *   DepthScope depth(true, false, CompareOp::Less); was: LLGLDepthTest depth(true, false, GL_LESS);
  *   BlendScope blend(cond, false-or-true);          was: LLGLEnable blend(cond ? GL_BLEND : 0);   (second argument 'active': false changes nothing)
  *
  * LL_VK_STATE_GUARD_CHECK=1: when a guard is destroyed the block must still hold what the guard set; if not, something changed the state while the guard

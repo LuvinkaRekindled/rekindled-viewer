@@ -42,6 +42,7 @@
 #include "llpointer.h"
 #include "llglheaders.h"
 #include "llrenderstate.h"
+#include "llrenderformat.h"
 #include "llrendermatrix.h"
 #include "llmatrix4a.h"
 #include "glm/mat4x4.hpp"
@@ -466,8 +467,8 @@ public:
     void setColorMask(bool writeColorR, bool writeColorG, bool writeColorB, bool writeAlpha);
     // <FS> Phase 2a: GL state/clear calls that used to be made directly by the viewer. They are thin
     // pass-throughs today (no flush, so behaviour is unchanged); the Vulkan backend will implement them.
-    // Mask/face arguments are the GL enum values (GL_COLOR_BUFFER_BIT, GL_FRONT, ...).
-    void clearBuffers(U32 gl_buffer_mask);
+    // Mask/face arguments are the GL enum values (ClearBits::Color, GL_FRONT, ...).
+    void clearBuffers(ClearBits mask);
     void setClearColor(F32 r, F32 g, F32 b, F32 a);
     const F32* getClearColor() const { return mClearColor; }       // F3.5d: the pass scope clears to this unless it is given a colour
     void setViewport(S32 x, S32 y, S32 width, S32 height);

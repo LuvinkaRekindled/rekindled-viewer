@@ -298,7 +298,7 @@ void LLPostProcess::doEffects(void)
 
     /// Clear the frame buffer.
     gGL.setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    gGL.clearBuffers(GL_COLOR_BUFFER_BIT);
+    gGL.clearBuffers(ClearBits::Color);
 
     /// Change to an orthogonal view
     viewOrthogonal(screenW, screenH);

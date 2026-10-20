@@ -568,7 +568,7 @@ void LLGLSLShader::mirrorVector(S32 location, int kind, U32 components, U32 coun
     mVkProgram->setFloatsAt((size_t)twin, reinterpret_cast<const F32*>(data), components, count);
 }
 
-void LLGLSLShader::mirrorMatrix(S32 location, U32 columns, U32 rows, GLboolean transpose, U32 count, const F32* data)
+void LLGLSLShader::mirrorMatrix(S32 location, U32 columns, U32 rows, bool transpose, U32 count, const F32* data)
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
     if (!mVkProgram || !data) return;
@@ -577,7 +577,7 @@ void LLGLSLShader::mirrorMatrix(S32 location, U32 columns, U32 rows, GLboolean t
         const S32 twin = vkTwinOf(location);
         if (twin >= 0)
         {
-            vkWriteMatrix(twin, data, columns, rows, transpose != GL_FALSE, count);
+            vkWriteMatrix(twin, data, columns, rows, transpose != false, count);
             return;
         }
     }
@@ -595,7 +595,7 @@ void LLGLSLShader::mirrorMatrix(S32 location, U32 columns, U32 rows, GLboolean t
     }
     if (LLVkAsync::gUniformRec != 0 && (!async || LLVkAsync::mainOnlyProducer()))
     {
-        vkWriteMatrix(twin, data, columns, rows, transpose != GL_FALSE, count);
+        vkWriteMatrix(twin, data, columns, rows, transpose != false, count);
         if (LLVkAsync::gUniformRec == 2)
         {
             return;
@@ -864,7 +864,7 @@ void LLGLSLShader::mirrorDestroy() {}
 void LLGLSLShader::mirrorCreate() {}
 void LLGLSLShader::mirrorScalar(S32, int, std::initializer_list<double>) {}
 void LLGLSLShader::mirrorVector(S32, int, U32, U32, const void*) {}
-void LLGLSLShader::mirrorMatrix(S32, U32, U32, GLboolean, U32, const F32*) {}
+void LLGLSLShader::mirrorMatrix(S32, U32, U32, bool, U32, const F32*) {}
 #endif
 
 bool LLGLSLShader::createShader()
@@ -2205,7 +2205,7 @@ void LLGLSLShader::uniform4uiv(U32 index, U32 count, const U32* v)
     }
 }
 
-void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, const F32* v)
+void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2227,7 +2227,7 @@ void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, c
     }
 }
 
-void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, const F32* v)
+void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2249,7 +2249,7 @@ void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, c
     }
 }
 
-void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose, const F32* v)
+void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2271,7 +2271,7 @@ void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose,
     }
 }
 
-void LLGLSLShader::uniformMatrix4fv(U32 index, U32 count, GLboolean transpose, const F32* v)
+void LLGLSLShader::uniformMatrix4fv(U32 index, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2556,7 +2556,7 @@ void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, c
     }
 }
 
-void LLGLSLShader::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const F32* v)
+void LLGLSLShader::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2570,7 +2570,7 @@ void LLGLSLShader::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 cou
     }
 }
 
-void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const F32* v)
+void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
@@ -2584,7 +2584,7 @@ void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 cou
     }
 }
 
-void LLGLSLShader::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, GLboolean transpose, const F32* v)
+void LLGLSLShader::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;

@@ -3279,7 +3279,7 @@ void LLPipeline::shiftObjects(const LLVector3 &offset)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     assertInitialized();
 
-    gGL.clearBuffers(GL_DEPTH_BUFFER_BIT);
+    gGL.clearBuffers(ClearBits::Depth);
     gDepthDirty = true;
 
     LLVector4a offseta;
@@ -6750,7 +6750,7 @@ void LLPipeline::renderDebug()
                         const LLColor4 clearColor = gSavedSettings.getColor4("PathfindingNavMeshClear");
                         gGL.setColorMask(true, true);
                         gGL.setClearColor(clearColor.mV[0],clearColor.mV[1],clearColor.mV[2],0);
-                        gGL.clearBuffers(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // no stencil -- deprecated | GL_STENCIL_BUFFER_BIT);
+                        gGL.clearBuffers(ClearBits::Depth | ClearBits::Color); // no stencil -- deprecated | ClearBits::Stencil);
                         gGL.setColorMask(true, false);
                         gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
                     }
@@ -10221,8 +10221,8 @@ void LLPipeline::renderAvatarVelocity()
     {
         program.bind();
         program.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
-        program.uniformMatrix4fv(view_proj_cur_s, 1, GL_FALSE, glm::value_ptr(view_proj_cur));
-        program.uniformMatrix4fv(view_proj_prev_s, 1, GL_FALSE, glm::value_ptr(view_proj_prev));
+        program.uniformMatrix4fv(view_proj_cur_s, 1, false, glm::value_ptr(view_proj_cur));
+        program.uniformMatrix4fv(view_proj_prev_s, 1, false, glm::value_ptr(view_proj_prev));
         program.uniform2f(render_res_s, (F32)mAvatarVelocityMap.getWidth(), (F32)mAvatarVelocityMap.getHeight());
         program.uniform2fv(proj_z_s, 1, proj_z);
         program.uniform1f(tolerance_s, 0.004f);
@@ -10614,8 +10614,8 @@ LLRenderTarget* LLPipeline::accumulateSunShadow(LLRenderTarget* light)
         gShadowAccumProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &prev, false, LLTexUnit::TFO_BILINEAR, 1);
         const bool velocity = mAvatarVelocityDrawn && mAvatarVelocityMap.isComplete();
         gShadowAccumProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, velocity ? &mAvatarVelocityMap : light, false, LLTexUnit::TFO_POINT, 0);
-        gShadowAccumProgram.uniformMatrix4fv(prev_clip_s, 1, GL_FALSE, glm::value_ptr(prev_clip_from_view));
-        gShadowAccumProgram.uniformMatrix4fv(prev_view_s, 1, GL_FALSE, glm::value_ptr(prev_view_from_view));
+        gShadowAccumProgram.uniformMatrix4fv(prev_clip_s, 1, false, glm::value_ptr(prev_clip_from_view));
+        gShadowAccumProgram.uniformMatrix4fv(prev_view_s, 1, false, glm::value_ptr(prev_view_from_view));
         gShadowAccumProgram.uniform2f(res_s, (F32)out.getWidth(), (F32)out.getHeight());
         gShadowAccumProgram.uniform1f(len_s, (F32)llclamp(history_setting(), 2, 32));
         gShadowAccumProgram.uniform1f(use_s, have_history ? 1.f : 0.f);
@@ -10656,8 +10656,8 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     gMotionVectorProgram.uniform1f(use_avatar_s, use_avatar ? 1.f : 0.f);
     mAvatarVelocityDrawn = false;
     static LLStaticHashedString to_cur_s("to_cur"), to_prev_s("to_prev"), res_s("render_res");
-    gMotionVectorProgram.uniformMatrix4fv(to_cur_s, 1, GL_FALSE, glm::value_ptr(to_cur));
-    gMotionVectorProgram.uniformMatrix4fv(to_prev_s, 1, GL_FALSE, glm::value_ptr(to_prev));
+    gMotionVectorProgram.uniformMatrix4fv(to_cur_s, 1, false, glm::value_ptr(to_cur));
+    gMotionVectorProgram.uniformMatrix4fv(to_prev_s, 1, false, glm::value_ptr(to_prev));
     gMotionVectorProgram.uniform2f(res_s, (F32)dst->getWidth(), (F32)dst->getHeight());
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -10705,11 +10705,11 @@ void LLPipeline::generateRRReflectionMotion(LLRenderTarget* dst)
     bindDeferredShader(gRRReflMotionProgram);
     gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mMotionMap, false, LLTexUnit::TFO_POINT, 0);
     gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mRRHitDist, false, LLTexUnit::TFO_POINT, 0);
-    gRRReflMotionProgram.uniformMatrix4fv(inv_scene_s, 1, GL_FALSE, glm::value_ptr(inv_scene_f));
-    gRRReflMotionProgram.uniformMatrix4fv(cur_s, 1, GL_FALSE, glm::value_ptr(view_proj_cur));
-    gRRReflMotionProgram.uniformMatrix4fv(prev_s, 1, GL_FALSE, glm::value_ptr(view_proj_prev));
+    gRRReflMotionProgram.uniformMatrix4fv(inv_scene_s, 1, false, glm::value_ptr(inv_scene_f));
+    gRRReflMotionProgram.uniformMatrix4fv(cur_s, 1, false, glm::value_ptr(view_proj_cur));
+    gRRReflMotionProgram.uniformMatrix4fv(prev_s, 1, false, glm::value_ptr(view_proj_prev));
     gRRReflMotionProgram.uniform3f(cam_s, view_inv[3][0], view_inv[3][1], view_inv[3][2]);
-    gRRReflMotionProgram.uniformMatrix3fv(v2w_s, 1, GL_FALSE, glm::value_ptr(view_to_world));
+    gRRReflMotionProgram.uniformMatrix3fv(v2w_s, 1, false, glm::value_ptr(view_to_world));
     gRRReflMotionProgram.uniform2f(res_s, (F32)dst->getWidth(), (F32)dst->getHeight());
     {
         LLRenderState::BlendScope blend(false);
@@ -10762,7 +10762,7 @@ void LLPipeline::generateRRGuides(LLRenderTarget* dst)
 
     RenderPassScope pass(*dst);
     bindDeferredShader(gRRGuidesProgram);
-    gRRGuidesProgram.uniformMatrix3fv(view_to_world_s, 1, GL_FALSE, glm::value_ptr(view_to_world));
+    gRRGuidesProgram.uniformMatrix3fv(view_to_world_s, 1, false, glm::value_ptr(view_to_world));
     {
         LLRenderState::BlendScope blend(false);
         LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
@@ -10903,7 +10903,7 @@ void LLPipeline::applyFXAA(LLRenderTarget* src, LLRenderTarget* dst)
             S32 height = dst->getHeight();
 
             // bake out texture2D with RGBL for FXAA shader
-            RenderPassScope pass_10913(mFXAAMap, RenderPass::LoadOp::Clear, GL_COLOR_BUFFER_BIT);
+            RenderPassScope pass_10913(mFXAAMap, RenderPass::LoadOp::Clear, ClearBits::Color);
 
             LLGLSLShader* shader = &gGlowCombineFXAAProgram;
             shader->bind();
@@ -11000,7 +11000,7 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
             LLRenderTarget& dest = mFXAAMap;
             LLGLSLShader& edge_shader = gSMAAEdgeDetectProgram[fsaa_quality];
 
-            RenderPassScope pass_11011(dest, RenderPass::LoadOp::Clear, GL_COLOR_BUFFER_BIT);
+            RenderPassScope pass_11011(dest, RenderPass::LoadOp::Clear, ClearBits::Color);
 
             edge_shader.bind();
             edge_shader.uniform4fv(sSmaaRTMetrics, 1, rt_metrics);
@@ -11042,7 +11042,7 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
             LLRenderTarget& dest = mSMAABlendBuffer;
             LLGLSLShader& blend_weights_shader = gSMAABlendWeightsProgram[fsaa_quality];
 
-            RenderPassScope pass_11054(dest, RenderPass::LoadOp::Clear, GL_COLOR_BUFFER_BIT);
+            RenderPassScope pass_11054(dest, RenderPass::LoadOp::Clear, ClearBits::Color);
 
             blend_weights_shader.bind();
             blend_weights_shader.uniform4fv(sSmaaRTMetrics, 1, rt_metrics);
@@ -11117,7 +11117,7 @@ void LLPipeline::applySMAA(LLRenderTarget* src, LLRenderTarget* dst)
             LLRenderTarget* bound_target = dst;
             LLGLSLShader& blend_shader = gSMAANeighborhoodBlendProgram[fsaa_quality];
 
-            RenderPassScope pass_11130(*bound_target, RenderPass::LoadOp::Clear, GL_COLOR_BUFFER_BIT);
+            RenderPassScope pass_11130(*bound_target, RenderPass::LoadOp::Clear, ClearBits::Color);
 
             blend_shader.bind();
             blend_shader.uniform4fv(sSmaaRTMetrics, 1, rt_metrics);
@@ -11938,7 +11938,7 @@ void LLPipeline::renderFinalize()
     { // copy depth buffer from mRT->screen to framebuffer
         LLRenderTarget::copyContentsToFramebuffer(mRT->screen, 0, 0, mRT->screen.getWidth(), mRT->screen.getHeight(), 0, 0,
                                                   mRT->screen.getWidth(), mRT->screen.getHeight(),
-                                                  GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+                                                  ClearBits::Depth | ClearBits::Stencil, GL_NEAREST);
     }*/
 
     LLVertexBuffer::unbind();
@@ -12180,7 +12180,7 @@ void LLPipeline::bindDeferredShader(LLGLSLShader& shader, LLRenderTarget* light_
     F32 ssao_effect_mat[] = {   matrix_diag, matrix_nondiag, matrix_nondiag,
                                 matrix_nondiag, matrix_diag, matrix_nondiag,
                                 matrix_nondiag, matrix_nondiag, matrix_diag};
-    shader.uniformMatrix3fv(LLShaderMgr::DEFERRED_SSAO_EFFECT_MAT, 1, GL_FALSE, ssao_effect_mat);
+    shader.uniformMatrix3fv(LLShaderMgr::DEFERRED_SSAO_EFFECT_MAT, 1, false, ssao_effect_mat);
 
     //F32 shadow_offset_error = 1.f + RenderShadowOffsetError * fabsf(LLViewerCamera::getInstance()->getOrigin().mV[2]);
     F32 shadow_bias_error = RenderShadowBiasError * fabsf(LLViewerCamera::getInstance()->getOrigin().mV[2])/3000.f;
@@ -12200,8 +12200,8 @@ void LLPipeline::bindDeferredShader(LLGLSLShader& shader, LLRenderTarget* light_
     shader.uniform1f(LLShaderMgr::DEFERRED_DEPTH_CUTOFF, RenderEdgeDepthCutoff);
     shader.uniform1f(LLShaderMgr::DEFERRED_NORM_CUTOFF, RenderEdgeNormCutoff);
 
-    shader.uniformMatrix4fv(LLShaderMgr::MODELVIEW_DELTA_MATRIX, 1, GL_FALSE, glm::value_ptr(gGLDeltaModelView));
-    shader.uniformMatrix4fv(LLShaderMgr::INVERSE_MODELVIEW_DELTA_MATRIX, 1, GL_FALSE, glm::value_ptr(gGLInverseDeltaModelView));
+    shader.uniformMatrix4fv(LLShaderMgr::MODELVIEW_DELTA_MATRIX, 1, false, glm::value_ptr(gGLDeltaModelView));
+    shader.uniformMatrix4fv(LLShaderMgr::INVERSE_MODELVIEW_DELTA_MATRIX, 1, false, glm::value_ptr(gGLInverseDeltaModelView));
 
     shader.uniform1i(LLShaderMgr::CUBE_SNAPSHOT, gCubeSnapshot ? 1 : 0);
 
@@ -12720,7 +12720,7 @@ void LLPipeline::renderDeferredLighting()
         if ((RenderDeferredSSAO && !gCubeSnapshot) || RenderShadowDetail > 0)
         {
             LL_PROFILE_GPU_ZONE("sun program");
-            RenderPassScope pass(*deferred_light_target, RenderPass::Clear(1, 1, 1, 1, GL_COLOR_BUFFER_BIT));
+            RenderPassScope pass(*deferred_light_target, RenderPass::Clear(1, 1, 1, 1, ClearBits::Color));
             {  // paint shadow/SSAO light map (direct lighting lightmap)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - sun shadow");
                 LL_CPU_ZONE("lighting: sun shadow");
@@ -12764,7 +12764,7 @@ void LLPipeline::renderDeferredLighting()
             LL_CPU_ZONE("lighting: soften shadow");
             LL_PROFILE_GPU_ZONE("soften shadow");
             // blur lightmap
-            RenderPassScope pass_12784(*screen_target, RenderPass::Clear(1, 1, 1, 1, GL_COLOR_BUFFER_BIT));
+            RenderPassScope pass_12784(*screen_target, RenderPass::Clear(1, 1, 1, 1, ClearBits::Color));
             LLRenderState::DepthReadOnlyScope blur_depth_read_only(true);      // F3.5c: the blur samples the depth
 
             bindDeferredShader(gDeferredBlurLightProgram, accumulated);
@@ -12818,7 +12818,7 @@ void LLPipeline::renderDeferredLighting()
             unbindDeferredShader(gDeferredBlurLightProgram);
         }
 
-        screen_pass.begin(*screen_target, RenderPass::Clear(0, 0, 0, 0, GL_COLOR_BUFFER_BIT));
+        screen_pass.begin(*screen_target, RenderPass::Clear(0, 0, 0, 0, ClearBits::Color));
         lighting_depth_read_only.setEnabled(true);
         // the pass cleared the colour buffer when it began - zeroing alpha (glow) is important or it will accumulate against sky
 

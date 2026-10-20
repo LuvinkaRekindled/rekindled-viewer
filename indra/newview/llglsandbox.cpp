@@ -546,7 +546,7 @@ void LLViewerParcelMgr::renderHighlightSegments(const U8* segments, LLViewerRegi
     LLGLSUIDefault gls_ui;
     gGL.getTexUnit(0)->bindWhite();
     // <FS:Ansariel> FIRE-10546: Show parcel boundary up to max. build level
-    //LLGLDepthTest gls_depth(GL_TRUE);
+    //LLGLDepthTest gls_depth(true);
     LLRenderState::DepthScope gls_depth(true, false);
     LLRenderState::CullScope cull(false);
 

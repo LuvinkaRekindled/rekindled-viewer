@@ -15,4 +15,10 @@
 // F3.6b: the stage a shader source is compiled for (was the GL shader type numbers: vertex, fragment, geometry)
 enum class ShaderStage : U8 { Vertex = 1, Fragment = 2, Geometry = 3 };
 
+// F3.6c: what a clear clears (was GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT; the values are not GL numbers)
+enum class ClearBits : U32 { None = 0, Color = 1, Depth = 2, Stencil = 4, All = 7 };
+constexpr ClearBits operator|(ClearBits a, ClearBits b) { return (ClearBits)((U32)a | (U32)b); }
+constexpr ClearBits operator&(ClearBits a, ClearBits b) { return (ClearBits)((U32)a & (U32)b); }
+constexpr bool hasBits(ClearBits mask, ClearBits bits) { return ((U32)mask & (U32)bits) != 0; }
+
 #endif

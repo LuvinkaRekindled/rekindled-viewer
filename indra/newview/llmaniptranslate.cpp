@@ -1688,7 +1688,7 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
     {
         //glStencilMask(stencil_mask); //deprecated
         //glClearStencil(1);
-        //glClear(GL_STENCIL_BUFFER_BIT);
+        //glClear(ClearBits::Stencil);
         LLRenderState::CullScope cull_face(true);
         //LLGLEnable stencil(GL_STENCIL_TEST);
         LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
