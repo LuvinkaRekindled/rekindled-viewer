@@ -115,12 +115,6 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
     }
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-    // Check for OpenGL errors
-    GLenum err;
-    while ((err = gGL.getError()) != GL_NO_ERROR)
-    {
-        LL_INFOS() << "OpenGL Error: " << err << LL_ENDL;
-    }
 }
 
 static void renderStaticSphere(const LLVector3& joint_world_position, const LLColor4& color = LLColor4(1.f, 1.f, 0.f, .6f), float radius=0.01f)
@@ -159,12 +153,6 @@ static void renderStaticSphere(const LLVector3& joint_world_position, const LLCo
     }
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-    // Check for OpenGL errors
-    GLenum err;
-    while ((err = gGL.getError()) != GL_NO_ERROR)
-    {
-        LL_INFOS() << "OpenGL Error: " << err << LL_ENDL;
-    }
 }
 
 bool FSManipRotateJoint::isMouseOverJoint(S32 mouseX, S32 mouseY, const LLVector3& jointWorldPos, F32 jointRadius, F32& outDistanceFromCamera, F32& outRayDistanceFromCenter) const

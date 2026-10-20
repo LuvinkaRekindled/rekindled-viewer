@@ -29,11 +29,6 @@
 
 #define MAX_GL_TEXTURE_UNITS 16
 
-typedef U32 LLGLenum;
-typedef U32 LLGLuint;
-typedef S32 LLGLint;
-typedef F32 LLGLfloat;
 typedef F64 LLGLdouble;
-typedef U8 LLGLboolean;
 
 #endif

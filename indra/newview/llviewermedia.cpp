@@ -3138,7 +3138,7 @@ void LLViewerMediaImpl::doMediaTexUpdate(LLViewerMediaTexture* media_tex, U8* da
     // updated textures by the OpenGL implementation. (Windows 10/Nvidia)
     // -Cosmic,2023-04-04
     // Allocate GL texture based on LLImageRaw but do NOT copy to GL
-    LLGLuint tex_name = 0;
+    U32 tex_name = 0;
     if (!media_tex->createGLTexture(0, raw, 0, true, LLGLTexture::OTHER, true, &tex_name))
     {
         LL_WARNS("Media") << "Failed to create media texture" << LL_ENDL;

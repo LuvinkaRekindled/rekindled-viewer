@@ -252,7 +252,7 @@ public:
     S32 getUniformLocation(U32 index);
 
     S32 getAttribLocation(U32 attrib);
-    S32 mapUniformTextureChannel(S32 location, GLenum type, S32 size);
+    S32 mapUniformTextureChannel(S32 location, bool is_sampler, S32 size);
 
     void clearPermutations();
     void addPermutation(std::string name, std::string value);

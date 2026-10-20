@@ -1474,7 +1474,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         // but seems to be fine without
                         if (!textureW || !textureH)
                         {
-                            LLGLint glTemp{};
+                            S32 glTemp{};
                             gGL.getTexLevelParameteriv(0, TextureTarget::Tex2D, 0, LevelQuery::Width, (S32*)&glTemp);     // no texture is bound on this path
                             textureW = glTemp;
                             gGL.getTexLevelParameteriv(0, TextureTarget::Tex2D, 0, LevelQuery::Height, (S32*)&glTemp);
@@ -1504,12 +1504,6 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                     }
 
                     gGL.getTexImage(bound_target ? bound_target->getTexture(0) : 0, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, PixelFormat::RGBA, ComponentType::U8, temp);
-                    GLenum error = gGL.getError();
-                    if (error != GL_NO_ERROR)
-                    {
-                        LL_INFOS("Morph") << "GL Error while reading back morph texture. Error code: " << error << LL_ENDL;
-                    }
-                    else
                     {
                         U8* alpha_cursor = alpha_data;
                         U8* pixel = temp;

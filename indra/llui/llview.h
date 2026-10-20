@@ -63,7 +63,7 @@ constexpr U32   FOLLOWS_ALL     = 0x33;
 constexpr bool  MOUSE_OPAQUE = true;
 constexpr bool  NOT_MOUSE_OPAQUE = false;
 
-constexpr U32 GL_NAME_UI_RESERVED = 2;
+constexpr U32 PICK_NAME_UI_RESERVED = 2;
 
 
 // maintains render state during traversal of UI tree

@@ -41,8 +41,8 @@ const U32 LL_IMAGE_REZ_LOSSLESS_CUTOFF = 128;
 const bool MIPMAP_YES = true;
 const bool MIPMAP_NO = false;
 
-const bool GL_TEXTURE_YES = true;
-const bool GL_TEXTURE_NO = false;
+const bool TEXTURE_YES = true;
+const bool TEXTURE_NO = false;
 
 const bool IMMEDIATE_YES = true;
 const bool IMMEDIATE_NO = false;

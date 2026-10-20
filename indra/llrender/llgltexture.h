@@ -119,7 +119,7 @@ public:
     /*virtual*/S32         getHeight(S32 discard_level = -1) const;
 
     bool       hasGLTexture() const ;
-    LLGLuint   getTexName() const ;
+    U32   getTexName() const ;
     bool       createGLTexture() ;
 
     // Create a GL Texture from an image raw
@@ -130,16 +130,16 @@ public:
     // category - LLGLTexture category for this LLGLTexture
     // defer_copy - set to true to allocate GL texture but NOT initialize with imageraw data
     // tex_name - if not null, will be set to the GL name of the texture created
-    bool       createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true, S32 category = LLGLTexture::OTHER, bool defer_copy = false, LLGLuint* tex_name = nullptr);
+    bool       createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true, S32 category = LLGLTexture::OTHER, bool defer_copy = false, U32* tex_name = nullptr);
 
     void       setFilteringOption(LLTexUnit::eTextureFilterOptions option);
     void       setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format = ComponentType::None, bool swap_bytes = false, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void       setAddressMode(LLTexUnit::eTextureAddressMode mode);
-    bool       setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, LLGLuint use_name = 0);
-    bool       setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, LLGLuint use_name = 0);
+    bool       setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name = 0);
+    bool       setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name = 0);
     void       setGLTextureCreated (bool initialized);
     void       setCategory(S32 category) ;
-    void       setTexName(LLGLuint); // for forcing w/ externally created textures only
+    void       setTexName(U32); // for forcing w/ externally created textures only
     void       setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target);
 
     LLTexUnit::eTextureAddressMode getAddressMode(void) const ;

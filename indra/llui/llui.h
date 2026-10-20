@@ -297,10 +297,10 @@ public:
     void setMousePositionLocal(const LLView* viewp, S32 x, S32 y);
     void getMousePositionLocal(const LLView* viewp, S32 *x, S32 *y);
     LLVector2 getWindowSize();
-    void screenPointToGL(S32 screen_x, S32 screen_y, S32 *gl_x, S32 *gl_y);
-    void glPointToScreen(S32 gl_x, S32 gl_y, S32 *screen_x, S32 *screen_y);
-    void screenRectToGL(const LLRect& screen, LLRect *gl);
-    void glRectToScreen(const LLRect& gl, LLRect *screen);
+    void screenPointToPixels(S32 screen_x, S32 screen_y, S32 *gl_x, S32 *gl_y);
+    void pixelsPointToScreen(S32 gl_x, S32 gl_y, S32 *screen_x, S32 *screen_y);
+    void screenRectToPixels(const LLRect& screen, LLRect *gl);
+    void pixelsRectToScreen(const LLRect& gl, LLRect *screen);
     // Returns the control group containing the control name, or the default group
     LLControlGroup& getControlControlGroup (std::string_view controlname);
     F32 getMouseIdleTime() { return mMouseIdleTimer.getElapsedTimeF32(); }
