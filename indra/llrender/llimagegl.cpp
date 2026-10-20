@@ -521,8 +521,10 @@ LLImageGL::LLImageGL(
     LLGLint  formatInternal,
     LLGLenum formatPrimary,
     LLGLenum formatType,
-    LLTexUnit::eTextureAddressMode addressMode)
+    LLTexUnit::eTextureAddressMode addressMode,
+    const char* file, int line)
 {
+    LLVkFormat::noteFormat("LLImageGL", file, line, LLVkFormat::store(formatInternal), LLVkFormat::transfer(formatPrimary, formatType).mComps, LLVkFormat::transfer(formatPrimary, formatType).mType);
     init(false, true);
     mTexName = texName;
     markTexOptionsDirty();
@@ -748,8 +750,9 @@ F32 LLImageGL::getTimePassedSinceLastBound()
     return sLastFrameTime - mLastBindTime ;
 }
 
-void LLImageGL::setExplicitFormat( LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format, bool swap_bytes )
+void LLImageGL::setExplicitFormat( LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format, bool swap_bytes, const char* file, int line )
 {
+    LLVkFormat::noteFormat("setExplicitFormat", file, line, LLVkFormat::store(internal_format), LLVkFormat::transfer(primary_format, type_format ? type_format : 0x1401).mComps, LLVkFormat::transfer(primary_format, type_format ? type_format : 0x1401).mType);
     // Note: must be called before createTexture()
     // Note: it's up to the caller to ensure that the format matches the number of components.
     mHasExplicitFormat = true;
@@ -1327,8 +1330,9 @@ void LLImageGL::deleteTextures(S32 numTextures, const U32 *textures)
 
 // static
 // static
-void LLImageGL::setManualImage(U32 texname, U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void* pixels, bool allow_compression)
+void LLImageGL::setManualImage(U32 texname, U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void* pixels, bool allow_compression, const char* file, int line)
 {
+    LLVkFormat::noteFormat("setManualImage", file, line, LLVkFormat::store(intformat), LLVkFormat::transfer(pixformat, pixtype).mComps, LLVkFormat::transfer(pixformat, pixtype).mType);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     if (LLRender::sGLCoreProfile)
     {

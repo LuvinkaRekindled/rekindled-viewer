@@ -10,6 +10,10 @@
 
 #include "llvkformat.h"
 
+#include <mutex>
+#include <string>
+#include <unordered_set>
+
 namespace LLVkFormat
 {
 
@@ -68,6 +72,12 @@ Transfer transfer(U32 gl_format, U32 gl_type)
 static_assert((int)BK_VERTEX == (int)BufferKind::Vertex && (int)BK_INDEX == (int)BufferKind::Index && (int)BK_UNIFORM == (int)BufferKind::Uniform, "BufferKind");
 static_assert((int)T_U8 == (int)ComponentType::U8 && (int)T_U16 == (int)ComponentType::U16 && (int)T_U32 == (int)ComponentType::U32 && (int)T_F32 == (int)ComponentType::F32 && (int)T_F16 == (int)ComponentType::F16, "ComponentType");
 static_assert((int)TOP_POINTS == (int)PrimitiveMode::Points && (int)TOP_TRIANGLES == (int)PrimitiveMode::Triangles && (int)TOP_TRIANGLE_FAN == (int)PrimitiveMode::TriangleFan && (int)TOP_OTHER == (int)PrimitiveMode::Other, "PrimitiveMode");
+
+static_assert((int)S_RGBA8 == (int)TexelFormat::RGBA8 && (int)S_LUM_ALPHA8 == (int)TexelFormat::LumAlpha8 && (int)S_RGBA16F == (int)TexelFormat::RGBA16F && (int)S_RGB10A2 == (int)TexelFormat::RGB10A2
+              && (int)S_DEPTH == (int)TexelFormat::Depth && (int)S_BC7 == (int)TexelFormat::BC7 && (int)S_GENERIC_COMPRESSED == (int)TexelFormat::GenericCompressed
+              && (int)S_BC3_SRGBA == (int)TexelFormat::BC3_SRGBA && (int)S_R8 == (int)TexelFormat::R8 && (int)S_R11G11B10F == (int)TexelFormat::R11G11B10F, "TexelFormat");
+static_assert((int)C_R == (int)PixelFormat::R && (int)C_RGB == (int)PixelFormat::RGB && (int)C_RGBA == (int)PixelFormat::RGBA && (int)C_BGRA == (int)PixelFormat::BGRA
+              && (int)C_LUM_ALPHA == (int)PixelFormat::LumAlpha && (int)C_ALPHA == (int)PixelFormat::Alpha && (int)C_DEPTH == (int)PixelFormat::Depth, "PixelFormat");
 
 Topology topology(U32 gl)
 {
@@ -162,6 +172,9 @@ Store store(S32 f)
     case 0x83F2: return S_BC2;
     case 0x83F3: return S_BC3;
     case 0x8E8C: return S_BC7;
+    case 0x8C4D: return S_BC1_SRGBA;                                        // COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT
+    case 0x8C4E: return S_BC2_SRGBA;
+    case 0x8C4F: return S_BC3_SRGBA;
     case 0x84EE: case 0x84ED: return S_GENERIC_COMPRESSED;                  // COMPRESSED_RGBA, COMPRESSED_RGB
     default: return S_NONE;
     }
@@ -254,6 +267,104 @@ Setting setting(U32 pname, bool is_float, S32 i, F32 f)
     default: break;
     }
     return s;
+}
+
+// the plugin protocol (GL numbers on the wire, until F4 media)
+}
+
+TexelFormat texelFormatFromGL(S32 gl)
+{
+    return (TexelFormat)LLVkFormat::store(gl);
+}
+
+PixelFormat pixelFormatFromGL(U32 gl)
+{
+    return (PixelFormat)LLVkFormat::transfer(gl, 0x1401).mComps;
+}
+
+ComponentType componentTypeFromGL(U32 gl)
+{
+    // packed 8-8-8-8 types (the gstreamer plugin): the same bytes as 8-bit components on a little endian machine, and the plugin uses them with BGRA only
+    if (gl == 0x8035 || gl == 0x8367)       // UNSIGNED_INT_8_8_8_8 (_REV)
+    {
+        return ComponentType::U8;
+    }
+    return (ComponentType)LLVkFormat::componentType(gl);
+}
+
+namespace LLVkFormat
+{
+
+// ---- F3.6e verify ----
+namespace
+{
+const char* const kStoreNames[] = { "None", "RGBA8", "RGB8", "SRGBA8", "SRGB8", "Alpha8", "Lum8", "LumAlpha8", "RG16F", "RG32F", "RG16", "R8", "RG8", "R32F", "R16F", "RGBA16F", "RGBA32F", "RGBA16", "R11G11B10F", "RGB10A2",
+                                    "Depth", "BC1_RGB", "BC1_RGBA", "BC2", "BC3", "BC7", "GenericCompressed", "BC1_SRGBA", "BC2_SRGBA", "BC3_SRGBA" };
+const char* const kCompsNames[] = { "None", "R", "RG", "RGB", "BGR", "RGBA", "BGRA", "Lum", "LumAlpha", "Alpha", "Depth" };
+const char* const kTypeNames[] = { "None", "U8", "S8", "U16", "S16", "U32", "S32", "F32", "F16" };
+template <size_t N> const char* name_of(const char* const (&names)[N], U8 v) { return v < N ? names[v] : "?"; }
+}
+
+bool formatVerify()
+{
+    static const bool on = []() { const char* e = getenv("LL_VK_FORMAT_VERIFY"); return e && e[0] == '1'; }();
+    return on;
+}
+
+void noteFormat(const char* what, const char* file, int line, U8 store, U8 comps, U8 type)
+{
+    if (!formatVerify())
+    {
+        return;
+    }
+    static const bool tables = (verifyTables(), true);      // the migration tables are checked with the first call
+    (void)tables;
+    static std::mutex mutex;
+    static std::unordered_set<std::string> seen;
+    const char* base = file;
+    for (const char* c = file; *c; ++c)
+    {
+        if (*c == '/' || *c == '\\')
+        {
+            base = c + 1;
+        }
+    }
+    std::string key = std::string(what) + " " + base + ":" + std::to_string(line) + " store=" + name_of(kStoreNames, store) + " comps=" + name_of(kCompsNames, comps) + " type=" + name_of(kTypeNames, type);
+    std::lock_guard<std::mutex> lock(mutex);
+    if (seen.insert(key).second)
+    {
+        LL_INFOS("FormatVerify") << key << LL_ENDL;
+    }
+}
+
+// The migration tables: each GL number the old code used and the typed value that replaced it. Logs a mismatch with the pair named.
+void verifyTables()
+{
+    if (!formatVerify())
+    {
+        return;
+    }
+    S32 bad = 0;
+    auto texel = [&](const char* n, S32 gl, TexelFormat f) { if (store(gl) != store(f)) { ++bad; LL_WARNS("FormatVerify") << "texel table: " << n << " decodes to " << name_of(kStoreNames, store(gl)) << ", typed " << name_of(kStoreNames, (U8)f) << LL_ENDL; } };
+    auto pixel = [&](const char* n, U32 gl, PixelFormat f) { if (transfer(gl, 0x1401).mComps != (U8)f) { ++bad; LL_WARNS("FormatVerify") << "pixel table: " << n << " decodes to " << name_of(kCompsNames, transfer(gl, 0x1401).mComps) << ", typed " << name_of(kCompsNames, (U8)f) << LL_ENDL; } };
+    auto ctype = [&](const char* n, U32 gl, ComponentType t) { if (componentType(gl) != (U8)t) { ++bad; LL_WARNS("FormatVerify") << "type table: " << n << " decodes to " << name_of(kTypeNames, componentType(gl)) << ", typed " << name_of(kTypeNames, (U8)t) << LL_ENDL; } };
+#define LLVK_TEXEL(gl, f) texel(#gl, gl, TexelFormat::f)
+#define LLVK_PIXEL(gl, f) pixel(#gl, gl, PixelFormat::f)
+#define LLVK_CTYPE(gl, f) ctype(#gl, gl, ComponentType::f)
+    LLVK_TEXEL(GL_RGBA, RGBA8); LLVK_TEXEL(GL_RGBA8, RGBA8); LLVK_TEXEL(GL_RGB, RGB8); LLVK_TEXEL(GL_RGB8, RGB8); LLVK_TEXEL(GL_SRGB8_ALPHA8, SRGBA8); LLVK_TEXEL(GL_SRGB_ALPHA, SRGBA8);
+    LLVK_TEXEL(GL_SRGB8, SRGB8); LLVK_TEXEL(GL_SRGB, SRGB8); LLVK_TEXEL(GL_ALPHA, Alpha8); LLVK_TEXEL(GL_ALPHA8, Alpha8); LLVK_TEXEL(GL_LUMINANCE, Lum8); LLVK_TEXEL(GL_LUMINANCE8, Lum8);
+    LLVK_TEXEL(GL_LUMINANCE_ALPHA, LumAlpha8); LLVK_TEXEL(GL_LUMINANCE8_ALPHA8, LumAlpha8); LLVK_TEXEL(GL_RG16F, RG16F); LLVK_TEXEL(GL_RG32F, RG32F); LLVK_TEXEL(GL_R8, R8); LLVK_TEXEL(GL_RG8, RG8);
+    LLVK_TEXEL(GL_R32F, R32F); LLVK_TEXEL(GL_R16F, R16F); LLVK_TEXEL(GL_RGBA16F, RGBA16F); LLVK_TEXEL(GL_RGB16F, RGBA16F); LLVK_TEXEL(GL_RGBA32F, RGBA32F); LLVK_TEXEL(GL_RGB32F, RGBA32F);
+    LLVK_TEXEL(GL_RGBA16, RGBA16); LLVK_TEXEL(GL_R11F_G11F_B10F, R11G11B10F); LLVK_TEXEL(GL_RGB10_A2, RGB10A2); LLVK_TEXEL(GL_DEPTH_COMPONENT, Depth); LLVK_TEXEL(GL_DEPTH_COMPONENT24, Depth);
+    LLVK_TEXEL(GL_DEPTH24_STENCIL8, Depth); LLVK_TEXEL(GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, BC1_RGBA); LLVK_TEXEL(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT, BC2); LLVK_TEXEL(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, BC3);
+    LLVK_TEXEL(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT, BC1_SRGBA); LLVK_TEXEL(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT, BC2_SRGBA); LLVK_TEXEL(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT, BC3_SRGBA);
+    LLVK_PIXEL(GL_RGBA, RGBA); LLVK_PIXEL(GL_RGB, RGB); LLVK_PIXEL(GL_BGRA, BGRA); LLVK_PIXEL(GL_RED, R); LLVK_PIXEL(GL_RG, RG); LLVK_PIXEL(GL_ALPHA, Alpha); LLVK_PIXEL(GL_LUMINANCE, Lum);
+    LLVK_PIXEL(GL_LUMINANCE_ALPHA, LumAlpha); LLVK_PIXEL(GL_DEPTH_COMPONENT, Depth);
+    LLVK_CTYPE(GL_UNSIGNED_BYTE, U8); LLVK_CTYPE(GL_BYTE, S8); LLVK_CTYPE(GL_UNSIGNED_SHORT, U16); LLVK_CTYPE(GL_SHORT, S16); LLVK_CTYPE(GL_UNSIGNED_INT, U32); LLVK_CTYPE(GL_INT, S32); LLVK_CTYPE(GL_FLOAT, F32);
+#undef LLVK_TEXEL
+#undef LLVK_PIXEL
+#undef LLVK_CTYPE
+    LL_INFOS("FormatVerify") << "migration tables checked: " << (bad ? "MISMATCHES " : "all agree, ") << bad << " mismatches" << LL_ENDL;
 }
 
 Level level(U32 pname)

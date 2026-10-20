@@ -114,7 +114,7 @@ void LLRenderTarget::resize(U32 resx, U32 resy)
 }
 
 
-bool LLRenderTarget::allocate(U32 resx, U32 resy, U32 color_fmt, bool depth, LLTexUnit::eTextureType usage, LLTexUnit::eTextureMipGeneration generateMipMaps)
+bool LLRenderTarget::allocate(U32 resx, U32 resy, U32 color_fmt, bool depth, LLTexUnit::eTextureType usage, LLTexUnit::eTextureMipGeneration generateMipMaps, const char* file, int line)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     llassert(usage == LLTexUnit::TT_TEXTURE);
@@ -158,7 +158,7 @@ bool LLRenderTarget::allocate(U32 resx, U32 resy, U32 color_fmt, bool depth, LLT
         ll_fboAttach(mFBO, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), mDepth, sCurFBO);
     }
 
-    return addColorAttachment(color_fmt);
+    return addColorAttachment(color_fmt, file, line);
 }
 
 void LLRenderTarget::setColorAttachment(LLImageGL* img, LLGLuint use_name)
@@ -203,10 +203,11 @@ void LLRenderTarget::releaseColorAttachment()
     mTex.clear();
 }
 
-bool LLRenderTarget::addColorAttachment(U32 color_fmt)
+bool LLRenderTarget::addColorAttachment(U32 color_fmt, const char* file, int line)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     llassert(!isBoundInStack());
+    LLVkFormat::noteFormat("RT.color", file, line, LLVkFormat::store((S32)color_fmt), 0, 0);
 
     if (color_fmt == 0)
     {

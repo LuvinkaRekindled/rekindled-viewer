@@ -138,6 +138,9 @@ bool store_info(LLVkFormat::Store st, FormatMap& m)
     case S_BC2: m.mVk = VK_FORMAT_BC2_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
     case S_BC3: m.mVk = VK_FORMAT_BC3_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
     case S_BC7: m.mVk = VK_FORMAT_BC7_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
+    case S_BC1_SRGBA: m.mVk = VK_FORMAT_BC1_RGBA_SRGB_BLOCK; m.mTexelBytes = 8; m.mCompressed = true; return true;
+    case S_BC2_SRGBA: m.mVk = VK_FORMAT_BC2_SRGB_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
+    case S_BC3_SRGBA: m.mVk = VK_FORMAT_BC3_SRGB_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
     // generic compressed formats: the driver chose; the mirror stores plain RGBA8
     case S_GENERIC_COMPRESSED: m.mVk = VK_FORMAT_R8G8B8A8_UNORM; return true;
     default: return false;

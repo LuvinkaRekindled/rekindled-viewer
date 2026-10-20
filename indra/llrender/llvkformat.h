@@ -55,9 +55,20 @@ namespace LLVkFormat
         S_RG16F, S_RG32F, S_RG16, S_R8, S_RG8, S_R32F, S_R16F, S_RGBA16F, S_RGBA32F, S_RGBA16, S_R11G11B10F, S_RGB10A2,
         S_DEPTH,
         S_BC1_RGB, S_BC1_RGBA, S_BC2, S_BC3, S_BC7,
-        S_GENERIC_COMPRESSED
+        S_GENERIC_COMPRESSED,
+        S_BC1_SRGBA, S_BC2_SRGBA, S_BC3_SRGBA
     };
     Store store(S32 gl_internal_format);        // S_NONE: no Vulkan format for it
+
+    // ---- F3.6e: the typed vocabulary of llrenderformat.h IS these values (static_asserts in llvkformat.cpp) ----
+    inline Store store(TexelFormat f) { return (Store)f; }
+    inline Transfer transfer(PixelFormat f, ComponentType t) { Transfer r; r.mComps = (U8)f; r.mType = (U8)t; return r; }
+
+    // LL_VK_FORMAT_VERIFY=1: every texture data call names its call site and what it carries; the first time a (site, entry, store, comps, type) combination is seen it is logged
+    // ("FormatVerify"), so two builds can be compared by the sets of lines. tables() checks the decoders against the typed values once (the migration tables).
+    bool formatVerify();
+    void noteFormat(const char* what, const char* file, int line, U8 store, U8 comps, U8 type);
+    void verifyTables();
 
     // ---- sampler and level settings ----
     enum Param : U8

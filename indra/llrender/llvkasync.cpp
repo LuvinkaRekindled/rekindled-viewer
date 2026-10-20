@@ -1610,11 +1610,9 @@ void bindSlot(S32 unit, U32 id)
     LLVkGL::slot_set((unsigned)unit, id);
 }
 
-void image2D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 format, U32 type, const void* pixels)
+static void image2D_impl(U32 id, U32 target, S32 level, LLVkFormat::Store st, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels)
 {
     const LLVkFormat::Target tg = LLVkFormat::target(target);
-    const LLVkFormat::Store st = LLVkFormat::store(internal_format);
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1627,11 +1625,24 @@ void image2D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 
     pushImage(K_IMAGE2D, a, pixels, pixel_bytes(tr, width, height, 1, tlsPixelStore));
 }
 
-void image3D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 depth, S32 border, U32 format, U32 type, const void* pixels)
+void image2D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 border, U32 format, U32 type, const void* pixels, const char* file, int line)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
     const LLVkFormat::Store st = LLVkFormat::store(internal_format);
     const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("image2D", file, line, st, tr.mComps, tr.mType);
+    image2D_impl(id, target, level, st, width, height, tr, pixels);
+}
+
+void image2D(U32 id, U32 target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("image2D", file, line, (U8)internal_format, tr.mComps, tr.mType);
+    image2D_impl(id, target, level, LLVkFormat::store(internal_format), width, height, tr, pixels);
+}
+
+static void image3D_impl(U32 id, U32 target, S32 level, LLVkFormat::Store st, S32 width, S32 height, S32 depth, LLVkFormat::Transfer tr, const void* pixels)
+{
+    const LLVkFormat::Target tg = LLVkFormat::target(target);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1644,10 +1655,24 @@ void image3D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 
     pushImage(K_IMAGE3D, a, pixels, pixel_bytes(tr, width, height, depth, tlsPixelStore));
 }
 
-void subImage2D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, const void* pixels)
+void image3D(U32 id, U32 target, S32 level, S32 internal_format, S32 width, S32 height, S32 depth, S32 border, U32 format, U32 type, const void* pixels, const char* file, int line)
+{
+    const LLVkFormat::Store st = LLVkFormat::store(internal_format);
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("image3D", file, line, st, tr.mComps, tr.mType);
+    image3D_impl(id, target, level, st, width, height, depth, tr, pixels);
+}
+
+void image3D(U32 id, U32 target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("image3D", file, line, (U8)internal_format, tr.mComps, tr.mType);
+    image3D_impl(id, target, level, LLVkFormat::store(internal_format), width, height, depth, tr, pixels);
+}
+
+static void subImage2D_impl(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels)
 {
     const LLVkFormat::Target tg = LLVkFormat::target(target);
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1660,10 +1685,23 @@ void subImage2D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 heig
     pushImage(K_SUB2D, a, pixels, pixel_bytes(tr, width, height, 1, tlsPixelStore));
 }
 
-void subImage3D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, U32 format, U32 type, const void* pixels)
+void subImage2D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, const void* pixels, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("subImage2D", file, line, 0, tr.mComps, tr.mType);
+    subImage2D_impl(id, target, level, x, y, width, height, tr, pixels);
+}
+
+void subImage2D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("subImage2D", file, line, 0, tr.mComps, tr.mType);
+    subImage2D_impl(id, target, level, x, y, width, height, tr, pixels);
+}
+
+static void subImage3D_impl(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, LLVkFormat::Transfer tr, const void* pixels)
 {
     const LLVkFormat::Target tg = LLVkFormat::target(target);
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1676,10 +1714,23 @@ void subImage3D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S
     pushImage(K_SUB3D, a, pixels, pixel_bytes(tr, width, height, depth, tlsPixelStore));
 }
 
-void compressedImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 width, S32 height, S32 border, S32 image_size, const void* data)
+void subImage3D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, U32 format, U32 type, const void* pixels, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("subImage3D", file, line, 0, tr.mComps, tr.mType);
+    subImage3D_impl(id, target, level, x, y, z, width, height, depth, tr, pixels);
+}
+
+void subImage3D(U32 id, U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("subImage3D", file, line, 0, tr.mComps, tr.mType);
+    subImage3D_impl(id, target, level, x, y, z, width, height, depth, tr, pixels);
+}
+
+static void compressedImage2D_impl(U32 id, U32 target, S32 level, LLVkFormat::Store st, S32 width, S32 height, S32 image_size, const void* data)
 {
     const LLVkFormat::Target tg = LLVkFormat::target(target);
-    const LLVkFormat::Store st = LLVkFormat::store((S32)internal_format);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1690,6 +1741,19 @@ void compressedImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 w
     TexArgs a = {};
     a.mTarget = tg; a.mStore = st; a.mLevel = level; a.mWidth = width; a.mHeight = height; a.mDepth = 1; a.mImageSize = image_size; a.mTex = id;
     pushImage(K_COMPRESSED2D, a, data, (size_t)std::max(image_size, 0));
+}
+
+void compressedImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 width, S32 height, S32 border, S32 image_size, const void* data, const char* file, int line)
+{
+    const LLVkFormat::Store st = LLVkFormat::store((S32)internal_format);
+    LLVkFormat::noteFormat("compressedImage2D", file, line, st, 0, 0);
+    compressedImage2D_impl(id, target, level, st, width, height, image_size, data);
+}
+
+void compressedImage2D(U32 id, U32 target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 image_size, const void* data, const char* file, int line)
+{
+    LLVkFormat::noteFormat("compressedImage2D", file, line, (U8)internal_format, 0, 0);
+    compressedImage2D_impl(id, target, level, LLVkFormat::store(internal_format), width, height, image_size, data);
 }
 
 void params(U32 id, U32 target, const LLVkAsync::TexParam* p, U32 count)
@@ -1780,10 +1844,9 @@ void copySubImage(U32 id, U32 target, S32 level, S32 xoffset, S32 yoffset, S32 z
     pushOp(op);
 }
 
-void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border, U32 source)
+static void copyImage2D_impl(U32 id, U32 target, S32 level, LLVkFormat::Store st, S32 x, S32 y, S32 width, S32 height, U32 source)
 {
     const LLVkFormat::Target tg = LLVkFormat::target(target);
-    const LLVkFormat::Store st = LLVkFormat::store((S32)internal_format);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1794,6 +1857,19 @@ void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 
     op.mKind = OPK_COPY_IMAGE; op.mTex = id; op.mTarget = tg; op.mLevel = level; op.mStore = st;
     op.mX = x; op.mY = y; op.mW = width; op.mH = height; op.mSource = source;
     pushOp(op);
+}
+
+void copyImage2D(U32 id, U32 target, S32 level, U32 internal_format, S32 x, S32 y, S32 width, S32 height, S32 border, U32 source, const char* file, int line)
+{
+    const LLVkFormat::Store st = LLVkFormat::store((S32)internal_format);
+    LLVkFormat::noteFormat("copyImage2D", file, line, st, 0, 0);
+    copyImage2D_impl(id, target, level, st, x, y, width, height, source);
+}
+
+void copyImage2D(U32 id, U32 target, S32 level, TexelFormat internal_format, S32 x, S32 y, S32 width, S32 height, U32 source, const char* file, int line)
+{
+    LLVkFormat::noteFormat("copyImage2D", file, line, (U8)internal_format, 0, 0);
+    copyImage2D_impl(id, target, level, LLVkFormat::store(internal_format), x, y, width, height, source);
 }
 
 // A read back of a texture is a round trip: the main thread waits until the worker has replayed everything queued before it (and then for the copy). With the worker far behind (a burst of
@@ -1836,10 +1912,9 @@ S32 levelParameter(U32 id, U32 target, S32 level, U32 pname)
     return v;
 }
 
-void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out)
+static void getImage_impl(U32 id, U32 target, S32 level, LLVkFormat::Transfer tr, void* out)
 {
     const LLVkFormat::Target tg = LLVkFormat::target(target);
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         auto lock = inlineLock();
@@ -1847,6 +1922,20 @@ void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out)
         return;
     }
     LLVkAsync::syncCall([&]() { LLVkGL::tex_get_image(id, tg, level, tr, out); });
+}
+
+void getImage(U32 id, U32 target, S32 level, U32 format, U32 type, void* out, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("getImage", file, line, 0, tr.mComps, tr.mType);
+    getImage_impl(id, target, level, tr, out);
+}
+
+void getImage(U32 id, U32 target, S32 level, PixelFormat format, ComponentType type, void* out, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("getImage", file, line, 0, tr.mComps, tr.mType);
+    getImage_impl(id, target, level, tr, out);
 }
 
 void getCompressedImage(U32 id, U32 target, S32 level, void* out)
@@ -1893,9 +1982,8 @@ void clear(bool color, bool depth, const F32* rgba)
     LLVkAsync::clearTarget(color, depth, rgba);
 }
 
-void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, void* dst)
+static void readPixels_impl(U32 target, S32 x, S32 y, S32 width, S32 height, LLVkFormat::Transfer tr, void* dst)
 {
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
     if (!LLVkAsync::gEnabled)
     {
         std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
@@ -1903,6 +1991,20 @@ void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, U32 format, U32
         return;
     }
     LLVkAsync::syncCall([&]() { LLVkGL::read_pixels(target, x, y, width, height, tr, dst); });
+}
+
+void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, void* dst, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("readPixels", file, line, 0, tr.mComps, tr.mType);
+    readPixels_impl(target, x, y, width, height, tr, dst);
+}
+
+void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* dst, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("readPixels", file, line, 0, tr.mComps, tr.mType);
+    readPixels_impl(target, x, y, width, height, tr, dst);
 }
 
 }
