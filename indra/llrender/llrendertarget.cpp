@@ -915,3 +915,21 @@ std::string report(size_t frames)
 }
 
 }
+
+U32 LLRenderTarget::currentId(const char* file, int line)
+{
+    const U32 id = idOf(sBoundTarget);
+    if (id != sCurFBO)
+    {
+        pass_warn("the target of the innermost open pass is not the current frame buffer (a copy or readback source)", file, line, "");
+    }
+    return sCurFBO;
+}
+
+void LLRenderTarget::checkSource(const LLRenderTarget* named, const char* file, int line)
+{
+    if (idOf(named) != sCurFBO)
+    {
+        pass_warn("a copy names a source that is not the current frame buffer", file, line, "");
+    }
+}
