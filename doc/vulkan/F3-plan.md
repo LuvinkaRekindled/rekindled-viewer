@@ -88,3 +88,6 @@ Built: worker pass counters (passes begun, why, clears, depth read-only flips), 
 
 ## Status 2026-10-20: F3.5b done: all 75 target pairs are `RenderPassScope` / `RenderPassSuspend` (see `F3-5-render-target-design.md`)
 65 pairs by `f35b-migrate.py` (14 clears folded into the load op), 10 by hand (manual scopes for passes that cross blocks/functions, `RenderPassSuspend` for the "interrupt the caller's pass" idiom). Beach run: same counters as F3.5a (38.1 binds, 17 clears, 56 passes, 146 transitions), 0 warnings of the three checks, picture complete by eye. Not run: plaza, Adam's hand test list (snapshots, 360, previews, impostors, probes/mirrors, RLV sphere effect, RR hit distance).
+
+## F3.5 stop point 2026-10-20 (a) and (b) done; (c) as drafted is not worth doing: revised plan in `F3-5-render-target-design.md`
+Measured: the depth read-only flips are 6.5 each way per frame (not 45) and alternate inside one producer pass (geometry writes depth, alpha samples it), so declaring read-only depth would remove inference code but no pass split. The big transition sources are the scene colour (30 per frame) and the main depth (21 per frame) read between passes. Revised: F3.5c' attribute those transitions to named passes (measure), F3.5d' pass record + stack inside the pass machinery + clear values as scope arguments.
