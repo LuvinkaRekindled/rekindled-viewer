@@ -1090,7 +1090,6 @@ bool LLManipTranslate::handleMouseUp(S32 x, S32 y, MASK mask)
 
 void LLManipTranslate::render()
 {
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     if (mObjectSelection->getSelectType() == SELECT_TYPE_HUD)
     {
@@ -1544,7 +1543,6 @@ void LLManipTranslate::renderSnapGuides()
         F32 sz = mGridSizeMeters;
         F32 tiles = sz;
 
-        gGL.matrixMode(LLRender::MM_TEXTURE);
         LLRenderMatrix::push(LLRenderMatrix::Kind::CurrentTexture);
         usc = 1.0f/usc;
         vsc = 1.0f/vsc;
@@ -1589,7 +1587,6 @@ void LLManipTranslate::renderSnapGuides()
                     renderGrid(u,v,tiles,1,1,1,a);
 
                     LLRenderMatrix::pop(LLRenderMatrix::Kind::CurrentTexture);
-                    gGL.matrixMode(LLRender::MM_MODELVIEW);
                     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                 }
 
@@ -1902,7 +1899,6 @@ void LLManipTranslate::renderTranslationHandles()
     mGridSizeMeters = gSavedSettings.getF32("GridDrawSize");
     mConeSize = mArrowLengthMeters / 4.f;
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);

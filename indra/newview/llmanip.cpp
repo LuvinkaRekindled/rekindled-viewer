@@ -647,7 +647,6 @@ void LLManip::renderTickText(const LLVector3& pos, const std::string& text, cons
     const LLFontGL* big_fontp = LLFontGL::getFontSansSerif();
 
     bool hud_selection = mObjectSelection->getSelectType() == SELECT_TYPE_HUD;
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLVector3 render_pos = pos;
     if (hud_selection)
@@ -705,7 +704,6 @@ void LLManip::renderTickValue(const LLVector3& pos, F32 value, const std::string
     }
 
     bool hud_selection = mObjectSelection->getSelectType() == SELECT_TYPE_HUD;
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLVector3 render_pos = pos;

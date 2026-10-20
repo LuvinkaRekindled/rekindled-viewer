@@ -201,7 +201,6 @@ void setup_transforms_bbox(LLBBox bbox)
 
 void render_bbox(LLBBox bbox)
 {
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     setup_transforms_bbox(bbox);
@@ -214,7 +213,6 @@ void render_bbox(LLBBox bbox)
 
 void render_cone_bbox(LLBBox bbox)
 {
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     setup_transforms_bbox(bbox);

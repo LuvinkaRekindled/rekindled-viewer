@@ -207,7 +207,6 @@ void LLDrawPoolTerrain::drawLoop()
         {
             LLFace *facep = *iter;
 
-            llassert(gGL.getMatrixMode() == LLRender::MM_MODELVIEW);
             LLRenderPass::applyModelMatrix(&facep->getDrawable()->getRegion()->mRenderMatrix);
 
             facep->renderIndexed();
@@ -681,7 +680,6 @@ void LLDrawPoolTerrain::renderOwnership()
     // texture coordinates for pixel 256x256 is not 1,1. This makes the
     // ownership map not line up with the selection. We address this with
     // a texture matrix multiply.
-    gGL.matrixMode(LLRender::MM_TEXTURE);
     LLRenderMatrix::push(LLRenderMatrix::Kind::CurrentTexture);
 
     const F32 TEXTURE_FUDGE = 257.f / 256.f;
@@ -693,9 +691,7 @@ void LLDrawPoolTerrain::renderOwnership()
         facep->renderIndexed();
     }
 
-    gGL.matrixMode(LLRender::MM_TEXTURE);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::CurrentTexture);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
 }
 
 

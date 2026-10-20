@@ -890,7 +890,6 @@ LLRender::LLRender()
     mCurrBlendColorDFactor = BF_UNDEF;
     mCurrBlendAlphaDFactor = BF_UNDEF;
 
-    mMatrixMode = LLRender::MM_MODELVIEW;
 
     for (U32 i = 0; i < NUM_MATRIX_MODES; ++i)
     {
@@ -1301,84 +1300,6 @@ void LLRender::loadIdentityOf(eMatrixMode mode)
         mMatHash[mode]++;
     }
 }
-
-// the old calls: the same operations on the current matrix mode
-void LLRender::translatef(const GLfloat& x, const GLfloat& y, const GLfloat& z)
-{
-    translateOf(mMatrixMode, glm::vec3(x, y, z));
-}
-
-void LLRender::scalef(const GLfloat& x, const GLfloat& y, const GLfloat& z)
-{
-    scaleOf(mMatrixMode, glm::vec3(x, y, z));
-}
-
-void LLRender::ortho(F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar)
-{
-    orthoOf(mMatrixMode, left, right, bottom, top, zNear, zFar);
-}
-
-void LLRender::rotatef(const GLfloat& a, const GLfloat& x, const GLfloat& y, const GLfloat& z)
-{
-    rotateOf(mMatrixMode, a, glm::vec3(x, y, z));
-}
-
-void LLRender::pushMatrix()
-{
-    pushMatrixOf(mMatrixMode);
-}
-
-void LLRender::popMatrix()
-{
-    popMatrixOf(mMatrixMode);
-}
-
-void LLRender::loadMatrix(const GLfloat* m)
-{
-    setMatrixOf(mMatrixMode, glm::make_mat4((GLfloat*) m));
-}
-
-void LLRender::multMatrix(const GLfloat* m)
-{
-    multMatrixOf(mMatrixMode, glm::make_mat4(m));
-}
-
-void LLRender::loadIdentity()
-{
-    loadIdentityOf(mMatrixMode);
-}
-
-void LLRender::matrixMode(eMatrixMode mode)
-{
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_MODE);
-    if (mode == MM_TEXTURE)
-    {
-        U32 tex_index = gGL.getCurrentTexUnitIndex();
-        // the shaders don't actually reference anything beyond texture_matrix0/1 outside of terrain rendering
-        llassert(tex_index <= 3);
-        mode = eMatrixMode(MM_TEXTURE0 + tex_index);
-        if (mode > MM_TEXTURE3)
-        {
-            // getCurrentTexUnitIndex() can go as high as 32 (LL_NUM_TEXTURE_LAYERS)
-            // Large value will result in a crash at mMatrix
-            LL_WARNS_ONCE() << "Attempted to assign matrix mode out of bounds: " << mode << LL_ENDL;
-            mode = MM_TEXTURE0;
-        }
-    }
-
-    mMatrixMode = mode;
-}
-
-LLRender::eMatrixMode LLRender::getMatrixMode()
-{
-    if (mMatrixMode >= MM_TEXTURE0 && mMatrixMode <= MM_TEXTURE3)
-    { //always return MM_TEXTURE if current matrix mode points at any texture matrix
-        return MM_TEXTURE;
-    }
-
-    return mMatrixMode;
-}
-
 
 const glm::mat4& LLRender::getModelviewMatrix()
 {
@@ -2396,52 +2317,22 @@ inline LLRender::eMatrixMode mode_of(Kind kind)
 
 struct Site { const char* mFile; int mLine; };
 std::vector<Site> gSites;
-std::vector<Site> gModeSites;
-U64 gModeWarnings = 0;
-
-// a migrated call (it passes the caller's file and line) names a matrix; the old call would have used the current mode: they must be the same
-inline void check_mode(Kind kind, const char* file, int line)
-{
-    if (!sGuardCheck || !file)
-    {
-        return;
-    }
-    const LLRender::eMatrixMode current = gGL.rawMatrixMode();
-    if (current == mode_of(kind))
-    {
-        return;
-    }
-    ++gModeWarnings;
-    for (const Site& s : gModeSites)
-    {
-        if (s.mLine == line && s.mFile == file)
-        {
-            return;
-        }
-    }
-    if (gModeSites.size() < 200)
-    {
-        gModeSites.push_back({ file, line });
-        LL_WARNS("MatrixGuard") << "migrated call names matrix " << (int)kind << " but the current matrix mode is " << (int)current << " (0 modelview, 1 projection, 2-5 texture) at "
-            << (file ? file : "?") << ":" << line << LL_ENDL;
-    }
-}
 }
 
-void push(Kind kind, const char* file, int line) { check_mode(kind, file, line); gGL.pushMatrixOf(mode_of(kind)); }
-void pop(Kind kind, const char* file, int line) { check_mode(kind, file, line); gGL.popMatrixOf(mode_of(kind)); }
-void set(Kind kind, const glm::mat4& m, const char* file, int line) { check_mode(kind, file, line); gGL.setMatrixOf(mode_of(kind), m); }
-void load(Kind kind, const F32* m, const char* file, int line) { check_mode(kind, file, line); gGL.setMatrixOf(mode_of(kind), glm::make_mat4(m)); }
-void multiply(Kind kind, const glm::mat4& m, const char* file, int line) { check_mode(kind, file, line); gGL.multMatrixOf(mode_of(kind), m); }
-void multiply(Kind kind, const F32* m, const char* file, int line) { check_mode(kind, file, line); gGL.multMatrixOf(mode_of(kind), glm::make_mat4(m)); }
-void identity(Kind kind, const char* file, int line) { check_mode(kind, file, line); gGL.loadIdentityOf(mode_of(kind)); }
-void translate(Kind kind, const glm::vec3& v, const char* file, int line) { check_mode(kind, file, line); gGL.translateOf(mode_of(kind), v); }
-void translate(Kind kind, F32 x, F32 y, F32 z, const char* file, int line) { check_mode(kind, file, line); gGL.translateOf(mode_of(kind), glm::vec3(x, y, z)); }
-void rotate(Kind kind, F32 degrees, const glm::vec3& axis, const char* file, int line) { check_mode(kind, file, line); gGL.rotateOf(mode_of(kind), degrees, axis); }
-void rotate(Kind kind, F32 degrees, F32 x, F32 y, F32 z, const char* file, int line) { check_mode(kind, file, line); gGL.rotateOf(mode_of(kind), degrees, glm::vec3(x, y, z)); }
-void scale(Kind kind, const glm::vec3& v, const char* file, int line) { check_mode(kind, file, line); gGL.scaleOf(mode_of(kind), v); }
-void scale(Kind kind, F32 x, F32 y, F32 z, const char* file, int line) { check_mode(kind, file, line); gGL.scaleOf(mode_of(kind), glm::vec3(x, y, z)); }
-void ortho(Kind kind, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar, const char* file, int line) { check_mode(kind, file, line); gGL.orthoOf(mode_of(kind), left, right, bottom, top, zNear, zFar); }
+void push(Kind kind) { gGL.pushMatrixOf(mode_of(kind)); }
+void pop(Kind kind) { gGL.popMatrixOf(mode_of(kind)); }
+void set(Kind kind, const glm::mat4& m) { gGL.setMatrixOf(mode_of(kind), m); }
+void load(Kind kind, const F32* m) { gGL.setMatrixOf(mode_of(kind), glm::make_mat4(m)); }
+void multiply(Kind kind, const glm::mat4& m) { gGL.multMatrixOf(mode_of(kind), m); }
+void multiply(Kind kind, const F32* m) { gGL.multMatrixOf(mode_of(kind), glm::make_mat4(m)); }
+void identity(Kind kind) { gGL.loadIdentityOf(mode_of(kind)); }
+void translate(Kind kind, const glm::vec3& v) { gGL.translateOf(mode_of(kind), v); }
+void translate(Kind kind, F32 x, F32 y, F32 z) { gGL.translateOf(mode_of(kind), glm::vec3(x, y, z)); }
+void rotate(Kind kind, F32 degrees, const glm::vec3& axis) { gGL.rotateOf(mode_of(kind), degrees, axis); }
+void rotate(Kind kind, F32 degrees, F32 x, F32 y, F32 z) { gGL.rotateOf(mode_of(kind), degrees, glm::vec3(x, y, z)); }
+void scale(Kind kind, const glm::vec3& v) { gGL.scaleOf(mode_of(kind), v); }
+void scale(Kind kind, F32 x, F32 y, F32 z) { gGL.scaleOf(mode_of(kind), glm::vec3(x, y, z)); }
+void ortho(Kind kind, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar) { gGL.orthoOf(mode_of(kind), left, right, bottom, top, zNear, zFar); }
 const glm::mat4& get(Kind kind) { return gGL.matrixOf(mode_of(kind)); }
 U32 depth(Kind kind) { return gGL.matrixDepth(mode_of(kind)); }
 

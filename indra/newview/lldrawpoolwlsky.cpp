@@ -96,7 +96,6 @@ void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLoca
 {
     llassert_always(NULL != shader);
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     //chop off translation
@@ -123,7 +122,6 @@ void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLoca
 
     gSky.mVOWLSkyp->drawDome();
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 

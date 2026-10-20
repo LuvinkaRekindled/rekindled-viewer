@@ -115,10 +115,8 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     GLfloat ogl_matrix[16];
     camera.getOpenGLTransform(ogl_matrix);
     modelview *= glm::make_mat4(ogl_matrix);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(modelview));
     // Override the projection matrix from the camera
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
     llassert(camera_origin.mV[VZ] >= surface.getMaxZ());
@@ -264,7 +262,6 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
         shader.unbind();
     }
 
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
     gGL.flush();

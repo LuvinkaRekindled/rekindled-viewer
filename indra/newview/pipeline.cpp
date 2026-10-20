@@ -5901,7 +5901,6 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         }
 
         gGLLastMatrix = NULL;
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
         gGL.setColorMask(true, false);
@@ -6140,7 +6139,6 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
     }
 
     gGLLastMatrix = NULL;
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
 
     if (!gCubeSnapshot)
@@ -6306,12 +6304,10 @@ void LLPipeline::renderSnapshotGuidesOverlay()
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, LLTexUnit::sWhiteTexture);
     }
 
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.f, width, 0.f, height, -1.f, 1.f);
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
     gGLLastMatrix = nullptr;
@@ -6576,9 +6572,7 @@ void LLPipeline::renderSnapshotGuidesOverlay()
         }
     }
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
     gGLLastMatrix = nullptr;
 
@@ -10257,7 +10251,6 @@ void LLPipeline::renderAvatarVelocity()
     LLRenderState::DepthScope depth(false, false);
     LLRenderState::BlendScope blend(false);
     LLRenderState::CullScope cull(true);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
     gGLLastMatrix = NULL;
 
@@ -14096,10 +14089,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     }
 
     //generate shadow map
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj));
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(view));
 
@@ -14864,9 +14855,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     gGL.setColorMask(true, true);
 
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     gGLLastMatrix = NULL;
 
@@ -16263,9 +16252,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         set_current_modelview(view[1]);
         set_current_projection(proj[1]);
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(view[1]));
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj[1]));
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
     gGL.setColorMask(true, true);
 
@@ -16572,7 +16559,6 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
         tdim.mV[0] = fabsf(half_height.dot3(left).getF32());
         tdim.mV[1] = fabsf(half_height.dot3(up).getF32());
 
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
 
         F32 distance = (pos-camera.getOrigin()).length();
@@ -16582,7 +16568,6 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
         set_current_projection(persp);
         LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(persp));
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         F32 ogl_mat[16];
@@ -16692,7 +16677,6 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
 
@@ -16730,7 +16714,6 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
         gDebugProgram.unbind();
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 
@@ -16748,9 +16731,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
     if (!preview_avatar)
     {
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
 

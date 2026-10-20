@@ -546,7 +546,6 @@ bool LLDrawPoolAlpha::TexSetup(LLDrawInfo* draw, bool use_material)
         {
             tex_setup = true;
             gGL.getTexUnit(0)->activate();
-            gGL.matrixMode(LLRender::MM_TEXTURE);
             LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*)draw->mTextureMatrix->mMatrix);
             gPipeline.mTextureMatrixOps++;
         }
@@ -597,7 +596,6 @@ bool LLDrawPoolAlpha::TexSetup(LLDrawInfo* draw, bool use_material)
                 {
                     tex_setup = true;
                     gGL.getTexUnit(0)->activate();
-                    gGL.matrixMode(LLRender::MM_TEXTURE);
                     LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*)draw->mTextureMatrix->mMatrix);
                     gPipeline.mTextureMatrixOps++;
                 }
@@ -617,9 +615,7 @@ void LLDrawPoolAlpha::RestoreTexSetup(bool tex_setup)
     if (tex_setup)
     {
         gGL.getTexUnit(0)->activate();
-        gGL.matrixMode(LLRender::MM_TEXTURE);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::CurrentTexture);
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
 }
 
@@ -985,9 +981,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 if (tex_setup)
                 {
                     gGL.getTexUnit(0)->activate();
-                    gGL.matrixMode(LLRender::MM_TEXTURE);
                     LLRenderMatrix::identity(LLRenderMatrix::Kind::CurrentTexture);
-                    gGL.matrixMode(LLRender::MM_MODELVIEW);
                 }
             }
 

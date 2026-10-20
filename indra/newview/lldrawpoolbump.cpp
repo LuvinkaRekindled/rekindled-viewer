@@ -1039,17 +1039,15 @@ void LLRenderPass::pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_te
             if (shiny)
             {
                 gGL.getTexUnit(0)->activate();
-                gGL.matrixMode(LLRender::MM_TEXTURE);
             }
             else
             {
                 gGL.getTexUnit(0)->activate();
-                gGL.matrixMode(LLRender::MM_TEXTURE);
                 LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*) params.mTextureMatrix->mMatrix);
                 gPipeline.mTextureMatrixOps++;
             }
 
-            gGL.loadMatrix((GLfloat*) params.mTextureMatrix->mMatrix);
+            LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*) params.mTextureMatrix->mMatrix);      // both branches above left the texture matrix of unit 0 as the current one
             gPipeline.mTextureMatrixOps++;
 
             tex_setup = true;
@@ -1080,10 +1078,8 @@ void LLRenderPass::pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_te
         else
         {
             gGL.getTexUnit(0)->activate();
-            gGL.matrixMode(LLRender::MM_TEXTURE);
         }
-        gGL.loadIdentity();
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
+        LLRenderMatrix::identity(LLRenderMatrix::Kind::CurrentTexture);      // both branches above made the texture matrix of unit 0 the current one
     }
 }
 

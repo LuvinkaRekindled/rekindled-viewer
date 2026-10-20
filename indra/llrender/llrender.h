@@ -379,8 +379,7 @@ public:
         MM_TEXTURE1,
         MM_TEXTURE2,
         MM_TEXTURE3,
-        NUM_MATRIX_MODES,
-        MM_TEXTURE
+        NUM_MATRIX_MODES
     };
 
     LLRender();
@@ -394,18 +393,8 @@ public:
     // Needed when the render context has changed and invalidated the current state
     void refreshState(void);
 
-    void translatef(const GLfloat& x, const GLfloat& y, const GLfloat& z);
-    void scalef(const GLfloat& x, const GLfloat& y, const GLfloat& z);
-    void rotatef(const GLfloat& a, const GLfloat& x, const GLfloat& y, const GLfloat& z);
-    void ortho(F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar);
 
-    void pushMatrix();
-    void popMatrix();
-    void loadMatrix(const GLfloat* m);
-    void loadIdentity();
-    void multMatrix(const GLfloat* m);
-    void matrixMode(eMatrixMode mode);
-    // F3.3 (llrendermatrix.h): the same operations on a named matrix; the calls above act on the current matrix mode through these
+    // F3.3 (llrendermatrix.h): the matrix operations name their matrix; there is no "current matrix mode" any more
     void pushMatrixOf(eMatrixMode mode);
     void popMatrixOf(eMatrixMode mode);
     void setMatrixOf(eMatrixMode mode, const glm::mat4& m);
@@ -417,8 +406,6 @@ public:
     void orthoOf(eMatrixMode mode, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar);
     const glm::mat4& matrixOf(eMatrixMode mode) const { return mMatrix[mode][mMatIdx[mode]]; }
     U32 matrixDepth(eMatrixMode mode) const { return mMatIdx[mode]; }
-    eMatrixMode rawMatrixMode() const { return mMatrixMode; }      // the hidden current mode (LL_VK_MATRIX_GUARD_CHECK compares it with the matrix a migrated call names)
-    eMatrixMode getMatrixMode();
 
     const glm::mat4& getModelviewMatrix();
     const glm::mat4& getProjectionMatrix();
@@ -558,7 +545,6 @@ private:
     void drawBuffer(LLVertexBuffer* vb, U32 mode, S32 count);
     void resetStriders(S32 count);
 
-    eMatrixMode mMatrixMode;
     U32 mMatIdx[NUM_MATRIX_MODES];
     U32 mMatHash[NUM_MATRIX_MODES];
     glm::mat4 mMatrix[NUM_MATRIX_MODES][LL_MATRIX_STACK_DEPTH];

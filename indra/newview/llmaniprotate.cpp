@@ -131,7 +131,6 @@ void LLManipRotate::render()
         return;
     }
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     if (mObjectSelection->getSelectType() == SELECT_TYPE_HUD)
     {

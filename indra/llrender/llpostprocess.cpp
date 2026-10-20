@@ -329,20 +329,16 @@ void LLPostProcess::drawOrthoQuad(unsigned int width, unsigned int height, QuadT
 
 void LLPostProcess::viewOrthogonal(unsigned int width, unsigned int height)
 {
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.f, (GLfloat) width , (GLfloat) height , 0.f, -1.f, 1.f);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 }
 
 void LLPostProcess::viewPerspective(void)
 {
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 

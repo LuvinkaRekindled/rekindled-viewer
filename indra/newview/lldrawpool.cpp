@@ -567,7 +567,6 @@ void LLRenderPass::applyModelMatrix(const LLMatrix4* model_matrix)
     if (model_matrix != gGLLastMatrix)
     {
         gGLLastMatrix = model_matrix;
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
         if (model_matrix)
         {
@@ -616,7 +615,6 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
                 {
                     tex_setup = true;
                     gGL.getTexUnit(0)->activate();
-                    gGL.matrixMode(LLRender::MM_TEXTURE);
                     LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*) params.mTextureMatrix->mMatrix);
                     gPipeline.mTextureMatrixOps++;
                 }
@@ -638,9 +636,7 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
     params.mVertexBuffer->drawRange(LLRender::TRIANGLES, params.mStart, params.mEnd, params.mCount, params.mOffset);
     if (tex_setup)
     {
-        gGL.matrixMode(LLRender::MM_TEXTURE0);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Texture0);
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
 }
 
@@ -1250,7 +1246,6 @@ void setup_texture_matrix(LLDrawInfo& params)
     if (params.mTextureMatrix)
     { //special case implementation of texture animation here because of special handling of textures for PBR batches
         gGL.getTexUnit(0)->activate();
-        gGL.matrixMode(LLRender::MM_TEXTURE);
         LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*)params.mTextureMatrix->mMatrix);
         gPipeline.mTextureMatrixOps++;
     }
@@ -1260,9 +1255,7 @@ void teardown_texture_matrix(LLDrawInfo& params)
 {
     if (params.mTextureMatrix)
     {
-        gGL.matrixMode(LLRender::MM_TEXTURE0);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Texture0);
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
 }
 

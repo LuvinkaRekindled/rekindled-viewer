@@ -1056,9 +1056,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
                 set_current_projection(proj);
                 set_current_modelview(mod);
-                gGL.matrixMode(LLRender::MM_PROJECTION);
                 LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj));
-                gGL.matrixMode(LLRender::MM_MODELVIEW);
                 LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(mod));
                 gViewerWindow->setup3DViewport();
 
@@ -1556,9 +1554,7 @@ void display_cube_face()
 void render_hud_attachments()
 {
     LLPerfStats::RecordSceneTime T ( LLPerfStats::StatType_t::RENDER_HUDS); // render time capture - Primary contributor to HUDs (though these end up in render batches)
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     glm::mat4 current_proj = get_current_projection();
@@ -1662,9 +1658,7 @@ void render_hud_attachments()
         LLPipeline::sUseOcclusion = use_occlusion;
         LLPipeline::sRenderingHUDs = false;
     }
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     set_current_projection(current_proj);
@@ -1757,11 +1751,9 @@ bool setup_hud_matrices(const LLRect& screen_region)
     if (!result) return result;
 
     // set up transform to keep HUD objects in front of camera
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj));
     set_current_projection(proj);
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(model));
     set_current_modelview(model);
     return true;
@@ -1952,7 +1944,6 @@ void draw_axes()
 // <FS:PP> Render chat range spheres in 3D world
 static void renderChatRangeSphere(const LLVector3& center, F32 radius, const LLColor4& color)
 {
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);

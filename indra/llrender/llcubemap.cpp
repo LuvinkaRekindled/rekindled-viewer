@@ -304,10 +304,8 @@ void LLCubeMap::setMatrix(S32 stage)
     LLMatrix4 trans(mat3);
     trans.transpose();
 
-    gGL.matrixMode(LLRender::MM_TEXTURE);
     LLRenderMatrix::push(LLRenderMatrix::Kind::CurrentTexture);
     LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (F32 *)trans.mMatrix);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
 
     /*if (stage > 0)
     {
@@ -323,9 +321,7 @@ void LLCubeMap::restoreMatrix()
     {
         gGL.getTexUnit(mMatrixStage)->activate();
     }
-    gGL.matrixMode(LLRender::MM_TEXTURE);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::CurrentTexture);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
 
     /*if (mMatrixStage > 0)
     {

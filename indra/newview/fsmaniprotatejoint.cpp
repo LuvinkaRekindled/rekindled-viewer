@@ -86,7 +86,6 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
 
@@ -131,7 +130,6 @@ static void renderStaticSphere(const LLVector3& joint_world_position, const LLCo
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
 
@@ -765,7 +763,6 @@ void FSManipRotateJoint::render()
     active_rotation.normalize();
 
     // Render the manipulator rings in a separate function.
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     renderAxes(agent_space_center, mRadiusMeters * 1.5f, active_rotation);
     renderManipulatorRings(agent_space_center, active_rotation);
 

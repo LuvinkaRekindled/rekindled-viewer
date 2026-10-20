@@ -598,9 +598,7 @@ void LLGLUserClipPlane::disable()
 {
     if (mApply)
     {
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
     mApply = false;
 }
@@ -623,11 +621,9 @@ void LLGLUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
     glm::mat4 suffix = glm::identity<glm::mat4>();
     suffix = glm::row(suffix, 2, cplane);
     glm::mat4 newP = suffix * P;
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(newP));
     gGLObliqueProjectionInverse = LLMatrix4(glm::value_ptr(glm::transpose(glm::inverse(newP))));
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
 }
 
 LLGLUserClipPlane::~LLGLUserClipPlane()
@@ -653,23 +649,17 @@ void LLGLSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
     glm::vec4 P_row_3 = glm::row(projection, 3) * depth;
     projection = glm::row(projection, 2, P_row_3);
 
-    LLRender::eMatrixMode last_matrix_mode = gGL.getMatrixMode();
 
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(projection));
 
-    gGL.matrixMode(last_matrix_mode);
 }
 
 LLGLSquashToFarClip::~LLGLSquashToFarClip()
 {
-    LLRender::eMatrixMode last_matrix_mode = gGL.getMatrixMode();
 
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
-    gGL.matrixMode(last_matrix_mode);
 }
 
 

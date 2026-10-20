@@ -228,7 +228,6 @@ void LLManipScale::render()
 
     if( canAffectSelection() )
     {
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         if (mObjectSelection->getSelectType() == SELECT_TYPE_HUD)
         {
@@ -297,7 +296,6 @@ void LLManipScale::render()
         LLVector3 pos_agent = bbox.getPositionAgent();
         LLQuaternion rot = bbox.getRotation();
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         {
             LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[VX], pos_agent.mV[VY], pos_agent.mV[VZ]);

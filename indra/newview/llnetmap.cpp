@@ -396,7 +396,6 @@ void LLNetMap::draw()
         {
             gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
 
-            gGL.matrixMode(LLRender::MM_MODELVIEW);
 
             // Draw background rectangle
             LLColor4 background_color = mBackgroundColor.get();
@@ -992,7 +991,6 @@ void LLNetMap::drawRing(const F32 radius, const LLVector3 pos_map, const LLUICol
 // </FS:CR> Aurora Sim
     F32 radius_pixels = radius * meters_to_pixels;
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)pos_map.mV[VX], (F32)pos_map.mV[VY], 0.f);
     gl_ring(radius_pixels, WIDTH_PIXELS, color, color, CIRCLE_STEPS, false);

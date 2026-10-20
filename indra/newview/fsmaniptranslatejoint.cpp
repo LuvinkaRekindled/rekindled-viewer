@@ -715,7 +715,6 @@ void FSManipTranslateJoint::render()
     if (!isMoveableJoint())
         return;
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLRenderState::DepthScope gls_depth(true, false);
@@ -807,7 +806,6 @@ void FSManipTranslateJoint::renderTranslationHandles()
     mPlaneManipOffsetMeters = mArrowLengthMeters * 1.8f;
     mConeSize = mArrowLengthMeters / 4.f;
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     {
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);

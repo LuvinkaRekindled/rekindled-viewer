@@ -91,7 +91,6 @@ void LLDrawPoolTree::renderDeferred(S32 pass)
         {
             LLMatrix4* model_matrix = &(face->getDrawable()->getRegion()->mRenderMatrix);
 
-            llassert(gGL.getMatrixMode() == LLRender::MM_MODELVIEW);
             LLRenderPass::applyModelMatrix(model_matrix);
 
             buff->setBuffer();
