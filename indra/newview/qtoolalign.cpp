@@ -374,7 +374,7 @@ void QToolAlign::render()
         LLRenderState::BlendScope gl_blend(true);
         // F3.2: LLGLEnable(GL_ALPHA_TEST) had no effect on the render state block (never mapped); dropped
         LLRenderState::DepthScope gls_depth(false);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         // render box
         LLColor4 default_normal_color( 0.7f, 0.7f, 0.7f, 0.1f );

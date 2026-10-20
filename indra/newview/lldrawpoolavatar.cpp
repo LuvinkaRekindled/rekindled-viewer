@@ -729,7 +729,7 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
 
         // set up drawing mode and remove any textures used
         LLRenderState::BlendScope blend(true);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         LLColor4 avatar_color = LLNetMap::getAvatarColor(avatarp->getID());
         gGL.diffuseColor4f(avatar_color.mV[VRED], avatar_color.mV[VGREEN], avatar_color.mV[VBLUE], avatar_color.mV[VALPHA]);

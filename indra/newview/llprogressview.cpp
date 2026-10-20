@@ -305,11 +305,11 @@ void LLProgressView::drawStartTexture(F32 alpha)
             LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 1.f, view_aspect / image_aspect, 1.f);
         }
         gl_rect_2d_simple_tex( getRect().getWidth(), getRect().getHeight() );
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
     }
     else
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         gGL.color4f(0.f, 0.f, 0.f, alpha);      // ## Zi: Fade teleport screens
         gl_rect_2d(getRect());
     }

@@ -6736,7 +6736,7 @@ U32 LLVOAvatar::renderImpostor(LLColor4U color, S32 diffuse_channel)
     {
         LLRenderState::BlendScope blend(true);
         gGL.setSceneBlendType(LLRender::BT_ADD);
-        gGL.getTexUnit(diffuse_channel)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(diffuse_channel)->bindWhite();
 
         gGL.begin(LLRender::LINES);
         gGL.color4f(1.f,1.f,1.f,1.f);

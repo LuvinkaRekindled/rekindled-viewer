@@ -1120,7 +1120,7 @@ void LLManipTranslate::renderSnapGuides()
     F32 max_subdivisions = sGridMaxSubdivisionLevel;//(F32)gSavedSettings.getS32("GridSubdivision");
     F32 line_alpha = gSavedSettings.getF32("GridOpacity");
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::CullScope gls_cull(false);
     LLVector3 translate_axis;
@@ -1530,7 +1530,7 @@ void LLManipTranslate::renderSnapGuides()
             break;
         }
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         highlightIntersection(normal, selection_center, grid_rotation, inner_color);
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
@@ -1579,7 +1579,7 @@ void LLManipTranslate::renderSnapGuides()
 
                 {
                     //draw black overlay
-                    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                    gGL.getTexUnit(0)->bindWhite();
                     renderGrid(u,v,tiles,0.0f, 0.0f, 0.0f,a*0.16f);
 
                     //draw grid top
@@ -1694,7 +1694,7 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
         LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
         //glStencilFunc(GL_ALWAYS, 0, stencil_mask);
         gGL.setColorMask(false, false);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         gGL.diffuseColor4f(1,1,1,1);
 
@@ -1769,7 +1769,7 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
 
     //draw volume/plane intersections
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         LLRenderState::DepthScope depth(false);
         //LLGLEnable stencil(GL_STENCIL_TEST);
         gGL.setStencilOp(LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep);
@@ -1924,7 +1924,7 @@ void LLManipTranslate::renderTranslationHandles()
         relative_camera_dir.normVec();
 
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
             LLRenderState::CullScope cull_face(false);
 
             LLColor4 color1;
@@ -2166,7 +2166,7 @@ void LLManipTranslate::renderTranslationHandles()
             }
         }
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
 
             // Since we draw handles with depth testing off, we need to draw them in the
             // proper depth order.
@@ -2240,7 +2240,7 @@ void LLManipTranslate::renderTranslationHandles()
 
 void LLManipTranslate::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_size, F32 arrow_size, F32 handle_size, bool reverse_direction)
 {
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     LLRenderState::BlendScope gls_blend(true);
 
     for (S32 pass = 1; pass <= 2; pass++)

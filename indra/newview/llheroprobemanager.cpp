@@ -426,7 +426,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-        gGL.getTexUnit(diffuseChannel)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(diffuseChannel)->bindWhite();
         gReflectionMipProgram.unbind();
     }
 }

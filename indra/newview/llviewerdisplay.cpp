@@ -1180,7 +1180,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         //  gGL.matrixMode(LLRender::MM_MODELVIEW);
         //  gGL.pushMatrix();
         //  {
-        //      gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        //      gGL.getTexUnit(0)->bindWhite();
 
         //      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
         //      gGL.loadIdentity();
@@ -1875,7 +1875,7 @@ void swap()
 
 void renderCoordinateAxes()
 {
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     gGL.begin(LLRender::LINES);
         gGL.color3f(1.0f, 0.0f, 0.0f);   // i direction = X-Axis = red
         gGL.vertex3f(0.0f, 0.0f, 0.0f);
@@ -1926,7 +1926,7 @@ void renderCoordinateAxes()
 void draw_axes()
 {
     LLGLSUIDefault gls_ui;
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     // A vertical white line at origin
     LLVector3 v = gAgent.getPositionAgent();
     gGL.begin(LLRender::LINES);
@@ -2418,7 +2418,7 @@ void render_disconnected_background()
         raw->expandToPowerOfTwo();
         gDisconnectedImagep = LLViewerTextureManager::getLocalTexture(raw.get(), false);
         gStartTexture = gDisconnectedImagep;
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
     }
 
     // Make sure the progress view always fills the entire window.
@@ -2440,7 +2440,7 @@ void render_disconnected_background()
             gGL.getTexUnit(0)->bind(gDisconnectedImagep);
             gGL.color4f(1.f, 1.f, 1.f, 1.f);
             gl_rect_2d_simple_tex(width, height);
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
         }
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }

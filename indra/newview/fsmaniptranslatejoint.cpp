@@ -823,7 +823,7 @@ void FSManipTranslateJoint::renderTranslationHandles()
         relative_camera_dir.normVec();
 
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
             LLRenderState::CullScope cull_face(false);
 
             LLColor4 color1;
@@ -1033,7 +1033,7 @@ void FSManipTranslateJoint::renderTranslationHandles()
             }
         }
         {
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
 
             // Since we draw handles with depth testing off, we need to draw them in the
             // proper depth order.
@@ -1099,7 +1099,7 @@ void FSManipTranslateJoint::renderTranslationHandles()
 
 void FSManipTranslateJoint::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_size, F32 arrow_size, F32 handle_size, bool reverse_direction)
 {
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     LLRenderState::BlendScope gls_blend(true);
 
     for (S32 pass = 1; pass <= 2; pass++)

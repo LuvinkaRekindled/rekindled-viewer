@@ -606,7 +606,7 @@ void LLVertexBufferData::drawWithMatrix()
     }
     else
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
     }
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
@@ -639,7 +639,7 @@ void LLVertexBufferData::draw()
     }
     else
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
     }
 
     mVB->setBuffer();

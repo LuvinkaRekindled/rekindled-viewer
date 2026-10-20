@@ -298,7 +298,7 @@ void LLSlider::draw()
     // Draw background and thumb.
 
     // drawing solids requires texturing be disabled
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 
     // Track
     LLPointer<LLUIImage>& trackImage = ( mOrientation == HORIZONTAL )

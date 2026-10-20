@@ -123,7 +123,7 @@ void LLViewerDynamicTexture::preRender(bool clear_depth)
      //use the bottom left corner
     mOrigin.set(0, 0);
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     // Set up camera
     LLViewerCamera* camera = LLViewerCamera::getInstance();
     mCamera.setOrigin(*camera);

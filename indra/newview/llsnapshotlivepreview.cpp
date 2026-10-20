@@ -368,7 +368,7 @@ void LLSnapshotLivePreview::draw()
                 S32 y1 = 0;
                 S32 y2 = gViewerWindow->getWindowHeightScaled() + TOP_PANEL_HEIGHT;
 
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTexUnit(0)->bindWhite();
                 gGL.begin(LLRender::TRIANGLES);
                 {
                     gGL.color4f(1.f, 1.f, 1.f, 0.f);

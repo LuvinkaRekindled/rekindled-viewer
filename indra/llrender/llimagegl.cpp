@@ -405,7 +405,7 @@ void LLImageGL::destroyGL()
 {
     for (S32 stage = 0; stage < gGLManager.mNumTextureImageUnits; stage++)
     {
-        gGL.getTexUnit(stage)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(stage)->bindWhite();
     }
 }
 
@@ -2468,7 +2468,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("scaleDown - glGenerateMipmap");
                 gGL.getTexUnit(0)->bind(this);
                 LLVkTex::generateMipmap(mTexName, mTarget);
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTexUnit(0)->bindWhite();
             }
         }
         else

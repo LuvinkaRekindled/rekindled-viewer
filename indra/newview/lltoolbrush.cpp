@@ -524,7 +524,7 @@ void LLToolBrushLand::render()
 void LLToolBrushLand::renderOverlay(LLSurface& land, const LLVector3& pos_region,
                                     const LLVector3& pos_world)
 {
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope mDepthTest(true);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     gGL.color4fv(OVERLAY_COLOR.mV);

@@ -245,13 +245,13 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     {
         // Bind current and next sun textures
         gGL.getTexUnit(0)->bind(tex_a);
-        gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(1)->bindWhite();
         blend_factor = 0;
     }
     else if (tex_b && !tex_a)
     {
         gGL.getTexUnit(0)->bind(tex_b);
-        gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(1)->bindWhite();
         blend_factor = 0;
     }
     else if (tex_b != tex_a)
@@ -277,8 +277,8 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
 
     gSky.mVOWLSkyp->drawStars();
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-    gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
+    gGL.getTexUnit(1)->bindWhite();
 
     gDeferredStarProgram.unbind();
 
@@ -303,8 +303,8 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
         LLPointer<LLViewerTexture> cloud_noise      = gSky.mVOSkyp->getCloudNoiseTex();
         LLPointer<LLViewerTexture> cloud_noise_next = gSky.mVOSkyp->getCloudNoiseTexNext();
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-        gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
+        gGL.getTexUnit(1)->bindWhite();
 
         F32 cloud_variance = psky ? (F32)psky->getCloudVariance() : 0.0f;
         F32 blend_factor   = psky ? (F32)psky->getBlendFactor() : 0.0f;
@@ -344,8 +344,8 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
 
         cloudshader->unbind();
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-        gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
+        gGL.getTexUnit(1)->bindWhite();
     }
 }
 
@@ -371,8 +371,8 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
         LLPointer<LLViewerTexture> tex_a = face->getTexture(LLRender::DIFFUSE_MAP);
         LLPointer<LLViewerTexture> tex_b = face->getTexture(LLRender::ALTERNATE_DIFFUSE_MAP);
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-        gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
+        gGL.getTexUnit(1)->bindWhite();
 
         // if we even have sun disc textures to work with...
         if (tex_a || tex_b)
@@ -406,8 +406,8 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
 
                 face->renderIndexed();
 
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-                gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTexUnit(0)->bindWhite();
+                gGL.getTexUnit(1)->bindWhite();
 
                 sun_shader->unbind();
             }
@@ -456,8 +456,8 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
 
             face->renderIndexed();
 
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
-            gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
+            gGL.getTexUnit(1)->bindWhite();
 
             moon_shader->unbind();
         }

@@ -967,7 +967,7 @@ void LLFolderViewItem::drawHighlight(bool showContent, bool hasKeyboardFocus,
     //
     if (isHighlightAllowed())
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         // Highlight for selected but not current items
         if (!isHighlightActive() && !isFlashing())
@@ -1040,7 +1040,7 @@ void LLFolderViewItem::drawHighlight(bool showContent, bool hasKeyboardFocus,
     //
     if (mDragAndDropTarget)
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         gl_rect_2d(FOCUS_LEFT,
             focus_top,
             getRect().getWidth() - 2,

@@ -252,7 +252,7 @@ void LLTextureBar::draw()
     LLFontGL::getFontMonospace()->renderUTF8(fetch_state_desc[state].desc, 0, title_x2, getRect().getHeight(),
                                      fetch_state_desc[state].color,
                                      LLFontGL::LEFT, LLFontGL::TOP);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 
     // Draw the progress bar.
     S32 bar_width = 110;
@@ -611,7 +611,7 @@ void LLGLTexMemBar::draw()
     S32 right = left + bar_width;
     F32 bar_scale;
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 
     // VRAM Mem Bar
     text = "VRAM";

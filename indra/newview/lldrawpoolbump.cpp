@@ -552,8 +552,8 @@ void LLDrawPoolBump::renderDeferred(S32 pass)
         gDeferredBumpProgram.bind(rigged);
         diffuse_channel = LLGLSLShader::sCurBoundShaderPtr->enableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
         bump_channel = LLGLSLShader::sCurBoundShaderPtr->enableTexture(LLViewerShaderMgr::BUMP_MAP);
-        gGL.getTexUnit(diffuse_channel)->unbind(LLTexUnit::TT_TEXTURE);
-        gGL.getTexUnit(bump_channel)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(diffuse_channel)->bindWhite();
+        gGL.getTexUnit(bump_channel)->bindWhite();
 
         U32 type = rigged ? LLRenderPass::PASS_BUMP_RIGGED : LLRenderPass::PASS_BUMP;
         LLCullResult::drawinfo_iterator begin = gPipeline.beginRenderMap(type);
@@ -975,7 +975,7 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
         // generate mipmap
         gGL.getTexUnit(0)->bind(bump);
         gGL.generateMipmap(bump->getGLTexture()->getTexName(), GL_TEXTURE_2D);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
     }
 
     iter->second = bump; // derefs (and deletes) old image
@@ -1061,7 +1061,7 @@ void LLRenderPass::pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_te
             }
             else
             {
-                gGL.getTexUnit(diffuse_channel)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTexUnit(diffuse_channel)->bindWhite();
             }
         }
     }

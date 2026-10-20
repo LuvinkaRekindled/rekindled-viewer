@@ -4673,7 +4673,7 @@ bool LLModelPreview::render()
                     buffer->setBuffer();
                     buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
 
-                    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                    gGL.getTexUnit(0)->bindWhite();
                     gGL.diffuseColor4fv(edge_col().mV); // <FS:Beq/> restore changes removed by the lab
                     if (show_edges)
                     {
@@ -4793,7 +4793,7 @@ bool LLModelPreview::render()
                             {
                                 for (size_t i = 0; i < num_models; ++i)
                                 {
-                                    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                                    gGL.getTexUnit(0)->bindWhite();
                                     gGL.diffuseColor4fv(phys_fill_col().mV); // <FS:Beq/> restore changes removed by the lab
 
                                     // Zero this variable for an obligatory buffer initialization
@@ -4993,7 +4993,7 @@ bool LLModelPreview::render()
                             model->mSkinInfo.updateHash();
                             LLRenderPass::uploadMatrixPalette(mPreviewAvatar, &model->mSkinInfo);
 
-                            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                            gGL.getTexUnit(0)->bindWhite();
 
                             if (show_textures)
                             {
@@ -5030,7 +5030,7 @@ bool LLModelPreview::render()
 
                             if (show_edges)
                             {
-                                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                                gGL.getTexUnit(0)->bindWhite();
                                 // <FS:Beq> restore behaviour removed by lab
                                 // gGL.diffuseColor4fv(PREVIEW_EDGE_COL.mV);
                                 // gGL.setLineWidth(PREVIEW_EDGE_WIDTH);

@@ -381,7 +381,7 @@ bool LLTexLayerSet::render( S32 x, S32 y, S32 width, S32 height, LLRenderTarget*
     {
         gGL.flush();
         gAlphaMaskProgram.setMinimumAlpha(0.0f);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         gGL.color4f( 0.f, 0.f, 0.f, 1.f );
 
         gl_rect_2d_simple( width, height );
@@ -414,7 +414,7 @@ bool LLTexLayerSet::render( S32 x, S32 y, S32 width, S32 height, LLRenderTarget*
         gGL.setSceneBlendType(LLRender::BT_REPLACE);
         gAlphaMaskProgram.setMinimumAlpha(0.f);
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         gGL.color4f( 0.f, 0.f, 0.f, 0.f );
 
         gl_rect_2d_simple( width, height );
@@ -502,7 +502,7 @@ void LLTexLayerSet::renderAlphaMaskTextures(S32 x, S32 y, S32 width, S32 height,
         // Set the alpha channel to one (clean up after previous blending)
         gGL.flush();
         gAlphaMaskProgram.setMinimumAlpha(0.f);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         gGL.color4f( 0.f, 0.f, 0.f, 1.f );
 
         gl_rect_2d_simple( width, height );
@@ -525,7 +525,7 @@ void LLTexLayerSet::renderAlphaMaskTextures(S32 x, S32 y, S32 width, S32 height,
 
     }
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 
     gGL.setColorMask(true, true);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
@@ -1124,7 +1124,7 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
                     gl_rect_2d_simple_tex( width, height );
 
                     gGL.getTexUnit(0)->setTextureAddressMode(old_mode);
-                    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                    gGL.getTexUnit(0)->bindWhite();
                     if (no_alpha_test)
                     {
                         gAlphaMaskProgram.setMinimumAlpha(0.004f);
@@ -1146,7 +1146,7 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
             {
                 gGL.getTexUnit(0)->bind(tex, true);
                 gl_rect_2d_simple_tex( width, height );
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTexUnit(0)->bindWhite();
             }
             else
             {
@@ -1162,7 +1162,7 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
     {
         gAlphaMaskProgram.setMinimumAlpha(0.000f);
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         gGL.color4fv( net_color.mV );
         gl_rect_2d_simple( width, height );
         gAlphaMaskProgram.setMinimumAlpha(0.004f);
@@ -1260,7 +1260,7 @@ bool LLTexLayer::blendAlphaTexture(S32 x, S32 y, S32 width, S32 height)
             gAlphaMaskProgram.setMinimumAlpha(0.f);
             gGL.getTexUnit(0)->bind(tex, true);
             gl_rect_2d_simple_tex( width, height );
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
             gAlphaMaskProgram.setMinimumAlpha(0.004f);
         }
         else
@@ -1278,7 +1278,7 @@ bool LLTexLayer::blendAlphaTexture(S32 x, S32 y, S32 width, S32 height)
                 gAlphaMaskProgram.setMinimumAlpha(0.f);
                 gGL.getTexUnit(0)->bind(tex);
                 gl_rect_2d_simple_tex( width, height );
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTexUnit(0)->bindWhite();
                 gAlphaMaskProgram.setMinimumAlpha(0.004f);
             }
         }
@@ -1311,7 +1311,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
     // Note: if the first param is a mulitply, multiply against the current buffer's alpha
     if( !first_param || !first_param->getMultiplyBlend() )
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         // Clear the alpha
         gGL.flush();
@@ -1351,7 +1351,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
             gl_rect_2d_simple_tex( width, height );
 
             gGL.getTexUnit(0)->setTextureAddressMode(old_mode);
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
         }
     }
 
@@ -1364,7 +1364,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
             {
                 gGL.getTexUnit(0)->bind(tex, true);
                 gl_rect_2d_simple_tex( width, height );
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTexUnit(0)->bindWhite();
             }
             else
             {
@@ -1378,7 +1378,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
     // Note: we're still using gGL.blendFunc( GL_DST_ALPHA, GL_ZERO );
     if ( !is_approx_equal(layer_color.mV[VALPHA], 1.f) )
     {
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         gGL.color4fv(layer_color.mV);
         gl_rect_2d_simple( width, height );
     }

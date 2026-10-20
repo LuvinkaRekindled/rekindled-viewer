@@ -91,7 +91,7 @@ LLDrawPoolTerrain::LLDrawPoolTerrain(LLViewerTexture *texturep) :
 
     mTexturep->setBoostLevel(LLGLTexture::BOOST_TERRAIN);
 
-    //gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    //gGL.getTexUnit(0)->bindWhite();
 }
 
 LLDrawPoolTerrain::~LLDrawPoolTerrain()
@@ -170,7 +170,7 @@ void LLDrawPoolTerrain::beginShadowPass(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_TERRAIN);
     LLFacePool::beginRenderPass(pass);
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     gDeferredShadowProgram.bind();
 
     LLEnvironment& environment = LLEnvironment::instance();
@@ -322,26 +322,26 @@ void LLDrawPoolTerrain::renderFullShaderTextures()
     sShader->disableTexture(LLViewerShaderMgr::TERRAIN_DETAIL2);
     sShader->disableTexture(LLViewerShaderMgr::TERRAIN_DETAIL3);
 
-    gGL.getTexUnit(alpha_ramp)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(alpha_ramp)->bindWhite();
     gGL.getTexUnit(alpha_ramp)->disable();
     gGL.getTexUnit(alpha_ramp)->activate();
 
-    gGL.getTexUnit(detail3)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(detail3)->bindWhite();
     gGL.getTexUnit(detail3)->disable();
     gGL.getTexUnit(detail3)->activate();
 
-    gGL.getTexUnit(detail2)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(detail2)->bindWhite();
     gGL.getTexUnit(detail2)->disable();
     gGL.getTexUnit(detail2)->activate();
 
-    gGL.getTexUnit(detail1)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(detail1)->bindWhite();
     gGL.getTexUnit(detail1)->disable();
     gGL.getTexUnit(detail1)->activate();
 
     //----------------------------------------------------------------------------
     // Restore Texture Unit 0 defaults
 
-    gGL.getTexUnit(detail0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(detail0)->bindWhite();
     gGL.getTexUnit(detail0)->enable(LLTexUnit::TT_TEXTURE);
     gGL.getTexUnit(detail0)->activate();
 }
@@ -582,7 +582,7 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
     {
         sShader->disableTexture(LLViewerShaderMgr::TERRAIN_ALPHARAMP);
 
-        gGL.getTexUnit(alpha_ramp)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(alpha_ramp)->bindWhite();
         gGL.getTexUnit(alpha_ramp)->disable();
         gGL.getTexUnit(alpha_ramp)->activate();
     }
@@ -590,7 +590,7 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
     {
         sShader->disableTexture(LLViewerShaderMgr::TERRAIN_PAINTMAP);
 
-        gGL.getTexUnit(paint_map)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(paint_map)->bindWhite();
         gGL.getTexUnit(paint_map)->disable();
         gGL.getTexUnit(paint_map)->activate();
     }
@@ -611,27 +611,27 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
             sShader->disableTexture(LLViewerShaderMgr::TERRAIN_DETAIL0_EMISSIVE + i);
         }
 
-        gGL.getTexUnit(detail_basecolor[i])->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(detail_basecolor[i])->bindWhite();
         gGL.getTexUnit(detail_basecolor[i])->disable();
         gGL.getTexUnit(detail_basecolor[i])->activate();
 
         if (sPBRDetailMode >= TERRAIN_PBR_DETAIL_NORMAL)
         {
-            gGL.getTexUnit(detail_normal[i])->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(detail_normal[i])->bindWhite();
             gGL.getTexUnit(detail_normal[i])->disable();
             gGL.getTexUnit(detail_normal[i])->activate();
         }
 
         if (sPBRDetailMode >= TERRAIN_PBR_DETAIL_METALLIC_ROUGHNESS)
         {
-            gGL.getTexUnit(detail_metalrough[i])->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(detail_metalrough[i])->bindWhite();
             gGL.getTexUnit(detail_metalrough[i])->disable();
             gGL.getTexUnit(detail_metalrough[i])->activate();
         }
 
         if (sPBRDetailMode >= TERRAIN_PBR_DETAIL_EMISSIVE)
         {
-            gGL.getTexUnit(detail_emissive[i])->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(detail_emissive[i])->bindWhite();
             gGL.getTexUnit(detail_emissive[i])->disable();
             gGL.getTexUnit(detail_emissive[i])->activate();
         }

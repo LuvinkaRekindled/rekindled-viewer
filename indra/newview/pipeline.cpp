@@ -2959,7 +2959,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
         gGL.setColorMask(false, false);
 
         LLRenderState::BlendScope blend(false);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
         LLRenderState::DepthScope depth(true, false);
 
         LLRenderState::CullScope cull(false);
@@ -7111,7 +7111,7 @@ void LLPipeline::renderDebug()
         {
             gDebugProgram.bind();
 
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
 
             LLVector3 center(gDebugRaycastParticleIntersection.getF32ptr());
             LLVector3 size(0.1f, 0.1f, 0.1f);
@@ -7147,7 +7147,7 @@ void LLPipeline::renderDebug()
         LLRenderState::CullScope cull(false);
 
         gGL.color4f(1,1,1,1);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         F32 a = 0.1f;
 
@@ -7281,7 +7281,7 @@ void LLPipeline::renderDebug()
         // Debug composition layers
         F32 x, y;
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         if (gAgent.getRegion())
         {
@@ -11056,7 +11056,7 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
             edge_shader.unbind();
             dest.flush();
 
-            gGL.getTexUnit(channel)->unbindFast(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(channel)->bindWhiteFast();
         }
 
         {
@@ -11106,9 +11106,9 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
             //}
             blend_weights_shader.unbind();
             dest.flush();
-            gGL.getTexUnit(edge_tex_channel)->unbindFast(LLTexUnit::TT_TEXTURE);
-            gGL.getTexUnit(area_tex_channel)->unbindFast(LLTexUnit::TT_TEXTURE);
-            gGL.getTexUnit(search_tex_channel)->unbindFast(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(edge_tex_channel)->bindWhiteFast();
+            gGL.getTexUnit(area_tex_channel)->bindWhiteFast();
+            gGL.getTexUnit(search_tex_channel)->bindWhiteFast();
         }
     }
 }
@@ -11166,8 +11166,8 @@ void LLPipeline::applySMAA(LLRenderTarget* src, LLRenderTarget* dst)
 
             bound_target->flush();
             blend_shader.unbind();
-            gGL.getTexUnit(diffuse_channel)->unbindFast(LLTexUnit::TT_TEXTURE);
-            gGL.getTexUnit(blend_channel)->unbindFast(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(diffuse_channel)->bindWhiteFast();
+            gGL.getTexUnit(blend_channel)->bindWhiteFast();
         }
     }
     else
@@ -13762,7 +13762,7 @@ void LLPipeline::unbindDeferredShader(LLGLSLShader &shader)
 
     unbindReflectionProbes(shader);
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     gGL.getTexUnit(0)->activate();
     shader.unbind();
 }
@@ -14097,7 +14097,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     stop_glerror();
     gGLLastMatrix = NULL;
 
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 
     stop_glerror();
 
@@ -16600,7 +16600,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
                 gGL.getTexUnit(0)->bind(&avatar->mImpostor);
                 gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
-                gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+                gGL.getTexUnit(0)->bindWhite();
             }
             else if (resX != avatar->mImpostor.getWidth() || resY != avatar->mImpostor.getHeight())
             {
@@ -16669,7 +16669,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
             gGL.setColorMask(false, true);
         }
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Greater);
 

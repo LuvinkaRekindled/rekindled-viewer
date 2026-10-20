@@ -421,7 +421,7 @@ void LLFastTimerView::draw()
     legend_panel->localRectToOtherView(legend_panel->getLocalRect(), &mLegendRect, this);
 
     // Draw the window background
-            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            gGL.getTexUnit(0)->bindWhite();
     gl_rect_2d(getLocalRect(), LLColor4(0.f, 0.f, 0.f, 0.25f));
 
     drawHelp(getRect().getHeight() - MARGIN);
@@ -539,7 +539,7 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
     LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -0.05f, 1.05f, -0.05f, 1.05f, -1.0f, 1.0f);
 
     //render charts
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 
     buffer.bindTarget();
 
@@ -1032,7 +1032,7 @@ void LLFastTimerView::drawLineGraph()
 {
     LL_PROFILE_ZONE_SCOPED;
     //draw line graph history
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     LLLocalClipRect clip(mGraphRect);
 
     //normalize based on last frame's maximum
@@ -1562,7 +1562,7 @@ void LLFastTimerView::drawBars()
         }
 
     }
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
 }
 
 F32Seconds LLFastTimerView::updateTimerBarWidths(LLTrace::BlockTimerStatHandle* time_block, TimerBarRow& row, S32 history_index, U32& bar_index)

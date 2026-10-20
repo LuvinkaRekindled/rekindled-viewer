@@ -6069,7 +6069,7 @@ void LLAgent::renderAutoPilotTarget()
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         // not textured
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         // lovely green
         gGL.color4f(0.f, 1.f, 1.f, 1.f);

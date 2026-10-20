@@ -180,7 +180,7 @@ LLRenderTarget& LLSceneMonitor::getCaptureTarget()
         mFrames[0]->allocate(width, height, GL_RGB);
         gGL.getTexUnit(0)->bind(mFrames[0]);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         cur_target = mFrames[0];
     }
@@ -190,7 +190,7 @@ LLRenderTarget& LLSceneMonitor::getCaptureTarget()
         mFrames[1]->allocate(width, height, GL_RGB);
         gGL.getTexUnit(0)->bind(mFrames[1]);
         gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(0)->bindWhite();
 
         cur_target = mFrames[1];
     }
@@ -393,11 +393,11 @@ void LLSceneMonitor::compare()
     gTwoTextureCompareProgram.unbind();
 
     gGL.getTexUnit(0)->disable();
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     gGL.getTexUnit(1)->disable();
-    gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(1)->bindWhite();
     gGL.getTexUnit(2)->disable();
-    gGL.getTexUnit(2)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(2)->bindWhite();
 
     if (!mDebugViewerVisible)
     {
@@ -723,7 +723,7 @@ void LLSceneMonitorView::draw()
     setRect(new_rect);
 
     //draw background
-    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gGL.getTexUnit(0)->bindWhite();
     gl_rect_2d(0, getRect().getHeight(), getRect().getWidth(), 0, LLColor4(0.f, 0.f, 0.f, 0.25f));
 
     LLSceneMonitor::getInstance()->calcDiffAggregate();
