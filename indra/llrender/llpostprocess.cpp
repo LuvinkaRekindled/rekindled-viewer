@@ -297,8 +297,8 @@ void LLPostProcess::doEffects(void)
     }
 
     /// Clear the frame buffer.
-    gGL.setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    gGL.clearBuffers(ClearBits::Color);
+    gRender.setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    gRender.clearBuffers(ClearBits::Color);
 
     /// Change to an orthogonal view
     viewOrthogonal(screenW, screenH);
@@ -306,7 +306,7 @@ void LLPostProcess::doEffects(void)
     checkError();
     applyShaders();
 
-    LLGLSLShader::unbind();
+    LLShaderProgram::unbind();
     checkError();
 
     /// Change to a perspective view
@@ -318,7 +318,7 @@ void LLPostProcess::doEffects(void)
 
 void LLPostProcess::copyFrameBuffer(U32 & texture, unsigned int width, unsigned int height)
 {
-    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture);
+    gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture);
     LLVkTex::copyImage2D(texture, TextureTarget::Rect, 0, TexelFormat::RGBA8, 0, 0, width, height, LLRenderTarget::currentId());
 }
 
@@ -348,22 +348,22 @@ void LLPostProcess::changeOrthogonal(unsigned int width, unsigned int height)
     viewOrthogonal(width, height);
 }
 
-void LLPostProcess::createTexture(LLPointer<LLImageGL>& texture, unsigned int width, unsigned int height)
+void LLPostProcess::createTexture(LLPointer<LLImageTex>& texture, unsigned int width, unsigned int height)
 {
     std::vector<U8> data(width * height * 4, 0) ;
 
-    texture = new LLImageGL(false) ;
-    if(texture->createGLTexture())
+    texture = new LLImageTex(false) ;
+    if(texture->createImageTexture())
     {
-        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture->getTexName());
+        gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture->getTexName());
         LLVkTex::image2D(texture->getTexName(), TextureTarget::Rect, 0, TexelFormat::RGBA8, width, height,
             PixelFormat::RGBA, ComponentType::U8, &data[0]);
-        gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
-        gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+        gRender.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
     }
 }
 
-void LLPostProcess::createNoiseTexture(LLPointer<LLImageGL>& texture)
+void LLPostProcess::createNoiseTexture(LLPointer<LLImageTex>& texture)
 {
     std::vector<U8> buffer(NOISE_SIZE * NOISE_SIZE);
     for (unsigned int i = 0; i < NOISE_SIZE; i++){
@@ -372,13 +372,13 @@ void LLPostProcess::createNoiseTexture(LLPointer<LLImageGL>& texture)
         }
     }
 
-    texture = new LLImageGL(false) ;
-    if(texture->createGLTexture())
+    texture = new LLImageTex(false) ;
+    if(texture->createImageTexture())
     {
-        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture->getTexName());
-        LLImageGL::setManualImage(texture->getTexName(), TextureTarget::Tex2D, 0, TexelFormat::Lum8, NOISE_SIZE, NOISE_SIZE, PixelFormat::Lum, ComponentType::U8, &buffer[0]);
-        gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
-        gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_WRAP);
+        gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, texture->getTexName());
+        LLImageTex::setManualImage(texture->getTexName(), TextureTarget::Tex2D, 0, TexelFormat::Lum8, NOISE_SIZE, NOISE_SIZE, PixelFormat::Lum, ComponentType::U8, &buffer[0]);
+        gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+        gRender.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_WRAP);
     }
 }
 

@@ -51,7 +51,7 @@ class LLWindow;
 #define BYTES_TO_MEGA_BYTES(x) ((x) >> 20)
 #define MEGA_BYTES_TO_BYTES(x) ((x) << 20)
 
-namespace LLImageGLMemory
+namespace LLImageTexMemory
 {
     void alloc_tex_image(U32 width, U32 height, TexelFormat intformat, U32 count);
     void free_tex_image(U32 texName);
@@ -60,7 +60,7 @@ namespace LLImageGLMemory
 }
 
 //============================================================================
-class LLImageGL : public LLRefCount
+class LLImageTex : public LLRefCount
 {
     friend class LLTexUnit;
 public:
@@ -106,28 +106,28 @@ public:
     static void updateStats(F32 current_time);
 
     // cleanup GL state
-    static void destroyGL();
+    static void destroyResources();
     static void dirtyTexOptions();
 
     static bool checkSize(S32 width, S32 height);
 
     //for server side use only.
-    // Not currently necessary for LLImageGL, but required in some derived classes,
+    // Not currently necessary for LLImageTex, but required in some derived classes,
     // so include for compatability
-    static bool create(LLPointer<LLImageGL>& dest, bool usemipmaps = true);
-    static bool create(LLPointer<LLImageGL>& dest, U32 width, U32 height, U8 components, bool usemipmaps = true);
-    static bool create(LLPointer<LLImageGL>& dest, const LLImageRaw* imageraw, bool usemipmaps = true);
+    static bool create(LLPointer<LLImageTex>& dest, bool usemipmaps = true);
+    static bool create(LLPointer<LLImageTex>& dest, U32 width, U32 height, U8 components, bool usemipmaps = true);
+    static bool create(LLPointer<LLImageTex>& dest, const LLImageRaw* imageraw, bool usemipmaps = true);
 
 public:
-    LLImageGL(bool usemipmaps = true, bool allow_compression = true);
-    LLImageGL(U32 width, U32 height, U8 components, bool usemipmaps = true, bool allow_compression = true);
-    LLImageGL(const LLImageRaw* imageraw, bool usemipmaps = true, bool allow_compression = true);
+    LLImageTex(bool usemipmaps = true, bool allow_compression = true);
+    LLImageTex(U32 width, U32 height, U8 components, bool usemipmaps = true, bool allow_compression = true);
+    LLImageTex(const LLImageRaw* imageraw, bool usemipmaps = true, bool allow_compression = true);
 
     // For wrapping textures created via GL elsewhere with our API only. Use with caution.
-    LLImageGL(U32 mTexName, U32 components, TextureTarget target, TexelFormat formatInternal, PixelFormat formatPrimary, ComponentType formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    LLImageTex(U32 mTexName, U32 components, TextureTarget target, TexelFormat formatInternal, PixelFormat formatPrimary, ComponentType formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
 protected:
-    virtual ~LLImageGL();
+    virtual ~LLImageTex();
 
     void analyzeAlpha(const void* data_in, U32 w, U32 h);
     void calcAlphaChannelOffsetAndStride();
@@ -142,10 +142,10 @@ public:
     // the texture is named: nothing is bound or read from the unit state
     static void setManualImage(U32 texname, TextureTarget target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void *pixels, bool allow_compression = true, const char* file = __builtin_FILE(), int line = __builtin_LINE());       // file/line: LL_VK_FORMAT_VERIFY
 
-    bool createGLTexture() ;
-    bool createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true,
+    bool createImageTexture() ;
+    bool createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true,
         S32 category = sMaxCategories-1, bool defer_copy = false, U32* tex_name = nullptr);
-    bool createGLTexture(S32 discard_level, const U8* data, bool data_hasmips = false, S32 usename = 0, bool defer_copy = false, U32* tex_name = nullptr);
+    bool createImageTexture(S32 discard_level, const U8* data, bool data_hasmips = false, S32 usename = 0, bool defer_copy = false, U32* tex_name = nullptr);
     void setImage(const LLImageRaw* imageraw);
     bool setImage(const U8* data_in, bool data_hasmips = false, S32 usename = 0);
     // *TODO: This function may not work if the textures is compressed (i.e.
@@ -161,7 +161,7 @@ public:
 
     // Read back a raw image for this discard level, if it exists
     bool readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compressed_ok) const;
-    void destroyGLTexture();
+    void destroyImageTexture();
     void forceToInvalidateGLTexture();
 
     void setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format = ComponentType::None, const char* file = __builtin_FILE(), int line = __builtin_LINE());
@@ -187,7 +187,7 @@ public:
     PixelFormat getPrimaryFormat() const { return mFormatPrimary; }
     ComponentType getFormatType() const { return mFormatType; }
 
-    bool getHasGLTexture() const { return mTexName != 0; }
+    bool getHasImageTexture() const { return mTexName != 0; }
     U32 getTexName() const { return mTexName; }
 
     bool getIsAlphaMask() const;
@@ -197,8 +197,8 @@ public:
     void setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target);
 
     LLTexUnit::eTextureType getTarget(void) const { return mBindTarget; }
-    bool isGLTextureCreated(void) const { return mGLTextureCreated ; }
-    void setGLTextureCreated (bool initialized) { mGLTextureCreated = initialized; }
+    bool isImageTextureCreated(void) const { return mImageTextureCreated ; }
+    void setImageTextureCreated (bool initialized) { mImageTextureCreated = initialized; }
 
     bool getUseMipMaps() const { return mUseMipMaps; }
     void setUseMipMaps(bool usemips) { mUseMipMaps = usemips; }
@@ -226,7 +226,7 @@ public:
     TextureTarget getTexTarget()const { return mTarget; }
 
     void init(bool usemipmaps, bool allow_compression);
-    virtual void cleanup(); // Clean up the LLImageGL so it can be reinitialized.  Be careful when using this in derived class destructors
+    virtual void cleanup(); // Clean up the LLImageTex so it can be reinitialized.  Be careful when using this in derived class destructors
 
     void setNeedsAlphaAndPickMask(bool need_mask);
 
@@ -254,7 +254,7 @@ private:
     bool isCompressed();
     S64 formatBytes(S32 w, S32 h) const;     // bytes of one level of w x h in the format the data is in (block compressed: the texel format)
 
-    LLPointer<LLImageRaw> mSaveData; // used for destroyGL/restoreGL
+    LLPointer<LLImageRaw> mSaveData; // used for destroyResources/restoreResources
     LL::WorkQueue::weak_t mMainQueue;
     U8* mPickMask;  //downsampled bitmap approximation of alpha channel.  NULL if no alpha channel
     U16 mPickMaskWidth;
@@ -268,7 +268,7 @@ private:
     S8   mAlphaStride ;
     S8   mAlphaOffset ;
 
-    bool     mGLTextureCreated ;
+    bool     mImageTextureCreated ;
     U32 mTexName;
     U16      mWidth;
     U16      mHeight;
@@ -297,7 +297,7 @@ public:
     void markTexOptionsDirty();
     static void flushDirtyTexOptions();
 private:
-    static std::vector<LLImageGL*> sDirtyOptionImages;
+    static std::vector<LLImageTex*> sDirtyOptionImages;
     static std::mutex sDirtyOptionMutex;
     LLTexUnit::eTextureAddressMode      mAddressMode;   // Defaults to TAM_WRAP
     LLTexUnit::eTextureFilterOptions    mFilterOption;  // Defaults to TFO_ANISOTROPIC
@@ -310,7 +310,7 @@ private:
 
     // STATICS
 public:
-    static std::unordered_set<LLImageGL*> sImageList;
+    static std::unordered_set<LLImageTex*> sImageList;
     static S32 sCount;
     static U32 sFrameCount;
     static F32 sLastFrameTime;
@@ -319,7 +319,7 @@ public:
     static U32 sBindCount;                  // Tracks number of texture binds for current frame
     static U32 sUniqueCount;                // Tracks number of unique texture binds for current frame
     static bool sGlobalUseAnisotropic;
-    static LLImageGL* sDefaultGLTexture ;
+    static LLImageTex* sDefaultGLTexture ;
     static bool sAutomatedTest;
     static bool sCompressTextures;          //use GL texture compression
 #if DEBUG_MISS
@@ -371,7 +371,7 @@ public:
 
 };
 
-class LLImageGLThread : public LLSimpleton<LLImageGLThread>, LL::ThreadPool
+class LLImageTexThread : public LLSimpleton<LLImageTexThread>, LL::ThreadPool
 {
 public:
     // follows gSavedSettings "RenderGLMultiThreadedTextures"
@@ -379,9 +379,9 @@ public:
     // follows gSavedSettings "RenderGLMultiThreadedMedia"
     static bool sEnabledMedia;
 
-    LLImageGLThread(LLWindow* window);
+    LLImageTexThread(LLWindow* window);
 
-    // post a function to be executed on the LLImageGL background thread
+    // post a function to be executed on the LLImageTex background thread
     template <typename CALLABLE>
     bool post(CALLABLE&& func)
     {

@@ -133,7 +133,7 @@ protected:
     // LLViewerObject interface and related
     //--------------------------------------------------------------------
 public:
-    /*virtual*/ void            updateGL();
+    /*virtual*/ void            updateResources();
     /*virtual*/ LLVOAvatar*     asAvatar();
 
     virtual U32                 processUpdateMessage(LLMessageSystem *mesgsys,
@@ -602,8 +602,8 @@ public:
     void        renderBoxAroundJointAttachments(LLJoint * joint);
 
     static void deleteCachedImages(bool clearAll=true);
-    static void destroyGL();
-    static void restoreGL();
+    static void destroyResources();
+    static void restoreResources();
     S32         mSpecialRenderMode; // special lighting
 
 private:
@@ -845,8 +845,8 @@ private:
     // Constants
     //--------------------------------------------------------------------
 public:
-    virtual LLViewerTexture::EBoostLevel    getAvatarBoostLevel() const { return LLGLTexture::BOOST_AVATAR; }
-    virtual LLViewerTexture::EBoostLevel    getAvatarBakedBoostLevel() const { return LLGLTexture::BOOST_AVATAR_BAKED; }
+    virtual LLViewerTexture::EBoostLevel    getAvatarBoostLevel() const { return LLBaseTexture::BOOST_AVATAR; }
+    virtual LLViewerTexture::EBoostLevel    getAvatarBakedBoostLevel() const { return LLBaseTexture::BOOST_AVATAR_BAKED; }
     virtual S32                         getTexImageSize() const;
     /*virtual*/ S32                     getTexImageArea() const { return getTexImageSize()*getTexImageSize(); }
 

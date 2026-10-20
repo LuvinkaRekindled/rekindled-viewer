@@ -134,7 +134,7 @@ LLManipTranslate::LLManipTranslate( LLToolComposite* composite )
 {
     if (sGridTex.isNull())
     {
-        restoreGL();
+        restoreResources();
     }
 }
 
@@ -143,14 +143,14 @@ U32 LLManipTranslate::getGridTexName()
 {
     if(sGridTex.isNull())
     {
-        restoreGL() ;
+        restoreResources() ;
     }
 
     return sGridTex.isNull() ? 0 : sGridTex->getTexName() ;
 }
 
 //static
-void LLManipTranslate::destroyGL()
+void LLManipTranslate::destroyResources()
 {
     if (sGridTex)
     {
@@ -159,15 +159,15 @@ void LLManipTranslate::destroyGL()
 }
 
 //static
-void LLManipTranslate::restoreGL()
+void LLManipTranslate::restoreResources()
 {
     //generate grid texture
     U32 rez = 512;
     U32 mip = 0;
 
-    destroyGL() ;
+    destroyResources() ;
     sGridTex = LLViewerTextureManager::getLocalTexture() ;
-    if(!sGridTex->createGLTexture())
+    if(!sGridTex->createImageTexture())
     {
         sGridTex = NULL ;
         return ;
@@ -175,8 +175,8 @@ void LLManipTranslate::restoreGL()
 
     U32* d = new U32[rez*rez];
 
-    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, sGridTex->getTexName(), true);
-    gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
+    gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, sGridTex->getTexName(), true);
+    gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
 
     while (rez >= 1)
     {
@@ -271,7 +271,7 @@ void LLManipTranslate::restoreGL()
                 }
             }
         }
-        LLImageGL::setManualImage(sGridTex->getTexName(), TextureTarget::Tex2D, mip, TexelFormat::RGBA8, rez, rez, PixelFormat::RGBA, ComponentType::U8, d);
+        LLImageTex::setManualImage(sGridTex->getTexName(), TextureTarget::Tex2D, mip, TexelFormat::RGBA8, rez, rez, PixelFormat::RGBA, ComponentType::U8, d);
         rez = rez >> 1;
         mip++;
     }
@@ -1120,7 +1120,7 @@ void LLManipTranslate::renderSnapGuides()
     F32 max_subdivisions = sGridMaxSubdivisionLevel;//(F32)gSavedSettings.getS32("GridSubdivision");
     F32 line_alpha = gSavedSettings.getF32("GridOpacity");
 
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::CullScope gls_cull(false);
     LLVector3 translate_axis;
@@ -1292,31 +1292,31 @@ void LLManipTranslate::renderSnapGuides()
             LLColor4 line_color = setupSnapGuideRenderPass(pass);
             LLRenderState::DepthScope gls_depth(pass != 1);
 
-            gGL.begin(LLRender::LINES);
+            gRender.begin(LLRender::LINES);
             {
                 LLVector3 line_start = selection_center + (mSnapOffsetMeters * mSnapOffsetAxis) + (translate_axis * (guide_size_meters * 0.5f + offset_nearest_grid_unit));
                 LLVector3 line_end = selection_center + (mSnapOffsetMeters * mSnapOffsetAxis) - (translate_axis * (guide_size_meters * 0.5f + offset_nearest_grid_unit));
                 LLVector3 line_mid = (line_start + line_end) * 0.5f;
 
-                gGL.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA] * 0.2f);
-                gGL.vertex3fv(line_start.mV);
-                gGL.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
-                gGL.vertex3fv(line_mid.mV);
-                gGL.vertex3fv(line_mid.mV);
-                gGL.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA] * 0.2f);
-                gGL.vertex3fv(line_end.mV);
+                gRender.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA] * 0.2f);
+                gRender.vertex3fv(line_start.mV);
+                gRender.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
+                gRender.vertex3fv(line_mid.mV);
+                gRender.vertex3fv(line_mid.mV);
+                gRender.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA] * 0.2f);
+                gRender.vertex3fv(line_end.mV);
 
                 line_start.setVec(selection_center + (mSnapOffsetAxis * -mSnapOffsetMeters) + (translate_axis * guide_size_meters * 0.5f));
                 line_end.setVec(selection_center + (mSnapOffsetAxis * -mSnapOffsetMeters) - (translate_axis * guide_size_meters * 0.5f));
                 line_mid = (line_start + line_end) * 0.5f;
 
-                gGL.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA] * 0.2f);
-                gGL.vertex3fv(line_start.mV);
-                gGL.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
-                gGL.vertex3fv(line_mid.mV);
-                gGL.vertex3fv(line_mid.mV);
-                gGL.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA] * 0.2f);
-                gGL.vertex3fv(line_end.mV);
+                gRender.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA] * 0.2f);
+                gRender.vertex3fv(line_start.mV);
+                gRender.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
+                gRender.vertex3fv(line_mid.mV);
+                gRender.vertex3fv(line_mid.mV);
+                gRender.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA] * 0.2f);
+                gRender.vertex3fv(line_end.mV);
 
                 for (S32 i = -num_ticks_per_side; i <= num_ticks_per_side; i++)
                 {
@@ -1347,53 +1347,53 @@ void LLManipTranslate::renderSnapGuides()
 
                     tick_end = tick_start + (mSnapOffsetAxis * mSnapOffsetMeters * tick_scale);
 
-                    gGL.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
-                    gGL.vertex3fv(tick_start.mV);
-                    gGL.vertex3fv(tick_end.mV);
+                    gRender.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
+                    gRender.vertex3fv(tick_start.mV);
+                    gRender.vertex3fv(tick_end.mV);
 
                     tick_start = selection_center + (mSnapOffsetAxis * -mSnapOffsetMeters) +
                         (translate_axis * (getMinGridScale() / (F32)(max_subdivisions) * (F32)i - offset_nearest_grid_unit));
                     tick_end = tick_start - (mSnapOffsetAxis * mSnapOffsetMeters * tick_scale);
 
-                    gGL.vertex3fv(tick_start.mV);
-                    gGL.vertex3fv(tick_end.mV);
+                    gRender.vertex3fv(tick_start.mV);
+                    gRender.vertex3fv(tick_end.mV);
                 }
             }
-            gGL.end();
+            gRender.end();
 
             if (mInSnapRegime)
             {
                 LLVector3 line_start = selection_center - mSnapOffsetAxis * mSnapOffsetMeters;
                 LLVector3 line_end = selection_center + mSnapOffsetAxis * mSnapOffsetMeters;
 
-                gGL.begin(LLRender::LINES);
+                gRender.begin(LLRender::LINES);
                 {
-                    gGL.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
+                    gRender.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
 
-                    gGL.vertex3fv(line_start.mV);
-                    gGL.vertex3fv(line_end.mV);
+                    gRender.vertex3fv(line_start.mV);
+                    gRender.vertex3fv(line_end.mV);
                 }
-                gGL.end();
+                gRender.end();
 
                 // draw snap guide arrow
-                gGL.begin(LLRender::TRIANGLES);
+                gRender.begin(LLRender::TRIANGLES);
                 {
-                    gGL.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
+                    gRender.color4f(line_color.mV[VRED], line_color.mV[VGREEN], line_color.mV[VBLUE], line_color.mV[VALPHA]);
 
                     LLVector3 arrow_dir;
                     LLVector3 arrow_span = translate_axis;
 
                     arrow_dir = -mSnapOffsetAxis;
-                    gGL.vertex3fv((line_start + arrow_dir * mConeSize * SNAP_ARROW_SCALE).mV);
-                    gGL.vertex3fv((line_start + arrow_span * mConeSize * SNAP_ARROW_SCALE).mV);
-                    gGL.vertex3fv((line_start - arrow_span * mConeSize * SNAP_ARROW_SCALE).mV);
+                    gRender.vertex3fv((line_start + arrow_dir * mConeSize * SNAP_ARROW_SCALE).mV);
+                    gRender.vertex3fv((line_start + arrow_span * mConeSize * SNAP_ARROW_SCALE).mV);
+                    gRender.vertex3fv((line_start - arrow_span * mConeSize * SNAP_ARROW_SCALE).mV);
 
                     arrow_dir = mSnapOffsetAxis;
-                    gGL.vertex3fv((line_end + arrow_dir * mConeSize * SNAP_ARROW_SCALE).mV);
-                    gGL.vertex3fv((line_end + arrow_span * mConeSize * SNAP_ARROW_SCALE).mV);
-                    gGL.vertex3fv((line_end - arrow_span * mConeSize * SNAP_ARROW_SCALE).mV);
+                    gRender.vertex3fv((line_end + arrow_dir * mConeSize * SNAP_ARROW_SCALE).mV);
+                    gRender.vertex3fv((line_end + arrow_span * mConeSize * SNAP_ARROW_SCALE).mV);
+                    gRender.vertex3fv((line_end - arrow_span * mConeSize * SNAP_ARROW_SCALE).mV);
                 }
-                gGL.end();
+                gRender.end();
             }
         }
 
@@ -1530,7 +1530,7 @@ void LLManipTranslate::renderSnapGuides()
             break;
         }
 
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
         highlightIntersection(normal, selection_center, grid_rotation, inner_color);
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
@@ -1569,21 +1569,21 @@ void LLManipTranslate::renderSnapGuides()
                 //LLGLDisable stencil(GL_STENCIL_TEST);
                 {
                     LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::Greater);
-                    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
-                    gGL.flush();
-                    gGL.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+                    gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
+                    gRender.flush();
+                    gRender.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
                     renderGrid(u,v,tiles,0.9f, 0.9f, 0.9f,a*0.15f);
-                    gGL.flush();
-                    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+                    gRender.flush();
+                    gRender.setSceneBlendType(LLRender::BT_ALPHA);
                 }
 
                 {
                     //draw black overlay
-                    gGL.getTexUnit(0)->bindWhite();
+                    gRender.getTexUnit(0)->bindWhite();
                     renderGrid(u,v,tiles,0.0f, 0.0f, 0.0f,a*0.16f);
 
                     //draw grid top
-                    gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
+                    gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
                     renderGrid(u,v,tiles,1,1,1,a);
 
                     LLRenderMatrix::pop(LLRenderMatrix::Kind::Texture0);
@@ -1597,7 +1597,7 @@ void LLManipTranslate::renderSnapGuides()
 
                 {
                     LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::Greater);
-                    gGL.flush();
+                    gRender.flush();
 
                     switch (mManipPart)
                     {
@@ -1613,7 +1613,7 @@ void LLManipTranslate::renderSnapGuides()
                       default:
                         break;
                     }
-                    gGL.flush();
+                    gRender.flush();
                 }
             }
         }
@@ -1626,32 +1626,32 @@ void LLManipTranslate::renderGrid(F32 x, F32 y, F32 size, F32 r, F32 g, F32 b, F
 
     for (F32 xx = -size-d; xx < size+d; xx += d)
     {
-        gGL.begin(LLRender::TRIANGLE_STRIP);
+        gRender.begin(LLRender::TRIANGLE_STRIP);
         for (F32 yy = -size-d; yy < size+d; yy += d)
         {
             float dx, dy, da;
 
             dx = xx; dy = yy;
             da = sqrtf(llmax(0.0f, 1.0f-sqrtf(dx*dx+dy*dy)/size))*a;
-            gGL.texCoord2f(dx, dy);
+            gRender.texCoord2f(dx, dy);
             renderGridVert(dx,dy,r,g,b,da);
 
             dx = xx+d; dy = yy;
             da = sqrtf(llmax(0.0f, 1.0f-sqrtf(dx*dx+dy*dy)/size))*a;
-            gGL.texCoord2f(dx, dy);
+            gRender.texCoord2f(dx, dy);
             renderGridVert(dx,dy,r,g,b,da);
 
             dx = xx; dy = yy+d;
             da = sqrtf(llmax(0.0f, 1.0f-sqrtf(dx*dx+dy*dy)/size))*a;
-            gGL.texCoord2f(dx, dy);
+            gRender.texCoord2f(dx, dy);
             renderGridVert(dx,dy,r,g,b,da);
 
             dx = xx+d; dy = yy+d;
             da = sqrtf(llmax(0.0f, 1.0f-sqrtf(dx*dx+dy*dy)/size))*a;
-            gGL.texCoord2f(dx, dy);
+            gRender.texCoord2f(dx, dy);
             renderGridVert(dx,dy,r,g,b,da);
         }
-        gGL.end();
+        gRender.end();
     }
 
 
@@ -1669,7 +1669,7 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
     }
 
 
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
 
 
     static const U32 types[] = { LLRenderPass::PASS_SIMPLE, LLRenderPass::PASS_ALPHA, LLRenderPass::PASS_FULLBRIGHT, LLRenderPass::PASS_SHINY };
@@ -1678,7 +1678,7 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
     U32 stencil_mask = 0xFFFFFFFF;
     //stencil in volumes
 
-    gGL.flush();
+    gRender.flush();
 
     if (shader)
     {
@@ -1693,10 +1693,10 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
         //LLGLEnable stencil(GL_STENCIL_TEST);
         LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
         //glStencilFunc(GL_ALWAYS, 0, stencil_mask);
-        gGL.setColorMask(false, false);
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.setColorMask(false, false);
+        gRender.getTexUnit(0)->bindWhite();
 
-        gGL.diffuseColor4f(1,1,1,1);
+        gRender.diffuseColor4f(1,1,1,1);
 
         //setup clip plane
         normal = normal * grid_rotation;
@@ -1707,7 +1707,7 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
         F32 d = -(selection_center * normal);
         glm::vec4 plane(normal.mV[0], normal.mV[1], normal.mV[2], d );
 
-        plane = glm::inverse(gGL.getModelviewMatrix()) * plane;
+        plane = glm::inverse(gRender.getModelviewMatrix()) * plane;
 
         static LLStaticHashedString sClipPlane("clip_plane");
         gClipProgram.uniform4fv(sClipPlane, 1, plane.v);
@@ -1726,14 +1726,14 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
 
         //stencil in volumes
         //glStencilOp(GL_INCR, GL_INCR, GL_INCR);
-        gGL.setCullFace(LLRenderState::CullFace::Front);
+        gRender.setCullFace(LLRenderState::CullFace::Front);
         for (U32 i = 0; i < num_types; i++)
         {
             gPipeline.renderObjects(types[i], LLVertexBuffer::MAP_VERTEX, false);
         }
 
         //glStencilOp(GL_DECR, GL_DECR, GL_DECR);
-        gGL.setCullFace(LLRenderState::CullFace::Back);
+        gRender.setCullFace(LLRenderState::CullFace::Back);
         for (U32 i = 0; i < num_types; i++)
         {
             gPipeline.renderObjects(types[i], LLVertexBuffer::MAP_VERTEX, false);
@@ -1748,9 +1748,9 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
             LLPipeline::toggleRenderType(LLPipeline::RENDER_TYPE_CLOUDS);
         }
 
-        gGL.setColorMask(true, false);
+        gRender.setColorMask(true, false);
     }
-    gGL.color4f(1,1,1,1);
+    gRender.color4f(1,1,1,1);
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
@@ -1769,17 +1769,17 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
 
     //draw volume/plane intersections
     {
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
         LLRenderState::DepthScope depth(false);
         //LLGLEnable stencil(GL_STENCIL_TEST);
-        gGL.setStencilOp(LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep);
-        gGL.setStencilFunc(LLRenderState::CompareOp::Equal, 0, stencil_mask);
+        gRender.setStencilOp(LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep);
+        gRender.setStencilFunc(LLRenderState::CompareOp::Equal, 0, stencil_mask);
         renderGrid(0,0,tiles,inner_color.mV[0], inner_color.mV[1], inner_color.mV[2], 0.25f);
     }
 
-    gGL.setStencilFunc(LLRenderState::CompareOp::Always, 255, 0xFFFFFFFF);
-    gGL.setStencilMask(0xFFFFFFFF);
-    gGL.setStencilOp(LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Replace);
+    gRender.setStencilFunc(LLRenderState::CompareOp::Always, 255, 0xFFFFFFFF);
+    gRender.setStencilMask(0xFFFFFFFF);
+    gRender.setStencilOp(LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Replace);
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 #endif
@@ -1924,7 +1924,7 @@ void LLManipTranslate::renderTranslationHandles()
         relative_camera_dir.normVec();
 
         {
-            gGL.getTexUnit(0)->bindWhite();
+            gRender.getTexUnit(0)->bindWhite();
             LLRenderState::CullScope cull_face(false);
 
             LLColor4 color1;
@@ -1975,39 +1975,39 @@ void LLManipTranslate::renderTranslationHandles()
                     color2.setVec(getUserEditColor(VZ, 0.6f));
                     // </FS:AR> [FIRE-36909]
                 }
-                gGL.begin(LLRender::TRIANGLES);
+                gRender.begin(LLRender::TRIANGLES);
                 {
-                    gGL.color4fv(color1.mV);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f));
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f));
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
+                    gRender.color4fv(color1.mV);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f));
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f));
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
 
-                    gGL.color4fv(color2.mV);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f), mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f));
+                    gRender.color4fv(color2.mV);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f), mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f));
                 }
-                gGL.end();
+                gRender.end();
 
                 LLUI::setLineWidth(3.0f);
-                gGL.begin(LLRender::LINES);
+                gRender.begin(LLRender::LINES);
                 {
-                    gGL.color4f(0.f, 0.f, 0.f, 0.3f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.1f,   mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.1f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.1f,   mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.4f);
+                    gRender.color4f(0.f, 0.f, 0.f, 0.3f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.1f,   mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.1f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.1f,   mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.4f);
 
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.1f,  mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.1f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.4f,  mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.1f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.1f,  mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.1f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.4f,  mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.1f);
                 }
-                gGL.end();
+                gRender.end();
                 LLUI::setLineWidth(1.0f);
                 LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
@@ -2038,39 +2038,39 @@ void LLManipTranslate::renderTranslationHandles()
                     // </FS:AR> [FIRE-36909]
                 }
 
-                gGL.begin(LLRender::TRIANGLES);
+                gRender.begin(LLRender::TRIANGLES);
                 {
-                    gGL.color4fv(color1.mV);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f), 0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
-                    gGL.vertex3f(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f), 0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
-                    gGL.vertex3f(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), 0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f));
+                    gRender.color4fv(color1.mV);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f), 0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
+                    gRender.vertex3f(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f), 0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
+                    gRender.vertex3f(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), 0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f));
 
-                    gGL.color4fv(color2.mV);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), 0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f));
-                    gGL.vertex3f(mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f),   0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f));
-                    gGL.vertex3f(mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f),   0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
+                    gRender.color4fv(color2.mV);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), 0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f));
+                    gRender.vertex3f(mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f),   0.f, mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f));
+                    gRender.vertex3f(mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f),   0.f, mPlaneManipOffsetMeters * (PLANE_TICK_SIZE * 0.25f));
                 }
-                gGL.end();
+                gRender.end();
 
                 LLUI::setLineWidth(3.0f);
-                gGL.begin(LLRender::LINES);
+                gRender.begin(LLRender::LINES);
                 {
-                    gGL.color4f(0.f, 0.f, 0.f, 0.3f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.1f,   0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.1f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.1f,   0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.4f);
+                    gRender.color4f(0.f, 0.f, 0.f, 0.3f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.1f,   0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.1f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * PLANE_TICK_SIZE  * 0.1f,   0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.4f);
 
-                    gGL.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.1f,   0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.1f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
-                    gGL.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.4f,   0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.1f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.1f,   0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.1f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.25f,  0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.25f);
+                    gRender.vertex3f(mPlaneManipOffsetMeters * -PLANE_TICK_SIZE * 0.4f,   0.f, mPlaneManipOffsetMeters * PLANE_TICK_SIZE * 0.1f);
                 }
-                gGL.end();
+                gRender.end();
                 LLUI::setLineWidth(1.0f);
 
                 LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
@@ -2125,48 +2125,48 @@ void LLManipTranslate::renderTranslationHandles()
                         // </FS:AR> [FIRE-36909]
                     }
 
-                    gGL.begin(LLRender::TRIANGLES);
+                    gRender.begin(LLRender::TRIANGLES);
                     {
-                        gGL.color4fv(color1.mV);
-                        gGL.vertex3fv(v0.mV);
-                        gGL.vertex3fv(v1.mV);
-                        gGL.vertex3fv(v2.mV);
+                        gRender.color4fv(color1.mV);
+                        gRender.vertex3fv(v0.mV);
+                        gRender.vertex3fv(v1.mV);
+                        gRender.vertex3fv(v2.mV);
 
-                        gGL.color4fv(color2.mV);
-                        gGL.vertex3fv(v2.mV);
-                        gGL.vertex3fv(v3.mV);
-                        gGL.vertex3fv(v0.mV);
+                        gRender.color4fv(color2.mV);
+                        gRender.vertex3fv(v2.mV);
+                        gRender.vertex3fv(v3.mV);
+                        gRender.vertex3fv(v0.mV);
                     }
-                    gGL.end();
+                    gRender.end();
 
                     LLUI::setLineWidth(3.0f);
-                    gGL.begin(LLRender::LINES);
+                    gRender.begin(LLRender::LINES);
                     {
-                        gGL.color4f(0.f, 0.f, 0.f, 0.3f);
+                        gRender.color4f(0.f, 0.f, 0.f, 0.3f);
                         LLVector3 v12 = (v1 + v2) * .5f;
-                        gGL.vertex3fv(v0.mV);
-                        gGL.vertex3fv(v12.mV);
-                        gGL.vertex3fv(v12.mV);
-                        gGL.vertex3fv((v12 + (v0-v12)*.3f + (v2-v12)*.3f).mV);
-                        gGL.vertex3fv(v12.mV);
-                        gGL.vertex3fv((v12 + (v0-v12)*.3f + (v1-v12)*.3f).mV);
+                        gRender.vertex3fv(v0.mV);
+                        gRender.vertex3fv(v12.mV);
+                        gRender.vertex3fv(v12.mV);
+                        gRender.vertex3fv((v12 + (v0-v12)*.3f + (v2-v12)*.3f).mV);
+                        gRender.vertex3fv(v12.mV);
+                        gRender.vertex3fv((v12 + (v0-v12)*.3f + (v1-v12)*.3f).mV);
 
                         LLVector3 v23 = (v2 + v3) * .5f;
-                        gGL.vertex3fv(v0.mV);
-                        gGL.vertex3fv(v23.mV);
-                        gGL.vertex3fv(v23.mV);
-                        gGL.vertex3fv((v23 + (v0-v23)*.3f + (v3-v23)*.3f).mV);
-                        gGL.vertex3fv(v23.mV);
-                        gGL.vertex3fv((v23 + (v0-v23)*.3f + (v2-v23)*.3f).mV);
+                        gRender.vertex3fv(v0.mV);
+                        gRender.vertex3fv(v23.mV);
+                        gRender.vertex3fv(v23.mV);
+                        gRender.vertex3fv((v23 + (v0-v23)*.3f + (v3-v23)*.3f).mV);
+                        gRender.vertex3fv(v23.mV);
+                        gRender.vertex3fv((v23 + (v0-v23)*.3f + (v2-v23)*.3f).mV);
                     }
-                    gGL.end();
+                    gRender.end();
                     LLUI::setLineWidth(1.0f);
 
                 LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             }
         }
         {
-            gGL.getTexUnit(0)->bindWhite();
+            gRender.getTexUnit(0)->bindWhite();
 
             // Since we draw handles with depth testing off, we need to draw them in the
             // proper depth order.
@@ -2240,7 +2240,7 @@ void LLManipTranslate::renderTranslationHandles()
 
 void LLManipTranslate::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_size, F32 arrow_size, F32 handle_size, bool reverse_direction)
 {
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
     LLRenderState::BlendScope gls_blend(true);
 
     for (S32 pass = 1; pass <= 2; pass++)
@@ -2288,19 +2288,19 @@ void LLManipTranslate::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_
             color.mV[VW] = 0.6f;
         }
         // </FS:AR> [FIRE-36909]
-        gGL.color4fv( color.mV );
+        gRender.color4fv( color.mV );
 
         LLVector3 vec;
 
         {
             LLUI::setLineWidth(2.0f);
-            gGL.begin(LLRender::LINES);
+            gRender.begin(LLRender::LINES);
                 vec.mV[index] = box_size;
-                gGL.vertex3f(vec.mV[0], vec.mV[1], vec.mV[2]);
+                gRender.vertex3f(vec.mV[0], vec.mV[1], vec.mV[2]);
 
                 vec.mV[index] = arrow_size;
-                gGL.vertex3f(vec.mV[0], vec.mV[1], vec.mV[2]);
-            gGL.end();
+                gRender.vertex3f(vec.mV[0], vec.mV[1], vec.mV[2]);
+            gRender.end();
             LLUI::setLineWidth(1.0f);
         }
 
@@ -2329,7 +2329,7 @@ void LLManipTranslate::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_
             break;
         }
 
-        gGL.diffuseColor4fv(color.mV);
+        gRender.diffuseColor4fv(color.mV);
         LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, rot, axis.mV[0], axis.mV[1], axis.mV[2]);
         LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mArrowScales.mV[index], mArrowScales.mV[index], mArrowScales.mV[index] * 1.5f);
 
@@ -2341,20 +2341,20 @@ void LLManipTranslate::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_
 
 void LLManipTranslate::renderGridVert(F32 x_trans, F32 y_trans, F32 r, F32 g, F32 b, F32 alpha)
 {
-    gGL.color4f(r, g, b, alpha);
+    gRender.color4f(r, g, b, alpha);
     switch (mManipPart)
     {
     case LL_YZ_PLANE:
-        gGL.vertex3f(0, x_trans, y_trans);
+        gRender.vertex3f(0, x_trans, y_trans);
         break;
     case LL_XZ_PLANE:
-        gGL.vertex3f(x_trans, 0, y_trans);
+        gRender.vertex3f(x_trans, 0, y_trans);
         break;
     case LL_XY_PLANE:
-        gGL.vertex3f(x_trans, y_trans, 0);
+        gRender.vertex3f(x_trans, y_trans, 0);
         break;
     default:
-        gGL.vertex3f(0,0,0);
+        gRender.vertex3f(0,0,0);
         break;
     }
 

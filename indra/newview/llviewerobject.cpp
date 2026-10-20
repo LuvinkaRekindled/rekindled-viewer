@@ -4041,7 +4041,7 @@ bool LLViewerObject::updateGeometry(LLDrawable *drawable)
     return true;
 }
 
-void LLViewerObject::updateGL()
+void LLViewerObject::updateResources()
 {
 
 }
@@ -4402,12 +4402,12 @@ void LLViewerObject::boostTexturePriority(bool boost_children /* = true */)
         // <FS:minerjr> [FIRE-36016] - Re-added Store/Restore boost levels of selected objects
         // This fixes textures becoming blury (Esepecially with Bias > 1.0f) after an object is selected and unselected.
         // If this is changing the boost level for the TEImage for the first time, store the boost level before modifying it.
-        if (getTEImage(i)->getBoostLevel() != LLGLTexture::BOOST_SELECTED)
+        if (getTEImage(i)->getBoostLevel() != LLBaseTexture::BOOST_SELECTED)
         {
             getTEImage(i)->storeBoostLevel();
         }
         // </FS:minerjr> [FIRE-36016]
-        getTEImage(i)->setBoostLevel(LLGLTexture::BOOST_SELECTED);
+        getTEImage(i)->setBoostLevel(LLBaseTexture::BOOST_SELECTED);
     }
 
     if (isSculpted() && !isMesh())
@@ -4417,18 +4417,18 @@ void LLViewerObject::boostTexturePriority(bool boost_children /* = true */)
         {
             LLUUID sculpt_id = sculpt_params->getSculptTexture();
             // <FS:minerjr> [FIRE-36016] - Re-added Store/Restore boost levels of selected objects
-            //LLViewerTextureManager::getFetchedTexture(sculpt_id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE)->setBoostLevel(LLGLTexture::BOOST_SELECTED);
+            //LLViewerTextureManager::getFetchedTexture(sculpt_id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE)->setBoostLevel(LLBaseTexture::BOOST_SELECTED);
             // This fixes textures becoming blury (Esepecially with Bias > 1.0f) after an object is selected and unselected.
             // If this is changing the boost level for the sculpted for the first time, store the boost level before modifying it.
-            LLViewerFetchedTexture* sculptedTexture = LLViewerTextureManager::getFetchedTexture(sculpt_id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+            LLViewerFetchedTexture* sculptedTexture = LLViewerTextureManager::getFetchedTexture(sculpt_id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
             if (sculptedTexture)
             {
                 // If the texture is already boost selected, don't store the boost level again. Otherwise, it will overwrite the saved boost level with itself.
-                if (sculptedTexture->getBoostLevel() != LLGLTexture::BOOST_SELECTED)
+                if (sculptedTexture->getBoostLevel() != LLBaseTexture::BOOST_SELECTED)
                 {
                     sculptedTexture->storeBoostLevel();
                 }
-                sculptedTexture->setBoostLevel(LLGLTexture::BOOST_SELECTED);
+                sculptedTexture->setBoostLevel(LLBaseTexture::BOOST_SELECTED);
             }
             // </FS:minerjr> [FIRE-36016]
         }
@@ -5441,7 +5441,7 @@ LLViewerTexture* LLViewerObject::getBakedTextureForMagicId(const LLUUID& id)
     LLViewerObject *root = getRootEdit();
     if (root && root->isAnimatedObject())
     {
-        return LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+        return LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
     }
 
     LLVOAvatar* avatar = getAvatar();
@@ -5451,7 +5451,7 @@ LLViewerTexture* LLViewerObject::getBakedTextureForMagicId(const LLUUID& id)
         LLViewerTexture* bakedTexture = avatar->getBakedTexture(texIndex);
         if (bakedTexture == NULL || bakedTexture->isMissingAsset())
         {
-            return LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+            return LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
         }
         else
         {
@@ -5460,7 +5460,7 @@ LLViewerTexture* LLViewerObject::getBakedTextureForMagicId(const LLUUID& id)
     }
     else
     {
-        return LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+        return LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
     }
 
 }
@@ -5497,7 +5497,7 @@ void LLViewerObject::setTE(const U8 te, const LLTextureEntry& texture_entry)
 
     const LLUUID& image_id = getTEref(te).getID();
     LLViewerTexture* bakedTexture = getBakedTextureForMagicId(image_id);
-    mTEImages[te] = bakedTexture ? bakedTexture : LLViewerTextureManager::getFetchedTexture(image_id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+    mTEImages[te] = bakedTexture ? bakedTexture : LLViewerTextureManager::getFetchedTexture(image_id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
 
     updateAvatarMeshVisibility(image_id, old_image_id);
 
@@ -5509,10 +5509,10 @@ void LLViewerObject::updateTEMaterialTextures(U8 te)
     if (getTEref(te).getMaterialParams().notNull())
     {
         const LLUUID& norm_id = getTEref(te).getMaterialParams()->getNormalID();
-        mTENormalMaps[te] = LLViewerTextureManager::getFetchedTexture(norm_id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+        mTENormalMaps[te] = LLViewerTextureManager::getFetchedTexture(norm_id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
 
         const LLUUID& spec_id = getTEref(te).getMaterialParams()->getSpecularID();
-        mTESpecularMaps[te] = LLViewerTextureManager::getFetchedTexture(spec_id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+        mTESpecularMaps[te] = LLViewerTextureManager::getFetchedTexture(spec_id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
     }
 
     LLFetchedGLTFMaterial* mat = (LLFetchedGLTFMaterial*) getTE(te)->getGLTFRenderMaterial();
@@ -5557,7 +5557,7 @@ void LLViewerObject::updateTEMaterialTextures(U8 te)
             }
             else
             {
-                img = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+                img = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
                 img->addTextureStats(64.f * 64.f, true);
             }
         }
@@ -5708,21 +5708,21 @@ S32 LLViewerObject::setTETexture(const U8 te, const LLUUID& uuid)
 {
     // Invalid host == get from the agent's sim
     LLViewerFetchedTexture *image = LLViewerTextureManager::getFetchedTexture(
-        uuid, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, LLHost());
+        uuid, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, LLHost());
         return setTETextureCore(te, image);
 }
 
 S32 LLViewerObject::setTENormalMap(const U8 te, const LLUUID& uuid)
 {
     LLViewerFetchedTexture *image = (uuid == LLUUID::null) ? NULL : LLViewerTextureManager::getFetchedTexture(
-        uuid, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, LLHost());
+        uuid, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, LLHost());
     return setTENormalMapCore(te, image);
 }
 
 S32 LLViewerObject::setTESpecularMap(const U8 te, const LLUUID& uuid)
 {
     LLViewerFetchedTexture *image = (uuid == LLUUID::null) ? NULL : LLViewerTextureManager::getFetchedTexture(
-        uuid, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, LLHost());
+        uuid, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, LLHost());
     return setTESpecularMapCore(te, image);
 }
 
@@ -8091,7 +8091,7 @@ void LLViewerObject::clearTEWaterExclusion(const U8 te)
         if (image && (IMG_ALPHA_GRAD == image->getID()))
         {
             // reset texture to default plywood
-            setTEImage(te, LLViewerTextureManager::getFetchedTexture(DEFAULT_OBJECT_TEXTURE, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+            setTEImage(te, LLViewerTextureManager::getFetchedTexture(DEFAULT_OBJECT_TEXTURE, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
 
             // reset texture repeats, that might be altered by invisiprim script from wiki
             U32 s_axis, t_axis;

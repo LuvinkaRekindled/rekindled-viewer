@@ -287,8 +287,8 @@ void LLProgressView::drawStartTexture(F32 alpha)
     if (gStartTexture)
     {
         LLGLSUIDefault gls_ui;
-        gGL.getTexUnit(0)->bind(gStartTexture.get());
-        gGL.color4f(1.f, 1.f, 1.f, alpha);
+        gRender.getTexUnit(0)->bind(gStartTexture.get());
+        gRender.color4f(1.f, 1.f, 1.f, alpha);
         F32 image_aspect = (F32)gStartImageWidth / (F32)gStartImageHeight;
         S32 width = getRect().getWidth();
         S32 height = getRect().getHeight();
@@ -305,12 +305,12 @@ void LLProgressView::drawStartTexture(F32 alpha)
             LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 1.f, view_aspect / image_aspect, 1.f);
         }
         gl_rect_2d_simple_tex( getRect().getWidth(), getRect().getHeight() );
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
     }
     else
     {
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.color4f(0.f, 0.f, 0.f, alpha);      // ## Zi: Fade teleport screens
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.color4f(0.f, 0.f, 0.f, alpha);      // ## Zi: Fade teleport screens
         gl_rect_2d(getRect());
     }
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);

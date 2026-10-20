@@ -75,17 +75,17 @@ public:
     virtual void postRender(bool success);
 
     virtual void restoreGLTexture() {}
-    virtual void destroyGLTexture() {}
+    virtual void destroyImageTexture() {}
 
     static bool updateAllInstances();
-    static void destroyGL() ;
-    static void restoreGL() ;
+    static void destroyResources() ;
+    static void restoreResources() ;
 
     void setBoundTarget(LLRenderTarget* target) { mBoundTarget = target; }
 
 protected:
-    void generateGLTexture();
-    void generateGLTexture(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format);
+    void generateImageTexture();
+    void generateImageTexture(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format);
 
 protected:
     bool mClamp;

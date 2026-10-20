@@ -127,18 +127,18 @@ void LLVOWLSky::resetVertexBuffers()
     gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_ALL);
 }
 
-void LLVOWLSky::cleanupGL()
+void LLVOWLSky::cleanupResources()
 {
     mStripsVerts.clear();
     mStarsVerts = nullptr;
     mFsSkyVerts = nullptr;
 
-    LLDrawPoolWLSky::cleanupGL();
+    LLDrawPoolWLSky::cleanupResources();
 }
 
-void LLVOWLSky::restoreGL()
+void LLVOWLSky::restoreResources()
 {
-    LLDrawPoolWLSky::restoreGL();
+    LLDrawPoolWLSky::restoreResources();
     gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_ALL);
 }
 

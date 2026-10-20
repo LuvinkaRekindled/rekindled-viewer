@@ -66,7 +66,7 @@ LLShaderMgr * LLShaderMgr::instance()
     return sInstance;
 }
 
-bool LLShaderMgr::attachShaderFeatures(LLGLSLShader * shader)
+bool LLShaderMgr::attachShaderFeatures(LLShaderProgram * shader)
 {
     llassert_always(shader != NULL);
     LLShaderFeatures *features = & shader->mFeatures;
@@ -344,7 +344,7 @@ bool LLShaderMgr::attachShaderFeatures(LLGLSLShader * shader)
                     return false;
                 }
             }
-            shader->mFeatures.mIndexedTextureChannels = llmax(LLGLSLShader::sIndexedTextureChannels, 1);
+            shader->mFeatures.mIndexedTextureChannels = llmax(LLShaderProgram::sIndexedTextureChannels, 1);
         }
     }
 
@@ -374,7 +374,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
 
 // endsure work-around for missing GLSL funcs gets propogated to feature shader files (e.g. srgbF.glsl)
 #if LL_DARWIN
-    if (!gGLManager.mIsApple && defines)
+    if (!gDeviceCaps.mIsApple && defines)
     {
         (*defines)["OLD_SELECT"] = "1";
     }
@@ -468,8 +468,8 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
     BOOST_STATIC_ASSERT(LL_ARRAY_SIZE(extra_code_text) < LL_ARRAY_SIZE(shader_code_text));
 
 
-    S32 major_version = gGLManager.mGLSLVersionMajor;
-    S32 minor_version = gGLManager.mGLSLVersionMinor;
+    S32 major_version = gDeviceCaps.mShaderLangMajor;
+    S32 minor_version = gDeviceCaps.mShaderLangMinor;
 
     if (major_version == 1 && minor_version < 30)
     {
@@ -550,7 +550,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         }
     }
 
-    if( gGLManager.mIsAMD )
+    if( gDeviceCaps.mIsAMD )
     {
         extra_code_text[extra_code_count++] = strdup( "#define IS_AMD_CARD 1\n" );
     }
@@ -642,7 +642,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         }
         else if (major_version > 1 || minor_version >= 30)
         {  //switches are supported in GLSL 1.30 and later
-            if (gGLManager.mIsNVIDIA)
+            if (gDeviceCaps.mIsNVIDIA)
             { //switches are unreliable on some NVIDIA drivers
                 for (S32 i = 0; i < texture_index_channels; ++i)
                 {
@@ -861,7 +861,7 @@ void LLShaderMgr::initShaderCache(bool enabled, const LLUUID& old_cache_version,
     LL_PROFILE_ZONE_SCOPED;
     LL_INFOS("ShaderMgr") << "Initializing shader cache" << LL_ENDL;
 
-    mRecordShaderSources = getenv("LL_VK_SHADER_CHECK") != nullptr || LLVkMirror::isRequested();
+    mRecordShaderSources = getenv("LL_VK_SHADER_CHECK") != nullptr || LLVkBridge::isRequested();
     if (mRecordShaderSources)
     {
         enabled = false;    // cached binaries would skip loadShaderFile, so there would be no source to check

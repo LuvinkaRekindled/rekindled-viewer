@@ -1374,7 +1374,7 @@ void LLView::drawDebugRect()
     LLUI::pushMatrix();
     {
         // drawing solids requires texturing be disabled
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
 
         if (getUseBoundingRect())
         {
@@ -1402,21 +1402,21 @@ void LLView::drawDebugRect()
             border_color.mV[sDepth%3] = 1.f;
         }
 
-        gGL.color4fv( border_color.mV );
+        gRender.color4fv( border_color.mV );
 
-        gGL.begin(LLRender::LINES);
-            gGL.vertex2i(0, debug_rect.getHeight() - 1);
-            gGL.vertex2i(0, 0);
+        gRender.begin(LLRender::LINES);
+            gRender.vertex2i(0, debug_rect.getHeight() - 1);
+            gRender.vertex2i(0, 0);
 
-            gGL.vertex2i(0, 0);
-            gGL.vertex2i(debug_rect.getWidth() - 1, 0);
+            gRender.vertex2i(0, 0);
+            gRender.vertex2i(debug_rect.getWidth() - 1, 0);
 
-            gGL.vertex2i(debug_rect.getWidth() - 1, 0);
-            gGL.vertex2i(debug_rect.getWidth() - 1, debug_rect.getHeight() - 1);
+            gRender.vertex2i(debug_rect.getWidth() - 1, 0);
+            gRender.vertex2i(debug_rect.getWidth() - 1, debug_rect.getHeight() - 1);
 
-            gGL.vertex2i(debug_rect.getWidth() - 1, debug_rect.getHeight() - 1);
-            gGL.vertex2i(0, debug_rect.getHeight() - 1);
-        gGL.end();
+            gRender.vertex2i(debug_rect.getWidth() - 1, debug_rect.getHeight() - 1);
+            gRender.vertex2i(0, debug_rect.getHeight() - 1);
+        gRender.end();
 
         // Draw the name if it's not a leaf node or not in editing or preview mode
         if (mChildList.size()
@@ -1424,7 +1424,7 @@ void LLView::drawDebugRect()
             && sDebugRectsShowNames)
         {
             S32 x, y;
-            gGL.color4fv( border_color.mV );
+            gRender.color4fv( border_color.mV );
 
             x = debug_rect.getWidth() / 2;
 

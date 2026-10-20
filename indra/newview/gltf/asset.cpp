@@ -180,10 +180,10 @@ void Asset::uploadTransforms()
 
     if (mNodesUBO == 0)
     {
-        gGL.genBuffers(1, &mNodesUBO);
+        gRender.genBuffers(1, &mNodesUBO);
     }
 
-    gGL.bufferData(mNodesUBO, BufferKind::Uniform, glmp.size() * sizeof(F32), glmp.data());
+    gRender.bufferData(mNodesUBO, BufferKind::Uniform, glmp.size() * sizeof(F32), glmp.data());
 }
 
 void Asset::uploadMaterials()
@@ -193,7 +193,7 @@ void Asset::uploadMaterials()
     std::vector<vec4> md;
 
     U32 material_size = sizeof(vec4) * 12;
-    U32 max_materials = gGLManager.mMaxUniformBlockSize / material_size;
+    U32 max_materials = gDeviceCaps.mMaxUniformBlockSize / material_size;
 
     U32 mat_count = (U32)mMaterials.size();
     mat_count = llmin(mat_count, max_materials);
@@ -227,10 +227,10 @@ void Asset::uploadMaterials()
 
     if (mMaterialsUBO == 0)
     {
-        gGL.genBuffers(1, &mMaterialsUBO);
+        gRender.genBuffers(1, &mMaterialsUBO);
     }
 
-    gGL.bufferData(mMaterialsUBO, BufferKind::Uniform, md.size() * sizeof(vec4), md.data());
+    gRender.bufferData(mMaterialsUBO, BufferKind::Uniform, md.size() * sizeof(vec4), md.data());
 }
 
 S32 Asset::lineSegmentIntersect(const LLVector4a& start, const LLVector4a& end,
@@ -558,7 +558,7 @@ bool Asset::prep()
         // material count is number of materials + 1 for default material
         U32 mat_count = (U32) mMaterials.size() + 1;
 
-        if (LLGLSLShader::sCurBoundShaderPtr == nullptr)
+        if (LLShaderProgram::sCurBoundShaderPtr == nullptr)
         { // make sure a shader is bound to satisfy mVertexBuffer->setBuffer
             gDebugProgram.bind();
         }
@@ -566,7 +566,7 @@ bool Asset::prep()
         for (S32 double_sided = 0; double_sided < 2; ++double_sided)
         {
             RenderData& rd = mRenderData[double_sided];
-            for (U32 i = 0; i < LLGLSLShader::NUM_GLTF_VARIANTS; ++i)
+            for (U32 i = 0; i < LLShaderProgram::NUM_GLTF_VARIANTS; ++i)
             {
                 rd.mBatches[i].resize(mat_count);
             }
@@ -575,8 +575,8 @@ bool Asset::prep()
             for (S32 mat_id = -1; mat_id < (S32)mMaterials.size(); ++mat_id)
             {
                 // for each shader variant
-                U32 vertex_count[LLGLSLShader::NUM_GLTF_VARIANTS] = { 0 };
-                U32 index_count[LLGLSLShader::NUM_GLTF_VARIANTS] = { 0 };
+                U32 vertex_count[LLShaderProgram::NUM_GLTF_VARIANTS] = { 0 };
+                U32 index_count[LLShaderProgram::NUM_GLTF_VARIANTS] = { 0 };
 
                 S32 ds_mat = mat_id == -1 ? 0 : mMaterials[mat_id].mDoubleSided;
                 if (ds_mat != double_sided)
@@ -584,7 +584,7 @@ bool Asset::prep()
                     continue;
                 }
 
-                for (U32 variant = 0; variant < LLGLSLShader::NUM_GLTF_VARIANTS; ++variant)
+                for (U32 variant = 0; variant < LLShaderProgram::NUM_GLTF_VARIANTS; ++variant)
                 {
 #ifdef SHOW_ASSERT
                     U32 attribute_mask = 0;

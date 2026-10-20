@@ -50,10 +50,10 @@ extern bool gCubeSnapshot;
 static LLStaticHashedString sCamPosLocal("camPosLocal");
 static LLStaticHashedString sCustomAlpha("custom_alpha");
 
-static LLGLSLShader* cloud_shader = NULL;
-static LLGLSLShader* sky_shader   = NULL;
-static LLGLSLShader* sun_shader   = NULL;
-static LLGLSLShader* moon_shader  = NULL;
+static LLShaderProgram* cloud_shader = NULL;
+static LLShaderProgram* sky_shader   = NULL;
+static LLShaderProgram* sun_shader   = NULL;
+static LLShaderProgram* moon_shader  = NULL;
 
 static float sStarTime;
 
@@ -89,10 +89,10 @@ void LLDrawPoolWLSky::endDeferredPass(S32 pass)
     moon_shader  = nullptr;
 
     // clear the depth buffer so haze shaders can use unwritten depth as a mask
-    gGL.clearBuffers(ClearBits::Depth);
+    gRender.clearBuffers(ClearBits::Depth);
 }
 
-void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLocal, LLGLSLShader * shader) const
+void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLocal, LLShaderProgram * shader) const
 {
     llassert_always(NULL != shader);
 
@@ -125,7 +125,7 @@ void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLoca
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
-extern LLPointer<LLImageGL> gEXRImage;
+extern LLPointer<LLImageTex> gEXRImage;
 
 static bool use_hdri_sky()
 {
@@ -156,7 +156,7 @@ void LLDrawPoolWLSky::renderSkyHazeDeferred(const LLVector3& camPosLocal, F32 ca
             S32 idx = sky_shader->enableTexture(LLShaderMgr::ENVIRONMENT_MAP);
             if (idx > -1)
             {
-                gGL.getTexUnit(idx)->bind(gEXRImage);
+                gRender.getTexUnit(idx)->bind(gEXRImage);
             }
 
             static LLCachedControl<F32> hdri_exposure(gSavedSettings, "RenderHDRIExposure", 0.0f);
@@ -223,7 +223,7 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
 
     LLGLSPipelineBlendSkyBox gls_sky(true, false);
 
-    gGL.setSceneBlendType(LLRender::BT_ADD_WITH_ALPHA);
+    gRender.setSceneBlendType(LLRender::BT_ADD_WITH_ALPHA);
 
     F32 star_alpha = LLEnvironment::instance().getCurrentSky()->getStarBrightness() / 500.0f;
 
@@ -244,20 +244,20 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     if (tex_a && (!tex_b || (tex_a == tex_b)))
     {
         // Bind current and next sun textures
-        gGL.getTexUnit(0)->bind(tex_a);
-        gGL.getTexUnit(1)->bindWhite();
+        gRender.getTexUnit(0)->bind(tex_a);
+        gRender.getTexUnit(1)->bindWhite();
         blend_factor = 0;
     }
     else if (tex_b && !tex_a)
     {
-        gGL.getTexUnit(0)->bind(tex_b);
-        gGL.getTexUnit(1)->bindWhite();
+        gRender.getTexUnit(0)->bind(tex_b);
+        gRender.getTexUnit(1)->bindWhite();
         blend_factor = 0;
     }
     else if (tex_b != tex_a)
     {
-        gGL.getTexUnit(0)->bind(tex_a);
-        gGL.getTexUnit(1)->bind(tex_b);
+        gRender.getTexUnit(0)->bind(tex_a);
+        gRender.getTexUnit(1)->bind(tex_b);
     }
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
@@ -277,15 +277,15 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
 
     gSky.mVOWLSkyp->drawStars();
 
-    gGL.getTexUnit(0)->bindWhite();
-    gGL.getTexUnit(1)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(1)->bindWhite();
 
     gDeferredStarProgram.unbind();
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 
-void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 camHeightLocal, LLGLSLShader* cloudshader) const
+void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 camHeightLocal, LLShaderProgram* cloudshader) const
 {
     if (use_hdri_sky())
     {
@@ -303,8 +303,8 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
         LLPointer<LLViewerTexture> cloud_noise      = gSky.mVOSkyp->getCloudNoiseTex();
         LLPointer<LLViewerTexture> cloud_noise_next = gSky.mVOSkyp->getCloudNoiseTexNext();
 
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.getTexUnit(1)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(1)->bindWhite();
 
         F32 cloud_variance = psky ? (F32)psky->getCloudVariance() : 0.0f;
         F32 blend_factor   = psky ? (F32)psky->getBlendFactor() : 0.0f;
@@ -344,8 +344,8 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
 
         cloudshader->unbind();
 
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.getTexUnit(1)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(1)->bindWhite();
     }
 }
 
@@ -371,8 +371,8 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
         LLPointer<LLViewerTexture> tex_a = face->getTexture(LLRender::DIFFUSE_MAP);
         LLPointer<LLViewerTexture> tex_b = face->getTexture(LLRender::ALTERNATE_DIFFUSE_MAP);
 
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.getTexUnit(1)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(1)->bindWhite();
 
         // if we even have sun disc textures to work with...
         if (tex_a || tex_b)
@@ -406,8 +406,8 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
 
                 face->renderIndexed();
 
-                gGL.getTexUnit(0)->bindWhite();
-                gGL.getTexUnit(1)->bindWhite();
+                gRender.getTexUnit(0)->bindWhite();
+                gRender.getTexUnit(1)->bindWhite();
 
                 sun_shader->unbind();
             }
@@ -456,8 +456,8 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
 
             face->renderIndexed();
 
-            gGL.getTexUnit(0)->bindWhite();
-            gGL.getTexUnit(1)->bindWhite();
+            gRender.getTexUnit(0)->bindWhite();
+            gRender.getTexUnit(1)->bindWhite();
 
             moon_shader->unbind();
         }
@@ -517,11 +517,11 @@ void LLDrawPoolWLSky::resetDrawOrders()
 }
 
 //static
-void LLDrawPoolWLSky::cleanupGL()
+void LLDrawPoolWLSky::cleanupResources()
 {
 }
 
 //static
-void LLDrawPoolWLSky::restoreGL()
+void LLDrawPoolWLSky::restoreResources()
 {
 }

@@ -27,13 +27,13 @@
 #include "llgltexture.h"
 
 
-LLGLTexture::LLGLTexture(bool usemipmaps)
+LLBaseTexture::LLBaseTexture(bool usemipmaps)
 {
     init();
     mUseMipMaps = usemipmaps;
 }
 
-LLGLTexture::LLGLTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps)
+LLBaseTexture::LLBaseTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps)
 {
     init();
     mFullWidth = width ;
@@ -43,29 +43,29 @@ LLGLTexture::LLGLTexture(const U32 width, const U32 height, const U8 components,
     setTexelsPerImage();
 }
 
-LLGLTexture::LLGLTexture(const LLImageRaw* raw, bool usemipmaps)
+LLBaseTexture::LLBaseTexture(const LLImageRaw* raw, bool usemipmaps)
 {
     init();
     mUseMipMaps = usemipmaps ;
     // Create an empty image of the specified size and width
-    mGLTexturep = new LLImageGL(raw, usemipmaps) ;
-    mFullWidth = mGLTexturep->getWidth();
-    mFullHeight = mGLTexturep->getHeight();
-    mComponents = mGLTexturep->getComponents();
+    mImageTexp = new LLImageTex(raw, usemipmaps) ;
+    mFullWidth = mImageTexp->getWidth();
+    mFullHeight = mImageTexp->getHeight();
+    mComponents = mImageTexp->getComponents();
     setTexelsPerImage();
 }
 
-LLGLTexture::~LLGLTexture()
+LLBaseTexture::~LLBaseTexture()
 {
     cleanup();
 }
 
-void LLGLTexture::init()
+void LLBaseTexture::init()
 {
-    mBoostLevel = LLGLTexture::BOOST_NONE;
+    mBoostLevel = LLBaseTexture::BOOST_NONE;
     // <FS:minerjr> [FIRE-36016] - Re-added Store/Restore boost levels of selected objects
     // Added a previous boost level to allow for restoring boost after BOOST_SELECTED is applied
-    mPrevBoostLevel = LLGLTexture::BOOST_NONE;
+    mPrevBoostLevel = LLBaseTexture::BOOST_NONE;
     // </FS:minerjr> [FIRE-36016]
 
     mFullWidth = 0;
@@ -79,32 +79,32 @@ void LLGLTexture::init()
     mNeedsGLTexture = false ;
 }
 
-void LLGLTexture::cleanup()
+void LLBaseTexture::cleanup()
 {
-    if(mGLTexturep)
+    if(mImageTexp)
     {
-        mGLTexturep->cleanup();
+        mImageTexp->cleanup();
     }
 }
 
 // virtual
-void LLGLTexture::dump()
+void LLBaseTexture::dump()
 {
-    if(mGLTexturep)
+    if(mImageTexp)
     {
-        mGLTexturep->dump();
+        mImageTexp->dump();
     }
 }
 
-void LLGLTexture::setBoostLevel(S32 level)
+void LLBaseTexture::setBoostLevel(S32 level)
 {
     if(mBoostLevel != level)
     {
         mBoostLevel = level ;
-        if(mBoostLevel != LLGLTexture::BOOST_NONE
-           && mBoostLevel != LLGLTexture::BOOST_ICON
-           && mBoostLevel != LLGLTexture::BOOST_THUMBNAIL
-           && mBoostLevel != LLGLTexture::BOOST_TERRAIN)
+        if(mBoostLevel != LLBaseTexture::BOOST_NONE
+           && mBoostLevel != LLBaseTexture::BOOST_ICON
+           && mBoostLevel != LLBaseTexture::BOOST_THUMBNAIL
+           && mBoostLevel != LLBaseTexture::BOOST_TERRAIN)
         {
             setNoDelete() ;
         }
@@ -113,24 +113,24 @@ void LLGLTexture::setBoostLevel(S32 level)
 
 // <FS:minerjr> [FIRE-36016] - Re-added Store/Restore boost levels of selected objects
 // Changes the current boost level back to the previous value
-void LLGLTexture::restoreBoostLevel()
+void LLBaseTexture::restoreBoostLevel()
 {
     mBoostLevel = mPrevBoostLevel;
 }
 
 // Stores the current boost level in the previous boost
-void LLGLTexture::storeBoostLevel()
+void LLBaseTexture::storeBoostLevel()
 {
     mPrevBoostLevel = mBoostLevel;
 }
 // </FS:minerjr> [FIRE-36016]
 
-void LLGLTexture::forceActive()
+void LLBaseTexture::forceActive()
 {
     mTextureState = ACTIVE ;
 }
 
-void LLGLTexture::setActive()
+void LLBaseTexture::setActive()
 {
     if(mTextureState != NO_DELETE)
     {
@@ -139,256 +139,256 @@ void LLGLTexture::setActive()
 }
 
 //set the texture to stay in memory
-void LLGLTexture::setNoDelete()
+void LLBaseTexture::setNoDelete()
 {
     mTextureState = NO_DELETE ;
 }
 
-void LLGLTexture::generateGLTexture()
+void LLBaseTexture::generateImageTexture()
 {
-    if(mGLTexturep.isNull())
+    if(mImageTexp.isNull())
     {
-        mGLTexturep = new LLImageGL(mFullWidth, mFullHeight, mComponents, mUseMipMaps) ;
+        mImageTexp = new LLImageTex(mFullWidth, mFullHeight, mComponents, mUseMipMaps) ;
     }
 }
 
-LLImageGL* LLGLTexture::getGLTexture() const
+LLImageTex* LLBaseTexture::getImageTexture() const
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep ;
+    return mImageTexp ;
 }
 
-bool LLGLTexture::createGLTexture()
+bool LLBaseTexture::createImageTexture()
 {
-    if(mGLTexturep.isNull())
+    if(mImageTexp.isNull())
     {
-        generateGLTexture() ;
+        generateImageTexture() ;
     }
 
-    return mGLTexturep->createGLTexture() ;
+    return mImageTexp->createImageTexture() ;
 }
 
-bool LLGLTexture::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename, bool to_create, S32 category, bool defer_copy, U32* tex_name)
+bool LLBaseTexture::createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename, bool to_create, S32 category, bool defer_copy, U32* tex_name)
 {
-    llassert(mGLTexturep.notNull());
+    llassert(mImageTexp.notNull());
 
-    bool ret = mGLTexturep->createGLTexture(discard_level, imageraw, usename, to_create, category, defer_copy, tex_name) ;
+    bool ret = mImageTexp->createImageTexture(discard_level, imageraw, usename, to_create, category, defer_copy, tex_name) ;
 
     if(ret)
     {
-        mFullWidth = mGLTexturep->getCurrentWidth() ;
-        mFullHeight = mGLTexturep->getCurrentHeight() ;
-        mComponents = mGLTexturep->getComponents() ;
+        mFullWidth = mImageTexp->getCurrentWidth() ;
+        mFullHeight = mImageTexp->getCurrentHeight() ;
+        mComponents = mImageTexp->getComponents() ;
         setTexelsPerImage();
     }
 
     return ret ;
 }
 
-void LLGLTexture::setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, const char* file, int line)
+void LLBaseTexture::setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, const char* file, int line)
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    mGLTexturep->setExplicitFormat(internal_format, primary_format, type_format, file, line) ;
+    mImageTexp->setExplicitFormat(internal_format, primary_format, type_format, file, line) ;
 }
-void LLGLTexture::setAddressMode(LLTexUnit::eTextureAddressMode mode)
+void LLBaseTexture::setAddressMode(LLTexUnit::eTextureAddressMode mode)
 {
-    llassert(mGLTexturep.notNull()) ;
-    mGLTexturep->setAddressMode(mode) ;
+    llassert(mImageTexp.notNull()) ;
+    mImageTexp->setAddressMode(mode) ;
 }
-void LLGLTexture::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
+void LLBaseTexture::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
 {
-    llassert(mGLTexturep.notNull()) ;
-    mGLTexturep->setFilteringOption(option) ;
-}
-
-//virtual
-S32 LLGLTexture::getWidth(S32 discard_level) const
-{
-    llassert(mGLTexturep.notNull()) ;
-    return mGLTexturep->getWidth(discard_level) ;
+    llassert(mImageTexp.notNull()) ;
+    mImageTexp->setFilteringOption(option) ;
 }
 
 //virtual
-S32 LLGLTexture::getHeight(S32 discard_level) const
+S32 LLBaseTexture::getWidth(S32 discard_level) const
 {
-    llassert(mGLTexturep.notNull()) ;
-    return mGLTexturep->getHeight(discard_level) ;
+    llassert(mImageTexp.notNull()) ;
+    return mImageTexp->getWidth(discard_level) ;
 }
 
-S32 LLGLTexture::getMaxDiscardLevel() const
+//virtual
+S32 LLBaseTexture::getHeight(S32 discard_level) const
 {
-    llassert(mGLTexturep.notNull()) ;
-    return mGLTexturep->getMaxDiscardLevel() ;
-}
-S32 LLGLTexture::getDiscardLevel() const
-{
-    llassert(mGLTexturep.notNull()) ;
-    return mGLTexturep->getDiscardLevel() ;
-}
-S8  LLGLTexture::getComponents() const
-{
-    llassert(mGLTexturep.notNull()) ;
-
-    return mGLTexturep->getComponents() ;
+    llassert(mImageTexp.notNull()) ;
+    return mImageTexp->getHeight(discard_level) ;
 }
 
-U32 LLGLTexture::getTexName() const
+S32 LLBaseTexture::getMaxDiscardLevel() const
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
+    return mImageTexp->getMaxDiscardLevel() ;
+}
+S32 LLBaseTexture::getDiscardLevel() const
+{
+    llassert(mImageTexp.notNull()) ;
+    return mImageTexp->getDiscardLevel() ;
+}
+S8  LLBaseTexture::getComponents() const
+{
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->getTexName() ;
+    return mImageTexp->getComponents() ;
 }
 
-bool LLGLTexture::hasGLTexture() const
+U32 LLBaseTexture::getTexName() const
 {
-    if(mGLTexturep.notNull())
+    llassert(mImageTexp.notNull()) ;
+
+    return mImageTexp->getTexName() ;
+}
+
+bool LLBaseTexture::hasImageTexture() const
+{
+    if(mImageTexp.notNull())
     {
-        return mGLTexturep->getHasGLTexture() ;
+        return mImageTexp->getHasImageTexture() ;
     }
     return false ;
 }
 
-bool LLGLTexture::getBoundRecently() const
+bool LLBaseTexture::getBoundRecently() const
 {
-    if(mGLTexturep.notNull())
+    if(mImageTexp.notNull())
     {
-        return mGLTexturep->getBoundRecently() ;
+        return mImageTexp->getBoundRecently() ;
     }
     return false ;
 }
 
-LLTexUnit::eTextureType LLGLTexture::getTarget(void) const
+LLTexUnit::eTextureType LLBaseTexture::getTarget(void) const
 {
-    llassert(mGLTexturep.notNull()) ;
-    return mGLTexturep->getTarget() ;
+    llassert(mImageTexp.notNull()) ;
+    return mImageTexp->getTarget() ;
 }
 
-bool LLGLTexture::setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name)
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    llassert(mGLTexturep.notNull()) ;
-
-    return mGLTexturep->setSubImage(imageraw, x_pos, y_pos, width, height, 0, use_name) ;
-}
-
-bool LLGLTexture::setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name)
+bool LLBaseTexture::setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->setSubImage(datap, data_width, data_height, x_pos, y_pos, width, height, 0, use_name) ;
+    return mImageTexp->setSubImage(imageraw, x_pos, y_pos, width, height, 0, use_name) ;
 }
 
-void LLGLTexture::setGLTextureCreated (bool initialized)
+bool LLBaseTexture::setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name)
 {
-    llassert(mGLTexturep.notNull()) ;
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    llassert(mImageTexp.notNull()) ;
 
-    mGLTexturep->setGLTextureCreated (initialized) ;
+    return mImageTexp->setSubImage(datap, data_width, data_height, x_pos, y_pos, width, height, 0, use_name) ;
 }
 
-void  LLGLTexture::setCategory(S32 category)
+void LLBaseTexture::setImageTextureCreated (bool initialized)
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    mGLTexturep->setCategory(category) ;
+    mImageTexp->setImageTextureCreated (initialized) ;
 }
 
-void LLGLTexture::setTexName(U32 texName)
+void  LLBaseTexture::setCategory(S32 category)
 {
-    llassert(mGLTexturep.notNull());
-    return mGLTexturep->setTexName(texName);
+    llassert(mImageTexp.notNull()) ;
+
+    mImageTexp->setCategory(category) ;
 }
 
-void LLGLTexture::setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target)
+void LLBaseTexture::setTexName(U32 texName)
 {
-    llassert(mGLTexturep.notNull());
-    return mGLTexturep->setTarget(target, bind_target);
+    llassert(mImageTexp.notNull());
+    return mImageTexp->setTexName(texName);
 }
 
-LLTexUnit::eTextureAddressMode LLGLTexture::getAddressMode(void) const
+void LLBaseTexture::setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target)
 {
-    llassert(mGLTexturep.notNull()) ;
-
-    return mGLTexturep->getAddressMode() ;
+    llassert(mImageTexp.notNull());
+    return mImageTexp->setTarget(target, bind_target);
 }
 
-S32Bytes LLGLTexture::getTextureMemory() const
+LLTexUnit::eTextureAddressMode LLBaseTexture::getAddressMode(void) const
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->mTextureMemory ;
+    return mImageTexp->getAddressMode() ;
 }
 
-PixelFormat LLGLTexture::getPrimaryFormat() const
+S32Bytes LLBaseTexture::getTextureMemory() const
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->getPrimaryFormat() ;
+    return mImageTexp->mTextureMemory ;
 }
 
-bool LLGLTexture::getIsAlphaMask() const
+PixelFormat LLBaseTexture::getPrimaryFormat() const
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->getIsAlphaMask() ;
+    return mImageTexp->getPrimaryFormat() ;
 }
 
-//bool LLGLTexture::getMask(const LLVector2 &tc)
+bool LLBaseTexture::getIsAlphaMask() const
+{
+    llassert(mImageTexp.notNull()) ;
+
+    return mImageTexp->getIsAlphaMask() ;
+}
+
+//bool LLBaseTexture::getMask(const LLVector2 &tc)
 // [RLVa:KB] - Checked: RLVa-2.2 (@setoverlay)
-bool LLGLTexture::getMask(const LLVector2 &tc) const
+bool LLBaseTexture::getMask(const LLVector2 &tc) const
 // [/RLVa:KB]
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->getMask(tc) ;
+    return mImageTexp->getMask(tc) ;
 }
 
-F32 LLGLTexture::getTimePassedSinceLastBound()
+F32 LLBaseTexture::getTimePassedSinceLastBound()
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->getTimePassedSinceLastBound() ;
+    return mImageTexp->getTimePassedSinceLastBound() ;
 }
-bool LLGLTexture::getMissed() const
+bool LLBaseTexture::getMissed() const
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->getMissed() ;
-}
-
-bool LLGLTexture::isJustBound() const
-{
-    llassert(mGLTexturep.notNull()) ;
-
-    return mGLTexturep->isJustBound() ;
+    return mImageTexp->getMissed() ;
 }
 
-void LLGLTexture::forceUpdateBindStats(void) const
+bool LLBaseTexture::isJustBound() const
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->forceUpdateBindStats() ;
+    return mImageTexp->isJustBound() ;
 }
 
-bool LLGLTexture::isGLTextureCreated() const
+void LLBaseTexture::forceUpdateBindStats(void) const
 {
-    llassert(mGLTexturep.notNull()) ;
+    llassert(mImageTexp.notNull()) ;
 
-    return mGLTexturep->isGLTextureCreated() ;
+    return mImageTexp->forceUpdateBindStats() ;
 }
 
-void LLGLTexture::destroyGLTexture()
+bool LLBaseTexture::isImageTextureCreated() const
 {
-    if(mGLTexturep.notNull() && mGLTexturep->getHasGLTexture())
+    llassert(mImageTexp.notNull()) ;
+
+    return mImageTexp->isImageTextureCreated() ;
+}
+
+void LLBaseTexture::destroyImageTexture()
+{
+    if(mImageTexp.notNull() && mImageTexp->getHasImageTexture())
     {
-        mGLTexturep->destroyGLTexture() ;
+        mImageTexp->destroyImageTexture() ;
         mTextureState = DELETED ;
     }
 }
 
-void LLGLTexture::setTexelsPerImage()
+void LLBaseTexture::setTexelsPerImage()
 {
     U32 fullwidth = llmin(mFullWidth,U32(MAX_IMAGE_SIZE_DEFAULT));
     U32 fullheight = llmin(mFullHeight,U32(MAX_IMAGE_SIZE_DEFAULT));
@@ -397,4 +397,4 @@ void LLGLTexture::setTexelsPerImage()
 
 static LLUUID sStubUUID;
 
-const LLUUID& LLGLTexture::getID() const { return sStubUUID; }
+const LLUUID& LLBaseTexture::getID() const { return sStubUUID; }

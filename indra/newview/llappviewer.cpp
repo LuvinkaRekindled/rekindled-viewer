@@ -338,7 +338,7 @@ extern void init_apple_menu(const char* product);
 
 extern bool gRandomizeFramerate;
 extern bool gPeriodicSlowFrame;
-extern bool gDebugGL;
+extern bool gDebugRender;
 
 #if LL_DARWIN
 extern bool gHiDPISupport;
@@ -393,7 +393,7 @@ S32 gPendingMetricsUploads = 0;
 
 // Used to restore texture state after a mode switch
 LLFrameTimer gRestoreGLTimer;
-bool gRestoreGL = false;
+bool gRestoreResources = false;
 bool gUseWireframe = false;
 
 U64Bytes gMemoryAllocated(0); // updated in display_stats() in llviewerdisplay.cpp
@@ -628,8 +628,8 @@ static void settings_to_globals()
     LLRender::sGLCoreProfile = gSavedSettings.getBOOL("RenderGLContextCoreProfile");
 #endif
     LLRender::sNsightDebugSupport = gSavedSettings.getBOOL("RenderNsightDebugSupport");
-    LLImageGL::sGlobalUseAnisotropic    = gSavedSettings.getBOOL("RenderAnisotropic");
-    LLImageGL::sCompressTextures        = gSavedSettings.getBOOL("RenderCompressTextures");
+    LLImageTex::sGlobalUseAnisotropic    = gSavedSettings.getBOOL("RenderAnisotropic");
+    LLImageTex::sCompressTextures        = gSavedSettings.getBOOL("RenderCompressTextures");
     LLVOVolume::sLODFactor              = llclamp(gSavedSettings.getF32("RenderVolumeLODFactor"), 0.01f, MAX_LOD_FACTOR);
     LLVOVolume::sDistanceFactor         = 1.f-LLVOVolume::sLODFactor * 0.1f;
     LLVolumeImplFlexible::sUpdateFactor = gSavedSettings.getF32("RenderFlexTimeFactor");
@@ -665,7 +665,7 @@ static void settings_modify()
     LLRenderTarget::sUseFBO             = LLPipeline::sRenderDeferred;
     LLVOSurfacePatch::sLODFactor        = gSavedSettings.getF32("RenderTerrainLODFactor");
     LLVOSurfacePatch::sLODFactor *= LLVOSurfacePatch::sLODFactor; //square lod factor to get exponential range of [1,4]
-    gDebugGL       = gDebugGLSession || gDebugSession;
+    gDebugRender       = gDebugGLSession || gDebugSession;
     gDebugPipeline = gSavedSettings.getBOOL("RenderDebugPipeline");
 }
 
@@ -1209,12 +1209,12 @@ bool LLAppViewer::init()
     //
     // Initialize the window
     //
-    gGLActive = true;
+    gRenderActive = true;
     initWindow();
     LL_INFOS("InitInfo") << "Window is initialized." << LL_ENDL ;
     // <FS:Beq> allow detected hardware to be overridden.
-    gGLManager.mVRAMDetected = gGLManager.mVRAM;
-    LL_INFOS("AppInit") << "VRAM detected: " << gGLManager.mVRAMDetected << LL_ENDL;
+    gDeviceCaps.mVRAMDetected = gDeviceCaps.mVRAM;
+    LL_INFOS("AppInit") << "VRAM detected: " << gDeviceCaps.mVRAMDetected << LL_ENDL;
     overrideDetectedHardware(); 
     // </FS:Beq> 
 
@@ -1230,15 +1230,15 @@ bool LLAppViewer::init()
 
     LLFolderViewItem::initClass(); // SJB: Needs to happen after initWindow(), not sure why but related to fonts
 
-    gGLManager.getGLInfo(gDebugInfo);
-    gGLManager.printGLInfoString();
+    gDeviceCaps.getGLInfo(gDebugInfo);
+    gDeviceCaps.printGLInfoString();
 
     // If we don't have the right GL requirements, exit.
     // ? AG: It seems we never set mHasRequirements to false
-    if (!gGLManager.mHasRequirements)
+    if (!gDeviceCaps.mHasRequirements)
     {
         // Already handled with a MBVideoDrvErr
-        LL_WARNS("InitInfo") << "gGLManager.mHasRequirements is false." << LL_ENDL;
+        LL_WARNS("InitInfo") << "gDeviceCaps.mHasRequirements is false." << LL_ENDL;
         // quit immediately
         LL_PROFILER_FRAME_END;
         return false;
@@ -1315,18 +1315,18 @@ bool LLAppViewer::init()
 
     // Obsolete? mExpectedGLVersion is always zero
 #if LL_WINDOWS
-    if (gGLManager.mGLVersion < LLFeatureManager::getInstance()->getExpectedGLVersion())
+    if (gDeviceCaps.mApiVersionNumber < LLFeatureManager::getInstance()->getExpectedGLVersion())
     {
         std::string url;
-        if (gGLManager.mIsIntel)
+        if (gDeviceCaps.mIsIntel)
         {
             url = LLTrans::getString("IntelDriverPage");
         }
-        else if (gGLManager.mIsNVIDIA)
+        else if (gDeviceCaps.mIsNVIDIA)
         {
             url = LLTrans::getString("NvidiaDriverPage");
         }
-        else if (gGLManager.mIsAMD)
+        else if (gDeviceCaps.mIsAMD)
         {
             url = LLTrans::getString("AMDDriverPage");
         }
@@ -1365,7 +1365,7 @@ bool LLAppViewer::init()
         LLNotificationsUtil::add("CorruptedProtectedDataStore");
     }
 
-    gGLActive = false;
+    gRenderActive = false;
 
     // <FS:Ansariel> Disable updater
 ////#if LL_RELEASE_FOR_DOWNLOAD
@@ -1500,7 +1500,7 @@ void LLAppViewer::overrideDetectedHardware()
         U32 forced_video_memory = gSavedSettings.getU32("FSForcedVideoMemory");
         // Note: 0 is allowed here, some systems detect VRAM as zero so override should support emulating them.
         LL_INFOS("AppInit") << "Overriding VRAM to " << forced_video_memory * 1024U << " MB" << LL_ENDL;
-        gGLManager.mVRAM = forced_video_memory * 1024U;
+        gDeviceCaps.mVRAM = forced_video_memory * 1024U;
     }
 }
 // </FS:Beq>
@@ -1879,9 +1879,9 @@ bool LLAppViewer::doFrame()
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df Display");
                 pingMainloopTimeout("Main:Display");
-                gGLActive = true;
+                gRenderActive = true;
 
-                LLVkMirror::holdFrame(true); // <FS> the mirror frame spans display() and the probe update / snapshots below
+                LLVkBridge::holdFrame(true); // <FS> the mirror frame spans display() and the probe update / snapshots below
                 {
                     LL_CPU_ZONE("main loop: display()");
                     display();
@@ -1898,10 +1898,10 @@ bool LLAppViewer::doFrame()
                     LLFloaterSimpleSnapshot::update();
                     LLFloaterFlickr::update(); // <FS:Beq/> FIRE-35002 - Flickr preview not updating whne opened directly from tool tray icon
                     FSFloaterPrimfeed::update(); // <FS:Beq/> Primfeed support
-                    gGLActive = false;
+                    gRenderActive = false;
                 }
-                LLVkMirror::holdFrame(false); // <FS>
-                LLVkMirror::endFrame(); // <FS>
+                LLVkBridge::holdFrame(false); // <FS>
+                LLVkBridge::endFrame(); // <FS>
                 LLCpuZoneScope::frame(); // <FS>
                 apply_dev_settings(); // <FS>
 
@@ -2116,7 +2116,7 @@ void LLAppViewer::flushLFSIO()
 
 bool LLAppViewer::cleanup()
 {
-    LLVkMirror::stopAsync(); // <FS> the Vulkan mirror thread must be done before anything is torn down
+    LLVkBridge::stopAsync(); // <FS> the Vulkan mirror thread must be done before anything is torn down
 
 #if LL_VELOPACK
     // Apply any pending Velopack update before shutdown
@@ -2733,7 +2733,7 @@ bool LLAppViewer::initThreads()
     // get the number of concurrent threads that can run
     S32 cores = std::thread::hardware_concurrency();
 #if LL_DARWIN
-    if (!gGLManager.mIsApple)
+    if (!gDeviceCaps.mIsApple)
     {
         cores /= 2;
     }
@@ -3493,7 +3493,7 @@ bool LLAppViewer::initConfiguration()
     if (gSavedSettings.getBOOL("DebugSession"))
     {
         gDebugSession = true;
-        gDebugGL = true;
+        gDebugRender = true;
 
         ll_init_fail_log(gDirUtilp->getExpandedFilename(LL_PATH_LOGS, "test_failures.log"));
     }
@@ -3501,8 +3501,8 @@ bool LLAppViewer::initConfiguration()
     if (gSavedSettings.getBOOL("RenderDebugGLSession"))
     {
         gDebugGLSession = true;
-        gDebugGL = true;
-        // gDebugGL can cause excessive logging
+        gDebugRender = true;
+        // gDebugRender can cause excessive logging
         // so it's limited to a single session
         gSavedSettings.setBOOL("RenderDebugGLSession", false);
     }
@@ -4247,23 +4247,23 @@ LLSD LLAppViewer::getViewerInfo() const
     info["CONCURRENCY"] = LLSD::Integer(std::thread::hardware_concurrency());    // <FS:Beq> Add hardware concurrency to info
     // Moved hack adjustment to Windows memory size into llsys.cpp
     info["OS_VERSION"] = LLOSInfo::instance().getOSString();
-    info["GRAPHICS_CARD_VENDOR"] = gGLManager.mGLVendor;
-    info["GRAPHICS_CARD"] = gGLManager.mGLRenderer;
-    info["GRAPHICS_CARD_MEMORY"] = LLSD::Integer(gGLManager.mVRAM);
-    info["GRAPHICS_CARD_MEMORY_DETECTED"] = gGLManager.mVRAMDetected; // <FS:Beq/> allow detected hardware to be overridden.
+    info["GRAPHICS_CARD_VENDOR"] = gDeviceCaps.mVendorString;
+    info["GRAPHICS_CARD"] = gDeviceCaps.mDeviceString;
+    info["GRAPHICS_CARD_MEMORY"] = LLSD::Integer(gDeviceCaps.mVRAM);
+    info["GRAPHICS_CARD_MEMORY_DETECTED"] = gDeviceCaps.mVRAMDetected; // <FS:Beq/> allow detected hardware to be overridden.
 
 #if LL_WINDOWS
     std::string drvinfo;
 
-    if (gGLManager.mIsIntel)
+    if (gDeviceCaps.mIsIntel)
     {
         drvinfo = gDXHardware.getDriverVersionWMI(LLDXHardware::GPU_INTEL);
     }
-    else if (gGLManager.mIsNVIDIA)
+    else if (gDeviceCaps.mIsNVIDIA)
     {
         drvinfo = gDXHardware.getDriverVersionWMI(LLDXHardware::GPU_NVIDIA);
     }
-    else if (gGLManager.mIsAMD)
+    else if (gDeviceCaps.mIsAMD)
     {
         drvinfo = gDXHardware.getDriverVersionWMI(LLDXHardware::GPU_AMD);
     }
@@ -4293,7 +4293,7 @@ LLSD LLAppViewer::getViewerInfo() const
 // [RLVa:KB] - Checked: 2010-04-18 (RLVa-1.2.0)
     info["RLV_VERSION"] = (rlv_handler_t::isEnabled()) ? RlvStrings::getVersionAbout() : LLTrans::getString("RLVaStatusDisabled");
 // [/RLVa:KB]
-    info["OPENGL_VERSION"] = gGLManager.mGLVersionString;
+    info["OPENGL_VERSION"] = gDeviceCaps.mApiVersionString;
     info["LIBCURL_VERSION"] = LLCore::LLHttp::getCURLVersion();
     // Settings
     // <FS:Beq> gViewerWindow can be null on shutdown. Crashes if bugsplatt uses the info
@@ -4315,7 +4315,7 @@ LLSD LLAppViewer::getViewerInfo() const
     //info["NET_BANDWITH"] = LLViewerThrottle::getMaxBandwidthKbps();
     //info["LOD_FACTOR"] = gSavedSettings.getF32("RenderVolumeLODFactor");
     //info["RENDER_QUALITY"] = (F32)gSavedSettings.getU32("RenderQualityPerformance");
-    //info["TEXTURE_MEMORY"] = gGLManager.mVRAM;
+    //info["TEXTURE_MEMORY"] = gDeviceCaps.mVRAM;
     // </FS>
 
 #if LL_DARWIN
@@ -6049,8 +6049,8 @@ void LLAppViewer::idle()
     LLGLTFMaterialList::flushUpdates();
 
     static LLCachedControl<U32> downscale_method(gSavedSettings, "RenderDownScaleMethod");
-    gGLManager.mDownScaleMethod = downscale_method;
-    { LL_CPU_ZONE("idle: LLImageGL::updateClass"); LLImageGL::updateClass(); }
+    gDeviceCaps.mDownScaleMethod = downscale_method;
+    { LL_CPU_ZONE("idle: LLImageTex::updateClass"); LLImageTex::updateClass(); }
 
     // Service the WorkQueue we use for replies from worker threads.
     // Use function statics for the timeslice setting so we only have to fetch
@@ -6113,13 +6113,13 @@ void LLAppViewer::idle()
     if (LLStartUp::getStartupState() < STATE_STARTED)
     {
         // Skip rest if idle startup returns false (essentially, no world yet)
-        gGLActive = true;
+        gRenderActive = true;
         if (!idle_startup())
         {
-            gGLActive = false;
+            gRenderActive = false;
             return;
         }
-        gGLActive = false;
+        gRenderActive = false;
     }
 
 
@@ -6483,7 +6483,7 @@ void LLAppViewer::idle()
     // forcibly quit if it has taken too long
     if (mQuitRequested)
     {
-        gGLActive = true;
+        gRenderActive = true;
         idleShutdown();
     }
 }
@@ -7082,7 +7082,7 @@ void LLAppViewer::forceErrorOSSpecificException()
 void LLAppViewer::forceErrorDriverCrash()
 {
     LL_WARNS() << "Forcing a deliberate driver crash" << LL_ENDL;
-    gGL.deleteTextures(1, NULL);
+    gRender.deleteTextures(1, NULL);
 }
 
 // <FS:Ansariel> Wrongly merged back in by LL

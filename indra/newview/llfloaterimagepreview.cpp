@@ -483,19 +483,19 @@ void LLFloaterImagePreview::draw()
 
             if(mImagep.notNull())
             {
-                gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mImagep->getTexName());
+                gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mImagep->getTexName());
             }
             else
             {
                 mImagep = LLViewerTextureManager::getLocalTexture(mRawImagep.get(), false) ;
 
-                gGL.getTexUnit(0)->unbind(mImagep->getTarget()) ;
-                gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mImagep->getTexName());
+                gRender.getTexUnit(0)->unbind(mImagep->getTarget()) ;
+                gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mImagep->getTexName());
                 stop_glerror();
 
-                gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+                gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
 
-                gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+                gRender.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
                 if (mAvatarPreview)
                 {
                     mAvatarPreview->setTexture(mImagep->getTexName());
@@ -503,42 +503,42 @@ void LLFloaterImagePreview::draw()
                 }
             }
 
-            gGL.color3f(1.f, 1.f, 1.f);
-            gGL.begin(LLRender::TRIANGLES);
+            gRender.color3f(1.f, 1.f, 1.f);
+            gRender.begin(LLRender::TRIANGLES);
             {
                 // <FS:Zi> Make preview area position to be not hard-coded
-                //gGL.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mTop);
-                //gGL.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
-                //gGL.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mBottom);
-                //gGL.vertex2i(PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
-                //gGL.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mBottom);
-                //gGL.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
+                //gRender.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mTop);
+                //gRender.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
+                //gRender.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mBottom);
+                //gRender.vertex2i(PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
+                //gRender.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mBottom);
+                //gRender.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
 
-                //gGL.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mBottom);
-                //gGL.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
-                //gGL.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mTop);
-                //gGL.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
-                //gGL.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mTop);
-                //gGL.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
+                //gRender.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mBottom);
+                //gRender.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
+                //gRender.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mTop);
+                //gRender.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
+                //gRender.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mTop);
+                //gRender.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
 
-                gGL.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mTop);
-                gGL.vertex2i(mPreviewRect.mLeft, mPreviewRect.mTop);
-                gGL.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mBottom);
-                gGL.vertex2i(mPreviewRect.mLeft, mPreviewRect.mBottom);
-                gGL.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mBottom);
-                gGL.vertex2i(mPreviewRect.mRight, mPreviewRect.mBottom);
+                gRender.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mTop);
+                gRender.vertex2i(mPreviewRect.mLeft, mPreviewRect.mTop);
+                gRender.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mBottom);
+                gRender.vertex2i(mPreviewRect.mLeft, mPreviewRect.mBottom);
+                gRender.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mBottom);
+                gRender.vertex2i(mPreviewRect.mRight, mPreviewRect.mBottom);
 
-                gGL.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mTop);
-                gGL.vertex2i(mPreviewRect.mLeft, mPreviewRect.mTop);
-                gGL.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mBottom);
-                gGL.vertex2i(mPreviewRect.mRight, mPreviewRect.mBottom);
-                gGL.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mTop);
-                gGL.vertex2i(mPreviewRect.mRight, mPreviewRect.mTop);
+                gRender.texCoord2f(mPreviewImageRect.mLeft, mPreviewImageRect.mTop);
+                gRender.vertex2i(mPreviewRect.mLeft, mPreviewRect.mTop);
+                gRender.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mBottom);
+                gRender.vertex2i(mPreviewRect.mRight, mPreviewRect.mBottom);
+                gRender.texCoord2f(mPreviewImageRect.mRight, mPreviewImageRect.mTop);
+                gRender.vertex2i(mPreviewRect.mRight, mPreviewRect.mTop);
                 // </FS:Zi>
             }
-            gGL.end();
+            gRender.end();
 
-            gGL.getTexUnit(0)->bindWhite();
+            gRender.getTexUnit(0)->bindWhite();
 
             stop_glerror();
         }
@@ -546,52 +546,52 @@ void LLFloaterImagePreview::draw()
         {
             if ((mAvatarPreview) && (mSculptedPreview))
             {
-                gGL.color3f(1.f, 1.f, 1.f);
+                gRender.color3f(1.f, 1.f, 1.f);
 
                 if (selected == 9)
                 {
-                    gGL.getTexUnit(0)->bind(mSculptedPreview);
+                    gRender.getTexUnit(0)->bind(mSculptedPreview);
                 }
                 else
                 {
-                    gGL.getTexUnit(0)->bind(mAvatarPreview);
+                    gRender.getTexUnit(0)->bind(mAvatarPreview);
                 }
 
-                gGL.begin(LLRender::TRIANGLES);
+                gRender.begin(LLRender::TRIANGLES);
                 {
                     // <FS:Zi> Make preview area position to be not hard-coded
-                    //gGL.texCoord2f(0.f, 1.f);
-                    //gGL.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
-                    //gGL.texCoord2f(0.f, 0.f);
-                    //gGL.vertex2i(PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
-                    //gGL.texCoord2f(1.f, 0.f);
-                    //gGL.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
+                    //gRender.texCoord2f(0.f, 1.f);
+                    //gRender.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
+                    //gRender.texCoord2f(0.f, 0.f);
+                    //gRender.vertex2i(PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
+                    //gRender.texCoord2f(1.f, 0.f);
+                    //gRender.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
 
-                    //gGL.texCoord2f(1.f, 0.f);
-                    //gGL.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
-                    //gGL.texCoord2f(0.f, 1.f);
-                    //gGL.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
-                    //gGL.texCoord2f(1.f, 1.f);
-                    //gGL.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
+                    //gRender.texCoord2f(1.f, 0.f);
+                    //gRender.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_HPAD + PREF_BUTTON_HEIGHT + PREVIEW_HPAD);
+                    //gRender.texCoord2f(0.f, 1.f);
+                    //gRender.vertex2i(PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
+                    //gRender.texCoord2f(1.f, 1.f);
+                    //gRender.vertex2i(r.getWidth() - PREVIEW_HPAD, PREVIEW_TEXTURE_HEIGHT + PREVIEW_VPAD);
 
-                    gGL.texCoord2f(0.f, 1.f);
-                    gGL.vertex2i(mPreviewRect.mLeft, mPreviewRect.mTop);
-                    gGL.texCoord2f(0.f, 0.f);
-                    gGL.vertex2i(mPreviewRect.mLeft, mPreviewRect.mBottom);
-                    gGL.texCoord2f(1.f, 0.f);
-                    gGL.vertex2i(mPreviewRect.mRight, mPreviewRect.mBottom);
+                    gRender.texCoord2f(0.f, 1.f);
+                    gRender.vertex2i(mPreviewRect.mLeft, mPreviewRect.mTop);
+                    gRender.texCoord2f(0.f, 0.f);
+                    gRender.vertex2i(mPreviewRect.mLeft, mPreviewRect.mBottom);
+                    gRender.texCoord2f(1.f, 0.f);
+                    gRender.vertex2i(mPreviewRect.mRight, mPreviewRect.mBottom);
 
-                    gGL.texCoord2f(0.f, 1.f);
-                    gGL.vertex2i(mPreviewRect.mLeft, mPreviewRect.mTop);
-                    gGL.texCoord2f(1.f, 0.f);
-                    gGL.vertex2i(mPreviewRect.mRight, mPreviewRect.mBottom);
-                    gGL.texCoord2f(1.f, 1.f);
-                    gGL.vertex2i(mPreviewRect.mRight, mPreviewRect.mTop);
+                    gRender.texCoord2f(0.f, 1.f);
+                    gRender.vertex2i(mPreviewRect.mLeft, mPreviewRect.mTop);
+                    gRender.texCoord2f(1.f, 0.f);
+                    gRender.vertex2i(mPreviewRect.mRight, mPreviewRect.mBottom);
+                    gRender.texCoord2f(1.f, 1.f);
+                    gRender.vertex2i(mPreviewRect.mRight, mPreviewRect.mTop);
                     // </FS:Zi>
                 }
-                gGL.end();
+                gRender.end();
 
-                gGL.getTexUnit(0)->bindWhite();
+                gRender.getTexUnit(0)->bindWhite();
             }
         }
     }
@@ -965,8 +965,8 @@ bool LLImagePreviewAvatar::render()
     mNeedsUpdate = false;
     LLVOAvatar* avatarp = mDummyAvatar;
 
-    gGL.pushUIMatrix();
-    gGL.loadUIIdentity();
+    gRender.pushUIMatrix();
+    gRender.loadUIIdentity();
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
@@ -977,7 +977,7 @@ bool LLImagePreviewAvatar::render()
 
 
     LLGLSUIDefault def;
-    gGL.color4f(0.15f, 0.2f, 0.3f, 1.f);
+    gRender.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
     gUIProgram.bind();
 
@@ -987,7 +987,7 @@ bool LLImagePreviewAvatar::render()
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-    gGL.flush();
+    gRender.flush();
     LLVector3 target_pos = mTargetJoint->getWorldPosition();
 
     LLQuaternion camera_rot = LLQuaternion(mCameraPitch, LLVector3::y_axis) *
@@ -1023,8 +1023,8 @@ bool LLImagePreviewAvatar::render()
         }
     }
 
-    gGL.popUIMatrix();
-    gGL.color4f(1,1,1,1);
+    gRender.popUIMatrix();
+    gRender.color4f(1,1,1,1);
     return true;
 }
 
@@ -1175,7 +1175,7 @@ bool LLImagePreviewSculpted::render()
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
-    gGL.color4f(0.15f, 0.2f, 0.3f, 1.f);
+    gRender.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
     gUIProgram.bind();
 
@@ -1185,7 +1185,7 @@ bool LLImagePreviewSculpted::render()
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-    gGL.clearBuffers(ClearBits::Depth);
+    gRender.clearBuffers(ClearBits::Depth);
 
     LLVector3 target_pos(0, 0, 0);
 
@@ -1216,7 +1216,7 @@ bool LLImagePreviewSculpted::render()
     const F32 SCALE = 1.25f;
     LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, SCALE, SCALE, SCALE);
     const F32 BRIGHTNESS = 0.9f;
-    gGL.diffuseColor3f(BRIGHTNESS, BRIGHTNESS, BRIGHTNESS);
+    gRender.diffuseColor3f(BRIGHTNESS, BRIGHTNESS, BRIGHTNESS);
 
     mVertexBuffer->setBuffer();
     mVertexBuffer->draw(LLRender::TRIANGLES, num_indices, 0);

@@ -177,7 +177,7 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     if (!rigged && deferredPacketsEnabled())
     {
         const U32 idx = sMaterialPassShader[pass];
-        LLGLSLShader* pull = &gDeferredMaterialPullProgram[idx];
+        LLShaderProgram* pull = &gDeferredMaterialPullProgram[idx];
         if (pull->mProgramObject != 0)
         {
             LLGeometryPassInfo info;
@@ -215,26 +215,26 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     LLTexture* lastSpecMap = nullptr;
     LLTexture* lastDiffuse = nullptr;
 
-    gGL.getTexUnit(diffuseChannel)->bindWhiteFast();
+    gRender.getTexUnit(diffuseChannel)->bindWhiteFast();
 
     if (intensity > -1)
     {
-        LLGLSLShader::uniform1fAt(intensity, lastIntensity);
+        LLShaderProgram::uniform1fAt(intensity, lastIntensity);
     }
 
     if (brightness > -1)
     {
-        LLGLSLShader::uniform1fAt(brightness, lastFullbright);
+        LLShaderProgram::uniform1fAt(brightness, lastFullbright);
     }
 
     if (minAlpha > -1)
     {
-        LLGLSLShader::uniform1fAt(minAlpha, lastMinimumAlpha);
+        LLShaderProgram::uniform1fAt(minAlpha, lastMinimumAlpha);
     }
 
     if (specular > -1)
     {
-        LLGLSLShader::uniform4fvAt(specular, 1, lastSpecular.mV);
+        LLShaderProgram::uniform4fvAt(specular, 1, lastSpecular.mV);
     }
 
     const LLVOAvatar* lastAvatar = nullptr;
@@ -248,40 +248,40 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         if (specular > -1 && params.mSpecColor != lastSpecular)
         {
             lastSpecular = params.mSpecColor;
-            LLGLSLShader::uniform4fvAt(specular, 1, lastSpecular.mV);
+            LLShaderProgram::uniform4fvAt(specular, 1, lastSpecular.mV);
         }
 
         if (intensity != -1 && lastIntensity != params.mEnvIntensity)
         {
             lastIntensity = params.mEnvIntensity;
-            LLGLSLShader::uniform1fAt(intensity, lastIntensity);
+            LLShaderProgram::uniform1fAt(intensity, lastIntensity);
         }
 
         if (minAlpha > -1 && lastMinimumAlpha != params.mAlphaMaskCutoff)
         {
             lastMinimumAlpha = params.mAlphaMaskCutoff;
-            LLGLSLShader::uniform1fAt(minAlpha, lastMinimumAlpha);
+            LLShaderProgram::uniform1fAt(minAlpha, lastMinimumAlpha);
         }
 
         F32 fullbright = params.mFullbright ? 1.f : 0.f;
         if (brightness > -1 && lastFullbright != fullbright)
         {
             lastFullbright = fullbright;
-            LLGLSLShader::uniform1fAt(brightness, lastFullbright);
+            LLShaderProgram::uniform1fAt(brightness, lastFullbright);
         }
 
         if (normChannel > -1 && params.mNormalMap != lastNormalMap)
         {
             lastNormalMap = params.mNormalMap;
             llassert(lastNormalMap);
-            gGL.getTexUnit(normChannel)->bindFast(lastNormalMap);
+            gRender.getTexUnit(normChannel)->bindFast(lastNormalMap);
         }
 
         if (specChannel > -1 && params.mSpecularMap != lastSpecMap)
         {
             lastSpecMap = params.mSpecularMap;
             llassert(lastSpecMap);
-            gGL.getTexUnit(specChannel)->bindFast(lastSpecMap);
+            gRender.getTexUnit(specChannel)->bindFast(lastSpecMap);
         }
 
         if (params.mTexture != lastDiffuse)
@@ -289,11 +289,11 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
             lastDiffuse = params.mTexture;
             if (lastDiffuse)
             {
-                gGL.getTexUnit(diffuseChannel)->bindFast(lastDiffuse);
+                gRender.getTexUnit(diffuseChannel)->bindFast(lastDiffuse);
             }
             else
             {
-                gGL.getTexUnit(diffuseChannel)->bindWhiteFast();
+                gRender.getTexUnit(diffuseChannel)->bindWhiteFast();
             }
         }
 

@@ -67,34 +67,34 @@ void LLHUDEffectBlob::render()
     LLViewerCamera::instance().getPixelVectors(pos_agent, pixel_up, pixel_right);
 
     LLGLSPipelineAlpha gls_pipeline_alpha;
-    gGL.getTexUnit(0)->bind(mImage->getImage());
+    gRender.getTexUnit(0)->bind(mImage->getImage());
 
     LLColor4U color = mColor;
     color.mV[VALPHA] = (U8)clamp_rescale(time, 0.f, mDuration, 255.f, 0.f);
-    gGL.color4ubv(color.mV);
+    gRender.color4ubv(color.mV);
 
     { LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
         LLVector3 u_scale = pixel_right * (F32)mPixelSize;
         LLVector3 v_scale = pixel_up * (F32)mPixelSize;
 
-        gGL.begin(LLRender::TRIANGLES);
+        gRender.begin(LLRender::TRIANGLES);
         {
-            gGL.texCoord2f(0.f, 1.f);
-            gGL.vertex3fv((v_scale - u_scale).mV);
-            gGL.texCoord2f(0.f, 0.f);
-            gGL.vertex3fv((-v_scale - u_scale).mV);
-            gGL.texCoord2f(1.f, 0.f);
-            gGL.vertex3fv((-v_scale + u_scale).mV);
+            gRender.texCoord2f(0.f, 1.f);
+            gRender.vertex3fv((v_scale - u_scale).mV);
+            gRender.texCoord2f(0.f, 0.f);
+            gRender.vertex3fv((-v_scale - u_scale).mV);
+            gRender.texCoord2f(1.f, 0.f);
+            gRender.vertex3fv((-v_scale + u_scale).mV);
 
-            gGL.texCoord2f(0.f, 1.f);
-            gGL.vertex3fv((v_scale - u_scale).mV);
-            gGL.texCoord2f(1.f, 0.f);
-            gGL.vertex3fv((-v_scale + u_scale).mV);
-            gGL.texCoord2f(1.f, 1.f);
-            gGL.vertex3fv((v_scale + u_scale).mV);
+            gRender.texCoord2f(0.f, 1.f);
+            gRender.vertex3fv((v_scale - u_scale).mV);
+            gRender.texCoord2f(1.f, 0.f);
+            gRender.vertex3fv((-v_scale + u_scale).mV);
+            gRender.texCoord2f(1.f, 1.f);
+            gRender.vertex3fv((v_scale + u_scale).mV);
         }
-        gGL.end();
+        gRender.end();
 
     } LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }

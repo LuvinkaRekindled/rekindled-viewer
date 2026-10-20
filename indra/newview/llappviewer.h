@@ -447,7 +447,7 @@ extern F32 gSimLastTime;
 extern F32 gSimFrames;
 
 extern LLFrameTimer gRestoreGLTimer;
-extern bool         gRestoreGL;
+extern bool         gRestoreResources;
 extern bool     gUseWireframe;
 
 extern LLMemoryInfo gSysMemory;

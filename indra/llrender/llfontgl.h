@@ -85,7 +85,7 @@ public:
 
     void reset(); // Reset a font after GL cleanup.  ONLY works on an already loaded font.
 
-    void destroyGL();
+    void destroyResources();
 
     // <FS:Ansariel> Optional tabular numeric font rendering
     //bool loadFace(const std::string& filename, F32 point_size, const F32 vert_dpi, const F32 horz_dpi, S32 weight, bool is_fallback, S32 face_n, EFontHinting hinting, S32 flags);

@@ -524,10 +524,10 @@ void LLToolBrushLand::render()
 void LLToolBrushLand::renderOverlay(LLSurface& land, const LLVector3& pos_region,
                                     const LLVector3& pos_world)
 {
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope mDepthTest(true);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    gGL.color4fv(OVERLAY_COLOR.mV);
+    gRender.color4fv(OVERLAY_COLOR.mV);
     LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, 0.0f, 0.0f, 1.0f);
 
     S32 i = (S32) pos_region.mV[VX];
@@ -536,7 +536,7 @@ void LLToolBrushLand::renderOverlay(LLSurface& land, const LLVector3& pos_region
     S32 radioAction = gSavedSettings.getS32("RadioLandBrushAction");
     F32 force = gSavedSettings.getF32("LandBrushForce"); // .1 to 100?
 
-    gGL.begin(LLRender::LINES);
+    gRender.begin(LLRender::LINES);
     for(S32 di = -half_edge; di <= half_edge; di++)
     {
         if((i+di) < 0 || (i+di) >= (S32)land.mGridsPerEdge) continue;
@@ -552,35 +552,35 @@ void LLToolBrushLand::renderOverlay(LLSurface& land, const LLVector3& pos_region
                 wz2 = wz + .2f + (.2f + force/100.f) * force_scale, // top vertex
                 tic = .075f; // arrowhead size
             // vertical line
-            gGL.vertex3f(wx, wy, wz);
-            gGL.vertex3f(wx, wy, wz2);
+            gRender.vertex3f(wx, wy, wz);
+            gRender.vertex3f(wx, wy, wz2);
             if(radioAction == E_LAND_RAISE || radioAction == E_LAND_NOISE) // up arrow
             {
-                gGL.vertex3f(wx, wy, wz2);
-                gGL.vertex3f(wx+tic, wy, wz2-tic);
-                gGL.vertex3f(wx, wy, wz2);
-                gGL.vertex3f(wx-tic, wy, wz2-tic);
+                gRender.vertex3f(wx, wy, wz2);
+                gRender.vertex3f(wx+tic, wy, wz2-tic);
+                gRender.vertex3f(wx, wy, wz2);
+                gRender.vertex3f(wx-tic, wy, wz2-tic);
             }
             if(radioAction == E_LAND_LOWER || radioAction == E_LAND_NOISE) // down arrow
             {
-                gGL.vertex3f(wx, wy, wz);
-                gGL.vertex3f(wx+tic, wy, wz+tic);
-                gGL.vertex3f(wx, wy, wz);
-                gGL.vertex3f(wx-tic, wy, wz+tic);
+                gRender.vertex3f(wx, wy, wz);
+                gRender.vertex3f(wx+tic, wy, wz+tic);
+                gRender.vertex3f(wx, wy, wz);
+                gRender.vertex3f(wx-tic, wy, wz+tic);
             }
             if(radioAction == E_LAND_REVERT || radioAction == E_LAND_SMOOTH) // flat top
             {
-                gGL.vertex3f(wx-tic, wy, wz2);
-                gGL.vertex3f(wx+tic, wy, wz2);
+                gRender.vertex3f(wx-tic, wy, wz2);
+                gRender.vertex3f(wx+tic, wy, wz2);
             }
             if(radioAction == E_LAND_LEVEL || radioAction == E_LAND_SMOOTH) // flat bottom
             {
-                gGL.vertex3f(wx-tic, wy, wz);
-                gGL.vertex3f(wx+tic, wy, wz);
+                gRender.vertex3f(wx-tic, wy, wz);
+                gRender.vertex3f(wx+tic, wy, wz);
             }
         }
     }
-    gGL.end();
+    gRender.end();
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }

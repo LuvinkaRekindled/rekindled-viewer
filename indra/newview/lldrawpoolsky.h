@@ -30,13 +30,13 @@
 #include "lldrawpool.h"
 
 class LLSkyTex;
-class LLGLSLShader;
+class LLShaderProgram;
 
 class LLDrawPoolSky : public LLFacePool
 {
 private:
     LLSkyTex            *mSkyTex;
-    LLGLSLShader        *mShader;
+    LLShaderProgram        *mShader;
 
 public:
     enum

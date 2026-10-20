@@ -30,7 +30,7 @@ namespace LLVkBuf
     void setConstantAttribute(U32 location, F32 x, F32 y, F32 z, F32 w);
 }
 
-namespace LLVkGL
+namespace LLVkWorker
 {
     void uniform_block_bind(unsigned binding, unsigned buffer);
     void draw_arrays(unsigned mode, int first, int count);

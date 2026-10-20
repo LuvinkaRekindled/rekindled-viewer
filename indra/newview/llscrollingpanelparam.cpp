@@ -153,21 +153,21 @@ void LLScrollingPanelParam::draw()
     F32 alpha = getTransparencyType() == TT_ACTIVE ? 1.0f : getCurrentTransparency();
 
     // Draw the hints over the "less" and "more" buttons.
-    gGL.pushUIMatrix();
+    gRender.pushUIMatrix();
     {
         const LLRect& r = mHintMin->getRect();
-        gGL.translateUI((F32)r.mLeft, (F32)r.mBottom, 0.f);
+        gRender.translateUI((F32)r.mLeft, (F32)r.mBottom, 0.f);
         mHintMin->draw(alpha);
     }
-    gGL.popUIMatrix();
+    gRender.popUIMatrix();
 
-    gGL.pushUIMatrix();
+    gRender.pushUIMatrix();
     {
         const LLRect& r = mHintMax->getRect();
-        gGL.translateUI((F32)r.mLeft, (F32)r.mBottom, 0.f);
+        gRender.translateUI((F32)r.mLeft, (F32)r.mBottom, 0.f);
         mHintMax->draw(alpha);
     }
-    gGL.popUIMatrix();
+    gRender.popUIMatrix();
 
 
     // Draw labels on top of the buttons

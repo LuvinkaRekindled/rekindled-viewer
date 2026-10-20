@@ -265,7 +265,7 @@ void LLHUDEffectBeam::render()
     }
 
     LLGLSPipelineAlpha gls_pipeline_alpha;
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
 
 
     // Interpolate the global fade alpha
@@ -315,7 +315,7 @@ void LLHUDEffectBeam::render()
         F32 alpha = mFadeInterp.getCurVal()*mColor.mV[3];
         alpha *= mInterpFade[i].getCurVal();
         coloru.mV[3] = (U8)alpha;
-        gGL.color4ubv(coloru.mV);
+        gRender.color4ubv(coloru.mV);
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);

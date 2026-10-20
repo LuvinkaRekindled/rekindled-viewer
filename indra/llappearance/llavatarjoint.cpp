@@ -251,9 +251,9 @@ void LLAvatarJointCollisionVolume::renderCollision()
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &mXform.getWorldMatrix().mMatrix[0][0]);
 
-    gGL.diffuseColor3f( 0.f, 0.f, 1.f );
+    gRender.diffuseColor3f( 0.f, 0.f, 1.f );
 
-    gGL.begin(LLRender::LINES);
+    gRender.begin(LLRender::LINES);
 
     LLVector3 v[] =
     {
@@ -267,47 +267,47 @@ void LLAvatarJointCollisionVolume::renderCollision()
     };
 
     //sides
-    gGL.vertex3fv(v[0].mV);
-    gGL.vertex3fv(v[2].mV);
+    gRender.vertex3fv(v[0].mV);
+    gRender.vertex3fv(v[2].mV);
 
-    gGL.vertex3fv(v[0].mV);
-    gGL.vertex3fv(v[3].mV);
+    gRender.vertex3fv(v[0].mV);
+    gRender.vertex3fv(v[3].mV);
 
-    gGL.vertex3fv(v[1].mV);
-    gGL.vertex3fv(v[2].mV);
+    gRender.vertex3fv(v[1].mV);
+    gRender.vertex3fv(v[2].mV);
 
-    gGL.vertex3fv(v[1].mV);
-    gGL.vertex3fv(v[3].mV);
+    gRender.vertex3fv(v[1].mV);
+    gRender.vertex3fv(v[3].mV);
 
 
     //top
-    gGL.vertex3fv(v[0].mV);
-    gGL.vertex3fv(v[4].mV);
+    gRender.vertex3fv(v[0].mV);
+    gRender.vertex3fv(v[4].mV);
 
-    gGL.vertex3fv(v[1].mV);
-    gGL.vertex3fv(v[4].mV);
+    gRender.vertex3fv(v[1].mV);
+    gRender.vertex3fv(v[4].mV);
 
-    gGL.vertex3fv(v[2].mV);
-    gGL.vertex3fv(v[4].mV);
+    gRender.vertex3fv(v[2].mV);
+    gRender.vertex3fv(v[4].mV);
 
-    gGL.vertex3fv(v[3].mV);
-    gGL.vertex3fv(v[4].mV);
+    gRender.vertex3fv(v[3].mV);
+    gRender.vertex3fv(v[4].mV);
 
 
     //bottom
-    gGL.vertex3fv(v[0].mV);
-    gGL.vertex3fv(v[5].mV);
+    gRender.vertex3fv(v[0].mV);
+    gRender.vertex3fv(v[5].mV);
 
-    gGL.vertex3fv(v[1].mV);
-    gGL.vertex3fv(v[5].mV);
+    gRender.vertex3fv(v[1].mV);
+    gRender.vertex3fv(v[5].mV);
 
-    gGL.vertex3fv(v[2].mV);
-    gGL.vertex3fv(v[5].mV);
+    gRender.vertex3fv(v[2].mV);
+    gRender.vertex3fv(v[5].mV);
 
-    gGL.vertex3fv(v[3].mV);
-    gGL.vertex3fv(v[5].mV);
+    gRender.vertex3fv(v[3].mV);
+    gRender.vertex3fv(v[5].mV);
 
-    gGL.end();
+    gRender.end();
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }

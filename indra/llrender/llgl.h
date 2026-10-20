@@ -47,7 +47,7 @@
 #include "llglheaders.h"
 #include "glm/mat4x4.hpp"
 
-extern bool gDebugGL;
+extern bool gDebugRender;
 extern bool gDebugSession;
 extern bool gDebugGLSession;
 extern llofstream gFailLog;
@@ -63,10 +63,10 @@ void ll_close_fail_log();
 class LLSD;
 
 // Manage GL extensions...
-class LLGLManager
+class LLDeviceCaps
 {
 public:
-    LLGLManager();
+    LLDeviceCaps();
 
     bool initGL();
     bool initGLNoGL();     // <FS> LL_VK_NOGL: everything comes from the Vulkan device
@@ -75,7 +75,7 @@ public:
 #if LL_WINDOWS
 #endif
 
-    std::string getRawGLString(); // For sending to simulator
+    std::string getRawDeviceString(); // For sending to simulator
 
     bool mInited;
     bool mIsDisabled;
@@ -87,9 +87,9 @@ public:
     S32 mMaxColorTextureSamples;
     S32 mMaxDepthTextureSamples;
     S32 mMaxIntegerSamples;
-    S32 mGLMaxVertexRange;
-    S32 mGLMaxIndexRange;
-    S32 mGLMaxTextureSize;
+    S32 mVertexRangeLimit;
+    S32 mIndexRangeLimit;
+    S32 mTextureSizeLimit;
     F32 mMaxAnisotropy = 0.f;
     S32 mMaxUniformBlockSize = 0;
     S32 mMaxVaryingVectors = 0;
@@ -133,11 +133,11 @@ public:
     S32 mDriverVersionMajor;
     S32 mDriverVersionMinor;
     S32 mDriverVersionRelease;
-    F32 mGLVersion; // e.g = 1.4
-    S32 mGLSLVersionMajor;
-    S32 mGLSLVersionMinor;
+    F32 mApiVersionNumber; // e.g = 1.4
+    S32 mShaderLangMajor;
+    S32 mShaderLangMinor;
     std::string mDriverVersionVendorString;
-    std::string mGLVersionString;
+    std::string mApiVersionString;
 
     U32 mVRAM; // VRAM in MB
     S32 mVRAMDetected; // <FS:Beq/> The amount detected/reported by the OS/Drivers. If different to mVRAM there is an override in place.
@@ -148,16 +148,16 @@ public:
     void asLLSD(LLSD& info);
 
     // In ALL CAPS
-    std::string mGLVendor;
-    std::string mGLVendorShort;
+    std::string mVendorString;
+    std::string mVendorShort;
 
     // In ALL CAPS
-    std::string mGLRenderer;
+    std::string mDeviceString;
 
 private:
 };
 
-extern LLGLManager gGLManager;
+extern LLDeviceCaps gDeviceCaps;
 
 class LLQuaternion;
 class LLMatrix4;
@@ -204,7 +204,7 @@ void clear_glerror();
   GL_MODELVIEW_MATRIX is active whenever program execution
   leaves this class.
   Does not stack.
-  Caches inverse of projection matrix used in gGLObliqueProjectionInverse
+  Caches inverse of projection matrix used in gRenderObliqueProjectionInverse
 */
 class LLGLUserClipPlane
 {
@@ -245,32 +245,32 @@ public:
     Interface for objects that need periodic GL updates applied to them.
     Used to synchronize GL updates with GL thread.
 */
-class LLGLUpdate
+class LLRenderUpdate
 {
 public:
 
-    static std::list<LLGLUpdate*> sGLQ;
+    static std::list<LLRenderUpdate*> sUpdateQueue;
 
     bool mInQ;
-    LLGLUpdate()
+    LLRenderUpdate()
         : mInQ(false)
     {
     }
-    virtual ~LLGLUpdate()
+    virtual ~LLRenderUpdate()
     {
         if (mInQ)
         {
-            std::list<LLGLUpdate*>::iterator iter = std::find(sGLQ.begin(), sGLQ.end(), this);
-            if (iter != sGLQ.end())
+            std::list<LLRenderUpdate*>::iterator iter = std::find(sUpdateQueue.begin(), sUpdateQueue.end(), this);
+            if (iter != sUpdateQueue.end())
             {
-                sGLQ.erase(iter);
+                sUpdateQueue.erase(iter);
             }
         }
     }
-    virtual void updateGL() = 0;
+    virtual void updateResources() = 0;
 };
 
-extern LLMatrix4 gGLObliqueProjectionInverse;
+extern LLMatrix4 gRenderObliqueProjectionInverse;
 
 #include "llglstates.h"
 
@@ -281,6 +281,6 @@ void parse_gl_version( S32* major, S32* minor, S32* release, std::string* vendor
 extern bool gClothRipple;
 extern bool gHeadlessClient;
 extern bool gNonInteractive;
-extern bool gGLActive;
+extern bool gRenderActive;
 
 #endif // LL_LLGL_H

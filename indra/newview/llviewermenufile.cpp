@@ -956,7 +956,7 @@ class LLFileUploadModel : public view_listener_t
         }
         else
         {
-            if (gGLManager.mIsApple)
+            if (gDeviceCaps.mIsApple)
             {
                 LLNotificationsUtil::add("ModelUploaderMissingPhysicsApple");
             }

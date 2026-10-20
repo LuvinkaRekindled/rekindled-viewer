@@ -61,6 +61,6 @@ void FSJointRotateTool::computeManipulatorSize()
 void FSJointRotateTool::renderManipulators()
 {
     // Render manipulators (axes or rotation handles) using OpenGL
-    gGL.color4f(0.5f, 0.5f, 0.5f, 0.5f); // Example color
-    gGL.flush();
+    gRender.color4f(0.5f, 0.5f, 0.5f, 0.5f); // Example color
+    gRender.flush();
 }

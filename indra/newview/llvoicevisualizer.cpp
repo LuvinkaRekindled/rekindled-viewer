@@ -125,7 +125,7 @@ LLVoiceVisualizer::LLVoiceVisualizer( const U8 type )
     for (int i=0; i<NUM_VOICE_SYMBOL_WAVES; i++)
     {
         mSoundSymbol.mWaveFadeOutStartTime  [i] = mCurrentTime;
-        mSoundSymbol.mTexture               [i] = LLViewerTextureManager::getFetchedTextureFromFile(sound_level_img[i], FTT_LOCAL_FILE, false, LLGLTexture::BOOST_UI);
+        mSoundSymbol.mTexture               [i] = LLViewerTextureManager::getFetchedTextureFromFile(sound_level_img[i], FTT_LOCAL_FILE, false, LLBaseTexture::BOOST_UI);
         mSoundSymbol.mWaveActive            [i] = false;
         mSoundSymbol.mWaveOpacity           [i] = 1.0f;
         mSoundSymbol.mWaveExpansion         [i] = 1.0f;
@@ -377,7 +377,7 @@ void LLVoiceVisualizer::render()
         //-----------------------------
         // bind texture 0 (the dot)
         //-----------------------------
-        gGL.getTexUnit(0)->bind(mSoundSymbol.mTexture[0]);
+        gRender.getTexUnit(0)->bind(mSoundSymbol.mTexture[0]);
 
         // <FS:PP> FIRE-22570: Option to show visualizers as waves without the dot
         static LLCachedControl<bool> fsShowVoiceVisualizerWithDot(gSavedSettings, "FSShowVoiceVisualizerWithDot");
@@ -388,19 +388,19 @@ void LLVoiceVisualizer::render()
             //-------------------------------------------------------------
             // now render the dot
             //-------------------------------------------------------------
-            gGL.color4fv( LLColor4( 1.0f, 1.0f, 1.0f, DOT_OPACITY ).mV );
+            gRender.color4fv( LLColor4( 1.0f, 1.0f, 1.0f, DOT_OPACITY ).mV );
 
-            gGL.begin( LLRender::TRIANGLE_STRIP );
-                gGL.texCoord2i( 0,  0   ); gGL.vertex3fv( bottomLeft.mV );
-                gGL.texCoord2i( 1,  0   ); gGL.vertex3fv( bottomRight.mV );
-                gGL.texCoord2i( 0,  1   ); gGL.vertex3fv( topLeft.mV );
-            gGL.end();
+            gRender.begin( LLRender::TRIANGLE_STRIP );
+                gRender.texCoord2i( 0,  0   ); gRender.vertex3fv( bottomLeft.mV );
+                gRender.texCoord2i( 1,  0   ); gRender.vertex3fv( bottomRight.mV );
+                gRender.texCoord2i( 0,  1   ); gRender.vertex3fv( topLeft.mV );
+            gRender.end();
 
-            gGL.begin( LLRender::TRIANGLE_STRIP );
-                gGL.texCoord2i( 1,  0   ); gGL.vertex3fv( bottomRight.mV );
-                gGL.texCoord2i( 1,  1   ); gGL.vertex3fv( topRight.mV );
-                gGL.texCoord2i( 0,  1   ); gGL.vertex3fv( topLeft.mV );
-            gGL.end();
+            gRender.begin( LLRender::TRIANGLE_STRIP );
+                gRender.texCoord2i( 1,  0   ); gRender.vertex3fv( bottomRight.mV );
+                gRender.texCoord2i( 1,  1   ); gRender.vertex3fv( topRight.mV );
+                gRender.texCoord2i( 0,  1   ); gRender.vertex3fv( topLeft.mV );
+            gRender.end();
 
         // <FS:PP> FIRE-22570: Option to show visualizers as waves without the dot
         }
@@ -509,24 +509,24 @@ void LLVoiceVisualizer::render()
                 LLVector3 topLeft       = mSoundSymbol.mPosition + l + u;
                 LLVector3 topRight      = mSoundSymbol.mPosition - l + u;
 
-                gGL.color4fv( LLColor4( red, green, blue, mSoundSymbol.mWaveOpacity[i] ).mV );
-                gGL.getTexUnit(0)->bind(mSoundSymbol.mTexture[i]);
+                gRender.color4fv( LLColor4( red, green, blue, mSoundSymbol.mWaveOpacity[i] ).mV );
+                gRender.getTexUnit(0)->bind(mSoundSymbol.mTexture[i]);
 
 
                 //---------------------------------------------------
                 // now, render the mofo
                 //---------------------------------------------------
-                gGL.begin( LLRender::TRIANGLE_STRIP );
-                    gGL.texCoord2i( 0, 0 ); gGL.vertex3fv( bottomLeft.mV );
-                    gGL.texCoord2i( 1, 0 ); gGL.vertex3fv( bottomRight.mV );
-                    gGL.texCoord2i( 0, 1 ); gGL.vertex3fv( topLeft.mV );
-                gGL.end();
+                gRender.begin( LLRender::TRIANGLE_STRIP );
+                    gRender.texCoord2i( 0, 0 ); gRender.vertex3fv( bottomLeft.mV );
+                    gRender.texCoord2i( 1, 0 ); gRender.vertex3fv( bottomRight.mV );
+                    gRender.texCoord2i( 0, 1 ); gRender.vertex3fv( topLeft.mV );
+                gRender.end();
 
-                gGL.begin( LLRender::TRIANGLE_STRIP );
-                    gGL.texCoord2i( 1, 0 ); gGL.vertex3fv( bottomRight.mV );
-                    gGL.texCoord2i( 1, 1 ); gGL.vertex3fv( topRight.mV );
-                    gGL.texCoord2i( 0, 1 ); gGL.vertex3fv( topLeft.mV );
-                gGL.end();
+                gRender.begin( LLRender::TRIANGLE_STRIP );
+                    gRender.texCoord2i( 1, 0 ); gRender.vertex3fv( bottomRight.mV );
+                    gRender.texCoord2i( 1, 1 ); gRender.vertex3fv( topRight.mV );
+                    gRender.texCoord2i( 0, 1 ); gRender.vertex3fv( topLeft.mV );
+                gRender.end();
 
             } //if ( mSoundSymbol.mWaveActive[i] )
 

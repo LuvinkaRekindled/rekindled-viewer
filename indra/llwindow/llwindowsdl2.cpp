@@ -429,7 +429,7 @@ LLWindowSDL::LLWindowSDL(LLWindowCallbacks* callbacks,
     // Create the GL context and set it up for windowed or fullscreen, as appropriate.
     if(createContext(x, y, width, height, 32, fullscreen, enable_vsync))
     {
-        gGLManager.initGL();
+        gDeviceCaps.initGL();
 
         //start with arrow cursor
         initCursors(useLegacyCursors); // <FS:LO> Legacy cursor setting from main program
@@ -821,20 +821,20 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
 
     // Detect video memory size.
 # if LL_X11
-    gGLManager.mVRAM = x11_detect_VRAM_kb() / 1024;
-    if (gGLManager.mVRAM != 0)
+    gDeviceCaps.mVRAM = x11_detect_VRAM_kb() / 1024;
+    if (gDeviceCaps.mVRAM != 0)
     {
-        LL_INFOS() << "X11 log-parser detected " << gGLManager.mVRAM << "MB VRAM." << LL_ENDL;
+        LL_INFOS() << "X11 log-parser detected " << gDeviceCaps.mVRAM << "MB VRAM." << LL_ENDL;
     } else
 # endif // LL_X11
     {
         // fallback to letting SDL detect VRAM.
         // note: I've not seen SDL's detection ever actually find
         // VRAM != 0, but if SDL *does* detect it then that's a bonus.
-        gGLManager.mVRAM = 0;
-        if (gGLManager.mVRAM != 0)
+        gDeviceCaps.mVRAM = 0;
+        if (gDeviceCaps.mVRAM != 0)
         {
-            LL_INFOS() << "SDL detected " << gGLManager.mVRAM << "MB VRAM." << LL_ENDL;
+            LL_INFOS() << "SDL detected " << gDeviceCaps.mVRAM << "MB VRAM." << LL_ENDL;
         }
     }
     // If VRAM is not detected, that is handled later
@@ -934,7 +934,7 @@ bool LLWindowSDL::switchContext(bool fullscreen, const LLCoordScreen &size, bool
         result = createContext(0, 0, size.mX, size.mY, 0, fullscreen, enable_vsync);
         if (result)
         {
-            gGLManager.initGL();
+            gDeviceCaps.initGL();
 
             //start with arrow cursor
             initCursors(mUseLegacyCursors); // <FS:LO> Legacy cursor setting from main program
@@ -961,7 +961,7 @@ void LLWindowSDL::destroyContext()
 
     // Clean up remaining GL state before blowing away window
     LL_INFOS() << "shutdownGL begins" << LL_ENDL;
-    gGLManager.shutdownGL();
+    gDeviceCaps.shutdownGL();
     LL_INFOS() << "SDL_QuitSS/VID begins" << LL_ENDL;
     SDL_QuitSubSystem(SDL_INIT_VIDEO);  // *FIX: this might be risky...
 

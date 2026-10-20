@@ -191,7 +191,7 @@ void setup_transforms_bbox(LLBBox bbox)
     LLQuaternion rotation = bbox.getRotation();
     F32 angle_radians, x, y, z;
     rotation.getAngleAxis(&angle_radians, &x, &y, &z);
-    gGL.flush();
+    gRender.flush();
     LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
     // scale
@@ -205,7 +205,7 @@ void render_bbox(LLBBox bbox)
 
     setup_transforms_bbox(bbox);
 
-    gGL.flush();
+    gRender.flush();
     gBox.render();
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
@@ -217,7 +217,7 @@ void render_cone_bbox(LLBBox bbox)
 
     setup_transforms_bbox(bbox);
 
-    gGL.flush();
+    gRender.flush();
     gCone.render();
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
@@ -332,8 +332,8 @@ void QToolAlign::renderManipulators()
                 manipulator_bbox.addPointLocal(LLVector3(-1.f, -1.f, -0.75f) * size * 0.5f);
                 manipulator_bbox.addPointLocal(LLVector3(1.f, 1.f, 0.75f) * size * 0.5f);
 
-                gGL.color4fv(color.mV);
-                gGL.color4fv(color.mV);
+                gRender.color4fv(color.mV);
+                gRender.color4fv(color.mV);
 
                 render_cone_bbox(manipulator_bbox);
             }
@@ -374,11 +374,11 @@ void QToolAlign::render()
         LLRenderState::BlendScope gl_blend(true);
         // F3.2: LLGLEnable(GL_ALPHA_TEST) had no effect on the render state block (never mapped); dropped
         LLRenderState::DepthScope gls_depth(false);
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
 
         // render box
         LLColor4 default_normal_color( 0.7f, 0.7f, 0.7f, 0.1f );
-        gGL.color4fv( default_normal_color.mV );
+        gRender.color4fv( default_normal_color.mV );
 
         render_bbox(mBBox);
         renderManipulators();

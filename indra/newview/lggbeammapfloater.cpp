@@ -60,26 +60,26 @@ void lggBeamMapFloater::draw()
     const LLRect& rec = mBeamshapePanel->getRect();
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    gGL.color4fv(LLColor4::white.mV);
+    gRender.color4fv(LLColor4::white.mV);
     gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 2.0f, 30, false);
-    gGL.color4fv(LLColor4::black.mV);
+    gRender.color4fv(LLColor4::black.mV);
     gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 30.0f, 30, false);
-    gGL.color4fv(LLColor4::white.mV);
+    gRender.color4fv(LLColor4::white.mV);
     gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 60.0f, 30, false);
-    gGL.color4fv(LLColor4::black.mV);
+    gRender.color4fv(LLColor4::black.mV);
     gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 90.0f, 30, false);
-    gGL.color4fv(LLColor4::white.mV);
+    gRender.color4fv(LLColor4::white.mV);
     gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 120.0f, 30, false);
 
     for (const auto& dot : mDots)
     {
-        gGL.color4fv(LLColor4::white.mV);
+        gRender.color4fv(LLColor4::white.mV);
         gl_circle_2d((F32)dot.x, (F32)dot.y, 9.0f, 30, true);
 
-        gGL.color4fv(LLColor4::black.mV);
+        gRender.color4fv(LLColor4::black.mV);
         gl_circle_2d((F32)dot.x, (F32)dot.y, 8.0f, 30, true);
 
-        gGL.color4fv(dot.c.mV);
+        gRender.color4fv(dot.c.mV);
         gl_circle_2d((F32)dot.x, (F32)dot.y, 7.0f, 30, true);
     }
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);

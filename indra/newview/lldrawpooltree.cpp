@@ -41,7 +41,7 @@
 #include "llenvironment.h"
 
 S32 LLDrawPoolTree::sDiffTex = 0;
-static LLGLSLShader* shader = NULL;
+static LLShaderProgram* shader = NULL;
 
 LLDrawPoolTree::LLDrawPoolTree(LLViewerTexture *texturep) :
     LLFacePool(POOL_TREE),
@@ -74,11 +74,11 @@ void LLDrawPoolTree::renderDeferred(S32 pass)
 
 // [SL:KB] - Patch: Render-TextureToggle (Catznip-4.0)
     if( (LLPipeline::sRenderTextures) )
-        gGL.getTexUnit(sDiffTex)->bindFast( mTexturep );
+        gRender.getTexUnit(sDiffTex)->bindFast( mTexturep );
     else
-        gGL.getTexUnit(sDiffTex)->bindFast( LLViewerFetchedTexture::sDefaultDiffuseImagep );
+        gRender.getTexUnit(sDiffTex)->bindFast( LLViewerFetchedTexture::sDefaultDiffuseImagep );
 // [/SL:KB]
-//    gGL.getTexUnit(sDiffTex)->bindFast(mTexturep);
+//    gRender.getTexUnit(sDiffTex)->bindFast(mTexturep);
     mTexturep->addTextureStats(1024.f * 1024.f); // <=== keep Linden tree textures at full res
 
     for (std::vector<LLFace*>::iterator iter = mDrawFace.begin();
@@ -115,7 +115,7 @@ void LLDrawPoolTree::beginShadowPass(S32 pass)
 
     static LLCachedControl<F32> shadow_offset(gSavedSettings, "RenderDeferredTreeShadowOffset");
     static LLCachedControl<F32> shadow_bias(gSavedSettings, "RenderDeferredTreeShadowBias");
-    gGL.setPolygonOffset(shadow_offset(), shadow_bias());
+    gRender.setPolygonOffset(shadow_offset(), shadow_bias());
 
     LLEnvironment& environment = LLEnvironment::instance();
 
@@ -138,7 +138,7 @@ void LLDrawPoolTree::endShadowPass(S32 pass)
     //                  gSavedSettings.getF32("RenderDeferredSpotShadowBias"));
     static LLCachedControl<F32> RenderDeferredSpotShadowOffset(gSavedSettings, "RenderDeferredSpotShadowOffset");
     static LLCachedControl<F32> RenderDeferredSpotShadowBias(gSavedSettings, "RenderDeferredSpotShadowBias");
-    gGL.setPolygonOffset(RenderDeferredSpotShadowOffset, RenderDeferredSpotShadowBias);
+    gRender.setPolygonOffset(RenderDeferredSpotShadowOffset, RenderDeferredSpotShadowBias);
     // </FS:PP>
 
     gDeferredTreeShadowProgram.unbind();

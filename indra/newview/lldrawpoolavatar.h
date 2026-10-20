@@ -34,7 +34,7 @@
 
 class LLVOAvatar;
 class LLVOVolume;
-class LLGLSLShader;
+class LLShaderProgram;
 class LLFace;
 class LLVolume;
 class LLVolumeFace;
@@ -121,7 +121,7 @@ typedef enum
     static S32 sDiffuseChannel;
     static F32 sMinimumAlpha;
 
-    static LLGLSLShader* sVertexProgram;
+    static LLShaderProgram* sVertexProgram;
 };
 
 extern S32 AVATAR_OFFSET_POS;

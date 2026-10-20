@@ -21,7 +21,7 @@
 namespace LLVk { struct Image; }
 #endif
 
-namespace LLVkMirror
+namespace LLVkBridge
 {
     // mirror mode was requested (environment) and this build supports it
     bool isRequested();
@@ -362,7 +362,7 @@ namespace LLVkMirror
 }
 
 #if defined(LL_VULKAN)
-namespace LLVkGL
+namespace LLVkWorker
 {
     // Arena phase 3: where a GL buffer name lives. The address stays valid while epoch is unchanged; version moves on every write. Worker thread only (it owns the buffer table).
     struct BufferInfo

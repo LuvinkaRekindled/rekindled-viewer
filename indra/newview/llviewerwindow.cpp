@@ -701,10 +701,10 @@ public:
 
             }
 
-            addText(xpos, ypos, llformat("%d Texture Binds", LLImageGL::sBindCount));
+            addText(xpos, ypos, llformat("%d Texture Binds", LLImageTex::sBindCount));
             ypos += y_inc;
 
-            addText(xpos, ypos, llformat("%d Unique Textures", LLImageGL::sUniqueCount));
+            addText(xpos, ypos, llformat("%d Unique Textures", LLImageTex::sUniqueCount));
             ypos += y_inc;
 
             addText(xpos, ypos, llformat("%d Render Calls", (U32)last_frame_recording.getSampleCount(LLPipeline::sStatBatchSize)));
@@ -832,10 +832,10 @@ public:
             // Projection last column is always <0,0,-1.0001,0>
             // Projection last row is always <0,0,-0.2>
             mBackRectCamera1.mBottom = ypos - y_inc + 2;
-            MATRIX_ROW_N32_TO_STR(gGLProjection, 12,camera_lines[7]); addText(xpos, ypos, std::string(camera_lines[7])); ypos += y_inc;
-            MATRIX_ROW_N32_TO_STR(gGLProjection,  8,camera_lines[6]); addText(xpos, ypos, std::string(camera_lines[6])); ypos += y_inc;
-            MATRIX_ROW_N32_TO_STR(gGLProjection,  4,camera_lines[5]); addText(xpos, ypos, std::string(camera_lines[5])); ypos += y_inc; mBackRectCamera1.mTop    = ypos + 2;
-            MATRIX_ROW_N32_TO_STR(gGLProjection,  0,camera_lines[4]); addText(xpos, ypos, std::string(camera_lines[4])); ypos += y_inc; mBackRectCamera2.mBottom = ypos + 2;
+            MATRIX_ROW_N32_TO_STR(gRenderProjection, 12,camera_lines[7]); addText(xpos, ypos, std::string(camera_lines[7])); ypos += y_inc;
+            MATRIX_ROW_N32_TO_STR(gRenderProjection,  8,camera_lines[6]); addText(xpos, ypos, std::string(camera_lines[6])); ypos += y_inc;
+            MATRIX_ROW_N32_TO_STR(gRenderProjection,  4,camera_lines[5]); addText(xpos, ypos, std::string(camera_lines[5])); ypos += y_inc; mBackRectCamera1.mTop    = ypos + 2;
+            MATRIX_ROW_N32_TO_STR(gRenderProjection,  0,camera_lines[4]); addText(xpos, ypos, std::string(camera_lines[4])); ypos += y_inc; mBackRectCamera2.mBottom = ypos + 2;
 
             addText(xpos, ypos, "Projection Matrix");
             ypos += y_inc;
@@ -846,13 +846,13 @@ public:
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
             // View last column is always <0,0,0,1>
-            MATRIX_ROW_F32_TO_STR(gGLModelView, 12,camera_lines[3]); addText(xpos, ypos, std::string(camera_lines[3])); ypos += y_inc;
+            MATRIX_ROW_F32_TO_STR(gRenderModelView, 12,camera_lines[3]); addText(xpos, ypos, std::string(camera_lines[3])); ypos += y_inc;
 #if LL_DARWIN
 #pragma clang diagnostic pop
 #endif
-            MATRIX_ROW_N32_TO_STR(gGLModelView,  8,camera_lines[2]); addText(xpos, ypos, std::string(camera_lines[2])); ypos += y_inc;
-            MATRIX_ROW_N32_TO_STR(gGLModelView,  4,camera_lines[1]); addText(xpos, ypos, std::string(camera_lines[1])); ypos += y_inc; mBackRectCamera2.mTop = ypos + 2;
-            MATRIX_ROW_N32_TO_STR(gGLModelView,  0,camera_lines[0]); addText(xpos, ypos, std::string(camera_lines[0])); ypos += y_inc;
+            MATRIX_ROW_N32_TO_STR(gRenderModelView,  8,camera_lines[2]); addText(xpos, ypos, std::string(camera_lines[2])); ypos += y_inc;
+            MATRIX_ROW_N32_TO_STR(gRenderModelView,  4,camera_lines[1]); addText(xpos, ypos, std::string(camera_lines[1])); ypos += y_inc; mBackRectCamera2.mTop = ypos + 2;
+            MATRIX_ROW_N32_TO_STR(gRenderModelView,  0,camera_lines[0]); addText(xpos, ypos, std::string(camera_lines[0])); ypos += y_inc;
 
             addText(xpos, ypos, "View Matrix");
             ypos += y_inc;
@@ -872,7 +872,7 @@ public:
             S32 x_raw = (S32)llround(coord.mX * gViewerWindow->getWindowWidthRaw() / (F32) gViewerWindow->getWindowWidthScaled());
             S32 y_raw = (S32)llround(coord.mY * gViewerWindow->getWindowHeightRaw() / (F32) gViewerWindow->getWindowHeightScaled());
 
-            gGL.readPixels(x_raw, y_raw, 1, 1, PixelFormat::RGBA, ComponentType::U8, color);
+            gRender.readPixels(x_raw, y_raw, 1, 1, PixelFormat::RGBA, ComponentType::U8, color);
             addText(xpos, ypos, llformat("Pixel <%1d, %1d> R:%1d G:%1d B:%1d A:%1d", x_raw, y_raw, color[0], color[1], color[2], color[3]));
             ypos += y_inc;
         }
@@ -2023,7 +2023,7 @@ LLViewerWindow::LLViewerWindow(const Params& p)
     */
     // create window
 
-    LLVkMirror::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), gSavedSettings.getBOOL("RenderVSyncEnable")); // <FS> before the swapchain exists
+    LLVkBridge::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), gSavedSettings.getBOOL("RenderVSyncEnable")); // <FS> before the swapchain exists
 
     U32 max_core_count = gSavedSettings.getU32("EmulateCoreCount");
     F32 max_gl_version = gSavedSettings.getF32("RenderMaxOpenGLVersion");
@@ -2106,7 +2106,7 @@ LLViewerWindow::LLViewerWindow(const Params& p)
 
     // fonts use an GL_UNSIGNED_BYTE image format,
     // so they need convertion, init buffers if needed
-    LLImageGL::allocateConversionBuffer();
+    LLImageTex::allocateConversionBuffer();
 
     // Init font system, load default fonts and generate basic glyphs
     // currently it takes aprox. 0.5 sec and we would load these fonts anyway
@@ -2128,10 +2128,10 @@ LLViewerWindow::LLViewerWindow(const Params& p)
     // Initialize OpenGL Renderer
     LLVertexBuffer::initClass(mWindow);
     LL_INFOS("RenderInit") << "LLVertexBuffer initialization done." << LL_ENDL ;
-    if (!gGL.init(true))
+    if (!gRender.init(true))
     {
         LLError::LLUserWarningMsg::show(LLTrans::getString("MBVideoDrvErr"));
-        LL_ERRS() << "gGL not initialized" << LL_ENDL;
+        LL_ERRS() << "gRender not initialized" << LL_ENDL;
     }
     // <FS:Ansariel> Exodus vignette
 
@@ -2154,7 +2154,7 @@ LLViewerWindow::LLViewerWindow(const Params& p)
 
     // Init the image list.  Must happen after GL is initialized and before the images that
     // LLViewerWindow needs are requested, as well as before LLViewerMedia starts updating images.
-    LLImageGL::initClass(mWindow, LLViewerTexture::MAX_GL_IMAGE_CATEGORY, false, gSavedSettings.getBOOL("RenderGLMultiThreadedTextures"), gSavedSettings.getBOOL("RenderGLMultiThreadedMedia"));
+    LLImageTex::initClass(mWindow, LLViewerTexture::MAX_GL_IMAGE_CATEGORY, false, gSavedSettings.getBOOL("RenderGLMultiThreadedTextures"), gSavedSettings.getBOOL("RenderGLMultiThreadedMedia"));
     gTextureList.init();
     LLViewerTextureManager::init() ;
     gBumpImageList.init();
@@ -2677,7 +2677,7 @@ void LLViewerWindow::shutdownGL()
     LLWorldMapView::cleanupTextures();
 
     LLViewerTextureManager::cleanup() ;
-    SUBSYSTEM_CLEANUP(LLImageGL) ;
+    SUBSYSTEM_CLEANUP(LLImageTex) ;
 
     LL_INFOS() << "All textures and llimagegl images are destroyed!" << LL_ENDL ;
 
@@ -2688,7 +2688,7 @@ void LLViewerWindow::shutdownGL()
     stopGL();
     stop_glerror();
 
-    gGL.shutdown();
+    gRender.shutdown();
 
     SUBSYSTEM_CLEANUP(LLVertexBuffer);
 
@@ -2948,18 +2948,18 @@ void LLViewerWindow::setMenuBackgroundColor(bool god_mode, bool dev_grid)
 void LLViewerWindow::drawDebugText()
 {
     gUIProgram.bind();
-    gGL.color4f(1,1,1,1);
+    gRender.color4f(1,1,1,1);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    gGL.pushUIMatrix();
+    gRender.pushUIMatrix();
     {
         // scale view by UI global scale factor and aspect ratio correction factor
-        gGL.scaleUI(mDisplayScale.mV[VX], mDisplayScale.mV[VY], 1.f);
+        gRender.scaleUI(mDisplayScale.mV[VX], mDisplayScale.mV[VY], 1.f);
         mDebugText->draw();
     }
-    gGL.popUIMatrix();
+    gRender.popUIMatrix();
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-    gGL.flush();
+    gRender.flush();
     gUIProgram.unbind();
 }
 
@@ -3007,7 +3007,7 @@ void LLViewerWindow::draw()
     // No translation needed, this view is glued to 0,0
 
     gUIProgram.bind();
-    gGL.color4f(1, 1, 1, 1);
+    gRender.color4f(1, 1, 1, 1);
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLUI::pushMatrix();
@@ -3016,7 +3016,7 @@ void LLViewerWindow::draw()
         LLViewerCamera& camera = LLViewerCamera::instance();
 
         // scale view by UI global scale factor and aspect ratio correction factor
-        gGL.scaleUI(mDisplayScale.mV[VX], mDisplayScale.mV[VY], 1.f);
+        gRender.scaleUI(mDisplayScale.mV[VX], mDisplayScale.mV[VY], 1.f);
 
         LLVector2 old_scale_factor = LLUI::getScaleFactor();
         // apply camera zoom transform (for high res screenshots)
@@ -4567,9 +4567,9 @@ const float offset_factor = -3.0;
 void renderMeshBaseHullPhysics(LLVOVolume* volume, U32 data_mask, LLColor4& color, LLColor4& line_color)
 {
             LLRenderState::PolygonOffsetScope offset(true);
-            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-            gGL.setPolygonOffset(offset_factor, offset_units);
-            gGL.diffuseColor4fv(color.mV);
+            gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+            gRender.setPolygonOffset(offset_factor, offset_units);
+            gRender.diffuseColor4fv(color.mV);
             renderMeshBaseHullWithOutline(volume, data_mask, color, line_color);
 }
 
@@ -4577,8 +4577,8 @@ void renderMeshBaseHullPhysics(LLVOVolume* volume, U32 data_mask, LLColor4& colo
 void renderHullPhysics(LLModel::PhysicsMesh& mesh, const LLColor4& color, const LLColor4& line_color)
 {
     LLRenderState::PolygonOffsetScope offset(true);
-    gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-    gGL.setPolygonOffset(offset_factor, offset_units);
+    gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+    gRender.setPolygonOffset(offset_factor, offset_units);
     render_hull_with_outline(mesh, color, line_color);
 }
 
@@ -4588,7 +4588,7 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
 // Not required here, we already disable this in the outer scope
 //  LLGLDisable multisample(LLPipeline::RenderFSAASamples > 0 ? GL_MULTISAMPLE_ARB : 0);
 
-    LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
 
     if (shader)
     {
@@ -4600,79 +4600,79 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
     {
         // This draw section covers the hidden geometry
 
-        gGL.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
+        gRender.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
         LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::GreaterEqual);
         if (shader)
         {
             {
                 LLRenderState::PolygonOffsetScope offset(true);
-                gGL.setPolygonOffset(offset_factor, offset_units);
-                gGL.diffuseColor4fv(color.mV);
+                gRender.setPolygonOffset(offset_factor, offset_units);
+                gRender.diffuseColor4fv(color.mV);
                 //decomp has physics mesh, render that mesh
-                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
                 LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
             }
             {
                 // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
-                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
-                gGL.setPolygonOffset(offset_factor, offset_units);
-                gGL.diffuseColor4fv(line_color.mV);
+                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                gRender.setPolygonOffset(offset_factor, offset_units);
+                gRender.diffuseColor4fv(line_color.mV);
                 LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
             }
         }
         else
         {
-            gGL.flush();
+            gRender.flush();
             {
-                gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-                gGL.diffuseColor4fv(color.mV);
+                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                gRender.diffuseColor4fv(color.mV);
                 //decomp has physics mesh, render that mesh
                 LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
-                gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
-                gGL.diffuseColor4fv(line_color.mV);
+                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                gRender.diffuseColor4fv(line_color.mV);
                 LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
             }
         }
     }//End depth test for hidden geometry
-//  gGL.flush();
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+//  gRender.flush();
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
     if (shader)
     {
         {
-            gGL.diffuseColor4fv(color.mV);
+            gRender.diffuseColor4fv(color.mV);
             LLRenderState::PolygonOffsetScope offset(true);
-            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-            gGL.setPolygonOffset(offset_factor, offset_units);
-            gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
+            gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+            gRender.setPolygonOffset(offset_factor, offset_units);
+            gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
         }
         {
-            gGL.diffuseColor4fv(line_color.mV);
+            gRender.diffuseColor4fv(line_color.mV);
             // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
-            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
-            gGL.setPolygonOffset(offset_factor, offset_units);
-            gGL.setLineWidth(3.f); // <FS> Line width OGL core profile fix by Rye Mutt
+            gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+            gRender.setPolygonOffset(offset_factor, offset_units);
+            gRender.setLineWidth(3.f); // <FS> Line width OGL core profile fix by Rye Mutt
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
         }
     }
     else
     {
-        gGL.flush();
+        gRender.flush();
         {
-            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-            gGL.diffuseColor4fv(color.mV);
+            gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+            gRender.diffuseColor4fv(color.mV);
             //decomp has physics mesh, render that mesh
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
-            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
-            gGL.diffuseColor4fv(line_color.mV);
-            gGL.setLineWidth(3.f); // <FS> Line width OGL core profile fix by Rye Mutt
+            gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+            gRender.diffuseColor4fv(line_color.mV);
+            gRender.setLineWidth(3.f); // <FS> Line width OGL core profile fix by Rye Mutt
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
         }
     }
 
-    gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
-    gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
+    gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
+    gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
     //restore the previous shader
@@ -4788,23 +4788,23 @@ void renderNonMeshHullPhysics(LLVOVolume* vovolume, LLVolume* volume, LLColor4 c
         //render hull
         // TODO: (BEQ) Find out why is this not a call to render_hull? it probably could be if the data is in the right form
 
-        gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
+        gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
 
-        gGL.diffuseColor4fv(line_color.mV);
+        gRender.diffuseColor4fv(line_color.mV);
         LLVertexBuffer::unbind();
 
-        llassert(LLGLSLShader::sCurBoundShader != 0);
+        llassert(LLShaderProgram::sCurBoundShader != 0);
 
         LLVertexBuffer::drawElements(LLRender::TRIANGLES, phys_volume->mHullPoints, NULL, phys_volume->mNumHullIndices, phys_volume->mHullIndices);
 
-        gGL.diffuseColor4fv(color.mV);
-        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
+        gRender.diffuseColor4fv(color.mV);
+        gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
         LLVertexBuffer::drawElements(LLRender::TRIANGLES, phys_volume->mHullPoints, NULL, phys_volume->mNumHullIndices, phys_volume->mHullIndices);
     }
     else
     {
         // if we don't have a physics convex model then draw a magenta box
-        gGL.diffuseColor4f(1, 0, 1, 1);
+        gRender.diffuseColor4f(1, 0, 1, 1);
         drawBoxOutline(center, size);
     }
     //pragma endregion
@@ -4882,7 +4882,7 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     // This is a link set. The models need an additional transform to modelview
     if (drawable->isActive())
     {
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
         LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)objectp->getRenderMatrix().mMatrix);
     }
 
@@ -4961,7 +4961,7 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
             // No physics when expected, probably Havok broken/missing or asset still downloading
             // all else fails then ORANGE wireframe box.
             // This typically means you are running without Havok
-            gGL.diffuseColor3f(1, 1, 0);
+            gRender.diffuseColor3f(1, 1, 0);
             drawBoxOutline(center, size);
         }
     }
@@ -4982,21 +4982,21 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     else if (physicsShapeType == LLPhysicsShapeBuilderUtil::PhysicsShapeSpecification::BOX)
     {
         LLRenderState::PolygonOffsetScope offset(true);
-        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-        gGL.setPolygonOffset(offset_factor, offset_units);
+        gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+        gRender.setPolygonOffset(offset_factor, offset_units);
         LLVector3 center = physics_spec.getCenter();
         LLVector3 scale = physics_spec.getScale();
         LLVector3 vscale = vovolume->getScale()*2.f;
         scale.set(scale[0] / vscale[0], scale[1] / vscale[1], scale[2] / vscale[2]);
 
-        gGL.diffuseColor4fv(color.mV);
+        gRender.diffuseColor4fv(color.mV);
         drawBox(center, scale);
     }
     else if (physicsShapeType == LLPhysicsShapeBuilderUtil::PhysicsShapeSpecification::SPHERE)
     {
         LLRenderState::PolygonOffsetScope offset(true);
-        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-        gGL.setPolygonOffset(offset_factor, offset_units);
+        gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+        gRender.setPolygonOffset(offset_factor, offset_units);
 
         LLVolumeParams volume_params;
         volume_params.setType(LL_PCODE_PROFILE_CIRCLE_HALF, LL_PCODE_PATH_CIRCLE);
@@ -5006,15 +5006,15 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
         volume_params.setShear(0, 0);
         LLVolume* sphere = LLPrimitive::sVolumeManager->refVolume(volume_params, 3);
 
-        gGL.diffuseColor4fv(color.mV);
+        gRender.diffuseColor4fv(color.mV);
         pushVerts(sphere);
         LLPrimitive::sVolumeManager->unrefVolume(sphere);
     }
     else if (physicsShapeType == LLPhysicsShapeBuilderUtil::PhysicsShapeSpecification::CYLINDER)
     {
         LLRenderState::PolygonOffsetScope offset(true);
-        gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
-        gGL.setPolygonOffset(offset_factor, offset_units);
+        gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+        gRender.setPolygonOffset(offset_factor, offset_units);
 
         LLVolumeParams volume_params;
         volume_params.setType(LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PATH_LINE);
@@ -5024,7 +5024,7 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
         volume_params.setShear(0, 0);
         LLVolume* cylinder = LLPrimitive::sVolumeManager->refVolume(volume_params, 3);
 
-        gGL.diffuseColor4fv(color.mV);
+        gRender.diffuseColor4fv(color.mV);
         pushVerts(cylinder);
         LLPrimitive::sVolumeManager->unrefVolume(cylinder);
     }
@@ -5037,19 +5037,19 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
         LLVolume* phys_volume = LLPrimitive::sVolumeManager->refVolume(volume_params, detail);
 
         // TODO: (BEQ) We ought to be able to use a common draw call here too?
-        gGL.setPolygonOffset(offset_factor, offset_units);
+        gRender.setPolygonOffset(offset_factor, offset_units);
 
         {
             // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
-            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
+            gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
 
-            gGL.diffuseColor4fv(line_color.mV);
+            gRender.diffuseColor4fv(line_color.mV);
             pushVerts(phys_volume); // draw the outlines
         }
         {
             LLRenderState::PolygonOffsetScope offset(true);
-            gGL.diffuseColor4fv(color.mV);
-            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
+            gRender.diffuseColor4fv(color.mV);
+            gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
             pushVerts(phys_volume); // draw the filled boxes
         }
         LLPrimitive::sVolumeManager->unrefVolume(phys_volume);
@@ -5068,22 +5068,22 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
             // TODO: (Beq) refactor this!! yet another flavour of drawing the same crap. Can we ratioanlise the arguments
             // <FS:Ansariel> Use a vbo for the static LLVertexBuffer::drawArray/Element functions; by Drake Arconis/Shyotl Kuhr
             //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            //llassert(LLGLSLShader::sCurBoundShader != 0);
+            //llassert(LLShaderProgram::sCurBoundShader != 0);
             //LLVertexBuffer::unbind();
             //glVertexPointer(3, GL_FLOAT, 16, phys_volume->mHullPoints);
-            //gGL.diffuseColor4fv(line_color.mV);
-            //gGL.syncMatrices();
+            //gRender.diffuseColor4fv(line_color.mV);
+            //gRender.syncMatrices();
             //glDrawElements(GL_TRIANGLES, phys_volume->mNumHullIndices, GL_UNSIGNED_SHORT, phys_volume->mHullIndices);
 
-            //gGL.diffuseColor4fv(color.mV);
+            //gRender.diffuseColor4fv(color.mV);
             //glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             //glDrawElements(GL_TRIANGLES, phys_volume->mNumHullIndices, GL_UNSIGNED_SHORT, phys_volume->mHullIndices);
-            gGL.diffuseColor4fv(line_color.mV);
-            gGL.setPolygonMode(LLRenderState::PolygonMode::Line);
+            gRender.diffuseColor4fv(line_color.mV);
+            gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
             LLVertexBuffer::drawElements(LLRender::TRIANGLES, phys_volume->mHullPoints, NULL, phys_volume->mNumHullIndices, phys_volume->mHullIndices);
 
-            gGL.diffuseColor4fv(color.mV);
-            gGL.setPolygonMode(LLRenderState::PolygonMode::Fill);
+            gRender.diffuseColor4fv(color.mV);
+            gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
             LLVertexBuffer::drawElements(LLRender::TRIANGLES, phys_volume->mHullPoints, NULL, phys_volume->mNumHullIndices, phys_volume->mHullIndices);
             // </FS:Ansariel>
         }
@@ -5091,7 +5091,7 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
         {
             // The hull data has not been computed yet (it may never be if havok is not installed) draw a magenta box and request it to be built
             // TODO: can we cache the fact Havok is not installed and speed all this up by not bothering?
-            gGL.diffuseColor3f(1, 0, 1);
+            gRender.diffuseColor3f(1, 0, 1);
             drawBoxOutline(center, size);
             gMeshRepo.buildHull(volume_params, detail);
         }
@@ -5184,15 +5184,15 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                 LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
                 //Need to because crash on ATI 3800 (and similar cards) MAINT-5018
                 // F3.2: LLGLDisable(GL_MULTISAMPLE_ARB) had no effect on the render state block (never mapped); dropped
-                LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
+                LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
                 if (shader)
                 {
                     gDebugProgram.bind();
                 }
-                gGL.getTexUnit(0)->bindWhite(); // no textures needed
-                gGL.setClearColor(0, 0, 0, 0); // bg black
-                gGL.setColorMask(true, true); // write color and alpha info
-                gGL.color4f(1.f, 1.f, 1.f, 0.5);
+                gRender.getTexUnit(0)->bindWhite(); // no textures needed
+                gRender.setClearColor(0, 0, 0, 0); // bg black
+                gRender.setColorMask(true, true); // write color and alpha info
+                gRender.color4f(1.f, 1.f, 1.f, 0.5);
                 LLRenderState::BlendScope gls_blend(true);
                 LLRenderState::CullScope gls_cull(true);
                 LLRenderState::DepthScope gls_depth(true, false);
@@ -5237,7 +5237,7 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
         // Render light for editing
         if (LLSelectMgr::sRenderLightRadius && LLToolMgr::getInstance()->inEdit())
         {
-            gGL.getTexUnit(0)->bindWhite();
+            gRender.getTexUnit(0)->bindWhite();
             LLRenderState::BlendScope gls_blend(true);
             LLRenderState::CullScope gls_cull(true);
             LLRenderState::DepthScope gls_depth(true, false);
@@ -5264,16 +5264,16 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                         LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale, scale, scale);
 
                         LLColor4 color(vovolume->getLightSRGBColor(), .5f);
-                        gGL.color4fv(color.mV);
+                        gRender.color4fv(color.mV);
 
                         //F32 pixel_area = 100000.f;
                         // Render Outside
                         gSphere.render();
 
                         // Render Inside
-                        gGL.setCullFace(LLRenderState::CullFace::Front);
+                        gRender.setCullFace(LLRenderState::CullFace::Front);
                         gSphere.render();
-                        gGL.setCullFace(LLRenderState::CullFace::Back);
+                        gRender.setCullFace(LLRenderState::CullFace::Back);
 
                         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
                     }
@@ -6174,7 +6174,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     gSnapshotNoPost = no_post;
     gDisplaySwapBuffers = false;
 
-    gGL.clearBuffers(ClearBits::Depth | ClearBits::Color); // stencil buffer is deprecated | ClearBits::Stencil);
+    gRender.clearBuffers(ClearBits::Depth | ClearBits::Color); // stencil buffer is deprecated | ClearBits::Stencil);
     setCursor(UI_CURSOR_WAIT);
 
     // Hide all the UI widgets first and draw a frame
@@ -6241,7 +6241,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     F32 scale_factor = 1.0f ;
     if (!keep_window_aspect || (image_width > window_width) || (image_height > window_height))
     {
-        if ((image_width <= gGLManager.mGLMaxTextureSize && image_height <= gGLManager.mGLMaxTextureSize) &&
+        if ((image_width <= gDeviceCaps.mTextureSizeLimit && image_height <= gDeviceCaps.mTextureSizeLimit) &&
             (image_width > window_width || image_height > window_height) && LLPipeline::sRenderDeferred && !show_ui)
         {
             // <FS:Ansariel> FIRE-15667: 24bit depth maps
@@ -6384,10 +6384,10 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                 }
                 for (S32 w = 0; w < warmup; ++w)
                 {
-                    LLVkMirror::snapshotBoundary(fs_vk_snap_variant);
+                    LLVkBridge::snapshotBoundary(fs_vk_snap_variant);
                     display(do_rebuild, scale_factor, subfield, true);
                 }
-                LLVkMirror::snapshotBoundary(fs_vk_snap_variant);
+                LLVkBridge::snapshotBoundary(fs_vk_snap_variant);
                 // </FS>
                 display(do_rebuild, scale_factor, subfield, true);
 
@@ -6419,7 +6419,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                     {
                         if (type == LLSnapshotModel::SNAPSHOT_TYPE_COLOR)
                         {
-                            gGL.readPixels(
+                            gRender.readPixels(
                                      subimage_x_offset, out_y + subimage_y_offset,
                                      read_width, 1,
                                      PixelFormat::RGB, ComponentType::U8,
@@ -6430,7 +6430,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                         else if (type == LLSnapshotModel::SNAPSHOT_TYPE_DEPTH24)
                         {
                             LLPointer<LLImageRaw> depth_line_buffer = new LLImageRaw(read_width, 1, sizeof(F32)); // need to store floating point values
-                            gGL.readPixels(
+                            gRender.readPixels(
                                          subimage_x_offset, out_y + subimage_y_offset,
                                          read_width, 1,
                                          PixelFormat::Depth, ComponentType::F32,
@@ -6464,7 +6464,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                             //LLPointer<LLImageRaw> depth_line_buffer = new LLImageRaw(read_width, 1, sizeof(GL_FLOAT)); // need to store floating point values
                             LLPointer<LLImageRaw> depth_line_buffer = new LLImageRaw(read_width, 1, sizeof(F32)); // need to store floating point values
                             // </FS>
-                            gGL.readPixels(
+                            gRender.readPixels(
                                          subimage_x_offset, out_y + subimage_y_offset,
                                          read_width, 1,
                                          PixelFormat::Depth, ComponentType::F32,
@@ -6572,7 +6572,7 @@ bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_
     LL_PROFILE_ZONE_SCOPED_CATEGORY_APP;
     gDisplaySwapBuffers = false;
 
-    gGL.clearBuffers(ClearBits::Depth | ClearBits::Color); // stencil buffer is deprecated | ClearBits::Stencil);
+    gRender.clearBuffers(ClearBits::Depth | ClearBits::Color); // stencil buffer is deprecated | ClearBits::Stencil);
     setCursor(UI_CURSOR_WAIT);
 
     bool prev_draw_ui = gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI);
@@ -6639,7 +6639,7 @@ bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_
 
     LLImageDataSharedLock lock(raw);
 
-    gGL.readPixels(
+    gRender.readPixels(
         0, 0,
         image_width,
         image_height,
@@ -6718,7 +6718,7 @@ bool LLViewerWindow::cubeSnapshot(const LLVector3& origin, LLCubeMapArray* cubea
 
     gPipeline.pushRenderTypeMask();
 
-    gGL.clearBuffers(ClearBits::Depth | ClearBits::Color); // stencil buffer is deprecated | ClearBits::Stencil);
+    gRender.clearBuffers(ClearBits::Depth | ClearBits::Color); // stencil buffer is deprecated | ClearBits::Stencil);
 
     U32 dynamic_render_types[] = {
         LLPipeline::RENDER_TYPE_AVATAR,
@@ -6935,11 +6935,11 @@ void LLViewerWindow::setup2DRender()
 
 void LLViewerWindow::setup2DViewport(S32 x_offset, S32 y_offset)
 {
-    gGLViewport[0] = mWindowRectRaw.mLeft + x_offset;
-    gGLViewport[1] = mWindowRectRaw.mBottom + y_offset;
-    gGLViewport[2] = mWindowRectRaw.getWidth();
-    gGLViewport[3] = mWindowRectRaw.getHeight();
-    gGL.setViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
+    gRenderViewport[0] = mWindowRectRaw.mLeft + x_offset;
+    gRenderViewport[1] = mWindowRectRaw.mBottom + y_offset;
+    gRenderViewport[2] = mWindowRectRaw.getWidth();
+    gRenderViewport[3] = mWindowRectRaw.getHeight();
+    gRender.setViewport(gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3]);
 }
 
 
@@ -6953,11 +6953,11 @@ void LLViewerWindow::setup3DRender()
 void LLViewerWindow::setup3DViewport(S32 x_offset, S32 y_offset)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
-    gGLViewport[0] = mWorldViewRectRaw.mLeft + x_offset;
-    gGLViewport[1] = mWorldViewRectRaw.mBottom + y_offset;
-    gGLViewport[2] = mWorldViewRectRaw.getWidth();
-    gGLViewport[3] = mWorldViewRectRaw.getHeight();
-    gGL.setViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
+    gRenderViewport[0] = mWorldViewRectRaw.mLeft + x_offset;
+    gRenderViewport[1] = mWorldViewRectRaw.mBottom + y_offset;
+    gRenderViewport[2] = mWorldViewRectRaw.getWidth();
+    gRenderViewport[3] = mWorldViewRectRaw.getHeight();
+    gRender.setViewport(gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3]);
 }
 
 void LLViewerWindow::revealIntroPanel()
@@ -7105,8 +7105,8 @@ void LLViewerWindow::stopGL()
     //Note: --bao
     //if not necessary, do not change the order of the function calls in this function.
     //if change something, make sure it will not break anything.
-    //especially be careful to put anything behind gTextureList.destroyGL(save_state);
-    if (!gGLManager.mIsDisabled)
+    //especially be careful to put anything behind gTextureList.destroyResources(save_state);
+    if (!gDeviceCaps.mIsDisabled)
     {
         LL_INFOS() << "Shutting down GL..." << LL_ENDL;
 
@@ -7114,54 +7114,54 @@ void LLViewerWindow::stopGL()
         LLAppViewer::getTextureCache()->pause();
         LLAppViewer::getTextureFetch()->pause();
 
-        gSky.destroyGL();
+        gSky.destroyResources();
         stop_glerror();
 
-        LLManipTranslate::destroyGL() ;
+        LLManipTranslate::destroyResources() ;
         stop_glerror();
 
-        gBumpImageList.destroyGL();
+        gBumpImageList.destroyResources();
         stop_glerror();
 
         LLFontGL::destroyAllGL();
         stop_glerror();
 
-        LLVOAvatar::destroyGL();
+        LLVOAvatar::destroyResources();
         stop_glerror();
 
-        LLVOPartGroup::destroyGL();
+        LLVOPartGroup::destroyResources();
 
-        LLViewerDynamicTexture::destroyGL();
+        LLViewerDynamicTexture::destroyResources();
         stop_glerror();
 
         if (gPipeline.isInit())
         {
-            gPipeline.destroyGL();
+            gPipeline.destroyResources();
         }
 
-        gBox.cleanupGL();
+        gBox.cleanupResources();
 
         if(gPostProcess)
         {
             gPostProcess->invalidate();
         }
 
-        gTextureList.destroyGL();
+        gTextureList.destroyResources();
         stop_glerror();
 
-        gGLManager.mIsDisabled = true;
+        gDeviceCaps.mIsDisabled = true;
         stop_glerror();
 
         //unload shader's
-        while (LLGLSLShader::sInstances.size())
+        while (LLShaderProgram::sInstances.size())
         {
-            LLGLSLShader* shader = *(LLGLSLShader::sInstances.begin());
+            LLShaderProgram* shader = *(LLShaderProgram::sInstances.begin());
             shader->unload();
         }
     }
 }
 
-void LLViewerWindow::restoreGL(const std::string& progress_message)
+void LLViewerWindow::restoreResources(const std::string& progress_message)
 {
     llassert(false);
     // DEPRECATED -- this is left over from when we would completely destroy and restore a GL context
@@ -7174,11 +7174,11 @@ void LLViewerWindow::restoreGL(const std::string& progress_message)
     //Note: --bao
     //if not necessary, do not change the order of the function calls in this function.
     //if change something, make sure it will not break anything.
-    //especially, be careful to put something before gTextureList.restoreGL();
-    if (gGLManager.mIsDisabled)
+    //especially, be careful to put something before gTextureList.restoreResources();
+    if (gDeviceCaps.mIsDisabled)
     {
         LL_INFOS() << "Restoring GL..." << LL_ENDL;
-        gGLManager.mIsDisabled = false;
+        gDeviceCaps.mIsDisabled = false;
 
         initGLDefaults();
 
@@ -7186,14 +7186,14 @@ void LLViewerWindow::restoreGL(const std::string& progress_message)
         //LLFontGL::destroyDefaultFonts();
         initFonts();
 
-        gSky.restoreGL();
-        gPipeline.restoreGL();
-        LLManipTranslate::restoreGL();
+        gSky.restoreResources();
+        gPipeline.restoreResources();
+        LLManipTranslate::restoreResources();
 
-        gBumpImageList.restoreGL();
-        LLViewerDynamicTexture::restoreGL();
-        LLVOAvatar::restoreGL();
-        LLVOPartGroup::restoreGL();
+        gBumpImageList.restoreResources();
+        LLViewerDynamicTexture::restoreResources();
+        LLVOAvatar::restoreResources();
+        LLVOPartGroup::restoreResources();
 
         gResizeScreenTexture = true;
         gWindowResized = true;
@@ -7206,14 +7206,14 @@ void LLViewerWindow::restoreGL(const std::string& progress_message)
         if (!progress_message.empty())
         {
             gRestoreGLTimer.reset();
-            gRestoreGL = true;
+            gRestoreResources = true;
             setShowProgress(true,true);
             setProgressString(progress_message);
         }
         LL_INFOS() << "...Restoring GL done" << LL_ENDL;
         if(!LLAppViewer::instance()->restoreErrorTrap())
         {
-            LL_WARNS() << " Someone took over my signal/exception handler (post restoreGL)!" << LL_ENDL;
+            LL_WARNS() << " Someone took over my signal/exception handler (post restoreResources)!" << LL_ENDL;
         }
 
     }
@@ -7246,7 +7246,7 @@ void LLViewerWindow::checkSettings()
     LL_RECORD_BLOCK_TIME(FTM_WINDOW_CHECK_SETTINGS);
     if (mStatesDirty)
     {
-        gGL.refreshState();
+        gRender.refreshState();
         LLViewerShaderMgr::instance()->setShaders();
         mStatesDirty = false;
     }

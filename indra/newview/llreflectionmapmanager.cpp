@@ -53,7 +53,7 @@
 #pragma warning (pop)
 #endif
 
-LLPointer<LLImageGL> gEXRImage;
+LLPointer<LLImageTex> gEXRImage;
 
 void load_exr(const std::string& filename)
 {
@@ -70,24 +70,24 @@ void load_exr(const std::string& filename)
     if (ret == TINYEXR_SUCCESS)
     {
         U32 texName = 0;
-        LLImageGL::generateTextures(1, &texName);
+        LLImageTex::generateTextures(1, &texName);
 
-        gEXRImage = new LLImageGL(texName, 4, TextureTarget::Tex2D, TexelFormat::RGBA16F, PixelFormat::RGBA, ComponentType::F32, LLTexUnit::TAM_CLAMP);
+        gEXRImage = new LLImageTex(texName, 4, TextureTarget::Tex2D, TexelFormat::RGBA16F, PixelFormat::RGBA, ComponentType::F32, LLTexUnit::TAM_CLAMP);
         gEXRImage->setHasMipMaps(true);
         gEXRImage->setUseMipMaps(true);
         gEXRImage->setFilteringOption(LLTexUnit::TFO_TRILINEAR);
 
-        gGL.getTexUnit(0)->bind(gEXRImage);
+        gRender.getTexUnit(0)->bind(gEXRImage);
 
-        gGL.texImage2D(texName, TextureTarget::Tex2D, 0, TexelFormat::RGBA16F, width, height, PixelFormat::RGBA, ComponentType::F32, out);
+        gRender.texImage2D(texName, TextureTarget::Tex2D, 0, TexelFormat::RGBA16F, width, height, PixelFormat::RGBA, ComponentType::F32, out);
 
-        LLImageGLMemory::alloc_tex_image(width, height, TexelFormat::RGBA16F, 1);
+        LLImageTexMemory::alloc_tex_image(width, height, TexelFormat::RGBA16F, 1);
 
         free(out); // release memory of image data
 
-        gGL.generateMipmap(texName);
+        gRender.generateMipmap(texName);
 
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
 
     }
     else
@@ -538,7 +538,7 @@ void LLReflectionMapManager::refreshSettings()
 
 LLReflectionMap* LLReflectionMapManager::addProbe(LLSpatialGroup* group)
 {
-    if (gGLManager.mGLVersion < 4.05f || !LLPipeline::sReflectionProbesEnabled)
+    if (gDeviceCaps.mApiVersionNumber < 4.05f || !LLPipeline::sReflectionProbesEnabled)
     {
         return nullptr;
     }
@@ -586,7 +586,7 @@ U32 LLReflectionMapManager::allocateQuery()
     if (mQueryPool.empty())
     {
         U32 query;
-        gGL.genQueries(1, &query);
+        gRender.genQueries(1, &query);
         return query;
     }
 
@@ -613,7 +613,7 @@ void LLReflectionMapManager::getReflectionMaps(std::vector<LLReflectionMap*>& ma
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
 
     LLMatrix4a modelview;
-    modelview.loadu(gGLModelView);
+    modelview.loadu(gRenderModelView);
     LLVector4a oa; // scratch space for transformed origin
 
     U32 count = 0;
@@ -844,7 +844,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         sourceIdx += 1;
     }
 
-    gGL.setColorMask(true, true);
+    gRender.setColorMask(true, true);
     LLRenderState::DepthScope depth(false, false);
     LLRenderState::CullScope cull(false);
     LLRenderState::BlendScope blend(false);
@@ -857,7 +857,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
 
-        gGL.flush();
+        gRender.flush();
         U32 res = mProbeResolution * 2;
 
         static LLStaticHashedString resScale("resScale");
@@ -875,7 +875,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
             // horizontal
             gGaussianProgram.uniform2f(direction, 1.f, 0.f);
-            gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
+            gRender.getTexUnit(diffuseChannel)->bind(screen_rt);
             RenderPassScope pass_879(mRenderTarget);
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -883,7 +883,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
             // vertical
             gGaussianProgram.uniform2f(direction, 0.f, 1.f);
-            gGL.getTexUnit(diffuseChannel)->bind(&mRenderTarget);
+            gRender.getTexUnit(diffuseChannel)->bind(&mRenderTarget);
             RenderPassScope pass(*screen_rt);
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -901,11 +901,11 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
             RenderPassScope pass(mMipChain[i]);
             if (i == 0)
             {
-                gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
+                gRender.getTexUnit(diffuseChannel)->bind(screen_rt);
             }
             else
             {
-                gGL.getTexUnit(diffuseChannel)->bind(&(mMipChain[i - 1]));
+                gRender.getTexUnit(diffuseChannel)->bind(&(mMipChain[i - 1]));
             }
 
 
@@ -923,7 +923,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                 LL_PROFILE_GPU_ZONE("probe mip copy");
                 mTexture->bind(0);
                 //glCopyTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, mip, 0, 0, probe->mCubeIndex * 6 + face, 0, 0, res, res);
-                gGL.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, mip, 0, 0, sourceIdx * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                gRender.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, mip, 0, 0, sourceIdx * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
                 //if (i == 0)
                 //{
                     //glCopyTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, mip, 0, 0, probe->mCubeIndex * 6 + face, 0, 0, res, res);
@@ -935,7 +935,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-        gGL.getTexUnit(diffuseChannel)->bindWhite();
+        gRender.getTexUnit(diffuseChannel)->bindWhite();
         gReflectionMipProgram.unbind();
     }
 
@@ -978,15 +978,15 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                     frame.getOpenGLRotation(mat);
                     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, mat);
 
-                    mVertexBuffer->drawArrays(gGL.TRIANGLE_STRIP, 0, 4);
+                    mVertexBuffer->drawArrays(gRender.TRIANGLE_STRIP, 0, 4);
 
-                    gGL.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, i, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                    gRender.copyTexSubImage3D(mTexture->getGLName(), TextureTarget::CubeArray, i, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
                 }
 
                 if (i != mMipChain.size() - 1)
                 {
                     res /= 2;
-                    gGL.setViewport(0, 0, res, res);
+                    gRender.setViewport(0, 0, res, res);
                 }
             }
 
@@ -1017,7 +1017,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
             {
                 int i = start_mip;
                 LL_PROFILE_GPU_ZONE("probe irradiance gen");
-                gGL.setViewport(0, 0, mMipChain[i].getWidth(), mMipChain[i].getHeight());
+                gRender.setViewport(0, 0, mMipChain[i].getWidth(), mMipChain[i].getHeight());
                 for (int cf = 0; cf < 6; ++cf)
                 { // for each cube face
                     LLCoordFrame frame;
@@ -1027,11 +1027,11 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                     frame.getOpenGLRotation(mat);
                     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, mat);
 
-                    mVertexBuffer->drawArrays(gGL.TRIANGLE_STRIP, 0, 4);
+                    mVertexBuffer->drawArrays(gRender.TRIANGLE_STRIP, 0, 4);
 
                     S32 res = mMipChain[i].getWidth();
                     mIrradianceMaps->bind(channel);
-                    gGL.copyTexSubImage3D(mIrradianceMaps->getGLName(), TextureTarget::CubeArray, i - start_mip, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                    gRender.copyTexSubImage3D(mIrradianceMaps->getGLName(), TextureTarget::CubeArray, i - start_mip, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
                     mTexture->bind(channel);
                 }
             }
@@ -1133,7 +1133,7 @@ void LLReflectionMapManager::updateUniforms()
 
     // load modelview matrix into matrix 4a
     LLMatrix4a modelview;
-    modelview.loadu(gGLModelView);
+    modelview.loadu(gRenderModelView);
     LLVector4a oa; // scratch space for transformed origin
 
     S32 count = 0;
@@ -1318,12 +1318,12 @@ void LLReflectionMapManager::updateUniforms()
     //copy mProbeData into uniform buffer object
     if (mUBO == 0)
     {
-        gGL.genBuffers(1, &mUBO);
+        gRender.genBuffers(1, &mUBO);
     }
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("rmmsu - update buffer");
-        gGL.bufferData(mUBO, BufferKind::Uniform, sizeof(ReflectionProbeData), &mProbeData);
+        gRender.bufferData(mUBO, BufferKind::Uniform, sizeof(ReflectionProbeData), &mProbeData);
     }
 
 #if 0
@@ -1353,7 +1353,7 @@ void LLReflectionMapManager::setUniforms()
     {
         updateUniforms();
     }
-    gGL.bindUniformBlock(LLGLSLShader::UB_REFLECTION_PROBES, mUBO);
+    gRender.bindUniformBlock(LLShaderProgram::UB_REFLECTION_PROBES, mUBO);
 }
 
 
@@ -1364,9 +1364,9 @@ void renderReflectionProbe(LLReflectionMap* probe, std::map<LLSpatialGroup*, int
         F32* po = probe->mOrigin.getF32ptr();
 
         //draw orange line from probe to neighbors
-        gGL.flush();
-        gGL.diffuseColor4f(1, 0.5f, 0, 1);
-        gGL.begin(gGL.LINES);
+        gRender.flush();
+        gRender.diffuseColor4f(1, 0.5f, 0, 1);
+        gRender.begin(gRender.LINES);
         for (auto& neighbor : probe->mNeighbors)
         {
             if (probe->mViewerObject && neighbor->mViewerObject)
@@ -1374,24 +1374,24 @@ void renderReflectionProbe(LLReflectionMap* probe, std::map<LLSpatialGroup*, int
                 continue;
             }
 
-            gGL.vertex3fv(po);
-            gGL.vertex3fv(neighbor->mOrigin.getF32ptr());
+            gRender.vertex3fv(po);
+            gRender.vertex3fv(neighbor->mOrigin.getF32ptr());
         }
-        gGL.end();
-        gGL.flush();
+        gRender.end();
+        gRender.flush();
 
-        gGL.diffuseColor4f(0, 1, 1, 1);
-        gGL.begin(gGL.LINES);
+        gRender.diffuseColor4f(0, 1, 1, 1);
+        gRender.begin(gRender.LINES);
         for (auto& neighbor : probe->mNeighbors)
         {
             if (probe->mViewerObject && neighbor->mViewerObject)
             {
-                gGL.vertex3fv(po);
-                gGL.vertex3fv(neighbor->mOrigin.getF32ptr());
+                gRender.vertex3fv(po);
+                gRender.vertex3fv(neighbor->mOrigin.getF32ptr());
             }
         }
-        gGL.end();
-        gGL.flush();
+        gRender.end();
+        gRender.flush();
 
         // --- New: draw a point at the probe origin color-coded by type ---
         bool dupByGroup = (probe->mGroup       && groupCount[ probe->mGroup       ] > 1);
@@ -1406,17 +1406,17 @@ void renderReflectionProbe(LLReflectionMap* probe, std::map<LLSpatialGroup*, int
         if (is_manual)
         {
             // red dot for manual probes
-            gGL.diffuseColor4f(1.f, 0.f, 0.f, 1.f);
+            gRender.diffuseColor4f(1.f, 0.f, 0.f, 1.f);
         }
         else if (is_automatic)
         {
             // blue dot for automatic probes
-            gGL.diffuseColor4f(0.f, 0.f, 1.f, 1.f);
+            gRender.diffuseColor4f(0.f, 0.f, 1.f, 1.f);
         }
         else
         {
             // green dot for terrain/water probes
-            gGL.diffuseColor4f(0.f, 1.f, 0.f, 1.f);
+            gRender.diffuseColor4f(0.f, 1.f, 0.f, 1.f);
         }
 
         // use a bigger dot if *any* duplicate condition is true
@@ -1425,11 +1425,11 @@ void renderReflectionProbe(LLReflectionMap* probe, std::map<LLSpatialGroup*, int
         float pointSize = (dupByGroup || dupByObject || dupByLoc)
                             ? bigSize
                             : normalSize;
-        gGL.setPointSize(pointSize);
-        gGL.begin(gGL.POINTS);
-        gGL.vertex3fv(po);
-        gGL.end();
-        gGL.flush();
+        gRender.setPointSize(pointSize);
+        gRender.begin(gRender.POINTS);
+        gRender.vertex3fv(po);
+        gRender.end();
+        gRender.flush();
     }
 
 #if 0
@@ -1440,42 +1440,42 @@ void renderReflectionProbe(LLReflectionMap* probe, std::map<LLSpatialGroup*, int
         const LLVector4a* bounds = group->getBounds();
         LLVector4a o = bounds[0];
 
-        gGL.flush();
-        gGL.diffuseColor4f(0, 0, 1, 1);
+        gRender.flush();
+        gRender.diffuseColor4f(0, 0, 1, 1);
         F32* c = o.getF32ptr();
 
         const F32* bc = bounds[0].getF32ptr();
         const F32* bs = bounds[1].getF32ptr();
 
         // daaw blue lines from corners to center of node
-        gGL.begin(gGL.LINES);
-        gGL.vertex3fv(c);
-        gGL.vertex3f(bc[0] + bs[0], bc[1] + bs[1], bc[2] + bs[2]);
-        gGL.vertex3fv(c);
-        gGL.vertex3f(bc[0] - bs[0], bc[1] + bs[1], bc[2] + bs[2]);
-        gGL.vertex3fv(c);
-        gGL.vertex3f(bc[0] + bs[0], bc[1] - bs[1], bc[2] + bs[2]);
-        gGL.vertex3fv(c);
-        gGL.vertex3f(bc[0] - bs[0], bc[1] - bs[1], bc[2] + bs[2]);
+        gRender.begin(gRender.LINES);
+        gRender.vertex3fv(c);
+        gRender.vertex3f(bc[0] + bs[0], bc[1] + bs[1], bc[2] + bs[2]);
+        gRender.vertex3fv(c);
+        gRender.vertex3f(bc[0] - bs[0], bc[1] + bs[1], bc[2] + bs[2]);
+        gRender.vertex3fv(c);
+        gRender.vertex3f(bc[0] + bs[0], bc[1] - bs[1], bc[2] + bs[2]);
+        gRender.vertex3fv(c);
+        gRender.vertex3f(bc[0] - bs[0], bc[1] - bs[1], bc[2] + bs[2]);
 
-        gGL.vertex3fv(c);
-        gGL.vertex3f(bc[0] + bs[0], bc[1] + bs[1], bc[2] - bs[2]);
-        gGL.vertex3fv(c);
-        gGL.vertex3f(bc[0] - bs[0], bc[1] + bs[1], bc[2] - bs[2]);
-        gGL.vertex3fv(c);
-        gGL.vertex3f(bc[0] + bs[0], bc[1] - bs[1], bc[2] - bs[2]);
-        gGL.vertex3fv(c);
-        gGL.vertex3f(bc[0] - bs[0], bc[1] - bs[1], bc[2] - bs[2]);
-        gGL.end();
+        gRender.vertex3fv(c);
+        gRender.vertex3f(bc[0] + bs[0], bc[1] + bs[1], bc[2] - bs[2]);
+        gRender.vertex3fv(c);
+        gRender.vertex3f(bc[0] - bs[0], bc[1] + bs[1], bc[2] - bs[2]);
+        gRender.vertex3fv(c);
+        gRender.vertex3f(bc[0] + bs[0], bc[1] - bs[1], bc[2] - bs[2]);
+        gRender.vertex3fv(c);
+        gRender.vertex3f(bc[0] - bs[0], bc[1] - bs[1], bc[2] - bs[2]);
+        gRender.end();
 
         //draw yellow line from center of node to reflection probe origin
-        gGL.flush();
-        gGL.diffuseColor4f(1, 1, 0, 1);
-        gGL.begin(gGL.LINES);
-        gGL.vertex3fv(c);
-        gGL.vertex3fv(po);
-        gGL.end();
-        gGL.flush();
+        gRender.flush();
+        gRender.diffuseColor4f(1, 1, 0, 1);
+        gRender.begin(gRender.LINES);
+        gRender.vertex3fv(c);
+        gRender.vertex3fv(po);
+        gRender.end();
+        gRender.flush();
     }
 #endif
 }
@@ -1629,7 +1629,7 @@ void LLReflectionMapManager::cleanup()
     mDefaultProbe = nullptr;
     mUpdatingProbe = nullptr;
 
-    gGL.deleteBuffers(1, &mUBO);
+    gRender.deleteBuffers(1, &mUBO);
     mUBO = 0;
 
     cleanupQueryPool();
@@ -1644,7 +1644,7 @@ void LLReflectionMapManager::cleanupQueryPool()
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("cleanup query pool");
         std::vector<U32> queries(mQueryPool.begin(), mQueryPool.end());
-        gGL.deleteQueries(static_cast<S32>(queries.size()), queries.data());
+        gRender.deleteQueries(static_cast<S32>(queries.size()), queries.data());
         mQueryPool.clear();
     }
 }

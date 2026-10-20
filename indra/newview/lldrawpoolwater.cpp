@@ -112,7 +112,7 @@ S32 LLDrawPoolWater::getNumPostDeferredPasses()
 void LLDrawPoolWater::beginPostDeferredPass(S32 pass)
 {
     LL_PROFILE_GPU_ZONE("water beginPostDeferredPass")
-    gGL.setColorMask(true, true);
+    gRender.setColorMask(true, true);
 
     if (LLPipeline::sRenderTransparentWater)
     {
@@ -130,8 +130,8 @@ void LLDrawPoolWater::beginPostDeferredPass(S32 pass)
         S32 diff_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DIFFUSE_MAP);
         S32 depth_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DEFERRED_DEPTH);
 
-        gGL.getTexUnit(diff_map)->bind(&src);
-        gGL.getTexUnit(depth_map)->bind(&depth_src, true);
+        gRender.getTexUnit(diff_map)->bind(&src);
+        gRender.getTexUnit(depth_map)->bind(&depth_src, true);
 
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -144,7 +144,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     LLRenderState::BlendScope blend(false);
 
-    gGL.setColorMask(true, true);
+    gRender.setColorMask(true, true);
 
     LLColor3 light_diffuse(0, 0, 0);
 
@@ -191,7 +191,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
 
     LLColor4      specular(sun_up ? psky->getSunlightColor() : psky->getMoonlightColor());
     F32           phase_time = (F32) LLFrameTimer::getElapsedSeconds() * 0.5f;
-    LLGLSLShader *shader     = nullptr;
+    LLShaderProgram *shader     = nullptr;
 
     // One pass, one of two shaders.  Void water and region water share state.
     // There isn't a good reason anymore to really have void water run in a separate pass.
@@ -239,9 +239,9 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     {
         // <FS> ray traced reflections on the water (rt-debug.txt waterrt, rtReflection in shadowUtil.glsl)
         static LLStaticHashedString rt_water_s("rt_water_reflections");
-        S32 rt_water_mode = LLVkMirror::rtWaterReflections();
+        S32 rt_water_mode = LLVkBridge::rtWaterReflections();
         static LLCachedControl<bool> rt_water_setting(gSavedSettings, "FSVkRTWater", false);
-        if (rt_water_mode == 0 && rt_water_setting && LLVkMirror::rtMaterialsAvailable())
+        if (rt_water_mode == 0 && rt_water_setting && LLVkBridge::rtMaterialsAvailable())
         {
             rt_water_mode = 1;      // the preference (Graphics > Vulkan); rt-debug.txt waterrt=N still overrides it for tests
         }
@@ -327,7 +327,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     // clean up
     gPipeline.unbindDeferredShader(*shader);
 
-    gGL.setColorMask(true, false);
+    gRender.setColorMask(true, false);
 }
 
 void LLDrawPoolWater::pushWaterPlanes(int pass)

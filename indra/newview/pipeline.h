@@ -51,7 +51,7 @@ class LLTextureEntry;
 class LLCullResult;
 class LLVOAvatar;
 class LLVOPartGroup;
-class LLGLSLShader;
+class LLShaderProgram;
 class LLDrawPoolAlpha;
 class LLSettingsSky;
 
@@ -97,20 +97,20 @@ public:
     LLPipeline();
     ~LLPipeline();
 
-    void destroyGL();
-    void restoreGL();
+    void destroyResources();
+    void restoreResources();
     void requestResizeScreenTexture(); // set flag only, no work, safer for callbacks...
     void requestResizeShadowTexture(); // set flag only, no work, safer for callbacks...
 
     void resizeScreenTexture();
     void resizeShadowTexture();
 
-    void releaseGLBuffers();
+    void releaseRenderBuffers();
     void releaseLUTBuffers();
     void releaseScreenBuffers();
     void releaseShadowBuffers();
 
-    void createGLBuffers();
+    void createRenderBuffers();
     void createLUTBuffers();
     void generateBrdfLut(bool allocate);
 
@@ -250,7 +250,7 @@ public:
     void        markMoved(LLDrawable *drawablep, bool damped_motion = false);
     void        markShift(LLDrawable *drawablep);
     void        markTextured(LLDrawable *drawablep);
-    void        markGLRebuild(LLGLUpdate* glu);
+    void        markGLRebuild(LLRenderUpdate* glu);
     void        markRebuild(LLSpatialGroup* group);
     void        markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags flag = LLDrawable::REBUILD_ALL);
     void        markPartitionMove(LLDrawable* drawablep);
@@ -319,7 +319,7 @@ public:
     void createObject(LLViewerObject* vobj);
     void processPartitionQ();
     void updateGeom(F32 max_dtime);
-    void updateGL();
+    void updateResources();
     void rebuildPriorityGroups();
     void rebuildGroups();
     void clearRebuildGroups();
@@ -403,22 +403,22 @@ public:
     void renderGeomDeferred(LLCamera& camera, bool do_occlusion = false);
     void renderGeomPostDeferred(LLCamera& camera);
     void renderGeomShadow(LLCamera& camera);
-    void bindLightFunc(LLGLSLShader& shader);
+    void bindLightFunc(LLShaderProgram& shader);
 
     // bind shadow maps
     // if setup is true, wil lset texture compare mode function and filtering options
-    void bindShadowMaps(LLGLSLShader& shader);
-    void bindDeferredShaderFast(LLGLSLShader& shader);
-    void bindDeferredShader(LLGLSLShader& shader, LLRenderTarget* light_target = nullptr, LLRenderTarget* depth_target = nullptr);
-    void setupSpotLight(LLGLSLShader& shader, LLDrawable* drawablep);
+    void bindShadowMaps(LLShaderProgram& shader);
+    void bindDeferredShaderFast(LLShaderProgram& shader);
+    void bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* light_target = nullptr, LLRenderTarget* depth_target = nullptr);
+    void setupSpotLight(LLShaderProgram& shader, LLDrawable* drawablep);
 
-    void unbindDeferredShader(LLGLSLShader& shader);
+    void unbindDeferredShader(LLShaderProgram& shader);
 
     // set env_mat parameter in given shader
-    void setEnvMat(LLGLSLShader& shader);
+    void setEnvMat(LLShaderProgram& shader);
 
-    void bindReflectionProbes(LLGLSLShader& shader);
-    void unbindReflectionProbes(LLGLSLShader& shader);
+    void bindReflectionProbes(LLShaderProgram& shader);
+    void unbindReflectionProbes(LLShaderProgram& shader);
 
     void renderDeferredLighting();
 
@@ -1272,6 +1272,6 @@ U32 rt_body_material(LLViewerTexture* texture, const F32* color, bool masked);
 
 extern LLPipeline gPipeline;
 extern bool gDebugPipeline;
-extern const LLMatrix4* gGLLastMatrix;
+extern const LLMatrix4* gRenderLastMatrix;
 
 #endif

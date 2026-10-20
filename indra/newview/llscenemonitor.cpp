@@ -178,9 +178,9 @@ LLRenderTarget& LLSceneMonitor::getCaptureTarget()
     {
         mFrames[0] = new LLRenderTarget();
         mFrames[0]->allocate(width, height, TexelFormat::RGB8);
-        gGL.getTexUnit(0)->bind(mFrames[0]);
-        gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bind(mFrames[0]);
+        gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+        gRender.getTexUnit(0)->bindWhite();
 
         cur_target = mFrames[0];
     }
@@ -188,9 +188,9 @@ LLRenderTarget& LLSceneMonitor::getCaptureTarget()
     {
         mFrames[1] = new LLRenderTarget();
         mFrames[1]->allocate(width, height, TexelFormat::RGB8);
-        gGL.getTexUnit(0)->bind(mFrames[1]);
-        gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bind(mFrames[1]);
+        gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+        gRender.getTexUnit(0)->bindWhite();
 
         cur_target = mFrames[1];
     }
@@ -311,9 +311,9 @@ void LLSceneMonitor::capture()
 
         LLRenderTarget& cur_target = getCaptureTarget();
 
-        gGL.getTexUnit(0)->bind(&cur_target);
+        gRender.getTexUnit(0)->bind(&cur_target);
         // copy the content of the main frame buffer (source 0) into the capture target's texture
-        gGL.copyTexSubImage2D(cur_target.getTexture(), TextureTarget::Tex2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight(), nullptr);
+        gRender.copyTexSubImage2D(cur_target.getTexture(), TextureTarget::Tex2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight(), nullptr);
 
         mDiffState = NEED_DIFF;
     }
@@ -370,11 +370,11 @@ void LLSceneMonitor::compare()
     gTwoTextureCompareProgram.uniform1f(sDitherScaleS, mDitherScaleS);
     gTwoTextureCompareProgram.uniform1f(sDitherScaleT, mDitherScaleT);
 
-    gGL.getTexUnit(0)->bind(mFrames[0]);
+    gRender.getTexUnit(0)->bind(mFrames[0]);
 
-    gGL.getTexUnit(1)->bind(mFrames[1]);
+    gRender.getTexUnit(1)->bind(mFrames[1]);
 
-    gGL.getTexUnit(2)->bind(mDitheringTexture);
+    gRender.getTexUnit(2)->bind(mDitheringTexture);
 
     gl_rect_2d_simple_tex(width, height);
 
@@ -382,12 +382,12 @@ void LLSceneMonitor::compare()
 
     gTwoTextureCompareProgram.unbind();
 
-    gGL.getTexUnit(0)->clear();
-    gGL.getTexUnit(0)->bindWhite();
-    gGL.getTexUnit(1)->clear();
-    gGL.getTexUnit(1)->bindWhite();
-    gGL.getTexUnit(2)->clear();
-    gGL.getTexUnit(2)->bindWhite();
+    gRender.getTexUnit(0)->clear();
+    gRender.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(1)->clear();
+    gRender.getTexUnit(1)->bindWhite();
+    gRender.getTexUnit(2)->clear();
+    gRender.getTexUnit(2)->bindWhite();
 
     if (!mDebugViewerVisible)
     {
@@ -416,25 +416,25 @@ void LLSceneMonitor::calcDiffAggregate()
     LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
     if(!mDebugViewerVisible)
     {
-        gGL.setColorMask(false, false, false, false);
+        gRender.setColorMask(false, false, false, false);
     }
 
-    LLGLSLShader* cur_shader = NULL;
+    LLShaderProgram* cur_shader = NULL;
 
-    cur_shader = LLGLSLShader::sCurBoundShaderPtr;
+    cur_shader = LLShaderProgram::sCurBoundShaderPtr;
     gOneTextureFilterProgram.bind();
     gOneTextureFilterProgram.uniform1f(sTolerance, mDiffTolerance);
 
     if(mDiffState == EXECUTE_DIFF)
     {
-        gGL.beginQuery(LLRender::QUERY_SAMPLES_PASSED, mQueryObject);
+        gRender.beginQuery(LLRender::QUERY_SAMPLES_PASSED, mQueryObject);
     }
 
     gl_draw_scaled_target(0, 0, S32(mDiff->getWidth() * mDiffPixelRatio), S32(mDiff->getHeight() * mDiffPixelRatio), mDiff);
 
     if(mDiffState == EXECUTE_DIFF)
     {
-        gGL.endQuery(LLRender::QUERY_SAMPLES_PASSED);
+        gRender.endQuery(LLRender::QUERY_SAMPLES_PASSED);
         mDiffState = WAIT_ON_RESULT;
     }
 
@@ -447,7 +447,7 @@ void LLSceneMonitor::calcDiffAggregate()
 
     if(!mDebugViewerVisible)
     {
-        gGL.setColorMask(true, true, true, true);
+        gRender.setColorMask(true, true, true, true);
     }
 #endif
 }
@@ -464,9 +464,9 @@ void LLSceneMonitor::fetchQueryResult()
     {
         mDiffState = WAITING_FOR_NEXT_DIFF;
 
-        if(gGL.queryReady(mQueryObject))
+        if(gRender.queryReady(mQueryObject))
         {
-            const U32 count = (U32)gGL.queryResult(mQueryObject);
+            const U32 count = (U32)gRender.queryResult(mQueryObject);
 
             mDiffResult = sqrtf(count * 0.5f / (mDiff->getWidth() * mDiff->getHeight() * mDiffPixelRatio * mDiffPixelRatio)); //0.5 -> (front face + back face)
 
@@ -713,7 +713,7 @@ void LLSceneMonitorView::draw()
     setRect(new_rect);
 
     //draw background
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
     gl_rect_2d(0, getRect().getHeight(), getRect().getWidth(), 0, LLColor4(0.f, 0.f, 0.f, 0.25f));
 
     LLSceneMonitor::getInstance()->calcDiffAggregate();

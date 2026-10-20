@@ -46,7 +46,7 @@
 constexpr F32 MIN_VRAM_BUDGET = 768.f; // <FS:Ansariel> Expose max texture VRAM setting
 
 class LLFace;
-class LLImageGL ;
+class LLImageTex ;
 class LLImageRaw;
 class LLViewerObject;
 class LLViewerTexture;
@@ -93,7 +93,7 @@ public:
 
 class LLTextureBar;
 
-class LLViewerTexture : public LLGLTexture
+class LLViewerTexture : public LLBaseTexture
 {
 public:
     enum
@@ -574,7 +574,7 @@ protected:
     /*virtual*/ ~LLViewerMediaTexture() ;
 
 public:
-    LLViewerMediaTexture(const LLUUID& id, bool usemipmaps = true, LLImageGL* gl_image = NULL) ;
+    LLViewerMediaTexture(const LLUUID& id, bool usemipmaps = true, LLImageTex* gl_image = NULL) ;
 
     /*virtual*/ S8 getType() const;
     void reinit(bool usemipmaps = true);
@@ -653,12 +653,12 @@ public:
     static LLViewerFetchedTexture*    findFetchedTexture(const LLUUID& id, S32 tex_type);
     static LLViewerMediaTexture*      findMediaTexture(const LLUUID& id) ;
 
-    static LLViewerMediaTexture*      createMediaTexture(const LLUUID& id, bool usemipmaps = true, LLImageGL* gl_image = NULL) ;
+    static LLViewerMediaTexture*      createMediaTexture(const LLUUID& id, bool usemipmaps = true, LLImageTex* gl_image = NULL) ;
 
     //
     //"get-texture" will create a new texture if the texture does not exist.
     //
-    static LLViewerMediaTexture*      getMediaTexture(const LLUUID& id, bool usemipmaps = true, LLImageGL* gl_image = NULL) ;
+    static LLViewerMediaTexture*      getMediaTexture(const LLUUID& id, bool usemipmaps = true, LLImageTex* gl_image = NULL) ;
 
     static LLPointer<LLViewerTexture> getLocalTexture(bool usemipmaps = true, bool generate_gl_tex = true);
     static LLPointer<LLViewerTexture> getLocalTexture(const LLUUID& id, bool usemipmaps, bool generate_gl_tex = true) ;
@@ -670,7 +670,7 @@ public:
     static LLViewerFetchedTexture* getFetchedTexture(const LLUUID &image_id,
                                      FTType f_type = FTT_DEFAULT,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
+                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                      PixelFormat primary_format = PixelFormat::None,
@@ -680,7 +680,7 @@ public:
     static LLViewerFetchedTexture* getFetchedTextureFromFile(const std::string& filename,
                                      FTType f_type = FTT_LOCAL_FILE,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,
+                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                      PixelFormat primary_format = PixelFormat::None,
@@ -690,7 +690,7 @@ public:
     static LLViewerFetchedTexture* getFetchedTextureFromUrl(const std::string& url,
                                      FTType f_type,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,
+                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                      PixelFormat primary_format = PixelFormat::None,

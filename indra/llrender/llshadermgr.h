@@ -369,14 +369,14 @@ public:
 
     virtual void initAttribsAndUniforms(void);
 
-    bool attachShaderFeatures(LLGLSLShader * shader);
+    bool attachShaderFeatures(LLShaderProgram * shader);
     U32 loadShaderFile(const std::string& filename, S32 & shader_level, ShaderStage type, std::map<std::string, std::string>* defines = NULL, S32 texture_index_channels = -1);
 
     // Implemented in the application to actually point to the shader directory.
     virtual std::string getShaderDirPrefix(void) = 0; // Pure Virtual
 
     // Implemented in the application to actually update out of date uniforms for a particular shader
-    virtual void updateShaderUniforms(LLGLSLShader * shader) = 0; // Pure Virtual
+    virtual void updateShaderUniforms(LLShaderProgram * shader) = 0; // Pure Virtual
 
     void initShaderCache(bool enabled, const LLUUID& old_cache_version, const LLUUID& current_cache_version, bool second_instance);
     void clearShaderCache();

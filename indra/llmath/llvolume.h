@@ -206,7 +206,7 @@ constexpr U8 LL_SCULPT_FLAG_MASK = LL_SCULPT_FLAG_INVERT | LL_SCULPT_FLAG_MIRROR
 
 constexpr S32 LL_SCULPT_MESH_MAX_FACES = 8;
 
-extern bool gDebugGL;
+extern bool gDebugRender;
 
 class LLProfileParams
 {

@@ -102,7 +102,7 @@ LLPreviewTexture::LLPreviewTexture(const LLSD& key)
       mAspectRatio(0.f),
       mPreviewToSave(false),
       mImage(NULL),
-      mImageOldBoostLevel(LLGLTexture::BOOST_NONE),
+      mImageOldBoostLevel(LLBaseTexture::BOOST_NONE),
       mShowingButtons(false),
       mDisplayNameCallback(false),
       mAvatarNameCallbackConnection()
@@ -142,7 +142,7 @@ LLPreviewTexture::~LLPreviewTexture()
     if (mImage.notNull())
     {
         mImage->setBoostLevel(mImageOldBoostLevel);
-        // <FS:Ansariel> Remove NO_DELETE texture state so image gets removed from memory (set by calling setBoostLevel(LLGLTexture::BOOST_PREVIEW))
+        // <FS:Ansariel> Remove NO_DELETE texture state so image gets removed from memory (set by calling setBoostLevel(LLBaseTexture::BOOST_PREVIEW))
         mImage->forceActive();
         // </FS:Ansariel>
         mImage = NULL;
@@ -286,7 +286,7 @@ void LLPreviewTexture::draw()
     if (!isMinimized())
     {
         LLGLSUIDefault gls_ui;
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
 
         const LLRect& border = mClientRect;
         LLRect interior = mClientRect;
@@ -299,7 +299,7 @@ void LLPreviewTexture::draw()
         if ( mImage.notNull() )
         {
             // Draw the texture
-            gGL.diffuseColor3f( 1.f, 1.f, 1.f );
+            gRender.diffuseColor3f( 1.f, 1.f, 1.f );
             gl_draw_scaled_image(interior.mLeft,
                                 interior.mBottom,
                                 interior.getWidth(),
@@ -656,7 +656,7 @@ void LLPreviewTexture::onFileLoadedForSaveTGA(bool success,
                 << " Discard: " << src_vi->getDiscardLevel()
                 << " Raw discard: " << discard_level
                 << " Size: " << src_vi->getWidth() << "x" << src_vi->getHeight()
-                << " Has GL texture: " << (src_vi->hasGLTexture() ? "true" : "false")
+                << " Has GL texture: " << (src_vi->hasImageTexture() ? "true" : "false")
                 << " Has saved raw image: " << (src_vi->hasSavedRawImage() ? "true" : "false") << LL_ENDL;
         }
     }
@@ -1096,11 +1096,11 @@ void LLPreviewTexture::onAspectRatioCommit(LLUICtrl* ctrl, void* userdata)
 void LLPreviewTexture::loadAsset()
 {
     // <FS:Beq> FIRE-30559 texture fetch speedup for user previews (based on patches from Oren Hurvitz)
-    // mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_TRUE, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+    // mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_TRUE, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
     // mImageOldBoostLevel = mImage->getBoostLevel();
-    // mImage->setBoostLevel(LLGLTexture::BOOST_PREVIEW);
-    mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_TRUE, LLGLTexture::BOOST_PREVIEW, LLViewerTexture::LOD_TEXTURE);
-    mImageOldBoostLevel = LLGLTexture::BOOST_NONE;
+    // mImage->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
+    mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_TRUE, LLBaseTexture::BOOST_PREVIEW, LLViewerTexture::LOD_TEXTURE);
+    mImageOldBoostLevel = LLBaseTexture::BOOST_NONE;
     // </FS:Beq>
     mImage->forceToSaveRawImage(0) ;
     // <FS:Techwolf Lupindo> texture comment decoder

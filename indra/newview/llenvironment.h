@@ -134,7 +134,7 @@ public:
     static void                 updateGLVariablesForSettings(LLShaderUniforms* uniforms, const LLSettingsBase::ptr_t &psetting);
     
     // apply current sky settings to given shader
-    void                        updateShaderUniforms(LLGLSLShader *shader);
+    void                        updateShaderUniforms(LLShaderProgram *shader);
 
     // prepare settings to be applied to shaders (call whenever settings are updated)
     void                        updateSettingsUniforms();
@@ -243,8 +243,8 @@ public:
     void                        handleEnvironmentPush(LLSD &message);
 
     //cached uniform values from LLSD values
-    LLShaderUniforms mWaterUniforms[LLGLSLShader::SG_COUNT];
-    LLShaderUniforms mSkyUniforms[LLGLSLShader::SG_COUNT];
+    LLShaderUniforms mWaterUniforms[LLShaderProgram::SG_COUNT];
+    LLShaderUniforms mSkyUniforms[LLShaderProgram::SG_COUNT];
     // =======================================================================================
 
     class DayInstance: public std::enable_shared_from_this<DayInstance>

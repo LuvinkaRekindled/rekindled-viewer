@@ -49,7 +49,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     llassert(tex.getWidth() > 0 && tex.getHeight() > 0);
     llassert(tex.getWidth() == tex.getHeight());
     llassert(tex.getPrimaryFormat() == PixelFormat::RGB);
-    llassert(tex.getGLTexture());
+    llassert(tex.getImageTexture());
 
     const LLSurface& surface = region.getLand();
     const U32 patch_count = surface.getPatchesPerEdge();
@@ -85,7 +85,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
         LL_WARNS() << "Failed to allocate render target" << LL_ENDL;
         return false;
     }
-    gGL.getTexUnit(0)->clear();
+    gRender.getTexUnit(0)->clear();
     stop_glerror();
 
     RenderPassScope pass_91(scratch_target, RenderPass::Clear(0, 0, 0, 0));
@@ -107,7 +107,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     camera.lookAt(camera_origin, region_center, LLVector3::y_axis);
     camera.setAspect(F32(scratch_target.getWidth()) / F32(scratch_target.getHeight()));
     const LLRect texture_rect(0, scratch_target.getHeight(), scratch_target.getWidth(), 0);
-    gGL.setViewport(texture_rect.mLeft, texture_rect.mBottom, texture_rect.getWidth(), texture_rect.getHeight());
+    gRender.setViewport(texture_rect.mLeft, texture_rect.mBottom, texture_rect.getWidth(), texture_rect.getHeight());
     // Manually get modelview matrix from camera orientation.
     glm::mat4 modelview(glm::make_mat4((F32 *) OGL_TO_CFR_ROTATION));
     F32 ogl_matrix[16];
@@ -146,7 +146,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     const U32 ni = 6 * (vert_size - 1) * (vert_size - 1);
     const U32 region_vertices = n * patch_count * patch_count;
     const U32 region_indices = ni * patch_count * patch_count;
-    if (LLGLSLShader::sCurBoundShaderPtr == nullptr)
+    if (LLShaderProgram::sCurBoundShaderPtr == nullptr)
     { // make sure a shader is bound to satisfy mVertexBuffer->setBuffer
         gDebugProgram.bind();
     }
@@ -220,11 +220,11 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     // Draw the region in agent space at full resolution
     {
 
-        LLGLSLShader::unbind();
+        LLShaderProgram::unbind();
         // *NOTE: A theoretical non-PBR terrain bake program would be
         // *slightly* different, due the texture terrain shader not having an
         // alpha ramp threshold (TERRAIN_RAMP_MIX_THRESHOLD)
-        LLGLSLShader& shader = gPBRTerrainBakeProgram;
+        LLShaderProgram& shader = gPBRTerrainBakeProgram;
         shader.bind();
 
         LLRenderState::StencilScope stencil(false);
@@ -234,8 +234,8 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
 
         S32 alpha_ramp = shader.enableTexture(LLViewerShaderMgr::TERRAIN_ALPHARAMP);
         LLPointer<LLViewerTexture> alpha_ramp_texture = LLViewerTextureManager::getFetchedTexture(IMG_ALPHA_GRAD_2D);
-        gGL.getTexUnit(alpha_ramp)->bind(alpha_ramp_texture);
-        gGL.getTexUnit(alpha_ramp)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        gRender.getTexUnit(alpha_ramp)->bind(alpha_ramp_texture);
+        gRender.getTexUnit(alpha_ramp)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
 
         buf->setBuffer();
         for (U32 rj = 0; rj < patch_count; ++rj)
@@ -253,28 +253,28 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
 
         shader.disableTexture(LLViewerShaderMgr::TERRAIN_ALPHARAMP);
 
-        gGL.getTexUnit(alpha_ramp)->bindWhite();
-        gGL.getTexUnit(alpha_ramp)->clear();
+        gRender.getTexUnit(alpha_ramp)->bindWhite();
+        gRender.getTexUnit(alpha_ramp)->clear();
 
         shader.unbind();
     }
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
-    gGL.flush();
+    gRender.flush();
     LLVertexBuffer::unbind();
     // Final step: Copy the output to the terrain paintmap
-    const bool success = tex.getGLTexture()->setSubImageFromFrameBuffer(0, 0, 0, 0, dim, dim);
+    const bool success = tex.getImageTexture()->setSubImageFromFrameBuffer(0, 0, 0, 0, dim, dim);
     if (!success)
     {
         LL_WARNS() << "Failed to copy framebuffer to paintmap" << LL_ENDL;
     }
-    gGL.generateMipmap(tex.getGLTexture()->getTexName());
+    gRender.generateMipmap(tex.getImageTexture()->getTexName());
     stop_glerror();
 
     pass_91.end();
 
-    LLGLSLShader::unbind();
+    LLShaderProgram::unbind();
 
     return success;
 }

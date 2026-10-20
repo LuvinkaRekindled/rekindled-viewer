@@ -64,7 +64,7 @@ bool LLRenderTarget::sUseFBO = false;
 U32 LLRenderTarget::sCurFBO = 0;
 
 
-extern S32 gGLViewport[4];
+extern S32 gRenderViewport[4];
 
 U32 LLRenderTarget::sCurResX = 0;
 U32 LLRenderTarget::sCurResY = 0;
@@ -96,16 +96,16 @@ void LLRenderTarget::resize(U32 resx, U32 resy)
 
     for (U32 i = 0; i < mTex.size(); ++i)
     { //resize color attachments
-        gGL.getTexUnit(0)->bindManual(mUsage, mTex[i]);
-        LLImageGL::setManualImage(mTex[i], LLTexUnit::getInternalType(mUsage), 0, mInternalFormat[i], mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
+        gRender.getTexUnit(0)->bindManual(mUsage, mTex[i]);
+        LLImageTex::setManualImage(mTex[i], LLTexUnit::getInternalType(mUsage), 0, mInternalFormat[i], mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
         sBytesAllocated += pix_diff*4;
     }
 
     if (mDepth)
     {
-        gGL.getTexUnit(0)->bindManual(mUsage, mDepth);
+        gRender.getTexUnit(0)->bindManual(mUsage, mDepth);
         TextureTarget internal_type = LLTexUnit::getInternalType(mUsage);
-        LLImageGL::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
+        LLImageTex::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
 
         sBytesAllocated += pix_diff*4;
     }
@@ -122,8 +122,8 @@ bool LLRenderTarget::allocate(U32 resx, U32 resy, TexelFormat color_fmt, bool de
     {
         return true;
     }
-    resx = llmin(resx, (U32) gGLManager.mGLMaxTextureSize);
-    resy = llmin(resy, (U32) gGLManager.mGLMaxTextureSize);
+    resx = llmin(resx, (U32) gDeviceCaps.mTextureSizeLimit);
+    resy = llmin(resy, (U32) gDeviceCaps.mTextureSizeLimit);
 
     release();
 
@@ -159,13 +159,13 @@ bool LLRenderTarget::allocate(U32 resx, U32 resy, TexelFormat color_fmt, bool de
     return addColorAttachment(color_fmt, file, line);
 }
 
-void LLRenderTarget::setColorAttachment(LLImageGL* img, U32 use_name)
+void LLRenderTarget::setColorAttachment(LLImageTex* img, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     llassert(img != nullptr); // img must not be null
     llassert(sUseFBO); // FBO support must be enabled
     llassert(mDepth == 0); // depth buffers not supported with this mode
-    llassert(mTex.empty()); // mTex must be empty with this mode (binding target should be done via LLImageGL)
+    llassert(mTex.empty()); // mTex must be empty with this mode (binding target should be done via LLImageTex)
     llassert(!isBoundInStack());
 
     if (mFBO == 0)
@@ -227,15 +227,15 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
     }
 
     U32 tex;
-    LLImageGL::generateTextures(1, &tex);
-    gGL.getTexUnit(0)->bindManual(mUsage, tex);
+    LLImageTex::generateTextures(1, &tex);
+    gRender.getTexUnit(0)->bindManual(mUsage, tex);
 
     stop_glerror();
 
 
     {
         clear_glerror();
-        LLImageGL::setManualImage(tex, LLTexUnit::getInternalType(mUsage), 0, color_fmt, mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
+        LLImageTex::setManualImage(tex, LLTexUnit::getInternalType(mUsage), 0, color_fmt, mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
     }
 
     sBytesAllocated += mResX*mResY*4;
@@ -245,24 +245,24 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
 
     if (offset == 0)
     { //use bilinear filtering on single texture render targets that aren't multisampled
-        gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+        gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
         stop_glerror();
     }
     else
     { //don't filter data attachments
-        gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+        gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
         stop_glerror();
     }
 
     if (mUsage != LLTexUnit::TT_RECT_TEXTURE)
     {
-        gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_MIRROR);
+        gRender.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_MIRROR);
         stop_glerror();
     }
     else
     {
         // ATI doesn't support mirrored repeat for rectangular textures.
-        gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        gRender.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         stop_glerror();
     }
 
@@ -275,7 +275,7 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
     mTex.push_back(tex);
     mInternalFormat.push_back(color_fmt);
 
-    if (gDebugGL)
+    if (gDebugRender)
     { //bind and unbind to validate target
         bindTarget();
         flush();
@@ -288,14 +288,14 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
 bool LLRenderTarget::allocateDepth()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
-    LLImageGL::generateTextures(1, &mDepth);
-    gGL.getTexUnit(0)->bindManual(mUsage, mDepth);
+    LLImageTex::generateTextures(1, &mDepth);
+    gRender.getTexUnit(0)->bindManual(mUsage, mDepth);
 
     TextureTarget internal_type = LLTexUnit::getInternalType(mUsage);
     stop_glerror();
     clear_glerror();
-    LLImageGL::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
-    gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+    LLImageTex::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
+    gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
 
     sBytesAllocated += mResX*mResY*4;
 
@@ -339,7 +339,7 @@ void LLRenderTarget::release()
 
     if (mDepth)
     {
-        LLImageGL::deleteTextures(1, &mDepth);
+        LLImageTex::deleteTextures(1, &mDepth);
 
         mDepth = 0;
 
@@ -364,7 +364,7 @@ void LLRenderTarget::release()
         {
             sBytesAllocated -= mResX*mResY*4;
             ll_fboAttach(mFBO, static_cast<U32>(z), 0);
-            LLImageGL::deleteTextures(1, &mTex[z]);
+            LLImageTex::deleteTextures(1, &mTex[z]);
         }
     }
 
@@ -373,7 +373,7 @@ void LLRenderTarget::release()
         if (mFBO == sCurFBO)
         {
             sCurFBO = 0;
-            LLVkAsync::targetState(0, -1, gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
+            LLVkAsync::targetState(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3]);
         }
 
         LLVkTarget::destroy(mFBO);
@@ -383,7 +383,7 @@ void LLRenderTarget::release()
     if (mTex.size() > 0)
     {
         sBytesAllocated -= mResX*mResY*4;
-        LLImageGL::deleteTextures(1, &mTex[0]);
+        LLImageTex::deleteTextures(1, &mTex[0]);
     }
 
     mTex.clear();
@@ -447,13 +447,13 @@ void LLRenderTarget::clear(ClearBits mask_in, const char* file, int line)
     }
     if (mFBO)
     {
-        gGL.clearBuffers(mask & mask_in);
+        gRender.clearBuffers(mask & mask_in);
     }
     else
     {
         LLRenderState::ScissorScope scissor(true);
         LLVkState::setScissor(0, 0, mResX, mResY);
-        gGL.clearBuffers(mask & mask_in);
+        gRender.clearBuffers(mask & mask_in);
     }
 }
 
@@ -495,15 +495,15 @@ U32 LLRenderTarget::getNumTextures() const
 
 void LLRenderTarget::bindTexture(U32 index, S32 channel, LLTexUnit::eTextureFilterOptions filter_options)
 {
-    gGL.getTexUnit(channel)->bindManual(mUsage, getTexture(index), filter_options == LLTexUnit::TFO_TRILINEAR || filter_options == LLTexUnit::TFO_ANISOTROPIC);
-    gGL.getTexUnit(channel)->setTextureFilteringOption(filter_options);
+    gRender.getTexUnit(channel)->bindManual(mUsage, getTexture(index), filter_options == LLTexUnit::TFO_TRILINEAR || filter_options == LLTexUnit::TFO_ANISOTROPIC);
+    gRender.getTexUnit(channel)->setTextureFilteringOption(filter_options);
 }
 
 void LLRenderTarget::flush(const char* file, int line)
 {
     LL_PROFILE_GPU_ZONE("rt flush");
     noteFlush(file, line);
-    gGL.flush();
+    gRender.flush();
     llassert(mFBO);
     llassert(sCurFBO == mFBO);
     llassert(sBoundTarget == this);
@@ -527,10 +527,10 @@ void LLRenderTarget::flush(const char* file, int line)
     else
     {
         sBoundTarget = nullptr;
-        LLVkAsync::targetState(0, -1, gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
+        LLVkAsync::targetState(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3]);
         sCurFBO = 0;
-        sCurResX = gGLViewport[2];
-        sCurResY = gGLViewport[3];
+        sCurResX = gRenderViewport[2];
+        sCurResY = gRenderViewport[3];
     }
     mBindFile = nullptr;
 }
@@ -835,7 +835,7 @@ void begin(LLRenderTarget& target, LoadOp load, ClearBits clear_mask, const F32*
 {
     if (load == LoadOp::Clear)
     {
-        target.bindImpl(file, line, false, clear_mask, clear_color ? clear_color : gGL.getClearColor());
+        target.bindImpl(file, line, false, clear_mask, clear_color ? clear_color : gRender.getClearColor());
     }
     else
     {

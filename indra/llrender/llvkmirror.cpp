@@ -9,40 +9,40 @@
 
 #if !defined(LL_VULKAN)
 
-bool LLVkMirror::isRequested() { return false; }
-bool LLVkMirror::isReady() { return false; }
-bool LLVkMirror::videoMemory(U64&, U64&) { return false; }
-bool LLVkMirror::readbackAffordable() { return true; }
-bool LLVkMirror::ensureReady() { return false; }
-void LLVkMirror::setMainWindow(void*) {}
-bool LLVkMirror::describeDevice(DeviceInfo&) { return false; }
-bool LLVkMirror::inFrame() { return false; }
-void LLVkMirror::beginFrame(S32, S32) {}
-void LLVkMirror::endFrame() {}
-void LLVkMirror::holdFrame(bool) {}
-void LLVkMirror::setPresentPreference(S32, bool) {}
-void LLVkMirror::snapshotBoundary(S32) {}
-bool LLVkMirror::upscaleAvailable() { return false; }
-bool LLVkMirror::rayReconstructionAvailable() { return false; }
-void LLVkMirror::setUpscaleLodBias(float) {}
-bool LLVkMirror::shadowPacketsAvailable() { return false; }
-bool LLVkMirror::shadowAlphaPacketsAvailable() { return false; }
-void LLVkMirror::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
-void LLVkMirror::upscale(const UpscaleArgs&) {}
-U32 LLVkMirror::rtShadowMode() { return 0; }
-bool LLVkMirror::rtLoadingGates() { return false; }
-S32 LLVkMirror::rtDebugView() { return 0; }
-S32 LLVkMirror::rtWaterReflections() { return 0; }
-S32 LLVkMirror::rtHitQuality() { return -1; }
-S32 LLVkMirror::rtHitRays() { return -1; }
-S32 LLVkMirror::rtGlossyReflections() { return 0; }
-bool LLVkMirror::rtMaterialsAvailable() { return false; }
-bool LLVkMirror::rtBodyRename() { return false; }
-void LLVkMirror::rtScene(const RtSceneArgs&) {}
-void LLVkMirror::presentFrame() {}
-void LLVkMirror::shutdown() {}
-void LLVkMirror::setBindlessPersistent(bool) {}
-void LLVkMirror::stopAsync() {}
+bool LLVkBridge::isRequested() { return false; }
+bool LLVkBridge::isReady() { return false; }
+bool LLVkBridge::videoMemory(U64&, U64&) { return false; }
+bool LLVkBridge::readbackAffordable() { return true; }
+bool LLVkBridge::ensureReady() { return false; }
+void LLVkBridge::setMainWindow(void*) {}
+bool LLVkBridge::describeDevice(DeviceInfo&) { return false; }
+bool LLVkBridge::inFrame() { return false; }
+void LLVkBridge::beginFrame(S32, S32) {}
+void LLVkBridge::endFrame() {}
+void LLVkBridge::holdFrame(bool) {}
+void LLVkBridge::setPresentPreference(S32, bool) {}
+void LLVkBridge::snapshotBoundary(S32) {}
+bool LLVkBridge::upscaleAvailable() { return false; }
+bool LLVkBridge::rayReconstructionAvailable() { return false; }
+void LLVkBridge::setUpscaleLodBias(float) {}
+bool LLVkBridge::shadowPacketsAvailable() { return false; }
+bool LLVkBridge::shadowAlphaPacketsAvailable() { return false; }
+void LLVkBridge::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
+void LLVkBridge::upscale(const UpscaleArgs&) {}
+U32 LLVkBridge::rtShadowMode() { return 0; }
+bool LLVkBridge::rtLoadingGates() { return false; }
+S32 LLVkBridge::rtDebugView() { return 0; }
+S32 LLVkBridge::rtWaterReflections() { return 0; }
+S32 LLVkBridge::rtHitQuality() { return -1; }
+S32 LLVkBridge::rtHitRays() { return -1; }
+S32 LLVkBridge::rtGlossyReflections() { return 0; }
+bool LLVkBridge::rtMaterialsAvailable() { return false; }
+bool LLVkBridge::rtBodyRename() { return false; }
+void LLVkBridge::rtScene(const RtSceneArgs&) {}
+void LLVkBridge::presentFrame() {}
+void LLVkBridge::shutdown() {}
+void LLVkBridge::setBindlessPersistent(bool) {}
+void LLVkBridge::stopAsync() {}
 
 #else // LL_VULKAN
 
@@ -58,9 +58,9 @@ void LLVkMirror::stopAsync() {}
 
 #include <cstdlib>
 
-namespace LLVkGL { extern bool gActive; extern bool gOwn; extern LLVkMirror::Mutex gMutex; void after_frame(); void before_end_frame(); double take_hook_ms(); std::string resource_summary(); }
+namespace LLVkWorker { extern bool gActive; extern bool gOwn; extern LLVkBridge::Mutex gMutex; void after_frame(); void before_end_frame(); double take_hook_ms(); std::string resource_summary(); }
 
-namespace LLVkMirror
+namespace LLVkBridge
 {
 long long gPhaseTicks[PH_COUNT] = {};
 bool gPhaseTiming = false;
@@ -164,7 +164,7 @@ void bench_init()
         return;
     }
     sBench.mInit = true;
-    LLVkMirror::gPhaseTiming = !glonly_mode();
+    LLVkBridge::gPhaseTiming = !glonly_mode();
     if (glonly_mode())
     {
         LL_INFOS("VkBench") << "benchmark mode on, OpenGL only: no Vulkan work; GL GPU time and CPU time are measured at the viewer's natural pace" << LL_ENDL;
@@ -198,17 +198,17 @@ void bench_log()
         LL_INFOS("VkBench") << "BENCH memory: process working set " << pmc.WorkingSetSize / (1024 * 1024) << " MB, private " << pmc.PrivateUsage / (1024 * 1024)
                             << " MB | uniform ring peak " << ring_peak / 1024 << " KB of " << (128 * 1024) << " KB per frame, " << ring_dropped << " draws dropped | "
                             << LLVk::Context::instance().memoryBudgetText() << LL_ENDL;
-        LL_INFOS("VkBench") << "BENCH resources: " << LLVkGL::resource_summary() << LL_ENDL;
+        LL_INFOS("VkBench") << "BENCH resources: " << LLVkWorker::resource_summary() << LL_ENDL;
     }
-    if (LLVkMirror::gPhaseTiming)
+    if (LLVkBridge::gPhaseTiming)
     {
         LARGE_INTEGER freq;
         QueryPerformanceFrequency(&freq);
         std::string text;
-        for (int p = 0; p < LLVkMirror::PH_COUNT; ++p)
+        for (int p = 0; p < LLVkBridge::PH_COUNT; ++p)
         {
-            text += std::string(PHASE_NAMES[p]) + " " + std::to_string((double)LLVkMirror::gPhaseTicks[p] * 1000.0 / (double)freq.QuadPart / std::max<U32>(1, sBench.mWallN)).substr(0, 5) + " | ";
-            LLVkMirror::gPhaseTicks[p] = 0;
+            text += std::string(PHASE_NAMES[p]) + " " + std::to_string((double)LLVkBridge::gPhaseTicks[p] * 1000.0 / (double)freq.QuadPart / std::max<U32>(1, sBench.mWallN)).substr(0, 5) + " | ";
+            LLVkBridge::gPhaseTicks[p] = 0;
         }
         LL_INFOS("VkBench") << "BENCH translator CPU by phase (ms/iter; hooks include the draw phases, 'all hooks' also the unhooked-uniform and state calls): " << text << LL_ENDL;
     }
@@ -278,8 +278,8 @@ void bench_begin_iteration()
     sBench.mPhaseIteration = !glonly_mode() && (sBench.mIter % 4) == 0;
     {
         // GL call time of the previous iteration (this thread's counter, then reset)
-        sBench.mGlCpu += (double)LLVkGL::gGlTicks * 1000.0 / (double)freq.QuadPart;
-        LLVkGL::gGlTicks = 0;
+        sBench.mGlCpu += (double)LLVkWorker::gGlTicks * 1000.0 / (double)freq.QuadPart;
+        LLVkWorker::gGlTicks = 0;
     }
     ++sBench.mIter;
     if (sBench.mIter % 150 == 0)
@@ -355,7 +355,7 @@ void bench_vk_collect(bool offscreen)
         }
         sBench.mPhaseActive = false;
     }
-    sBench.mHook += LLVkGL::take_hook_ms();
+    sBench.mHook += LLVkWorker::take_hook_ms();
 }
 
 const wchar_t* const MIRROR_WINDOW_CLASS = L"LLVkMirrorWindow";
@@ -536,12 +536,12 @@ bool create_backbuffer(U32 width, U32 height)
 
 } // anonymous namespace
 
-void LLVkMirror::setPresentPreference(S32 mode, bool vsync_on)
+void LLVkBridge::setPresentPreference(S32 mode, bool vsync_on)
 {
     LLVk::setPresentPreference((int)mode, vsync_on);
 }
 
-bool LLVkMirror::isRequested()
+bool LLVkBridge::isRequested()
 {
     if (!sMirror.mRequestChecked)
     {
@@ -555,47 +555,47 @@ bool LLVkMirror::isRequested()
     return sMirror.mRequested;
 }
 
-LLVkMirror::Mutex& LLVkMirror::lock()
+LLVkBridge::Mutex& LLVkBridge::lock()
 {
-    return LLVkGL::gMutex;
+    return LLVkWorker::gMutex;
 }
 
-bool LLVkMirror::isReady()
+bool LLVkBridge::isReady()
 {
     return sMirror.mReady;
 }
 
-bool LLVkMirror::readbackAffordable()
+bool LLVkBridge::readbackAffordable()
 {
     return LLVkTex::readbackAffordable();
 }
 
-bool LLVkMirror::videoMemory(U64& usage_bytes, U64& budget_bytes)
+bool LLVkBridge::videoMemory(U64& usage_bytes, U64& budget_bytes)
 {
     return sMirror.mReady && !sMirror.mFailed && LLVk::Context::instance().videoMemory(usage_bytes, budget_bytes);
 }
 
-LLVk::Image* LLVkMirror::backbufferColor()
+LLVk::Image* LLVkBridge::backbufferColor()
 {
     return (sMirror.mReady && sMirror.mBackbuffer.valid()) ? &sMirror.mBackbuffer : nullptr;
 }
 
-LLVk::Image* LLVkMirror::backbufferDepth()
+LLVk::Image* LLVkBridge::backbufferDepth()
 {
     return (sMirror.mReady && sMirror.mDepth.valid()) ? &sMirror.mDepth : nullptr;
 }
 
-bool LLVkMirror::inFrame()
+bool LLVkBridge::inFrame()
 {
     return sMirror.mReady && sMirror.mInFrame;
 }
 
-void LLVkMirror::setMainWindow(void* hwnd)
+void LLVkBridge::setMainWindow(void* hwnd)
 {
     sMainWindowHandle = hwnd;
 }
 
-bool LLVkMirror::describeDevice(DeviceInfo& out)
+bool LLVkBridge::describeDevice(DeviceInfo& out)
 {
     if (!ensureReady())
     {
@@ -654,9 +654,9 @@ bool LLVkMirror::describeDevice(DeviceInfo& out)
     return true;
 }
 
-bool LLVkMirror::ensureReady()
+bool LLVkBridge::ensureReady()
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
     if (sMirror.mReady)
     {
         return true;
@@ -677,9 +677,9 @@ bool LLVkMirror::ensureReady()
         return false;
     }
     sMirror.mReady = true;
-    LLVkGL::gActive = true;
-    LLVkGL::gOwn = getenv("LL_VK_OWN") != nullptr;
-    if (LLVkGL::gOwn)
+    LLVkWorker::gActive = true;
+    LLVkWorker::gOwn = getenv("LL_VK_OWN") != nullptr;
+    if (LLVkWorker::gOwn)
     {
         LL_INFOS("VkMirror") << "LL_VK_OWN: the mirror owns textures, buffers, framebuffers, vertex arrays, queries and fences; OpenGL no longer executes them or the draws. The main window stays blank, the picture is in the mirror window." << LL_ENDL;
     }
@@ -688,7 +688,7 @@ bool LLVkMirror::ensureReady()
     return true;
 }
 
-void LLVkMirror::stopAsync()
+void LLVkBridge::stopAsync()
 {
     LLVkAsync::stop();
     // Renderer::shutdown() is not reached on the normal exit path: stop the pipeline build threads and write the pipeline cache and the variant list here
@@ -699,21 +699,21 @@ void LLVkMirror::stopAsync()
     }
 }
 
-void LLVkMirror::setBindlessPersistent(bool on)
+void LLVkBridge::setBindlessPersistent(bool on)
 {
     LLVk::Renderer::sBindlessPersistent = on;
 }
 
-void LLVkMirror::shutdown()
+void LLVkBridge::shutdown()
 {
     LLVkAsync::stop();
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
-    if (LLVkGL::gOwn)
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    if (LLVkWorker::gOwn)
     {
         LL_WARNS("VkMirror") << "the mirror shut down while it owned the resources: nothing can be drawn any more" << LL_ENDL;
     }
-    LLVkGL::gActive = false;
-    LLVkGL::gOwn = false;
+    LLVkWorker::gActive = false;
+    LLVkWorker::gOwn = false;
     LLVk::Context& ctx = LLVk::Context::instance();
     if (ctx.isReady())
     {
@@ -743,10 +743,10 @@ void LLVkMirror::shutdown()
     sMirror.mClosed = false;
 }
 
-void LLVkMirror::beginFrameImpl(S32 width, S32 height)
+void LLVkBridge::beginFrameImpl(S32 width, S32 height)
 {
     gMainThreadId = __readgsdword(0x48);
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
     if (glonly_mode())
     {
         bench_init();
@@ -905,7 +905,7 @@ void LLVkMirror::beginFrameImpl(S32 width, S32 height)
     bool acquired = false;
     for (int attempt = 0; attempt < 3 && !acquired; ++attempt)
     {
-        acquired = sc.acquire(ctx.getAcquireSemaphore(), image_index, LLVkGL::gOwn ? 250ull * 1000 * 1000 : 0ull);
+        acquired = sc.acquire(ctx.getAcquireSemaphore(), image_index, LLVkWorker::gOwn ? 250ull * 1000 * 1000 : 0ull);
         if (!acquired)
         {
             if (!sc.needsRecreate() || !sc.create(ctx.getSurface(), sMirror.mWindow) || !sc.isValid())
@@ -929,9 +929,9 @@ void LLVkMirror::beginFrameImpl(S32 width, S32 height)
     sMirror.mInFrame = true;
 }
 
-void LLVkMirror::holdFrameImpl(bool hold)
+void LLVkBridge::holdFrameImpl(bool hold)
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
     sMirror.mHold = hold;
 }
 
@@ -960,7 +960,7 @@ bool begin_offscreen_frame()
 }
 }
 
-void LLVkMirror::Mutex::lockSlow(unsigned long me)
+void LLVkBridge::Mutex::lockSlow(unsigned long me)
 {
     for (U32 attempt = 0;; ++attempt)
     {
@@ -976,14 +976,14 @@ void LLVkMirror::Mutex::lockSlow(unsigned long me)
     }
 }
 
-const char* LLVkMirror::phaseName(int id)
+const char* LLVkBridge::phaseName(int id)
 {
     return id >= 0 && id < PH_COUNT ? PHASE_NAMES[id] : "?";
 }
 
-void LLVkMirror::snapshotBoundaryImpl(S32 mode)
+void LLVkBridge::snapshotBoundaryImpl(S32 mode)
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
     if (mode <= 0 || !sMirror.mReady || !sMirror.mInFrame)
     {
         return;
@@ -1011,9 +1011,9 @@ void LLVkMirror::snapshotBoundaryImpl(S32 mode)
     }
 }
 
-void LLVkMirror::presentFrameImpl()
+void LLVkBridge::presentFrameImpl()
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
     if (glonly_mode())
     {
         bench_mark_present();
@@ -1078,9 +1078,9 @@ bool represent_after_resize()
 
 }
 
-void LLVkMirror::endFrameImpl()
+void LLVkBridge::endFrameImpl()
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
     if (glonly_mode())
     {
         return;
@@ -1096,7 +1096,7 @@ void LLVkMirror::endFrameImpl()
     LLVk::Swapchain& sc = sMirror.mSwapchain;
     const U32 index = sMirror.mImageIndex;
 
-    LLVkGL::before_end_frame();
+    LLVkWorker::before_end_frame();
     if (sMirror.mOffscreen)
     {
         sMirror.mOffscreen = false;
@@ -1145,15 +1145,15 @@ void LLVkMirror::endFrameImpl()
     }
     bench_vk_collect(false);
     ++sMirror.mFrames;
-    LLVkGL::after_frame();
+    LLVkWorker::after_frame();
 }
 
-bool LLVkMirror::benchPhasesActive()
+bool LLVkBridge::benchPhasesActive()
 {
     return sBench.mPhaseActive;
 }
 
-void LLVkMirror::benchPass(const char* name)
+void LLVkBridge::benchPass(const char* name)
 {
     const U32 kind = bench_kind_of(name);
     if ((int)kind == sBench.mCurrentKind || sBench.mPhaseUsed + 2 >= Bench::PHASE_QUERIES)
@@ -1173,14 +1173,14 @@ namespace
 // The worker takes over between two frames: once a frame has been closed in the usual way and the mirror is ready.
 void maybe_start_async()
 {
-    if (!LLVkAsync::gEnabled && LLVkAsync::requested() && sMirror.mReady && !sMirror.mInFrame && !sMirror.mHold && LLVkGL::gOwn)
+    if (!LLVkAsync::gEnabled && LLVkAsync::requested() && sMirror.mReady && !sMirror.mInFrame && !sMirror.mHold && LLVkWorker::gOwn)
     {
         LLVkAsync::start();
     }
 }
 }
 
-void LLVkMirror::beginFrame(S32 width, S32 height)
+void LLVkBridge::beginFrame(S32 width, S32 height)
 {
     if (LLVkAsync::gEnabled)
     {
@@ -1190,7 +1190,7 @@ void LLVkMirror::beginFrame(S32 width, S32 height)
     beginFrameImpl(width, height);
 }
 
-void LLVkMirror::endFrame()
+void LLVkBridge::endFrame()
 {
     if (LLVkAsync::gEnabled)
     {
@@ -1201,7 +1201,7 @@ void LLVkMirror::endFrame()
     maybe_start_async();
 }
 
-void LLVkMirror::presentFrame()
+void LLVkBridge::presentFrame()
 {
     if (LLVkAsync::gEnabled)
     {
@@ -1211,7 +1211,7 @@ void LLVkMirror::presentFrame()
     presentFrameImpl();
 }
 
-void LLVkMirror::holdFrame(bool hold)
+void LLVkBridge::holdFrame(bool hold)
 {
     if (LLVkAsync::gEnabled)
     {
@@ -1221,7 +1221,7 @@ void LLVkMirror::holdFrame(bool hold)
     holdFrameImpl(hold);
 }
 
-void LLVkMirror::snapshotBoundary(S32 mode)
+void LLVkBridge::snapshotBoundary(S32 mode)
 {
     if (LLVkAsync::gEnabled)
     {
@@ -1231,22 +1231,22 @@ void LLVkMirror::snapshotBoundary(S32 mode)
     snapshotBoundaryImpl(mode);
 }
 
-void LLVkMirror::setUpscaleLodBias(float bias)
+void LLVkBridge::setUpscaleLodBias(float bias)
 {
     LLVkDlss::setLodBias(bias);
 }
 
-bool LLVkMirror::upscaleAvailable()
+bool LLVkBridge::upscaleAvailable()
 {
     return sMirror.mReady && LLVkDlss::ready();
 }
 
-bool LLVkMirror::rayReconstructionAvailable()
+bool LLVkBridge::rayReconstructionAvailable()
 {
     return sMirror.mReady && LLVkDlss::rayReconstructionAvailable();
 }
 
-void LLVkMirror::upscale(const UpscaleArgs& args)
+void LLVkBridge::upscale(const UpscaleArgs& args)
 {
     if (LLVkAsync::gEnabled)
     {
@@ -1256,66 +1256,66 @@ void LLVkMirror::upscale(const UpscaleArgs& args)
     upscaleImpl(args);
 }
 
-void LLVkMirror::upscaleImpl(const UpscaleArgs& args)
+void LLVkBridge::upscaleImpl(const UpscaleArgs& args)
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
-    LLVkGL::on_upscale(args);
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    LLVkWorker::on_upscale(args);
 }
 
-namespace LLVkGL
+namespace LLVkWorker
 {
-    void on_shadow_packets(const LLVkMirror::ShadowPacketsHeader& header, const U8* blob);
-    void on_rt_scene(const LLVkMirror::RtSceneArgs& args);
+    void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& header, const U8* blob);
+    void on_rt_scene(const LLVkBridge::RtSceneArgs& args);
 }
 
-U32 LLVkMirror::rtShadowMode()
+U32 LLVkBridge::rtShadowMode()
 {
     // known once the device exists (the shaders are compiled after that); the scene is built only when the device was created with ray queries
     const LLVk::Capabilities& caps = LLVk::Context::instance().getCaps();
     return sMirror.mReady && caps.mRt.mEnabled && caps.mRt.mUsable ? LLVk::Rt::shadowMode() : 0;
 }
 
-bool LLVkMirror::rtMaterialsAvailable()
+bool LLVkBridge::rtMaterialsAvailable()
 {
     return rtShadowMode() != 0 && LLVk::Rt::materialsOn();
 }
 
-S32 LLVkMirror::rtGlossyReflections()
+S32 LLVkBridge::rtGlossyReflections()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::glossyReflections() : 0;
 }
 
-S32 LLVkMirror::rtHitQuality()
+S32 LLVkBridge::rtHitQuality()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::hitQuality() : -1;
 }
 
-S32 LLVkMirror::rtHitRays()
+S32 LLVkBridge::rtHitRays()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::hitRays() : -1;
 }
 
-S32 LLVkMirror::rtWaterReflections()
+S32 LLVkBridge::rtWaterReflections()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::waterReflections() : 0;
 }
 
-S32 LLVkMirror::rtDebugView()
+S32 LLVkBridge::rtDebugView()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::debugView() : 0;
 }
 
-bool LLVkMirror::rtLoadingGates()
+bool LLVkBridge::rtLoadingGates()
 {
     return rtShadowMode() != 0 && LLVk::Rt::loadingGates();
 }
 
-bool LLVkMirror::rtBodyRename()
+bool LLVkBridge::rtBodyRename()
 {
     return rtShadowMode() != 0 && LLVk::Rt::bodyRename();
 }
 
-void LLVkMirror::rtScene(const RtSceneArgs& args)
+void LLVkBridge::rtScene(const RtSceneArgs& args)
 {
     if (LLVkAsync::gEnabled)
     {
@@ -1325,23 +1325,23 @@ void LLVkMirror::rtScene(const RtSceneArgs& args)
     rtSceneImpl(args);
 }
 
-void LLVkMirror::rtSceneImpl(const RtSceneArgs& args)
+void LLVkBridge::rtSceneImpl(const RtSceneArgs& args)
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
-    LLVkGL::on_rt_scene(args);
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    LLVkWorker::on_rt_scene(args);
 }
 
-bool LLVkMirror::shadowPacketsAvailable()
+bool LLVkBridge::shadowPacketsAvailable()
 {
     return sMirror.mReady && LLVk::Context::instance().getCaps().mBufferDeviceAddress;
 }
 
-bool LLVkMirror::shadowAlphaPacketsAvailable()
+bool LLVkBridge::shadowAlphaPacketsAvailable()
 {
     return shadowPacketsAvailable() && LLVk::Context::instance().getCaps().mBindlessSlots != 0;
 }
 
-void LLVkMirror::shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes)
+void LLVkBridge::shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes)
 {
     if (LLVkAsync::gEnabled)
     {
@@ -1351,10 +1351,10 @@ void LLVkMirror::shadowPackets(const ShadowPacketsHeader& header, const void* bl
     shadowPacketsImpl(header, (const U8*)blob);
 }
 
-void LLVkMirror::shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob)
+void LLVkBridge::shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob)
 {
-    std::lock_guard<LLVkMirror::Mutex> lock(LLVkGL::gMutex);
-    LLVkGL::on_shadow_packets(header, blob);
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    LLVkWorker::on_shadow_packets(header, blob);
 }
 
 #endif // LL_VULKAN

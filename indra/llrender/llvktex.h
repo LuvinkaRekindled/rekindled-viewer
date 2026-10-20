@@ -64,7 +64,7 @@ namespace LLVkTex
     void bindSlot(S32 unit, U32 id);
 }
 
-namespace LLVkGL
+namespace LLVkWorker
 {
     // worker side (or the calling thread in inline mode): the typed handlers, acting on the named texture
     void tex_image2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, LLVkFormat::Transfer tr, const void* pixels);

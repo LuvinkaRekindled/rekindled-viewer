@@ -36,7 +36,7 @@ namespace LLVkQuery
     U64 result(U32 id);
 }
 
-namespace LLVkGL
+namespace LLVkWorker
 {
     void query_begin(unsigned kind, unsigned id);
     void query_end(unsigned kind);

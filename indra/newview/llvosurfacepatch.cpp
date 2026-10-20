@@ -138,12 +138,12 @@ LLDrawable *LLVOSurfacePatch::createDrawable(LLPipeline *pipeline)
 }
 
 
-void LLVOSurfacePatch::updateGL()
+void LLVOSurfacePatch::updateResources()
 {
     if (mPatchp)
     {
         LL_PROFILE_ZONE_SCOPED;
-        mPatchp->updateGL();
+        mPatchp->updateResources();
     }
 }
 

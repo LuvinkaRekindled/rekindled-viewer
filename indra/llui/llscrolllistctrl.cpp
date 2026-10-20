@@ -1897,7 +1897,7 @@ void LLScrollListCtrl::draw()
     if (mBackgroundVisible)
     {
         F32 alpha = getCurrentTransparency();
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
         gl_rect_2d(background, getEnabled() ? mBgWriteableColor.get() % alpha : mBgReadOnlyColor.get() % alpha );
     }
 

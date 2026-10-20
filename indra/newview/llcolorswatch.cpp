@@ -231,7 +231,7 @@ void LLColorSwatchCtrl::draw()
             // Draw semi-transparent center area in filled with mColor.
             LLColor4 opaque_color = mColor;
             opaque_color.mV[VALPHA] = alpha;
-            gGL.color4fv(opaque_color.mV);
+            gRender.color4fv(opaque_color.mV);
             if (mAlphaGradientImage.notNull())
             {
                 LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);

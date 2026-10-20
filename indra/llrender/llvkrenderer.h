@@ -538,7 +538,7 @@ private:
     BindlessTable mBindlessTbl[BINDLESS_TABLES];
     U32 mBindlessCap[BINDLESS_TABLES] = {};         // slots per table: the 2D table is the big one
 public:
-    // <FS> what the textures cost and where they fail (logged every 1800 frames by LLVkGL::after_frame; reset by each read)
+    // <FS> what the textures cost and where they fail (logged every 1800 frames by LLVkWorker::after_frame; reset by each read)
     struct TexStats
     {
         U32 mBindlessPeak = 0;          // most slots one table had in use

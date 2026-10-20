@@ -37,7 +37,7 @@ protected:
     U32     mTriangleCount;
 public:
     void    prerender();
-    void    cleanupGL();
+    void    cleanupResources();
 
     void    renderface(S32 which_face);
     void    render();

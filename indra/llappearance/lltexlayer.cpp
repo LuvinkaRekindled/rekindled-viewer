@@ -134,7 +134,7 @@ void LLTexLayerSetBuffer::postRenderTexLayerSet(bool success)
 bool LLTexLayerSetBuffer::renderTexLayerSet(LLRenderTarget* bound_target)
 {
     // Default color mask for tex layer render
-    gGL.setColorMask(true, true);
+    gRender.setColorMask(true, true);
 
     bool success = true;
 
@@ -147,7 +147,7 @@ bool LLTexLayerSetBuffer::renderTexLayerSet(LLRenderTarget* bound_target)
     LLGLSUIDefault gls_ui;
     success &= mTexLayerSet->render( getCompositeOriginX(), getCompositeOriginY(),
                                      getCompositeWidth(), getCompositeHeight(), bound_target );
-    gGL.flush();
+    gRender.flush();
 
     // <FS:Ansariel> [Legacy Bake]
     //midRenderTexLayerSet(success);
@@ -159,8 +159,8 @@ bool LLTexLayerSetBuffer::renderTexLayerSet(LLRenderTarget* bound_target)
     LLVertexBuffer::unbind();
 
     // reset GL state
-    gGL.setColorMask(true, true);
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    gRender.setColorMask(true, true);
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
     return success;
 }
@@ -375,18 +375,18 @@ bool LLTexLayerSet::render( S32 x, S32 y, S32 width, S32 height, LLRenderTarget*
 
     LLGLSUIDefault gls_ui;
     LLRenderState::DepthScope gls_depth(false, false);
-    gGL.setColorMask(true, true);
+    gRender.setColorMask(true, true);
 
     // clear buffer area to ensure we don't pick up UI elements
     {
-        gGL.flush();
+        gRender.flush();
         gAlphaMaskProgram.setMinimumAlpha(0.0f);
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.color4f( 0.f, 0.f, 0.f, 1.f );
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.color4f( 0.f, 0.f, 0.f, 1.f );
 
         gl_rect_2d_simple( width, height );
 
-        gGL.flush();
+        gRender.flush();
         gAlphaMaskProgram.setMinimumAlpha(0.004f);
     }
 
@@ -397,9 +397,9 @@ bool LLTexLayerSet::render( S32 x, S32 y, S32 width, S32 height, LLRenderTarget*
         {
             if (layer->getRenderPass() == LLTexLayer::RP_COLOR)
             {
-                gGL.flush();
+                gRender.flush();
                 success &= layer->render(x, y, width, height, bound_target);
-                gGL.flush();
+                gRender.flush();
             }
         }
 
@@ -409,18 +409,18 @@ bool LLTexLayerSet::render( S32 x, S32 y, S32 width, S32 height, LLRenderTarget*
     }
     else
     {
-        gGL.flush();
+        gRender.flush();
 
-        gGL.setSceneBlendType(LLRender::BT_REPLACE);
+        gRender.setSceneBlendType(LLRender::BT_REPLACE);
         gAlphaMaskProgram.setMinimumAlpha(0.f);
 
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.color4f( 0.f, 0.f, 0.f, 0.f );
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.color4f( 0.f, 0.f, 0.f, 0.f );
 
         gl_rect_2d_simple( width, height );
-        gGL.setSceneBlendType(LLRender::BT_ALPHA);
+        gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
-        gGL.flush();
+        gRender.flush();
         gAlphaMaskProgram.setMinimumAlpha(0.004f);
     }
 
@@ -479,35 +479,35 @@ void LLTexLayerSet::renderAlphaMaskTextures(S32 x, S32 y, S32 width, S32 height,
     LL_PROFILE_ZONE_SCOPED;
     const LLTexLayerSetInfo *info = getInfo();
 
-    gGL.setColorMask(false, true);
-    gGL.setSceneBlendType(LLRender::BT_REPLACE);
+    gRender.setColorMask(false, true);
+    gRender.setSceneBlendType(LLRender::BT_REPLACE);
 
     // (Optionally) replace alpha with a single component image from a tga file.
     if (!info->mStaticAlphaFileName.empty())
     {
-        gGL.flush();
+        gRender.flush();
         {
-            LLGLTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture(info->mStaticAlphaFileName, true);
+            LLBaseTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture(info->mStaticAlphaFileName, true);
             if( tex )
             {
                 LLGLSUIDefault gls_ui;
-                gGL.getTexUnit(0)->bind(tex);
+                gRender.getTexUnit(0)->bind(tex);
                 gl_rect_2d_simple_tex( width, height );
             }
         }
-        gGL.flush();
+        gRender.flush();
     }
     else if (forceClear || info->mClearAlpha || (mMaskLayerList.size() > 0))
     {
         // Set the alpha channel to one (clean up after previous blending)
-        gGL.flush();
+        gRender.flush();
         gAlphaMaskProgram.setMinimumAlpha(0.f);
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.color4f( 0.f, 0.f, 0.f, 1.f );
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.color4f( 0.f, 0.f, 0.f, 1.f );
 
         gl_rect_2d_simple( width, height );
 
-        gGL.flush();
+        gRender.flush();
         gAlphaMaskProgram.setMinimumAlpha(0.004f);
     }
 
@@ -515,20 +515,20 @@ void LLTexLayerSet::renderAlphaMaskTextures(S32 x, S32 y, S32 width, S32 height,
     // will still have an effect even if mClearAlpha is set or the alpha component was replaced
     if (mMaskLayerList.size() > 0)
     {
-        gGL.setSceneBlendType(LLRender::BT_MULT_ALPHA);
+        gRender.setSceneBlendType(LLRender::BT_MULT_ALPHA);
         for (LLTexLayerInterface* layer : mMaskLayerList)
         {
-            gGL.flush();
+            gRender.flush();
             layer->blendAlphaTexture(x,y,width, height);
-            gGL.flush();
+            gRender.flush();
         }
 
     }
 
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
 
-    gGL.setColorMask(true, true);
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    gRender.setColorMask(true, true);
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
 }
 
 void LLTexLayerSet::applyMorphMask(const U8* tex_data, S32 width, S32 height, S32 num_components)
@@ -1078,22 +1078,22 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
         const bool force_render = true;
         renderMorphMasks(x, y, width, height, net_color, bound_target, force_render);
         alpha_mask_specified = true;
-        gGL.flush();
-        gGL.blendFunc(LLRender::BF_DEST_ALPHA, LLRender::BF_ONE_MINUS_DEST_ALPHA);
+        gRender.flush();
+        gRender.blendFunc(LLRender::BF_DEST_ALPHA, LLRender::BF_ONE_MINUS_DEST_ALPHA);
     }
 
-    gGL.color4fv( net_color.mV);
+    gRender.color4fv( net_color.mV);
 
     if( getInfo()->mWriteAllChannels )
     {
-        gGL.flush();
-        gGL.setSceneBlendType(LLRender::BT_REPLACE);
+        gRender.flush();
+        gRender.setSceneBlendType(LLRender::BT_REPLACE);
     }
 
     if( (getInfo()->mLocalTexture != -1) && !getInfo()->mUseLocalTextureAlphaOnly )
     {
         {
-            LLGLTexture* tex = NULL;
+            LLBaseTexture* tex = NULL;
             if (mLocalTextureObject && mLocalTextureObject->getImage())
             {
                 tex = mLocalTextureObject->getImage();
@@ -1118,13 +1118,13 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
 
                     LLTexUnit::eTextureAddressMode old_mode = tex->getAddressMode();
 
-                    gGL.getTexUnit(0)->bind(tex, true);
-                    gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+                    gRender.getTexUnit(0)->bind(tex, true);
+                    gRender.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
 
                     gl_rect_2d_simple_tex( width, height );
 
-                    gGL.getTexUnit(0)->setTextureAddressMode(old_mode);
-                    gGL.getTexUnit(0)->bindWhite();
+                    gRender.getTexUnit(0)->setTextureAddressMode(old_mode);
+                    gRender.getTexUnit(0)->bindWhite();
                     if (no_alpha_test)
                     {
                         gAlphaMaskProgram.setMinimumAlpha(0.004f);
@@ -1141,12 +1141,12 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
     if( !getInfo()->mStaticImageFileName.empty() )
     {
         {
-            LLGLTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture(getInfo()->mStaticImageFileName, getInfo()->mStaticImageIsMask);
+            LLBaseTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture(getInfo()->mStaticImageFileName, getInfo()->mStaticImageIsMask);
             if( tex )
             {
-                gGL.getTexUnit(0)->bind(tex, true);
+                gRender.getTexUnit(0)->bind(tex, true);
                 gl_rect_2d_simple_tex( width, height );
-                gGL.getTexUnit(0)->bindWhite();
+                gRender.getTexUnit(0)->bindWhite();
             }
             else
             {
@@ -1162,8 +1162,8 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
     {
         gAlphaMaskProgram.setMinimumAlpha(0.000f);
 
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.color4fv( net_color.mV );
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.color4fv( net_color.mV );
         gl_rect_2d_simple( width, height );
         gAlphaMaskProgram.setMinimumAlpha(0.004f);
     }
@@ -1171,8 +1171,8 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
     if( alpha_mask_specified || getInfo()->mWriteAllChannels )
     {
         // Restore standard blend func value
-        gGL.flush();
-        gGL.setSceneBlendType(LLRender::BT_ALPHA);
+        gRender.flush();
+        gRender.setSceneBlendType(LLRender::BT_ALPHA);
         stop_glerror();
     }
 
@@ -1250,17 +1250,17 @@ bool LLTexLayer::blendAlphaTexture(S32 x, S32 y, S32 width, S32 height)
 {
     bool success = true;
 
-    gGL.flush();
+    gRender.flush();
 
     if( !getInfo()->mStaticImageFileName.empty() )
     {
-        LLGLTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture( getInfo()->mStaticImageFileName, getInfo()->mStaticImageIsMask );
+        LLBaseTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture( getInfo()->mStaticImageFileName, getInfo()->mStaticImageIsMask );
         if( tex )
         {
             gAlphaMaskProgram.setMinimumAlpha(0.f);
-            gGL.getTexUnit(0)->bind(tex, true);
+            gRender.getTexUnit(0)->bind(tex, true);
             gl_rect_2d_simple_tex( width, height );
-            gGL.getTexUnit(0)->bindWhite();
+            gRender.getTexUnit(0)->bindWhite();
             gAlphaMaskProgram.setMinimumAlpha(0.004f);
         }
         else
@@ -1272,13 +1272,13 @@ bool LLTexLayer::blendAlphaTexture(S32 x, S32 y, S32 width, S32 height)
     {
         if (getInfo()->mLocalTexture >=0 && getInfo()->mLocalTexture < TEX_NUM_INDICES)
         {
-            LLGLTexture* tex = mLocalTextureObject->getImage();
+            LLBaseTexture* tex = mLocalTextureObject->getImage();
             if (tex)
             {
                 gAlphaMaskProgram.setMinimumAlpha(0.f);
-                gGL.getTexUnit(0)->bind(tex);
+                gRender.getTexUnit(0)->bind(tex);
                 gl_rect_2d_simple_tex( width, height );
-                gGL.getTexUnit(0)->bindWhite();
+                gRender.getTexUnit(0)->bindWhite();
                 gAlphaMaskProgram.setMinimumAlpha(0.004f);
             }
         }
@@ -1305,24 +1305,24 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
     llassert( !mParamAlphaList.empty() );
 
     gAlphaMaskProgram.setMinimumAlpha(0.f);
-    gGL.setColorMask(false, true);
+    gRender.setColorMask(false, true);
 
     LLTexLayerParamAlpha* first_param = *mParamAlphaList.begin();
     // Note: if the first param is a mulitply, multiply against the current buffer's alpha
     if( !first_param || !first_param->getMultiplyBlend() )
     {
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
 
         // Clear the alpha
-        gGL.flush();
-        gGL.setSceneBlendType(LLRender::BT_REPLACE);
+        gRender.flush();
+        gRender.setSceneBlendType(LLRender::BT_REPLACE);
 
-        gGL.color4f( 0.f, 0.f, 0.f, 0.f );
+        gRender.color4f( 0.f, 0.f, 0.f, 0.f );
         gl_rect_2d_simple( width, height );
     }
 
     // Accumulate alphas
-    gGL.color4f( 1.f, 1.f, 1.f, 1.f );
+    gRender.color4f( 1.f, 1.f, 1.f, 1.f );
     for (LLTexLayerParamAlpha* param : mParamAlphaList)
     {
         success &= param->render( x, y, width, height );
@@ -1334,37 +1334,37 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
     }
 
     // Approximates a min() function
-    gGL.flush();
-    gGL.setSceneBlendType(LLRender::BT_MULT_ALPHA);
+    gRender.flush();
+    gRender.setSceneBlendType(LLRender::BT_MULT_ALPHA);
 
     // Accumulate the alpha component of the texture
     if( getInfo()->mLocalTexture != -1 )
     {
-        LLGLTexture* tex = mLocalTextureObject->getImage();
+        LLBaseTexture* tex = mLocalTextureObject->getImage();
         if( tex && (tex->getComponents() == 4) )
         {
             LLTexUnit::eTextureAddressMode old_mode = tex->getAddressMode();
 
-            gGL.getTexUnit(0)->bind(tex, true);
-            gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+            gRender.getTexUnit(0)->bind(tex, true);
+            gRender.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
 
             gl_rect_2d_simple_tex( width, height );
 
-            gGL.getTexUnit(0)->setTextureAddressMode(old_mode);
-            gGL.getTexUnit(0)->bindWhite();
+            gRender.getTexUnit(0)->setTextureAddressMode(old_mode);
+            gRender.getTexUnit(0)->bindWhite();
         }
     }
 
     if( !getInfo()->mStaticImageFileName.empty() && getInfo()->mStaticImageIsMask )
     {
-        LLGLTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture(getInfo()->mStaticImageFileName, getInfo()->mStaticImageIsMask);
+        LLBaseTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture(getInfo()->mStaticImageFileName, getInfo()->mStaticImageIsMask);
         if( tex )
         {
             if( (tex->getComponents() == 4) || (tex->getComponents() == 1) )
             {
-                gGL.getTexUnit(0)->bind(tex, true);
+                gRender.getTexUnit(0)->bind(tex, true);
                 gl_rect_2d_simple_tex( width, height );
-                gGL.getTexUnit(0)->bindWhite();
+                gRender.getTexUnit(0)->bindWhite();
             }
             else
             {
@@ -1375,11 +1375,11 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
     }
 
     // Draw a rectangle with the layer color to multiply the alpha by that color's alpha.
-    // Note: we're still using gGL.blendFunc( GL_DST_ALPHA, GL_ZERO );
+    // Note: we're still using gRender.blendFunc( GL_DST_ALPHA, GL_ZERO );
     if ( !is_approx_equal(layer_color.mV[VALPHA], 1.f) )
     {
-        gGL.getTexUnit(0)->bindWhite();
-        gGL.color4fv(layer_color.mV);
+        gRender.getTexUnit(0)->bindWhite();
+        gRender.color4fv(layer_color.mV);
         gl_rect_2d_simple( width, height );
     }
 
@@ -1387,7 +1387,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
 
     LLGLSUIDefault gls_ui;
 
-    gGL.setColorMask(true, true);
+    gRender.setColorMask(true, true);
 
     if (hasMorph() && success)
     {
@@ -1438,7 +1438,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
 
             if (!skip_readback)
             {
-                if (gGLManager.mIsIntel)
+                if (gDeviceCaps.mIsIntel)
                 { // work-around for broken intel drivers which cannot do glReadPixels on an RGBA FBO
                     // returning only the alpha portion without locking up downstream
 
@@ -1464,25 +1464,25 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
 
                     if (bound_target)
                     {
-                        gGL.getTexUnit(0)->bind(bound_target);
+                        gRender.getTexUnit(0)->bind(bound_target);
                     }
                     else
                     {
                         // <FS:ND> Last resort if there is no bound render target
                         // Maybe it would make sense to call
-                        // gGL.getTexUnit(0)->bind( LLRenderTarget::getCurrentBoundTarget ) in case  LLRenderTarget::getCurrentBoundTarget != nullptr rather than bindManual(TT_TEXTURE,0)
+                        // gRender.getTexUnit(0)->bind( LLRenderTarget::getCurrentBoundTarget ) in case  LLRenderTarget::getCurrentBoundTarget != nullptr rather than bindManual(TT_TEXTURE,0)
                         // but seems to be fine without
                         if (!textureW || !textureH)
                         {
                             S32 glTemp{};
-                            gGL.getTexLevelParameteriv(0, TextureTarget::Tex2D, 0, LevelQuery::Width, (S32*)&glTemp);     // no texture is bound on this path
+                            gRender.getTexLevelParameteriv(0, TextureTarget::Tex2D, 0, LevelQuery::Width, (S32*)&glTemp);     // no texture is bound on this path
                             textureW = glTemp;
-                            gGL.getTexLevelParameteriv(0, TextureTarget::Tex2D, 0, LevelQuery::Height, (S32*)&glTemp);
+                            gRender.getTexLevelParameteriv(0, TextureTarget::Tex2D, 0, LevelQuery::Height, (S32*)&glTemp);
                             textureH = glTemp;
                         }
                         // </FS>ND>
 
-                        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, 0);
+                        gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, 0);
                     }
 
                     // <FS:ND> Check invariants and allocate memory
@@ -1503,7 +1503,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         return;
                     }
 
-                    gGL.getTexImage(bound_target ? bound_target->getTexture(0) : 0, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, PixelFormat::RGBA, ComponentType::U8, temp);
+                    gRender.getTexImage(bound_target ? bound_target->getTexture(0) : 0, LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, PixelFormat::RGBA, ComponentType::U8, temp);
                     {
                         U8* alpha_cursor = alpha_data;
                         U8* pixel = temp;
@@ -1524,7 +1524,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         // </FS:ND>
                     }
 
-                    gGL.getTexUnit(0)->clear();
+                    gRender.getTexUnit(0)->clear();
 
                     ll_aligned_free_32(temp);
                 }
@@ -1539,7 +1539,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         LL_ERRS() << "Failed to allocate temporary memory for morph texture: " << (S32)(mem_size * TEMP_BYTES_PER_PIXEL) << LL_ENDL;
                         return;
                     }
-                    gGL.readPixels(x, y, width, height, PixelFormat::RGBA, ComponentType::U8, temp_data);
+                    gRender.readPixels(x, y, width, height, PixelFormat::RGBA, ComponentType::U8, temp_data);
                     for (size_t pixel = 0; pixel < pixels; pixel++) {
                         alpha_data[pixel] = temp_data[(pixel * TEMP_BYTES_PER_PIXEL) + 3];
                     }
@@ -1608,7 +1608,7 @@ LLUUID LLTexLayer::getUUID() const
     LLUUID uuid;
     if( getInfo()->mLocalTexture != -1 )
     {
-            LLGLTexture* tex = mLocalTextureObject->getImage();
+            LLBaseTexture* tex = mLocalTextureObject->getImage();
             if (tex)
             {
                 uuid = mLocalTextureObject->getID();
@@ -1616,7 +1616,7 @@ LLUUID LLTexLayer::getUUID() const
     }
     if( !getInfo()->mStaticImageFileName.empty() )
     {
-            LLGLTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture(getInfo()->mStaticImageFileName, getInfo()->mStaticImageIsMask);
+            LLBaseTexture* tex = LLTexLayerStaticImageList::getInstance()->getTexture(getInfo()->mStaticImageFileName, getInfo()->mStaticImageIsMask);
             if( tex )
             {
                 uuid = tex->getID();
@@ -1930,10 +1930,10 @@ LLImageTGA* LLTexLayerStaticImageList::getImageTGA(const std::string& file_name)
 
 // Returns a GL Image (without a backing ImageRaw) that contains the decoded data from a tga file named file_name.
 // Caches the result to speed identical subsequent requests.
-LLGLTexture* LLTexLayerStaticImageList::getTexture(const std::string& file_name, bool is_mask)
+LLBaseTexture* LLTexLayerStaticImageList::getTexture(const std::string& file_name, bool is_mask)
 {
     LL_PROFILE_ZONE_SCOPED;
-    LLPointer<LLGLTexture> tex;
+    LLPointer<LLBaseTexture> tex;
     const char *namekey = mImageNames.addString(file_name);
 
     texture_map_t::const_iterator iter = mStaticImageList.find(namekey);
@@ -1960,12 +1960,12 @@ LLGLTexture* LLTexLayerStaticImageList::getTexture(const std::string& file_name,
 
                 image_raw->copyUnscaledAlphaMask(alpha_image_raw, LLColor4U::black);
             }
-            if (!tex->createGLTexture(0, image_raw, 0, true, LLGLTexture::LOCAL))
+            if (!tex->createImageTexture(0, image_raw, 0, true, LLBaseTexture::LOCAL))
             {
                 LL_WARNS() << "Failed to create GL texture for image: " << file_name << LL_ENDL;
             }
 
-            gGL.getTexUnit(0)->bind(tex);
+            gRender.getTexUnit(0)->bind(tex);
             tex->setAddressMode(LLTexUnit::TAM_CLAMP);
 
             mStaticImageList [ namekey ] = tex;

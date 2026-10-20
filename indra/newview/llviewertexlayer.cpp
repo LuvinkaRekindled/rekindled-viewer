@@ -69,7 +69,7 @@ LLViewerTexLayerSetBuffer::LLViewerTexLayerSetBuffer(LLTexLayerSet* const owner,
     mNeedsUpdate(true),
     mNumLowresUpdates(0)
 {
-    mGLTexturep->setNeedsAlphaAndPickMask(false);
+    mImageTexp->setNeedsAlphaAndPickMask(false);
 
     LLViewerTexLayerSetBuffer::sGLByteCount += getSize();
     // <FS:Ansariel> [Legacy Bake]
@@ -80,7 +80,7 @@ LLViewerTexLayerSetBuffer::LLViewerTexLayerSetBuffer(LLTexLayerSet* const owner,
 LLViewerTexLayerSetBuffer::~LLViewerTexLayerSetBuffer()
 {
     LLViewerTexLayerSetBuffer::sGLByteCount -= getSize();
-    destroyGLTexture();
+    destroyImageTexture();
     for( S32 order = 0; order < ORDER_COUNT; order++ )
     {
         LLViewerDynamicTexture::sInstances[order].erase(this);  // will fail in all but one case.
@@ -100,9 +100,9 @@ void LLViewerTexLayerSetBuffer::restoreGLTexture()
 }
 
 //virtual
-void LLViewerTexLayerSetBuffer::destroyGLTexture()
+void LLViewerTexLayerSetBuffer::destroyImageTexture()
 {
-    LLViewerDynamicTexture::destroyGLTexture() ;
+    LLViewerDynamicTexture::destroyImageTexture() ;
 }
 
 // static
@@ -240,14 +240,14 @@ void LLViewerTexLayerSetBuffer::midRenderTexLayerSet(bool success, LLRenderTarge
         doUpdate();
     }
 
-    // *TODO: Old logic does not check success before setGLTextureCreated
+    // *TODO: Old logic does not check success before setImageTextureCreated
     // we have valid texture data now
-    mGLTexturep->setGLTextureCreated(true);
+    mImageTexp->setImageTextureCreated(true);
 }
 
 bool LLViewerTexLayerSetBuffer::isInitialized(void) const
 {
-    return mGLTexturep.notNull() && mGLTexturep->isGLTextureCreated();
+    return mImageTexp.notNull() && mImageTexp->isImageTextureCreated();
 }
 
 bool LLViewerTexLayerSetBuffer::isReadyToUpdate() const
@@ -623,7 +623,7 @@ void LLViewerTexLayerSetBuffer::doUpload(LLRenderTarget* bound_target)
 
     // Get the COLOR information from our texture
     U8* baked_color_data = new U8[ mFullWidth * mFullHeight * 4 ];
-    gGL.readPixels(mOrigin.mX, mOrigin.mY, mFullWidth, mFullHeight, PixelFormat::RGBA, ComponentType::U8, baked_color_data );
+    gRender.readPixels(mOrigin.mX, mOrigin.mY, mFullWidth, mFullHeight, PixelFormat::RGBA, ComponentType::U8, baked_color_data );
     stop_glerror();
 
     // Get the MASK information from our texture

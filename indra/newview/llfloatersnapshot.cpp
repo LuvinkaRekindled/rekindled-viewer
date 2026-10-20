@@ -1243,10 +1243,10 @@ void LLFloaterSnapshotBase::draw()
 
             previewp->drawPreviewRect(offset_x, offset_y) ;
 
-            gGL.pushUIMatrix();
+            gRender.pushUIMatrix();
             LLUI::translate((F32) thumbnail_rect.mLeft, (F32) thumbnail_rect.mBottom);
             mThumbnailPlaceholder->draw();
-            gGL.popUIMatrix();
+            gRender.popUIMatrix();
         }
     }
     impl->updateLayout(this);

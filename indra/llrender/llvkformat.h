@@ -2,7 +2,7 @@
  * @file llvkformat.h
  * @brief F2.2: typed descriptions of textures and pixel data, and the one place that decodes the viewer's GL enum numbers.
  *
- * The viewer keeps GL enum numbers as constants (LLImageGL's formats, LLTexUnit's filter and wrap modes ...). They are turned into the types below once, where the producer
+ * The viewer keeps GL enum numbers as constants (LLImageTex's formats, LLTexUnit's filter and wrap modes ...). They are turned into the types below once, where the producer
  * writes a record (llvktex.h, llvktarget.h), so neither the command stream nor the worker carries a GL number for textures.
  *
  * Compiled only with -DUSE_VULKAN=ON.

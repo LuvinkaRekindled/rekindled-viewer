@@ -111,37 +111,37 @@ void FSAvatarAlignBase::drawCompass()
     F32 cy = lo.cy;
     F32 fR = (F32)lo.R;
 
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
 
     // Background circle
-    gGL.color4f(0.08f, 0.08f, 0.10f, 0.90f);
+    gRender.color4f(0.08f, 0.08f, 0.10f, 0.90f);
     gl_circle_2d(cx, cy, fR, 64, TRUE);
 
     // Outer ring
-    gGL.color4f(0.45f, 0.45f, 0.45f, 1.f);
+    gRender.color4f(0.45f, 0.45f, 0.45f, 1.f);
     gl_circle_2d(cx, cy, fR, 64, FALSE);
 
     // Inner ring at half radius
-    gGL.color4f(0.25f, 0.25f, 0.25f, 1.f);
+    gRender.color4f(0.25f, 0.25f, 0.25f, 1.f);
     gl_circle_2d(cx, cy, fR * 0.5f, 48, FALSE);
 
     // Tick marks at 45° intervals
-    gGL.begin(LLRender::LINES);
-    gGL.color4f(0.35f, 0.35f, 0.35f, 1.f);
+    gRender.begin(LLRender::LINES);
+    gRender.color4f(0.35f, 0.35f, 0.35f, 1.f);
     for (S32 i = 0; i < 8; ++i)
     {
         F32 a  = i * F_PI / 4.f;
         F32 sa = sinf(a), ca = cosf(a);
-        gGL.vertex2f(cx + (fR - 7.f) * sa, cy + (fR - 7.f) * ca);
-        gGL.vertex2f(cx +  fR        * sa, cy +  fR        * ca);
+        gRender.vertex2f(cx + (fR - 7.f) * sa, cy + (fR - 7.f) * ca);
+        gRender.vertex2f(cx +  fR        * sa, cy +  fR        * ca);
     }
-    gGL.end();
+    gRender.end();
 
     // Hover highlight: a semi-transparent light overlay drawn on whichever zone the mouse is over
     if (mHoverOctant == -2)
     {
         // Center zone: fill the inner circle
-        gGL.color4f(1.f, 1.f, 1.f, 0.18f);
+        gRender.color4f(1.f, 1.f, 1.f, 0.18f);
         gl_circle_2d(cx, cy, fR * 0.25f, 24, TRUE);
     }
     else if (mHoverOctant >= 0)
@@ -152,22 +152,22 @@ void FSAvatarAlignBase::drawCompass()
         F32 halfSpan   = F_PI / 8.f;                       // half of 45° in radians
         F32 innerR     = fR * 0.25f;                       // inner boundary (center zone edge)
         S32 segs       = 8;                                // subdivisions for a smooth arc
-        gGL.begin(LLRender::TRIANGLES);
-        gGL.color4f(1.f, 1.f, 1.f, 0.13f);
+        gRender.begin(LLRender::TRIANGLES);
+        gRender.color4f(1.f, 1.f, 1.f, 0.13f);
         for (S32 i = 0; i < segs; ++i)
         {
             // Two adjacent arc angles for this subdivision
             F32 a0 = hoverAngle - halfSpan + (F32)i       * (2.f * halfSpan / segs);
             F32 a1 = hoverAngle - halfSpan + (F32)(i + 1) * (2.f * halfSpan / segs);
             // Two triangles forming a trapezoid between innerR and fR for this strip
-            gGL.vertex2f(cx + innerR * sinf(a0), cy + innerR * cosf(a0));
-            gGL.vertex2f(cx + fR     * sinf(a0), cy + fR     * cosf(a0));
-            gGL.vertex2f(cx + fR     * sinf(a1), cy + fR     * cosf(a1));
-            gGL.vertex2f(cx + innerR * sinf(a0), cy + innerR * cosf(a0));
-            gGL.vertex2f(cx + fR     * sinf(a1), cy + fR     * cosf(a1));
-            gGL.vertex2f(cx + innerR * sinf(a1), cy + innerR * cosf(a1));
+            gRender.vertex2f(cx + innerR * sinf(a0), cy + innerR * cosf(a0));
+            gRender.vertex2f(cx + fR     * sinf(a0), cy + fR     * cosf(a0));
+            gRender.vertex2f(cx + fR     * sinf(a1), cy + fR     * cosf(a1));
+            gRender.vertex2f(cx + innerR * sinf(a0), cy + innerR * cosf(a0));
+            gRender.vertex2f(cx + fR     * sinf(a1), cy + fR     * cosf(a1));
+            gRender.vertex2f(cx + innerR * sinf(a1), cy + innerR * cosf(a1));
         }
-        gGL.end();
+        gRender.end();
     }
 
     // Draw the 4 cardinal arms as kite (diamond) shapes.
@@ -183,7 +183,7 @@ void FSAvatarAlignBase::drawCompass()
     F32 tipR  = fR - 4.f;    // how far out the arm tip reaches
     F32 sideR = fR * 0.245f; // half-width of the arm at its base (center of compass)
 
-    gGL.begin(LLRender::TRIANGLES);
+    gRender.begin(LLRender::TRIANGLES);
     for (const auto& arm : ARMS)
     {
         F32 a  = arm.angle_deg * DEG_TO_RAD;
@@ -196,11 +196,11 @@ void FSAvatarAlignBase::drawCompass()
         F32 rx = cx + sideR * sinf(ar);  F32 ry = cy + sideR * cosf(ar);
 
         // two triangles: tip->center->left, tip->right->center
-        gGL.color4f(arm.r, arm.g, arm.b, 1.f);
-        gGL.vertex2f(tx, ty); gGL.vertex2f(cx, cy); gGL.vertex2f(lx, ly);
-        gGL.vertex2f(tx, ty); gGL.vertex2f(rx, ry); gGL.vertex2f(cx, cy);
+        gRender.color4f(arm.r, arm.g, arm.b, 1.f);
+        gRender.vertex2f(tx, ty); gRender.vertex2f(cx, cy); gRender.vertex2f(lx, ly);
+        gRender.vertex2f(tx, ty); gRender.vertex2f(rx, ry); gRender.vertex2f(cx, cy);
     }
-    gGL.end();
+    gRender.end();
 
     // Intercardinal arms (NE, SE, SW, NW): same kite shape as cardinals but shorter and narrower.
     // Skipped entirely when the floater is in compact mini mode (too small to be legible).
@@ -210,8 +210,8 @@ void FSAvatarAlignBase::drawCompass()
 
     if (!lo.mini_compact)
     {
-        gGL.begin(LLRender::TRIANGLES);
-        gGL.color4f(0.55f, 0.55f, 0.55f, 1.f);
+        gRender.begin(LLRender::TRIANGLES);
+        gRender.color4f(0.55f, 0.55f, 0.55f, 1.f);
         for (F32 angle_deg : INTER_ANGLES)
         {
             F32 a  = angle_deg * DEG_TO_RAD;
@@ -223,16 +223,16 @@ void FSAvatarAlignBase::drawCompass()
             F32 lx = cx + sideR2 * sinf(al);  F32 ly = cy + sideR2 * cosf(al);
             F32 rx = cx + sideR2 * sinf(ar);  F32 ry = cy + sideR2 * cosf(ar);
 
-            gGL.vertex2f(tx, ty); gGL.vertex2f(cx, cy); gGL.vertex2f(lx, ly);
-            gGL.vertex2f(tx, ty); gGL.vertex2f(rx, ry); gGL.vertex2f(cx, cy);
+            gRender.vertex2f(tx, ty); gRender.vertex2f(cx, cy); gRender.vertex2f(lx, ly);
+            gRender.vertex2f(tx, ty); gRender.vertex2f(rx, ry); gRender.vertex2f(cx, cy);
         }
-        gGL.end();
+        gRender.end();
     }
 
     // Center dot
-    gGL.color4f(0.20f, 0.20f, 0.20f, 1.f);
+    gRender.color4f(0.20f, 0.20f, 0.20f, 1.f);
     gl_circle_2d(cx, cy, 5.f, 16, TRUE);
-    gGL.color4f(0.50f, 0.50f, 0.50f, 1.f);
+    gRender.color4f(0.50f, 0.50f, 0.50f, 1.f);
     gl_circle_2d(cx, cy, 5.f, 16, FALSE);
 
     // Heading needle: a yellow triangle pointing in the direction the agent is currently facing.
@@ -250,10 +250,10 @@ void FSAvatarAlignBase::drawCompass()
         F32 bx1 = cx - at.mV[VY] * pw;  F32 by1 = cy + at.mV[VX] * pw;
         F32 bx2 = cx + at.mV[VY] * pw;  F32 by2 = cy - at.mV[VX] * pw;
 
-        gGL.begin(LLRender::TRIANGLES);
-        gGL.color4f(1.f, 0.85f, 0.f, 0.95f); // yellow
-        gGL.vertex2f(nx, ny); gGL.vertex2f(bx1, by1); gGL.vertex2f(bx2, by2);
-        gGL.end();
+        gRender.begin(LLRender::TRIANGLES);
+        gRender.color4f(1.f, 0.85f, 0.f, 0.95f); // yellow
+        gRender.vertex2f(nx, ny); gRender.vertex2f(bx1, by1); gRender.vertex2f(bx2, by2);
+        gRender.end();
     }
 
     // Cardinal labels: only in full mode and when compass is large enough
@@ -295,9 +295,9 @@ void FSAvatarAlignBase::drawCompass()
     mToggleBtnRect.set(btn_x, btn_yt, btn_x + btn_w, btn_yt - btn_h);
 
     // Dark fill, then a white border that brightens on hover
-    gGL.color4f(0.f, 0.f, 0.f, 0.55f);
+    gRender.color4f(0.f, 0.f, 0.f, 0.55f);
     gl_rect_2d(mToggleBtnRect, true);
-    gGL.color4f(1.f, 1.f, 1.f, mHoverToggle ? 1.f : 0.65f);
+    gRender.color4f(1.f, 1.f, 1.f, mHoverToggle ? 1.f : 0.65f);
     gl_rect_2d(mToggleBtnRect, false);
 
     // Label centered inside the button

@@ -165,15 +165,15 @@ inline void LLManipScale::conditionalHighlight( U32 part, const LLColor4* highli
 
     if (mManipPart != (S32)LL_NO_PART && mManipPart != (S32)part)
     {
-        gGL.color4fv( invisible.mV );
+        gRender.color4fv( invisible.mV );
     }
     else if( mHighlightedPart == (S32)part )
     {
-        gGL.color4fv( highlight ? highlight->mV : default_highlight.mV );
+        gRender.color4fv( highlight ? highlight->mV : default_highlight.mV );
     }
     else
     {
-        gGL.color4fv( normal ? normal->mV : default_normal.mV  );
+        gRender.color4fv( normal ? normal->mV : default_normal.mV  );
     }
 }
 
@@ -221,7 +221,7 @@ LLManipScale::~LLManipScale()
 void LLManipScale::render()
 {
     LLGLSUIDefault gls_ui;
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope gls_depth(true);
     LLRenderState::BlendScope gl_blend(true);
     LLBBox bbox = LLSelectMgr::getInstance()->getBBoxOfSelection();
@@ -307,7 +307,7 @@ void LLManipScale::render()
 
             {
                 LLRenderState::PolygonOffsetScope poly_offset(true);
-                gGL.setPolygonOffset( -2.f, -2.f);
+                gRender.setPolygonOffset( -2.f, -2.f);
 
                 renderCorners( bbox );
                 renderFaces( bbox );
@@ -317,7 +317,7 @@ void LLManipScale::render()
                     renderGuidelinesPart( bbox );
                 }
 
-                gGL.setPolygonOffset( 0.f, 0.f);
+                gRender.setPolygonOffset( 0.f, 0.f);
             }
         }
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
@@ -636,26 +636,26 @@ void LLManipScale::renderFaces( const LLBBox& bbox )
 
     if (mManipPart == LL_NO_PART)
     {
-        gGL.color4fv( default_normal_color.mV );
+        gRender.color4fv( default_normal_color.mV );
         LLRenderState::DepthScope gls_depth(false);
-        gGL.begin(LLRender::TRIANGLE_STRIP);
+        gRender.begin(LLRender::TRIANGLE_STRIP);
         {
-            gGL.vertex3f(min.mV[VX], max.mV[VY], min.mV[VZ]);
-            gGL.vertex3f(max.mV[VX], max.mV[VY], min.mV[VZ]);
-            gGL.vertex3f(min.mV[VX], min.mV[VY], min.mV[VZ]);
-            gGL.vertex3f(max.mV[VX], min.mV[VY], min.mV[VZ]);
-            gGL.vertex3f(max.mV[VX], min.mV[VY], max.mV[VZ]);
-            gGL.vertex3f(max.mV[VX], max.mV[VY], min.mV[VZ]);
-            gGL.vertex3f(max.mV[VX], max.mV[VY], max.mV[VZ]);
-            gGL.vertex3f(min.mV[VX], max.mV[VY], min.mV[VZ]);
-            gGL.vertex3f(min.mV[VX], max.mV[VY], max.mV[VZ]);
-            gGL.vertex3f(min.mV[VX], min.mV[VY], min.mV[VZ]);
-            gGL.vertex3f(min.mV[VX], min.mV[VY], max.mV[VZ]);
-            gGL.vertex3f(max.mV[VX], min.mV[VY], max.mV[VZ]);
-            gGL.vertex3f(min.mV[VX], max.mV[VY], max.mV[VZ]);
-            gGL.vertex3f(max.mV[VX], max.mV[VY], max.mV[VZ]);
+            gRender.vertex3f(min.mV[VX], max.mV[VY], min.mV[VZ]);
+            gRender.vertex3f(max.mV[VX], max.mV[VY], min.mV[VZ]);
+            gRender.vertex3f(min.mV[VX], min.mV[VY], min.mV[VZ]);
+            gRender.vertex3f(max.mV[VX], min.mV[VY], min.mV[VZ]);
+            gRender.vertex3f(max.mV[VX], min.mV[VY], max.mV[VZ]);
+            gRender.vertex3f(max.mV[VX], max.mV[VY], min.mV[VZ]);
+            gRender.vertex3f(max.mV[VX], max.mV[VY], max.mV[VZ]);
+            gRender.vertex3f(min.mV[VX], max.mV[VY], min.mV[VZ]);
+            gRender.vertex3f(min.mV[VX], max.mV[VY], max.mV[VZ]);
+            gRender.vertex3f(min.mV[VX], min.mV[VY], min.mV[VZ]);
+            gRender.vertex3f(min.mV[VX], min.mV[VY], max.mV[VZ]);
+            gRender.vertex3f(max.mV[VX], min.mV[VY], max.mV[VZ]);
+            gRender.vertex3f(min.mV[VX], max.mV[VY], max.mV[VZ]);
+            gRender.vertex3f(max.mV[VX], max.mV[VY], max.mV[VZ]);
         }
-        gGL.end();
+        gRender.end();
     }
 
     // Find nearest vertex
@@ -753,7 +753,7 @@ void LLManipScale::renderCorners( const LLBBox& bbox )
 
 void LLManipScale::renderBoxHandle( F32 x, F32 y, F32 z )
 {
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
     LLRenderState::DepthScope gls_depth(false);
     //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 
@@ -1577,29 +1577,29 @@ void LLManipScale::renderSnapGuides(const LLBBox& bbox)
     {
         LLColor4 tick_color = setupSnapGuideRenderPass(pass);
 
-        gGL.begin(LLRender::LINES);
+        gRender.begin(LLRender::LINES);
         LLVector3 line_mid = mScaleCenter + (mScaleSnappedValue * mScaleDir) + (mSnapGuideDir1 * mSnapRegimeOffset);
         LLVector3 line_start = line_mid - (mScaleDir * (llmin(mScaleSnappedValue, mSnapGuideLength * 0.5f)));
         LLVector3 line_end = line_mid + (mScaleDir * llmin(max_point_on_scale_line - mScaleSnappedValue, mSnapGuideLength * 0.5f));
 
-        gGL.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * 0.1f);
-        gGL.vertex3fv(line_start.mV);
-        gGL.color4fv(tick_color.mV);
-        gGL.vertex3fv(line_mid.mV);
-        gGL.vertex3fv(line_mid.mV);
-        gGL.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * 0.1f);
-        gGL.vertex3fv(line_end.mV);
+        gRender.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * 0.1f);
+        gRender.vertex3fv(line_start.mV);
+        gRender.color4fv(tick_color.mV);
+        gRender.vertex3fv(line_mid.mV);
+        gRender.vertex3fv(line_mid.mV);
+        gRender.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * 0.1f);
+        gRender.vertex3fv(line_end.mV);
 
         line_mid = mScaleCenter + (mScaleSnappedValue * mScaleDir) + (mSnapGuideDir2 * mSnapRegimeOffset);
         line_start = line_mid - (mScaleDir * (llmin(mScaleSnappedValue, mSnapGuideLength * 0.5f)));
         line_end = line_mid + (mScaleDir * llmin(max_point_on_scale_line - mScaleSnappedValue, mSnapGuideLength * 0.5f));
-        gGL.vertex3fv(line_start.mV);
-        gGL.color4fv(tick_color.mV);
-        gGL.vertex3fv(line_mid.mV);
-        gGL.vertex3fv(line_mid.mV);
-        gGL.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * 0.1f);
-        gGL.vertex3fv(line_end.mV);
-        gGL.end();
+        gRender.vertex3fv(line_start.mV);
+        gRender.color4fv(tick_color.mV);
+        gRender.vertex3fv(line_mid.mV);
+        gRender.vertex3fv(line_mid.mV);
+        gRender.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * 0.1f);
+        gRender.vertex3fv(line_end.mV);
+        gRender.end();
     }
 
     {
@@ -1635,41 +1635,41 @@ void LLManipScale::renderSnapGuides(const LLBBox& bbox)
         if (mSnapRegime != SNAP_REGIME_NONE)
         {
             // draw snap guide line
-            gGL.begin(LLRender::LINES);
+            gRender.begin(LLRender::LINES);
             LLVector3 snap_line_center = bbox.localToAgent(unitVectorToLocalBBoxExtent( partToUnitVector( mManipPart ), bbox ));
 
             LLVector3 snap_line_start = snap_line_center + (mSnapGuideDir1 * mSnapRegimeOffset);
             LLVector3 snap_line_end = snap_line_center + (mSnapGuideDir2 * mSnapRegimeOffset);
 
-            gGL.color4f(1.f, 1.f, 1.f, grid_alpha);
-            gGL.vertex3fv(snap_line_start.mV);
-            gGL.vertex3fv(snap_line_center.mV);
-            gGL.vertex3fv(snap_line_center.mV);
-            gGL.vertex3fv(snap_line_end.mV);
-            gGL.end();
+            gRender.color4f(1.f, 1.f, 1.f, grid_alpha);
+            gRender.vertex3fv(snap_line_start.mV);
+            gRender.vertex3fv(snap_line_center.mV);
+            gRender.vertex3fv(snap_line_center.mV);
+            gRender.vertex3fv(snap_line_end.mV);
+            gRender.end();
 
             // draw snap guide arrow
-            gGL.begin(LLRender::TRIANGLES);
+            gRender.begin(LLRender::TRIANGLES);
             {
                 //gGLSNoCullFaces.set();
-                gGL.color4f(1.f, 1.f, 1.f, grid_alpha);
+                gRender.color4f(1.f, 1.f, 1.f, grid_alpha);
 
                 LLVector3 arrow_dir;
                 LLVector3 arrow_span = mScaleDir;
 
                 arrow_dir = snap_line_start - snap_line_center;
                 arrow_dir.normalize();
-                gGL.vertex3fv((snap_line_start + arrow_dir * mSnapRegimeOffset * 0.1f).mV);
-                gGL.vertex3fv((snap_line_start + arrow_span * mSnapRegimeOffset * 0.1f).mV);
-                gGL.vertex3fv((snap_line_start - arrow_span * mSnapRegimeOffset * 0.1f).mV);
+                gRender.vertex3fv((snap_line_start + arrow_dir * mSnapRegimeOffset * 0.1f).mV);
+                gRender.vertex3fv((snap_line_start + arrow_span * mSnapRegimeOffset * 0.1f).mV);
+                gRender.vertex3fv((snap_line_start - arrow_span * mSnapRegimeOffset * 0.1f).mV);
 
                 arrow_dir = snap_line_end - snap_line_center;
                 arrow_dir.normalize();
-                gGL.vertex3fv((snap_line_end + arrow_dir * mSnapRegimeOffset * 0.1f).mV);
-                gGL.vertex3fv((snap_line_end + arrow_span * mSnapRegimeOffset * 0.1f).mV);
-                gGL.vertex3fv((snap_line_end - arrow_span * mSnapRegimeOffset * 0.1f).mV);
+                gRender.vertex3fv((snap_line_end + arrow_dir * mSnapRegimeOffset * 0.1f).mV);
+                gRender.vertex3fv((snap_line_end + arrow_span * mSnapRegimeOffset * 0.1f).mV);
+                gRender.vertex3fv((snap_line_end - arrow_span * mSnapRegimeOffset * 0.1f).mV);
             }
-            gGL.end();
+            gRender.end();
         }
 
         LLVector2 screen_translate_axis(llabs(mScaleDir * LLViewerCamera::getInstance()->getLeftAxis()), llabs(mScaleDir * LLViewerCamera::getInstance()->getUpAxis()));
@@ -1684,7 +1684,7 @@ void LLManipScale::renderSnapGuides(const LLBBox& bbox)
             start_tick = -(llmin(ticks_from_scale_center_1, num_ticks_per_side1));
             stop_tick = llmin(max_ticks1, num_ticks_per_side1);
 
-            gGL.begin(LLRender::LINES);
+            gRender.begin(LLRender::LINES);
             // draw first row of ticks
             for (S32 i = start_tick; i <= stop_tick; i++)
             {
@@ -1708,11 +1708,11 @@ void LLManipScale::renderSnapGuides(const LLBBox& bbox)
                     tick_scale *= 0.7f;
                 }
 
-                gGL.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * alpha);
+                gRender.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * alpha);
                 LLVector3 tick_start = tick_pos + (mSnapGuideDir1 * mSnapRegimeOffset);
                 LLVector3 tick_end = tick_start + (mSnapGuideDir1 * mSnapRegimeOffset * tick_scale);
-                gGL.vertex3fv(tick_start.mV);
-                gGL.vertex3fv(tick_end.mV);
+                gRender.vertex3fv(tick_start.mV);
+                gRender.vertex3fv(tick_end.mV);
             }
 
             // draw opposite row of ticks
@@ -1741,13 +1741,13 @@ void LLManipScale::renderSnapGuides(const LLBBox& bbox)
                     tick_scale *= 0.7f;
                 }
 
-                gGL.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * alpha);
+                gRender.color4f(tick_color.mV[VRED], tick_color.mV[VGREEN], tick_color.mV[VBLUE], tick_color.mV[VALPHA] * alpha);
                 LLVector3 tick_start = tick_pos + (mSnapGuideDir2 * mSnapRegimeOffset);
                 LLVector3 tick_end = tick_start + (mSnapGuideDir2 * mSnapRegimeOffset * tick_scale);
-                gGL.vertex3fv(tick_start.mV);
-                gGL.vertex3fv(tick_end.mV);
+                gRender.vertex3fv(tick_start.mV);
+                gRender.vertex3fv(tick_end.mV);
             }
-            gGL.end();
+            gRender.end();
         }
 
         // render upper tick labels

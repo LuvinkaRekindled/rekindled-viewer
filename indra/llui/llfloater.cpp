@@ -2473,32 +2473,32 @@ void LLFloater::drawConeToOwner(F32 &context_cone_opacity,
         owner_view->localRectToOtherView(owner_view->getLocalRect(), &owner_rect, this);
         LLRect local_rect = getLocalRect();
 
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
         LLRenderState::CullScope cull_face(true);
-        gGL.begin(LLRender::TRIANGLE_STRIP);
+        gRender.begin(LLRender::TRIANGLE_STRIP);
         {
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
-            gGL.vertex2i(owner_rect.mLeft, owner_rect.mTop);
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
-            gGL.vertex2i(local_rect.mLeft, local_rect.mTop);
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
-            gGL.vertex2i(owner_rect.mRight, owner_rect.mTop);
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
-            gGL.vertex2i(local_rect.mRight, local_rect.mTop);
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
-            gGL.vertex2i(owner_rect.mRight, owner_rect.mBottom);
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
-            gGL.vertex2i(local_rect.mRight, local_rect.mBottom);
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
-            gGL.vertex2i(owner_rect.mLeft, owner_rect.mBottom);
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
-            gGL.vertex2i(local_rect.mLeft, local_rect.mBottom);
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
-            gGL.vertex2i(owner_rect.mLeft, owner_rect.mTop);
-            gGL.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
-            gGL.vertex2i(local_rect.mLeft, local_rect.mTop);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
+            gRender.vertex2i(owner_rect.mLeft, owner_rect.mTop);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
+            gRender.vertex2i(local_rect.mLeft, local_rect.mTop);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
+            gRender.vertex2i(owner_rect.mRight, owner_rect.mTop);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
+            gRender.vertex2i(local_rect.mRight, local_rect.mTop);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
+            gRender.vertex2i(owner_rect.mRight, owner_rect.mBottom);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
+            gRender.vertex2i(local_rect.mRight, local_rect.mBottom);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
+            gRender.vertex2i(owner_rect.mLeft, owner_rect.mBottom);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
+            gRender.vertex2i(local_rect.mLeft, local_rect.mBottom);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
+            gRender.vertex2i(owner_rect.mLeft, owner_rect.mTop);
+            gRender.color4f(0.f, 0.f, 0.f, contex_cone_out_alpha * context_cone_opacity);
+            gRender.vertex2i(local_rect.mLeft, local_rect.mTop);
         }
-        gGL.end();
+        gRender.end();
     }
 
     if (gFocusMgr.childHasMouseCapture(getDragHandle()))

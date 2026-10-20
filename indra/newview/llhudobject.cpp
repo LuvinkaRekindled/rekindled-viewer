@@ -296,7 +296,7 @@ void LLHUDObject::renderAll()
     LLGLSUIDefault gls_ui;
 
     gUIProgram.bind();
-    gGL.color4f(1, 1, 1, 1);
+    gRender.color4f(1, 1, 1, 1);
 
     LLRenderState::DepthScope depth(false, false);
 

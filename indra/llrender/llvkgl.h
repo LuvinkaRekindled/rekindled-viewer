@@ -15,12 +15,12 @@
 #include "llvkmirror.h"
 #include "llvkasync.h"
 
-namespace LLVkGL
+namespace LLVkWorker
 {
     // true while the mirror is initialised and accepting calls
     extern bool gActive;
     // every mirror entry point of the inline mode (before the queue starts) runs under this lock
-    extern LLVkMirror::Mutex gMutex;
+    extern LLVkBridge::Mutex gMutex;
 
     // CPU time this thread spent inside real OpenGL calls (ticks of the performance counter); read by the benchmark
     inline thread_local long long gGlTicks = 0;
@@ -34,7 +34,7 @@ namespace LLVkGL
     void resource_create(unsigned kind, int n, const unsigned* ids);
     void resource_destroy(unsigned kind, int n, const unsigned* ids);
     // DLSS: runs the upscaler on four mirror-owned textures (colour, depth, motion vectors -> output); the gMutex must be held
-    void on_upscale(const LLVkMirror::UpscaleArgs& args);
+    void on_upscale(const LLVkBridge::UpscaleArgs& args);
     // the GL texture whose image has this view id (device lost report)
     std::string describe_texture_of_view(U64 view_id);
 }

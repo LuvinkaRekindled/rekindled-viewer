@@ -370,17 +370,17 @@ bool LLFacePool::LLOverrideFaceColor::sOverrideFaceColor = false;
 
 void LLFacePool::LLOverrideFaceColor::setColor(const LLColor4& color)
 {
-    gGL.diffuseColor4fv(color.mV);
+    gRender.diffuseColor4fv(color.mV);
 }
 
 void LLFacePool::LLOverrideFaceColor::setColor(const LLColor4U& color)
 {
-    gGL.diffuseColor4ubv(color.mV);
+    gRender.diffuseColor4ubv(color.mV);
 }
 
 void LLFacePool::LLOverrideFaceColor::setColor(F32 r, F32 g, F32 b, F32 a)
 {
-    gGL.diffuseColor4f(r,g,b,a);
+    gRender.diffuseColor4f(r,g,b,a);
 }
 
 
@@ -526,7 +526,7 @@ void LLRenderPass::pushMaskBatches(U32 type, bool texture, bool batch_textures)
     {
         LLDrawInfo* pparams = *i;
         LLCullResult::increment_iterator(i, end);
-        LLGLSLShader::sCurBoundShaderPtr->setMinimumAlpha(pparams->mAlphaMaskCutoff);
+        LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(pparams->mAlphaMaskCutoff);
         pushBatch(*pparams, texture, batch_textures);
     }
 }
@@ -547,7 +547,7 @@ void LLRenderPass::pushRiggedMaskBatches(U32 type, bool texture, bool batch_text
 
         llassert(pparams);
 
-        LLGLSLShader::sCurBoundShaderPtr->setMinimumAlpha(pparams->mAlphaMaskCutoff);
+        LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(pparams->mAlphaMaskCutoff);
 
         if (uploadMatrixPalette(pparams->mAvatar, pparams->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
         {
@@ -563,10 +563,10 @@ void LLRenderPass::applyModelMatrix(const LLDrawInfo& params)
 
 void LLRenderPass::applyModelMatrix(const LLMatrix4* model_matrix)
 {
-    if (model_matrix != gGLLastMatrix)
+    if (model_matrix != gRenderLastMatrix)
     {
-        gGLLastMatrix = model_matrix;
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gGLModelView);
+        gRenderLastMatrix = model_matrix;
+        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
         if (model_matrix)
         {
             LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) model_matrix->mMatrix);
@@ -601,7 +601,7 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
             {
                 if (params.mTextureList[i].notNull())
                 {
-                    gGL.getTexUnit(i)->bindFast(params.mTextureList[i]);
+                    gRender.getTexUnit(i)->bindFast(params.mTextureList[i]);
                 }
             }
         }
@@ -609,7 +609,7 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
         { //not batching textures or batch has only 1 texture -- might need a texture matrix
             if (params.mTexture.notNull())
             {
-                gGL.getTexUnit(0)->bindFast(params.mTexture);
+                gRender.getTexUnit(0)->bindFast(params.mTexture);
                 if (params.mTextureMatrix)
                 {
                     tex_setup = true;
@@ -619,7 +619,7 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
             }
             else
             {
-                gGL.getTexUnit(0)->bindWhiteFast();
+                gRender.getTexUnit(0)->bindWhiteFast();
             }
         }
     }
@@ -659,7 +659,7 @@ bool LLRenderPass::deferredPacketsEnabled()
             LL_INFOS("ShadowPackets") << "[phase] deferred packets now " << (on ? "ON" : "off") << LL_ENDL;
         }
     }
-    return on && gDeferredDiffusePullProgram.mProgramObject != 0 && LLVkMirror::shadowAlphaPacketsAvailable();
+    return on && gDeferredDiffusePullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable();
 }
 
 // can this static draw be an entry of a geometry record? The pull shader reads 16 bit indices, position first, and the normal, texcoord 0 and colour arrays; the textures
@@ -667,7 +667,7 @@ bool LLRenderPass::deferredPacketsEnabled()
 static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
-    if (!p.mCount || p.mAvatar || p.mGLTFMaterial || !vb || !vb->getGLBuffer() || !vb->getGLIndices() || vb->getIndicesType() != ComponentType::U16
+    if (!p.mCount || p.mAvatar || p.mGLTFMaterial || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0
         || !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
     {
@@ -710,7 +710,7 @@ struct LLGeometryBuild
     unsigned mEpoch = 0;                // LLBuilderGuard::sEpoch when it was started
     F32 mView[16];                      // the matrices it was built for: the consumer checks them against the ones it has now
     F32 mProj[16];
-    std::vector<LLVkMirror::GeoEntry> mEntries;
+    std::vector<LLVkBridge::GeoEntry> mEntries;
     std::vector<F32> mMatrices;
     std::vector<LLViewerTexture*> mTextures;
     std::vector<LLDrawInfo*> mFallback;
@@ -723,7 +723,7 @@ static void build_geometry(LLGeometryBuild& out)
     const LLGeometryPassInfo* materials = out.mHasMaterials ? &out.mInfo : nullptr;
     const glm::mat4 view = glm::make_mat4(out.mView);
     const glm::mat4 proj = glm::make_mat4(out.mProj);
-    std::vector<LLVkMirror::GeoEntry>& entries = out.mEntries;
+    std::vector<LLVkBridge::GeoEntry>& entries = out.mEntries;
     std::vector<F32>& matrices = out.mMatrices;
     std::unordered_map<const void*, U32> matrix_numbers;
     std::unordered_map<const LLViewerTexture*, U32> texture_numbers;
@@ -788,9 +788,9 @@ static void build_geometry(LLGeometryBuild& out)
             continue;
         }
         const LLVertexBuffer* vb = params->mVertexBuffer.get();
-        LLVkMirror::GeoEntry e = {};
-        e.mVertexBuffer = vb->getGLBuffer();
-        e.mIndexBuffer = vb->getGLIndices();
+        LLVkBridge::GeoEntry e = {};
+        e.mVertexBuffer = vb->getVertexBufferId();
+        e.mIndexBuffer = vb->getIndexBufferId();
         e.mFirstIndex = params->mOffset;
         e.mIndexCount = params->mCount;
         e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
@@ -829,7 +829,7 @@ static void build_geometry(LLGeometryBuild& out)
         }
         else
         {
-            e.mFlags |= LLVkMirror::GEO_ONE_TEXTURE;
+            e.mFlags |= LLVkBridge::GEO_ONE_TEXTURE;
             if (params->mTexture.notNull())
             {
                 e.mTextures[0] = texture_ref(params->mTexture.get());
@@ -866,11 +866,11 @@ static void finish_geometry_build(LLGeometryBuild& b)
     std::vector<U32> names(b.mTextures.size());
     for (size_t k = 0; k < b.mTextures.size(); ++k)
     {
-        names[k] = gGL.getTexUnit(0)->prepareFast(b.mTextures[k]);
+        names[k] = gRender.getTexUnit(0)->prepareFast(b.mTextures[k]);
         ++gGeometryPacketStats.mTextures;
     }
     auto name_of = [&names](U32 number) -> U32 { return number ? names[number - 1] : 0u; };
-    for (LLVkMirror::GeoEntry& e : b.mEntries)
+    for (LLVkBridge::GeoEntry& e : b.mEntries)
     {
         for (U32& t : e.mTextures)
         {
@@ -919,8 +919,8 @@ static void fill_geometry_build(LLGeometryBuild& b, U32 type, const LLGeometryPa
     }
     b.mCull = cull;
     b.mEpoch = LLBuilderGuard::sEpoch.load();
-    memcpy(b.mView, gGLModelView, sizeof(b.mView));
-    memcpy(b.mProj, glm::value_ptr(gGL.getProjectionMatrix()), sizeof(b.mProj));
+    memcpy(b.mView, gRenderModelView, sizeof(b.mView));
+    memcpy(b.mProj, glm::value_ptr(gRender.getProjectionMatrix()), sizeof(b.mProj));
 }
 
 // static
@@ -981,7 +981,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         }
         const bool bad_cull = build->mCull != cull;
         const bool bad_epoch = build->mEpoch != LLBuilderGuard::sEpoch.load();
-        const bool bad_matrix = memcmp(build->mView, gGLModelView, sizeof(build->mView)) != 0 || memcmp(build->mProj, glm::value_ptr(gGL.getProjectionMatrix()), sizeof(build->mProj)) != 0;
+        const bool bad_matrix = memcmp(build->mView, gRenderModelView, sizeof(build->mView)) != 0 || memcmp(build->mProj, glm::value_ptr(gRender.getProjectionMatrix()), sizeof(build->mProj)) != 0;
         if (bad_cull || bad_epoch || bad_matrix)
         {
             if (bad_cull) { ++sGeoRejectCull; } else if (bad_epoch) { ++sGeoRejectEpoch; } else { ++sGeoRejectMatrix; }
@@ -1027,18 +1027,18 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
 
     finish_geometry_build(*build);
     fallback.insert(fallback.end(), build->mFallback.begin(), build->mFallback.end());
-    const std::vector<LLVkMirror::GeoEntry>& entries = build->mEntries;
+    const std::vector<LLVkBridge::GeoEntry>& entries = build->mEntries;
     const std::vector<F32>& matrices = build->mMatrices;
     if (!entries.empty())
     {
-        LLVkMirror::ShadowPacketsHeader header;
+        LLVkBridge::ShadowPacketsHeader header;
         header.mKind = 3;
         header.mEntries = (U32)entries.size();
         header.mMatrices = (U32)(matrices.size() / 44);
         std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
         memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
         memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
-        LLVkMirror::shadowPackets(header, blob.data(), blob.size());
+        LLVkBridge::shadowPackets(header, blob.data(), blob.size());
         gGeometryPacketStats.mEntries += entries.size();
         gGeometryPacketStats.mMatrices += header.mMatrices;
         ++gGeometryPacketStats.mRecords;
@@ -1057,11 +1057,11 @@ void LLShadowDrawStats::endStaticPass()
     for (const Caster& c : mTable)
     {
         const LLVertexBuffer* vb = c.mVB;
-        if (!vb->getGLBuffer() || !vb->getGLIndices())
+        if (!vb->getVertexBufferId() || !vb->getIndexBufferId())
         {
             ++mBadNames;
         }
-        pairs.insert(((U64)vb->getGLBuffer() << 32) | vb->getGLIndices());
+        pairs.insert(((U64)vb->getVertexBufferId() << 32) | vb->getIndexBufferId());
         if (vb->getIndicesType() != ComponentType::U16)
         {
             ++mWideIndices;
@@ -1156,7 +1156,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
         return false;
     }
 
-    LLGLSLShader::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
+    LLShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
         count,
         false,
         (F32*)&(mpc.mGLMp[0]));
@@ -1171,7 +1171,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
     llassert(skinInfo);
-    llassert(LLGLSLShader::sCurBoundShaderPtr);
+    llassert(LLShaderProgram::sCurBoundShaderPtr);
 
     if (!avatar)
     {
@@ -1192,7 +1192,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
 
     if (!skipLastSkin)
     {
-        LLGLSLShader::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
+        LLShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
             count,
             false,
             (F32*)&(mpc.mGLMp[0]));
@@ -1203,19 +1203,19 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
 
 // Returns true if rendering should proceed
 //static
-bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, const LLGLSLShader*& lastAvatarShader, bool& skipLastSkin)// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
+bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, const LLShaderProgram*& lastAvatarShader, bool& skipLastSkin)// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
     llassert(skinInfo);
-    llassert(LLGLSLShader::sCurBoundShaderPtr);
+    llassert(LLShaderProgram::sCurBoundShaderPtr);
 
     if (!avatar)
     {
         return false;
     }
 
-    if (avatar == lastAvatar && skinInfo->mHash == lastMeshId && lastAvatarShader == LLGLSLShader::sCurBoundShaderPtr)
+    if (avatar == lastAvatar && skinInfo->mHash == lastMeshId && lastAvatarShader == LLShaderProgram::sCurBoundShaderPtr)
     {
         return !skipLastSkin;
     }
@@ -1226,11 +1226,11 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
     skipLastSkin = !bool(count);
     lastAvatar = avatar;
     lastMeshId = skinInfo->mHash;
-    lastAvatarShader = LLGLSLShader::sCurBoundShaderPtr;
+    lastAvatarShader = LLShaderProgram::sCurBoundShaderPtr;
 
     if (!skipLastSkin)
     {
-        LLGLSLShader::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
+        LLShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
             count,
             false,
             (F32*)&(mpc.mGLMp[0]));

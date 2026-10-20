@@ -50,7 +50,7 @@ void LLBox::prerender()
 }
 
 // These routines support multiple textures on a box
-void LLBox::cleanupGL()
+void LLBox::cleanupResources()
 {
     // No GL state, a noop.
 }
@@ -76,24 +76,24 @@ void LLBox::renderface(S32 which_face)
         {7, 4, 0, 3}
     };
 
-    gGL.begin(LLRender::TRIANGLES);
+    gRender.begin(LLRender::TRIANGLES);
     {
-        //gGL.normal3fv(&normals[which_face][0]);
-        gGL.texCoord2f(1.f, 0.f);
-        gGL.vertex3fv(&mVertex[faces[which_face][0]][0]);
-        gGL.texCoord2f(1.f, 1.f);
-        gGL.vertex3fv(&mVertex[faces[which_face][1]][0]);
-        gGL.texCoord2f(0.f, 1.f);
-        gGL.vertex3fv(&mVertex[faces[which_face][2]][0]);
+        //gRender.normal3fv(&normals[which_face][0]);
+        gRender.texCoord2f(1.f, 0.f);
+        gRender.vertex3fv(&mVertex[faces[which_face][0]][0]);
+        gRender.texCoord2f(1.f, 1.f);
+        gRender.vertex3fv(&mVertex[faces[which_face][1]][0]);
+        gRender.texCoord2f(0.f, 1.f);
+        gRender.vertex3fv(&mVertex[faces[which_face][2]][0]);
 
-        gGL.texCoord2f(1.f, 0.f);
-        gGL.vertex3fv(&mVertex[faces[which_face][0]][0]);
-        gGL.texCoord2f(0.f, 1.f);
-        gGL.vertex3fv(&mVertex[faces[which_face][2]][0]);
-        gGL.texCoord2f(0.f, 0.f);
-        gGL.vertex3fv(&mVertex[faces[which_face][3]][0]);
+        gRender.texCoord2f(1.f, 0.f);
+        gRender.vertex3fv(&mVertex[faces[which_face][0]][0]);
+        gRender.texCoord2f(0.f, 1.f);
+        gRender.vertex3fv(&mVertex[faces[which_face][2]][0]);
+        gRender.texCoord2f(0.f, 0.f);
+        gRender.vertex3fv(&mVertex[faces[which_face][3]][0]);
     }
-    gGL.end();
+    gRender.end();
 }
 
 void LLBox::render()
@@ -128,5 +128,5 @@ void LLBox::render()
     renderface(2);
     renderface(1);
     renderface(0);
-    gGL.flush();
+    gRender.flush();
 }

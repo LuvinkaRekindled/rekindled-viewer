@@ -63,7 +63,7 @@
 
 static U32 sShaderLevel = 0;
 
-LLGLSLShader* LLDrawPoolAvatar::sVertexProgram = NULL;
+LLShaderProgram* LLDrawPoolAvatar::sVertexProgram = NULL;
 bool    LLDrawPoolAvatar::sSkipOpaque = false;
 bool    LLDrawPoolAvatar::sSkipTransparent = false;
 S32     LLDrawPoolAvatar::sShadowPass = -1;
@@ -155,10 +155,10 @@ LLMatrix4& LLDrawPoolAvatar::getModelView()
 
     static LLMatrix4 ret;
 
-    ret.initRows(LLVector4(gGLModelView+0),
-                 LLVector4(gGLModelView+4),
-                 LLVector4(gGLModelView+8),
-                 LLVector4(gGLModelView+12));
+    ret.initRows(LLVector4(gRenderModelView+0),
+                 LLVector4(gRenderModelView+4),
+                 LLVector4(gRenderModelView+8),
+                 LLVector4(gRenderModelView+12));
 
     return ret;
 }
@@ -300,7 +300,7 @@ void LLDrawPoolAvatar::beginShadowPass(S32 pass)
             sVertexProgram->bind();
         }
 
-        gGL.diffuseColor4f(1, 1, 1, 1);
+        gRender.diffuseColor4f(1, 1, 1, 1);
     }
     else if (pass == SHADOW_PASS_AVATAR_ALPHA_BLEND)
     {
@@ -320,7 +320,7 @@ void LLDrawPoolAvatar::beginShadowPass(S32 pass)
             sVertexProgram->bind();
         }
 
-        gGL.diffuseColor4f(1, 1, 1, 1);
+        gRender.diffuseColor4f(1, 1, 1, 1);
     }
     else if (pass == SHADOW_PASS_AVATAR_ALPHA_MASK)
     {
@@ -340,7 +340,7 @@ void LLDrawPoolAvatar::beginShadowPass(S32 pass)
             sVertexProgram->bind();
         }
 
-        gGL.diffuseColor4f(1, 1, 1, 1);
+        gRender.diffuseColor4f(1, 1, 1, 1);
     }
 }
 
@@ -468,7 +468,7 @@ void LLDrawPoolAvatar::beginRenderPass(S32 pass)
 
     if (pass == 0)
     { //make sure no stale colors are left over from a previous render
-        gGL.diffuseColor4f(1,1,1,1);
+        gRender.diffuseColor4f(1,1,1,1);
     }
 }
 
@@ -610,7 +610,7 @@ void LLDrawPoolAvatar::beginSkinned()
     {
         llassert(false); // Avatar shader shouldn't have failed if deferred shader loaded
         sVertexProgram = nullptr;
-        LLGLSLShader::unbind();
+        LLShaderProgram::unbind();
         return;
     }
 
@@ -721,16 +721,16 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
         LL_PROFILE_ZONE_NAMED_CATEGORY_AVATAR("render_hitbox");
 
         // load the debug output shader
-        LLGLSLShader* current_shader_program = LLGLSLShader::sCurBoundShaderPtr;
+        LLShaderProgram* current_shader_program = LLShaderProgram::sCurBoundShaderPtr;
         gDebugProgram.bind();
 
         // set up drawing mode and remove any textures used
         LLRenderState::BlendScope blend(true);
-        gGL.getTexUnit(0)->bindWhite();
+        gRender.getTexUnit(0)->bindWhite();
 
         LLColor4 avatar_color = LLNetMap::getAvatarColor(avatarp->getID());
-        gGL.diffuseColor4f(avatar_color.mV[VRED], avatar_color.mV[VGREEN], avatar_color.mV[VBLUE], avatar_color.mV[VALPHA]);
-        gGL.setLineWidth(2.0f);
+        gRender.diffuseColor4f(avatar_color.mV[VRED], avatar_color.mV[VGREEN], avatar_color.mV[VBLUE], avatar_color.mV[VALPHA]);
+        gRender.setLineWidth(2.0f);
 
         const LLQuaternion& rot = avatarp->getRotationRegion();
         const LLVector3& pos = avatarp->getPositionAgent();
@@ -745,43 +745,43 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
         LLVector3 v4 = size.scaledVec(LLVector3( 0.5f,-0.5f, 0.5f)) * rot;
 
         // render the box
-        gGL.begin(LLRender::LINES);
+        gRender.begin(LLRender::LINES);
 
         //top
-        gGL.vertex3fv((pos + v1).mV);
-        gGL.vertex3fv((pos + v2).mV);
-        gGL.vertex3fv((pos + v2).mV);
-        gGL.vertex3fv((pos + v3).mV);
-        gGL.vertex3fv((pos + v3).mV);
-        gGL.vertex3fv((pos + v4).mV);
-        gGL.vertex3fv((pos + v4).mV);
-        gGL.vertex3fv((pos + v1).mV);
+        gRender.vertex3fv((pos + v1).mV);
+        gRender.vertex3fv((pos + v2).mV);
+        gRender.vertex3fv((pos + v2).mV);
+        gRender.vertex3fv((pos + v3).mV);
+        gRender.vertex3fv((pos + v3).mV);
+        gRender.vertex3fv((pos + v4).mV);
+        gRender.vertex3fv((pos + v4).mV);
+        gRender.vertex3fv((pos + v1).mV);
 
         //bottom
-        gGL.vertex3fv((pos - v1).mV);
-        gGL.vertex3fv((pos - v2).mV);
-        gGL.vertex3fv((pos - v2).mV);
-        gGL.vertex3fv((pos - v3).mV);
-        gGL.vertex3fv((pos - v3).mV);
-        gGL.vertex3fv((pos - v4).mV);
-        gGL.vertex3fv((pos - v4).mV);
-        gGL.vertex3fv((pos - v1).mV);
+        gRender.vertex3fv((pos - v1).mV);
+        gRender.vertex3fv((pos - v2).mV);
+        gRender.vertex3fv((pos - v2).mV);
+        gRender.vertex3fv((pos - v3).mV);
+        gRender.vertex3fv((pos - v3).mV);
+        gRender.vertex3fv((pos - v4).mV);
+        gRender.vertex3fv((pos - v4).mV);
+        gRender.vertex3fv((pos - v1).mV);
 
         //right
-        gGL.vertex3fv((pos + v1).mV);
-        gGL.vertex3fv((pos - v3).mV);
+        gRender.vertex3fv((pos + v1).mV);
+        gRender.vertex3fv((pos - v3).mV);
 
-        gGL.vertex3fv((pos + v4).mV);
-        gGL.vertex3fv((pos - v2).mV);
+        gRender.vertex3fv((pos + v4).mV);
+        gRender.vertex3fv((pos - v2).mV);
 
         //left
-        gGL.vertex3fv((pos + v2).mV);
-        gGL.vertex3fv((pos - v4).mV);
+        gRender.vertex3fv((pos + v2).mV);
+        gRender.vertex3fv((pos - v4).mV);
 
-        gGL.vertex3fv((pos + v3).mV);
-        gGL.vertex3fv((pos - v1).mV);
+        gRender.vertex3fv((pos + v3).mV);
+        gRender.vertex3fv((pos - v1).mV);
 
-        gGL.end();
+        gRender.end();
 
         // unload debug shader
         gDebugProgram.unbind();
@@ -801,10 +801,10 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
         if (pass==0 && (!gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES) || LLViewerPartSim::getMaxPartCount() <= 0))
         {
             // debug code to draw a sphere in place of avatar
-            gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
-            gGL.setColorMask(true, true);
+            gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
+            gRender.setColorMask(true, true);
             LLVector3 pos = avatarp->getPositionAgent();
-            gGL.color4f(1.0f, 1.0f, 1.0f, 0.7f);
+            gRender.color4f(1.0f, 1.0f, 1.0f, 0.7f);
 
             LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)(pos.mV[VX]),
@@ -815,7 +815,7 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
              gSphere.renderGGL();
 
              LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-             gGL.setColorMask(true, false);
+             gRender.setColorMask(true, false);
         }
         // don't render please
         return;

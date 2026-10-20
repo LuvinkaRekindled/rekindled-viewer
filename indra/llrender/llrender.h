@@ -53,7 +53,7 @@
 
 class LLVertexBuffer;
 class LLCubeMap;
-class LLImageGL;
+class LLImageTex;
 class LLRenderTarget;
 class LLTexture;
 class LLVertexBufferData;
@@ -165,14 +165,14 @@ public:
     // The unit holds nothing: white when it held a 2D texture, no texture (slot 0) for the other types (what disable() was)
     void clear();
 
-    // Binds the LLImageGL to this texture unit
-    // (automatically enables the unit for the LLImageGL's texture type)
-    bool bind(LLImageGL* texture, bool for_rendering = false, bool forceBind = false, S32 usename = 0);
+    // Binds the LLImageTex to this texture unit
+    // (automatically enables the unit for the LLImageTex's texture type)
+    bool bind(LLImageTex* texture, bool for_rendering = false, bool forceBind = false, S32 usename = 0);
     bool bind(LLTexture* texture, bool for_rendering = false, bool forceBind = false);
 
     // bind implementation for inner loops
     // makes the following assumptions:
-    //  - No need for gGL.flush()
+    //  - No need for gRender.flush()
     //  - texture is not null
     //  - gl_tex->getTexName() is not zero
     //  - This texture is not being bound redundantly
@@ -183,7 +183,7 @@ public:
     // <FS> render packets: the effects of bindFast() on the texture (marks it in use, regenerates a deleted one, applies changed options) without binding it; returns its GL name
     U32 prepareFast(LLTexture* texture);
     // <FS> binds the image on this unit and sends its address mode and filtering options (what bindFast does when they are dirty)
-    void applyTexOptions(LLImageGL* gl_tex);
+    void applyTexOptions(LLImageTex* gl_tex);
 
     // Binds a cubemap to this texture unit
     // (automatically enables the texture unit for cubemaps)
@@ -586,15 +586,15 @@ private:
     std::vector<LLVector4a, boost::alignment::aligned_allocator<LLVector4a, 16> > mUIScale;
 };
 
-extern F32 gGLModelView[16];
-extern F32 gGLLastModelView[16];
+extern F32 gRenderModelView[16];
+extern F32 gRenderLastModelView[16];
 extern F32 gGLLastProjection[16];
-extern F32 gGLProjection[16];
-extern S32 gGLViewport[4];
+extern F32 gRenderProjection[16];
+extern S32 gRenderViewport[4];
 extern glm::mat4 gGLDeltaModelView;
 extern glm::mat4 gGLInverseDeltaModelView;
 
-extern thread_local LLRender gGL;
+extern thread_local LLRender gRender;
 
 // This rotation matrix moves the default OpenGL reference frame
 // (-Z at, Y up) to Cory's favorite reference frame (X at, Z up)

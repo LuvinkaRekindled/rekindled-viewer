@@ -76,7 +76,7 @@ bool gDebugGLSession = false;
 bool gClothRipple = false;
 bool gHeadlessClient = false;
 bool gNonInteractive = false;
-bool gGLActive = false;
+bool gRenderActive = false;
 
 static const std::string HEADLESS_VENDOR_STRING("Linden Lab");
 static const std::string HEADLESS_RENDERER_STRING("Headless");
@@ -122,18 +122,18 @@ void ll_close_fail_log()
     gFailLog.close();
 }
 
-LLMatrix4 gGLObliqueProjectionInverse;
+LLMatrix4 gRenderObliqueProjectionInverse;
 
 #define LL_GL_NAME_POOLING 0
 
-std::list<LLGLUpdate*> LLGLUpdate::sGLQ;
+std::list<LLRenderUpdate*> LLRenderUpdate::sUpdateQueue;
 
 // <FS:Zi> Linux support
 // #if (LL_WINDOWS || LL_LINUX)  && !LL_MESA_HEADLESS
 
-LLGLManager gGLManager;
+LLDeviceCaps gDeviceCaps;
 
-LLGLManager::LLGLManager() :
+LLDeviceCaps::LLDeviceCaps() :
     mInited(false),
     mIsDisabled(false),
     mMaxSamples(0),
@@ -152,13 +152,13 @@ LLGLManager::LLGLManager() :
     mDriverVersionMajor(1),
     mDriverVersionMinor(0),
     mDriverVersionRelease(0),
-    mGLVersion(1.0f),
-    mGLSLVersionMajor(0),
-    mGLSLVersionMinor(0),
+    mApiVersionNumber(1.0f),
+    mShaderLangMajor(0),
+    mShaderLangMinor(0),
     mVRAM(0),
     mVRAMDetected(0), // <FS:Beq/> add override support
-    mGLMaxVertexRange(0),
-    mGLMaxIndexRange(0)
+    mVertexRangeLimit(0),
+    mIndexRangeLimit(0)
 {
 }
 
@@ -186,17 +186,17 @@ static const char* gl_info_string(InfoString which)
 // Global initialization for GL
 //---------------------------------------------------------------------
 // return false if unable (or unwilling due to old drivers) to init GL
-bool LLGLManager::initGL()
+bool LLDeviceCaps::initGL()
 {
     LL_INFOS("RenderInit") << "Initializing the graphics device (Vulkan, no OpenGL)" << LL_ENDL;
     if (mInited)
     {
-        LL_ERRS("RenderInit") << "Calling init on LLGLManager after already initialized!" << LL_ENDL;
+        LL_ERRS("RenderInit") << "Calling init on LLDeviceCaps after already initialized!" << LL_ENDL;
     }
     return initGLNoGL();
 }
 
-void LLGLManager::getGLInfo(LLSD& info)
+void LLDeviceCaps::getGLInfo(LLSD& info)
 {
     if (gHeadlessClient)
     {
@@ -223,7 +223,7 @@ void LLGLManager::getGLInfo(LLSD& info)
 #endif
 }
 
-std::string LLGLManager::getGLInfoString()
+std::string LLDeviceCaps::getGLInfoString()
 {
     std::string info_str;
 
@@ -249,7 +249,7 @@ std::string LLGLManager::getGLInfoString()
     return info_str;
 }
 
-void LLGLManager::printGLInfoString()
+void LLDeviceCaps::printGLInfoString()
 {
     if (gHeadlessClient)
     {
@@ -271,7 +271,7 @@ void LLGLManager::printGLInfoString()
 #endif
 }
 
-std::string LLGLManager::getRawGLString()
+std::string LLDeviceCaps::getRawDeviceString()
 {
     std::string gl_string;
     if (gHeadlessClient)
@@ -285,12 +285,12 @@ std::string LLGLManager::getRawGLString()
     return gl_string;
 }
 
-void LLGLManager::asLLSD(LLSD& info)
+void LLDeviceCaps::asLLSD(LLSD& info)
 {
     // Currently these are duplicates of fields in "system".
-    info["gpu_vendor"] = mGLVendorShort;
+    info["gpu_vendor"] = mVendorShort;
     info["gpu_version"] = mDriverVersionVendorString;
-    info["opengl_version"] = mGLVersionString;
+    info["opengl_version"] = mApiVersionString;
 
     info["vram"] = LLSD::Integer(mVRAM);
 
@@ -301,19 +301,19 @@ void LLGLManager::asLLSD(LLSD& info)
     info["max_color_texture_samples"] = mMaxColorTextureSamples;
     info["max_depth_texture_samples"] = mMaxDepthTextureSamples;
     info["max_integer_samples"] = mMaxIntegerSamples;
-    info["max_vertex_range"] = mGLMaxVertexRange;
-    info["max_index_range"] = mGLMaxIndexRange;
-    info["max_texture_size"] = mGLMaxTextureSize;
+    info["max_vertex_range"] = mVertexRangeLimit;
+    info["max_index_range"] = mIndexRangeLimit;
+    info["max_texture_size"] = mTextureSizeLimit;
 
     // Which vendor
     info["is_ati"] = mIsAMD;  // note, do not rename is_ati to is_amd without coordinating with DW
     info["is_nvidia"] = mIsNVIDIA;
     info["is_intel"] = mIsIntel;
 
-    info["gl_renderer"] = mGLRenderer;
+    info["gl_renderer"] = mDeviceString;
 }
 
-void LLGLManager::shutdownGL()
+void LLDeviceCaps::shutdownGL()
 {
     if (mInited)
     {
@@ -327,12 +327,12 @@ void LLGLManager::shutdownGL()
 #endif
 
 // <FS> LL_VK_NOGL start-up: what initGL and initExtensions work out from a GL context, worked out from the Vulkan device instead
-bool LLGLManager::initGLNoGL()
+bool LLDeviceCaps::initGLNoGL()
 {
     LL_INFOS("RenderInit") << "Initializing without OpenGL (LL_VK_NOGL): the renderer is Vulkan only" << LL_ENDL;
 
-    LLVkMirror::DeviceInfo dev;
-    if (!LLVkMirror::describeDevice(dev))
+    LLVkBridge::DeviceInfo dev;
+    if (!LLVkBridge::describeDevice(dev))
     {
         LL_WARNS("RenderInit") << "Vulkan could not be started: there is no OpenGL to fall back on" << LL_ENDL;
         return false;
@@ -345,33 +345,33 @@ bool LLGLManager::initGLNoGL()
     sNoGLGlsl = "4.60";
     sNoGLExtensions = "GL_EXT_texture_filter_anisotropic GL_ARB_texture_cube_map_array GL_ARB_buffer_storage GL_ARB_multi_draw_indirect";
 
-    mGLVendor = vendor;
-    LLStringUtil::toUpper(mGLVendor);
-    mGLRenderer = renderer;
-    LLStringUtil::toUpper(mGLRenderer);
+    mVendorString = vendor;
+    LLStringUtil::toUpper(mVendorString);
+    mDeviceString = renderer;
+    LLStringUtil::toUpper(mDeviceString);
 
-    parse_gl_version(&mDriverVersionMajor, &mDriverVersionMinor, &mDriverVersionRelease, &mDriverVersionVendorString, &mGLVersionString);
-    mGLVersion = mDriverVersionMajor + mDriverVersionMinor * .1f;
-    parse_glsl_version(mGLSLVersionMajor, mGLSLVersionMinor);
+    parse_gl_version(&mDriverVersionMajor, &mDriverVersionMinor, &mDriverVersionRelease, &mDriverVersionVendorString, &mApiVersionString);
+    mApiVersionNumber = mDriverVersionMajor + mDriverVersionMinor * .1f;
+    parse_glsl_version(mShaderLangMajor, mShaderLangMinor);
 
-    if (mGLVendor.find("AMD") != std::string::npos || mGLVendor.substr(0, 4) == "ATI ")
+    if (mVendorString.find("AMD") != std::string::npos || mVendorString.substr(0, 4) == "ATI ")
     {
-        mGLVendorShort = "AMD";
+        mVendorShort = "AMD";
         mIsAMD = true;
     }
-    else if (mGLVendor.find("NVIDIA") != std::string::npos)
+    else if (mVendorString.find("NVIDIA") != std::string::npos)
     {
-        mGLVendorShort = "NVIDIA";
+        mVendorShort = "NVIDIA";
         mIsNVIDIA = true;
     }
-    else if (mGLVendor.find("INTEL") != std::string::npos)
+    else if (mVendorString.find("INTEL") != std::string::npos)
     {
-        mGLVendorShort = "INTEL";
+        mVendorShort = "INTEL";
         mIsIntel = true;
     }
     else
     {
-        mGLVendorShort = "MISC";
+        mVendorShort = "MISC";
     }
 
     // what initExtensions sets from the version and the extension list
@@ -383,9 +383,9 @@ bool LLGLManager::initGLNoGL()
     mHasATIMemInfo = false;
     mHasAMDAssociations = false;
     // the limits come straight from the device (C6); nothing here asks a GL context any more
-    mGLMaxVertexRange = dev.mMaxVertexRange;
-    mGLMaxIndexRange = dev.mMaxIndexRange;
-    mGLMaxTextureSize = dev.mMaxTextureSize > 0 ? dev.mMaxTextureSize : 16384;
+    mVertexRangeLimit = dev.mMaxVertexRange;
+    mIndexRangeLimit = dev.mMaxIndexRange;
+    mTextureSizeLimit = dev.mMaxTextureSize > 0 ? dev.mMaxTextureSize : 16384;
     mVRAM = (S32)dev.mVramMb;
     mInited = true;
 
@@ -411,9 +411,9 @@ bool LLGLManager::initGLNoGL()
     LL_INFOS("RenderInit") << "GL_RENDERER:   " << sNoGLRenderer << LL_ENDL;
     LL_INFOS("RenderInit") << "GL_VERSION:    " << sNoGLVersion << " (reported to the viewer)" << LL_ENDL;
     LL_INFOS("RenderInit") << "VRAM:          " << mVRAM << " MB" << LL_ENDL;
-    LL_INFOS("RenderInit") << "limits:        texture " << mGLMaxTextureSize << ", units " << mNumTextureImageUnits << ", samples " << mMaxSamples << " (color texture " << mMaxColorTextureSamples
+    LL_INFOS("RenderInit") << "limits:        texture " << mTextureSizeLimit << ", units " << mNumTextureImageUnits << ", samples " << mMaxSamples << " (color texture " << mMaxColorTextureSamples
         << ", depth texture " << mMaxDepthTextureSamples << ", integer " << mMaxIntegerSamples << "), sample mask words " << mMaxSampleMaskWords << ", varying vectors " << mMaxVaryingVectors
-        << ", uniform block " << mMaxUniformBlockSize << ", draw range vertices " << mGLMaxVertexRange << " indices " << mGLMaxIndexRange << ", anisotropy " << mMaxAnisotropy << LL_ENDL;
+        << ", uniform block " << mMaxUniformBlockSize << ", draw range vertices " << mVertexRangeLimit << " indices " << mIndexRangeLimit << ", anisotropy " << mMaxAnisotropy << LL_ENDL;
     LL_INFOS("RenderInit") << "capabilities:  memory bandwidth " << mMemoryBandwidthGBps << " GB/s, ray tracing " << (mHasRayTracing ? "yes" : "no") << " (acceleration structure " << mHasAccelStructure
         << ", ray query " << mHasRayQuery << ", pipeline " << mHasRayTracingPipeline << ", enabled " << mRayTracingEnabled << "), DLSS ray reconstruction " << mHasRayReconstruction << LL_ENDL;
 
@@ -620,7 +620,7 @@ void LLGLUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
     glm::mat4 newP = suffix * P;
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(newP));
-    gGLObliqueProjectionInverse = LLMatrix4(glm::value_ptr(glm::transpose(glm::inverse(newP))));
+    gRenderObliqueProjectionInverse = LLMatrix4(glm::value_ptr(glm::transpose(glm::inverse(newP))));
 }
 
 LLGLUserClipPlane::~LLGLUserClipPlane()
@@ -682,7 +682,7 @@ LLGLSPipelineBlendSkyBox::LLGLSPipelineBlendSkyBox(bool depth_test, bool depth_w
 : LLGLSPipelineDepthTestSkyBox(depth_test, depth_write)
 , mBlend(true)
 {
-    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
 }
 
 #if LL_WINDOWS

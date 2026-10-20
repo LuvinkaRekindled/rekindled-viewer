@@ -87,27 +87,27 @@ void LLSky::cleanup()
     mVOWLSkyp = NULL;
 }
 
-void LLSky::destroyGL()
+void LLSky::destroyResources()
 {
     if (!mVOSkyp.isNull() && mVOSkyp->getCubeMap())
     {
-        mVOSkyp->cleanupGL();
+        mVOSkyp->cleanupResources();
     }
     if (mVOWLSkyp.notNull())
     {
-        mVOWLSkyp->cleanupGL();
+        mVOWLSkyp->cleanupResources();
     }
 }
 
-void LLSky::restoreGL()
+void LLSky::restoreResources()
 {
     if (mVOSkyp)
     {
-        mVOSkyp->restoreGL();
+        mVOSkyp->restoreResources();
     }
     if (mVOWLSkyp)
     {
-        mVOWLSkyp->restoreGL();
+        mVOWLSkyp->restoreResources();
     }
 }
 

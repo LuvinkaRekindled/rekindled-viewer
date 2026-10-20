@@ -186,9 +186,9 @@ public:
     LLSD mAllEffects;
 
 private:
-    LLPointer<LLImageGL> mSceneRenderTexture ;
-    LLPointer<LLImageGL> mNoiseTexture ;
-    LLPointer<LLImageGL> mTempBloomTexture ;
+    LLPointer<LLImageTex> mSceneRenderTexture ;
+    LLPointer<LLImageTex> mNoiseTexture ;
+    LLPointer<LLImageTex> mTempBloomTexture ;
 
 public:
     LLPostProcess(void);
@@ -249,9 +249,9 @@ private:
     void applyColorFilterShader(void);
 
     /// OpenGL Helper Functions
-    void createTexture(LLPointer<LLImageGL>& texture, unsigned int width, unsigned int height);
+    void createTexture(LLPointer<LLImageTex>& texture, unsigned int width, unsigned int height);
     void copyFrameBuffer(U32 & texture, unsigned int width, unsigned int height);
-    void createNoiseTexture(LLPointer<LLImageGL>& texture);
+    void createNoiseTexture(LLPointer<LLImageTex>& texture);
     bool checkError(void);
     void drawOrthoQuad(unsigned int width, unsigned int height, QuadType type);
     void viewOrthogonal(unsigned int width, unsigned int height);

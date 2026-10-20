@@ -43,7 +43,7 @@
 
 //#pragma optimize("", off)
 
-using namespace LLImageGLMemory;
+using namespace LLImageTexMemory;
 
 // MUST match order of OpenGL face-layers
 TextureTarget LLCubeMapArray::sTargets[6] =
@@ -148,9 +148,9 @@ void LLCubeMapArray::allocate(U32 resolution, U32 components, U32 count, bool us
 
     mHDR = hdr;
 
-    LLImageGL::generateTextures(1, &texname);
+    LLImageTex::generateTextures(1, &texname);
 
-    mImage = new LLImageGL(resolution, resolution, components, use_mips);
+    mImage = new LLImageTex(resolution, resolution, components, use_mips);
     mImage->setTexName(texname);
     mImage->setTarget(sTargets[0], LLTexUnit::TT_CUBE_MAP_ARRAY);
 
@@ -200,12 +200,12 @@ void LLCubeMapArray::allocate(U32 resolution, U32 components, U32 count, bool us
 void LLCubeMapArray::bind(S32 stage)
 {
     mTextureStage = stage;
-    gGL.getTexUnit(stage)->bindManual(LLTexUnit::TT_CUBE_MAP_ARRAY, getGLName(), mImage->getUseMipMaps());
+    gRender.getTexUnit(stage)->bindManual(LLTexUnit::TT_CUBE_MAP_ARRAY, getGLName(), mImage->getUseMipMaps());
 }
 
 void LLCubeMapArray::unbind()
 {
-    gGL.getTexUnit(mTextureStage)->bindNone(LLTexUnit::TT_CUBE_MAP_ARRAY);
+    gRender.getTexUnit(mTextureStage)->bindNone(LLTexUnit::TT_CUBE_MAP_ARRAY);
     mTextureStage = -1;
 }
 
@@ -214,7 +214,7 @@ U32 LLCubeMapArray::getGLName()
     return mImage->getTexName();
 }
 
-void LLCubeMapArray::destroyGL()
+void LLCubeMapArray::destroyResources()
 {
     mImage = NULL;
 }

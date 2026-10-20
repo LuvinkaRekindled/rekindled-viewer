@@ -741,7 +741,7 @@ U32 exchange(Kind kind, U32 value, const char* file, int line)
     {
         return old;
     }
-    gGL.flush();                                // pending immediate-mode vertices belong to the old state
+    gRender.flush();                                // pending immediate-mode vertices belong to the old state
     sInGuard = true;
     switch (kind)
     {

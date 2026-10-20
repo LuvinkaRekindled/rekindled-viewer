@@ -68,13 +68,13 @@ LLImageRaw *LLFontBitmapCache::getImageRaw(EFontGlyphType bitmap_type, U32 bitma
     return mImageRawVec[bitmap_idx][bitmap_num];
 }
 
-LLImageGL *LLFontBitmapCache::getImageGL(EFontGlyphType bitmap_type, U32 bitmap_num) const
+LLImageTex *LLFontBitmapCache::getImageGL(EFontGlyphType bitmap_type, U32 bitmap_num) const
 {
     const U32 bitmap_idx = static_cast<U32>(bitmap_type);
-    if (bitmap_type >= EFontGlyphType::Count || bitmap_num >= mImageGLVec[bitmap_idx].size())
+    if (bitmap_type >= EFontGlyphType::Count || bitmap_num >= mImageTexVec[bitmap_idx].size())
         return nullptr;
 
-    return mImageGLVec[bitmap_idx][bitmap_num];
+    return mImageTexVec[bitmap_idx][bitmap_num];
 }
 
 
@@ -117,15 +117,15 @@ bool LLFontBitmapCache::nextOpenPos(S32 width, S32& pos_x, S32& pos_y, EFontGlyp
             }
 
             // Make corresponding GL image.
-            mImageGLVec[bitmap_idx].emplace_back(new LLImageGL(image_raw, false, false));
-            LLImageGL* image_gl = getImageGL(bitmap_type, bitmap_num);
+            mImageTexVec[bitmap_idx].emplace_back(new LLImageTex(image_raw, false, false));
+            LLImageTex* image_gl = getImageGL(bitmap_type, bitmap_num);
 
             // Start at beginning of the new image.
             mCurrentOffsetX[bitmap_idx] = 1;
             mCurrentOffsetY[bitmap_idx] = 1;
 
             // Attach corresponding GL texture. (*TODO: is this needed?)
-            gGL.getTexUnit(0)->bind(image_gl);
+            gRender.getTexUnit(0)->bind(image_gl);
             image_gl->setFilteringOption(LLTexUnit::TFO_POINT); // was setMipFilterNearest(true, true);
         }
         else
@@ -146,13 +146,13 @@ bool LLFontBitmapCache::nextOpenPos(S32 width, S32& pos_x, S32& pos_y, EFontGlyp
     return true;
 }
 
-void LLFontBitmapCache::destroyGL()
+void LLFontBitmapCache::destroyResources()
 {
     for (U32 idx = 0, cnt = static_cast<U32>(EFontGlyphType::Count); idx < cnt; idx++)
     {
-        for (LLImageGL* image_gl : mImageGLVec[idx])
+        for (LLImageTex* image_gl : mImageTexVec[idx])
         {
-            image_gl->destroyGLTexture();
+            image_gl->destroyImageTexture();
         }
     }
 }
@@ -162,7 +162,7 @@ void LLFontBitmapCache::reset()
     for (U32 idx = 0, cnt = static_cast<U32>(EFontGlyphType::Count); idx < cnt; idx++)
     {
         mImageRawVec[idx].clear();
-        mImageGLVec[idx].clear();
+        mImageTexVec[idx].clear();
         mCurrentOffsetX[idx] = 1;
         mCurrentOffsetY[idx] = 1;
     }

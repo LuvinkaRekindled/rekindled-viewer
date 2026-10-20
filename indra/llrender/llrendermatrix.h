@@ -6,9 +6,9 @@
  * calls (matrixMode, pushMatrix, translatef ...) depend on. pushMatrix / popMatrix flush the immediate-mode batch (pending vertices belong to the old matrix); so do these,
  * through the same LLRender functions.
  *
- *   LLRenderMatrix::push(Kind::Modelview);                 was: gGL.matrixMode(LLRender::MM_MODELVIEW); gGL.pushMatrix();
- *   LLRenderMatrix::translate(Kind::Modelview, x, y, z);   was: gGL.translatef(x, y, z);
- *   LLRenderMatrix::load(Kind::Projection, ptr);           was: gGL.loadMatrix(ptr);
+ *   LLRenderMatrix::push(Kind::Modelview);                 was: gRender.matrixMode(LLRender::MM_MODELVIEW); gRender.pushMatrix();
+ *   LLRenderMatrix::translate(Kind::Modelview, x, y, z);   was: gRender.translatef(x, y, z);
+ *   LLRenderMatrix::load(Kind::Projection, ptr);           was: gRender.loadMatrix(ptr);
  *   ModelviewScope m;  m.translate(x, y, z);               push when made, pop when destroyed
  *
  * LL_VK_MATRIX_GUARD_CHECK=1: (1) when a scope is destroyed the stack of its matrix must be as deep as the scope left it (an unbalanced push or pop inside the scope shows up as a

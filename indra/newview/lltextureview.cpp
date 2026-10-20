@@ -252,7 +252,7 @@ void LLTextureBar::draw()
     LLFontGL::getFontMonospace()->renderUTF8(fetch_state_desc[state].desc, 0, title_x2, getRect().getHeight(),
                                      fetch_state_desc[state].color,
                                      LLFontGL::LEFT, LLFontGL::TOP);
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
 
     // Draw the progress bar.
     S32 bar_width = 110;
@@ -260,7 +260,7 @@ void LLTextureBar::draw()
     left = bar_left;
     right = left + bar_width;
 
-    gGL.color4f(0.f, 0.f, 0.f, 0.75f);
+    gRender.color4f(0.f, 0.f, 0.f, 0.75f);
     gl_rect_2d(left, top, right, bottom);
 
     F32 data_progress = mImagep->mDownloadProgress;
@@ -271,7 +271,7 @@ void LLTextureBar::draw()
         right = left + llfloor(data_progress * (F32)bar_width);
         if (right > left)
         {
-            gGL.color4f(0.f, 0.f, 1.f, 0.75f);
+            gRender.color4f(0.f, 0.f, 1.f, 0.75f);
             gl_rect_2d(left, top, right, bottom);
         }
     }
@@ -306,13 +306,13 @@ void LLTextureBar::draw()
     if (last_event < pip_max_time)
     {
         clr.setAlpha(1.f - last_event/pip_max_time);
-        gGL.color4fv(clr.mV);
+        gRender.color4fv(clr.mV);
         gl_rect_2d(pip_x, top, pip_x + pip_width, bottom);
     }
     pip_x += pip_width + pip_space;
 
     // we don't want to show bind/resident pips for textures using the default texture
-    if (mImagep->hasGLTexture())
+    if (mImagep->hasImageTexture())
     {
         // Draw the bound pip
         last_event = mImagep->getTimePassedSinceLastBound();
@@ -320,7 +320,7 @@ void LLTextureBar::draw()
         {
             clr = mImagep->getMissed() ? LLColor4::red : LLColor4::magenta1;
             clr.setAlpha(1.f - last_event);
-            gGL.color4fv(clr.mV);
+            gRender.color4fv(clr.mV);
             gl_rect_2d(pip_x, top, pip_x + pip_width, bottom);
         }
     }
@@ -332,7 +332,7 @@ void LLTextureBar::draw()
         // draw the image size at the end
         {
             std::string num_str = llformat("%3dx%3d (%2d) %7d", mImagep->getWidth(), mImagep->getHeight(),
-                mImagep->getDiscardLevel(), mImagep->hasGLTexture() ? mImagep->getTextureMemory().value() : 0);
+                mImagep->getDiscardLevel(), mImagep->hasImageTexture() ? mImagep->getTextureMemory().value() : 0);
             LLFontGL::getFontMonospace()->renderUTF8(num_str, 0, title_x4, getRect().getHeight(), color,
                                             LLFontGL::LEFT, LLFontGL::TOP);
         }
@@ -551,7 +551,7 @@ void LLGLTexMemBar::draw()
    F64 raw_image_bytes_MB = raw_image_bytes / (1024.0 * 1024.0);
    F64 saved_raw_image_bytes_MB = saved_raw_image_bytes / (1024.0 * 1024.0);
    F64 aux_raw_image_bytes_MB = aux_raw_image_bytes / (1024.0 * 1024.0);
-   F64 texture_bytes_alloc = LLImageGL::getTextureBytesAllocated() / 1024.0 / 512.0;
+   F64 texture_bytes_alloc = LLImageTex::getTextureBytesAllocated() / 1024.0 / 512.0;
    F64 vertex_bytes_alloc = LLVertexBuffer::getBytesAllocated() / 1024.0 / 512.0;
    F64 render_bytes_alloc = LLRenderTarget::sBytesAllocated / 1024.0 / 512.0;
 
@@ -582,13 +582,13 @@ void LLGLTexMemBar::draw()
     U32 texFetchLatMax = U32(recording.getMax(LLTextureFetch::sTexFetchLatency).value() * 1000.0f);
 
     // draw a background above first line.... no idea where the rest of the background comes from for the below text
-    gGL.color4f(0.f, 0.f, 0.f, 0.25f);
+    gRender.color4f(0.f, 0.f, 0.f, 0.25f);
     gl_rect_2d(-10, getRect().getHeight() + line_height*2 + 1, getRect().getWidth()+2, getRect().getHeight()+2);
 
     text = llformat("Est. Free: %d MB Sys Free: %d MB GL Tex: %d MB FBO: %d MB Probe#: %d Probe Mem: %d MB Bias: %.2f Cache: %.1f/%.1f MB",
                     (S32)LLViewerTexture::sFreeVRAMMegabytes,
                     LLMemory::getAvailableMemKB()/1024,
-                    LLImageGL::getTextureBytesAllocated() / 1024 / 1024,
+                    LLImageTex::getTextureBytesAllocated() / 1024 / 1024,
                     LLRenderTarget::sBytesAllocated/(1024*1024),
                     gPipeline.mReflectionMapManager.probeCount(),
                     gPipeline.mReflectionMapManager.probeMemory(),
@@ -611,7 +611,7 @@ void LLGLTexMemBar::draw()
     S32 right = left + bar_width;
     F32 bar_scale;
 
-    gGL.getTexUnit(0)->bindWhite();
+    gRender.getTexUnit(0)->bindWhite();
 
     // VRAM Mem Bar
     text = "VRAM";
@@ -620,15 +620,15 @@ void LLGLTexMemBar::draw()
     left += 35;
     right = left + bar_width;
 
-    gGL.color4f(0.5f, 0.5f, 0.5f, 0.75f);
+    gRender.color4f(0.5f, 0.5f, 0.5f, 0.75f);
     gl_rect_2d(left, top, right, bottom);
 
-    U32 gpu_used = gGLManager.mVRAM - (S32)LLViewerTexture::sFreeVRAMMegabytes;
-    color = (gpu_used < (U32)llfloor(gGLManager.mVRAM * 0.85f)) ? LLColor4::green :
-        (gpu_used < gGLManager.mVRAM) ? LLColor4::yellow : LLColor4::red;
+    U32 gpu_used = gDeviceCaps.mVRAM - (S32)LLViewerTexture::sFreeVRAMMegabytes;
+    color = (gpu_used < (U32)llfloor(gDeviceCaps.mVRAM * 0.85f)) ? LLColor4::green :
+        (gpu_used < gDeviceCaps.mVRAM) ? LLColor4::yellow : LLColor4::red;
     color[VALPHA] = .75f;
 
-    bar_scale = (F32)bar_width / gGLManager.mVRAM;
+    bar_scale = (F32)bar_width / gDeviceCaps.mVRAM;
     right = left + llfloor(gpu_used * bar_scale);
 
     gl_rect_2d(left, top, right, bottom, color);
@@ -644,7 +644,7 @@ void LLGLTexMemBar::draw()
     left += 35;
     right = left + bar_width;
 
-    gGL.color4f(0.5f, 0.5f, 0.5f, 0.75f);
+    gRender.color4f(0.5f, 0.5f, 0.5f, 0.75f);
     gl_rect_2d(left, top, right, bottom);
 
     color = (cache_usage < cache_max_usage * 0.8f)? LLColor4::green :
@@ -839,7 +839,7 @@ bool LLGLTexSizeBar::handleHover(S32 x, S32 y, MASK mask, bool set_pick_size)
 {
     if(y > mBottom && (y < mBottom + (S32)(mTopLoaded * mScale) || y < mBottom + (S32)(mTopBound * mScale)))
     {
-        LLImageGL::setCurTexSizebar(mIndex, set_pick_size);
+        LLImageTex::setCurTexSizebar(mIndex, set_pick_size);
     }
     return true ;
 }
@@ -847,7 +847,7 @@ void LLGLTexSizeBar::draw()
 {
     LLGLSUIDefault gls_ui;
 
-    if(LLImageGL::sCurTexSizeBar == mIndex)
+    if(LLImageTex::sCurTexSizeBar == mIndex)
     {
         LLColor4 text_color(1.f, 1.f, 1.f, 0.75f);
         std::string text;
@@ -956,7 +956,7 @@ void LLTextureView::draw()
 
             if (mPrintList)
             {
-                S32 tex_mem = imagep->hasGLTexture() ? imagep->getTextureMemory().value() : 0 ;
+                S32 tex_mem = imagep->hasImageTexture() ? imagep->getTextureMemory().value() : 0 ;
                 LL_INFOS() << imagep->getID()
                         << "\t" << tex_mem
                         << "\t" << imagep->getBoostLevel()

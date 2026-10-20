@@ -945,9 +945,9 @@ void LLButton::draw()
             imagep->draw(getLocalRect(), (enabled ? mImageColor.get() : disabled_color) % alpha  );
             if (mCurGlowStrength > 0.01f)
             {
-                gGL.setSceneBlendType(glow_type);
+                gRender.setSceneBlendType(glow_type);
                 image_glow->drawSolid(0, 0, getRect().getWidth(), getRect().getHeight(), glow_color % (mCurGlowStrength * alpha));
-                gGL.setSceneBlendType(LLRender::BT_ALPHA);
+                gRender.setSceneBlendType(LLRender::BT_ALPHA);
             }
         }
         else
@@ -956,9 +956,9 @@ void LLButton::draw()
             imagep->draw(0, y, (enabled ? mImageColor.get() : disabled_color) % alpha);
             if (mCurGlowStrength > 0.01f)
             {
-                gGL.setSceneBlendType(glow_type);
+                gRender.setSceneBlendType(glow_type);
                 image_glow->drawSolid(0, y, glow_color % (mCurGlowStrength * alpha));
-                gGL.setSceneBlendType(LLRender::BT_ALPHA);
+                gRender.setSceneBlendType(LLRender::BT_ALPHA);
             }
         }
     }

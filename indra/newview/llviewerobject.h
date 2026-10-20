@@ -125,7 +125,7 @@ struct PotentialReturnableObject
 class LLViewerObject
 :   public LLPrimitive,
     public LLRefCount,
-    public LLGLUpdate
+    public LLRenderUpdate
 {
 protected:
     virtual ~LLViewerObject(); // use unref()
@@ -247,7 +247,7 @@ public:
 
     virtual LLDrawable* createDrawable(LLPipeline *pipeline);
     virtual bool        updateGeometry(LLDrawable *drawable);
-    virtual void        updateGL();
+    virtual void        updateResources();
     virtual void        updateFaceSize(S32 idx);
     virtual bool        updateLOD();
     virtual bool        setDrawableParent(LLDrawable* parentp);

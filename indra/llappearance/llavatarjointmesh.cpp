@@ -238,7 +238,7 @@ void LLAvatarJointMesh::setColor( const LLColor4& color )
 //--------------------------------------------------------------------
 // LLAvatarJointMesh::setTexture()
 //--------------------------------------------------------------------
-void LLAvatarJointMesh::setTexture( LLGLTexture *texture )
+void LLAvatarJointMesh::setTexture( LLBaseTexture *texture )
 {
     mTexture = texture;
 
@@ -252,9 +252,9 @@ void LLAvatarJointMesh::setTexture( LLGLTexture *texture )
 }
 
 
-bool LLAvatarJointMesh::hasGLTexture() const
+bool LLAvatarJointMesh::hasImageTexture() const
 {
-    return mTexture.notNull() && mTexture->hasGLTexture();
+    return mTexture.notNull() && mTexture->hasImageTexture();
 }
 
 //--------------------------------------------------------------------

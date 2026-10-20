@@ -41,7 +41,7 @@ class LLColor4U;
 class LLUIColor;
 class LLVector2;
 
-class LLViewerParcelOverlay : public LLGLUpdate
+class LLViewerParcelOverlay : public LLRenderUpdate
 {
 public:
     LLViewerParcelOverlay(LLViewerRegion* region, F32 region_width_meters);
@@ -84,7 +84,7 @@ public:
     void    setDirty();
 
     void    idleUpdate(bool update_now = false);
-    void    updateGL();
+    void    updateResources();
 
 // [SL:KB] - Patch: World-MinimapOverlay | Checked: 2012-06-20 (Catznip-3.3)
     typedef boost::signals2::signal<void (const LLViewerRegion*)> update_signal_t;

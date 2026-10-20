@@ -180,7 +180,7 @@ private:
 private:
     mutable LLSharedMutex mDataMutex;
 
-    // <FS> native-vk: the render thread reads the pixels of an image that was handed over to it (see LLImageGL::PixelHandover) after the call that
+    // <FS> native-vk: the render thread reads the pixels of an image that was handed over to it (see LLImageTex::PixelHandover) after the call that
     // handed them over has returned. Whatever takes the exclusive data lock (every call that reallocates, resizes or writes the pixels) first waits
     // until the render thread has let go. Shared locks (readers) do not wait.
     mutable std::atomic<S32> mPixelHolds{ 0 };

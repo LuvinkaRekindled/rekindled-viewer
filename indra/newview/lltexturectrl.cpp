@@ -775,7 +775,7 @@ void LLFloaterTexturePicker::draw()
                 }
                 if (mGLTFPreview)
                 {
-                    mGLTFPreview->setBoostLevel(LLGLTexture::BOOST_PREVIEW);
+                    mGLTFPreview->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
                 }
             }
             else
@@ -801,7 +801,7 @@ void LLFloaterTexturePicker::draw()
                 }
 
                 mTexturep = texture;
-                mTexturep->setBoostLevel(LLGLTexture::BOOST_PREVIEW);
+                mTexturep->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
             }
         }
 
@@ -1977,7 +1977,7 @@ LLTextureCtrl::~LLTextureCtrl()
 {
     closeDependentFloater();
 
-    // <FS:Ansariel> Remove NO_DELETE texture state so image gets removed from memory (set by calling setBoostLevel(LLGLTexture::BOOST_PREVIEW))
+    // <FS:Ansariel> Remove NO_DELETE texture state so image gets removed from memory (set by calling setBoostLevel(LLBaseTexture::BOOST_PREVIEW))
     if (mTexturep.notNull())
     {
         mTexturep->forceActive();
@@ -2542,15 +2542,15 @@ void LLTextureCtrl::draw()
                 }
                 if (mGLTFPreview)
                 {
-                    mGLTFPreview->setBoostLevel(LLGLTexture::BOOST_PREVIEW);
+                    mGLTFPreview->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
                 }
 
                 preview = mGLTFPreview;
             }
             else
             {
-                mTexturep = LLViewerTextureManager::getFetchedTexture(mImageAssetID, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
-                mTexturep->setBoostLevel(LLGLTexture::BOOST_PREVIEW);
+                mTexturep = LLViewerTextureManager::getFetchedTexture(mImageAssetID, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+                mTexturep->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
                 mTexturep->forceToSaveRawImage(0);
 
                 preview = mTexturep;

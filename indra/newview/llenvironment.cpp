@@ -1851,7 +1851,7 @@ void LLEnvironment::updateGLVariablesForSettings(LLShaderUniforms* uniforms, con
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
-    for (int i = 0; i < LLGLSLShader::SG_COUNT; ++i)
+    for (int i = 0; i < LLShaderProgram::SG_COUNT; ++i)
     {
         uniforms[i].clear();
     }
@@ -1861,13 +1861,13 @@ void LLEnvironment::updateGLVariablesForSettings(LLShaderUniforms* uniforms, con
     psetting->applySpecial(uniforms);
 }
 
-void LLEnvironment::updateShaderUniforms(LLGLSLShader* shader)
+void LLEnvironment::updateShaderUniforms(LLShaderProgram* shader)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
     // apply uniforms that should be applied to all shaders
-    mSkyUniforms[LLGLSLShader::SG_ANY].apply(shader);
-    mWaterUniforms[LLGLSLShader::SG_ANY].apply(shader);
+    mSkyUniforms[LLShaderProgram::SG_ANY].apply(shader);
+    mWaterUniforms[LLShaderProgram::SG_ANY].apply(shader);
 
     // apply uniforms specific to the given shader's shader group
     auto group = shader->mShaderGroup;
