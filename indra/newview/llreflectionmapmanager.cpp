@@ -851,11 +851,9 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
     // downsample to placeholder map
     {
-        gGL.matrixMode(gGL.MM_MODELVIEW);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
-        gGL.matrixMode(gGL.MM_PROJECTION);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
 
@@ -937,7 +935,6 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         }
 
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-        gGL.matrixMode(gGL.MM_MODELVIEW);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
         gGL.getTexUnit(diffuseChannel)->unbind(LLTexUnit::TT_TEXTURE);

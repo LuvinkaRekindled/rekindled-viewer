@@ -420,7 +420,6 @@ void LLWorldMapView::draw()
     LLLocalClipRect clip(getLocalRect());
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
 
     // Draw background rectangle
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
@@ -1500,7 +1499,6 @@ void LLWorldMapView::drawTrackingCircle( const LLRect& rect, S32 x, S32 y, const
         end_theta -= angle_adjust_y;
     }
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)x * LLUI::getScaleFactor().mV[VX], (F32)y * LLUI::getScaleFactor().mV[VY], 0.f);
     gl_washer_segment_2d(inner_radius, outer_radius, start_theta, end_theta, 40, color, color);

@@ -109,9 +109,7 @@ void hud_render_text(const LLWString &wstr, const LLVector3 &pos_agent,
     glm::vec3 win_coord = glm::project(glm::vec3(render_pos), get_current_modelview(), LLViewerCamera::getScreenProjection(), viewport);
 
     //fonts all render orthographically, set up projection``
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLUI::pushMatrix();
 
@@ -130,7 +128,5 @@ void hud_render_text(const LLWString &wstr, const LLVector3 &pos_agent,
     LLUI::popMatrix();
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
 }

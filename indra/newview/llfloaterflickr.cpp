@@ -219,7 +219,6 @@ void LLFlickrPhotoPanel::draw()
         S32 offset_x = thumbnail_rect.mLeft + local_offset_x;
         S32 offset_y = thumbnail_rect.mBottom + local_offset_y;
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         // Apply floater transparency to the texture unless the floater is focused.
         F32 alpha = getTransparencyType() == TT_ACTIVE ? 1.0f : getCurrentTransparency();
         LLColor4 color = LLColor4::white;

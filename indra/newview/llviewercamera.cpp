@@ -72,11 +72,9 @@ LLUnjitteredScope::LLUnjitteredScope()
     if (mActive)
     {
         mSaved = get_current_projection();
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(LLViewerCamera::sUnjitteredProjection));
         set_current_projection(LLViewerCamera::sUnjitteredProjection);
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
 }
 
@@ -84,10 +82,8 @@ LLUnjitteredScope::~LLUnjitteredScope()
 {
     if (mActive)
     {
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
         set_current_projection(mSaved);
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
 }
 
@@ -350,7 +346,6 @@ void LLViewerCamera::setPerspective(bool for_selection,
     aspect = getAspect();
 
     // Load camera view matrix
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
 
     glm::mat4 proj_mat = glm::identity<glm::mat4>();
@@ -436,7 +431,6 @@ void LLViewerCamera::setPerspective(bool for_selection,
 
     set_current_projection(proj_mat);
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
 
     glm::mat4 modelview(glm::make_mat4((GLfloat*) OGL_TO_CFR_ROTATION));
 

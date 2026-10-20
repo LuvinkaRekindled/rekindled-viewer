@@ -103,22 +103,18 @@ LLTexLayerSetBuffer::~LLTexLayerSetBuffer()
 
 void LLTexLayerSetBuffer::pushProjection() const
 {
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)getCompositeWidth(), 0.0f, (F32)getCompositeHeight(), -1.0f, 1.0f);
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 }
 
 void LLTexLayerSetBuffer::popProjection() const
 {
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 

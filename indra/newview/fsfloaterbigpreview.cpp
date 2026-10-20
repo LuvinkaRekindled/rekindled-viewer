@@ -96,7 +96,6 @@ void FSFloaterBigPreview::draw()
         S32 offset_x = preview_rect.mLeft   + local_offset_x;
         S32 offset_y = preview_rect.mBottom + local_offset_y;
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         // Apply floater transparency to the texture unless the floater is focused.
         F32 alpha = getTransparencyType() == TT_ACTIVE ? 1.0f : getCurrentTransparency();
         LLColor4 color = LLColor4::white;

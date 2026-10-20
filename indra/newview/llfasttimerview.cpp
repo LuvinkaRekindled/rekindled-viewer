@@ -535,7 +535,6 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
     LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -0.05f, 1.05f, -0.05f, 1.05f, -1.0f, 1.0f);
 
@@ -775,7 +774,6 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
     buffer.flush();
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
 

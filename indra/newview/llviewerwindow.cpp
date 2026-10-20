@@ -2974,7 +2974,6 @@ void LLViewerWindow::draw()
     LLUI::setLineWidth(1.f);
 
     // Reset any left-over transforms
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
 
     LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
@@ -3159,7 +3158,6 @@ void LLViewerWindow::draw()
             S32 screen_x, screen_y;
             top_ctrl->localPointToScreen(0, 0, &screen_x, &screen_y);
 
-            gGL.matrixMode(LLRender::MM_MODELVIEW);
             LLUI::pushMatrix();
             LLUI::translate( (F32) screen_x, (F32) screen_y);
             top_ctrl->draw();
@@ -4597,7 +4595,6 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
         gDebugProgram.bind();
     }
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     // scope for the RAII for the depth test on hidden geometry
     {
@@ -5196,7 +5193,6 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                 gGL.setClearColor(0, 0, 0, 0); // bg black
                 gGL.setColorMask(true, true); // write color and alpha info
                 gGL.color4f(1.f, 1.f, 1.f, 0.5);
-                gGL.matrixMode(LLRender::MM_MODELVIEW);
                 LLRenderState::BlendScope gls_blend(true);
                 LLRenderState::CullScope gls_cull(true);
                 LLRenderState::DepthScope gls_depth(true, false);
@@ -5227,13 +5223,11 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
             LLBBox hud_bbox = gAgentAvatarp->getHUDBBox();
 
             // set up transform to encompass bounding box of HUD
-            gGL.matrixMode(LLRender::MM_PROJECTION);
             LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
             LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
             F32 depth = llmax(1.f, hud_bbox.getExtentLocal().mV[VX] * 1.1f);
             LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -0.5f * LLViewerCamera::getInstance()->getAspect(), 0.5f * LLViewerCamera::getInstance()->getAspect(), -0.5f, 0.5f, 0.f, depth);
 
-            gGL.matrixMode(LLRender::MM_MODELVIEW);
             LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
             LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, OGL_TO_CFR_ROTATION);        // Load Cory's favorite reference frame
@@ -5247,7 +5241,6 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
             LLRenderState::BlendScope gls_blend(true);
             LLRenderState::CullScope gls_cull(true);
             LLRenderState::DepthScope gls_depth(true, false);
-            gGL.matrixMode(LLRender::MM_MODELVIEW);
             LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
             if (selection->getSelectType() == SELECT_TYPE_HUD)
             {
@@ -5343,10 +5336,8 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
         // un-setup HUD render
         if (selection->getSelectType() == SELECT_TYPE_HUD && selection->getObjectCount())
         {
-            gGL.matrixMode(LLRender::MM_PROJECTION);
             LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
-            gGL.matrixMode(LLRender::MM_MODELVIEW);
             LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
             stop_glerror();
         }

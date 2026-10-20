@@ -706,7 +706,6 @@ void LLViewerParcelOverlay::renderPropertyLines()
     // Always fudge a little vertically.
     pull_toward_camera.mV[VZ] += 0.01f;
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     // Move to appropriate region coords

@@ -524,7 +524,6 @@ void LLToolBrushLand::render()
 void LLToolBrushLand::renderOverlay(LLSurface& land, const LLVector3& pos_region,
                                     const LLVector3& pos_world)
 {
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
     LLRenderState::DepthScope mDepthTest(true);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);

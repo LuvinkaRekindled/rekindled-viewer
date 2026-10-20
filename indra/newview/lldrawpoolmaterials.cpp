@@ -314,7 +314,6 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         if (params.mTextureMatrix)
         {
             gGL.getTexUnit(0)->activate();
-            gGL.matrixMode(LLRender::MM_TEXTURE);
 
             LLRenderMatrix::load(LLRenderMatrix::Kind::CurrentTexture, (GLfloat*)params.mTextureMatrix->mMatrix);
             gPipeline.mTextureMatrixOps++;
@@ -333,8 +332,7 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         if (tex_setup)
         {
             gGL.getTexUnit(0)->activate();
-            gGL.loadIdentity();
-            gGL.matrixMode(LLRender::MM_MODELVIEW);
+            LLRenderMatrix::identity(LLRenderMatrix::Kind::CurrentTexture);      // tex_setup: the texture matrix of unit 0 was made the current one above
         }
     };
 

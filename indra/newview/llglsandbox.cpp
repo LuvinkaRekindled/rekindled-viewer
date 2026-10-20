@@ -146,7 +146,6 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
     S32 center_y = (top + bottom) / 2;
 
     // save drawing mode
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
 
     // <FS:Ansariel> Use faster LLCachedControls
@@ -298,9 +297,7 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
     }
 
     // restore drawing mode
-    gGL.matrixMode(LLRender::MM_PROJECTION);
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
 
     // restore camera
     camera.setFar(old_far_plane);

@@ -756,7 +756,6 @@ void LLHUDEffectLookAt::render()
         // render crosshair
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, target.mV[VX], target.mV[VY], target.mV[VZ]);
         // <FS:Ansariel> FIRE-16912: Draw lines for lookat targets; by Ayamo Nozaki

@@ -531,7 +531,6 @@ void LLTracker::drawBeacon(LLVector3 pos_agent, std::string direction, LLColor4 
 
     LLColor4 c_col, col_next, col_edge, col_edge_next;
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
     if ("DOWN" == direction)

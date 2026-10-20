@@ -6824,7 +6824,6 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         // set up transform to encompass bounding box of HUD
         F32 aspect = LLViewerCamera::getInstance()->getAspect(); // <FS:Ansariel> Performance improvement
 
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
         F32 depth = llmax(1.f, hud_bbox.getExtentLocal().mV[VX] * 1.1f);
@@ -6832,7 +6831,6 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         //gGL.ortho(-0.5f * LLViewerCamera::getInstance()->getAspect(), 0.5f * LLViewerCamera::getInstance()->getAspect(), -0.5f, 0.5f, 0.f, depth);
         LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -0.5f * aspect, 0.5f * aspect, -0.5f, 0.5f, 0.f, depth);
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         gGL.pushUIMatrix();
         gGL.loadUIIdentity();
@@ -6859,7 +6857,6 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
             gDebugProgram.bind();
         }
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         bool is_hud_object = objectp->isHUDAttachment();
@@ -7040,10 +7037,8 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
 
     if (isAgentAvatarValid() && for_hud)
     {
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gGL.popUIMatrix();
         stop_glerror();
@@ -7530,7 +7525,6 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
         gUIProgram.bind();
     }
 
-    gGL.matrixMode(LLRender::MM_MODELVIEW);
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     gGL.pushUIMatrix();
     gGL.loadUIIdentity();

@@ -1459,7 +1459,6 @@ void LLView::drawChild(LLView* childp, S32 x_offset, S32 y_offset, bool force_dr
         if ((childp->getVisible() && childp->getRect().isValid())
             || force_draw)
         {
-            gGL.matrixMode(LLRender::MM_MODELVIEW);
             LLUI::pushMatrix();
             {
                 LLUI::translate((F32)childp->getRect().mLeft + x_offset, (F32)childp->getRect().mBottom + y_offset);

@@ -4349,22 +4349,18 @@ bool LLModelPreview::render()
         gUIProgram.bind();
 
         //clear background to grey
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
         LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)width, 0.0f, (F32)height, -1.0f, 1.0f);
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
 
         gGL.color4fv(canvas_col().mV); // <FS:Beq/> restore changes removed by the lab
         gl_rect_2d_simple(width, height);
 
-        gGL.matrixMode(LLRender::MM_PROJECTION);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
         gUIProgram.unbind();
     }

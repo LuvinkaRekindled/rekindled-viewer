@@ -6066,7 +6066,6 @@ void LLAgent::renderAutoPilotTarget()
         F32 height_meters;
         LLVector3d target_global;
 
-        gGL.matrixMode(LLRender::MM_MODELVIEW);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
         // not textured
