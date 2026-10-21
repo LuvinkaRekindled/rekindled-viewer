@@ -409,6 +409,9 @@ public:
     // if setup is true, wil lset texture compare mode function and filtering options
     void bindShadowMaps(LLShaderProgram& shader);
     void bindDeferredShaderFast(LLShaderProgram& shader);
+    void bindFastUnit(S32 k, S32 unit);                       // <FS> U1: one pass sampler of the Fast bind
+    void bindDeferredFill(LLShaderProgram& shader);         // <FS> U1: the Fast bind in full
+    void passFastState(void* out);                           // <FS> U1: the state the Fast bind depends on (PassFastState in pipeline.cpp)
     void bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* light_target = nullptr, LLRenderTarget* depth_target = nullptr);
     void setupSpotLight(LLShaderProgram& shader, LLDrawable* drawablep);
 
@@ -418,6 +421,7 @@ public:
     void setEnvMat(LLShaderProgram& shader);
 
     void bindReflectionProbes(LLShaderProgram& shader);
+    void stepPoissonOffset(LLShaderProgram& shader);
     void unbindReflectionProbes(LLShaderProgram& shader);
 
     void renderDeferredLighting();

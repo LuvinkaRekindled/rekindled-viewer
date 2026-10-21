@@ -126,6 +126,8 @@ static U32 sSlotId[LL_NUM_TEXTURE_LAYERS];                    // F3.4: what the 
 static const char* sSlotWriter[LL_NUM_TEXTURE_LAYERS];        // and which LLTexUnit function wrote it
 static const char* sSlotFile[LL_NUM_TEXTURE_LAYERS];          // the call site of unbind / bindManual that wrote it (file, line)
 static int sSlotLine[LL_NUM_TEXTURE_LAYERS];
+static U32 sUnitStamp[LL_NUM_TEXTURE_LAYERS];                 // <FS> U1: the write sequence number of the last slot write of each unit (every write goes through ll_bindTexUnit_impl); 0 = never written
+static U32 sWriteSeq = 0;
 static const char* sNextFile = nullptr;                       // set by those functions just before they write the slot
 static int sNextLine = 0;
 static inline void ll_bindTexUnit_impl(S32 unit_index, U32 texture, const char* who)
@@ -139,10 +141,21 @@ static inline void ll_bindTexUnit_impl(S32 unit_index, U32 texture, const char* 
         sSlotLine[unit_index] = sNextLine;
         sNextFile = nullptr;
         sNextLine = 0;
+        sUnitStamp[unit_index] = ++sWriteSeq;
     }
     LLVkTex::bindSlot(unit_index, texture);
 }
 #define ll_bindTexUnit(unit, texture) ll_bindTexUnit_impl(unit, texture, __func__)
+
+U32 LLTexUnit::getUnitStamp(S32 unit)
+{
+    return (unit >= 0 && unit < (S32)LL_NUM_TEXTURE_LAYERS) ? sUnitStamp[unit] : ~0u;
+}
+
+U32 LLTexUnit::getWriteSeq()
+{
+    return sWriteSeq;
+}
 
 TextureTarget LLTexUnit::getInternalType(eTextureType type)
 {
