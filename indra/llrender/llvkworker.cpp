@@ -3828,10 +3828,48 @@ static void on_rt_only_packets(const LLVkBridge::ShadowPacketsHeader& h, const U
     }
 }
 
+// S4 A2: the frame's shared palette list (kind 27): segments of whole palettes, each in scratch memory of this frame, found by the absolute float offset the entries carry
+struct PalSeg { U32 mStart, mFloats; U64 mAddress; };
+static std::vector<PalSeg> sPalSegs;
+static U32 sPalFrame = ~0u;
+static U64 palette_address(U32 offset)
+{
+    for (size_t k = sPalSegs.size(); k-- > 0; )
+    {
+        const PalSeg& s = sPalSegs[k];
+        if (offset >= s.mStart && offset < s.mStart + s.mFloats)
+        {
+            return s.mAddress + 4ull * (offset - s.mStart);
+        }
+    }
+    return 0;
+}
+
+static void on_palette_segment(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (h.mPass != sPalFrame)
+    {
+        sPalFrame = h.mPass;
+        sPalSegs.clear();
+    }
+    if (h.mPaletteFloats == 0)
+    {
+        return;
+    }
+    Renderer::ScratchAlloc a = Renderer::instance().allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+    if (!a.mPtr || !a.mAddress)
+    {
+        return;
+    }
+    memcpy(a.mPtr, blob, 4 * (size_t)h.mPaletteFloats);
+    sPalSegs.push_back({ h.mFragment, h.mPaletteFloats, (U64)a.mAddress });
+}
+
 // the worker side of kinds 6 and 7: rigged draws of the main view, only named to the ray scene (palettes are copied into the frame's scratch memory the scene call reads)
 static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if (!Rt::active() || h.mEntries == 0 || h.mPaletteFloats == 0)
+    const bool shared_palettes = h.mKind == 6 && h.mFragment == 1;       // S4 A2: the palettes are in the frame's shared list
+    if (!Rt::active() || h.mEntries == 0 || (h.mPaletteFloats == 0 && !shared_palettes))
     {
         return;
     }
@@ -3839,12 +3877,16 @@ static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, con
     const size_t entry_bytes = alpha_entries ? sizeof(LLVkBridge::ShadowAlphaEntry) : sizeof(LLVkBridge::ShadowSkinEntry);
     const F32* matrices = (const F32*)(blob + entry_bytes * h.mEntries);
     Renderer& r = Renderer::instance();
-    Renderer::ScratchAlloc palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
-    if (!palettes.mPtr || !palettes.mAddress)
+    Renderer::ScratchAlloc palettes;
+    if (!shared_palettes)
     {
-        return;
+        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+        if (!palettes.mPtr || !palettes.mAddress)
+        {
+            return;
+        }
+        memcpy(palettes.mPtr, matrices + 16 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
     }
-    memcpy(palettes.mPtr, matrices + 16 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         if (alpha_entries)
@@ -3895,7 +3937,12 @@ static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, con
             {
                 continue;
             }
-            note_rt_skinned(h.mPass, e, *vb, *ib, (U64)palettes.mAddress + 4ull * e.mPaletteOffset, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+            const U64 pal = shared_palettes ? palette_address(e.mPaletteOffset) : (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+            if (!pal)
+            {
+                continue;
+            }
+            note_rt_skinned(h.mPass, e, *vb, *ib, pal, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
         }
     }
 }
@@ -4206,22 +4253,19 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::GeoEntry) * h.mEntries);
     // S4 A1: a rigged entry is the 128 bytes of GeoGpu and 32 more (weights, palette, joints), the palettes follow the matrices in the blob
     const size_t stride = rigged ? 160 : sizeof(GeoGpu);
-    if (rigged && h.mPaletteFloats == 0)
-    {
-        return;
-    }
+    const bool own_palettes = rigged && h.mPaletteFloats > 0;       // else (S4 A2) they are in the frame's shared list
     Renderer::ScratchAlloc table = r.allocVertexScratch(stride * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(176 * (size_t)std::max<U32>(h.mMatrices, 1));
     Renderer::ScratchAlloc palettes;
-    if (rigged)
+    if (own_palettes)
     {
         palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
     }
-    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress || (rigged && (!palettes.mPtr || !palettes.mAddress)))
+    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress || (own_palettes && (!palettes.mPtr || !palettes.mAddress)))
     {
         return;
     }
-    if (rigged)
+    if (own_palettes)
     {
         memcpy(palettes.mPtr, matrices + 44 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
     }
@@ -4266,7 +4310,11 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         if (rigged)
         {
             U32* x = (U32*)(raw + 128);
-            const U64 wa = pa + e.mWeightOffset, pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+            const U64 wa = pa + e.mWeightOffset, pal = own_palettes ? (U64)palettes.mAddress + 4ull * e.mPaletteOffset : palette_address(e.mPaletteOffset);
+            if (!pal)
+            {
+                continue;       // (a palette the frame's list does not hold: not drawn; counts[i] stays 0)
+            }
             x[0] = (U32)wa;
             x[1] = (U32)(wa >> 32);
             x[2] = (U32)pal;
@@ -4429,7 +4477,8 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
 
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
-    if (h.mEntries == 0 || h.mPaletteFloats == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    const bool shared_palettes = h.mFragment == 1;       // S4 A2: the palettes are in the frame's shared list (kind 27)
+    if (h.mEntries == 0 || (h.mPaletteFloats == 0 && !shared_palettes) || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
     {
         ++sStats.mNoProgram;
         return;
@@ -4438,12 +4487,19 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
     const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowSkinEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(SkinGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
-    Renderer::ScratchAlloc palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
-    if (!table.mPtr || !models.mPtr || !palettes.mPtr || !table.mAddress || !models.mAddress || !palettes.mAddress)
+    Renderer::ScratchAlloc palettes;
+    if (!shared_palettes)
+    {
+        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+    }
+    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress || (!shared_palettes && (!palettes.mPtr || !palettes.mAddress)))
     {
         return;
     }
-    memcpy(palettes.mPtr, matrices + 16 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
+    if (!shared_palettes)
+    {
+        memcpy(palettes.mPtr, matrices + 16 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
+    }
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
     SkinGpu* out = (SkinGpu*)table.mPtr;
@@ -4459,7 +4515,11 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
-        const U64 wa = pa + e.mWeightOffset, pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+        const U64 wa = pa + e.mWeightOffset, pal = shared_palettes ? palette_address(e.mPaletteOffset) : (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+        if (!pal)
+        {
+            continue;       // (a palette the list does not hold: not drawn)
+        }
         g.mPositions[0] = (U32)pa;
         g.mPositions[1] = (U32)(pa >> 32);
         g.mIndices[0] = (U32)ia;
@@ -6891,6 +6951,11 @@ void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (h.mKind == 9)
     {
         on_object_velocity_packets(h, blob);
+        return;
+    }
+    if (h.mKind == 27)
+    {
+        on_palette_segment(h, blob);
         return;
     }
     if (h.mKind == 3 || h.mKind == 25 || h.mKind == 26)

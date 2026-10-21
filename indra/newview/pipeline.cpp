@@ -7253,9 +7253,11 @@ struct LLPipeline::ShadowSkinBuild
 {
     std::vector<LLVkBridge::ShadowSkinEntry> mEntries;
     std::vector<F32> mMatrices;
-    std::vector<F32> mPalettes;
+    std::vector<F32> mPalettes;         // the record's own palettes (LL_VK_PALETTE_SHARED=0; empty when they are in the frame's shared list)
     std::vector<LLDrawInfo*> mFallback;
     size_t mPaletteCount = 0;
+    bool mShared = false;               // S4 A2: the entries' palette offsets belong to the shared list of mPaletteFrame
+    U64 mPaletteFrame = ~0ull;
 };
 
 // ray scene materials: the material and the arrays the hit shading reads, for a rigged draw (every rigged entry gets them, whatever pass names the draw)
@@ -7282,6 +7284,10 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
     matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
                 std::unordered_map<const void*, U32> matrix_numbers;
         std::unordered_map<const F32*, U32> palette_offsets;
+        std::unordered_set<U32> palettes_used;
+        const bool shared_palettes = ll_palette_shared();
+        out.mShared = shared_palettes;
+        out.mPaletteFrame = ll_frame_palette_frame();
         for (size_t t = 0; t < count; ++t)
         {
             auto begin = result.beginRenderMap(list[t] + 1);      // the rigged variant of a pass type is the next number
@@ -7302,10 +7308,12 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                     continue;
                 }
                 LLVkBridge::ShadowSkinEntry e = {};
-                if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                if (!(shared_palettes ? ll_frame_palette(params->mAvatar, params->mSkinInfo.get(), e.mPaletteOffset, e.mJoints)
+                                      : shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
                 {
                     continue;       // the skin is not loaded yet: not drawn, as before
                 }
+                palettes_used.insert(e.mPaletteOffset);
                 e.mVertexBuffer = vb->getVertexBufferId();
                 e.mIndexBuffer = vb->getIndexBufferId();
                 e.mFirstIndex = params->mOffset;
@@ -7337,7 +7345,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                 entries.push_back(e);
             }
         }
-    out.mPaletteCount = palette_offsets.size();
+    out.mPaletteCount = palettes_used.size();
 }
 
 static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPipeline::ShadowSkinBuild& b)
@@ -16786,6 +16794,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             prepared->mSkinJob->wait();
         }
         const ShadowSkinBuild* source = prepared ? prepared->mSkinBuild.get() : nullptr;
+        if (source && source->mShared && source->mPaletteFrame != ll_frame_palette_frame())
+        {
+            source = nullptr;       // S4 A2: made in another frame: its palette offsets name that frame's list
+        }
         if (!source)
         {
             build_shadow_skin(result, list, count, built);
@@ -16809,6 +16821,11 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
             header.mPaletteFloats = (U32)palettes.size();
+            if (source->mShared)
+            {
+                header.mFragment = 1;       // S4 A2: the palettes are in the frame's shared list
+                ll_frame_palette_flush();
+            }
             const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
             memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
             std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));

@@ -223,6 +223,8 @@ namespace LLVkBridge
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
         U32 mWeightOffset, mPaletteOffset, mJoints, mPad3;          // A1 rigged draws: byte offset of the weight4 array, the palette's offset in floats (12 per joint) and its joint count
     };
+    // S4 A2 kind 27 PALETTES: the viewer's per-frame palette list grows by mPaletteFloats floats (12 per joint, whole palettes) at float offset mFragment; mPass = the viewer's frame; the blob is the floats. The worker keeps
+    //   them in scratch memory of the frame (segments by offset); entries of kinds 25 / 26 and of kinds 2 / 6 with mFragment = 1 name a palette by its absolute offset in this list instead of carrying copies.
     // S4 A1 (doc/vulkan/S4-design.md) kind 25: the same record as kind 3 for rigged draws (GEO_RIGGED, entries 160 bytes in the table, drawn with the skinned pull program): after the matrices (44 floats each)
     //   come mPaletteFloats floats of joint matrix palettes (12 per joint), the entries point into them.
     // S3 G2 / G3 (doc/vulkan/S3-design.md, LL_VK_SCENE_GEO=2): the deferred geometry entries kept by the worker in a persistent table, drawn from the list of fragments the viewer says are visible.
