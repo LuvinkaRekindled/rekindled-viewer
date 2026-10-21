@@ -705,6 +705,99 @@ static bool rigged_verify()
     return on;
 }
 
+// S4 A2: the frame's shared palette list (see lldrawpool.h)
+static struct FramePalettes
+{
+    std::mutex mMutex;
+    U64 mFrame = ~0ull;
+    std::vector<F32> mData;
+    size_t mSent = 0;
+    std::unordered_map<const F32*, U32> mOffsets;       // by the palette cache's data pointer (stable for the frame)
+    U64 mFlushedFloats = 0;                             // census: floats sent since the last log line
+    U64 mRequests = 0, mAdded = 0;
+} sFramePal;
+
+U64 ll_frame_palette_frame()
+{
+    return gFrameCount;
+}
+
+bool ll_palette_shared()
+{
+    static const int base = []() { const char* v = getenv("LL_VK_PALETTE_SHARED"); return v ? atoi(v) : 1; }();
+    static const int period = []() { const char* v = getenv("LL_VK_PALETTE_SHARED_AB"); return v ? atoi(v) : 0; }();
+    static U64 frame = ~0ull;
+    static bool now = true;
+    if (frame != gFrameCount)
+    {
+        frame = gFrameCount;
+        bool on = base != 0;
+        if (period > 0)
+        {
+            const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            const bool phase = ((seconds / period) % 2) == 1;
+            static int last = -1;
+            if ((int)phase != last)
+            {
+                last = (int)phase;
+                LL_INFOS("VkScene") << "[phase] shared palettes now " << (phase ? "ON" : "off") << LL_ENDL;
+            }
+            on = on && phase;
+        }
+        now = on;
+    }
+    return now;
+}
+
+bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints)
+{
+    if (!avatar || !skin)
+    {
+        return false;
+    }
+    const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(skin);       // (one at a time inside, and the entry is not written again in this frame)
+    joints = (U32)mpc.mMatrixPalette.size();
+    if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12)
+    {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(sFramePal.mMutex);
+    if (sFramePal.mFrame != gFrameCount)
+    {
+        sFramePal.mFrame = gFrameCount;
+        sFramePal.mData.clear();
+        sFramePal.mOffsets.clear();
+        sFramePal.mSent = 0;
+    }
+    ++sFramePal.mRequests;
+    auto it = sFramePal.mOffsets.find(mpc.mGLMp.data());
+    if (it == sFramePal.mOffsets.end())
+    {
+        it = sFramePal.mOffsets.emplace(mpc.mGLMp.data(), (U32)sFramePal.mData.size()).first;
+        sFramePal.mData.insert(sFramePal.mData.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
+        ++sFramePal.mAdded;
+    }
+    offset = it->second;
+    return true;
+}
+
+void ll_frame_palette_flush()
+{
+    std::lock_guard<std::mutex> lock(sFramePal.mMutex);
+    if (sFramePal.mFrame != gFrameCount || sFramePal.mSent >= sFramePal.mData.size())
+    {
+        return;
+    }
+    LLVkBridge::ShadowPacketsHeader header;
+    header.mKind = 27;
+    header.mPass = (U32)gFrameCount;
+    header.mFragment = (U32)sFramePal.mSent;
+    header.mPaletteFloats = (U32)(sFramePal.mData.size() - sFramePal.mSent);
+    LLVkBridge::shadowPackets(header, sFramePal.mData.data() + sFramePal.mSent, (size_t)header.mPaletteFloats * sizeof(F32));
+    sFramePal.mFlushedFloats += header.mPaletteFloats;
+    sFramePal.mSent = sFramePal.mData.size();
+}
+
 // A1 census (log tag RiggedPackets, every 600 frames): what the rigged records carried and what they left to the old path
 static struct RiggedStats
 {
@@ -834,7 +927,9 @@ struct LLGeometryBuild
     LLGeometryPassInfo mInfo;
     bool mRigged = false;               // S4 A1: the rigged variant of the pass type (entries carry weights and a palette, kind 25)
     std::vector<F32> mPalettes;         // ... the palettes the entries point into (12 floats per joint)
+    bool mShared = false;               // ... the palettes are in the frame's shared list (else mPalettes holds the record's own)
     U32 mNotDrawn = 0, mInMap = 0;      // ... draw infos the old path draws nothing for (no avatar / skin not loaded), draw infos looked at
+    U32 mJointsDistinct = 0;            // ... joints of the distinct palettes this build names (what a record of its own would copy)
     LLCullResult* mCull = nullptr;
     bool mServe = false;                // S3: the scene table serves this frame (ll_scene_geo_serving() when the build was made) ...
     bool mSkipServed = false;           // ... and the draws it serves are left out of this build (not while verifying)
@@ -859,13 +954,15 @@ static void build_geometry(LLGeometryBuild& out)
     std::vector<F32>& matrices = out.mMatrices;
     std::unordered_map<const void*, U32> matrix_numbers;
     std::unordered_map<const LLViewerTexture*, U32> texture_numbers;
-    std::unordered_map<const F32*, U32> palette_offsets;
+    std::unordered_map<const F32*, U32> palette_offsets;       // (LL_VK_PALETTE_SHARED=0: the record's own palettes)
+    std::unordered_set<U32> palettes_used;
+    out.mShared = out.mRigged && ll_palette_shared();
     entries.clear();
     matrices.clear();
     out.mTextures.clear();
     out.mFallback.clear();
     out.mPalettes.clear();
-    out.mNotDrawn = out.mInMap = 0;
+    out.mNotDrawn = out.mInMap = out.mJointsDistinct = 0;
 
     // the matrices the shader would get from LLRender::syncMatrices() for this model matrix: modelview, modelview * projection, normal matrix (inverse transpose)
     auto add_matrix = [&](const LLMatrix4* model) -> U32
@@ -938,10 +1035,15 @@ static void build_geometry(LLGeometryBuild& out)
         if (out.mRigged)
         {
             U32 offset = 0, joints = 0;
-            if (!ll_skin_palette(params->mAvatar, params->mSkinInfo.get(), out.mPalettes, palette_offsets, offset, joints))
+            if (!(out.mShared ? ll_frame_palette(params->mAvatar, params->mSkinInfo.get(), offset, joints)
+                              : ll_skin_palette(params->mAvatar, params->mSkinInfo.get(), out.mPalettes, palette_offsets, offset, joints)))
             {
                 ++out.mNotDrawn;    // the skin is not loaded yet: not drawn, as before
                 continue;
+            }
+            if (palettes_used.insert(offset).second)
+            {
+                out.mJointsDistinct += joints;
             }
             e.mFlags |= LLVkBridge::GEO_RIGGED;
             e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
@@ -1234,11 +1336,16 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         header.mEntries = (U32)entries.size();
         header.mMatrices = (U32)(matrices.size() / 44);
         const std::vector<F32>& palettes = build->mPalettes;
-        header.mPaletteFloats = rigged ? (U32)palettes.size() : 0;
-        std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + (rigged ? palettes.size() * sizeof(F32) : 0));
+        const bool own_palettes = rigged && !build->mShared;
+        header.mPaletteFloats = own_palettes ? (U32)palettes.size() : 0;
+        if (rigged && build->mShared)
+        {
+            ll_frame_palette_flush();       // the palettes the entries name are in the worker's list before the record
+        }
+        std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + (own_palettes ? palettes.size() * sizeof(F32) : 0));
         memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
         memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
-        if (rigged)
+        if (own_palettes)
         {
             memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
         }
@@ -1255,8 +1362,8 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         rs.mEntries += entries.size();
         rs.mFallback += build->mFallback.size();
         rs.mNotDrawn += build->mNotDrawn;
-        rs.mPaletteFloats += build->mPalettes.size();
-        rs.mPalettes += build->mPalettes.size() / 12;        // (joints: the palettes are 12 floats a joint)
+        rs.mPaletteFloats += build->mPalettes.size();       // (the record's own copies, LL_VK_PALETTE_SHARED=0)
+        rs.mPalettes += build->mJointsDistinct;             // (the joints of the distinct palettes of each build: what records of their own copy)
         rs.mInRenderMap += build->mInMap;
         {
             U32 last_ib = ~0u;
@@ -1281,8 +1388,10 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             rs.mLast = gFrameCount;
             LL_INFOS("RiggedPackets") << "per frame: " << (double)rs.mRecords / frames << " records, " << (double)rs.mEntries / frames << " entries, " << (double)rs.mFallback / frames
                 << " fallback draws, " << (double)rs.mNotDrawn / frames << " not drawn (no palette), " << (double)rs.mInRenderMap / frames << " draw infos in the render maps, joints in palettes "
-                << (double)rs.mPalettes / frames << ", palette bytes " << (double)rs.mPaletteFloats * 4.0 / frames << "; triangles " << (double)rs.mTris / frames << " (corners drawn " << (double)rs.mTris * 3.0 / frames << "), runs of one index buffer " << (double)rs.mRuns / frames << "; over-count " << rs.mUncounted << LL_ENDL;
+                << (double)rs.mPalettes / frames << " (per record), own palette bytes " << (double)rs.mPaletteFloats * 4.0 / frames << ", shared list sent " << (double)sFramePal.mFlushedFloats * 4.0 / frames
+                << " bytes a frame, palette requests " << (double)sFramePal.mRequests / frames << " added " << (double)sFramePal.mAdded / frames << "; triangles " << (double)rs.mTris / frames << " (corners drawn " << (double)rs.mTris * 3.0 / frames << "), runs of one index buffer " << (double)rs.mRuns / frames << "; over-count " << rs.mUncounted << LL_ENDL;
             rs.mTris = rs.mRuns = rs.mRecords = rs.mEntries = rs.mFallback = rs.mNotDrawn = rs.mPalettes = rs.mPaletteFloats = rs.mInRenderMap = 0;
+            sFramePal.mFlushedFloats = sFramePal.mRequests = sFramePal.mAdded = 0;
         }
     }
 }

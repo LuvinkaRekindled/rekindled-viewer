@@ -141,6 +141,12 @@ struct LLGeometryPassInfo
 
 // <FS> S4 A1: the rigged draws of the diffuse and the materials passes as geometry records (kind 25, skinned pull programs); LL_VK_RIGGED_PACKETS=1, LL_VK_RIGGED_PACKETS_AB=<s> alternates
 bool ll_rigged_packets_enabled();
+// <FS> S4 A2: the frame's shared palette list: a palette of an (avatar, skin) is added once per frame (12 floats per joint) and named by its absolute float offset by every record that needs it (rigged geometry records,
+// rigged shadow records); the new part of the list is sent (kind 27) by ll_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
+bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints);
+void ll_frame_palette_flush();
+U64 ll_frame_palette_frame();       // the frame the list belongs to (a build made in another frame names offsets of another list)
+bool ll_palette_shared();           // LL_VK_PALETTE_SHARED (default 1; 0 = a palette copy in every record, as before), LL_VK_PALETTE_SHARED_AB=<s> alternates (marker "[phase] shared palettes now ON/off")
 bool ll_rigged_indexed();           // LL_VK_RIGGED_INDEXED=1: the rigged records are drawn indexed (kind 26, the shaders get HAS_INDEXED_DRAW), fixed for the run
 
 class LLRenderPass : public LLDrawPool
