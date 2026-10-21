@@ -5542,22 +5542,46 @@ static void res_ray_membership(U64 frame)
                 {
                     continue;
                 }
+                // a changed buffer refreshes the buffer info of the groups its entries belong to: the entries that share a group need one note, not one each
+                void* noted[8];
+                size_t noted_count = 0;
+                auto already = [&](void* group) -> bool
+                {
+                    for (size_t k = 0; k < noted_count; ++k)
+                    {
+                        if (noted[k] == group)
+                        {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
                 for (size_t i = 0; i < f->mEntries.size(); ++i)
                 {
                     if (f->mPairOf[i] == p->mIndex)
                     {
+                        if (f->mRefs[i].mGroup && already(f->mRefs[i].mGroup))
+                        {
+                            continue;
+                        }
                         res_full_note(*f, i);
                         ++sRes.mEventNotes;
                         ++sRes.mEvBufNotes;
+                        if (noted_count < 8) { noted[noted_count++] = f->mRefs[i].mGroup; }
                     }
                 }
                 for (size_t i = 0; i < f->mAlpha.size(); ++i)
                 {
                     if (f->mAlphaPairOf[i] == p->mIndex && f->mAlphaHeld[i])
                     {
+                        if (f->mAlphaRefs[i].mGroup && already(f->mAlphaRefs[i].mGroup))
+                        {
+                            continue;
+                        }
                         res_full_note_alpha(*f, i);
                         ++sRes.mEventNotes;
                         ++sRes.mEvBufNotes;
+                        if (noted_count < 8) { noted[noted_count++] = f->mAlphaRefs[i].mGroup; }
                     }
                 }
             }
