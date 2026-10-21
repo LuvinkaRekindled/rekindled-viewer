@@ -87,9 +87,11 @@ bool ll_scene_geo_on();                                         // pipeline.cpp 
 bool ll_scene_geo_verify_on();                                  // ... with LL_VK_SCENE_VERIFY=1
 bool ll_scene_geo_serving();                                    // LL_VK_SCENE_GEO=2 and the table draws this frame (LL_VK_SCENE_GEO_AB=<seconds> alternates it)
 bool ll_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
+bool ll_scene_geo_main_view();                                  // the camera / render flags of the main view (not a probe, an impostor, a shadow or a reflection render)
 bool ll_scene_geo_prepared(LLCullResult* cull);                 // the table was told this frame's visible fragments for this cull result
 int ll_scene_geo_type_number(U32 type);                         // the pass type's number in the table's order (-1: not a table type)
 void ll_scene_geo_frame(LLCullResult* cull);                    // main view, once a frame before the passes
+void ll_scene_geo_frame_end();                                  // main view, after the passes: releases of fragments that went during the frame
 void ll_scene_geo_count(U32 what, U64 n);                       // 0 builder draws left out, 1 table draw records sent, 2 builds made again for want of a prepare            // pipeline.cpp (S2): after a group's rebuild
 
 class LLDrawInfo final : public LLRefCount
@@ -371,6 +373,9 @@ public:
     U32 mSceneSeenFrame = 0;
     // <FS> S1: the retained shadow fragment of this group (pipeline.cpp), valid while its serial is mDrawMapSerial; freed with the group
     struct LLSceneFragment* mSceneFragment = nullptr;
+    U16 mGeoServedMask = 0;             // <FS> S3 G4: the bits (kGeoTypes order) of the pass types whose draw infos in this group are ALL drawn by the scene table: postSort does not list those
+    U32 mGeoServedTris = 0;             // ... their index count (the triangle statistic)
+    U32 mGeoHandle = 0;                 // <FS> S3 G3: the worker's handle of this group's scene geometry fragment (0 = none, or the table does not hold it): what postSort lists for the passes
     static U32 sDrawMapsCleared;        // non empty draw maps cleared (group rebuilds), counted per frame by LL_VK_SCENE_STATS
 
     bridge_list_t mBridgeList;
@@ -586,6 +591,8 @@ public:
     // (LL_VK_SCENE_GEO=1). Filled by postSort.
     std::vector<LLSpatialGroup*> mGeoGroups;
     std::vector<U32> mGeoSerials;                       // their mDrawMapSerial when postSort listed them
+    bool mGeoElided = false;                            // S3 G4: postSort left the table's draws out of this cull result's render map (the passes must be prepared)
+    std::vector<U32> mGeoHandles;                       // S3 G3 (LL_VK_SCENE_GEO=2 serving): the scene geometry handles of the groups that passed postSort's filters: the list the worker draws from
     // verify only (LL_VK_SCENE_GEO with LL_VK_SCENE_VERIFY=1): who pushed each draw info into the render map: the group, its mDrawMapSerial then, and where (1 postSort, 2 the shadow render map job)
     struct GeoOwner { LLSpatialGroup* mGroup; U32 mSerial; U8 mSource; };
     std::unordered_map<const LLDrawInfo*, GeoOwner> mGeoOwner;

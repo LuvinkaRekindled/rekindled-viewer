@@ -90,6 +90,38 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
         mShader = mShader->mRiggedVariant;
     }
 
+    // <FS> S3 G4: the program of a pass is bound (deferred shader setup: lights, shadow maps, probes) only when something is drawn with it. A rigged pass with no draws binds nothing; a static pass
+    // that the packets draw binds its pull program in renderDeferred, and this program only if a draw is left for it
+    mUntouched = false;
+    if (deferredPacketsEnabled())
+    {
+        static const U32 pass_types[] =
+        {
+            LLRenderPass::PASS_MATERIAL, LLRenderPass::PASS_MATERIAL_ALPHA_MASK, LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE, LLRenderPass::PASS_SPECMAP, LLRenderPass::PASS_SPECMAP_MASK,
+            LLRenderPass::PASS_SPECMAP_EMISSIVE, LLRenderPass::PASS_NORMMAP, LLRenderPass::PASS_NORMMAP_MASK, LLRenderPass::PASS_NORMMAP_EMISSIVE, LLRenderPass::PASS_NORMSPEC,
+            LLRenderPass::PASS_NORMSPEC_MASK, LLRenderPass::PASS_NORMSPEC_EMISSIVE,
+        };
+        static const bool lazy = !(getenv("LL_VK_POOL_LAZY") && getenv("LL_VK_POOL_LAZY")[0] == '0');
+        if (lazy)
+        {
+            if (rigged)
+            {
+                const U32 type = pass_types[pass] + 1;
+                if (gPipeline.beginRenderMap(type) == gPipeline.endRenderMap(type))
+                {
+                    mUntouched = true;
+                    ll_scene_geo_count(4, 1);
+                    return;
+                }
+            }
+            else if (gDeferredMaterialPullProgram[idx].mProgramObject != 0)
+            {
+                ll_scene_geo_count(5, 1);
+                return;
+            }
+        }
+    }
+
     gPipeline.bindDeferredShader(*mShader);
 }
 
@@ -97,7 +129,11 @@ void LLDrawPoolMaterials::endDeferredPass(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;
 
-    mShader->unbind();
+    if (!mUntouched)
+    {
+        mShader->unbind();      // (unbinds whatever program is current)
+    }
+    mUntouched = false;
 
     LLRenderPass::endRenderPass(pass);
 }
@@ -169,6 +205,10 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     if (rigged)
     {
         type += 1;
+    }
+    if (mUntouched)
+    {
+        return;         // <FS> S3 G4: beginDeferredPass found nothing to draw
     }
 
     // <FS> render packets: the static draws as one record (the pull program of this pass bound instead of the old one); what it cannot carry is drawn the old way below

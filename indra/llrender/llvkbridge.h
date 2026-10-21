@@ -221,14 +221,15 @@ namespace LLVkBridge
         F32 mEnvIntensity, mCutoff, mBrightness, mPad;
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
     };
-    // S3 G2 (doc/vulkan/S3-design.md, LL_VK_SCENE_GEO=2): the deferred geometry entries kept by the worker in a persistent table, drawn from the list of fragments the viewer says are visible.
-    // kind 20 RETAIN_GEO: mFragment = id, mEntries x GeoWire (mE.mMatrix = region matrix slot, 0 = the view alone; its texture fields are 1 + the number in the fragment's texture list, 0 = none).
-    // kind 21 PREPARE_GEO (once a frame, before the passes): mEntries = visible fragments, mMatrices = region matrices, mPaletteFloats = words of texture names. Blob: mEntries x GeoFragRef, the
-    //   name words (the GL name of each fragment's textures in list order), mMatrices x GeoSlotMatrix. The worker checks each fragment's buffers and texture slots, rewrites its entries when
-    //   something changed and writes the draw commands of the frame, by pass type.
+    // S3 G2 / G3 (doc/vulkan/S3-design.md, LL_VK_SCENE_GEO=2): the deferred geometry entries kept by the worker in a persistent table, drawn from the list of fragments the viewer says are visible.
+    // The fragments are named by the viewer's dense HANDLE (LLSceneFragment::mGeoHandle, reused only after the release was sent).
+    // kind 20 RETAIN_GEO: mFragment = handle, mEntries x GeoWire (mE.mMatrix = region matrix slot, 0 = the view alone; its texture fields are 1 + the number in the fragment's texture list, 0 = none),
+    //   then mPaletteFloats GL names, the fragment's textures in list order (the worker pins them: permanent bindless slots).
+    // kind 21 PREPARE_GEO (once a frame, before the passes): mEntries = handles of the visible fragments (U32 each), then mMatrices x GeoSlotMatrix (all region matrices in use). The worker looks at the
+    //   fragments that something named (buffer storage changed, a texture's name changed, a pin got another slot), and writes the draw commands of the frame, by pass type.
     // kind 22 DRAW_GEO: mPass = pass type number (0..12, the viewer's kGeoTypes order), blob = 32 floats: the view and the projection matrix (column-major) of the pass. The viewer has bound the pass's
     //   pull program; the worker draws that type's commands with it.
-    // kind 23 RELEASE_GEO: mEntries fragment ids (U32).
+    // kind 23 RELEASE_GEO: mEntries handles (U32). kind 24 GEO_TEX: mFragment = handle, mEntries x { local texture number, GL name } (the textures whose name changed).
     struct GeoWire { GeoEntry mE; U32 mType; };
     struct GeoFragRef { U32 mId, mNameOffset, mNameCount; };
     struct GeoSlotMatrix { U32 mSlot; F32 mM[16]; };

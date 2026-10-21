@@ -436,6 +436,7 @@ struct Buf
     unsigned mRtName = 0;               // its GL name, for the list of changed watched buffers
     bool mResWatched = false;           // S2: a resident fragment of the ray scene reads it: a change (epoch, moves, version) is logged by name (sResChanged)
     U32 mResName = 0;
+    bool mGeoWatched = false;           // S3: a scene geometry fragment reads it: a change of its storage (epoch, moves) is logged by name (sGeoChanged), and the write path asks whether the fragments listed it lately
     bool mRtWatched = false;            // the ray scene reads this buffer at trace time (alpha records): a change of its storage is counted (sBufferTopology)
     // The Vulkan buffer lives in write-combined video memory, which is very slow to read from the CPU. This copy in ordinary memory
     // is what a renamed buffer is refilled from when only part of it is rewritten.
@@ -1763,7 +1764,15 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
 std::vector<U32> sPendingBufs;       // the buffers whose Buf::mPending is set
 std::vector<U32> sResChanged;           // names of the buffers a resident fragment reads that changed since the ray membership was last looked at
 U64 sResCause[3] = {};                  // writes of watched buffers by what changed: 0 epoch (storage given up or made again), 1 version (data written), 2 moves (same data in another range)
-inline void res_touched(const Buf& b, int cause) { if (b.mResWatched) { sResChanged.push_back(b.mResName); ++sResCause[cause]; } }
+static U64 sGeoPinEpoch = 0;                 // <FS> S3: bumped when a pin a scene geometry fragment uses gets another bindless slot
+void geo_buffer_gone_impl(U32 name);      // (defined with the scene geometry table below)
+bool geo_in_flight_impl(U32 name, U64 frame);
+std::vector<U32> sGeoChanged;           // S3: names of the buffers a scene geometry fragment reads whose storage changed (causes 0 and 2) since the last prepare
+inline void res_touched(const Buf& b, int cause)
+{
+    if (b.mResWatched) { sResChanged.push_back(b.mResName); ++sResCause[cause]; }
+    if (b.mGeoWatched && cause != 1) { sGeoChanged.push_back(b.mResName); }
+}
 U64 sBufferTopology = 0;                // see Buf::mRtWatched
 std::vector<unsigned> sTopologyNames;  // the names behind the count (cleared when taken; sTopologyOverflow: too many)
 bool sTopologyOverflow = false;
@@ -2013,7 +2022,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
     ++b.mVersion; res_touched(b, 1);
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
-    const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1;
+    const bool in_flight = (b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1) || (b.mGeoWatched && geo_in_flight_impl(b.mResName, frame));
     if (in_flight && b.mVk.valid())
     {
         const auto t0 = std::chrono::steady_clock::now();
@@ -2486,6 +2495,7 @@ void destroy_buffers(S32 n, const U32* buffers)
             release_storage(it->second);
             buf_forget(it->first);
             res_buffer_gone(it->first);
+            geo_buffer_gone_impl(it->first);
             sGL.mBuffers.erase(it);
             ++sPacketBufferGeneration;
         }
@@ -3081,6 +3091,7 @@ struct Pin
     U32 mName = 0;              // GL name (0 = free entry)
     U32 mSlot = 0;              // the pinned bindless slot (0 = none yet: the texture has no image, or is not a plain 2D one)
     U32 mRefs = 0;
+    U32 mGeoRefs = 0;           // S3: how many of the refs are scene geometry fragment textures (their entries are written again when the slot changes)
     bool mQueued = false;       // in sPinDirty
     bool mWaiting = false;      // in sPinWaiting
     U64 mNextTry = 0;           // a pin with no image is tried again from this frame on (the wait doubles each time, up to 256 frames)
@@ -3157,6 +3168,10 @@ void pin_resolve(U32 index)
         }
         p.mSlot = slot;
         Rt::setPinSlot(index, slot);
+        if (p.mGeoRefs)
+        {
+            ++sGeoPinEpoch;
+        }
     }
     if (!slot && !p.mWaiting)
     {
@@ -3175,6 +3190,10 @@ void pin_lost(Tex& t, U32 name)
         Renderer::instance().bindlessUnpin(0, sPins[index].mSlot);
         sPins[index].mSlot = 0;
         Rt::setPinSlot(index, 0);
+        if (sPins[index].mGeoRefs)
+        {
+            ++sGeoPinEpoch;
+        }
         if (!sPins[index].mWaiting)
         {
             sPins[index].mWaiting = true;
@@ -5740,10 +5759,13 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
-// <FS> S3 G2 (doc/vulkan/S3-design.md): the deferred geometry entries of the scene fragments, kept in a persistent GPU table (the 128 byte entry diffusePullV.glsl / materialPullV.glsl read), drawn
-// from the list of fragments the viewer names once a frame (kind 21) and the pass it draws (kind 22). A fragment's buffers are checked, and its entries written again, only when something changed
-// (a buffer moved or appeared, a texture has another slot): the per-frame work is per visible fragment, not per entry. The table is single buffered and write-combined (the CPU never reads it):
-// an entry rewritten while the previous frame still runs can show that frame the new slot (G3 pins the texture slots to remove the case).
+// <FS> S3 G2 / G3 (doc/vulkan/S3-design.md): the deferred geometry entries of the scene fragments, kept in a persistent GPU table (the 128 byte entry diffusePullV.glsl / materialPullV.glsl read), drawn
+// from the list of fragments the viewer names once a frame (kind 21) and the pass it draws (kind 22). Nothing is looked at per entry per frame: a fragment is checked only when an EVENT says
+// so (a buffer it reads got other storage or went, one of its textures was named otherwise by the viewer (kind 24), a pin of its textures got another bindless slot) and its entries are then
+// written again, with its draw commands. The per-frame work is per listed fragment: one dirty test and a copy of its commands. The textures of the entries are PINNED slots (permanent in every
+// frame's descriptor set, rtPinAcquire), so the single buffered, write-combined table never names a slot an earlier frame in flight cannot see. A buffer a fragment reads is marked used by the
+// fragment's listed frame (geo_buffer_in_flight, asked by the write path), not by touching it every frame. LL_VK_SCENE_GEO_STALECHECK (default on, every 16th prepare) compares what the table
+// holds against a fresh lookup and heals it, counting what the events missed.
 namespace
 {
 const U32 kGeoCapacity = 131072;
@@ -5764,17 +5786,29 @@ struct GeoFrag
     std::vector<U32> mSlots;            // the table slot of each item
     std::vector<U32> mPairOf;           // each item's index into mPairs
     std::vector<ResPair> mPairs;        // the distinct (vertex, index) buffers of its items
-    std::vector<U32> mTexSlot;          // the slot each of its textures had when the entries were last written (~0 = never)
-    bool mDirty = true;
+    std::vector<U64> mAddr;             // per pair: vertex and index buffer address as last written into the entries (the stale check reads these, never the write-combined table)
+    std::vector<U32> mTexName;          // the GL name the viewer last told for each local texture
+    std::vector<U32> mPin;              // its pin (0 = none)
+    std::vector<U32> mTexSlot;          // the slot the entries were last written with
+    std::vector<VkDrawIndirectCommand> mCmds;   // the draws of its usable items, sorted by pass type
+    U32 mTypeFirst[kGeoTypes + 1] = {};
+    bool mDirtyPairs = true, mDirtyEntries = true;
+    U64 mPinEpochSeen = ~0ull;
+    U64 mListedFrame = ~0ull;           // the frame it was last listed (the buffers it reads count as in flight for the frames after)
+    U32 mHandle = 0;
 };
 struct GeoStats
 {
     U64 mRetains = 0, mReleases = 0, mReleaseUnknown = 0, mOverflow = 0, mPrepares = 0, mDrawRecords = 0, mDrawStale = 0, mDrawNoProgram = 0, mScratchFail = 0, mNotInFrame = 0;
-    U64 mFragsListed = 0, mFragsUnknown = 0, mFragsRewritten = 0, mRewriteFirst = 0, mRewritePair = 0, mRewriteSlot = 0, mItemsRewritten = 0, mItemsListed = 0, mItemsSkippedPair = 0;
-    U64 mNames = 0, mNamesZero = 0, mSlotLookups = 0, mSlotZero = 0, mPairChecks = 0, mPairChanged = 0, mPairNotThere = 0, mFlushes = 0;
+    U64 mFragsListed = 0, mFragsUnknown = 0, mItemsListed = 0, mItemsSkippedPair = 0, mCommandsTotal = 0;
+    U64 mRebuilds = 0, mRebuildFirst = 0, mRebuildPairs = 0, mRebuildTex = 0, mRebuildPin = 0, mItemsRewritten = 0;
+    U64 mBufEvents = 0, mBufEventFrags = 0, mBufGone = 0, mBufGoneFrags = 0, mInFlightAsks = 0, mInFlightYes = 0;
+    U64 mTexUpdates = 0, mTexUpdateEntries = 0, mPinAcquires = 0, mPinReleases = 0, mPinSlotZero = 0, mFlushes = 0;
+    U64 mCheckRuns = 0, mCheckFrags = 0, mStaleAddr = 0, mStaleSlot = 0, mStaleCmd = 0;
     U64 mCommands[kGeoTypes] = {}, mCommandsMax[kGeoTypes] = {}, mDrawNs[kGeoTypes] = {}, mDrawCalls[kGeoTypes] = {};
     U64 mMaxFragsFrame = 0, mMaxItemsFrame = 0;
-    U64 mNsMatrices = 0, mNsTextures = 0, mNsPairs = 0, mNsRewrite = 0, mNsCommands = 0, mNsPrepare = 0, mNsRetain = 0, mNsDraw = 0, mNsDrawMatrices = 0, mNsDrawState = 0;
+    U64 mNsPrepare = 0, mNsEvents = 0, mNsPins = 0, mNsRebuild = 0, mNsList = 0, mNsCopy = 0, mNsCheck = 0, mNsRetain = 0, mNsRelease = 0, mNsTexUpdate = 0, mNsMatrices = 0;
+    U64 mNsDraw = 0, mNsDrawMatrices = 0, mNsDrawState = 0, mNsDrawCall = 0;
     U64 mMatricesSent = 0;
     U64 mLastLog = 0;
 };
@@ -5786,20 +5820,26 @@ static struct GeoState
     U32 mHigh = 0;
     std::vector<U32> mFree;
     std::vector<std::pair<U32, U64>> mRetired;
-    std::unordered_map<U32, GeoFrag> mFrags;
+    std::vector<GeoFrag*> mBy;                          // by the viewer's dense handle
+    std::unordered_multimap<U32, U32> mByBuf;           // buffer name -> handle of a fragment that reads it
     U64 mPreparedFrame = ~0ull;
     Renderer::ScratchAlloc mCommands;
     U32 mFirst[kGeoTypes] = {}, mCount[kGeoTypes] = {};
     F32 mRegionM[256][16] = {};
     U8 mHaveM[256] = {};
     U32 mMaxSlot = 0;
-    std::vector<U32> mUsed;
+    size_t mFragCount = 0;
     GeoStats mS;
 } sGeo;
 
 bool geo_timed()
 {
     static const bool on = getenv("LL_VK_SCENE_TIMES") != nullptr;
+    return on;
+}
+bool geo_stale_check_on()
+{
+    static const bool on = !(getenv("LL_VK_SCENE_GEO_STALECHECK") && getenv("LL_VK_SCENE_GEO_STALECHECK")[0] == '0');
     return on;
 }
 U64 geo_ns(const std::chrono::steady_clock::time_point& since)
@@ -5856,21 +5896,73 @@ void geo_reclaim(U64 frame)
     sGeo.mRetired.resize(keep);
 }
 
-void geo_release(U32 id)
+GeoFrag* geo_find(U32 handle)
 {
-    auto it = sGeo.mFrags.find(id);
-    if (it == sGeo.mFrags.end())
+    return handle < sGeo.mBy.size() ? sGeo.mBy[handle] : nullptr;
+}
+
+void geo_pin_set(GeoFrag& f, size_t k, U32 name)
+{
+    if (f.mPin[k])
+    {
+        if (sPins[f.mPin[k]].mGeoRefs)
+        {
+            --sPins[f.mPin[k]].mGeoRefs;
+        }
+        rtPinRelease(f.mPin[k]);
+        ++sGeo.mS.mPinReleases;
+        f.mPin[k] = 0;
+    }
+    f.mTexName[k] = name;
+    if (name)
+    {
+        const U32 pin = rtPinAcquire(name);
+        f.mPin[k] = pin;
+        if (pin)
+        {
+            ++sPins[pin].mGeoRefs;
+            ++sGeo.mS.mPinAcquires;
+        }
+    }
+}
+
+void geo_release(U32 handle)
+{
+    GeoFrag* f = geo_find(handle);
+    if (!f)
     {
         return;
     }
     const U64 frame = Context::instance().getFrameNumber();
-    for (U32 slot : it->second.mSlots)
+    for (U32 slot : f->mSlots)
     {
         sGeo.mRetired.push_back({ slot, frame });
     }
-    sGeo.mFrags.erase(it);
+    for (size_t k = 0; k < f->mPin.size(); ++k)
+    {
+        geo_pin_set(*f, k, 0);
+    }
+    for (const ResPair& p : f->mPairs)
+    {
+        for (U32 name : { p.mVb, p.mIb })
+        {
+            auto range = sGeo.mByBuf.equal_range(name);
+            for (auto m = range.first; m != range.second; ++m)
+            {
+                if (m->second == handle)
+                {
+                    sGeo.mByBuf.erase(m);
+                    break;
+                }
+            }
+        }
+    }
+    sGeo.mBy[handle] = nullptr;
+    --sGeo.mFragCount;
+    delete f;
 }
 
+// kind 20: mFragment = the viewer's handle, mEntries x GeoWire, then mPaletteFloats GL names (the fragment's textures in list order)
 void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!geo_init())
@@ -5881,9 +5973,10 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     geo_release(h.mFragment);
     geo_reclaim(Context::instance().getFrameNumber());
     const LLVkBridge::GeoWire* items = (const LLVkBridge::GeoWire*)blob;
-    GeoFrag f;
-    f.mItems.assign(items, items + h.mEntries);
-    U32 textures = 0;
+    const U32* names = (const U32*)(items + h.mEntries);
+    GeoFrag* f = new GeoFrag();
+    f->mHandle = h.mFragment;
+    f->mItems.assign(items, items + h.mEntries);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         U32 slot;
@@ -5902,36 +5995,72 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             {
                 LL_WARNS("VkScene") << "scene geometry table is full (" << kGeoCapacity << " entries): the rest are not drawn from it" << LL_ENDL;
             }
-            for (U32 s : f.mSlots)
+            for (U32 s : f->mSlots)
             {
                 sGeo.mRetired.push_back({ s, Context::instance().getFrameNumber() });
             }
+            delete f;
             return;
         }
-        f.mSlots.push_back(slot);
-        const LLVkBridge::GeoEntry& e = f.mItems[i].mE;
+        f->mSlots.push_back(slot);
+        const LLVkBridge::GeoEntry& e = f->mItems[i].mE;
         size_t k = 0;
-        while (k < f.mPairs.size() && !(f.mPairs[k].mVb == e.mVertexBuffer && f.mPairs[k].mIb == e.mIndexBuffer))
+        while (k < f->mPairs.size() && !(f->mPairs[k].mVb == e.mVertexBuffer && f->mPairs[k].mIb == e.mIndexBuffer))
         {
             ++k;
         }
-        if (k == f.mPairs.size())
+        if (k == f->mPairs.size())
         {
             ResPair p;
             p.mVb = e.mVertexBuffer;
             p.mIb = e.mIndexBuffer;
-            f.mPairs.push_back(p);
+            f->mPairs.push_back(p);
+            sGeo.mByBuf.emplace(p.mVb, h.mFragment);
+            sGeo.mByBuf.emplace(p.mIb, h.mFragment);
         }
-        f.mPairOf.push_back((U32)k);
-        for (U32 n : { e.mTextures[0], e.mTextures[1], e.mTextures[2], e.mTextures[3], e.mNormalMap, e.mSpecularMap })
-        {
-            textures = std::max(textures, n);
-        }
+        f->mPairOf.push_back((U32)k);
     }
-    f.mTexSlot.assign(textures, ~0u);
-    sGeo.mFrags[h.mFragment] = std::move(f);
+    f->mAddr.assign(2 * f->mPairs.size(), 0);
+    const size_t textures = h.mPaletteFloats;
+    f->mTexName.assign(textures, 0);
+    f->mPin.assign(textures, 0);
+    f->mTexSlot.assign(textures, ~0u);
+    for (size_t k = 0; k < textures; ++k)
+    {
+        geo_pin_set(*f, k, names[k]);
+    }
+    if (sGeo.mBy.size() <= h.mFragment)
+    {
+        sGeo.mBy.resize(h.mFragment + 1 + h.mFragment / 4, nullptr);
+    }
+    sGeo.mBy[h.mFragment] = f;
+    ++sGeo.mFragCount;
     ++sGeo.mS.mRetains;
     sGeo.mS.mNsRetain += geo_ns(t0);
+}
+
+// kind 24: mFragment = handle, mEntries x { local texture number (0 based), GL name }
+void geo_tex_update(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    const auto t0 = std::chrono::steady_clock::now();
+    GeoFrag* f = geo_find(h.mFragment);
+    ++sGeo.mS.mTexUpdates;
+    if (!f)
+    {
+        return;
+    }
+    const U32* u = (const U32*)blob;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const U32 k = u[2 * i], name = u[2 * i + 1];
+        if (k < f->mTexName.size() && f->mTexName[k] != name)
+        {
+            geo_pin_set(*f, k, name);
+            f->mDirtyEntries = true;
+            ++sGeo.mS.mTexUpdateEntries;
+        }
+    }
+    sGeo.mS.mNsTexUpdate += geo_ns(t0);
 }
 
 // the matrices a pass needs for its region matrices: modelview, modelview * projection, the normal matrix (columns of the inverse transpose of the modelview's upper 3x3), as LLRender::syncMatrices()
@@ -5977,7 +6106,13 @@ void geo_matrix(const F32* view, const F32* proj, const F32* model, F32* out)
     n[3] = n[7] = n[11] = 0.f;
 }
 
-void geo_write_items(GeoFrag& f, const std::vector<U32>& tex_slot)
+U32 geo_pin_slot(U32 pin)
+{
+    return pin && pin < sPins.size() ? sPins[pin].mSlot : 0u;
+}
+
+// the entries of a fragment from the pairs and slots as they are now (the pairs have been looked at)
+void geo_write_items(GeoFrag& f)
 {
     for (size_t i = 0; i < f.mItems.size(); ++i)
     {
@@ -6003,7 +6138,7 @@ void geo_write_items(GeoFrag& f, const std::vector<U32>& tex_slot)
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;
-        auto slot_of = [&](U32 n) -> U32 { return n ? tex_slot[n - 1] : 0u; };
+        auto slot_of = [&](U32 n) -> U32 { return n ? f.mTexSlot[n - 1] : 0u; };
         g.mSlots[0] = slot_of(e.mTextures[0]) | (slot_of(e.mTextures[1]) << 16);
         g.mSlots[1] = slot_of(e.mTextures[2]) | (slot_of(e.mTextures[3]) << 16);
         g.mMapSlots = slot_of(e.mNormalMap) | (slot_of(e.mSpecularMap) << 16);
@@ -6015,7 +6150,227 @@ void geo_write_items(GeoFrag& f, const std::vector<U32>& tex_slot)
     }
 }
 
-// kind 21: once a frame, before the passes
+// the draw commands of the usable items, sorted by pass type
+void geo_build_commands(GeoFrag& f)
+{
+    f.mCmds.clear();
+    for (U32 t = 0; t < kGeoTypes; ++t)
+    {
+        f.mTypeFirst[t] = (U32)f.mCmds.size();
+        for (size_t i = 0; i < f.mItems.size(); ++i)
+        {
+            if (f.mItems[i].mType == t && f.mPairs[f.mPairOf[i]].mOk)
+            {
+                f.mCmds.push_back({ f.mItems[i].mE.mIndexCount, 1u, 0u, f.mSlots[i] });
+            }
+        }
+    }
+    f.mTypeFirst[kGeoTypes] = (U32)f.mCmds.size();
+}
+
+// the fragment was named by an event (or is new): look at its buffers and textures again, write its entries and commands
+void geo_rebuild(GeoFrag& f, U64 frame_now, bool first)
+{
+    GeoStats& s = sGeo.mS;
+    ++s.mRebuilds;
+    bool pairs_changed = false;
+    if (f.mDirtyPairs)
+    {
+        for (size_t k = 0; k < f.mPairs.size(); ++k)
+        {
+            ResPair& p = f.mPairs[k];
+            const int c = res_pair_check(p);
+            if (c == 1)
+            {
+                pairs_changed = true;
+            }
+            if (p.mOk)
+            {
+                p.mPvb->mGeoWatched = true;
+                p.mPvb->mResName = p.mVb;
+                p.mPib->mGeoWatched = true;
+                p.mPib->mResName = p.mIb;
+                f.mAddr[2 * k] = (U64)p.mPvb->mVk.mAddress;
+                f.mAddr[2 * k + 1] = (U64)p.mPib->mVk.mAddress;
+            }
+        }
+        // a pair that is not usable yet stays dirty (looked at again next frame: its buffer appears without an event we can see)
+        bool all_ok = true;
+        for (const ResPair& p : f.mPairs)
+        {
+            all_ok = all_ok && p.mOk;
+        }
+        f.mDirtyPairs = !all_ok;
+    }
+    bool slots_changed = false;
+    for (size_t k = 0; k < f.mTexSlot.size(); ++k)
+    {
+        const U32 slot = geo_pin_slot(f.mPin[k]);
+        if (f.mTexSlot[k] != slot)
+        {
+            f.mTexSlot[k] = slot;
+            slots_changed = true;
+            s.mPinSlotZero += slot == 0 ? 1 : 0;
+        }
+    }
+    s.mRebuildFirst += first ? 1 : 0;
+    s.mRebuildPairs += pairs_changed ? 1 : 0;
+    s.mRebuildTex += (slots_changed && !first) ? 1 : 0;
+    s.mRebuildPin += f.mPinEpochSeen != sGeoPinEpoch ? 1 : 0;
+    if (first || pairs_changed || slots_changed || f.mDirtyEntries)
+    {
+        s.mItemsRewritten += f.mItems.size();
+        geo_write_items(f);
+        geo_build_commands(f);
+        f.mDirtyEntries = false;
+    }
+    f.mPinEpochSeen = sGeoPinEpoch;
+    (void)frame_now;
+}
+
+// a watched buffer got other storage (called by the write path through res_touched, causes 0 and 2): the fragments reading it look at their pairs when next listed
+void geo_buffer_changed(U32 name)
+{
+    ++sGeo.mS.mBufEvents;
+    auto range = sGeo.mByBuf.equal_range(name);
+    for (auto m = range.first; m != range.second; ++m)
+    {
+        if (GeoFrag* f = geo_find(m->second))
+        {
+            f->mDirtyPairs = true;
+            ++sGeo.mS.mBufEventFrags;
+        }
+    }
+}
+
+// a buffer entry is erased: no pair of ours may keep a pointer to it
+void geo_buffer_gone_impl(U32 name)
+{
+    ++sGeo.mS.mBufGone;
+    auto range = sGeo.mByBuf.equal_range(name);
+    for (auto m = range.first; m != range.second; ++m)
+    {
+        GeoFrag* f = geo_find(m->second);
+        if (!f)
+        {
+            continue;
+        }
+        ++sGeo.mS.mBufGoneFrags;
+        f->mDirtyPairs = true;
+        for (ResPair& p : f->mPairs)
+        {
+            if (p.mVb == name)
+            {
+                p.mPvb = nullptr;
+                p.mOk = false;
+                p.mGen = ~0ull;
+            }
+            if (p.mIb == name)
+            {
+                p.mPib = nullptr;
+                p.mOk = false;
+                p.mGen = ~0ull;
+            }
+        }
+    }
+}
+
+bool geo_in_flight_impl(U32 name, U64 frame)
+{
+    ++sGeo.mS.mInFlightAsks;
+    auto range = sGeo.mByBuf.equal_range(name);
+    for (auto m = range.first; m != range.second; ++m)
+    {
+        const GeoFrag* f = geo_find(m->second);
+        if (f && f->mListedFrame != ~0ull && frame < f->mListedFrame + Context::frameCount() + 1)
+        {
+            ++sGeo.mS.mInFlightYes;
+            return true;
+        }
+    }
+    return false;
+}
+
+// writes by the main thread to a buffer the table reads are recorded before the draw that reads them
+void geo_flush_if_needed()
+{
+    if (sPendingBufs.empty())
+    {
+        return;
+    }
+    for (U32 name : sPendingBufs)
+    {
+        if (sGeo.mByBuf.find(name) != sGeo.mByBuf.end())
+        {
+            ++sGeo.mS.mFlushes;
+            flush_buffer_updates();
+            return;
+        }
+    }
+}
+
+// the safety net, every 16th prepare: what the table holds against a fresh look (buffer addresses by a plain lookup of the names, texture slots by the pins and by the per-frame path), healed
+void geo_stale_check(const std::vector<GeoFrag*>& listed)
+{
+    GeoStats& s = sGeo.mS;
+    Renderer& r = Renderer::instance();
+    ++s.mCheckRuns;
+    for (GeoFrag* f : listed)
+    {
+        ++s.mCheckFrags;
+        bool stale = false;
+        for (size_t k = 0; k < f->mPairs.size(); ++k)
+        {
+            const ResPair& p = f->mPairs[k];
+            auto v = sGL.mBuffers.find(p.mVb);
+            auto i = sGL.mBuffers.find(p.mIb);
+            const bool ok = v != sGL.mBuffers.end() && i != sGL.mBuffers.end() && v->second.mVk.valid() && i->second.mVk.valid() && v->second.mVk.mAddress && i->second.mVk.mAddress;
+            if (ok != p.mOk || (ok && (f->mAddr[2 * k] != (U64)v->second.mVk.mAddress || f->mAddr[2 * k + 1] != (U64)i->second.mVk.mAddress)))
+            {
+                ++s.mStaleAddr;
+                stale = true;
+                static U32 said = 0;
+                if (said++ < 8)
+                {
+                    LL_WARNS("VkScene") << "scene geometry stale check: fragment " << f->mHandle << " pair " << k << " (vb " << p.mVb << ", ib " << p.mIb << ") table " << (p.mOk ? "usable" : "not usable") << ", now "
+                        << (ok ? "usable" : "not usable") << (ok ? "" : "") << LL_ENDL;
+                }
+            }
+        }
+        for (size_t k = 0; k < f->mTexSlot.size(); ++k)
+        {
+            // the pin's slot against the slot the per-frame lookup gives for the same GL name (0 = no image yet: both 0)
+            const U32 expect = f->mTexName[k] ? packet_texture_slot(r, f->mTexName[k]) : 0u;
+            if (expect != f->mTexSlot[k])
+            {
+                ++s.mStaleSlot;
+                stale = true;
+                static U32 said = 0;
+                if (said++ < 8)
+                {
+                    LL_WARNS("VkScene") << "scene geometry stale check: fragment " << f->mHandle << " texture " << k << " (GL " << f->mTexName[k] << ") table slot " << f->mTexSlot[k] << ", per-frame lookup " << expect << LL_ENDL;
+                }
+            }
+        }
+        size_t usable = 0;
+        for (size_t i = 0; i < f->mItems.size(); ++i)
+        {
+            usable += f->mPairs[f->mPairOf[i]].mOk ? 1 : 0;
+        }
+        if (usable != f->mCmds.size())
+        {
+            ++s.mStaleCmd;
+            stale = true;
+        }
+        if (stale)
+        {
+            f->mDirtyPairs = true;
+            f->mDirtyEntries = true;
+        }
+    }
+}
+
+// kind 21: once a frame, before the passes. Blob: mEntries handles (U32), then mMatrices x GeoSlotMatrix
 void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!geo_init())
@@ -6033,10 +6388,14 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     Renderer& r = Renderer::instance();
     const U64 frame_now = Context::instance().getFrameNumber();
     geo_reclaim(frame_now);
-    const LLVkBridge::GeoFragRef* refs = (const LLVkBridge::GeoFragRef*)blob;
-    const U32* names = (const U32*)(refs + h.mEntries);
-    const LLVkBridge::GeoSlotMatrix* matrices = (const LLVkBridge::GeoSlotMatrix*)(names + h.mPaletteFloats);
+    const U32* handles = (const U32*)blob;
+    const LLVkBridge::GeoSlotMatrix* matrices = (const LLVkBridge::GeoSlotMatrix*)(handles + h.mEntries);
     auto t0 = std::chrono::steady_clock::now();
+    // pins: textures the viewer named since last frame are resolved (their slots are permanent from here on); a slot that changed makes the fragments look at their slots again
+    rtPinUpdate();
+    if (timed) s.mNsPins += geo_ns(t0);
+    // matrices
+    t0 = std::chrono::steady_clock::now();
     memset(sGeo.mHaveM, 0, sizeof(sGeo.mHaveM));
     sGeo.mMaxSlot = 0;
     for (U32 i = 0; i < h.mMatrices; ++i)
@@ -6051,138 +6410,72 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     s.mMatricesSent += h.mMatrices;
     if (timed) s.mNsMatrices += geo_ns(t0);
-
-    // the slot of each distinct texture name this frame (one lookup each, whatever number of fragments use it)
+    // events: the buffers whose storage changed
     t0 = std::chrono::steady_clock::now();
-    static thread_local std::unordered_map<U32, U32> slot_of_name;
-    slot_of_name.clear();
-    static thread_local std::vector<U32> slots_by_word;
-    slots_by_word.assign(h.mPaletteFloats, 0);
-    for (U32 i = 0; i < h.mPaletteFloats; ++i)
+    if (!sGeoChanged.empty())
     {
-        const U32 name = names[i];
-        ++s.mNames;
-        if (!name)
+        std::sort(sGeoChanged.begin(), sGeoChanged.end());
+        sGeoChanged.erase(std::unique(sGeoChanged.begin(), sGeoChanged.end()), sGeoChanged.end());
+        for (U32 name : sGeoChanged)
         {
-            ++s.mNamesZero;
-            continue;
+            geo_buffer_changed(name);
         }
-        auto it = slot_of_name.find(name);
-        if (it == slot_of_name.end())
-        {
-            ++s.mSlotLookups;
-            const U32 slot = packet_texture_slot(r, name);
-            s.mSlotZero += slot == 0 ? 1 : 0;
-            it = slot_of_name.emplace(name, slot).first;
-        }
-        slots_by_word[i] = it->second;
+        sGeoChanged.clear();
     }
-    if (timed) s.mNsTextures += geo_ns(t0);
-
-    static thread_local std::vector<VkDrawIndirectCommand> commands[kGeoTypes];
-    for (U32 t = 0; t < kGeoTypes; ++t)
-    {
-        commands[t].clear();
-    }
-    sGeo.mUsed.clear();
-    const bool pending = !sPendingBufs.empty();
-    bool flush = false;
-    static thread_local std::vector<U32> tex_slot;
+    if (timed) s.mNsEvents += geo_ns(t0);
+    // the listed fragments: rebuilt when something named them, their commands counted by type
+    static thread_local std::vector<GeoFrag*> listed;
+    listed.clear();
+    t0 = std::chrono::steady_clock::now();
+    U32 counts[kGeoTypes] = {};
     U64 items_frame = 0;
-    for (U32 fi = 0; fi < h.mEntries; ++fi)
+    for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkBridge::GeoFragRef& ref = refs[fi];
         ++s.mFragsListed;
-        auto found = sGeo.mFrags.find(ref.mId);
-        if (found == sGeo.mFrags.end())
+        GeoFrag* f = geo_find(handles[i]);
+        if (!f)
         {
             ++s.mFragsUnknown;
             continue;
         }
-        GeoFrag& f = found->second;
-        t0 = std::chrono::steady_clock::now();
-        bool first = f.mDirty, pair_changed = false, slot_changed = false;
-        for (ResPair& p : f.mPairs)
+        const bool first = f->mPinEpochSeen == ~0ull;
+        if (first || f->mDirtyPairs || f->mDirtyEntries || f->mPinEpochSeen != sGeoPinEpoch)
         {
-            const int c = res_pair_check(p);
-            ++s.mPairChecks;
-            if (c == 1)
-            {
-                ++s.mPairChanged;
-                pair_changed = true;
-            }
-            else if (c == 2)
-            {
-                ++s.mPairNotThere;
-            }
-            if (p.mOk)
-            {
-                p.mPvb->mLastUseFrame = frame_now;
-                p.mPib->mLastUseFrame = frame_now;
-                flush = flush || (pending && (p.mPvb->mPending || p.mPib->mPending));
-                sGeo.mUsed.push_back(p.mVb);
-                sGeo.mUsed.push_back(p.mIb);
-            }
+            const auto t1 = std::chrono::steady_clock::now();
+            geo_rebuild(*f, frame_now, first);
+            if (timed) s.mNsRebuild += geo_ns(t1);
         }
-        if (timed) s.mNsPairs += geo_ns(t0);
-        t0 = std::chrono::steady_clock::now();
-        tex_slot.assign(f.mTexSlot.size(), 0);
-        for (size_t k = 0; k < f.mTexSlot.size(); ++k)
+        f->mListedFrame = frame_now;
+        listed.push_back(f);
+        items_frame += f->mItems.size();
+        s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size();
+        for (U32 t = 0; t < kGeoTypes; ++t)
         {
-            const U32 word = ref.mNameOffset + (U32)k;
-            const U32 slot = (k < ref.mNameCount && word < h.mPaletteFloats) ? slots_by_word[word] : 0;
-            tex_slot[k] = slot;
-            if (f.mTexSlot[k] != slot)
-            {
-                f.mTexSlot[k] = slot;
-                slot_changed = true;
-            }
+            counts[t] += f->mTypeFirst[t + 1] - f->mTypeFirst[t];
         }
-        if (first || pair_changed || slot_changed)
-        {
-            ++s.mFragsRewritten;
-            s.mRewriteFirst += first ? 1 : 0;
-            s.mRewritePair += pair_changed ? 1 : 0;
-            s.mRewriteSlot += slot_changed ? 1 : 0;
-            s.mItemsRewritten += f.mItems.size();
-            geo_write_items(f, tex_slot);
-            f.mDirty = false;
-        }
-        if (timed) s.mNsRewrite += geo_ns(t0);
-        t0 = std::chrono::steady_clock::now();
-        for (size_t i = 0; i < f.mItems.size(); ++i)
-        {
-            ++s.mItemsListed;
-            ++items_frame;
-            if (!f.mPairs[f.mPairOf[i]].mOk)
-            {
-                ++s.mItemsSkippedPair;
-                continue;
-            }
-            const LLVkBridge::GeoWire& w = f.mItems[i];
-            if (w.mType < kGeoTypes)
-            {
-                commands[w.mType].push_back({ w.mE.mIndexCount, 1u, 0u, f.mSlots[i] });
-            }
-        }
-        if (timed) s.mNsCommands += geo_ns(t0);
     }
+    if (timed) s.mNsList += geo_ns(t0);
+    s.mItemsListed += items_frame;
     s.mMaxFragsFrame = std::max<U64>(s.mMaxFragsFrame, h.mEntries);
     s.mMaxItemsFrame = std::max<U64>(s.mMaxItemsFrame, items_frame);
-    if (flush)
+    if (geo_stale_check_on() && (s.mPrepares & 15u) == 0)
     {
-        ++s.mFlushes;
-        flush_buffer_updates();     // data written by the main thread this frame is recorded before anything reads it
+        t0 = std::chrono::steady_clock::now();
+        geo_stale_check(listed);
+        if (timed) s.mNsCheck += geo_ns(t0);
     }
+    // the commands of the frame, by type
+    t0 = std::chrono::steady_clock::now();
     size_t total = 0;
     for (U32 t = 0; t < kGeoTypes; ++t)
     {
         sGeo.mFirst[t] = (U32)total;
-        sGeo.mCount[t] = (U32)commands[t].size();
-        total += commands[t].size();
-        s.mCommands[t] += commands[t].size();
-        s.mCommandsMax[t] = std::max<U64>(s.mCommandsMax[t], commands[t].size());
+        sGeo.mCount[t] = counts[t];
+        total += counts[t];
+        s.mCommands[t] += counts[t];
+        s.mCommandsMax[t] = std::max<U64>(s.mCommandsMax[t], counts[t]);
     }
+    s.mCommandsTotal += total;
     sGeo.mCommands = Renderer::ScratchAlloc();
     if (total)
     {
@@ -6194,15 +6487,28 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         else
         {
+            VkDrawIndirectCommand* out = (VkDrawIndirectCommand*)sGeo.mCommands.mPtr;
+            U32 at[kGeoTypes];
             for (U32 t = 0; t < kGeoTypes; ++t)
             {
-                if (!commands[t].empty())
+                at[t] = sGeo.mFirst[t];
+            }
+            for (const GeoFrag* f : listed)
+            {
+                for (U32 t = 0; t < kGeoTypes; ++t)
                 {
-                    memcpy((VkDrawIndirectCommand*)sGeo.mCommands.mPtr + sGeo.mFirst[t], commands[t].data(), commands[t].size() * sizeof(VkDrawIndirectCommand));
+                    const U32 n = f->mTypeFirst[t + 1] - f->mTypeFirst[t];
+                    if (n)
+                    {
+                        memcpy(out + at[t], f->mCmds.data() + f->mTypeFirst[t], n * sizeof(VkDrawIndirectCommand));
+                        at[t] += n;
+                    }
                 }
             }
         }
     }
+    if (timed) s.mNsCopy += geo_ns(t0);
+    geo_flush_if_needed();
     sGeo.mPreparedFrame = frame_now;
     ++s.mPrepares;
     if (timed) s.mNsPrepare += geo_ns(t_all);
@@ -6215,21 +6521,27 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             per_type += std::string(t ? "/" : "") + std::to_string((long long)((double)s.mCommands[t] / n + 0.5)) + "(max " + std::to_string(s.mCommandsMax[t]) + ")";
         }
-        LL_INFOS("VkScene") << "scene geometry table, per frame over " << s.mPrepares << " prepares: " << (double)s.mFragsListed / n << " fragments listed (" << s.mFragsUnknown << " unknown ids in total, max "
-            << s.mMaxFragsFrame << "), " << (double)s.mItemsListed / n << " entries (max " << s.mMaxItemsFrame << ", " << (double)s.mItemsSkippedPair / n << " skipped: buffers not usable), "
-            << (double)s.mFragsRewritten / n << " fragments rewritten (first " << (double)s.mRewriteFirst / n << ", buffers changed " << (double)s.mRewritePair / n << ", texture slots changed "
-            << (double)s.mRewriteSlot / n << ", " << (double)s.mItemsRewritten / n << " entries written), pair checks " << (double)s.mPairChecks / n << " (" << (double)s.mPairChanged / n << " changed, "
-            << (double)s.mPairNotThere / n << " not there), texture names " << (double)s.mNames / n << " (" << (double)s.mNamesZero / n << " zero), slot lookups " << (double)s.mSlotLookups / n << " ("
-            << (double)s.mSlotZero / n << " gave slot 0), matrices sent " << (double)s.mMatricesSent / n << ", buffer flushes " << s.mFlushes << ", commands by type (simple/material/mask/glow/spec/specmask/specglow/"
-            << "norm/normmask/normglow/normspec/nsmask/nsglow) " << per_type << " | table: " << sGeo.mHigh << " slots used, " << sGeo.mFree.size() << " free, " << sGeo.mRetired.size() << " retired, "
-            << sGeo.mFrags.size() << " fragments, " << s.mRetains << " retains, " << s.mReleases << " releases (" << s.mReleaseUnknown << " unknown), " << s.mOverflow << " overflows, " << s.mScratchFail
-            << " scratch failures, " << s.mNotInFrame << " prepares outside a frame, " << s.mDrawStale << " draws without this frame's prepare, " << s.mDrawNoProgram << " draws without the program" << LL_ENDL;
+        U64 pins = 0, resolves = 0, events = 0;
+        LLVkWorker::rtPinCounts(pins, resolves, events);
+        LL_INFOS("VkScene") << "scene geometry table, per frame over " << s.mPrepares << " prepares: " << (double)s.mFragsListed / n << " fragments listed (" << s.mFragsUnknown << " unknown handles in total, max "
+            << s.mMaxFragsFrame << "), " << (double)s.mItemsListed / n << " entries (max " << s.mMaxItemsFrame << "), " << (double)s.mCommandsTotal / n << " commands (" << (double)s.mItemsSkippedPair / n
+            << " entries without usable buffers), rebuilds " << (double)s.mRebuilds / n << " (first " << (double)s.mRebuildFirst / n << ", buffers changed " << (double)s.mRebuildPairs / n << ", texture slots changed "
+            << (double)s.mRebuildTex / n << ", entries written " << (double)s.mItemsRewritten / n << "), pin epoch bumps " << sGeoPinEpoch << ", buffer events " << (double)s.mBufEvents / n << " naming "
+            << (double)s.mBufEventFrags / n << " fragments, buffers gone " << (double)s.mBufGone / n << " (" << (double)s.mBufGoneFrags / n << " fragments), in-flight asks by the write path "
+            << (double)s.mInFlightAsks / n << " (" << (double)s.mInFlightYes / n << " yes), texture update records " << (double)s.mTexUpdates / n << " (" << (double)s.mTexUpdateEntries / n << " entries), pins acquired "
+            << (double)s.mPinAcquires / n << " released " << (double)s.mPinReleases / n << " (entries with slot 0: " << s.mPinSlotZero << "; all pins " << pins << ", resolves since last report " << resolves
+            << ", events " << events << "), matrices sent " << (double)s.mMatricesSent / n << ", flushes " << s.mFlushes << ", commands by type (simple/material/mask/glow/spec/specmask/specglow/"
+            << "norm/normmask/normglow/normspec/nsmask/nsglow) " << per_type << " | stale check: " << s.mCheckRuns << " runs over " << s.mCheckFrags << " fragments found " << s.mStaleAddr << " stale buffer pairs, "
+            << s.mStaleSlot << " stale texture slots, " << s.mStaleCmd << " stale command lists | table: " << sGeo.mHigh << " slots used, " << sGeo.mFree.size() << " free, " << sGeo.mRetired.size()
+            << " retired, " << sGeo.mFragCount << " fragments, " << s.mRetains << " retains, " << s.mReleases << " releases (" << s.mReleaseUnknown << " unknown), " << s.mOverflow << " overflows, "
+            << s.mScratchFail << " scratch failures, " << s.mNotInFrame << " prepares outside a frame, " << s.mDrawStale << " draws without this frame's prepare, " << s.mDrawNoProgram << " draws without the program" << LL_ENDL;
         if (timed)
         {
-            LL_INFOS("VkScene") << "scene geometry table, worker time per frame (us): prepare " << (double)s.mNsPrepare / 1000.0 / n << " = matrices " << (double)s.mNsMatrices / 1000.0 / n << " + texture slots "
-                << (double)s.mNsTextures / 1000.0 / n << " + pair checks " << (double)s.mNsPairs / 1000.0 / n << " + texture compare and entry writes " << (double)s.mNsRewrite / 1000.0 / n << " + commands "
-                << (double)s.mNsCommands / 1000.0 / n << " (rest: scratch, flush); retain " << (double)s.mNsRetain / 1000.0 / n << "; draw records " << (double)s.mNsDraw / 1000.0 / n << " (matrices "
-                << (double)s.mNsDrawMatrices / 1000.0 / n << ", state " << (double)s.mNsDrawState / 1000.0 / n << ")" << LL_ENDL;
+            LL_INFOS("VkScene") << "scene geometry table, worker time per frame (us): prepare " << (double)s.mNsPrepare / 1000.0 / n << " = pins " << (double)s.mNsPins / 1000.0 / n << " + matrices "
+                << (double)s.mNsMatrices / 1000.0 / n << " + buffer events " << (double)s.mNsEvents / 1000.0 / n << " + listing " << (double)s.mNsList / 1000.0 / n << " (of it rebuilds "
+                << (double)s.mNsRebuild / 1000.0 / n << ") + stale check " << (double)s.mNsCheck / 1000.0 / n << " + command copy " << (double)s.mNsCopy / 1000.0 / n << "; retain " << (double)s.mNsRetain / 1000.0 / n
+                << ", release " << (double)s.mNsRelease / 1000.0 / n << ", texture updates " << (double)s.mNsTexUpdate / 1000.0 / n << "; draw records " << (double)s.mNsDraw / 1000.0 / n << " (matrices "
+                << (double)s.mNsDrawMatrices / 1000.0 / n << ", state " << (double)s.mNsDrawState / 1000.0 / n << ", draw call " << (double)s.mNsDrawCall / 1000.0 / n << ")" << LL_ENDL;
         }
     }
 }
@@ -6301,11 +6613,12 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         return;
     }
-    ensure_buffers_current(sGeo.mUsed, 0);
+    geo_flush_if_needed();
     r.setVertexInput(vi);
     r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
     if (timed) s.mNsDrawState += geo_ns(t0);
+    t0 = std::chrono::steady_clock::now();
     if (r.drawPackets(nullptr, count, sGeo.mCommands.mBuffer, sGeo.mCommands.mOffset + (VkDeviceSize)sGeo.mFirst[type] * sizeof(VkDrawIndirectCommand)))
     {
         if (sStatsEnabled)
@@ -6317,6 +6630,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         ++sStats.mRendererRefused;
     }
+    if (timed) s.mNsDrawCall += geo_ns(t0);
     sDraws += count;
     sDrawsTotal += count;
     ++s.mDrawRecords;
@@ -6343,15 +6657,21 @@ void geo_dispatch(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         geo_draw(h, blob);
     }
+    else if (h.mKind == 24)
+    {
+        geo_tex_update(h, blob);
+    }
     else
     {
+        const auto t0 = std::chrono::steady_clock::now();
         const U32* ids = (const U32*)blob;
         for (U32 i = 0; i < h.mEntries; ++i)
         {
             ++sGeo.mS.mReleases;
-            sGeo.mS.mReleaseUnknown += sGeo.mFrags.find(ids[i]) == sGeo.mFrags.end() ? 1 : 0;
+            sGeo.mS.mReleaseUnknown += geo_find(ids[i]) ? 0 : 1;
             geo_release(ids[i]);
         }
+        sGeo.mS.mNsRelease += geo_ns(t0);
     }
 }
 }
@@ -6451,7 +6771,7 @@ static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const 
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if (h.mKind >= 20 && h.mKind <= 23)
+    if (h.mKind >= 20 && h.mKind <= 24)
     {
         geo_dispatch(h, blob);      // <FS> S3 G2: the scene geometry table
         return;
