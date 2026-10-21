@@ -1762,7 +1762,8 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
 // ---- device-local buffers: writes become GPU copies, recorded when a draw is about to read the buffer ----
 std::vector<U32> sPendingBufs;       // the buffers whose Buf::mPending is set
 std::vector<U32> sResChanged;           // names of the buffers a resident fragment reads that changed since the ray membership was last looked at
-inline void res_touched(const Buf& b) { if (b.mResWatched) { sResChanged.push_back(b.mResName); } }
+U64 sResCause[3] = {};                  // writes of watched buffers by what changed: 0 epoch (storage given up or made again), 1 version (data written), 2 moves (same data in another range)
+inline void res_touched(const Buf& b, int cause) { if (b.mResWatched) { sResChanged.push_back(b.mResName); ++sResCause[cause]; } }
 U64 sBufferTopology = 0;                // see Buf::mRtWatched
 std::vector<unsigned> sTopologyNames;  // the names behind the count (cleared when taken; sTopologyOverflow: too many)
 bool sTopologyOverflow = false;
@@ -1863,12 +1864,12 @@ void release_storage(Buf& b)
     {
         retire_range(b.mArena);
         b.mVk = Buffer();
-        ++b.mEpoch; res_touched(b);
+        ++b.mEpoch; res_touched(b, 0);
     }
     else if (b.mVk.valid())
     {
         ctx.destroyBuffer(b.mVk);
-        ++b.mEpoch; res_touched(b);
+        ++b.mEpoch; res_touched(b, 0);
     }
 }
 
@@ -1888,7 +1889,7 @@ bool acquire_arena_storage(Buf& b, U64 size, ArenaKind kind)
     b.mVk.mSize = (VkDeviceSize)size;
     b.mVk.mAddress = ref.mAddress;
     b.mVk.mMapped = ref.mMapped;
-    ++b.mEpoch; res_touched(b);
+    ++b.mEpoch; res_touched(b, 0);
     if (b.mRtWatched)
     {
         note_topology_change(b);
@@ -1995,7 +1996,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
     {
         ++sBufTraffic.mSubDev;
         sBufTraffic.mSubDevBytes += size;
-        ++b.mVersion; res_touched(b);
+        ++b.mVersion; res_touched(b, 1);
         if (b.mVk.valid() && data && size && offset + size <= b.mVk.mSize)
         {
             Renderer::instance().updateBuffer(b.mVk.mBuffer, b.mArena.mOffset + offset, size, data);
@@ -2009,7 +2010,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
     }
     ++sBufTraffic.mSubHost;
     sBufTraffic.mSubHostBytes += size;
-    ++b.mVersion; res_touched(b);
+    ++b.mVersion; res_touched(b, 1);
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
     const bool in_flight = b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1;
@@ -2043,7 +2044,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
                 b.mVk.mSize = (VkDeviceSize)b.mSize;
                 b.mVk.mAddress = fresh_range.mAddress;
                 b.mVk.mMapped = fresh_range.mMapped;
-                ++b.mMoves; res_touched(b);
+                ++b.mMoves; res_touched(b, 2);
                 if (b.mRtWatched)
                 {
                     note_topology_change(b);
@@ -2512,7 +2513,7 @@ void on_bufferData(U32 name, unsigned kind, S64 size, const void* data)
         // the same size again (the viewer re-specifies a buffer to rewrite it): keep the Vulkan buffer, queue the data
         b.mSize = (U64)size;
         ++sBufTraffic.mSpecDevSame;
-        ++b.mVersion; res_touched(b);
+        ++b.mVersion; res_touched(b, 1);
         if (data)
         {
             Renderer::instance().updateBuffer(b.mVk.mBuffer, b.mArena.mOffset, (VkDeviceSize)size, data);
@@ -2529,7 +2530,7 @@ void on_bufferData(U32 name, unsigned kind, S64 size, const void* data)
     b.mLastUseFrame = ~0ull;
     b.mShadow.clear();
     b.mDevicePath = want_device;
-    ++b.mVersion; res_touched(b);
+    ++b.mVersion; res_touched(b, 1);
     if (want_device)
     {
         ++sBufTraffic.mSpecDevNew;
@@ -2576,7 +2577,7 @@ void on_bufferRecycle(U32 name)
     auto it = sGL.mBuffers.find(name);
     if (it != sGL.mBuffers.end())
     {
-        ++it->second.mEpoch; res_touched(it->second);
+        ++it->second.mEpoch; res_touched(it->second, 0);
     }
 }
 
@@ -5603,7 +5604,7 @@ static void res_ray_membership(U64 frame)
     if (++sRes.mMembershipFrames % 600 == 0)
     {
         LL_INFOS("VkScene") << "resident ray membership: " << sRes.mHeldNow << " of " << sRes.mCull.size() << " fragments in the scene, " << sRes.mEntered << " entered and " << sRes.mLeft << " left in total, "
-            << "full notes (kind 0 / alpha): first " << sRes.mHandleFirst[0] << " / " << sRes.mHandleFirst[1] << ", group gone and made again " << sRes.mHandleReplaced[0] << " / " << sRes.mHandleReplaced[1] << ", same group " << sRes.mHandleSame[0] << " / " << sRes.mHandleSame[1] << "; " << sRes.mEventNotes << " event notes (" << sRes.mEvBufNotes << " from " << sRes.mEvBufNames << " changed buffer names, " << sRes.mEvMatNotes << " from matrix changes in " << sRes.mEvMatFrames << " frames), " << (double)sRes.mMembershipNs / 1000.0 / sRes.mMembershipFrames << " us a frame" << LL_ENDL;
+            << "full notes (kind 0 / alpha): first " << sRes.mHandleFirst[0] << " / " << sRes.mHandleFirst[1] << ", group gone and made again " << sRes.mHandleReplaced[0] << " / " << sRes.mHandleReplaced[1] << ", same group " << sRes.mHandleSame[0] << " / " << sRes.mHandleSame[1] << "; " << sRes.mEventNotes << " event notes (" << sRes.mEvBufNotes << " from " << sRes.mEvBufNames << " changed buffer names; writes of watched buffers: " << sResCause[1] << " data, " << sResCause[0] << " storage made again, " << sResCause[2] << " moved, " << sRes.mEvMatNotes << " from matrix changes in " << sRes.mEvMatFrames << " frames), " << (double)sRes.mMembershipNs / 1000.0 / sRes.mMembershipFrames << " us a frame" << LL_ENDL;
     }
 }
 

@@ -2645,6 +2645,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>FSVkResidentScene</key>
+    <map>
+      <key>Comment</key>
+      <string>Vulkan renderer: keep the static geometry in scene tables the render thread owns (resident shadow casters culled on the GPU, the ray scene fed from them, alpha masked casters, instance deltas) instead of building the casters again every frame. Takes effect after a restart. An explicit LL_VK_SCENE_RESIDENT=0 (or RAYRANGE, RAYALPHA, LL_VK_RT_INSTDELTA) in the environment turns a part off.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSVkRayTracing</key>
     <map>
       <key>Comment</key>

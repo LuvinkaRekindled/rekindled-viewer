@@ -5502,7 +5502,7 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
     }
     f.mAlpha.clear();
     f.mTexLocal.clear();
-    if (scene_alpha_on())
+    if (scene_alpha_on() && LLVkBridge::rtShadowMode())
     {
         scene_fragment_fill_alpha(group, f);
     }
