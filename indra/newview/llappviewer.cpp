@@ -3908,6 +3908,17 @@ bool LLAppViewer::initWindow()
                 _putenv_s("LL_VK_RT_MATERIALS", "1");   // the material table the traced glossy mirror and the traced water reflections shade their hits from (costs frame time, so only with those options)
             }
         }
+        if (gSavedSettings.getBOOL("FSVkResidentScene"))
+        {
+            // the scene tables (doc/vulkan/S2-handoff.md): what the environment sets explicitly (also 0) wins
+            for (const char* name : { "LL_VK_SCENE_RESIDENT", "LL_VK_SCENE_RAYRANGE", "LL_VK_SCENE_RAYALPHA", "LL_VK_RT_INSTDELTA" })
+            {
+                if (!getenv(name))
+                {
+                    _putenv_s(name, "1");
+                }
+            }
+        }
         if (!getenv("LL_VK_ASYNC"))
         {
             _putenv_s("LL_VK_ASYNC", "1");      // the Vulkan work runs on its own thread
