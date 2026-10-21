@@ -31,6 +31,7 @@
 #include "llviewershadermgr.h"
 #include "pipeline.h"
 #include "llrendercommonfunc.h"
+#include "llgpuzonetimer.h"
 #include "llvoavatar.h"
 
 LLDrawPoolMaterials::LLDrawPoolMaterials()
@@ -53,6 +54,7 @@ S32 LLDrawPoolMaterials::getNumDeferredPasses()
 void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;
+    LL_CPU_ZONE("materials: beginDeferredPass");
 
     bool rigged = false;
     if (pass >= 12)
@@ -128,6 +130,7 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
 void LLDrawPoolMaterials::endDeferredPass(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;
+    LL_CPU_ZONE("materials: endDeferredPass");
 
     if (!mUntouched)
     {
@@ -172,6 +175,7 @@ void LLDrawPoolMaterials::kickGeometryBuilds()
 void LLDrawPoolMaterials::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;
+    LL_CPU_ZONE("materials: renderDeferred");
     static const U32 type_list[] =
     {
         LLRenderPass::PASS_MATERIAL,
@@ -223,8 +227,14 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
             LLGeometryPassInfo info;
             info.mNormalMap = (idx & 0x8) != 0;
             info.mSpecularMap = (idx & 0x4) != 0;
-            gPipeline.bindDeferredShader(*pull);
-            pushGeometryPackets(type, packet_fallback, &info);
+            {
+                LL_CPU_ZONE("materials: bind pull program");
+                gPipeline.bindDeferredShader(*pull);
+            }
+            {
+                LL_CPU_ZONE("materials: push packets");
+                pushGeometryPackets(type, packet_fallback, &info);
+            }
             packets_used = true;
             if (packet_fallback.empty())
             {

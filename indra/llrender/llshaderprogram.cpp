@@ -427,6 +427,7 @@ S32 LLShaderProgram::vkTwinOf(S32 location) const
 void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list<double> values)
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
+    if (LLUniCensus::sOn) { censusProgram(); LLUniCensus::note_call(); ++mCensus.mCalls; }
     if (!mVkProgram) return;
     if (LLVkAsync::mainOnlyProducer())
     {
@@ -523,6 +524,7 @@ void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list
 void LLShaderProgram::mirrorVector(S32 location, int kind, U32 components, U32 count, const void* data)
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
+    if (LLUniCensus::sOn) { censusProgram(); LLUniCensus::note_call(); ++mCensus.mCalls; }
     if (!mVkProgram || !data) return;
     if (LLVkAsync::mainOnlyProducer())
     {
@@ -562,6 +564,7 @@ void LLShaderProgram::mirrorVector(S32 location, int kind, U32 components, U32 c
 void LLShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool transpose, U32 count, const F32* data)
 {
     LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
+    if (LLUniCensus::sOn) { censusProgram(); LLUniCensus::note_call(); ++mCensus.mCalls; }
     if (!mVkProgram || !data) return;
     if (LLVkAsync::mainOnlyProducer())
     {
@@ -682,6 +685,7 @@ bool LLShaderProgram::uniformValueChanged(S32 location, const LLVector4& value, 
 // a range of this shader's copy of a class block changed: it goes to the worker (or, before the queue runs, straight into the program)
 void LLShaderProgram::vkSendRange(U32 cls, U32 offset, U32 size)
 {
+    if (LLUniCensus::sOn) { LLUniCensus::note_changed(size); ++mCensus.mChanged; }
     const U8* bytes = &mVkShadow[cls][offset];
     if (LLVkAsync::gEnabled)
     {
@@ -701,6 +705,7 @@ bool LLShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U
     }
     const VkUni& u = mVkUni[twin];
     std::vector<U8>& sh = mVkShadow[u.mClass];
+    if (LLUniCensus::sOn) censusUniform(twin, false);
     if (u.mArraySize == 0 && count <= 1)
     {
         // the common case: one scalar or vector
@@ -708,6 +713,7 @@ bool LLShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U
         {
             return false;
         }
+        if (LLUniCensus::sOn) censusUniform(twin, true);
         vkSendRange(u.mClass, u.mOffset, components * 4);
         return true;
     }
@@ -733,6 +739,7 @@ bool LLShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U
     {
         return false;
     }
+    if (LLUniCensus::sOn) censusUniform(twin, true);
     vkSendRange(u.mClass, lo, hi - lo);
     return true;
 }
@@ -745,6 +752,7 @@ bool LLShaderProgram::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 
     }
     const VkUni& u = mVkUni[twin];
     std::vector<U8>& sh = mVkShadow[u.mClass];
+    if (LLUniCensus::sOn) censusUniform(twin, false);
     const U32 max_count = std::max<U32>(1, u.mArraySize);
     count = std::min(count, max_count);
     const U32 stride = columns * 16;        // std140: every column occupies 16 bytes
@@ -779,6 +787,7 @@ bool LLShaderProgram::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 
     {
         return false;
     }
+    if (LLUniCensus::sOn) censusUniform(twin, true);
     vkSendRange(u.mClass, lo, hi - lo);
     return true;
 }
@@ -1538,10 +1547,48 @@ bool LLShaderProgram::link(bool suppress_errors)
     return true;
 }
 
+void LLShaderProgram::censusProgram()
+{
+    if (!mCensus.mReg)
+    {
+        mCensus.mReg = true;
+        LLUniCensus::sProgs.push_back({ &mName, &mCensus, this });
+    }
+}
+
+void LLShaderProgram::censusUniform(S32 twin, bool changed)
+{
+    if ((size_t)twin >= mCensus.mUniCalls.size())
+    {
+        mCensus.mUniCalls.resize(std::max<size_t>(mVkUni.size(), (size_t)twin + 1), 0);
+        mCensus.mUniChanged.resize(mCensus.mUniCalls.size(), 0);
+    }
+    ++(changed ? mCensus.mUniChanged : mCensus.mUniCalls)[twin];
+}
+
+const std::string* LLShaderProgram::censusUniformName(size_t index) const
+{
+    if (!mVkProgram || index >= mVkProgram->getInfo().mUniforms.size())
+    {
+        return nullptr;
+    }
+    return &mVkProgram->getInfo().mUniforms[index].mName;
+}
+
+int LLShaderProgram::censusUniformClass(size_t index) const
+{
+    if (!mVkProgram || index >= mVkProgram->getInfo().mUniforms.size())
+    {
+        return -1;
+    }
+    return (int)mVkProgram->getInfo().mUniforms[index].mClass;
+}
+
 void LLShaderProgram::bind()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SHADER_BIND);
+    if (LLUniCensus::sOn) { censusProgram(); LLUniCensus::note_bind(); ++mCensus.mBinds; }
 
     llassert_always(mProgramObject != 0);
 
@@ -1563,8 +1610,16 @@ void LLShaderProgram::bind()
 
     if (mUniformsDirty)
     {
+        const long long t_upd = LLUniCensus::sOn ? LLUniCensus::now_ns() : 0;
+        const U64 calls_upd = LLUniCensus::sTotal.mCalls;
         LLShaderMgr::instance()->updateShaderUniforms(this);
         mUniformsDirty = false;
+        if (LLUniCensus::sOn)
+        {
+            ++mCensus.mUpdBinds;
+            mCensus.mUpdNs += (U64)(LLUniCensus::now_ns() - t_upd);
+            mCensus.mUpdCalls += LLUniCensus::sTotal.mCalls - calls_upd;
+        }
     }
 
     llassert_always(sCurBoundShaderPtr != nullptr);

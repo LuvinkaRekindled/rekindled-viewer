@@ -14155,6 +14155,7 @@ void LLPipeline::bindShadowMaps(LLShaderProgram& shader)
 
 void LLPipeline::bindDeferredShaderFast(LLShaderProgram& shader)
 {
+    LL_CPU_ZONE("bindDeferredShaderFast");
     if (shader.mCanBindFast)
     { // was previously fully bound, use fast path
         shader.bind();
@@ -14175,7 +14176,10 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
     LLRenderTarget* deferred_target       = &mRT->deferredScreen;
     LLRenderTarget* deferred_light_target = &mRT->deferredLight;
 
+    LL_CPU_ZONE("bindDeferredShader");
+    LLUniCensus::Lap lap(shader.mCensus);       // <FS> U0: the sections of this bind, per program (LL_VK_UNICENSUS=1)
     shader.bind();
+    lap(0);
     S32 channel = 0;
     channel = shader.enableTexture(LLShaderMgr::DEFERRED_DIFFUSE, deferred_target->getUsage());
     if (channel > -1)
@@ -14205,6 +14209,7 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
         gRender.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
     }
 
+    lap(1);
     channel = shader.enableTexture(LLShaderMgr::DEFERRED_DEPTH, deferred_target->getUsage());
     if (channel > -1)
     {
@@ -14224,6 +14229,7 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
         gRender.getTexUnit(channel)->bind(&mExposureMap);
     }
 
+    lap(2);
     if (shader.getUniformLocation(LLShaderMgr::VIEWPORT) != -1)
     {
         shader.uniform4f(LLShaderMgr::VIEWPORT, (F32) gRenderViewport[0],
@@ -14237,6 +14243,7 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
         shader.uniformMatrix4fv(LLShaderMgr::MODELVIEW_MATRIX, 1, false, glm::value_ptr(mReflectionModelView));
     }
 
+    lap(3);
     channel = shader.enableTexture(LLShaderMgr::DEFERRED_NOISE);
     if (channel > -1)
     {
@@ -14244,7 +14251,9 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
         gRender.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
 
+    lap(4);
     bindLightFunc(shader);
+    lap(5);
 
 
     light_target = light_target ? light_target : deferred_light_target;
@@ -14262,7 +14271,9 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
     }
 
 
+    lap(6);
     bindShadowMaps(shader);
+    lap(7);
 
 
     F32 mat[16*6];
@@ -14277,6 +14288,7 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
     }
 
     shader.uniformMatrix4fv(LLShaderMgr::DEFERRED_SHADOW_MATRIX, 6, false, mat);
+    lap(8);
 
 
     if (!LLPipeline::sReflectionProbesEnabled)
@@ -14301,7 +14313,9 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
         }
     }
 
+    lap(9);
     bindReflectionProbes(shader);
+    lap(10);
 
     /*if (gCubeSnapshot)
     { // we only really care about the first two values, but the shader needs increasing separation between clip planes
@@ -14327,6 +14341,7 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
     shader.uniform1f(LLShaderMgr::DEFERRED_SSAO_FACTOR, ssao_factor);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSAO_FACTOR_INV, 1.0f/ssao_factor);
 
+    lap(11);
     LLVector3 ssao_effect = RenderSSAOEffect;
 
     F32 matrix_diag = (ssao_effect[0] + 2.0f*ssao_effect[1])/3.0f;
@@ -14367,6 +14382,7 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
         shader.uniformMatrix4fv(LLShaderMgr::DEFERRED_NORM_MATRIX, 1, false, glm::value_ptr(norm_mat));
     }
 
+    lap(12);
     // auto adjust legacy sun color if needed
     static LLCachedControl<bool> should_auto_adjust(gSavedSettings, "RenderSkyAutoAdjustLegacy", false);
     static LLCachedControl<F32> auto_adjust_sun_color_scale(gSavedSettings, "RenderSkyAutoAdjustSunColorScale", 1.f);
