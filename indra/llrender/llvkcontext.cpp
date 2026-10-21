@@ -1655,7 +1655,24 @@ VkCommandBuffer Context::beginFrame(bool wait)
             U64 prev = gSyncStats.mGpuMaxMicros.load(std::memory_order_relaxed);
             while (micros > prev && !gSyncStats.mGpuMaxMicros.compare_exchange_weak(prev, micros, std::memory_order_relaxed)) {}
             if (f.mOffscreen) { mPassStats.mOffMicros += micros; ++mPassStats.mOffFrames; mPassStats.mOffMax = std::max(mPassStats.mOffMax, micros); }
-            else { mPassStats.mMainMicros += micros; ++mPassStats.mMainFrames; mPassStats.mMainMax = std::max(mPassStats.mMainMax, micros); }
+            else
+            {
+                mPassStats.mMainMicros += micros; ++mPassStats.mMainFrames; mPassStats.mMainMax = std::max(mPassStats.mMainMax, micros);
+                // how the GPU time of the presented frames is spread (the 150 ms log below only sees the worst): counts per band, logged every 600 frames
+                static const U64 kBands[] = { 12000, 16700, 25000, 40000, 75000, 150000 };
+                static U32 bands[7] = {};
+                static U32 seen = 0;
+                U32 band = 0;
+                while (band < 6 && micros > kBands[band]) ++band;
+                ++bands[band];
+                if (++seen == 600)
+                {
+                    LL_INFOS("VkPhases") << "GPU time of 600 presented frames: up to 12 ms " << bands[0] << ", to 16.7 " << bands[1] << ", to 25 " << bands[2] << ", to 40 " << bands[3]
+                        << ", to 75 " << bands[4] << ", to 150 " << bands[5] << ", over 150 " << bands[6] << LL_ENDL;
+                    memset(bands, 0, sizeof(bands));
+                    seen = 0;
+                }
+            }
             if (n)
             {
                 // the time from one pass's stamp to the next is that pass's; the first stretch (uploads, copies) and the last pass run to the frame's own start and end
