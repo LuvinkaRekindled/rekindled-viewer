@@ -4297,6 +4297,11 @@ void LLPipeline::postSort(LLCamera &camera)
 
     mMeshDirtyGroup.clear();
 
+    if (!sShadowRender)
+    {
+        ll_scene_geo_palette_kick(sCull);       // <FS> S4 B: the rigged items' palettes on the pool while the main thread goes on
+    }
+
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("sort alpha groups");
     if (!sShadowRender)
@@ -5703,6 +5708,20 @@ static U32 scene_region_slot(const LLMatrix4* m)
 
 static U64 sGeoFillNs = 0, sGeoFillCalls = 0, sGeoFillItems = 0, sGeoFillFallback = 0, sGeoFillNonRegion = 0;
 static U64 sGeoRiggedBindings = 0, sGeoRiggedNs = 0;
+// S4 B: a palette binding of the frame record (the worker patches the row of item mItem of fragment mHandle), and the job that makes them on the pool
+struct GeoBinding { U32 mHandle, mItem, mOffset, mJoints; };
+// (plain pointers: the job must never hold the last reference of an avatar, a destructor on a pool thread; they stay valid until the end of the display, where the job is waited for: ll_scene_geo_frame_end)
+struct GeoBindWork { LLVOAvatar* mAvatar; const LLMeshSkinInfo* mSkin; U32 mHandle, mWire; };
+struct GeoBindJob
+{
+    std::vector<GeoBindWork> mWork;
+    std::vector<GeoBinding> mOut;
+    LLAsyncPool::JobPtr mJob;
+    LLCullResult* mCull = nullptr;
+    U64 mFrame = ~0ull;
+};
+static std::shared_ptr<GeoBindJob> sBindJob;
+static U64 sBindJobTaken = 0, sBindJobInline = 0;
 static U64 sGeoMovingSent = 0;        // S4 B: palette bindings sent, main thread ns to make them
 
 static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
@@ -6700,6 +6719,64 @@ void ll_scene_geo_count(U32 what, U64 n)
 // the worker gets the list of visible fragments (the handles postSort collected from the groups' fields) and the region matrices
 static void scene_alpha_frame(U64 frame);
 
+void ll_scene_geo_palette_kick(LLCullResult* cull)
+{
+    sBindJob.reset();
+    if (!scene_geo_rigged_on() || !cull || !ll_scene_geo_serving() || !ll_scene_geo_main_view())
+    {
+        return;
+    }
+    std::shared_ptr<GeoBindJob> job = std::make_shared<GeoBindJob>();
+    job->mCull = cull;
+    job->mFrame = gFrameCount;
+    for (U32 handle : cull->mGeoHandles)
+    {
+        const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+        if (!f)
+        {
+            continue;
+        }
+        for (U32 index : f->mGeoRigged)
+        {
+            const LLSceneFragment::GeoItem& item = f->mGeo[index];
+            job->mWork.push_back({ item.mInfo->mAvatar.get(), item.mInfo->mSkinInfo.get(), handle, item.mWire });
+        }
+    }
+    if (job->mWork.empty())
+    {
+        return;
+    }
+    job->mJob = LLAsyncPool::shared().submit([job]()
+    {
+        job->mOut.reserve(job->mWork.size());
+        const LLVOAvatar* last_avatar = nullptr;
+        const LLMeshSkinInfo* last_skin = nullptr;
+        U32 last_handle = ~0u, last_offset = ~0u, last_joints = 0;
+        for (const GeoBindWork& w : job->mWork)
+        {
+            if (w.mHandle != last_handle || w.mAvatar != last_avatar || w.mSkin != last_skin)
+            {
+                last_handle = w.mHandle;
+                last_avatar = w.mAvatar;
+                last_skin = w.mSkin;
+                U32 offset = 0, joints = 0;
+                if (ll_frame_palette(w.mAvatar, w.mSkin, offset, joints))
+                {
+                    last_offset = offset;
+                    last_joints = joints;
+                }
+                else
+                {
+                    last_offset = ~0u;
+                    last_joints = 0;
+                }
+            }
+            job->mOut.push_back({ w.mHandle, w.mWire, last_offset, last_joints });
+        }
+    });
+    sBindJob = job;
+}
+
 void ll_scene_geo_frame(LLCullResult* cull)
 {
     if (scene_geo_mode() < 2)
@@ -6758,12 +6835,25 @@ void ll_scene_geo_frame(LLCullResult* cull)
         }
     }
     // S4 B: the palettes of the rigged items of the listed fragments, once per distinct (avatar, skin) of a fragment, from the frame's shared list (sent before this record)
-    struct Binding { U32 mHandle, mItem, mOffset, mJoints; };
+    typedef GeoBinding Binding;
     static std::vector<Binding> bindings;
     bindings.clear();
     if (scene_geo_rigged_on())
     {
         const auto t_bind = std::chrono::steady_clock::now();
+        const bool from_job = sBindJob && sBindJob->mCull == cull && sBindJob->mFrame == gFrameCount;
+        if (from_job)
+        {
+            sBindJob->mJob->wait();
+            bindings.swap(sBindJob->mOut);
+            ++sBindJobTaken;
+        }
+        else
+        {
+            ++sBindJobInline;
+        }
+        sBindJob.reset();
+        if (!from_job)       // (else they were made on the pool)
         for (U32 handle : handles)
         {
             LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
@@ -6840,7 +6930,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             << r.mTexUpdateRecords << " (" << r.mTexUpdateEntries << " entries); reconcile every 256 frames: " << r.mReconcileRuns << " runs, " << r.mReconcileMissed << " names an event had not told ("
             << (double)r.mNsReconcile / 1000.0 / std::max<U64>(r.mReconcileRuns, 1) << " us a run) | main thread us per frame: all " << (double)s.mNsAll / 1000.0 / n << " = events and keep-alive "
             << (double)s.mNsEvents / 1000.0 / n << " (registry total " << (double)r.mNsEvents / 1000.0 / n << ") + list and send " << (double)s.mNsSend / 1000.0 / n << "; fragment attach (retain, at group rebuild) "
-            << (double)r.mNsRetain / 1000.0 / n << " | rigged palette bindings " << (double)sGeoRiggedBindings / n << " a frame, " << (double)sGeoRiggedNs / 1000.0 / n << " us | moving matrices sent " << (double)sGeoMovingSent / n << " a frame, slots held "
+            << (double)r.mNsRetain / 1000.0 / n << " | rigged palette bindings " << (double)sGeoRiggedBindings / n << " a frame, " << (double)sGeoRiggedNs / 1000.0 / n << " us (palette jobs taken " << sBindJobTaken << ", made inline " << sBindJobInline << ") | moving matrices sent " << (double)sGeoMovingSent / n << " a frame, slots held "
             << sMovingSlot.size() << ", acquired " << sMovingAcquired << ", no slot free " << sMovingFull << LL_ENDL;
         sGeoRiggedBindings = sGeoRiggedNs = sGeoMovingSent = 0;
     }
@@ -6852,6 +6942,15 @@ void ll_scene_geo_frame_end()
     if (scene_geo_mode() < 2)
     {
         return;
+    }
+    if (sBindJob)
+    {
+        // the palette job never outlives the display (its avatars and skins are plain pointers); normally the frame record took it already
+        if (sBindJob->mJob)
+        {
+            sBindJob->mJob->wait();
+        }
+        sBindJob.reset();
     }
     std::vector<U32> gone;
     {

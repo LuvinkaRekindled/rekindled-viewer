@@ -5947,6 +5947,7 @@ struct GeoFrag
     std::vector<RRun> mRRuns;
     U32 mRTypeFirst[kGeoTypes + 1] = {};
     std::vector<U32> mRItemCmd;                 // per item: its command in mRCmds (~0u: none)
+    U32 mMaxModel = 0;                          // the highest matrix slot its items name: the pass matrices must cover it whether or not the viewer sent that slot this frame (a fragment released by the viewer during the frame is still listed: an item must never index past the matrix scratch)
     std::vector<U64> mPalAddr;                  // per item: the palette address last bound (0: never): an item draws only with one
     std::vector<U32> mPalJoints;
     bool mDirtyPairs = true, mDirtyEntries = true;
@@ -6141,6 +6142,10 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     f->mItems.assign(items, items + h.mEntries);
     f->mPalAddr.assign(h.mEntries, 0);
     f->mPalJoints.assign(h.mEntries, 0);
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mMatrix);
+    }
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         U32 slot;
@@ -6648,6 +6653,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             if (timed) s.mNsRebuild += geo_ns(t1);
         }
         f->mListedFrame = frame_now;
+        sGeo.mMaxSlot = std::max(sGeo.mMaxSlot, std::min<U32>(f->mMaxModel, 2047u));
         listed.push_back(f);
         items_frame += f->mItems.size();
         s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size() - f->mRCmds.size();
