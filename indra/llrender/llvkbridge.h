@@ -127,6 +127,9 @@ namespace LLVkBridge
     //   space, radius). Kind 12 RELEASE frees resident ones as well. kind 15 MATRICES: mMatrices x 16 floats, the region matrices by slot (slot 0 = identity). kind 16 DRAW_RESIDENT: one pass:
     //   mViewProj, mPass; the worker culls every resident entry against the pass's frustum on the GPU and draws the survivors; the blob is the 6 frustum planes (6 x 4 floats). Kind 17 NOTE_RESIDENT: the same pass for the ray scene (ray shadows only: nothing is drawn): the worker tests the resident fragments against the planes
     //   on the CPU and names the survivors to the ray scene (Rt::noteCaster) as a kind 5 record would; mPass, the blob as kind 16.
+    // S2 alpha (ray shadows, LL_VK_SCENE_RAYALPHA=1): kind 18 RETAIN_ALPHA: the alpha masked static casters of a resident fragment: mFragment, mEntries ShadowAlphaEntry (mMatrix = region matrix slot,
+    //   mTextures = GL names, ALPHA_NOT_READY set when a texture has no data), mViewProj[0..3] = the fragment's bounding sphere (the kind 14 one); merges with the fragment's kind 14 record.
+    //   kind 19 TEXTURES: mFragment, mEntries updates { entry index, 4 GL names, ready } (6 U32 each) for entries whose textures changed name or readiness.
     // mMatrixId: stable identity of the model matrix (ray tracing instances). The last four are for the ray scene only: the material of the draw (RtMaterialDef id, 0 = none) and the byte
     // offsets of the texcoord0, colour and normal arrays in the vertex buffer (0 = the buffer has no such array)
     struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId, mMaterial, mTexcoordOffset, mColorOffset, mNormalOffset; };
@@ -145,7 +148,8 @@ namespace LLVkBridge
         ALPHA_HAS_COLOR = 16,       // mColorOffset is valid
         ALPHA_RIGGED = 32,          // mWeightOffset, mPaletteOffset and mJoints are valid
         ALPHA_HARD = 64,            // ray tracing: a plain cut at mCutoff on texture alpha times vertex alpha (glTF alpha mask): no dithering
-        ALPHA_RAY_ONLY = 128        // ray tracing: an opaque caster (no alpha test); kind 5 records only
+        ALPHA_RAY_ONLY = 128,       // ray tracing: an opaque caster (no alpha test); kind 5 records only
+        ALPHA_NOT_READY = 256       // kind 18 / 19 only: a texture of the entry has no data yet (ray scene loading gate): the entry stays out of the scene
     };
     struct ShadowAlphaEntry
     {

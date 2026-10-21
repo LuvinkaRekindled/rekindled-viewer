@@ -135,6 +135,8 @@ struct Group
     Key mKey;
     F32 mModel[16] = {};
     std::vector<Range> mRanges;
+    std::vector<U16> mRangeHold;        // parallel to mRanges: resident casters holding the range (holdRange)
+    bool mManaged = false;              // a resident caster has held a range: the structure covers exactly mRanges, not everything ever named
     std::vector<AlphaInfo> mAlpha;      // kind 1: parallel to mRanges
     U32 mId = ~0u;                      // its row in sSeenRows (the per-pass note stamps live there, contiguous)
     bool mPending = false;              // in sPending: no built structure yet (or dropped), looked at at every scene call
@@ -202,7 +204,7 @@ struct Stats
     U64 mOverCap = 0, mExtraCalls = 0, mBadVertices = 0, mBadMatrices = 0, mChecked = 0, mCheckUs = 0, mSingular = 0, mCompared = 0, mMismatched = 0;
     F32 mMaxScale = 0.f;
     Key mMaxScaleKey;
-    U64 mWhyNew = 0, mWhyEpoch = 0, mWhyGrew = 0, mWhyIb = 0, mWhyRefitLimit = 0, mNewGroups = 0, mNewMasked = 0;      // why structures were built (and how many casters were new)
+    U64 mWhyNew = 0, mWhyEpoch = 0, mWhyGrew = 0, mWhyIb = 0, mWhyRefitLimit = 0, mNewGroups = 0, mNewMasked = 0, mNewByRef[2] = {};      // why structures were built (and how many casters were new)
     double mCpuMs = 0, mCpuMsMax = 0;
     U64 mSlotMisses = 0;            // texture slot lookups that went to the renderer
     U64 mDirtyWhy[7] = {};          // marked dirty because: moved, buffer address, alpha info, new range, buffer move check, structure change (3 places)
@@ -456,6 +458,7 @@ struct SeenRow
 {
     U64 mSeen[kPasses] = {};
     U16 mHold = 0;                                      // S2: held by resident casters in range (see holdGroup): alive whatever the stamps say
+    U64 mGrace = 0;                                     // S2: frame tag until which a group that lost its last hold stays (its rebuilt fragment may need a few frames to arrive; the old stamps gave the same)
     Group* mGroup = nullptr;                            // null: a free row
 };
 std::vector<SeenRow> sSeenRows;
@@ -1300,6 +1303,12 @@ bool init(VkDescriptorSetLayout set_layout)
     {
         Context::instance().setHangReporter(report_recent_scene_calls);
     }
+    {
+        // the skinning compute shader is compiled here, at start-up, not by the first scene call after login (the worker built nothing for about a second then: the GPU idled and the main thread waited)
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool skin = ensure_skin_pipeline();
+        LL_INFOS("VkRt") << "skinning pipeline " << (skin ? "ready" : "not available") << " at start-up after " << (double)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count() / 1000.0 << " ms" << LL_ENDL;
+    }
     LL_INFOS("VkRt") << "ray tracing scene ready: mode " << shadowMode() << ", " << Context::frameCount() << " frame slots, " << kCalls << " scene calls per frame, instance capacity "
                      << kInstanceCapacity << ", geometry table " << (sGeomBytes >> 10) << " KB per call (" << sMaxRecords << " records), material tables " << (sMatsInit ? "on" : "off")
                      << ", table regions per frame slot " << sTableCalls << LL_ENDL;
@@ -1498,6 +1507,79 @@ void holdGroup(const CasterRef& ref, int delta)
     }
 }
 
+void holdRange(const CasterRef& ref, U32 first, U32 count, int delta)
+{
+    if (!sInit || sFailed)
+    {
+        return;
+    }
+    Group* g = (Group*)ref.mGroup;
+    if (!g || ref.mRow >= sSeenRows.size() || sSeenRows[ref.mRow].mGroup != g || g->mId != ref.mRow || g->mKey.mVb != ref.mVb || g->mKey.mIb != ref.mIb || g->mKey.mMatrixId != ref.mMatrixId)
+    {
+        return;
+    }
+    const Range r = { first, count };
+    size_t k = 0;
+    while (k < g->mRanges.size() && !(g->mRanges[k] == r))
+    {
+        ++k;
+    }
+    if (k == g->mRanges.size() || k >= g->mRangeHold.size())
+    {
+        return;
+    }
+    U16& row_hold = sSeenRows[ref.mRow].mHold;
+    if (delta > 0)
+    {
+        ++g->mRangeHold[k];
+        ++row_hold;
+        if (g->mKey.mKind == 1)
+        {
+            g->mManaged = true;                 // masked casters: the structure covers exactly the ranges held (a stale range draws the wrong triangles); opaque ones keep accumulating, as before
+        }
+        return;
+    }
+    if (!g->mRangeHold[k])
+    {
+        return;
+    }
+    --g->mRangeHold[k];
+    if (row_hold)
+    {
+        --row_hold;
+    }
+    if (!row_hold)
+    {
+        sSeenRows[ref.mRow].mGrace = Context::instance().getFrameNumber() + 1 + 16;
+    }
+    if (g->mRangeHold[k] == 0 && g->mManaged)
+    {
+        // nothing holds the range any more: it leaves the group, and the scene call looks at the group (its structure may cover a range that is not wanted now)
+        g->mRanges.erase(g->mRanges.begin() + k);
+        g->mRangeHold.erase(g->mRangeHold.begin() + k);
+        if (k < g->mAlpha.size())
+        {
+            g->mAlpha.erase(g->mAlpha.begin() + k);
+        }
+        mark_dirty(*g);
+        if (g->mRanges.empty())
+        {
+            drop_entry(*g, 7);                  // nothing left to draw: its instance goes (the structure still covers the old ranges until one comes back)
+        }
+        const U64 frame_tag = Context::instance().getFrameNumber() + 1;
+        if (g->mNotedTag != frame_tag)
+        {
+            if (sNotedListTag != frame_tag)
+            {
+                sNotedListTag = frame_tag;
+                sNotedList.clear();
+            }
+            sNotedList.push_back(g);
+            g->mNotedTag = frame_tag;
+        }
+    }
+}
+
 void passRendered(U32 pass)
 {
     if (sInit && !sFailed)
@@ -1544,6 +1626,10 @@ void noteCaster(const Caster& c, CasterRef* ref)
         }
         add_pending(it->second);
         ++sStats.mNewGroups;
+        if (ref)
+        {
+            ++sStats.mNewByRef[key.mKind == 1 ? 1 : 0];     // made by a resident caster's full note (kind 0 / masked)
+        }
         mark_dirty(it->second);
     }
     Group& g = it->second;
@@ -1606,6 +1692,7 @@ void noteCaster(const Caster& c, CasterRef* ref)
     if (ranges.size() < 512)
     {
         ranges.push_back(r);
+        g.mRangeHold.push_back(0);
         ++sStats.mDirtyWhy[3];
         mark_dirty(g);
         g.mAlpha.push_back(c.mAlpha ? *c.mAlpha : AlphaInfo());
@@ -1782,6 +1869,20 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     {
         return;
     }
+    // a scene call that takes long (the first ones, the loading of a scene) is logged: the worker builds nothing meanwhile
+    struct CallTimer
+    {
+        std::chrono::steady_clock::time_point mT0 = std::chrono::steady_clock::now();
+        ~CallTimer()
+        {
+            const double ms = (double)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - mT0).count() / 1000.0;
+            static int logged = 0;
+            if (ms >= 100.0 && logged++ < 20)
+            {
+                LL_INFOS("VkRt") << "a scene call took " << ms << " ms (frame " << Context::instance().getFrameNumber() << ")" << LL_ENDL;
+            }
+        }
+    } call_timer;
     Context& ctx = Context::instance();
     if (!ctx.inFrame())
     {
@@ -1878,9 +1979,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         }
         for (SeenRow& row : sSeenRows)
         {
-            if (!row.mGroup || row.mHold)
+            if (!row.mGroup || row.mHold || row.mGrace > tag)
             {
-                continue;                   // free, or held by resident casters in range
+                continue;                   // free, held by resident casters in range, or just let go of by them
             }
             bool alive = false;
             for (U32 p = 0; p < kPasses; ++p)
@@ -1934,6 +2035,16 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 }
                 drop_entry(g, 0);
                 remove_pending(g);
+                if (g.mNotedTag == sNotedListTag)
+                {
+                    // named (or looked at) this frame, and now gone: the frame's list must not keep the pointer (a resident caster's range leaving a group names it without a stamp)
+                    auto noted = std::find(sNotedList.begin(), sNotedList.end(), &g);
+                    if (noted != sNotedList.end())
+                    {
+                        *noted = sNotedList.back();
+                        sNotedList.pop_back();
+                    }
+                }
                 sSeenFree.push_back(g.mId);
                 row.mGroup = nullptr;
                 sGroups.erase(dead_key);
@@ -1997,6 +2108,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         for (size_t k = 0; !changed && k < g.mRanges.size(); ++k)
         {
             changed = std::find(b.mBuilt.begin(), b.mBuilt.end(), g.mRanges[k]) == b.mBuilt.end();
+        }
+        for (size_t k = 0; g.mManaged && !changed && k < b.mBuilt.size(); ++k)
+        {
+            changed = std::find(g.mRanges.begin(), g.mRanges.end(), b.mBuilt[k]) == g.mRanges.end();      // the structure covers a range that was taken out of the group
         }
         return changed;
     };
@@ -2105,7 +2220,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             b.mIbEpoch = ii.mEpoch;
         }
         // the ranges the structure has to cover: what it covers already plus what was drawn now
-        std::vector<Range> want = b.mBuilt;
+        std::vector<Range> want = g.mManaged ? std::vector<Range>() : b.mBuilt;
         bool grew = b.mAs == VK_NULL_HANDLE;
         if (!b.mBad.empty() && (b.mBadVbVersion != vi.mVersion || b.mBadIbVersion != ii.mVersion))
         {
@@ -2126,6 +2241,15 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             {
                 want.push_back(r);
                 grew = true;
+            }
+        }
+        if (g.mManaged && b.mAs != VK_NULL_HANDLE)
+        {
+            std::vector<Range> sorted = want;
+            std::sort(sorted.begin(), sorted.end());
+            if (!(sorted == b.mBuilt))
+            {
+                grew = true;                    // ranges came or went: the structure is made again from exactly what is left
             }
         }
         if (want.empty())
@@ -4301,12 +4425,12 @@ std::string report(double frames)
     snprintf(buf, sizeof(buf),
              "rt scene (mode %u): %u structures (%.0f MB, %.2f M triangles), instances %.0f/scene (last %u), casters named %.0f/frame, builds %.2f/frame (%.0f tri), refits %.2f/frame (%.0f tri), "
              "deferred %.2f, no data %.2f, masked structures %.0f/frame, table full %.2f, over instance cap %.2f, failed %.3f, evicted %.3f, scene calls %.2f/frame (over %u: %.2f), "
-             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; skin: %.1f jobs/frame, %.0f vertices/frame, avatars %.2f/frame (over budget %.2f, throttled by distance %.2f), failed %.3f, avatar instances %.2f/call of which showing an older pose %.2f (on average %.1f frames old, oldest %llu); casters new %.2f/frame, groups held %zu; scene cache: %zu instances, %zu record rows (%u garbage), refreshed %.1f groups/call, made again %.3f/call, buffer moves checked %.3f/call, check: %llu runs, %llu groups, %llu differed; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
+             "CPU %.3f ms/call (worst %.2f ms; expire %.2f, order %.2f, scan+sort %.2f, instances %.2f, record %.2f), scratch %.1f MB; builds because: new %.2f, names recycled %.2f, ranges grew %.2f, index data rewritten %.2f, refit limit %.2f; skin: %.1f jobs/frame, %.0f vertices/frame, avatars %.2f/frame (over budget %.2f, throttled by distance %.2f), failed %.3f, avatar instances %.2f/call of which showing an older pose %.2f (on average %.1f frames old, oldest %llu); casters new %.2f/frame (by resident casters: opaque %.2f, masked %.2f), groups held %zu; scene cache: %zu instances, %zu record rows (%u garbage), refreshed %.1f groups/call, made again %.3f/call, buffer moves checked %.3f/call, check: %llu runs, %llu groups, %llu differed; checks: structures checked %.2f/frame, bad vertex data %.3f, bad matrices %.3f, singular matrices %.3f, copy vs video memory compared %.2f mismatched %.2f, largest instance scale %.2f (vb %u ib %u matrix id %u kind %u)",
              shadowMode(), live, (double)sBlasStorageBytes / 1048576.0, (double)prims / 1e6, (double)s.mInstances / scenes, sLastInstances, (double)s.mCasters / f, (double)s.mBuilds / f,
              (double)s.mPrimsBuilt / f, (double)s.mRefits / f, (double)s.mPrimsRefit / f, (double)s.mDeferred / f, (double)s.mNoData / f, (double)s.mAlphaStructs / f, (double)s.mTableFull / f,
              (double)s.mOverCap / f, (double)s.mFailed / f, (double)s.mEvicted / f, (double)s.mScenes / f, kCalls, (double)s.mExtraCalls / f, s.mCpuMs / scenes, s.mCpuMsMax, s.mPhaseMs[0] / scenes, s.mPhaseMs[1] / scenes, s.mPhaseMs[2] / scenes, s.mPhaseMs[3] / scenes, s.mPhaseMs[4] / scenes,
              (double)sScratch.mSize / 1048576.0, (double)s.mWhyNew / f, (double)s.mWhyEpoch / f, (double)s.mWhyGrew / f, (double)s.mWhyIb / f, (double)s.mWhyRefitLimit / f,
-             (double)s.mSkinJobs / f, (double)s.mSkinVerts / f, (double)s.mAvatars / f, (double)s.mSkinOver / f, (double)s.mSkinThrottled / f, (double)s.mSkinFailed / f, (double)s.mAvatarInstances / scenes, (double)s.mAvatarStale / scenes, s.mAvatarStale ? (double)s.mAvatarStaleFrames / (double)s.mAvatarStale : 0.0, (unsigned long long)s.mAvatarStaleMax, (double)s.mNewGroups / f, sGroups.size(), sInstArray.size(), sRecs.size(), sRecGarbage, (double)s.mRefreshed / scenes, (double)s.mFullRebuilds / scenes, (double)s.mTopologyChecks / scenes, (unsigned long long)s.mVerifies, (unsigned long long)s.mVerifyGroups, (unsigned long long)s.mVerifyMismatch, (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
+             (double)s.mSkinJobs / f, (double)s.mSkinVerts / f, (double)s.mAvatars / f, (double)s.mSkinOver / f, (double)s.mSkinThrottled / f, (double)s.mSkinFailed / f, (double)s.mAvatarInstances / scenes, (double)s.mAvatarStale / scenes, s.mAvatarStale ? (double)s.mAvatarStaleFrames / (double)s.mAvatarStale : 0.0, (unsigned long long)s.mAvatarStaleMax, (double)s.mNewGroups / f, (double)s.mNewByRef[0] / f, (double)s.mNewByRef[1] / f, sGroups.size(), sInstArray.size(), sRecs.size(), sRecGarbage, (double)s.mRefreshed / scenes, (double)s.mFullRebuilds / scenes, (double)s.mTopologyChecks / scenes, (unsigned long long)s.mVerifies, (unsigned long long)s.mVerifyGroups, (unsigned long long)s.mVerifyMismatch, (double)s.mChecked / f, (double)s.mBadVertices / f, (double)s.mBadMatrices / f, (double)s.mSingular / f, (double)s.mCompared / f, (double)s.mMismatched / f, s.mMaxScale, s.mMaxScaleKey.mVb, s.mMaxScaleKey.mIb,
              s.mMaxScaleKey.mMatrixId, s.mMaxScaleKey.mKind);
     {
         size_t used = strlen(buf);
