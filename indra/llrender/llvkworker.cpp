@@ -4142,6 +4142,28 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         F32 mEnvIntensity, mCutoff, mBrightness, mPad2;
     };
     static_assert(sizeof(GeoGpu) == 128, "geometry packet entry");
+    // S3 G0 (LL_VK_SCENE_TIMES=1): what this record costs the worker: the table build (entries, buffer and texture lookups), and the rest (matrices, state, draw)
+    static const bool timed = getenv("LL_VK_SCENE_TIMES") != nullptr;
+    static U64 ns_table = 0, ns_rest = 0, records = 0, entries_total = 0;
+    const auto t_begin = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+    std::chrono::steady_clock::time_point t_table_end = t_begin;
+    struct Account
+    {
+        bool mOn; std::chrono::steady_clock::time_point mBegin, &mTableEnd; U32 mEntries;
+        ~Account()
+        {
+            if (!mOn) return;
+            const auto now = std::chrono::steady_clock::now();
+            ns_table += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(mTableEnd - mBegin).count();
+            ns_rest += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(now - mTableEnd).count();
+            entries_total += mEntries;
+            if (++records % 3000 == 0)
+            {
+                LL_INFOS("VkScene") << "geometry packets, worker time per record: table build " << (double)ns_table / 1000.0 / records << " us, matrices + state + draw " << (double)ns_rest / 1000.0 / records
+                    << " us, " << (double)entries_total / records << " entries a record (" << records << " records)" << LL_ENDL;
+            }
+        }
+    } account = { timed, t_begin, t_table_end, h.mEntries };
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
@@ -4234,6 +4256,10 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
             packet_used.push_back(e.mVertexBuffer);
             packet_used.push_back(e.mIndexBuffer);
         }
+    }
+    if (timed)
+    {
+        t_table_end = std::chrono::steady_clock::now();
     }
     memcpy(models.mPtr, matrices, 176 * (size_t)h.mMatrices);
 
