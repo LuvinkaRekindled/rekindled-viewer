@@ -90,6 +90,7 @@ bool ll_scene_geo_skip();                                       // the deferred 
 bool ll_scene_geo_main_view();                                  // the camera / render flags of the main view (not a probe, an impostor, a shadow or a reflection render)
 bool ll_scene_geo_prepared(LLCullResult* cull);                 // the table was told this frame's visible fragments for this cull result
 int ll_scene_geo_type_number(U32 type);                         // the pass type's number in the table's order (-1: not a table type)
+void ll_scene_geo_palette_kick(LLCullResult* cull);               // S4 B: end of postSort: the palettes of the rigged items of the listed fragments are made on the pool (ll_scene_geo_frame takes them)
 void ll_scene_geo_frame(LLCullResult* cull);                    // main view, once a frame before the passes
 void ll_scene_geo_frame_end();                                  // main view, after the passes: releases of fragments that went during the frame
 void ll_scene_geo_count(U32 what, U64 n);                       // 0 builder draws left out, 1 table draw records sent, 2 builds made again for want of a prepare            // pipeline.cpp (S2): after a group's rebuild
