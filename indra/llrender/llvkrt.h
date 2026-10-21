@@ -120,6 +120,9 @@ void passRendered(U32 pass);
 // S2 stage 2: a group a resident caster belongs to is HELD while the caster is in range (delta +1 when it enters, -1 when it leaves or is released): the expiry sweep keeps a held group whatever its
 // pass stamps say, so nothing has to name it every frame. A handle that does not name the group any more is ignored.
 void holdGroup(const CasterRef& ref, int delta);
+// the same per index range: a resident caster holds the range it was filed under (after its full note); when nothing holds a range any more it leaves the group, and the structure of such a
+// group is made from exactly the ranges that are left (a rebuilt spatial group that reuses its buffers must not leave the triangles of its old layout in the scene)
+void holdRange(const CasterRef& ref, U32 first, U32 count, int delta);
 
 // Builds what the casters noted since the last call need (a budget per call), then the top-level structure for this view: the instances are transformed into eye space
 // (view * model), the space the lighting shaders work in. Recorded into the current frame outside any render pass. view: 16 floats column-major.

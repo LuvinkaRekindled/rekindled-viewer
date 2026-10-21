@@ -4651,9 +4651,15 @@ struct ResFrag
     std::vector<U32> mRefMat;                                   // the matrix version of the entry's region slot at its last full note
     U64 mNoteFrame = ~0ull;                                     // the frame a pass of which noted this fragment (the other passes of the frame need not)
     size_t mCullIndex = 0;                                      // its row in sRes.mCull
+    bool mInCull = false;
+    // ray scene alpha casters (kind 18): mMatrix = region slot, mTextures = GL names as last told (kind 19 changes them), ALPHA_NOT_READY keeps an entry out of the scene
+    std::vector<LLVkBridge::ShadowAlphaEntry> mAlpha;
+    std::vector<LLVk::Rt::CasterRef> mAlphaRefs;
+    std::vector<U32> mAlphaPairOf;
+    std::vector<U8> mAlphaHeld;
 };
 // one row per fragment, contiguous, for the sphere test of the ray notes (a sweep over 5,000 fragments must not touch their scattered nodes): centre in region space, radius, the region matrix slot
-struct ResCullItem { F32 mC[3]; F32 mR; U32 mSlot; U32 mId; ResFrag* mFrag; bool mHeld; };
+struct ResCullItem { F32 mC[3]; F32 mR; U32 mSlot; U32 mId; ResFrag* mFrag; bool mHeld; bool mHasAlpha; };
 static std::unordered_multimap<U32, struct ResPair*> sResPairByName;     // the fragments' buffer pairs by the names of their buffers (to drop their cached pointers when a buffer goes)
 static const U32 kResCapacity = 131072;
 static const U32 kResMatrixSlots = 256;
@@ -4673,6 +4679,8 @@ static struct ResState
     U32 mPlaneMask = 0;                                         // which of them are set
     std::vector<bool> mMatrixDirty = std::vector<bool>(256, false);     // slots whose region matrix changed value since the membership was last looked at
     U64 mEntered = 0, mLeft = 0, mEventNotes = 0, mMembershipFrames = 0, mMembershipNs = 0, mHeldNow = 0;
+    U64 mEvBufNames = 0, mEvBufNotes = 0, mEvMatNotes = 0, mEvMatFrames = 0;
+    U64 mHandleFirst[2] = {}, mHandleReplaced[2] = {}, mHandleSame[2] = {};       // full notes by kind: the first of an entry, one that found its group gone (a new one made), and the rest
     U64 mRefreshFrame = ~0ull;
     U64 mRefreshNs = 0;
     std::vector<F32> mMatrixCpu = std::vector<F32>(16 * 256, 0.f);     // the region matrices as sent (the ray notes read them: the table copy is write-combined)
@@ -4801,6 +4809,37 @@ static void res_write_entries(ResFrag& f, size_t pair_index)
     }
 }
 
+static void res_register_pairs(ResFrag& f)
+{
+    for (size_t k = 0; k < f.mPairs.size(); ++k)
+    {
+        ResPair& p = f.mPairs[k];
+        p.mFrag = &f;
+        p.mIndex = (U32)k;
+        sResPairByName.emplace(p.mVb, &p);
+        sResPairByName.emplace(p.mIb, &p);
+    }
+}
+
+static void res_unregister_pairs(ResFrag& f)
+{
+    for (ResPair& p : f.mPairs)
+    {
+        for (U32 name : { p.mVb, p.mIb })
+        {
+            auto range = sResPairByName.equal_range(name);
+            for (auto m = range.first; m != range.second; ++m)
+            {
+                if (m->second == &p)
+                {
+                    sResPairByName.erase(m);
+                    break;
+                }
+            }
+        }
+    }
+}
+
 static void res_buffer_gone(U32 name)
 {
     auto range = sResPairByName.equal_range(name);
@@ -4848,11 +4887,51 @@ static void res_full_note(ResFrag& f, size_t i)
 {
     ResPair& pair = f.mPairs[f.mPairOf[i]];
     const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+    void* before = f.mRefs[i].mGroup;
     note_rt_caster_ref(0, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, &f.mRefs[i]);
+    ++(!before ? sRes.mHandleFirst[0] : (before != f.mRefs[i].mGroup ? sRes.mHandleReplaced[0] : sRes.mHandleSame[0]));
     f.mRefMat[i] = sRes.mMatrixVersion[e.mMatrix];
 }
 
 // the fragment comes into range: all its pairs have to be there, then every entry is named in full and its group held
+// an alpha caster named to the ray scene in full (kind 1: the alpha test data with it)
+static void res_full_note_alpha(ResFrag& f, size_t i)
+{
+    ResPair& pair = f.mPairs[f.mAlphaPairOf[i]];
+    const LLVkBridge::ShadowAlphaEntry& e = f.mAlpha[i];
+    Rt::AlphaInfo a;
+    a.mFlags = e.mFlags & (31u | 64u);
+    a.mTexcoordOffset = e.mTexcoordOffset;
+    a.mColorOffset = e.mColorOffset;
+    memcpy(a.mTextures, e.mTextures, sizeof(a.mTextures));
+    a.mCutoff = e.mCutoff;
+    memcpy(a.mUv, e.mUv, sizeof(a.mUv));
+    a.mNormalOffset = e.mNormalOffset;
+    a.mMaterial = e.mMaterial;
+    void* before = f.mAlphaRefs[i].mGroup;
+    note_rt_caster(0, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 1, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, &a, &f.mAlphaRefs[i]);
+    ++(!before ? sRes.mHandleFirst[1] : (before != f.mAlphaRefs[i].mGroup ? sRes.mHandleReplaced[1] : sRes.mHandleSame[1]));
+}
+
+static void res_alpha_hold(ResFrag& f, size_t i)
+{
+    if (!f.mAlphaHeld[i] && !(f.mAlpha[i].mFlags & LLVkBridge::ALPHA_NOT_READY))
+    {
+        res_full_note_alpha(f, i);
+        LLVk::Rt::holdRange(f.mAlphaRefs[i], f.mAlpha[i].mFirstIndex, f.mAlpha[i].mIndexCount, 1);
+        f.mAlphaHeld[i] = 1;
+    }
+}
+
+static void res_alpha_unhold(ResFrag& f, size_t i)
+{
+    if (f.mAlphaHeld[i])
+    {
+        LLVk::Rt::holdRange(f.mAlphaRefs[i], f.mAlpha[i].mFirstIndex, f.mAlpha[i].mIndexCount, -1);
+        f.mAlphaHeld[i] = 0;
+    }
+}
+
 static bool res_enter(ResFrag& f)
 {
     for (ResPair& p : f.mPairs)
@@ -4865,7 +4944,11 @@ static bool res_enter(ResFrag& f)
     for (size_t i = 0; i < f.mEntries.size(); ++i)
     {
         res_full_note(f, i);
-        LLVk::Rt::holdGroup(f.mRefs[i], 1);
+        LLVk::Rt::holdRange(f.mRefs[i], f.mEntries[i].mFirstIndex, f.mEntries[i].mIndexCount, 1);
+    }
+    for (size_t i = 0; i < f.mAlpha.size(); ++i)
+    {
+        res_alpha_hold(f, i);
     }
     return true;
 }
@@ -4874,7 +4957,11 @@ static void res_leave(ResFrag& f)
 {
     for (size_t i = 0; i < f.mEntries.size(); ++i)
     {
-        LLVk::Rt::holdGroup(f.mRefs[i], -1);
+        LLVk::Rt::holdRange(f.mRefs[i], f.mEntries[i].mFirstIndex, f.mEntries[i].mIndexCount, -1);
+    }
+    for (size_t i = 0; i < f.mAlpha.size(); ++i)
+    {
+        res_alpha_unhold(f, i);
     }
 }
 
@@ -4885,33 +4972,19 @@ static void res_release(U32 id)
     {
         return;
     }
-    if (!it->second.mSlots.empty() && sRes.mCull[it->second.mCullIndex].mHeld)
+    if (it->second.mInCull && sRes.mCull[it->second.mCullIndex].mHeld)
     {
         res_leave(it->second);
         sRes.mCull[it->second.mCullIndex].mHeld = false;
     }
-    for (ResPair& p : it->second.mPairs)
-    {
-        for (U32 name : { p.mVb, p.mIb })
-        {
-            auto range = sResPairByName.equal_range(name);
-            for (auto m = range.first; m != range.second; ++m)
-            {
-                if (m->second == &p)
-                {
-                    sResPairByName.erase(m);
-                    break;
-                }
-            }
-        }
-    }
+    res_unregister_pairs(it->second);
     const U64 frame = Context::instance().getFrameNumber();
     for (U32 slot : it->second.mSlots)
     {
         sRes.mT[slot].mCount = 0;
         sRes.mRetired.push_back({ slot, frame });
     }
-    if (!it->second.mSlots.empty())
+    if (it->second.mInCull)
     {
         const size_t index = it->second.mCullIndex;
         sRes.mCull[index] = sRes.mCull.back();
@@ -4977,18 +5050,12 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         sRes.mT[slot].mModel = e.mMatrix;
     }
     ResFrag& stored = sRes.mFrags[h.mFragment] = std::move(f);
-    for (size_t k = 0; k < stored.mPairs.size(); ++k)
-    {
-        ResPair& p = stored.mPairs[k];
-        p.mFrag = &stored;
-        p.mIndex = (U32)k;
-        sResPairByName.emplace(p.mVb, &p);
-        sResPairByName.emplace(p.mIb, &p);
-    }
+    res_register_pairs(stored);
     if (!stored.mSlots.empty())
     {
-        ResCullItem item = { { stored.mBounds[0], stored.mBounds[1], stored.mBounds[2] }, stored.mBounds[3], stored.mEntries[0].mMatrix, h.mFragment, &stored, false };
+        ResCullItem item = { { stored.mBounds[0], stored.mBounds[1], stored.mBounds[2] }, stored.mBounds[3], stored.mEntries[0].mMatrix, h.mFragment, &stored, false, false };
         stored.mCullIndex = sRes.mCull.size();
+        stored.mInCull = true;
         sRes.mCull.push_back(item);
     }
     for (size_t k = 0; k < stored.mPairs.size(); ++k)
@@ -5042,6 +5109,110 @@ static void res_refresh(U64 frame)
     if (flush)
     {
         flush_buffer_updates();     // data written by the main thread this frame is recorded before anything reads it
+    }
+}
+
+// kind 18: the alpha masked static casters of a fragment (merges with its kind 14 record, which comes first)
+static void res_retain_alpha(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!res_init() || h.mEntries == 0)
+    {
+        return;
+    }
+    const LLVkBridge::ShadowAlphaEntry* entries = (const LLVkBridge::ShadowAlphaEntry*)blob;
+    auto found = sRes.mFrags.find(h.mFragment);
+    ResFrag* f;
+    if (found == sRes.mFrags.end())
+    {
+        f = &sRes.mFrags[h.mFragment];
+        memcpy(f->mBounds, h.mViewProj, sizeof(f->mBounds));
+    }
+    else
+    {
+        f = &found->second;
+    }
+    res_unregister_pairs(*f);
+    f->mAlpha.assign(entries, entries + h.mEntries);
+    f->mAlphaRefs.assign(h.mEntries, LLVk::Rt::CasterRef());
+    f->mAlphaHeld.assign(h.mEntries, 0);
+    f->mAlphaPairOf.clear();
+    for (const LLVkBridge::ShadowAlphaEntry& e : f->mAlpha)
+    {
+        size_t k = 0;
+        while (k < f->mPairs.size() && !(f->mPairs[k].mVb == e.mVertexBuffer && f->mPairs[k].mIb == e.mIndexBuffer))
+        {
+            ++k;
+        }
+        if (k == f->mPairs.size())
+        {
+            ResPair p;
+            p.mVb = e.mVertexBuffer;
+            p.mIb = e.mIndexBuffer;
+            f->mPairs.push_back(p);
+        }
+        f->mAlphaPairOf.push_back((U32)k);
+    }
+    res_register_pairs(*f);
+    if (!f->mInCull)
+    {
+        ResCullItem item = { { f->mBounds[0], f->mBounds[1], f->mBounds[2] }, f->mBounds[3], f->mAlpha[0].mMatrix, h.mFragment, f, false, true };
+        f->mCullIndex = sRes.mCull.size();
+        f->mInCull = true;
+        sRes.mCull.push_back(item);
+    }
+    else
+    {
+        sRes.mCull[f->mCullIndex].mHasAlpha = true;
+    }
+}
+
+// kind 19: entries whose textures changed name or readiness: { entry index, 4 names, ready }
+static void res_tex_update(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    auto it = sRes.mFrags.find(h.mFragment);
+    if (it == sRes.mFrags.end())
+    {
+        return;
+    }
+    ResFrag& f = it->second;
+    const U32* u = (const U32*)blob;
+    const bool held = f.mInCull && sRes.mCull[f.mCullIndex].mHeld;
+    for (U32 j = 0; j < h.mEntries; ++j)
+    {
+        const U32 index = u[6 * j];
+        if (index >= f.mAlpha.size())
+        {
+            continue;
+        }
+        LLVkBridge::ShadowAlphaEntry& e = f.mAlpha[index];
+        memcpy(e.mTextures, u + 6 * j + 1, sizeof(e.mTextures));
+        if (u[6 * j + 5])
+        {
+            e.mFlags &= ~(U32)LLVkBridge::ALPHA_NOT_READY;
+        }
+        else
+        {
+            e.mFlags |= LLVkBridge::ALPHA_NOT_READY;
+        }
+        if (!held)
+        {
+            continue;
+        }
+        if (e.mFlags & LLVkBridge::ALPHA_NOT_READY)
+        {
+            res_alpha_unhold(f, index);
+        }
+        else if (res_pair_ready(f.mPairs[f.mAlphaPairOf[index]]))
+        {
+            if (f.mAlphaHeld[index])
+            {
+                res_full_note_alpha(f, index);          // the group's alpha test data changed
+            }
+            else
+            {
+                res_alpha_hold(f, index);
+            }
+        }
     }
 }
 
@@ -5338,11 +5509,27 @@ static void res_ray_membership(U64 frame)
         held += item.mHeld ? 1 : 0;
     }
     sRes.mHeldNow = held;
+    // the alpha test reads the vertex data of a held alpha caster while the lighting traces: its buffers count as in use this frame (a CPU rewrite of a host-written range renames it first)
+    for (const ResCullItem& item : sRes.mCull)
+    {
+        if (item.mHeld && item.mHasAlpha)
+        {
+            for (ResPair& p : item.mFrag->mPairs)
+            {
+                if (p.mPvb && p.mPib)
+                {
+                    p.mPvb->mLastUseFrame = frame;
+                    p.mPib->mLastUseFrame = frame;
+                }
+            }
+        }
+    }
     // events: a buffer a held fragment reads changed (its group's buffer info and ranges are made again by a full note)
     if (!sResChanged.empty())
     {
         std::sort(sResChanged.begin(), sResChanged.end());
         sResChanged.erase(std::unique(sResChanged.begin(), sResChanged.end()), sResChanged.end());
+        sRes.mEvBufNames += sResChanged.size();
         for (U32 name : sResChanged)
         {
             auto range_it = sResPairByName.equal_range(name);
@@ -5350,7 +5537,7 @@ static void res_ray_membership(U64 frame)
             {
                 ResPair* p = it->second;
                 ResFrag* f = p->mFrag;
-                if (!f || f->mSlots.empty() || !sRes.mCull[f->mCullIndex].mHeld || !res_pair_ready(*p))
+                if (!f || !f->mInCull || !sRes.mCull[f->mCullIndex].mHeld || !res_pair_ready(*p))
                 {
                     continue;
                 }
@@ -5360,6 +5547,16 @@ static void res_ray_membership(U64 frame)
                     {
                         res_full_note(*f, i);
                         ++sRes.mEventNotes;
+                        ++sRes.mEvBufNotes;
+                    }
+                }
+                for (size_t i = 0; i < f->mAlpha.size(); ++i)
+                {
+                    if (f->mAlphaPairOf[i] == p->mIndex && f->mAlphaHeld[i])
+                    {
+                        res_full_note_alpha(*f, i);
+                        ++sRes.mEventNotes;
+                        ++sRes.mEvBufNotes;
                     }
                 }
             }
@@ -5374,6 +5571,7 @@ static void res_ray_membership(U64 frame)
     }
     if (any_matrix)
     {
+        ++sRes.mEvMatFrames;
         for (ResCullItem& item : sRes.mCull)
         {
             if (!item.mHeld)
@@ -5389,6 +5587,15 @@ static void res_ray_membership(U64 frame)
                     ++sRes.mEventNotes;
                 }
             }
+            for (size_t i = 0; i < f.mAlpha.size(); ++i)
+            {
+                if (f.mAlphaHeld[i] && f.mAlpha[i].mMatrix && sRes.mMatrixDirty[f.mAlpha[i].mMatrix] && res_pair_ready(f.mPairs[f.mAlphaPairOf[i]]))
+                {
+                    res_full_note_alpha(f, i);
+                    ++sRes.mEventNotes;
+                    ++sRes.mEvMatNotes;
+                }
+            }
         }
         std::fill(sRes.mMatrixDirty.begin(), sRes.mMatrixDirty.end(), false);
     }
@@ -5396,7 +5603,7 @@ static void res_ray_membership(U64 frame)
     if (++sRes.mMembershipFrames % 600 == 0)
     {
         LL_INFOS("VkScene") << "resident ray membership: " << sRes.mHeldNow << " of " << sRes.mCull.size() << " fragments in the scene, " << sRes.mEntered << " entered and " << sRes.mLeft << " left in total, "
-            << sRes.mEventNotes << " event notes, " << (double)sRes.mMembershipNs / 1000.0 / sRes.mMembershipFrames << " us a frame" << LL_ENDL;
+            << "full notes (kind 0 / alpha): first " << sRes.mHandleFirst[0] << " / " << sRes.mHandleFirst[1] << ", group gone and made again " << sRes.mHandleReplaced[0] << " / " << sRes.mHandleReplaced[1] << ", same group " << sRes.mHandleSame[0] << " / " << sRes.mHandleSame[1] << "; " << sRes.mEventNotes << " event notes (" << sRes.mEvBufNotes << " from " << sRes.mEvBufNames << " changed buffer names, " << sRes.mEvMatNotes << " from matrix changes in " << sRes.mEvMatFrames << " frames), " << (double)sRes.mMembershipNs / 1000.0 / sRes.mMembershipFrames << " us a frame" << LL_ENDL;
     }
 }
 
@@ -5489,6 +5696,8 @@ void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     typedef LLVkBridge::ShadowPacketEntry Entry;
+    if (h.mKind == 18) { res_retain_alpha(h, blob); return; }
+    if (h.mKind == 19) { res_tex_update(h, blob); return; }
     if (h.mKind >= 14 && h.mKind <= 17)
     {
         // timing per kind (LL_VK_SCENE_TIMES=1): what the resident records cost the worker
@@ -5574,7 +5783,7 @@ static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const 
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if (h.mKind >= 11 && h.mKind <= 17)
+    if (h.mKind >= 11 && h.mKind <= 19)
     {
         on_shadow_fragments(h, blob);
         return;

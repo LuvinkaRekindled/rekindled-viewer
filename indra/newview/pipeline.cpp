@@ -5289,6 +5289,15 @@ struct LLSceneFragment
     bool mResidentSent = false;
     std::vector<U32> mSlots;
     F32 mBounds[4] = {};
+    // S2 alpha (LL_VK_SCENE_RAYALPHA): the group's static alpha masked casters, what build_shadow_alpha makes of them. mMatrix: 0 = none, else 1 + index into mMatrices; mTextures: local texture
+    // number (1-based, into mTexLocal), 0 = none. Texture names are not kept here: the registry (sAlphaTex) resolves them once a frame.
+    std::vector<LLVkBridge::ShadowAlphaEntry> mAlpha;
+    std::vector<LLPointer<LLViewerTexture>> mTexLocal;
+    std::vector<U32> mSentName;                         // per local texture: the name the worker was told
+    std::vector<U8> mSentReady;
+    bool mAlphaRegistered = false;                      // in the texture registry, the key map and the alpha sweep
+    bool mAlphaSent = false;
+    size_t mAlphaCullIndex = 0;
 };
 
 namespace
@@ -5315,6 +5324,25 @@ bool scene_resident_on()
     static const bool on = scene_env("LL_VK_SCENE_RESIDENT");
     return on;
 }
+// the alpha masked casters of resident fragments too (ray shadows, with the range membership)
+bool scene_alpha_on()
+{
+    static const bool on = scene_env("LL_VK_SCENE_RESIDENT") && scene_env("LL_VK_SCENE_RAYRANGE") && scene_env("LL_VK_SCENE_RAYALPHA");
+    return on;
+}
+// the textures of resident alpha entries: one record each, with the users (fragment, local number); resolved once a frame for the fragments in range
+struct AlphaTexUse { LLSceneFragment* mFrag; U32 mLocal; };
+struct AlphaTexInfo { LLPointer<LLViewerTexture> mTex; U32 mName = 0; bool mReady = true; U64 mTouch = ~0ull; std::vector<AlphaTexUse> mUsers; };
+std::unordered_map<LLViewerTexture*, AlphaTexInfo> sAlphaTex;
+struct AlphaKeyRef { LLSceneFragment* mFrag; U32 mIndex; };
+std::unordered_map<U64, AlphaKeyRef> sAlphaKeys;        // (vertex buffer, index buffer, first index, count) of a resident alpha entry -> where it lives
+struct AlphaCullItem { F32 mC[3]; F32 mR; const LLMatrix4* mM; LLSceneFragment* mFrag; };
+std::vector<AlphaCullItem> sAlphaCull;                  // the sphere of every resident fragment with alpha entries (contiguous, for the once-a-frame sweep)
+std::vector<LLSceneFragment*> sPendingAlpha;            // registered, not yet told to the worker
+F32 sPassPlanes[4][6][4] = {};                          // the frustum planes each sun cascade pass last had (the sweep and the worker's membership use the same)
+U32 sPassPlaneMask = 0;
+U64 sAlphaStats[8] = {};                                // fragments registered, sweeps, in range total, texture updates sent, entries updated, builder entries dropped, uncovered, stale names
+inline U64 alpha_key(U32 vb, U32 ib, U32 first, U32 count) { return ((U64)vb * 0x9E3779B97F4A7C15ull) ^ ((U64)ib * 0xC2B2AE3D27D4EB4Full) ^ (((U64)first << 32) | count); }
 // region render matrices get a slot each (the worker keeps their values by slot, sent with every pass); slot 0 is the identity
 std::vector<const LLMatrix4*> sSlotMatrix(1, nullptr);
 std::unordered_map<const LLMatrix4*, U32> sRegionSlot;
@@ -5336,6 +5364,46 @@ struct FragmentStats
 } sFragStats;
 }
 
+static void scene_alpha_unregister(LLSceneFragment* f)
+{
+    f->mAlphaRegistered = false;
+    for (LLPointer<LLViewerTexture>& tex : f->mTexLocal)
+    {
+        auto it = sAlphaTex.find(tex.get());
+        if (it == sAlphaTex.end())
+        {
+            continue;
+        }
+        auto& users = it->second.mUsers;
+        users.erase(std::remove_if(users.begin(), users.end(), [f](const AlphaTexUse& u) { return u.mFrag == f; }), users.end());
+        if (users.empty())
+        {
+            sAlphaTex.erase(it);
+        }
+    }
+    for (size_t i = 0; i < f->mAlpha.size(); ++i)
+    {
+        const LLVkBridge::ShadowAlphaEntry& e = f->mAlpha[i];
+        auto it = sAlphaKeys.find(alpha_key(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount));
+        if (it != sAlphaKeys.end() && it->second.mFrag == f)
+        {
+            sAlphaKeys.erase(it);
+        }
+    }
+    if (!sAlphaCull.empty() && f->mAlphaCullIndex < sAlphaCull.size() && sAlphaCull[f->mAlphaCullIndex].mFrag == f)
+    {
+        sAlphaCull[f->mAlphaCullIndex] = sAlphaCull.back();
+        sAlphaCull[f->mAlphaCullIndex].mFrag->mAlphaCullIndex = f->mAlphaCullIndex;
+        sAlphaCull.pop_back();
+    }
+    auto pending = std::find(sPendingAlpha.begin(), sPendingAlpha.end(), f);
+    if (pending != sPendingAlpha.end())
+    {
+        *pending = sPendingAlpha.back();
+        sPendingAlpha.pop_back();
+    }
+}
+
 void ll_scene_fragment_free(LLSceneFragment*& fragment)
 {
     if (!fragment)
@@ -5346,6 +5414,10 @@ void ll_scene_fragment_free(LLSceneFragment*& fragment)
     {
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
         sFragmentReleases.push_back(fragment->mId);
+    }
+    if (fragment->mAlphaRegistered)
+    {
+        scene_alpha_unregister(fragment);
     }
     if (fragment->mResident)
     {
@@ -5364,6 +5436,7 @@ void ll_scene_fragment_free(LLSceneFragment*& fragment)
     fragment = nullptr;
 }
 
+static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f);
 static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
 {
     f.mBuffers.clear();
@@ -5427,9 +5500,15 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
             f.mEntries.push_back(entry);
         }
     }
+    f.mAlpha.clear();
+    f.mTexLocal.clear();
+    if (scene_alpha_on())
+    {
+        scene_fragment_fill_alpha(group, f);
+    }
     f.mResident = false;
     f.mSlots.clear();
-    if (scene_resident_on() && !f.mEntries.empty() && f.mFallback.empty() && !group->isDead())
+    if (scene_resident_on() && (!f.mEntries.empty() || !f.mAlpha.empty()) && f.mFallback.empty() && !group->isDead())
     {
         bool all_region = true;
         for (size_t k = 0; k < f.mMatrices.size() && all_region; ++k)
@@ -5473,7 +5552,37 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
     }
 }
 
+static void scene_alpha_register(LLSceneFragment* f)
+{
+    f->mAlphaRegistered = true;
+    f->mSentName.assign(f->mTexLocal.size(), 0);
+    f->mSentReady.assign(f->mTexLocal.size(), 1);
+    for (size_t k = 0; k < f->mTexLocal.size(); ++k)
+    {
+        AlphaTexInfo& info = sAlphaTex[f->mTexLocal[k].get()];
+        if (!info.mTex)
+        {
+            info.mTex = f->mTexLocal[k];
+            info.mName = gRender.getTexUnit(0)->prepareFast(info.mTex.get());       // setActive, and the GL texture made when it was deleted: what the builder's finish step does
+            info.mReady = rt_texture_ready(info.mTex.get());
+            info.mTouch = (U64)gFrameCount;
+        }
+        info.mUsers.push_back({ f, (U32)k });
+    }
+    for (size_t i = 0; i < f->mAlpha.size(); ++i)
+    {
+        const LLVkBridge::ShadowAlphaEntry& e = f->mAlpha[i];
+        sAlphaKeys[alpha_key(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount)] = { f, (U32)i };
+    }
+    F32 centre[3] = { f->mBounds[0], f->mBounds[1], f->mBounds[2] };
+    f->mAlphaCullIndex = sAlphaCull.size();
+    sAlphaCull.push_back({ { centre[0], centre[1], centre[2] }, f->mBounds[3], f->mMatrices.empty() ? nullptr : f->mMatrices[0], f });
+    sPendingAlpha.push_back(f);
+    ++sAlphaStats[0];
+}
+
 // the fragment of a group, current: made again when the draw info set changed (the serial) or a buffer it names has another id (an event the plan lists as "buffer reallocated without a rebuild")
+static void scene_alpha_register(LLSceneFragment* f);
 static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
 {
     LLSceneFragment* f = group->mSceneFragment;
@@ -5505,6 +5614,10 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     {
         sResidentFragments.insert(f);
         sPendingResident.push_back(f);
+        if (!f->mAlpha.empty())
+        {
+            scene_alpha_register(f);
+        }
     }
     return f;
 }
@@ -5657,7 +5770,10 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool r
             << " fallback draws served | verify: " << s.mChecked << " fragments checked, mismatches by cause (" << causes << "); " << s.mViewsChecked
             << " cascade lists compared with the builder's: " << s.mViewCount << " differ in count, " << s.mViewContent << " in content, " << s.mViewFallback << " in fallback draws"
             << " | resident: " << s.mResPasses << " passes, " << sResidentFragments.size() << " fragments live, " << s.mResRetains << " sent; coverage check: " << s.mResBuilder << " builder entries, "
-            << s.mResMissing << " not covered, " << s.mResPassed << " resident entries passing the frustum test" << LL_ENDL;
+            << s.mResMissing << " not covered, " << s.mResPassed << " resident entries passing the frustum test"
+            << " | alpha: " << sAlphaStats[0] << " fragments registered, " << sAlphaTex.size() << " textures, " << sAlphaCull.size() << " in the sweep (" << (sAlphaStats[1] ? sAlphaStats[2] / sAlphaStats[1] : 0)
+            << " in range a frame), " << sAlphaStats[3] << " texture update records for " << sAlphaStats[4] << " entries, " << sAlphaStats[5] << " builder entries not named again, verify: "
+            << sAlphaStats[6] << " outside the sphere test, " << sAlphaStats[7] << " stale texture names" << LL_ENDL;
     }
 }
 
@@ -5681,10 +5797,186 @@ static void scene_frustum_planes(const glm::mat4& vp, F32 planes[6][4])
     }
 }
 
+static bool alpha_tex_ready(LLViewerTexture* tex)
+{
+    return LLVkBridge::rtShadowMode() != 1 || !LLVkBridge::rtLoadingGates() || rt_texture_ready(tex);
+}
+
+// S2 alpha, once a frame: which resident fragments with alpha entries are in range (the union of the cascades' last frusta), their textures touched once (what the builder's finish step did for the
+// visible draws: setActive, the GL texture made when it was deleted) and resolved to names, and the entries the worker holds with other names or another readiness told as updates (kind 19)
+static void scene_alpha_frame(U64 frame)
+{
+    static U64 last = ~0ull;
+    if (last == frame || !sPassPlaneMask)
+    {
+        return;
+    }
+    last = frame;
+    ++sAlphaStats[1];
+    static const U32 plane_count = scene_env("LL_VK_SCENE_NEARFAR") ? 6 : 4;
+    static std::vector<LLSceneFragment*> in_range;
+    in_range.clear();
+    for (const AlphaCullItem& item : sAlphaCull)
+    {
+        F32 c[3] = { item.mC[0], item.mC[1], item.mC[2] };
+        if (item.mM)
+        {
+            for (int a = 0; a < 3; ++a)
+            {
+                c[a] += item.mM->mMatrix[3][a];
+            }
+        }
+        bool inside = false;
+        for (U32 pass = 0; pass < 4 && !inside; ++pass)
+        {
+            if (!(sPassPlaneMask & (1u << pass)))
+            {
+                continue;
+            }
+            bool in = true;
+            for (U32 p = 0; p < plane_count && in; ++p)
+            {
+                in = sPassPlanes[pass][p][0] * c[0] + sPassPlanes[pass][p][1] * c[1] + sPassPlanes[pass][p][2] * c[2] + sPassPlanes[pass][p][3] >= -item.mR;
+            }
+            inside = in;
+        }
+        if (inside)
+        {
+            in_range.push_back(item.mFrag);
+        }
+    }
+    sAlphaStats[2] += in_range.size();
+    for (LLSceneFragment* f : in_range)
+    {
+        for (LLPointer<LLViewerTexture>& tex : f->mTexLocal)
+        {
+            auto it = sAlphaTex.find(tex.get());
+            if (it != sAlphaTex.end() && it->second.mTouch != (U64)frame)
+            {
+                AlphaTexInfo& info = it->second;
+                info.mTouch = (U64)frame;
+                info.mName = gRender.getTexUnit(0)->prepareFast(info.mTex.get());
+                info.mReady = alpha_tex_ready(info.mTex.get());
+            }
+        }
+        if (!f->mAlphaSent)
+        {
+            continue;
+        }
+        std::vector<U8> dirty(f->mTexLocal.size(), 0);
+        bool any = false;
+        for (size_t k = 0; k < f->mTexLocal.size(); ++k)
+        {
+            auto it = sAlphaTex.find(f->mTexLocal[k].get());
+            if (it != sAlphaTex.end() && (it->second.mName != f->mSentName[k] || (it->second.mReady ? 1 : 0) != f->mSentReady[k]))
+            {
+                dirty[k] = 1;
+                any = true;
+            }
+        }
+        if (!any)
+        {
+            continue;
+        }
+        std::vector<U32> updates;
+        for (size_t i = 0; i < f->mAlpha.size(); ++i)
+        {
+            const LLVkBridge::ShadowAlphaEntry& e = f->mAlpha[i];
+            bool uses = false;
+            for (U32 t = 0; t < 4; ++t)
+            {
+                uses = uses || (e.mTextures[t] && dirty[e.mTextures[t] - 1]);
+            }
+            if (!uses)
+            {
+                continue;
+            }
+            U32 ready = 1;
+            U32 names[4] = {};
+            for (U32 t = 0; t < 4; ++t)
+            {
+                if (e.mTextures[t])
+                {
+                    const AlphaTexInfo& info = sAlphaTex[f->mTexLocal[e.mTextures[t] - 1].get()];
+                    names[t] = info.mName;
+                    ready = ready && info.mReady;
+                }
+            }
+            updates.push_back((U32)i);
+            updates.insert(updates.end(), names, names + 4);
+            updates.push_back(ready);
+            ++sAlphaStats[4];
+        }
+        for (size_t k = 0; k < f->mTexLocal.size(); ++k)
+        {
+            if (dirty[k])
+            {
+                const AlphaTexInfo& info = sAlphaTex[f->mTexLocal[k].get()];
+                f->mSentName[k] = info.mName;
+                f->mSentReady[k] = info.mReady ? 1 : 0;
+            }
+        }
+        if (!updates.empty())
+        {
+            LLVkBridge::ShadowPacketsHeader header;
+            header.mKind = 19;
+            header.mEntries = (U32)(updates.size() / 6);
+            header.mFragment = f->mId;
+            LLVkBridge::shadowPackets(header, updates.data(), updates.size() * sizeof(U32));
+            ++sAlphaStats[3];
+        }
+    }
+    // the fragments made since the last pass: their alpha entries with the names as the registry has them
+    for (LLSceneFragment* f : sPendingAlpha)
+    {
+        std::vector<LLVkBridge::ShadowAlphaEntry> entries = f->mAlpha;
+        for (LLVkBridge::ShadowAlphaEntry& e : entries)
+        {
+            e.mMatrix = e.mMatrix ? f->mSlots[e.mMatrix - 1] : 0;
+            bool ready = true;
+            for (U32 t = 0; t < 4; ++t)
+            {
+                if (e.mTextures[t])
+                {
+                    const AlphaTexInfo& info = sAlphaTex[f->mTexLocal[e.mTextures[t] - 1].get()];
+                    e.mTextures[t] = info.mName;
+                    ready = ready && info.mReady;
+                }
+            }
+            if (!ready)
+            {
+                e.mFlags |= LLVkBridge::ALPHA_NOT_READY;
+            }
+        }
+        for (size_t k = 0; k < f->mTexLocal.size(); ++k)
+        {
+            const AlphaTexInfo& info = sAlphaTex[f->mTexLocal[k].get()];
+            f->mSentName[k] = info.mName;
+            f->mSentReady[k] = info.mReady ? 1 : 0;
+        }
+        LLVkBridge::ShadowPacketsHeader header;
+        header.mKind = 18;
+        header.mEntries = (U32)entries.size();
+        header.mFragment = f->mId;
+        memcpy(header.mViewProj, f->mBounds, sizeof(f->mBounds));
+        LLVkBridge::shadowPackets(header, entries.data(), entries.size() * sizeof(entries[0]));
+        f->mAlphaSent = true;
+        f->mSent = true;
+    }
+    sPendingAlpha.clear();
+}
+
+static bool sResidentPassRan = false;       // the resident pass named this cascade's casters (the alpha builder entries the worker holds can be dropped)
+
 static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPipeline::ShadowStaticBuild* source, const SceneGather& gather, bool ray_notes)
 {
     for (LLSceneFragment* f : sPendingResident)
     {
+        if (f->mEntries.empty())
+        {
+            f->mResidentSent = true;        // alpha entries only (kind 18 carries the fragment)
+            continue;
+        }
         std::vector<LLVkBridge::ShadowPacketEntry> entries = f->mEntries;
         for (LLVkBridge::ShadowPacketEntry& e : entries)
         {
@@ -5730,6 +6022,16 @@ static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPi
 
     F32 planes[6][4];
     scene_frustum_planes(view_proj, planes);
+    if (pass < 4)
+    {
+        memcpy(sPassPlanes[pass], planes, sizeof(planes));
+        sPassPlaneMask |= 1u << pass;
+    }
+    if (scene_alpha_on() && ray_notes)
+    {
+        scene_alpha_frame((U64)gFrameCount);
+    }
+    sResidentPassRan = true;
     {
         LLVkBridge::ShadowPacketsHeader header;
         header.mKind = ray_notes ? 17 : 16;
@@ -10043,6 +10345,120 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 entries.push_back(e);
             }
         }
+}
+
+// S2 alpha: the static alpha masked casters of a group as build_shadow_alpha makes them (the same draws, the same fields), with the textures by local number and the matrices in the fragment's list
+static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
+{
+    std::unordered_map<const LLViewerTexture*, U32> local;
+    auto texture_ref = [&](LLViewerTexture* tex) -> U32
+    {
+        auto found = local.find(tex);
+        if (found != local.end())
+        {
+            return found->second;
+        }
+        f.mTexLocal.push_back(tex);
+        const U32 number = (U32)f.mTexLocal.size();
+        local.emplace(tex, number);
+        return number;
+    };
+    for (const ShadowAlphaSource& source : sources)
+    {
+        auto found = group->mDrawMap.find(source.type);
+        if (found == group->mDrawMap.end())
+        {
+            continue;
+        }
+        const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
+        for (LLDrawInfo* params : found->second)
+        {
+            if (!params->mCount || params->mAvatar != nullptr)
+            {
+                continue;
+            }
+            if (source.kind == KIND_ALPHA && params->mGLTFMaterial)
+            {
+                continue;
+            }
+            if (!shadow_alpha_packet_ok(*params, batch, false))
+            {
+                continue;
+            }
+            const LLVertexBuffer* vb = params->mVertexBuffer.get();
+            bool known = false;
+            for (const LLSceneFragment::BufferRef& b : f.mBuffers)
+            {
+                known = known || b.mBuffer == vb;
+            }
+            if (!known)
+            {
+                f.mBuffers.push_back({ vb, vb->getVertexBufferId(), vb->getIndexBufferId() });
+            }
+            LLVkBridge::ShadowAlphaEntry e = {};
+            e.mVertexBuffer = vb->getVertexBufferId();
+            e.mIndexBuffer = vb->getIndexBufferId();
+            e.mFirstIndex = params->mOffset;
+            e.mIndexCount = params->mCount;
+            e.mMatrixId = rt_matrix_id(params->mModelMatrix);
+            if (params->mModelMatrix)
+            {
+                size_t k = 0;
+                while (k < f.mMatrices.size() && f.mMatrices[k] != params->mModelMatrix)
+                {
+                    ++k;
+                }
+                if (k == f.mMatrices.size())
+                {
+                    f.mMatrices.push_back(params->mModelMatrix);
+                    f.mMatrixIds.push_back(e.mMatrixId);
+                }
+                e.mMatrix = (U32)k + 1;
+            }
+            U32 flags = 0;
+            if (source.kind == KIND_FULLBRIGHT)
+            {
+                flags |= LLVkBridge::ALPHA_FULLBRIGHT;
+            }
+            if (source.kind == KIND_GRASS || source.kind == KIND_MATERIAL)
+            {
+                flags |= LLVkBridge::ALPHA_TREE;
+            }
+            if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+            {
+                flags |= LLVkBridge::ALPHA_HAS_TEXCOORD;
+                e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+            }
+            if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+            {
+                flags |= LLVkBridge::ALPHA_HAS_COLOR;
+                e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+            }
+            if (batch && params->mTextureList.size() > 1)
+            {
+                for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
+                {
+                    if (params->mTextureList[t].notNull())
+                    {
+                        e.mTextures[t] = texture_ref(params->mTextureList[t].get());
+                    }
+                }
+            }
+            else
+            {
+                flags |= LLVkBridge::ALPHA_NO_INDEX;
+                if (params->mTexture.notNull())
+                {
+                    e.mTextures[0] = texture_ref(params->mTexture.get());
+                }
+            }
+            e.mFlags = flags;
+            e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
+            e.mUv[0] = 1.f;       // identity texture coordinate transform (the matrix-free entries of the kind 5 record)
+            e.mUv[3] = 1.f;
+            f.mAlpha.push_back(e);
+        }
+    }
 }
 
 static void finish_shadow_alpha(LLPipeline::ShadowAlphaBuild& b)
@@ -14715,6 +15131,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     auto render_shadow_packets = [this, rt_skip, prepared, &result](const U32* list, size_t count)
     {
         LL_CPU_ZONE("packets: shadow static (build + record)");
+        sResidentPassRan = false;
         // the entries come from the cascade's preparation job when there was one (built beside the other cascades, off this thread), else they are built here
         ShadowStaticBuild built;
         if (prepared && prepared->mStaticJob)
@@ -15260,6 +15677,60 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             build_shadow_alpha(result, rigged, *build_owned);
         }
         finish_shadow_alpha(*build_owned);
+        if (rt_skip && !rigged && scene_alpha_on() && sResidentPassRan && !rt_materials_on())
+        {
+            // S2 alpha: the casters the worker holds as resident fragments are not named again. With LL_VK_SCENE_VERIFY=1 every builder entry must be one the worker holds (the fragment is in
+            // range of the cascades' frusta) with the textures the builder resolved (a stale name would be a missed update)
+            const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
+            F32 planes[6][4];
+            scene_frustum_planes(view_proj, planes);
+            static const U32 plane_count = scene_env("LL_VK_SCENE_NEARFAR") ? 6 : 4;
+            const bool verify = scene_verify_on();
+            std::vector<LLVkBridge::ShadowAlphaEntry>& list = build_owned->mEntries;
+            size_t kept = 0;
+            for (size_t i = 0; i < list.size(); ++i)
+            {
+                const LLVkBridge::ShadowAlphaEntry& e = list[i];
+                auto found = sAlphaKeys.find(alpha_key(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount));
+                if (found == sAlphaKeys.end() || !found->second.mFrag->mAlphaSent)
+                {
+                    list[kept++] = e;           // not resident (yet): named as before
+                    continue;
+                }
+                ++sAlphaStats[5];
+                if (verify)
+                {
+                    const LLSceneFragment* f = found->second.mFrag;
+                    F32 c[3] = { f->mBounds[0], f->mBounds[1], f->mBounds[2] };
+                    if (!f->mMatrices.empty())
+                    {
+                        for (int a = 0; a < 3; ++a)
+                        {
+                            c[a] += f->mMatrices[0]->mMatrix[3][a];
+                        }
+                    }
+                    bool inside = true;
+                    for (U32 p = 0; p < plane_count && inside; ++p)
+                    {
+                        inside = planes[p][0] * c[0] + planes[p][1] * c[1] + planes[p][2] * c[2] + planes[p][3] >= -f->mBounds[3];
+                    }
+                    if (!inside && sAlphaStats[6]++ < 8)
+                    {
+                        LL_WARNS("VkScene") << "alpha verify: a builder entry is outside its resident fragment's sphere test: vb " << e.mVertexBuffer << " ib " << e.mIndexBuffer << LL_ENDL;
+                    }
+                    const LLVkBridge::ShadowAlphaEntry& mine = f->mAlpha[found->second.mIndex];
+                    for (U32 t = 0; t < 4; ++t)
+                    {
+                        const U32 expected = mine.mTextures[t] ? sAlphaTex[f->mTexLocal[mine.mTextures[t] - 1].get()].mName : 0u;
+                        if (expected != e.mTextures[t] && sAlphaStats[7]++ < 8)
+                        {
+                            LL_WARNS("VkScene") << "alpha verify: texture " << t << " of a resident entry has name " << expected << ", the builder resolved " << e.mTextures[t] << LL_ENDL;
+                        }
+                    }
+                }
+            }
+            list.resize(kept);
+        }
         std::vector<LLVkBridge::ShadowAlphaEntry>& entries = build_owned->mEntries;
         std::vector<F32>& matrices = build_owned->mMatrices;
         std::vector<F32>& palettes = build_owned->mPalettes;
