@@ -523,6 +523,16 @@ size_t apply_rows(RowLog& log, RegionState& rs, const std::vector<T>& rows, T* d
     return copied;
 }
 RowLog sRecLog, sMatLog;
+// S2: the scene's static instances (sInstArray) are written to the call's TLAS instance region as deltas, like the table rows (LL_VK_RT_INSTDELTA=1): the transforms are world space relative to
+// sOrigin, they do not depend on the camera, so a region only needs the entries that changed since it was last written (not all 12,000 every call); avatar instances are added after them per call
+RowLog sInstLog;
+RegionState sInstRegion[Context::FRAMES_IN_FLIGHT * kCalls];
+U64 sInstRowsWritten = 0, sInstCalls = 0, sInstMismatch = 0;
+bool inst_delta_on()
+{
+    static const bool on = env_u64("LL_VK_RT_INSTDELTA", 0) != 0;
+    return on;
+}
 RegionState sRecRegion[Context::FRAMES_IN_FLIGHT * kCalls], sMatRegion[Context::FRAMES_IN_FLIGHT * kCalls];
 std::vector<GpuMaterial> sMatRows;              // by viewer id (row 0 unused); slots are patched in at every frame
 std::vector<std::array<U32, 8>> sMatPins;       // pin indices of each material row's textures: 4 diffuse, normal, specular, emissive, unused (0 = none)
@@ -635,6 +645,7 @@ void drop_entry(Group& g, U32 why = 7)
             sInstArray[g.mSlot] = sInstArray[last];
             sInstGroup[g.mSlot] = sInstGroup[last];
             sInstGroup[g.mSlot]->mSlot = g.mSlot;
+            sInstLog.touch(g.mSlot);
         }
         sInstArray.pop_back();
         sInstGroup.pop_back();
@@ -3285,10 +3296,12 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             g.mSlot = (U32)sInstArray.size();
             sInstArray.push_back(inst);
             sInstGroup.push_back(&g);
+            sInstLog.touch(g.mSlot);
         }
         else
         {
             sInstArray[g.mSlot] = inst;
+            sInstLog.touch(g.mSlot);
         }
         ++sStats.mRefreshed;
     };
@@ -3297,6 +3310,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         sForceFull = false;
         sInstArray.clear();
         sInstGroup.clear();
+        sInstLog.reset();
         for (size_t row = 0; row < sRecPins.size(); ++row)
         {
             release_row(row);
@@ -3470,8 +3484,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     }
     sub_lap(1);
     std::vector<VkAccelerationStructureInstanceKHR> instances;
-    instances.reserve(sInstArray.size() + 256);
-    instances.assign(sInstArray.begin(), sInstArray.end());
+    // delta mode: `instances` holds only what is added for this call (the avatars); the static ones are written to the region from sInstArray by deltas. Not with the logs that read all of them.
+    const bool inst_delta = inst_delta_on() && !diag_on() && !sDbg.mAvatarLog && !sDbg.mInstDump;
+    const size_t inst_base = inst_delta ? sInstArray.size() : 0;
+    instances.reserve((inst_delta ? 0 : sInstArray.size()) + 256);
+    if (!inst_delta)
+    {
+        instances.assign(sInstArray.begin(), sInstArray.end());
+    }
     std::vector<U64> who;                       // where each instance came from (flight recorder)
     if (diag_on())
     {
@@ -3631,7 +3651,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             avatar_skipped(a, kv.first, !a.mAddressNow ? "no structure yet" : (av_tag > a.mNotedTag + keep ? "not named for too long" : (!sDbg.mRigged ? "switched off" : "no geometries")));
             continue;
         }
-        if (instances.size() >= kInstanceCapacity)
+        if (inst_base + instances.size() >= kInstanceCapacity)
         {
             ++sStats.mOverCap;
             break;
@@ -3880,7 +3900,31 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         }
     }
     const VkDeviceSize instance_offset = (VkDeviceSize)call * 64ull * tlas.mCapacity;
-    if (!instances.empty())
+    if (inst_delta)
+    {
+        VkAccelerationStructureInstanceKHR* dst = (VkAccelerationStructureInstanceKHR*)((U8*)tlas.mInstances.mMapped + instance_offset);
+        const U32 inst_region = ctx.getFrameSlot() * kCalls + call;         // the region of the instance buffer written here (offset call * capacity in this frame slot's buffer)
+        sInstRowsWritten += apply_rows(sInstLog, sInstRegion[inst_region], sInstArray, dst, sDbg.mDelta);
+        ++sInstCalls;
+        if (!instances.empty())
+        {
+            memcpy(dst + inst_base, instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
+        }
+        if (sDbg.mTableVerify && inst_base && memcmp(dst, sInstArray.data(), inst_base * sizeof(VkAccelerationStructureInstanceKHR)) != 0)
+        {
+            ++sInstMismatch;
+            static U32 logged_inst = 0;
+            if (logged_inst++ < 20)
+            {
+                LL_WARNS("VkRt") << "instance verify: the instances of region " << inst_region << " differ from the kept array (" << inst_base << " instances, epoch " << sInstLog.mEpoch << ")" << LL_ENDL;
+            }
+        }
+        if (sInstCalls % 1200 == 0)
+        {
+            LL_INFOS("VkRt") << "instance deltas: " << (double)sInstRowsWritten / (double)sInstCalls << " of " << inst_base << " instances written per call, " << sInstMismatch << " verify mismatches" << LL_ENDL;
+        }
+    }
+    else if (!instances.empty())
     {
         memcpy((U8*)tlas.mInstances.mMapped + instance_offset, instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
     }
@@ -4209,7 +4253,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     tinfo.dstAccelerationStructure = tlas.mAs;
     tinfo.scratchData.deviceAddress = scratch_base;
     VkAccelerationStructureBuildRangeInfoKHR trange = {};
-    trange.primitiveCount = (U32)instances.size();
+    trange.primitiveCount = (U32)(inst_base + instances.size());
     const VkAccelerationStructureBuildRangeInfoKHR* tranges[1] = { &trange };
 
     const bool recorded = Renderer::instance().recordExternal({}, [&](VkCommandBuffer cmd) {
@@ -4364,8 +4408,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     }
     lap(4, t_lap);
     ++sStats.mScenes;
-    sStats.mInstances += instances.size();
-    sLastInstances = (U32)instances.size();
+    sStats.mInstances += inst_base + instances.size();
+    sLastInstances = (U32)(inst_base + instances.size());
     sLastBuilt = (U32)jobs.size();
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     sStats.mCpuMs += ms;
