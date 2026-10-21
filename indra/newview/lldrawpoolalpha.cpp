@@ -94,6 +94,12 @@ S32 LLDrawPoolAlpha::getNumPostDeferredPasses()
 // set some common parameters on the given shader to prepare for alpha rendering
 extern S32 rrAlphaSunOld();    // pipeline.cpp: test switch, 1 = the old one hard sun ray
 
+// <FS> U1 (pipeline.cpp: LL_VK_PASSUNI, _VERIFY, _AB)
+extern bool ll_pass_uni_on();
+extern bool ll_pass_uni_verify();
+extern U64 gPassUniAlphaMade, gPassUniAlphaSkipped, gPassUniAlphaMismatch;
+static U32 sAlphaEpoch = 1;
+
 static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironment, F32 water_sign)
 {
     static LLCachedControl<F32> displayGamma(gSavedSettings, "RenderDeferredDisplayGamma");
@@ -703,6 +709,9 @@ void LLDrawPoolAlpha::renderRiggedPbrEmissives(std::vector<LLDrawInfo*>& emissiv
 void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
+    ++sAlphaEpoch;      // <FS> U1: what the loop below last wrote to a program is not known any more
+    const bool alpha_values_on = ll_pass_uni_on();
+    const bool alpha_values_verify = alpha_values_on && ll_pass_uni_verify();
     bool initialized_lighting = false;
     bool light_enabled = true;
 
@@ -905,9 +914,45 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 
                     if (current_shader)
                     {
-                        current_shader->uniform4f(LLShaderMgr::SPECULAR_COLOR, spec_color.mV[VRED], spec_color.mV[VGREEN], spec_color.mV[VBLUE], spec_color.mV[VALPHA]);
-                        current_shader->uniform1f(LLShaderMgr::ENVIRONMENT_INTENSITY, env_intensity);
-                        current_shader->uniform1f(LLShaderMgr::EMISSIVE_BRIGHTNESS, brightness);
+                        // <FS> U1: the three per-draw values are written only when they differ from what this loop last wrote to the program (a per-program record, valid in this epoch only)
+                        const F32 vals[6] = { spec_color.mV[VRED], spec_color.mV[VGREEN], spec_color.mV[VBLUE], spec_color.mV[VALPHA], env_intensity, brightness };
+                        const bool same = alpha_values_on && current_shader->mAlphaEpoch == sAlphaEpoch && memcmp(current_shader->mAlphaVals, vals, sizeof(vals)) == 0;
+                        if (!same || alpha_values_verify)
+                        {
+                            std::vector<U8> blocks[5];
+                            if (same)
+                            {   // verify: the writes must change nothing
+                                for (U32 c = 0; c < 5; ++c) blocks[c] = current_shader->vkBlock(c);
+                            }
+                            current_shader->uniform4f(LLShaderMgr::SPECULAR_COLOR, spec_color.mV[VRED], spec_color.mV[VGREEN], spec_color.mV[VBLUE], spec_color.mV[VALPHA]);
+                            current_shader->uniform1f(LLShaderMgr::ENVIRONMENT_INTENSITY, env_intensity);
+                            current_shader->uniform1f(LLShaderMgr::EMISSIVE_BRIGHTNESS, brightness);
+                            if (same)
+                            {
+                                ++gPassUniAlphaSkipped;
+                                for (U32 c = 0; c < 5; ++c)
+                                {
+                                    if (current_shader->vkBlock(c) != blocks[c])
+                                    {
+                                        if (gPassUniAlphaMismatch++ < 20)
+                                        {
+                                            LL_WARNS("VkScene") << "[PassUni] MISMATCH alpha pool setters on program " << current_shader->getName() << " class " << c << LL_ENDL;
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                ++gPassUniAlphaMade;
+                            }
+                            memcpy(current_shader->mAlphaVals, vals, sizeof(vals));
+                            current_shader->mAlphaEpoch = sAlphaEpoch;
+                        }
+                        else
+                        {
+                            ++gPassUniAlphaSkipped;
+                        }
                     }
                 }
 
@@ -1027,6 +1072,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 if (lastShader && rebind)
                 {
                     lastShader->bind();
+                }
+                if (rebind)
+                {
+                    ++sAlphaEpoch;      // <FS> U1: the emissive passes wrote their own values
                 }
             }
         }

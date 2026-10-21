@@ -1584,6 +1584,30 @@ int LLShaderProgram::censusUniformClass(size_t index) const
     return (int)mVkProgram->getInfo().mUniforms[index].mClass;
 }
 
+bool LLShaderProgram::vkMainOnlyProducer()
+{
+    return LLVkAsync::mainOnlyProducer();
+}
+
+std::string LLShaderProgram::vkUniformAt(U32 cls, U32 offset) const
+{
+    S64 best = -1;
+    for (size_t i = 0; i < mVkUni.size(); ++i)
+    {
+        const VkUni& u = mVkUni[i];
+        if (u.mClass == cls && u.mOffset <= offset && (best < 0 || u.mOffset >= mVkUni[(size_t)best].mOffset))
+        {
+            best = (S64)i;
+        }
+    }
+    if (best < 0)
+    {
+        return "?";
+    }
+    const std::string* n = censusUniformName((size_t)best);
+    return n ? *n : std::string("?");
+}
+
 void LLShaderProgram::bind()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;

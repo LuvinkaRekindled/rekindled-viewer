@@ -85,6 +85,7 @@
 #include "lltoolmgr.h"
 #include "llviewercamera.h"
 #include "llvkbridge.h"
+#include "llvkasync.h"
 #include "llviewermediafocus.h"
 #include "llviewertexturelist.h"
 #include "llviewerobject.h"
@@ -14153,21 +14154,364 @@ void LLPipeline::bindShadowMaps(LLShaderProgram& shader)
     }
 }
 
+// <FS> U1: the Fast bind of the alpha pool (one per draw group, about 1,030 a frame in London) skips what is current. Design: doc/vulkan/U-pass-uniforms-design.md section 8.
+// The pass state (the GL names the Fast bind puts on the texture units, the probe UBO, the values it writes) is built on every call and compared by value with the last one: a change
+// bumps a version, no source of it has to be listed. A program remembers the version and the texture unit write sequence number of its last Fast fill; it is current when the version is
+// the same and none of its pass units was written since (every slot write stamps its unit, see ll_bindTexUnit_impl).
+static U32 ssr_trace_mode_bits();
+void ll_pass_uni_log();
+
+namespace
+{
+struct PassFastState
+{
+    U32 mId[16];        // 0 light function, 1 BRDF LUT, 2-5 sun shadow maps, 6-7 spot shadow maps, 8 probes, 9 irradiance, 10 hero probe, 11 scene map, 12 scene depth, 13 probe UBO, 14 flags
+    F32 mVal[16];       // 0-8 env matrix, 9-14 the six screen space reflection values, 15 trace mode bits
+};
+constexpr S32 kFastUnits = 13;      // the first 13 ids are bound to a texture unit
+const S32 kFastUniform[kFastUnits] = {
+    LLShaderMgr::DEFERRED_LIGHTFUNC, LLShaderMgr::DEFERRED_BRDF_LUT,
+    LLShaderMgr::DEFERRED_SHADOW0, LLShaderMgr::DEFERRED_SHADOW0 + 1, LLShaderMgr::DEFERRED_SHADOW0 + 2, LLShaderMgr::DEFERRED_SHADOW0 + 3, LLShaderMgr::DEFERRED_SHADOW0 + 4, LLShaderMgr::DEFERRED_SHADOW0 + 5,
+    LLShaderMgr::REFLECTION_PROBES, LLShaderMgr::IRRADIANCE_PROBES, LLShaderMgr::HERO_PROBE, LLShaderMgr::SCENE_MAP, LLShaderMgr::SCENE_DEPTH };
+const char* const kFastUnitName[kFastUnits] = { "lightFunc", "brdfLut", "shadow0", "shadow1", "shadow2", "shadow3", "shadow4", "shadow5", "probes", "irradiance", "hero", "sceneMap", "sceneDepth" };
+
+PassFastState sFastState = {};
+U32 sFastVer = 1;
+bool sFastWasOn = false;
+U32 sFastModeFrame = ~0u;
+bool sFastModeNow = false;
+
+struct PassUniStats
+{
+    U64 mPartial = 0, mUnitsRebound = 0;
+    U64 mCalls = 0, mHits = 0, mFull = 0, mMissCold = 0, mMissVer = 0, mMissUnit = 0, mMissOff = 0, mVerified = 0, mMismatch = 0, mLogged = 0;
+    U64 mMissUnitBy[kFastUnits] = {};
+    U64 mVerBy[32] = {};
+    U64 mFrom = 0;
+} sPU;
+
+bool pass_uni_enabled()
+{
+    static const int base = []() { const char* e = getenv("LL_VK_PASSUNI"); return e ? atoi(e) : 0; }();
+    static const int period = []() { const char* e = getenv("LL_VK_PASSUNI_AB"); return e ? atoi(e) : 0; }();
+    if (sFastModeFrame != (U32)gFrameCount)
+    {
+        sFastModeFrame = (U32)gFrameCount;
+        bool on = base != 0 || period > 0;
+        if (period > 0)
+        {
+            const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            const bool phase = ((seconds / period) % 2) == 1;
+            static int last = -1;
+            if ((int)phase != last)
+            {
+                last = (int)phase;
+                LL_INFOS("VkScene") << "[phase] pass uniform skip now " << (phase ? "ON" : "off") << LL_ENDL;
+            }
+            on = on && phase;
+        }
+        sFastModeNow = on;
+    }
+    return sFastModeNow;
+}
+
+bool pass_uni_verify()
+{
+    static const bool on = []() { const char* e = getenv("LL_VK_PASSUNI_VERIFY"); return e && atoi(e) != 0; }();
+    return on;
+}
+}
+
+bool ll_pass_uni_on()
+{
+    return pass_uni_enabled() && LLShaderProgram::vkMainOnlyProducer();
+}
+
+bool ll_pass_uni_verify()
+{
+    return pass_uni_verify();
+}
+
+U64 gPassUniAlphaMade = 0, gPassUniAlphaSkipped = 0, gPassUniAlphaMismatch = 0;
+
+void LLPipeline::passFastState(void* out)
+{
+    PassFastState& st = *static_cast<PassFastState*>(out);
+    memset(&st, 0, sizeof(st));
+    st.mId[0] = mLightFunc;
+    st.mId[1] = mPbrBrdfLut.getTexture(0);
+    for (U32 i = 0; i < 4; i++)
+    {
+        st.mId[2 + i] = getSunShadowTarget(i)->getDepth();
+    }
+    for (U32 i = 0; i < 2; i++)
+    {
+        st.mId[6 + i] = getSpotShadowTarget(i)->getDepth();
+    }
+    if (sReflectionProbesEnabled)
+    {
+        st.mId[8] = mReflectionMapManager.mTexture.notNull() ? mReflectionMapManager.mTexture->getTextureHandle() : 0;
+        st.mId[9] = mReflectionMapManager.mIrradianceMaps.notNull() ? mReflectionMapManager.mIrradianceMaps->getTextureHandle() : 0;
+        st.mId[10] = (RenderMirrors && mHeroProbeManager.mTexture.notNull()) ? mHeroProbeManager.mTexture->getTextureHandle() : 0;
+        st.mId[11] = mSceneMap.getTexture(0);
+        st.mId[12] = mSceneMap.getDepth();
+        st.mId[13] = mReflectionMapManager.mUBO;
+        const F32* m = gRenderModelView;
+        const F32 env[9] = { m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10] };
+        memcpy(st.mVal, env, sizeof(env));
+        st.mVal[9] = (F32)RenderScreenSpaceReflectionIterations;
+        st.mVal[10] = RenderScreenSpaceReflectionDistanceBias;
+        st.mVal[11] = RenderScreenSpaceReflectionRayStep;
+        st.mVal[12] = (F32)RenderScreenSpaceReflectionGlossySamples;
+        st.mVal[13] = RenderScreenSpaceReflectionDepthRejectBias;
+        st.mVal[14] = RenderScreenSpaceReflectionAdaptiveStepMultiplier;
+        st.mVal[15] = (F32)ssr_trace_mode_bits();
+    }
+    st.mId[14] = (sReflectionProbesEnabled ? 1u : 0u) | (RenderMirrors ? 2u : 0u);
+}
+
+// one pass sampler of the Fast bind, with the calls of bindLightFunc / bindShadowMaps / bindReflectionProbes (k = the index in kFastUniform; the probe ones only exist with the probes on)
+void LLPipeline::bindFastUnit(S32 k, S32 unit)
+{
+    if (unit < 0)
+    {
+        return;
+    }
+    LLTexUnit* tu = gRender.getTexUnit(unit);
+    switch (k)
+    {
+    case 0: tu->bindManual(LLTexUnit::TT_TEXTURE, mLightFunc); break;
+    case 1: mPbrBrdfLut.bindTexture(0, unit); break;
+    case 2: case 3: case 4: case 5: tu->bind(getSunShadowTarget(k - 2), true); break;
+    case 6: case 7: tu->bind(getSpotShadowTarget(k - 6), true); break;
+    case 8: if (sReflectionProbesEnabled && mReflectionMapManager.mTexture.notNull()) mReflectionMapManager.mTexture->bind(unit); break;
+    case 9: if (sReflectionProbesEnabled && mReflectionMapManager.mIrradianceMaps.notNull()) mReflectionMapManager.mIrradianceMaps->bind(unit); break;
+    case 10: if (sReflectionProbesEnabled && RenderMirrors && mHeroProbeManager.mTexture.notNull()) mHeroProbeManager.mTexture->bind(unit); break;
+    case 11: if (sReflectionProbesEnabled) tu->bind(&mSceneMap); break;
+    case 12: if (sReflectionProbesEnabled) tu->bind(&mSceneMap, true); break;
+    default: break;
+    }
+}
+
+// the old Fast bind in full (also what a miss does)
+void LLPipeline::bindDeferredFill(LLShaderProgram& shader)
+{
+    shader.bind();
+    bindLightFunc(shader);
+    bindShadowMaps(shader);
+    bindReflectionProbes(shader);
+}
+
 void LLPipeline::bindDeferredShaderFast(LLShaderProgram& shader)
 {
     LL_CPU_ZONE("bindDeferredShaderFast");
+    ll_pass_uni_log();
+    ++sPU.mCalls;
+    const bool on = pass_uni_enabled() && LLShaderProgram::vkMainOnlyProducer();
+    if (!on)
+    {
+        sFastWasOn = false;
+        ++sPU.mMissOff;
+        if (shader.mCanBindFast)
+        { // was previously fully bound, use fast path
+            bindDeferredFill(shader);
+        }
+        else
+        { //wasn't previously bound, use slow path
+            bindDeferredShader(shader);
+            shader.mCanBindFast = true;
+        }
+        return;
+    }
+
+    PassFastState now;
+    passFastState(&now);
+    if (!sFastWasOn || memcmp(&now, &sFastState, sizeof(now)) != 0)
+    {
+        // the version is new when the skip was off in between (nothing was watching), or a source changed
+        if (sFastWasOn)
+        {
+            for (U32 i = 0; i < 16; ++i)
+            {
+                if (now.mId[i] != sFastState.mId[i]) ++sPU.mVerBy[i];
+                if (memcmp(&now.mVal[i], &sFastState.mVal[i], 4) != 0) ++sPU.mVerBy[16 + i];
+            }
+        }
+        sFastState = now;
+        ++sFastVer;
+        sFastWasOn = true;
+    }
+
+    bool hit = false;           // the program's pass state is current (the version is the same): hit, or the units written since are bound again
+    U32 stale = 0;              // bit k: the unit of sampler k was written since the last fill
     if (shader.mCanBindFast)
-    { // was previously fully bound, use fast path
-        shader.bind();
-        bindLightFunc(shader);
-        bindShadowMaps(shader);
-        bindReflectionProbes(shader);
+    {
+        if (shader.mFastVer == 0)
+        {
+            ++sPU.mMissCold;
+        }
+        else if (shader.mFastVer != sFastVer)
+        {
+            ++sPU.mMissVer;
+        }
+        else
+        {
+            hit = true;
+            for (S32 k = 0; k < kFastUnits; ++k)
+            {
+                const S32 unit = shader.mFastUnits[k];
+                if (unit >= 0 && LLTexUnit::getUnitStamp(unit) > shader.mFastSeq)
+                {
+                    stale |= 1u << k;
+                    ++sPU.mMissUnitBy[k];
+                }
+            }
+            if (stale)
+            {
+                ++sPU.mPartial;
+                sPU.mUnitsRebound += (U64)__popcnt(stale);
+            }
+        }
     }
     else
-    { //wasn't previously bound, use slow path
+    {
+        ++sPU.mMissCold;
+    }
+
+    if (hit)
+    {
+        ++sPU.mHits;
+        const S32 offset_before = mPoissonOffset;
+        shader.bind();
+        for (S32 k = 0; stale && k < kFastUnits; ++k)
+        {
+            if (stale & (1u << k))
+            {
+                bindFastUnit(k, shader.mFastUnits[k]);
+            }
+        }
+        if (stale)
+        {
+            shader.mFastSeq = LLTexUnit::getWriteSeq();
+        }
+        if (sReflectionProbesEnabled)
+        {
+            stepPoissonOffset(shader);
+            // bind() of a cube map array leaves the unit in the array (its unbind clears that one)
+            if (shader.mFastUnits[8] >= 0 && mReflectionMapManager.mTexture.notNull()) mReflectionMapManager.mTexture->setTextureStage(shader.mFastUnits[8]);
+            if (shader.mFastUnits[9] >= 0 && mReflectionMapManager.mIrradianceMaps.notNull()) mReflectionMapManager.mIrradianceMaps->setTextureStage(shader.mFastUnits[9]);
+            if (shader.mFastUnits[10] >= 0 && RenderMirrors && mHeroProbeManager.mTexture.notNull()) mHeroProbeManager.mTexture->setTextureStage(shader.mFastUnits[10]);
+        }
+        if (pass_uni_verify())
+        {
+            // the old fill into the same program: the class blocks and the texture units must not change by it (the poisson step is taken back so both write the same value)
+            ++sPU.mVerified;
+            std::vector<U8> blocks[5];
+            for (U32 c = 0; c < 5; ++c) blocks[c] = shader.vkBlock(c);
+            U32 units[kFastUnits];
+            for (S32 k = 0; k < kFastUnits; ++k)
+            {
+                const S32 unit = shader.mFastUnits[k];
+                units[k] = unit >= 0 ? gRender.getTexUnit(unit)->getCurrTexture() : 0;
+            }
+            const S32 stages[3] = { mReflectionMapManager.mTexture.notNull() ? mReflectionMapManager.mTexture->getTextureStage() : -2,
+                                    mReflectionMapManager.mIrradianceMaps.notNull() ? mReflectionMapManager.mIrradianceMaps->getTextureStage() : -2,
+                                    mHeroProbeManager.mTexture.notNull() ? mHeroProbeManager.mTexture->getTextureStage() : -2 };
+            const S32 offset_after = mPoissonOffset;
+            mPoissonOffset = offset_before;
+            bindDeferredFill(shader);
+            bool bad = mPoissonOffset != offset_after;
+            for (U32 c = 0; c < 5 && !bad; ++c)
+            {
+                const std::vector<U8>& now_block = shader.vkBlock(c);
+                if (now_block.size() != blocks[c].size() || memcmp(now_block.data(), blocks[c].data(), now_block.size()) != 0)
+                {
+                    bad = true;
+                    ++sPU.mMismatch;
+                    if (sPU.mLogged++ < 40)
+                    {
+                        U32 off = 0;
+                        while (off < blocks[c].size() && off < now_block.size() && blocks[c][off] == now_block[off]) ++off;
+                        LL_WARNS("VkScene") << "[PassUni] MISMATCH program " << shader.getName() << " class " << c << " byte " << off << " uniform " << shader.vkUniformAt(c, off) << LL_ENDL;
+                    }
+                }
+            }
+            for (S32 k = 0; k < kFastUnits && !bad; ++k)
+            {
+                const S32 unit = shader.mFastUnits[k];
+                if (unit >= 0 && gRender.getTexUnit(unit)->getCurrTexture() != units[k])
+                {
+                    bad = true;
+                    ++sPU.mMismatch;
+                    if (sPU.mLogged++ < 40)
+                    {
+                        LL_WARNS("VkScene") << "[PassUni] MISMATCH program " << shader.getName() << " unit " << unit << " (" << kFastUnitName[k] << ") held " << units[k] << " the fill binds " << gRender.getTexUnit(unit)->getCurrTexture() << LL_ENDL;
+                    }
+                }
+            }
+            const S32 stages_after[3] = { mReflectionMapManager.mTexture.notNull() ? mReflectionMapManager.mTexture->getTextureStage() : -2,
+                                          mReflectionMapManager.mIrradianceMaps.notNull() ? mReflectionMapManager.mIrradianceMaps->getTextureStage() : -2,
+                                          mHeroProbeManager.mTexture.notNull() ? mHeroProbeManager.mTexture->getTextureStage() : -2 };
+            for (U32 i = 0; i < 3 && !bad; ++i)
+            {
+                if (sReflectionProbesEnabled && shader.mFastUnits[8 + i] >= 0 && stages[i] != stages_after[i])
+                {
+                    bad = true;
+                    ++sPU.mMismatch;
+                    if (sPU.mLogged++ < 40)
+                    {
+                        LL_WARNS("VkScene") << "[PassUni] MISMATCH program " << shader.getName() << " cube array " << i << " stage " << stages[i] << " the fill sets " << stages_after[i] << LL_ENDL;
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    ++sPU.mFull;
+    if (shader.mCanBindFast)
+    {
+        bindDeferredFill(shader);
+    }
+    else
+    {
         bindDeferredShader(shader);
         shader.mCanBindFast = true;
     }
+    // what this fill leaves: the version, the unit write sequence number, the units
+    shader.mFastVer = sFastVer;
+    for (S32 k = 0; k < kFastUnits; ++k)
+    {
+        shader.mFastUnits[k] = (S8)shader.enableTexture(kFastUniform[k]);
+    }
+    shader.mFastSeq = LLTexUnit::getWriteSeq();
+}
+
+void ll_pass_uni_log()
+{
+    if (gFrameCount < sPU.mFrom + 600 || sPU.mCalls == 0)
+    {
+        return;
+    }
+    const double frames = (double)(gFrameCount - sPU.mFrom);
+    sPU.mFrom = gFrameCount;
+    std::string by_unit, by_ver;
+    for (S32 k = 0; k < kFastUnits; ++k)
+    {
+        if (sPU.mMissUnitBy[k]) by_unit += std::string(" ") + kFastUnitName[k] + " " + std::to_string(sPU.mMissUnitBy[k] / frames).substr(0, 6);
+    }
+    for (U32 i = 0; i < 32; ++i)
+    {
+        if (sPU.mVerBy[i]) by_ver += std::string(i < 16 ? " id" : " val") + std::to_string(i % 16) + " " + std::to_string(sPU.mVerBy[i]);
+    }
+    LL_INFOS("VkScene") << "[PassUni] per frame over " << (U32)frames << " frames: Fast calls " << sPU.mCalls / frames << ", skipped " << sPU.mHits / frames << " (of which " << sPU.mPartial / frames << " rebind " << sPU.mUnitsRebound / frames << " units)" << ", filled " << sPU.mFull / frames
+        << " (cold " << sPU.mMissCold / frames << ", state changed " << sPU.mMissVer / frames << "), skip off " << sPU.mMissOff / frames
+        << "; units rebound by sampler:" << by_unit << "; state changes by field:" << by_ver << "; verified " << sPU.mVerified << " mismatches " << sPU.mMismatch
+        << "; alpha pool material setters (spec / env / brightness per draw): made " << gPassUniAlphaMade / frames << " skipped " << gPassUniAlphaSkipped / frames << " per frame, verify mismatches " << gPassUniAlphaMismatch << LL_ENDL;
+    gPassUniAlphaMade = gPassUniAlphaSkipped = 0;
+    sPU.mPartial = sPU.mUnitsRebound = sPU.mCalls = sPU.mHits = sPU.mFull = sPU.mMissCold = sPU.mMissVer = sPU.mMissUnit = sPU.mMissOff = 0;
+    memset(sPU.mMissUnitBy, 0, sizeof(sPU.mMissUnitBy));
+    memset(sPU.mVerBy, 0, sizeof(sPU.mVerBy));
 }
 
 void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* light_target, LLRenderTarget* depth_target)
@@ -15915,6 +16259,26 @@ void LLPipeline::setEnvMat(LLShaderProgram& shader)
     shader.uniformMatrix3fv(LLShaderMgr::DEFERRED_ENV_MAT, 1, true, mat);
 }
 
+// <FS> the improved reflection trace: bit 0 water, bit 1 other glossy surfaces, bit 2 the water ray takes fewer, uneven steps (finer near the surface, coarser far away) (live, read every time the probes are bound)
+static U32 ssr_trace_mode_bits()
+{
+    static LLCachedControl<bool> ssr_water_trace(gSavedSettings, "FSSSRWaterTrace", true);
+    static LLCachedControl<bool> ssr_surface_trace(gSavedSettings, "FSSSRSurfaceTrace", false);
+    static LLCachedControl<bool> ssr_water_adaptive(gSavedSettings, "FSWaterTraceAdaptive", true);
+    return (ssr_water_trace ? 1 : 0) | (ssr_surface_trace ? 2 : 0) | (ssr_water_adaptive ? 4 : 0);
+}
+
+// the noise value of the reflection trace moves on by one for every bind of the probes (a new value for every draw group of the alpha pool): one step and one write
+void LLPipeline::stepPoissonOffset(LLShaderProgram& shader)
+{
+    mPoissonOffset++;
+
+    if (mPoissonOffset > 128 - RenderScreenSpaceReflectionGlossySamples)
+        mPoissonOffset = 0;
+
+    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_NOISE_SINE, (F32)mPoissonOffset);
+}
+
 void LLPipeline::bindReflectionProbes(LLShaderProgram& shader)
 {
     if (!sReflectionProbesEnabled)
@@ -15968,19 +16332,9 @@ void LLPipeline::bindReflectionProbes(LLShaderProgram& shader)
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_RAY_STEP, RenderScreenSpaceReflectionRayStep);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_GLOSSY_SAMPLES, (F32)RenderScreenSpaceReflectionGlossySamples);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_REJECT_BIAS, RenderScreenSpaceReflectionDepthRejectBias);
-    mPoissonOffset++;
-
-    if (mPoissonOffset > 128 - RenderScreenSpaceReflectionGlossySamples)
-        mPoissonOffset = 0;
-
-    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_NOISE_SINE, (F32)mPoissonOffset);
+    stepPoissonOffset(shader);
     shader.uniform1f(LLShaderMgr::DEFERRED_SSR_ADAPTIVE_STEP_MULT, RenderScreenSpaceReflectionAdaptiveStepMultiplier);
-
-    // <FS> the improved reflection trace: bit 0 water, bit 1 other glossy surfaces (live, read every time the probes are bound)
-    static LLCachedControl<bool> ssr_water_trace(gSavedSettings, "FSSSRWaterTrace", true);
-    static LLCachedControl<bool> ssr_surface_trace(gSavedSettings, "FSSSRSurfaceTrace", false);
-    static LLCachedControl<bool> ssr_water_adaptive(gSavedSettings, "FSWaterTraceAdaptive", true);     // <FS> bit 2: the water ray takes fewer, uneven steps (finer near the surface, coarser far away)
-    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_TRACE_MODE, (F32)((ssr_water_trace ? 1 : 0) | (ssr_surface_trace ? 2 : 0) | (ssr_water_adaptive ? 4 : 0)));
+    shader.uniform1f(LLShaderMgr::DEFERRED_SSR_TRACE_MODE, (F32)ssr_trace_mode_bits());
 
     channel = shader.enableTexture(LLShaderMgr::SCENE_DEPTH);
     if (channel > -1)

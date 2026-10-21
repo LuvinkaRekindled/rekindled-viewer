@@ -59,6 +59,10 @@ public:
 
     U32 getTextureHandle();
 
+    // <FS> U1: the unit the array was last bound to (unbind() clears that one); a skipped bind sets it by hand
+    S32 getTextureStage() const { return mTextureStage; }
+    void setTextureStage(S32 stage) { mTextureStage = stage; }
+
     void destroyResources();
 
     // get width of cubemaps in array (they're cubes, so this is also the height)
