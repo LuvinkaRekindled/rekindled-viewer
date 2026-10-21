@@ -638,6 +638,7 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
     }
 }
 
+void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo* materials, const std::vector<LLVkBridge::GeoEntry>& built, const std::vector<LLDrawInfo*>& built_fallback);     // pipeline.cpp (S3)
 LLShadowDrawStats gShadowDrawStats;
 LLGeometryPacketStats gGeometryPacketStats;
 
@@ -695,6 +696,78 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
         return p.mTextureList.size() <= 4;
     }
     return !(p.mTexture.notNull() && p.mTextureMatrix);
+}
+
+// static. S3: the per-draw part of build_geometry, with the textures as pointers (the fragments of the scene tables keep them)
+bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6])
+{
+    e = {};
+    for (int t = 0; t < 6; ++t)
+    {
+        textures[t] = nullptr;
+    }
+    if (!params.mCount || !geometry_packet_ok(params, materials == nullptr, materials))
+    {
+        return false;
+    }
+    const LLVertexBuffer* vb = params.mVertexBuffer.get();
+    e.mVertexBuffer = vb->getVertexBufferId();
+    e.mIndexBuffer = vb->getIndexBufferId();
+    e.mFirstIndex = params.mOffset;
+    e.mIndexCount = params.mCount;
+    e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
+    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+    e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+    if (materials)
+    {
+        if (materials->mNormalMap)
+        {
+            e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_TANGENT);
+            e.mTexcoord1Offset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD1);
+        }
+        if (materials->mSpecularMap)
+        {
+            e.mTexcoord2Offset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD2);
+        }
+    }
+    if (!materials && params.mTextureList.size() > 1)
+    {
+        for (size_t t = 0; t < params.mTextureList.size() && t < 4; ++t)
+        {
+            if (params.mTextureList[t].notNull())
+            {
+                textures[t] = params.mTextureList[t].get();
+                e.mTextures[t] = (U32)t + 1;
+            }
+        }
+    }
+    else
+    {
+        e.mFlags |= LLVkBridge::GEO_ONE_TEXTURE;
+        if (params.mTexture.notNull())
+        {
+            textures[0] = params.mTexture.get();
+            e.mTextures[0] = 1;
+        }
+        if (materials)
+        {
+            if (materials->mNormalMap)
+            {
+                textures[4] = params.mNormalMap.get();
+                e.mNormalMap = 5;
+            }
+            if (materials->mSpecularMap)
+            {
+                textures[5] = params.mSpecularMap.get();
+                e.mSpecularMap = 6;
+            }
+            memcpy(e.mSpecular, params.mSpecColor.mV, sizeof(e.mSpecular));
+            e.mEnvIntensity = params.mEnvIntensity;
+            e.mCutoff = params.mAlphaMaskCutoff;
+            e.mBrightness = params.mFullbright ? 1.f : 0.f;
+        }
+    }
+    return true;
 }
 
 // <FS> A geometry packet build (see doc/vulkan/F2-start.md, "how parallel recording is made safe"): a pure function of a cull result, the camera matrices and what the draws point at. It can
@@ -1026,6 +1099,10 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
     }
 
     finish_geometry_build(*build);
+    if (ll_scene_geo_on())
+    {
+        ll_scene_geo_verify(cull, type, materials, build->mEntries, build->mFallback);      // <FS> S3 G1 (only with LL_VK_SCENE_VERIFY=1)
+    }
     fallback.insert(fallback.end(), build->mFallback.begin(), build->mFallback.end());
     const std::vector<LLVkBridge::GeoEntry>& entries = build->mEntries;
     const std::vector<F32>& matrices = build->mMatrices;

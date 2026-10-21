@@ -81,7 +81,8 @@ void render_hull_with_outline(LLModel::PhysicsMesh& mesh, const LLColor4& color,
 struct LLSceneFragment;
 void ll_scene_fragment_free(LLSceneFragment*& fragment);        // pipeline.cpp (S1)
 class LLSpatialGroup;
-void ll_scene_fragment_build(LLSpatialGroup* group);            // pipeline.cpp (S2): after a group's rebuild
+void ll_scene_fragment_build(LLSpatialGroup* group);
+bool ll_scene_geo_on();                                         // pipeline.cpp (S3): LL_VK_SCENE_GEO=1            // pipeline.cpp (S2): after a group's rebuild
 
 class LLDrawInfo final : public LLRefCount
 {
@@ -572,6 +573,10 @@ public:
     // <FS> S2: the visible groups whose static shadow casters are not resident on the worker (no current resident fragment): the only ones the main thread still names per pass.
     // Filled by the shadow render map job (shadowPrepRenderMap) when LL_VK_SCENE_RESIDENT=1.
     std::vector<LLSpatialGroup*> mSceneGroups;
+    // <FS> S3: the visible groups that passed postSort's filters (not dead, not occluded, not auto-hidden), after their rebuild: the groups whose deferred geometry the scene tables draw
+    // (LL_VK_SCENE_GEO=1). Filled by postSort.
+    std::vector<LLSpatialGroup*> mGeoGroups;
+    std::vector<U32> mGeoSerials;                       // their mDrawMapSerial when postSort listed them
 
 private:
 
