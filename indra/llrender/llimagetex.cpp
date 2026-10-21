@@ -29,6 +29,7 @@
 
 #include "linden_common.h"
 #include <chrono>
+#include <atomic>
 
 #include "llimagetex.h"
 
@@ -526,6 +527,7 @@ LLImageTex::LLImageTex(
     LLVkFormat::noteFormat("LLImageTex", file, line, (U8)formatInternal, (U8)formatPrimary, (U8)formatType);
     init(false, true);
     mTexName = texName;
+    noteNameChange();
     markTexOptionsDirty();
     mTarget = target;
     mComponents = components;
@@ -535,6 +537,37 @@ LLImageTex::LLImageTex(
     mFormatPrimary = formatPrimary;
 }
 
+
+static std::mutex sNameEventMutex;
+static std::vector<U32> sNameEventIds;
+static std::atomic<U32> sNextTexId{1};
+static std::atomic<bool> sNameEventsWanted{false};
+
+void LLImageTex::wantNameEvents()
+{
+    sNameEventsWanted = true;
+}
+
+void LLImageTex::noteNameChange()
+{
+    if (mTexId == 0)
+    {
+        mTexId = sNextTexId.fetch_add(1);
+    }
+    if (!sNameEventsWanted)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(sNameEventMutex);
+    sNameEventIds.push_back(mTexId);
+}
+
+void LLImageTex::takeNameEvents(std::vector<U32>& ids)
+{
+    ids.clear();
+    std::lock_guard<std::mutex> lock(sNameEventMutex);
+    ids.swap(sNameEventIds);
+}
 
 LLImageTex::~LLImageTex()
 {
@@ -578,6 +611,7 @@ void LLImageTex::init(bool usemipmaps, bool allow_compression)
 
     mImageTextureCreated = false ;
     mTexName = 0;
+    noteNameChange();
     mWidth = 0;
     mHeight = 0;
     mCurrentDiscardLevel = -1;
@@ -1466,10 +1500,12 @@ bool LLImageTex::createImageTexture()
     {
         LLImageTex::deleteTextures(1, (reinterpret_cast<U32*>(&mTexName))) ;
         mTexName = 0;
+        noteNameChange();
     }
 
 
     LLImageTex::generateTextures(1, &mTexName);
+    noteNameChange();
     if (!mTexName)
     {
         LL_WARNS() << "LLImageTex::createImageTexture failed to make an empty texture" << LL_ENDL;
@@ -1677,6 +1713,7 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
                 LLImageTex::deleteTextures(1, &old_texname);
             }
             mTexName = new_texname;
+            noteNameChange();
             markTexOptionsDirty();      // <FS> the new GL texture gets its sampler options with the others
         }
     }
@@ -1721,6 +1758,7 @@ void LLImageTex::syncTexName(U32 texname)
             LLImageTex::deleteTextures(1, &mTexName);
         }
         mTexName = texname;
+        noteNameChange();
         markTexOptionsDirty();
     }
 }
@@ -1845,6 +1883,7 @@ void LLImageTex::destroyImageTexture()
         LLImageTex::deleteTextures(1, &mTexName);
         mCurrentDiscardLevel = -1 ; //invalidate mCurrentDiscardLevel.
         mTexName = 0;
+        noteNameChange();
         mImageTextureCreated = false ;
     }
 }

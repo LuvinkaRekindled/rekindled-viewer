@@ -189,6 +189,12 @@ public:
 
     bool getHasImageTexture() const { return mTexName != 0; }
     U32 getTexName() const { return mTexName; }
+    // <FS> S texture identity: an id that stays with this texture object for its life (the GL name changes when the texture is made again or another discard level is loaded), and the
+    // names that changed since the events were last taken: the ids of the objects whose name changed. A consumer keeps what it knows about a texture by id and hears about changes instead of
+    // asking every texture every frame. Taken on the main thread (the changes are made there).
+    U32 getTexId() const { return mTexId; }
+    static void takeNameEvents(std::vector<U32>& ids);
+    static void wantNameEvents();       // until a consumer asks, the events are not kept
 
     bool getIsAlphaMask() const;
 
@@ -270,6 +276,8 @@ private:
 
     bool     mImageTextureCreated ;
     U32 mTexName;
+    U32 mTexId = 0;                     // see getTexId()
+    void noteNameChange();
     U16      mWidth;
     U16      mHeight;
     S8       mCurrentDiscardLevel;
