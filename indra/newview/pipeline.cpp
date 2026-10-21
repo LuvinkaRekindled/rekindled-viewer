@@ -5554,6 +5554,12 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
 
 static void scene_alpha_register(LLSceneFragment* f)
 {
+    static bool events_asked = false;
+    if (!events_asked)
+    {
+        events_asked = true;
+        LLImageTex::wantNameEvents();       // texture name changes from now on are kept for scene_alpha_frame
+    }
     f->mAlphaRegistered = true;
     f->mSentName.assign(f->mTexLocal.size(), 0);
     f->mSentReady.assign(f->mTexLocal.size(), 1);
@@ -5771,8 +5777,8 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool r
             << " cascade lists compared with the builder's: " << s.mViewCount << " differ in count, " << s.mViewContent << " in content, " << s.mViewFallback << " in fallback draws"
             << " | resident: " << s.mResPasses << " passes, " << sResidentFragments.size() << " fragments live, " << s.mResRetains << " sent; coverage check: " << s.mResBuilder << " builder entries, "
             << s.mResMissing << " not covered, " << s.mResPassed << " resident entries passing the frustum test"
-            << " | alpha: " << sAlphaStats[0] << " fragments registered, " << sAlphaTex.size() << " textures, " << sAlphaCull.size() << " in the sweep (" << (sAlphaStats[1] ? sAlphaStats[2] / sAlphaStats[1] : 0)
-            << " in range a frame), " << sAlphaStats[3] << " texture update records for " << sAlphaStats[4] << " entries, " << sAlphaStats[5] << " builder entries not named again, verify: "
+            << " | alpha: " << sAlphaStats[0] << " fragments registered, " << sAlphaTex.size() << " textures, " << sAlphaCull.size() << " in the sweep (" << sAlphaStats[2]
+            << " texture changes seen), " << sAlphaStats[3] << " texture update records for " << sAlphaStats[4] << " entries, " << sAlphaStats[5] << " builder entries not named again, verify: "
             << sAlphaStats[6] << " outside the sphere test, " << sAlphaStats[7] << " stale texture names" << LL_ENDL;
     }
 }
@@ -5802,128 +5808,185 @@ static bool alpha_tex_ready(LLViewerTexture* tex)
     return LLVkBridge::rtShadowMode() != 1 || !LLVkBridge::rtLoadingGates() || rt_texture_ready(tex);
 }
 
-// S2 alpha, once a frame: which resident fragments with alpha entries are in range (the union of the cascades' last frusta), their textures touched once (what the builder's finish step did for the
-// visible draws: setActive, the GL texture made when it was deleted) and resolved to names, and the entries the worker holds with other names or another readiness told as updates (kind 19)
+// S2 alpha, once a frame: texture identity (llimagetex.h getTexId / takeNameEvents). The registry of the textures resident alpha entries use is kept by EVENTS: a texture object reports when its GL
+// name changes (made, deleted, another discard level), so only those textures are looked at again (name and readiness), and the entries the worker holds with other names or another readiness are
+// told as updates (kind 19). Nothing asks every texture every frame. The textures are kept active (setActive: what the builder's finish step did for the visible draws) in a slow round robin, and
+// one that has no GL texture gets it made (prepareFast) at most a few a frame: the old path made them for the casters it named, the visible ones, at the pace the pass drew them.
+static void scene_alpha_send_updates(LLSceneFragment* f, const std::vector<U8>& dirty)
+{
+    std::vector<U32> updates;
+    for (size_t i = 0; i < f->mAlpha.size(); ++i)
+    {
+        const LLVkBridge::ShadowAlphaEntry& e = f->mAlpha[i];
+        bool uses = false;
+        for (U32 t = 0; t < 4; ++t)
+        {
+            uses = uses || (e.mTextures[t] && dirty[e.mTextures[t] - 1]);
+        }
+        if (!uses)
+        {
+            continue;
+        }
+        U32 ready = 1;
+        U32 names[4] = {};
+        for (U32 t = 0; t < 4; ++t)
+        {
+            if (e.mTextures[t])
+            {
+                const AlphaTexInfo& info = sAlphaTex[f->mTexLocal[e.mTextures[t] - 1].get()];
+                names[t] = info.mName;
+                ready = ready && info.mReady;
+            }
+        }
+        updates.push_back((U32)i);
+        updates.insert(updates.end(), names, names + 4);
+        updates.push_back(ready);
+        ++sAlphaStats[4];
+    }
+    for (size_t k = 0; k < f->mTexLocal.size(); ++k)
+    {
+        if (dirty[k])
+        {
+            const AlphaTexInfo& info = sAlphaTex[f->mTexLocal[k].get()];
+            f->mSentName[k] = info.mName;
+            f->mSentReady[k] = info.mReady ? 1 : 0;
+        }
+    }
+    if (!updates.empty())
+    {
+        LLVkBridge::ShadowPacketsHeader header;
+        header.mKind = 19;
+        header.mEntries = (U32)(updates.size() / 6);
+        header.mFragment = f->mId;
+        LLVkBridge::shadowPackets(header, updates.data(), updates.size() * sizeof(U32));
+        ++sAlphaStats[3];
+    }
+}
+
 static void scene_alpha_frame(U64 frame)
 {
     static U64 last = ~0ull;
-    if (last == frame || !sPassPlaneMask)
+    if (last == frame)
     {
         return;
     }
     last = frame;
     ++sAlphaStats[1];
-    static const U32 plane_count = scene_env("LL_VK_SCENE_NEARFAR") ? 6 : 4;
-    static std::vector<LLSceneFragment*> in_range;
-    in_range.clear();
-    for (const AlphaCullItem& item : sAlphaCull)
+    static bool wanted = false;
+    if (!wanted)
     {
-        F32 c[3] = { item.mC[0], item.mC[1], item.mC[2] };
-        if (item.mM)
-        {
-            for (int a = 0; a < 3; ++a)
-            {
-                c[a] += item.mM->mMatrix[3][a];
-            }
-        }
-        bool inside = false;
-        for (U32 pass = 0; pass < 4 && !inside; ++pass)
-        {
-            if (!(sPassPlaneMask & (1u << pass)))
-            {
-                continue;
-            }
-            bool in = true;
-            for (U32 p = 0; p < plane_count && in; ++p)
-            {
-                in = sPassPlanes[pass][p][0] * c[0] + sPassPlanes[pass][p][1] * c[1] + sPassPlanes[pass][p][2] * c[2] + sPassPlanes[pass][p][3] >= -item.mR;
-            }
-            inside = in;
-        }
-        if (inside)
-        {
-            in_range.push_back(item.mFrag);
-        }
+        wanted = true;
+        LLImageTex::wantNameEvents();
     }
-    sAlphaStats[2] += in_range.size();
-    for (LLSceneFragment* f : in_range)
+    // 1. the textures whose name changed since last frame: the registry entry is made again, the fragments that use it get their updates
+    static std::vector<U32> ids;
+    LLImageTex::takeNameEvents(ids);
+    static std::vector<LLViewerTexture*> changed;
+    changed.clear();
+    if (!ids.empty())
     {
-        for (LLPointer<LLViewerTexture>& tex : f->mTexLocal)
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        for (auto& kv : sAlphaTex)
         {
-            auto it = sAlphaTex.find(tex.get());
-            if (it != sAlphaTex.end() && it->second.mTouch != (U64)frame)
+            AlphaTexInfo& info = kv.second;
+            LLImageTex* gl = info.mTex->getImageTexture();
+            if (gl && std::binary_search(ids.begin(), ids.end(), gl->getTexId()))
             {
-                AlphaTexInfo& info = it->second;
-                info.mTouch = (U64)frame;
-                info.mName = gRender.getTexUnit(0)->prepareFast(info.mTex.get());
-                info.mReady = alpha_tex_ready(info.mTex.get());
-            }
-        }
-        if (!f->mAlphaSent)
-        {
-            continue;
-        }
-        std::vector<U8> dirty(f->mTexLocal.size(), 0);
-        bool any = false;
-        for (size_t k = 0; k < f->mTexLocal.size(); ++k)
-        {
-            auto it = sAlphaTex.find(f->mTexLocal[k].get());
-            if (it != sAlphaTex.end() && (it->second.mName != f->mSentName[k] || (it->second.mReady ? 1 : 0) != f->mSentReady[k]))
-            {
-                dirty[k] = 1;
-                any = true;
-            }
-        }
-        if (!any)
-        {
-            continue;
-        }
-        std::vector<U32> updates;
-        for (size_t i = 0; i < f->mAlpha.size(); ++i)
-        {
-            const LLVkBridge::ShadowAlphaEntry& e = f->mAlpha[i];
-            bool uses = false;
-            for (U32 t = 0; t < 4; ++t)
-            {
-                uses = uses || (e.mTextures[t] && dirty[e.mTextures[t] - 1]);
-            }
-            if (!uses)
-            {
-                continue;
-            }
-            U32 ready = 1;
-            U32 names[4] = {};
-            for (U32 t = 0; t < 4; ++t)
-            {
-                if (e.mTextures[t])
+                const U32 name = gl->getTexName() ? gl->getTexName() : info.mTex->getDefaultImageName();
+                const bool ready = alpha_tex_ready(info.mTex.get());
+                if (name != info.mName || ready != info.mReady)
                 {
-                    const AlphaTexInfo& info = sAlphaTex[f->mTexLocal[e.mTextures[t] - 1].get()];
-                    names[t] = info.mName;
-                    ready = ready && info.mReady;
+                    info.mName = name;
+                    info.mReady = ready;
+                    changed.push_back(kv.first);
                 }
             }
-            updates.push_back((U32)i);
-            updates.insert(updates.end(), names, names + 4);
-            updates.push_back(ready);
-            ++sAlphaStats[4];
         }
-        for (size_t k = 0; k < f->mTexLocal.size(); ++k)
+    }
+    // 2. the keep-alive: a slow round robin over the registry, and the textures with no GL texture made a few at a time
+    static size_t cursor = 0;
+    static std::vector<LLViewerTexture*> list;
+    static size_t list_size = ~(size_t)0;
+    if (list_size != sAlphaTex.size())
+    {
+        // rebuilt only when the registry changed size (a fragment made or freed changes it often: cheap, a few thousand pointers)
+        list.clear();
+        for (auto& kv : sAlphaTex)
         {
-            if (dirty[k])
+            list.push_back(kv.first);
+        }
+        list_size = sAlphaTex.size();
+    }
+    if (!list.empty())
+    {
+        const size_t per_frame = std::max<size_t>(8, list.size() / 64);
+        int made = 0;
+        for (size_t n = 0; n < per_frame; ++n)
+        {
+            cursor = (cursor + 1) % list.size();
+            auto it = sAlphaTex.find(list[cursor]);
+            if (it == sAlphaTex.end())
             {
-                const AlphaTexInfo& info = sAlphaTex[f->mTexLocal[k].get()];
-                f->mSentName[k] = info.mName;
-                f->mSentReady[k] = info.mReady ? 1 : 0;
+                continue;
+            }
+            AlphaTexInfo& info = it->second;
+            LLImageTex* gl = info.mTex->getImageTexture();
+            if (gl && gl->getTexName() == 0 && made < 4)
+            {
+                ++made;
+                info.mName = gRender.getTexUnit(0)->prepareFast(info.mTex.get());      // makes the GL texture (the event it raises is read next frame)
+                info.mReady = alpha_tex_ready(info.mTex.get());
+                changed.push_back(it->first);
+            }
+            else
+            {
+                info.mTex->setActive();
             }
         }
-        if (!updates.empty())
+    }
+    // 3. the updates
+    sAlphaStats[2] += changed.size();
+    if (!changed.empty())
+    {
+        std::sort(changed.begin(), changed.end());
+        changed.erase(std::unique(changed.begin(), changed.end()), changed.end());
+        static std::vector<LLSceneFragment*> frags;
+        frags.clear();
+        for (LLViewerTexture* tex : changed)
         {
-            LLVkBridge::ShadowPacketsHeader header;
-            header.mKind = 19;
-            header.mEntries = (U32)(updates.size() / 6);
-            header.mFragment = f->mId;
-            LLVkBridge::shadowPackets(header, updates.data(), updates.size() * sizeof(U32));
-            ++sAlphaStats[3];
+            auto it = sAlphaTex.find(tex);
+            if (it != sAlphaTex.end())
+            {
+                for (const AlphaTexUse& use : it->second.mUsers)
+                {
+                    frags.push_back(use.mFrag);
+                }
+            }
+        }
+        std::sort(frags.begin(), frags.end());
+        frags.erase(std::unique(frags.begin(), frags.end()), frags.end());
+        for (LLSceneFragment* f : frags)
+        {
+            if (!f->mAlphaSent)
+            {
+                continue;
+            }
+            std::vector<U8> dirty(f->mTexLocal.size(), 0);
+            bool any = false;
+            for (size_t k = 0; k < f->mTexLocal.size(); ++k)
+            {
+                auto it = sAlphaTex.find(f->mTexLocal[k].get());
+                if (it != sAlphaTex.end() && (it->second.mName != f->mSentName[k] || (it->second.mReady ? 1 : 0) != f->mSentReady[k]))
+                {
+                    dirty[k] = 1;
+                    any = true;
+                }
+            }
+            if (any)
+            {
+                scene_alpha_send_updates(f, dirty);
+            }
         }
     }
     // the fragments made since the last pass: their alpha entries with the names as the registry has them
