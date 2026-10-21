@@ -4216,6 +4216,7 @@ void LLCullResult::clear()
     mSceneGroups.clear();
     mGeoGroups.clear();
     mGeoSerials.clear();
+    mGeoOwner.clear();
 
     for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)
     {

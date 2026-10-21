@@ -221,6 +221,18 @@ namespace LLVkBridge
         F32 mEnvIntensity, mCutoff, mBrightness, mPad;
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
     };
+    // S3 G2 (doc/vulkan/S3-design.md, LL_VK_SCENE_GEO=2): the deferred geometry entries kept by the worker in a persistent table, drawn from the list of fragments the viewer says are visible.
+    // kind 20 RETAIN_GEO: mFragment = id, mEntries x GeoWire (mE.mMatrix = region matrix slot, 0 = the view alone; its texture fields are 1 + the number in the fragment's texture list, 0 = none).
+    // kind 21 PREPARE_GEO (once a frame, before the passes): mEntries = visible fragments, mMatrices = region matrices, mPaletteFloats = words of texture names. Blob: mEntries x GeoFragRef, the
+    //   name words (the GL name of each fragment's textures in list order), mMatrices x GeoSlotMatrix. The worker checks each fragment's buffers and texture slots, rewrites its entries when
+    //   something changed and writes the draw commands of the frame, by pass type.
+    // kind 22 DRAW_GEO: mPass = pass type number (0..12, the viewer's kGeoTypes order), blob = 32 floats: the view and the projection matrix (column-major) of the pass. The viewer has bound the pass's
+    //   pull program; the worker draws that type's commands with it.
+    // kind 23 RELEASE_GEO: mEntries fragment ids (U32).
+    struct GeoWire { GeoEntry mE; U32 mType; };
+    struct GeoFragRef { U32 mId, mNameOffset, mNameCount; };
+    struct GeoSlotMatrix { U32 mSlot; F32 mM[16]; };
+    bool sceneGeoAvailable();       // the worker can keep and draw them (buffer addresses, indirect draws with a first instance, bindless textures)
     // ---- ray query shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md) ----
     // 0 = off (or the device cannot), 1 = ray query shadows replace the cascades, 2 = split screen, 3 = disagreement map. Fixed for the run; the shader programs are compiled for it.
     U32 rtShadowMode();
