@@ -131,6 +131,7 @@ public:
 
 // <FS> what a materials pass adds to a geometry record: which maps its draws carry
 class LLCullResult;
+namespace LLVkBridge { struct GeoEntry; }
 
 struct LLGeometryPassInfo
 {
@@ -398,6 +399,9 @@ public:
     // (a pull program); the draws it cannot carry are returned to be drawn the old way
     static bool deferredPacketsEnabled();
     static void pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials = nullptr);
+    // S3 (doc/vulkan/S3-design.md): the entry a geometry record gets for one draw, with the textures as pointers: textures[0..3] the diffuse ones, [4] the normal map, [5] the specular map; the entry's
+    // texture fields hold 1 + the index into textures (0 = none), its matrix is 0. False: the draw takes the old path (the same decision as the builder's). Kept in step with build_geometry by the verify mode.
+    static bool geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& entry, LLViewerTexture* textures[6]);
     // the builds of the geometry records start on the async pool at the top of renderGeomDeferred (the main thread draws its own things meanwhile), pushGeometryPackets takes them
     static void kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials = nullptr);
     static std::string geometryBuildStats();      // what became of the builds since the last call, for the log
