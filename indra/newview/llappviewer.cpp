@@ -3910,9 +3910,9 @@ bool LLAppViewer::initWindow()
         }
         if (gSavedSettings.getBOOL("FSVkResidentScene"))
         {
-            // the scene tables (doc/vulkan/S2-handoff.md): what the environment sets explicitly (also 0) wins. LL_VK_SCENE_RAYALPHA (resident alpha casters in the ray scene) is not
-            // among them: with it on, 150 ms GPU frames come in bursts and the device was lost twice (2026-10-20 isolation runs: 0 slow frames without it, 15 with)
-            for (const char* name : { "LL_VK_SCENE_RESIDENT", "LL_VK_SCENE_RAYRANGE", "LL_VK_RT_INSTDELTA" })
+            // the scene tables (doc/vulkan/S2-handoff.md): what the environment sets explicitly (also 0) wins. LL_VK_SCENE_RAYALPHA (resident alpha casters in the ray scene) was off by
+            // default for a day (150 ms GPU frames in bursts and device-lost crashes: ray records held stale buffer addresses, fixed in d9995666, S2-handoff part 12); on again by Adam's choice
+            for (const char* name : { "LL_VK_SCENE_RESIDENT", "LL_VK_SCENE_RAYRANGE", "LL_VK_SCENE_RAYALPHA", "LL_VK_RT_INSTDELTA" })
             {
                 if (!getenv(name))
                 {

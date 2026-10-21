@@ -3387,7 +3387,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         {
             static U64 stale_rows = 0, stale_recs = 0, checked_calls = 0;
             ++checked_calls;
-            for (size_t i = 0; i < sInstArray.size() && i < sInstGroup.size(); ++i)
+            // (measured 2026-10-21: every call cost 1 ms of the worker's time per call; now that the cause is fixed this is the safety net, so each half runs every 16th call, a quarter of the calls apart)
+            for (size_t i = 0; checked_calls % 16 == 0 && i < sInstArray.size() && i < sInstGroup.size(); ++i)
             {
                 Group* gp = sInstGroup[i];
                 if (!gp || gp->mDirty || !gp->mBlas)
@@ -3407,7 +3408,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     mark_dirty(*gp);
                 }
             }
-            if (checked_calls % 8 == 0)
+            if (checked_calls % 16 == 8)
             {
                 for (Group* gp : sInstGroup)
                 {
