@@ -3385,6 +3385,62 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             }
         }
         sub_lap(5);
+        // The stale check (LL_VK_RT_STALECHECK=0 turns it off): nothing the GPU reads may name memory that was given up. Two things are looked at here, before the dirty groups are made again:
+        // (a) every instance row against its group's structure address (and the recently destroyed ones), (b) every few calls the masked groups' records against the buffer addresses now. A group
+        // that fails is counted, reported (the first few) and marked dirty, so it is made again in this call. The device-lost crashes of 2026-10-20 read just past the end of a block that
+        // no longer existed (a freed block's address): this finds which of the two kept tables names it.
+        static const bool stale_check = env_u64("LL_VK_RT_STALECHECK", 1) != 0;
+        if (stale_check)
+        {
+            static U64 stale_rows = 0, stale_recs = 0, checked_calls = 0;
+            ++checked_calls;
+            for (size_t i = 0; i < sInstArray.size() && i < sInstGroup.size(); ++i)
+            {
+                Group* gp = sInstGroup[i];
+                if (!gp || gp->mDirty || !gp->mBlas)
+                {
+                    continue;
+                }
+                const U64 ref = sInstArray[i].accelerationStructureReference;
+                if (ref != gp->mBlas->mAddress || (!sDeadRecent.empty() && sDeadRecent.count(ref)))
+                {
+                    ++stale_rows;
+                    static U32 logged_row = 0;
+                    if (logged_row++ < 20)
+                    {
+                        LL_WARNS("VkRt") << "stale check: instance row " << i << " (vb " << gp->mKey.mVb << " ib " << gp->mKey.mIb << " kind " << gp->mKey.mKind << ") names the structure 0x" << std::hex << (unsigned long long)ref
+                                         << " but the group's is 0x" << (unsigned long long)gp->mBlas->mAddress << std::dec << (sDeadRecent.count(ref) ? ", given up lately" : "") << ": made again" << LL_ENDL;
+                    }
+                    mark_dirty(*gp);
+                }
+            }
+            if (checked_calls % 8 == 0)
+            {
+                for (Group* gp : sInstGroup)
+                {
+                    if (!gp || gp->mDirty || gp->mSlot == ~0u || !(gp->mKey.mKind == 1 || (gp->mKey.mKind == 0 && sDbg.mMats)))
+                    {
+                        continue;
+                    }
+                    LLVkWorker::BufferInfo tvi, tii;
+                    if (!LLVkWorker::getBufferInfo(gp->mKey.mVb, tvi) || !LLVkWorker::getBufferInfo(gp->mKey.mIb, tii) || tvi.mAddress != gp->mCacheVb || tii.mAddress != gp->mCacheIb)
+                    {
+                        ++stale_recs;
+                        static U32 logged_rec = 0;
+                        if (logged_rec++ < 20)
+                        {
+                            LL_WARNS("VkRt") << "stale check: the records of the group vb " << gp->mKey.mVb << " ib " << gp->mKey.mIb << " kind " << gp->mKey.mKind << " hold the buffer addresses 0x" << std::hex << (unsigned long long)gp->mCacheVb
+                                             << " / 0x" << (unsigned long long)gp->mCacheIb << ", the buffers are at 0x" << (unsigned long long)tvi.mAddress << " / 0x" << (unsigned long long)tii.mAddress << std::dec << ": made again" << LL_ENDL;
+                        }
+                        mark_dirty(*gp);
+                    }
+                }
+            }
+            if (checked_calls % 1200 == 0)
+            {
+                LL_INFOS("VkRt") << "stale check: " << stale_rows << " instance rows and " << stale_recs << " record sets found stale and made again in " << checked_calls << " scene calls" << LL_ENDL;
+            }
+        }
         std::vector<Key> dirty;
         dirty.swap(sDirtyKeys);
         for (const Key& k : dirty)
