@@ -109,7 +109,8 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
             if (rigged)
             {
                 const U32 type = pass_types[pass] + 1;
-                if (gPipeline.beginRenderMap(type) == gPipeline.endRenderMap(type))
+                // (S4 B: with the table serving the rigged draws the render map is empty on purpose: the pass still sends the table's draw record)
+                if (gPipeline.beginRenderMap(type) == gPipeline.endRenderMap(type) && !(ll_scene_geo_rigged_env() && ll_scene_geo_serving() && ll_scene_geo_main_view()))
                 {
                     mUntouched = true;
                     ll_scene_geo_count(4, 1);

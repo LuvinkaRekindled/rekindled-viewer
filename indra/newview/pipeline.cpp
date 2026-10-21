@@ -5341,7 +5341,7 @@ struct LLSceneFragment
     size_t mAlphaCullIndex = 0;
     // S3 (LL_VK_SCENE_GEO=1, doc/vulkan/S3-design.md): the entries LLRenderPass::geometryEntry makes for the group's draw infos of the 13 deferred geometry pass types (kGeoTypes). mE.mMatrix = the
     // region matrix slot (0 = none), its texture fields are 1-based numbers into mGeoTex.
-    struct GeoItem { LLVkBridge::GeoEntry mE; LLDrawInfo* mInfo; U32 mType; bool mServed; };
+    struct GeoItem { LLVkBridge::GeoEntry mE; LLDrawInfo* mInfo; U32 mType; bool mServed; U32 mWire; };      // mType 0-12 static, 13-25 the rigged variants (S4 B); mWire: its number in the worker's item list
     std::vector<GeoItem> mGeo;
     std::vector<LLPointer<LLViewerTexture>> mGeoTex;
     std::vector<std::pair<U32, LLDrawInfo*>> mGeoFallback;      // (type number, draw info) the packet layout cannot take
@@ -5351,6 +5351,8 @@ struct LLSceneFragment
     U32 mGeoServedMask = 0, mGeoServedTris = 0;         // G4: see LLSpatialGroup
     U32 mGeoHandle = 0;                                 // its handle at the worker (0 = not attached: nothing served, or LL_VK_SCENE_GEO < 2)
     std::vector<U32> mGeoSentName;                      // per local texture, the GL name the worker was told
+    std::vector<U32> mGeoRigged;                        // S4 B: the indices in mGeo of the served rigged items (their palettes are bound every frame)
+    std::vector<U32> mGeoMoving;                        // S4 C: the moving matrix slots (256-2047) this fragment's items use (reference counted)
 };
 
 namespace
@@ -5386,6 +5388,18 @@ bool scene_geo_on()
 {
     return scene_geo_mode() >= 1;
 }
+// S4 C: the draws with a model matrix that is not a region matrix are served by the table too (their matrix has a moving slot)
+bool scene_geo_moving_on()
+{
+    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_MOVING"); return v && atoi(v) != 0; }();
+    return on && scene_geo_mode() >= 2;
+}
+// S4 B: the rigged draws of the deferred passes are items of the fragments too (their palettes are bound by the frame record); needs the rigged pull programs (A1)
+bool scene_geo_rigged_on()
+{
+    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_RIGGED"); return v && atoi(v) != 0; }();
+    return on && scene_geo_mode() >= 2;
+}
 // the alpha masked casters of resident fragments too (ray shadows, with the range membership)
 bool scene_alpha_on()
 {
@@ -5406,6 +5420,15 @@ struct GeoRegStats
 } sGeoReg;
 std::vector<U32> sGeoHandleFree;
 U32 sGeoHandleNext = 1;
+// S4 C: model matrices that are not region matrices (active objects, animated children, attachments of avatars) get table slots of their own: 256-2047, reference counted by the fragments that
+// use them, lowest free slot first (the worker's per-pass matrix scratch is as large as the highest slot). The values of the slots the listed fragments use are sent every frame.
+constexpr U32 kMovingBase = 256, kMovingMax = 2048;
+std::vector<const LLMatrix4*> sMovingMatrix(kMovingMax - kMovingBase, nullptr);
+std::vector<U32> sMovingRefs(kMovingMax - kMovingBase, 0);
+std::vector<U32> sMovingStamp(kMovingMax - kMovingBase, 0);
+std::unordered_map<const LLMatrix4*, U32> sMovingSlot;
+U64 sMovingAcquired = 0, sMovingFull = 0;
+std::vector<LLSceneFragment*> sGeoFragByHandle;     // S4 B: the fragment of a worker handle (the frame record binds the palettes of the rigged items of the listed ones)
 
 U32 scene_geo_tex_name(LLViewerTexture* tex)
 {
@@ -5517,6 +5540,8 @@ static void scene_alpha_unregister(LLSceneFragment* f)
     }
 }
 
+static void scene_moving_release(LLSceneFragment* f);       // (S4 C, defined below)
+
 static void scene_geo_detach_textures(LLSceneFragment* f)
 {
     ++sGeoReg.mDetached;
@@ -5547,8 +5572,13 @@ void ll_scene_fragment_free(LLSceneFragment*& fragment)
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
         sFragmentReleases.push_back(fragment->mId);
     }
+    scene_moving_release(fragment);
     if (fragment->mGeoHandle)
     {
+        if (fragment->mGeoHandle < sGeoFragByHandle.size())
+        {
+            sGeoFragByHandle[fragment->mGeoHandle] = nullptr;
+        }
         scene_geo_detach_textures(fragment);
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
         sGeoReleases.push_back(fragment->mGeoHandle);       // told to the worker at the end of the frame (ll_scene_geo_frame_end), the handle is reused after that
@@ -5611,6 +5641,54 @@ static LLGeometryPassInfo geo_pass_info(const GeoType& t)
     return info;
 }
 
+// S4 C: the moving slot of a matrix for a fragment (0: none free); the fragment holds one reference per slot
+static U32 scene_moving_acquire(const LLMatrix4* m, LLSceneFragment& f)
+{
+    auto it = sMovingSlot.find(m);
+    if (it == sMovingSlot.end())
+    {
+        U32 k = 0;
+        while (k < sMovingMatrix.size() && sMovingMatrix[k])
+        {
+            ++k;
+        }
+        if (k == sMovingMatrix.size())
+        {
+            ++sMovingFull;
+            return 0;
+        }
+        sMovingMatrix[k] = m;
+        sMovingRefs[k] = 0;
+        it = sMovingSlot.emplace(m, kMovingBase + k).first;
+    }
+    const U32 slot = it->second;
+    for (U32 held : f.mGeoMoving)
+    {
+        if (held == slot)
+        {
+            return slot;
+        }
+    }
+    f.mGeoMoving.push_back(slot);
+    ++sMovingRefs[slot - kMovingBase];
+    ++sMovingAcquired;
+    return slot;
+}
+
+static void scene_moving_release(LLSceneFragment* f)
+{
+    for (U32 slot : f->mGeoMoving)
+    {
+        const U32 k = slot - kMovingBase;
+        if (sMovingRefs[k] && --sMovingRefs[k] == 0)
+        {
+            sMovingSlot.erase(sMovingMatrix[k]);
+            sMovingMatrix[k] = nullptr;
+        }
+    }
+    f->mGeoMoving.clear();
+}
+
 // the slot of a region render matrix (0: none free)
 static U32 scene_region_slot(const LLMatrix4* m)
 {
@@ -5624,6 +5702,8 @@ static U32 scene_region_slot(const LLMatrix4* m)
 }
 
 static U64 sGeoFillNs = 0, sGeoFillCalls = 0, sGeoFillItems = 0, sGeoFillFallback = 0, sGeoFillNonRegion = 0;
+static U64 sGeoRiggedBindings = 0, sGeoRiggedNs = 0;
+static U64 sGeoMovingSent = 0;        // S4 B: palette bindings sent, main thread ns to make them
 
 static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
 {
@@ -5635,10 +5715,14 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mGeoServedCount = 0;
     f.mGeoServedMask = 0;
     f.mGeoServedTris = 0;
-    U32 total_infos[13] = {}, served_infos[13] = {}, served_tris[13] = {};
-    for (size_t t = 0; t < kGeoTypeCount; ++t)
+    f.mGeoRigged.clear();
+    U32 total_infos[26] = {}, served_infos[26] = {}, served_tris[26] = {};
+    const bool rigged_on = scene_geo_rigged_on();
+    for (size_t t2 = 0; t2 < (rigged_on ? 2 * kGeoTypeCount : kGeoTypeCount); ++t2)
     {
-        auto it = group->mDrawMap.find(kGeoTypes[t].mType);
+        const bool rigged = t2 >= kGeoTypeCount;
+        const size_t t = t2 % kGeoTypeCount;
+        auto it = group->mDrawMap.find(kGeoTypes[t].mType + (rigged ? 1 : 0));        // the rigged variant of a pass type is the next number
         if (it == group->mDrawMap.end())
         {
             continue;
@@ -5651,7 +5735,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             {
                 continue;
             }
-            ++total_infos[t];
+            ++total_infos[t2];
             const LLVertexBuffer* vb = params->mVertexBuffer.get();
             if (vb)
             {
@@ -5667,9 +5751,9 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             }
             LLSceneFragment::GeoItem item = {};
             LLViewerTexture* textures[6];
-            if (!LLRenderPass::geometryEntry(*params, materials, item.mE, textures))
+            if (!LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged))
             {
-                f.mGeoFallback.push_back({ (U32)t, params });
+                f.mGeoFallback.push_back({ (U32)t2, params });
                 params->mGeoServed = false;
                 continue;
             }
@@ -5694,24 +5778,36 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             }
             if (params->mModelMatrix)
             {
-                const U32 slot = (rt_matrix_id(params->mModelMatrix) & 0x80000000u) ? scene_region_slot(params->mModelMatrix) : 0;
+                U32 slot = 0;
+                if (rt_matrix_id(params->mModelMatrix) & 0x80000000u)
+                {
+                    slot = scene_region_slot(params->mModelMatrix);
+                }
+                else if (scene_geo_moving_on())
+                {
+                    slot = scene_moving_acquire(params->mModelMatrix, f);       // S4 C
+                }
                 item.mE.mMatrix = slot;
                 f.mGeoRegion = f.mGeoRegion && slot != 0;
             }
             item.mInfo = params;
-            item.mType = (U32)t;
+            item.mType = (U32)t2;
             item.mServed = !params->mModelMatrix || item.mE.mMatrix != 0;
             params->mGeoServed = item.mServed;
             f.mGeoServedCount += item.mServed ? 1 : 0;
             if (item.mServed)
             {
-                ++served_infos[t];
-                served_tris[t] += params->mCount;
+                ++served_infos[t2];
+                served_tris[t2] += params->mCount;
+                if (rigged)
+                {
+                    f.mGeoRigged.push_back((U32)f.mGeo.size());
+                }
             }
             f.mGeo.push_back(item);
         }
     }
-    for (size_t t = 0; t < kGeoTypeCount; ++t)
+    for (size_t t = 0; t < 2 * kGeoTypeCount; ++t)
     {
         if (total_infos[t] && served_infos[t] == total_infos[t])
         {
@@ -5916,13 +6012,19 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
     static std::vector<LLVkBridge::GeoWire> wire;
     static std::vector<U8> blob;
     wire.clear();
-    for (const LLSceneFragment::GeoItem& item : f->mGeo)
+    for (LLSceneFragment::GeoItem& item : f->mGeo)
     {
         if (item.mServed)
         {
+            item.mWire = (U32)wire.size();
             wire.push_back({ item.mE, item.mType });
         }
     }
+    if (sGeoFragByHandle.size() <= handle)
+    {
+        sGeoFragByHandle.resize(handle + 1 + handle / 4, nullptr);
+    }
+    sGeoFragByHandle[handle] = f;
     blob.resize(wire.size() * sizeof(wire[0]) + f->mGeoTex.size() * sizeof(U32));
     U32* names = (U32*)(blob.data() + wire.size() * sizeof(wire[0]));
     for (size_t k = 0; k < f->mGeoTex.size(); ++k)
@@ -5949,7 +6051,7 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
     LLVkBridge::shadowPackets(header, blob.data(), blob.size());
     f->mGeoSent = true;
     group->mGeoHandle = handle;
-    group->mGeoServedMask = (U16)f->mGeoServedMask;
+    group->mGeoServedMask = f->mGeoServedMask;
     group->mGeoServedTris = f->mGeoServedTris;
     ++sGeoReg.mAttached;
     sGeoReg.mRetainWireBytes += blob.size();
@@ -6170,7 +6272,7 @@ struct GeoVerifyStats
 {
     U64 mPasses = 0, mInfos = 0, mMissing = 0, mExtra = 0, mFallbackDiff = 0, mBuilderDiff = 0, mItemDiff = 0, mCountDiff = 0, mGroups = 0, mItems = 0, mMissingInDrawMaps = 0, mDeadGroups = 0, mMissingPasses = 0, mMissingChangedGroup = 0;
     // census of the main view, once a frame (what the worker side of S3 has to carry): sums over the frames counted
-    U64 mFrames = 0, mVisibleGroups = 0, mGroupsWithItems = 0, mItemsByType[13] = {}, mFallback = 0, mNonRegionGroups = 0, mNonRegionItems = 0, mDistinctTextures = 0, mRenderMapAll = 0, mRenderMapGeo = 0, mFragmentless = 0;
+    U64 mFrames = 0, mVisibleGroups = 0, mGroupsWithItems = 0, mItemsByType[26] = {}, mFallback = 0, mNonRegionGroups = 0, mNonRegionItems = 0, mDistinctTextures = 0, mRenderMapAll = 0, mRenderMapGeo = 0, mFragmentless = 0;
     U64 mNamesChecked = 0, mNamesStale = 0, mHandleGroups = 0, mHandleListDiff = 0, mHandleMismatch = 0, mPassesNoList = 0, mInfosNoList = 0;     // G3: the registry's names against prepareFast's, the handles of the listed groups against the list
     U64 mMissingCause[6] = {}, mMissingByType[13] = {}, mDup = 0;     // causes: no owner recorded, pushed by the shadow job, group dead, group's draw map changed, owner not listed, listed with the same serial
     U32 mCensusFrame = ~0u;
@@ -6572,6 +6674,10 @@ int ll_scene_geo_type_number(U32 type)
         for (size_t t = 0; t < kGeoTypeCount; ++t)
         {
             lut[kGeoTypes[t].mType] = (S8)t;
+            if (scene_geo_rigged_on())
+            {
+                lut[kGeoTypes[t].mType + 1] = (S8)(kGeoTypeCount + t);        // S4 B: the rigged variant
+            }
         }
     }
     return type < lut.size() ? lut[type] : -1;
@@ -6625,13 +6731,86 @@ void ll_scene_geo_frame(LLCullResult* cull)
         }
     }
     const std::vector<U32>& handles = cull->mGeoHandles;
-    blob.resize(handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]));
+    if (scene_geo_moving_on())
+    {
+        static U32 prepare_seq = 0;
+        const U32 stamp = ++prepare_seq;        // (one per record, not per frame: a second render in the same frame, the snapshot at exit, sends its own matrices)
+        for (U32 handle : handles)
+        {
+            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+            if (!f)
+            {
+                continue;
+            }
+            for (U32 slot : f->mGeoMoving)
+            {
+                const U32 k = slot - kMovingBase;
+                if (sMovingStamp[k] != stamp && sMovingMatrix[k])
+                {
+                    sMovingStamp[k] = stamp;
+                    LLVkBridge::GeoSlotMatrix m;
+                    m.mSlot = slot;
+                    memcpy(m.mM, sMovingMatrix[k]->mMatrix, sizeof(m.mM));
+                    matrices.push_back(m);
+                    ++sGeoMovingSent;
+                }
+            }
+        }
+    }
+    // S4 B: the palettes of the rigged items of the listed fragments, once per distinct (avatar, skin) of a fragment, from the frame's shared list (sent before this record)
+    struct Binding { U32 mHandle, mItem, mOffset, mJoints; };
+    static std::vector<Binding> bindings;
+    bindings.clear();
+    if (scene_geo_rigged_on())
+    {
+        const auto t_bind = std::chrono::steady_clock::now();
+        for (U32 handle : handles)
+        {
+            LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+            if (!f || f->mGeoRigged.empty())
+            {
+                continue;
+            }
+            const LLVOAvatar* last_avatar = nullptr;
+            const LLMeshSkinInfo* last_skin = nullptr;
+            U32 last_offset = ~0u, last_joints = 0;
+            for (U32 index : f->mGeoRigged)
+            {
+                const LLSceneFragment::GeoItem& item = f->mGeo[index];
+                LLVOAvatar* avatar = item.mInfo->mAvatar.get();
+                const LLMeshSkinInfo* skin = item.mInfo->mSkinInfo.get();
+                if (avatar != last_avatar || skin != last_skin)
+                {
+                    last_avatar = avatar;
+                    last_skin = skin;
+                    U32 offset = 0, joints = 0;
+                    if (ll_frame_palette(avatar, skin, offset, joints))
+                    {
+                        last_offset = offset;
+                        last_joints = joints;
+                    }
+                    else
+                    {
+                        last_offset = ~0u;
+                        last_joints = 0;
+                    }
+                }
+                bindings.push_back({ handle, item.mWire, last_offset, last_joints });
+            }
+        }
+        ll_frame_palette_flush();
+        sGeoRiggedBindings += bindings.size();
+        sGeoRiggedNs += geo_ns_since(t_bind);
+    }
+    blob.resize(handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]) + bindings.size() * sizeof(Binding));
     if (!handles.empty()) { memcpy(blob.data(), handles.data(), handles.size() * sizeof(U32)); }
     if (!matrices.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32), matrices.data(), matrices.size() * sizeof(matrices[0])); }
+    if (!bindings.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]), bindings.data(), bindings.size() * sizeof(Binding)); }
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 21;
     header.mEntries = (U32)handles.size();
     header.mMatrices = (U32)matrices.size();
+    header.mPaletteFloats = (U32)bindings.size();
     LLVkBridge::shadowPackets(header, blob.data(), blob.size());
     s.mHandles += handles.size();
     s.mMatrices += matrices.size();
@@ -6661,7 +6840,9 @@ void ll_scene_geo_frame(LLCullResult* cull)
             << r.mTexUpdateRecords << " (" << r.mTexUpdateEntries << " entries); reconcile every 256 frames: " << r.mReconcileRuns << " runs, " << r.mReconcileMissed << " names an event had not told ("
             << (double)r.mNsReconcile / 1000.0 / std::max<U64>(r.mReconcileRuns, 1) << " us a run) | main thread us per frame: all " << (double)s.mNsAll / 1000.0 / n << " = events and keep-alive "
             << (double)s.mNsEvents / 1000.0 / n << " (registry total " << (double)r.mNsEvents / 1000.0 / n << ") + list and send " << (double)s.mNsSend / 1000.0 / n << "; fragment attach (retain, at group rebuild) "
-            << (double)r.mNsRetain / 1000.0 / n << LL_ENDL;
+            << (double)r.mNsRetain / 1000.0 / n << " | rigged palette bindings " << (double)sGeoRiggedBindings / n << " a frame, " << (double)sGeoRiggedNs / 1000.0 / n << " us | moving matrices sent " << (double)sGeoMovingSent / n << " a frame, slots held "
+            << sMovingSlot.size() << ", acquired " << sMovingAcquired << ", no slot free " << sMovingFull << LL_ENDL;
+        sGeoRiggedBindings = sGeoRiggedNs = sGeoMovingSent = 0;
     }
 }
 
@@ -14846,24 +15027,19 @@ static void rt_name_rigged_main_view()
         std::unordered_map<const void*, U32> matrix_numbers;
         std::vector<F32> palettes;
         std::unordered_map<const F32*, U32> palette_offsets;
-        for (U32 type : types)
+        // <FS> one rigged draw named to the ray scene (S4 B: the render map or, for the draws the scene table serves, the visible fragments' items)
+        auto name_one = [&](LLDrawInfo* params)
         {
-            auto* begin = gPipeline.beginRenderMap(type + 1);       // the rigged variant of a pass type is the next number
-            auto* end = gPipeline.endRenderMap(type + 1);
-            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-            {
-                LLDrawInfo* params = *i;
-                LLCullResult::increment_iterator(i, end);
                 const LLVertexBuffer* vb = params->mVertexBuffer.get();
                 if (!params->mCount || !params->mAvatar || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
                     || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || params->mSkinInfo.isNull())
                 {
-                    continue;
+                    return;
                 }
                 LLVkBridge::ShadowSkinEntry e = {};
                 if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
                 {
-                    continue;
+                    return;
                 }
                 e.mVertexBuffer = vb->getVertexBufferId();
                 e.mIndexBuffer = vb->getIndexBufferId();
@@ -14894,6 +15070,35 @@ static void rt_name_rigged_main_view()
                     e.mMatrix = it->second;
                 }
                 entries.push_back(e);
+        };
+        for (U32 type : types)
+        {
+            auto* begin = gPipeline.beginRenderMap(type + 1);       // the rigged variant of a pass type is the next number
+            auto* end = gPipeline.endRenderMap(type + 1);
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo* params = *i;
+                LLCullResult::increment_iterator(i, end);
+                name_one(params);
+            }
+        }
+        if (scene_geo_rigged_on() && ll_scene_geo_serving())
+        {
+            // S4 B: the render map no longer holds the rigged draws the table serves: they are named from the fragments listed for this frame
+            if (LLCullResult* cull = gPipeline.getCull())
+            {
+                for (U32 handle : cull->mGeoHandles)
+                {
+                    const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+                    if (!f)
+                    {
+                        continue;
+                    }
+                    for (U32 index : f->mGeoRigged)
+                    {
+                        name_one(f->mGeo[index].mInfo);
+                    }
+                }
             }
         }
         if (!entries.empty())
