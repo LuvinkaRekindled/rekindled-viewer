@@ -638,6 +638,7 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
     }
 }
 
+bool ll_skin_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints);       // pipeline.cpp (S4 A1)
 void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo* materials, const std::vector<LLVkBridge::GeoEntry>& built, const std::vector<LLDrawInfo*>& built_fallback);     // pipeline.cpp (S3)
 LLShadowDrawStats gShadowDrawStats;
 LLGeometryPacketStats gGeometryPacketStats;
@@ -663,16 +664,68 @@ bool LLRenderPass::deferredPacketsEnabled()
     return on && gDeferredDiffusePullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable();
 }
 
+// <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records. LL_VK_RIGGED_PACKETS=1 (needs FSDeferredPackets), LL_VK_RIGGED_PACKETS_AB=<seconds> alternates it (log marker
+// "[phase] rigged packets now ON/off"), LL_VK_RIGGED_VERIFY=1 checks that every draw info of a rigged pass is an entry, a fallback draw or a counted skip.
+bool ll_rigged_packets_enabled()
+{
+    static const int base = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS"); return v ? atoi(v) : 0; }();
+    static const int period = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS_AB"); return v ? atoi(v) : 0; }();
+    static U32 frame = ~0u;
+    static bool now = false;
+    if (frame != (U32)gFrameCount)
+    {
+        frame = (U32)gFrameCount;
+        bool on = base != 0 || period > 0;
+        if (period > 0)
+        {
+            const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            const bool phase = ((seconds / period) % 2) == 1;
+            static int last = -1;
+            if ((int)phase != last)
+            {
+                last = (int)phase;
+                LL_INFOS("VkScene") << "[phase] rigged packets now " << (phase ? "ON" : "off") << LL_ENDL;
+            }
+            on = on && phase;
+        }
+        now = on && gDeferredDiffusePullSkinProgram.mProgramObject != 0;
+    }
+    return now && LLRenderPass::deferredPacketsEnabled();
+}
+
+bool ll_rigged_indexed()
+{
+    static const bool on = []() { const char* v = getenv("LL_VK_RIGGED_INDEXED"); return !v || atoi(v) != 0; }();      // on unless LL_VK_RIGGED_INDEXED=0 (the non-indexed pull draw costs +0.8 ms GPU in the plaza: no vertex reuse)
+    return on;
+}
+
+static bool rigged_verify()
+{
+    static const bool on = getenv("LL_VK_RIGGED_VERIFY") != nullptr;
+    return on;
+}
+
+// A1 census (log tag RiggedPackets, every 600 frames): what the rigged records carried and what they left to the old path
+static struct RiggedStats
+{
+    U64 mTris = 0, mRuns = 0, mRecords = 0, mEntries = 0, mFallback = 0, mNotDrawn = 0, mPalettes = 0, mPaletteFloats = 0, mInRenderMap = 0, mUncounted = 0, mFrames = 0;
+    U64 mLast = 0;
+} sRigged;
+
 // can this static draw be an entry of a geometry record? The pull shader reads 16 bit indices, position first, and the normal, texcoord 0 and colour arrays; the textures
 // come from the bindless table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
-static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials)
+static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
-    if (!p.mCount || p.mAvatar || p.mGLTFMaterial || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
+    if (!p.mCount || (p.mAvatar != nullptr) != rigged || p.mGLTFMaterial || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0
         || !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
     {
         return false;
+    }
+    if (rigged && (p.mSkinInfo.isNull() || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4)))
+    {
+        return false;       // (no skin: the old path draws nothing, or cannot)
     }
     if (materials)
     {
@@ -779,6 +832,9 @@ struct LLGeometryBuild
     U32 mType = 0;
     bool mHasMaterials = false;
     LLGeometryPassInfo mInfo;
+    bool mRigged = false;               // S4 A1: the rigged variant of the pass type (entries carry weights and a palette, kind 25)
+    std::vector<F32> mPalettes;         // ... the palettes the entries point into (12 floats per joint)
+    U32 mNotDrawn = 0, mInMap = 0;      // ... draw infos the old path draws nothing for (no avatar / skin not loaded), draw infos looked at
     LLCullResult* mCull = nullptr;
     bool mServe = false;                // S3: the scene table serves this frame (ll_scene_geo_serving() when the build was made) ...
     bool mSkipServed = false;           // ... and the draws it serves are left out of this build (not while verifying)
@@ -803,10 +859,13 @@ static void build_geometry(LLGeometryBuild& out)
     std::vector<F32>& matrices = out.mMatrices;
     std::unordered_map<const void*, U32> matrix_numbers;
     std::unordered_map<const LLViewerTexture*, U32> texture_numbers;
+    std::unordered_map<const F32*, U32> palette_offsets;
     entries.clear();
     matrices.clear();
     out.mTextures.clear();
     out.mFallback.clear();
+    out.mPalettes.clear();
+    out.mNotDrawn = out.mInMap = 0;
 
     // the matrices the shader would get from LLRender::syncMatrices() for this model matrix: modelview, modelview * projection, normal matrix (inverse transpose)
     auto add_matrix = [&](const LLMatrix4* model) -> U32
@@ -854,6 +913,7 @@ static void build_geometry(LLGeometryBuild& out)
     {
         LLDrawInfo* params = *i;
         LLCullResult::increment_iterator(i, end);
+        ++out.mInMap;
         if (!params->mCount)
         {
             continue;       // nothing to draw (the old path returns)
@@ -863,13 +923,31 @@ static void build_geometry(LLGeometryBuild& out)
             ++out.mSkipped;     // S3: the scene table draws this one
             continue;
         }
-        if (!geometry_packet_ok(*params, materials == nullptr, materials))
+        if (out.mRigged && !params->mAvatar)
+        {
+            ++out.mNotDrawn;    // no palette: the old path draws nothing either
+            continue;
+        }
+        if (!geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged))
         {
             out.mFallback.push_back(params);
             continue;
         }
         const LLVertexBuffer* vb = params->mVertexBuffer.get();
         LLVkBridge::GeoEntry e = {};
+        if (out.mRigged)
+        {
+            U32 offset = 0, joints = 0;
+            if (!ll_skin_palette(params->mAvatar, params->mSkinInfo.get(), out.mPalettes, palette_offsets, offset, joints))
+            {
+                ++out.mNotDrawn;    // the skin is not loaded yet: not drawn, as before
+                continue;
+            }
+            e.mFlags |= LLVkBridge::GEO_RIGGED;
+            e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+            e.mPaletteOffset = offset;
+            e.mJoints = joints;
+        }
         e.mVertexBuffer = vb->getVertexBufferId();
         e.mIndexBuffer = vb->getIndexBufferId();
         e.mFirstIndex = params->mOffset;
@@ -990,16 +1068,17 @@ static U32 geometry_build_key(U32 type, const LLGeometryPassInfo* materials)
     return (type << 3) | (materials ? 1u : 0u) | ((materials && materials->mNormalMap) ? 2u : 0u) | ((materials && materials->mSpecularMap) ? 4u : 0u);
 }
 
-static void fill_geometry_build(LLGeometryBuild& b, U32 type, const LLGeometryPassInfo* materials, LLCullResult* cull)
+static void fill_geometry_build(LLGeometryBuild& b, U32 type, const LLGeometryPassInfo* materials, LLCullResult* cull, bool rigged = false)
 {
     b.mType = type;
+    b.mRigged = rigged;
     b.mHasMaterials = materials != nullptr;
     if (materials)
     {
         b.mInfo = *materials;
     }
     b.mCull = cull;
-    b.mServe = ll_scene_geo_serving() && ll_scene_geo_main_view();      // (the table is told only the main view's visible fragments)
+    b.mServe = !rigged && ll_scene_geo_serving() && ll_scene_geo_main_view();      // (the table is told only the main view's visible fragments; it carries no rigged draws)
     b.mSkipServed = b.mServe && ll_scene_geo_skip();
     b.mEpoch = LLBuilderGuard::sEpoch.load();
     memcpy(b.mView, gRenderModelView, sizeof(b.mView));
@@ -1007,7 +1086,7 @@ static void fill_geometry_build(LLGeometryBuild& b, U32 type, const LLGeometryPa
 }
 
 // static
-void LLRenderPass::kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials)
+void LLRenderPass::kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials, bool rigged)
 {
     LLCullResult* cull = gPipeline.getCull();
     if (!cull)
@@ -1020,7 +1099,7 @@ void LLRenderPass::kickGeometryBuild(U32 type, const LLGeometryPassInfo* materia
         return;         // started earlier in the frame for this cull result (the early sort)
     }
     std::shared_ptr<LLGeometryBuild> build = std::make_shared<LLGeometryBuild>();
-    fill_geometry_build(*build, type, materials, cull);
+    fill_geometry_build(*build, type, materials, cull, rigged);
     // the job keeps the build alive itself (it is written by the pool thread until the job is done, whatever happens to the registry); the job lets go of it when it has run
     build->mJob = LLAsyncPool::shared().submit([build]() { build_geometry(*build); });
     sGeometryBuilds[key] = build;
@@ -1045,7 +1124,7 @@ void LLRenderPass::finishGeometryBuilds(LLCullResult* cull)
 }
 
 // static
-void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials)
+void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials, bool rigged)
 {
     LL_CPU_ZONE("packets: geometry (build + record)");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
@@ -1084,14 +1163,14 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
     if (!build)
     {
         build = std::make_shared<LLGeometryBuild>();
-        fill_geometry_build(*build, type, materials, cull);
+        fill_geometry_build(*build, type, materials, cull, rigged);
         build_geometry(*build);
         ++sGeoInline;
     }
     else if (geometry_build_verify())
     {
         LLGeometryBuild again;
-        fill_geometry_build(again, type, materials, cull);
+        fill_geometry_build(again, type, materials, cull, rigged);
         build_geometry(again);
         static std::atomic<U32> checked{0}, bad{0};
         ++checked;
@@ -1116,7 +1195,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
     {
         // S3: the build left out what the table serves, and the table was not told this cull result's fragments (an impostor, a snapshot, a frame boundary in between): built again with everything in it
         build = std::make_shared<LLGeometryBuild>();
-        fill_geometry_build(*build, type, materials, cull);
+        fill_geometry_build(*build, type, materials, cull, rigged);
         build->mServe = false;
         build->mSkipServed = false;
         build_geometry(*build);
@@ -1141,7 +1220,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             ll_scene_geo_count(1, 1);
         }
     }
-    if (ll_scene_geo_on())
+    if (ll_scene_geo_on() && !rigged)
     {
         ll_scene_geo_verify(cull, type, materials, build->mEntries, build->mFallback);      // <FS> S3 G1 (only with LL_VK_SCENE_VERIFY=1)
     }
@@ -1151,18 +1230,61 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
     if (!entries.empty())
     {
         LLVkBridge::ShadowPacketsHeader header;
-        header.mKind = 3;
+        header.mKind = rigged ? (ll_rigged_indexed() ? 26 : 25) : 3;
         header.mEntries = (U32)entries.size();
         header.mMatrices = (U32)(matrices.size() / 44);
-        std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
+        const std::vector<F32>& palettes = build->mPalettes;
+        header.mPaletteFloats = rigged ? (U32)palettes.size() : 0;
+        std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + (rigged ? palettes.size() * sizeof(F32) : 0));
         memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
         memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+        if (rigged)
+        {
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
+        }
         LLVkBridge::shadowPackets(header, blob.data(), blob.size());
         gGeometryPacketStats.mEntries += entries.size();
         gGeometryPacketStats.mMatrices += header.mMatrices;
         ++gGeometryPacketStats.mRecords;
     }
     gGeometryPacketStats.mFallback += fallback.size();
+    if (rigged)
+    {
+        RiggedStats& rs = sRigged;
+        ++rs.mRecords;
+        rs.mEntries += entries.size();
+        rs.mFallback += build->mFallback.size();
+        rs.mNotDrawn += build->mNotDrawn;
+        rs.mPaletteFloats += build->mPalettes.size();
+        rs.mPalettes += build->mPalettes.size() / 12;        // (joints: the palettes are 12 floats a joint)
+        rs.mInRenderMap += build->mInMap;
+        {
+            U32 last_ib = ~0u;
+            for (const LLVkBridge::GeoEntry& ge : entries)
+            {
+                rs.mTris += ge.mIndexCount / 3;
+                if (ge.mIndexBuffer != last_ib)
+                {
+                    ++rs.mRuns;
+                    last_ib = ge.mIndexBuffer;
+                }
+            }
+        }
+        const U64 accounted = entries.size() + build->mFallback.size() + build->mNotDrawn;
+        if (rigged_verify() && accounted > build->mInMap)
+        {
+            ++rs.mUncounted;        // every draw info is an entry, a fallback draw or a skip: more than the render map holds would be a double count
+        }
+        if (gFrameCount >= rs.mLast + 600)
+        {
+            const U64 frames = std::max<U64>(1, gFrameCount - rs.mLast);
+            rs.mLast = gFrameCount;
+            LL_INFOS("RiggedPackets") << "per frame: " << (double)rs.mRecords / frames << " records, " << (double)rs.mEntries / frames << " entries, " << (double)rs.mFallback / frames
+                << " fallback draws, " << (double)rs.mNotDrawn / frames << " not drawn (no palette), " << (double)rs.mInRenderMap / frames << " draw infos in the render maps, joints in palettes "
+                << (double)rs.mPalettes / frames << ", palette bytes " << (double)rs.mPaletteFloats * 4.0 / frames << "; triangles " << (double)rs.mTris / frames << " (corners drawn " << (double)rs.mTris * 3.0 / frames << "), runs of one index buffer " << (double)rs.mRuns / frames << "; over-count " << rs.mUncounted << LL_ENDL;
+            rs.mTris = rs.mRuns = rs.mRecords = rs.mEntries = rs.mFallback = rs.mNotDrawn = rs.mPalettes = rs.mPaletteFloats = rs.mInRenderMap = 0;
+        }
+    }
 }
 
 void LLShadowDrawStats::endStaticPass()

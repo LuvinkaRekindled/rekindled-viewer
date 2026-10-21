@@ -208,7 +208,8 @@ namespace LLVkBridge
     // matrix as three vec4 columns (the viewer computes them, once per model matrix). Matrix 0 is the view alone.
     enum GeoFlags : U32
     {
-        GEO_ONE_TEXTURE = 1         // one diffuse texture, mTextures[0]: the vertices carry no texture index
+        GEO_ONE_TEXTURE = 1,        // one diffuse texture, mTextures[0]: the vertices carry no texture index
+        GEO_RIGGED = 2              // A1 (kind 25): a rigged draw, mWeightOffset / mPaletteOffset / mJoints are valid
     };
     struct GeoEntry
     {
@@ -220,7 +221,10 @@ namespace LLVkBridge
         F32 mSpecular[4];
         F32 mEnvIntensity, mCutoff, mBrightness, mPad;
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
+        U32 mWeightOffset, mPaletteOffset, mJoints, mPad3;          // A1 rigged draws: byte offset of the weight4 array, the palette's offset in floats (12 per joint) and its joint count
     };
+    // S4 A1 (doc/vulkan/S4-design.md) kind 25: the same record as kind 3 for rigged draws (GEO_RIGGED, entries 160 bytes in the table, drawn with the skinned pull program): after the matrices (44 floats each)
+    //   come mPaletteFloats floats of joint matrix palettes (12 per joint), the entries point into them.
     // S3 G2 / G3 (doc/vulkan/S3-design.md, LL_VK_SCENE_GEO=2): the deferred geometry entries kept by the worker in a persistent table, drawn from the list of fragments the viewer says are visible.
     // The fragments are named by the viewer's dense HANDLE (LLSceneFragment::mGeoHandle, reused only after the release was sent).
     // kind 20 RETAIN_GEO: mFragment = handle, mEntries x GeoWire (mE.mMatrix = region matrix slot, 0 = the view alone; its texture fields are 1 + the number in the fragment's texture list, 0 = none),

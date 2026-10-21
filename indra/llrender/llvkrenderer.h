@@ -307,6 +307,8 @@ public:
     bool draw(U32 vertex_count, U32 first_vertex);
     bool drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset);
     bool drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0);      // <FS> render packets
+    // <FS> S4 A1: indexed packet draws: the commands (VkDrawIndexedIndirectCommand, the draw number as first instance) of one run that share the index buffer set with setIndexBuffer(); the hardware reads the indices (vertex reuse)
+    bool drawPacketsIndexed(const VkDrawIndexedIndirectCommand* commands, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0);
     // <FS> bindless sampled images (set 2) for the render packets with textures: one slot per distinct (image view, sampler) pair a frame uses, handed out on first
     // use; slot 0 is the white image. The caller makes sure the image is in the sampling layout.
     bool bindlessAvailable() const { return mSet2Layout != VK_NULL_HANDLE; }
