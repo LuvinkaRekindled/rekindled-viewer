@@ -5543,11 +5543,12 @@ static void res_ray_membership(U64 frame)
                     continue;
                 }
                 // a changed buffer refreshes the buffer info of the groups its entries belong to: the entries that share a group need one note, not one each
+                static const bool dedupe = !(getenv("LL_VK_SCENE_EVDEDUPE") && getenv("LL_VK_SCENE_EVDEDUPE")[0] == '0');
                 void* noted[8];
                 size_t noted_count = 0;
                 auto already = [&](void* group) -> bool
                 {
-                    for (size_t k = 0; k < noted_count; ++k)
+                    for (size_t k = 0; dedupe && k < noted_count; ++k)
                     {
                         if (noted[k] == group)
                         {
