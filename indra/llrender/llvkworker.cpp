@@ -4119,6 +4119,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
 
+
     Renderer::ScratchAlloc commands;
     const auto& caps = Context::instance().getCaps();
     if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
@@ -4149,7 +4150,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
 }
 
 // the worker side of a record of deferred geometry draws (diffusePullV.glsl): the draw's matrices are in the record, its textures get slots in the bindless table
-static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob, bool rigged = false, bool indexed = false)
 {
     struct GeoGpu
     {
@@ -4163,26 +4164,28 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     static_assert(sizeof(GeoGpu) == 128, "geometry packet entry");
     // S3 G0 (LL_VK_SCENE_TIMES=1): what this record costs the worker: the table build (entries, buffer and texture lookups), and the rest (matrices, state, draw)
     static const bool timed = getenv("LL_VK_SCENE_TIMES") != nullptr;
-    static U64 ns_table = 0, ns_rest = 0, records = 0, entries_total = 0;
+    static U64 ns_table_a[2] = {}, ns_rest_a[2] = {}, records_a[2] = {}, entries_total_a[2] = {};       // [0] static, [1] rigged (S4 A1, kind 25)
     const auto t_begin = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
     std::chrono::steady_clock::time_point t_table_end = t_begin;
     struct Account
     {
-        bool mOn; std::chrono::steady_clock::time_point mBegin, &mTableEnd; U32 mEntries;
+        bool mOn; std::chrono::steady_clock::time_point mBegin, &mTableEnd; U32 mEntries; bool mRigged;
         ~Account()
         {
             if (!mOn) return;
             const auto now = std::chrono::steady_clock::now();
+            const int k = mRigged ? 1 : 0;
+            U64& ns_table = ns_table_a[k]; U64& ns_rest = ns_rest_a[k]; U64& records = records_a[k]; U64& entries_total = entries_total_a[k];
             ns_table += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(mTableEnd - mBegin).count();
             ns_rest += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(now - mTableEnd).count();
             entries_total += mEntries;
             if (++records % 3000 == 0)
             {
-                LL_INFOS("VkScene") << "geometry packets, worker time per record: table build " << (double)ns_table / 1000.0 / records << " us, matrices + state + draw " << (double)ns_rest / 1000.0 / records
+                LL_INFOS("VkScene") << (mRigged ? "rigged " : "") << "geometry packets, worker time per record: table build " << (double)ns_table / 1000.0 / records << " us, matrices + state + draw " << (double)ns_rest / 1000.0 / records
                     << " us, " << (double)entries_total / records << " entries a record (" << records << " records)" << LL_ENDL;
             }
         }
-    } account = { timed, t_begin, t_table_end, h.mEntries };
+    } account = { timed, t_begin, t_table_end, h.mEntries, rigged };
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
@@ -4201,20 +4204,37 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     }
     const LLVkBridge::GeoEntry* entries = (const LLVkBridge::GeoEntry*)blob;
     const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::GeoEntry) * h.mEntries);
-    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(GeoGpu) * (size_t)h.mEntries);
-    Renderer::ScratchAlloc models = r.allocVertexScratch(176 * (size_t)std::max<U32>(h.mMatrices, 1));
-    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
+    // S4 A1: a rigged entry is the 128 bytes of GeoGpu and 32 more (weights, palette, joints), the palettes follow the matrices in the blob
+    const size_t stride = rigged ? 160 : sizeof(GeoGpu);
+    if (rigged && h.mPaletteFloats == 0)
     {
         return;
     }
+    Renderer::ScratchAlloc table = r.allocVertexScratch(stride * (size_t)h.mEntries);
+    Renderer::ScratchAlloc models = r.allocVertexScratch(176 * (size_t)std::max<U32>(h.mMatrices, 1));
+    Renderer::ScratchAlloc palettes;
+    if (rigged)
+    {
+        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+    }
+    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress || (rigged && (!palettes.mPtr || !palettes.mAddress)))
+    {
+        return;
+    }
+    if (rigged)
+    {
+        memcpy(palettes.mPtr, matrices + 44 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
+    }
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
-    GeoGpu* out = (GeoGpu*)table.mPtr;
+    static thread_local std::vector<Buf*> index_buffers;
+    index_buffers.assign(h.mEntries, nullptr);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         const LLVkBridge::GeoEntry& e = entries[i];
-        GeoGpu& g = out[i];
-        memset(&g, 0, sizeof(g));
+        U8* raw = (U8*)table.mPtr + stride * i;
+        memset(raw, 0, stride);
+        GeoGpu& g = *(GeoGpu*)raw;
         Buf* vb = packet_buffer(e.mVertexBuffer);
         Buf* ib = packet_buffer(e.mIndexBuffer);
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
@@ -4243,6 +4263,16 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;
+        if (rigged)
+        {
+            U32* x = (U32*)(raw + 128);
+            const U64 wa = pa + e.mWeightOffset, pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+            x[0] = (U32)wa;
+            x[1] = (U32)(wa >> 32);
+            x[2] = (U32)pal;
+            x[3] = (U32)(pal >> 32);
+            x[4] = e.mJoints;
+        }
         if (probe_on())
         {
             // positions are the vec4 array at the start of the vertex buffer, the normals (or the next array) follow it
@@ -4268,6 +4298,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         g.mCutoff = e.mCutoff;
         g.mBrightness = e.mBrightness;
         counts[i] = e.mIndexCount;
+        index_buffers[i] = ib;
         vb->mLastUseFrame = frame_now;
         ib->mLastUseFrame = frame_now;
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
@@ -4296,6 +4327,62 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     r.setVertexInput(vi);
     r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
+
+    if (indexed)
+    {
+        // S4 A1: the hardware reads the indices (the vertex shader gets the index as its vertex number: post-transform cache reuse); one indirect draw per run of entries that share an index buffer
+        static thread_local std::vector<VkDrawIndexedIndirectCommand> icmds;
+        icmds.assign(h.mEntries, VkDrawIndexedIndirectCommand{ 0, 1, 0, 0, 0 });
+        for (U32 i = 0; i < h.mEntries; ++i)
+        {
+            icmds[i] = { counts[i], 1u, entries[i].mFirstIndex, 0, i };
+        }
+        const auto& icaps = Context::instance().getCaps();
+        Renderer::ScratchAlloc idraw;
+        if (icaps.mMultiDrawIndirect && icaps.mDrawIndirectFirstInstance)
+        {
+            idraw = r.allocVertexScratch(sizeof(VkDrawIndexedIndirectCommand) * (size_t)h.mEntries);
+            if (idraw.mPtr)
+            {
+                memcpy(idraw.mPtr, icmds.data(), sizeof(VkDrawIndexedIndirectCommand) * (size_t)h.mEntries);
+            }
+        }
+        U32 drawn = 0, runs = 0;
+        for (U32 a = 0; a < h.mEntries; )
+        {
+            if (!index_buffers[a] || !counts[a])
+            {
+                ++a;
+                continue;
+            }
+            U32 b = a + 1;
+            while (b < h.mEntries && index_buffers[b] == index_buffers[a])
+            {
+                ++b;        // (an entry with nothing to draw has a zero count: the draw is empty)
+            }
+            r.setIndexBuffer(index_buffers[a]->mVk.mBuffer, index_buffers[a]->mArena.mOffset, VK_INDEX_TYPE_UINT16);
+            if (r.drawPacketsIndexed(icmds.data() + a, b - a, idraw.mPtr ? idraw.mBuffer : VK_NULL_HANDLE, idraw.mPtr ? idraw.mOffset + (VkDeviceSize)a * sizeof(VkDrawIndexedIndirectCommand) : 0))
+            {
+                drawn += b - a;
+                ++runs;
+            }
+            a = b;
+        }
+        if (drawn)
+        {
+            if (sStatsEnabled)
+            {
+                sStats.mDone += drawn;
+            }
+        }
+        else
+        {
+            ++sStats.mRendererRefused;
+        }
+        sDraws += runs;
+        sDrawsTotal += runs;
+        return;
+    }
 
     Renderer::ScratchAlloc commands;
     const auto& caps = Context::instance().getCaps();
@@ -6806,9 +6893,9 @@ void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         on_object_velocity_packets(h, blob);
         return;
     }
-    if (h.mKind == 3)
+    if (h.mKind == 3 || h.mKind == 25 || h.mKind == 26)
     {
-        on_geometry_packets(h, blob);
+        on_geometry_packets(h, blob, h.mKind >= 25, h.mKind == 26);
         return;
     }
     if (h.mKind == 4)

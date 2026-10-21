@@ -11665,6 +11665,12 @@ static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::
     return true;
 }
 
+// <FS> S4 A1: the same palette function for the geometry records (lldrawpool.cpp)
+bool ll_skin_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints)
+{
+    return shadow_palette(avatar, skin, data, offsets, offset, joints);
+}
+
 void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;

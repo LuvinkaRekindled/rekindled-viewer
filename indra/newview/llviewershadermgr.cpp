@@ -172,6 +172,8 @@ LLShaderProgram            gDeferredShadowAlphaPullProgram;
 LLShaderProgram            gDeferredShadowSkinPullProgram;
 LLShaderProgram            gDeferredDiffusePullProgram;
 LLShaderProgram            gDeferredMaterialPullProgram[16];
+LLShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
+LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
 LLShaderProgram            gDeferredShadowAlphaMaskProgram;
 LLShaderProgram            gDeferredSkinnedShadowAlphaMaskProgram;
 LLShaderProgram            gDeferredShadowGLTFAlphaMaskProgram;
@@ -265,6 +267,8 @@ LLShaderProgram            gGLTFPBRMetallicRoughnessProgram;
 
 
 //helper for making a rigged variant of a given shader
+extern bool ll_rigged_indexed();       // lldrawpool.cpp (S4 A1)
+
 static bool make_rigged_variant(LLShaderProgram& shader, LLShaderProgram& riggedShader)
 {
     riggedShader.mName = llformat("Skinned %s", shader.mName.c_str());
@@ -1171,6 +1175,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowSkinPullProgram.unload();
         gDeferredDiffusePullProgram.unload();
         for (LLShaderProgram& pull : gDeferredMaterialPullProgram)
+        {
+            pull.unload();
+        }
+        gDeferredDiffusePullSkinProgram.unload();
+        for (LLShaderProgram& pull : gDeferredMaterialPullSkinProgram)
         {
             pull.unload();
         }
@@ -2390,6 +2399,25 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("ShadowPackets") << "the deferred diffuse pull shader could not be made: the diffuse pass stays on the old path" << LL_ENDL;
             gDeferredDiffusePullProgram.unload();
         }
+        // <FS> S4 A1: ... and its rigged variant (HAS_SKIN: the draw's weights and palette are read by address). Optional.
+        gDeferredDiffusePullSkinProgram.mName = "Deferred Diffuse Pull Skin Shader";
+        gDeferredDiffusePullSkinProgram.mFeatures.hasSrgb = true;
+        gDeferredDiffusePullSkinProgram.mShaderFiles.clear();
+        gDeferredDiffusePullSkinProgram.mShaderFiles.push_back(make_pair("deferred/diffusePullV.glsl", ShaderStage::Vertex));
+        gDeferredDiffusePullSkinProgram.mShaderFiles.push_back(make_pair("deferred/diffuseIndexedF.glsl", ShaderStage::Fragment));
+        gDeferredDiffusePullSkinProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gDeferredDiffusePullSkinProgram.addPermutation("LL_BINDLESS_DIFFUSE", "1");
+        gDeferredDiffusePullSkinProgram.addPermutation("HAS_SKIN", "1");
+        if (ll_rigged_indexed())
+        {
+            gDeferredDiffusePullSkinProgram.addPermutation("HAS_INDEXED_DRAW", "1");
+        }
+        add_common_permutations(&gDeferredDiffusePullSkinProgram);
+        if (!gDeferredDiffusePullSkinProgram.createShader())
+        {
+            LL_WARNS("ShadowPackets") << "the rigged deferred diffuse pull shader could not be made: the rigged diffuse draws stay on the old path" << LL_ENDL;
+            gDeferredDiffusePullSkinProgram.unload();
+        }
     }
 
     // <FS> ... and the materials passes: the unskinned programs of the 12 deferred passes (alpha mode in bits 0-1, specular map bit 2, normal map bit 3). Optional too.
@@ -2436,6 +2464,51 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             {
                 LL_WARNS("ShadowPackets") << "a materials pull shader could not be made (index " << i << "): that materials pass stays on the old path" << LL_ENDL;
                 pull.unload();
+            }
+
+            // <FS> S4 A1: the rigged variant of the same pass (HAS_SKIN)
+            LLShaderProgram& skin = gDeferredMaterialPullSkinProgram[i];
+            skin.mName = llformat("Material Pull Skin Shader %d", i);
+            skin.mShaderFiles.clear();
+            skin.mShaderFiles.push_back(make_pair("deferred/materialPullV.glsl", ShaderStage::Vertex));
+            skin.mShaderFiles.push_back(make_pair("deferred/materialF.glsl", ShaderStage::Fragment));
+            skin.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            skin.clearPermutations();
+            if (i & 0x8)
+            {
+                skin.addPermutation("HAS_NORMAL_MAP", "1");
+            }
+            if (i & 0x4)
+            {
+                skin.addPermutation("HAS_SPECULAR_MAP", "1");
+            }
+            skin.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
+            if (alpha_mode != 0)
+            {
+                skin.mFeatures.hasAlphaMask = true;
+                skin.addPermutation("HAS_ALPHA_MASK", "1");
+            }
+            if (use_sun_shadow)
+            {
+                skin.addPermutation("HAS_SUN_SHADOW", "1");
+            }
+            skin.addPermutation("LL_BINDLESS_MATERIAL", "1");
+            skin.addPermutation("HAS_SKIN", "1");
+            if (ll_rigged_indexed())
+            {
+                skin.addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(&skin);
+            skin.mFeatures.hasSrgb = true;
+            skin.mFeatures.calculatesAtmospherics = true;
+            skin.mFeatures.hasAtmospherics = true;
+            skin.mFeatures.hasGamma = true;
+            skin.mFeatures.hasShadows = use_sun_shadow;
+            skin.mFeatures.hasReflectionProbes = true;
+            if (!skin.createShader())
+            {
+                LL_WARNS("ShadowPackets") << "a rigged materials pull shader could not be made (index " << i << "): that rigged pass stays on the old path" << LL_ENDL;
+                skin.unload();
             }
         }
     }

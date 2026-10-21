@@ -124,6 +124,28 @@ void LLDrawPoolSimple::renderDeferred(S32 pass)
     }
 
     //render rigged
+    if (ll_rigged_packets_enabled())
+    {
+        // <FS> S4 A1: the rigged draws as one record (the rigged pull program); what it cannot carry is drawn the old way
+        std::vector<LLDrawInfo*> fallback;
+        gDeferredDiffusePullSkinProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_SIMPLE_RIGGED, fallback, nullptr, true);
+        if (!fallback.empty())
+        {
+            gDeferredDiffuseProgram.bind(true);
+            const LLVOAvatar* lastAvatar = nullptr;
+            U64 lastMeshId = 0;
+            bool skipLastSkin = false;
+            for (LLDrawInfo* params : fallback)
+            {
+                if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
+                {
+                    pushBatch(*params, true, true);
+                }
+            }
+        }
+        return;
+    }
     gDeferredDiffuseProgram.bind(true);
     pushRiggedBatches(LLRenderPass::PASS_SIMPLE_RIGGED, true, true);
 }

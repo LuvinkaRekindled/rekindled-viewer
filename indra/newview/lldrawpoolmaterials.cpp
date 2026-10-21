@@ -115,6 +115,10 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
                     ll_scene_geo_count(4, 1);
                     return;
                 }
+                if (ll_rigged_packets_enabled() && gDeferredMaterialPullSkinProgram[idx].mProgramObject != 0)
+                {
+                    return;     // S4 A1: renderDeferred binds the rigged pull program, and this one only if a draw is left for it
+                }
             }
             else if (gDeferredMaterialPullProgram[idx].mProgramObject != 0)
             {
@@ -158,17 +162,25 @@ void LLDrawPoolMaterials::kickGeometryBuilds()
         return;
     }
     kickGeometryBuild(LLRenderPass::PASS_SIMPLE);
+    const bool rigged_too = ll_rigged_packets_enabled();       // S4 A1
+    if (rigged_too)
+    {
+        kickGeometryBuild(LLRenderPass::PASS_SIMPLE_RIGGED, nullptr, true);
+    }
     for (U32 pass = 0; pass < sizeof(type_list) / sizeof(type_list[0]); ++pass)
     {
         const U32 idx = sMaterialPassShader[pass];
-        if (gDeferredMaterialPullProgram[idx].mProgramObject == 0)
-        {
-            continue;
-        }
         LLGeometryPassInfo info;
         info.mNormalMap = (idx & 0x8) != 0;
         info.mSpecularMap = (idx & 0x4) != 0;
-        kickGeometryBuild(type_list[pass], &info);
+        if (gDeferredMaterialPullProgram[idx].mProgramObject != 0)
+        {
+            kickGeometryBuild(type_list[pass], &info);
+        }
+        if (rigged_too && gDeferredMaterialPullSkinProgram[idx].mProgramObject != 0)
+        {
+            kickGeometryBuild(type_list[pass] + 1, &info, true);
+        }
     }
 }
 
@@ -216,12 +228,13 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     }
 
     // <FS> render packets: the static draws as one record (the pull program of this pass bound instead of the old one); what it cannot carry is drawn the old way below
+    // (S4 A1: the rigged draws too, with the rigged pull program)
     std::vector<LLDrawInfo*> packet_fallback;
     bool packets_used = false;
-    if (!rigged && deferredPacketsEnabled())
+    if (rigged ? ll_rigged_packets_enabled() : deferredPacketsEnabled())
     {
         const U32 idx = sMaterialPassShader[pass];
-        LLShaderProgram* pull = &gDeferredMaterialPullProgram[idx];
+        LLShaderProgram* pull = rigged ? &gDeferredMaterialPullSkinProgram[idx] : &gDeferredMaterialPullProgram[idx];
         if (pull->mProgramObject != 0)
         {
             LLGeometryPassInfo info;
@@ -233,7 +246,7 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
             }
             {
                 LL_CPU_ZONE("materials: push packets");
-                pushGeometryPackets(type, packet_fallback, &info);
+                pushGeometryPackets(type, packet_fallback, &info, rigged);
             }
             packets_used = true;
             if (packet_fallback.empty())
@@ -388,6 +401,10 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     {
         for (LLDrawInfo* params : packet_fallback)
         {
+            if (rigged && params->mSkinInfo.isNull())
+            {
+                continue;       // (no skin: nothing to draw with a palette)
+            }
             draw_one(*params);
         }
         return;

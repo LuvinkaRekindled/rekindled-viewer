@@ -3950,6 +3950,53 @@ bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirec
     return true;
 }
 
+bool Renderer::drawPacketsIndexed(const VkDrawIndexedIndirectCommand* commands, U32 draws, VkBuffer indirect, VkDeviceSize indirect_offset)
+{
+    if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget) || !mIndexBuffer || draws == 0)
+    {
+        return false;
+    }
+    gDebugProgram = mProgram->getName().c_str();
+    applyState();
+    if (mDrawBlocked)
+    {
+        mDrawBlocked = false;
+        return false;
+    }
+    if (mIndexBuffer != mBoundIndexBuffer || mIndexOffset != mBoundIndexOffset || mIndexType != mBoundIndexType)
+    {
+        vkCmdBindIndexBuffer(mCmd, mIndexBuffer, mIndexOffset, mIndexType);
+        mBoundIndexBuffer = mIndexBuffer;
+        mBoundIndexOffset = mIndexOffset;
+        mBoundIndexType = mIndexType;
+    }
+    startPendingQuery();
+    noteDraw(2, draws, 0, 0);
+    if (indirect != VK_NULL_HANDLE)
+    {
+        vkCmdDrawIndexedIndirect(mCmd, indirect, indirect_offset, draws, (U32)sizeof(VkDrawIndexedIndirectCommand));
+        mDrawCount += draws;
+    }
+    else
+    {
+        for (U32 i = 0; i < draws; ++i)
+        {
+            if (commands[i].indexCount)
+            {
+                vkCmdDrawIndexed(mCmd, commands[i].indexCount, 1, commands[i].firstIndex, commands[i].vertexOffset, commands[i].firstInstance);
+                ++mDrawCount;
+            }
+        }
+    }
+    if (mDrawStamps)
+    {
+        Context::instance().gpuStamp(drawTag("packet draws", draws, 0, 0));
+        serialize_draw(mCmd, mSerialPass);
+    }
+    ++mModCount;
+    return true;
+}
+
 bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget) || !mIndexBuffer)

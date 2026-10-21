@@ -139,6 +139,10 @@ struct LLGeometryPassInfo
     bool mSpecularMap = false;
 };
 
+// <FS> S4 A1: the rigged draws of the diffuse and the materials passes as geometry records (kind 25, skinned pull programs); LL_VK_RIGGED_PACKETS=1, LL_VK_RIGGED_PACKETS_AB=<s> alternates
+bool ll_rigged_packets_enabled();
+bool ll_rigged_indexed();           // LL_VK_RIGGED_INDEXED=1: the rigged records are drawn indexed (kind 26, the shaders get HAS_INDEXED_DRAW), fixed for the run
+
 class LLRenderPass : public LLDrawPool
 {
 public:
@@ -398,12 +402,12 @@ public:
     // <FS> render packets for the deferred geometry passes (Vulkan mirror only): sends the static draws of a pass type as one record, with the program bound by the caller
     // (a pull program); the draws it cannot carry are returned to be drawn the old way
     static bool deferredPacketsEnabled();
-    static void pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials = nullptr);
+    static void pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials = nullptr, bool rigged = false);
     // S3 (doc/vulkan/S3-design.md): the entry a geometry record gets for one draw, with the textures as pointers: textures[0..3] the diffuse ones, [4] the normal map, [5] the specular map; the entry's
     // texture fields hold 1 + the index into textures (0 = none), its matrix is 0. False: the draw takes the old path (the same decision as the builder's). Kept in step with build_geometry by the verify mode.
     static bool geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& entry, LLViewerTexture* textures[6]);
     // the builds of the geometry records start on the async pool at the top of renderGeomDeferred (the main thread draws its own things meanwhile), pushGeometryPackets takes them
-    static void kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials = nullptr);
+    static void kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials = nullptr, bool rigged = false);
     static std::string geometryBuildStats();      // what became of the builds since the last call, for the log
     static void finishGeometryBuilds(LLCullResult* cull = nullptr);     // those of this cull result (all when null)
     void pushUntexturedBatch(LLDrawInfo& params);
