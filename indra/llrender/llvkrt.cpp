@@ -2200,12 +2200,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         {
             continue;
         }
-        if (g.mNotedTag == scan_tag)
-        {
-            vi = g.mVi;
-            ii = g.mIi;
-        }
-        else if (!LLVkWorker::getBufferInfo(g.mKey.mVb, vi) || !LLVkWorker::getBufferInfo(g.mKey.mIb, ii))
+        // the buffers as they are now (the info of a note can be older than a storage change after it); only the groups that need work get here
+        if (!LLVkWorker::getBufferInfo(g.mKey.mVb, vi) || !LLVkWorker::getBufferInfo(g.mKey.mIb, ii))
         {
             ++sStats.mNoData;
             continue;
@@ -3158,12 +3154,9 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         {
             const std::vector<Range>& set = job ? job->mSet : b.mBuilt;
             LLVkWorker::BufferInfo lvi, lii;
-            if (g.mNotedTag == scan_tag)
-            {
-                lvi = g.mVi;
-                lii = g.mIi;
-            }
-            else if (!LLVkWorker::getBufferInfo(g.mKey.mVb, lvi) || !LLVkWorker::getBufferInfo(g.mKey.mIb, lii))
+            // always the buffers as they are NOW: the info a note carries (g.mVi) can be older than a storage change that came after the note and before this call; the records would then hold
+            // addresses the topology check (which already took that change's event) never looks at again (the stale check of 2026-10-21 found such record sets in every run)
+            if (!LLVkWorker::getBufferInfo(g.mKey.mVb, lvi) || !LLVkWorker::getBufferInfo(g.mKey.mIb, lii))
             {
                 ++sStats.mNoData;
                 drop_entry(g, 5);
