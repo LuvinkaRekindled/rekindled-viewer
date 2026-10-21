@@ -4252,7 +4252,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const LLVkBridge::GeoEntry* entries = (const LLVkBridge::GeoEntry*)blob;
     const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::GeoEntry) * h.mEntries);
     // S4 A1: a rigged entry is the 128 bytes of GeoGpu and 32 more (weights, palette, joints), the palettes follow the matrices in the blob
-    const size_t stride = rigged ? 160 : sizeof(GeoGpu);
+    const size_t stride = 160;       // (S4 B: every record entry has the rigged tail, the pull shaders read one layout)
     const bool own_palettes = rigged && h.mPaletteFloats > 0;       // else (S4 A2) they are in the frame's shared list
     Renderer::ScratchAlloc table = r.allocVertexScratch(stride * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(176 * (size_t)std::max<U32>(h.mMatrices, 1));
@@ -5925,8 +5925,9 @@ struct GeoGpuG
     U32 mPad[2];
     F32 mSpecular[4];
     F32 mEnvIntensity, mCutoff, mBrightness, mPad2;
+    U32 mWeights[2]; U32 mPalette[2]; U32 mJoints; U32 mSkinPad[3];     // S4 B: rigged items (the viewer's per-frame binding writes the palette and the joints)
 };
-static_assert(sizeof(GeoGpuG) == 128, "geometry table entry");
+static_assert(sizeof(GeoGpuG) == 160, "geometry table entry");
 struct GeoFrag
 {
     std::vector<LLVkBridge::GeoWire> mItems;
@@ -5939,6 +5940,15 @@ struct GeoFrag
     std::vector<U32> mTexSlot;          // the slot the entries were last written with
     std::vector<VkDrawIndirectCommand> mCmds;   // the draws of its usable items, sorted by pass type
     U32 mTypeFirst[kGeoTypes + 1] = {};
+    // S4 B: the rigged items (types 13-25, drawn indexed: the hardware reads the indices): commands sorted by rigged type and buffer pair, runs of one pair, the item -> command map
+    struct RRun { U32 mPair, mFirst, mCount; };
+    std::vector<VkDrawIndexedIndirectCommand> mRCmds;
+    std::vector<U32> mRCount0;                  // the index count of each (a skin without a palette this frame draws nothing: count 0)
+    std::vector<RRun> mRRuns;
+    U32 mRTypeFirst[kGeoTypes + 1] = {};
+    std::vector<U32> mRItemCmd;                 // per item: its command in mRCmds (~0u: none)
+    std::vector<U64> mPalAddr;                  // per item: the palette address last bound (0: never): an item draws only with one
+    std::vector<U32> mPalJoints;
     bool mDirtyPairs = true, mDirtyEntries = true;
     U64 mPinEpochSeen = ~0ull;
     U64 mListedFrame = ~0ull;           // the frame it was last listed (the buffers it reads count as in flight for the frames after)
@@ -5972,8 +5982,13 @@ static struct GeoState
     U64 mPreparedFrame = ~0ull;
     Renderer::ScratchAlloc mCommands;
     U32 mFirst[kGeoTypes] = {}, mCount[kGeoTypes] = {};
-    F32 mRegionM[256][16] = {};
-    U8 mHaveM[256] = {};
+    // S4 B: the frame's rigged draws by rigged type: a run = the commands of one buffer pair of one fragment (index buffer bound, one indirect indexed draw)
+    struct RDraw { U32 mIbName; U32 mFirst, mCount; };       // (the index buffer by its GL name: looked up again at the draw, a buffer destroyed since the prepare must not be used)
+    std::vector<RDraw> mRDraws[kGeoTypes];
+    Renderer::ScratchAlloc mRCommands;
+    U64 mRBindings = 0, mRDead = 0, mRCmdsFrame = 0;
+    F32 mRegionM[2048][16] = {};       // S4 C: slots 1-255 region matrices, 256-2047 the moving ones (the viewer sends the values of the slots the listed fragments use, every frame)
+    U8 mHaveM[2048] = {};
     U32 mMaxSlot = 0;
     size_t mFragCount = 0;
     GeoStats mS;
@@ -6124,6 +6139,8 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     GeoFrag* f = new GeoFrag();
     f->mHandle = h.mFragment;
     f->mItems.assign(items, items + h.mEntries);
+    f->mPalAddr.assign(h.mEntries, 0);
+    f->mPalJoints.assign(h.mEntries, 0);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         U32 slot;
@@ -6285,6 +6302,15 @@ void geo_write_items(GeoFrag& f)
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;
+        if (e.mFlags & LLVkBridge::GEO_RIGGED)
+        {
+            const U64 wa = pa + e.mWeightOffset;
+            g.mWeights[0] = (U32)wa;
+            g.mWeights[1] = (U32)(wa >> 32);
+            g.mPalette[0] = (U32)f.mPalAddr[i];            // (the last palette bound: see the shadow in GeoFrag)
+            g.mPalette[1] = (U32)(f.mPalAddr[i] >> 32);
+            g.mJoints = f.mPalJoints[i];
+        }
         auto slot_of = [&](U32 n) -> U32 { return n ? f.mTexSlot[n - 1] : 0u; };
         g.mSlots[0] = slot_of(e.mTextures[0]) | (slot_of(e.mTextures[1]) << 16);
         g.mSlots[1] = slot_of(e.mTextures[2]) | (slot_of(e.mTextures[3]) << 16);
@@ -6313,6 +6339,33 @@ void geo_build_commands(GeoFrag& f)
         }
     }
     f.mTypeFirst[kGeoTypes] = (U32)f.mCmds.size();
+    // S4 B: the rigged items, by rigged type and buffer pair
+    f.mRCmds.clear();
+    f.mRCount0.clear();
+    f.mRRuns.clear();
+    f.mRItemCmd.assign(f.mItems.size(), ~0u);
+    for (U32 rt = 0; rt < kGeoTypes; ++rt)
+    {
+        f.mRTypeFirst[rt] = (U32)f.mRRuns.size();
+        for (size_t k = 0; k < f.mPairs.size(); ++k)
+        {
+            const U32 first = (U32)f.mRCmds.size();
+            for (size_t i = 0; i < f.mItems.size(); ++i)
+            {
+                if (f.mItems[i].mType == kGeoTypes + rt && f.mPairOf[i] == k && f.mPairs[k].mOk)
+                {
+                    f.mRItemCmd[i] = (U32)f.mRCmds.size();
+                    f.mRCmds.push_back({ f.mPalAddr[i] ? f.mItems[i].mE.mIndexCount : 0u, 1u, f.mItems[i].mE.mFirstIndex, 0, f.mSlots[i] });
+                    f.mRCount0.push_back(f.mItems[i].mE.mIndexCount);
+                }
+            }
+            if (f.mRCmds.size() > first)
+            {
+                f.mRRuns.push_back({ (U32)k, first, (U32)f.mRCmds.size() - first });
+            }
+        }
+    }
+    f.mRTypeFirst[kGeoTypes] = (U32)f.mRRuns.size();
 }
 
 // the fragment was named by an event (or is new): look at its buffers and textures again, write its entries and commands
@@ -6504,7 +6557,7 @@ void geo_stale_check(const std::vector<GeoFrag*>& listed)
         {
             usable += f->mPairs[f->mPairOf[i]].mOk ? 1 : 0;
         }
-        if (usable != f->mCmds.size())
+        if (usable != f->mCmds.size() + f->mRCmds.size())
         {
             ++s.mStaleCmd;
             stale = true;
@@ -6537,6 +6590,8 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     geo_reclaim(frame_now);
     const U32* handles = (const U32*)blob;
     const LLVkBridge::GeoSlotMatrix* matrices = (const LLVkBridge::GeoSlotMatrix*)(handles + h.mEntries);
+    struct Binding { U32 mHandle, mItem, mOffset, mJoints; };
+    const Binding* bindings = (const Binding*)(matrices + h.mMatrices);       // S4 B: mPaletteFloats = how many
     auto t0 = std::chrono::steady_clock::now();
     // pins: textures the viewer named since last frame are resolved (their slots are permanent from here on); a slot that changed makes the fragments look at their slots again
     rtPinUpdate();
@@ -6548,7 +6603,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     for (U32 i = 0; i < h.mMatrices; ++i)
     {
         const U32 slot = matrices[i].mSlot;
-        if (slot < 256)
+        if (slot < 2048)
         {
             memcpy(sGeo.mRegionM[slot], matrices[i].mM, 64);
             sGeo.mHaveM[slot] = 1;
@@ -6595,13 +6650,41 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         f->mListedFrame = frame_now;
         listed.push_back(f);
         items_frame += f->mItems.size();
-        s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size();
+        s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size() - f->mRCmds.size();
         for (U32 t = 0; t < kGeoTypes; ++t)
         {
             counts[t] += f->mTypeFirst[t + 1] - f->mTypeFirst[t];
         }
     }
     if (timed) s.mNsList += geo_ns(t0);
+    // S4 B: this frame's palettes of the rigged items (the viewer sent the shared list before this record): the row's palette address and joints, and the command's count (a skin that has no palette draws nothing)
+    for (U32 i = 0; i < h.mPaletteFloats; ++i)
+    {
+        const Binding& b = bindings[i];
+        GeoFrag* f = geo_find(b.mHandle);
+        ++sGeo.mRBindings;
+        if (!f || b.mItem >= f->mItems.size() || b.mItem >= f->mRItemCmd.size() || f->mRItemCmd[b.mItem] == ~0u)
+        {
+            continue;
+        }
+        const U32 cmd = f->mRItemCmd[b.mItem];
+        const U64 pal = b.mOffset != ~0u ? palette_address(b.mOffset) : 0;
+        GeoGpuG& row = sGeo.mT[f->mSlots[b.mItem]];
+        if (pal)
+        {
+            f->mPalAddr[b.mItem] = pal;
+            f->mPalJoints[b.mItem] = b.mJoints;
+            row.mPalette[0] = (U32)pal;
+            row.mPalette[1] = (U32)(pal >> 32);
+            row.mJoints = b.mJoints;
+            f->mRCmds[cmd].indexCount = f->mRCount0[cmd];
+        }
+        else
+        {
+            f->mRCmds[cmd].indexCount = 0;
+            ++sGeo.mRDead;
+        }
+    }
     s.mItemsListed += items_frame;
     s.mMaxFragsFrame = std::max<U64>(s.mMaxFragsFrame, h.mEntries);
     s.mMaxItemsFrame = std::max<U64>(s.mMaxItemsFrame, items_frame);
@@ -6654,6 +6737,44 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             }
         }
     }
+    // S4 B: the rigged commands of the frame, by rigged type: runs of one buffer pair
+    for (U32 rt = 0; rt < kGeoTypes; ++rt)
+    {
+        sGeo.mRDraws[rt].clear();
+    }
+    sGeo.mRCommands = Renderer::ScratchAlloc();
+    size_t rtotal = 0;
+    for (const GeoFrag* f : listed)
+    {
+        rtotal += f->mRCmds.size();
+    }
+    sGeo.mRCmdsFrame += rtotal;
+    if (rtotal)
+    {
+        sGeo.mRCommands = r.allocVertexScratch(sizeof(VkDrawIndexedIndirectCommand) * rtotal);
+        if (!sGeo.mRCommands.mPtr)
+        {
+            ++s.mScratchFail;
+        }
+        else
+        {
+            VkDrawIndexedIndirectCommand* rout = (VkDrawIndexedIndirectCommand*)sGeo.mRCommands.mPtr;
+            U32 cursor = 0;
+            for (const GeoFrag* f : listed)
+            {
+                for (U32 rt = 0; rt < kGeoTypes; ++rt)
+                {
+                    for (U32 k = f->mRTypeFirst[rt]; k < f->mRTypeFirst[rt + 1]; ++k)
+                    {
+                        const GeoFrag::RRun& run = f->mRRuns[k];
+                        memcpy(rout + cursor, f->mRCmds.data() + run.mFirst, run.mCount * sizeof(VkDrawIndexedIndirectCommand));
+                        sGeo.mRDraws[rt].push_back({ f->mPairs[run.mPair].mIb, cursor, run.mCount });
+                        cursor += run.mCount;
+                    }
+                }
+            }
+        }
+    }
     if (timed) s.mNsCopy += geo_ns(t0);
     geo_flush_if_needed();
     sGeo.mPreparedFrame = frame_now;
@@ -6698,7 +6819,8 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     GeoStats& s = sGeo.mS;
     const U32 type = h.mPass;
-    if (!sGeo.mReady || type >= kGeoTypes)
+    const bool rigged_draw = type >= kGeoTypes && type < 2 * kGeoTypes;       // S4 B: the rigged variants of the 13 types
+    if (!sGeo.mReady || type >= 2 * kGeoTypes)
     {
         return;
     }
@@ -6708,8 +6830,27 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         ++s.mDrawStale;
         return;
     }
-    const U32 count = sGeo.mCount[type];
-    if (count == 0 || !sGeo.mCommands.mPtr)
+    U32 count = 0;
+    if (rigged_draw)
+    {
+        if (!sGeo.mRCommands.mPtr)
+        {
+            return;
+        }
+        for (const GeoState::RDraw& d : sGeo.mRDraws[type - kGeoTypes])
+        {
+            count += d.mCount;
+        }
+    }
+    else
+    {
+        count = sGeo.mCount[type];
+        if (count == 0 || !sGeo.mCommands.mPtr)
+        {
+            return;
+        }
+    }
+    if (count == 0)
     {
         return;
     }
@@ -6766,27 +6907,61 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     r.bindlessFlush();
     if (timed) s.mNsDrawState += geo_ns(t0);
     t0 = std::chrono::steady_clock::now();
-    if (r.drawPackets(nullptr, count, sGeo.mCommands.mBuffer, sGeo.mCommands.mOffset + (VkDeviceSize)sGeo.mFirst[type] * sizeof(VkDrawIndirectCommand)))
+    if (rigged_draw)
     {
-        if (sStatsEnabled)
+        U32 drawn = 0, runs = 0;
+        for (const GeoState::RDraw& d : sGeo.mRDraws[type - kGeoTypes])
         {
-            sStats.mDone += count;
+            Buf* ib = packet_buffer(d.mIbName);
+            if (!ib || !ib->mVk.valid())
+            {
+                continue;
+            }
+            r.setIndexBuffer(ib->mVk.mBuffer, ib->mArena.mOffset, VK_INDEX_TYPE_UINT16);
+            if (r.drawPacketsIndexed(nullptr, d.mCount, sGeo.mRCommands.mBuffer, sGeo.mRCommands.mOffset + (VkDeviceSize)d.mFirst * sizeof(VkDrawIndexedIndirectCommand)))
+            {
+                drawn += d.mCount;
+                ++runs;
+            }
         }
+        if (drawn)
+        {
+            if (sStatsEnabled)
+            {
+                sStats.mDone += drawn;
+            }
+        }
+        else
+        {
+            ++sStats.mRendererRefused;
+        }
+        sDraws += runs;
+        sDrawsTotal += runs;
     }
     else
     {
-        ++sStats.mRendererRefused;
+        if (r.drawPackets(nullptr, count, sGeo.mCommands.mBuffer, sGeo.mCommands.mOffset + (VkDeviceSize)sGeo.mFirst[type] * sizeof(VkDrawIndirectCommand)))
+        {
+            if (sStatsEnabled)
+            {
+                sStats.mDone += count;
+            }
+        }
+        else
+        {
+            ++sStats.mRendererRefused;
+        }
+        sDraws += count;
+        sDrawsTotal += count;
     }
     if (timed) s.mNsDrawCall += geo_ns(t0);
-    sDraws += count;
-    sDrawsTotal += count;
     ++s.mDrawRecords;
-    ++s.mDrawCalls[type];
+    ++s.mDrawCalls[type % kGeoTypes];
     if (timed)
     {
         const U64 ns = geo_ns(t_all);
         s.mNsDraw += ns;
-        s.mDrawNs[type] += ns;
+        s.mDrawNs[type % kGeoTypes] += ns;
     }
 }
 

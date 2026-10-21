@@ -2412,6 +2412,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             gDeferredDiffusePullSkinProgram.addPermutation("HAS_INDEXED_DRAW", "1");
         }
+        if (getenv("LL_VK_SKIN_TEST"))
+        {
+            gDeferredDiffusePullSkinProgram.addPermutation("SKIN_NOOP", "1");       // (diagnostic: a wrong picture, only for the GPU time)
+        }
         add_common_permutations(&gDeferredDiffusePullSkinProgram);
         if (!gDeferredDiffusePullSkinProgram.createShader())
         {
@@ -2497,6 +2501,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             if (ll_rigged_indexed())
             {
                 skin.addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            if (getenv("LL_VK_SKIN_TEST"))
+            {
+                skin.addPermutation("SKIN_NOOP", "1");       // (diagnostic: a wrong picture, only for the GPU time)
             }
             add_common_permutations(&skin);
             skin.mFeatures.hasSrgb = true;

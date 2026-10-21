@@ -34,7 +34,7 @@ struct SkinJoint
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer SkinPalette { SkinJoint j[]; };
 #endif
 
-// 128 bytes
+// 160 bytes
 struct GeoPacket
 {
     uvec2 positions;
@@ -56,14 +56,12 @@ struct GeoPacket
     float cutoff;
     float brightness;
     float pad2;
-#ifdef HAS_SKIN
-    uvec2 weights;     // 160 bytes with these (rigged draws)
+    uvec2 weights;     // 160 bytes: the rigged draws' weights and palette (the entries of the other draws leave them 0)
     uvec2 palette;
     uint joints;
     uint skinPad0;
     uint skinPad1;
     uint skinPad2;
-#endif
 };
 
 // 176 bytes
@@ -111,6 +109,11 @@ flat out float minimum_alpha;
 // as getObjectSkinnedTransform() in objectSkinV.glsl; the joint numbers stay inside the palette that was sent
 void skinTransform(GeoPacket pk, uint index, out mat3 sm, out vec3 trans)
 {
+#ifdef SKIN_NOOP
+    sm = mat3(1.0);
+    trans = vec3(0.0);
+    return;
+#endif
     vec4 weight4 = SkinWeights(pk.weights).w[index];
     vec4 w = fract(weight4);
     vec4 joint = floor(weight4);

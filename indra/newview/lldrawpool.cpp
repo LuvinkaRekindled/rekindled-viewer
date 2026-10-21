@@ -666,9 +666,15 @@ bool LLRenderPass::deferredPacketsEnabled()
 
 // <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records. LL_VK_RIGGED_PACKETS=1 (needs FSDeferredPackets), LL_VK_RIGGED_PACKETS_AB=<seconds> alternates it (log marker
 // "[phase] rigged packets now ON/off"), LL_VK_RIGGED_VERIFY=1 checks that every draw info of a rigged pass is an entry, a fallback draw or a counted skip.
+bool ll_scene_geo_rigged_env()
+{
+    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_RIGGED"); return v && atoi(v) != 0; }();
+    return on;
+}
+
 bool ll_rigged_packets_enabled()
 {
-    static const int base = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS"); return v ? atoi(v) : 0; }();
+    static const int base = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS"); return (v ? atoi(v) : 0) || ll_scene_geo_rigged_env(); }();
     static const int period = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS_AB"); return v ? atoi(v) : 0; }();
     static U32 frame = ~0u;
     static bool now = false;
@@ -845,14 +851,14 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
 }
 
 // static. S3: the per-draw part of build_geometry, with the textures as pointers (the fragments of the scene tables keep them)
-bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6])
+bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged)
 {
     e = {};
     for (int t = 0; t < 6; ++t)
     {
         textures[t] = nullptr;
     }
-    if (!params.mCount || !geometry_packet_ok(params, materials == nullptr, materials))
+    if (!params.mCount || !geometry_packet_ok(params, materials == nullptr, materials, rigged) || (rigged && params.mModelMatrix))
     {
         return false;
     }
@@ -864,6 +870,11 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
     e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
     e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
     e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+    if (rigged)
+    {
+        e.mFlags |= LLVkBridge::GEO_RIGGED;
+        e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+    }
     if (materials)
     {
         if (materials->mNormalMap)
@@ -1180,7 +1191,7 @@ static void fill_geometry_build(LLGeometryBuild& b, U32 type, const LLGeometryPa
         b.mInfo = *materials;
     }
     b.mCull = cull;
-    b.mServe = !rigged && ll_scene_geo_serving() && ll_scene_geo_main_view();      // (the table is told only the main view's visible fragments; it carries no rigged draws)
+    b.mServe = (!rigged || ll_scene_geo_rigged_env()) && ll_scene_geo_serving() && ll_scene_geo_main_view();      // (the table is told only the main view's visible fragments; S4 B: it carries rigged draws too)
     b.mSkipServed = b.mServe && ll_scene_geo_skip();
     b.mEpoch = LLBuilderGuard::sEpoch.load();
     memcpy(b.mView, gRenderModelView, sizeof(b.mView));
