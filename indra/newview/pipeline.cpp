@@ -4084,6 +4084,8 @@ void scene_stats_frame()
 }
 }
 
+static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // <FS> S3 G4: what postSort left out of the render map (groups with served draws, type lists skipped, indices)
+
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -4121,11 +4123,18 @@ void LLPipeline::postSort(LLCamera &camera)
     // build render map
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("build render map");
+        LL_CPU_ZONE("postSort: build render map");
     // <FS> the thread-local state is looked up once here, not once per draw info (a thread_local with a constructor costs a guard check per access)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
     const bool geo_collect = ll_scene_geo_on() && !sShadowRender;
     const bool geo_owner = geo_collect && ll_scene_geo_verify_on();
+    const bool geo_list = geo_collect && &camera == LLViewerCamera::getInstance() && ll_scene_geo_main_view() && ll_scene_geo_serving();
+    const bool geo_elide = geo_list && !ll_scene_geo_verify_on();       // S3 G4: the draws the table serves are not listed in the render map
+    if (geo_elide)
+    {
+        sCull->mGeoElided = true;
+    }
     for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
     {
         LLSpatialGroup *group = *i;
@@ -4147,10 +4156,20 @@ void LLPipeline::postSort(LLCamera &camera)
             group->rebuildGeom();
         }
 
-        if (geo_collect)
+        if (geo_owner)
         {
-            sCull->mGeoGroups.push_back(group);     // <FS> S3: the groups the G-buffer entries are taken from
+            sCull->mGeoGroups.push_back(group);     // <FS> S3: the groups the G-buffer entries are taken from (verify and census only)
             sCull->mGeoSerials.push_back(group->mDrawMapSerial);
+        }
+        if (geo_list && group->mGeoHandle)
+        {
+            sCull->mGeoHandles.push_back(group->mGeoHandle);       // <FS> S3 G3: the list the worker draws from
+            if (geo_elide && group->mGeoServedTris)
+            {
+                ++sGeoElideGroups;
+                sGeoElideTris += group->mGeoServedTris;
+                addTrianglesDrawn(group->mGeoServedTris);          // (the statistic counted every draw info of the types the table draws)
+            }
         }
 
         for (LLSpatialGroup::draw_map_t::iterator j = group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
@@ -4159,6 +4178,15 @@ void LLPipeline::postSort(LLCamera &camera)
             if (!hasRenderType(j->first))
             {
                 continue;
+            }
+            if (geo_elide && group->mGeoServedMask)
+            {
+                const int tn = ll_scene_geo_type_number(j->first);
+                if (tn >= 0 && (group->mGeoServedMask & (1u << tn)))
+                {
+                    ++sGeoElideTypes;       // every draw info of this type in this group is the scene table's
+                    continue;
+                }
             }
 
             for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
@@ -5319,6 +5347,9 @@ struct LLSceneFragment
     bool mGeoRegion = true;                             // all its matrices are region matrices (the worker can hold it)
     U32 mGeoServedCount = 0;                            // entries of mGeo the scene table can draw (region matrix or none)
     bool mGeoSent = false;                              // the worker has it (RETAIN_GEO, kind 20)
+    U32 mGeoServedMask = 0, mGeoServedTris = 0;         // G4: see LLSpatialGroup
+    U32 mGeoHandle = 0;                                 // its handle at the worker (0 = not attached: nothing served, or LL_VK_SCENE_GEO < 2)
+    std::vector<U32> mGeoSentName;                      // per local texture, the GL name the worker was told
 };
 
 namespace
@@ -5362,8 +5393,58 @@ bool scene_alpha_on()
 }
 // the textures of resident alpha entries: one record each, with the users (fragment, local number); resolved once a frame for the fragments in range
 struct AlphaTexUse { LLSceneFragment* mFrag; U32 mLocal; };
-struct AlphaTexInfo { LLPointer<LLViewerTexture> mTex; U32 mName = 0; bool mReady = true; U64 mTouch = ~0ull; std::vector<AlphaTexUse> mUsers; };
+struct AlphaTexInfo { LLPointer<LLViewerTexture> mTex; U32 mName = 0; bool mReady = true; U64 mTouch = ~0ull; std::vector<AlphaTexUse> mUsers; U32 mTexId = 0; std::vector<AlphaTexUse> mGeoUsers; };
 std::unordered_map<LLViewerTexture*, AlphaTexInfo> sAlphaTex;
+// S3 G3: the registry also serves the textures of the scene geometry fragments (mGeoUsers). A texture's name events carry its LLImageTex id: found by this map, not by a scan of the registry
+std::unordered_map<U32, LLViewerTexture*> sTexById;
+std::vector<LLViewerTexture*> sTexNoId;                 // registered before its image had an id (the id is made at its first name change): looked at when events come
+struct GeoRegStats
+{
+    U64 mAttached = 0, mDetached = 0, mRetainWireBytes = 0, mTexUpdateRecords = 0, mTexUpdateEntries = 0, mEventIds = 0, mEventMatched = 0, mNoIdResolved = 0, mReconcileRuns = 0, mReconcileMissed = 0;
+    U64 mNsEvents = 0, mNsRetain = 0, mNsReconcile = 0;
+} sGeoReg;
+std::vector<U32> sGeoHandleFree;
+U32 sGeoHandleNext = 1;
+
+U32 scene_geo_tex_name(LLViewerTexture* tex)
+{
+    LLImageTex* gl = tex->getImageTexture();
+    const U32 name = gl ? gl->getTexName() : 0;
+    return name ? name : tex->getDefaultImageName();
+}
+
+// the registry entry of a texture is found by its image's id when a name event comes
+void scene_tex_index(LLViewerTexture* tex, AlphaTexInfo& info)
+{
+    if (info.mTexId)
+    {
+        return;
+    }
+    LLImageTex* gl = tex->getImageTexture();
+    const U32 id = gl ? gl->getTexId() : 0;
+    if (id)
+    {
+        info.mTexId = id;
+        sTexById[id] = tex;
+    }
+    else if (std::find(sTexNoId.begin(), sTexNoId.end(), tex) == sTexNoId.end())
+    {
+        sTexNoId.push_back(tex);
+    }
+}
+
+void scene_tex_forget(std::unordered_map<LLViewerTexture*, AlphaTexInfo>::iterator it)
+{
+    if (it->second.mTexId)
+    {
+        sTexById.erase(it->second.mTexId);
+    }
+    else
+    {
+        sTexNoId.erase(std::remove(sTexNoId.begin(), sTexNoId.end(), it->first), sTexNoId.end());
+    }
+    sAlphaTex.erase(it);
+}
 struct AlphaKeyRef { LLSceneFragment* mFrag; U32 mIndex; };
 std::unordered_map<U64, AlphaKeyRef> sAlphaKeys;        // (vertex buffer, index buffer, first index, count) of a resident alpha entry -> where it lives
 struct AlphaCullItem { F32 mC[3]; F32 mR; const LLMatrix4* mM; LLSceneFragment* mFrag; };
@@ -5407,9 +5488,9 @@ static void scene_alpha_unregister(LLSceneFragment* f)
         }
         auto& users = it->second.mUsers;
         users.erase(std::remove_if(users.begin(), users.end(), [f](const AlphaTexUse& u) { return u.mFrag == f; }), users.end());
-        if (users.empty())
+        if (users.empty() && it->second.mGeoUsers.empty())
         {
-            sAlphaTex.erase(it);
+            scene_tex_forget(it);
         }
     }
     for (size_t i = 0; i < f->mAlpha.size(); ++i)
@@ -5435,6 +5516,25 @@ static void scene_alpha_unregister(LLSceneFragment* f)
     }
 }
 
+static void scene_geo_detach_textures(LLSceneFragment* f)
+{
+    ++sGeoReg.mDetached;
+    for (const LLPointer<LLViewerTexture>& tex : f->mGeoTex)
+    {
+        auto it = sAlphaTex.find(tex.get());
+        if (it == sAlphaTex.end())
+        {
+            continue;
+        }
+        auto& users = it->second.mGeoUsers;
+        users.erase(std::remove_if(users.begin(), users.end(), [f](const AlphaTexUse& u) { return u.mFrag == f; }), users.end());
+        if (users.empty() && it->second.mUsers.empty())
+        {
+            scene_tex_forget(it);
+        }
+    }
+}
+
 void ll_scene_fragment_free(LLSceneFragment*& fragment)
 {
     if (!fragment)
@@ -5446,10 +5546,11 @@ void ll_scene_fragment_free(LLSceneFragment*& fragment)
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
         sFragmentReleases.push_back(fragment->mId);
     }
-    if (fragment->mGeoSent)
+    if (fragment->mGeoHandle)
     {
+        scene_geo_detach_textures(fragment);
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
-        sGeoReleases.push_back(fragment->mId);
+        sGeoReleases.push_back(fragment->mGeoHandle);       // told to the worker at the end of the frame (ll_scene_geo_frame_end), the handle is reused after that
     }
     if (fragment->mAlphaRegistered)
     {
@@ -5531,6 +5632,9 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mGeoFallback.clear();
     f.mGeoRegion = true;
     f.mGeoServedCount = 0;
+    f.mGeoServedMask = 0;
+    f.mGeoServedTris = 0;
+    U32 total_infos[13] = {}, served_infos[13] = {}, served_tris[13] = {};
     for (size_t t = 0; t < kGeoTypeCount; ++t)
     {
         auto it = group->mDrawMap.find(kGeoTypes[t].mType);
@@ -5546,6 +5650,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             {
                 continue;
             }
+            ++total_infos[t];
             const LLVertexBuffer* vb = params->mVertexBuffer.get();
             if (vb)
             {
@@ -5597,7 +5702,20 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             item.mServed = !params->mModelMatrix || item.mE.mMatrix != 0;
             params->mGeoServed = item.mServed;
             f.mGeoServedCount += item.mServed ? 1 : 0;
+            if (item.mServed)
+            {
+                ++served_infos[t];
+                served_tris[t] += params->mCount;
+            }
             f.mGeo.push_back(item);
+        }
+    }
+    for (size_t t = 0; t < kGeoTypeCount; ++t)
+    {
+        if (total_infos[t] && served_infos[t] == total_infos[t])
+        {
+            f.mGeoServedMask |= 1u << t;
+            f.mGeoServedTris += served_tris[t];
         }
     }
     sGeoFillNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t_fill).count();
@@ -5753,6 +5871,7 @@ static void scene_alpha_register(LLSceneFragment* f)
             info.mReady = rt_texture_ready(info.mTex.get());
             info.mTouch = (U64)gFrameCount;
         }
+        scene_tex_index(f->mTexLocal[k].get(), info);
         info.mUsers.push_back({ f, (U32)k });
     }
     for (size_t i = 0; i < f->mAlpha.size(); ++i)
@@ -5765,6 +5884,75 @@ static void scene_alpha_register(LLSceneFragment* f)
     sAlphaCull.push_back({ { centre[0], centre[1], centre[2] }, f->mBounds[3], f->mMatrices.empty() ? nullptr : f->mMatrices[0], f });
     sPendingAlpha.push_back(f);
     ++sAlphaStats[0];
+}
+
+// S3 G3: a new fragment with served entries gets a handle, its textures go into the registry (names as the registry has them), and the worker gets it (kind 20, with the names)
+static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
+{
+    if (f->mGeoServedCount == 0)
+    {
+        return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    static bool events_asked = false;
+    if (!events_asked)
+    {
+        events_asked = true;
+        LLImageTex::wantNameEvents();
+    }
+    U32 handle;
+    if (!sGeoHandleFree.empty())
+    {
+        handle = sGeoHandleFree.back();
+        sGeoHandleFree.pop_back();
+    }
+    else
+    {
+        handle = sGeoHandleNext++;
+    }
+    f->mGeoHandle = handle;
+    f->mGeoSentName.assign(f->mGeoTex.size(), 0);
+    static std::vector<LLVkBridge::GeoWire> wire;
+    static std::vector<U8> blob;
+    wire.clear();
+    for (const LLSceneFragment::GeoItem& item : f->mGeo)
+    {
+        if (item.mServed)
+        {
+            wire.push_back({ item.mE, item.mType });
+        }
+    }
+    blob.resize(wire.size() * sizeof(wire[0]) + f->mGeoTex.size() * sizeof(U32));
+    U32* names = (U32*)(blob.data() + wire.size() * sizeof(wire[0]));
+    for (size_t k = 0; k < f->mGeoTex.size(); ++k)
+    {
+        LLViewerTexture* tex = f->mGeoTex[k].get();
+        AlphaTexInfo& info = sAlphaTex[tex];
+        if (!info.mTex)
+        {
+            info.mTex = f->mGeoTex[k];
+            info.mName = scene_geo_tex_name(tex);
+            info.mTouch = (U64)gFrameCount;
+        }
+        scene_tex_index(tex, info);
+        info.mGeoUsers.push_back({ f, (U32)k });
+        names[k] = info.mName;
+        f->mGeoSentName[k] = info.mName;
+    }
+    memcpy(blob.data(), wire.data(), wire.size() * sizeof(wire[0]));
+    LLVkBridge::ShadowPacketsHeader header;
+    header.mKind = 20;
+    header.mFragment = handle;
+    header.mEntries = (U32)wire.size();
+    header.mPaletteFloats = (U32)f->mGeoTex.size();
+    LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+    f->mGeoSent = true;
+    group->mGeoHandle = handle;
+    group->mGeoServedMask = (U16)f->mGeoServedMask;
+    group->mGeoServedTris = f->mGeoServedTris;
+    ++sGeoReg.mAttached;
+    sGeoReg.mRetainWireBytes += blob.size();
+    sGeoReg.mNsRetain += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
 }
 
 // the fragment of a group, current: made again when the draw info set changed (the serial) or a buffer it names has another id (an event the plan lists as "buffer reallocated without a rebuild")
@@ -5796,6 +5984,13 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     f->mSerial = group->mDrawMapSerial;
     scene_fragment_fill(group, *f);
     ++sFragStats.mBuilt;
+    group->mGeoHandle = 0;
+    group->mGeoServedMask = 0;
+    group->mGeoServedTris = 0;
+    if (scene_geo_mode() >= 2)
+    {
+        scene_geo_attach(group, f);
+    }
     if (f->mResident)
     {
         sResidentFragments.insert(f);
@@ -5975,6 +6170,7 @@ struct GeoVerifyStats
     U64 mPasses = 0, mInfos = 0, mMissing = 0, mExtra = 0, mFallbackDiff = 0, mBuilderDiff = 0, mItemDiff = 0, mCountDiff = 0, mGroups = 0, mItems = 0, mMissingInDrawMaps = 0, mDeadGroups = 0, mMissingPasses = 0, mMissingChangedGroup = 0;
     // census of the main view, once a frame (what the worker side of S3 has to carry): sums over the frames counted
     U64 mFrames = 0, mVisibleGroups = 0, mGroupsWithItems = 0, mItemsByType[13] = {}, mFallback = 0, mNonRegionGroups = 0, mNonRegionItems = 0, mDistinctTextures = 0, mRenderMapAll = 0, mRenderMapGeo = 0, mFragmentless = 0;
+    U64 mNamesChecked = 0, mNamesStale = 0, mHandleGroups = 0, mHandleListDiff = 0, mHandleMismatch = 0, mPassesNoList = 0, mInfosNoList = 0;     // G3: the registry's names against prepareFast's, the handles of the listed groups against the list
     U64 mMissingCause[6] = {}, mMissingByType[13] = {}, mDup = 0;     // causes: no owner recorded, pushed by the shadow job, group dead, group's draw map changed, owner not listed, listed with the same serial
     U32 mCensusFrame = ~0u;
     U32 mLast = 0;
@@ -6005,6 +6201,7 @@ static void geo_census(LLCullResult* cull)
 {
     GeoVerifyStats& s = sGeoStats;
     std::unordered_set<const LLViewerTexture*> textures;
+    U64 handle_groups = 0;
     ++s.mFrames;
     s.mVisibleGroups += cull->mGeoGroups.size();
     for (LLSpatialGroup* group : cull->mGeoGroups)
@@ -6034,6 +6231,31 @@ static void geo_census(LLCullResult* cull)
         {
             textures.insert(tex.get());
         }
+        if (f->mGeoHandle)
+        {
+            ++handle_groups;
+            s.mHandleMismatch += group->mGeoHandle != f->mGeoHandle ? 1 : 0;
+            // the names the worker was told against the names the old path would bind now (prepareFast: what the builder's finish step does for every texture of a record)
+            for (size_t k = 0; k < f->mGeoTex.size(); ++k)
+            {
+                const U32 fresh = gRender.getTexUnit(0)->prepareFast(f->mGeoTex[k].get());
+                ++s.mNamesChecked;
+                if (k < f->mGeoSentName.size() && fresh != f->mGeoSentName[k])
+                {
+                    ++s.mNamesStale;
+                    static U32 said = 0;
+                    if (said++ < 12)
+                    {
+                        LL_WARNS("VkScene") << "geometry verify: fragment " << f->mId << " texture " << k << " told as GL " << f->mGeoSentName[k] << ", prepareFast gives " << fresh << LL_ENDL;
+                    }
+                }
+            }
+        }
+    }
+    s.mHandleGroups += handle_groups;
+    if (ll_scene_geo_serving() && cull->mGeoHandles.size() != handle_groups)
+    {
+        ++s.mHandleListDiff;
     }
     s.mDistinctTextures += textures.size();
     for (U32 t = 0; t < LLRenderPass::NUM_RENDER_TYPES; ++t)
@@ -6063,6 +6285,12 @@ void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo*
         return;
     }
     GeoVerifyStats& s = sGeoStats;
+    if (cull->mGeoGroups.empty())
+    {
+        ++s.mPassesNoList;       // a cull result postSort did not collect for (an impostor, a probe, a snapshot): nothing to compare
+        s.mInfosNoList += cull->getRenderMapSize(type);
+        return;
+    }
     ++s.mPasses;
     // the render map side, with the entries walked in the builder's order
     std::vector<LLDrawInfo*> expected;
@@ -6260,6 +6488,8 @@ void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo*
             << " with G entries (" << (double)s.mFragmentless / fr << " without), entries by type (simple/material/mask/glow/spec/specmask/specglow/norm/normmask/normglow/normspec/nsmask/nsglow) " << per_type
             << ", fallback draws " << (double)s.mFallback / fr << ", groups not region-only " << (double)s.mNonRegionGroups / fr << " (" << (double)s.mNonRegionItems / fr << " entries), distinct textures "
             << (double)s.mDistinctTextures / fr << ", render map draw infos " << (double)s.mRenderMapAll / fr << " of which G types " << (double)s.mRenderMapGeo / fr
+            << " | G3 verify: " << s.mHandleGroups << " listed groups with a handle (" << s.mHandleMismatch << " group / fragment handle mismatches, " << s.mHandleListDiff << " frames where the handle list size differs), registry names checked "
+            << s.mNamesChecked << ", stale " << s.mNamesStale << ", passes of other views without a group list " << s.mPassesNoList << " (" << s.mInfosNoList << " draw infos)"
             << " | fragment G builds: " << sGeoFillCalls << " (" << (double)sGeoFillNs / 1000.0 / std::max<U64>(sGeoFillCalls, 1) << " us each, " << (double)sGeoFillItems / std::max<U64>(sGeoFillCalls, 1)
             << " entries, " << sGeoFillFallback << " fallback, " << sGeoFillNonRegion << " not region-only), region matrix slots used " << sSlotMatrix.size() << LL_ENDL;
         LL_INFOS("VkScene") << "geometry verify (G-buffer entries of the fragments against the builder): " << s.mPasses << " passes, " << s.mInfos << " render map draw infos, " << s.mGroups << " group visits, "
@@ -6281,11 +6511,11 @@ U32 sGeoServingFrame = ~0u;
 bool sGeoServingNow = false;
 LLCullResult* sGeoPrepared = nullptr;
 U32 sGeoPreparedFrame = ~0u;
-U64 sGeoCounts[3] = {};
+U64 sGeoCounts[6] = {};         // builder draws left out, table draw records, builds made again, elided but not prepared, rigged material passes skipped, old shader binds skipped
 struct GeoFrameStats
 {
-    U64 mFrames = 0, mGroups = 0, mFragments = 0, mNoItems = 0, mItemsServed = 0, mItemsUnserved = 0, mFallback = 0, mRetains = 0, mRetainItems = 0, mReleases = 0, mNames = 0, mTexturesDistinct = 0, mMatrices = 0, mBytes = 0, mOff = 0;
-    U64 mNsAll = 0, mNsEnsure = 0, mNsRetain = 0, mNsTextures = 0, mNsSend = 0, mNsReleases = 0;
+    U64 mFrames = 0, mHandles = 0, mMatrices = 0, mBytes = 0, mOff = 0;
+    U64 mNsAll = 0, mNsEvents = 0, mNsSend = 0;
     U32 mLast = 0;
 } sGeoF;
 U64 geo_ns_since(const std::chrono::steady_clock::time_point& t)
@@ -6334,126 +6564,58 @@ bool ll_scene_geo_prepared(LLCullResult* cull)
 
 int ll_scene_geo_type_number(U32 type)
 {
-    return geo_type_number(type);
+    static std::vector<S8> lut;
+    if (lut.empty())
+    {
+        lut.assign(LLRenderPass::NUM_RENDER_TYPES, -1);
+        for (size_t t = 0; t < kGeoTypeCount; ++t)
+        {
+            lut[kGeoTypes[t].mType] = (S8)t;
+        }
+    }
+    return type < lut.size() ? lut[type] : -1;
+}
+
+bool ll_scene_geo_main_view()
+{
+    return !gCubeSnapshot && !LLPipeline::sImpostorRender && !LLPipeline::sShadowRender && !LLPipeline::sReflectionRender && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
 }
 
 void ll_scene_geo_count(U32 what, U64 n)
 {
-    if (what < 3)
+    if (what < 6)
     {
         sGeoCounts[what] += n;
     }
 }
 
-// once a frame, main view, before the passes: tells the worker which fragments are visible (the groups postSort listed), with the names of their textures and the region matrices they use; sends the
-// fragments the worker does not have yet (RETAIN_GEO) and the ones that are gone (RELEASE_GEO)
+// once a frame, main view, before the passes (LL_VK_SCENE_GEO=2): the texture identity events are taken (every frame, serving or not: they keep the worker's pins current), and when the table serves,
+// the worker gets the list of visible fragments (the handles postSort collected from the groups' fields) and the region matrices
+static void scene_alpha_frame(U64 frame);
+
 void ll_scene_geo_frame(LLCullResult* cull)
 {
-    if (!cull || !ll_scene_geo_serving())
+    if (scene_geo_mode() < 2)
     {
-        if (cull && scene_geo_mode() >= 2)
-        {
-            ++sGeoF.mOff;
-        }
         return;
     }
     const auto t_all = std::chrono::steady_clock::now();
     GeoFrameStats& s = sGeoF;
-    static std::vector<LLVkBridge::GeoFragRef> refs;
-    static std::vector<U32> names;
+    scene_alpha_frame((U64)gFrameCount);
+    if (!cull || !ll_scene_geo_serving())
+    {
+        ++s.mOff;
+        s.mNsEvents += geo_ns_since(t_all);
+        return;
+    }
     static std::vector<LLVkBridge::GeoSlotMatrix> matrices;
-    static std::vector<LLVkBridge::GeoWire> wire;
     static std::vector<U8> blob;
-    static std::unordered_map<LLViewerTexture*, U32> name_of;
-    refs.clear();
-    names.clear();
     matrices.clear();
-    name_of.clear();
-    U8 used[256] = {};
     ++s.mFrames;
-    auto t0 = std::chrono::steady_clock::now();
-    {
-        std::vector<U32> gone;
-        {
-            std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
-            gone.swap(sGeoReleases);
-        }
-        if (!gone.empty())
-        {
-            LLVkBridge::ShadowPacketsHeader header;
-            header.mKind = 23;
-            header.mEntries = (U32)gone.size();
-            LLVkBridge::shadowPackets(header, gone.data(), gone.size() * sizeof(U32));
-            s.mReleases += gone.size();
-        }
-    }
-    s.mNsReleases += geo_ns_since(t0);
-    for (LLSpatialGroup* group : cull->mGeoGroups)
-    {
-        if (group->isDead())
-        {
-            continue;
-        }
-        ++s.mGroups;
-        t0 = std::chrono::steady_clock::now();
-        LLSceneFragment* f = scene_fragment_ensure(group);
-        s.mNsEnsure += geo_ns_since(t0);
-        s.mItemsUnserved += f->mGeo.size() - f->mGeoServedCount;
-        s.mFallback += f->mGeoFallback.size();
-        if (f->mGeoServedCount == 0)
-        {
-            ++s.mNoItems;
-            continue;
-        }
-        ++s.mFragments;
-        s.mItemsServed += f->mGeoServedCount;
-        if (!f->mGeoSent)
-        {
-            t0 = std::chrono::steady_clock::now();
-            wire.clear();
-            for (const LLSceneFragment::GeoItem& item : f->mGeo)
-            {
-                if (item.mServed)
-                {
-                    wire.push_back({ item.mE, item.mType });
-                }
-            }
-            LLVkBridge::ShadowPacketsHeader header;
-            header.mKind = 20;
-            header.mFragment = f->mId;
-            header.mEntries = (U32)wire.size();
-            LLVkBridge::shadowPackets(header, wire.data(), wire.size() * sizeof(wire[0]));
-            f->mGeoSent = true;
-            ++s.mRetains;
-            s.mRetainItems += wire.size();
-            s.mBytes += wire.size() * sizeof(wire[0]);
-            s.mNsRetain += geo_ns_since(t0);
-        }
-        t0 = std::chrono::steady_clock::now();
-        LLVkBridge::GeoFragRef ref = { f->mId, (U32)names.size(), (U32)f->mGeoTex.size() };
-        for (const LLPointer<LLViewerTexture>& tex : f->mGeoTex)
-        {
-            auto it = name_of.find(tex.get());
-            if (it == name_of.end())
-            {
-                it = name_of.emplace(tex.get(), gRender.getTexUnit(0)->prepareFast(tex.get())).first;      // what the builder's finish step does for every texture of a record
-            }
-            names.push_back(it->second);
-        }
-        refs.push_back(ref);
-        s.mNsTextures += geo_ns_since(t0);
-        for (const LLSceneFragment::GeoItem& item : f->mGeo)
-        {
-            if (item.mServed && item.mE.mMatrix < 256)
-            {
-                used[item.mE.mMatrix] = 1;
-            }
-        }
-    }
-    t0 = std::chrono::steady_clock::now();
+    const auto t0 = std::chrono::steady_clock::now();
     for (U32 slot = 1; slot < 256 && slot < sSlotMatrix.size(); ++slot)
     {
-        if (used[slot] && sSlotMatrix[slot])
+        if (sSlotMatrix[slot])
         {
             LLVkBridge::GeoSlotMatrix m;
             m.mSlot = slot;
@@ -6461,19 +6623,16 @@ void ll_scene_geo_frame(LLCullResult* cull)
             matrices.push_back(m);
         }
     }
-    blob.resize(refs.size() * sizeof(refs[0]) + names.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]));
-    U8* at = blob.data();
-    if (!refs.empty()) { memcpy(at, refs.data(), refs.size() * sizeof(refs[0])); at += refs.size() * sizeof(refs[0]); }
-    if (!names.empty()) { memcpy(at, names.data(), names.size() * sizeof(U32)); at += names.size() * sizeof(U32); }
-    if (!matrices.empty()) { memcpy(at, matrices.data(), matrices.size() * sizeof(matrices[0])); }
+    const std::vector<U32>& handles = cull->mGeoHandles;
+    blob.resize(handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]));
+    if (!handles.empty()) { memcpy(blob.data(), handles.data(), handles.size() * sizeof(U32)); }
+    if (!matrices.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32), matrices.data(), matrices.size() * sizeof(matrices[0])); }
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 21;
-    header.mEntries = (U32)refs.size();
+    header.mEntries = (U32)handles.size();
     header.mMatrices = (U32)matrices.size();
-    header.mPaletteFloats = (U32)names.size();
     LLVkBridge::shadowPackets(header, blob.data(), blob.size());
-    s.mNames += names.size();
-    s.mTexturesDistinct += name_of.size();
+    s.mHandles += handles.size();
     s.mMatrices += matrices.size();
     s.mBytes += blob.size();
     s.mNsSend += geo_ns_since(t0);
@@ -6485,13 +6644,49 @@ void ll_scene_geo_frame(LLCullResult* cull)
     {
         s.mLast = frame;
         const double n = (double)std::max<U64>(s.mFrames, 1);
-        LL_INFOS("VkScene") << "scene geometry, viewer side per frame over " << s.mFrames << " frames (" << s.mOff << " frames with the table off): " << (double)s.mGroups / n << " listed groups, "
-            << (double)s.mFragments / n << " fragments with served entries (" << (double)s.mNoItems / n << " without), " << (double)s.mItemsServed / n << " entries served, " << (double)s.mItemsUnserved / n
-            << " entries left to the builder (matrix not a region one), " << (double)s.mFallback / n << " fallback draws, " << (double)s.mRetains / n << " fragments retained (" << (double)s.mRetainItems / n
-            << " entries), " << (double)s.mReleases / n << " released, " << (double)s.mNames / n << " texture names sent (" << (double)s.mTexturesDistinct / n << " distinct), " << (double)s.mMatrices / n
-            << " matrices, " << (double)s.mBytes / n << " bytes; builder draws left out " << (double)sGeoCounts[0] / n << ", table draw records " << (double)sGeoCounts[1] / n << ", builds made again for want of a prepare "
-            << sGeoCounts[2] << " | main thread us per frame: all " << (double)s.mNsAll / 1000.0 / n << " = releases " << (double)s.mNsReleases / 1000.0 / n << " + fragment ensure " << (double)s.mNsEnsure / 1000.0 / n
-            << " + retain " << (double)s.mNsRetain / 1000.0 / n << " + texture names " << (double)s.mNsTextures / 1000.0 / n << " + blob and send " << (double)s.mNsSend / 1000.0 / n << LL_ENDL;
+        U64 geo_users = 0;
+        for (const auto& kv : sAlphaTex)
+        {
+            geo_users += kv.second.mGeoUsers.size();
+        }
+        const GeoRegStats& r = sGeoReg;
+        LL_INFOS("VkScene") << "scene geometry, viewer side per frame over " << s.mFrames << " frames serving (" << s.mOff << " frames with the table off): " << (double)s.mHandles / n << " fragments listed, "
+            << (double)s.mMatrices / n << " matrices, " << (double)s.mBytes / n << " bytes; builder draws left out " << (double)sGeoCounts[0] / n << ", table draw records " << (double)sGeoCounts[1] / n
+            << ", builds made again for want of a prepare " << sGeoCounts[2] << " | postSort left out (per frame) " << (double)sGeoElideGroups / n << " groups, " << (double)sGeoElideTypes / n
+            << " type lists, " << (double)sGeoElideTris / n / 3.0 << " triangles; passes elided but not prepared " << sGeoCounts[3] << " | pools: rigged material passes skipped " << (double)sGeoCounts[4] / n
+            << " a frame, old shader binds skipped " << (double)sGeoCounts[5] / n << " | fragments attached " << r.mAttached << " (" << r.mRetainWireBytes / std::max<U64>(r.mAttached, 1) << " bytes each), detached "
+            << r.mDetached << ", handles allocated " << sGeoHandleNext - 1 << " (" << sGeoHandleFree.size() << " free) | registry: " << sAlphaTex.size() << " textures, " << geo_users << " geometry users, "
+            << sTexById.size() << " indexed by id, " << sTexNoId.size() << " without an id yet; name events " << r.mEventIds << " ids, " << r.mEventMatched << " matched, " << r.mNoIdResolved << " ids found late; texture update records "
+            << r.mTexUpdateRecords << " (" << r.mTexUpdateEntries << " entries); reconcile every 256 frames: " << r.mReconcileRuns << " runs, " << r.mReconcileMissed << " names an event had not told ("
+            << (double)r.mNsReconcile / 1000.0 / std::max<U64>(r.mReconcileRuns, 1) << " us a run) | main thread us per frame: all " << (double)s.mNsAll / 1000.0 / n << " = events and keep-alive "
+            << (double)s.mNsEvents / 1000.0 / n << " (registry total " << (double)r.mNsEvents / 1000.0 / n << ") + list and send " << (double)s.mNsSend / 1000.0 / n << "; fragment attach (retain, at group rebuild) "
+            << (double)r.mNsRetain / 1000.0 / n << LL_ENDL;
+    }
+}
+
+// after the passes: the fragments that went since the last frame are released at the worker, their handles can be reused
+void ll_scene_geo_frame_end()
+{
+    if (scene_geo_mode() < 2)
+    {
+        return;
+    }
+    std::vector<U32> gone;
+    {
+        std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
+        gone.swap(sGeoReleases);
+    }
+    if (gone.empty())
+    {
+        return;
+    }
+    LLVkBridge::ShadowPacketsHeader header;
+    header.mKind = 23;
+    header.mEntries = (U32)gone.size();
+    LLVkBridge::shadowPackets(header, gone.data(), gone.size() * sizeof(U32));
+    for (U32 h : gone)
+    {
+        sGeoHandleFree.push_back(h);
     }
 }
 
@@ -6594,15 +6789,62 @@ static void scene_alpha_frame(U64 frame)
     LLImageTex::takeNameEvents(ids);
     static std::vector<LLViewerTexture*> changed;
     changed.clear();
+    const auto t_events = std::chrono::steady_clock::now();
     if (!ids.empty())
     {
         std::sort(ids.begin(), ids.end());
         ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
-        for (auto& kv : sAlphaTex)
+        sGeoReg.mEventIds += ids.size();
+        static std::vector<LLViewerTexture*> hits;
+        hits.clear();
+        for (U32 id : ids)
         {
-            AlphaTexInfo& info = kv.second;
+            auto m = sTexById.find(id);
+            if (m != sTexById.end())
+            {
+                hits.push_back(m->second);
+            }
+        }
+        // textures registered before their image had an id: it exists now if they had a name change
+        for (size_t n = 0; n < sTexNoId.size(); )
+        {
+            LLViewerTexture* tex = sTexNoId[n];
+            auto it = sAlphaTex.find(tex);
+            LLImageTex* gl = it != sAlphaTex.end() ? it->second.mTex->getImageTexture() : nullptr;
+            const U32 id = gl ? gl->getTexId() : 0;
+            if (id)
+            {
+                it->second.mTexId = id;
+                sTexById[id] = tex;
+                ++sGeoReg.mNoIdResolved;
+                if (std::binary_search(ids.begin(), ids.end(), id))
+                {
+                    hits.push_back(tex);
+                }
+                sTexNoId[n] = sTexNoId.back();
+                sTexNoId.pop_back();
+            }
+            else if (it == sAlphaTex.end())
+            {
+                sTexNoId[n] = sTexNoId.back();
+                sTexNoId.pop_back();
+            }
+            else
+            {
+                ++n;
+            }
+        }
+        for (LLViewerTexture* tex : hits)
+        {
+            auto it = sAlphaTex.find(tex);
+            if (it == sAlphaTex.end())
+            {
+                continue;
+            }
+            ++sGeoReg.mEventMatched;
+            AlphaTexInfo& info = it->second;
             LLImageTex* gl = info.mTex->getImageTexture();
-            if (gl && std::binary_search(ids.begin(), ids.end(), gl->getTexId()))
+            if (gl)
             {
                 const U32 name = gl->getTexName() ? gl->getTexName() : info.mTex->getDefaultImageName();
                 const bool ready = alpha_tex_ready(info.mTex.get());
@@ -6610,16 +6852,40 @@ static void scene_alpha_frame(U64 frame)
                 {
                     info.mName = name;
                     info.mReady = ready;
-                    changed.push_back(kv.first);
+                    changed.push_back(tex);
                 }
             }
         }
     }
+    // the safety net: every 256th frame every registry entry is compared with its texture as it is now; a difference is an event that did not reach us (counted)
+    if ((frame & 255u) == 0)
+    {
+        const auto t_rec = std::chrono::steady_clock::now();
+        ++sGeoReg.mReconcileRuns;
+        for (auto& kv : sAlphaTex)
+        {
+            AlphaTexInfo& info = kv.second;
+            LLImageTex* gl = info.mTex->getImageTexture();
+            if (!gl)
+            {
+                continue;
+            }
+            const U32 name = gl->getTexName() ? gl->getTexName() : info.mTex->getDefaultImageName();
+            if (name != info.mName)
+            {
+                ++sGeoReg.mReconcileMissed;
+                info.mName = name;
+                changed.push_back(kv.first);
+            }
+        }
+        sGeoReg.mNsReconcile += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t_rec).count();
+    }
+    sGeoReg.mNsEvents += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t_events).count();
     // 2. the keep-alive: a slow round robin over the registry, and the textures with no GL texture made a few at a time
     static size_t cursor = 0;
     static std::vector<LLViewerTexture*> list;
     static size_t list_size = ~(size_t)0;
-    if (list_size != sAlphaTex.size())
+    if (list_size != sAlphaTex.size() && (list.empty() || (frame & 15u) == 0))
     {
         // rebuilt only when the registry changed size (a fragment made or freed changes it often: cheap, a few thousand pointers)
         list.clear();
@@ -6697,6 +6963,54 @@ static void scene_alpha_frame(U64 frame)
             if (any)
             {
                 scene_alpha_send_updates(f, dirty);
+            }
+        }
+    }
+    // S3 G3: the geometry fragments that use a texture whose name changed are told (kind 24): the worker pins the new name
+    if (!changed.empty())
+    {
+        static std::vector<LLSceneFragment*> gfrags;
+        static std::vector<U32> updates;
+        gfrags.clear();
+        for (LLViewerTexture* tex : changed)
+        {
+            auto it = sAlphaTex.find(tex);
+            if (it != sAlphaTex.end())
+            {
+                for (const AlphaTexUse& use : it->second.mGeoUsers)
+                {
+                    gfrags.push_back(use.mFrag);
+                }
+            }
+        }
+        std::sort(gfrags.begin(), gfrags.end());
+        gfrags.erase(std::unique(gfrags.begin(), gfrags.end()), gfrags.end());
+        for (LLSceneFragment* f : gfrags)
+        {
+            if (!f->mGeoHandle)
+            {
+                continue;
+            }
+            updates.clear();
+            for (size_t k = 0; k < f->mGeoTex.size(); ++k)
+            {
+                auto it = sAlphaTex.find(f->mGeoTex[k].get());
+                if (it != sAlphaTex.end() && it->second.mName != f->mGeoSentName[k])
+                {
+                    updates.push_back((U32)k);
+                    updates.push_back(it->second.mName);
+                    f->mGeoSentName[k] = it->second.mName;
+                }
+            }
+            if (!updates.empty())
+            {
+                LLVkBridge::ShadowPacketsHeader header;
+                header.mKind = 24;
+                header.mFragment = f->mGeoHandle;
+                header.mEntries = (U32)(updates.size() / 2);
+                LLVkBridge::shadowPackets(header, updates.data(), updates.size() * sizeof(U32));
+                ++sGeoReg.mTexUpdateRecords;
+                sGeoReg.mTexUpdateEntries += updates.size() / 2;
             }
         }
     }
@@ -7663,6 +7977,10 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         gRender.setColorMask(true, false);
 
         LLRenderPass::finishGeometryBuilds(getCull());       // <FS> builds no pass asked for (a hidden pool) must not run on into the next frame's cull
+        if (&camera == LLViewerCamera::getInstance() && !gCubeSnapshot)
+        {
+            ll_scene_geo_frame_end();       // <FS> S3 G3
+        }
 
     } // Tracy ZoneScoped
 

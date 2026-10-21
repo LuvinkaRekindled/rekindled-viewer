@@ -151,6 +151,9 @@ void LLSpatialGroup::clearDrawMap()
         LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
     }
     mDrawMap.clear();
+    mGeoHandle = 0;
+    mGeoServedMask = 0;
+    mGeoServedTris = 0;
     ll_scene_fragment_free(mSceneFragment);     // <FS> S2: the retained entries of the draw infos go with them (the worker's table follows)
 }
 
@@ -4216,6 +4219,8 @@ void LLCullResult::clear()
     mSceneGroups.clear();
     mGeoGroups.clear();
     mGeoSerials.clear();
+    mGeoHandles.clear();
+    mGeoElided = false;
     mGeoOwner.clear();
 
     for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)

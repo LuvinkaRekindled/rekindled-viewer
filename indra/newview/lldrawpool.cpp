@@ -999,8 +999,8 @@ static void fill_geometry_build(LLGeometryBuild& b, U32 type, const LLGeometryPa
         b.mInfo = *materials;
     }
     b.mCull = cull;
-    b.mServe = ll_scene_geo_serving();
-    b.mSkipServed = ll_scene_geo_skip();
+    b.mServe = ll_scene_geo_serving() && ll_scene_geo_main_view();      // (the table is told only the main view's visible fragments)
+    b.mSkipServed = b.mServe && ll_scene_geo_skip();
     b.mEpoch = LLBuilderGuard::sEpoch.load();
     memcpy(b.mView, gRenderModelView, sizeof(b.mView));
     memcpy(b.mProj, glm::value_ptr(gRender.getProjectionMatrix()), sizeof(b.mProj));
@@ -1108,6 +1108,10 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         }
     }
 
+    if (cull && cull->mGeoElided && !ll_scene_geo_prepared(cull))
+    {
+        ll_scene_geo_count(3, 1);       // postSort left the table's draws out of this render map and the table was not told: they are missing from this frame (should stay 0)
+    }
     if (build->mSkipServed && !ll_scene_geo_prepared(cull))
     {
         // S3: the build left out what the table serves, and the table was not told this cull result's fragments (an impostor, a snapshot, a frame boundary in between): built again with everything in it

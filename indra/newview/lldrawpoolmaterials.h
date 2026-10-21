@@ -41,6 +41,7 @@ class LLShaderProgram;
 class LLDrawPoolMaterials : public LLRenderPass
 {
     LLShaderProgram *mShader;
+    bool mUntouched = false;        // <FS> S3 G4: beginDeferredPass bound nothing (a rigged pass with no draws): renderDeferred / endDeferredPass leave it alone
 public:
     LLDrawPoolMaterials();
 
