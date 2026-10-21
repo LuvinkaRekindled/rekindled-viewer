@@ -4125,6 +4125,7 @@ void LLPipeline::postSort(LLCamera &camera)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
     const bool geo_collect = ll_scene_geo_on() && !sShadowRender;
+    const bool geo_owner = geo_collect && ll_scene_geo_verify_on();
     for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
     {
         LLSpatialGroup *group = *i;
@@ -4176,6 +4177,10 @@ void LLPipeline::postSort(LLCamera &camera)
                 }
 
                 sCull->pushDrawInfo(j->first, info);
+                if (geo_owner)
+                {
+                    sCull->mGeoOwner[info] = { group, group->mDrawMapSerial, 1 };
+                }
                 if (!sShadowRender && !sReflectionRender && !gCubeSnapshot)
                 {
                     addTrianglesDrawn(info->mCount);
@@ -5307,11 +5312,13 @@ struct LLSceneFragment
     size_t mAlphaCullIndex = 0;
     // S3 (LL_VK_SCENE_GEO=1, doc/vulkan/S3-design.md): the entries LLRenderPass::geometryEntry makes for the group's draw infos of the 13 deferred geometry pass types (kGeoTypes). mE.mMatrix = the
     // region matrix slot (0 = none), its texture fields are 1-based numbers into mGeoTex.
-    struct GeoItem { LLVkBridge::GeoEntry mE; LLDrawInfo* mInfo; U32 mType; };
+    struct GeoItem { LLVkBridge::GeoEntry mE; LLDrawInfo* mInfo; U32 mType; bool mServed; };
     std::vector<GeoItem> mGeo;
     std::vector<LLPointer<LLViewerTexture>> mGeoTex;
     std::vector<std::pair<U32, LLDrawInfo*>> mGeoFallback;      // (type number, draw info) the packet layout cannot take
     bool mGeoRegion = true;                             // all its matrices are region matrices (the worker can hold it)
+    U32 mGeoServedCount = 0;                            // entries of mGeo the scene table can draw (region matrix or none)
+    bool mGeoSent = false;                              // the worker has it (RETAIN_GEO, kind 20)
 };
 
 namespace
@@ -5338,10 +5345,14 @@ bool scene_resident_on()
     static const bool on = scene_env("LL_VK_SCENE_RESIDENT");
     return on;
 }
+int scene_geo_mode()
+{
+    static const int mode = []() { const char* e = getenv("LL_VK_SCENE_GEO"); return e && e[0] == '2' ? 2 : (e && e[0] == '1' ? 1 : 0); }();
+    return mode;
+}
 bool scene_geo_on()
 {
-    static const bool on = scene_env("LL_VK_SCENE_GEO");
-    return on;
+    return scene_geo_mode() >= 1;
 }
 // the alpha masked casters of resident fragments too (ray shadows, with the range membership)
 bool scene_alpha_on()
@@ -5369,6 +5380,7 @@ std::unordered_set<LLSceneFragment*> sResidentFragments;
 std::vector<LLSceneFragment*> sPendingResident;     // built, not yet told to the worker
 std::mutex sFragmentReleaseLock;
 std::vector<U32> sFragmentReleases;         // ids of fragments gone (groups destroyed or rebuilt), told to the worker with the next pass
+std::vector<U32> sGeoReleases;              // the same for the scene geometry table (kind 23), told by ll_scene_geo_frame
 U32 sNextFragmentId = 1;
 
 enum FragmentCause { FC_COUNT, FC_FALLBACK, FC_MATRICES, FC_VERTEX_BUFFER, FC_INDEX_BUFFER, FC_RANGE, FC_MATRIX, FC_MATRIX_ID, FC_NUM };
@@ -5433,6 +5445,11 @@ void ll_scene_fragment_free(LLSceneFragment*& fragment)
     {
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
         sFragmentReleases.push_back(fragment->mId);
+    }
+    if (fragment->mGeoSent)
+    {
+        std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
+        sGeoReleases.push_back(fragment->mId);
     }
     if (fragment->mAlphaRegistered)
     {
@@ -5513,6 +5530,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mGeoTex.clear();
     f.mGeoFallback.clear();
     f.mGeoRegion = true;
+    f.mGeoServedCount = 0;
     for (size_t t = 0; t < kGeoTypeCount; ++t)
     {
         auto it = group->mDrawMap.find(kGeoTypes[t].mType);
@@ -5546,6 +5564,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             if (!LLRenderPass::geometryEntry(*params, materials, item.mE, textures))
             {
                 f.mGeoFallback.push_back({ (U32)t, params });
+                params->mGeoServed = false;
                 continue;
             }
             U32* fields[6] = { &item.mE.mTextures[0], &item.mE.mTextures[1], &item.mE.mTextures[2], &item.mE.mTextures[3], &item.mE.mNormalMap, &item.mE.mSpecularMap };
@@ -5575,6 +5594,9 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             }
             item.mInfo = params;
             item.mType = (U32)t;
+            item.mServed = !params->mModelMatrix || item.mE.mMatrix != 0;
+            params->mGeoServed = item.mServed;
+            f.mGeoServedCount += item.mServed ? 1 : 0;
             f.mGeo.push_back(item);
         }
     }
@@ -5953,6 +5975,7 @@ struct GeoVerifyStats
     U64 mPasses = 0, mInfos = 0, mMissing = 0, mExtra = 0, mFallbackDiff = 0, mBuilderDiff = 0, mItemDiff = 0, mCountDiff = 0, mGroups = 0, mItems = 0, mMissingInDrawMaps = 0, mDeadGroups = 0, mMissingPasses = 0, mMissingChangedGroup = 0;
     // census of the main view, once a frame (what the worker side of S3 has to carry): sums over the frames counted
     U64 mFrames = 0, mVisibleGroups = 0, mGroupsWithItems = 0, mItemsByType[13] = {}, mFallback = 0, mNonRegionGroups = 0, mNonRegionItems = 0, mDistinctTextures = 0, mRenderMapAll = 0, mRenderMapGeo = 0, mFragmentless = 0;
+    U64 mMissingCause[6] = {}, mMissingByType[13] = {}, mDup = 0;     // causes: no owner recorded, pushed by the shadow job, group dead, group's draw map changed, owner not listed, listed with the same serial
     U32 mCensusFrame = ~0u;
     U32 mLast = 0;
 } sGeoStats;
@@ -6156,6 +6179,10 @@ void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo*
     }
     std::vector<LLDrawInfo*> a = expected;
     std::sort(a.begin(), a.end());
+    for (size_t k = 1; k < a.size(); ++k)
+    {
+        s.mDup += a[k] == a[k - 1] ? 1 : 0;       // the same draw info twice in the render map of one type
+    }
     std::sort(held.begin(), held.end());
     std::vector<LLDrawInfo*> diff;
     std::set_difference(a.begin(), a.end(), held.begin(), held.end(), std::back_inserter(diff));
@@ -6167,9 +6194,47 @@ void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo*
         s.mMissingChangedGroup += changed_group ? 1 : 0;
         // the draw info is not in the groups' draw maps either: the group was rebuilt or died after postSort listed it (the render map keeps the old pointers; the epoch check throws such a build away)
         std::sort(in_maps.begin(), in_maps.end());
+        std::unordered_set<const LLSpatialGroup*> listed(cull->mGeoGroups.begin(), cull->mGeoGroups.end());
+        s.mMissingByType[tn] += diff.size();
         for (LLDrawInfo* p : diff)
         {
-            s.mMissingInDrawMaps += std::binary_search(in_maps.begin(), in_maps.end(), p) ? 1 : 0;
+            const bool in_map = std::binary_search(in_maps.begin(), in_maps.end(), p);
+            s.mMissingInDrawMaps += in_map ? 1 : 0;
+            // who pushed it, and what became of that group (a group not in the listed set is not touched: it may be gone)
+            int cause = 0;
+            U32 serial_then = 0, serial_now = 0;
+            U8 source = 0;
+            auto owner = cull->mGeoOwner.find(p);
+            if (owner != cull->mGeoOwner.end())
+            {
+                source = owner->second.mSource;
+                serial_then = owner->second.mSerial;
+                if (source == 2)
+                {
+                    cause = 1;
+                }
+                else if (!listed.count(owner->second.mGroup))
+                {
+                    cause = 4;
+                }
+                else if (owner->second.mGroup->isDead())
+                {
+                    cause = 2;
+                }
+                else
+                {
+                    serial_now = owner->second.mGroup->mDrawMapSerial;
+                    cause = serial_now != serial_then ? 3 : 5;
+                }
+            }
+            ++s.mMissingCause[cause];
+            static U32 detailed = 0;
+            if (detailed++ < 12)
+            {
+                LL_WARNS("VkScene") << "geometry verify detail: type " << type << " draw info " << (const void*)p << " not in the fragments: cause " << cause << " (0 no owner recorded, 1 shadow job pushed it, 2 group dead, 3 group's draw map changed, "
+                    << "4 owner group not listed, 5 listed, same serial), source " << (int)source << ", serial then " << serial_then << " now " << serial_now << ", still in a listed group's draw map " << in_map
+                    << ", pass draw infos " << a.size() << LL_ENDL;
+            }
         }
     }
     diff.clear();
@@ -6198,8 +6263,235 @@ void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo*
             << " | fragment G builds: " << sGeoFillCalls << " (" << (double)sGeoFillNs / 1000.0 / std::max<U64>(sGeoFillCalls, 1) << " us each, " << (double)sGeoFillItems / std::max<U64>(sGeoFillCalls, 1)
             << " entries, " << sGeoFillFallback << " fallback, " << sGeoFillNonRegion << " not region-only), region matrix slots used " << sSlotMatrix.size() << LL_ENDL;
         LL_INFOS("VkScene") << "geometry verify (G-buffer entries of the fragments against the builder): " << s.mPasses << " passes, " << s.mInfos << " render map draw infos, " << s.mGroups << " group visits, "
-            << s.mItems << " fragment entries (" << s.mDeadGroups << " dead groups skipped); not in the fragments " << s.mMissing << " (of those still in a draw map: " << s.mMissingInDrawMaps << "; in " << s.mMissingPasses << " passes, " << s.mMissingChangedGroup << " of which had a group whose draw map changed or that died since postSort), extra in the fragments " << s.mExtra << ", builder entries differing from geometryEntry " << s.mBuilderDiff
+            << s.mItems << " fragment entries (" << s.mDeadGroups << " dead groups skipped); not in the fragments " << s.mMissing << " (of those still in a draw map: " << s.mMissingInDrawMaps << "; in " << s.mMissingPasses << " passes, " << s.mMissingChangedGroup << " of which had a group whose draw map changed or that died since postSort; "
+            << "by cause " << s.mMissingCause[0] << "/" << s.mMissingCause[1] << "/" << s.mMissingCause[2] << "/" << s.mMissingCause[3] << "/" << s.mMissingCause[4] << "/" << s.mMissingCause[5] << " (no owner / shadow job / dead / map changed / not listed / same serial), duplicates in the render map " << s.mDup << "), extra in the fragments " << s.mExtra << ", builder entries differing from geometryEntry " << s.mBuilderDiff
             << ", fragment entries differing from a fresh one " << s.mItemDiff << ", entry count / fallback list differences " << s.mCountDiff << LL_ENDL;
+    }
+}
+
+// ---- <FS> S3 G2: the table serves the deferred geometry of the visible fragments (LL_VK_SCENE_GEO=2) ----
+bool ll_scene_geo_verify_on()
+{
+    return scene_geo_on() && scene_verify_on();
+}
+
+namespace
+{
+U32 sGeoServingFrame = ~0u;
+bool sGeoServingNow = false;
+LLCullResult* sGeoPrepared = nullptr;
+U32 sGeoPreparedFrame = ~0u;
+U64 sGeoCounts[3] = {};
+struct GeoFrameStats
+{
+    U64 mFrames = 0, mGroups = 0, mFragments = 0, mNoItems = 0, mItemsServed = 0, mItemsUnserved = 0, mFallback = 0, mRetains = 0, mRetainItems = 0, mReleases = 0, mNames = 0, mTexturesDistinct = 0, mMatrices = 0, mBytes = 0, mOff = 0;
+    U64 mNsAll = 0, mNsEnsure = 0, mNsRetain = 0, mNsTextures = 0, mNsSend = 0, mNsReleases = 0;
+    U32 mLast = 0;
+} sGeoF;
+U64 geo_ns_since(const std::chrono::steady_clock::time_point& t)
+{
+    return (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t).count();
+}
+}
+
+bool ll_scene_geo_serving()
+{
+    if (scene_geo_mode() < 2)
+    {
+        return false;
+    }
+    if (sGeoServingFrame != (U32)gFrameCount)
+    {
+        sGeoServingFrame = (U32)gFrameCount;
+        bool on = LLVkBridge::sceneGeoAvailable() && LLRenderPass::deferredPacketsEnabled();
+        static const int period = []() { const char* e = getenv("LL_VK_SCENE_GEO_AB"); return e ? atoi(e) : 0; }();
+        if (period > 0)
+        {
+            const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            const bool phase = ((seconds / period) % 2) == 1;
+            static int last = -1;
+            if ((int)phase != last)
+            {
+                last = (int)phase;
+                LL_INFOS("VkScene") << "[phase] scene geometry table now " << (phase ? "ON" : "off") << LL_ENDL;
+            }
+            on = on && phase;
+        }
+        sGeoServingNow = on;
+    }
+    return sGeoServingNow;
+}
+
+bool ll_scene_geo_skip()
+{
+    return ll_scene_geo_serving() && !scene_verify_on();
+}
+
+bool ll_scene_geo_prepared(LLCullResult* cull)
+{
+    return cull && cull == sGeoPrepared && sGeoPreparedFrame == (U32)gFrameCount;
+}
+
+int ll_scene_geo_type_number(U32 type)
+{
+    return geo_type_number(type);
+}
+
+void ll_scene_geo_count(U32 what, U64 n)
+{
+    if (what < 3)
+    {
+        sGeoCounts[what] += n;
+    }
+}
+
+// once a frame, main view, before the passes: tells the worker which fragments are visible (the groups postSort listed), with the names of their textures and the region matrices they use; sends the
+// fragments the worker does not have yet (RETAIN_GEO) and the ones that are gone (RELEASE_GEO)
+void ll_scene_geo_frame(LLCullResult* cull)
+{
+    if (!cull || !ll_scene_geo_serving())
+    {
+        if (cull && scene_geo_mode() >= 2)
+        {
+            ++sGeoF.mOff;
+        }
+        return;
+    }
+    const auto t_all = std::chrono::steady_clock::now();
+    GeoFrameStats& s = sGeoF;
+    static std::vector<LLVkBridge::GeoFragRef> refs;
+    static std::vector<U32> names;
+    static std::vector<LLVkBridge::GeoSlotMatrix> matrices;
+    static std::vector<LLVkBridge::GeoWire> wire;
+    static std::vector<U8> blob;
+    static std::unordered_map<LLViewerTexture*, U32> name_of;
+    refs.clear();
+    names.clear();
+    matrices.clear();
+    name_of.clear();
+    U8 used[256] = {};
+    ++s.mFrames;
+    auto t0 = std::chrono::steady_clock::now();
+    {
+        std::vector<U32> gone;
+        {
+            std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
+            gone.swap(sGeoReleases);
+        }
+        if (!gone.empty())
+        {
+            LLVkBridge::ShadowPacketsHeader header;
+            header.mKind = 23;
+            header.mEntries = (U32)gone.size();
+            LLVkBridge::shadowPackets(header, gone.data(), gone.size() * sizeof(U32));
+            s.mReleases += gone.size();
+        }
+    }
+    s.mNsReleases += geo_ns_since(t0);
+    for (LLSpatialGroup* group : cull->mGeoGroups)
+    {
+        if (group->isDead())
+        {
+            continue;
+        }
+        ++s.mGroups;
+        t0 = std::chrono::steady_clock::now();
+        LLSceneFragment* f = scene_fragment_ensure(group);
+        s.mNsEnsure += geo_ns_since(t0);
+        s.mItemsUnserved += f->mGeo.size() - f->mGeoServedCount;
+        s.mFallback += f->mGeoFallback.size();
+        if (f->mGeoServedCount == 0)
+        {
+            ++s.mNoItems;
+            continue;
+        }
+        ++s.mFragments;
+        s.mItemsServed += f->mGeoServedCount;
+        if (!f->mGeoSent)
+        {
+            t0 = std::chrono::steady_clock::now();
+            wire.clear();
+            for (const LLSceneFragment::GeoItem& item : f->mGeo)
+            {
+                if (item.mServed)
+                {
+                    wire.push_back({ item.mE, item.mType });
+                }
+            }
+            LLVkBridge::ShadowPacketsHeader header;
+            header.mKind = 20;
+            header.mFragment = f->mId;
+            header.mEntries = (U32)wire.size();
+            LLVkBridge::shadowPackets(header, wire.data(), wire.size() * sizeof(wire[0]));
+            f->mGeoSent = true;
+            ++s.mRetains;
+            s.mRetainItems += wire.size();
+            s.mBytes += wire.size() * sizeof(wire[0]);
+            s.mNsRetain += geo_ns_since(t0);
+        }
+        t0 = std::chrono::steady_clock::now();
+        LLVkBridge::GeoFragRef ref = { f->mId, (U32)names.size(), (U32)f->mGeoTex.size() };
+        for (const LLPointer<LLViewerTexture>& tex : f->mGeoTex)
+        {
+            auto it = name_of.find(tex.get());
+            if (it == name_of.end())
+            {
+                it = name_of.emplace(tex.get(), gRender.getTexUnit(0)->prepareFast(tex.get())).first;      // what the builder's finish step does for every texture of a record
+            }
+            names.push_back(it->second);
+        }
+        refs.push_back(ref);
+        s.mNsTextures += geo_ns_since(t0);
+        for (const LLSceneFragment::GeoItem& item : f->mGeo)
+        {
+            if (item.mServed && item.mE.mMatrix < 256)
+            {
+                used[item.mE.mMatrix] = 1;
+            }
+        }
+    }
+    t0 = std::chrono::steady_clock::now();
+    for (U32 slot = 1; slot < 256 && slot < sSlotMatrix.size(); ++slot)
+    {
+        if (used[slot] && sSlotMatrix[slot])
+        {
+            LLVkBridge::GeoSlotMatrix m;
+            m.mSlot = slot;
+            memcpy(m.mM, sSlotMatrix[slot]->mMatrix, sizeof(m.mM));
+            matrices.push_back(m);
+        }
+    }
+    blob.resize(refs.size() * sizeof(refs[0]) + names.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]));
+    U8* at = blob.data();
+    if (!refs.empty()) { memcpy(at, refs.data(), refs.size() * sizeof(refs[0])); at += refs.size() * sizeof(refs[0]); }
+    if (!names.empty()) { memcpy(at, names.data(), names.size() * sizeof(U32)); at += names.size() * sizeof(U32); }
+    if (!matrices.empty()) { memcpy(at, matrices.data(), matrices.size() * sizeof(matrices[0])); }
+    LLVkBridge::ShadowPacketsHeader header;
+    header.mKind = 21;
+    header.mEntries = (U32)refs.size();
+    header.mMatrices = (U32)matrices.size();
+    header.mPaletteFloats = (U32)names.size();
+    LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+    s.mNames += names.size();
+    s.mTexturesDistinct += name_of.size();
+    s.mMatrices += matrices.size();
+    s.mBytes += blob.size();
+    s.mNsSend += geo_ns_since(t0);
+    sGeoPrepared = cull;
+    sGeoPreparedFrame = (U32)gFrameCount;
+    s.mNsAll += geo_ns_since(t_all);
+    const U32 frame = (U32)gFrameCount;
+    if (frame >= s.mLast + 600)
+    {
+        s.mLast = frame;
+        const double n = (double)std::max<U64>(s.mFrames, 1);
+        LL_INFOS("VkScene") << "scene geometry, viewer side per frame over " << s.mFrames << " frames (" << s.mOff << " frames with the table off): " << (double)s.mGroups / n << " listed groups, "
+            << (double)s.mFragments / n << " fragments with served entries (" << (double)s.mNoItems / n << " without), " << (double)s.mItemsServed / n << " entries served, " << (double)s.mItemsUnserved / n
+            << " entries left to the builder (matrix not a region one), " << (double)s.mFallback / n << " fallback draws, " << (double)s.mRetains / n << " fragments retained (" << (double)s.mRetainItems / n
+            << " entries), " << (double)s.mReleases / n << " released, " << (double)s.mNames / n << " texture names sent (" << (double)s.mTexturesDistinct / n << " distinct), " << (double)s.mMatrices / n
+            << " matrices, " << (double)s.mBytes / n << " bytes; builder draws left out " << (double)sGeoCounts[0] / n << ", table draw records " << (double)sGeoCounts[1] / n << ", builds made again for want of a prepare "
+            << sGeoCounts[2] << " | main thread us per frame: all " << (double)s.mNsAll / 1000.0 / n << " = releases " << (double)s.mNsReleases / 1000.0 / n << " + fragment ensure " << (double)s.mNsEnsure / 1000.0 / n
+            << " + retain " << (double)s.mNsRetain / 1000.0 / n << " + texture names " << (double)s.mNsTextures / 1000.0 / n << " + blob and send " << (double)s.mNsSend / 1000.0 / n << LL_ENDL;
     }
 }
 
@@ -6851,6 +7143,10 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
                 }
 
                 sCull->pushDrawInfo(j->first, info);
+                if (ll_scene_geo_on() && ll_scene_geo_verify_on())
+                {
+                    sCull->mGeoOwner[info] = { group, group->mDrawMapSerial, 2 };
+                }
             }
         }
 
@@ -7277,6 +7573,11 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         {
             LL_CPU_ZONE("deferred: start geometry builds");
             LLDrawPoolMaterials::kickGeometryBuilds();       // (nothing when the early sort already started them for this cull result)
+        }
+        if (&camera == LLViewerCamera::getInstance() && !gCubeSnapshot)
+        {
+            LL_CPU_ZONE("deferred: scene geometry prepare");
+            ll_scene_geo_frame(getCull());       // <FS> S3: the visible fragments' deferred geometry, named to the worker's table (LL_VK_SCENE_GEO=2)
         }
 
         LLVertexBuffer::unbind();

@@ -26,6 +26,7 @@ bool LLVkBridge::rayReconstructionAvailable() { return false; }
 void LLVkBridge::setUpscaleLodBias(float) {}
 bool LLVkBridge::shadowPacketsAvailable() { return false; }
 bool LLVkBridge::shadowAlphaPacketsAvailable() { return false; }
+bool LLVkBridge::sceneGeoAvailable() { return false; }
 void LLVkBridge::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
 void LLVkBridge::upscale(const UpscaleArgs&) {}
 U32 LLVkBridge::rtShadowMode() { return 0; }
@@ -823,6 +824,12 @@ bool LLVkBridge::shadowPacketsAvailable()
 bool LLVkBridge::shadowAlphaPacketsAvailable()
 {
     return shadowPacketsAvailable() && LLVk::Context::instance().getCaps().mBindlessSlots != 0;
+}
+
+bool LLVkBridge::sceneGeoAvailable()
+{
+    const auto& caps = LLVk::Context::instance().getCaps();
+    return shadowAlphaPacketsAvailable() && caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance;
 }
 
 void LLVkBridge::shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes)

@@ -82,7 +82,15 @@ struct LLSceneFragment;
 void ll_scene_fragment_free(LLSceneFragment*& fragment);        // pipeline.cpp (S1)
 class LLSpatialGroup;
 void ll_scene_fragment_build(LLSpatialGroup* group);
-bool ll_scene_geo_on();                                         // pipeline.cpp (S3): LL_VK_SCENE_GEO=1            // pipeline.cpp (S2): after a group's rebuild
+class LLCullResult;
+bool ll_scene_geo_on();                                         // pipeline.cpp (S3): LL_VK_SCENE_GEO=1 or 2
+bool ll_scene_geo_verify_on();                                  // ... with LL_VK_SCENE_VERIFY=1
+bool ll_scene_geo_serving();                                    // LL_VK_SCENE_GEO=2 and the table draws this frame (LL_VK_SCENE_GEO_AB=<seconds> alternates it)
+bool ll_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
+bool ll_scene_geo_prepared(LLCullResult* cull);                 // the table was told this frame's visible fragments for this cull result
+int ll_scene_geo_type_number(U32 type);                         // the pass type's number in the table's order (-1: not a table type)
+void ll_scene_geo_frame(LLCullResult* cull);                    // main view, once a frame before the passes
+void ll_scene_geo_count(U32 what, U64 n);                       // 0 builder draws left out, 1 table draw records sent, 2 builds made again for want of a prepare            // pipeline.cpp (S2): after a group's rebuild
 
 class LLDrawInfo final : public LLRefCount
 {
@@ -138,6 +146,7 @@ public:
     LLUUID mMaterialID; // id of LLGLTFMaterial or LLMaterial applied to this draw info
 
     U32 mShaderMask = 0;
+    bool mGeoServed = false;            // <FS> S3: the scene geometry table draws this one (its fragment holds a served entry): the deferred geometry builders leave it out while the table is serving
     F32  mEnvIntensity = 0.f;
     F32  mAlphaMaskCutoff = 0.5f;
 
@@ -577,6 +586,9 @@ public:
     // (LL_VK_SCENE_GEO=1). Filled by postSort.
     std::vector<LLSpatialGroup*> mGeoGroups;
     std::vector<U32> mGeoSerials;                       // their mDrawMapSerial when postSort listed them
+    // verify only (LL_VK_SCENE_GEO with LL_VK_SCENE_VERIFY=1): who pushed each draw info into the render map: the group, its mDrawMapSerial then, and where (1 postSort, 2 the shadow render map job)
+    struct GeoOwner { LLSpatialGroup* mGroup; U32 mSerial; U8 mSource; };
+    std::unordered_map<const LLDrawInfo*, GeoOwner> mGeoOwner;
 
 private:
 

@@ -780,6 +780,9 @@ struct LLGeometryBuild
     bool mHasMaterials = false;
     LLGeometryPassInfo mInfo;
     LLCullResult* mCull = nullptr;
+    bool mServe = false;                // S3: the scene table serves this frame (ll_scene_geo_serving() when the build was made) ...
+    bool mSkipServed = false;           // ... and the draws it serves are left out of this build (not while verifying)
+    U32 mSkipped = 0;                   // how many it left out
     unsigned mEpoch = 0;                // LLBuilderGuard::sEpoch when it was started
     F32 mView[16];                      // the matrices it was built for: the consumer checks them against the ones it has now
     F32 mProj[16];
@@ -854,6 +857,11 @@ static void build_geometry(LLGeometryBuild& out)
         if (!params->mCount)
         {
             continue;       // nothing to draw (the old path returns)
+        }
+        if (out.mSkipServed && params->mGeoServed)
+        {
+            ++out.mSkipped;     // S3: the scene table draws this one
+            continue;
         }
         if (!geometry_packet_ok(*params, materials == nullptr, materials))
         {
@@ -991,6 +999,8 @@ static void fill_geometry_build(LLGeometryBuild& b, U32 type, const LLGeometryPa
         b.mInfo = *materials;
     }
     b.mCull = cull;
+    b.mServe = ll_scene_geo_serving();
+    b.mSkipServed = ll_scene_geo_skip();
     b.mEpoch = LLBuilderGuard::sEpoch.load();
     memcpy(b.mView, gRenderModelView, sizeof(b.mView));
     memcpy(b.mProj, glm::value_ptr(gRender.getProjectionMatrix()), sizeof(b.mProj));
@@ -1098,7 +1108,35 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         }
     }
 
+    if (build->mSkipServed && !ll_scene_geo_prepared(cull))
+    {
+        // S3: the build left out what the table serves, and the table was not told this cull result's fragments (an impostor, a snapshot, a frame boundary in between): built again with everything in it
+        build = std::make_shared<LLGeometryBuild>();
+        fill_geometry_build(*build, type, materials, cull);
+        build->mServe = false;
+        build->mSkipServed = false;
+        build_geometry(*build);
+        ll_scene_geo_count(2, 1);
+    }
+    ll_scene_geo_count(0, build->mSkipped);
     finish_geometry_build(*build);
+    if (build->mServe && ll_scene_geo_prepared(cull))
+    {
+        // S3: the draws of this pass the scene table serves: the worker has the visible fragments' entries and draws this type's commands with the program bound now
+        const int tn = ll_scene_geo_type_number(type);
+        if (tn >= 0)
+        {
+            LL_CPU_ZONE("packets: scene table draw record");
+            LLVkBridge::ShadowPacketsHeader header;
+            header.mKind = 22;
+            header.mPass = (U32)tn;
+            F32 matrices[32];
+            memcpy(matrices, gRenderModelView, 16 * sizeof(F32));
+            memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
+            LLVkBridge::shadowPackets(header, matrices, sizeof(matrices));
+            ll_scene_geo_count(1, 1);
+        }
+    }
     if (ll_scene_geo_on())
     {
         ll_scene_geo_verify(cull, type, materials, build->mEntries, build->mFallback);      // <FS> S3 G1 (only with LL_VK_SCENE_VERIFY=1)
