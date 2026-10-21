@@ -91,6 +91,11 @@ struct GpuMaterial
 static_assert(sizeof(GpuMaterial) == 96, "material row");
 
 bool sMatsInit = false;                                     // LL_VK_RT_MATERIALS=1 at start-up: bigger tables, records for every geometry (the scene side can still be switched off live)
+// Texture identity for the alpha records without the material tables (LL_VK_RT_PINS=0 turns it off): the records of the masked structures hold PIN indices (a pin = a texture with a permanent bindless slot, kept
+// by events in LLVkWorker::rtPin*), the shader looks the slot up in the pin table of the call's region (kRecPinned), nothing asks every texture's slot every call (record slots 0.38 ms a call, 900 rows
+// rewritten a call, 2026-10-21). With the material tables on the same pins are used; the pin table then follows the material table in the region.
+bool sPinsInit = false;
+VkDeviceSize sPinOffset = 0;                                // where the pin table is in a call's region (after the geometry records, or after the material table)
 VkDeviceSize sGeomBytes = kGeomBytesBase, sRegionBytes = kGeomBytesBase;
 U32 sMaxRecords = 0, sTableCalls = kCalls;
 constexpr F32 kSkinReach = 300.f;                            // metres from the avatar's position: skinned vertices farther away are garbage and are left out
@@ -278,6 +283,7 @@ struct DebugSwitches
     bool mBBox = false;             // one line per build/refit of a structure with a matrix of its own (CPU-visible data only) into D:/claude/rt-bbox.log: bounding box, largest coordinate (stage C step 0)
 };
 DebugSwitches sDbg;
+inline bool pins_wanted() { return sPinsInit || (sMatsInit && sDbg.mMats); }       // the records hold pin indices
 std::atomic<S32> sViewLive{0};
 std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkBridge)
@@ -1215,8 +1221,10 @@ bool init(VkDescriptorSetLayout set_layout)
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
     sMatsInit = env_u64("LL_VK_RT_MATERIALS", 0) != 0;
+    sPinsInit = !sMatsInit && env_u64("LL_VK_RT_PINS", 1) != 0 && !(getenv("LL_VK_BINDLESS") && getenv("LL_VK_BINDLESS")[0] == '0');       // pins are slots of the bindless table
     sGeomBytes = sMatsInit ? kGeomBytesMats : kGeomBytesBase;
-    sRegionBytes = sGeomBytes + (sMatsInit ? kMatBytes + kPinBytes : 0);
+    sRegionBytes = sGeomBytes + (sMatsInit ? kMatBytes + kPinBytes : (sPinsInit ? kPinBytes : 0));
+    sPinOffset = sMatsInit ? sGeomBytes + kMatBytes : sGeomBytes;
     sMaxRecords = (U32)(sGeomBytes / sizeof(GpuGeom));
     // One table region per scene call of a frame (up to kCalls). With the material tables on there used to be only 3: a frame with more scene calls (a mirror or other extra views: 3.5 calls per frame in a
     // mirror room) made the calls from the fourth on rewrite the third call's region while the GPU still had to trace the earlier calls against it: records that do not match their structures,
@@ -3223,7 +3231,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         }
         // the new rows take their pins before the old rows of this group give theirs back: a texture that stays in use keeps its pin and its slot (no new lookup)
         std::vector<std::array<U32, 4>> pins(recs.size(), std::array<U32, 4>{ 0u, 0u, 0u, 0u });
-        if (sMatsInit && sDbg.mMats)
+        if (pins_wanted())
         {
             // the textures of the rows become pins: the rows hold pin indices, no slot is looked up per frame
             for (size_t i = 0; i < recs.size(); ++i)
@@ -3577,13 +3585,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         memcpy(&table[0], header_words, sizeof(header_words));
         table[0].mNormals[0] = (U32)mat_table_address;          // where the material rows of this call are
         table[0].mNormals[1] = (U32)(mat_table_address >> 32);
-        const bool pins_on = mat_table && sDbg.mMats;
-        U32* pin_table = pins_on ? (U32*)((U8*)mat_table + kMatBytes) : nullptr;
+        const bool pins_on = pins_wanted();
+        U32* pin_table = pins_on ? (U32*)((U8*)table + sPinOffset) : nullptr;
         if (pins_on)
         {
             // the pinned textures: those that changed are looked at again, the pin table (slot by pin index) gets what changed since this region was written; its address is in the header
             LLVkWorker::rtPinUpdate();
-            const U64 pa = mat_table_address + kMatBytes;
+            const U64 pa = (U64)tlas.mTable.mAddress + (U64)table_call * sRegionBytes + sPinOffset;
             const U32 words[2] = { (U32)pa, (U32)(pa >> 32) };
             memcpy(table[0].mUv, words, sizeof(words));
         }
@@ -3658,15 +3666,18 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 }
             }
             tbl_lap(2);
-            sStats.mMatRowsWritten += apply_rows(sMatLog, sMatRegion[region_index], sMatRows, mat_table, sDbg.mDelta);
-            tbl_lap(3);
-            if (sDbg.mTableVerify && !sMatRows.empty() && memcmp(mat_table, sMatRows.data(), sMatRows.size() * sizeof(GpuMaterial)) != 0)
+            if (mat_table)
             {
-                ++sStats.mTableMismatch;
-                static U32 logged_mat = 0;
-                if (logged_mat++ < 20)
+                sStats.mMatRowsWritten += apply_rows(sMatLog, sMatRegion[region_index], sMatRows, mat_table, sDbg.mDelta);
+                tbl_lap(3);
+                if (sDbg.mTableVerify && !sMatRows.empty() && memcmp(mat_table, sMatRows.data(), sMatRows.size() * sizeof(GpuMaterial)) != 0)
                 {
-                    LL_WARNS("VkRt") << "table verify: the material rows of region " << region_index << " differ from the kept rows (" << sMatRows.size() << " rows)" << LL_ENDL;
+                    ++sStats.mTableMismatch;
+                    static U32 logged_mat = 0;
+                    if (logged_mat++ < 20)
+                    {
+                        LL_WARNS("VkRt") << "table verify: the material rows of region " << region_index << " differ from the kept rows (" << sMatRows.size() << " rows)" << LL_ENDL;
+                    }
                 }
             }
         }
