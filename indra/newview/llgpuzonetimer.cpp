@@ -15,6 +15,8 @@
 #include "llfasttimer.h"
 #include "llrenderheaders.h"
 #include "llvkzones.h"
+#include "lluniformcensus.h"
+#include "llshaderprogram.h"
 #include "llviewercontrol.h"
 
 namespace
@@ -209,6 +211,7 @@ LLCpuZoneScope::LLCpuZoneScope(const char* name)
     {
         mName = name;
         mStart = cpu_now();
+        LLUniCensus::push(name);
     }
 }
 
@@ -218,6 +221,7 @@ LLCpuZoneScope::~LLCpuZoneScope()
     {
         return;
     }
+    LLUniCensus::pop();
     const long long d = cpu_now() - mStart;
     for (unsigned i = 0; i < sCpuZoneCount; ++i)
     {
@@ -257,6 +261,132 @@ namespace
     }
 }
 
+// <FS> U0 (doc/vulkan/U-pass-uniforms-design.md): the census of uniform writes, shader binds and texture binds (LL_VK_UNICENSUS=1 with FS_CPU_ZONES=1), per frame over 600 frames
+static void uni_census_report(double frames)
+{
+    using namespace LLUniCensus;
+    if (!sOn)
+    {
+        return;
+    }
+    LL_INFOS("UniCensus") << "per frame: uniform writes " << (double)sTotal.mCalls / frames << " (changed " << (double)sTotal.mChanged / frames << ", " << (double)sTotal.mBytes / frames << " bytes), texture binds "
+        << (double)sTotal.mTex / frames << ", shader binds " << (double)sTotal.mBinds / frames << ", programs seen " << sProgs.size() << LL_ENDL;
+    {
+        std::vector<std::pair<const char*, Counters*>> zones;
+        for (auto& kv : sByZone)
+        {
+            if (kv.second.mCalls || kv.second.mTex || kv.second.mBinds)
+            {
+                zones.push_back({ kv.first, &kv.second });
+            }
+        }
+        std::sort(zones.begin(), zones.end(), [](const auto& a, const auto& b) { return a.second->mCalls + a.second->mTex + 4 * a.second->mBinds > b.second->mCalls + b.second->mTex + 4 * b.second->mBinds; });
+        std::string text;
+        size_t n = 0;
+        for (auto& z : zones)
+        {
+            if (++n > 40) break;
+            text += llformat(" | %s: writes %.1f (changed %.1f), tex %.1f, binds %.1f, entered %.1f", z.first, (double)z.second->mCalls / frames, (double)z.second->mChanged / frames, (double)z.second->mTex / frames,
+                             (double)z.second->mBinds / frames, (double)z.second->mScopes / frames);
+        }
+        LL_INFOS("UniCensus") << "by innermost zone (writes / changes / texture binds / shader binds per frame):" << text << LL_ENDL;
+        for (auto& kv : sByZone)
+        {
+            kv.second = Counters();
+        }
+    }
+    {
+        std::vector<ProgReg> progs = sProgs;
+        std::sort(progs.begin(), progs.end(), [](const ProgReg& a, const ProgReg& b) { return a.mStats->mDefNs > b.mStats->mDefNs; });
+        std::string text;
+        size_t n = 0;
+        for (const ProgReg& p : progs)
+        {
+            const ProgStats& s = *p.mStats;
+            if (!s.mDefBinds || ++n > 28) continue;
+            const double b = (double)s.mDefBinds;
+            text += llformat(" | %s: %.2f binds/frame, %.1f us each, %.1f writes (%.1f changed), %.1f tex; sections us: bind %.1f gbuf %.1f depth+exp %.1f viewport %.1f noise %.1f lightfn %.1f lighttgt %.1f shadowmaps %.1f shadowmat %.1f env %.1f probes %.1f ssao %.1f norm %.1f tail %.1f",
+                             p.mName->c_str(), b / frames, (double)s.mDefNs / 1000.0 / b, (double)s.mDefCalls / b, (double)s.mDefChanged / b, (double)s.mDefTex / b,
+                             (double)s.mSec[0] / 1000.0 / b, (double)s.mSec[1] / 1000.0 / b, (double)s.mSec[2] / 1000.0 / b, (double)s.mSec[3] / 1000.0 / b, (double)s.mSec[4] / 1000.0 / b,
+                             (double)s.mSec[5] / 1000.0 / b, (double)s.mSec[6] / 1000.0 / b, (double)s.mSec[7] / 1000.0 / b, (double)s.mSec[8] / 1000.0 / b, (double)s.mSec[9] / 1000.0 / b,
+                             (double)s.mSec[10] / 1000.0 / b, (double)s.mSec[11] / 1000.0 / b, (double)s.mSec[12] / 1000.0 / b, (double)s.mSec[SECTIONS - 1] / 1000.0 / b);
+        }
+        LL_INFOS("UniCensus") << "bindDeferredShader by program (sorted by wall time per frame):" << text << LL_ENDL;
+        // by uniform name over all programs: writes, changes and how many programs
+        {
+            struct Agg { U64 mCalls = 0, mChanged = 0; int mPrograms = 0; int mClass = -1; };
+            std::unordered_map<std::string, Agg> agg;
+            for (const ProgReg& p : sProgs)
+            {
+                const ProgStats& s = *p.mStats;
+                for (size_t i = 0; i < s.mUniCalls.size(); ++i)
+                {
+                    if (!s.mUniCalls[i])
+                    {
+                        continue;
+                    }
+                    const std::string* name = p.mProg->censusUniformName(i);
+                    if (!name)
+                    {
+                        continue;
+                    }
+                    Agg& a = agg[*name];
+                    a.mCalls += s.mUniCalls[i];
+                    a.mChanged += i < s.mUniChanged.size() ? s.mUniChanged[i] : 0;
+                    ++a.mPrograms;
+                    a.mClass = p.mProg->censusUniformClass(i);
+                }
+            }
+            std::vector<std::pair<std::string, Agg>> list(agg.begin(), agg.end());
+            std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) { return a.second.mCalls > b.second.mCalls; });
+            static const char* const kClass[] = { "pass", "draw", "material", "light", "skin" };
+            std::string by_uniform;
+            size_t k = 0;
+            for (const auto& u : list)
+            {
+                if (++k > 60) break;
+                by_uniform += llformat(" | %s [%s, %d programs]: %.1f writes, %.1f changed", u.first.c_str(), u.second.mClass >= 0 && u.second.mClass < 5 ? kClass[u.second.mClass] : "?", u.second.mPrograms,
+                                       (double)u.second.mCalls / frames, (double)u.second.mChanged / frames);
+            }
+            U64 by_class_calls[6] = {}, by_class_changed[6] = {};
+            for (const auto& u : list)
+            {
+                const int c = u.second.mClass >= 0 && u.second.mClass < 5 ? u.second.mClass : 5;
+                by_class_calls[c] += u.second.mCalls;
+                by_class_changed[c] += u.second.mChanged;
+            }
+            std::string classes;
+            for (int c = 0; c < 6; ++c)
+            {
+                classes += llformat(" %s %.1f writes / %.1f changed;", c < 5 ? kClass[c] : "other", (double)by_class_calls[c] / frames, (double)by_class_changed[c] / frames);
+            }
+            LL_INFOS("UniCensus") << "by class:" << classes << LL_ENDL;
+            LL_INFOS("UniCensus") << "by uniform name (all programs, sorted by writes per frame):" << by_uniform << LL_ENDL;
+        }
+        std::sort(progs.begin(), progs.end(), [](const ProgReg& a, const ProgReg& b) { return a.mStats->mCalls > b.mStats->mCalls; });
+        text.clear();
+        n = 0;
+        for (const ProgReg& p : progs)
+        {
+            const ProgStats& s = *p.mStats;
+            if (!s.mCalls || ++n > 28) continue;
+            text += llformat(" | %s: writes %.1f (changed %.1f), binds %.2f, environment update %.2f a frame (%.1f us, %.1f writes each)", p.mName->c_str(), (double)s.mCalls / frames, (double)s.mChanged / frames,
+                             (double)s.mBinds / frames, (double)s.mUpdBinds / frames, s.mUpdBinds ? (double)s.mUpdNs / 1000.0 / (double)s.mUpdBinds : 0.0, s.mUpdBinds ? (double)s.mUpdCalls / (double)s.mUpdBinds : 0.0);
+        }
+        LL_INFOS("UniCensus") << "by program (sorted by uniform writes per frame):" << text << LL_ENDL;
+        for (const ProgReg& p : sProgs)
+        {
+            const bool reg = p.mStats->mReg;
+            std::vector<U32> zero_calls(p.mStats->mUniCalls.size(), 0), zero_changed(p.mStats->mUniChanged.size(), 0);
+            *p.mStats = ProgStats();
+            p.mStats->mReg = reg;
+            p.mStats->mUniCalls = zero_calls;
+            p.mStats->mUniChanged = zero_changed;
+        }
+    }
+    sTotal = Counters();
+}
+
 // static
 void LLCpuZoneScope::frame()
 {
@@ -290,6 +420,7 @@ void LLCpuZoneScope::frame()
         text += llformat(" | %s %.2f ms (%.1f calls)", z.mName, (double)z.mNanos / 1.0e6 / frames, (double)z.mCalls / frames);
     }
     LL_INFOS("CpuZones") << "main thread per frame over " << sCpuFrames << " frames: loop interval " << interval_ms << " ms (inclusive zones, nested ones count in their parents)" << text << LL_ENDL;
+    uni_census_report(frames);
     for (unsigned i = 0; i < sCpuZoneCount; ++i)
     {
         sCpuZones[i].mNanos = 0;

@@ -31,6 +31,7 @@
 #include "llrender.h"
 #include "llrenderformat.h"
 #include "llstaticstringtable.h"
+#include "lluniformcensus.h"
 #include <boost/json.hpp>
 #include <unordered_map>
 #include <initializer_list>
@@ -398,6 +399,12 @@ public:
 
     // hacky flag used for optimization in LLDrawPoolAlpha
     bool mCanBindFast = false;
+
+    LLUniCensus::ProgStats mCensus;     // <FS> U0 counters (LL_VK_UNICENSUS=1)
+    void censusProgram();               // registers the program with the census (first call)
+    void censusUniform(S32 twin, bool changed);
+    const std::string* censusUniformName(size_t index) const;       // the name and class of the program's uniform number index (null when there is none)
+    int censusUniformClass(size_t index) const;
 
 #if LL_PROFILER_ENABLE_RENDER_DOC
     void setLabel(const char* label);

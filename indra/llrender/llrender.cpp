@@ -192,6 +192,7 @@ void LLTexUnit::applyTexOptions(LLImageTex* gl_tex)
 
 void LLTexUnit::bindFast(LLTexture* texture)
 {
+    if (LLUniCensus::sOn) LLUniCensus::note_tex();
     LLImageTex* gl_tex = texture->getImageTexture();
     texture->setActive();
     mCurrTexture = gl_tex->getTexName();
@@ -255,6 +256,7 @@ U32 LLTexUnit::prepareFast(LLTexture* texture)
 
 bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 {
+    if (LLUniCensus::sOn) LLUniCensus::note_tex();
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     if (mIndex >= 0)
@@ -319,6 +321,7 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 
 bool LLTexUnit::bind(LLImageTex* texture, bool for_rendering, bool forceBind, S32 usename)
 {
+    if (LLUniCensus::sOn) LLUniCensus::note_tex();
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
     if (mIndex < 0) return false;
 
@@ -361,6 +364,7 @@ bool LLTexUnit::bind(LLImageTex* texture, bool for_rendering, bool forceBind, S3
 
 bool LLTexUnit::bind(LLCubeMap* cubeMap)
 {
+    if (LLUniCensus::sOn) LLUniCensus::note_tex();
     if (mIndex < 0) return false;
 
     gRender.flush();
@@ -400,6 +404,7 @@ bool LLTexUnit::bind(LLCubeMap* cubeMap)
 // LLRenderTarget is unavailible on the mapserver since it uses FBOs.
 bool LLTexUnit::bind(LLRenderTarget* renderTarget, bool bindDepth)
 {
+    if (LLUniCensus::sOn) LLUniCensus::note_tex();
     if (mIndex < 0) return false;
 
     gRender.flush();
@@ -420,6 +425,7 @@ bool LLTexUnit::bind(LLRenderTarget* renderTarget, bool bindDepth)
 
 bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const char* file, int line)
 {
+    if (LLUniCensus::sOn) LLUniCensus::note_tex();
     sNextFile = file;
     sNextLine = line;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_MANUAL);
