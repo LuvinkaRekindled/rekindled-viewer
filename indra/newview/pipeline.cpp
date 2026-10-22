@@ -5995,9 +5995,8 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
 // slot) or OLD (the old code draws it in place). Consecutive served draws with one key (fullbright or lit) are one segment: a run. The served draws are items of the fragment (type 26, after the
 // deferred ones); a run is a range of them.
 static bool scene_alpha_plan_env()
-{
-    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_ALPHA"); return v && atoi(v) != 0; }();
-    return on;
+{   // S5g: the table is the only alpha path: its plans are made whenever its pull programs exist
+    return gAlphaPullReady;
 }
 // diagnostic (LL_VK_SCENE_ALPHA_ONLY=<mask>, default 63): which classes of draws the table takes: 1 lit, 2 fullbright, 4 draws with a texture matrix, 8 draws with a model matrix that is not a region matrix, 16 materials (S5b), 32 glTF blend (S5c), 64 rigged draws (S5d)
 // S5b: the blend function pairs of the draws (standard alpha blend = id 0); a run key carries the id in bits 8 and up
@@ -6186,6 +6185,12 @@ bool ll_alpha_transient(LLDrawInfo* draw, bool rigged, bool depth_only, LLAlphaT
     ++sAlphaWhyTr[ac.mWhy];
     if (!ac.mServed)
     {
+        static bool warned[WHY_COUNT] = {};
+        if (ac.mWhy != WHY_EMPTY && !warned[ac.mWhy])
+        {   // S5g: no old path: such a draw is not drawn at all
+            warned[ac.mWhy] = true;
+            LL_WARNS("VkScene") << "[S5g] an alpha draw the table cannot draw is not drawn (reason: " << sAlphaWhyName[ac.mWhy] << "; logged once)" << LL_ENDL;
+        }
         return false;
     }
     out.mEntry = ac.mEntry;
@@ -6423,32 +6428,8 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged
 // the alpha pass is drawn from the table: the switch (LL_VK_SCENE_ALPHA=1, LL_VK_SCENE_ALPHA_AB=<s> alternates it, marker "[phase] scene alpha now ON/off"), the table serving this frame, the pull programs, and the
 // worker told this cull result's fragments
 bool ll_alpha_ab_on()
-{
-    if (!scene_alpha_plan_env() || !gAlphaPullReady)
-    {
-        return false;
-    }
-    static U32 frame = ~0u;
-    static bool on = false;
-    if (frame != (U32)gFrameCount)
-    {
-        frame = (U32)gFrameCount;
-        on = true;
-        static const int period = []() { const char* e = getenv("LL_VK_SCENE_ALPHA_AB"); return e ? atoi(e) : 0; }();
-        if (period > 0)
-        {
-            const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-            const bool phase = ((seconds / period) % 2) == 1;
-            static int last = -1;
-            if ((int)phase != last)
-            {
-                last = (int)phase;
-                LL_INFOS("VkScene") << "[phase] scene alpha now " << (phase ? "ON" : "off") << LL_ENDL;
-            }
-            on = phase;
-        }
-    }
-    return on;
+{   // the alpha pull programs draw in every view (S5g: always, once they exist)
+    return gAlphaPullReady;
 }
 
 bool ll_alpha_serving()
