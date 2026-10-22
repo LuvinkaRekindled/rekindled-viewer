@@ -33,6 +33,7 @@
 #include <glslang/SPIRV/GlslangToSpv.h>
 
 #include <chrono>
+#include <deque>
 #include "llvkworker.h"
 #include "llvkasync.h"
 #include <map>
@@ -7755,6 +7756,471 @@ void geo_dispatch(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// <FS> S7 H1 (doc/vulkan/S7-design.md section 4): Hi-Z occlusion. Kind 34 carries the boxes of the occlusion groups (HizBox, 32 bytes each) and the view-projection of the pass; the worker builds a max-depth
+// pyramid of the depth target that is bound at that point of the frame (first level = half resolution; sizes are the floor of half like Vulkan's mip chain, texel p of a level covers texels 2p and 2p+1 of the one below and the last texel also the odd extra row / column), and tests every box
+// with one thread: the nearest depth of its 8 corners against the largest depth of the pyramid texels its screen rectangle covers (a level where the rectangle spans at most 2 texels). One word a box
+// goes to a slot of a ring of host-visible cached memory: bit 0 = occluded, bits 8-15 = the pyramid level used, bit 16 = a corner behind the near plane (visible), bit 17 = rectangle off the screen
+// (visible), bit 18 = beyond the far plane (visible). The viewer reads the slot when the frame's fence has signalled (hiz_poll publishes the serial); nothing ever blocks.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+namespace
+{
+const char* kHizDownShader = R"GLSL(#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D uSrc;
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D uDst;
+layout(push_constant) uniform PC { ivec2 srcSize; ivec2 dstSize; int srcLod; } pc;
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= pc.dstSize.x || p.y >= pc.dstSize.y) return;
+    ivec2 b = p * 2;
+    ivec2 m = pc.srcSize - 1;
+    // texel p covers source texels 2p and 2p+1; the last one also takes the odd extra source row / column (the level sizes are the floor of half, as Vulkan's mip chain)
+    int nx = (p.x == pc.dstSize.x - 1 && (pc.srcSize.x & 1) == 1 && pc.srcSize.x > 1) ? 3 : 2;
+    int ny = (p.y == pc.dstSize.y - 1 && (pc.srcSize.y & 1) == 1 && pc.srcSize.y > 1) ? 3 : 2;
+    float d = 0.0;
+    for (int y = 0; y < ny; ++y)
+        for (int x = 0; x < nx; ++x)
+            d = max(d, texelFetch(uSrc, min(b + ivec2(x, y), m), pc.srcLod).r);
+    imageStore(uDst, p, vec4(d));
+}
+)GLSL";
+const char* kHizTestShader = R"GLSL(#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) uniform sampler2D uPyr;
+struct Box { vec4 c; vec4 h; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Boxes { Box b[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { uint o[]; };
+layout(push_constant) uniform PC { mat4 vp; uvec2 boxes; uvec2 outp; uint count; uint levels; vec2 depthSize; uint fine; uint pad0; uint pad1; uint pad2; } pc;
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count) return;
+    Box bx = Boxes(pc.boxes).b[i];
+    bool water = (floatBitsToUint(bx.c.w) & 1u) != 0u;
+    float minz = 1e9;
+    vec2 mn = vec2(1e9), mx = vec2(-1e9);
+    uint why = 0u;
+    for (int k = 0; k < 8; ++k)
+    {
+        vec3 s = vec3((k & 1) != 0 ? 1.0 : -1.0, (k & 2) != 0 ? 1.0 : -1.0, (k & 4) != 0 ? 1.0 : -1.0);
+        vec4 cl = pc.vp * vec4(bx.c.xyz + s * bx.h.xyz, 1.0);
+        float z = (cl.z + cl.w) * 0.5;
+        if (cl.w <= 1e-4 || (!water && z < 0.0)) { why = 1u << 16; break; }
+        vec2 uv = cl.xy / cl.w * 0.5 + 0.5;
+        mn = min(mn, uv);
+        mx = max(mx, uv);
+        minz = min(minz, clamp(z / cl.w, 0.0, 1.0));
+    }
+    uint result = why;
+    Out(pc.outp).o[3u * i + 1u] = 0u;
+    Out(pc.outp).o[3u * i + 2u] = 0u;
+    if (why == 0u)
+    {
+        if (mx.x < 0.0 || mn.x > 1.0 || mx.y < 0.0 || mn.y > 1.0) result = 1u << 17;
+        else if (!water && minz >= 1.0) result = 1u << 18;
+        else
+        {
+            mn = clamp(mn, vec2(0.0), vec2(1.0));
+            mx = clamp(mx, vec2(0.0), vec2(1.0));
+            vec2 pmn = mn * pc.depthSize, pmx = mx * pc.depthSize;
+            vec2 ext = max(pmx - pmn, vec2(1.0));
+            float s = max(ext.x, ext.y);
+            int lod = clamp(int(ceil(log2(s))) - int(pc.fine), 0, int(pc.levels) - 1);
+            float texel = exp2(float(lod + 1));
+            ivec2 sz = textureSize(uPyr, lod);
+            ivec2 t0 = min(ivec2(floor(pmn / texel)), sz - 1);
+            ivec2 t1 = min(ivec2(floor(pmx / texel)), sz - 1);
+            t1 = min(t1, t0 + 11);
+            float maxd = 0.0;
+            for (int y = t0.y; y <= t1.y; ++y)
+                for (int x = t0.x; x <= t1.x; ++x)
+                    maxd = max(maxd, texelFetch(uPyr, ivec2(x, y), lod).r);
+            result = (minz > maxd ? 1u : 0u) | (uint(lod) << 8);
+            Out(pc.outp).o[3u * i + 1u] = floatBitsToUint(minz);
+            Out(pc.outp).o[3u * i + 2u] = floatBitsToUint(maxd);
+        }
+    }
+    Out(pc.outp).o[3u * i] = result;
+}
+)GLSL";
+
+constexpr U32 kHizSlots = 8;                // ring slots (the viewer never has more than kHizSlots - 1 serials in flight)
+constexpr U32 kHizCapacity = 4096;          // boxes a slot holds
+
+struct HizState
+{
+    bool mTried = false, mReady = false;
+    VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout mDownLayout = VK_NULL_HANDLE, mTestLayout = VK_NULL_HANDLE;
+    VkPipeline mDown = VK_NULL_HANDLE, mTest = VK_NULL_HANDLE;
+    VkSampler mSampler = VK_NULL_HANDLE;
+    Buffer mResults;                        // kHizSlots x kHizCapacity words, cached host memory
+    Image mPyramid;                         // R32_SFLOAT, mips, GENERAL for good
+    std::vector<VkImageView> mMipViews;
+    bool mPyramidInit = false;
+    U32 mDepthW = 0, mDepthH = 0;
+    struct Pending { U32 mSerial, mSlot; U64 mFrame; };
+    std::deque<Pending> mPending;
+    // counters (reported every 600 records)
+    U64 mRecords = 0, mBoxes = 0, mNoDepth = 0, mNoPipeline = 0, mPyramidBuilds = 0, mTooMany = 0, mPublished = 0, mDispatches = 0, mLast = 0;
+};
+HizState sHiz;
+
+VkShaderModule hiz_compile(const char* source, const char* what)
+{
+    static const bool glslang_ready = glslang::InitializeProcess();
+    if (!glslang_ready)
+    {
+        return VK_NULL_HANDLE;
+    }
+    glslang::TShader shader(EShLangCompute);
+    const char* strings[1] = { source };
+    shader.setStrings(strings, 1);
+    shader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientVulkan, 100);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_6);
+    const EShMessages msgs = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+    if (!shader.parse(GetDefaultResources(), 450, ECoreProfile, false, false, msgs))
+    {
+        LL_WARNS("VkHiz") << what << ": compile failed: " << shader.getInfoLog() << LL_ENDL;
+        return VK_NULL_HANDLE;
+    }
+    glslang::TProgram program;
+    program.addShader(&shader);
+    if (!program.link(msgs))
+    {
+        LL_WARNS("VkHiz") << what << ": link failed: " << program.getInfoLog() << LL_ENDL;
+        return VK_NULL_HANDLE;
+    }
+    std::vector<unsigned int> spirv;
+    spv::SpvBuildLogger logger;
+    glslang::SpvOptions options;
+    options.validate = false;
+    glslang::GlslangToSpv(*program.getIntermediate(EShLangCompute), spirv, &logger, &options);
+    if (spirv.empty())
+    {
+        LL_WARNS("VkHiz") << what << ": no SPIR-V: " << logger.getAllMessages() << LL_ENDL;
+        return VK_NULL_HANDLE;
+    }
+    VkShaderModuleCreateInfo mi = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    mi.codeSize = spirv.size() * sizeof(unsigned int);
+    mi.pCode = spirv.data();
+    VkShaderModule module = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(Context::instance().getDevice(), &mi, nullptr, &module) != VK_SUCCESS)
+    {
+        return VK_NULL_HANDLE;
+    }
+    return module;
+}
+
+bool hiz_init()
+{
+    HizState& s = sHiz;
+    if (s.mReady)
+    {
+        return true;
+    }
+    if (s.mTried)
+    {
+        return false;
+    }
+    s.mTried = true;
+    Context& ctx = Context::instance();
+    VkDevice dev = ctx.getDevice();
+    VkShaderModule down = hiz_compile(kHizDownShader, "hiz down");
+    VkShaderModule test = hiz_compile(kHizTestShader, "hiz test");
+    if (down == VK_NULL_HANDLE || test == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    VkDescriptorSetLayoutBinding b[2] = {};
+    b[0].binding = 0;
+    b[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    b[0].descriptorCount = 1;
+    b[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    b[1].binding = 1;
+    b[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    b[1].descriptorCount = 1;
+    b[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    VkDescriptorSetLayoutCreateInfo sl = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+    sl.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+    sl.bindingCount = 2;
+    sl.pBindings = b;
+    if (vkCreateDescriptorSetLayout(dev, &sl, nullptr, &s.mSetLayout) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkPushConstantRange down_pc = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 20 };
+    VkPushConstantRange test_pc = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 112 };
+    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    li.setLayoutCount = 1;
+    li.pSetLayouts = &s.mSetLayout;
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &down_pc;
+    if (vkCreatePipelineLayout(dev, &li, nullptr, &s.mDownLayout) != VK_SUCCESS)
+    {
+        return false;
+    }
+    li.pPushConstantRanges = &test_pc;
+    if (vkCreatePipelineLayout(dev, &li, nullptr, &s.mTestLayout) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkComputePipelineCreateInfo pi = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    pi.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    pi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pi.stage.pName = "main";
+    pi.stage.module = down;
+    pi.layout = s.mDownLayout;
+    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &s.mDown) != VK_SUCCESS)
+    {
+        return false;
+    }
+    pi.stage.module = test;
+    pi.layout = s.mTestLayout;
+    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &s.mTest) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkSamplerCreateInfo sci = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+    sci.magFilter = sci.minFilter = VK_FILTER_NEAREST;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.maxLod = 16.f;
+    if (vkCreateSampler(dev, &sci, nullptr, &s.mSampler) != VK_SUCCESS)
+    {
+        return false;
+    }
+    if (!ctx.createBuffer((VkDeviceSize)kHizSlots * kHizCapacity * 12, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Readback, s.mResults) || !s.mResults.mMapped || !s.mResults.mAddress)
+    {
+        return false;
+    }
+    memset(s.mResults.mMapped, 0, (size_t)kHizSlots * kHizCapacity * 12);
+    LLVkBridge::hizSetResults((const U32*)s.mResults.mMapped, kHizCapacity);
+    s.mReady = true;
+    LL_INFOS("VkHiz") << "Hi-Z occlusion ready: " << kHizSlots << " result slots of " << kHizCapacity << " boxes" << LL_ENDL;
+    return true;
+}
+
+void hiz_poll()
+{
+    HizState& s = sHiz;
+    if (!s.mReady)
+    {
+        return;
+    }
+    Context& ctx = Context::instance();
+    while (!s.mPending.empty() && ctx.frameFinished(s.mPending.front().mFrame))
+    {
+        const HizState::Pending p = s.mPending.front();
+        s.mPending.pop_front();
+        vmaInvalidateAllocation(ctx.getAllocator(), s.mResults.mAllocation, (VkDeviceSize)p.mSlot * kHizCapacity * 12, (VkDeviceSize)kHizCapacity * 12);
+        LLVkBridge::hizPublish(p.mSlot, p.mSerial);
+        ++s.mPublished;
+    }
+}
+
+// the pyramid for a depth target of this size; false when it cannot be made
+bool hiz_pyramid(U32 w, U32 h)
+{
+    HizState& s = sHiz;
+    if (s.mPyramid.valid() && s.mDepthW == w && s.mDepthH == h)
+    {
+        return true;
+    }
+    Context& ctx = Context::instance();
+    if (s.mPyramid.valid())
+    {
+        Image old = s.mPyramid;
+        std::vector<VkImageView> views = s.mMipViews;
+        s.mPyramid = Image();
+        s.mMipViews.clear();
+        ctx.destroyLater([old, views]() mutable {
+            Context& c = Context::instance();
+            for (VkImageView v : views) vkDestroyImageView(c.getDevice(), v, nullptr);
+            c.destroyImage(old);
+        });
+    }
+    const U32 w0 = std::max(1u, w / 2), h0 = std::max(1u, h / 2);
+    U32 mips = 1;
+    for (U32 m = std::max(w0, h0); m > 1; m /= 2) ++mips;
+    if (!ctx.createImage2D(w0, h0, mips, 1, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, s.mPyramid))
+    {
+        s.mPyramid = Image();
+        return false;
+    }
+    s.mMipViews.clear();
+    for (U32 m = 0; m < mips; ++m)
+    {
+        VkImageViewCreateInfo vi = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+        vi.image = s.mPyramid.mImage;
+        vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format = VK_FORMAT_R32_SFLOAT;
+        vi.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, m, 1, 0, 1 };
+        VkImageView v = VK_NULL_HANDLE;
+        if (vkCreateImageView(ctx.getDevice(), &vi, nullptr, &v) != VK_SUCCESS)
+        {
+            return false;
+        }
+        s.mMipViews.push_back(v);
+    }
+    s.mDepthW = w;
+    s.mDepthH = h;
+    s.mPyramidInit = false;
+    ++s.mPyramidBuilds;
+    LL_INFOS("VkHiz") << "Hi-Z pyramid for a " << w << "x" << h << " depth target: " << w0 << "x" << h0 << ", " << mips << " levels" << LL_ENDL;
+    return true;
+}
+
+// kind 34
+void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    HizState& s = sHiz;
+    ++s.mRecords;
+    s.mBoxes += h.mEntries;
+    Renderer& r = Renderer::instance();
+    Context& ctx = Context::instance();
+    hiz_poll();
+    Image* depth = r.currentDepthTarget();
+    if (!hiz_init() || !h.mEntries)
+    {
+        ++s.mNoPipeline;
+        return;
+    }
+    if (h.mEntries > kHizCapacity)
+    {
+        ++s.mTooMany;
+        return;
+    }
+    if (!depth || !depth->valid() || !(depth->mAspect & VK_IMAGE_ASPECT_DEPTH_BIT))
+    {
+        ++s.mNoDepth;
+        return;
+    }
+    Image* root = depth->mOwner ? depth->mOwner : depth;
+    const U32 w = depth->mExtent.width, hgt = depth->mExtent.height;
+    if (!hiz_pyramid(w, hgt))
+    {
+        ++s.mNoPipeline;
+        return;
+    }
+    Renderer::ScratchAlloc boxes = r.allocVertexScratch(32ull * h.mEntries);
+    if (!boxes.mPtr || !boxes.mAddress)
+    {
+        ++s.mNoPipeline;
+        return;
+    }
+    memcpy(boxes.mPtr, blob, 32ull * h.mEntries);
+    const U32 slot = h.mPass % kHizSlots;
+    const U64 out_address = (U64)s.mResults.mAddress + (U64)slot * kHizCapacity * 12;
+    const U32 levels = s.mPyramid.mMipLevels;
+    struct TestPc { F32 mVp[16]; U32 mBoxes[2]; U32 mOut[2]; U32 mCount; U32 mLevels; F32 mDepth[2]; U32 mFine; U32 mPad[3]; } tpc;
+    static_assert(sizeof(TestPc) == 112, "hiz test push constants");
+    memcpy(tpc.mVp, h.mViewProj, sizeof(tpc.mVp));
+    tpc.mBoxes[0] = (U32)boxes.mAddress; tpc.mBoxes[1] = (U32)((U64)boxes.mAddress >> 32);
+    tpc.mOut[0] = (U32)out_address; tpc.mOut[1] = (U32)(out_address >> 32);
+    tpc.mCount = h.mEntries;
+    tpc.mLevels = levels;
+    tpc.mDepth[0] = (F32)w; tpc.mDepth[1] = (F32)hgt;
+    static const U32 fine = []() { const char* e = getenv("LL_VK_HIZ_FINE"); return e ? (U32)atoi(e) : 5u; }();      // how many pyramid levels finer than "the rectangle spans two texels" the test reads (5: the rectangle spans up to about 9 x 9 texels of a level 4 finer; 3 lost 23 % of the queries' savings, 5 lost 15 %)
+    tpc.mFine = fine;
+    tpc.mPad[0] = tpc.mPad[1] = tpc.mPad[2] = 0;
+    const bool init = !s.mPyramidInit;
+    VkImage pyramid_image = s.mPyramid.mImage;
+    VkImageView pyramid_view = s.mPyramid.mView;
+    const std::vector<VkImageView> mip_views = s.mMipViews;
+    VkImageView depth_view = depth->mView;
+    const VkSampler sampler = s.mSampler;
+    const VkPipeline down = s.mDown, test = s.mTest;
+    const VkPipelineLayout down_layout = s.mDownLayout, test_layout = s.mTestLayout;
+    U64 dispatches = 0;
+    const bool recorded = r.recordExternal({ { root, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL } }, [&](VkCommandBuffer cmd) {
+        if (LLVkBridge::gPhaseTiming)
+        {
+            ctx.gpuStamp(Context::stampTag("hiz pyramid + box test"));
+        }
+        auto barrier = [&](VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+            VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+            mb.srcStageMask = src_stage; mb.srcAccessMask = src_access; mb.dstStageMask = dst_stage; mb.dstAccessMask = dst_access;
+            VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            di.memoryBarrierCount = 1;
+            di.pMemoryBarriers = &mb;
+            vkCmdPipelineBarrier2(cmd, &di);
+        };
+        if (init)
+        {
+            VkImageMemoryBarrier2 ib = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+            ib.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            ib.srcAccessMask = 0;
+            ib.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            ib.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+            ib.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            ib.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            ib.srcQueueFamilyIndex = ib.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            ib.image = pyramid_image;
+            ib.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, 1 };
+            VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            di.imageMemoryBarrierCount = 1;
+            di.pImageMemoryBarriers = &ib;
+            vkCmdPipelineBarrier2(cmd, &di);
+        }
+        // the depth writes of the passes before, the pyramid and results of the frames before
+        barrier(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, down);
+        U32 src_w = w, src_h = hgt;
+        for (U32 m = 0; m < levels; ++m)
+        {
+            const U32 dst_w = std::max(1u, src_w / 2), dst_h = std::max(1u, src_h / 2);
+            VkDescriptorImageInfo src_info = { sampler, m == 0 ? depth_view : pyramid_view, m == 0 ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL };
+            VkDescriptorImageInfo dst_info = { VK_NULL_HANDLE, mip_views[m], VK_IMAGE_LAYOUT_GENERAL };
+            VkWriteDescriptorSet wr[2] = {};
+            wr[0].sType = wr[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            wr[0].dstBinding = 0; wr[0].descriptorCount = 1; wr[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr[0].pImageInfo = &src_info;
+            wr[1].dstBinding = 1; wr[1].descriptorCount = 1; wr[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; wr[1].pImageInfo = &dst_info;
+            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, down_layout, 0, 2, wr);
+            const S32 dpc[5] = { (S32)src_w, (S32)src_h, (S32)dst_w, (S32)dst_h, m == 0 ? 0 : (S32)(m - 1) };
+            vkCmdPushConstants(cmd, down_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(dpc), dpc);
+            vkCmdDispatch(cmd, (dst_w + 7) / 8, (dst_h + 7) / 8, 1);
+            ++dispatches;
+            barrier(VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+            src_w = dst_w;
+            src_h = dst_h;
+        }
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, test);
+        VkDescriptorImageInfo pyr_info = { sampler, pyramid_view, VK_IMAGE_LAYOUT_GENERAL };
+        VkWriteDescriptorSet wr = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        wr.dstBinding = 0; wr.descriptorCount = 1; wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.pImageInfo = &pyr_info;
+        vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, test_layout, 0, 1, &wr);
+        vkCmdPushConstants(cmd, test_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(tpc), &tpc);
+        vkCmdDispatch(cmd, (tpc.mCount + 63) / 64, 1, 1);
+        ++dispatches;
+        // the results are read by the host after the fence; the depth is written again by the passes after this (a write after our reads)
+        barrier(VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    });
+    if (!recorded)
+    {
+        ++s.mNoPipeline;
+        return;
+    }
+    s.mPyramidInit = true;
+    s.mDispatches += dispatches;
+    s.mPending.push_back({ h.mFragment, slot, ctx.getFrameNumber() });
+    if (s.mRecords - s.mLast >= 600)
+    {
+        s.mLast = s.mRecords;
+        const double n = (double)s.mRecords;
+        LL_INFOS("VkHiz") << "Hi-Z worker over " << s.mRecords << " records: " << (double)s.mBoxes / n << " boxes a record, " << (double)s.mDispatches / n << " dispatches a record, depth " << w << "x" << hgt << " (pyramid "
+            << s.mPyramid.mExtent.width << "x" << s.mPyramid.mExtent.height << ", " << levels << " levels, " << s.mPyramidBuilds << " builds), published " << s.mPublished << ", still pending " << s.mPending.size()
+            << "; refused: no depth target " << s.mNoDepth << ", no pipeline/other " << s.mNoPipeline << ", too many boxes " << s.mTooMany << LL_ENDL;
+    }
+}
+}
+
 // <FS> S1 retained fragments: the table id -> entries (kinds 11-13 of LLVkBridge::shadowPackets). Ordered with the draws by the queue, so a release never overtakes a pass that uses it.
 static std::unordered_map<U32, std::vector<LLVkBridge::ShadowPacketEntry>> sShadowFragments;
 static U64 sFragmentMissing = 0;
@@ -7940,6 +8406,11 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     if (h.mKind == 33)
     {
         on_light_volumes(h, blob);
+        return;
+    }
+    if (h.mKind == 34)
+    {
+        on_hiz_boxes(h, blob);       // <FS> S7 H1
         return;
     }
     if (h.mKind == 3 || h.mKind == 25 || h.mKind == 26)
@@ -8374,6 +8845,7 @@ void after_frame()
     {
         drain_query_results();
     }
+    hiz_poll();     // <FS> S7 H1: publish the Hi-Z results of the frames the GPU has finished
     {
         // <FS> the video memory and what the textures take of it, every 1800 frames (about 30 seconds): after a teleport this shows where the memory went and whether a texture was refused
         static U32 frames = 0;

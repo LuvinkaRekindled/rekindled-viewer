@@ -27,6 +27,12 @@ void LLVkBridge::setUpscaleLodBias(float) {}
 bool LLVkBridge::shadowPacketsAvailable() { return false; }
 bool LLVkBridge::shadowAlphaPacketsAvailable() { return false; }
 bool LLVkBridge::sceneGeoAvailable() { return false; }
+bool LLVkBridge::hizAvailable() { return false; }
+U32 LLVkBridge::hizSend(const HizBox*, U32, const F32*) { return 0; }
+S32 LLVkBridge::hizRead(U32, U32, U32*) { return -1; }
+void LLVkBridge::hizDone(U32) {}
+void LLVkBridge::hizSetResults(const U32*, U32) {}
+void LLVkBridge::hizPublish(U32, U32) {}
 void LLVkBridge::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
 void LLVkBridge::upscale(const UpscaleArgs&) {}
 U32 LLVkBridge::rtShadowMode() { return 0; }
@@ -841,6 +847,82 @@ void LLVkBridge::shadowPackets(const ShadowPacketsHeader& header, const void* bl
         return;
     }
     shadowPacketsImpl(header, (const U8*)blob);
+}
+
+// S7 H1: the Hi-Z ring (the worker writes the results, the main thread reads them once published)
+namespace
+{
+std::atomic<U32> gHizPublished[8];
+std::atomic<const U32*> gHizResults{ nullptr };
+std::atomic<U32> gHizCapacity{ 0 };
+std::atomic<U32> gHizDone{ 0 };
+U32 gHizSerial = 0;         // main thread only
+}
+
+bool LLVkBridge::hizAvailable()
+{
+    return LLVkBridge::sceneGeoAvailable();
+}
+
+U32 LLVkBridge::hizSend(const HizBox* boxes, U32 count, const F32* view_proj)
+{
+    if (!count || count > 4096 || !hizAvailable())
+    {
+        return 0;
+    }
+    const U32 serial = gHizSerial + 1;
+    if (serial - gHizDone.load(std::memory_order_acquire) > 6)
+    {
+        return 0;       // the ring would wrap onto a serial that has not been read
+    }
+    gHizSerial = serial;
+    ShadowPacketsHeader header;
+    header.mKind = 34;
+    header.mEntries = count;
+    header.mPass = serial % 8;
+    header.mFragment = serial;
+    memcpy(header.mViewProj, view_proj, sizeof(header.mViewProj));
+    shadowPackets(header, boxes, (size_t)count * sizeof(HizBox));
+    return serial;
+}
+
+S32 LLVkBridge::hizRead(U32 serial, U32 count, U32* out)
+{
+    const U32* results = gHizResults.load(std::memory_order_acquire);
+    const U32 capacity = gHizCapacity.load(std::memory_order_relaxed);
+    if (!results || !capacity || count > capacity)
+    {
+        return 0;
+    }
+    // three words a box: result bits, nearest depth of the box, largest depth of the pyramid under it
+    const U32 slot = serial % 8;
+    const U32 published = gHizPublished[slot].load(std::memory_order_acquire);
+    if (published == serial)
+    {
+        memcpy(out, results + (size_t)slot * capacity * 3, (size_t)count * 12);
+        std::atomic_thread_fence(std::memory_order_acquire);
+        return gHizPublished[slot].load(std::memory_order_relaxed) == serial ? 1 : -1;
+    }
+    return published > serial ? -1 : 0;
+}
+
+void LLVkBridge::hizDone(U32 serial)
+{
+    U32 cur = gHizDone.load(std::memory_order_relaxed);
+    while (serial > cur && !gHizDone.compare_exchange_weak(cur, serial, std::memory_order_release))
+    {
+    }
+}
+
+void LLVkBridge::hizSetResults(const U32* results, U32 capacity)
+{
+    gHizCapacity.store(capacity, std::memory_order_relaxed);
+    gHizResults.store(results, std::memory_order_release);
+}
+
+void LLVkBridge::hizPublish(U32 slot, U32 serial)
+{
+    gHizPublished[slot % 8].store(serial, std::memory_order_release);
 }
 
 void LLVkBridge::shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob)

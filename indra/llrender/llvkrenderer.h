@@ -276,6 +276,7 @@ public:
 
     // render target (color attachments + optional depth); changing it ends the current pass
     void setRenderTarget(Image* const* colors, U32 color_count, Image* depth);
+    Image* currentDepthTarget() const { return mDepthTarget; }      // <FS> S7 H1: the depth attachment of the pass in progress (null: none)
     void setViewport(S32 x, S32 y, S32 width, S32 height);
     void setScissor(S32 x, S32 y, S32 width, S32 height);
     void setScissorEnabled(bool enabled);

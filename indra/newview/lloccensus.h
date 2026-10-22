@@ -13,7 +13,7 @@
 
 namespace LLOccCensus
 {
-    constexpr int CAMS = 8;                 // >= LLViewerCamera::NUM_CAMERAS
+    constexpr int CAMS = 9;                 // >= LLViewerCamera::NUM_CAMERAS
     constexpr int AGES = 8;                 // age of a query result at the read, in frames: 0..6, 7 = older
 
     struct Cam
@@ -65,6 +65,23 @@ namespace LLOccCensus
             c->mSortOccluded += occluded;
             c->mSortOccludedElems += occluded ? elements : 0;
         }
+    }
+
+    // S7 H1: the Hi-Z batches (world camera) and, in mode 2, the comparison with the queries issued with them
+    inline U64 sHizSends = 0, sHizRefused = 0, sHizBoxes = 0, sHizApplied = 0, sHizOccluded = 0, sHizLost = 0, sHizSuperseded = 0, sHizDead = 0;
+    inline U64 sHizLag[AGES] = {};                  // frames from the send to the apply
+    inline U64 sHizLod[16] = {};
+    inline U64 sHizWhy[3] = {};                     // forced visible: behind the near plane, off screen, beyond the far plane
+    inline U64 sCmpBothOcc = 0, sCmpBothVis = 0, sCmpHizOccQVis = 0, sCmpHizVisQOcc = 0, sCmpNoHist = 0;
+    inline U64 sRiskLod[16] = {};                   // Hi-Z occluded where the query saw samples, by pyramid level used
+    inline U64 sRiskWater = 0;
+    inline U64 sHizTicksCollect = 0, sHizTicksSend = 0, sHizTicksApply = 0;      // main thread time of the Hi-Z pieces
+    inline U64 sMarginRisk[8] = {}, sMarginLost[8] = {};   // nearest box depth minus the largest pyramid depth, for the two kinds of disagreement, by size of the margin
+    inline int margin_bin(float m)
+    {
+        const float a = m < 0.f ? -m : m;
+        const int k = a < 1e-4f ? 0 : (a < 1e-3f ? 1 : (a < 1e-2f ? 2 : 3));
+        return m < 0.f ? 3 - k : 4 + k;
     }
 
     void report();                                  // llvieweroctree.cpp
