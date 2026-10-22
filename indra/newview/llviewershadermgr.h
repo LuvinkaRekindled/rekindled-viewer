@@ -152,7 +152,6 @@ extern LLVector4            gShinyOrigin;
 
 //utility shaders
 extern LLShaderProgram         gOcclusionProgram;
-extern LLShaderProgram         gOcclusionCubeProgram;
 extern LLShaderProgram         gGlowCombineProgram;
 extern LLShaderProgram         gReflectionMipProgram;
 extern LLShaderProgram         gGaussianProgram;

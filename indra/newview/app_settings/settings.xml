@@ -18309,17 +18309,6 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>SanityComment</key>
       <string>Disabling this option might lead to severely degraded viewer performance and increased rezzing time.</string>
     </map>
-  <key>RenderOcclusionTimeout</key>
-  <map>
-    <key>Comment</key>
-    <string>Maximum number of frames to wait on an occlusion query before forcibly reading it back</string>
-    <key>Persist</key>
-    <integer>1</integer>
-    <key>Type</key>
-    <string>U32</string>
-    <key>Value</key>
-    <integer>8</integer>
-  </map>
   <key>UseObjectCacheOcclusion</key>
   <map>
     <key>Comment</key>

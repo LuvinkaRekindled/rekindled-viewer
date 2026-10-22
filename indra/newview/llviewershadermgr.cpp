@@ -80,7 +80,6 @@ S32 clamp_terrain_mapping(S32 mapping)
 //utility shaders
 LLShaderProgram    gOcclusionProgram;
 LLShaderProgram    gSkinnedOcclusionProgram;
-LLShaderProgram    gOcclusionCubeProgram;
 LLShaderProgram    gGlowCombineProgram;
 LLShaderProgram    gReflectionMipProgram;
 LLShaderProgram    gGaussianProgram;
@@ -4455,16 +4454,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gSkinnedOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", ShaderStage::Fragment));
         gSkinnedOcclusionProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gSkinnedOcclusionProgram.createShader();
-    }
-
-    if (success)
-    {
-        gOcclusionCubeProgram.mName = "Occlusion Cube Shader";
-        gOcclusionCubeProgram.mShaderFiles.clear();
-        gOcclusionCubeProgram.mShaderFiles.push_back(make_pair("interface/occlusionCubeV.glsl", ShaderStage::Vertex));
-        gOcclusionCubeProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", ShaderStage::Fragment));
-        gOcclusionCubeProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-        success = gOcclusionCubeProgram.createShader();
     }
 
     if (success)

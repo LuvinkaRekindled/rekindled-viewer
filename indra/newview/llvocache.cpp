@@ -911,7 +911,7 @@ public:
             return ; //wait for occlusion culling result
         }
 
-        if(group->isOcclusionState(LLOcclusionCullingGroup::QUERY_PENDING) ||
+        if(group->isHizAwaiting() ||
             group->isOcclusionState(LLOcclusionCullingGroup::ACTIVE_OCCLUSION))
         {
             //keep waiting
@@ -1142,7 +1142,7 @@ void LLVOCachePartition::processOccluders(LLCamera* camera)
         LLVOCacheGroup* group = *iter;
         if(group->isOcclusionState(LLOcclusionCullingGroup::ACTIVE_OCCLUSION))
         {
-            group->doOcclusion(camera, &shift);
+            group->hizCollect(camera, &shift);      // <FS> S7 H3: the group's box goes to the Hi-Z batch the pipeline sends
             group->clearOcclusionState(LLOcclusionCullingGroup::ACTIVE_OCCLUSION);
         }
     }

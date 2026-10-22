@@ -533,7 +533,6 @@ void LLReflectionMapManager::refreshSettings()
     //mRenderReflectionProbeLevel = gSavedSettings.getS32("RenderReflectionProbeLevel"); // <FS:Beq/> No longer required use the pipeline cached version instead
     mRenderReflectionProbeCount = gSavedSettings.getU32("RenderReflectionProbeCount");
     mRenderReflectionProbeDynamicAllocation = gSavedSettings.getS32("RenderReflectionProbeDynamicAllocation");
-    cleanupQueryPool();
 }
 
 LLReflectionMap* LLReflectionMapManager::addProbe(LLSpatialGroup* group)
@@ -579,25 +578,6 @@ U32 LLReflectionMapManager::probeCount()
 U32 LLReflectionMapManager::probeMemory()
 {
     return (mDynamicProbeCount * 6 * (mProbeResolution * mProbeResolution) * 4) / 1024 / 1024 + (mDynamicProbeCount * 6 * (LL_IRRADIANCE_MAP_RESOLUTION * LL_IRRADIANCE_MAP_RESOLUTION) * 4) / 1024 / 1024;
-}
-
-U32 LLReflectionMapManager::allocateQuery()
-{
-    if (mQueryPool.empty())
-    {
-        U32 query;
-        gRender.genQueries(1, &query);
-        return query;
-    }
-
-    U32 query = mQueryPool.front();
-    mQueryPool.pop_front();
-    return query;
-}
-
-void LLReflectionMapManager::recycleQuery(U32 query)
-{
-    mQueryPool.push_back(query);
 }
 
 struct CompareProbeDepth
@@ -1632,21 +1612,9 @@ void LLReflectionMapManager::cleanup()
     gRender.deleteBuffers(1, &mUBO);
     mUBO = 0;
 
-    cleanupQueryPool();
 
     // note: also called on teleport (not just shutdown), so make sure we're in a good "starting" state
     initCubeFree();
-}
-
-void LLReflectionMapManager::cleanupQueryPool()
-{
-    if (!mQueryPool.empty())
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("cleanup query pool");
-        std::vector<U32> queries(mQueryPool.begin(), mQueryPool.end());
-        gRender.deleteQueries(static_cast<S32>(queries.size()), queries.data());
-        mQueryPool.clear();
-    }
 }
 
 void LLReflectionMapManager::doOcclusion()
@@ -1658,7 +1626,7 @@ void LLReflectionMapManager::doOcclusion()
     {
         if (probe != nullptr && probe != mDefaultProbe)
         {
-            probe->doOcclusion(eye);
+            probe->hizCollect(eye);
         }
     }
 }

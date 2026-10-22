@@ -51,7 +51,9 @@ LLOcclusionCullingGroup::LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctre
 {
 }
 LLOcclusionCullingGroup::~LLOcclusionCullingGroup() = default;
-void LLOcclusionCullingGroup::doOcclusion(LLCamera* camera, const LLVector4a* shift) {}
+void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shift) {}
+void LLOcclusionCullingGroup::hizResult(bool occluded) {}
+LLHizTarget::~LLHizTarget() {}
 void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode) {}
 void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode) {}
 void LLOcclusionCullingGroup::handleChildAddition(const OctreeNode *parent, OctreeNode *child) {}

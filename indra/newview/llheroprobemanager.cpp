@@ -654,7 +654,7 @@ void LLHeroProbeManager::doOcclusion()
     {
         if (probe != nullptr)
         {
-            probe->doOcclusion(eye);
+            probe->hizCollect(eye);
         }
     }
 }

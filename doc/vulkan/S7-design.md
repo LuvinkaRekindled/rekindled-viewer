@@ -1,6 +1,6 @@
 # S7 part 1: Hi-Z occlusion and GPU visibility (design only, 2026-10-22)
 
-Scope agreed with Adam: design here, build and test in a new session. Order: this (S7 part 1), then S6 (structure), then the rest of S7 (GPU LOD, OIT). H0 (measurement, section 9) is built and run; H1-H3 are not.
+Scope agreed with Adam: design here, build and test in a new session. Order: this (S7 part 1), then S6 (structure), then the rest of S7 (GPU LOD, OIT). H0-H3 (sections 9-11) are built and tested: world-camera occlusion is the worker's Hi-Z pass, the query code is gone.
 
 ## 1. What "visible" means today (census)
 
@@ -126,3 +126,43 @@ Tools added (commit after 35e5e2d4): `LL_VK_OCC_CENSUS=1` (header `lloccensus.h`
 | probes | 559 calls, 147 reads (120 occluded), 400 still pending, 147 new cube draws, 0.038 ms |
 
 **What this means for H1-H3.** The main-thread prize of A is about 0.2 ms (H2, world groups only: group loop 0.058 + pending branch 0.117 minus the new box record and ring read, so about 0.15; H3 adds the probes 0.038 and the cheap-path calls: about 0.2-0.25), the worker gets about 0.25 ms back, the GPU nothing measurable (0.03 ms, Hi-Z adds its own dispatches). That is at or below the 0.2 ms line the plan set, so this stage's value is mostly structural (no query pool/state machine, no blocking read, results 1-2 frames old instead of 3-5), plus the groundwork for B. Risk to weigh: Hi-Z is conservative, so it reports fewer occluded groups than the queries (627 groups dropped a frame today); if it keeps materially fewer, `updateCull`/`stateSort` work grows and eats the gain. H1's mode 2 measures exactly that before anything depends on it.
+
+## 10. H1 + H2: Hi-Z occlusion built (2026-10-22, commit 96d8bc98; London midnight)
+
+**What was built.** `LLPipeline::doOcclusion` (same point of the G-buffer pass as the cubes) sends one record, **kind 34**, with the boxes of the occlusion groups (+ the view-projection). The worker (`on_hiz_boxes`, llvkworker.cpp) ends the pass with `recordExternal` (depth to read-only; the pass split costs nothing extra: the cubes' read-only depth draws already split the pass there, and the next draw starts a new one), builds a max-depth pyramid of the bound depth target (compute, one dispatch a level: first level half resolution, floor sizes like Vulkan's mip chain, the odd last row/column folded into the last texel; 10 levels at 1713x898, 11 dispatches), and tests every box with one thread: nearest depth of its 8 corners against the largest depth of the pyramid texels under its screen rectangle, at the level where the rectangle spans up to about 9 x 9 texels (`LL_VK_HIZ_FINE`, default 5 = five levels finer than "2 texels"). Depth is NOT reversed-Z: 0..1 near to far, so the test is `nearest > max depth under the rectangle`. Three words a box into a ring of 8 slots of host-visible **cached** memory: result bits (occluded, level, special cases), nearest box depth, largest pyramid depth. The viewer reads a slot when the frame's fence has signalled (`hiz_poll` publishes the serial after `vmaInvalidateAllocation`; `LLVkBridge::hizRead`, never blocking; a serial that never publishes is dropped after 60 frames). `LL_VK_HIZ` 0 / 1 / 2 existed for H1/H2 (queries / Hi-Z drives / both, queries drive, Hi-Z compared with the query issued with the same box); H3 removed the switch.
+
+**Pass structure answer (section 7, risk 4):** the depth CAN be sampled at the query point without an extra split (see above); the fallback of section 7 was not needed. Depth convention checked: the shader wrapper maps GL clip z to (z+w)/2, no y flip anywhere, framebuffer row = (ndc.y*0.5+0.5)*H; the test uses the same matrix the cubes used (`gRender.getProjectionMatrix() * gRenderModelView`).
+
+**Mode 2 compare (the H1 gate, 195-250 boxes a frame, queries issued with the same boxes):**
+
+| pyramid level read | Hi-Z OCCLUDED where the query saw samples (pop-in risk) | Hi-Z visible where the query said occluded (lost saving) |
+|---|---|---|
+| 1 finer than "2 texels" (first build) | 5.1 boxes = 2.1 % | 114 = 46.7 % |
+| 3 finer | **0** | 45 = 23.1 % |
+| 5 finer (default) | 0.4 = 0.2 % (gaps of 1e-4..1e-3 in depth) | 29 = 15.0 % |
+
+Why the loss never reaches zero: the old cube draw is an 8 vertex triangle FAN from the box's nearest corner over its silhouette, i.e. a surface INSIDE the box, deeper than the box's front faces, so the query was more aggressive than any conservative box test. Hi-Z reports about 80 % of what the queries found and culls what is visible only through thin gaps. Result age when applied: 2-4 frames (mostly 4) against 3-5 for the queries (0.05 forced reads a frame: the viewer's timeout never mattered).
+
+**Mode 1 (Hi-Z drives OCCLUDED) against mode 0, same exe, London (h2a/h2c mode 0, h2b/h2e/h2f mode 1; the crowd differs a bit between runs, so differences under about 0.1 ms are noise):**
+
+| per frame | queries (mode 0) | Hi-Z (mode 1) |
+|---|---|---|
+| main thread: `doOcclusion` zone | 0.089-0.106 ms | 0.063-0.067 (collect 0.014, send 0.001) |
+| main thread: query read (`checkOcclusion` pending branch) | 0.12 | 0 |
+| main thread: apply results (inside updateCull) | - | 0.03-0.05 |
+| **main thread net** | | **about -0.15 ms** |
+| worker: `queryBegin` + `queryEnd` | 0.12 + 0.03 | 0 |
+| worker: cube draws (group + probe + object cache) | 290 a frame (0.09 ms) | 120 (only probes) |
+| worker: kind 34 record | - | 29 us |
+| **worker net** | | **about -0.14 ms** |
+| GPU | zone `doOcclusion` 0.03 ms | pyramid + test 0.05 ms, zone 0.01: **+0.03 ms** |
+
+Sort/cull side: groups dropped as OCCLUDED by the cull 608-631 against 580-602 (Hi-Z), groups reaching `stateSort` 2030-2060 against 2165-2180 (about 6 % more, the cost of the conservative test; included in the zones above; the frame interval did not move outside the noise: 14.9-15.0 against 14.2-14.9 ms). Pictures: the static scene is equal to the query run (the difference image of two adjacent runs shows only the moving avatars and edge noise); runs minutes apart cannot be diffed (the night environment keeps moving). Validation + sync validation (RT_VALIDATE=1 RT_SYNCVAL=1) found my pyramid asked for 11 mips where the image allows 10 (fixed); no Hi-Z message since (the remaining messages are old ones: buffer copy hazard in the BRDF / copy shaders, fragment output without attachment in the shadow programs). Adam asked about GPU % in the phases run (h2d): the logs show the same GPU time a frame with and without Hi-Z (13.0 / 13.4 ms) and a main-thread limited frame in both phases runs.
+
+## 11. H3: probes and the object cache on the same path, query machinery deleted (2026-10-22)
+
+End state, no old path: `LLHizTarget` / `LLHiz` (llhiz.h, llvieweroctree.cpp) collect the boxes of everything that wants a verdict in ONE batch per frame: occlusion groups (`LLOcclusionCullingGroup::hizCollect`), reflection and hero probes (`LLReflectionMap::hizCollect`, hizResult sets `mOccluded`), the object cache's groups (`LLVOCachePartition::processOccluders` with the region shift). `LLHiz::send` once, `LLHiz::apply` at the start of every world cull. Deleted: `mOcclusionQuery[]`, `mOcclusionCheckCount[]`, `mOcclusionIssued[]`, the query name pool and `sPendingQueries`, `getNewOcclusionQueryObjectName`, the `QUERY_PENDING` / `DISCARD_QUERY` states (now `mHizSerial` != 0 = a verdict awaited, `hizInvalidate()` = the group changed: the behaviour of the discard flag), `checkOcclusion`'s query branch and the timeout (setting `RenderOcclusionTimeout` removed), the group's `doOcclusion`, the probe query pool and `cleanupQueryPool`, the cube drawing and `gOcclusionCubeProgram` with its shader file, the "Queries pending" debug line. The scene monitor keeps its own query object (generated directly). The shadow-cascade occlusion pass (`doOcclusion(shadow_cam)`) is **gone**: it needed the cascade camera's own queries; ray shadows (the default) never used it; in cascade mode the casters are no longer occlusion culled (a perf difference, not a picture difference). Without the Vulkan worker nothing is occluded.
+
+Found by the first H3 run: probes dropped from 82 % occluded (queries) to 11 % because a box with all corners behind the camera or outside the view was reported visible, while a clipped cube has no samples. Fixed in the shader (bit 19 = wholly behind the camera, bit 17 = outside the view: both OCCLUDED; a box cut by the near plane stays visible): probes 64-65 % occluded (90-130 of 140-200 boxes a frame). London (h3c/h3d, a heavier crowd than the H2 runs: 350-500 boxes a frame of which 140-190 probes): worker draws 862-950 a frame (was 1150-1270 with queries), no cube draw, no query record; `LL_VK_OCC_CENSUS=1` lines "Hi-Z window" and "camera 0" show boxes, results, ages, probes and the main thread ms of each piece. Three clean runs (h3b, h3c, h3d), no device lost, clean quits.
+
+Open / not done: the Hi-Z pyramid can also serve B (fragment cull, S7 later) and SSR; the `mCubeVB` still draws the (non pull) lighting volumes when `LL_VK_LIGHT_PULL=0`; cascade shadow occlusion could come back with a pyramid of the cascade depth if the non-ray mode matters.

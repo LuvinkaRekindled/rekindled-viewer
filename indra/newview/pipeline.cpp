@@ -2783,10 +2783,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
-    if (LLOcclusionCullingGroup::hizMode() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !hud_attachments && !gCubeSnapshot)
+    if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !hud_attachments && !gCubeSnapshot)
     {
         LL_CPU_ZONE("occlusion: Hi-Z results");
-        LLOcclusionCullingGroup::hizApply();        // <FS> S7 H1
+        LLHiz::apply();        // <FS> S7 H3: the verdicts of the boxes sent a few frames ago
     }
 
     sCull->clear();
@@ -2898,164 +2898,90 @@ void LLPipeline::markOccluder(LLSpatialGroup* group)
     }
 }
 
+// <FS> S7 H3 (doc/vulkan/S7-design.md): the occlusion pass of the world camera. The boxes of the occlusion groups, the reflection and hero probes and the object cache's groups go to the worker as one record at
+// this point of the G-buffer pass (after the big occluders were drawn); the worker's Hi-Z test answers one to four frames later (LLHiz::apply). No cube is drawn and no query is issued.
 void LLPipeline::doOcclusion(LLCamera& camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("doOcclusion");
-    LL_CPU_ZONE("occlusion: doOcclusion");            // <FS> H0
+    LL_CPU_ZONE("occlusion: doOcclusion");
     llassert(!gCubeSnapshot);
 
-    // <FS> H0 (LL_VK_OCC_CENSUS=1): the pass and its parts, by camera
-    const int occ_cam = LLViewerCamera::sCurCameraID;
-    const U64 occ_t0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
-    if (LLOccCensus::sOn && occ_cam >= 0 && occ_cam < LLOccCensus::CAMS)
+    // the shadow cascades, reflections and cube snapshots have no occlusion data of their own (it is the world camera's); without the Vulkan worker nothing is tested and nothing is occluded
+    if (sUseOcclusion <= 1 || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || LLPipeline::sShadowRender || gCubeSnapshot || !LLVkBridge::hizAvailable())
     {
-        ++LLOccCensus::sPasses[occ_cam];
-        if (occ_cam == LLViewerCamera::CAMERA_WORLD)
+        return;
+    }
+
+    // <FS> (LL_VK_OCC_CENSUS=1): the pass and its parts
+    const U64 occ_t0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
+    if (LLOccCensus::sOn)
+    {
+        ++LLOccCensus::sPasses[LLViewerCamera::CAMERA_WORLD];
+        if (!LLOccCensus::sQpc0)
         {
-            if (!LLOccCensus::sQpc0)
-            {
-                LARGE_INTEGER q;
-                QueryPerformanceCounter(&q);
-                LLOccCensus::sQpc0 = q.QuadPart;
-                LLOccCensus::sTsc0 = LLOccCensus::now();
-            }
-            ++LLOccCensus::sFrames;
+            LARGE_INTEGER q;
+            QueryPerformanceCounter(&q);
+            LLOccCensus::sQpc0 = q.QuadPart;
+            LLOccCensus::sTsc0 = LLOccCensus::now();
         }
+        ++LLOccCensus::sFrames;
     }
     struct OccPassEnd
     {
-        int mCam; U64 mT0;
+        U64 mT0;
         ~OccPassEnd()
         {
-            if (LLOccCensus::sOn && mCam >= 0 && mCam < LLOccCensus::CAMS)
+            if (LLOccCensus::sOn)
             {
-                LLOccCensus::sTicksPass[mCam] += LLOccCensus::now() - mT0;
-                if (mCam == LLViewerCamera::CAMERA_WORLD && LLOccCensus::sFrames >= 600)
+                LLOccCensus::sTicksPass[LLViewerCamera::CAMERA_WORLD] += LLOccCensus::now() - mT0;
+                if (LLOccCensus::sFrames >= 600)
                 {
                     LLOccCensus::report();
                 }
             }
         }
-    } occ_end = { occ_cam, occ_t0 };
+    } occ_end = { occ_t0 };
 
-    if (sReflectionProbesEnabled && sUseOcclusion > 1 && !LLPipeline::sShadowRender && !gCubeSnapshot)
+    LLHiz::begin();
+
+    if (sReflectionProbesEnabled)
     {
         const U64 occ_p0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
-        gRender.setColorMask(false, false);
-        LLRenderState::DepthScope depth(true, false);
-        LLRenderState::CullScope cull(false);
-
-        gOcclusionCubeProgram.bind();
-
-        if (mCubeVB.isNull())
-        { //cube VB will be used for issuing occlusion queries
-            mCubeVB = ll_create_cube_vb(LLVertexBuffer::MAP_VERTEX);
-        }
-        mCubeVB->setBuffer();
-
         mReflectionMapManager.doOcclusion();
         mHeroProbeManager.doOcclusion();
-        gOcclusionCubeProgram.unbind();
-
-        gRender.setColorMask(true, true);
         if (LLOccCensus::sOn)
         {
             LLOccCensus::sTicksProbes += LLOccCensus::now() - occ_p0;
         }
     }
 
-    if (sReflectionProbesEnabled && sUseOcclusion > 1 && !LLPipeline::sShadowRender && !gCubeSnapshot)
+    if (sCull->hasOcclusionGroups() || LLVOCachePartition::sNeedsOcclusionCheck)
     {
-        const U64 occ_p1 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
-        gRender.setColorMask(false, false);
-        LLRenderState::DepthScope depth(true, false);
-        LLRenderState::CullScope cull(false);
-
-        gOcclusionCubeProgram.bind();
-
-        if (mCubeVB.isNull())
-        { //cube VB will be used for issuing occlusion queries
-            mCubeVB = ll_create_cube_vb(LLVertexBuffer::MAP_VERTEX);
-        }
-        mCubeVB->setBuffer();
-
-        mHeroProbeManager.doOcclusion();
-        gOcclusionCubeProgram.unbind();
-
-        gRender.setColorMask(true, true);
-        if (LLOccCensus::sOn)
-        {
-            LLOccCensus::sTicksProbes += LLOccCensus::now() - occ_p1;
-        }
-    }
-
-    if (LLPipeline::sUseOcclusion > 1 &&
-        (sCull->hasOcclusionGroups() || LLVOCachePartition::sNeedsOcclusionCheck))
-    {
-        LLVertexBuffer::unbind();
-
-        gRender.setColorMask(false, false);
-
-        LLRenderState::BlendScope blend(false);
-        gRender.getTexUnit(0)->bindWhite();
-        LLRenderState::DepthScope depth(true, false);
-
-        LLRenderState::CullScope cull(false);
-
-        gOcclusionCubeProgram.bind();
-
-        if (mCubeVB.isNull())
-        { //cube VB will be used for issuing occlusion queries
-            mCubeVB = ll_create_cube_vb(LLVertexBuffer::MAP_VERTEX);
-        }
-        mCubeVB->setBuffer();
-
         const U64 occ_g0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
-        const bool occ_count = LLOccCensus::sOn && occ_cam >= 0 && occ_cam < LLOccCensus::CAMS;
-        // <FS> S7 H1: the boxes of the world camera's groups go to the Hi-Z pass in one record (mode 1: instead of the queries, mode 2: next to them)
-        const U32 hiz_mode = (occ_cam == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !gCubeSnapshot && LLVkBridge::hizAvailable()) ? LLOcclusionCullingGroup::hizMode() : 0;
-        static std::vector<LLVkBridge::HizBox> hiz_boxes;
-        static std::vector<LLOcclusionCullingGroup*> hiz_groups;
-        hiz_boxes.clear();
-        hiz_groups.clear();
         for (LLCullResult::sg_iterator iter = sCull->beginOcclusionGroups(); iter != sCull->endOcclusionGroups(); ++iter)
         {
             LLSpatialGroup* group = *iter;
-            if (occ_count)
+            if (LLOccCensus::sOn)
             {
-                ++LLOccCensus::sListGroups[occ_cam];
-                LLOccCensus::sListDead[occ_cam] += group->isDead();
-                LLOccCensus::sListOccluded[occ_cam] += !group->isDead() && group->isOcclusionState(LLSpatialGroup::OCCLUDED);
+                ++LLOccCensus::sListGroups[LLViewerCamera::CAMERA_WORLD];
+                LLOccCensus::sListDead[LLViewerCamera::CAMERA_WORLD] += group->isDead();
+                LLOccCensus::sListOccluded[LLViewerCamera::CAMERA_WORLD] += !group->isDead() && group->isOcclusionState(LLSpatialGroup::OCCLUDED);
             }
             if (!group->isDead())
             {
-                if (hiz_mode)
+                const U64 hiz_t0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
+                group->hizCollect(&camera);
+                if (LLOccCensus::sOn)
                 {
-                    const U64 hiz_t0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
-                    group->hizCollect(&camera, hiz_mode, hiz_boxes, hiz_groups);
-                    if (LLOccCensus::sOn)
-                    {
-                        LLOccCensus::sHizTicksCollect += LLOccCensus::now() - hiz_t0;
-                    }
-                }
-                if (hiz_mode != 1)
-                {
-                    group->doOcclusion(&camera);
+                    LLOccCensus::sHizTicksCollect += LLOccCensus::now() - hiz_t0;
                 }
                 group->clearOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
             }
         }
-        if (hiz_mode)
+        if (LLOccCensus::sOn)
         {
-            LL_CPU_ZONE("occlusion: Hi-Z send");
-            LL_PROFILE_GPU_ZONE("hiz");
-            const glm::mat4 hiz_view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
-            LLOcclusionCullingGroup::hizSend(hiz_boxes, hiz_groups, glm::value_ptr(hiz_view_proj));
-        }
-        if (occ_count)
-        {
-            LLOccCensus::sTicksGroups[occ_cam] += LLOccCensus::now() - occ_g0;
+            LLOccCensus::sTicksGroups[LLViewerCamera::CAMERA_WORLD] += LLOccCensus::now() - occ_g0;
         }
 
         //apply occlusion culling to object cache tree
@@ -3069,12 +2995,17 @@ void LLPipeline::doOcclusion(LLCamera& camera)
                 vo_part->processOccluders(&camera);
             }
         }
-        if (LLOccCensus::sOn && occ_cam == LLViewerCamera::CAMERA_WORLD)
+        if (LLOccCensus::sOn)
         {
             LLOccCensus::sTicksCache += LLOccCensus::now() - occ_c0;
         }
+    }
 
-        gRender.setColorMask(true, true);
+    {
+        LL_CPU_ZONE("occlusion: Hi-Z send");
+        LL_PROFILE_GPU_ZONE("hiz");
+        const glm::mat4 hiz_view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
+        LLHiz::send(glm::value_ptr(hiz_view_proj));
     }
 }
 
@@ -18797,11 +18728,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     }
 
-    if (LLPipeline::sUseOcclusion > 1)
-    { // do occlusion culling against non-masked only to take advantage of hierarchical Z
-        doOcclusion(shadow_cam);
-    }
-
+    // <FS> S7 H3: no occlusion culling for the shadow cascades (it was the cascade camera's own queries, which the Hi-Z pass of the world camera does not provide; the cascades draw their casters
+    // without it: ray shadows, the default, never did this)
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow geom");

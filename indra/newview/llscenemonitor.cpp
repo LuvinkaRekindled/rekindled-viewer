@@ -96,7 +96,7 @@ void LLSceneMonitor::reset()
 
     if(mQueryObject > 0)
     {
-        LLOcclusionCullingGroup::releaseOcclusionQueryObjectName(mQueryObject);
+        gRender.deleteQueries(1, &mQueryObject);
         mQueryObject = 0;
     }
 }
@@ -410,7 +410,7 @@ void LLSceneMonitor::calcDiffAggregate()
 
     if(!mQueryObject)
     {
-        mQueryObject = LLOcclusionCullingGroup::getNewOcclusionQueryObjectName();
+        gRender.genQueries(1, &mQueryObject);
     }
 
     LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);

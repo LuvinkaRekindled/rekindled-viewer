@@ -28,11 +28,12 @@
 
 #include "llcubemaparray.h"
 #include "llmemory.h"
+#include "llhiz.h"
 
 class LLSpatialGroup;
 class LLViewerObject;
 
-class alignas(16) LLReflectionMap : public LLRefCount
+class alignas(16) LLReflectionMap : public LLRefCount, public LLHizTarget
 {
     LL_ALIGN_NEW
 public:
@@ -86,7 +87,8 @@ public:
     bool isActive() const;
 
     // perform occlusion query/readback
-    void doOcclusion(const LLVector4a& eye);
+    void hizCollect(const LLVector4a& eye);         // adds the probe's box to the Hi-Z batch when no verdict is awaited
+    virtual void hizResult(bool occluded);
 
     // return false if this probe isn't currently relevant (for example, disabled due to graphics preferences)
     bool isRelevant() const;
@@ -140,9 +142,7 @@ public:
     U32 mPriority = 0;
 
     // occlusion culling state
-    U32 mOcclusionQuery = 0;
     bool mOccluded = false;
-    U32 mOcclusionPendingFrames = 0;
 
     ProbeType mType;
 };

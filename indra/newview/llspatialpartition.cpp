@@ -330,7 +330,7 @@ bool LLSpatialGroup::addObject(LLDrawable *drawablep)
     {
         drawablep->setGroup(this);
         setState(static_cast<U32>(OBJECT_DIRTY) | static_cast<U32>(GEOM_DIRTY));
-        setOcclusionState(LLSpatialGroup::DISCARD_QUERY, LLSpatialGroup::STATE_MODE_ALL_CAMERAS);
+        hizInvalidate();
         gPipeline.markRebuild(this);
         if (drawablep->isSpatialBridge())
         {
@@ -919,7 +919,7 @@ void LLSpatialGroup::destroyGLState(bool keep_occlusion)
 
     if (!keep_occlusion)
     {
-        releaseOcclusionQueryObjectNames();
+        hizInvalidate();        // <FS> S7 H3: the verdict awaited (if any) is out of date (it was: the query names were given back)
     }
 
 
@@ -990,9 +990,9 @@ LLSpatialGroup *LLSpatialPartition::put(LLDrawable *drawablep, bool was_visible)
     LLSpatialGroup* group = drawablep->getSpatialGroup();
     //llassert(group != NULL);
 
-    if (group && was_visible && group->isOcclusionState(LLSpatialGroup::QUERY_PENDING))
+    if (group && was_visible && group->isHizAwaiting())
     {
-        group->setOcclusionState(LLSpatialGroup::DISCARD_QUERY, LLSpatialGroup::STATE_MODE_ALL_CAMERAS);
+        group->hizInvalidate();
     }
 
     return group;
@@ -1146,11 +1146,6 @@ public:
     {
         LL_PROFILE_ZONE_SCOPED;
         LLSpatialGroup* group = (LLSpatialGroup*)base_group;
-        /*if (group->needsUpdate() ||
-            group->getVisible(LLViewerCamera::sCurCameraID) < LLDrawable::getCurrentFrame() - 1)
-        {
-            group->doOcclusion(mCamera);
-        }*/
         gPipeline.markNotCulled(group, *mCamera);
     }
 };

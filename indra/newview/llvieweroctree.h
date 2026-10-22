@@ -38,6 +38,7 @@
 #include "llquaternion.h"
 #include "lloctree.h"
 #include "llviewercamera.h"
+#include "llhiz.h"
 #include "llvkbridge.h"
 
 class LLViewerRegion;
@@ -272,15 +273,13 @@ protected:
 
 //octree group which has capability to support occlusion culling
 //LL_ALIGN_PREFIX(16)
-class LLOcclusionCullingGroup : public LLViewerOctreeGroup
+class LLOcclusionCullingGroup : public LLViewerOctreeGroup, public LLHizTarget
 {
 public:
     typedef enum
     {
         OCCLUDED                = 0x00010000,
-        QUERY_PENDING           = 0x00020000,
         ACTIVE_OCCLUSION        = 0x00040000,
-        DISCARD_QUERY           = 0x00080000,
         EARLY_FAIL              = 0x00100000,
     } eOcclusionState;
 
@@ -304,13 +303,15 @@ public:
 
     void setOcclusionState(U32 state, S32 mode = STATE_MODE_SINGLE);
     void clearOcclusionState(U32 state, S32 mode = STATE_MODE_SINGLE);
-    void checkOcclusion(); //read back last occlusion query (if any)
-    void doOcclusion(LLCamera* camera, const LLVector4a* shift = NULL); //issue occlusion query
+    void checkOcclusion(); // a group that asked to be discarded while its verdict was awaited is visible again; a group under an occluded parent is occluded with it
+    // adds the group's box to the Hi-Z batch when it has none awaited (shift: the object cache's region origin, to agent space)
+    void hizCollect(LLCamera* camera, const LLVector4a* shift = NULL);
+    void hizInvalidate() { mHizStale = true; }  // the group changed (an object was added): the verdict awaited, if any, is out of date
+    virtual void hizResult(bool occluded);
     bool isOcclusionState(U32 state) const { return mOcclusionState[LLViewerCamera::sCurCameraID] & state; }
     U32  getOcclusionState() const { return mOcclusionState[LLViewerCamera::sCurCameraID];}
 
     bool needsUpdate();
-    U32  getLastOcclusionIssuedTime();
 
     //virtual
     void handleChildAddition(const OctreeNode* parent, OctreeNode* child);
@@ -319,38 +320,16 @@ public:
     bool isRecentlyVisible() const;
     bool isAnyRecentlyVisible() const;
 
-    static U32 getNewOcclusionQueryObjectName();
-    static void releaseOcclusionQueryObjectName(U32 name);
-
-    // <FS> S7 H1 (doc/vulkan/S7-design.md): Hi-Z occlusion instead of queries. LL_VK_HIZ: 0 queries, 1 Hi-Z drives OCCLUDED (default), 2 both run, the queries drive and the log compares.
-    static U32 hizMode();
-    // the box of this group for the Hi-Z pass, with what doOcclusion does for the state (mode 1) or only the decision that doOcclusion will issue (mode 2); true when a box was added
-    bool hizCollect(LLCamera* camera, U32 mode, std::vector<LLVkBridge::HizBox>& boxes, std::vector<LLOcclusionCullingGroup*>& groups);
-    static void hizSend(std::vector<LLVkBridge::HizBox>& boxes, std::vector<LLOcclusionCullingGroup*>& groups, const F32* view_proj);
-    static void hizApply();         // the results of the frames the GPU has finished (once per cull of the world camera)
-
-protected:
-    void releaseOcclusionQueryObjectNames();
-
 private:
     bool earlyFail(LLCamera* camera, const LLVector4a* bounds);
 
 protected:
     U32         mOcclusionState[LLViewerCamera::NUM_CAMERAS];
-    U32         mOcclusionIssued[LLViewerCamera::NUM_CAMERAS];
 
     S32         mLODHash;
 
     LLViewerOctreePartition* mSpatialPartition;
-    U32                      mOcclusionQuery[LLViewerCamera::NUM_CAMERAS];
-    U32                      mOcclusionCheckCount[LLViewerCamera::NUM_CAMERAS];
-    U32                      mHizId = 0;            // <FS> H1: the id the Hi-Z batches name the group by (0 until its first box)
-    U32                      mHizSerial = 0;        // ... the serial of the batch whose result is awaited (mode 1)
-    struct HizHist { U32 mFrame[8] = {}; U8 mBit[8] = {}; U8 mLod[8] = {}; F32 mMargin[8] = {}; };
-    HizHist*                 mHizHist = nullptr;    // ... mode 2: the last results by issue frame, to compare with the query that was issued with them
-
-public:
-    static std::set<U32> sPendingQueries;
+    bool                     mHizStale = false;
 };//LL_ALIGN_POSTFIX(16);
 
 class LLViewerOctreePartition
