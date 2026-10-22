@@ -57,6 +57,51 @@ void LLDrawPoolGlow::renderPostDeferred(S32 pass)
     LLRenderState::DepthScope depth(true, false);
     gRender.setColorMask(false, true);
 
+    // <FS> S6 X2: the glow draws from the scene table (the emissive pull programs of the alpha glow, the same rows); what it cannot carry is drawn the old way
+    if (!LLPipeline::sRenderingHUDs && deferredPacketsEnabled() && gAlphaGlowPullReady)
+    {
+        std::vector<LLDrawInfo*> fallback;
+        gDeferredEmissivePullProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_GLOW, fallback);
+        if (!fallback.empty())
+        {
+            shader->bind();
+            for (LLDrawInfo* params : fallback)
+            {
+                pushBatch(*params, true, true);
+            }
+        }
+        shader = shader->mRiggedVariant;
+        if (ll_rigged_packets_enabled())
+        {
+            fallback.clear();
+            gDeferredEmissivePullSkinProgram.bind();
+            pushGeometryPackets(LLRenderPass::PASS_GLOW_RIGGED, fallback, nullptr, true);
+            if (!fallback.empty())
+            {
+                shader->bind();
+                const LLVOAvatar* lastAvatar = nullptr;
+                U64 lastMeshId = 0;
+                bool skipLastSkin = false;
+                for (LLDrawInfo* params : fallback)
+                {
+                    if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
+                    {
+                        pushBatch(*params, true, true);
+                    }
+                }
+            }
+        }
+        else
+        {
+            shader->bind();
+            pushRiggedBatches(LLRenderPass::PASS_GLOW_RIGGED, true, true);
+        }
+        gRender.setColorMask(true, false);
+        gRender.setSceneBlendType(LLRender::BT_ALPHA);
+        return;
+    }
+
     //first pass -- static objects
     shader->bind();
     pushBatches(LLRenderPass::PASS_GLOW, true, true);

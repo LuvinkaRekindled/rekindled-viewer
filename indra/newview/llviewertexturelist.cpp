@@ -67,6 +67,9 @@
 #include "llwindow.h"
 #include "llprogressview.h"
 #include "llvkbridge.h"
+#include "llface.h"
+#include "lldrawable.h"
+#include "llviewerobject.h"
 
 ////////////////////////////////////////////////////////////////////////////
 
@@ -877,6 +880,54 @@ void LLViewerTextureList::logSummary()
         }
     }
     LL_CONT << LL_ENDL;
+    {
+        // census (clothing of the crowd that never loads: 65-156 images with no data and nothing fetching, in every run since before the scene table): what those images are and why nothing asks for them
+        U32 vsize_zero = 0, vsize_pos = 0, with_faces = 0, wants_data = 0, deleted = 0, listed = 0;
+        std::map<S32, U32> by_boost;
+        std::map<S32, U32> by_ft;
+        std::string samples;
+        for (const LLPointer<LLViewerFetchedTexture>& image_ptr : mImageList)
+        {
+            LLViewerFetchedTexture* image = const_cast<LLViewerFetchedTexture*>(image_ptr.get());
+            if (image->isMissingAsset() || image->getDiscardLevel() >= 0 || image->isFetching())
+            {
+                continue;
+            }
+            ++listed;
+            const F32 vsize = image->getMaxVirtualSize();
+            ++(vsize > 0.f ? vsize_pos : vsize_zero);
+            const U32 faces = image->getNumFaces(LLRender::DIFFUSE_MAP);
+            with_faces += faces ? 1 : 0;
+            wants_data += image->getDesiredDiscardLevel() >= 0 && image->getDesiredDiscardLevel() < MAX_DISCARD_LEVEL ? 1 : 0;
+            deleted += image->isDeleted() ? 1 : 0;
+            ++by_boost[image->getBoostLevel()];
+            ++by_ft[(S32)image->getFTType()];
+            if (listed <= 8)
+            {
+                samples += llformat(" [%s boost %d type %d vsize %.0f faces %u desired %d fetch priority %u; faces:", image->getID().asString().c_str(), image->getBoostLevel(), (S32)image->getFTType(), vsize, faces,
+                                    (S32)image->getDesiredDiscardLevel(), image->getFetchPriority());
+                const LLViewerTexture::ll_face_list_t* list = image->getFaceList(LLRender::DIFFUSE_MAP);
+                U32 shown = 0;
+                for (LLFace* face : *list)
+                {
+                    if (!face || ++shown > 3)
+                    {
+                        continue;
+                    }
+                    const LLViewerObject* object = face->getViewerObject();
+                    const LLDrawable* drawable = face->getDrawable();
+                    samples += llformat(" (pixel area %.1f, %s%s%s%s)", face->getPixelArea(), drawable ? (drawable->isVisible() ? "visible" : "not visible") : "no drawable",
+                                        object && object->isRiggedMesh() ? ", rigged mesh" : "", object && object->isAttachment() ? ", attachment" : "", object && object->isAvatar() ? ", avatar" : "");
+                }
+                samples += "]";
+            }
+        }
+        std::string boost_text, ft_text;
+        for (const auto& kv : by_boost) boost_text += " " + std::to_string(kv.first) + ":" + std::to_string(kv.second);
+        for (const auto& kv : by_ft) ft_text += " " + std::to_string(kv.first) + ":" + std::to_string(kv.second);
+        LL_INFOS("VkTex") << "images with no data and not fetching: " << listed << " (virtual size 0: " << vsize_zero << ", above 0: " << vsize_pos << "; with faces on a diffuse map: " << with_faces << "; a desired discard level set: "
+            << wants_data << "; deleted: " << deleted << "); by boost level" << boost_text << "; by fetched texture type" << ft_text << "; first ones:" << samples << LL_ENDL;
+    }
     extern U32 gEarlySortResorts;
     LL_INFOS("VkTex") << LLRenderPass::geometryBuildStats() << "; the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
 }

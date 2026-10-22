@@ -827,18 +827,30 @@ static struct RiggedStats
 
 // can this static draw be an entry of a geometry record? The pull shader reads 16 bit indices, position first, and the normal, texcoord 0 and colour arrays; the textures
 // come from the bindless table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
-// S6 X1: the fullbright passes have no use for normals (the fullbright pull program does not read them), so a draw without a normal array is served too
-bool ll_pass_needs_normals(U32 type)
+// S6 X1 / X2: the arrays a pass type needs besides position, texcoord 0, colour and indices: the fullbright passes have no use for normals (their pull program does not read them), the glow pass needs the
+// emissive array instead
+U32 ll_pass_arrays(U32 type)
 {
-    return type != LLRenderPass::PASS_FULLBRIGHT && type != LLRenderPass::PASS_FULLBRIGHT_RIGGED;
+    switch (type)
+    {
+    case LLRenderPass::PASS_FULLBRIGHT:
+    case LLRenderPass::PASS_FULLBRIGHT_RIGGED:
+        return 0;
+    case LLRenderPass::PASS_GLOW:
+    case LLRenderPass::PASS_GLOW_RIGGED:
+        return LL_PASS_ARRAY_EMISSIVE;
+    default:
+        return LL_PASS_ARRAY_NORMALS;
+    }
 }
 
-static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false, bool normals = true)
+static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount || (p.mAvatar != nullptr) != rigged || p.mGLTFMaterial || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0
-        || (normals && !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+        || ((arrays & LL_PASS_ARRAY_NORMALS) && !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) || ((arrays & LL_PASS_ARRAY_EMISSIVE) && !vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+        || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
     {
         return false;
     }
@@ -871,7 +883,7 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
 }
 
 // S6 census: why geometry_packet_ok refuses a draw (0 = it does not)
-int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix)
+int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount) return 1;
@@ -880,7 +892,8 @@ int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LL
     if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId()) return 4;
     if (vb->getIndicesType() != ComponentType::U16) return 5;
     if (!vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0) return 6;
-    if (!vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) return 7;
+    if ((arrays & LL_PASS_ARRAY_NORMALS) && !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) return 7;
+    if ((arrays & LL_PASS_ARRAY_EMISSIVE) && !vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE)) return 14;
     if (!vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0)) return 8;
     if (!vb->hasDataType(LLVertexBuffer::TYPE_COLOR)) return 9;
     if (rigged && (p.mSkinInfo.isNull() || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))) return 10;
@@ -919,14 +932,14 @@ bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry&
 }
 
 // static. S3: the per-draw part of build_geometry, with the textures as pointers (the fragments of the scene tables keep them)
-bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix, bool normals)
+bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix, U32 arrays)
 {
     e = {};
     for (int t = 0; t < 6; ++t)
     {
         textures[t] = nullptr;
     }
-    if (!params.mCount || !geometry_packet_ok(params, materials == nullptr, materials, rigged, texture_matrix, normals) || (rigged && params.mModelMatrix))
+    if (!params.mCount || !geometry_packet_ok(params, materials == nullptr, materials, rigged, texture_matrix, arrays) || (rigged && params.mModelMatrix))
     {
         return false;
     }
@@ -938,7 +951,7 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
     e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
     e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
     e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
-    if (texture_matrix && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+    if ((texture_matrix || (arrays & LL_PASS_ARRAY_EMISSIVE)) && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
     {
         e.mEmissiveOffset = vb->getOffset(LLVertexBuffer::TYPE_EMISSIVE);       // S5e: (the alpha items) the glow draw
     }
@@ -1108,7 +1121,7 @@ static void build_geometry(LLGeometryBuild& out)
             ++out.mNotDrawn;    // no palette: the old path draws nothing either
             continue;
         }
-        if (!geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged, false, ll_pass_needs_normals(out.mType)))
+        if (!geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged, false, ll_pass_arrays(out.mType)))
         {
             out.mFallback.push_back(params);
             continue;
@@ -1140,6 +1153,10 @@ static void build_geometry(LLGeometryBuild& out)
         e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
         e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
         e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+        if ((ll_pass_arrays(out.mType) & LL_PASS_ARRAY_EMISSIVE) && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+        {
+            e.mEmissiveOffset = vb->getOffset(LLVertexBuffer::TYPE_EMISSIVE);       // S6 X2: the glow pass
+        }
         if (materials)
         {
             if (materials->mNormalMap)

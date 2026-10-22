@@ -4321,8 +4321,8 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         {
             g.mPad[0] = e.mPad3;                                // S5f F3: the texture matrix (0 = none)
             g.mPad[1] = e.mPbrRow;                              // ... the PBR row
-            memcpy(&g.mPad2, &e.mEmissiveOffset, sizeof(U32));   // ... the emissive array (the glow draw)
         }
+        memcpy(&g.mPad2, &e.mEmissiveOffset, sizeof(U32));       // ... the emissive array (the glow draw; S6 X2: the glow pass's own draws too)
         if (rigged)
         {
             U32* x = (U32*)(raw + 128);
@@ -6451,8 +6451,8 @@ void geo_write_items(GeoFrag& f)
         {
             g.mPad[0] = e.mPad3;            // S5a: the slot of the draw's texture matrix (0 = none)
             g.mPad[1] = (i < f.mPbrOfItem.size() && f.mPbrOfItem[i]) ? f.mPbrOfItem[i] - 1 : 0;       // S5c: its PBR row
-            g.mEmissiveOffset = e.mEmissiveOffset;      // S5e
         }
+        g.mEmissiveOffset = e.mEmissiveOffset;      // S5e (the alpha items' glow draw), S6 X2 (the glow pass items: the emissive array; 0 for everything else)
         if (e.mFlags & LLVkBridge::GEO_RIGGED)
         {
             const U64 wa = pa + e.mWeightOffset;
