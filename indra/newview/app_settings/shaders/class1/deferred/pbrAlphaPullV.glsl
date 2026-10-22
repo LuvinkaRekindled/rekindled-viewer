@@ -203,6 +203,10 @@ void main()
     vary_normal = n;
 
     vertex_color = unpackUnorm4x8(GeoWords(pk.colors).w[index]);
+#ifdef IS_HUD
+    // S5f F4: the fullbright HUD variant of pbralphaV.glsl: no normals or tangents, the position is the clip space position
+    vary_position = vert.xyz;
+#endif
 
     vary_slot = pk.slots.x & 0xFFFFu;
     vary_slot_normal = pk.slots.x >> 16;

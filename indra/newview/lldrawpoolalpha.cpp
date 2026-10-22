@@ -233,8 +233,23 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
-    if (gAlphaPullReady && ll_alpha_serving())
-    {   // <FS> S5a: the pull programs of the runs drawn from the scene table
+    if (gAlphaPullReady && ll_alpha_ab_on())
+    {   // <FS> S5a: the pull programs of the runs drawn from the scene table (S5f F4: and the transient draws of every view)
+        if (LLPipeline::sRenderingHUDs)
+        {
+            if (gAlphaHudPullReady) { prepare_alpha_shader(&gHUDFullbrightAlphaPullProgram, true, water_sign); }
+            if (gAlphaHudPbrReady) { prepare_alpha_shader(&gHUDPBRAlphaPullProgram, true, water_sign); }
+        }
+        if (gAlphaImpostorPullReady)
+        {
+            prepare_alpha_shader(&gDeferredAlphaImpostorPullProgram, true, water_sign);
+            prepare_alpha_shader(&gDeferredAlphaImpostorPullSkinProgram, true, water_sign);
+        }
+        if (gAlphaMaskPullReady)
+        {
+            prepare_alpha_shader(&gDeferredFullbrightMaskPullProgram, true, water_sign);
+            prepare_alpha_shader(&gDeferredFullbrightMaskPullSkinProgram, true, water_sign);
+        }
         prepare_alpha_shader(&gDeferredAlphaPullProgram, true, water_sign);
         prepare_alpha_shader(&gDeferredFullbrightAlphaPullProgram, true, water_sign);
         if (gAlphaPbrPullReady)
@@ -1061,6 +1076,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // <FS> S5a-2: the static main-view colour pass draws the plain runs of the groups' plans from the scene table (one record per run, in the loop's order); everything else is drawn by the code below
     const bool post_water = getType() == LLDrawPool::POOL_ALPHA_POST_WATER;
     const bool alpha_table = !LLPipeline::sImpostorRender && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sReflectionRender && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && ll_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
+    // S5f F4: the draws the fragments do not keep are sent as transient entries in EVERY view that has its pull programs (HUD, impostor render, probe and reflection renders, the depth only passes): a pass
+    // that is not the main view's has no fragments to serve (alpha_table false) but draws all of its draws that way
+    const bool transient_ok = ll_alpha_ab_on() && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && !(LLPipeline::sRenderingHUDs && rigged);
     struct PendingRange { U32 mHandle, mFirst, mCount; };
     struct PendingSrc { const LLDrawInfo* const* mInfo; const U32* mWire; U32 mRank, mCount, mHandle; };       // (S5d: where the items of a rigged range are, for their palette bindings)
     static thread_local std::vector<PendingRange> pending;
@@ -1071,8 +1089,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     static thread_local std::vector<PendingRange> glow_range[3];
     static thread_local std::vector<PendingSrc> glow_src[3];
     const bool glow_pass = post_water && !depth_only && !mFringePass;       // (the glow second draw is made by the colour passes only)
-    const bool glow_plain_table = alpha_table && glow_pass && ll_alpha_glow_table(false);
-    const bool glow_pbr_table = alpha_table && glow_pass && ll_alpha_glow_table(true);
+    const bool glow_plain_table = (alpha_table || transient_ok) && glow_pass && ll_alpha_glow_table(false);
+    const bool glow_pbr_table = (alpha_table || transient_ok) && glow_pass && ll_alpha_glow_table(true);
     // S5f F1: the depth only passes (the depth of field depth pass: minimum alpha 0.33 on the mask program; the rigged depth prepass: mDepthCutoff) are served by the same runs: the lit key draws with the fullbright
     // (mask) pull program, as the old code sets simple_shader = fullbright_shader = the mask program for them
     const bool dof_pass = alpha_table && depth_only && mDepthCutoff <= 0.f;
@@ -1082,15 +1100,16 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         {
             return mDepthCutoff;
         }
-        return dof_pass && (program == &gDeferredFullbrightAlphaPullProgram || program == &gDeferredFullbrightAlphaPullSkinProgram) ? 0.33f : MINIMUM_ALPHA;
+        return dof_pass && (program == &gDeferredFullbrightMaskPullProgram || program == &gDeferredFullbrightMaskPullSkinProgram) ? 0.33f : MINIMUM_ALPHA;
     };
+    // (the HUD draws all its plain draws with its fullbright program; the depth only passes draw lit and fullbright ones with the mask program)
     auto run_key = [&](U32 key) -> int
     {
-        return depth_only && (key & 0xFF) == 0 ? (int)((key & ~0xFFu) | 1u) : (int)key;
+        return (depth_only || LLPipeline::sRenderingHUDs) && (key & 0xFF) == 0 ? (int)((key & ~0xFFu) | 1u) : (int)key;
     };
     if (dof_pass)
     {
-        for (LLShaderProgram* program : { &gDeferredFullbrightAlphaPullProgram, &gDeferredFullbrightAlphaPullSkinProgram })
+        for (LLShaderProgram* program : { &gDeferredFullbrightMaskPullProgram, &gDeferredFullbrightMaskPullSkinProgram })
         {
             if (program->mProgramObject != 0)
             {
@@ -1118,7 +1137,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     tr.mTexmats.clear();
     tr.mPbr.clear();
     tr.mMatrixKeys.clear();
-    const glm::mat4 tr_view = glm::make_mat4(gRenderModelView);
+    const glm::mat4 tr_view = gRender.getModelviewMatrix();         // (what the old draws start from before their model matrix: the HUD and probe renders set it on the stack)
     const glm::mat4 tr_proj = gRender.getProjectionMatrix();
     // the matrices the shader would get from LLRender::syncMatrices() for a model matrix: modelview, modelview * projection, normal matrix (as the geometry packets of the deferred passes)
     auto tr_matrix = [&](const LLMatrix4* model) -> U32
@@ -1156,6 +1175,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         return (U32)(at / 44);
     };
     int pending_key = -1;
+    const bool tr_rigged = rigged;
     auto tr_flush = [&]()
     {
         if (tr.mEntries.empty())
@@ -1184,6 +1204,11 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         header.mMatrices = (U32)(tr.mMatrices.size() / 44);
         header.mFragment = (U32)(tr.mTexmats.size() / 16);
         header.mPaletteFloats = (U32)(tr.mPbr.size() / 40);
+        header.mPass = tr_rigged ? 1u : 0u;
+        if (tr_rigged)
+        {
+            ll_frame_palette_flush();       // (the shared palettes the entries point into go first)
+        }
         {
             LLRenderState::CullScope cull_face(false, pending_key >= 0 && (((pending_key >> 16) & 1) != 0 || ((pending_key >> 18) & 1) != 0));       // a double sided glTF material, a particle group: culling off
             LLVkBridge::shadowPackets(header, tr.mBlob.data(), tr.mBlob.size());
@@ -1206,6 +1231,16 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             tr_matrix(nullptr);         // matrix 0: the view alone
         }
         LLVkBridge::GeoEntry e = t.mEntry;
+        if (tr_rigged)
+        {
+            U32 offset = 0, joints = 0;
+            if (!ll_frame_palette(draw.mAvatar.get(), draw.mSkinInfo.get(), offset, joints))
+            {
+                return;                 // the skin is not loaded yet: not drawn, as the old path
+            }
+            e.mPaletteOffset = offset;
+            e.mJoints = joints;
+        }
         U32* fields[6] = { &e.mTextures[0], &e.mTextures[1], &e.mTextures[2], &e.mTextures[3], &e.mNormalMap, &e.mSpecularMap };
         for (int k = 0; k < 6; ++k)
         {
@@ -1338,9 +1373,25 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     {
         const int pkey = key & 0xFF;        // the program: 0 lit, 1 fullbright, 2 + mask a material, 18 PBR; the blend function pair id is in bits 8-15, bit 16: double sided, bit 17: rigged
         const bool skinned = ((key >> 17) & 1) != 0;
-        LLShaderProgram* pull = pkey == 18 ? (skinned ? &gDeferredPBRAlphaPullSkinProgram : &gDeferredPBRAlphaPullProgram)
-            : (pkey >= 2 ? (skinned ? &gDeferredMaterialPullSkinProgram[pkey - 2] : &gDeferredMaterialPullProgram[pkey - 2])
-            : (pkey ? (skinned ? &gDeferredFullbrightAlphaPullSkinProgram : &gDeferredFullbrightAlphaPullProgram) : (skinned ? &gDeferredAlphaPullSkinProgram : &gDeferredAlphaPullProgram)));
+        LLShaderProgram* pull;
+        if (pkey == 18)
+        {
+            pull = LLPipeline::sRenderingHUDs ? &gHUDPBRAlphaPullProgram : (skinned ? &gDeferredPBRAlphaPullSkinProgram : &gDeferredPBRAlphaPullProgram);
+        }
+        else if (pkey >= 2)
+        {
+            pull = skinned ? &gDeferredMaterialPullSkinProgram[pkey - 2] : &gDeferredMaterialPullProgram[pkey - 2];
+        }
+        else if (pkey == 1)
+        {   // fullbright: the HUD's program in the HUD; the mask program (no atmosphere, no water clip) in the depth only passes and the impostor render; else the fullbright alpha program
+            pull = LLPipeline::sRenderingHUDs ? &gHUDFullbrightAlphaPullProgram
+                : ((depth_only || LLPipeline::sImpostorRender) ? (skinned ? &gDeferredFullbrightMaskPullSkinProgram : &gDeferredFullbrightMaskPullProgram)
+                : (skinned ? &gDeferredFullbrightAlphaPullSkinProgram : &gDeferredFullbrightAlphaPullProgram));
+        }
+        else
+        {
+            pull = LLPipeline::sImpostorRender ? (skinned ? &gDeferredAlphaImpostorPullSkinProgram : &gDeferredAlphaImpostorPullProgram) : (skinned ? &gDeferredAlphaPullSkinProgram : &gDeferredAlphaPullProgram);
+        }
         if (setup_key == key && current_shader == pull)
         {
             pending_key = key;
@@ -1600,10 +1651,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         ++sAlphaScene.mMismatch;        // (the plan does not list this draw here: drawn the old way)
                     }
                 }
-                if (alpha_table && !rigged)
-                {   // S5f F3: the table does not keep this draw: a transient entry (the same pull program as a fragment item of its key), in the pass's order
+                if (transient_ok)
+                {   // S5f F3: the table does not keep this draw (or this view has no fragments): a transient entry (the same pull program as a fragment item of its key), in the pass's order
                     LLAlphaTransient transient;
-                    if (ll_alpha_transient(&params, false, transient))
+                    if (ll_alpha_transient(&params, rigged, depth_only, transient))
                     {
                         int key = run_key(transient.mKey);
                         if (is_particle_or_hud_particle)
@@ -1623,10 +1674,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             {
                                 glow_draws[pbr_draw ? (params.mGLTFMaterial->mDoubleSided ? 2 : 1) : 0].push_back(&params);
                             }
-                            else
-                            {
-                                (pbr_draw ? pbr_emissives : emissives).push_back(&params);
-                            }
+                            else if (params.mAvatar) { (pbr_draw ? pbr_rigged_emissives : rigged_emissives).push_back(&params); }
+                            else { (pbr_draw ? pbr_emissives : emissives).push_back(&params); }
                         }
                         cen.drawEnd();
                         continue;
@@ -1924,18 +1973,26 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     {
                         if (!glow_draws[cls].empty())
                         {   // the transient draws' glow: entries made again, one record (the program of the class, culling off for double sided glTF)
-                            LLShaderProgram* transient_glow_program = cls == 0 ? &gDeferredEmissivePullProgram : &gPBRGlowPullProgram;
+                            LLShaderProgram* transient_glow_program = cls == 0 ? (rigged ? &gDeferredEmissivePullSkinProgram : &gDeferredEmissivePullProgram) : (rigged ? &gPBRGlowPullSkinProgram : &gPBRGlowPullProgram);
                             transient_glow_program->bind();
                             pending_key = cls == 2 ? (1 << 16) : 0;
                             for (LLDrawInfo* glow_draw : glow_draws[cls])
                             {
                                 LLAlphaTransient glow_transient;
-                                if (ll_alpha_transient(glow_draw, false, glow_transient))
+                                if (ll_alpha_transient(glow_draw, rigged, false, glow_transient))
                                 {
                                     tr_add(glow_transient, *glow_draw);
                                 }
                             }
-                            tr_flush();
+                            if (rigged)
+                            {
+                                LLRenderState::DepthScope depth(true, false);
+                                tr_flush();
+                            }
+                            else
+                            {
+                                tr_flush();
+                            }
                             glow_draws[cls].clear();
                         }
                         if (glow_range[cls].empty())
@@ -1980,7 +2037,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     run_flush();
     if (dof_pass)
     {   // (the mask pull programs go back to the usual minimum alpha)
-        for (LLShaderProgram* program : { &gDeferredFullbrightAlphaPullProgram, &gDeferredFullbrightAlphaPullSkinProgram })
+        for (LLShaderProgram* program : { &gDeferredFullbrightMaskPullProgram, &gDeferredFullbrightMaskPullSkinProgram })
         {
             if (program->mProgramObject != 0)
             {
