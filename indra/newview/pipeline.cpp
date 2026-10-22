@@ -5403,7 +5403,8 @@ struct LLSceneFragment
     std::vector<const LLDrawInfo*> mAlphaOrder;
     std::vector<LLAlphaPlanSeg> mAlphaPlan;
     std::vector<GeoItem> mAlphaItems;                   // S5a-2: the served alpha draws as table items (type 26), in plan order
-    bool mAlphaPlanned = false, mAlphaGlow = false;
+    bool mAlphaPlanned = false, mAlphaGlow = false, mAlphaDirect = false;
+    std::vector<U32> mAlphaGlowIdx;                     // plan indices of the served draws with a glow buffer
 };
 
 namespace
@@ -5987,10 +5988,48 @@ static bool scene_alpha_plan_env()
     static const bool on = []() { const char* v = getenv("LL_VK_SCENE_ALPHA"); return v && atoi(v) != 0; }();
     return on;
 }
-// diagnostic (LL_VK_SCENE_ALPHA_ONLY=<mask>, default 15): which classes of plain draws the table takes: 1 lit, 2 fullbright, 4 draws with a texture matrix, 8 draws with a model matrix that is not a region matrix
+// diagnostic (LL_VK_SCENE_ALPHA_ONLY=<mask>, default 31): which classes of draws the table takes: 1 lit, 2 fullbright, 4 draws with a texture matrix, 8 draws with a model matrix that is not a region matrix, 16 materials (S5b)
+// S5b: the blend function pairs of the draws (standard alpha blend = id 0); a run key carries the id in bits 8 and up
+static std::vector<std::pair<int, int>> sAlphaBlendPairs;
+static U32 alpha_blend_id(int src, int dst)
+{
+    if (src == (int)LLRender::BF_SOURCE_ALPHA && dst == (int)LLRender::BF_ONE_MINUS_SOURCE_ALPHA)
+    {
+        return 0;
+    }
+    for (size_t k = 0; k < sAlphaBlendPairs.size(); ++k)
+    {
+        if (sAlphaBlendPairs[k].first == src && sAlphaBlendPairs[k].second == dst)
+        {
+            return (U32)k + 1;
+        }
+    }
+    if (sAlphaBlendPairs.size() >= 250)
+    {
+        return ~0u;         // (more pairs than ids: such a draw stays old)
+    }
+    sAlphaBlendPairs.push_back({ src, dst });
+    return (U32)sAlphaBlendPairs.size();
+}
+bool ll_alpha_blend_pair(U32 id, int* src, int* dst)
+{
+    if (id == 0)
+    {
+        *src = (int)LLRender::BF_SOURCE_ALPHA;
+        *dst = (int)LLRender::BF_ONE_MINUS_SOURCE_ALPHA;
+        return true;
+    }
+    if (id > sAlphaBlendPairs.size())
+    {
+        return false;
+    }
+    *src = sAlphaBlendPairs[id - 1].first;
+    *dst = sAlphaBlendPairs[id - 1].second;
+    return true;
+}
 static int scene_alpha_only()
 {
-    static const int mask = []() { const char* v = getenv("LL_VK_SCENE_ALPHA_ONLY"); return v ? atoi(v) : 15; }();
+    static const int mask = []() { const char* v = getenv("LL_VK_SCENE_ALPHA_ONLY"); return v ? atoi(v) : 31; }();
     return mask;
 }
 static U64 sAlphaPlanBuilds = 0, sAlphaPlanNs = 0, sAlphaPlanServed = 0, sAlphaPlanOld = 0, sAlphaPlanSegs = 0, sAlphaPlanNoSlot = 0, sAlphaPlanTexMatrix = 0;
@@ -6001,6 +6040,8 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mAlphaItems.clear();
     f.mAlphaPlanned = false;
     f.mAlphaGlow = false;
+    f.mAlphaDirect = false;
+    f.mAlphaGlowIdx.clear();
     if (!scene_alpha_plan_env())
     {
         return;
@@ -6027,19 +6068,27 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
         {
             f.mAlphaGlow = true;
         }
-        bool served = table && p->mCount && !p->mGLTFMaterial && p->mMaterial.isNull() && (((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0)
-            && p->mBlendFuncSrc == LLRender::BF_SOURCE_ALPHA && p->mBlendFuncDst == LLRender::BF_ONE_MINUS_SOURCE_ALPHA
+        // S5b: a draw with a material (blend variant of its shader mask: 1, 5, 9, 13, the program gDeferredMaterialProgram[mask] of the old loop) is served by the materials pull program of the same mask
+        const bool material = !LLPipeline::sRenderingHUDs && p->mMaterial.notNull();
+        const U32 mmask = p->mShaderMask;
+        const U32 blend_id = alpha_blend_id((int)p->mBlendFuncSrc, (int)p->mBlendFuncDst);
+        const bool material_ok = material && gAlphaMaterialPullReady && (scene_alpha_only() & 16) && mmask < 16 && (mmask & 3) == 1;
+        bool served = table && p->mCount && !p->mGLTFMaterial && (material ? material_ok : (((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0))
+            && blend_id != ~0u
             && vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16
             && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0
             && vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) && vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && vb->hasDataType(LLVertexBuffer::TYPE_COLOR)
-            && p->mTextureList.size() <= 4;
+            && (material || p->mTextureList.size() <= 4);
         LLSceneFragment::GeoItem item = {};
         if (served)
         {
             LLViewerTexture* textures[6];
             // (the old loop loads the texture matrix only for a draw with one texture; a batch ignores it)
             const bool use_tex_matrix = p->mTextureMatrix && p->mTextureList.size() <= 1 && p->mTexture.notNull();
-            served = LLRenderPass::geometryEntry(*p, nullptr, item.mE, textures, false, true);
+            LLGeometryPassInfo material_info;
+            material_info.mNormalMap = (mmask & 0x8) != 0;
+            material_info.mSpecularMap = (mmask & 0x4) != 0;
+            served = LLRenderPass::geometryEntry(*p, material ? &material_info : nullptr, item.mE, textures, false, true);
             if (served)
             {
                 U32* fields[6] = { &item.mE.mTextures[0], &item.mE.mTextures[1], &item.mE.mTextures[2], &item.mE.mTextures[3], &item.mE.mNormalMap, &item.mE.mSpecularMap };
@@ -6088,11 +6137,15 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 }
             }
         }
-        const U32 key = p->mFullbright ? 1u : 0u;
+        const U32 key = (material ? 2u + mmask : (p->mFullbright ? 1u : 0u)) | (blend_id == ~0u ? 0u : blend_id << 8);
         const U32 index = (U32)f.mAlphaOrder.size();
         f.mAlphaOrder.push_back(p);
         if (served)
         {
+            if (vb && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+            {
+                f.mAlphaGlowIdx.push_back(index);
+            }
             if (vb)
             {
                 bool known = false;
@@ -6123,6 +6176,7 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
         }
         (served ? sAlphaPlanServed : sAlphaPlanOld) += 1;
     }
+    f.mAlphaDirect = f.mAlphaOrder.size() == it->second.size();
     sAlphaPlanSegs += f.mAlphaPlan.size();
     ++sAlphaPlanBuilds;
     sAlphaPlanNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
@@ -6150,6 +6204,9 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out)
     out.mSegCount = (U32)f->mAlphaPlan.size();
     out.mGlow = f->mAlphaGlow;
     out.mHandle = f->mGeoHandle;
+    out.mDirect = f->mAlphaDirect;
+    out.mGlowIdx = f->mAlphaGlowIdx.data();
+    out.mGlowCount = (U32)f->mAlphaGlowIdx.size();
     return 1;
 }
 

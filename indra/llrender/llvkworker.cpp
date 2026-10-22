@@ -7030,9 +7030,10 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
-// kind 29 (S5a, doc/vulkan/S5-design.md): one run of the alpha pass, drawn with the pull program the viewer bound (alphaPullV with the lit or the fullbright alpha fragment shader). Blob: 32 floats (the view
-// and the projection matrix of the pass), then mEntries x AlphaRange { fragment handle, first alpha item, count }: the ranges of the fragments' alpha items (their own command list, in item order) the run
-// draws, in order. The matrices (modelview, modelview * projection, normal; and the raw texture matrices) of the slots the prepare of the frame knew are made once per pass and shared by its runs.
+// kind 29 (S5a, doc/vulkan/S5-design.md): the alpha pass drawn from the scene table. mEntries == 0: the pass begins, blob = 32 floats (the view and the projection matrix of the pass): the matrices (modelview,
+// modelview * projection, normal; and the raw texture matrices) of the slots the prepare of the frame knew are made once and shared by the runs that follow. mEntries > 0: one run, drawn with the pull
+// program the viewer bound (alphaPullV with the lit or the fullbright alpha fragment shader); blob = mEntries x AlphaRange { fragment handle, first alpha item, count }: the ranges of the fragments'
+// alpha items (their own command list, in item order) the run draws, in order.
 struct AlphaStats
 {
     U64 mRecords = 0, mRanges = 0, mCmds = 0, mStale = 0, mNoProgram = 0, mScratchFail = 0, mBadRange = 0, mUnknown = 0, mTables = 0, mRefused = 0;
@@ -7049,7 +7050,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     GeoStats& s = sGeo.mS;
     AlphaStats& a = sAlphaS;
-    if (!sGeo.mReady || h.mEntries == 0)
+    if (!sGeo.mReady)
     {
         return;
     }
@@ -7062,19 +7063,13 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const bool timed = geo_timed();
     const auto t_all = std::chrono::steady_clock::now();
     Renderer& r = Renderer::instance();
-    Program* program = r.getProgram();
-    if (!program || !program->isValid() || !program->hasUniform("ll_packet_table") || !program->hasUniform("ll_packet_models") || !r.bindlessAvailable())
-    {
-        ++a.mNoProgram;
-        return;
-    }
-    // the pass's tables: once per (frame, prepare, view and projection)
-    const F32* view = (const F32*)blob;
-    const F32* proj = view + 16;
     AlphaPass& pass = sAlphaPass;
     auto t0 = std::chrono::steady_clock::now();
-    if (pass.mFrame != frame_now || pass.mPrepares != s.mPrepares || memcmp(pass.mVP, view, sizeof(pass.mVP)) != 0 || !pass.mModels.mPtr || !pass.mTexmats.mPtr)
+    if (h.mEntries == 0)
     {
+        // the pass begins: its tables
+        const F32* view = (const F32*)blob;
+        const F32* proj = view + 16;
         const U32 slots = sGeo.mMaxSlot + 1;
         pass.mModels = r.allocVertexScratch(176 * (size_t)slots);
         pass.mTexmats = r.allocVertexScratch(64 * (size_t)slots);
@@ -7107,11 +7102,23 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         pass.mPrepares = s.mPrepares;
         memcpy(pass.mVP, view, sizeof(pass.mVP));
         ++a.mTables;
+        if (timed) a.mNsTables += geo_ns(t0);
+        return;
     }
-    if (timed) a.mNsTables += geo_ns(t0);
-    t0 = std::chrono::steady_clock::now();
+    if (pass.mFrame != frame_now || pass.mPrepares != s.mPrepares || !pass.mModels.mPtr || !pass.mTexmats.mPtr)
+    {
+        ++a.mStale;         // (a run without the pass's begin record of this frame)
+        return;
+    }
+    Program* program = r.getProgram();
+    if (!program || !program->isValid() || !program->hasUniform("ll_packet_table") || !program->hasUniform("ll_packet_models") || !r.bindlessAvailable())
+    {
+        ++a.mNoProgram;
+        return;
+    }
     struct Range { U32 mHandle, mFirst, mCount; };
-    const Range* ranges = (const Range*)(blob + sizeof(F32) * 32);
+    const Range* ranges = (const Range*)blob;
+    t0 = std::chrono::steady_clock::now();
     static thread_local std::vector<std::pair<GeoFrag*, Range>> todo;
     todo.clear();
     size_t total = 0;

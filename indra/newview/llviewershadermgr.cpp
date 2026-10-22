@@ -174,6 +174,7 @@ LLShaderProgram            gDeferredDiffusePullProgram;
 LLShaderProgram            gDeferredAlphaPullProgram;
 LLShaderProgram            gDeferredFullbrightAlphaPullProgram;
 bool                       gAlphaPullReady = false;
+bool                       gAlphaMaterialPullReady = false;
 LLShaderProgram            gDeferredMaterialPullProgram[16];
 LLShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
 LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
@@ -2507,7 +2508,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // <FS> ... and the materials passes: the unskinned programs of the 12 deferred passes (alpha mode in bits 0-1, specular map bit 2, normal map bit 3). Optional too.
     if (success && LLVkBridge::shadowAlphaPacketsAvailable())
     {
-        static const U32 pull_indices[] = { 0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15 };
+        // (S5b: + 1, 5, 9, 13, the blend variants the alpha pass draws materials with; no rigged variant of those yet)
+        static const U32 pull_indices[] = { 0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 1, 5, 9, 13 };
+        bool blend_pull_ok = true;
         for (U32 i : pull_indices)
         {
             LLShaderProgram& pull = gDeferredMaterialPullProgram[i];
@@ -2548,6 +2551,18 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             {
                 LL_WARNS("ShadowPackets") << "a materials pull shader could not be made (index " << i << "): that materials pass stays on the old path" << LL_ENDL;
                 pull.unload();
+                if ((i & 3) == 1)
+                {
+                    blend_pull_ok = false;
+                }
+            }
+            else if ((i & 3) == 1)
+            {
+                pull.mFeatures.hasLighting = true;       // (as the ordinary blend variants, see gDeferredMaterialProgram[1])
+            }
+            if ((i & 3) == 1)
+            {
+                continue;       // S5b: the alpha pass has no rigged variant of these yet
             }
 
             // <FS> S4 A1: the rigged variant of the same pass (HAS_SKIN)
@@ -2599,6 +2614,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 skin.unload();
             }
         }
+        gAlphaMaterialPullReady = blend_pull_ok;
     }
 
     if (success)
