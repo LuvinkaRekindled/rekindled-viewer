@@ -6074,7 +6074,7 @@ static void alpha_classify(LLDrawInfo* p, bool rigged, bool table, bool whole_ol
     const U32 blend_id = alpha_blend_id((int)p->mBlendFuncSrc, (int)p->mBlendFuncDst);
     const bool material_ok = material && gAlphaMaterialPullReady && (scene_alpha_only() & 16) && mmask < 16 && (mmask & 3) == 1;
     // S5c: a draw with a glTF blend material is served by the PBR pull program (the values in a PBR row; double sided = a key bit: the run is drawn with culling off)
-    const bool pbr = !LLPipeline::sRenderingHUDs && p->mGLTFMaterial.notNull() && p->mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;
+    const bool pbr = p->mGLTFMaterial.notNull() && p->mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;       // (S5f F4: in the HUD too: the old loop draws it with the HUD's glTF program)
     const bool pbr_ok = pbr && gAlphaPbrPullReady && (!rigged || gAlphaPbrSkinReady) && (scene_alpha_only() & 32) && vb && vb->hasDataType(LLVertexBuffer::TYPE_TANGENT);
     ac.mKey = (pbr ? 18u : (material ? 2u + mmask : (p->mFullbright ? 1u : 0u))) | (blend_id == ~0u ? 0u : blend_id << 8) | ((pbr && p->mGLTFMaterial->mDoubleSided) ? (1u << 16) : 0u) | (rigged ? (1u << 17) : 0u);
     int why = WHY_SERVED;
@@ -6156,10 +6156,33 @@ static void alpha_classify(LLDrawInfo* p, bool rigged, bool table, bool whole_ol
 
 // S5f F3: a draw the scene table does not keep, as a transient entry of the alpha pass loop (same conditions as a fragment item; the particle groups, a group without a current fragment, ...)
 static U64 sAlphaWhyTr[WHY_COUNT] = {};
-bool ll_alpha_transient(LLDrawInfo* draw, bool rigged, LLAlphaTransient& out)
+bool ll_alpha_transient(LLDrawInfo* draw, bool rigged, bool depth_only, LLAlphaTransient& out)
 {
     AlphaClass ac;
     alpha_classify(draw, rigged, true, false, ac);
+    if (ac.mServed)
+    {
+        // the pull program of the context this pass draws in must exist (HUD: fullbright / glTF; impostor render: lit / mask; depth only passes: mask); the old path draws the rest
+        const U32 pkey = ac.mKey & 0xFF;
+        bool have = true;
+        if (LLPipeline::sRenderingHUDs)
+        {
+            have = pkey == 18 ? (gAlphaHudPbrReady && !rigged) : (pkey < 2 && gAlphaHudPullReady && !rigged);
+        }
+        else if (depth_only)
+        {
+            have = pkey >= 2 || gAlphaMaskPullReady;
+        }
+        else if (LLPipeline::sImpostorRender)
+        {
+            have = pkey == 0 ? gAlphaImpostorPullReady : (pkey == 1 ? gAlphaMaskPullReady : true);
+        }
+        if (!have)
+        {
+            ac.mServed = false;
+            ac.mWhy = WHY_PBR;       // (counted with "glTF blend not ready": a program of the context is missing)
+        }
+    }
     ++sAlphaWhyTr[ac.mWhy];
     if (!ac.mServed)
     {
@@ -6399,7 +6422,7 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged
 
 // the alpha pass is drawn from the table: the switch (LL_VK_SCENE_ALPHA=1, LL_VK_SCENE_ALPHA_AB=<s> alternates it, marker "[phase] scene alpha now ON/off"), the table serving this frame, the pull programs, and the
 // worker told this cull result's fragments
-bool ll_alpha_serving()
+bool ll_alpha_ab_on()
 {
     if (!scene_alpha_plan_env() || !gAlphaPullReady)
     {
@@ -6425,7 +6448,12 @@ bool ll_alpha_serving()
             on = phase;
         }
     }
-    return on && ll_scene_geo_serving() && ll_scene_geo_main_view() && ll_scene_geo_prepared(sCull);
+    return on;
+}
+
+bool ll_alpha_serving()
+{
+    return ll_alpha_ab_on() && ll_scene_geo_serving() && ll_scene_geo_main_view() && ll_scene_geo_prepared(sCull);
 }
 
 static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f);

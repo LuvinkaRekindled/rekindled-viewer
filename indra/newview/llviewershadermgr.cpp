@@ -189,6 +189,16 @@ LLShaderProgram            gPBRGlowPullProgram;
 LLShaderProgram            gPBRGlowPullSkinProgram;
 bool                       gAlphaGlowPullReady = false;
 bool                       gAlphaGlowPbrReady = false;
+LLShaderProgram            gHUDFullbrightAlphaPullProgram;
+LLShaderProgram            gHUDPBRAlphaPullProgram;
+LLShaderProgram            gDeferredAlphaImpostorPullProgram;
+LLShaderProgram            gDeferredAlphaImpostorPullSkinProgram;
+LLShaderProgram            gDeferredFullbrightMaskPullProgram;
+LLShaderProgram            gDeferredFullbrightMaskPullSkinProgram;
+bool                       gAlphaHudPullReady = false;
+bool                       gAlphaHudPbrReady = false;
+bool                       gAlphaImpostorPullReady = false;
+bool                       gAlphaMaskPullReady = false;
 LLShaderProgram            gDeferredMaterialPullProgram[16];
 LLShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
 LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
@@ -1202,6 +1212,16 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredEmissivePullSkinProgram.unload();
         gPBRGlowPullProgram.unload();
         gPBRGlowPullSkinProgram.unload();
+        gHUDFullbrightAlphaPullProgram.unload();
+        gHUDPBRAlphaPullProgram.unload();
+        gDeferredAlphaImpostorPullProgram.unload();
+        gDeferredAlphaImpostorPullSkinProgram.unload();
+        gDeferredFullbrightMaskPullProgram.unload();
+        gDeferredFullbrightMaskPullSkinProgram.unload();
+        gAlphaHudPullReady = false;
+        gAlphaHudPbrReady = false;
+        gAlphaImpostorPullReady = false;
+        gAlphaMaskPullReady = false;
         gAlphaGlowPullReady = false;
         gAlphaGlowPbrReady = false;
         gAlphaRiggedPullReady = false;
@@ -2294,6 +2314,101 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         bool pbr_ok = gAlphaPbrPullReady && gAlphaPbrSkinReady && make_glow(&gPBRGlowPullProgram, "PBR Glow Pull Shader", "deferred/pbrGlowPullV.glsl", "deferred/pbrglowF.glsl", "LL_BINDLESS_PBR", false, true);
         pbr_ok = pbr_ok && make_glow(&gPBRGlowPullSkinProgram, "PBR Glow Pull Skin Shader", "deferred/pbrGlowPullV.glsl", "deferred/pbrglowF.glsl", "LL_BINDLESS_PBR", true, true);
         gAlphaGlowPbrReady = pbr_ok;
+    }
+
+    // <FS> S5f F4: the pull variants of the programs the HUD, impostor and depth only alpha passes use (their fragment shaders are the old programs' own: IS_HUD, FOR_IMPOSTOR, the mask program without IS_ALPHA).
+    // Optional: a context without its program keeps the old path for those draws.
+    gAlphaHudPullReady = false;
+    gAlphaHudPbrReady = false;
+    gAlphaImpostorPullReady = false;
+    gAlphaMaskPullReady = false;
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        auto make_pull = [&](LLShaderProgram* shader, const char* name, const char* vertex, const char* fragment, std::initializer_list<std::pair<const char*, const char*> > permutations, bool skin, bool sun_shadow = false) -> bool
+        {
+            shader->mName = name;
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            shader->mShaderFiles.push_back(make_pair(vertex, ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
+            for (const auto& p : permutations)
+            {
+                shader->addPermutation(p.first, p.second);
+            }
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                if (ll_rigged_indexed())
+                {
+                    shader->addPermutation("HAS_INDEXED_DRAW", "1");
+                }
+            }
+            if (sun_shadow)
+            {
+                shader->addPermutation("HAS_SUN_SHADOW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            if (!shader->createShader())
+            {
+                LL_WARNS("ShadowPackets") << "the " << name << " could not be made: those draws stay on the old path" << LL_ENDL;
+                shader->unload();
+                return false;
+            }
+            return true;
+        };
+        // the HUD's fullbright alpha program (all the HUD's plain draws: its lit program is never used) and its glTF program
+        {
+            LLShaderProgram* shader = &gHUDFullbrightAlphaPullProgram;
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.isDeferred = true;
+            gAlphaHudPullReady = make_pull(shader, "HUD Fullbright Alpha Pull Shader", "deferred/alphaPullV.glsl", "deferred/fullbrightF.glsl",
+                { { "HAS_ALPHA_MASK", "1" }, { "IS_ALPHA", "1" }, { "IS_HUD", "1" }, { "IS_FULLBRIGHT_PULL", "1" }, { "LL_BINDLESS_DIFFUSE", "1" } }, false);
+            shader = &gHUDPBRAlphaPullProgram;
+            shader->mFeatures.hasSrgb = true;
+            gAlphaHudPbrReady = make_pull(shader, "HUD PBR Alpha Pull Shader", "deferred/pbrAlphaPullV.glsl", "deferred/pbralphaF.glsl", { { "IS_HUD", "1" }, { "LL_BINDLESS_PBR", "1" } }, false);
+        }
+        // the impostor render's lit program, static and rigged
+        if (gAlphaLitSkinReady && ll_rigged_indexed())
+        {
+            bool ok = true;
+            for (int i = 0; i < 2 && ok; ++i)
+            {
+                const bool rigged = i == 1;
+                LLShaderProgram* shader = rigged ? &gDeferredAlphaImpostorPullSkinProgram : &gDeferredAlphaImpostorPullProgram;
+                shader->mFeatures.calculatesLighting = false;
+                shader->mFeatures.hasLighting = false;
+                shader->mFeatures.hasSrgb = true;
+                shader->mFeatures.isAlphaLighting = true;
+                shader->mFeatures.hasShadows = use_sun_shadow;
+                shader->mFeatures.hasReflectionProbes = true;
+                ok = make_pull(shader, rigged ? "Skinned Deferred Alpha Impostor Pull Shader" : "Deferred Alpha Impostor Pull Shader", "deferred/alphaPullV.glsl", "deferred/alphaF.glsl",
+                    { { "USE_INDEXED_TEX", "1" }, { "FOR_IMPOSTOR", "1" }, { "HAS_ALPHA_MASK", "1" }, { "USE_VERTEX_COLOR", "1" }, { "LL_BINDLESS_DIFFUSE", "1" } }, rigged, use_sun_shadow);
+                if (ok)
+                {
+                    shader->mFeatures.calculatesLighting = true;        // (as the ordinary impostor alpha program: the hack that follows its createShader)
+                    shader->mFeatures.hasLighting = true;
+                }
+            }
+            gAlphaImpostorPullReady = ok;
+            // the mask programs (fullbrightF with HAS_ALPHA_MASK only): the impostor render's fullbright draws and the depth only passes
+            bool mask_ok = true;
+            for (int i = 0; i < 2 && mask_ok; ++i)
+            {
+                const bool rigged = i == 1;
+                LLShaderProgram* shader = rigged ? &gDeferredFullbrightMaskPullSkinProgram : &gDeferredFullbrightMaskPullProgram;
+                shader->mFeatures.calculatesAtmospherics = true;
+                shader->mFeatures.hasGamma = true;
+                shader->mFeatures.hasAtmospherics = true;
+                shader->mFeatures.hasSrgb = true;
+                mask_ok = make_pull(shader, rigged ? "Skinned Deferred Fullbright Alpha Mask Pull Shader" : "Deferred Fullbright Alpha Mask Pull Shader", "deferred/alphaPullV.glsl", "deferred/fullbrightF.glsl",
+                    { { "HAS_ALPHA_MASK", "1" }, { "IS_FULLBRIGHT_PULL", "1" }, { "LL_BINDLESS_DIFFUSE", "1" } }, rigged);
+            }
+            gAlphaMaskPullReady = mask_ok;
+        }
     }
 
     if (success)

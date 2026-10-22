@@ -4258,7 +4258,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::GeoEntry) * h.mEntries);
     // S4 A1: a rigged entry is the 128 bytes of GeoGpu and 32 more (weights, palette, joints), the palettes follow the matrices in the blob
     const size_t stride = 160;       // (S4 B: every record entry has the rigged tail, the pull shaders read one layout)
-    const bool own_palettes = rigged && h.mPaletteFloats > 0;       // else (S4 A2) they are in the frame's shared list
+    const bool own_palettes = rigged && !alpha && h.mPaletteFloats > 0;       // else (S4 A2) they are in the frame's shared list (always for the alpha kind 32: mPaletteFloats counts its PBR rows)
     Renderer::ScratchAlloc table = r.allocVertexScratch(stride * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(176 * (size_t)std::max<U32>(h.mMatrices, 1));
     Renderer::ScratchAlloc palettes;
@@ -7686,7 +7686,7 @@ void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     if (h.mKind == 32)
     {
-        on_geometry_packets(h, blob, false, false, true);       // S5f F3: transient alpha draws
+        on_geometry_packets(h, blob, h.mPass == 1, h.mPass == 1, true);       // S5f F3: transient alpha draws (F4: mPass 1 = rigged: indexed draws, palettes of the shared list)
         return;
     }
     if (h.mKind == 4)
