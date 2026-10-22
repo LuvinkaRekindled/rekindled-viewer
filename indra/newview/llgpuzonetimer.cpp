@@ -269,25 +269,25 @@ static void uni_census_report(double frames)
     {
         return;
     }
-    LL_INFOS("UniCensus") << "per frame: uniform writes " << (double)sTotal.mCalls / frames << " (changed " << (double)sTotal.mChanged / frames << ", " << (double)sTotal.mBytes / frames << " bytes), texture binds "
+    LL_INFOS("UniCensus") << "per frame: uniform writes " << (double)sTotal.mCalls / frames << " (changed " << (double)sTotal.mChanged / frames << ", " << (double)sTotal.mBytes / frames << " bytes), records " << (double)sTotal.mRecords / frames << ", draws " << (double)sTotal.mDraws / frames << ", setBuffer " << (double)sTotal.mSetBuf / frames << ", syncMatrices " << (double)sTotal.mSync / frames << ", texture binds "
         << (double)sTotal.mTex / frames << ", shader binds " << (double)sTotal.mBinds / frames << ", programs seen " << sProgs.size() << LL_ENDL;
     {
         std::vector<std::pair<const char*, Counters*>> zones;
         for (auto& kv : sByZone)
         {
-            if (kv.second.mCalls || kv.second.mTex || kv.second.mBinds)
+            if (kv.second.mCalls || kv.second.mTex || kv.second.mBinds || kv.second.mRecords || kv.second.mDraws)
             {
                 zones.push_back({ kv.first, &kv.second });
             }
         }
-        std::sort(zones.begin(), zones.end(), [](const auto& a, const auto& b) { return a.second->mCalls + a.second->mTex + 4 * a.second->mBinds > b.second->mCalls + b.second->mTex + 4 * b.second->mBinds; });
+        std::sort(zones.begin(), zones.end(), [](const auto& a, const auto& b) { return a.second->mRecords + a.second->mCalls + a.second->mTex + 4 * a.second->mBinds > b.second->mRecords + b.second->mCalls + b.second->mTex + 4 * b.second->mBinds; });
         std::string text;
         size_t n = 0;
         for (auto& z : zones)
         {
-            if (++n > 40) break;
-            text += llformat(" | %s: writes %.1f (changed %.1f), tex %.1f, binds %.1f, entered %.1f", z.first, (double)z.second->mCalls / frames, (double)z.second->mChanged / frames, (double)z.second->mTex / frames,
-                             (double)z.second->mBinds / frames, (double)z.second->mScopes / frames);
+            if (++n > 60) break;
+            text += llformat(" | %s: writes %.1f (changed %.1f), tex %.1f, binds %.1f, entered %.1f, records %.1f, draws %.1f, setBuffer %.1f, syncMatrices %.1f", z.first, (double)z.second->mCalls / frames, (double)z.second->mChanged / frames, (double)z.second->mTex / frames,
+                             (double)z.second->mBinds / frames, (double)z.second->mScopes / frames, (double)z.second->mRecords / frames, (double)z.second->mDraws / frames, (double)z.second->mSetBuf / frames, (double)z.second->mSync / frames);
         }
         LL_INFOS("UniCensus") << "by innermost zone (writes / changes / texture binds / shader binds per frame):" << text << LL_ENDL;
         for (auto& kv : sByZone)

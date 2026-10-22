@@ -26,6 +26,10 @@ namespace LLUniCensus
         U64 mTex = 0;           // LLTexUnit bind / bindManual / bindFast calls
         U64 mBinds = 0;         // LLShaderProgram::bind calls
         U64 mScopes = 0;        // times the zone was entered
+        U64 mRecords = 0;       // S6 census: records the main thread wrote into the command stream (what the worker replays)
+        U64 mDraws = 0;         // S6 census: draw* calls (indexed, arrays, immediate mode)
+        U64 mSetBuf = 0;        // S6 census: LLVertexBuffer::setBuffer calls
+        U64 mSync = 0;          // S6 census: LLRender::syncMatrices calls
     };
 
     const int SECTIONS = 16;
@@ -70,6 +74,10 @@ namespace LLUniCensus
     inline void note_call() { ++sTotal.mCalls; if (sCur) ++sCur->mCalls; }
     inline void note_changed(U32 bytes) { ++sTotal.mChanged; sTotal.mBytes += bytes; if (sCur) { ++sCur->mChanged; sCur->mBytes += bytes; } }
     inline void note_tex() { ++sTotal.mTex; if (sCur) ++sCur->mTex; }
+    inline void note_record() { ++sTotal.mRecords; if (sCur) ++sCur->mRecords; }
+    inline void note_draw() { ++sTotal.mDraws; if (sCur) ++sCur->mDraws; }
+    inline void note_setbuf() { ++sTotal.mSetBuf; if (sCur) ++sCur->mSetBuf; }
+    inline void note_sync() { ++sTotal.mSync; if (sCur) ++sCur->mSync; }
     inline void note_bind() { ++sTotal.mBinds; if (sCur) ++sCur->mBinds; }
     inline long long now_ns() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
