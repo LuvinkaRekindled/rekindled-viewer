@@ -1,0 +1,34 @@
+/**
+ * @file llhiz.h
+ * @brief S7 H3: the targets of the Hi-Z occlusion pass and the batch they are tested in. See doc/vulkan/S7-design.md.
+ */
+#ifndef LL_LLHIZ_H
+#define LL_LLHIZ_H
+
+#include "stdtypes.h"
+#include "llvector4a.h"
+
+// <FS> S7 H3 (doc/vulkan/S7-design.md): occlusion is decided by the worker's Hi-Z pass, not by queries. Whatever wants a verdict (an occlusion group, a reflection probe) is an LLHizTarget: LLHiz collects the
+// boxes of the targets once a frame (the world camera, at the point of the G-buffer pass where the occluders have been drawn), sends them as one record, and gives each target the result of the batch it was in
+// when the GPU has finished the frame (2-4 frames later, never blocking).
+class LLHizTarget
+{
+public:
+    virtual ~LLHizTarget();
+    virtual void hizResult(bool occluded) = 0;      // the verdict of the batch mHizSerial named (mHizSerial is 0 by then)
+    bool isHizAwaiting() const { return mHizSerial != 0; }
+    U32 mHizId = 0;             // the registry id (given when the target first has a box)
+    U32 mHizSerial = 0;         // the batch whose result is awaited; 0 = none
+    U32 mHizBatch = 0;          // the number of the batch the target was last added to (a target is in a batch once)
+};
+
+class LLHiz
+{
+public:
+    static void begin();                                                // before the boxes of a pass are collected
+    static void add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 half_y, F32 half_z, bool water);
+    static void send(const F32* view_proj);                             // one record for the boxes collected; their targets now await its result
+    static void apply();                                                // the results of the batches the GPU has finished, to their targets (once per cull of the world camera)
+};
+
+#endif // LL_LLHIZ_H

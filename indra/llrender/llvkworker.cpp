@@ -7760,8 +7760,8 @@ void geo_dispatch(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 // <FS> S7 H1 (doc/vulkan/S7-design.md section 4): Hi-Z occlusion. Kind 34 carries the boxes of the occlusion groups (HizBox, 32 bytes each) and the view-projection of the pass; the worker builds a max-depth
 // pyramid of the depth target that is bound at that point of the frame (first level = half resolution; sizes are the floor of half like Vulkan's mip chain, texel p of a level covers texels 2p and 2p+1 of the one below and the last texel also the odd extra row / column), and tests every box
 // with one thread: the nearest depth of its 8 corners against the largest depth of the pyramid texels its screen rectangle covers (a level where the rectangle spans at most 2 texels). One word a box
-// goes to a slot of a ring of host-visible cached memory: bit 0 = occluded, bits 8-15 = the pyramid level used, bit 16 = a corner behind the near plane (visible), bit 17 = rectangle off the screen
-// (visible), bit 18 = beyond the far plane (visible). The viewer reads the slot when the frame's fence has signalled (hiz_poll publishes the serial); nothing ever blocks.
+// goes to a slot of a ring of host-visible cached memory: bit 0 = occluded, bits 8-15 = the pyramid level used, bit 16 = cut by the near plane (visible), bit 17 = rectangle off the screen
+// (occluded: no sample of it is drawn), bit 18 = beyond the far plane (visible), bit 19 = wholly behind the camera (occluded). The viewer reads the slot when the frame's fence has signalled (hiz_poll publishes the serial); nothing ever blocks.
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 namespace
 {
@@ -7803,24 +7803,28 @@ void main()
     bool water = (floatBitsToUint(bx.c.w) & 1u) != 0u;
     float minz = 1e9;
     vec2 mn = vec2(1e9), mx = vec2(-1e9);
-    uint why = 0u;
+    uint behind = 0u;
+    bool near_cut = false;
     for (int k = 0; k < 8; ++k)
     {
         vec3 s = vec3((k & 1) != 0 ? 1.0 : -1.0, (k & 2) != 0 ? 1.0 : -1.0, (k & 4) != 0 ? 1.0 : -1.0);
         vec4 cl = pc.vp * vec4(bx.c.xyz + s * bx.h.xyz, 1.0);
         float z = (cl.z + cl.w) * 0.5;
-        if (cl.w <= 1e-4 || (!water && z < 0.0)) { why = 1u << 16; break; }
+        if (cl.w <= 1e-4) { ++behind; near_cut = true; continue; }
+        if (!water && z < 0.0) near_cut = true;
         vec2 uv = cl.xy / cl.w * 0.5 + 0.5;
         mn = min(mn, uv);
         mx = max(mx, uv);
         minz = min(minz, clamp(z / cl.w, 0.0, 1.0));
     }
-    uint result = why;
+    uint result = 0u;
     Out(pc.outp).o[3u * i + 1u] = 0u;
     Out(pc.outp).o[3u * i + 2u] = 0u;
-    if (why == 0u)
+    if (behind == 8u) result = 1u | (1u << 19);         // wholly behind the camera: nothing of it can be drawn (what the query counted as no samples)
+    else if (near_cut) result = 1u << 16;               // cut by the near plane: some of it is in front of everything, visible
+    else
     {
-        if (mx.x < 0.0 || mn.x > 1.0 || mx.y < 0.0 || mn.y > 1.0) result = 1u << 17;
+        if (mx.x < 0.0 || mn.x > 1.0 || mx.y < 0.0 || mn.y > 1.0) result = 1u | (1u << 17);      // outside the view: no samples either
         else if (!water && minz >= 1.0) result = 1u << 18;
         else
         {

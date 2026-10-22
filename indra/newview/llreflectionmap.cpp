@@ -44,11 +44,6 @@ LLReflectionMap::LLReflectionMap()
 
 LLReflectionMap::~LLReflectionMap()
 {
-    if (mOcclusionQuery)
-    {
-        gPipeline.mReflectionMapManager.recycleQuery(mOcclusionQuery);
-        mOcclusionQuery = 0;
-    }
 }
 
 void LLReflectionMap::update(U32 resolution, U32 face, bool force_dynamic, F32 near_clip, bool useClipPlane, LLPlane clipPlane)
@@ -344,7 +339,8 @@ bool LLReflectionMap::isRelevant() const
 }
 
 
-void LLReflectionMap::doOcclusion(const LLVector4a& eye)
+// <FS> S7 H3: the probe's box goes to the Hi-Z batch (a probe whose eye is inside its volume is never occluded); the verdict comes back in hizResult
+void LLReflectionMap::hizCollect(const LLVector4a& eye)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     if (LLShaderProgram::sProfileEnabled)
@@ -352,7 +348,6 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
         return;
     }
 
-#if 1
     // super sloppy, but we're doing an occlusion cull against a bounding cube of
     // a bounding sphere, pad radius so we assume if the eye is within
     // the bounding sphere of the bounding cube, the node is not culled
@@ -361,11 +356,9 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
     LLVector4a o;
     o.setSub(mOrigin, eye);
 
-    bool do_query = false;
-
     if (LLOccCensus::sOn)
     {
-        ++LLOccCensus::sProbeCalls;     // <FS> H0
+        ++LLOccCensus::sProbeCalls;
     }
     if (o.getLength3().getF32() < dist)
     { // eye is inside radius, don't attempt to occlude
@@ -373,63 +366,32 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
         {
             ++LLOccCensus::sProbeInside;
         }
+        mHizSerial = 0;
         mOccluded = false;
         return;
     }
 
-    if (mOcclusionQuery == 0)
-    { // no query was previously issued, allocate one and issue
-        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rmdo - glGenQueries");
-        mOcclusionQuery = gPipeline.mReflectionMapManager.allocateQuery();
-        do_query = true;
+    if (mHizSerial)
+    { // the verdict of the last box is not back yet: the probe keeps what it had
         if (LLOccCensus::sOn)
         {
-            ++LLOccCensus::sProbeNew;
+            ++LLOccCensus::sProbeAwaiting;
         }
+        return;
     }
-    else
-    { // query was previously issued, check it and only issue a new query
-        // if previous query is available
-        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rmdo - glGetQueryObject");
-        if (gRender.queryReady(mOcclusionQuery))
-        {
-            do_query = true;
-            const U64 result = gRender.queryResult(mOcclusionQuery);
-            mOccluded = result == 0;
-            mOcclusionPendingFrames = 0;
-            if (LLOccCensus::sOn)
-            {
-                ++LLOccCensus::sProbeReady;
-                ++(mOccluded ? LLOccCensus::sProbeOccluded : LLOccCensus::sProbeVisible);
-            }
-        }
-        else
-        {
-            mOcclusionPendingFrames++;
-            if (LLOccCensus::sOn)
-            {
-                ++LLOccCensus::sProbePending;
-            }
-        }
-    }
-
-    if (do_query)
+    if (LLOccCensus::sOn)
     {
-        if (LLOccCensus::sOn)
-        {
-            ++LLOccCensus::sProbeIssued;
-        }
-        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rmdo - push query");
-        gRender.beginQuery(LLRender::QUERY_ANY_SAMPLES, mOcclusionQuery);
-
-        LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
-
-        shader->uniform3fv(LLShaderMgr::BOX_CENTER, 1, mOrigin.getF32ptr());
-        shader->uniform3f(LLShaderMgr::BOX_SIZE, mRadius, mRadius, mRadius);
-
-        gPipeline.mCubeVB->drawRange(LLRender::TRIANGLE_FAN, 0, 7, 8, get_box_fan_indices(LLViewerCamera::getInstance(), mOrigin));
-
-        gRender.endQuery(LLRender::QUERY_ANY_SAMPLES);
+        ++LLOccCensus::sProbeAdded;
     }
-#endif
+    LLHiz::add(this, mOrigin, mRadius, mRadius, mRadius, false);
+}
+
+//virtual
+void LLReflectionMap::hizResult(bool occluded)
+{
+    mOccluded = occluded;
+    if (LLOccCensus::sOn)
+    {
+        ++(occluded ? LLOccCensus::sProbeOccluded : LLOccCensus::sProbeVisible);
+    }
 }
