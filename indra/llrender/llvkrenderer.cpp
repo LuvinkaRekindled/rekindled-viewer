@@ -2638,6 +2638,38 @@ void Renderer::bindlessStart()
         }
         bindlessQueue(tbl, 0, tbl.mStandIn, 0);
     }
+    if (!mBindlessFilled && mBindlessSet[0] != VK_NULL_HANDLE && !mBindlessTbl[0].mSlots.empty())
+    {
+        // crash hunt 2026-10-22 (GPU-assisted validation: "descriptor index N is uninitialized / never updated" in table draws): the sets start with the stand-in in every slot. The slots that are really
+        // used are written over it as before (the CPU copy of what the sets hold says "nothing written", so every first write goes through).
+        mBindlessFilled = true;
+        std::vector<VkDescriptorImageInfo> infos[BINDLESS_TABLES];
+        std::vector<VkWriteDescriptorSet> writes;
+        for (U32 t = 0; t < BINDLESS_TABLES; ++t)
+        {
+            infos[t].assign(mBindlessCap[t], mBindlessTbl[t].mStandIn);
+        }
+        for (U32 set = 0; set < Context::frameCount(); ++set)
+        {
+            for (U32 t = 0; t < BINDLESS_TABLES; ++t)
+            {
+                if (!mBindlessCap[t])
+                {
+                    continue;
+                }
+                VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+                w.dstSet = mBindlessSet[set];
+                w.dstBinding = t;
+                w.dstArrayElement = 0;
+                w.descriptorCount = mBindlessCap[t];
+                w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                w.pImageInfo = infos[t].data();
+                writes.push_back(w);
+            }
+        }
+        vkUpdateDescriptorSets(Context::instance().getDevice(), (U32)writes.size(), writes.data(), 0, nullptr);
+        LL_INFOS("Vulkan") << "bindless: every slot of the " << Context::frameCount() << " frame sets holds the stand-in (" << mBindlessCap[0] << " 2D slots)" << LL_ENDL;
+    }
 }
 
 // the slot is wanted in this frame's set with this content: queue a write unless the set already holds exactly it. "Exactly" means the same view OBJECT (its id), not the same handle

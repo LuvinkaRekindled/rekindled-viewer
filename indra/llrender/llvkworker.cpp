@@ -6876,13 +6876,17 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             ++s.mFragsUnknown;
             continue;
         }
-        geo_check_slots(*f, Renderer::instance(), frame_now);
         const bool first = f->mPinEpochSeen == ~0ull;
         if (first || f->mDirtyPairs || f->mDirtyEntries || f->mPinEpochSeen != sGeoPinEpoch)
         {
             const auto t1 = std::chrono::steady_clock::now();
             geo_rebuild(*f, frame_now, first);
             if (timed) s.mNsRebuild += geo_ns(t1);
+        }
+        geo_check_slots(*f, Renderer::instance(), frame_now);       // (after the rebuild: see geo_alpha_draw)
+        if (f->mDirtyEntries)
+        {
+            geo_rebuild(*f, frame_now, false);
         }
         f->mListedFrame = frame_now;
         sGeo.mMaxSlot = std::max(sGeo.mMaxSlot, std::min<U32>(f->mMaxModel, 2047u));
@@ -7355,11 +7359,15 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 ++a.mSafetyHits;
             }
         }
-        geo_check_slots(*f, r, frame_now);
         const bool first = f->mPinEpochSeen == ~0ull;
         if (first || f->mDirtyPairs || f->mDirtyEntries || f->mPinEpochSeen != sGeoPinEpoch)
         {
             geo_rebuild(*f, frame_now, first);
+        }
+        geo_check_slots(*f, r, frame_now);       // (after the rebuild: the rows then hold the pins' current slots; a slot freed or missing in the set is found here, and a rewrite it asks for happens at the next listing)
+        if (f->mDirtyEntries)
+        {
+            geo_rebuild(*f, frame_now, false);   // (a slot given back: the rows get the stand-in now, before they are read)
         }
         f->mListedFrame = frame_now;
         Range rg = ranges[i];
