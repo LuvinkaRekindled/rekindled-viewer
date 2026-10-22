@@ -6450,7 +6450,10 @@ void geo_write_items(GeoFrag& f)
         if (f.mItems[i].mType == kGeoAlphaType || f.mItems[i].mType == kGeoAlphaRiggedType)
         {
             g.mPad[0] = e.mPad3;            // S5a: the slot of the draw's texture matrix (0 = none)
-            g.mPad[1] = (i < f.mPbrOfItem.size() && f.mPbrOfItem[i]) ? f.mPbrOfItem[i] - 1 : 0;       // S5c: its PBR row
+        }
+        if (i < f.mPbrOfItem.size() && f.mPbrOfItem[i])
+        {
+            g.mPad[1] = f.mPbrOfItem[i] - 1;       // S5c: its PBR row (S6 X4: the glTF items of the G passes have one too)
         }
         g.mEmissiveOffset = e.mEmissiveOffset;      // S5e (the alpha items' glow draw), S6 X2 (the glow pass items: the emissive array; 0 for everything else)
         if (e.mFlags & LLVkBridge::GEO_RIGGED)
@@ -7199,6 +7202,12 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (pu.mModels != ~0u)
     {
         program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+    }
+    if (pu.mPbr != ~0u && sGeo.mPbrT)
+    {   // S6 X4: the glTF passes read their PBR rows
+        const U64 pbr_address = (U64)sGeo.mPbrTable.mAddress;
+        const S32 pbr_words[2] = { (S32)(U32)pbr_address, (S32)(U32)(pbr_address >> 32) };
+        program->setFloatsAt(pu.mPbr, reinterpret_cast<const F32*>(pbr_words), 2, 1);
     }
     if (!prepare_draw(vi, used_cache))
     {

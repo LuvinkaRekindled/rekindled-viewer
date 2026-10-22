@@ -180,6 +180,10 @@ LLShaderProgram            gDeferredDiffuseAlphaMaskPullProgram;           // S6
 LLShaderProgram            gDeferredDiffuseAlphaMaskPullSkinProgram;
 LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
 LLShaderProgram            gDeferredFullbrightAlphaMaskPullSkinProgram;
+LLShaderProgram            gDeferredPBROpaquePullProgram;                 // S6 X4: the glTF opaque / mask G-buffer pass from the scene table (pbrAlphaPullV + pbropaqueF)
+LLShaderProgram            gDeferredPBROpaquePullSkinProgram;
+bool                       gPbrOpaquePullReady = false;
+bool                       gPbrOpaquePullSkinReady = false;
 bool                       gDiffuseMaskPullReady = false;
 bool                       gDiffuseMaskPullSkinReady = false;
 bool                       gFullbrightMaskPullReady = false;
@@ -1225,6 +1229,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightAlphaMaskPullProgram.unload();
         gDeferredFullbrightAlphaMaskPullSkinProgram.unload();
         gDiffuseMaskPullReady = gDiffuseMaskPullSkinReady = gFullbrightMaskPullReady = gFullbrightMaskPullSkinReady = false;
+        gDeferredPBROpaquePullProgram.unload();
+        gDeferredPBROpaquePullSkinProgram.unload();
+        gPbrOpaquePullReady = gPbrOpaquePullSkinReady = false;
         gDeferredPBRAlphaPullProgram.unload();
         gDeferredAlphaPullSkinProgram.unload();
         gDeferredFullbrightAlphaPullSkinProgram.unload();
@@ -2397,6 +2404,50 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             gDiffuseMaskPullSkinReady = make_mask(&gDeferredDiffuseAlphaMaskPullSkinProgram, "Deferred Diffuse Alpha Mask Pull Skin Shader", false, true);
             gFullbrightMaskPullSkinReady = make_mask(&gDeferredFullbrightAlphaMaskPullSkinProgram, "Deferred Fullbright Alpha Mask Pull Skin Shader", true, true);
+        }
+    }
+
+    // <FS> S6 X4: the glTF opaque and mask G-buffer pass from the table: the PBR alpha pull vertex shader (the same rows) with pbropaqueF rewritten like pbralphaF (LL_BINDLESS_PBR). Optional.
+    gPbrOpaquePullReady = gPbrOpaquePullSkinReady = false;
+    if (success && gAlphaPbrPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        for (int i = 0; i < 2; ++i)
+        {
+            const bool skin = i == 1;
+            if (skin && !(gAlphaPbrSkinReady && ll_rigged_indexed()))
+            {
+                break;
+            }
+            LLShaderProgram* shader = skin ? &gDeferredPBROpaquePullSkinProgram : &gDeferredPBROpaquePullProgram;
+            shader->mName = skin ? "Deferred PBR Opaque Pull Skin Shader" : "Deferred PBR Opaque Pull Shader";
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.isDeferred = true;
+            shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
+            shader->mShaderFiles.clear();
+            shader->mShaderFiles.push_back(make_pair("deferred/pbrAlphaPullV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/pbropaqueF.glsl", ShaderStage::Fragment));
+            shader->clearPermutations();
+            shader->addPermutation("LL_BINDLESS_PBR", "1");
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            if (shader->createShader())
+            {
+                (skin ? gPbrOpaquePullSkinReady : gPbrOpaquePullReady) = true;
+            }
+            else
+            {
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: glTF opaque objects are drawn the old way" << LL_ENDL;
+                shader->unload();
+                break;
+            }
         }
     }
 
