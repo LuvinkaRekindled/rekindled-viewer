@@ -33,9 +33,18 @@ uniform vec3 env_mat[3];
 uniform float sun_wash;
 
 // light params
+#ifdef LL_LIGHT_PULL
+flat in vec3 vary_light_color;          // S6 LV1: the light of the instance, from the vertex shader
+flat in float vary_light_falloff;
+flat in float vary_light_size;
+#define color vary_light_color
+#define falloff vary_light_falloff
+#define size vary_light_size
+#else
 uniform vec3 color;
 uniform float falloff;
 uniform float size;
+#endif
 
 in vec4 vary_fragcoord;
 in vec3 trans_center;
@@ -44,7 +53,12 @@ uniform vec2 screen_res;
 
 uniform mat4 inv_proj;
 uniform vec4 viewport;
+#ifdef LL_LIGHT_PULL
+flat in int vary_light_classic;
+#define classic_mode vary_light_classic
+#else
 uniform int classic_mode;
+#endif
 
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
 float calcLegacyDistanceAttenuation(float distance, float falloff);

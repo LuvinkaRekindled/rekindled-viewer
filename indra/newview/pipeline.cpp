@@ -16705,14 +16705,24 @@ void LLPipeline::renderDeferredLighting()
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - local lights");
                 LL_CPU_ZONE("lighting: local lights (boxes)");
                 LL_PROFILE_GPU_ZONE("local lights");
-                bindDeferredShader(gDeferredLightProgram);
+                // <FS> S6 LV1: the boxes of the lights that are not projectors go into one record (the light of each in a table, the fan of the box made in the vertex shader) instead of five uniform writes, a matrix sync
+                // and a draw each
+                static const bool light_pull_off = getenv("LL_VK_LIGHT_PULL") && getenv("LL_VK_LIGHT_PULL")[0] == '0';        // (diagnostic: the old per light draws)
+                const bool light_pull = gLightPullReady && !light_pull_off && LLRenderPass::deferredPacketsEnabled() && LLVkBridge::sceneGeoAvailable();
+                LLShaderProgram& light_program = light_pull ? gDeferredLightPullProgram : gDeferredLightProgram;
+                static std::vector<LLVkBridge::LightVolumeRow> light_rows;
+                light_rows.clear();
+                bindDeferredShader(light_program);
 
                 if (mCubeVB.isNull())
                 {
                     mCubeVB = ll_create_cube_vb(LLVertexBuffer::MAP_VERTEX);
                 }
 
-                mCubeVB->setBuffer();
+                if (!light_pull)
+                {
+                    mCubeVB->setBuffer();
+                }
 
                 LLRenderState::DepthScope depth(true, false);
                 // mNearbyLights already includes distance calculation and excludes muted avatars.
@@ -16786,6 +16796,22 @@ void LLPipeline::renderDeferredLighting()
                             continue;
                         }
 
+                        if (light_pull)
+                        {
+                            LLVkBridge::LightVolumeRow row = {};
+                            row.mCenter[0] = c[0];
+                            row.mCenter[1] = c[1];
+                            row.mCenter[2] = c[2];
+                            row.mSize = s;
+                            row.mColor[0] = col.mV[0];
+                            row.mColor[1] = col.mV[1];
+                            row.mColor[2] = col.mV[2];
+                            row.mFalloff = volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF);
+                            row.mCypher = get_box_fan_indices(camera, center) / 8;
+                            row.mClassic = (psky->canAutoAdjust()) ? 1 : 0;
+                            light_rows.push_back(row);
+                            continue;
+                        }
                         gDeferredLightProgram.uniform3fv(LLShaderMgr::LIGHT_CENTER, 1, c);
                         gDeferredLightProgram.uniform1f(LLShaderMgr::LIGHT_SIZE, s);
                         gDeferredLightProgram.uniform3fv(LLShaderMgr::DIFFUSE_COLOR, 1, col.mV);
@@ -16816,7 +16842,15 @@ void LLPipeline::renderDeferredLighting()
                 // Bookmark comment to allow searching for mSpecialRenderMode == 3 (avatar edit mode),
                 // prev site of appended deferred character light, removed by SL-13522 09/20
 
-                unbindDeferredShader(gDeferredLightProgram);
+                if (!light_rows.empty())
+                {
+                    gRender.syncMatrices();         // (the matrices of the pass: the boxes carry no model matrix)
+                    LLVkBridge::ShadowPacketsHeader header;
+                    header.mKind = 33;
+                    header.mEntries = (U32)light_rows.size();
+                    LLVkBridge::shadowPackets(header, light_rows.data(), light_rows.size() * sizeof(light_rows[0]));
+                }
+                unbindDeferredShader(light_program);
             }
 
             if (!spot_lights.empty())

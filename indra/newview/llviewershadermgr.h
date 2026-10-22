@@ -255,6 +255,8 @@ extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullProgram;
 extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullSkinProgram;
 extern LLShaderProgram         gDeferredPBROpaquePullProgram;             // <FS> S6 X4: the glTF opaque / mask G-buffer pass from the scene table
 extern LLShaderProgram         gDeferredPBROpaquePullSkinProgram;
+extern LLShaderProgram         gDeferredLightPullProgram;                 // <FS> S6 LV1: the point light volumes from one record
+extern bool                    gLightPullReady;
 extern bool                    gPbrOpaquePullReady;
 extern bool                    gPbrOpaquePullSkinReady;
 extern bool                    gDiffuseMaskPullReady;

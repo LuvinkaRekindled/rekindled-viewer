@@ -7606,6 +7606,63 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
+// kind 33 (S6 LV1): the light volumes of a deferred lighting pass. The program is the pull light program the viewer bound; each light is an 8 vertex triangle fan drawn as one indirect command whose instance is the
+// light's row.
+void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (!h.mEntries || !program || !program->isValid())
+    {
+        return;
+    }
+    const Program::PacketUniforms& pu = program->packetUniforms();
+    if (pu.mLights == ~0u)
+    {
+        return;
+    }
+    const size_t row_bytes = sizeof(LLVkBridge::LightVolumeRow);
+    Renderer::ScratchAlloc rows = r.allocVertexScratch(row_bytes * h.mEntries);
+    Renderer::ScratchAlloc cmds = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * h.mEntries);
+    if (!rows.mPtr || !rows.mAddress || !cmds.mPtr)
+    {
+        return;
+    }
+    memcpy(rows.mPtr, blob, row_bytes * h.mEntries);
+    VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)cmds.mPtr;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        c[i] = { 8u, 1u, 0u, i };
+    }
+    static thread_local VertexInput vi;
+    static thread_local std::vector<U32> used;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used.clear();
+    const U64 address = (U64)rows.mAddress;
+    const S32 words[2] = { (S32)(U32)address, (S32)(U32)(address >> 32) };
+    program->setFloatsAt(pu.mLights, reinterpret_cast<const F32*>(words), 2, 1);
+    if (!prepare_draw(vi, used))
+    {
+        return;
+    }
+    r.setVertexInput(vi);
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLE_FAN));
+    if (r.drawPackets(nullptr, h.mEntries, cmds.mBuffer, cmds.mOffset))
+    {
+        if (sStatsEnabled)
+        {
+            sStats.mDone += h.mEntries;
+        }
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
+    sDraws += h.mEntries;
+    sDrawsTotal += h.mEntries;
+}
+
 // kind 31 (S5d): the palettes of this frame for the rigged alpha items. Blob: mEntries x { fragment handle, item (its number in the fragment's wire list), the palette's offset in the frame's shared list
 // (~0u: none), joints }. The row of the item gets the palette address and joint count, its command the index count: an item without a binding this frame draws nothing (as the rigged G-buffer items).
 void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
@@ -7864,6 +7921,11 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     if (h.mKind == 27)
     {
         on_palette_segment(h, blob);
+        return;
+    }
+    if (h.mKind == 33)
+    {
+        on_light_volumes(h, blob);
         return;
     }
     if (h.mKind == 3 || h.mKind == 25 || h.mKind == 26)

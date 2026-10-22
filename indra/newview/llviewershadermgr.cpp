@@ -182,6 +182,8 @@ LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
 LLShaderProgram            gDeferredFullbrightAlphaMaskPullSkinProgram;
 LLShaderProgram            gDeferredPBROpaquePullProgram;                 // S6 X4: the glTF opaque / mask G-buffer pass from the scene table (pbrAlphaPullV + pbropaqueF)
 LLShaderProgram            gDeferredPBROpaquePullSkinProgram;
+LLShaderProgram            gDeferredLightPullProgram;                     // S6 LV1: the point light volumes of a lighting pass from one record (pointLightV with LL_LIGHT_PULL)
+bool                       gLightPullReady = false;
 bool                       gPbrOpaquePullReady = false;
 bool                       gPbrOpaquePullSkinReady = false;
 bool                       gDiffuseMaskPullReady = false;
@@ -1232,6 +1234,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPBROpaquePullProgram.unload();
         gDeferredPBROpaquePullSkinProgram.unload();
         gPbrOpaquePullReady = gPbrOpaquePullSkinReady = false;
+        gDeferredLightPullProgram.unload();
+        gLightPullReady = false;
         gDeferredPBRAlphaPullProgram.unload();
         gDeferredAlphaPullSkinProgram.unload();
         gDeferredFullbrightAlphaPullSkinProgram.unload();
@@ -2404,6 +2408,33 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             gDiffuseMaskPullSkinReady = make_mask(&gDeferredDiffuseAlphaMaskPullSkinProgram, "Deferred Diffuse Alpha Mask Pull Skin Shader", false, true);
             gFullbrightMaskPullSkinReady = make_mask(&gDeferredFullbrightAlphaMaskPullSkinProgram, "Deferred Fullbright Alpha Mask Pull Skin Shader", true, true);
+        }
+    }
+
+    // <FS> S6 LV1: the point light volumes of the deferred lighting pass from one record: pointLightV / pointLightF with LL_LIGHT_PULL (the light of each box read from a table). Optional.
+    gLightPullReady = false;
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        gDeferredLightPullProgram.mName = "Deferred Light Pull Shader";
+        gDeferredLightPullProgram.mFeatures.isDeferred = true;
+        gDeferredLightPullProgram.mFeatures.hasFullGBuffer = true;
+        gDeferredLightPullProgram.mFeatures.hasShadows = true;
+        gDeferredLightPullProgram.mFeatures.hasSrgb = true;
+        gDeferredLightPullProgram.mShaderFiles.clear();
+        gDeferredLightPullProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", ShaderStage::Vertex));
+        gDeferredLightPullProgram.mShaderFiles.push_back(make_pair("deferred/pointLightF.glsl", ShaderStage::Fragment));
+        gDeferredLightPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gDeferredLightPullProgram.clearPermutations();
+        gDeferredLightPullProgram.addPermutation("LL_LIGHT_PULL", "1");
+        add_common_permutations(&gDeferredLightPullProgram);
+        if (gDeferredLightPullProgram.createShader())
+        {
+            gLightPullReady = true;
+        }
+        else
+        {
+            LL_WARNS("ShadowPackets") << "the deferred light pull shader could not be made: the point lights are drawn one at a time" << LL_ENDL;
+            gDeferredLightPullProgram.unload();
         }
     }
 
