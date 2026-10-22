@@ -736,6 +736,7 @@ namespace AlphaCensus
         U64 mGlowDraws[4] = {};
         U64 mDistinctTex = 0, mTexHist[4] = {};
         U64 mSect[S_COUNT] = {}, mGroupTicks = 0, mCallTicks = 0, mGlowTicks = 0;
+        U64 mPlanGroups = 0, mPlanStale = 0, mPlanNone = 0, mPlanServed = 0, mPlanOld = 0, mPlanSegs = 0, mPlanRanges = 0, mPlanRecords = 0, mPlanMismatch = 0, mPlanGlowGroups = 0;
     };
     static Ctx sCtx[2][2][2][3];            // view (0 main, 1 other: cube / reflection / impostor / HUD), pool (0 pre water, 1 post), rigged, mode (0 colour, 1 depth only, 2 fringe)
     static U32 sFrom = 0;
@@ -749,11 +750,14 @@ namespace AlphaCensus
         bool mOn;
         Ctx* mCtx = nullptr;
         U64 mT0 = 0, mLast = 0, mGroupT0 = 0, mEmT0 = 0;
-        bool mHudImp = false, mGroupFragment = false, mGroupParticle = false, mDrawn = false, mCurEligible = false, mHaveKey = false;
+        bool mHudImp = false, mGroupFragment = false, mGroupParticle = false, mDrawn = false, mCurEligible = false, mHaveKey = false, mPost = false, mPlanActive = false, mPlanGlow = false;
+        LLAlphaPlanView mPlan;
+        U32 mPlanIdx = 0;
+        int mOpenKey = -1;
         Key mLastKey, mRunKey, mEligKey;
         U32 mRunLen = 0, mEligLen = 0;
         std::unordered_set<const void*> mTex;
-        Call(bool post, bool rigged, bool depth_only, bool fringe) : mOn(sOn)
+        Call(bool post, bool rigged, bool depth_only, bool fringe) : mOn(sOn), mPost(post)
         {
             if (!mOn) return;
             mHudImp = LLPipeline::sImpostorRender || LLPipeline::sRenderingHUDs;
@@ -775,7 +779,17 @@ namespace AlphaCensus
         // sections: the time since the last stamp goes to the section named
         void stamp(Sect s) { if (!mOn || !mDrawn) return; const U64 t = __rdtsc(); mCtx->mSect[s] += t - mLast; mLast = t; ++sStamps; }
         void groupBegin() { if (mOn) { mGroupT0 = __rdtsc(); mGroupFragment = mGroupParticle = false; } }
-        void groupEnd() { if (mOn) { mCtx->mGroupTicks += __rdtsc() - mGroupT0; } }
+        void groupEnd()
+        {
+            if (!mOn) return;
+            mCtx->mGroupTicks += __rdtsc() - mGroupT0;
+            if (mPlanActive)
+            {
+                if (mPlanIdx != mPlan.mOrderCount) ++mCtx->mPlanMismatch;       // the loop drew fewer draw infos than the plan lists
+                if (mPlanGlow && mPost) mOpenKey = -1;                          // the glow pass after the group changes program and blend
+                mPlanActive = false;
+            }
+        }
         void groupSkip(int why)
         {
             if (!mOn) return;
@@ -793,12 +807,49 @@ namespace AlphaCensus
             if (bridge) ++mCtx->mGrpBridge;
             if (mGroupFragment) ++mCtx->mGrpFragment;
             if (resident) ++mCtx->mGrpResident;
+            // S5a-1: the group's plan (only with LL_VK_SCENE_ALPHA=1): segments, the records a loop that sent runs would make (adjacent served segments with one key merge until an old draw or a glow pass), the order check
+            mPlanActive = false;
+            mPlan = LLAlphaPlanView();
+            const int st = ll_alpha_plan(group, mPlan);
+            if (st == 1)
+            {
+                mPlanActive = true;
+                mPlanIdx = 0;
+                mPlanGlow = mPlan.mGlow;
+                ++mCtx->mPlanGroups;
+                if (mPlan.mGlow) ++mCtx->mPlanGlowGroups;
+                mCtx->mPlanSegs += mPlan.mSegCount;
+                for (U32 k = 0; k < mPlan.mSegCount; ++k)
+                {
+                    const LLAlphaPlanSeg& seg = mPlan.mSegs[k];
+                    if (seg.mServed)
+                    {
+                        mCtx->mPlanServed += seg.mCount;
+                        ++mCtx->mPlanRanges;
+                        if (mOpenKey != (int)seg.mKey) { ++mCtx->mPlanRecords; mOpenKey = (int)seg.mKey; }
+                    }
+                    else
+                    {
+                        mCtx->mPlanOld += seg.mCount;
+                        mOpenKey = -1;
+                    }
+                }
+            }
+            else
+            {
+                if (st == 2) ++mCtx->mPlanStale; else ++mCtx->mPlanNone;
+                mOpenKey = -1;
+            }
         }
         void drawBegin(const LLDrawInfo& p, bool rigged)
         {
             if (!mOn) return;
             mDrawn = true;
             Ctx& c = *mCtx;
+            if (mPlanActive)
+            {
+                if (mPlanIdx < mPlan.mOrderCount && mPlan.mOrder[mPlanIdx] == &p) ++mPlanIdx; else ++c.mPlanMismatch;       // S5a-1: the plan lists the draw infos in the loop's order
+            }
             ++c.mDraws;
             c.mTris += p.mCount / 3;
             const LLVertexBuffer* vb = p.mVertexBuffer.get();
@@ -931,6 +982,11 @@ namespace AlphaCensus
                                                  per(c.mShaderBinds), per(c.mBlendChanges), per(c.mCullChanges), per(c.mRuns), runs.c_str(), per(c.mEligRuns), per(c.mEligDraws), per(c.mEligEndedByOther), per(c.mEligEndedByGlow), eligs.c_str(),
                                                  per(c.mGlowDraws[0]), per(c.mGlowDraws[1]), per(c.mGlowDraws[2]), per(c.mGlowDraws[3])) << LL_ENDL;
             const double group_loop = tm(c.mGroupTicks), draws_ms = tm(sum), glow_ms = tm(c.mGlowTicks);
+            if (c.mPlanGroups || c.mPlanStale)
+            {
+                LL_INFOS("AlphaCensus") << llformat("  plan (S5a-1): groups with a plan %.1f (stale fragment %.1f, no plan %.1f, with glow %.1f), draws in served segments %.1f, in old segments %.1f, segments %.1f, served ranges %.1f, records after merging %.1f; order mismatches %llu",
+                                                     per(c.mPlanGroups), per(c.mPlanStale), per(c.mPlanNone), per(c.mPlanGlowGroups), per(c.mPlanServed), per(c.mPlanOld), per(c.mPlanSegs), per(c.mPlanRanges), per(c.mPlanRecords), (unsigned long long)c.mPlanMismatch) << LL_ENDL;
+            }
             LL_INFOS("AlphaCensus") << llformat("  main thread ms a frame: calls %.3f; group loop %.3f of which draws %.3f (sections%s), glow passes %.3f, group loop overhead (water test, cull scope, emissive vectors, stamps) %.3f",
                                                  tm(c.mCallTicks), group_loop, draws_ms, sects.c_str(), glow_ms, group_loop - draws_ms - glow_ms) << LL_ENDL;
         }
