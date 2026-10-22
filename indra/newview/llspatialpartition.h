@@ -95,6 +95,19 @@ void ll_scene_geo_frame(LLCullResult* cull);                    // main view, on
 void ll_scene_geo_frame_end();                                  // main view, after the passes: releases of fragments that went during the frame
 void ll_scene_geo_count(U32 what, U64 n);                       // 0 builder draws left out, 1 table draw records sent, 2 builds made again for want of a prepare            // pipeline.cpp (S2): after a group's rebuild
 
+// <FS> S5a-1 (doc/vulkan/S5-design.md section 8): the plan of a group's static alpha draws, kept by its fragment (LL_VK_SCENE_ALPHA=1): the draw infos the alpha loop draws, in its order, as segments of
+// draws a table can serve (mServed, equal mKey: one run) and draws it cannot (the old path draws them in place)
+struct LLAlphaPlanSeg { U32 mFirst, mCount, mKey; bool mServed; };
+struct LLAlphaPlanView
+{
+    const class LLDrawInfo* const* mOrder = nullptr;
+    U32 mOrderCount = 0;
+    const LLAlphaPlanSeg* mSegs = nullptr;
+    U32 mSegCount = 0;
+    bool mGlow = false;         // a draw of the group has an emissive buffer (the loop draws a glow pass after the group, post water)
+};
+int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out);      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
+
 class LLDrawInfo final : public LLRefCount
 {
     LL_ALIGN_NEW;

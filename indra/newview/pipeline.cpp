@@ -5399,6 +5399,10 @@ struct LLSceneFragment
     std::vector<U32> mGeoSentName;                      // per local texture, the GL name the worker was told
     std::vector<U32> mGeoRigged;                        // S4 B: the indices in mGeo of the served rigged items (their palettes are bound every frame)
     std::vector<U32> mGeoMoving;                        // S4 C: the moving matrix slots (256-2047) this fragment's items use (reference counted)
+    // S5a-1 (LL_VK_SCENE_ALPHA=1): the plan of the group's static alpha draws (LLAlphaPlanView)
+    std::vector<const LLDrawInfo*> mAlphaOrder;
+    std::vector<LLAlphaPlanSeg> mAlphaPlan;
+    bool mAlphaPlanned = false, mAlphaGlow = false;
 };
 
 namespace
@@ -5973,6 +5977,100 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     }
 }
 
+// <FS> S5a-1 (doc/vulkan/S5-design.md section 8, LL_VK_SCENE_ALPHA=1): the plan of the group's static alpha draws, in the order LLDrawPoolAlpha::renderAlpha draws them. A draw is SERVED (a table could draw it:
+// plain simple / fullbright, standard blend, 16 bit indices, position / normal / texcoord / colour arrays, at most four textures, no material, no glTF, a matrix the table can hold or a texture matrix) or OLD
+// (the old code draws it in place). Consecutive served draws with one key (fullbright or lit) are one segment: a run. Nothing is drawn from this yet (S5a-1); the census counts what a loop that sent
+// runs would send, and checks the order against the loop.
+static bool scene_alpha_plan_env()
+{
+    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_ALPHA"); return v && atoi(v) != 0; }();
+    return on;
+}
+static U64 sAlphaPlanBuilds = 0, sAlphaPlanNs = 0, sAlphaPlanServed = 0, sAlphaPlanOld = 0, sAlphaPlanSegs = 0;
+static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
+{
+    f.mAlphaOrder.clear();
+    f.mAlphaPlan.clear();
+    f.mAlphaPlanned = false;
+    f.mAlphaGlow = false;
+    if (!scene_alpha_plan_env())
+    {
+        return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    f.mAlphaPlanned = true;
+    auto it = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
+    if (it == group->mDrawMap.end())
+    {
+        return;
+    }
+    const LLSpatialPartition* partition = group->getSpatialPartition();
+    const U32 ptype = partition ? partition->mPartitionType : 0;
+    const bool whole_old = !partition || ptype == LLViewerRegion::PARTITION_PARTICLE || ptype == LLViewerRegion::PARTITION_HUD_PARTICLE || ptype == LLViewerRegion::PARTITION_HUD || group->isHUDGroup();
+    const bool moving = scene_geo_moving_on();
+    for (LLDrawInfo* p : it->second)
+    {
+        if (p->mAvatar)
+        {
+            continue;       // (the rigged loop draws these; the static loop skips them)
+        }
+        const LLVertexBuffer* vb = p->mVertexBuffer.get();
+        if (vb && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+        {
+            f.mAlphaGlow = true;
+        }
+        bool served = !whole_old && p->mCount && !p->mGLTFMaterial && p->mMaterial.isNull()
+            && p->mBlendFuncSrc == LLRender::BF_SOURCE_ALPHA && p->mBlendFuncDst == LLRender::BF_ONE_MINUS_SOURCE_ALPHA
+            && vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16
+            && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0
+            && vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) && vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && vb->hasDataType(LLVertexBuffer::TYPE_COLOR)
+            && p->mTextureList.size() <= 4;
+        if (served && (p->mModelMatrix || p->mTextureMatrix))
+        {
+            served = moving || ((!p->mModelMatrix || (rt_matrix_id(p->mModelMatrix) & 0x80000000u)) && !p->mTextureMatrix);       // (S5a-2 gives these matrices slots)
+        }
+        const U32 key = p->mFullbright ? 1u : 0u;
+        const U32 index = (U32)f.mAlphaOrder.size();
+        f.mAlphaOrder.push_back(p);
+        if (!f.mAlphaPlan.empty() && f.mAlphaPlan.back().mServed == served && (!served || f.mAlphaPlan.back().mKey == key))
+        {
+            ++f.mAlphaPlan.back().mCount;
+        }
+        else
+        {
+            f.mAlphaPlan.push_back({ index, 1u, served ? key : 0u, served });
+        }
+        (served ? sAlphaPlanServed : sAlphaPlanOld) += 1;
+    }
+    sAlphaPlanSegs += f.mAlphaPlan.size();
+    ++sAlphaPlanBuilds;
+    sAlphaPlanNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+    if (sAlphaPlanBuilds % 4000 == 0)
+    {
+        LL_INFOS("VkScene") << "alpha plan builds: " << sAlphaPlanBuilds << ", " << (double)sAlphaPlanNs / 1000.0 / sAlphaPlanBuilds << " us each, " << (double)sAlphaPlanServed / sAlphaPlanBuilds << " served draws, "
+            << (double)sAlphaPlanOld / sAlphaPlanBuilds << " old draws, " << (double)sAlphaPlanSegs / sAlphaPlanBuilds << " segments each" << LL_ENDL;
+    }
+}
+
+int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out)
+{
+    const LLSceneFragment* f = group->mSceneFragment;
+    if (!f || !f->mAlphaPlanned)
+    {
+        return 0;
+    }
+    if (f->mSerial != group->mDrawMapSerial)
+    {
+        return 2;
+    }
+    out.mOrder = f->mAlphaOrder.data();
+    out.mOrderCount = (U32)f->mAlphaOrder.size();
+    out.mSegs = f->mAlphaPlan.data();
+    out.mSegCount = (U32)f->mAlphaPlan.size();
+    out.mGlow = f->mAlphaGlow;
+    return 1;
+}
+
 static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f);
 static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
 {
@@ -6047,6 +6145,7 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
     {
         scene_geo_fill(group, f);
     }
+    scene_alpha_plan_fill(group, f);        // <FS> S5a-1 (only with LL_VK_SCENE_ALPHA=1)
     f.mResident = false;
     f.mSlots.clear();
     if (scene_resident_on() && (!f.mEntries.empty() || !f.mAlpha.empty()) && f.mFallback.empty() && !group->isDead())
