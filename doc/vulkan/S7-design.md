@@ -1,6 +1,6 @@
 # S7 part 1: Hi-Z occlusion and GPU visibility (design only, 2026-10-22)
 
-Scope agreed with Adam: design here, build and test in a new session. Order: this (S7 part 1), then S6 (structure), then the rest of S7 (GPU LOD, OIT). Nothing in this note is built.
+Scope agreed with Adam: design here, build and test in a new session. Order: this (S7 part 1), then S6 (structure), then the rest of S7 (GPU LOD, OIT). H0 (measurement, section 9) is built and run; H1-H3 are not.
 
 ## 1. What "visible" means today (census)
 
@@ -107,3 +107,22 @@ At the point where `doOcclusion` runs today (same place in the frame, so the sam
 ## 8. Decision for Adam
 
 Go for H0 (measure) in the new session, then H1-H3. B and C wait for S6.
+
+## 9. H0 results: what the occlusion class costs today (2026-10-22, London midnight, no behaviour change)
+
+Tools added (commit after 35e5e2d4): `LL_VK_OCC_CENSUS=1` (header `lloccensus.h`, one log line per camera every 600 world passes, tag `OccCensus`: query issue, readback, result ages, cull drops, probe queries, times by `rdtsc`), CPU zone `occlusion: doOcclusion`, worker op-stat line "draw of 8 indices (occlusion cubes, included in draw)". Runs: `h0a` (timing, no phases, OPSTATS + CPU zones + census; 47 windows of 600 frames, first 5 dropped for the averages below) and `h0b` (phases + `FSGpuZoneTimers` + UNICENSUS; phases inflate worker times, so only GPU and record counts are taken from it). Logs in `<work>un-logs\h0a.log`, `h0b.log`. The crowd differs from the x7a run (345 cube draws a frame in h0a, 440 in h0b, x7a 448).
+
+| item | per frame |
+|---|---|
+| cube draws (worker count) | **345**: 200 group queries + **146 probe queries** (reflection/hero probes are 42 %, not "few") |
+| occlusion list at `doOcclusion` | 776 groups, **627 already OCCLUDED** (topmost occluders are re-queried); a query is still pending for 492 of 691 calls (kept), 201 issued |
+| main thread: `LLPipeline::doOcclusion` zone | **0.099 ms**: group loop 0.058 (incl. the ~1,300 records of the cubes), probes 0.038, `processOccluders` ~0 (0 calls with groups) |
+| main thread: `checkOcclusion` | 5,207 calls; the pending branch (1,016 calls: `queryReady`/`queryResult`, state propagation) **0.117 ms**; the other ~4,200 calls are the cheap path (not timed, est. 0.02 ms) |
+| main thread total of the class | **about 0.22-0.25 ms** (cull and sort loops that read the result are not in it) |
+| worker | cube draws 345 x 313 ns = **0.107 ms**, `queryBegin` 0.107, `queryEnd` 0.034 -> **about 0.25 ms** of 12.7 ms in operations (the worker waited 0.6 ms in this run: it is not limiting) |
+| GPU | zone `doOcclusion` **0.03 ms** (h0b); the cube draws are not a GPU cost |
+| what it finds | 75 % of the results say OCCLUDED (152 of 200); the cull then drops **627 groups a frame** as OCCLUDED (the sort loops see 0.5), so occlusion is worth a lot, and a more conservative test could cost more in `updateCull`/`stateSort` than it saves |
+| result age when read (frames after issue) | **3: 59, 4: 54, 5: 88**, never younger than 3; 0.05 forced reads a frame (the 4 frame timeout works on the call count of `checkOcclusion`, which is called 3-4 times a frame per group). So today's lag is 3-5 frames, not 1-4 as assumed in section 1 |
+| probes | 559 calls, 147 reads (120 occluded), 400 still pending, 147 new cube draws, 0.038 ms |
+
+**What this means for H1-H3.** The main-thread prize of A is about 0.2 ms (H2, world groups only: group loop 0.058 + pending branch 0.117 minus the new box record and ring read, so about 0.15; H3 adds the probes 0.038 and the cheap-path calls: about 0.2-0.25), the worker gets about 0.25 ms back, the GPU nothing measurable (0.03 ms, Hi-Z adds its own dispatches). That is at or below the 0.2 ms line the plan set, so this stage's value is mostly structural (no query pool/state machine, no blocking read, results 1-2 frames old instead of 3-5), plus the groundwork for B. Risk to weigh: Hi-Z is conservative, so it reports fewer occluded groups than the queries (627 groups dropped a frame today); if it keeps materially fewer, `updateCull`/`stateSort` work grows and eats the gain. H1's mode 2 measures exactly that before anything depends on it.

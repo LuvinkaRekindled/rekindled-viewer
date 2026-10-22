@@ -96,6 +96,7 @@
 #include "llviewerwindow.h" // For getSpinAxis
 #include "llvoavatarself.h"
 #include "llvocache.h"
+#include "lloccensus.h"
 #include "llvosky.h"
 #include "llvowlsky.h"
 #include "llvotree.h"
@@ -2895,10 +2896,46 @@ void LLPipeline::doOcclusion(LLCamera& camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("doOcclusion");
+    LL_CPU_ZONE("occlusion: doOcclusion");            // <FS> H0
     llassert(!gCubeSnapshot);
+
+    // <FS> H0 (LL_VK_OCC_CENSUS=1): the pass and its parts, by camera
+    const int occ_cam = LLViewerCamera::sCurCameraID;
+    const U64 occ_t0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
+    if (LLOccCensus::sOn && occ_cam >= 0 && occ_cam < LLOccCensus::CAMS)
+    {
+        ++LLOccCensus::sPasses[occ_cam];
+        if (occ_cam == LLViewerCamera::CAMERA_WORLD)
+        {
+            if (!LLOccCensus::sQpc0)
+            {
+                LARGE_INTEGER q;
+                QueryPerformanceCounter(&q);
+                LLOccCensus::sQpc0 = q.QuadPart;
+                LLOccCensus::sTsc0 = LLOccCensus::now();
+            }
+            ++LLOccCensus::sFrames;
+        }
+    }
+    struct OccPassEnd
+    {
+        int mCam; U64 mT0;
+        ~OccPassEnd()
+        {
+            if (LLOccCensus::sOn && mCam >= 0 && mCam < LLOccCensus::CAMS)
+            {
+                LLOccCensus::sTicksPass[mCam] += LLOccCensus::now() - mT0;
+                if (mCam == LLViewerCamera::CAMERA_WORLD && LLOccCensus::sFrames >= 600)
+                {
+                    LLOccCensus::report();
+                }
+            }
+        }
+    } occ_end = { occ_cam, occ_t0 };
 
     if (sReflectionProbesEnabled && sUseOcclusion > 1 && !LLPipeline::sShadowRender && !gCubeSnapshot)
     {
+        const U64 occ_p0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
         gRender.setColorMask(false, false);
         LLRenderState::DepthScope depth(true, false);
         LLRenderState::CullScope cull(false);
@@ -2916,10 +2953,15 @@ void LLPipeline::doOcclusion(LLCamera& camera)
         gOcclusionCubeProgram.unbind();
 
         gRender.setColorMask(true, true);
+        if (LLOccCensus::sOn)
+        {
+            LLOccCensus::sTicksProbes += LLOccCensus::now() - occ_p0;
+        }
     }
 
     if (sReflectionProbesEnabled && sUseOcclusion > 1 && !LLPipeline::sShadowRender && !gCubeSnapshot)
     {
+        const U64 occ_p1 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
         gRender.setColorMask(false, false);
         LLRenderState::DepthScope depth(true, false);
         LLRenderState::CullScope cull(false);
@@ -2936,6 +2978,10 @@ void LLPipeline::doOcclusion(LLCamera& camera)
         gOcclusionCubeProgram.unbind();
 
         gRender.setColorMask(true, true);
+        if (LLOccCensus::sOn)
+        {
+            LLOccCensus::sTicksProbes += LLOccCensus::now() - occ_p1;
+        }
     }
 
     if (LLPipeline::sUseOcclusion > 1 &&
@@ -2959,17 +3005,30 @@ void LLPipeline::doOcclusion(LLCamera& camera)
         }
         mCubeVB->setBuffer();
 
+        const U64 occ_g0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
+        const bool occ_count = LLOccCensus::sOn && occ_cam >= 0 && occ_cam < LLOccCensus::CAMS;
         for (LLCullResult::sg_iterator iter = sCull->beginOcclusionGroups(); iter != sCull->endOcclusionGroups(); ++iter)
         {
             LLSpatialGroup* group = *iter;
+            if (occ_count)
+            {
+                ++LLOccCensus::sListGroups[occ_cam];
+                LLOccCensus::sListDead[occ_cam] += group->isDead();
+                LLOccCensus::sListOccluded[occ_cam] += !group->isDead() && group->isOcclusionState(LLSpatialGroup::OCCLUDED);
+            }
             if (!group->isDead())
             {
                 group->doOcclusion(&camera);
                 group->clearOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
             }
         }
+        if (occ_count)
+        {
+            LLOccCensus::sTicksGroups[occ_cam] += LLOccCensus::now() - occ_g0;
+        }
 
         //apply occlusion culling to object cache tree
+        const U64 occ_c0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
         for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
             iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
         {
@@ -2978,6 +3037,10 @@ void LLPipeline::doOcclusion(LLCamera& camera)
             {
                 vo_part->processOccluders(&camera);
             }
+        }
+        if (LLOccCensus::sOn && occ_cam == LLViewerCamera::CAMERA_WORLD)
+        {
+            LLOccCensus::sTicksCache += LLOccCensus::now() - occ_c0;
         }
 
         gRender.setColorMask(true, true);
@@ -3437,6 +3500,10 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             continue;
         }
         group->checkOcclusion();
+        if (LLOccCensus::sOn)
+        {
+            LLOccCensus::sortNote(LLViewerCamera::sCurCameraID, group->isOcclusionState(LLSpatialGroup::OCCLUDED), group->getElementCount());
+        }
         if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
@@ -3505,6 +3572,10 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             continue;
         }
         group->checkOcclusion();
+        if (LLOccCensus::sOn)
+        {
+            LLOccCensus::sortNote(LLViewerCamera::sCurCameraID, group->isOcclusionState(LLSpatialGroup::OCCLUDED), group->getElementCount());
+        }
         if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);

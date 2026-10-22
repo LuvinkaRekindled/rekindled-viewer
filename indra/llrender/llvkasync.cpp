@@ -177,10 +177,11 @@ unsigned long long gFrontCalls[FP_COUNT] = {};
 unsigned long long gFrontTicks[FP_COUNT] = {};
 const char* const kFrontNames[FP_COUNT] = { "LLShaderProgram::bind", "uniform*", "uniformMatrix*", "uniform writes sent (count only)", "LLTexUnit::bind", "blendFunc", "state guards", "setBuffer", "draw*", "syncMatrices (contains uniformMatrix)", "LLRender::flush (contains draw*)", "matrix push/pop (contains flush)", "matrix set/mult/identity/ortho (contains flush)", "matrix translate/rotate/scale (contains flush)", "matrixMode", "LLTexUnit::unbind/unbindFast (contains flush)", "LLTexUnit::activate/enable/disable", "LLTexUnit::bindManual (contains flush)", "LLTexUnit::setTextureAddressMode/FilteringOption" };
 long long gOpStatQpc0 = 0;
-inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 1); }
+inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 2); }
+constexpr int OP_SLOT_CUBE = OP_STAT_SLOTS - 1;     // S7 H0: the draws of 8 indices (the occlusion cubes), also counted in "draw": reported separately, left out of the total
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
                                   "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bufferData", "bufferSubData", "shadowPackets", "texParams", "fboAttach", "targetState", "texSlots", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "draw", "uniformRange", "pass", "drawScratch" };
-const char* slotName(int slot) { return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
+const char* slotName(int slot) { if (slot == OP_SLOT_CUBE) return "draw of 8 indices (occlusion cubes, included in draw)"; return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
 // C4: texture upload costs on the main thread, and what was handed over without a copy
@@ -1078,7 +1079,10 @@ std::string opStatsReport(size_t frames)
         if (gOpStatCalls[i])
         {
             rows.push_back({ i, gOpStatTicks[i], gOpStatCalls[i] });
-            total += gOpStatTicks[i];
+            if (i != OP_SLOT_CUBE)
+            {
+                total += gOpStatTicks[i];
+            }
         }
         gOpStatTicks[i] = 0;
         gOpStatCalls[i] = 0;
@@ -2505,8 +2509,14 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
     if (gOpStats)
     {
         const int slot = opStatSlot(op);
-        gOpStatTicks[slot] += __rdtsc() - t0;
+        const unsigned long long dt = __rdtsc() - t0;
+        gOpStatTicks[slot] += dt;
         ++gOpStatCalls[slot];
+        if (op == CMD_DRAW && ((const DrawHeader2*)payload)->mDraw.mKind == 0 && ((const DrawHeader2*)payload)->mDraw.mCount == 8)
+        {
+            gOpStatTicks[OP_SLOT_CUBE] += dt;       // S7 H0
+            ++gOpStatCalls[OP_SLOT_CUBE];
+        }
     }
 }
 
