@@ -3,7 +3,7 @@
  * @brief F1.4: render targets named by their id, clears and the read source of copies.
  *
  * A render target is a handle (the id the producer allocates) with attached textures; the target a draw goes to is set by one record that also carries the number of
- * colour attachments (LLVkAsync::targetState). Clears and copies name what they act on instead of reading "the bound framebuffer" / "the clear colour" state.
+ * colour attachments (LLVkAsync::passBegin). Clears and copies name what they act on instead of reading "the bound framebuffer" / "the clear colour" state.
  *
  * Compiled only with -DUSE_VULKAN=ON.
  */

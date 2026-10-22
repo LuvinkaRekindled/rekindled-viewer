@@ -119,6 +119,8 @@ namespace LLVkBridge
         U32 mPaletteFloats = 0;     // floats of joint matrix palettes (12 per joint) after the model matrices; the rigged entries point into them
         U32 mPass = 0;              // the shadow pass: 0-3 sun cascades, 4-5 spot shadows, 6 other (ray tracing keeps the casters of a cached cascade)
         U32 mFragment = 0;          // kind 11: the id of the fragment retained (S1, below)
+        U64 mProgram = ~0ull;       // S6.3: the program (an LLVk::Program*) the record draws with, written by pushData from the producer's draw context; ~0: not named, the worker keeps the one it has
+        U32 mFrame = 0;             // S6.3: the producer's frame number (0: unknown); kinds 22 and 29 draw what the frame's kind 21 prepared and are checked against it
     };
     // S1 retained fragments (doc/vulkan/S1-handoff.md): the untextured static casters of one spatial group, kept by the worker under an id until released.
     // kind 11 RETAIN: mFragment = id, mEntries ShadowPacketEntry in the blob; mMatrix of an entry is 0 (no matrix) or 1 + the fragment's own matrix number.

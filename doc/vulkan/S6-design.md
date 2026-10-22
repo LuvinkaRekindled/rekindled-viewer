@@ -80,4 +80,23 @@ Order is fixed: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 (6.2 needs 6.1's epoch, 6
 
 ## 6. Results
 
-(filled in as stages land)
+### 6.0 Census (LL_VK_PASSCENSUS=1 target binds, =2 Vulkan render passes, =3 GPU zone phases; runs pc0a / pc0b, London midnight, ~99 avatars)
+
+What it changed in this design:
+
+- **The viewer's render-target binds are coarse.** The main scene is ONE producer pass (llviewerdisplay.cpp:1203: 615 records, 285 draws, 52 packet records, 43 programs a frame), the post-water alpha runs another (pipeline.cpp:17148: 3,338 records, 811 packet records). The real units inside them are Vulkan render passes (79 a frame, 97 draws each) and GPU-zone phases. A pass description at bind level is right for the stream (what the viewer announces); the unit a recorder thread would take is the render pass the worker begins, and turning it into immutable resolved draw ops is the resolve/record split of the threading plan, not S6.
+- **The stream is already almost closed at bind level.** The render state block is rewritten inside the pass in nearly every pass that draws (every pass sets its viewport); it is inherited only in the restored passes (3 a frame). Texture units 2.2 own / 0.8 earlier in the frame / 0.3 older per pass, UBO bindings mostly set once and inherited, the vertex binding is carried by the first draw. The packet program is inherited by no pass (it is bound inside each).
+- **Uniform class blocks are the inheritance.** First reads of a (program, class) per frame: 404 blocks, 205 KB over 104 programs; of that 176 KB was written by the stream in the same pass, 9 KB in an earlier frame, 19 KB never (initial shader values or written by the worker). So announcing every block at its first use in a pass sends at most 205 KB and truly re-sends about 28 KB.
+- Kind 22 / 29 records read the frame's prepare output: 426k reads in 600 frames, 0 from another frame.
+
+### 6.1-6.3 built (commit with this note; switch LL_VK_PASSCLOSE, default off until the next stage flips it)
+
+- **6.1** One pass record (CMD_PASS: target, colour count, viewport, load op, kind NEW / RESUME / SCREEN, pass id, parent id, bind site). The producer keeps the open-pass stack (LLRenderTarget::bindImpl / flush call passBegin / passEnd); CMD_TARGET_STATE is only the draw-buffer count now (`targetDrawBuffers`); the worker has `currentPass()`. The pass site (file:line) travels in the record and names the pass in the logs.
+- **6.2** LL_VK_PASSCLOSE=1: every pass record bumps an epoch; the render state block is re-emitted, the draw context's binding and the texture units are re-sent with the next draw, the uniform buffer bindings and constant attributes are re-sent at once (llvkasync.cpp `LLVkBuf::reannounce`), and a program announces all its uniform class blocks (`uniformRangeAnnounce`, marked in the record) at its first bind in a pass (`LLShaderProgram::bind`, `announceBound` for the program that is bound across a pass begin). =2 compares every announced block with what the worker held; =3 poison: at every pass the worker forgets all of it (`LLVkWorker::pass_poison`; LL_VK_PASSPOISON is a mask of what: 1 uniform blocks, 2 units, 4 UBO bindings, 8 constant attributes, 16 vertex binding, 32 render state, 64 program).
+- **6.3** Packet records name their program in the header (`mProgram`, written by pushData from the producer's draw context; the CMD_PROGRAM_BIND-before-packets and `DrawCtx::mSent` are gone; the worker validates the pointer with `Program::isLive` when it differs) and carry the producer's frame (`mFrame`); kinds 22 / 29 are checked against the frame of the last kind 21 (warn if different).
+
+Verification, London midnight (runs s61a baseline, s61b verify, s61c / d / h full poison, s61e closed, s61f / g poison of the uniform blocks only):
+
+- Verify: 604 class blocks announced a frame (290 KB); the ones that differ from what the worker held are the worker's own writes (the packet table / model matrix addresses of the pull programs, written by each record before it draws, so overwriting them is harmless): once a frame per program.
+- Poison: 0 draws refused (no program / target / vertex input) in every pass; pictures right in 4 of 5 full-poison runs (store front, neon sign, shadows, avatars). One run (s61d) showed objects missing, with 1,367 fragments listed a frame against 1,600-1,690 in the others: the intermittent "things not loading" (repeat full poison runs s61h: normal; mask 1 only s61g: normal). "Non Finite mOrigin" viewer warnings (911 to 1,036 in s61c / d / f) did not come back in s61g / s61h with the same flags: scene dependent, not caused by poison (the stack hook that was added to find the caller never fired).
+- Closed (s61e): records 4,579 a frame (baseline 4,594), main thread writing the queue 0.35 ms (0.35), worker draws 844 (846), frame interval 12.3 ms (baseline 13.9, other crowd: noise), pictures equal, no warnings. Announced volume 290 KB a frame costs nothing visible.

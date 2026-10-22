@@ -22,6 +22,7 @@
 #include "llframetimer.h"
 #include "llvkformat.h"
 #include "lluniformcensus.h"
+#include "llvkpasscensus.h"
 
 #include <windows.h>
 #include <synchapi.h>
@@ -307,7 +308,6 @@ constexpr U32 TEX_UNIT_BASE = 0x84C0;       // GL_TEXTURE0
 struct DrawCtx
 {
     void* mProgram = nullptr;
-    void* mSent = (void*)(intptr_t)-1;    // the program the worker's renderer holds as far as the stream says (a draw record names its program; packet records read the renderer's: see pushData); -1: unknown
     DrawBinding mBinding;
     bool mDirty = true;                   // the binding changed since the last draw record that carried it (a draw record only carries a binding when it is new)
 };
@@ -319,6 +319,8 @@ struct Pend
     DrawCtx mDraw;
 };
 Pend gMainPend;
+std::atomic<U32> gProducerFrame{ 0 };       // S6.3: counts the main thread's frameBegin calls; packet records carry it
+U64 gPassEpoch = 1;                         // S6.2: changes with every pass record (main thread)
 thread_local Pend* tlsPend = nullptr;
 inline Pend& pend() { return tlsPend ? *tlsPend : gMainPend; }
 
@@ -492,6 +494,14 @@ void uniformRange(void* program, U32 cls, U32 offset, U32 size, const void* data
     struct A { void* mProgram; U32 mClass; U32 mOffset; U32 mSize; U32 mPad; } a = { program, cls, offset, size, 0 };
     uniAppend(CMD_UNIFORM_RANGE, &a, sizeof(a), data, size);
 }
+void uniformRangeAnnounce(void* program, U32 cls, U32 offset, U32 size, const void* data)
+{
+    MainLap lap;
+    struct A { void* mProgram; U32 mClass; U32 mOffset; U32 mSize; U32 mPad; } a = { program, cls, offset, size, 1 };
+    uniAppend(CMD_UNIFORM_RANGE, &a, sizeof(a), data, size);
+}
+bool passClosed() { return LLVkPassCensus::sClose != 0; }
+unsigned long long passEpoch() { return gPassEpoch; }
 static unsigned long long gDrawSeq = 0;
 unsigned long long drawSeq() { return gDrawSeq; }
 unsigned long long frontStart(int id)
@@ -519,6 +529,12 @@ bool mainProducer()
     return gEnabled && produces();
 }
 
+static PassInfo gPass;      // worker thread: the pass the last CMD_PASS began
+static U32 gPrepareFrame = 0;                       // S6.3: the producer frame of the last kind 21 record
+static U64 gFrameRefReads = 0, gFrameRefStale = 0;  // ... and the kind 22 / 29 records checked against it, and the ones from another frame
+static U32 gClosePresents = 0;
+const PassInfo& currentPass() { return gPass; }
+
 void framebufferAttach(U32 fbo, U32 slot, U32 texture)
 {
     if (!gEnabled)
@@ -535,13 +551,6 @@ void framebufferAttach(U32 fbo, U32 slot, U32 texture)
     coFlushAll(opStatSlot(CMD_FBO_ATTACH));
     const U32 a[3] = { fbo, slot, texture };
     rawPush(CMD_FBO_ATTACH, a, sizeof(a));
-}
-
-void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh)
-{
-    // the viewport is part of the render state context; the record carries the target and its colour attachment count
-    LLVkState::setViewport(vx, vy, vw, vh);
-    targetDrawBuffers(fbo, draw_buffers);
 }
 
 void targetDrawBuffers(U32 fbo, S32 draw_buffers)
@@ -562,9 +571,30 @@ void targetDrawBuffers(U32 fbo, S32 draw_buffers)
     rawPush(CMD_TARGET_STATE, a, sizeof(a));
 }
 
-void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool clear_color, bool clear_depth, const F32* rgba)
+namespace
+{
+// S6.1: the passes the viewer has open, outermost first (the main thread's; LLRenderTarget::bindImpl / flush)
+struct OpenPass { U32 mId; U32 mParent; };
+std::vector<OpenPass> gOpenPasses;
+U32 gPassSeq = 0;
+}
+
+void passEnd()
+{
+    if (!gOpenPasses.empty())
+    {
+        gOpenPasses.pop_back();
+    }
+}
+
+void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool clear_color, bool clear_depth, const F32* rgba, PassKind kind, const char* file, int line)
 {
     LLVkState::setViewport(vx, vy, vw, vh);
+    static const F32 zero[4] = {};
+    if (!rgba)
+    {
+        rgba = zero;
+    }
     if (!gEnabled)
     {
         std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
@@ -585,8 +615,42 @@ void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool c
     {
         stateEmit();        // the clear honours the colour / depth write masks and the scissor: the state record comes first, as before a clear
     }
-    struct R { S32 mFbo; S32 mDrawBuffers; U32 mFlags; F32 mColor[4]; } rec = { (S32)fbo, draw_buffers, (clear_color ? 1u : 0u) | (clear_depth ? 2u : 0u), { rgba[0], rgba[1], rgba[2], rgba[3] } };
+    U32 id, parent;
+    if (kind == PASS_RESUME && !gOpenPasses.empty())
+    {
+        id = gOpenPasses.back().mId;
+        parent = gOpenPasses.back().mParent;
+    }
+    else
+    {
+        id = ++gPassSeq;
+        parent = gOpenPasses.empty() ? 0 : gOpenPasses.back().mId;
+        if (kind == PASS_NEW)
+        {
+            gOpenPasses.push_back({ id, parent });
+        }
+    }
+    const U32 site = LLVkPassCensus::internSite(file, line, kind == PASS_RESUME ? 'r' : kind == PASS_SCREEN ? 'f' : 'b');
+    struct R { S32 mFbo; S32 mDrawBuffers; U32 mFlags; F32 mColor[4]; U32 mSite; U32 mId; U32 mParent; U32 mPad; } rec =
+        { (S32)fbo, draw_buffers, (clear_color ? 1u : 0u) | (clear_depth ? 2u : 0u) | ((U32)kind << 8), { rgba[0], rgba[1], rgba[2], rgba[3] }, site, id, parent, 0 };
     rawPush(CMD_PASS, &rec, sizeof(rec));
+    ++gPassEpoch;
+    if (LLVkPassCensus::sClose)
+    {
+        // S6.2: what the pass reads of the state that persisted from the pass before is sent again where it is used: the render state block with the next record that reads it, the draw
+        // context's binding with the next draw, the texture units with the next draw (or a texture record), the uniform buffer bindings and constant attributes now, a program's uniform class
+        // blocks at its bind (LLShaderProgram::bind / announceBound: the bound program is announced by the caller, after this record)
+        LLVkState::forceEmit();
+        Pend& p = pend();
+        p.mDraw.mDirty = true;
+        U32 m = 0;
+        for (U32 u = 0; u < 32; ++u)
+        {
+            if (p.mTex[u]) m |= 1u << u;
+        }
+        p.mMask |= m;
+        LLVkBuf::reannounce();
+    }
 }
 
 void clearTarget(bool color, bool depth, const F32* rgba)
@@ -814,7 +878,6 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
         {
             d.mDirty = false;
         }
-        d.mSent = d.mProgram;
         pend().mMask = 0;
         pend().mUni.clear();
     }
@@ -911,17 +974,17 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         {
             ++gMainOpCalls[opStatSlot(op)];
         }
+        LLVkBridge::ShadowPacketsHeader named;
         if (op == CMD_SHADOW_PACKETS)
         {
             stateEmit();
+            if (size == sizeof(named))
             {
-                // the packet handlers draw with the renderer's current program: it is written here, when the program changed since the last record that set it
-                DrawCtx& d = pend().mDraw;
-                if (d.mSent != d.mProgram)
-                {
-                    rawPush(CMD_PROGRAM_BIND, &d.mProgram, sizeof(d.mProgram));
-                    d.mSent = d.mProgram;
-                }
+                // S6.3: the record names the program it draws with (the packet handlers used to draw with the renderer's, set by a CMD_PROGRAM_BIND written before the record) and the frame it belongs to
+                memcpy(&named, args, size);
+                named.mProgram = (U64)(uintptr_t)pend().mDraw.mProgram;
+                named.mFrame = gProducerFrame.load(std::memory_order_relaxed);
+                args = &named;
             }
         }
         if (!texIndependent(op))
@@ -1229,6 +1292,7 @@ void frameBegin(S32 width, S32 height)
         gMainWaitTicks += now_ticks() - wait_start;
     }
     gBeginsEnqueued.fetch_add(1);
+    gProducerFrame.fetch_add(1);
     S32 a[2] = { width, height };
     push(CMD_FRAME_BEGIN, a, sizeof(a));
     wake();
@@ -1245,10 +1309,6 @@ void snapshotBoundary(S32 mode) { push(CMD_SNAPSHOT_BOUNDARY, &mode, sizeof(mode
 void programBind(void* program)
 {
     drawProgram(program);
-    if (DrawCtx* d = drawCtx())
-    {
-        d->mSent = program;
-    }
     push(CMD_PROGRAM_BIND, &program, sizeof(program));
 }
 void programDestroy(void* program) { push(CMD_PROGRAM_DESTROY, &program, sizeof(program)); }
@@ -2015,8 +2075,38 @@ void setData(U32 id, BufferKind kind, S64 size, const void* data)
     LLVkAsync::bufferData(id, kind, size, data);
 }
 
+// S6.2: what the main thread has sent of the constant attributes and the uniform block bindings (a closed pass sends them again)
+static F32 sConstShadow[16][4];
+static U32 sConstSet = 0;
+static U32 sUboShadow[4];
+
+void reannounce()
+{
+    for (U32 i = 0; i < 4; ++i)
+    {
+        if (sUboShadow[i])
+        {
+            const U32 a[2] = { i, sUboShadow[i] };
+            LLVkAsync::push(LLVkAsync::CMD_UNIFORM_BLOCK, a, sizeof(a));
+        }
+    }
+    for (U32 l = 0; l < 16; ++l)
+    {
+        if (sConstSet & (1u << l))
+        {
+            struct { U32 mLocation; F32 mV[4]; } rec = { l, { sConstShadow[l][0], sConstShadow[l][1], sConstShadow[l][2], sConstShadow[l][3] } };
+            LLVkAsync::push(LLVkAsync::CMD_CONST_ATTRIB, &rec, sizeof(rec));
+        }
+    }
+}
+
 void setConstantAttribute(U32 location, F32 x, F32 y, F32 z, F32 w)
 {
+    if (location < 16 && LLVkAsync::mainOnlyProducer())
+    {
+        sConstShadow[location][0] = x; sConstShadow[location][1] = y; sConstShadow[location][2] = z; sConstShadow[location][3] = w;
+        sConstSet |= 1u << location;
+    }
     if (!LLVkAsync::gEnabled)
     {
         std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
@@ -2029,6 +2119,10 @@ void setConstantAttribute(U32 location, F32 x, F32 y, F32 z, F32 w)
 
 void bindUniformBlock(U32 binding, U32 id)
 {
+    if (binding < 4 && LLVkAsync::mainOnlyProducer())
+    {
+        sUboShadow[binding] = id;
+    }
     const U32 a[2] = { binding, id };
     LLVkAsync::push(LLVkAsync::CMD_UNIFORM_BLOCK, a, sizeof(a));
 }
@@ -2124,6 +2218,7 @@ void applyUniformBatch(const U8* p, U32 bytes)
             {
                 if (a.mKind == 0) pr->setFloatsAt((size_t)a.mIndex, a.mF, a.mN, 1);
                 else pr->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(a.mI), a.mN, 1);
+                if (LLVkPassCensus::sOn && a.mIndex < pr->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(pr->mCensus, pr->getInfo().mUniforms[a.mIndex].mClass, a.mN * 4);
             }
             break;
         }
@@ -2132,7 +2227,11 @@ void applyUniformBatch(const U8* p, U32 bytes)
             UniformVecArgs a;
             memcpy(&a, d, sizeof(a));
             LLVk::Program* pr = (LLVk::Program*)a.mProgram;
-            if (pr) pr->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(d + sizeof(a)), a.mComponents, a.mCount);
+            if (pr)
+            {
+                pr->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(d + sizeof(a)), a.mComponents, a.mCount);
+                if (LLVkPassCensus::sOn && a.mIndex < pr->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(pr->mCensus, pr->getInfo().mUniforms[a.mIndex].mClass, a.mComponents * a.mCount * 4);
+            }
             break;
         }
         case CMD_UNIFORM_MATRIX:
@@ -2140,7 +2239,11 @@ void applyUniformBatch(const U8* p, U32 bytes)
             UniformMatArgs a;
             memcpy(&a, d, sizeof(a));
             LLVk::Program* pr = (LLVk::Program*)a.mProgram;
-            if (pr) pr->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(d + sizeof(a)), a.mColumns, a.mRows, a.mCount);
+            if (pr)
+            {
+                pr->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(d + sizeof(a)), a.mColumns, a.mRows, a.mCount);
+                if (LLVkPassCensus::sOn && a.mIndex < pr->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(pr->mCensus, pr->getInfo().mUniforms[a.mIndex].mClass, a.mColumns * a.mRows * a.mCount * 4);
+            }
             break;
         }
         case CMD_UNIFORM_RANGE:
@@ -2150,7 +2253,13 @@ void applyUniformBatch(const U8* p, U32 bytes)
             LLVk::Program* pr = (LLVk::Program*)a.mProgram;
             if (pr)
             {
+                if (a.mPad == 1 && LLVkPassCensus::sClose == 2)
+                {
+                    const std::vector<U8>& held = pr->shadowOf(a.mClass < LLVk::UC_COUNT ? a.mClass : 0);
+                    LLVkPassCensus::announceCompare(pr->getName().c_str(), a.mClass, a.mClass < LLVk::UC_COUNT && (size_t)a.mOffset + a.mSize <= held.size() && memcmp(&held[a.mOffset], d + sizeof(a), a.mSize) == 0, a.mSize);
+                }
                 pr->writeRange(a.mClass, a.mOffset, a.mSize, d + sizeof(a));
+                if (LLVkPassCensus::sOn) LLVkPassCensus::uniformWrite(pr->mCensus, a.mClass, a.mSize);
             }
             break;
         }
@@ -2229,6 +2338,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         const S32 w = r.get<S32>(), h = r.get<S32>();
         gBeginsDone.fetch_add(1, std::memory_order_release);
+        if (LLVkPassCensus::sOn) LLVkPassCensus::frameBegin();
         LLVkBridge::beginFrameImpl(w, h);
         break;
     }
@@ -2265,6 +2375,42 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         const LLVkBridge::ShadowPacketsHeader h = r.get<LLVkBridge::ShadowPacketsHeader>();
         Blob b = read_blob(r, flags);
+        if (h.mProgram != ~0ull && LLVkBridge::isReady())
+        {
+            // S6.3: the record names its program
+            LLVk::Renderer& rr = LLVk::Renderer::instance();
+            if ((U64)(uintptr_t)rr.getProgram() != h.mProgram)
+            {
+                LLVk::Program* named = (LLVk::Program*)(uintptr_t)h.mProgram;
+                rr.setProgram(named && LLVk::Program::isLive(named) ? named : nullptr);
+            }
+            if (LLVkPassCensus::sOn) LLVkPassCensus::programAnnounced();
+        }
+        if (h.mKind == 21)
+        {
+            gPrepareFrame = h.mFrame;
+        }
+        else if ((h.mKind == 22 || h.mKind == 29) && h.mFrame)
+        {
+            ++gFrameRefReads;
+            if (h.mFrame != gPrepareFrame) ++gFrameRefStale;
+        }
+        if (LLVkPassCensus::sOn)
+        {   // S6.0: the packet kinds that draw read the render state block and the renderer's program; 21 makes the frame's draw commands that 22 and 29 draw
+            switch (h.mKind)
+            {
+            case 0: case 1: case 2: case 3: case 8: case 9: case 16: case 22: case 25: case 26: case 29: case 32: case 33:
+            {
+                LLVkPassCensus::stateRead();
+                LLVk::Program* pp = LLVkBridge::isReady() ? LLVk::Renderer::instance().getProgram() : nullptr;
+                LLVkPassCensus::packetProgram(pp, pp ? pp->getName().c_str() : nullptr);
+                if (h.mKind == 22 || h.mKind == 29) LLVkPassCensus::geoDrawSeen();
+                break;
+            }
+            case 21: LLVkPassCensus::prepareSeen(); break;
+            default: break;
+            }
+        }
         if (b.mData)
         {
             LLVkBridge::shadowPacketsImpl(h, b.mData);
@@ -2273,6 +2419,17 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     }
     case CMD_PRESENT:
         LLVkBridge::presentFrameImpl();
+        if (LLVkPassCensus::sOn) LLVkPassCensus::present();
+        if (++gClosePresents >= 600)
+        {
+            gClosePresents = 0;
+            if (gFrameRefStale)
+            {
+                LL_WARNS("VkPassClose") << "frame inputs: " << gFrameRefStale << " of " << gFrameRefReads << " records that draw the prepared geometry came from another frame than the prepare record" << LL_ENDL;
+            }
+            gFrameRefReads = gFrameRefStale = 0;
+            if (LLVkPassCensus::sClose == 2) LLVkPassCensus::closeReport();
+        }
         note_gap(gPresentGaps, gLastPresentTick);
         if (gOpStatsPeriodic && ++gOpStatsFrames >= 600)
         {
@@ -2301,6 +2458,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         const U32 head[2] = { r.get<U32>(), r.get<U32>() };
         Blob b = read_blob(r, flags);
+        if (LLVkPassCensus::sOn) LLVkPassCensus::zone(b.mData ? (const char*)b.mData : "", head[0] != 0);
         LLVk::Renderer::instance().gpuZone(b.mData ? (const char*)b.mData : "", head[0] != 0);
         break;
     }
@@ -2333,6 +2491,12 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             drawBindingRead(payload + sizeof(DrawHeader2), b);
         }
         LLVkWorker::draw_context_apply(h2->mProgram, h2->mBindBytes ? &b : nullptr);
+        if (LLVkPassCensus::sOn)
+        {
+            LLVkPassCensus::programAnnounced();
+            LLVkPassCensus::drawProgram(h2->mProgram, h2->mProgram ? ((LLVk::Program*)h2->mProgram)->getName().c_str() : nullptr);
+            LLVkPassCensus::binding(h2->mBindBytes != 0);
+        }
         const U32* ids = (const U32*)(payload + sizeof(DrawHeader2) + h2->mBindBytes);
         const U32 id_bytes = (h->mCountTex * (U32)sizeof(U32) + 7) & ~7u;
         if (h->mUniBytes)
@@ -2363,6 +2527,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVkState::Block b;
         memcpy(&b, payload, sizeof(b));
         LLVkState::receive(b);
+        if (LLVkPassCensus::sOn) LLVkPassCensus::stateReceived();
         break;
     }
     case CMD_FBO_ATTACH:
@@ -2379,12 +2544,18 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     }
     case CMD_PASS:
     {
-        struct R { S32 mFbo; S32 mDrawBuffers; U32 mFlags; F32 mColor[4]; };
+        struct R { S32 mFbo; S32 mDrawBuffers; U32 mFlags; F32 mColor[4]; U32 mSite; U32 mId; U32 mParent; U32 mPad; };
         const R* a = (const R*)payload;
+        gPass.mId = a->mId; gPass.mParent = a->mParent; gPass.mFbo = (U32)a->mFbo; gPass.mBuffers = a->mDrawBuffers; gPass.mSite = a->mSite; gPass.mKind = (a->mFlags >> 8) & 3;
+        if (LLVkPassCensus::sOn) LLVkPassCensus::passBegin(a->mFbo, a->mSite);
         LLVkWorker::target_state((unsigned)a->mFbo, a->mDrawBuffers);
         if (a->mFlags & 3)
         {
             LLVkWorker::clear_target((a->mFlags & 1) != 0, (a->mFlags & 2) != 0, a->mColor);
+        }
+        if (LLVkPassCensus::sClose == 3)
+        {
+            LLVkWorker::pass_poison();      // the pass starts knowing only what its own records say
         }
         break;
     }
@@ -2395,7 +2566,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVkWorker::clear_target((a->mFlags & 1) != 0, (a->mFlags & 2) != 0, a->mColor);
         break;
     }
-    case CMD_UNIFORM_BLOCK: { const U32* a = (const U32*)payload; LLVkWorker::uniform_block_bind(a[0], a[1]); break; }
+    case CMD_UNIFORM_BLOCK: { const U32* a = (const U32*)payload; LLVkWorker::uniform_block_bind(a[0], a[1]); if (LLVkPassCensus::sOn) LLVkPassCensus::uboSet(a[0]); break; }
     case CMD_QUERY_BEGIN:
     {
         struct A { U32 mKind; U32 mId; U64 mGen; };
@@ -2424,6 +2595,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         {
             LLVk::Renderer::instance().setProgram(p);       // null unbinds
         }
+        if (LLVkPassCensus::sOn) LLVkPassCensus::programAnnounced();
         break;
     }
     case CMD_PROGRAM_DESTROY:
@@ -2462,6 +2634,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         {
             if (kind == 0) p->setFloatsAt((size_t)idx, f, n, 1);
             else p->setFloatsAt((size_t)idx, reinterpret_cast<const F32*>(iv), n, 1);
+            if (LLVkPassCensus::sOn && idx < p->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[idx].mClass, n * 4);
         }
         break;
     }
@@ -2470,7 +2643,11 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         const UniformVecArgs a = r.get<UniformVecArgs>();
         LLVk::Program* p = (LLVk::Program*)a.mProgram;
         Blob b = read_blob(r, flags);
-        if (p && b.mData) p->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(b.mData), a.mComponents, a.mCount);
+        if (p && b.mData)
+        {
+            p->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(b.mData), a.mComponents, a.mCount);
+            if (LLVkPassCensus::sOn && a.mIndex < p->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[a.mIndex].mClass, a.mComponents * a.mCount * 4);
+        }
         break;
     }
     case CMD_UNIFORM_MATRIX:
@@ -2478,7 +2655,11 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         const UniformMatArgs a = r.get<UniformMatArgs>();
         LLVk::Program* p = (LLVk::Program*)a.mProgram;
         Blob b = read_blob(r, flags);
-        if (p && b.mData) p->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(b.mData), a.mColumns, a.mRows, a.mCount);
+        if (p && b.mData)
+        {
+            p->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(b.mData), a.mColumns, a.mRows, a.mCount);
+            if (LLVkPassCensus::sOn && a.mIndex < p->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[a.mIndex].mClass, a.mColumns * a.mRows * a.mCount * 4);
+        }
         break;
     }
     case CMD_SYNC:
@@ -2504,8 +2685,12 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
     gCurrentOp = op;
     gCurrentCtx = ctx;
     LLVkWorker::set_worker_context(ctx);
-    const unsigned long long t0 = gOpStats ? __rdtsc() : 0;
+    const unsigned long long t0 = (gOpStats || LLVkPassCensus::sOn) ? __rdtsc() : 0;
     dispatch_cmd(op, flags, payload);
+    if (LLVkPassCensus::sOn)
+    {
+        LLVkPassCensus::opDone(op, op == CMD_SHADOW_PACKETS ? ((const LLVkBridge::ShadowPacketsHeader*)payload)->mKind : 0, __rdtsc() - t0);
+    }
     if (gOpStats)
     {
         const int slot = opStatSlot(op);
@@ -2636,6 +2821,49 @@ LONG crash_filter(EXCEPTION_POINTERS* info)
 }
 
 void run_loop();
+
+}   // anonymous namespace
+}   // namespace LLVkAsync
+extern void (*gLLNonFiniteHook)();
+namespace LLVkAsync
+{
+namespace
+{
+// S6.2 diagnostics: where a non finite coordinate frame origin came from (the first few, with names from the .pdb)
+void nonFiniteHook()
+{
+    static int n = 0;
+    if (n++ >= 4)
+    {
+        return;
+    }
+    void* frames[24] = {};
+    const USHORT count = CaptureStackBackTrace(1, 24, frames, nullptr);
+    HANDLE proc = GetCurrentProcess();
+    static bool init = false;
+    if (!init)
+    {
+        char exe_path[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
+        char* slash = strrchr(exe_path, '\\');
+        if (slash) *slash = 0;
+        SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+        SymInitialize(proc, exe_path, TRUE);
+        init = true;
+    }
+    alignas(8) char sym_buf[sizeof(SYMBOL_INFO) + 512] = {};
+    std::string out;
+    for (USHORT i = 0; i < count; ++i)
+    {
+        SYMBOL_INFO* si = (SYMBOL_INFO*)sym_buf;
+        si->SizeOfStruct = sizeof(SYMBOL_INFO);
+        si->MaxNameLen = 500;
+        DWORD64 disp = 0;
+        out += "\n   ";
+        out += SymFromAddr(proc, (DWORD64)frames[i], &disp, si) ? si->Name : "?";
+    }
+    LL_WARNS("VkPassClose") << "non finite origin, called from:" << out << LL_ENDL;
+}
 
 DWORD WINAPI workerMain(LPVOID)
 {
@@ -2788,6 +3016,8 @@ bool start()
         LL_INFOS("VkAsync") << "LL_VK_ASYNC=loopback: GL calls go through the queue and are replayed at once on the main thread (no worker thread)" << LL_ENDL;
         return true;
     }
+    LLVkPassCensus::init();
+    if (LLVkPassCensus::sClose) gLLNonFiniteHook = nonFiniteHook;
     if (getenv("LL_VK_PHASES") || getenv("LL_VK_OPSTATS"))
     {
         gOpStatsPeriodic = getenv("LL_VK_PHASES") == nullptr;
@@ -2881,7 +3111,6 @@ void SubStream::begin()
     s.mBuf.mCur = 0;
     s.mPend = Pend();
     s.mPend.mDraw = s.mSeedDraw;
-    s.mPend.mDraw.mSent = (void*)(intptr_t)-1;
     s.mPend.mDraw.mDirty = true;                    // the first draw of the sub-stream carries its binding: nothing is assumed about what the worker holds
     tlsBuf = &s.mBuf;
     tlsPend = &s.mPend;

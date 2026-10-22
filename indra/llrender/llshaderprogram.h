@@ -172,6 +172,7 @@ public:
 
     static U32 sCurBoundShader;
     static LLShaderProgram* sCurBoundShaderPtr;
+    static void announceBound();                // S6.2: a pass began: the program that is bound sends its uniform class blocks again (the others do at their bind)
     static S32 sIndexedTextureChannels;
 
     static U32 sMaxGLTFMaterials;
@@ -356,6 +357,8 @@ public:
     bool vkWriteFloats(S32 twin, const F32* data, U32 components, U32 count);
     bool vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 rows, bool transpose, U32 count);
     void vkSendRange(U32 cls, U32 offset, U32 size);
+    void vkAnnounce();                          // S6.2: all the class blocks, whole, as the first use of the program in this pass
+    U64 mVkEpoch = 0;                           // the pass epoch it was last announced in
     // the value cache the setters used to keep per shader (a hash map): true when the value must be written; with range writes the class block copy does the comparing and this is always true
     bool uniformValueChanged(S32 location, const LLVector4& value, bool force = false);
 

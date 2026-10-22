@@ -30,6 +30,10 @@ namespace LLVkWorker
     // the worker side of the lifetime records: kind is an LLVkAsync::ResourceKind
     void resource_create(unsigned kind, int n, const unsigned* ids);
     void resource_destroy(unsigned kind, int n, const unsigned* ids);
+    // S6.2 (LL_VK_PASSCLOSE=3): forgets everything a pass could inherit: program uniform blocks, texture units, uniform block bindings, constant attributes, the vertex binding, the render state, the program
+    void pass_poison();
+    // the draw refusals counted so far in this frame: no program, no target, no vertex input, no index buffer, refused by the renderer, outside a frame (S6 census, per pass)
+    void refusals(unsigned long long out[6]);
     // DLSS: runs the upscaler on four mirror-owned textures (colour, depth, motion vectors -> output); the gMutex must be held
     void on_upscale(const LLVkBridge::UpscaleArgs& args);
     // the GL texture whose image has this view id (device lost report)

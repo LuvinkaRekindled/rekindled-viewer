@@ -26,6 +26,7 @@ namespace LLVkBuf
     void setData(U32 id, BufferKind kind, S64 size, const void* data);
     // makes a buffer the contents of a numbered uniform block (what the shaders' named blocks read)
     void bindUniformBlock(U32 binding, U32 id);
+    void reannounce();          // S6.2: sends the uniform block bindings and constant attributes again (a closed pass)
     // a vertex attribute that has no array (the shader reads this constant); the worker keeps one value per location
     void setConstantAttribute(U32 location, F32 x, F32 y, F32 z, F32 w);
 }

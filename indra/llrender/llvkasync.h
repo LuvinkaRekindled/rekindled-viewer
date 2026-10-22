@@ -85,19 +85,30 @@ namespace LLVkAsync
     void bufferRecycle(U32 name);
     // LLShaderProgram::bind(): unbinds the vertex and index buffers, binds the program (null: unchanged) and enables / disables vertex attribute arrays (bit masks of attribute locations)
     void shaderBind(void* program);
-    // render targets (LLRenderTarget): attach a texture to a framebuffer by name (then bind restore_fbo again), and make a framebuffer current with its draw buffers and viewport
+    // render targets (LLRenderTarget): attach a texture to a framebuffer by name
     void framebufferAttach(U32 fbo, U32 slot, U32 texture);
     // a query begins / ends in the command stream (llvkquery.h; kind is an LLVkQuery::Kind)
     void queryBeginCmd(U32 kind, U32 id);
     void queryEndCmd(U32 kind);
     // clears the current target (the state block is written first): colour and/or depth with the given colour
     void clearTarget(bool color, bool depth, const F32* rgba);
-    // draw_buffers: the number of colour attachments to draw to (0: none, -1: the back buffer)
-    void targetState(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh);
-    // the colour attachment count of a target without touching the viewport
+    // the colour attachment count of the current target (0: none, -1: the back buffer); not a pass boundary
     void targetDrawBuffers(U32 fbo, S32 draw_buffers);
-    // F3.5d: a pass begins: the target (colour attachment count), the viewport and the load op (clear colour / depth with the colour to clear to) are ONE record (was: targetState + clear)
-    void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool clear_color, bool clear_depth, const F32* rgba);
+    // S6.1: a pass is one record. PASS_NEW: the viewer bound a render target (it nests inside the pass that was open); PASS_RESUME: the pass an inner one interrupted goes on (after passEnd of the inner);
+    // PASS_SCREEN: the default framebuffer again, no pass is open. The record carries the target (colour attachment count, -1: the back buffer), the viewport, the load op (clear colour / depth with the
+    // colour to clear to), the pass id and its parent's, and where the viewer bound it (file:line, for the logs).
+    enum PassKind : U32 { PASS_NEW = 0, PASS_RESUME = 1, PASS_SCREEN = 2 };
+    void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool clear_color, bool clear_depth, const F32* rgba, PassKind kind, const char* file, int line);
+    // the viewer flushed the pass it bound last (LLRenderTarget::flush): it is closed; the next passBegin is PASS_RESUME of the one below it or PASS_SCREEN
+    void passEnd();
+    // S6.2: a pass is closed: everything it reads of the state classes that used to persist from the pass before (render state block, program uniform class blocks, texture units, uniform buffer
+    // bindings, constant attributes, the program of the packet records, the vertex binding) is sent again at its first use in the pass. passEpoch changes with every pass record.
+    bool passClosed();
+    unsigned long long passEpoch();
+    void uniformRangeAnnounce(void* program, U32 cls, U32 offset, U32 size, const void* data);      // uniformRange, marked as a full class block announced at the first use of the program in a pass
+    // the pass being played (worker thread): what the last pass record said
+    struct PassInfo { U32 mId = 0, mParent = 0, mFbo = 0; S32 mBuffers = 0; U32 mSite = 0, mKind = 0; };
+    const PassInfo& currentPass();
     // a named GPU zone (the viewer's LL_PROFILE_GPU_ZONE scopes, enabled with FSGpuZoneTimers + LL_VK_PHASES): the worker writes a GPU timestamp at this point of the frame
     void gpuZone(const char* name, bool begin);
 

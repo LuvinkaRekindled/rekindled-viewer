@@ -697,6 +697,30 @@ void LLShaderProgram::vkSendRange(U32 cls, U32 offset, U32 size)
     }
 }
 
+void LLShaderProgram::vkAnnounce()
+{
+    mVkEpoch = LLVkAsync::passEpoch();
+    if (!mVkProgram || !LLVkAsync::gEnabled || !LLVkAsync::mainOnlyProducer())
+    {
+        return;
+    }
+    for (U32 cls = 0; cls < LLVk::UC_COUNT; ++cls)
+    {
+        if (!mVkShadow[cls].empty())
+        {
+            LLVkAsync::uniformRangeAnnounce(mVkProgram, cls, 0, (U32)mVkShadow[cls].size(), mVkShadow[cls].data());
+        }
+    }
+}
+
+void LLShaderProgram::announceBound()
+{
+    if (sCurBoundShaderPtr && LLVkAsync::passClosed() && sCurBoundShaderPtr->mVkEpoch != LLVkAsync::passEpoch())
+    {
+        sCurBoundShaderPtr->vkAnnounce();
+    }
+}
+
 bool LLShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U32 count)
 {
     if ((size_t)twin >= mVkUni.size())
@@ -1644,6 +1668,11 @@ void LLShaderProgram::bind()
             mCensus.mUpdNs += (U64)(LLUniCensus::now_ns() - t_upd);
             mCensus.mUpdCalls += LLUniCensus::sTotal.mCalls - calls_upd;
         }
+    }
+
+    if (LLVkAsync::passClosed() && mVkEpoch != LLVkAsync::passEpoch())
+    {
+        vkAnnounce();       // S6.2: the first use of the program in this pass
     }
 
     llassert_always(sCurBoundShaderPtr != nullptr);

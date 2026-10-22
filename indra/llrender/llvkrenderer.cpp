@@ -536,6 +536,28 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
     return true;
 }
 
+bool Program::isLive(const Program* p)
+{
+    std::lock_guard<std::mutex> lock(gPipeDoneMutex);
+    return gLivePrograms.count(const_cast<Program*>(p)) != 0;
+}
+
+void Program::poisonAll()
+{
+    std::lock_guard<std::mutex> lock(gPipeDoneMutex);
+    for (Program* p : gLivePrograms)
+    {
+        for (U32 k = 0; k < UC_COUNT; ++k)
+        {
+            if (!p->mShadow[k].empty())
+            {
+                memset(p->mShadow[k].data(), 0xCD, p->mShadow[k].size());
+                p->mDirty[k] = true;
+            }
+        }
+    }
+}
+
 void Program::destroy()
 {
     // background builds read this program's shader modules: wait for them, then drop what they delivered
@@ -2465,6 +2487,11 @@ void Renderer::beginRenderingIfNeeded()
         return;
     }
     mInBegin = true;
+    if (LLVkPassCensus::sOn && LLVkPassCensus::sMode == 2)
+    {
+        const std::string target = describeTarget();
+        LLVkPassCensus::renderPassBegin((std::string(mDepthRO ? "ro-depth " : "") + target + " | " + (mProgram ? mProgram->getName() : std::string("no program"))).c_str());
+    }
     ++mPassBegins;
     ++mPassBeginsTotal;
     ++mPassBeginAfter[mLastPassEnd];
@@ -3688,6 +3715,7 @@ void Renderer::applyState()
     for (U32 k = 0; k < UC_COUNT; ++k)
     {
         std::vector<U8>& shadow = mProgram->mShadow[k];
+        if (LLVkPassCensus::sOn && !shadow.empty()) LLVkPassCensus::classRead(mProgram->mCensus, k, (U32)shadow.size(), mProgram->mName.c_str());
         if (shadow.empty() || (!mProgram->mDirty[k] && mProgram->mRingFrame[k] == ring_key))
         {
             continue;

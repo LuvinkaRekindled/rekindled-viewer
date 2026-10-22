@@ -28,6 +28,7 @@
 #include "llvkformat.h"
 #include "llvkdlss.h"
 #include "llvkrt.h"
+#include "llvkpasscensus.h"
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
@@ -1229,6 +1230,7 @@ void sync_draw_state(Renderer& r, bool has_depth)
     {
         return;
     }
+    if (LLVkPassCensus::sOn) LLVkPassCensus::stateRead();
     // the translation is a function of the block, has_depth and the renderer's own state generation: when none changed it is skipped
     static LLVkState::Block last;
     static U32 last_gen = 0;
@@ -1294,6 +1296,7 @@ void sync_textures(Renderer& r, Program& program)
             continue;
         }
         const U32 cls = program.getSamplerClass(k);
+        if (LLVkPassCensus::sOn) LLVkPassCensus::unitRead(unit);
         const U32 slot_name = unit_texture(unit, cls);
         Tex* tex = tex_ptr(slot_name);
         if (sStatsEnabled)
@@ -1625,6 +1628,7 @@ void sync_uniform_blocks(Renderer& r, std::vector<U32>& used_buffers)
 {
     for (U32 i = 0; i < 4; ++i)
     {
+        if (LLVkPassCensus::sOn && sUboBinding[i]) LLVkPassCensus::uboRead(i);
         auto it = sUboBinding[i] ? sGL.mBuffers.find(sUboBinding[i]) : sGL.mBuffers.end();
         if (it != sGL.mBuffers.end() && it->second.mVk.valid())
         {
@@ -2155,6 +2159,7 @@ void slot_set(unsigned unit, unsigned name)
 {
     if (unit < 32)
     {
+        if (LLVkPassCensus::sOn) LLVkPassCensus::unitSet(unit);
         sUnitTex[unit] = name;
         if (name)
         {
@@ -2674,6 +2679,38 @@ void uniform_block_bind(unsigned index, unsigned buffer)
 //-----------------------------------------------------------------------------------------------------
 // F2.4: draw records (doc/vulkan/F2-draw-records.md)
 //-----------------------------------------------------------------------------------------------------
+
+void refusals(unsigned long long out[6])
+{
+    out[0] = sStats.mNoProgram; out[1] = sStats.mNoTarget; out[2] = sStats.mNoVertexInput; out[3] = sStats.mNoElement; out[4] = sStats.mRendererRefused; out[5] = sStats.mNotInFrame;
+}
+
+void pass_poison()
+{
+    const int mask = LLVkPassCensus::sPoisonMask;
+    if (mask & 1) Program::poisonAll();
+    if (mask & 2) for (U32 u = 0; u < 32; ++u) sUnitTex[u] = 0;
+    if (mask & 4) for (U32 i = 0; i < 4; ++i) sUboBinding[i] = 0;
+    if (mask & 8) for (auto& a : sGL.mConstAttrib) { a[0] = a[1] = a[2] = 0.f; a[3] = 1.f; }
+    if (mask & 16) sBound = BoundVertices();
+    if (const LLVkState::Block* cur = (mask & 32) ? LLVkState::received() : nullptr)
+    {
+        LLVkState::Block b = *cur;
+        b.mRaster.mCull = VK_CULL_MODE_FRONT_BIT;
+        b.mDepth.mDepthTest = false;
+        b.mDepth.mDepthWrite = false;
+        b.mBlend.mEnable = true;
+        b.mBlend.mWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_B_BIT;
+        b.mScissorOn = true;
+        b.mScissor[0] = b.mScissor[1] = 0;
+        b.mScissor[2] = b.mScissor[3] = 1;
+        LLVkState::receive(b);
+    }
+    if ((mask & 64) && LLVkBridge::isReady())
+    {
+        Renderer::instance().setProgram(nullptr);
+    }
+}
 
 // CMD_DRAW2: the draw names its program and carries its vertex binding when it changed; the binding is written into the vertex input state the draw functions read
 void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
