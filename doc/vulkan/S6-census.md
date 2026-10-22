@@ -54,3 +54,17 @@ Draws still written the GL way (about 3,100):
 ## Note on the census counters
 
 `packet kinds, worker` (llvkworker.cpp, `on_shadow_packets`) counts per command buffer submit; the viewer's frame counter there is the submit count, 2 a presented frame. `LLUniCensus` now also counts records, draws, setBuffer and syncMatrices per zone (llgpuzonetimer.cpp, lluniformcensus.h, llvkasync.cpp `noteRecord` / `frontStart`).
+
+## 6. Alpha run cost on the worker: measured and cut (2026-10-22, runs s6f / s6g)
+
+`LL_VK_SCENE_TIMES=1` now splits the alpha run record (kind 29) further (`us per record: ... (program check, ranges loop, stamp+flight, uniforms, prepare_draw+vertex input, bindless flush)`). Before (s6f): 4.53 us a record = **2.13 us "copy"** + draw call 1.09 + ranges loop 0.44 + stamp/flight 0.13 + uniforms 0.19 + prepare_draw 0.18 + program check 0.11 + rest.
+
+- **The 2.13 us was a diagnostic reading the draw commands back from write-combined scratch memory** (`a.mZeroStatic += out[k].vertexCount == 0`, 3 reads a record at about 0.7 us each: the same gotcha as the resident tables, see the S2 notes). Fixed: counted from the source copy. Both loops (static and rigged).
+- **Uniforms by name**: `hasUniform` x2-4 and `setInts` x3-4 per record, hashing strings and building temporaries (two of the names are longer than the small string size). Now resolved once per program (`Program::packetUniforms()`, reset in `create`) and written with `setFloatsAt`.
+- **G-buffer draw records (kind 22) made the whole matrix table again for every record**: 26 records a frame x 7.7 us. Now one table per view / projection / prepare, shared by the records of a frame (`geo_draw`, `shared`).
+
+Result (s6g, same scene, 100 s): alpha record **4.53 -> 2.24 us**, kind 29 **3.7 -> 1.5 ms a frame**, kind 22 0.54 -> 0.19 ms a frame, `shadowPackets` 5.2-6.3 -> 3.4 ms a frame, frame pacing 15.3-15.9 -> 13.3 ms (the worker's operations 12.6-15.1 -> 13.2 of 13.26 ms: it is now the limiting thread outright; the main thread waited 0.8 ms a frame, `present` takes 4.5 ms). 0 slot-check findings, 0 stale, 0 refused, 0 device lost. Pictures not compared (the changes are CPU side only; Adam's eyes on the next run).
+
+Left in the alpha record (2.24 us): the draw call itself 1.07 (`drawPackets`), the ranges loop 0.41 (fragment lookup, safety once a fragment a frame, rebuild checks, slot check), stamp + flight 0.20 (crash diagnostics, kept), prepare_draw + vertex input 0.18, bindless flush 0.04.
+
+**Open, found on the way:** `geo_check_slots` (the crash hunt's safety check) costs **0.35 ms a frame** of the worker's `prepare` listing (about 6,400 slot looks a frame, 55 ns each, cache misses). It found 0 problems in 40M checks since the stand-in fill. Cheaper without losing the protection: do the freed-slot test only when a slot lifecycle event happened (a generation counter bumped at free / sweep), and leave "not in this frame's set" to the flush that the draw records already do. Not done: it is safety code, decide with Adam.

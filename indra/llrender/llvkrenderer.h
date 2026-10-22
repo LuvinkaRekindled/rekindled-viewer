@@ -53,6 +53,9 @@ public:
 
     // loose uniforms (write into the shadow copy; uploaded to the uniform ring on the next draw)
     bool hasUniform(const std::string& name) const { return mUniformIndex.count(name) != 0; }
+    // S6 (alpha run cost): the indices of the packet table uniforms (~0u: the program has none), looked up by name once per program, not per record
+    struct PacketUniforms { bool mResolved = false; U32 mTable = ~0u, mModels = ~0u, mTexmats = ~0u, mPbr = ~0u; };
+    const PacketUniforms& packetUniforms();
     // scalar / vector floats or ints; for arrays 'count' elements are written with std140 stride
     bool setFloats(const std::string& name, const F32* data, U32 components, U32 count = 1);
     bool setInts(const std::string& name, const S32* data, U32 components, U32 count = 1);
@@ -107,6 +110,7 @@ private:
     bool mValid = false;
     VkShaderModule mModules[3] = {};
     std::unordered_map<std::string, size_t> mUniformIndex;
+    PacketUniforms mPacketU;
     std::unordered_map<std::string, U32> mSamplerIndex;
     std::vector<U32> mSamplerUnits;
     std::vector<U8> mSamplerClass;      // 0 2D, 1 cube, 2 cube array, 3 2D array, 4 3D, 5 multisample (index into the GL per-unit texture bindings)
