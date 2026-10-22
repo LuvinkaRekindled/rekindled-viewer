@@ -5400,13 +5400,21 @@ struct LLSceneFragment
     std::vector<U32> mGeoRigged;                        // S4 B: the indices in mGeo of the served rigged items (their palettes are bound every frame)
     std::vector<U32> mGeoMoving;                        // S4 C: the moving matrix slots (256-2047) this fragment's items use (reference counted)
     // S5a-1 (LL_VK_SCENE_ALPHA=1): the plan of the group's static alpha draws (LLAlphaPlanView)
-    std::vector<const LLDrawInfo*> mAlphaOrder;
-    std::vector<LLAlphaPlanSeg> mAlphaPlan;
-    std::vector<GeoItem> mAlphaItems;                   // S5a-2: the served alpha draws as table items (type 26), in plan order
     struct AlphaPbr { U32 mRank; F32 mV[40]; };         // S5c: the PBR values of the alpha item mRank (see pbrAlphaPullV.glsl)
-    std::vector<AlphaPbr> mAlphaPbr;
-    bool mAlphaPlanned = false, mAlphaGlow = false, mAlphaDirect = false;
-    std::vector<U32> mAlphaGlowIdx;                     // plan indices of the served draws with a glow buffer
+    // S5a / S5d: the plan of the group's alpha draws, one set for the static draws (PASS_ALPHA, items of type 26) and one for the rigged ones (PASS_ALPHA_RIGGED, type 27)
+    struct AlphaSet
+    {
+        std::vector<const LLDrawInfo*> mOrder;
+        std::vector<LLAlphaPlanSeg> mPlan;
+        std::vector<GeoItem> mItems;                    // the served draws as table items, in plan order
+        std::vector<const LLDrawInfo*> mItemInfo;       // (their draw infos and wire numbers, by rank, for the view)
+        std::vector<U32> mItemWire;
+        std::vector<AlphaPbr> mPbr;
+        std::vector<U32> mGlowIdx;                      // plan indices of the served draws with a glow buffer
+        bool mGlow = false, mDirect = false;
+    };
+    AlphaSet mAlphaSet[2];
+    bool mAlphaPlanned = false;
 };
 
 namespace
@@ -5990,7 +5998,7 @@ static bool scene_alpha_plan_env()
     static const bool on = []() { const char* v = getenv("LL_VK_SCENE_ALPHA"); return v && atoi(v) != 0; }();
     return on;
 }
-// diagnostic (LL_VK_SCENE_ALPHA_ONLY=<mask>, default 63): which classes of draws the table takes: 1 lit, 2 fullbright, 4 draws with a texture matrix, 8 draws with a model matrix that is not a region matrix, 16 materials (S5b), 32 glTF blend (S5c)
+// diagnostic (LL_VK_SCENE_ALPHA_ONLY=<mask>, default 63): which classes of draws the table takes: 1 lit, 2 fullbright, 4 draws with a texture matrix, 8 draws with a model matrix that is not a region matrix, 16 materials (S5b), 32 glTF blend (S5c), 64 rigged draws (S5d)
 // S5b: the blend function pairs of the draws (standard alpha blend = id 0); a run key carries the id in bits 8 and up
 static std::vector<std::pair<int, int>> sAlphaBlendPairs;
 static U32 alpha_blend_id(int src, int dst)
@@ -6031,27 +6039,24 @@ bool ll_alpha_blend_pair(U32 id, int* src, int* dst)
 }
 static int scene_alpha_only()
 {
-    static const int mask = []() { const char* v = getenv("LL_VK_SCENE_ALPHA_ONLY"); return v ? atoi(v) : 63; }();
+    static const int mask = []() { const char* v = getenv("LL_VK_SCENE_ALPHA_ONLY"); return v ? atoi(v) : 127; }();
     return mask;
 }
 static U64 sAlphaPlanBuilds = 0, sAlphaPlanNs = 0, sAlphaPlanServed = 0, sAlphaPlanOld = 0, sAlphaPlanSegs = 0, sAlphaPlanNoSlot = 0, sAlphaPlanTexMatrix = 0;
-static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
+static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f, bool rigged)
 {
-    f.mAlphaOrder.clear();
-    f.mAlphaPlan.clear();
-    f.mAlphaItems.clear();
-    f.mAlphaPbr.clear();
-    f.mAlphaPlanned = false;
-    f.mAlphaGlow = false;
-    f.mAlphaDirect = false;
-    f.mAlphaGlowIdx.clear();
-    if (!scene_alpha_plan_env())
-    {
-        return;
-    }
+    LLSceneFragment::AlphaSet& ps = f.mAlphaSet[rigged ? 1 : 0];
+    ps.mOrder.clear();
+    ps.mPlan.clear();
+    ps.mItems.clear();
+    ps.mItemInfo.clear();
+    ps.mItemWire.clear();
+    ps.mPbr.clear();
+    ps.mGlow = false;
+    ps.mDirect = false;
+    ps.mGlowIdx.clear();
     const auto t0 = std::chrono::steady_clock::now();
-    f.mAlphaPlanned = true;
-    auto it = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
+    auto it = group->mDrawMap.find(rigged ? LLRenderPass::PASS_ALPHA_RIGGED : LLRenderPass::PASS_ALPHA);
     if (it == group->mDrawMap.end())
     {
         return;
@@ -6059,17 +6064,17 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
     const LLSpatialPartition* partition = group->getSpatialPartition();
     const U32 ptype = partition ? partition->mPartitionType : 0;
     const bool whole_old = !partition || ptype == LLViewerRegion::PARTITION_PARTICLE || ptype == LLViewerRegion::PARTITION_HUD_PARTICLE || ptype == LLViewerRegion::PARTITION_HUD || group->isHUDGroup();
-    const bool table = scene_geo_mode() >= 2 && !whole_old;
+    const bool table = scene_geo_mode() >= 2 && !whole_old && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed() && (scene_alpha_only() & 64)));
     for (LLDrawInfo* p : it->second)
     {
-        if (p->mAvatar)
+        if ((p->mAvatar != nullptr) != rigged)
         {
-            continue;       // (the rigged loop draws these; the static loop skips them)
+            continue;       // (the rigged loop draws the draws of avatars; the static loop skips them)
         }
         const LLVertexBuffer* vb = p->mVertexBuffer.get();
         if (vb && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
         {
-            f.mAlphaGlow = true;
+            ps.mGlow = true;
         }
         // S5b: a draw with a material (blend variant of its shader mask: 1, 5, 9, 13, the program gDeferredMaterialProgram[mask] of the old loop) is served by the materials pull program of the same mask
         const bool material = !LLPipeline::sRenderingHUDs && p->mMaterial.notNull();
@@ -6078,7 +6083,7 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
         const bool material_ok = material && gAlphaMaterialPullReady && (scene_alpha_only() & 16) && mmask < 16 && (mmask & 3) == 1;
         // S5c: a draw with a glTF blend material is served by the PBR pull program (the values in a PBR row; double sided = a key bit: the run is drawn with culling off)
         const bool pbr = !LLPipeline::sRenderingHUDs && p->mGLTFMaterial.notNull() && p->mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;
-        const bool pbr_ok = pbr && gAlphaPbrPullReady && (scene_alpha_only() & 32) && vb && vb->hasDataType(LLVertexBuffer::TYPE_TANGENT);
+        const bool pbr_ok = pbr && gAlphaPbrPullReady && (!rigged || gAlphaPbrSkinReady) && (scene_alpha_only() & 32) && vb && vb->hasDataType(LLVertexBuffer::TYPE_TANGENT);
         bool served = table && p->mCount && (pbr ? pbr_ok : (!p->mGLTFMaterial && (material ? material_ok : (((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0))))
             && blend_id != ~0u
             && vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16
@@ -6109,7 +6114,7 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 textures[1] = gltf->mNormalTexture.notNull() ? (LLViewerTexture*)gltf->mNormalTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sFlatNormalImagep.get();
                 textures[2] = gltf->mMetallicRoughnessTexture.notNull() ? (LLViewerTexture*)gltf->mMetallicRoughnessTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get();
                 textures[3] = media ? media : (gltf->mEmissiveTexture.notNull() ? (LLViewerTexture*)gltf->mEmissiveTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
-                served = LLRenderPass::pbrAlphaEntry(*p, item.mE);
+                served = LLRenderPass::pbrAlphaEntry(*p, item.mE, rigged);
                 if (served)
                 {
                     static const int infos[4] = { LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR, LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL, LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS, LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE };
@@ -6128,7 +6133,7 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
             }
             else
             {
-                served = LLRenderPass::geometryEntry(*p, material ? &material_info : nullptr, item.mE, textures, false, true);
+                served = LLRenderPass::geometryEntry(*p, material ? &material_info : nullptr, item.mE, textures, rigged, true);
             }
             if (served)
             {
@@ -6178,14 +6183,14 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 }
             }
         }
-        const U32 key = (pbr ? 18u : (material ? 2u + mmask : (p->mFullbright ? 1u : 0u))) | (blend_id == ~0u ? 0u : blend_id << 8) | ((pbr && p->mGLTFMaterial->mDoubleSided) ? (1u << 16) : 0u);
-        const U32 index = (U32)f.mAlphaOrder.size();
-        f.mAlphaOrder.push_back(p);
+        const U32 key = (pbr ? 18u : (material ? 2u + mmask : (p->mFullbright ? 1u : 0u))) | (blend_id == ~0u ? 0u : blend_id << 8) | ((pbr && p->mGLTFMaterial->mDoubleSided) ? (1u << 16) : 0u) | (rigged ? (1u << 17) : 0u);
+        const U32 index = (U32)ps.mOrder.size();
+        ps.mOrder.push_back(p);
         if (served)
         {
             if (vb && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
             {
-                f.mAlphaGlowIdx.push_back(index);
+                ps.mGlowIdx.push_back(index);
             }
             if (vb)
             {
@@ -6200,32 +6205,37 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 }
             }
             item.mInfo = p;
-            item.mType = 26;
+            item.mType = rigged ? 27 : 26;
             item.mServed = true;
         }
-        if (!f.mAlphaPlan.empty() && f.mAlphaPlan.back().mServed == served && (!served || f.mAlphaPlan.back().mKey == key))
+        if (!ps.mPlan.empty() && ps.mPlan.back().mServed == served && (!served || ps.mPlan.back().mKey == key))
         {
-            ++f.mAlphaPlan.back().mCount;
+            ++ps.mPlan.back().mCount;
         }
         else
         {
-            f.mAlphaPlan.push_back({ index, 1u, served ? key : 0u, served, (U32)f.mAlphaItems.size() });
+            ps.mPlan.push_back({ index, 1u, served ? key : 0u, served, (U32)ps.mItems.size() });
         }
         if (served)
         {
             if (pbr_block)
             {
                 LLSceneFragment::AlphaPbr block;
-                block.mRank = (U32)f.mAlphaItems.size();
+                block.mRank = (U32)ps.mItems.size();
                 memcpy(block.mV, pbr_values, sizeof(block.mV));
-                f.mAlphaPbr.push_back(block);
+                ps.mPbr.push_back(block);
             }
-            f.mAlphaItems.push_back(item);
+            ps.mItems.push_back(item);
         }
         (served ? sAlphaPlanServed : sAlphaPlanOld) += 1;
     }
-    f.mAlphaDirect = f.mAlphaOrder.size() == it->second.size();
-    sAlphaPlanSegs += f.mAlphaPlan.size();
+    ps.mDirect = ps.mOrder.size() == it->second.size();
+    for (const LLSceneFragment::GeoItem& gi : ps.mItems)
+    {
+        ps.mItemInfo.push_back(gi.mInfo);
+    }
+    ps.mItemWire.assign(ps.mItems.size(), 0);
+    sAlphaPlanSegs += ps.mPlan.size();
     ++sAlphaPlanBuilds;
     sAlphaPlanNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
     if (sAlphaPlanBuilds % 4000 == 0)
@@ -6235,7 +6245,23 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
     }
 }
 
-int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out)
+static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
+{
+    f.mAlphaPlanned = false;
+    for (LLSceneFragment::AlphaSet& ps : f.mAlphaSet)
+    {
+        ps = LLSceneFragment::AlphaSet();
+    }
+    if (!scene_alpha_plan_env())
+    {
+        return;
+    }
+    f.mAlphaPlanned = true;
+    scene_alpha_plan_fill_set(group, f, false);
+    scene_alpha_plan_fill_set(group, f, true);
+}
+
+int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged)
 {
     const LLSceneFragment* f = group->mSceneFragment;
     if (!f || !f->mAlphaPlanned)
@@ -6246,15 +6272,18 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out)
     {
         return 2;
     }
-    out.mOrder = f->mAlphaOrder.data();
-    out.mOrderCount = (U32)f->mAlphaOrder.size();
-    out.mSegs = f->mAlphaPlan.data();
-    out.mSegCount = (U32)f->mAlphaPlan.size();
-    out.mGlow = f->mAlphaGlow;
+    const LLSceneFragment::AlphaSet& ps = f->mAlphaSet[rigged ? 1 : 0];
+    out.mOrder = ps.mOrder.data();
+    out.mOrderCount = (U32)ps.mOrder.size();
+    out.mSegs = ps.mPlan.data();
+    out.mSegCount = (U32)ps.mPlan.size();
+    out.mGlow = ps.mGlow;
+    out.mItemInfo = ps.mItemInfo.data();
+    out.mItemWire = ps.mItemWire.data();
     out.mHandle = f->mGeoHandle;
-    out.mDirect = f->mAlphaDirect;
-    out.mGlowIdx = f->mAlphaGlowIdx.data();
-    out.mGlowCount = (U32)f->mAlphaGlowIdx.size();
+    out.mDirect = ps.mDirect;
+    out.mGlowIdx = ps.mGlowIdx.data();
+    out.mGlowCount = (U32)ps.mGlowIdx.size();
     return 1;
 }
 
@@ -6449,7 +6478,7 @@ static void scene_alpha_register(LLSceneFragment* f)
 // S3 G3: a new fragment with served entries gets a handle, its textures go into the registry (names as the registry has them), and the worker gets it (kind 20, with the names)
 static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
 {
-    if (f->mGeoServedCount == 0 && f->mAlphaItems.empty())
+    if (f->mGeoServedCount == 0 && f->mAlphaSet[0].mItems.empty() && f->mAlphaSet[1].mItems.empty())
     {
         return;
     }
@@ -6483,10 +6512,15 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
             wire.push_back({ item.mE, item.mType });
         }
     }
-    for (LLSceneFragment::GeoItem& item : f->mAlphaItems)
+    for (LLSceneFragment::AlphaSet& ps : f->mAlphaSet)
     {
-        item.mWire = (U32)wire.size();
-        wire.push_back({ item.mE, item.mType });        // S5a-2: the alpha items follow, in plan order: the worker numbers them in this order
+        for (size_t k = 0; k < ps.mItems.size(); ++k)
+        {
+            LLSceneFragment::GeoItem& item = ps.mItems[k];
+            item.mWire = (U32)wire.size();
+            ps.mItemWire[k] = item.mWire;
+            wire.push_back({ item.mE, item.mType });        // S5a-2: the alpha items follow, the static ones then the rigged ones, each in plan order: the worker numbers them in this order
+        }
     }
     if (sGeoFragByHandle.size() <= handle)
     {
@@ -6494,7 +6528,8 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
     }
     sGeoFragByHandle[handle] = f;
     struct PbrWireOut { U32 mItem; U32 mPad[3]; F32 mV[40]; };
-    blob.resize(wire.size() * sizeof(wire[0]) + f->mGeoTex.size() * sizeof(U32) + f->mAlphaPbr.size() * sizeof(PbrWireOut));
+    const size_t pbr_count = f->mAlphaSet[0].mPbr.size() + f->mAlphaSet[1].mPbr.size();
+    blob.resize(wire.size() * sizeof(wire[0]) + f->mGeoTex.size() * sizeof(U32) + pbr_count * sizeof(PbrWireOut));
     U32* names = (U32*)(blob.data() + wire.size() * sizeof(wire[0]));
     for (size_t k = 0; k < f->mGeoTex.size(); ++k)
     {
@@ -6514,16 +6549,20 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
     memcpy(blob.data(), wire.data(), wire.size() * sizeof(wire[0]));
     {   // S5c: the PBR values of the alpha items that have a glTF material, after the names
         PbrWireOut* pbr_out = (PbrWireOut*)(names + f->mGeoTex.size());
-        for (size_t k = 0; k < f->mAlphaPbr.size(); ++k)
+        size_t at = 0;
+        for (LLSceneFragment::AlphaSet& ps : f->mAlphaSet)
         {
-            memset(&pbr_out[k], 0, sizeof(PbrWireOut));
-            pbr_out[k].mItem = f->mAlphaItems[f->mAlphaPbr[k].mRank].mWire;
-            memcpy(pbr_out[k].mV, f->mAlphaPbr[k].mV, sizeof(pbr_out[k].mV));
+            for (size_t k = 0; k < ps.mPbr.size(); ++k, ++at)
+            {
+                memset(&pbr_out[at], 0, sizeof(PbrWireOut));
+                pbr_out[at].mItem = ps.mItems[ps.mPbr[k].mRank].mWire;
+                memcpy(pbr_out[at].mV, ps.mPbr[k].mV, sizeof(pbr_out[at].mV));
+            }
         }
     }
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 20;
-    header.mMatrices = (U32)f->mAlphaPbr.size();
+    header.mMatrices = (U32)pbr_count;
     header.mFragment = handle;
     header.mEntries = (U32)wire.size();
     header.mPaletteFloats = (U32)f->mGeoTex.size();

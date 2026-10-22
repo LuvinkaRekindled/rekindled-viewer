@@ -5923,6 +5923,7 @@ namespace
 const U32 kGeoCapacity = 131072;
 const U32 kGeoTypes = 13;
 const U32 kGeoAlphaType = 2 * kGeoTypes;       // S5a: the item type of the alpha items
+const U32 kGeoAlphaRiggedType = 2 * kGeoTypes + 1;       // S5d: ... of the rigged alpha items (weights and palette, indexed draws)
 const U32 kPbrCapacity = 16384;                // S5c: rows of PBR values (160 bytes each) for the alpha items with a glTF material
 struct PbrWire { U32 mItem; U32 mPad[3]; F32 mV[40]; };        // kind 20, after the texture names: the PBR values of the wire item mItem
 struct GeoGpuG
@@ -5948,6 +5949,8 @@ struct GeoFrag
     std::vector<U32> mTexSlot;          // the slot the entries were last written with
     std::vector<VkDrawIndirectCommand> mCmds;   // the draws of its usable items, sorted by pass type
     std::vector<U32> mPbrOfItem;                // S5c: per item, its PBR row + 1 (0 = none)
+    std::vector<VkDrawIndexedIndirectCommand> mARCmds;      // S5d: the draws of its rigged alpha items (type 27), in item order: indexed, the count 0 until the viewer bound a palette this frame
+    std::vector<U32> mARCount0, mARItem, mARItemCmd;        // ... their index counts, the item of each command, the command of each item (~0u: none)
     std::vector<VkDrawIndirectCommand> mACmds;  // S5a: the draws of its alpha items (type 26), in item order, one per item (count 0 when its buffers are not usable): a run names a range of them
     U32 mTypeFirst[kGeoTypes + 1] = {};
     // S4 B: the rigged items (types 13-25, drawn indexed: the hardware reads the indices): commands sorted by rigged type and buffer pair, runs of one pair, the item -> command map
@@ -6200,7 +6203,7 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mMatrix);
-        if (items[i].mType == kGeoAlphaType)
+        if (items[i].mType == kGeoAlphaType || items[i].mType == kGeoAlphaRiggedType)
         {
             f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mPad3);      // S5a: the texture matrix slot indexes the pass's tables too
         }
@@ -6398,7 +6401,7 @@ void geo_write_items(GeoFrag& f)
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;
-        if (f.mItems[i].mType == kGeoAlphaType)
+        if (f.mItems[i].mType == kGeoAlphaType || f.mItems[i].mType == kGeoAlphaRiggedType)
         {
             g.mPad[0] = e.mPad3;            // S5a: the slot of the draw's texture matrix (0 = none)
             g.mPad[1] = (i < f.mPbrOfItem.size() && f.mPbrOfItem[i]) ? f.mPbrOfItem[i] - 1 : 0;       // S5c: its PBR row
@@ -6467,6 +6470,22 @@ void geo_build_commands(GeoFrag& f)
         }
     }
     f.mRTypeFirst[kGeoTypes] = (U32)f.mRRuns.size();
+    // S5d: the rigged alpha items, in item order (indexed draws; the count is 0 until a palette is bound this frame)
+    f.mARCmds.clear();
+    f.mARCount0.clear();
+    f.mARItem.clear();
+    f.mARItemCmd.assign(f.mItems.size(), ~0u);
+    for (size_t i = 0; i < f.mItems.size(); ++i)
+    {
+        if (f.mItems[i].mType == kGeoAlphaRiggedType)
+        {
+            const bool ok = f.mPairs[f.mPairOf[i]].mOk;
+            f.mARItemCmd[i] = (U32)f.mARCmds.size();
+            f.mARItem.push_back((U32)i);
+            f.mARCmds.push_back({ ok && f.mPalAddr[i] ? f.mItems[i].mE.mIndexCount : 0u, 1u, f.mItems[i].mE.mFirstIndex, 0, f.mSlots[i] });
+            f.mARCount0.push_back(ok ? f.mItems[i].mE.mIndexCount : 0u);
+        }
+    }
     // S5a: the alpha items, in item order
     f.mACmds.clear();
     for (size_t i = 0; i < f.mItems.size(); ++i)
@@ -6669,7 +6688,7 @@ void geo_stale_check(const std::vector<GeoFrag*>& listed)
         {
             usable += f->mPairs[f->mPairOf[i]].mOk ? 1 : 0;
         }
-        if (usable != f->mCmds.size() + f->mRCmds.size() + f->mACmds.size())
+        if (usable != f->mCmds.size() + f->mRCmds.size() + f->mACmds.size() + f->mARCmds.size())
         {
             ++s.mStaleCmd;
             stale = true;
@@ -6765,9 +6784,13 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             c.indexCount = 0;           // S4 B: a rigged item draws only when the viewer bound a palette for it in THIS frame (below): one that was not (its fragment replaced during the frame, ...) would use a palette address of an older frame
         }
+        for (VkDrawIndexedIndirectCommand& c : f->mARCmds)
+        {
+            c.indexCount = 0;           // S5d: a rigged alpha item draws only when the viewer bound a palette for it in THIS frame (kind 31)
+        }
         listed.push_back(f);
         items_frame += f->mItems.size();
-        s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size() - f->mRCmds.size() - f->mACmds.size();
+        s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size() - f->mRCmds.size() - f->mACmds.size() - f->mARCmds.size();
         for (U32 t = 0; t < kGeoTypes; ++t)
         {
             counts[t] += f->mTypeFirst[t + 1] - f->mTypeFirst[t];
@@ -7187,6 +7210,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     struct Range { U32 mHandle, mFirst, mCount; };
     const Range* ranges = (const Range*)blob;
+    const bool rigged_run = h.mPass == 1;       // S5d: the ranges are of the rigged alpha items (indexed draws)
     t0 = std::chrono::steady_clock::now();
     static thread_local std::vector<std::pair<GeoFrag*, Range>> todo;
     todo.clear();
@@ -7206,12 +7230,13 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         f->mListedFrame = frame_now;
         Range rg = ranges[i];
-        if (rg.mFirst >= f->mACmds.size())
+        const size_t avail = rigged_run ? f->mARCmds.size() : f->mACmds.size();
+        if (rg.mFirst >= avail)
         {
             ++a.mBadRange;
             continue;
         }
-        rg.mCount = std::min<U32>(rg.mCount, (U32)f->mACmds.size() - rg.mFirst);
+        rg.mCount = std::min<U32>(rg.mCount, (U32)(avail - rg.mFirst));
         todo.push_back({ f, rg });
         total += rg.mCount;
     }
@@ -7219,12 +7244,22 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         return;
     }
-    Renderer::ScratchAlloc cmds = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * total);
+    Renderer::ScratchAlloc cmds = r.allocVertexScratch((rigged_run ? sizeof(VkDrawIndexedIndirectCommand) : sizeof(VkDrawIndirectCommand)) * total);
     if (!cmds.mPtr)
     {
         ++a.mScratchFail;
         return;
     }
+    if (rigged_run)
+    {
+        VkDrawIndexedIndirectCommand* out = (VkDrawIndexedIndirectCommand*)cmds.mPtr;
+        for (const auto& t : todo)
+        {
+            memcpy(out, t.first->mARCmds.data() + t.second.mFirst, t.second.mCount * sizeof(VkDrawIndexedIndirectCommand));
+            out += t.second.mCount;
+        }
+    }
+    else
     {
         VkDrawIndirectCommand* out = (VkDrawIndirectCommand*)cmds.mPtr;
         for (const auto& t : todo)
@@ -7278,6 +7313,50 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     r.bindlessFlush();
     if (timed) a.mNsState += geo_ns(t0);
     t0 = std::chrono::steady_clock::now();
+    if (rigged_run)
+    {
+        // runs of one buffer pair: the index buffer bound, one indirect indexed draw
+        size_t cursor = 0;
+        U32 drawn = 0;
+        for (const auto& t : todo)
+        {
+            GeoFrag* f = t.first;
+            U32 k = 0;
+            while (k < t.second.mCount)
+            {
+                const U32 pair = f->mPairOf[f->mARItem[t.second.mFirst + k]];
+                U32 e = k + 1;
+                while (e < t.second.mCount && f->mPairOf[f->mARItem[t.second.mFirst + e]] == pair)
+                {
+                    ++e;
+                }
+                Buf* ib = packet_buffer(f->mPairs[pair].mIb);
+                if (ib && ib->mVk.valid())
+                {
+                    r.setIndexBuffer(ib->mVk.mBuffer, ib->mArena.mOffset, VK_INDEX_TYPE_UINT16);
+                    if (r.drawPacketsIndexed(nullptr, e - k, cmds.mBuffer, cmds.mOffset + (VkDeviceSize)(cursor + k) * sizeof(VkDrawIndexedIndirectCommand)))
+                    {
+                        drawn += e - k;
+                    }
+                    else
+                    {
+                        ++a.mRefused;
+                        ++sStats.mRendererRefused;
+                    }
+                }
+                k = e;
+            }
+            cursor += t.second.mCount;
+        }
+        if (drawn && sStatsEnabled)
+        {
+            sStats.mDone += drawn;
+        }
+        sDraws += drawn;
+        sDrawsTotal += drawn;
+    }
+    else
+    {
     if (r.drawPackets(nullptr, (U32)total, cmds.mBuffer, cmds.mOffset))
     {
         if (sStatsEnabled)
@@ -7292,6 +7371,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     sDraws += (U32)total;
     sDrawsTotal += (U32)total;
+    }
     if (timed) a.mNsDraw += geo_ns(t0);
     ++a.mRecords;
     a.mRanges += h.mEntries;
@@ -7313,9 +7393,50 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
+// kind 31 (S5d): the palettes of this frame for the rigged alpha items. Blob: mEntries x { fragment handle, item (its number in the fragment's wire list), the palette's offset in the frame's shared list
+// (~0u: none), joints }. The row of the item gets the palette address and joint count, its command the index count: an item without a binding this frame draws nothing (as the rigged G-buffer items).
+void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!sGeo.mReady || sGeo.mPreparedFrame != Context::instance().getFrameNumber())
+    {
+        return;
+    }
+    struct Binding { U32 mHandle, mItem, mOffset, mJoints; };
+    const Binding* bindings = (const Binding*)blob;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const Binding& b = bindings[i];
+        GeoFrag* f = geo_find(b.mHandle);
+        if (!f || b.mItem >= f->mItems.size() || b.mItem >= f->mARItemCmd.size() || f->mARItemCmd[b.mItem] == ~0u)
+        {
+            continue;
+        }
+        const U32 cmd = f->mARItemCmd[b.mItem];
+        const U64 pal = b.mOffset != ~0u ? palette_address(b.mOffset) : 0;
+        GeoGpuG& row = sGeo.mT[f->mSlots[b.mItem]];
+        if (pal)
+        {
+            f->mPalAddr[b.mItem] = pal;
+            f->mPalJoints[b.mItem] = b.mJoints;
+            row.mPalette[0] = (U32)pal;
+            row.mPalette[1] = (U32)(pal >> 32);
+            row.mJoints = b.mJoints;
+            f->mARCmds[cmd].indexCount = f->mARCount0[cmd];
+        }
+        else
+        {
+            f->mARCmds[cmd].indexCount = 0;
+        }
+    }
+}
+
 void geo_dispatch(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if (h.mKind == 29)
+    if (h.mKind == 31)
+    {
+        geo_alpha_palettes(h, blob);
+    }
+    else if (h.mKind == 29)
     {
         geo_alpha_draw(h, blob);
     }
@@ -7445,7 +7566,7 @@ static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const 
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if ((h.mKind >= 20 && h.mKind <= 24) || h.mKind == 29)
+    if ((h.mKind >= 20 && h.mKind <= 24) || h.mKind == 29 || h.mKind == 31)
     {
         geo_dispatch(h, blob);      // <FS> S3 G2: the scene geometry table
         return;

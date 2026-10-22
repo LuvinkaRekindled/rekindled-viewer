@@ -171,13 +171,11 @@ void main()
     vary_normal = normalize(normal_matrix * normal);
 #endif
     mat4 texmat = mat4(1.0);
-#ifndef HAS_SKIN
     if (pk.pad.x != 0u)
     {
         texmat = GeoTexMatrices(ll_packet_texmats).t[pk.pad.x];
         vary_texcoord0 = (texmat * vec4(vary_texcoord0, 0.0, 1.0)).xy;
     }
-#endif
     vertex_color = unpackUnorm4x8(GeoWords(pk.colors).w[index]);
 
 #ifdef HAS_NORMAL_MAP

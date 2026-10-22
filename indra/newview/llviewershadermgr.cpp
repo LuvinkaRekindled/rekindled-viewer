@@ -177,6 +177,12 @@ bool                       gAlphaPullReady = false;
 bool                       gAlphaMaterialPullReady = false;
 LLShaderProgram            gDeferredPBRAlphaPullProgram;
 bool                       gAlphaPbrPullReady = false;
+LLShaderProgram            gDeferredAlphaPullSkinProgram;
+LLShaderProgram            gDeferredFullbrightAlphaPullSkinProgram;
+LLShaderProgram            gDeferredPBRAlphaPullSkinProgram;
+bool                       gAlphaRiggedPullReady = false;
+static bool                gAlphaLitSkinReady = false;      // the lit and the fullbright rigged alpha programs exist (they are made before the materials ones)
+bool                       gAlphaPbrSkinReady = false;
 LLShaderProgram            gDeferredMaterialPullProgram[16];
 LLShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
 LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
@@ -1183,6 +1189,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAlphaPullProgram.unload();
         gDeferredFullbrightAlphaPullProgram.unload();
         gDeferredPBRAlphaPullProgram.unload();
+        gDeferredAlphaPullSkinProgram.unload();
+        gDeferredFullbrightAlphaPullSkinProgram.unload();
+        gDeferredPBRAlphaPullSkinProgram.unload();
+        gAlphaRiggedPullReady = false;
+        gAlphaLitSkinReady = false;
+        gAlphaPbrSkinReady = false;
         gAlphaPbrPullReady = false;
         gAlphaPullReady = false;
         for (LLShaderProgram& pull : gDeferredMaterialPullProgram)
@@ -2117,6 +2129,120 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
     }
 
+    // <FS> S5d: the rigged variants of the alpha pull programs: the same vertex shaders with HAS_SKIN (weights and palette read by address) and indexed draws. Optional.
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        bool rigged_ok = true;
+        for (int i = 0; i < 2 && rigged_ok; ++i)
+        {
+            const bool fullbright = i == 1;
+            LLShaderProgram* shader = fullbright ? &gDeferredFullbrightAlphaPullSkinProgram : &gDeferredAlphaPullSkinProgram;
+            shader->mName = fullbright ? "Deferred Fullbright Alpha Pull Skin Shader" : "Deferred Alpha Pull Skin Shader";
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            if (fullbright)
+            {
+                shader->mFeatures.hasAtmospherics = true;
+                shader->mFeatures.isDeferred = true;
+                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+                shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
+                shader->addPermutation("HAS_ALPHA_MASK", "1");
+                shader->addPermutation("IS_ALPHA", "1");
+                shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
+            }
+            else
+            {
+                shader->mFeatures.calculatesLighting = false;
+                shader->mFeatures.hasLighting = false;
+                shader->mFeatures.isAlphaLighting = true;
+                shader->mFeatures.hasAtmospherics = true;
+                shader->mFeatures.hasShadows = use_sun_shadow;
+                shader->mFeatures.hasReflectionProbes = true;
+                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+                shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
+                shader->addPermutation("USE_VERTEX_COLOR", "1");
+                shader->addPermutation("HAS_ALPHA_MASK", "1");
+                shader->addPermutation("USE_INDEXED_TEX", "1");
+                if (use_sun_shadow)
+                {
+                    shader->addPermutation("HAS_SUN_SHADOW", "1");
+                }
+            }
+            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
+            shader->addPermutation("HAS_SKIN", "1");
+            if (ll_rigged_indexed())
+            {
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            rigged_ok = shader->createShader();
+            if (!rigged_ok)
+            {
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the rigged alpha pass stays on the old path" << LL_ENDL;
+                shader->unload();
+            }
+            else if (!fullbright)
+            {
+                shader->mFeatures.calculatesLighting = true;
+                shader->mFeatures.hasLighting = true;
+            }
+        }
+        gAlphaLitSkinReady = rigged_ok;
+        // ... and the PBR one
+        gAlphaPbrSkinReady = false;
+        if (gAlphaPbrPullReady)
+        {
+            LLShaderProgram* shader = &gDeferredPBRAlphaPullSkinProgram;
+            shader->mName = "Deferred PBR Alpha Pull Skin Shader";
+            shader->mFeatures.calculatesLighting = false;
+            shader->mFeatures.hasLighting = false;
+            shader->mFeatures.isAlphaLighting = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasShadows = use_sun_shadow;
+            shader->mFeatures.isDeferred = true;
+            shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
+            shader->mShaderFiles.clear();
+            shader->mShaderFiles.push_back(make_pair("deferred/pbrAlphaPullV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", ShaderStage::Fragment));
+            shader->clearPermutations();
+            shader->addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", LLMaterial::DIFFUSE_ALPHA_MODE_BLEND));
+            shader->addPermutation("HAS_NORMAL_MAP", "1");
+            shader->addPermutation("HAS_SPECULAR_MAP", "1");
+            shader->addPermutation("HAS_EMISSIVE_MAP", "1");
+            shader->addPermutation("USE_VERTEX_COLOR", "1");
+            shader->addPermutation("LL_BINDLESS_PBR", "1");
+            shader->addPermutation("HAS_SKIN", "1");
+            if (ll_rigged_indexed())
+            {
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            if (use_sun_shadow)
+            {
+                shader->addPermutation("HAS_SUN_SHADOW", "1");
+            }
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            if (shader->createShader())
+            {
+                shader->mFeatures.calculatesLighting = true;
+                shader->mFeatures.hasLighting = true;
+                gAlphaPbrSkinReady = true;
+            }
+            else
+            {
+                LL_WARNS("ShadowPackets") << "the PBR alpha pull skin shader could not be made: the rigged PBR alpha draws stay on the old path" << LL_ENDL;
+                shader->unload();
+            }
+        }
+    }
+
     if (success)
     {
         gDeferredAvatarEyesProgram.mName = "Deferred Avatar Eyes Shader";
@@ -2564,6 +2690,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // (S5b: + 1, 5, 9, 13, the blend variants the alpha pass draws materials with; no rigged variant of those yet)
         static const U32 pull_indices[] = { 0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 1, 5, 9, 13 };
         bool blend_pull_ok = true;
+        bool blend_skin_ok = true;
         for (U32 i : pull_indices)
         {
             LLShaderProgram& pull = gDeferredMaterialPullProgram[i];
@@ -2613,10 +2740,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             {
                 pull.mFeatures.hasLighting = true;       // (as the ordinary blend variants, see gDeferredMaterialProgram[1])
             }
-            if ((i & 3) == 1)
-            {
-                continue;       // S5b: the alpha pass has no rigged variant of these yet
-            }
 
             // <FS> S4 A1: the rigged variant of the same pass (HAS_SKIN)
             LLShaderProgram& skin = gDeferredMaterialPullSkinProgram[i];
@@ -2665,9 +2788,18 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             {
                 LL_WARNS("ShadowPackets") << "a rigged materials pull shader could not be made (index " << i << "): that rigged pass stays on the old path" << LL_ENDL;
                 skin.unload();
+                if ((i & 3) == 1)
+                {
+                    blend_skin_ok = false;
+                }
+            }
+            else if ((i & 3) == 1)
+            {
+                skin.mFeatures.hasLighting = true;       // (S5d: the rigged blend variants, as the ordinary ones)
             }
         }
         gAlphaMaterialPullReady = blend_pull_ok;
+        gAlphaRiggedPullReady = blend_skin_ok && gAlphaLitSkinReady;
     }
 
     if (success)
