@@ -168,6 +168,14 @@ void LLDrawPoolMaterials::kickGeometryBuilds()
     {
         kickGeometryBuild(LLRenderPass::PASS_SIMPLE_RIGGED, nullptr, true);
     }
+    if (gAlphaGlowPullReady)
+    {
+        kickGeometryBuild(LLRenderPass::PASS_GLOW);             // S6 X2
+        if (rigged_too)
+        {
+            kickGeometryBuild(LLRenderPass::PASS_GLOW_RIGGED, nullptr, true);
+        }
+    }
     if (gFullbrightPullReady)
     {
         kickGeometryBuild(LLRenderPass::PASS_FULLBRIGHT);       // S6 X1 (drawn after the lighting)

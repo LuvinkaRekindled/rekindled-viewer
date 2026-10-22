@@ -5711,6 +5711,7 @@ static const GeoType kGeoTypes[] =
     { LLRenderPass::PASS_NORMMAP, 8 }, { LLRenderPass::PASS_NORMMAP_MASK, 10 }, { LLRenderPass::PASS_NORMMAP_EMISSIVE, 11 },
     { LLRenderPass::PASS_NORMSPEC, 12 }, { LLRenderPass::PASS_NORMSPEC_MASK, 14 }, { LLRenderPass::PASS_NORMSPEC_EMISSIVE, 15 },
     { LLRenderPass::PASS_FULLBRIGHT, -1 },          // S6 X1: drawn in the post deferred pass (LLDrawPoolFullbright), the same entries as the diffuse pass
+    { LLRenderPass::PASS_GLOW, -1 },                // S6 X2: the glow pass (LLDrawPoolGlow): the emissive array, alpha only
 };
 static const size_t kGeoTypeCount = sizeof(kGeoTypes) / sizeof(kGeoTypes[0]);
 static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (llvkbridge.h)");
@@ -5734,6 +5735,10 @@ static bool geo_type_available(size_t t, bool rigged)
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT)
     {
         return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightPullReady);
+    }
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_GLOW)
+    {
+        return LLRenderPass::deferredPacketsEnabled() && gAlphaGlowPullReady && (!rigged || ll_rigged_packets_enabled());       // (gAlphaGlowPullReady: the plain and the skinned emissive pull programs)
     }
     return true;
 }
@@ -5928,12 +5933,12 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             }
             LLSceneFragment::GeoItem item = {};
             LLViewerTexture* textures[6];
-            if (!LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged, false, ll_pass_needs_normals(kGeoTypes[t].mType)))
+            if (!LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged, false, ll_pass_arrays(kGeoTypes[t].mType)))
             {
                 {   // S6 census: why, by type (logged with the fragment G entry builds)
                     static U64 reasons[2 * kGeoTypeCount][16] = {};
                     static U64 count = 0;
-                    ++reasons[t2][std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, rigged, false))];
+                    ++reasons[t2][std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, rigged, false, ll_pass_arrays(kGeoTypes[t].mType)))];
                     if (++count % 2000 == 0)
                     {
                         std::string text;
@@ -7099,7 +7104,7 @@ void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo*
         expected.push_back(params);
         LLVkBridge::GeoEntry fresh;
         LLViewerTexture* textures[6];
-        if (!LLRenderPass::geometryEntry(*params, materials, fresh, textures, false, false, ll_pass_needs_normals(type)))
+        if (!LLRenderPass::geometryEntry(*params, materials, fresh, textures, false, false, ll_pass_arrays(type)))
         {
             expected_fallback.push_back(params);
             continue;
@@ -7158,7 +7163,7 @@ void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo*
             ++s.mItems;
             LLVkBridge::GeoEntry fresh;
             LLViewerTexture* textures[6];
-            bool ok = LLRenderPass::geometryEntry(*item.mInfo, materials, fresh, textures, false, false, ll_pass_needs_normals(type));
+            bool ok = LLRenderPass::geometryEntry(*item.mInfo, materials, fresh, textures, false, false, ll_pass_arrays(type));
             const char* why = ok ? geo_entry_diff(item.mE, fresh) : "no longer eligible";
             if (!why)
             {
