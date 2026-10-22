@@ -503,6 +503,7 @@ private:
     VkDescriptorSetLayout mSet2Layout = VK_NULL_HANDLE;
     VkDescriptorPool mBindlessPool = VK_NULL_HANDLE;
     VkDescriptorSet mBindlessSet[Context::FRAMES_IN_FLIGHT] = {};
+    bool mBindlessFilled = false;       // <FS> every slot of every frame's set holds the stand-in from the first use on: a slot nothing has written yet can be read (a row naming it, a record made before its descriptor arrived) and then shows the stand-in instead of an undefined descriptor
     static constexpr U32 BINDLESS_TABLES = 4;               // set 2 bindings: 2D, cube, cube array, 2D shadow
     struct BindlessSlot
     {
