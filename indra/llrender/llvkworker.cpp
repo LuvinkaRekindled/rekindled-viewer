@@ -7621,7 +7621,8 @@ void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         return;
     }
-    const size_t row_bytes = sizeof(LLVkBridge::LightVolumeRow);
+    const bool spot = h.mPass == 1;
+    const size_t row_bytes = spot ? sizeof(LLVkBridge::SpotVolumeRow) : sizeof(LLVkBridge::LightVolumeRow);
     Renderer::ScratchAlloc rows = r.allocVertexScratch(row_bytes * h.mEntries);
     Renderer::ScratchAlloc cmds = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * h.mEntries);
     if (!rows.mPtr || !rows.mAddress || !cmds.mPtr)
@@ -7629,6 +7630,15 @@ void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     memcpy(rows.mPtr, blob, row_bytes * h.mEntries);
+    if (spot)
+    {   // the projected image: the GL name in the row becomes this frame's bindless slot
+        LLVkBridge::SpotVolumeRow* sr = (LLVkBridge::SpotVolumeRow*)rows.mPtr;
+        const LLVkBridge::SpotVolumeRow* src = (const LLVkBridge::SpotVolumeRow*)blob;
+        for (U32 i = 0; i < h.mEntries; ++i)
+        {
+            sr[i].mTexture = packet_texture_slot(r, src[i].mTexture);
+        }
+    }
     VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)cmds.mPtr;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
@@ -7648,6 +7658,10 @@ void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     r.setVertexInput(vi);
     r.setTopology(topology(LLVkFormat::TOP_TRIANGLE_FAN));
+    if (spot)
+    {
+        r.bindlessFlush();
+    }
     if (r.drawPackets(nullptr, h.mEntries, cmds.mBuffer, cmds.mOffset))
     {
         if (sStatsEnabled)

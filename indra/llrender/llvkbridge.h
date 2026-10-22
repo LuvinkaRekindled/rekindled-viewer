@@ -248,6 +248,9 @@ namespace LLVkBridge
     // kind 33 (S6 LV1): the light volumes of a deferred lighting pass in one record. The viewer has bound the pull light program (pointLightV with LL_LIGHT_PULL) and written the pass's uniforms and
     // matrices; blob = mEntries x LightVolumeRow. The worker draws each as one 8 vertex triangle fan (the fan of the box as seen from the camera side mCypher), the light read from the table by instance.
     struct LightVolumeRow { F32 mCenter[3]; F32 mSize; F32 mColor[3]; F32 mFalloff; U32 mCypher; U32 mClassic; U32 mPad[2]; };
+    // kind 33 with mPass 1 (LV2): the projectors: blob = mEntries x SpotVolumeRow (11 vec4: the light, the projector's matrix and values, the GL name of its image in mTexture, which the worker replaces by the
+    // bindless slot of the frame), drawn with the pull projector program (spotLightF with LL_PROJECTOR_PULL)
+    struct SpotVolumeRow { F32 mCenter[3]; F32 mSize; F32 mColor[3]; F32 mFalloff; U32 mCypher; U32 mClassic; U32 mTexture; S32 mShadowIndex; F32 mN[3]; F32 mNear; F32 mP[3]; F32 mRange; F32 mOrigin[3]; F32 mAmbiance; F32 mFocus; F32 mLod; F32 mAmbientLod; F32 mShadowFade; F32 mMat[16]; };
     struct GeoFragRef { U32 mId, mNameOffset, mNameCount; };
     struct GeoSlotMatrix { U32 mSlot; F32 mM[16]; };
     bool sceneGeoAvailable();       // the worker can keep and draw them (buffer addresses, indirect draws with a first instance, bindless textures)

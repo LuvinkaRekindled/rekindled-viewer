@@ -16859,6 +16859,56 @@ void LLPipeline::renderDeferredLighting()
                 LL_CPU_ZONE("lighting: projectors");
                 LL_PROFILE_GPU_ZONE("projectors");
                 LLRenderState::DepthScope depth(true, false);
+                // <FS> S6 LV2: the projectors in one record (each one's matrix, values and image in a row), the box fan made in the vertex shader
+                static const bool spot_pull_off = getenv("LL_VK_LIGHT_PULL") && getenv("LL_VK_LIGHT_PULL")[0] == '0';
+                const bool spot_pull = gSpotPullReady && !spot_pull_off && LLRenderPass::deferredPacketsEnabled() && LLVkBridge::sceneGeoAvailable();
+                if (spot_pull)
+                {
+                    static std::vector<LLVkBridge::SpotVolumeRow> spot_rows;
+                    spot_rows.clear();
+                    bindDeferredShader(gDeferredSpotLightPullProgram);
+                    for (LLDrawable::drawable_list_t::iterator iter = spot_lights.begin(); iter != spot_lights.end(); ++iter)
+                    {
+                        LLDrawable *drawablep = *iter;
+                        LLVOVolume *volume = drawablep->getVOVolume();
+
+                        LLVector4a center;
+                        center.load3(drawablep->getPositionAgent().mV);
+                        const F32* c = center.getF32ptr();
+                        F32        s = volume->getLightRadius() * 1.5f;
+
+                        sVisibleLightCount++;
+
+                        LLVkBridge::SpotVolumeRow row = {};
+                        LLViewerTexture* image = nullptr;
+                        spotLightRow(drawablep, row, image);
+                        LLColor3 col = volume->getLightLinearColor() * light_scale;
+                        row.mCenter[0] = c[0];
+                        row.mCenter[1] = c[1];
+                        row.mCenter[2] = c[2];
+                        row.mSize = s;
+                        row.mColor[0] = col.mV[0];
+                        row.mColor[1] = col.mV[1];
+                        row.mColor[2] = col.mV[2];
+                        row.mFalloff = volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF);
+                        row.mCypher = get_box_fan_indices(camera, center) / 8;
+                        row.mClassic = (psky->canAutoAdjust()) ? 1 : 0;
+                        row.mTexture = image ? gRender.getTexUnit(0)->prepareFast(image) : 0;
+                        spot_rows.push_back(row);
+                    }
+                    if (!spot_rows.empty())
+                    {
+                        gRender.syncMatrices();
+                        LLVkBridge::ShadowPacketsHeader header;
+                        header.mKind = 33;
+                        header.mPass = 1;
+                        header.mEntries = (U32)spot_rows.size();
+                        LLVkBridge::shadowPackets(header, spot_rows.data(), spot_rows.size() * sizeof(spot_rows[0]));
+                    }
+                    unbindDeferredShader(gDeferredSpotLightPullProgram);
+                }
+                else
+                {
                 bindDeferredShader(gDeferredSpotLightProgram);
 
                 mCubeVB->setBuffer();
@@ -16895,6 +16945,7 @@ void LLPipeline::renderDeferredLighting()
                 }
                 gDeferredSpotLightProgram.disableTexture(LLShaderMgr::DEFERRED_PROJECTION);
                 unbindDeferredShader(gDeferredSpotLightProgram);
+                }
             }
 
             {
@@ -17346,6 +17397,127 @@ void LLPipeline::setupSpotLight(LLShaderProgram& shader, LLDrawable* drawablep)
         }
     }
 
+}
+
+// <FS> S6 LV2: the values setupSpotLight writes as uniforms, as a row of the projector record; the same maths and the same side effects (which projectors get the two shadow maps)
+void LLPipeline::spotLightRow(LLDrawable* drawablep, LLVkBridge::SpotVolumeRow& row, LLViewerTexture*& image)
+{
+    LLVOVolume* volume = drawablep->getVOVolume();
+    LLVector3 params = volume->getSpotLightParams();
+
+    F32 fov = params.mV[0];
+    F32 focus = params.mV[1];
+
+    LLVector3 pos = drawablep->getPositionAgent();
+    LLQuaternion quat = volume->getRenderRotation();
+    LLVector3 scale = volume->getScale();
+
+    LLVector3 at_axis(0,0,-scale.mV[2]*0.5f);
+    at_axis *= quat;
+
+    LLVector3 np = pos+at_axis;
+    at_axis.normVec();
+
+    F32 dist = (scale.mV[1]*0.5f)/tanf(fov*0.5f);
+
+    LLVector3 origin = np - at_axis*dist;
+
+    LLMatrix4 light_mat(quat, LLVector4(origin,1.f));
+
+    glm::mat4 light_to_agent(glm::make_mat4((F32*) light_mat.mMatrix));
+    glm::mat4 light_to_screen = get_current_modelview() * light_to_agent;
+
+    glm::mat4 screen_to_light = glm::inverse(light_to_screen);
+
+    F32 s = volume->getLightRadius()*1.5f;
+    F32 near_clip = dist;
+    F32 width = scale.mV[VX];
+    F32 height = scale.mV[VY];
+    F32 far_clip = s+dist-scale.mV[VZ];
+
+    F32 fovy = fov;
+    F32 aspect = width/height;
+
+    glm::mat4 trans(0.5f, 0.0f, 0.0f, 0.0f,
+                        0.0f, 0.5f, 0.0f, 0.0f,
+                        0.0f, 0.0f, 0.5f, 0.0f,
+                        0.5f, 0.5f, 0.5f, 1.0f);
+
+    glm::vec3 p1(0, 0, -(near_clip+0.01f));
+    glm::vec3 p2(0, 0, -(near_clip+1.f));
+
+    glm::vec3 screen_origin(0, 0, 0);
+
+    p1 = mul_mat4_vec3(light_to_screen, p1);
+    p2 = mul_mat4_vec3(light_to_screen, p2);
+    screen_origin = mul_mat4_vec3(light_to_screen, screen_origin);
+
+    glm::vec3 n = p2-p1;
+    n = glm::normalize(n);
+
+    F32 proj_range = far_clip - near_clip;
+    glm::mat4 light_proj = glm::perspective(fovy, aspect, near_clip, far_clip);
+    screen_to_light = trans * light_proj * screen_to_light;
+    memcpy(row.mMat, glm::value_ptr(screen_to_light), sizeof(row.mMat));
+    row.mNear = near_clip;
+    row.mP[0] = p1.x; row.mP[1] = p1.y; row.mP[2] = p1.z;
+    row.mN[0] = n.x; row.mN[1] = n.y; row.mN[2] = n.z;
+    row.mOrigin[0] = screen_origin.x; row.mOrigin[1] = screen_origin.y; row.mOrigin[2] = screen_origin.z;
+    row.mRange = proj_range;
+    row.mAmbiance = params.mV[2];
+    S32 s_idx = -1;
+
+    for (U32 i = 0; i < 2; i++)
+    {
+        if (mShadowSpotLight[i] == drawablep)
+        {
+            s_idx = i;
+        }
+    }
+
+    row.mShadowIndex = s_idx;
+    row.mShadowFade = s_idx >= 0 ? 1.f - mSpotLightFade[s_idx] : 1.f;
+
+    if (!gCubeSnapshot)
+    {
+        LLDrawable* potential = drawablep;
+        F32 m_pri = volume->getSpotLightPriority();
+
+        for (U32 i = 0; i < 2; i++)
+        {
+            F32 pri = 0.f;
+
+            if (mTargetShadowSpotLight[i].notNull())
+            {
+                pri = mTargetShadowSpotLight[i]->getVOVolume()->getSpotLightPriority();
+            }
+
+            if (m_pri > pri)
+            {
+                LLDrawable* temp = mTargetShadowSpotLight[i];
+                mTargetShadowSpotLight[i] = potential;
+                potential = temp;
+                m_pri = pri;
+            }
+        }
+    }
+
+    LLViewerTexture* img = volume->getLightTexture();
+
+    if (img == NULL)
+    {
+        img = LLViewerFetchedTexture::sWhiteImagep;
+    }
+    image = img;
+    row.mFocus = focus;
+    row.mLod = 0.f;
+    row.mAmbientLod = 0.f;
+    if (img)
+    {
+        const F32 lod_range = logf((F32)img->getWidth())/logf(2.f);
+        row.mLod = lod_range;
+        row.mAmbientLod = llclamp((proj_range-focus)/proj_range*lod_range, 0.f, 1.f);
+    }
 }
 
 void LLPipeline::unbindDeferredShader(LLShaderProgram &shader)

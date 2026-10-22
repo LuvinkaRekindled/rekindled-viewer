@@ -31,6 +31,23 @@ uniform samplerCube environmentMap;
 uniform sampler2D lightMap;
 uniform sampler2D lightFunc;
 
+#ifdef LL_PROJECTOR_PULL
+// S6 LV2: the projector of the instance, from the vertex shader (the proj_mat, proj_p, proj_n, proj_focus, proj_lod, proj_range, proj_ambiance, color, size, classic_mode of the library are inputs too)
+flat in float vary_proj_near;
+flat in float vary_proj_ambient_lod;
+flat in vec3 vary_proj_origin;
+flat in int vary_proj_shadow_idx;
+flat in float vary_proj_shadow_fade;
+flat in float vary_light_falloff;
+#define proj_near vary_proj_near
+#define proj_ambient_lod vary_proj_ambient_lod
+#define proj_origin vary_proj_origin
+#define proj_shadow_idx vary_proj_shadow_idx
+#define shadow_fade vary_proj_shadow_fade
+#define falloff vary_light_falloff
+uniform float near_clip;
+uniform float far_clip;
+#else
 uniform mat4 proj_mat; //screen space to light space
 uniform float proj_near; //near clip for projection
 uniform vec3 proj_p; //plane projection is emitting from (in screen space)
@@ -42,12 +59,17 @@ uniform float proj_ambient_lod;
 uniform float proj_ambiance;
 uniform float near_clip;
 uniform float far_clip;
+#endif
 
+#ifndef LL_PROJECTOR_PULL
 uniform vec3 proj_origin; //origin of projection to be used for angular attenuation
+#endif
 uniform float sun_wash;
+#ifndef LL_PROJECTOR_PULL
 uniform int proj_shadow_idx;
 uniform float shadow_fade;
 uniform int classic_mode;
+#endif
 
 // Light params
 #if defined(MULTI_SPOTLIGHT)
@@ -55,9 +77,11 @@ uniform vec3 center;
 #else
 in vec3 trans_center;
 #endif
+#ifndef LL_PROJECTOR_PULL
 uniform float size;
 uniform vec3 color;
 uniform float falloff;
+#endif
 
 in vec4 vary_fragcoord;
 uniform vec2 screen_res;

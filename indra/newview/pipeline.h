@@ -44,6 +44,8 @@
 
 #include <stack>
 
+namespace LLVkBridge { struct SpotVolumeRow; }
+
 class LLViewerTexture;
 class LLFace;
 class LLViewerObject;
@@ -414,6 +416,7 @@ public:
     void passFastState(void* out);                           // <FS> U1: the state the Fast bind depends on (PassFastState in pipeline.cpp)
     void bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* light_target = nullptr, LLRenderTarget* depth_target = nullptr);
     void setupSpotLight(LLShaderProgram& shader, LLDrawable* drawablep);
+    void spotLightRow(LLDrawable* drawablep, struct LLVkBridge::SpotVolumeRow& row, LLViewerTexture*& image);        // <FS> S6 LV2: setupSpotLight's values as a row of the projector record (and its side effects)
 
     void unbindDeferredShader(LLShaderProgram& shader);
 

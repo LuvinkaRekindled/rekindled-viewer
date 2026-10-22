@@ -182,6 +182,8 @@ LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
 LLShaderProgram            gDeferredFullbrightAlphaMaskPullSkinProgram;
 LLShaderProgram            gDeferredPBROpaquePullProgram;                 // S6 X4: the glTF opaque / mask G-buffer pass from the scene table (pbrAlphaPullV + pbropaqueF)
 LLShaderProgram            gDeferredPBROpaquePullSkinProgram;
+LLShaderProgram            gDeferredSpotLightPullProgram;                 // S6 LV2: the projectors of a lighting pass from one record (spotLightF with LL_PROJECTOR_PULL)
+bool                       gSpotPullReady = false;
 LLShaderProgram            gDeferredLightPullProgram;                     // S6 LV1: the point light volumes of a lighting pass from one record (pointLightV with LL_LIGHT_PULL)
 bool                       gLightPullReady = false;
 bool                       gPbrOpaquePullReady = false;
@@ -1236,6 +1238,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gPbrOpaquePullReady = gPbrOpaquePullSkinReady = false;
         gDeferredLightPullProgram.unload();
         gLightPullReady = false;
+        gDeferredSpotLightPullProgram.unload();
+        gSpotPullReady = false;
         gDeferredPBRAlphaPullProgram.unload();
         gDeferredAlphaPullSkinProgram.unload();
         gDeferredFullbrightAlphaPullSkinProgram.unload();
@@ -2435,6 +2439,35 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             LL_WARNS("ShadowPackets") << "the deferred light pull shader could not be made: the point lights are drawn one at a time" << LL_ENDL;
             gDeferredLightPullProgram.unload();
+        }
+    }
+
+    // <FS> S6 LV2: the projectors of the lighting pass from one record. Optional.
+    gSpotPullReady = false;
+    if (success && gLightPullReady)
+    {
+        gDeferredSpotLightPullProgram.mName = "Deferred SpotLight Pull Shader";
+        gDeferredSpotLightPullProgram.mFeatures.hasSrgb = true;
+        gDeferredSpotLightPullProgram.mFeatures.isDeferred = true;
+        gDeferredSpotLightPullProgram.mFeatures.hasFullGBuffer = true;
+        gDeferredSpotLightPullProgram.mFeatures.hasShadows = true;
+        gDeferredSpotLightPullProgram.mShaderFiles.clear();
+        gDeferredSpotLightPullProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", ShaderStage::Vertex));
+        gDeferredSpotLightPullProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", ShaderStage::Fragment));
+        gDeferredSpotLightPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gDeferredSpotLightPullProgram.clearPermutations();
+        gDeferredSpotLightPullProgram.addPermutation("LL_LIGHT_PULL", "1");
+        gDeferredSpotLightPullProgram.addPermutation("LL_PROJECTOR_PULL", "1");
+        gDeferredSpotLightPullProgram.addPermutation("LL_BINDLESS_PROJECTOR", "1");
+        add_common_permutations(&gDeferredSpotLightPullProgram);
+        if (gDeferredSpotLightPullProgram.createShader())
+        {
+            gSpotPullReady = true;
+        }
+        else
+        {
+            LL_WARNS("ShadowPackets") << "the deferred projector pull shader could not be made: the projectors are drawn one at a time" << LL_ENDL;
+            gDeferredSpotLightPullProgram.unload();
         }
     }
 

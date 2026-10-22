@@ -46,6 +46,25 @@ flat out vec3 vary_light_color;
 flat out float vary_light_falloff;
 flat out float vary_light_size;
 flat out int vary_light_classic;
+#ifdef LL_PROJECTOR_PULL
+// S6 LV2: the projector rows are 11 vec4: centre+size, colour+falloff, (side, classic, slot, shadow index), n+near, p+range, origin+ambiance, (focus, lod, ambient lod, shadow fade), the 4 columns of proj_mat
+flat out mat4 vary_proj_mat;
+flat out vec3 vary_proj_n;
+flat out vec3 vary_proj_p;
+flat out vec3 vary_proj_origin;
+flat out float vary_proj_near;
+flat out float vary_proj_range;
+flat out float vary_proj_ambiance;
+flat out float vary_proj_focus;
+flat out float vary_proj_lod;
+flat out float vary_proj_ambient_lod;
+flat out float vary_proj_shadow_fade;
+flat out int vary_proj_shadow_idx;
+flat out uint vary_proj_slot;
+const uint kRowStride = 11u;
+#else
+const uint kRowStride = 3u;
+#endif
 #else
 in vec3 position;
 
@@ -60,15 +79,35 @@ void main()
 {
 #ifdef LL_LIGHT_PULL
     LightRows rows = LightRows(ll_light_table);
-    vec4 r0 = rows.v[uint(gl_InstanceIndex) * 3u];
-    vec4 r1 = rows.v[uint(gl_InstanceIndex) * 3u + 1u];
-    vec4 r2 = rows.v[uint(gl_InstanceIndex) * 3u + 2u];
+    uint at = uint(gl_InstanceIndex) * kRowStride;
+    vec4 r0 = rows.v[at];
+    vec4 r1 = rows.v[at + 1u];
+    vec4 r2 = rows.v[at + 2u];
     vec3 center = r0.xyz;
     float size = r0.w;
     vary_light_size = size;
     vary_light_color = r1.xyz;
     vary_light_falloff = r1.w;
     vary_light_classic = int(floatBitsToUint(r2.y));
+#ifdef LL_PROJECTOR_PULL
+    vary_proj_slot = floatBitsToUint(r2.z);
+    vary_proj_shadow_idx = int(floatBitsToUint(r2.w));
+    vec4 r3 = rows.v[at + 3u];
+    vec4 r4 = rows.v[at + 4u];
+    vec4 r5 = rows.v[at + 5u];
+    vec4 r6 = rows.v[at + 6u];
+    vary_proj_n = r3.xyz;
+    vary_proj_near = r3.w;
+    vary_proj_p = r4.xyz;
+    vary_proj_range = r4.w;
+    vary_proj_origin = r5.xyz;
+    vary_proj_ambiance = r5.w;
+    vary_proj_focus = r6.x;
+    vary_proj_lod = r6.y;
+    vary_proj_ambient_lod = r6.z;
+    vary_proj_shadow_fade = r6.w;
+    vary_proj_mat = mat4(rows.v[at + 7u], rows.v[at + 8u], rows.v[at + 9u], rows.v[at + 10u]);
+#endif
     uint corner = kFan[floatBitsToUint(r2.x) * 8u + uint(gl_VertexIndex)];
     vec3 position = vec3(((corner & 4u) != 0u) ? 1.0 : -1.0, ((corner & 2u) != 0u) ? 1.0 : -1.0, ((corner & 1u) != 0u) ? 1.0 : -1.0);
 #endif

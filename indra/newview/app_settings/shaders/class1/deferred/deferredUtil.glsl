@@ -50,8 +50,35 @@ SOFTWARE.
 
 uniform sampler2D normalMap;
 uniform sampler2D depthMap;
-uniform sampler2D projectionMap; // rgba
 uniform sampler2D brdfLut;
+
+#ifdef LL_PROJECTOR_PULL
+// S6 LV2 (doc/vulkan/S6-census.md): the projectors of a lighting pass drawn from one record: what the old pass wrote as uniforms before each projector comes from the vertex shader as flat inputs (the
+// light's row), the projected image from the bindless table by the slot in the row
+flat in mat4 vary_proj_mat;
+flat in vec3 vary_proj_n;
+flat in vec3 vary_proj_p;
+flat in float vary_proj_focus;
+flat in float vary_proj_lod;
+flat in float vary_proj_range;
+flat in float vary_proj_ambiance;
+flat in int vary_light_classic;
+flat in vec3 vary_light_color;
+flat in float vary_light_size;
+#define proj_mat vary_proj_mat
+#define proj_n vary_proj_n
+#define proj_p vary_proj_p
+#define proj_focus vary_proj_focus
+#define proj_lod vary_proj_lod
+#define proj_range vary_proj_range
+#define proj_ambiance vary_proj_ambiance
+#define classic_mode vary_light_classic
+#define color vary_light_color
+#define size vary_light_size
+#define PROJECTION_MAP_LOD(tc, lod) textureLod(ll_bindless_textures[nonuniformEXT(vary_proj_slot)], tc, lod)
+#define PROJECTION_MAP(tc) texture(ll_bindless_textures[nonuniformEXT(vary_proj_slot)], tc)
+#else
+uniform sampler2D projectionMap; // rgba
 
 // projected lighted params
 uniform mat4 proj_mat; //screen space to light space projector
@@ -67,6 +94,9 @@ uniform int classic_mode;
 // light params
 uniform vec3 color; // light_color
 uniform float size; // light_size
+#define PROJECTION_MAP_LOD(tc, lod) textureLod(projectionMap, tc, lod)
+#define PROJECTION_MAP(tc) texture(projectionMap, tc)
+#endif
 
 uniform mat4 inv_proj;
 uniform vec2 screen_res;
@@ -193,9 +223,9 @@ float getDepth(vec2 pos_screen)
 vec4 getTexture2DLodAmbient(vec2 tc, float lod)
 {
 #ifndef FXAA_GLSL_120
-    vec4 ret = textureLod(projectionMap, tc, lod);
+    vec4 ret = PROJECTION_MAP_LOD(tc, lod);
 #else
-    vec4 ret = texture(projectionMap, tc);
+    vec4 ret = PROJECTION_MAP(tc);
 #endif
     ret.rgb = srgb_to_linear(ret.rgb);
 
@@ -209,9 +239,9 @@ vec4 getTexture2DLodAmbient(vec2 tc, float lod)
 vec4 getTexture2DLodDiffuse(vec2 tc, float lod)
 {
 #ifndef FXAA_GLSL_120
-    vec4 ret = textureLod(projectionMap, tc, lod);
+    vec4 ret = PROJECTION_MAP_LOD(tc, lod);
 #else
-    vec4 ret = texture(projectionMap, tc);
+    vec4 ret = PROJECTION_MAP(tc);
 #endif
     ret.rgb = srgb_to_linear(ret.rgb);
 
@@ -256,9 +286,9 @@ vec3 getProjectedLightDiffuseColor(float light_distance, vec2 projected_uv)
 vec4 texture2DLodSpecular(vec2 tc, float lod)
 {
 #ifndef FXAA_GLSL_120
-    vec4 ret = textureLod(projectionMap, tc, lod);
+    vec4 ret = PROJECTION_MAP_LOD(tc, lod);
 #else
-    vec4 ret = texture(projectionMap, tc);
+    vec4 ret = PROJECTION_MAP(tc);
 #endif
     ret.rgb = srgb_to_linear(ret.rgb);
 
