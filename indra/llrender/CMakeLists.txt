@@ -36,6 +36,7 @@ set(llrender_SOURCE_FILES
     llvkcontext.cpp
     llvkdlss.cpp
     llvkasync.cpp
+    llvkpasscensus.cpp
     llvkbridge.cpp
     llvkworker.cpp
     llvkformat.cpp
@@ -84,6 +85,7 @@ set(llrender_HEADER_FILES
     llvkdlss.h
     llvkfunctions.inl
     llvkasync.h
+    llvkpasscensus.h
     llvkzones.h
     llvksubstream.h
     llvkbridge.h

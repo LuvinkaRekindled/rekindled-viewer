@@ -16,6 +16,7 @@
 
 #include "llvkcontext.h"
 #include "llvkshader.h"
+#include "llvkpasscensus.h"
 
 #include <array>
 #include <atomic>
@@ -68,6 +69,9 @@ public:
     void writeRange(U32 cls, U32 offset, U32 size, const U8* data);
     // the loose uniform block of a class as built (initial values from the shader text): the producer's own copy starts from it
     const std::vector<U8>& shadowOf(U32 cls) const { return mShadow[cls]; }
+    LLVkPassCensus::ProgState mCensus;      // S6.0: when the stream last wrote each uniform class block (LL_VK_PASSCENSUS)
+    static bool isLive(const Program* p);   // S6.3: created and not destroyed
+    static void poisonAll();                // S6.2 (LL_VK_PASSCLOSE=3): every program's loose uniform blocks are overwritten with a pattern and marked for upload
 
     // texture unit each sampler reads (GL numbering; defaults to the sampler's binding)
     void setSamplerUnit(size_t sampler_index, U32 unit) { if (sampler_index < mSamplerUnits.size()) mSamplerUnits[sampler_index] = unit; }

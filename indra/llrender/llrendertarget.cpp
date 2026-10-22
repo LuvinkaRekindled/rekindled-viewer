@@ -29,6 +29,7 @@
 #include "llrendertarget.h"
 #include "llrenderpass.h"
 #include "llrender.h"
+#include "llshaderprogram.h"
 #include "lldevicecaps.h"
 #include <atomic>
 #include <algorithm>
@@ -363,7 +364,7 @@ void LLRenderTarget::release()
         if (mFBO == sCurFBO)
         {
             sCurFBO = 0;
-            LLVkAsync::targetState(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3]);
+            LLVkAsync::passBegin(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3], false, false, nullptr, LLVkAsync::PASS_SCREEN, __FILE__, __LINE__);
         }
 
         LLVkTarget::destroy(mFBO);
@@ -409,12 +410,10 @@ void LLRenderTarget::bindImpl(const char* file, int line, bool restore, ClearBit
     {
         sBoundTarget = this;
         noteClear(file, line);
-        LLVkAsync::passBegin(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY, hasBits(clears, ClearBits::Color), hasBits(clears, ClearBits::Depth), clear_color);
     }
-    else
-    {
-        LLVkAsync::targetState(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY);
-    }
+    LLVkAsync::passBegin(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY, hasBits(clears, ClearBits::Color), hasBits(clears, ClearBits::Depth), clear_color,
+                         restore ? LLVkAsync::PASS_RESUME : LLVkAsync::PASS_NEW, file, line);
+    LLShaderProgram::announceBound();
     sCurResX = mResX;
     sCurResY = mResY;
 
@@ -505,6 +504,7 @@ void LLRenderTarget::flush(const char* file, int line)
         LLVkTex::generateMipmap(mTex[0]);
     }
 
+    LLVkAsync::passEnd();
     sTargetStack.erase(std::remove(sTargetStack.begin(), sTargetStack.end(), this), sTargetStack.end());
     if (!sTargetStack.empty())
     {
@@ -517,7 +517,8 @@ void LLRenderTarget::flush(const char* file, int line)
     else
     {
         sBoundTarget = nullptr;
-        LLVkAsync::targetState(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3]);
+        LLVkAsync::passBegin(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3], false, false, nullptr, LLVkAsync::PASS_SCREEN, file, line);
+        LLShaderProgram::announceBound();
         sCurFBO = 0;
         sCurResX = gRenderViewport[2];
         sCurResY = gRenderViewport[3];
