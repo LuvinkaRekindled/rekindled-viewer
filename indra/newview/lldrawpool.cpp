@@ -668,13 +668,13 @@ bool LLRenderPass::deferredPacketsEnabled()
 // "[phase] rigged packets now ON/off"), LL_VK_RIGGED_VERIFY=1 checks that every draw info of a rigged pass is an entry, a fallback draw or a counted skip.
 bool ll_scene_geo_rigged_env()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_RIGGED"); return v && atoi(v) != 0; }();
+    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_RIGGED"); return !v || atoi(v) != 0; }();       // (default on, as pipeline.cpp scene_geo_rigged_on; =0 off)
     return on;
 }
 
 bool ll_rigged_packets_enabled()
 {
-    static const int base = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS"); return (v ? atoi(v) : 0) || ll_scene_geo_rigged_env(); }();
+    static const int base = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS"); return (v ? atoi(v) : 1) || ll_scene_geo_rigged_env(); }();       // (default on; =0 off)
     static const int period = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS_AB"); return v ? atoi(v) : 0; }();
     static U32 frame = ~0u;
     static bool now = false;

@@ -5386,7 +5386,8 @@ bool scene_resident_on()
 }
 int scene_geo_mode()
 {
-    static const int mode = []() { const char* e = getenv("LL_VK_SCENE_GEO"); return e && e[0] == '2' ? 2 : (e && e[0] == '1' ? 1 : 0); }();
+    // (on since 2026-10-21, Adam: S3 table + S4 B + C verified in London; LL_VK_SCENE_GEO=0 turns the whole scene table off, 1 is the old verify-only mode)
+    static const int mode = []() { const char* e = getenv("LL_VK_SCENE_GEO"); return !e || !e[0] ? 2 : (e[0] == '2' ? 2 : (e[0] == '1' ? 1 : 0)); }();
     return mode;
 }
 bool scene_geo_on()
@@ -5396,13 +5397,13 @@ bool scene_geo_on()
 // S4 C: the draws with a model matrix that is not a region matrix are served by the table too (their matrix has a moving slot)
 bool scene_geo_moving_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_MOVING"); return v && atoi(v) != 0; }();
+    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_MOVING"); return !v || atoi(v) != 0; }();       // (default on; =0 off)
     return on && scene_geo_mode() >= 2;
 }
 // S4 B: the rigged draws of the deferred passes are items of the fragments too (their palettes are bound by the frame record); needs the rigged pull programs (A1)
 bool scene_geo_rigged_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_RIGGED"); return v && atoi(v) != 0; }();
+    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_RIGGED"); return !v || atoi(v) != 0; }();       // (default on; =0 off)
     return on && scene_geo_mode() >= 2;
 }
 // the alpha masked casters of resident fragments too (ray shadows, with the range membership)
