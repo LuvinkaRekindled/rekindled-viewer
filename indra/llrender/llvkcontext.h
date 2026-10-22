@@ -337,6 +337,8 @@ public:
     ArenaStats arenaStats();
     bool createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkFormat format, VkImageUsageFlags usage, Image& out);
     void destroyImage(Image& image);        // deferred
+    void setViewForgetHook(void (*fn)(VkImageView)) { mViewForget = fn; }       // called with every sampling view given up (the bindless table: its slots naming the view get the stand-in)
+    void forgetView(VkImageView v) { if (mViewForget && v) mViewForget(v); }
 
     void waitIdle();
     // "heap 0 (device) 3200/15000 MB; heap 1 (host) ..." : usage and budget of every memory heap, for the benchmark log
@@ -407,6 +409,7 @@ private:
     Frame mFrames[FRAMES_IN_FLIGHT];
     U32 mFrameSlot = 0;
     U64 mFrameNumber = 0;
+    void (*mViewForget)(VkImageView) = nullptr;
     bool mInFrame = false;
     std::vector<std::function<void()>> mPendingDeferred;     // destroyed with the next frame slot that completes
 

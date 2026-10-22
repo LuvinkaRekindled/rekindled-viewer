@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include <atomic>
 
 #include "lldrawpool.h"
 #include "llrender.h"
@@ -755,16 +756,29 @@ bool ll_palette_shared()
     return now;
 }
 
+// census (a rigged outfit that disappears for a frame now and then): why a palette request fails. An item without a palette is not drawn (the old path draws nothing for it either)
+static std::atomic<U64> sPalFailNoAvatar{ 0 }, sPalFailEmpty{ 0 }, sPalFailShort{ 0 }, sPalRequests{ 0 };
 bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints)
 {
+    ++sPalRequests;
     if (!avatar || !skin)
     {
+        const U64 n = ++sPalFailNoAvatar;
+        if (n <= 20 || (n % 200) == 0)
+        {
+            LL_INFOS("VkScene") << "[palette] request failed, frame " << gFrameCount << ": " << (avatar ? "an avatar without a skin" : "no avatar") << " (" << n << " so far)" << LL_ENDL;
+        }
         return false;
     }
     const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(skin);       // (one at a time inside, and the entry is not written again in this frame)
     joints = (U32)mpc.mMatrixPalette.size();
     if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12)
     {
+        const U64 n = joints == 0 ? ++sPalFailEmpty : ++sPalFailShort;
+        if (n <= 20 || (n % 200) == 0)
+        {
+            LL_INFOS("VkScene") << "[palette] request failed, frame " << gFrameCount << ": avatar " << (const void*)avatar << " skin " << (const void*)skin << " has " << joints << " joints and " << mpc.mGLMp.size() << " floats (" << (joints == 0 ? "no joints" : "matrices short") << ", " << n << " so far)" << LL_ENDL;
+        }
         return false;
     }
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
@@ -813,12 +827,18 @@ static struct RiggedStats
 
 // can this static draw be an entry of a geometry record? The pull shader reads 16 bit indices, position first, and the normal, texcoord 0 and colour arrays; the textures
 // come from the bindless table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
-static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false)
+// S6 X1: the fullbright passes have no use for normals (the fullbright pull program does not read them), so a draw without a normal array is served too
+bool ll_pass_needs_normals(U32 type)
+{
+    return type != LLRenderPass::PASS_FULLBRIGHT && type != LLRenderPass::PASS_FULLBRIGHT_RIGGED;
+}
+
+static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false, bool normals = true)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount || (p.mAvatar != nullptr) != rigged || p.mGLTFMaterial || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0
-        || !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+        || (normals && !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
     {
         return false;
     }
@@ -850,6 +870,26 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
     return texture_matrix || !(p.mTexture.notNull() && p.mTextureMatrix);       // (S5a: the alpha items carry a texture matrix slot)
 }
 
+// S6 census: why geometry_packet_ok refuses a draw (0 = it does not)
+int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix)
+{
+    const LLVertexBuffer* vb = p.mVertexBuffer.get();
+    if (!p.mCount) return 1;
+    if ((p.mAvatar != nullptr) != rigged) return 2;
+    if (p.mGLTFMaterial) return 3;
+    if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId()) return 4;
+    if (vb->getIndicesType() != ComponentType::U16) return 5;
+    if (!vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0) return 6;
+    if (!vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) return 7;
+    if (!vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0)) return 8;
+    if (!vb->hasDataType(LLVertexBuffer::TYPE_COLOR)) return 9;
+    if (rigged && (p.mSkinInfo.isNull() || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))) return 10;
+    if (materials) return p.mTextureMatrix && !texture_matrix ? 12 : 11;
+    if (batch_textures && p.mTextureList.size() > 1) return p.mTextureList.size() > 4 ? 13 : 0;
+    if (!(texture_matrix || !(p.mTexture.notNull() && p.mTextureMatrix))) return 12;
+    return 0;
+}
+
 // static. S5c: a draw with a glTF blend material as an entry of the alpha items: the pull shader reads 16 bit indices, position first, and the normal, texcoord 0, colour and tangent arrays
 bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& e, bool rigged)
 {
@@ -879,14 +919,14 @@ bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry&
 }
 
 // static. S3: the per-draw part of build_geometry, with the textures as pointers (the fragments of the scene tables keep them)
-bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix)
+bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix, bool normals)
 {
     e = {};
     for (int t = 0; t < 6; ++t)
     {
         textures[t] = nullptr;
     }
-    if (!params.mCount || !geometry_packet_ok(params, materials == nullptr, materials, rigged, texture_matrix) || (rigged && params.mModelMatrix))
+    if (!params.mCount || !geometry_packet_ok(params, materials == nullptr, materials, rigged, texture_matrix, normals) || (rigged && params.mModelMatrix))
     {
         return false;
     }
@@ -895,7 +935,7 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
     e.mIndexBuffer = vb->getIndexBufferId();
     e.mFirstIndex = params.mOffset;
     e.mIndexCount = params.mCount;
-    e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
+    e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
     e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
     e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
     if (texture_matrix && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
@@ -1068,7 +1108,7 @@ static void build_geometry(LLGeometryBuild& out)
             ++out.mNotDrawn;    // no palette: the old path draws nothing either
             continue;
         }
-        if (!geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged))
+        if (!geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged, false, ll_pass_needs_normals(out.mType)))
         {
             out.mFallback.push_back(params);
             continue;
@@ -1097,7 +1137,7 @@ static void build_geometry(LLGeometryBuild& out)
         e.mIndexBuffer = vb->getIndexBufferId();
         e.mFirstIndex = params->mOffset;
         e.mIndexCount = params->mCount;
-        e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
+        e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
         e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
         e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
         if (materials)
@@ -1432,7 +1472,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             LL_INFOS("RiggedPackets") << "per frame: " << (double)rs.mRecords / frames << " records, " << (double)rs.mEntries / frames << " entries, " << (double)rs.mFallback / frames
                 << " fallback draws, " << (double)rs.mNotDrawn / frames << " not drawn (no palette), " << (double)rs.mInRenderMap / frames << " draw infos in the render maps, joints in palettes "
                 << (double)rs.mPalettes / frames << " (per record), own palette bytes " << (double)rs.mPaletteFloats * 4.0 / frames << ", shared list sent " << (double)sFramePal.mFlushedFloats * 4.0 / frames
-                << " bytes a frame, palette requests " << (double)sFramePal.mRequests / frames << " added " << (double)sFramePal.mAdded / frames << "; triangles " << (double)rs.mTris / frames << " (corners drawn " << (double)rs.mTris * 3.0 / frames << "), runs of one index buffer " << (double)rs.mRuns / frames << "; over-count " << rs.mUncounted << LL_ENDL;
+                << " bytes a frame, palette requests that failed (no avatar or skin " << sPalFailNoAvatar.load() << ", no joints " << sPalFailEmpty.load() << ", matrices short " << sPalFailShort.load() << " of " << sPalRequests.load() << " in all so far), palette requests " << (double)sFramePal.mRequests / frames << " added " << (double)sFramePal.mAdded / frames << "; triangles " << (double)rs.mTris / frames << " (corners drawn " << (double)rs.mTris * 3.0 / frames << "), runs of one index buffer " << (double)rs.mRuns / frames << "; over-count " << rs.mUncounted << LL_ENDL;
             rs.mTris = rs.mRuns = rs.mRecords = rs.mEntries = rs.mFallback = rs.mNotDrawn = rs.mPalettes = rs.mPaletteFloats = rs.mInRenderMap = 0;
             sFramePal.mFlushedFloats = sFramePal.mRequests = sFramePal.mAdded = 0;
         }

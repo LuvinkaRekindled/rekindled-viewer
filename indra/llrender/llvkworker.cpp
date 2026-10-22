@@ -410,6 +410,11 @@ void rebuild_sampling_view(Tex& t)
     VkImageView old = t.mImage.mView;
     VkDevice dev = ctx.getDevice();
     ctx.destroyLater([=]() { vkDestroyImageView(dev, old, nullptr); });
+    // crash hunt 2026-10-22 (fullbright from the table: two device losts, both a table draw sampling the memory of an image destroyed seconds before): the old view is destroyed here, so its id must go into
+    // the destroyed list, else the bindless slot keyed by it keeps the dead view in every frame's set (the slot is never retired), and the image destroyed later is noted under another id (this one is
+    // zeroed below): a row that still names that slot samples freed memory
+    ctx.noteDestroyedView(t.mImage.mViewId);
+    ctx.forgetView(old);            // (by handle: the slot lifetime follows the view)
     t.mImage.mView = fresh;
     t.mImage.mViewId = 0;       // a different view: the bindless table must not take it for the old one
     pin_touch(t);
@@ -5957,7 +5962,7 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 namespace
 {
 const U32 kGeoCapacity = 131072;
-const U32 kGeoTypes = 13;
+const U32 kGeoTypes = LLVkBridge::kGeoPassTypes;
 const U32 kGeoAlphaType = 2 * kGeoTypes;       // S5a: the item type of the alpha items
 const U32 kGeoAlphaRiggedType = 2 * kGeoTypes + 1;       // S5d: ... of the rigged alpha items (weights and palette, indexed draws)
 const U32 kPbrCapacity = 16384;                // S5c: rows of PBR values (160 bytes each) for the alpha items with a glTF material

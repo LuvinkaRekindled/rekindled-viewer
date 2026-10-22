@@ -168,6 +168,14 @@ void LLDrawPoolMaterials::kickGeometryBuilds()
     {
         kickGeometryBuild(LLRenderPass::PASS_SIMPLE_RIGGED, nullptr, true);
     }
+    if (gFullbrightPullReady)
+    {
+        kickGeometryBuild(LLRenderPass::PASS_FULLBRIGHT);       // S6 X1 (drawn after the lighting)
+        if (rigged_too && gFullbrightPullSkinReady)
+        {
+            kickGeometryBuild(LLRenderPass::PASS_FULLBRIGHT_RIGGED, nullptr, true);
+        }
+    }
     for (U32 pass = 0; pass < sizeof(type_list) / sizeof(type_list[0]); ++pass)
     {
         const U32 idx = sMaterialPassShader[pass];

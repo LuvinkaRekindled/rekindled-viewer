@@ -23,6 +23,9 @@ namespace LLVk { struct Image; }
 
 namespace LLVkBridge
 {
+    // the deferred geometry pass types the scene table serves (kGeoTypes in pipeline.cpp, the viewer's list of them, has this many): item type t is a static pass type, kGeoPassTypes + t its rigged variant,
+    // 2 * kGeoPassTypes the static alpha items and 2 * kGeoPassTypes + 1 the rigged alpha items
+    constexpr unsigned kGeoPassTypes = 14;
     // true once Vulkan is initialised and the mirror has not been switched off
     bool isReady();
     // video memory as the OS sees this process (what it uses, what it may use before the driver pages allocations out), for the viewer's texture budget; false when no Vulkan device

@@ -4133,7 +4133,7 @@ void LLPipeline::postSort(LLCamera &camera)
     const bool cascade_cull_active = cascade_cull.mActive;
     const bool geo_collect = ll_scene_geo_on() && !sShadowRender;
     const bool geo_owner = geo_collect && ll_scene_geo_verify_on();
-    const bool geo_list = geo_collect && &camera == LLViewerCamera::getInstance() && ll_scene_geo_main_view() && ll_scene_geo_serving();
+    const bool geo_list = geo_collect && &camera == LLViewerCamera::getInstance() && ll_scene_geo_main_view() && ll_scene_geo_serving() && !sRenderingHUDs;       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
     const bool geo_elide = geo_list && !ll_scene_geo_verify_on();       // S3 G4: the draws the table serves are not listed in the render map
     const bool r2_whole_groups = geo_elide && (view_jobs_bits() & 2) != 0;
     if (geo_elide)
@@ -4197,7 +4197,7 @@ void LLPipeline::postSort(LLCamera &camera)
             if (geo_elide && group->mGeoServedMask)
             {
                 const int tn = ll_scene_geo_type_number(j->first);
-                if (tn >= 0 && (group->mGeoServedMask & (1u << tn)))
+                if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)))
                 {
                     ++sGeoElideTypes;       // every draw info of this type in this group is the scene table's
                     continue;
@@ -5395,7 +5395,8 @@ struct LLSceneFragment
     bool mGeoRegion = true;                             // all its matrices are region matrices (the worker can hold it)
     U32 mGeoServedCount = 0;                            // entries of mGeo the scene table can draw (region matrix or none)
     bool mGeoSent = false;                              // the worker has it (RETAIN_GEO, kind 20)
-    U32 mGeoServedMask = 0, mGeoServedTris = 0;         // G4: see LLSpatialGroup
+    U64 mGeoServedMask = 0;                             // G4: see LLSpatialGroup
+    U32 mGeoServedTris = 0;
     U32 mGeoHandle = 0;                                 // its handle at the worker (0 = not attached: nothing served, or LL_VK_SCENE_GEO < 2)
     std::vector<U32> mGeoSentName;                      // per local texture, the GL name the worker was told
     std::vector<U32> mGeoRigged;                        // S4 B: the indices in mGeo of the served rigged items (their palettes are bound every frame)
@@ -5709,8 +5710,11 @@ static const GeoType kGeoTypes[] =
     { LLRenderPass::PASS_SPECMAP, 4 }, { LLRenderPass::PASS_SPECMAP_MASK, 6 }, { LLRenderPass::PASS_SPECMAP_EMISSIVE, 7 },
     { LLRenderPass::PASS_NORMMAP, 8 }, { LLRenderPass::PASS_NORMMAP_MASK, 10 }, { LLRenderPass::PASS_NORMMAP_EMISSIVE, 11 },
     { LLRenderPass::PASS_NORMSPEC, 12 }, { LLRenderPass::PASS_NORMSPEC_MASK, 14 }, { LLRenderPass::PASS_NORMSPEC_EMISSIVE, 15 },
+    { LLRenderPass::PASS_FULLBRIGHT, -1 },          // S6 X1: drawn in the post deferred pass (LLDrawPoolFullbright), the same entries as the diffuse pass
 };
 static const size_t kGeoTypeCount = sizeof(kGeoTypes) / sizeof(kGeoTypes[0]);
+static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (llvkbridge.h)");
+static const U32 kGeoAlphaItemType = 2 * (U32)kGeoTypeCount;            // the item types of the alpha items (S5a static, S5d rigged: the next number)
 
 static int geo_type_number(U32 type)
 {
@@ -5722,6 +5726,16 @@ static int geo_type_number(U32 type)
         }
     }
     return -1;
+}
+
+// S6: a pass type the table serves only when the pool that draws it has the pull program for it (else the pool draws the old way and the draws must stay in the render map)
+static bool geo_type_available(size_t t, bool rigged)
+{
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT)
+    {
+        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightPullReady);
+    }
+    return true;
 }
 
 static LLGeometryPassInfo geo_pass_info(const GeoType& t)
@@ -5830,7 +5844,7 @@ static void collect_main_view_draw_infos(U32 type, std::vector<LLDrawInfo*>& out
     {
         return;
     }
-    static std::vector<LLDrawInfo*> lists[26];
+    static std::vector<LLDrawInfo*> lists[2 * kGeoTypeCount];
     static LLCullResult* key_cull = nullptr;
     static U64 key_frame = ~0ull;
     static size_t key_handles = 0;
@@ -5855,7 +5869,7 @@ static void collect_main_view_draw_infos(U32 type, std::vector<LLDrawInfo*>& out
             }
             for (const LLSceneFragment::GeoItem& item : f->mGeo)
             {
-                if (item.mServed && item.mType < 26 && (f->mGeoServedMask & (1u << item.mType)))
+                if (item.mServed && item.mType < 2 * kGeoTypeCount && (f->mGeoServedMask & (1ull << item.mType)))
                 {
                     lists[item.mType].push_back(item.mInfo);
                 }
@@ -5879,14 +5893,14 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mGeoServedMask = 0;
     f.mGeoServedTris = 0;
     f.mGeoRigged.clear();
-    U32 total_infos[26] = {}, served_infos[26] = {}, served_tris[26] = {};
+    U32 total_infos[2 * kGeoTypeCount] = {}, served_infos[2 * kGeoTypeCount] = {}, served_tris[2 * kGeoTypeCount] = {};
     const bool rigged_on = scene_geo_rigged_on();
     for (size_t t2 = 0; t2 < (rigged_on ? 2 * kGeoTypeCount : kGeoTypeCount); ++t2)
     {
         const bool rigged = t2 >= kGeoTypeCount;
         const size_t t = t2 % kGeoTypeCount;
         auto it = group->mDrawMap.find(kGeoTypes[t].mType + (rigged ? 1 : 0));        // the rigged variant of a pass type is the next number
-        if (it == group->mDrawMap.end())
+        if (it == group->mDrawMap.end() || !geo_type_available(t, rigged))
         {
             continue;
         }
@@ -5914,8 +5928,27 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             }
             LLSceneFragment::GeoItem item = {};
             LLViewerTexture* textures[6];
-            if (!LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged))
+            if (!LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged, false, ll_pass_needs_normals(kGeoTypes[t].mType)))
             {
+                {   // S6 census: why, by type (logged with the fragment G entry builds)
+                    static U64 reasons[2 * kGeoTypeCount][16] = {};
+                    static U64 count = 0;
+                    ++reasons[t2][std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, rigged, false))];
+                    if (++count % 2000 == 0)
+                    {
+                        std::string text;
+                        for (size_t k = 0; k < 2 * kGeoTypeCount; ++k)
+                        {
+                            std::string row;
+                            for (int r = 0; r < 16; ++r)
+                            {
+                                if (reasons[k][r]) row += " r" + std::to_string(r) + "=" + std::to_string(reasons[k][r]);
+                            }
+                            if (!row.empty()) text += " | type " + std::to_string(k) + ":" + row;
+                        }
+                        LL_INFOS("VkScene") << "fallback draws by type and reason (1 no count, 2 avatar mismatch, 3 glTF, 4 no buffer names, 5 32 bit indices, 6 no position first, 7 no normals, 8 no texcoord0, 9 no colour, 10 no skin, 11 materials, 12 texture matrix, 13 more than 4 textures, 0 other):" << text << LL_ENDL;
+                    }
+                }
                 f.mGeoFallback.push_back({ (U32)t2, params });
                 params->mGeoServed = false;
                 continue;
@@ -5974,7 +6007,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     {
         if (total_infos[t] && served_infos[t] == total_infos[t])
         {
-            f.mGeoServedMask |= 1u << t;
+            f.mGeoServedMask |= 1ull << t;
             f.mGeoServedTris += served_tris[t];
         }
     }
@@ -6320,7 +6353,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                 }
             }
             item.mInfo = p;
-            item.mType = rigged ? 27 : 26;
+            item.mType = kGeoAlphaItemType + (rigged ? 1 : 0);
             item.mServed = true;
         }
         if (!ps.mPlan.empty() && ps.mPlan.back().mServed == served && (!served || ps.mPlan.back().mKey == key))
@@ -6700,7 +6733,7 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
                 continue;
             }
             const int tn = ll_scene_geo_type_number(kv.first);
-            if (tn < 0 || !(group->mGeoServedMask & (1u << tn)))
+            if (tn < 0 || !(group->mGeoServedMask & (1ull << tn)))
             {
                 all = false;
                 break;
@@ -6928,9 +6961,9 @@ struct GeoVerifyStats
 {
     U64 mPasses = 0, mInfos = 0, mMissing = 0, mExtra = 0, mFallbackDiff = 0, mBuilderDiff = 0, mItemDiff = 0, mCountDiff = 0, mGroups = 0, mItems = 0, mMissingInDrawMaps = 0, mDeadGroups = 0, mMissingPasses = 0, mMissingChangedGroup = 0;
     // census of the main view, once a frame (what the worker side of S3 has to carry): sums over the frames counted
-    U64 mFrames = 0, mVisibleGroups = 0, mGroupsWithItems = 0, mItemsByType[26] = {}, mFallback = 0, mNonRegionGroups = 0, mNonRegionItems = 0, mDistinctTextures = 0, mRenderMapAll = 0, mRenderMapGeo = 0, mFragmentless = 0;
+    U64 mFrames = 0, mVisibleGroups = 0, mGroupsWithItems = 0, mItemsByType[2 * kGeoTypeCount + 2] = {}, mFallback = 0, mNonRegionGroups = 0, mNonRegionItems = 0, mDistinctTextures = 0, mRenderMapAll = 0, mRenderMapGeo = 0, mFragmentless = 0;
     U64 mNamesChecked = 0, mNamesStale = 0, mHandleGroups = 0, mHandleListDiff = 0, mHandleMismatch = 0, mPassesNoList = 0, mInfosNoList = 0;     // G3: the registry's names against prepareFast's, the handles of the listed groups against the list
-    U64 mMissingCause[6] = {}, mMissingByType[13] = {}, mDup = 0;     // causes: no owner recorded, pushed by the shadow job, group dead, group's draw map changed, owner not listed, listed with the same serial
+    U64 mMissingCause[6] = {}, mMissingByType[2 * kGeoTypeCount] = {}, mDup = 0;     // causes: no owner recorded, pushed by the shadow job, group dead, group's draw map changed, owner not listed, listed with the same serial
     U32 mCensusFrame = ~0u;
     U32 mLast = 0;
 } sGeoStats;
@@ -7066,7 +7099,7 @@ void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo*
         expected.push_back(params);
         LLVkBridge::GeoEntry fresh;
         LLViewerTexture* textures[6];
-        if (!LLRenderPass::geometryEntry(*params, materials, fresh, textures))
+        if (!LLRenderPass::geometryEntry(*params, materials, fresh, textures, false, false, ll_pass_needs_normals(type)))
         {
             expected_fallback.push_back(params);
             continue;
@@ -7125,7 +7158,7 @@ void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo*
             ++s.mItems;
             LLVkBridge::GeoEntry fresh;
             LLViewerTexture* textures[6];
-            bool ok = LLRenderPass::geometryEntry(*item.mInfo, materials, fresh, textures);
+            bool ok = LLRenderPass::geometryEntry(*item.mInfo, materials, fresh, textures, false, false, ll_pass_needs_normals(type));
             const char* why = ok ? geo_entry_diff(item.mE, fresh) : "no longer eligible";
             if (!why)
             {

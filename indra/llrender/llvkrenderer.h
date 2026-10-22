@@ -331,6 +331,9 @@ public:
     void bindlessFlush();           // writes the slots taken since the last call into the frame's set and binds it
     // <FS> crash hunt (2026-10-22): can a draw of this frame read the slot? 0 = yes (the stand-in, or this frame's set holds the slot's descriptor), 1 = the slot is active but this frame's set does not hold its
     // descriptor yet (with repair: queued, the next flush writes it), 2 = the slot is not active (given back): whoever still names it reads whatever the sets hold
+    // the view is being destroyed (called at the point the image or its view is given up, before the deferred destruction): every slot whose info names it holds the stand-in from now on, in every
+    // frame's set (the log), whatever the slot's key or id says. The slot lifetime follows the view: nothing can name a destroyed image through the table, however the destruction came about.
+    void bindlessForgetView(VkImageView view);
     int bindlessSlotState(U32 table, U32 slot, bool repair);
     std::string bindlessSlotDescribe(U32 table, U32 slot);
 
@@ -542,6 +545,7 @@ private:
     void bindlessSyncPins(BindlessTable& tbl);
     void bindlessSweep(U64 min_idle_frames);
     void bindlessRetireDestroyed();                 // slots that hold the view of a destroyed image get the stand-in (whoever still names the slot: pins, table rows, ray records)
+    std::unordered_map<VkImageView, std::vector<U32>> mViewSlots;      // the slots (table << 28 | slot) whose info named a view, by view handle: the slot lifetime follows the VIEW, whatever its id says
     U64 mDestroyedSeen = 0;
     U64 mRetiredSlots = 0, mRetiredPinned = 0;
     BindlessTable mBindlessTbl[BINDLESS_TABLES];

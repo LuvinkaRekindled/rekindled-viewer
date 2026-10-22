@@ -245,6 +245,10 @@ extern LLShaderProgram         gDeferredShadowSkinPullProgram;   // <FS> render 
 extern LLShaderProgram         gDeferredAlphaPullProgram;            // <FS> S5a: the lit alpha pass drawn from the scene table (alphaPullV + alphaF, textures from the bindless table)
 extern LLShaderProgram         gDeferredFullbrightAlphaPullProgram;  // <FS> S5a: ... and the fullbright alpha pass (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF)
 extern bool                    gAlphaPullReady;
+extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
+extern LLShaderProgram         gDeferredFullbrightPullSkinProgram;
+extern bool                    gFullbrightPullReady;
+extern bool                    gFullbrightPullSkinReady;
 extern LLShaderProgram         gDeferredPBRAlphaPullProgram;          // <FS> S5c: the PBR (glTF) blend pass, vertices by address, the four textures from the bindless table
 extern bool                    gAlphaPbrPullReady;
 extern LLShaderProgram         gDeferredAlphaPullSkinProgram;          // <FS> S5d: the rigged variants of the alpha pull programs (weights and palette by address, indexed draws)
