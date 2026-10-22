@@ -850,6 +850,28 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
     return texture_matrix || !(p.mTexture.notNull() && p.mTextureMatrix);       // (S5a: the alpha items carry a texture matrix slot)
 }
 
+// static. S5c: a draw with a glTF blend material as an entry of the alpha items: the pull shader reads 16 bit indices, position first, and the normal, texcoord 0, colour and tangent arrays
+bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& e)
+{
+    e = {};
+    const LLVertexBuffer* vb = params.mVertexBuffer.get();
+    if (!params.mCount || params.mAvatar || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
+        || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0
+        || !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR) || !vb->hasDataType(LLVertexBuffer::TYPE_TANGENT))
+    {
+        return false;
+    }
+    e.mVertexBuffer = vb->getVertexBufferId();
+    e.mIndexBuffer = vb->getIndexBufferId();
+    e.mFirstIndex = params.mOffset;
+    e.mIndexCount = params.mCount;
+    e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
+    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+    e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+    e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_TANGENT);
+    return true;
+}
+
 // static. S3: the per-draw part of build_geometry, with the textures as pointers (the fragments of the scene tables keep them)
 bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix)
 {

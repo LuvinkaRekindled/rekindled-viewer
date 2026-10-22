@@ -5403,6 +5403,8 @@ struct LLSceneFragment
     std::vector<const LLDrawInfo*> mAlphaOrder;
     std::vector<LLAlphaPlanSeg> mAlphaPlan;
     std::vector<GeoItem> mAlphaItems;                   // S5a-2: the served alpha draws as table items (type 26), in plan order
+    struct AlphaPbr { U32 mRank; F32 mV[40]; };         // S5c: the PBR values of the alpha item mRank (see pbrAlphaPullV.glsl)
+    std::vector<AlphaPbr> mAlphaPbr;
     bool mAlphaPlanned = false, mAlphaGlow = false, mAlphaDirect = false;
     std::vector<U32> mAlphaGlowIdx;                     // plan indices of the served draws with a glow buffer
 };
@@ -5988,7 +5990,7 @@ static bool scene_alpha_plan_env()
     static const bool on = []() { const char* v = getenv("LL_VK_SCENE_ALPHA"); return v && atoi(v) != 0; }();
     return on;
 }
-// diagnostic (LL_VK_SCENE_ALPHA_ONLY=<mask>, default 31): which classes of draws the table takes: 1 lit, 2 fullbright, 4 draws with a texture matrix, 8 draws with a model matrix that is not a region matrix, 16 materials (S5b)
+// diagnostic (LL_VK_SCENE_ALPHA_ONLY=<mask>, default 63): which classes of draws the table takes: 1 lit, 2 fullbright, 4 draws with a texture matrix, 8 draws with a model matrix that is not a region matrix, 16 materials (S5b), 32 glTF blend (S5c)
 // S5b: the blend function pairs of the draws (standard alpha blend = id 0); a run key carries the id in bits 8 and up
 static std::vector<std::pair<int, int>> sAlphaBlendPairs;
 static U32 alpha_blend_id(int src, int dst)
@@ -6029,7 +6031,7 @@ bool ll_alpha_blend_pair(U32 id, int* src, int* dst)
 }
 static int scene_alpha_only()
 {
-    static const int mask = []() { const char* v = getenv("LL_VK_SCENE_ALPHA_ONLY"); return v ? atoi(v) : 31; }();
+    static const int mask = []() { const char* v = getenv("LL_VK_SCENE_ALPHA_ONLY"); return v ? atoi(v) : 63; }();
     return mask;
 }
 static U64 sAlphaPlanBuilds = 0, sAlphaPlanNs = 0, sAlphaPlanServed = 0, sAlphaPlanOld = 0, sAlphaPlanSegs = 0, sAlphaPlanNoSlot = 0, sAlphaPlanTexMatrix = 0;
@@ -6038,6 +6040,7 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mAlphaOrder.clear();
     f.mAlphaPlan.clear();
     f.mAlphaItems.clear();
+    f.mAlphaPbr.clear();
     f.mAlphaPlanned = false;
     f.mAlphaGlow = false;
     f.mAlphaDirect = false;
@@ -6073,22 +6076,60 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
         const U32 mmask = p->mShaderMask;
         const U32 blend_id = alpha_blend_id((int)p->mBlendFuncSrc, (int)p->mBlendFuncDst);
         const bool material_ok = material && gAlphaMaterialPullReady && (scene_alpha_only() & 16) && mmask < 16 && (mmask & 3) == 1;
-        bool served = table && p->mCount && !p->mGLTFMaterial && (material ? material_ok : (((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0))
+        // S5c: a draw with a glTF blend material is served by the PBR pull program (the values in a PBR row; double sided = a key bit: the run is drawn with culling off)
+        const bool pbr = !LLPipeline::sRenderingHUDs && p->mGLTFMaterial.notNull() && p->mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;
+        const bool pbr_ok = pbr && gAlphaPbrPullReady && (scene_alpha_only() & 32) && vb && vb->hasDataType(LLVertexBuffer::TYPE_TANGENT);
+        bool served = table && p->mCount && (pbr ? pbr_ok : (!p->mGLTFMaterial && (material ? material_ok : (((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0))))
             && blend_id != ~0u
             && vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16
             && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0
             && vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) && vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && vb->hasDataType(LLVertexBuffer::TYPE_COLOR)
-            && (material || p->mTextureList.size() <= 4);
+            && (material || pbr || p->mTextureList.size() <= 4);
         LLSceneFragment::GeoItem item = {};
+        bool pbr_block = false;
+        F32 pbr_values[40] = {};
         if (served)
         {
             LLViewerTexture* textures[6];
             // (the old loop loads the texture matrix only for a draw with one texture; a batch ignores it)
-            const bool use_tex_matrix = p->mTextureMatrix && p->mTextureList.size() <= 1 && p->mTexture.notNull();
+            const bool use_tex_matrix = pbr ? (p->mTextureMatrix != nullptr) : (p->mTextureMatrix && p->mTextureList.size() <= 1 && p->mTexture.notNull());
             LLGeometryPassInfo material_info;
             material_info.mNormalMap = (mmask & 0x8) != 0;
             material_info.mSpecularMap = (mmask & 0x4) != 0;
-            served = LLRenderPass::geometryEntry(*p, material ? &material_info : nullptr, item.mE, textures, false, true);
+            if (pbr)
+            {
+                // the textures the old bind() takes: the face's own texture overrides the base colour and the emissive map (media), a missing map is the white image (the flat normal image for the normal map)
+                LLFetchedGLTFMaterial* gltf = p->mGLTFMaterial.get();
+                LLViewerTexture* media = p->mTexture.get();
+                for (int k = 0; k < 6; ++k)
+                {
+                    textures[k] = nullptr;
+                }
+                textures[0] = media ? media : (gltf->mBaseColorTexture.notNull() ? (LLViewerTexture*)gltf->mBaseColorTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
+                textures[1] = gltf->mNormalTexture.notNull() ? (LLViewerTexture*)gltf->mNormalTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sFlatNormalImagep.get();
+                textures[2] = gltf->mMetallicRoughnessTexture.notNull() ? (LLViewerTexture*)gltf->mMetallicRoughnessTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get();
+                textures[3] = media ? media : (gltf->mEmissiveTexture.notNull() ? (LLViewerTexture*)gltf->mEmissiveTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
+                served = LLRenderPass::pbrAlphaEntry(*p, item.mE);
+                if (served)
+                {
+                    static const int infos[4] = { LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR, LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL, LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS, LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE };
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        gltf->mTextureTransform[infos[k]].getPacked(*reinterpret_cast<LLGLTFMaterial::TextureTransform::Pack*>(pbr_values + 8 * k));
+                    }
+                    pbr_values[32] = gltf->mRoughnessFactor;
+                    pbr_values[33] = gltf->mMetallicFactor;
+                    pbr_values[34] = gltf->mEmissiveColor.mV[0];
+                    pbr_values[35] = gltf->mEmissiveColor.mV[1];
+                    pbr_values[36] = gltf->mEmissiveColor.mV[2];
+                    pbr_values[37] = -1.f;       // (the minimum alpha of the blend mode, as bind() sets it)
+                    pbr_block = true;
+                }
+            }
+            else
+            {
+                served = LLRenderPass::geometryEntry(*p, material ? &material_info : nullptr, item.mE, textures, false, true);
+            }
             if (served)
             {
                 U32* fields[6] = { &item.mE.mTextures[0], &item.mE.mTextures[1], &item.mE.mTextures[2], &item.mE.mTextures[3], &item.mE.mNormalMap, &item.mE.mSpecularMap };
@@ -6137,7 +6178,7 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 }
             }
         }
-        const U32 key = (material ? 2u + mmask : (p->mFullbright ? 1u : 0u)) | (blend_id == ~0u ? 0u : blend_id << 8);
+        const U32 key = (pbr ? 18u : (material ? 2u + mmask : (p->mFullbright ? 1u : 0u))) | (blend_id == ~0u ? 0u : blend_id << 8) | ((pbr && p->mGLTFMaterial->mDoubleSided) ? (1u << 16) : 0u);
         const U32 index = (U32)f.mAlphaOrder.size();
         f.mAlphaOrder.push_back(p);
         if (served)
@@ -6172,6 +6213,13 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, LLSceneFragment& f)
         }
         if (served)
         {
+            if (pbr_block)
+            {
+                LLSceneFragment::AlphaPbr block;
+                block.mRank = (U32)f.mAlphaItems.size();
+                memcpy(block.mV, pbr_values, sizeof(block.mV));
+                f.mAlphaPbr.push_back(block);
+            }
             f.mAlphaItems.push_back(item);
         }
         (served ? sAlphaPlanServed : sAlphaPlanOld) += 1;
@@ -6445,7 +6493,8 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
         sGeoFragByHandle.resize(handle + 1 + handle / 4, nullptr);
     }
     sGeoFragByHandle[handle] = f;
-    blob.resize(wire.size() * sizeof(wire[0]) + f->mGeoTex.size() * sizeof(U32));
+    struct PbrWireOut { U32 mItem; U32 mPad[3]; F32 mV[40]; };
+    blob.resize(wire.size() * sizeof(wire[0]) + f->mGeoTex.size() * sizeof(U32) + f->mAlphaPbr.size() * sizeof(PbrWireOut));
     U32* names = (U32*)(blob.data() + wire.size() * sizeof(wire[0]));
     for (size_t k = 0; k < f->mGeoTex.size(); ++k)
     {
@@ -6463,8 +6512,18 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
         f->mGeoSentName[k] = info.mName;
     }
     memcpy(blob.data(), wire.data(), wire.size() * sizeof(wire[0]));
+    {   // S5c: the PBR values of the alpha items that have a glTF material, after the names
+        PbrWireOut* pbr_out = (PbrWireOut*)(names + f->mGeoTex.size());
+        for (size_t k = 0; k < f->mAlphaPbr.size(); ++k)
+        {
+            memset(&pbr_out[k], 0, sizeof(PbrWireOut));
+            pbr_out[k].mItem = f->mAlphaItems[f->mAlphaPbr[k].mRank].mWire;
+            memcpy(pbr_out[k].mV, f->mAlphaPbr[k].mV, sizeof(pbr_out[k].mV));
+        }
+    }
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 20;
+    header.mMatrices = (U32)f->mAlphaPbr.size();
     header.mFragment = handle;
     header.mEntries = (U32)wire.size();
     header.mPaletteFloats = (U32)f->mGeoTex.size();

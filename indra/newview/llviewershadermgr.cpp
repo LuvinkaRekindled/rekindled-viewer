@@ -175,6 +175,8 @@ LLShaderProgram            gDeferredAlphaPullProgram;
 LLShaderProgram            gDeferredFullbrightAlphaPullProgram;
 bool                       gAlphaPullReady = false;
 bool                       gAlphaMaterialPullReady = false;
+LLShaderProgram            gDeferredPBRAlphaPullProgram;
+bool                       gAlphaPbrPullReady = false;
 LLShaderProgram            gDeferredMaterialPullProgram[16];
 LLShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
 LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
@@ -1180,6 +1182,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffusePullProgram.unload();
         gDeferredAlphaPullProgram.unload();
         gDeferredFullbrightAlphaPullProgram.unload();
+        gDeferredPBRAlphaPullProgram.unload();
+        gAlphaPbrPullReady = false;
         gAlphaPullReady = false;
         for (LLShaderProgram& pull : gDeferredMaterialPullProgram)
         {
@@ -2061,6 +2065,55 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             gDeferredAlphaPullProgram.unload();
             gDeferredFullbrightAlphaPullProgram.unload();
+        }
+    }
+
+    // <FS> S5c: the PBR (glTF) blend program with the vertices read by address (pbrAlphaPullV + pbralphaF with LL_BINDLESS_PBR). Optional.
+    gAlphaPbrPullReady = false;
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        LLShaderProgram* shader = &gDeferredPBRAlphaPullProgram;
+        shader->mName = "Deferred PBR Alpha Pull Shader";
+        shader->mFeatures.calculatesLighting = false;
+        shader->mFeatures.hasLighting = false;
+        shader->mFeatures.isAlphaLighting = true;
+        shader->mFeatures.hasSrgb = true;
+        shader->mFeatures.calculatesAtmospherics = true;
+        shader->mFeatures.hasAtmospherics = true;
+        shader->mFeatures.hasGamma = true;
+        shader->mFeatures.hasShadows = use_sun_shadow;
+        shader->mFeatures.isDeferred = true;
+        shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
+        shader->mShaderFiles.clear();
+        shader->mShaderFiles.push_back(make_pair("deferred/pbrAlphaPullV.glsl", ShaderStage::Vertex));
+        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", ShaderStage::Fragment));
+        shader->clearPermutations();
+        shader->addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", LLMaterial::DIFFUSE_ALPHA_MODE_BLEND));
+        shader->addPermutation("HAS_NORMAL_MAP", "1");
+        shader->addPermutation("HAS_SPECULAR_MAP", "1");
+        shader->addPermutation("HAS_EMISSIVE_MAP", "1");
+        shader->addPermutation("USE_VERTEX_COLOR", "1");
+        shader->addPermutation("LL_BINDLESS_PBR", "1");
+        add_common_permutations(shader);
+        if (use_sun_shadow)
+        {
+            shader->addPermutation("HAS_SUN_SHADOW", "1");
+        }
+        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (getenv("LL_VK_SCENE_ALPHA_DBGF"))
+        {
+            shader->addPermutation("ALPHA_PULL_DBGF", getenv("LL_VK_SCENE_ALPHA_DBGF"));
+        }
+        if (shader->createShader())
+        {
+            shader->mFeatures.calculatesLighting = true;        // (as the ordinary PBR alpha program: "Alpha Shader Hack", see LLRender::syncMatrices())
+            shader->mFeatures.hasLighting = true;
+            gAlphaPbrPullReady = true;
+        }
+        else
+        {
+            LL_WARNS("ShadowPackets") << "the PBR alpha pull shader could not be made: the PBR alpha draws stay on the old path" << LL_ENDL;
+            shader->unload();
         }
     }
 

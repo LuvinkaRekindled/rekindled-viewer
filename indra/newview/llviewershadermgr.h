@@ -245,6 +245,8 @@ extern LLShaderProgram         gDeferredShadowSkinPullProgram;   // <FS> render 
 extern LLShaderProgram         gDeferredAlphaPullProgram;            // <FS> S5a: the lit alpha pass drawn from the scene table (alphaPullV + alphaF, textures from the bindless table)
 extern LLShaderProgram         gDeferredFullbrightAlphaPullProgram;  // <FS> S5a: ... and the fullbright alpha pass (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF)
 extern bool                    gAlphaPullReady;
+extern LLShaderProgram         gDeferredPBRAlphaPullProgram;          // <FS> S5c: the PBR (glTF) blend pass, vertices by address, the four textures from the bindless table
+extern bool                    gAlphaPbrPullReady;
 extern bool                    gAlphaMaterialPullReady;       // <FS> S5b: the blend variants (masks 1, 5, 9, 13) of gDeferredMaterialPullProgram[] exist
 extern LLShaderProgram         gDeferredDiffusePullProgram;      // <FS> render packets: the deferred diffuse pass, vertices by address, textures from the bindless table
 extern LLShaderProgram         gDeferredMaterialPullProgram[16]; // <FS> render packets: the deferred materials passes (the unskinned indices of gDeferredMaterialProgram)

@@ -556,6 +556,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
     }
 
     const bool pull_material = defines && defines->find("LL_BINDLESS_MATERIAL") != defines->end() && type == ShaderStage::Fragment;
+    const bool pull_pbr = defines && defines->find("LL_BINDLESS_PBR") != defines->end() && type == ShaderStage::Fragment;
     if (defines && defines->find("LL_BINDLESS_DIFFUSE") != defines->end() && type == ShaderStage::Fragment)
     {
         // <FS> render packets (Vulkan mirror only): the draw's texture comes from the bindless table (set 2), by the slot the vertex shader passes on, instead of tex0..texN
@@ -581,6 +582,18 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         extra_code_text[extra_code_count++] = strdup("#ifdef HAS_SPECULAR_MAP\n");
         extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_specular;\n");
         extra_code_text[extra_code_count++] = strdup("#endif\n");
+    }
+    else if (pull_pbr)
+    {
+        // <FS> S5c: the PBR alpha fragment shader takes its four textures from the bindless table (slots from the vertex shader: base colour, normal, occlusion roughness metallic, emissive) and its
+        // per-draw uniforms (rewritten line by line below) as flat inputs. A normal map without an image yet (slot 0, the stand-in) is the flat normal the old path binds then.
+        extra_code_text[extra_code_count++] = strdup("#extension GL_EXT_nonuniform_qualifier : require\n");
+        extra_code_text[extra_code_count++] = strdup("layout(set = 2, binding = 0) uniform sampler2D ll_bindless_textures[];\n");
+        extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot;\n");
+        extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_normal;\n");
+        extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_specular;\n");
+        extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_emissive;\n");
+        extra_code_text[extra_code_count++] = strdup("vec3 pbrNormalTap(vec2 uv)\n{\n    vec3 tap = texture(ll_bindless_textures[nonuniformEXT(vary_slot_normal)], uv).xyz * 2.0 - 1.0;\n    return vary_slot_normal == 0u ? vec3(0.0, 0.0, 1.0) : tap;\n}\n");
     }
     else if (texture_index_channels > 0 && type == ShaderStage::Fragment)
     {
@@ -739,7 +752,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         }
         else
         {
-            if (pull_material)
+            if (pull_material || pull_pbr)
             {
                 std::string fixed((const char*)buff);
                 auto replace = [&fixed](const char* from, const char* to)
@@ -750,6 +763,24 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                         fixed.replace(at, from_len, to);
                     }
                 };
+                if (pull_pbr)
+                {
+                    replace("uniform sampler2D diffuseMap;", "");
+                    replace("uniform sampler2D bumpMap;", "");
+                    replace("uniform sampler2D emissiveMap;", "");
+                    replace("uniform sampler2D specularMap;", "");
+                    replace("texture(bumpMap, normal_texcoord.xy).xyz*2.0-1.0", "pbrNormalTap(normal_texcoord.xy)");
+                    replace("texture(diffuseMap,", "texture(ll_bindless_textures[nonuniformEXT(vary_slot)],");
+                    replace("texture(specularMap,", "texture(ll_bindless_textures[nonuniformEXT(vary_slot_specular)],");
+                    replace("texture(emissiveMap,", "texture(ll_bindless_textures[nonuniformEXT(vary_slot_emissive)],");
+                    replace("uniform float metallicFactor;", "flat in float metallicFactor;");
+                    replace("uniform float roughnessFactor;", "flat in float roughnessFactor;");
+                    replace("uniform vec3 emissiveColor;", "flat in vec3 emissiveColor;");
+                    replace("uniform float minimum_alpha;", "flat in float minimum_alpha;");
+                    shader_code_text[shader_code_count] = (char *)strdup(fixed.c_str());
+                }
+                else
+                {
                 replace("uniform sampler2D diffuseMap;", "");
                 replace("uniform sampler2D bumpMap;", "");
                 replace("uniform sampler2D specularMap;", "");
@@ -761,6 +792,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                 replace("uniform vec4 specular_color;", "flat in vec4 specular_color;");
                 replace("uniform float minimum_alpha;", "flat in float minimum_alpha;");
                 shader_code_text[shader_code_count] = (char *)strdup(fixed.c_str());
+                }
             }
             else
             {

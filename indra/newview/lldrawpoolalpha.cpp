@@ -235,6 +235,10 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     {   // <FS> S5a: the pull programs of the runs drawn from the scene table
         prepare_alpha_shader(&gDeferredAlphaPullProgram, true, water_sign);
         prepare_alpha_shader(&gDeferredFullbrightAlphaPullProgram, true, water_sign);
+        if (gAlphaPbrPullReady)
+        {   // S5c: and the PBR program
+            prepare_alpha_shader(&gDeferredPBRAlphaPullProgram, true, water_sign);
+        }
         if (gAlphaMaterialPullReady)
         {   // S5b: and the blend variants of the materials programs
             for (U32 mask : { 1u, 5u, 9u, 13u })
@@ -1069,7 +1073,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         LLVkBridge::ShadowPacketsHeader header;
         header.mKind = 29;
         header.mEntries = (U32)pending.size();
-        LLVkBridge::shadowPackets(header, pending.data(), pending.size() * sizeof(PendingRange));
+        {
+            LLRenderState::CullScope cull_face(false, ((pending_key >> 16) & 1) != 0);       // a double sided glTF material: culling off for its run
+            LLVkBridge::shadowPackets(header, pending.data(), pending.size() * sizeof(PendingRange));
+        }
         ++sAlphaScene.mRecords;
         sAlphaScene.mRanges += pending.size();
         sAlphaScene.mBytes += pending.size() * sizeof(PendingRange);
@@ -1079,8 +1086,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // a new run: the pull program of its key bound, the blend function, the per-draw values a plain draw has (spec 1, env 0, brightness 1)
     auto run_begin = [&](int key)
     {
-        const int pkey = key & 0xFF;        // the program: 0 lit, 1 fullbright, 2 + mask a material; the blend function pair id is in bits 8 and up
-        LLShaderProgram* pull = pkey >= 2 ? &gDeferredMaterialPullProgram[pkey - 2] : (pkey ? &gDeferredFullbrightAlphaPullProgram : &gDeferredAlphaPullProgram);
+        const int pkey = key & 0xFF;        // the program: 0 lit, 1 fullbright, 2 + mask a material, 18 PBR; the blend function pair id is in bits 8-15, bit 16: double sided
+        LLShaderProgram* pull = pkey == 18 ? &gDeferredPBRAlphaPullProgram : (pkey >= 2 ? &gDeferredMaterialPullProgram[pkey - 2] : (pkey ? &gDeferredFullbrightAlphaPullProgram : &gDeferredAlphaPullProgram));
         if (setup_key == key && current_shader == pull)
         {
             pending_key = key;
@@ -1099,7 +1106,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             }
         }
         int blend_src = (int)LLRender::BF_SOURCE_ALPHA, blend_dst = (int)LLRender::BF_ONE_MINUS_SOURCE_ALPHA;
-        ll_alpha_blend_pair((U32)key >> 8, &blend_src, &blend_dst);
+        ll_alpha_blend_pair(((U32)key >> 8) & 0xFF, &blend_src, &blend_dst);
         gRender.blendFunc((LLRender::eBlendFactor)blend_src, (LLRender::eBlendFactor)blend_dst, mAlphaSFactor, mAlphaDFactor);
         {   // a custom blend function may need "invisible" fragments: the minimum alpha is 0 for it, as the old loop sets it per draw (and back for the next run of this program)
             const bool zero_alpha = blend_dst != (int)LLRender::BF_SOURCE_ALPHA && blend_src != (int)LLRender::BF_SOURCE_ALPHA;
@@ -1265,7 +1272,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             }
                             while (glow_at < plan.mGlowCount && plan.mGlowIdx[glow_at] < seg.mFirst + seg.mCount)
                             {
-                                emissives.push_back(const_cast<LLDrawInfo*>(plan.mOrder[plan.mGlowIdx[glow_at]]));
+                                LLDrawInfo* glow_draw = const_cast<LLDrawInfo*>(plan.mOrder[plan.mGlowIdx[glow_at]]);
+                                (glow_draw->mGLTFMaterial.notNull() ? pbr_emissives : emissives).push_back(glow_draw);
                                 ++glow_at;
                             }
                         }
@@ -1305,7 +1313,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         ++sAlphaScene.mServed;
                         if (post_water && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
                         {
-                            emissives.push_back(&params);
+                            (params.mGLTFMaterial.notNull() ? pbr_emissives : emissives).push_back(&params);
                         }
                         cen.drawEnd();
                         continue;
