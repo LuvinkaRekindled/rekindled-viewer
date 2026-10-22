@@ -5403,6 +5403,7 @@ struct LLSceneFragment
     std::vector<U32> mGeoMoving;                        // S4 C: the moving matrix slots (256-2047) this fragment's items use (reference counted)
     // S5a-1 (LL_VK_SCENE_ALPHA=1): the plan of the group's static alpha draws (LLAlphaPlanView)
     struct AlphaPbr { U32 mRank; F32 mV[40]; };         // S5c: the PBR values of the alpha item mRank (see pbrAlphaPullV.glsl)
+    std::vector<AlphaPbr> mGeoPbr;                      // S6 X4: the PBR values of the glTF items of mGeo (mRank = the item's index in mGeo)
     // S5a / S5d: the plan of the group's alpha draws, one set for the static draws (PASS_ALPHA, items of type 26) and one for the rigged ones (PASS_ALPHA_RIGGED, type 27)
     struct AlphaSet
     {
@@ -5702,7 +5703,7 @@ bool ll_scene_geo_on()
 }
 
 // S3: the deferred geometry pass types the scene tables serve, with the index in gDeferredMaterialPullProgram[] of their program (-1 = the diffuse pass)
-struct GeoType { U32 mType; int mShader; };
+struct GeoType { U32 mType; int mShader; int mPbr = 0; };       // mPbr: 1 = a glTF opaque / mask pass, 2 = the glTF glow pass (entries with a PBR row, see scene_gltf_g_entry)
 static const GeoType kGeoTypes[] =
 {
     { LLRenderPass::PASS_SIMPLE, -1 },
@@ -5714,6 +5715,9 @@ static const GeoType kGeoTypes[] =
     { LLRenderPass::PASS_GLOW, -1 },                // S6 X2: the glow pass (LLDrawPoolGlow): the emissive array, alpha only
     { LLRenderPass::PASS_ALPHA_MASK, -1 },          // S6 X3: the alpha masked diffuse G-buffer pass (LLDrawPoolAlphaMask)
     { LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, -1 },       // S6 X3: the alpha masked fullbright pass (LLDrawPoolFullbrightAlphaMask)
+    { LLRenderPass::PASS_GLTF_PBR, -1, 1 },         // S6 X4: the glTF opaque and mask passes (LLDrawPoolGLTFPBR) and the glTF glow
+    { LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK, -1, 1 },
+    { LLRenderPass::PASS_GLTF_GLOW, -1, 2 },
 };
 static const size_t kGeoTypeCount = sizeof(kGeoTypes) / sizeof(kGeoTypes[0]);
 static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (llvkbridge.h)");
@@ -5738,6 +5742,14 @@ static bool geo_type_available(size_t t, bool rigged)
     {
         return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightPullReady);
     }
+    if (kGeoTypes[t].mPbr == 1)
+    {
+        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gPbrOpaquePullSkinReady && ll_rigged_packets_enabled()) : gPbrOpaquePullReady);
+    }
+    if (kGeoTypes[t].mPbr == 2)
+    {
+        return LLRenderPass::deferredPacketsEnabled() && gAlphaGlowPbrReady && (!rigged || ll_rigged_packets_enabled());
+    }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_ALPHA_MASK)
     {
         return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gDiffuseMaskPullSkinReady && ll_rigged_packets_enabled()) : gDiffuseMaskPullReady);
@@ -5750,6 +5762,48 @@ static bool geo_type_available(size_t t, bool rigged)
     {
         return LLRenderPass::deferredPacketsEnabled() && gAlphaGlowPullReady && (!rigged || ll_rigged_packets_enabled());       // (gAlphaGlowPullReady: the plain and the skinned emissive pull programs)
     }
+    return true;
+}
+
+// S6 X4: the entry of a glTF draw of the opaque, mask or glow pass: the arrays, the four textures and the PBR values the pbr pull programs read (the same rows as the glTF blend items, see alpha_classify). False: the old
+// path draws it (a double sided material changes the culling per draw, a texture matrix is not carried by these records, the glow pass needs the emissive array).
+static bool scene_gltf_g_entry(const LLDrawInfo& p, bool rigged, const GeoType& type, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], F32 values[40])
+{
+    for (int k = 0; k < 6; ++k)
+    {
+        textures[k] = nullptr;
+    }
+    LLFetchedGLTFMaterial* gltf = p.mGLTFMaterial.get();
+    if (!gltf || gltf->mDoubleSided || p.mTextureMatrix || !p.mCount)
+    {
+        return false;
+    }
+    const LLVertexBuffer* vb = p.mVertexBuffer.get();
+    if (type.mPbr == 2 && (!vb || !vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE)))
+    {
+        return false;
+    }
+    if (!LLRenderPass::pbrAlphaEntry(p, e, rigged))
+    {
+        return false;
+    }
+    LLViewerTexture* media = p.mTexture.get();
+    textures[0] = media ? media : (gltf->mBaseColorTexture.notNull() ? (LLViewerTexture*)gltf->mBaseColorTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
+    textures[1] = gltf->mNormalTexture.notNull() ? (LLViewerTexture*)gltf->mNormalTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sFlatNormalImagep.get();
+    textures[2] = gltf->mMetallicRoughnessTexture.notNull() ? (LLViewerTexture*)gltf->mMetallicRoughnessTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get();
+    textures[3] = media ? media : (gltf->mEmissiveTexture.notNull() ? (LLViewerTexture*)gltf->mEmissiveTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
+    static const int infos[4] = { LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR, LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL, LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS, LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE };
+    memset(values, 0, 40 * sizeof(F32));
+    for (int k = 0; k < 4; ++k)
+    {
+        gltf->mTextureTransform[infos[k]].getPacked(*reinterpret_cast<LLGLTFMaterial::TextureTransform::Pack*>(values + 8 * k));
+    }
+    values[32] = gltf->mRoughnessFactor;
+    values[33] = gltf->mMetallicFactor;
+    values[34] = gltf->mEmissiveColor.mV[0];
+    values[35] = gltf->mEmissiveColor.mV[1];
+    values[36] = gltf->mEmissiveColor.mV[2];
+    values[37] = gltf->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? gltf->mAlphaCutoff : -1.f;       // (the minimum alpha, as LLFetchedGLTFMaterial::bind sets it)
     return true;
 }
 
@@ -5908,6 +5962,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mGeoServedMask = 0;
     f.mGeoServedTris = 0;
     f.mGeoRigged.clear();
+    f.mGeoPbr.clear();
     U32 total_infos[2 * kGeoTypeCount] = {}, served_infos[2 * kGeoTypeCount] = {}, served_tris[2 * kGeoTypeCount] = {};
     const bool rigged_on = scene_geo_rigged_on();
     for (size_t t2 = 0; t2 < (rigged_on ? 2 * kGeoTypeCount : kGeoTypeCount); ++t2)
@@ -5943,7 +5998,9 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             }
             LLSceneFragment::GeoItem item = {};
             LLViewerTexture* textures[6];
-            if (!LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged, false, ll_pass_arrays(kGeoTypes[t].mType)))
+            F32 pbr_values[40];
+            if (!(kGeoTypes[t].mPbr ? scene_gltf_g_entry(*params, rigged, kGeoTypes[t], item.mE, textures, pbr_values)
+                                    : LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged, false, ll_pass_arrays(kGeoTypes[t].mType))))
             {
                 {   // S6 census: why, by type (logged with the fragment G entry builds)
                     static U64 reasons[2 * kGeoTypeCount][16] = {};
@@ -6014,6 +6071,13 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 {
                     f.mGeoRigged.push_back((U32)f.mGeo.size());
                 }
+            }
+            if (kGeoTypes[t].mPbr && item.mServed)
+            {
+                LLSceneFragment::AlphaPbr block;
+                block.mRank = (U32)f.mGeo.size();
+                memcpy(block.mV, pbr_values, sizeof(block.mV));
+                f.mGeoPbr.push_back(block);
             }
             f.mGeo.push_back(item);
         }
@@ -6695,7 +6759,7 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
     }
     sGeoFragByHandle[handle] = f;
     struct PbrWireOut { U32 mItem; U32 mPad[3]; F32 mV[40]; };
-    const size_t pbr_count = f->mAlphaSet[0].mPbr.size() + f->mAlphaSet[1].mPbr.size();
+    const size_t pbr_count = f->mAlphaSet[0].mPbr.size() + f->mAlphaSet[1].mPbr.size() + f->mGeoPbr.size();
     blob.resize(wire.size() * sizeof(wire[0]) + f->mGeoTex.size() * sizeof(U32) + pbr_count * sizeof(PbrWireOut));
     U32* names = (U32*)(blob.data() + wire.size() * sizeof(wire[0]));
     for (size_t k = 0; k < f->mGeoTex.size(); ++k)
@@ -6725,6 +6789,12 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
                 pbr_out[at].mItem = ps.mItems[ps.mPbr[k].mRank].mWire;
                 memcpy(pbr_out[at].mV, ps.mPbr[k].mV, sizeof(pbr_out[at].mV));
             }
+        }
+        for (size_t k = 0; k < f->mGeoPbr.size(); ++k, ++at)       // S6 X4: the glTF items of the G passes
+        {
+            memset(&pbr_out[at], 0, sizeof(PbrWireOut));
+            pbr_out[at].mItem = f->mGeo[f->mGeoPbr[k].mRank].mWire;
+            memcpy(pbr_out[at].mV, f->mGeoPbr[k].mV, sizeof(pbr_out[at].mV));
         }
     }
     LLVkBridge::ShadowPacketsHeader header;
