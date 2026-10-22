@@ -557,6 +557,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
 
     const bool pull_material = defines && defines->find("LL_BINDLESS_MATERIAL") != defines->end() && type == ShaderStage::Fragment;
     const bool pull_pbr = defines && defines->find("LL_BINDLESS_PBR") != defines->end() && type == ShaderStage::Fragment;
+    const bool pull_projector = defines && defines->find("LL_BINDLESS_PROJECTOR") != defines->end() && type == ShaderStage::Fragment;
     if (defines && defines->find("LL_BINDLESS_DIFFUSE") != defines->end() && type == ShaderStage::Fragment)
     {
         // <FS> render packets (Vulkan mirror only): the draw's texture comes from the bindless table (set 2), by the slot the vertex shader passes on, instead of tex0..texN
@@ -582,6 +583,13 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         extra_code_text[extra_code_count++] = strdup("#ifdef HAS_SPECULAR_MAP\n");
         extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_specular;\n");
         extra_code_text[extra_code_count++] = strdup("#endif\n");
+    }
+    else if (pull_projector)
+    {
+        // <FS> S6 LV2: the projectors of a lighting pass: the projected image comes from the bindless table by the slot of the light's row (flat in uint vary_proj_slot)
+        extra_code_text[extra_code_count++] = strdup("#extension GL_EXT_nonuniform_qualifier : require\n");
+        extra_code_text[extra_code_count++] = strdup("layout(set = 2, binding = 0) uniform sampler2D ll_bindless_textures[];\n");
+        extra_code_text[extra_code_count++] = strdup("flat in uint vary_proj_slot;\n");
     }
     else if (pull_pbr)
     {

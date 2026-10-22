@@ -257,6 +257,8 @@ extern LLShaderProgram         gDeferredPBROpaquePullProgram;             // <FS
 extern LLShaderProgram         gDeferredPBROpaquePullSkinProgram;
 extern LLShaderProgram         gDeferredLightPullProgram;                 // <FS> S6 LV1: the point light volumes from one record
 extern bool                    gLightPullReady;
+extern LLShaderProgram         gDeferredSpotLightPullProgram;             // <FS> S6 LV2: the projectors from one record
+extern bool                    gSpotPullReady;
 extern bool                    gPbrOpaquePullReady;
 extern bool                    gPbrOpaquePullSkinReady;
 extern bool                    gDiffuseMaskPullReady;
