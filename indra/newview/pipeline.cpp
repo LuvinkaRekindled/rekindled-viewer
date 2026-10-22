@@ -4085,6 +4085,8 @@ void scene_stats_frame()
 }
 }
 
+namespace { int view_jobs_bits(); }      // R1 = 1, R2 = 2 (LL_VK_VIEWJOBS, defined with scene_resident_on)
+static U64 sGeoElideWhole = 0;           // R2: groups postSort did not walk at all (every type of the group is served)
 static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // <FS> S3 G4: what postSort left out of the render map (groups with served draws, type lists skipped, indices)
 
 void LLPipeline::postSort(LLCamera &camera)
@@ -4132,6 +4134,7 @@ void LLPipeline::postSort(LLCamera &camera)
     const bool geo_owner = geo_collect && ll_scene_geo_verify_on();
     const bool geo_list = geo_collect && &camera == LLViewerCamera::getInstance() && ll_scene_geo_main_view() && ll_scene_geo_serving();
     const bool geo_elide = geo_list && !ll_scene_geo_verify_on();       // S3 G4: the draws the table serves are not listed in the render map
+    const bool r2_whole_groups = geo_elide && (view_jobs_bits() & 2) != 0;
     if (geo_elide)
     {
         sCull->mGeoElided = true;
@@ -4170,6 +4173,16 @@ void LLPipeline::postSort(LLCamera &camera)
                 ++sGeoElideGroups;
                 sGeoElideTris += group->mGeoServedTris;
                 addTrianglesDrawn(group->mGeoServedTris);          // (the statistic counted every draw info of the types the table draws)
+            }
+            if (geo_elide && group->mGeoAllServed && r2_whole_groups)
+            {
+                // R2: nothing of this group is left for the render map (no alpha, no unserved type): the draw map is not walked
+                ++sGeoElideWhole;
+                if (scene_stats)
+                {
+                    scene_stats_group(group);
+                }
+                continue;
             }
         }
 
@@ -4524,6 +4537,13 @@ struct ShadowPrepTimes
     U32 mFrames = 0;
     U32 mCascades = 0;
 };
+// R0 / R1a (doc/vulkan/S-retire-views-design.md): what the render map job of a cascade pushes, by kind, and the draw infos it leaves out when the cascade's static lists are dead
+struct ViewJobsStats
+{
+    std::atomic<U64> mJobs{0}, mGroups{0}, mResidentGroups{0}, mStatic{0}, mRiggedStatic{0}, mAlpha{0}, mOther{0}, mSkippedStatic{0};
+};
+ViewJobsStats sViewJobs;
+std::atomic<bool> sViewJobsSkipStatic{false};
 ShadowPrepTimes sShadowPrepTimes[2]; // [parallel]
 U64 sCascadeRenderNs[4];                 // renderShadow of each sun cascade (preparation included), summed over the renders
 U32 sCascadeRenders[4];
@@ -4603,6 +4623,16 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
             sCascadeRenders[c] = 0;
         }
         LL_INFOS("ShadowPrep") << "renderShadow by cascade:" << per_cascade << LL_ENDL;
+        {
+            const U64 jobs = sViewJobs.mJobs.exchange(0);
+            if (jobs)
+            {
+                const double n = (double)jobs;
+                LL_INFOS("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment; draw infos pushed: %.1f static (%.1f left out), %.1f rigged static, %.1f alpha, %.1f other",
+                    (unsigned long long)jobs, sViewJobs.mGroups.exchange(0) / n, sViewJobs.mResidentGroups.exchange(0) / n, sViewJobs.mStatic.exchange(0) / n, sViewJobs.mSkippedStatic.exchange(0) / n,
+                    sViewJobs.mRiggedStatic.exchange(0) / n, sViewJobs.mAlpha.exchange(0) / n, sViewJobs.mOther.exchange(0) / n) << LL_ENDL;
+            }
+        }
         t = ShadowPrepTimes();
     }
 }
@@ -5229,6 +5259,17 @@ static const U32 kShadowStaticTypes[] = {
     LLRenderPass::PASS_NORMSPEC_EMISSIVE
 };
 static const size_t kShadowStaticTypeCount = sizeof(kShadowStaticTypes) / sizeof(kShadowStaticTypes[0]);
+// the kind of a draw map type for the render map job's counters: 0 a static shadow type, 1 its rigged variant (the next number), 2 alpha (blend or mask, rigged or not), 3 anything else
+static int shadow_view_class(U32 type)
+{
+    for (size_t k = 0; k < kShadowStaticTypeCount; ++k)
+    {
+        if (type == kShadowStaticTypes[k]) return 0;
+        if (type == kShadowStaticTypes[k] + 1) return 1;
+    }
+    if (type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_ALPHA_RIGGED || type == LLRenderPass::PASS_ALPHA_MASK || type == LLRenderPass::PASS_ALPHA_MASK_RIGGED) return 2;
+    return 3;
+}
 
 // <FS> Pure packet builders (see doc/vulkan/F2-start.md, "safe parallel recording"): a builder reads a cull result and what the draws point at, writes only its own output, and
 // touches nothing shared, so it can run on any thread while the main thread does something else. Whatever has to change in shared state is the main thread's job, after the join.
@@ -5383,6 +5424,30 @@ bool scene_resident_on()
 {
     static const bool on = scene_env("LL_VK_SCENE_RESIDENT");
     return on;
+}
+// R1a (doc/vulkan/S-retire-views-design.md): LL_VK_VIEWJOBS=1, LL_VK_VIEWJOBS_AB=<s> alternates it (log marker "[phase] view jobs now ON/off"). Off by default.
+// bits: 1 = R1 (the cascades' dead static lists), 2 = R2 (postSort does not walk all-served groups); LL_VK_VIEWJOBS_AB alone alternates both
+int view_jobs_bits()
+{
+    static const int base = []() { const char* v = getenv("LL_VK_VIEWJOBS"); return v ? atoi(v) : 0; }();
+    static const int period = []() { const char* v = getenv("LL_VK_VIEWJOBS_AB"); return v ? atoi(v) : 0; }();
+    if (period <= 0)
+    {
+        return base;
+    }
+    const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const bool phase = ((seconds / period) % 2) == 1;
+    static int last = -1;
+    if ((int)phase != last)
+    {
+        last = (int)phase;
+        LL_INFOS("VkScene") << "[phase] view jobs now " << (phase ? "ON" : "off") << LL_ENDL;
+    }
+    return phase ? (base ? base : 3) : 0;
+}
+bool view_jobs_on()
+{
+    return (view_jobs_bits() & 1) != 0;
 }
 int scene_geo_mode()
 {
@@ -6133,6 +6198,24 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
     group->mGeoHandle = handle;
     group->mGeoServedMask = f->mGeoServedMask;
     group->mGeoServedTris = f->mGeoServedTris;
+    {
+        // R2: all-served = every non-empty draw map type of the group is a table type whose draw infos the table all serves
+        bool all = group->mGeoServedMask != 0;
+        for (const auto& kv : group->mDrawMap)
+        {
+            if (kv.second.empty())
+            {
+                continue;
+            }
+            const int tn = ll_scene_geo_type_number(kv.first);
+            if (tn < 0 || !(group->mGeoServedMask & (1u << tn)))
+            {
+                all = false;
+                break;
+            }
+        }
+        group->mGeoAllServed = all;
+    }
     ++sGeoReg.mAttached;
     sGeoReg.mRetainWireBytes += blob.size();
     sGeoReg.mNsRetain += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
@@ -6170,6 +6253,7 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     group->mGeoHandle = 0;
     group->mGeoServedMask = 0;
     group->mGeoServedTris = 0;
+    group->mGeoAllServed = false;
     if (scene_geo_mode() >= 2)
     {
         scene_geo_attach(group, f);
@@ -6984,7 +7068,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
         LL_INFOS("VkScene") << "scene geometry, viewer side per frame over " << s.mFrames << " frames serving (" << s.mOff << " frames with the table off): " << (double)s.mHandles / n << " fragments listed, "
             << (double)s.mMatrices / n << " matrices, " << (double)s.mBytes / n << " bytes; builder draws left out " << (double)sGeoCounts[0] / n << ", table draw records " << (double)sGeoCounts[1] / n
             << ", builds made again for want of a prepare " << sGeoCounts[2] << " | postSort left out (per frame) " << (double)sGeoElideGroups / n << " groups, " << (double)sGeoElideTypes / n
-            << " type lists, " << (double)sGeoElideTris / n / 3.0 << " triangles; passes elided but not prepared " << sGeoCounts[3] << " | pools: rigged material passes skipped " << (double)sGeoCounts[4] / n
+            << " type lists (" << (double)sGeoElideWhole / n << " whole groups not walked), " << (double)sGeoElideTris / n / 3.0 << " triangles; passes elided but not prepared " << sGeoCounts[3] << " | pools: rigged material passes skipped " << (double)sGeoCounts[4] / n
             << " a frame, old shader binds skipped " << (double)sGeoCounts[5] / n << " | fragments attached " << r.mAttached << " (" << r.mRetainWireBytes / std::max<U64>(r.mAttached, 1) << " bytes each), detached "
             << r.mDetached << ", handles allocated " << sGeoHandleNext - 1 << " (" << sGeoHandleFree.size() << " free) | registry: " << sAlphaTex.size() << " textures, " << geo_users << " geometry users, "
             << sTexById.size() << " indexed by id, " << sTexNoId.size() << " without an id yet; name events " << r.mEventIds << " ids, " << r.mEventMatched << " matched, " << r.mNoIdResolved << " ids found late; texture update records "
@@ -7763,6 +7847,10 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
     LLCullResult& result = *prep.mResult;
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
+    // R1a: in the ray-only modes with resident fragments nothing reads this cascade's lists of the static (non-rigged) types: the builder is not submitted (shadowPrepSubmitBuilds) and
+    // render_shadow_packets takes the casters from the fragments; the main thread decided (generateSunShadow)
+    const bool skip_static = sViewJobsSkipStatic.load(std::memory_order_relaxed);
+    U64 n_groups = 0, n_resident = 0, n_static = 0, n_rigged = 0, n_alpha = 0, n_other = 0, n_skipped = 0;
 
     for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
     {
@@ -7779,6 +7867,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             continue;
         }
 
+        ++n_groups;
         if (scene_resident_on() && !group->mDrawMap.empty())
         {
             // S2: a group with a current resident fragment is culled and drawn from the worker's table; the others stay on the per-pass list
@@ -7786,6 +7875,10 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             if (!(fragment && fragment->mSerial == group->mDrawMapSerial && fragment->mResident))
             {
                 result.mSceneGroups.push_back(group);
+            }
+            else
+            {
+                ++n_resident;
             }
         }
 
@@ -7795,6 +7888,15 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             if (!hasRenderType(j->first))
             {
                 continue;
+            }
+            {
+                const int cls = shadow_view_class(j->first);
+                if (cls == 0 && skip_static)
+                {
+                    n_skipped += src_vec.size();
+                    continue;
+                }
+                (cls == 0 ? n_static : (cls == 1 ? n_rigged : (cls == 2 ? n_alpha : n_other))) += src_vec.size();
             }
 
             for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
@@ -7837,6 +7939,14 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             }
         }
     }
+    sViewJobs.mJobs.fetch_add(1, std::memory_order_relaxed);
+    sViewJobs.mGroups.fetch_add(n_groups, std::memory_order_relaxed);
+    sViewJobs.mResidentGroups.fetch_add(n_resident, std::memory_order_relaxed);
+    sViewJobs.mStatic.fetch_add(n_static, std::memory_order_relaxed);
+    sViewJobs.mRiggedStatic.fetch_add(n_rigged, std::memory_order_relaxed);
+    sViewJobs.mAlpha.fetch_add(n_alpha, std::memory_order_relaxed);
+    sViewJobs.mOther.fetch_add(n_other, std::memory_order_relaxed);
+    sViewJobs.mSkippedStatic.fetch_add(n_skipped, std::memory_order_relaxed);
 }
 
 // main thread, right before the cascade is drawn: the pools and the sky, which every cascade fills for itself
@@ -19054,6 +19164,16 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             { LL_CPU_ZONE("shadow prep: rebuild"); shadowPrepRebuild(pending); }
             lap.reset();
 
+            {
+                // R1a: the static lists of the cascades are dead in the ray-only modes when the fragments name the casters (the same conditions as shadowPrepSubmitBuilds and render_shadow_packets)
+                bool all_static = true;
+                for (size_t k = 0; k < kShadowStaticTypeCount && all_static; ++k)
+                {
+                    all_static = hasRenderType(kShadowStaticTypes[k]);
+                }
+                sViewJobsSkipStatic.store(view_jobs_on() && rt_sun_cascades_unused() && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static,
+                                          std::memory_order_relaxed);
+            }
             const std::function<void(size_t)> map_job = [&](size_t i) { shadowPrepRenderMap(pending[i]); };
             { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(pending.size(), map_job); }
             lap.mark(PH_RENDER_MAP);

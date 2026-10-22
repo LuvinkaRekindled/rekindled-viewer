@@ -6909,6 +6909,17 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     Context::instance().flight(Context::FL_GEO_DRAW, (unsigned long long)type, (unsigned long long)count, (unsigned long long)models.mAddress, (unsigned long long)slots);
+    {
+        // a timestamp stamp per table draw type: the device lost report ("the GPU is inside [...]") names the type when the stuck pass is the G-buffer pass (the pass was one lump)
+        static U32 tags[2 * kGeoTypes] = {};
+        static bool made[2 * kGeoTypes] = {};
+        if (!made[type])
+        {
+            made[type] = true;
+            tags[type] = Context::stampTag(std::string("scene table draw, type ") + std::to_string(type % kGeoTypes) + (rigged_draw ? " rigged" : ""));
+        }
+        Context::instance().gpuStamp(tags[type]);
+    }
     F32* out = (F32*)models.mPtr;
     memset(out, 0, 176 * (size_t)slots);
     geo_matrix(view, proj, nullptr, out);               // slot 0: the view alone

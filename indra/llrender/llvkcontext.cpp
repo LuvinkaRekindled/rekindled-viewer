@@ -1197,9 +1197,49 @@ std::string Context::stampTagName(U32 tag)
     return tag < names.size() ? names[tag] : "?";
 }
 
+// A device lost leaves through the viewer's own message box, not an exception, so Windows writes no dump: the process memory (the draw ring, the geometry table, the arena, the ray scene state) is
+// what a later look with the debugger needs. Private read / write memory only (the heaps and stacks, not the images or the mapped GPU memory): written once, after the report.
+static void write_device_lost_dump()
+{
+    static bool done = false;
+    if (done)
+    {
+        return;
+    }
+    done = true;
+    char dir[MAX_PATH] = {};
+    if (GetEnvironmentVariableA("APPDATA", dir, sizeof(dir)) == 0 || GetEnvironmentVariableA("LL_VK_NO_DUMP", nullptr, 0) > 0)
+    {
+        return;
+    }
+    HMODULE dbg = LoadLibraryA("dbghelp.dll");
+    typedef BOOL(WINAPI * WriteDumpFn)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE, PMINIDUMP_EXCEPTION_INFORMATION, PMINIDUMP_USER_STREAM_INFORMATION, PMINIDUMP_CALLBACK_INFORMATION);
+    WriteDumpFn write = dbg ? (WriteDumpFn)GetProcAddress(dbg, "MiniDumpWriteDump") : nullptr;
+    if (!write)
+    {
+        return;
+    }
+    char path[MAX_PATH + 64] = {};
+    snprintf(path, sizeof(path), "%s\\Firestorm_x64\\logs\\vk-device-lost-%lu.dmp", dir, (unsigned long)GetCurrentProcessId());
+    HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        return;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    const BOOL ok = write(GetCurrentProcess(), GetCurrentProcessId(), file,
+                          (MINIDUMP_TYPE)(MiniDumpWithPrivateReadWriteMemory | MiniDumpWithDataSegs | MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules), nullptr, nullptr, nullptr);
+    LARGE_INTEGER size = {};
+    GetFileSizeEx(file, &size);
+    CloseHandle(file);
+    LL_WARNS("Vulkan") << "device lost: process dump " << (ok ? "written" : "FAILED") << " (" << (unsigned long long)(size.QuadPart >> 20) << " MB, "
+                       << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() << " ms): " << path << LL_ENDL;
+}
+
 void Context::reportDeviceLost()
 {
     reportCheckpoints("device lost");
+    write_device_lost_dump();
 }
 
 std::string Context::describeBinding(U64 handle, bool buffer) const
@@ -1413,12 +1453,35 @@ void Context::reportCheckpoints(const char* when)
             std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
             std::vector<VkDeviceFaultVendorInfoEXT> vendors(counts.vendorInfoCount);
             LL_WARNS("Vulkan") << when << ": device fault counts: addresses " << counts.addressInfoCount << ", vendor records " << counts.vendorInfoCount << ", vendor binary " << (unsigned long long)counts.vendorBinarySize << " bytes (not requested)" << LL_ENDL;
-            counts.vendorBinarySize = 0;        // no binary blob asked for: the driver wrote through the (null) binary pointer when the size was left as it reported it
+            // the driver's own crash blob (what NVIDIA's tools read to name the shader and the resource): asked for with a buffer of the size it reported (an earlier build left the size set with a null
+            // pointer and the driver wrote through it); written to the logs folder below
+            const bool want_binary = counts.vendorBinarySize > 0 && counts.vendorBinarySize <= (64u << 20);
+            std::vector<U8> vendor_binary(want_binary ? (size_t)counts.vendorBinarySize : 0);
+            if (!want_binary)
+            {
+                counts.vendorBinarySize = 0;
+            }
             VkDeviceFaultInfoEXT info = { VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT };
             info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
             info.pVendorInfos = vendors.empty() ? nullptr : vendors.data();
+            info.pVendorBinaryData = vendor_binary.empty() ? nullptr : vendor_binary.data();
             const VkResult r2 = vkGetDeviceFaultInfoEXT(mDevice, &counts, &info);
             LL_WARNS("Vulkan") << when << ": vkGetDeviceFaultInfoEXT (second call) answered " << (int)r2 << LL_ENDL;
+            if ((r2 == VK_SUCCESS || r2 == VK_INCOMPLETE) && !vendor_binary.empty())
+            {
+                char dir[MAX_PATH] = {};
+                if (GetEnvironmentVariableA("APPDATA", dir, sizeof(dir)) > 0)
+                {
+                    char path[MAX_PATH + 64] = {};
+                    snprintf(path, sizeof(path), "%s\\Firestorm_x64\\logs\\gpu-fault-frame%llu.bin", dir, (unsigned long long)mFrameNumber);
+                    if (FILE* f = fopen(path, "wb"))
+                    {
+                        fwrite(vendor_binary.data(), 1, vendor_binary.size(), f);
+                        fclose(f);
+                        LL_WARNS("Vulkan") << when << ": the driver's crash blob (" << vendor_binary.size() << " bytes) is in " << path << LL_ENDL;
+                    }
+                }
+            }
             if (r2 == VK_SUCCESS || r2 == VK_INCOMPLETE)
             {
                 if (mBindlessAudit)

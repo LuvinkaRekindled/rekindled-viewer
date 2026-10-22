@@ -154,6 +154,7 @@ void LLSpatialGroup::clearDrawMap()
     mGeoHandle = 0;
     mGeoServedMask = 0;
     mGeoServedTris = 0;
+    mGeoAllServed = false;
     ll_scene_fragment_free(mSceneFragment);     // <FS> S2: the retained entries of the draw infos go with them (the worker's table follows)
 }
 
