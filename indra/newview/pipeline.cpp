@@ -5425,11 +5425,12 @@ bool scene_resident_on()
     static const bool on = scene_env("LL_VK_SCENE_RESIDENT");
     return on;
 }
-// R1a (doc/vulkan/S-retire-views-design.md): LL_VK_VIEWJOBS=1, LL_VK_VIEWJOBS_AB=<s> alternates it (log marker "[phase] view jobs now ON/off"). Off by default.
-// bits: 1 = R1 (the cascades' dead static lists), 2 = R2 (postSort does not walk all-served groups); LL_VK_VIEWJOBS_AB alone alternates both
+// R1a (doc/vulkan/S-retire-views-design.md): on by default, LL_VK_VIEWJOBS=0 off, LL_VK_VIEWJOBS_AB=<s> alternates it (log marker "[phase] view jobs now ON/off").
+// bits: 1 = R1a (the cascades' dead static lists; ON by default since 2026-10-21, Adam: "R1a on"), 2 = R2 (postSort does not walk all-served groups; off, 0.02-0.04 ms); LL_VK_VIEWJOBS=0 turns both off.
+// LL_VK_VIEWJOBS_AB=<s> alternates them (with LL_VK_VIEWJOBS unset the alternation is R1a)
 int view_jobs_bits()
 {
-    static const int base = []() { const char* v = getenv("LL_VK_VIEWJOBS"); return v ? atoi(v) : 0; }();
+    static const int base = []() { const char* v = getenv("LL_VK_VIEWJOBS"); return v ? atoi(v) : 1; }();
     static const int period = []() { const char* v = getenv("LL_VK_VIEWJOBS_AB"); return v ? atoi(v) : 0; }();
     if (period <= 0)
     {
