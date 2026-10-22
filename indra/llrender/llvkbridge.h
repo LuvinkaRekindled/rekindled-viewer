@@ -253,6 +253,17 @@ namespace LLVkBridge
     struct SpotVolumeRow { F32 mCenter[3]; F32 mSize; F32 mColor[3]; F32 mFalloff; U32 mCypher; U32 mClassic; U32 mTexture; S32 mShadowIndex; F32 mN[3]; F32 mNear; F32 mP[3]; F32 mRange; F32 mOrigin[3]; F32 mAmbiance; F32 mFocus; F32 mLod; F32 mAmbientLod; F32 mShadowFade; F32 mMat[16]; };
     struct GeoFragRef { U32 mId, mNameOffset, mNameCount; };
     struct GeoSlotMatrix { U32 mSlot; F32 mM[16]; };
+    // S7 H1 (doc/vulkan/S7-design.md section 4): Hi-Z occlusion. hizSend queues kind 34 (the boxes of the occlusion groups and the view-projection of the pass) and returns its serial (0: not sent: no
+    // Vulkan, too many boxes, or too many serials not yet read). The worker tests the boxes against a depth pyramid of the depth target bound at that point of the frame and writes one word a box (bit 0 =
+    // occluded, bits 8-15 = pyramid level, bit 16 = behind the near plane, bit 17 = off screen, bit 18 = beyond the far plane) into a ring slot of cached host memory; the slot is published when the GPU has
+    // finished the frame. hizRead copies the 3 words a box (result bits, nearest depth, largest depth under it; out holds 3 * count) of a serial: 1 = copied, 0 = not published yet, -1 = lost (the slot holds a later serial). hizDone(serial) frees the serial's slot for reuse.
+    struct HizBox { F32 mCenter[3]; U32 mFlags; F32 mHalf[3]; F32 mPad; };      // mFlags bit 0 = water (depth clamped: no near / far rejection)
+    bool hizAvailable();
+    U32 hizSend(const HizBox* boxes, U32 count, const F32* view_proj);
+    S32 hizRead(U32 serial, U32 count, U32* out);
+    void hizDone(U32 serial);
+    void hizSetResults(const U32* results, U32 capacity);       // (worker) the mapped ring
+    void hizPublish(U32 slot, U32 serial);                      // (worker) the frame of this serial has finished
     bool sceneGeoAvailable();       // the worker can keep and draw them (buffer addresses, indirect draws with a first instance, bindless textures)
     // ---- ray query shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md) ----
     // 0 = off (or the device cannot), 1 = ray query shadows replace the cascades, 2 = split screen, 3 = disagreement map. Fixed for the run; the shader programs are compiled for it.

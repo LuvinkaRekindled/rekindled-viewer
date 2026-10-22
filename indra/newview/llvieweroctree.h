@@ -38,6 +38,7 @@
 #include "llquaternion.h"
 #include "lloctree.h"
 #include "llviewercamera.h"
+#include "llvkbridge.h"
 
 class LLViewerRegion;
 class LLViewerOctreeEntryData;
@@ -321,6 +322,13 @@ public:
     static U32 getNewOcclusionQueryObjectName();
     static void releaseOcclusionQueryObjectName(U32 name);
 
+    // <FS> S7 H1 (doc/vulkan/S7-design.md): Hi-Z occlusion instead of queries. LL_VK_HIZ: 0 queries, 1 Hi-Z drives OCCLUDED (default), 2 both run, the queries drive and the log compares.
+    static U32 hizMode();
+    // the box of this group for the Hi-Z pass, with what doOcclusion does for the state (mode 1) or only the decision that doOcclusion will issue (mode 2); true when a box was added
+    bool hizCollect(LLCamera* camera, U32 mode, std::vector<LLVkBridge::HizBox>& boxes, std::vector<LLOcclusionCullingGroup*>& groups);
+    static void hizSend(std::vector<LLVkBridge::HizBox>& boxes, std::vector<LLOcclusionCullingGroup*>& groups, const F32* view_proj);
+    static void hizApply();         // the results of the frames the GPU has finished (once per cull of the world camera)
+
 protected:
     void releaseOcclusionQueryObjectNames();
 
@@ -336,6 +344,10 @@ protected:
     LLViewerOctreePartition* mSpatialPartition;
     U32                      mOcclusionQuery[LLViewerCamera::NUM_CAMERAS];
     U32                      mOcclusionCheckCount[LLViewerCamera::NUM_CAMERAS];
+    U32                      mHizId = 0;            // <FS> H1: the id the Hi-Z batches name the group by (0 until its first box)
+    U32                      mHizSerial = 0;        // ... the serial of the batch whose result is awaited (mode 1)
+    struct HizHist { U32 mFrame[8] = {}; U8 mBit[8] = {}; U8 mLod[8] = {}; F32 mMargin[8] = {}; };
+    HizHist*                 mHizHist = nullptr;    // ... mode 2: the last results by issue frame, to compare with the query that was issued with them
 
 public:
     static std::set<U32> sPendingQueries;

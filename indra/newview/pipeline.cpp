@@ -2783,6 +2783,12 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
+    if (LLOcclusionCullingGroup::hizMode() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !hud_attachments && !gCubeSnapshot)
+    {
+        LL_CPU_ZONE("occlusion: Hi-Z results");
+        LLOcclusionCullingGroup::hizApply();        // <FS> S7 H1
+    }
+
     sCull->clear();
 
     for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
@@ -3007,6 +3013,12 @@ void LLPipeline::doOcclusion(LLCamera& camera)
 
         const U64 occ_g0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
         const bool occ_count = LLOccCensus::sOn && occ_cam >= 0 && occ_cam < LLOccCensus::CAMS;
+        // <FS> S7 H1: the boxes of the world camera's groups go to the Hi-Z pass in one record (mode 1: instead of the queries, mode 2: next to them)
+        const U32 hiz_mode = (occ_cam == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !gCubeSnapshot && LLVkBridge::hizAvailable()) ? LLOcclusionCullingGroup::hizMode() : 0;
+        static std::vector<LLVkBridge::HizBox> hiz_boxes;
+        static std::vector<LLOcclusionCullingGroup*> hiz_groups;
+        hiz_boxes.clear();
+        hiz_groups.clear();
         for (LLCullResult::sg_iterator iter = sCull->beginOcclusionGroups(); iter != sCull->endOcclusionGroups(); ++iter)
         {
             LLSpatialGroup* group = *iter;
@@ -3018,9 +3030,28 @@ void LLPipeline::doOcclusion(LLCamera& camera)
             }
             if (!group->isDead())
             {
-                group->doOcclusion(&camera);
+                if (hiz_mode)
+                {
+                    const U64 hiz_t0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
+                    group->hizCollect(&camera, hiz_mode, hiz_boxes, hiz_groups);
+                    if (LLOccCensus::sOn)
+                    {
+                        LLOccCensus::sHizTicksCollect += LLOccCensus::now() - hiz_t0;
+                    }
+                }
+                if (hiz_mode != 1)
+                {
+                    group->doOcclusion(&camera);
+                }
                 group->clearOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
             }
+        }
+        if (hiz_mode)
+        {
+            LL_CPU_ZONE("occlusion: Hi-Z send");
+            LL_PROFILE_GPU_ZONE("hiz");
+            const glm::mat4 hiz_view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
+            LLOcclusionCullingGroup::hizSend(hiz_boxes, hiz_groups, glm::value_ptr(hiz_view_proj));
         }
         if (occ_count)
         {

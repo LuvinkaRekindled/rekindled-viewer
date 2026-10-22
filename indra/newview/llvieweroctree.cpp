@@ -27,6 +27,8 @@
 #include "llviewerprecompiledheaders.h"
 #include "llvieweroctree.h"
 #include "lloccensus.h"
+#include <deque>
+#include <unordered_map>
 #include "llviewerregion.h"
 #include "pipeline.h"
 #include "llviewercontrol.h"
@@ -795,6 +797,15 @@ std::set<U32> LLOcclusionCullingGroup::sPendingQueries;
 
 static std::queue<U32> sFreeQueries;
 
+// <FS> S7 H1: the groups by Hi-Z id, and the batches sent whose results have not been applied yet
+static std::unordered_map<U32, LLOcclusionCullingGroup*> sHizGroups;
+static U32 sHizNextId = 0;
+namespace
+{
+struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; };
+std::deque<HizPending> sHizPending;
+}
+
 #define QUERY_POOL_SIZE 1024
 
 U32 LLOcclusionCullingGroup::getNewOcclusionQueryObjectName()
@@ -885,6 +896,11 @@ LLOcclusionCullingGroup::LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctre
 LLOcclusionCullingGroup::~LLOcclusionCullingGroup()
 {
     releaseOcclusionQueryObjectNames();
+    if (mHizId)
+    {
+        sHizGroups.erase(mHizId);
+    }
+    delete mHizHist;
 }
 
 bool LLOcclusionCullingGroup::needsUpdate()
@@ -1126,6 +1142,14 @@ void LLOcclusionCullingGroup::checkOcclusion()
         return;
     }
 
+    if (!mOcclusionQuery[LLViewerCamera::sCurCameraID] && mHizSerial && isOcclusionState(QUERY_PENDING) && isOcclusionState(DISCARD_QUERY) && hizMode() == 1)
+    {   // <FS> H1: a Hi-Z result is awaited and the group asked to be discarded (a drawable moved in it): as the query version below, it is visible until the next box has a result
+        clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+        clearOcclusionState(QUERY_PENDING | DISCARD_QUERY);
+        mHizSerial = 0;
+        return;
+    }
+
     if (mOcclusionQuery[LLViewerCamera::sCurCameraID] && isOcclusionState(QUERY_PENDING))
     {
         struct PendingLap       // <FS> H0: time of the pending branch
@@ -1193,6 +1217,23 @@ void LLOcclusionCullingGroup::checkOcclusion()
                 if (census)
                 {
                     ++(query_result > 0 ? census->mChkVisible : census->mChkOccluded);
+                    if (mHizHist && hizMode() == 2 && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
+                    {
+                        // the Hi-Z result that belongs to this query (same box, same frame)
+                        const U32 issued = (U32)mOcclusionIssued[LLViewerCamera::sCurCameraID];
+                        if (mHizHist->mFrame[issued & 7] == issued && issued)
+                        {
+                            const bool hiz_occ = mHizHist->mBit[issued & 7] != 0, q_occ = query_result == 0;
+                            if (hiz_occ && q_occ) ++LLOccCensus::sCmpBothOcc;
+                            else if (!hiz_occ && !q_occ) ++LLOccCensus::sCmpBothVis;
+                            else if (hiz_occ) { ++LLOccCensus::sCmpHizOccQVis; ++LLOccCensus::sRiskLod[std::min<U32>(mHizHist->mLod[issued & 7], 15)]; ++LLOccCensus::sMarginRisk[LLOccCensus::margin_bin(mHizHist->mMargin[issued & 7])]; }
+                            else { ++LLOccCensus::sCmpHizVisQOcc; ++LLOccCensus::sMarginLost[LLOccCensus::margin_bin(mHizHist->mMargin[issued & 7])]; }
+                        }
+                        else
+                        {
+                            ++LLOccCensus::sCmpNoHist;
+                        }
+                    }
                 }
                 if (query_result > 0)
                 {
@@ -1212,6 +1253,215 @@ void LLOcclusionCullingGroup::checkOcclusion()
         //clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
         assert_states_valid(this);
     }
+}
+
+// <FS> S7 H1
+U32 LLOcclusionCullingGroup::hizMode()
+{
+    static const U32 mode = []() { const char* e = getenv("LL_VK_HIZ"); return e ? (U32)atoi(e) : 1u; }();
+    return mode;
+}
+
+bool LLOcclusionCullingGroup::hizCollect(LLCamera* camera, U32 mode, std::vector<LLVkBridge::HizBox>& boxes, std::vector<LLOcclusionCullingGroup*>& groups)
+{
+    if (!(mSpatialPartition->isOcclusionEnabled() && LLPipeline::sUseOcclusion > 1))
+    {
+        return false;
+    }
+    const LLVector4a* b = mBounds;
+    F32 fudge_z = SG_OCCLUSION_FUDGE;
+    const bool water = mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_WATER || mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_VOIDWATER;
+    if (LLPipeline::RENDER_TYPE_VOIDWATER == mSpatialPartition->mDrawableType)
+    {
+        fudge_z = 1.f;
+    }
+    if (earlyFail(camera, b))
+    {
+        if (mode == 1)
+        {   // as doOcclusion: the camera is inside the box, nothing to test
+            setOcclusionState(LLOcclusionCullingGroup::DISCARD_QUERY);
+            clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+            mHizSerial = 0;
+        }
+        return false;
+    }
+    if (isOcclusionState(QUERY_PENDING) && !isOcclusionState(DISCARD_QUERY))
+    {
+        return false;
+    }
+    if (!mHizId)
+    {
+        mHizId = ++sHizNextId;
+        sHizGroups[mHizId] = this;
+    }
+    LLVkBridge::HizBox box;
+    box.mCenter[0] = b[0][0]; box.mCenter[1] = b[0][1]; box.mCenter[2] = b[0][2];
+    box.mFlags = water ? 1u : 0u;
+    box.mHalf[0] = b[1][0] + SG_OCCLUSION_FUDGE; box.mHalf[1] = b[1][1] + SG_OCCLUSION_FUDGE; box.mHalf[2] = b[1][2] + fudge_z;
+    box.mPad = 0.f;
+    boxes.push_back(box);
+    groups.push_back(this);
+    if (mode == 1)
+    {
+        mOcclusionIssued[LLViewerCamera::sCurCameraID] = gFrameCount;
+        setOcclusionState(LLOcclusionCullingGroup::QUERY_PENDING);
+        clearOcclusionState(LLOcclusionCullingGroup::DISCARD_QUERY);
+    }
+    return true;
+}
+
+void LLOcclusionCullingGroup::hizSend(std::vector<LLVkBridge::HizBox>& boxes, std::vector<LLOcclusionCullingGroup*>& groups, const F32* view_proj)
+{
+    struct Lap { U64 mT0 = LLOccCensus::sOn ? LLOccCensus::now() : 0; ~Lap() { if (LLOccCensus::sOn) LLOccCensus::sHizTicksSend += LLOccCensus::now() - mT0; } } lap;
+    const U32 mode = hizMode();
+    const U32 serial = boxes.empty() ? 0 : LLVkBridge::hizSend(boxes.data(), (U32)boxes.size(), view_proj);
+    if (LLOccCensus::sOn)
+    {
+        ++(serial || boxes.empty() ? LLOccCensus::sHizSends : LLOccCensus::sHizRefused);
+        LLOccCensus::sHizBoxes += boxes.size();
+    }
+    if (!serial)
+    {
+        if (mode == 1)
+        {   // nothing was sent: the groups are not waiting for a result (the next pass sends them again)
+            for (LLOcclusionCullingGroup* g : groups)
+            {
+                g->clearOcclusionState(QUERY_PENDING);
+                g->mHizSerial = 0;
+            }
+        }
+        return;
+    }
+    HizPending p;
+    p.mSerial = serial;
+    p.mFrame = (U32)gFrameCount;
+    p.mIds.reserve(groups.size());
+    for (LLOcclusionCullingGroup* g : groups)
+    {
+        p.mIds.push_back(g->mHizId);
+        if (mode == 1)
+        {
+            g->mHizSerial = serial;
+        }
+    }
+    sHizPending.push_back(std::move(p));
+}
+
+void LLOcclusionCullingGroup::hizApply()
+{
+    const U32 mode = hizMode();
+    if (!mode || sHizPending.empty())
+    {
+        return;
+    }
+    struct Lap { U64 mT0 = LLOccCensus::sOn ? LLOccCensus::now() : 0; ~Lap() { if (LLOccCensus::sOn) LLOccCensus::sHizTicksApply += LLOccCensus::now() - mT0; } } lap;
+    const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
+    LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;        // the occlusion state arrays are per camera
+    static std::vector<U32> words;
+    while (!sHizPending.empty())
+    {
+        HizPending& p = sHizPending.front();
+        words.resize(3 * p.mIds.size());
+        S32 r = LLVkBridge::hizRead(p.mSerial, (U32)p.mIds.size(), words.data());
+        if (r == 0)
+        {
+            if ((U32)gFrameCount - p.mFrame > 60)
+            {
+                r = -1;         // never published (the worker could not run the record)
+            }
+            else
+            {
+                break;
+            }
+        }
+        const bool census = LLOccCensus::sOn;
+        if (r < 0)
+        {
+            if (census)
+            {
+                ++LLOccCensus::sHizLost;
+            }
+            for (U32 id : p.mIds)
+            {
+                auto it = sHizGroups.find(id);
+                if (it != sHizGroups.end() && it->second->mHizSerial == p.mSerial)
+                {
+                    it->second->mHizSerial = 0;
+                    if (mode == 1)
+                    {
+                        it->second->clearOcclusionState(QUERY_PENDING);
+                    }
+                }
+            }
+            LLVkBridge::hizDone(p.mSerial);
+            sHizPending.pop_front();
+            continue;
+        }
+        if (census)
+        {
+            ++LLOccCensus::sHizApplied;
+            ++LLOccCensus::sHizLag[LLOccCensus::age_slot((U32)gFrameCount, p.mFrame)];
+        }
+        for (size_t i = 0; i < p.mIds.size(); ++i)
+        {
+            auto it = sHizGroups.find(p.mIds[i]);
+            if (it == sHizGroups.end())
+            {
+                if (census)
+                {
+                    ++LLOccCensus::sHizDead;
+                }
+                continue;
+            }
+            LLOcclusionCullingGroup* g = it->second;
+            const U32 word = words[3 * i];
+            float minz, maxd;
+            memcpy(&minz, &words[3 * i + 1], 4);
+            memcpy(&maxd, &words[3 * i + 2], 4);
+            const bool occluded = (word & 1u) != 0;
+            if (census)
+            {
+                LLOccCensus::sHizOccluded += occluded;
+                ++LLOccCensus::sHizLod[std::min<U32>((word >> 8) & 0xff, 15)];
+                LLOccCensus::sHizWhy[0] += (word >> 16) & 1u;
+                LLOccCensus::sHizWhy[1] += (word >> 17) & 1u;
+                LLOccCensus::sHizWhy[2] += (word >> 18) & 1u;
+            }
+            if (mode == 2)
+            {
+                if (!g->mHizHist)
+                {
+                    g->mHizHist = new HizHist();
+                }
+                g->mHizHist->mFrame[p.mFrame & 7] = p.mFrame;
+                g->mHizHist->mBit[p.mFrame & 7] = occluded ? 1 : 0;
+                g->mHizHist->mLod[p.mFrame & 7] = (U8)((word >> 8) & 0xff);
+                g->mHizHist->mMargin[p.mFrame & 7] = minz - maxd;
+                continue;
+            }
+            if (g->mHizSerial != p.mSerial)
+            {
+                if (census)
+                {
+                    ++LLOccCensus::sHizSuperseded;
+                }
+                continue;
+            }
+            g->mHizSerial = 0;
+            if (occluded)
+            {
+                g->setOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+            }
+            else
+            {
+                g->clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+            }
+            g->clearOcclusionState(QUERY_PENDING);
+        }
+        LLVkBridge::hizDone(p.mSerial);
+        sHizPending.pop_front();
+    }
+    LLViewerCamera::sCurCameraID = saved_camera;
 }
 
 void LLOcclusionCullingGroup::doOcclusion(LLCamera* camera, const LLVector4a* shift)
@@ -1372,7 +1622,43 @@ void LLOccCensus::report()
         << "; probe queries per frame: calls " << (double)sProbeCalls / frames << ", eye inside " << (double)sProbeInside / frames << ", first query " << (double)sProbeNew / frames
         << ", result read " << (double)sProbeReady / frames << " (visible " << (double)sProbeVisible / frames << ", occluded " << (double)sProbeOccluded / frames << "), still pending " << (double)sProbePending / frames
         << ", cube draws " << (double)sProbeIssued / frames << LL_ENDL;
-    static const char* const names[CAMS] = { "world", "cam1", "cam2", "cam3", "cam4", "cam5", "cam6", "cam7" };
+    {
+        std::string lag, lod, risk;
+        for (int a = 0; a < AGES; ++a)
+        {
+            lag += llformat("%s%.1f", a ? " " : "", (double)sHizLag[a] / frames);
+        }
+        for (int a = 0; a < 12; ++a)
+        {
+            lod += llformat("%s%.1f", a ? " " : "", (double)sHizLod[a] / frames);
+            risk += llformat("%s%.2f", a ? " " : "", (double)sRiskLod[a] / frames);
+        }
+        std::string margin_risk, margin_lost;
+        for (int a = 0; a < 8; ++a)
+        {
+            margin_risk += llformat("%s%.2f", a ? " " : "", (double)sMarginRisk[a] / frames);
+            margin_lost += llformat("%s%.2f", a ? " " : "", (double)sMarginLost[a] / frames);
+            sMarginRisk[a] = sMarginLost[a] = 0;
+        }
+        const double cmp_total = (double)(sCmpBothOcc + sCmpBothVis + sCmpHizOccQVis + sCmpHizVisQOcc);
+        LL_INFOS("OccCensus") << "Hi-Z (mode " << LLOcclusionCullingGroup::hizMode() << ") main thread ms per frame: collect boxes " << (double)sHizTicksCollect * ms_per_tick / frames << ", send " << (double)sHizTicksSend * ms_per_tick / frames
+            << ", apply results " << (double)sHizTicksApply * ms_per_tick / frames << " | per frame: batches sent " << (double)sHizSends / frames << " (refused " << (double)sHizRefused / frames << "), boxes " << (double)sHizBoxes / frames
+            << ", results applied " << (double)sHizApplied / frames << " batches, lost " << (double)sHizLost / frames << ", groups gone " << (double)sHizDead / frames << ", superseded " << (double)sHizSuperseded / frames
+            << ", OCCLUDED by Hi-Z " << (double)sHizOccluded / frames << "; forced visible: behind near plane " << (double)sHizWhy[0] / frames << ", off screen " << (double)sHizWhy[1] / frames << ", beyond far " << (double)sHizWhy[2] / frames
+            << " | result age in frames when applied (0 1 2 3 4 5 6 7+): " << lag << " | pyramid level used (0..11): " << lod
+            << " | compare with the queries issued with the same boxes (mode 2): both occluded " << (double)sCmpBothOcc / frames << ", both visible " << (double)sCmpBothVis / frames
+            << ", HI-Z OCCLUDED / QUERY SAW SAMPLES (pop-in risk) " << (double)sCmpHizOccQVis / frames << " (" << (cmp_total > 0 ? 100.0 * (double)sCmpHizOccQVis / cmp_total : 0.0) << " %), Hi-Z visible / query occluded (lost saving) "
+            << (double)sCmpHizVisQOcc / frames << " (" << (cmp_total > 0 ? 100.0 * (double)sCmpHizVisQOcc / cmp_total : 0.0) << " %), no Hi-Z result to compare " << (double)sCmpNoHist / frames
+            << "; pop-in risk by pyramid level: " << risk << " | margin (nearest box depth minus largest pyramid depth; bins <-1e-2, -1e-2..-1e-3, -1e-3..-1e-4, -1e-4..0, 0..1e-4, 1e-4..1e-3, 1e-3..1e-2, >1e-2) of the pop-in risk cases: " << margin_risk
+            << " and of the lost saving cases: " << margin_lost << LL_ENDL;
+        sHizTicksCollect = sHizTicksSend = sHizTicksApply = 0;
+        sHizSends = sHizRefused = sHizBoxes = sHizApplied = sHizOccluded = sHizLost = sHizSuperseded = sHizDead = 0;
+        sCmpBothOcc = sCmpBothVis = sCmpHizOccQVis = sCmpHizVisQOcc = sCmpNoHist = 0;
+        for (int a = 0; a < AGES; ++a) sHizLag[a] = 0;
+        for (int a = 0; a < 16; ++a) { sHizLod[a] = 0; sRiskLod[a] = 0; }
+        sHizWhy[0] = sHizWhy[1] = sHizWhy[2] = 0;
+    }
+    static const char* const names[CAMS] = { "world", "cam1", "cam2", "cam3", "cam4", "cam5", "cam6", "cam7", "cam8" };
     for (int i = 0; i < CAMS; ++i)
     {
         const Cam& c = sCam[i];
