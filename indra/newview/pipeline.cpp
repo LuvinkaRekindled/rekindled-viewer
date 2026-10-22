@@ -14949,6 +14949,15 @@ void LLPipeline::bindDeferredShaderFast(LLShaderProgram& shader)
     shader.mFastSeq = LLTexUnit::getWriteSeq();
 }
 
+// <FS> S5 A0 (doc/vulkan/S5-design.md): does the group hold a current fragment (the S2 / S3 persistent scene entries), and is it resident
+bool ll_group_fragment_state(const LLSpatialGroup* group, bool* resident)
+{
+    const LLSceneFragment* fragment = group->mSceneFragment;
+    const bool current = fragment && fragment->mSerial == group->mDrawMapSerial;
+    *resident = current && fragment->mResident;
+    return current;
+}
+
 void ll_pass_uni_log()
 {
     if (gFrameCount < sPU.mFrom + 600 || sPU.mCalls == 0)
