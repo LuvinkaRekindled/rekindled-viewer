@@ -107,10 +107,12 @@ struct LLAlphaPlanView
     U32 mHandle = 0;            // the fragment's handle at the worker (0: not attached, nothing is served)
     bool mDirect = false;       // the draw map holds exactly these draw infos in this order (no draw of an avatar among them): a segment can be stepped over by its draw count
     const U32* mGlowIdx = nullptr;      // the plan indices of the served draws that have a glow buffer, ascending
+    const class LLDrawInfo* const* mItemInfo = nullptr;     // S5d: per served item (by rank): its draw info and its number in the fragment's wire list (the palette bindings of the rigged items name it)
+    const U32* mItemWire = nullptr;
     U32 mGlowCount = 0;
     bool mGlow = false;         // a draw of the group has an emissive buffer (the loop draws a glow pass after the group, post water)
 };
-int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out);
+int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged = false);
 bool ll_alpha_blend_pair(U32 id, int* src, int* dst);       // pipeline.cpp (S5b): a run key carries the id of its blend function pair in bits 8 and up (0 = the standard alpha blend)
 bool ll_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha pass is drawn from the scene table this frame      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
 

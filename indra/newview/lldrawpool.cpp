@@ -851,11 +851,11 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
 }
 
 // static. S5c: a draw with a glTF blend material as an entry of the alpha items: the pull shader reads 16 bit indices, position first, and the normal, texcoord 0, colour and tangent arrays
-bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& e)
+bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& e, bool rigged)
 {
     e = {};
     const LLVertexBuffer* vb = params.mVertexBuffer.get();
-    if (!params.mCount || params.mAvatar || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
+    if (!params.mCount || (params.mAvatar != nullptr) != rigged || (rigged && (params.mSkinInfo.isNull() || params.mModelMatrix || !vb || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))) || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0
         || !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR) || !vb->hasDataType(LLVertexBuffer::TYPE_TANGENT))
     {
@@ -869,6 +869,11 @@ bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry&
     e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
     e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
     e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_TANGENT);
+    if (rigged)
+    {
+        e.mFlags |= LLVkBridge::GEO_RIGGED;
+        e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+    }
     return true;
 }
 

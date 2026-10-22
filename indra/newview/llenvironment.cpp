@@ -1825,6 +1825,13 @@ void LLEnvironment::update(const LLViewerCamera * cam)
     gDeferredAlphaPullProgram.mUniformsDirty = true;
     gDeferredFullbrightAlphaPullProgram.mUniformsDirty = true;
     gDeferredPBRAlphaPullProgram.mUniformsDirty = true;
+    gDeferredAlphaPullSkinProgram.mUniformsDirty = true;
+    gDeferredFullbrightAlphaPullSkinProgram.mUniformsDirty = true;
+    gDeferredPBRAlphaPullSkinProgram.mUniformsDirty = true;
+    for (LLShaderProgram& skin : gDeferredMaterialPullSkinProgram)
+    {
+        skin.mUniformsDirty = true;     // (S5d: the rigged blend variants are drawn by the alpha pass)
+    }
     for (LLShaderProgram& pull : gDeferredMaterialPullProgram)
     {
         pull.mUniformsDirty = true;     // (S5b: the blend variants are drawn by the alpha pass, which needs the sun and ambient colours)
