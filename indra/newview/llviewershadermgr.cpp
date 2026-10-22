@@ -2039,7 +2039,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> S5a (doc/vulkan/S5-design.md): the lit and the fullbright alpha programs with the vertices read by address and the diffuse texture from the bindless table. Optional: without them the alpha
-    // pass stays on the old path.
+    // pass draws nothing (S5g: no old path).
     gAlphaPullReady = false;
     if (success && LLVkBridge::shadowAlphaPacketsAvailable())
     {
@@ -2096,7 +2096,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             ok = shader->createShader();
             if (!ok)
             {
-                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the alpha pass stays on the old path" << LL_ENDL;
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the alpha blended objects will NOT be drawn" << LL_ENDL;
             }
             else if (!fullbright)
             {
@@ -2156,7 +2156,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
         else
         {
-            LL_WARNS("ShadowPackets") << "the PBR alpha pull shader could not be made: the PBR alpha draws stay on the old path" << LL_ENDL;
+            LL_WARNS("ShadowPackets") << "the PBR alpha pull shader could not be made: glTF blend objects will NOT be drawn" << LL_ENDL;
             shader->unload();
         }
     }
@@ -2214,7 +2214,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             rigged_ok = shader->createShader();
             if (!rigged_ok)
             {
-                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the rigged alpha pass stays on the old path" << LL_ENDL;
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: rigged alpha objects (hair, clothing layers) will NOT be drawn" << LL_ENDL;
                 shader->unload();
             }
             else if (!fullbright)
@@ -2269,7 +2269,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
             else
             {
-                LL_WARNS("ShadowPackets") << "the PBR alpha pull skin shader could not be made: the rigged PBR alpha draws stay on the old path" << LL_ENDL;
+                LL_WARNS("ShadowPackets") << "the PBR alpha pull skin shader could not be made: rigged glTF blend objects will NOT be drawn" << LL_ENDL;
                 shader->unload();
             }
         }
@@ -2301,7 +2301,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (!shader->createShader())
             {
-                LL_WARNS("ShadowPackets") << "the " << name << " could not be made: those glow draws stay on the old path" << LL_ENDL;
+                LL_WARNS("ShadowPackets") << "the " << name << " could not be made: the glow of those draws will NOT be drawn" << LL_ENDL;
                 shader->unload();
                 return false;
             }
@@ -2317,7 +2317,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> S5f F4: the pull variants of the programs the HUD, impostor and depth only alpha passes use (their fragment shaders are the old programs' own: IS_HUD, FOR_IMPOSTOR, the mask program without IS_ALPHA).
-    // Optional: a context without its program keeps the old path for those draws.
+    // S5g: a context without its program draws nothing of that class (no old path).
     gAlphaHudPullReady = false;
     gAlphaHudPbrReady = false;
     gAlphaImpostorPullReady = false;
@@ -2351,7 +2351,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (!shader->createShader())
             {
-                LL_WARNS("ShadowPackets") << "the " << name << " could not be made: those draws stay on the old path" << LL_ENDL;
+                LL_WARNS("ShadowPackets") << "the " << name << " could not be made: those draws will NOT be drawn" << LL_ENDL;
                 shader->unload();
                 return false;
             }

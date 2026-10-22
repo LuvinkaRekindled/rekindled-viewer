@@ -72,27 +72,10 @@ public:
     static bool sShowDebugAlphaRigged;
 
 private:
-    LLShaderProgram* target_shader;
-
-    // setup by beginFooPass, [0] is static variant, [1] is rigged variant
-    LLShaderProgram* simple_shader = nullptr;
     bool mFringePending = false;                        // <FS> the rigged alpha was split: its soft part is still to be drawn after the static alpha
     bool mFringePass = false;                           // <FS> drawing that soft part
     F32 mDepthCutoff = 0.f;                             // <FS> alpha cutoff of the depth only pass of the rigged alpha, 0 outside of it
     std::vector<LLShaderProgram*> mDepthCutoffShaders;     // <FS> the shaders that drew in it (they get the usual cutoff back)
-    LLShaderProgram* fullbright_shader = nullptr;
-    LLShaderProgram* emissive_shader = nullptr;
-    LLShaderProgram* pbr_emissive_shader = nullptr;
-    LLShaderProgram* pbr_shader = nullptr;
-
-    void drawEmissive(LLDrawInfo* draw);
-    void renderEmissives(std::vector<LLDrawInfo*>& emissives);
-    void renderRiggedEmissives(std::vector<LLDrawInfo*>& emissives);
-    void renderPbrEmissives(std::vector<LLDrawInfo*>& emissives);
-    void renderRiggedPbrEmissives(std::vector<LLDrawInfo*>& emissives);
-    bool TexSetup(LLDrawInfo* draw, bool use_material);
-    void RestoreTexSetup(bool tex_setup);
-
     // our 'normal' alpha blend function for this pass
     LLRender::eBlendFactor mColorSFactor;
     LLRender::eBlendFactor mColorDFactor;
