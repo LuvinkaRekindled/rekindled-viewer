@@ -85,6 +85,7 @@
 #include "lltoolmgr.h"
 #include "llviewercamera.h"
 #include "llvkbridge.h"
+#include "llalphatransient.h"
 #include "llvkasync.h"
 #include "llviewermediafocus.h"
 #include "llviewertexturelist.h"
@@ -6052,6 +6053,127 @@ static const char* const sAlphaWhyName[WHY_COUNT] = { "served", "particle / HUD 
                                                       "vertex layout", "missing normal / texcoord / colour", "more than 4 textures", "entry refused (geometry_packet_ok)", "no matrix slot", "no texture matrix slot" };
 static U64 sAlphaWhy[2][WHY_COUNT] = {};       // [rigged][reason]
 static U64 sAlphaPlanBuilds = 0, sAlphaPlanNs = 0, sAlphaPlanServed = 0, sAlphaPlanOld = 0, sAlphaPlanSegs = 0, sAlphaPlanNoSlot = 0, sAlphaPlanTexMatrix = 0;
+// S5f F3: what a draw is for the alpha pull programs: served or why not, its run key, its entry (arrays and flags: not the matrix, the texture numbers or GL names), the textures it names, its glTF values. The plan
+// fill of the fragments and the transient records of the pass loop share it: one place decides what the table can draw.
+struct AlphaClass
+{
+    int mWhy = WHY_SERVED;
+    bool mServed = false, mPbrBlock = false, mUseTexMatrix = false;
+    U32 mKey = 0;
+    F32 mPbrValues[40] = {};
+    LLVkBridge::GeoEntry mEntry = {};
+    LLViewerTexture* mTextures[6] = {};
+};
+
+static void alpha_classify(LLDrawInfo* p, bool rigged, bool table, bool whole_old, AlphaClass& ac)
+{
+    const LLVertexBuffer* vb = p->mVertexBuffer.get();
+    // S5b: a draw with a material (blend variant of its shader mask: 1, 5, 9, 13, the program gDeferredMaterialProgram[mask] of the old loop) is served by the materials pull program of the same mask
+    const bool material = !LLPipeline::sRenderingHUDs && p->mMaterial.notNull();
+    const U32 mmask = p->mShaderMask;
+    const U32 blend_id = alpha_blend_id((int)p->mBlendFuncSrc, (int)p->mBlendFuncDst);
+    const bool material_ok = material && gAlphaMaterialPullReady && (scene_alpha_only() & 16) && mmask < 16 && (mmask & 3) == 1;
+    // S5c: a draw with a glTF blend material is served by the PBR pull program (the values in a PBR row; double sided = a key bit: the run is drawn with culling off)
+    const bool pbr = !LLPipeline::sRenderingHUDs && p->mGLTFMaterial.notNull() && p->mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;
+    const bool pbr_ok = pbr && gAlphaPbrPullReady && (!rigged || gAlphaPbrSkinReady) && (scene_alpha_only() & 32) && vb && vb->hasDataType(LLVertexBuffer::TYPE_TANGENT);
+    ac.mKey = (pbr ? 18u : (material ? 2u + mmask : (p->mFullbright ? 1u : 0u))) | (blend_id == ~0u ? 0u : blend_id << 8) | ((pbr && p->mGLTFMaterial->mDoubleSided) ? (1u << 16) : 0u) | (rigged ? (1u << 17) : 0u);
+    int why = WHY_SERVED;
+    bool served = table && p->mCount && (pbr ? pbr_ok : (!p->mGLTFMaterial && (material ? material_ok : (((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0))))
+        && blend_id != ~0u
+        && vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16
+        && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0
+        && vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) && vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && vb->hasDataType(LLVertexBuffer::TYPE_COLOR)
+        && (material || pbr || p->mTextureList.size() <= 4);
+    if (!served)
+    {
+        if (!table) why = whole_old ? WHY_PARTITION : WHY_RIGGED_OFF;
+        else if (!p->mCount) why = WHY_EMPTY;
+        else if (pbr && !pbr_ok) why = WHY_PBR;
+        else if (!pbr && p->mGLTFMaterial) why = WHY_GLTF_MODE;
+        else if (material && !material_ok) why = WHY_MATERIAL;
+        else if (!pbr && !material && !(((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0)) why = WHY_SWITCH;
+        else if (blend_id == ~0u) why = WHY_BLEND;
+        else if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId()) why = WHY_NOBUF;
+        else if (vb->getIndicesType() != ComponentType::U16) why = WHY_IDX32;
+        else if (!vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0) why = WHY_LAYOUT;
+        else if (!vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR)) why = WHY_ARRAYS;
+        else why = WHY_TEXCOUNT;
+    }
+    if (served)
+    {
+        LLViewerTexture** textures = ac.mTextures;
+        // (the old loop loads the texture matrix only for a draw with one texture; a batch ignores it)
+        ac.mUseTexMatrix = pbr ? (p->mTextureMatrix != nullptr) : (p->mTextureMatrix && p->mTextureList.size() <= 1 && p->mTexture.notNull());
+        LLGeometryPassInfo material_info;
+        material_info.mNormalMap = (mmask & 0x8) != 0;
+        material_info.mSpecularMap = (mmask & 0x4) != 0;
+        if (pbr)
+        {
+            // the textures the old bind() takes: the face's own texture overrides the base colour and the emissive map (media), a missing map is the white image (the flat normal image for the normal map)
+            LLFetchedGLTFMaterial* gltf = p->mGLTFMaterial.get();
+            LLViewerTexture* media = p->mTexture.get();
+            for (int k = 0; k < 6; ++k)
+            {
+                textures[k] = nullptr;
+            }
+            textures[0] = media ? media : (gltf->mBaseColorTexture.notNull() ? (LLViewerTexture*)gltf->mBaseColorTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
+            textures[1] = gltf->mNormalTexture.notNull() ? (LLViewerTexture*)gltf->mNormalTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sFlatNormalImagep.get();
+            textures[2] = gltf->mMetallicRoughnessTexture.notNull() ? (LLViewerTexture*)gltf->mMetallicRoughnessTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get();
+            textures[3] = media ? media : (gltf->mEmissiveTexture.notNull() ? (LLViewerTexture*)gltf->mEmissiveTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
+            served = LLRenderPass::pbrAlphaEntry(*p, ac.mEntry, rigged);
+            if (!served)
+            {
+                why = WHY_ENTRY;
+            }
+            else
+            {
+                static const int infos[4] = { LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR, LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL, LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS, LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE };
+                for (int k = 0; k < 4; ++k)
+                {
+                    gltf->mTextureTransform[infos[k]].getPacked(*reinterpret_cast<LLGLTFMaterial::TextureTransform::Pack*>(ac.mPbrValues + 8 * k));
+                }
+                ac.mPbrValues[32] = gltf->mRoughnessFactor;
+                ac.mPbrValues[33] = gltf->mMetallicFactor;
+                ac.mPbrValues[34] = gltf->mEmissiveColor.mV[0];
+                ac.mPbrValues[35] = gltf->mEmissiveColor.mV[1];
+                ac.mPbrValues[36] = gltf->mEmissiveColor.mV[2];
+                ac.mPbrValues[37] = -1.f;       // (the minimum alpha of the blend mode, as bind() sets it)
+                ac.mPbrBlock = true;
+            }
+        }
+        else
+        {
+            served = LLRenderPass::geometryEntry(*p, material ? &material_info : nullptr, ac.mEntry, textures, rigged, true);
+            if (!served)
+            {
+                why = WHY_ENTRY;
+            }
+        }
+    }
+    ac.mServed = served;
+    ac.mWhy = served ? WHY_SERVED : why;
+}
+
+// S5f F3: a draw the scene table does not keep, as a transient entry of the alpha pass loop (same conditions as a fragment item; the particle groups, a group without a current fragment, ...)
+static U64 sAlphaWhyTr[WHY_COUNT] = {};
+bool ll_alpha_transient(LLDrawInfo* draw, bool rigged, LLAlphaTransient& out)
+{
+    AlphaClass ac;
+    alpha_classify(draw, rigged, true, false, ac);
+    ++sAlphaWhyTr[ac.mWhy];
+    if (!ac.mServed)
+    {
+        return false;
+    }
+    out.mEntry = ac.mEntry;
+    out.mKey = ac.mKey;
+    out.mPbr = ac.mPbrBlock;
+    out.mUseTexMatrix = ac.mUseTexMatrix;
+    memcpy(out.mPbrValues, ac.mPbrValues, sizeof(out.mPbrValues));
+    memcpy(out.mTextures, ac.mTextures, sizeof(out.mTextures));
+    return true;
+}
+
 static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f, bool rigged)
 {
     LLSceneFragment::AlphaSet& ps = f.mAlphaSet[rigged ? 1 : 0];
@@ -6085,83 +6207,18 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
         {
             ps.mGlow = true;
         }
-        // S5b: a draw with a material (blend variant of its shader mask: 1, 5, 9, 13, the program gDeferredMaterialProgram[mask] of the old loop) is served by the materials pull program of the same mask
-        const bool material = !LLPipeline::sRenderingHUDs && p->mMaterial.notNull();
-        const U32 mmask = p->mShaderMask;
-        const U32 blend_id = alpha_blend_id((int)p->mBlendFuncSrc, (int)p->mBlendFuncDst);
-        const bool material_ok = material && gAlphaMaterialPullReady && (scene_alpha_only() & 16) && mmask < 16 && (mmask & 3) == 1;
-        // S5c: a draw with a glTF blend material is served by the PBR pull program (the values in a PBR row; double sided = a key bit: the run is drawn with culling off)
-        const bool pbr = !LLPipeline::sRenderingHUDs && p->mGLTFMaterial.notNull() && p->mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;
-        const bool pbr_ok = pbr && gAlphaPbrPullReady && (!rigged || gAlphaPbrSkinReady) && (scene_alpha_only() & 32) && vb && vb->hasDataType(LLVertexBuffer::TYPE_TANGENT);
-        int why = WHY_SERVED;
-        bool served = table && p->mCount && (pbr ? pbr_ok : (!p->mGLTFMaterial && (material ? material_ok : (((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0))))
-            && blend_id != ~0u
-            && vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16
-            && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0
-            && vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) && vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && vb->hasDataType(LLVertexBuffer::TYPE_COLOR)
-            && (material || pbr || p->mTextureList.size() <= 4);
-        if (!served)
-        {
-            if (!table) why = whole_old ? WHY_PARTITION : WHY_RIGGED_OFF;
-            else if (!p->mCount) why = WHY_EMPTY;
-            else if (pbr && !pbr_ok) why = WHY_PBR;
-            else if (!pbr && p->mGLTFMaterial) why = WHY_GLTF_MODE;
-            else if (material && !material_ok) why = WHY_MATERIAL;
-            else if (!pbr && !material && !(((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0)) why = WHY_SWITCH;
-            else if (blend_id == ~0u) why = WHY_BLEND;
-            else if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId()) why = WHY_NOBUF;
-            else if (vb->getIndicesType() != ComponentType::U16) why = WHY_IDX32;
-            else if (!vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0) why = WHY_LAYOUT;
-            else if (!vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR)) why = WHY_ARRAYS;
-            else why = WHY_TEXCOUNT;
-        }
+        AlphaClass ac;
+        alpha_classify(p, rigged, table, whole_old, ac);
+        int why = ac.mWhy;
+        bool served = ac.mServed;
         LLSceneFragment::GeoItem item = {};
-        bool pbr_block = false;
-        F32 pbr_values[40] = {};
+        item.mE = ac.mEntry;
+        const bool pbr_block = ac.mPbrBlock;
+        const F32* pbr_values = ac.mPbrValues;
+        LLViewerTexture** textures = ac.mTextures;
+        const bool use_tex_matrix = ac.mUseTexMatrix;
         if (served)
         {
-            LLViewerTexture* textures[6];
-            // (the old loop loads the texture matrix only for a draw with one texture; a batch ignores it)
-            const bool use_tex_matrix = pbr ? (p->mTextureMatrix != nullptr) : (p->mTextureMatrix && p->mTextureList.size() <= 1 && p->mTexture.notNull());
-            LLGeometryPassInfo material_info;
-            material_info.mNormalMap = (mmask & 0x8) != 0;
-            material_info.mSpecularMap = (mmask & 0x4) != 0;
-            if (pbr)
-            {
-                // the textures the old bind() takes: the face's own texture overrides the base colour and the emissive map (media), a missing map is the white image (the flat normal image for the normal map)
-                LLFetchedGLTFMaterial* gltf = p->mGLTFMaterial.get();
-                LLViewerTexture* media = p->mTexture.get();
-                for (int k = 0; k < 6; ++k)
-                {
-                    textures[k] = nullptr;
-                }
-                textures[0] = media ? media : (gltf->mBaseColorTexture.notNull() ? (LLViewerTexture*)gltf->mBaseColorTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
-                textures[1] = gltf->mNormalTexture.notNull() ? (LLViewerTexture*)gltf->mNormalTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sFlatNormalImagep.get();
-                textures[2] = gltf->mMetallicRoughnessTexture.notNull() ? (LLViewerTexture*)gltf->mMetallicRoughnessTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get();
-                textures[3] = media ? media : (gltf->mEmissiveTexture.notNull() ? (LLViewerTexture*)gltf->mEmissiveTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
-                served = LLRenderPass::pbrAlphaEntry(*p, item.mE, rigged);
-                if (!served) why = WHY_ENTRY;
-                if (served)
-                {
-                    static const int infos[4] = { LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR, LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL, LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS, LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE };
-                    for (int k = 0; k < 4; ++k)
-                    {
-                        gltf->mTextureTransform[infos[k]].getPacked(*reinterpret_cast<LLGLTFMaterial::TextureTransform::Pack*>(pbr_values + 8 * k));
-                    }
-                    pbr_values[32] = gltf->mRoughnessFactor;
-                    pbr_values[33] = gltf->mMetallicFactor;
-                    pbr_values[34] = gltf->mEmissiveColor.mV[0];
-                    pbr_values[35] = gltf->mEmissiveColor.mV[1];
-                    pbr_values[36] = gltf->mEmissiveColor.mV[2];
-                    pbr_values[37] = -1.f;       // (the minimum alpha of the blend mode, as bind() sets it)
-                    pbr_block = true;
-                }
-            }
-            else
-            {
-                served = LLRenderPass::geometryEntry(*p, material ? &material_info : nullptr, item.mE, textures, rigged, true);
-                if (!served) why = WHY_ENTRY;
-            }
             if (served)
             {
                 U32* fields[6] = { &item.mE.mTextures[0], &item.mE.mTextures[1], &item.mE.mTextures[2], &item.mE.mTextures[3], &item.mE.mNormalMap, &item.mE.mSpecularMap };
@@ -6213,7 +6270,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
             }
         }
         ++sAlphaWhy[rigged ? 1 : 0][served ? WHY_SERVED : why];
-        const U32 key = (pbr ? 18u : (material ? 2u + mmask : (p->mFullbright ? 1u : 0u))) | (blend_id == ~0u ? 0u : blend_id << 8) | ((pbr && p->mGLTFMaterial->mDoubleSided) ? (1u << 16) : 0u) | (rigged ? (1u << 17) : 0u);
+        const U32 key = ac.mKey;
         const U32 index = (U32)ps.mOrder.size();
         ps.mOrder.push_back(p);
         if (served)
@@ -6272,6 +6329,17 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
     {
         LL_INFOS("VkScene") << "alpha plan builds: " << sAlphaPlanBuilds << ", " << (double)sAlphaPlanNs / 1000.0 / sAlphaPlanBuilds << " us each, " << (double)sAlphaPlanServed / sAlphaPlanBuilds << " served draws, "
             << (double)sAlphaPlanOld / sAlphaPlanBuilds << " old draws, " << (double)sAlphaPlanSegs / sAlphaPlanBuilds << " segments each; texture matrices " << sAlphaPlanTexMatrix << ", draws left old for want of a matrix slot " << sAlphaPlanNoSlot << LL_ENDL;
+        {
+            std::string why_text;
+            for (int w = 0; w < WHY_COUNT; ++w)
+            {
+                if (sAlphaWhyTr[w])
+                {
+                    why_text += std::string(" | ") + sAlphaWhyName[w] + " " + std::to_string((unsigned long long)sAlphaWhyTr[w]);
+                }
+            }
+            LL_INFOS("VkScene") << "alpha transient draws by reason (S5f F3, all passes so far):" << why_text << LL_ENDL;
+        }
         for (int rig = 0; rig < 2; ++rig)
         {   // S5f F2: draws of the plan builds by reason (all builds so far)
             std::string why_text;

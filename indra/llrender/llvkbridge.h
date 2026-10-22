@@ -204,6 +204,9 @@ namespace LLVkBridge
     // ALPHA_RIGGED (ShadowAlphaEntry): entries, model matrices, palettes, the layout of the kinds they copy.    // kind 8: rigged draws of the avatar velocity pass (avatarVelocityPullV.glsl): ShadowSkinEntry entries (no model matrices), then the palettes of this frame (mPaletteFloats floats, 12 per joint), then
     // the palettes of the frame before, same layout and offsets. mViewProj is the jittered view-projection (the pixels of the G-buffer); the unjittered ones come as ordinary uniforms
     // kind 9: draws that move as a whole, for the velocity pass (objectVelocityPullV.glsl): ShadowPacketEntry entries, then mMatrices model matrices of this frame, then mMatrices of the frame before
+    // S5f F3 kind 32 (alpha transient): the draws the scene table does not keep (particle groups, ...) of an alpha pass, drawn with the pull program the viewer bound, in the pass's order. Blob: mEntries GeoEntry
+    //   (mMatrix = number of its model matrix, mPad3 = number of its texture matrix, 0 = none, mPbrRow = its PBR row, textures as GL names), then mMatrices x 44 floats as in kind 3 (matrix 0: the view alone), then
+    //   mFragment texture matrices (16 floats each, numbered from 1), then mPaletteFloats PBR rows (40 floats each, numbered from 0). The pull shaders read the same row layout as for fragment items.
     // kind 3: a draw of a deferred geometry pass (the colour passes). The matrices after the entries are 44 floats each: modelview, modelview * projection, and the normal
     // matrix as three vec4 columns (the viewer computes them, once per model matrix). Matrix 0 is the view alone.
     enum GeoFlags : U32
@@ -221,6 +224,7 @@ namespace LLVkBridge
         F32 mSpecular[4];
         F32 mEnvIntensity, mCutoff, mBrightness;
         U32 mEmissiveOffset;        // S5e: byte offset of the emissive array (alpha items; 0 = none)
+        U32 mPbrRow;                // S5f F3 (kind 32): the number of the entry's PBR row in the record (glTF alpha items)
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
         U32 mWeightOffset, mPaletteOffset, mJoints, mPad3;          // A1 rigged draws: byte offset of the weight4 array, the palette's offset in floats (12 per joint) and its joint count
     };
