@@ -6004,6 +6004,7 @@ struct GeoFrag
     U64 mPinEpochSeen = ~0ull;
     U64 mListedFrame = ~0ull;           // the frame it was last listed (the buffers it reads count as in flight for the frames after)
     U64 mSafetyFrame = ~0ull;           // S5 safety: the frame an alpha record last checked its buffers against the live ones
+    U64 mSlotCheckFrame = ~0ull;        // the frame geo_check_slots last looked at its texture slots
     U32 mHandle = 0;
 };
 struct GeoStats
@@ -6047,6 +6048,7 @@ static struct GeoState
     F32 mRegionM[2048][16] = {};       // S4 C: slots 1-255 region matrices, 256-2047 the moving ones (the viewer sends the values of the slots the listed fragments use, every frame)
     U8 mHaveM[2048] = {};
     U32 mMaxSlot = 0;
+    U32 mMaxSlotAll = 0;           // the highest matrix slot any fragment ever named (the alpha passes draw fragments the G-buffer list does not name: their tables must cover them)
     size_t mFragCount = 0;
     GeoStats mS;
 } sGeo;
@@ -6246,6 +6248,7 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mPad3);      // S5a: the texture matrix slot indexes the pass's tables too
         }
     }
+    sGeo.mMaxSlotAll = std::max(sGeo.mMaxSlotAll, std::min<U32>(f->mMaxModel, 2047u));
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         U32 slot;
@@ -6536,6 +6539,69 @@ void geo_build_commands(GeoFrag& f)
     }
 }
 
+// crash hunt (2026-10-22, GPU-assisted validation: "(set = 2, binding = 0) Descriptor index N is uninitialized" in table draws; the user saw the leaves of a big tree blink): a texture slot a fragment's rows name
+// must be readable by this frame's draws: the slot active, and this frame's descriptor set holding its descriptor. The check runs once a frame for a fragment before its rows are used (alpha runs, G-buffer
+// listing); a slot that is only waiting for the sets to catch up is queued (written by the flush before the draw), a slot that was given back is replaced by the white stand-in in the rows (the pin looks at the
+// texture again). Counters and the first cases with all details go to the log.
+struct SlotCheckStats { U64 mChecked = 0, mNotInSet = 0, mFreed = 0, mLast = 0; } sSlotCheck;
+
+void geo_check_slots(GeoFrag& f, Renderer& r, U64 frame_now)
+{
+    if (f.mSlotCheckFrame == frame_now)
+    {
+        return;
+    }
+    f.mSlotCheckFrame = frame_now;
+    bool flushed = false;
+    for (size_t k = 0; k < f.mTexSlot.size(); ++k)
+    {
+        const U32 slot = f.mTexSlot[k];
+        if (!slot || slot == ~0u)
+        {
+            continue;           // (~0u: the pin has not been looked at yet: a new fragment, its rows are written by the rebuild that follows)
+        }
+        ++sSlotCheck.mChecked;
+        int state = r.bindlessSlotState(0, slot, false);
+        if (state == 1 && !flushed)
+        {
+            r.bindlessFlush();          // (the pins the sets still have to catch up with are written now)
+            flushed = true;
+            state = r.bindlessSlotState(0, slot, false);
+        }
+        if (state == 0)
+        {
+            continue;
+        }
+        static U32 said = 0;
+        if (said++ < 40)
+        {
+            const U32 pin = f.mPin[k];
+            LL_WARNS("VkScene") << "[slot check] fragment " << f.mHandle << " texture " << k << " (GL " << f.mTexName[k] << ", pin " << pin << (pin && pin < sPins.size() ? " slot " + std::to_string(sPins[pin].mSlot) + " refs " + std::to_string(sPins[pin].mRefs) + " name " + std::to_string(sPins[pin].mName) : std::string())
+                << ") rows name slot " << slot << ": " << (state == 1 ? "this frame's set does not hold its descriptor" : "the slot is not active") << "; " << r.bindlessSlotDescribe(0, slot) << LL_ENDL;
+        }
+        if (state == 1)
+        {
+            ++sSlotCheck.mNotInSet;
+            r.bindlessSlotState(0, slot, true);         // queued: the flush before the draw writes it
+        }
+        else
+        {
+            ++sSlotCheck.mFreed;
+            f.mTexSlot[k] = 0;                          // the rows get the stand-in at their next write; the pin resolves the texture again
+            f.mDirtyEntries = true;
+            if (f.mPin[k])
+            {
+                pin_queue(f.mPin[k]);
+            }
+        }
+    }
+    if (sSlotCheck.mChecked - sSlotCheck.mLast >= 4000000)
+    {
+        sSlotCheck.mLast = sSlotCheck.mChecked;
+        LL_INFOS("VkScene") << "[slot check] " << sSlotCheck.mChecked << " fragment texture slots checked: " << sSlotCheck.mNotInSet << " not in this frame's set (queued), " << sSlotCheck.mFreed << " given back (rows get the stand-in)" << LL_ENDL;
+    }
+}
+
 // the fragment was named by an event (or is new): look at its buffers and textures again, write its entries and commands
 void geo_rebuild(GeoFrag& f, U64 frame_now, bool first)
 {
@@ -6810,6 +6876,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             ++s.mFragsUnknown;
             continue;
         }
+        geo_check_slots(*f, Renderer::instance(), frame_now);
         const bool first = f->mPinEpochSeen == ~0ull;
         if (first || f->mDirtyPairs || f->mDirtyEntries || f->mPinEpochSeen != sGeoPinEpoch)
         {
@@ -7201,7 +7268,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         // the pass begins: its tables
         const F32* view = (const F32*)blob;
         const F32* proj = view + 16;
-        const U32 slots = sGeo.mMaxSlot + 1;
+        const U32 slots = std::max(sGeo.mMaxSlot, sGeo.mMaxSlotAll) + 1;       // (every slot a fragment names: the alpha groups are not all in the G-buffer list)
         pass.mModels = r.allocVertexScratch(176 * (size_t)slots);
         pass.mTexmats = r.allocVertexScratch(64 * (size_t)slots);
         if (!pass.mModels.mPtr || !pass.mModels.mAddress || !pass.mTexmats.mPtr || !pass.mTexmats.mAddress)
@@ -7288,6 +7355,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 ++a.mSafetyHits;
             }
         }
+        geo_check_slots(*f, r, frame_now);
         const bool first = f->mPinEpochSeen == ~0ull;
         if (first || f->mDirtyPairs || f->mDirtyEntries || f->mPinEpochSeen != sGeoPinEpoch)
         {

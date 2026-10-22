@@ -7449,13 +7449,8 @@ void ll_scene_geo_frame(LLCullResult* cull)
     {
         static U32 prepare_seq = 0;
         const U32 stamp = ++prepare_seq;        // (one per record, not per frame: a second render in the same frame, the snapshot at exit, sends its own matrices)
-        for (U32 handle : handles)
+        auto send_moving = [&](const LLSceneFragment* f)
         {
-            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-            if (!f)
-            {
-                continue;
-            }
             for (U32 slot : f->mGeoMoving)
             {
                 const U32 k = slot - kMovingBase;
@@ -7467,6 +7462,29 @@ void ll_scene_geo_frame(LLCullResult* cull)
                     memcpy(m.mM, sMovingMatrix[k]->mMatrix, sizeof(m.mM));
                     matrices.push_back(m);
                     ++sGeoMovingSent;
+                }
+            }
+        };
+        for (U32 handle : handles)
+        {
+            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+            if (f)
+            {
+                send_moving(f);
+            }
+        }
+        // S5g (blink hunt 2026-10-22): the alpha pass draws groups that have no deferred draw (fire prims, foliage: alpha only), which the G-buffer list above does not name: their moving matrices (texture
+        // animation, moving objects) are sent too, else the alpha runs use the values some earlier occupant of the slot left
+        for (int rigged = 0; rigged < 2; ++rigged)
+        {
+            LLCullResult::sg_iterator begin = rigged ? cull->beginRiggedAlphaGroups() : cull->beginAlphaGroups();
+            LLCullResult::sg_iterator end = rigged ? cull->endRiggedAlphaGroups() : cull->endAlphaGroups();
+            for (LLCullResult::sg_iterator it = begin; it != end; ++it)
+            {
+                LLSpatialGroup* group = *it;
+                if (group && !group->isDead() && group->mSceneFragment)
+                {
+                    send_moving(group->mSceneFragment);
                 }
             }
         }
