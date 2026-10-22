@@ -168,6 +168,22 @@ void LLDrawPoolMaterials::kickGeometryBuilds()
     {
         kickGeometryBuild(LLRenderPass::PASS_SIMPLE_RIGGED, nullptr, true);
     }
+    if (gDiffuseMaskPullReady)
+    {
+        kickGeometryBuild(LLRenderPass::PASS_ALPHA_MASK);       // S6 X3
+        if (rigged_too && gDiffuseMaskPullSkinReady)
+        {
+            kickGeometryBuild(LLRenderPass::PASS_ALPHA_MASK_RIGGED, nullptr, true);
+        }
+    }
+    if (gFullbrightMaskPullReady)
+    {
+        kickGeometryBuild(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK);
+        if (rigged_too && gFullbrightMaskPullSkinReady)
+        {
+            kickGeometryBuild(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, nullptr, true);
+        }
+    }
     if (gAlphaGlowPullReady)
     {
         kickGeometryBuild(LLRenderPass::PASS_GLOW);             // S6 X2

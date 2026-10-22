@@ -84,6 +84,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Ge
 uniform uvec2 ll_packet_table;
 uniform uvec2 ll_packet_models;
 
+#ifdef LL_MASK_CUTOFF
+flat out float minimum_alpha;        // S6 X3: the alpha mask cutoff of the draw (the old pass set it per draw as a uniform)
+#endif
 out vec3 vary_normal;
 out vec4 vertex_color;
 out vec2 vary_texcoord0;
@@ -155,4 +158,7 @@ void main()
     uint tex_index = ((pk.flags & 1u) != 0u) ? 0u : (floatBitsToUint(position.w) & 3u);
     uint pair = (tex_index < 2u) ? pk.slots.x : pk.slots.y;
     vary_slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
+#ifdef LL_MASK_CUTOFF
+    minimum_alpha = pk.cutoff;
+#endif
 }
