@@ -5966,6 +5966,7 @@ struct GeoFrag
     bool mDirtyPairs = true, mDirtyEntries = true;
     U64 mPinEpochSeen = ~0ull;
     U64 mListedFrame = ~0ull;           // the frame it was last listed (the buffers it reads count as in flight for the frames after)
+    U64 mSafetyFrame = ~0ull;           // S5 safety: the frame an alpha record last checked its buffers against the live ones
     U32 mHandle = 0;
 };
 struct GeoStats
@@ -7128,7 +7129,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 // alpha items (their own command list, in item order) the run draws, in order.
 struct AlphaStats
 {
-    U64 mRecords = 0, mRanges = 0, mCmds = 0, mStale = 0, mNoProgram = 0, mScratchFail = 0, mBadRange = 0, mUnknown = 0, mTables = 0, mRefused = 0;
+    U64 mRecords = 0, mRanges = 0, mCmds = 0, mStale = 0, mNoProgram = 0, mScratchFail = 0, mBadRange = 0, mUnknown = 0, mTables = 0, mRefused = 0, mSafetyChecks = 0, mSafetyHits = 0, mZeroStatic = 0, mZeroRigged = 0;
     U64 mNsAll = 0, mNsTables = 0, mNsCopy = 0, mNsState = 0, mNsDraw = 0, mLast = 0;
 } sAlphaS;
 static struct AlphaPass
@@ -7223,6 +7224,32 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             ++a.mUnknown;
             continue;
         }
+        if (f->mSafetyFrame != frame_now)
+        {
+            // safety at the point of use (once a fragment a frame): the buffers of its pairs, looked up by NAME now, must be the ones its rows were written with. A buffer whose storage moved or went
+            // without an event reaching us would otherwise be read from its old address until the stale check of every 16th prepare: the GPU reads freed memory (device lost).
+            f->mSafetyFrame = frame_now;
+            ++a.mSafetyChecks;
+            bool stale = false;
+            for (size_t k = 0; k < f->mPairs.size(); ++k)
+            {
+                ResPair& p = f->mPairs[k];
+                auto v = sGL.mBuffers.find(p.mVb);
+                auto ib = sGL.mBuffers.find(p.mIb);
+                const bool ok = v != sGL.mBuffers.end() && ib != sGL.mBuffers.end() && v->second.mVk.valid() && ib->second.mVk.valid() && v->second.mVk.mAddress && ib->second.mVk.mAddress;
+                if (ok != p.mOk || (ok && (f->mAddr[2 * k] != (U64)v->second.mVk.mAddress || f->mAddr[2 * k + 1] != (U64)ib->second.mVk.mAddress)))
+                {
+                    p.mGen = ~0ull;         // (looked up again by the rebuild: the pointers may be stale)
+                    stale = true;
+                }
+            }
+            if (stale)
+            {
+                f->mDirtyPairs = true;
+                f->mDirtyEntries = true;
+                ++a.mSafetyHits;
+            }
+        }
         const bool first = f->mPinEpochSeen == ~0ull;
         if (first || f->mDirtyPairs || f->mDirtyEntries || f->mPinEpochSeen != sGeoPinEpoch)
         {
@@ -7256,6 +7283,10 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         for (const auto& t : todo)
         {
             memcpy(out, t.first->mARCmds.data() + t.second.mFirst, t.second.mCount * sizeof(VkDrawIndexedIndirectCommand));
+            for (U32 k = 0; k < t.second.mCount; ++k)
+            {
+                a.mZeroRigged += out[k].indexCount == 0 ? 1 : 0;       // (an item that draws nothing: no palette this frame, or its buffers are not usable)
+            }
             out += t.second.mCount;
         }
     }
@@ -7265,6 +7296,10 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         for (const auto& t : todo)
         {
             memcpy(out, t.first->mACmds.data() + t.second.mFirst, t.second.mCount * sizeof(VkDrawIndirectCommand));
+            for (U32 k = 0; k < t.second.mCount; ++k)
+            {
+                a.mZeroStatic += out[k].vertexCount == 0 ? 1 : 0;      // (an item that draws nothing: its buffers are not usable: missing from the picture)
+            }
             out += t.second.mCount;
         }
     }
@@ -7389,7 +7424,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         LL_INFOS("VkScene") << "alpha runs (S5a), worker, over " << a.mRecords << " records: " << (double)a.mRanges / n << " ranges and " << (double)a.mCmds / n << " draws a record; pass tables made " << a.mTables
             << " times; stale (no prepare this frame) " << a.mStale << ", no program " << a.mNoProgram << ", scratch failures " << a.mScratchFail << ", unknown handles " << a.mUnknown << ", bad ranges " << a.mBadRange
-            << ", refused " << a.mRefused << tail << LL_ENDL;
+            << ", refused " << a.mRefused << "; safety: " << a.mSafetyChecks << " fragment checks, " << a.mSafetyHits << " found a buffer moved or gone; items sent that draw nothing: " << a.mZeroStatic << " static (buffers not usable), " << a.mZeroRigged << " rigged (no palette or buffers not usable)" << tail << LL_ENDL;
     }
 }
 
