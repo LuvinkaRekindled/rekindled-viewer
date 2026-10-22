@@ -48,6 +48,7 @@
 #include "llviewerwindow.h"
 #include "pipeline.h"
 #include "llvkbridge.h"          // <FS> rtShadowMode()
+#include "llalphatransient.h"      // <FS> S5f F3
 #include "llviewershadermgr.h"
 #include "llviewerregion.h"
 #include "lldrawpoolwater.h"
@@ -1045,7 +1046,7 @@ namespace AlphaCensus
 // <FS> S5a: what the alpha loop sent to the scene table (log tag VkScene, every 600 frames)
 static struct AlphaSceneStats
 {
-    U64 mCalls = 0, mRecords = 0, mRanges = 0, mServed = 0, mOld = 0, mMismatch = 0, mBytes = 0, mGlowServed = 0;
+    U64 mCalls = 0, mRecords = 0, mRanges = 0, mServed = 0, mOld = 0, mMismatch = 0, mBytes = 0, mGlowServed = 0, mTrRecords = 0, mTrEntries = 0;
     U64 mOldCtx[6] = {};        // S5f F2: draws the old path made, by context: HUD, impostor, cube snapshot, reflection render, table not serving this pass, particle groups of a serving pass
     U32 mLast = 0;
 } sAlphaScene;
@@ -1099,12 +1100,135 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         }
         LLShaderProgram::unbind();
     }
-    int pending_key = -1;
     bool pass_begun = false;
     LLShaderProgram* min_alpha_zero_program = nullptr;       // the pull program whose minimum alpha a custom blend run set to 0 (put back by the next run of it with a standard blend)
     int setup_key = -1;     // the key whose pull program is bound with its blend function, lights and values in place, since the last old draw or glow pass (anything that could change them clears it)
+    // S5f F3: the draws the table does not keep (particle groups, a group without a current fragment, ...) of this pass as transient entries (kind 32): batched like the ranges of a run, in the pass's order (the pending
+    // ranges and the pending entries are never both non-empty: whichever comes second flushes the other first)
+    struct TransientBatch
+    {
+        std::vector<LLVkBridge::GeoEntry> mEntries;
+        std::vector<F32> mMatrices, mTexmats, mPbr;
+        std::vector<const LLMatrix4*> mMatrixKeys;
+        std::vector<U8> mBlob;
+    };
+    static thread_local TransientBatch tr;
+    tr.mEntries.clear();
+    tr.mMatrices.clear();
+    tr.mTexmats.clear();
+    tr.mPbr.clear();
+    tr.mMatrixKeys.clear();
+    const glm::mat4 tr_view = glm::make_mat4(gRenderModelView);
+    const glm::mat4 tr_proj = gRender.getProjectionMatrix();
+    // the matrices the shader would get from LLRender::syncMatrices() for a model matrix: modelview, modelview * projection, normal matrix (as the geometry packets of the deferred passes)
+    auto tr_matrix = [&](const LLMatrix4* model) -> U32
+    {
+        if (tr.mMatrices.empty() || model)
+        {
+            for (size_t k = 0; k < tr.mMatrixKeys.size(); ++k)
+            {
+                if (tr.mMatrixKeys[k] == model)
+                {
+                    return (U32)k;
+                }
+            }
+        }
+        glm::mat4 mv = tr_view;
+        if (model)
+        {
+            mv = tr_view * glm::make_mat4((const F32*)model->mMatrix);
+        }
+        const glm::mat4 mvp = tr_proj * mv;
+        const glm::mat4 n = glm::transpose(glm::inverse(mv));
+        const size_t at = tr.mMatrices.size();
+        tr.mMatrices.resize(at + 44);
+        memcpy(&tr.mMatrices[at], glm::value_ptr(mv), 64);
+        memcpy(&tr.mMatrices[at + 16], glm::value_ptr(mvp), 64);
+        for (int col = 0; col < 3; ++col)
+        {
+            F32* d = &tr.mMatrices[at + 32 + 4 * col];
+            d[0] = n[col][0];
+            d[1] = n[col][1];
+            d[2] = n[col][2];
+            d[3] = 0.f;
+        }
+        tr.mMatrixKeys.push_back(model);
+        return (U32)(at / 44);
+    };
+    int pending_key = -1;
+    auto tr_flush = [&]()
+    {
+        if (tr.mEntries.empty())
+        {
+            return;
+        }
+        const size_t entries_bytes = tr.mEntries.size() * sizeof(LLVkBridge::GeoEntry), matrix_bytes = tr.mMatrices.size() * sizeof(F32), texmat_bytes = tr.mTexmats.size() * sizeof(F32), pbr_bytes = tr.mPbr.size() * sizeof(F32);
+        tr.mBlob.resize(entries_bytes + matrix_bytes + texmat_bytes + pbr_bytes);
+        U8* at = tr.mBlob.data();
+        memcpy(at, tr.mEntries.data(), entries_bytes);
+        at += entries_bytes;
+        memcpy(at, tr.mMatrices.data(), matrix_bytes);
+        at += matrix_bytes;
+        if (texmat_bytes)
+        {
+            memcpy(at, tr.mTexmats.data(), texmat_bytes);
+            at += texmat_bytes;
+        }
+        if (pbr_bytes)
+        {
+            memcpy(at, tr.mPbr.data(), pbr_bytes);
+        }
+        LLVkBridge::ShadowPacketsHeader header;
+        header.mKind = 32;
+        header.mEntries = (U32)tr.mEntries.size();
+        header.mMatrices = (U32)(tr.mMatrices.size() / 44);
+        header.mFragment = (U32)(tr.mTexmats.size() / 16);
+        header.mPaletteFloats = (U32)(tr.mPbr.size() / 40);
+        {
+            LLRenderState::CullScope cull_face(false, pending_key >= 0 && (((pending_key >> 16) & 1) != 0 || ((pending_key >> 18) & 1) != 0));       // a double sided glTF material, a particle group: culling off
+            LLVkBridge::shadowPackets(header, tr.mBlob.data(), tr.mBlob.size());
+        }
+        ++sAlphaScene.mTrRecords;
+        sAlphaScene.mTrEntries += tr.mEntries.size();
+        sAlphaScene.mBytes += tr.mBlob.size();
+        tr.mEntries.clear();
+        tr.mMatrices.clear();
+        tr.mTexmats.clear();
+        tr.mPbr.clear();
+        tr.mMatrixKeys.clear();
+        pending_key = -1;
+    };
+    // an entry for the draw (its GL names made now: the old bind marks a texture in use, regenerates a deleted one and applies its sampler options, prepareFast does the same)
+    auto tr_add = [&](const LLAlphaTransient& t, const LLDrawInfo& draw)
+    {
+        if (tr.mMatrices.empty())
+        {
+            tr_matrix(nullptr);         // matrix 0: the view alone
+        }
+        LLVkBridge::GeoEntry e = t.mEntry;
+        U32* fields[6] = { &e.mTextures[0], &e.mTextures[1], &e.mTextures[2], &e.mTextures[3], &e.mNormalMap, &e.mSpecularMap };
+        for (int k = 0; k < 6; ++k)
+        {
+            *fields[k] = t.mTextures[k] ? gRender.getTexUnit(0)->prepareFast(t.mTextures[k]) : 0u;
+        }
+        e.mMatrix = draw.mModelMatrix ? tr_matrix(draw.mModelMatrix) : 0u;
+        if (t.mUseTexMatrix && draw.mTextureMatrix)
+        {
+            tr.mTexmats.insert(tr.mTexmats.end(), (const F32*)draw.mTextureMatrix->mMatrix, (const F32*)draw.mTextureMatrix->mMatrix + 16);
+            e.mPad3 = (U32)(tr.mTexmats.size() / 16);
+        }
+        if (t.mPbr)
+        {
+            e.mPbrRow = (U32)(tr.mPbr.size() / 40);
+            tr.mPbr.insert(tr.mPbr.end(), t.mPbrValues, t.mPbrValues + 40);
+        }
+        tr.mEntries.push_back(e);
+    };
+    // S5f F3: the glow second draw of the transient draws, per group by class (as glow_range for the fragment items): the draws, built again as entries at the glow pass
+    static thread_local std::vector<LLDrawInfo*> glow_draws[3];
     auto run_flush = [&]()
     {
+        tr_flush();
         if (pending.empty())
         {
             return;
@@ -1167,7 +1291,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         header.mEntries = (U32)pending.size();
         header.mPass = rigged ? 1 : 0;
         {
-            LLRenderState::CullScope cull_face(false, ((pending_key >> 16) & 1) != 0);       // a double sided glTF material: culling off for its run
+            LLRenderState::CullScope cull_face(false, ((pending_key >> 16) & 1) != 0 || ((pending_key >> 18) & 1) != 0);       // a double sided glTF material, a particle group: culling off for its run
             LLVkBridge::shadowPackets(header, pending.data(), pending.size() * sizeof(PendingRange));
         }
         ++sAlphaScene.mRecords;
@@ -1355,6 +1479,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             {
                 glow_range[cls].clear();
                 glow_src[cls].clear();
+                glow_draws[cls].clear();
             }
 
             bool is_particle_or_hud_particle = group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_PARTICLE
@@ -1399,7 +1524,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     if (plan_seg < plan.mSegCount && plan.mSegs[plan_seg].mServed && o == plan.mSegs[plan_seg].mFirst)
                     {
                         const LLAlphaPlanSeg& seg = plan.mSegs[plan_seg];
-                        if (pending_key != run_key(seg.mKey))
+                        if (pending_key != run_key(seg.mKey) || !tr.mEntries.empty())
                         {
                             run_flush();
                             run_begin(run_key(seg.mKey));
@@ -1450,7 +1575,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         const LLAlphaPlanSeg& seg = plan.mSegs[plan_seg];
                         if (o == seg.mFirst)
                         {
-                            if (pending_key != run_key(seg.mKey))
+                            if (pending_key != run_key(seg.mKey) || !tr.mEntries.empty())
                             {
                                 run_flush();
                                 run_begin(run_key(seg.mKey));
@@ -1473,6 +1598,38 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     if (!(plan_seg < plan.mSegCount && !plan.mSegs[plan_seg].mServed && o < plan.mOrderCount && plan.mOrder[o] == &params))
                     {
                         ++sAlphaScene.mMismatch;        // (the plan does not list this draw here: drawn the old way)
+                    }
+                }
+                if (alpha_table && !rigged)
+                {   // S5f F3: the table does not keep this draw: a transient entry (the same pull program as a fragment item of its key), in the pass's order
+                    LLAlphaTransient transient;
+                    if (ll_alpha_transient(&params, false, transient))
+                    {
+                        int key = run_key(transient.mKey);
+                        if (is_particle_or_hud_particle)
+                        {
+                            key |= 1 << 18;         // (particle groups draw with culling off)
+                        }
+                        if (pending_key != key || !pending.empty())
+                        {
+                            run_flush();
+                            run_begin(key);
+                        }
+                        tr_add(transient, params);
+                        if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+                        {
+                            const bool pbr_draw = params.mGLTFMaterial.notNull();
+                            if (pbr_draw ? glow_pbr_table : glow_plain_table)
+                            {
+                                glow_draws[pbr_draw ? (params.mGLTFMaterial->mDoubleSided ? 2 : 1) : 0].push_back(&params);
+                            }
+                            else
+                            {
+                                (pbr_draw ? pbr_emissives : emissives).push_back(&params);
+                            }
+                        }
+                        cen.drawEnd();
+                        continue;
                     }
                 }
                 run_flush();        // an old draw: the pending run goes first (its program is still bound)
@@ -1716,7 +1873,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             // render emissive faces into alpha channel for bloom effects
             if (!depth_only && !mFringePass)
             {
-                const bool glow_served = !glow_range[0].empty() || !glow_range[1].empty() || !glow_range[2].empty();
+                const bool glow_served = !glow_range[0].empty() || !glow_range[1].empty() || !glow_range[2].empty() || !glow_draws[0].empty() || !glow_draws[1].empty() || !glow_draws[2].empty();
                 if (!emissives.empty() || !pbr_emissives.empty() || !rigged_emissives.empty() || !pbr_rigged_emissives.empty() || glow_served)
                 {
                     run_flush();
@@ -1765,6 +1922,22 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     rebind = true;
                     for (int cls = 0; cls < 3; ++cls)
                     {
+                        if (!glow_draws[cls].empty())
+                        {   // the transient draws' glow: entries made again, one record (the program of the class, culling off for double sided glTF)
+                            LLShaderProgram* transient_glow_program = cls == 0 ? &gDeferredEmissivePullProgram : &gPBRGlowPullProgram;
+                            transient_glow_program->bind();
+                            pending_key = cls == 2 ? (1 << 16) : 0;
+                            for (LLDrawInfo* glow_draw : glow_draws[cls])
+                            {
+                                LLAlphaTransient glow_transient;
+                                if (ll_alpha_transient(glow_draw, false, glow_transient))
+                                {
+                                    tr_add(glow_transient, *glow_draw);
+                                }
+                            }
+                            tr_flush();
+                            glow_draws[cls].clear();
+                        }
                         if (glow_range[cls].empty())
                         {
                             continue;
@@ -1823,10 +1996,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         sAlphaScene.mLast = gFrameCount;
         LL_INFOS("VkScene") << "alpha from the scene table (S5a), viewer side per frame: " << (double)sAlphaScene.mCalls / frames << " passes, " << (double)sAlphaScene.mRecords / frames << " records, "
             << (double)sAlphaScene.mRanges / frames << " ranges, " << (double)sAlphaScene.mServed / frames << " draws served, " << (double)sAlphaScene.mOld / frames << " drawn the old way, "
-            << (double)sAlphaScene.mBytes / frames << " bytes sent, glow draws served " << (double)sAlphaScene.mGlowServed / frames << ", plan mismatches " << sAlphaScene.mMismatch
+            << (double)sAlphaScene.mBytes / frames << " bytes sent, glow draws served " << (double)sAlphaScene.mGlowServed / frames << ", transient " << (double)sAlphaScene.mTrEntries / frames << " draws in " << (double)sAlphaScene.mTrRecords / frames << " records, plan mismatches " << sAlphaScene.mMismatch
             << "; old draws by context a frame: HUD " << (double)sAlphaScene.mOldCtx[0] / frames << ", impostor " << (double)sAlphaScene.mOldCtx[1] / frames << ", cube " << (double)sAlphaScene.mOldCtx[2] / frames
             << ", reflection " << (double)sAlphaScene.mOldCtx[3] / frames << ", not serving " << (double)sAlphaScene.mOldCtx[4] / frames << ", particle groups " << (double)sAlphaScene.mOldCtx[5] / frames << LL_ENDL;
-        sAlphaScene.mCalls = sAlphaScene.mRecords = sAlphaScene.mRanges = sAlphaScene.mServed = sAlphaScene.mOld = sAlphaScene.mBytes = sAlphaScene.mGlowServed = 0;
+        sAlphaScene.mCalls = sAlphaScene.mRecords = sAlphaScene.mRanges = sAlphaScene.mServed = sAlphaScene.mOld = sAlphaScene.mBytes = sAlphaScene.mGlowServed = sAlphaScene.mTrRecords = sAlphaScene.mTrEntries = 0;
         for (U64& n : sAlphaScene.mOldCtx) { n = 0; }
     }
 

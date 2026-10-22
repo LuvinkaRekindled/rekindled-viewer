@@ -4202,7 +4202,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
 }
 
 // the worker side of a record of deferred geometry draws (diffusePullV.glsl): the draw's matrices are in the record, its textures get slots in the bindless table
-static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob, bool rigged = false, bool indexed = false)
+static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob, bool rigged = false, bool indexed = false, bool alpha = false)
 {
     struct GeoGpu
     {
@@ -4312,6 +4312,12 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;
+        if (alpha)
+        {
+            g.mPad[0] = e.mPad3;                                // S5f F3: the texture matrix (0 = none)
+            g.mPad[1] = e.mPbrRow;                              // ... the PBR row
+            memcpy(&g.mPad2, &e.mEmissiveOffset, sizeof(U32));   // ... the emissive array (the glow draw)
+        }
         if (rigged)
         {
             U32* x = (U32*)(raw + 128);
@@ -4371,6 +4377,36 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     program->setInts("ll_packet_table", table_words, 2);
     program->setInts("ll_packet_models", models_words, 2);
+    if (alpha)
+    {
+        // S5f F3: the record's texture matrices (number 0 = identity) and PBR rows, in scratch memory of their own
+        const U32 texmat_count = h.mFragment, pbr_count = h.mPaletteFloats;
+        const F32* texmat_src = matrices + 44 * (size_t)h.mMatrices;
+        const F32* pbr_src = texmat_src + 16 * (size_t)texmat_count;
+        Renderer::ScratchAlloc texmats = r.allocVertexScratch(64 * ((size_t)texmat_count + 1));
+        Renderer::ScratchAlloc pbr_rows = r.allocVertexScratch(160 * (size_t)std::max<U32>(pbr_count, 1));
+        if (!texmats.mPtr || !texmats.mAddress || !pbr_rows.mPtr || !pbr_rows.mAddress)
+        {
+            return;
+        }
+        F32* tm = (F32*)texmats.mPtr;
+        memset(tm, 0, 64);
+        tm[0] = tm[5] = tm[10] = tm[15] = 1.f;
+        memcpy(tm + 16, texmat_src, 64 * (size_t)texmat_count);
+        memset(pbr_rows.mPtr, 0, 160 * (size_t)std::max<U32>(pbr_count, 1));
+        memcpy(pbr_rows.mPtr, pbr_src, 160 * (size_t)pbr_count);
+        const U64 texmats_address = (U64)texmats.mAddress, pbr_address = (U64)pbr_rows.mAddress;
+        const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
+        const S32 pbr_words[2] = { (S32)(U32)pbr_address, (S32)(U32)(pbr_address >> 32) };
+        if (program->hasUniform("ll_packet_texmats"))
+        {
+            program->setInts("ll_packet_texmats", texmats_words, 2);
+        }
+        if (program->hasUniform("ll_packet_pbr"))
+        {
+            program->setInts("ll_packet_pbr", pbr_words, 2);
+        }
+    }
 
     if (!prepare_draw(vi, used_cache))
     {
@@ -7646,6 +7682,11 @@ void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (h.mKind == 3 || h.mKind == 25 || h.mKind == 26)
     {
         on_geometry_packets(h, blob, h.mKind >= 25, h.mKind == 26);
+        return;
+    }
+    if (h.mKind == 32)
+    {
+        on_geometry_packets(h, blob, false, false, true);       // S5f F3: transient alpha draws
         return;
     }
     if (h.mKind == 4)
