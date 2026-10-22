@@ -1045,7 +1045,7 @@ namespace AlphaCensus
 // <FS> S5a: what the alpha loop sent to the scene table (log tag VkScene, every 600 frames)
 static struct AlphaSceneStats
 {
-    U64 mCalls = 0, mRecords = 0, mRanges = 0, mServed = 0, mOld = 0, mMismatch = 0, mBytes = 0;
+    U64 mCalls = 0, mRecords = 0, mRanges = 0, mServed = 0, mOld = 0, mMismatch = 0, mBytes = 0, mGlowServed = 0;
     U32 mLast = 0;
 } sAlphaScene;
 
@@ -1065,6 +1065,11 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     static thread_local std::vector<PendingSrc> pending_src;
     pending.clear();
     pending_src.clear();
+    // S5e: the glow second draw of the served alpha items, per group: ranges by class (0 plain, 1 glTF, 2 glTF double sided)
+    static thread_local std::vector<PendingRange> glow_range[3];
+    static thread_local std::vector<PendingSrc> glow_src[3];
+    const bool glow_plain_table = alpha_table && post_water && ll_alpha_glow_table(false);
+    const bool glow_pbr_table = alpha_table && post_water && ll_alpha_glow_table(true);
     int pending_key = -1;
     bool pass_begun = false;
     LLShaderProgram* min_alpha_zero_program = nullptr;       // the pull program whose minimum alpha a custom blend run set to 0 (put back by the next run of it with a standard blend)
@@ -1150,6 +1155,30 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         {
             pending_src.push_back({ pv.mItemInfo, pv.mItemWire, seg.mRank, seg.mCount, pv.mHandle });
         }
+    };
+    // S5e: a served draw with a glow buffer: into the group's glow ranges when the table draws its glow (true), else the caller keeps it for the old glow pass
+    auto glow_add = [&](const LLAlphaPlanView& pv, const LLDrawInfo* draw, U32 rank) -> bool
+    {
+        const bool pbr_draw = draw->mGLTFMaterial.notNull();
+        if (!(pbr_draw ? glow_pbr_table : glow_plain_table))
+        {
+            return false;
+        }
+        const int cls = pbr_draw ? (draw->mGLTFMaterial->mDoubleSided ? 2 : 1) : 0;
+        std::vector<PendingRange>& r = glow_range[cls];
+        std::vector<PendingSrc>& src = glow_src[cls];
+        if (!r.empty() && r.back().mHandle == pv.mHandle && r.back().mFirst + r.back().mCount == rank)
+        {
+            ++r.back().mCount;
+            ++src.back().mCount;
+        }
+        else
+        {
+            r.push_back({ pv.mHandle, rank, 1 });
+            src.push_back({ pv.mItemInfo, pv.mItemWire, rank, 1, pv.mHandle });
+        }
+        ++sAlphaScene.mGlowServed;
+        return true;
     };
     // a new run: the pull program of its key bound, the blend function, the per-draw values a plain draw has (spec 1, env 0, brightness 1)
     auto run_begin = [&](int key)
@@ -1293,6 +1322,11 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             rigged_emissives.resize(0);
             pbr_emissives.resize(0);
             pbr_rigged_emissives.resize(0);
+            for (int cls = 0; cls < 3; ++cls)
+            {
+                glow_range[cls].clear();
+                glow_src[cls].clear();
+            }
 
             bool is_particle_or_hud_particle = group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_PARTICLE
                                                       || group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_HUD_PARTICLE;
@@ -1352,7 +1386,11 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             while (glow_at < plan.mGlowCount && plan.mGlowIdx[glow_at] < seg.mFirst + seg.mCount)
                             {
                                 LLDrawInfo* glow_draw = const_cast<LLDrawInfo*>(plan.mOrder[plan.mGlowIdx[glow_at]]);
-                                if (glow_draw->mAvatar) { (glow_draw->mGLTFMaterial.notNull() ? pbr_rigged_emissives : rigged_emissives).push_back(glow_draw); }
+                                if (glow_add(plan, glow_draw, seg.mRank + (plan.mGlowIdx[glow_at] - seg.mFirst)))
+                                {
+                                    // (drawn from the table after the group)
+                                }
+                                else if (glow_draw->mAvatar) { (glow_draw->mGLTFMaterial.notNull() ? pbr_rigged_emissives : rigged_emissives).push_back(glow_draw); }
                                 else { (glow_draw->mGLTFMaterial.notNull() ? pbr_emissives : emissives).push_back(glow_draw); }
                                 ++glow_at;
                             }
@@ -1393,7 +1431,11 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         ++sAlphaScene.mServed;
                         if (post_water && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
                         {
-                            if (params.mAvatar) { (params.mGLTFMaterial.notNull() ? pbr_rigged_emissives : rigged_emissives).push_back(&params); }
+                            if (glow_add(plan, &params, seg.mRank + (o - seg.mFirst)))
+                            {
+                                // (drawn from the table after the group)
+                            }
+                            else if (params.mAvatar) { (params.mGLTFMaterial.notNull() ? pbr_rigged_emissives : rigged_emissives).push_back(&params); }
                             else { (params.mGLTFMaterial.notNull() ? pbr_emissives : emissives).push_back(&params); }
                         }
                         cen.drawEnd();
@@ -1637,7 +1679,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             // render emissive faces into alpha channel for bloom effects
             if (!depth_only && !mFringePass)
             {
-                if (!emissives.empty() || !pbr_emissives.empty() || !rigged_emissives.empty() || !pbr_rigged_emissives.empty())
+                const bool glow_served = !glow_range[0].empty() || !glow_range[1].empty() || !glow_range[2].empty();
+                if (!emissives.empty() || !pbr_emissives.empty() || !rigged_emissives.empty() || !pbr_rigged_emissives.empty() || glow_served)
                 {
                     run_flush();
                     setup_key = -1;
@@ -1679,6 +1722,35 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     rebind = true;
                 }
 
+                if (glow_served)
+                {   // S5e: the glow of the served draws, from the table: one run a class (glTF double sided: culling off), the rigged ones with depth writes off as the old rigged glow passes
+                    light_enabled = true;
+                    rebind = true;
+                    for (int cls = 0; cls < 3; ++cls)
+                    {
+                        if (glow_range[cls].empty())
+                        {
+                            continue;
+                        }
+                        LLShaderProgram* glow_program = cls == 0 ? (rigged ? &gDeferredEmissivePullSkinProgram : &gDeferredEmissivePullProgram) : (rigged ? &gPBRGlowPullSkinProgram : &gPBRGlowPullProgram);
+                        glow_program->bind();
+                        pending.swap(glow_range[cls]);
+                        pending_src.swap(glow_src[cls]);
+                        pending_key = cls == 2 ? (1 << 16) : 0;
+                        if (rigged)
+                        {
+                            LLRenderState::DepthScope depth(true, false);
+                            run_flush();
+                        }
+                        else
+                        {
+                            run_flush();
+                        }
+                        glow_range[cls].clear();
+                        glow_src[cls].clear();
+                    }
+                }
+
                 // restore our alpha blend mode
                 gRender.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
 
@@ -1702,8 +1774,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         sAlphaScene.mLast = gFrameCount;
         LL_INFOS("VkScene") << "alpha from the scene table (S5a), viewer side per frame: " << (double)sAlphaScene.mCalls / frames << " passes, " << (double)sAlphaScene.mRecords / frames << " records, "
             << (double)sAlphaScene.mRanges / frames << " ranges, " << (double)sAlphaScene.mServed / frames << " draws served, " << (double)sAlphaScene.mOld / frames << " drawn the old way, "
-            << (double)sAlphaScene.mBytes / frames << " bytes sent, plan mismatches " << sAlphaScene.mMismatch << LL_ENDL;
-        sAlphaScene.mCalls = sAlphaScene.mRecords = sAlphaScene.mRanges = sAlphaScene.mServed = sAlphaScene.mOld = sAlphaScene.mBytes = 0;
+            << (double)sAlphaScene.mBytes / frames << " bytes sent, glow draws served " << (double)sAlphaScene.mGlowServed / frames << ", plan mismatches " << sAlphaScene.mMismatch << LL_ENDL;
+        sAlphaScene.mCalls = sAlphaScene.mRecords = sAlphaScene.mRanges = sAlphaScene.mServed = sAlphaScene.mOld = sAlphaScene.mBytes = sAlphaScene.mGlowServed = 0;
     }
 
     gRender.setSceneBlendType(LLRender::BT_ALPHA);

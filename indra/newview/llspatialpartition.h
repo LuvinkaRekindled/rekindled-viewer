@@ -114,6 +114,7 @@ struct LLAlphaPlanView
 };
 int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged = false);
 bool ll_alpha_blend_pair(U32 id, int* src, int* dst);       // pipeline.cpp (S5b): a run key carries the id of its blend function pair in bits 8 and up (0 = the standard alpha blend)
+bool ll_alpha_glow_table(bool pbr);      // pipeline.cpp (S5e): the glow second draw of the alpha items is drawn from the table (plain / glTF items)
 bool ll_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha pass is drawn from the scene table this frame      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
 
 class LLDrawInfo final : public LLRefCount
