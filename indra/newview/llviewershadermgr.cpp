@@ -173,6 +173,10 @@ LLShaderProgram            gDeferredShadowSkinPullProgram;
 LLShaderProgram            gDeferredDiffusePullProgram;
 LLShaderProgram            gDeferredAlphaPullProgram;
 LLShaderProgram            gDeferredFullbrightAlphaPullProgram;
+LLShaderProgram            gDeferredFullbrightPullProgram;        // S6 X1: the OPAQUE fullbright pass from the scene table (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF, no alpha, no blending in the shader)
+LLShaderProgram            gDeferredFullbrightPullSkinProgram;
+bool                       gFullbrightPullReady = false;
+bool                       gFullbrightPullSkinReady = false;
 bool                       gAlphaPullReady = false;
 bool                       gAlphaMaterialPullReady = false;
 LLShaderProgram            gDeferredPBRAlphaPullProgram;
@@ -1204,6 +1208,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffusePullProgram.unload();
         gDeferredAlphaPullProgram.unload();
         gDeferredFullbrightAlphaPullProgram.unload();
+        gDeferredFullbrightPullProgram.unload();
+        gDeferredFullbrightPullSkinProgram.unload();
+        gFullbrightPullReady = false;
+        gFullbrightPullSkinReady = false;
         gDeferredPBRAlphaPullProgram.unload();
         gDeferredAlphaPullSkinProgram.unload();
         gDeferredFullbrightAlphaPullSkinProgram.unload();
@@ -2271,6 +2279,56 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             {
                 LL_WARNS("ShadowPackets") << "the PBR alpha pull skin shader could not be made: rigged glTF blend objects will NOT be drawn" << LL_ENDL;
                 shader->unload();
+            }
+        }
+    }
+
+    // <FS> S6 X1: the opaque fullbright pass from the table: the same vertex shader as the fullbright alpha pull program (rows and matrices as the G-buffer table's) with the plain fullbright fragment shader. Optional: without it the old pass draws.
+    gFullbrightPullReady = false;
+    gFullbrightPullSkinReady = false;
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        bool ok = true;
+        for (int i = 0; i < 2 && ok; ++i)
+        {
+            const bool skin = i == 1;
+            if (skin && !(gAlphaLitSkinReady && ll_rigged_indexed()))
+            {
+                break;
+            }
+            LLShaderProgram* shader = skin ? &gDeferredFullbrightPullSkinProgram : &gDeferredFullbrightPullProgram;
+            shader->mName = skin ? "Deferred Fullbright Pull Skin Shader" : "Deferred Fullbright Pull Shader";
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.isDeferred = true;
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
+            shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
+            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            ok = shader->createShader();
+            if (!ok)
+            {
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: " << (skin ? "rigged " : "") << "fullbright objects are drawn the old way" << LL_ENDL;
+                shader->unload();
+            }
+            else if (skin)
+            {
+                gFullbrightPullSkinReady = true;
+            }
+            else
+            {
+                gFullbrightPullReady = true;
             }
         }
     }

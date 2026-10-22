@@ -141,6 +141,8 @@ struct LLGeometryPassInfo
 
 // <FS> S4 A1: the rigged draws of the diffuse and the materials passes as geometry records (kind 25, skinned pull programs); LL_VK_RIGGED_PACKETS=1, LL_VK_RIGGED_PACKETS_AB=<s> alternates
 bool ll_rigged_packets_enabled();
+bool ll_pass_needs_normals(U32 type);       // S6 X1: false for the fullbright passes
+int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix);       // S6 census: why a draw is refused by the table / packets (0: it is not)
 bool ll_scene_geo_rigged_env();      // LL_VK_SCENE_GEO_RIGGED=1: S4 B, the rigged draws are served by the scene table (the rigged records stay for the frames it does not serve)
 // <FS> S4 A2: the frame's shared palette list: a palette of an (avatar, skin) is added once per frame (12 floats per joint) and named by its absolute float offset by every record that needs it (rigged geometry records,
 // rigged shadow records); the new part of the list is sent (kind 27) by ll_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
@@ -413,7 +415,7 @@ public:
     // S3 (doc/vulkan/S3-design.md): the entry a geometry record gets for one draw, with the textures as pointers: textures[0..3] the diffuse ones, [4] the normal map, [5] the specular map; the entry's
     // texture fields hold 1 + the index into textures (0 = none), its matrix is 0. False: the draw takes the old path (the same decision as the builder's). Kept in step with build_geometry by the verify mode.
     static bool pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& entry, bool rigged = false);       // S5c: the arrays of a draw with a glTF blend material (textures and values: the caller)
-    static bool geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false);
+    static bool geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false, bool normals = true);
     // the builds of the geometry records start on the async pool at the top of renderGeomDeferred (the main thread draws its own things meanwhile), pushGeometryPackets takes them
     static void kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials = nullptr, bool rigged = false);
     static std::string geometryBuildStats();      // what became of the builds since the last call, for the log

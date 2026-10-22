@@ -209,6 +209,46 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
 
     gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
+    // <FS> S6 X1: the opaque fullbright draws from the scene table (the pull program, the same entries as the diffuse pass); what it cannot carry is drawn the old way. HUDs stay on the old path.
+    if (!LLPipeline::sRenderingHUDs && deferredPacketsEnabled() && gFullbrightPullReady)
+    {
+        std::vector<LLDrawInfo*> fallback;
+        gDeferredFullbrightPullProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT, fallback);
+        if (!fallback.empty())
+        {
+            shader->bind();
+            for (LLDrawInfo* params : fallback)
+            {
+                pushBatch(*params, true, true);
+            }
+        }
+        if (ll_rigged_packets_enabled() && gFullbrightPullSkinReady)
+        {
+            fallback.clear();
+            gDeferredFullbrightPullSkinProgram.bind();
+            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_RIGGED, fallback, nullptr, true);
+            if (!fallback.empty())
+            {
+                shader->bind(true);
+                const LLVOAvatar* lastAvatar = nullptr;
+                U64 lastMeshId = 0;
+                bool skipLastSkin = false;
+                for (LLDrawInfo* params : fallback)
+                {
+                    if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
+                    {
+                        pushBatch(*params, true, true);
+                    }
+                }
+            }
+            return;
+        }
+        shader->bind(true);
+        pushRiggedBatches(LLRenderPass::PASS_FULLBRIGHT_RIGGED, true, true);
+        return;
+    }
+
     // render static
     shader->bind();
     pushBatches(LLRenderPass::PASS_FULLBRIGHT, true, true);

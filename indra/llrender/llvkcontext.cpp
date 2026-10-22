@@ -2572,6 +2572,7 @@ void Context::destroyImage(Image& image)
         return;
     }
     noteDestroyedView(image.mViewId);
+    forgetView(image.mView);
     VkImage i = image.mImage;
     VkImageView v = image.mView;
     VmaAllocation a = image.mAllocation;
