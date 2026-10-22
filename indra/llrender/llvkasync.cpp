@@ -21,6 +21,7 @@
 #include "llvkquery.h"
 #include "llframetimer.h"
 #include "llvkformat.h"
+#include "lluniformcensus.h"
 
 #include <windows.h>
 #include <synchapi.h>
@@ -282,7 +283,7 @@ inline void mainCommit(size_t payload_bytes)
 // Nothing is dropped and nothing is reordered: whatever else is queued first writes out what is held, and the worker plays a merged record
 // by calling the same functions in the same order.
 unsigned long long gMainRecords = 0;        // records actually written by the main thread (a sub-stream's are counted when it is spliced)
-inline void noteRecord() { if (!tlsBuf) { ++gMainRecords; } }
+inline void noteRecord() { if (!tlsBuf) { ++gMainRecords; if (LLUniCensus::sOn) { LLUniCensus::note_record(); } } }
 
 
 inline void rawPush(U16 op, const void* args, unsigned size)
@@ -502,11 +503,15 @@ unsigned long long frontStart(int id)
     {
         ++gDrawSeq;
     }
+    if (LLUniCensus::sOn)
+    {   // S6 census: by innermost CPU zone
+        if (id == FP_DRAW) LLUniCensus::note_draw(); else if (id == FP_SET_BUFFER) LLUniCensus::note_setbuf(); else if (id == FP_SYNC_MATRICES) LLUniCensus::note_sync();
+    }
     const unsigned long long n = ++gFrontCalls[id];
     return (n & 15) == 0 ? (__rdtsc() | 1) : 0;
 }
 void frontStop(int id, unsigned long long t0) { gFrontTicks[id] += (__rdtsc() - t0) * 16; }
-void frontNote(int id) { if (isMainThread()) { ++gFrontCalls[id]; if (id == FP_DRAW) { ++gDrawSeq; } } }
+void frontNote(int id) { if (isMainThread()) { if (LLUniCensus::sOn && id == FP_DRAW) { LLUniCensus::note_draw(); } ++gFrontCalls[id]; if (id == FP_DRAW) { ++gDrawSeq; } } }
 
 bool mainProducer()
 {

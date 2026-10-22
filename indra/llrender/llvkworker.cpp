@@ -7713,7 +7713,54 @@ static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const 
 
 // <FS> Render packets: the worker side of LLVkBridge::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
+void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob);
+// S6 census (LL_VK_OPSTATS): what the worker spends in each packet kind (calls and time per command buffer submit, which is 2 a presented frame; logged every 600 submits)
 void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    static const bool census = getenv("LL_VK_OPSTATS") != nullptr;
+    if (!census || h.mKind >= 40)
+    {
+        on_shadow_packets_impl(h, blob);
+        return;
+    }
+    static U64 ns[40] = {}, calls[40] = {}, entries[40] = {}, first_frame = 0, nested = 0;
+    if (nested)
+    {
+        on_shadow_packets_impl(h, blob);        // (a kind that dispatches another through here: counted by the outer one)
+        return;
+    }
+    const U64 now = (U64)Context::instance().getFrameNumber();
+    if (!first_frame)
+    {
+        first_frame = now;
+    }
+    nested = 1;
+    const auto t0 = std::chrono::steady_clock::now();
+    on_shadow_packets_impl(h, blob);
+    ns[h.mKind] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+    ++calls[h.mKind];
+    entries[h.mKind] += h.mEntries;
+    nested = 0;
+    if (now >= first_frame + 600)
+    {
+        const double frames = (double)(now - first_frame);
+        std::string text;
+        for (U32 k = 0; k < 40; ++k)
+        {
+            if (calls[k])
+            {
+                char buf[160];
+                snprintf(buf, sizeof(buf), " | kind %u: %.1f calls, %.1f entries, %.3f ms (%.2f us each)", k, (double)calls[k] / frames, (double)entries[k] / frames, (double)ns[k] / 1.0e6 / frames, (double)ns[k] / 1000.0 / (double)calls[k]);
+                text += buf;
+                ns[k] = calls[k] = entries[k] = 0;
+            }
+        }
+        first_frame = now;
+        LL_INFOS("VkOps") << "packet kinds, worker, per command buffer submit (2 a frame: multiply by 2 for per frame):" << text << LL_ENDL;
+    }
+}
+
+void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if ((h.mKind >= 20 && h.mKind <= 24) || h.mKind == 29 || h.mKind == 31)
     {
