@@ -57,6 +57,7 @@
 #include "gltfscenemanager.h"
 
 #include "llenvironment.h"
+#include "glm/gtc/type_ptr.hpp"
 
 bool LLDrawPoolAlpha::sShowDebugAlpha = false;
 bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;
@@ -229,6 +230,12 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
         &gDeferredPBRAlphaProgram;
 
     prepare_alpha_shader(pbr_shader, true, water_sign);
+
+    if (gAlphaPullReady && ll_alpha_serving())
+    {   // <FS> S5a: the pull programs of the runs drawn from the scene table
+        prepare_alpha_shader(&gDeferredAlphaPullProgram, true, water_sign);
+        prepare_alpha_shader(&gDeferredFullbrightAlphaPullProgram, true, water_sign);
+    }
 
     // explicitly unbind here so render loop doesn't make assumptions about the last shader
     // already being setup for rendering
@@ -750,7 +757,7 @@ namespace AlphaCensus
         bool mOn;
         Ctx* mCtx = nullptr;
         U64 mT0 = 0, mLast = 0, mGroupT0 = 0, mEmT0 = 0;
-        bool mHudImp = false, mGroupFragment = false, mGroupParticle = false, mDrawn = false, mCurEligible = false, mHaveKey = false, mPost = false, mPlanActive = false, mPlanGlow = false;
+        bool mUsePlan = false, mHudImp = false, mGroupFragment = false, mGroupParticle = false, mDrawn = false, mCurEligible = false, mHaveKey = false, mPost = false, mPlanActive = false, mPlanGlow = false;
         LLAlphaPlanView mPlan;
         U32 mPlanIdx = 0;
         int mOpenKey = -1;
@@ -763,6 +770,7 @@ namespace AlphaCensus
             mHudImp = LLPipeline::sImpostorRender || LLPipeline::sRenderingHUDs;
             const int view = (gCubeSnapshot || LLPipeline::sReflectionRender || mHudImp) ? 1 : 0;
             mCtx = &sCtx[view][post ? 1 : 0][rigged ? 1 : 0][depth_only ? 1 : fringe ? 2 : 0];
+            mUsePlan = !rigged && view == 0;
             ++mCtx->mCalls;
             mT0 = __rdtsc();
             if (!sFrom) { sFrom = gFrameCount; sTscFrom = mT0; sClockFrom = std::chrono::steady_clock::now(); }
@@ -810,7 +818,7 @@ namespace AlphaCensus
             // S5a-1: the group's plan (only with LL_VK_SCENE_ALPHA=1): segments, the records a loop that sent runs would make (adjacent served segments with one key merge until an old draw or a glow pass), the order check
             mPlanActive = false;
             mPlan = LLAlphaPlanView();
-            const int st = ll_alpha_plan(group, mPlan);
+            const int st = mUsePlan ? ll_alpha_plan(group, mPlan) : 0;
             if (st == 1)
             {
                 mPlanActive = true;
@@ -837,7 +845,7 @@ namespace AlphaCensus
             }
             else
             {
-                if (st == 2) ++mCtx->mPlanStale; else ++mCtx->mPlanNone;
+                if (st == 2) ++mCtx->mPlanStale; else if (mUsePlan) ++mCtx->mPlanNone;
                 mOpenKey = -1;
             }
         }
@@ -1009,6 +1017,13 @@ namespace AlphaCensus
     };
 }
 
+// <FS> S5a: what the alpha loop sent to the scene table (log tag VkScene, every 600 frames)
+static struct AlphaSceneStats
+{
+    U64 mCalls = 0, mRecords = 0, mRanges = 0, mServed = 0, mOld = 0, mMismatch = 0, mBytes = 0;
+    U32 mLast = 0;
+} sAlphaScene;
+
 void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
@@ -1016,6 +1031,67 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     const bool alpha_values_on = ll_pass_uni_on();
     const bool alpha_values_verify = alpha_values_on && ll_pass_uni_verify();
     AlphaCensus::Call cen(getType() == LLDrawPool::POOL_ALPHA_POST_WATER, rigged, depth_only, mFringePass);       // <FS> S5 A0
+    // <FS> S5a-2: the static main-view colour pass draws the plain runs of the groups' plans from the scene table (one record per run, in the loop's order); everything else is drawn by the code below
+    const bool post_water = getType() == LLDrawPool::POOL_ALPHA_POST_WATER;
+    const bool alpha_table = !rigged && !depth_only && !mFringePass && !LLPipeline::sImpostorRender && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sReflectionRender && ll_alpha_serving();
+    struct PendingRange { U32 mHandle, mFirst, mCount; };
+    static thread_local std::vector<PendingRange> pending;
+    pending.clear();
+    int pending_key = -1;
+    auto run_flush = [&]()
+    {
+        if (pending.empty())
+        {
+            return;
+        }
+        static thread_local std::vector<U8> blob;
+        blob.resize(sizeof(F32) * 32 + pending.size() * sizeof(PendingRange));
+        memcpy(blob.data(), gRenderModelView, 16 * sizeof(F32));
+        memcpy(blob.data() + 16 * sizeof(F32), glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
+        memcpy(blob.data() + 32 * sizeof(F32), pending.data(), pending.size() * sizeof(PendingRange));
+        LLVkBridge::ShadowPacketsHeader header;
+        header.mKind = 29;
+        header.mEntries = (U32)pending.size();
+        LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+        ++sAlphaScene.mRecords;
+        sAlphaScene.mRanges += pending.size();
+        sAlphaScene.mBytes += blob.size();
+        pending.clear();
+        pending_key = -1;
+    };
+    // a new run: the pull program of its key bound, the blend function, the per-draw values a plain draw has (spec 1, env 0, brightness 1)
+    auto run_begin = [&](int key)
+    {
+        LLShaderProgram* pull = key ? &gDeferredFullbrightAlphaPullProgram : &gDeferredAlphaPullProgram;
+        if (current_shader != pull)
+        {
+            gPipeline.bindDeferredShaderFast(*pull);
+            if (key)
+            {
+                S32 channel = pull->enableTexture(LLShaderMgr::EXPOSURE_MAP);
+                if (channel > -1)
+                {
+                    gRender.getTexUnit(channel)->bind(&gPipeline.mExposureMap);
+                }
+            }
+        }
+        gRender.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA, mAlphaSFactor, mAlphaDFactor);
+        gRender.syncLightState();       // the old draws upload the lights (point lights, sun up factor, ambient) into the bound program in syncMatrices(); a table run has no such draw: without this the program's lights stay 0 and the lit shader divides by them (NaN: black)
+        const F32 vals[6] = { 1.f, 1.f, 1.f, 1.f, 0.f, 1.f };
+        if (!(alpha_values_on && current_shader->mAlphaEpoch == sAlphaEpoch && memcmp(current_shader->mAlphaVals, vals, sizeof(vals)) == 0))
+        {
+            current_shader->uniform4f(LLShaderMgr::SPECULAR_COLOR, 1.f, 1.f, 1.f, 1.f);
+            current_shader->uniform1f(LLShaderMgr::ENVIRONMENT_INTENSITY, 0.f);
+            current_shader->uniform1f(LLShaderMgr::EMISSIVE_BRIGHTNESS, 1.f);
+            memcpy(current_shader->mAlphaVals, vals, sizeof(vals));
+            current_shader->mAlphaEpoch = sAlphaEpoch;
+        }
+        pending_key = key;
+    };
+    if (alpha_table)
+    {
+        ++sAlphaScene.mCalls;
+    }
     bool initialized_lighting = false;
     bool light_enabled = true;
 
@@ -1107,6 +1183,13 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             // </FS:LO>
 
             bool disable_cull = is_particle_or_hud_particle;
+            LLAlphaPlanView plan;
+            const bool group_plan = alpha_table && !is_particle_or_hud_particle && ll_alpha_plan(group, plan) == 1 && plan.mHandle != 0;
+            U32 plan_ord = 0, plan_seg = 0;
+            if (!group_plan)
+            {
+                run_flush();        // (the culling state of a group the table does not continue is its own)
+            }
             LLRenderState::CullScope cull(false, disable_cull);
             cen.groupAccepted(group, is_particle_or_hud_particle, bridge != nullptr);
 
@@ -1122,6 +1205,44 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("ra - push batch");
                 cen.drawBegin(params, rigged);
+                if (group_plan)
+                {
+                    const U32 o = plan_ord++;
+                    while (plan_seg < plan.mSegCount && o >= plan.mSegs[plan_seg].mFirst + plan.mSegs[plan_seg].mCount)
+                    {
+                        ++plan_seg;
+                    }
+                    if (plan_seg < plan.mSegCount && plan.mSegs[plan_seg].mServed && o < plan.mOrderCount && plan.mOrder[o] == &params)
+                    {
+                        // S5a-2: a served draw: its segment is one range of one run (the first draw of the segment adds it); a glow buffer is still drawn by the old glow pass after the group
+                        const LLAlphaPlanSeg& seg = plan.mSegs[plan_seg];
+                        if (o == seg.mFirst)
+                        {
+                            if (pending_key != (int)seg.mKey)
+                            {
+                                run_flush();
+                                run_begin((int)seg.mKey);
+                            }
+                            pending.push_back({ plan.mHandle, seg.mRank, seg.mCount });
+                        }
+                        ++sAlphaScene.mServed;
+                        if (post_water && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+                        {
+                            emissives.push_back(&params);
+                        }
+                        cen.drawEnd();
+                        continue;
+                    }
+                    if (!(plan_seg < plan.mSegCount && !plan.mSegs[plan_seg].mServed && o < plan.mOrderCount && plan.mOrder[o] == &params))
+                    {
+                        ++sAlphaScene.mMismatch;        // (the plan does not list this draw here: drawn the old way)
+                    }
+                }
+                run_flush();        // an old draw: the pending run goes first (its program is still bound)
+                if (alpha_table)
+                {
+                    ++sAlphaScene.mOld;
+                }
 
                 LLRenderPass::applyModelMatrix(params);
 
@@ -1349,6 +1470,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             // render emissive faces into alpha channel for bloom effects
             if (!depth_only && !mFringePass)
             {
+                if (!emissives.empty() || !pbr_emissives.empty() || !rigged_emissives.empty() || !pbr_rigged_emissives.empty())
+                {
+                    run_flush();
+                }
                 cen.glowBegin(emissives.size(), pbr_emissives.size(), rigged_emissives.size(), pbr_rigged_emissives.size());
                 gPipeline.enableLightsDynamic();
 
@@ -1400,6 +1525,17 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 cen.glowEnd();
             }
         }
+    }
+
+    run_flush();
+    if (alpha_table && gFrameCount >= sAlphaScene.mLast + 600)
+    {
+        const double frames = (double)std::max<U32>(1, gFrameCount - sAlphaScene.mLast);
+        sAlphaScene.mLast = gFrameCount;
+        LL_INFOS("VkScene") << "alpha from the scene table (S5a), viewer side per frame: " << (double)sAlphaScene.mCalls / frames << " passes, " << (double)sAlphaScene.mRecords / frames << " records, "
+            << (double)sAlphaScene.mRanges / frames << " ranges, " << (double)sAlphaScene.mServed / frames << " draws served, " << (double)sAlphaScene.mOld / frames << " drawn the old way, "
+            << (double)sAlphaScene.mBytes / frames << " bytes sent, plan mismatches " << sAlphaScene.mMismatch << LL_ENDL;
+        sAlphaScene.mCalls = sAlphaScene.mRecords = sAlphaScene.mRanges = sAlphaScene.mServed = sAlphaScene.mOld = sAlphaScene.mBytes = 0;
     }
 
     gRender.setSceneBlendType(LLRender::BT_ALPHA);

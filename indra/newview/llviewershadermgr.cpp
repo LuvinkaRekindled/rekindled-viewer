@@ -171,6 +171,9 @@ LLShaderProgram            gDeferredShadowPullProgram;
 LLShaderProgram            gDeferredShadowAlphaPullProgram;
 LLShaderProgram            gDeferredShadowSkinPullProgram;
 LLShaderProgram            gDeferredDiffusePullProgram;
+LLShaderProgram            gDeferredAlphaPullProgram;
+LLShaderProgram            gDeferredFullbrightAlphaPullProgram;
+bool                       gAlphaPullReady = false;
 LLShaderProgram            gDeferredMaterialPullProgram[16];
 LLShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
 LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
@@ -1174,6 +1177,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowAlphaPullProgram.unload();
         gDeferredShadowSkinPullProgram.unload();
         gDeferredDiffusePullProgram.unload();
+        gDeferredAlphaPullProgram.unload();
+        gDeferredFullbrightAlphaPullProgram.unload();
+        gAlphaPullReady = false;
         for (LLShaderProgram& pull : gDeferredMaterialPullProgram)
         {
             pull.unload();
@@ -1980,6 +1986,80 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             // End Hack
             shader->mFeatures.calculatesLighting = true;
             shader->mFeatures.hasLighting = true;
+        }
+    }
+
+    // <FS> S5a (doc/vulkan/S5-design.md): the lit and the fullbright alpha programs with the vertices read by address and the diffuse texture from the bindless table. Optional: without them the alpha
+    // pass stays on the old path.
+    gAlphaPullReady = false;
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        bool ok = true;
+        for (int i = 0; i < 2 && ok; ++i)
+        {
+            const bool fullbright = i == 1;
+            LLShaderProgram* shader = fullbright ? &gDeferredFullbrightAlphaPullProgram : &gDeferredAlphaPullProgram;
+            shader->mName = fullbright ? "Deferred Fullbright Alpha Pull Shader" : "Deferred Alpha Pull Shader";
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            if (fullbright)
+            {
+                shader->mFeatures.hasAtmospherics = true;
+                shader->mFeatures.isDeferred = true;
+                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+                shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
+                shader->addPermutation("HAS_ALPHA_MASK", "1");
+                shader->addPermutation("IS_ALPHA", "1");
+                shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
+            }
+            else
+            {
+                shader->mFeatures.calculatesLighting = false;
+                shader->mFeatures.hasLighting = false;
+                shader->mFeatures.isAlphaLighting = true;
+                shader->mFeatures.hasAtmospherics = true;
+                shader->mFeatures.hasShadows = use_sun_shadow;
+                shader->mFeatures.hasReflectionProbes = true;
+                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+                shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
+                shader->addPermutation("USE_VERTEX_COLOR", "1");
+                shader->addPermutation("HAS_ALPHA_MASK", "1");
+                shader->addPermutation("USE_INDEXED_TEX", "1");
+                if (use_sun_shadow)
+                {
+                    shader->addPermutation("HAS_SUN_SHADOW", "1");
+                }
+            }
+            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
+            if (const char* dbg = getenv("LL_VK_SCENE_ALPHA_DBG"))
+            {
+                shader->addPermutation("ALPHA_PULL_DBG", dbg);       // (diagnostic, see alphaPullV.glsl)
+            }
+            if (const char* dbgf = getenv("LL_VK_SCENE_ALPHA_DBGF"))
+            {
+                shader->addPermutation("ALPHA_PULL_DBGF", dbgf);     // (diagnostic, see alphaF.glsl: the lit program only)
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            ok = shader->createShader();
+            if (!ok)
+            {
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the alpha pass stays on the old path" << LL_ENDL;
+            }
+            else if (!fullbright)
+            {
+                shader->mFeatures.calculatesLighting = true;        // (as the ordinary alpha program: the hack that follows its createShader)
+                shader->mFeatures.hasLighting = true;
+            }
+        }
+        gAlphaPullReady = ok;
+        if (!ok)
+        {
+            gDeferredAlphaPullProgram.unload();
+            gDeferredFullbrightAlphaPullProgram.unload();
         }
     }
 

@@ -813,7 +813,7 @@ static struct RiggedStats
 
 // can this static draw be an entry of a geometry record? The pull shader reads 16 bit indices, position first, and the normal, texcoord 0 and colour arrays; the textures
 // come from the bindless table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
-static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false)
+static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount || (p.mAvatar != nullptr) != rigged || p.mGLTFMaterial || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
@@ -847,18 +847,18 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
     {
         return p.mTextureList.size() <= 4;
     }
-    return !(p.mTexture.notNull() && p.mTextureMatrix);
+    return texture_matrix || !(p.mTexture.notNull() && p.mTextureMatrix);       // (S5a: the alpha items carry a texture matrix slot)
 }
 
 // static. S3: the per-draw part of build_geometry, with the textures as pointers (the fragments of the scene tables keep them)
-bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged)
+bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix)
 {
     e = {};
     for (int t = 0; t < 6; ++t)
     {
         textures[t] = nullptr;
     }
-    if (!params.mCount || !geometry_packet_ok(params, materials == nullptr, materials, rigged) || (rigged && params.mModelMatrix))
+    if (!params.mCount || !geometry_packet_ok(params, materials == nullptr, materials, rigged, texture_matrix) || (rigged && params.mModelMatrix))
     {
         return false;
     }

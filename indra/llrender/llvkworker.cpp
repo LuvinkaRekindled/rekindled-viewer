@@ -5922,6 +5922,7 @@ namespace
 {
 const U32 kGeoCapacity = 131072;
 const U32 kGeoTypes = 13;
+const U32 kGeoAlphaType = 2 * kGeoTypes;       // S5a: the item type of the alpha items
 struct GeoGpuG
 {
     U32 mPositions[2]; U32 mNormals[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mIndices[2]; U32 mTangents[2]; U32 mTexcoords1[2]; U32 mTexcoords2[2];
@@ -5944,6 +5945,7 @@ struct GeoFrag
     std::vector<U32> mPin;              // its pin (0 = none)
     std::vector<U32> mTexSlot;          // the slot the entries were last written with
     std::vector<VkDrawIndirectCommand> mCmds;   // the draws of its usable items, sorted by pass type
+    std::vector<VkDrawIndirectCommand> mACmds;  // S5a: the draws of its alpha items (type 26), in item order, one per item (count 0 when its buffers are not usable): a run names a range of them
     U32 mTypeFirst[kGeoTypes + 1] = {};
     // S4 B: the rigged items (types 13-25, drawn indexed: the hardware reads the indices): commands sorted by rigged type and buffer pair, runs of one pair, the item -> command map
     struct RRun { U32 mPair, mFirst, mCount; };
@@ -6161,6 +6163,10 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mMatrix);
+        if (items[i].mType == kGeoAlphaType)
+        {
+            f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mPad3);      // S5a: the texture matrix slot indexes the pass's tables too
+        }
     }
     for (U32 i = 0; i < h.mEntries; ++i)
     {
@@ -6324,6 +6330,10 @@ void geo_write_items(GeoFrag& f)
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;
+        if (f.mItems[i].mType == kGeoAlphaType)
+        {
+            g.mPad[0] = e.mPad3;            // S5a: the slot of the draw's texture matrix (0 = none)
+        }
         if (e.mFlags & LLVkBridge::GEO_RIGGED)
         {
             const U64 wa = pa + e.mWeightOffset;
@@ -6388,6 +6398,15 @@ void geo_build_commands(GeoFrag& f)
         }
     }
     f.mRTypeFirst[kGeoTypes] = (U32)f.mRRuns.size();
+    // S5a: the alpha items, in item order
+    f.mACmds.clear();
+    for (size_t i = 0; i < f.mItems.size(); ++i)
+    {
+        if (f.mItems[i].mType == kGeoAlphaType)
+        {
+            f.mACmds.push_back({ f.mPairs[f.mPairOf[i]].mOk ? f.mItems[i].mE.mIndexCount : 0u, 1u, 0u, f.mSlots[i] });
+        }
+    }
 }
 
 // the fragment was named by an event (or is new): look at its buffers and textures again, write its entries and commands
@@ -6581,7 +6600,7 @@ void geo_stale_check(const std::vector<GeoFrag*>& listed)
         {
             usable += f->mPairs[f->mPairOf[i]].mOk ? 1 : 0;
         }
-        if (usable != f->mCmds.size() + f->mRCmds.size())
+        if (usable != f->mCmds.size() + f->mRCmds.size() + f->mACmds.size())
         {
             ++s.mStaleCmd;
             stale = true;
@@ -6679,7 +6698,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         listed.push_back(f);
         items_frame += f->mItems.size();
-        s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size() - f->mRCmds.size();
+        s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size() - f->mRCmds.size() - f->mACmds.size();
         for (U32 t = 0; t < kGeoTypes; ++t)
         {
             counts[t] += f->mTypeFirst[t + 1] - f->mTypeFirst[t];
@@ -7011,9 +7030,214 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
+// kind 29 (S5a, doc/vulkan/S5-design.md): one run of the alpha pass, drawn with the pull program the viewer bound (alphaPullV with the lit or the fullbright alpha fragment shader). Blob: 32 floats (the view
+// and the projection matrix of the pass), then mEntries x AlphaRange { fragment handle, first alpha item, count }: the ranges of the fragments' alpha items (their own command list, in item order) the run
+// draws, in order. The matrices (modelview, modelview * projection, normal; and the raw texture matrices) of the slots the prepare of the frame knew are made once per pass and shared by its runs.
+struct AlphaStats
+{
+    U64 mRecords = 0, mRanges = 0, mCmds = 0, mStale = 0, mNoProgram = 0, mScratchFail = 0, mBadRange = 0, mUnknown = 0, mTables = 0, mRefused = 0;
+    U64 mNsAll = 0, mNsTables = 0, mNsCopy = 0, mNsState = 0, mNsDraw = 0, mLast = 0;
+} sAlphaS;
+static struct AlphaPass
+{
+    U64 mFrame = ~0ull, mPrepares = ~0ull;
+    F32 mVP[32] = {};
+    Renderer::ScratchAlloc mModels, mTexmats;
+} sAlphaPass;
+
+void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    GeoStats& s = sGeo.mS;
+    AlphaStats& a = sAlphaS;
+    if (!sGeo.mReady || h.mEntries == 0)
+    {
+        return;
+    }
+    const U64 frame_now = Context::instance().getFrameNumber();
+    if (sGeo.mPreparedFrame != frame_now)
+    {
+        ++a.mStale;
+        return;
+    }
+    const bool timed = geo_timed();
+    const auto t_all = std::chrono::steady_clock::now();
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (!program || !program->isValid() || !program->hasUniform("ll_packet_table") || !program->hasUniform("ll_packet_models") || !r.bindlessAvailable())
+    {
+        ++a.mNoProgram;
+        return;
+    }
+    // the pass's tables: once per (frame, prepare, view and projection)
+    const F32* view = (const F32*)blob;
+    const F32* proj = view + 16;
+    AlphaPass& pass = sAlphaPass;
+    auto t0 = std::chrono::steady_clock::now();
+    if (pass.mFrame != frame_now || pass.mPrepares != s.mPrepares || memcmp(pass.mVP, view, sizeof(pass.mVP)) != 0 || !pass.mModels.mPtr || !pass.mTexmats.mPtr)
+    {
+        const U32 slots = sGeo.mMaxSlot + 1;
+        pass.mModels = r.allocVertexScratch(176 * (size_t)slots);
+        pass.mTexmats = r.allocVertexScratch(64 * (size_t)slots);
+        if (!pass.mModels.mPtr || !pass.mModels.mAddress || !pass.mTexmats.mPtr || !pass.mTexmats.mAddress)
+        {
+            pass.mModels = Renderer::ScratchAlloc();
+            pass.mTexmats = Renderer::ScratchAlloc();
+            ++a.mScratchFail;
+            return;
+        }
+        F32* out = (F32*)pass.mModels.mPtr;
+        F32* tex = (F32*)pass.mTexmats.mPtr;
+        memset(out, 0, 176 * (size_t)slots);
+        geo_matrix(view, proj, nullptr, out);               // slot 0: the view alone
+        for (U32 slot = 0; slot < slots; ++slot)
+        {
+            F32* t = tex + 16 * (size_t)slot;
+            if (slot && sGeo.mHaveM[slot])
+            {
+                geo_matrix(view, proj, sGeo.mRegionM[slot], out + 44 * (size_t)slot);
+                memcpy(t, sGeo.mRegionM[slot], 64);         // (a texture matrix slot holds the raw matrix the viewer sent)
+            }
+            else
+            {
+                memset(t, 0, 64);
+                t[0] = t[5] = t[10] = t[15] = 1.f;
+            }
+        }
+        pass.mFrame = frame_now;
+        pass.mPrepares = s.mPrepares;
+        memcpy(pass.mVP, view, sizeof(pass.mVP));
+        ++a.mTables;
+    }
+    if (timed) a.mNsTables += geo_ns(t0);
+    t0 = std::chrono::steady_clock::now();
+    struct Range { U32 mHandle, mFirst, mCount; };
+    const Range* ranges = (const Range*)(blob + sizeof(F32) * 32);
+    static thread_local std::vector<std::pair<GeoFrag*, Range>> todo;
+    todo.clear();
+    size_t total = 0;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        GeoFrag* f = geo_find(ranges[i].mHandle);
+        if (!f)
+        {
+            ++a.mUnknown;
+            continue;
+        }
+        const bool first = f->mPinEpochSeen == ~0ull;
+        if (first || f->mDirtyPairs || f->mDirtyEntries || f->mPinEpochSeen != sGeoPinEpoch)
+        {
+            geo_rebuild(*f, frame_now, first);
+        }
+        f->mListedFrame = frame_now;
+        Range rg = ranges[i];
+        if (rg.mFirst >= f->mACmds.size())
+        {
+            ++a.mBadRange;
+            continue;
+        }
+        rg.mCount = std::min<U32>(rg.mCount, (U32)f->mACmds.size() - rg.mFirst);
+        todo.push_back({ f, rg });
+        total += rg.mCount;
+    }
+    if (total == 0)
+    {
+        return;
+    }
+    Renderer::ScratchAlloc cmds = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * total);
+    if (!cmds.mPtr)
+    {
+        ++a.mScratchFail;
+        return;
+    }
+    {
+        VkDrawIndirectCommand* out = (VkDrawIndirectCommand*)cmds.mPtr;
+        for (const auto& t : todo)
+        {
+            memcpy(out, t.first->mACmds.data() + t.second.mFirst, t.second.mCount * sizeof(VkDrawIndirectCommand));
+            out += t.second.mCount;
+        }
+    }
+    if (timed) a.mNsCopy += geo_ns(t0);
+    t0 = std::chrono::steady_clock::now();
+    {
+        static U32 tag = 0;
+        static bool made = false;
+        if (!made)
+        {
+            made = true;
+            tag = Context::stampTag("scene table draw, alpha run");
+        }
+        Context::instance().gpuStamp(tag);
+    }
+    Context::instance().flight(Context::FL_GEO_DRAW, 99ull, (unsigned long long)total, (unsigned long long)pass.mModels.mAddress, (unsigned long long)(sGeo.mMaxSlot + 1));
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<U32> used_cache;
+    VertexInput& vi = vi_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used_cache.clear();
+    const U64 table_address = (U64)sGeo.mTable.mAddress, models_address = (U64)pass.mModels.mAddress, texmats_address = (U64)pass.mTexmats.mAddress;
+    const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
+    const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
+    const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
+    program->setInts("ll_packet_table", table_words, 2);
+    program->setInts("ll_packet_models", models_words, 2);
+    if (program->hasUniform("ll_packet_texmats"))
+    {
+        program->setInts("ll_packet_texmats", texmats_words, 2);
+    }
+    if (!prepare_draw(vi, used_cache))
+    {
+        return;
+    }
+    geo_flush_if_needed();
+    r.setVertexInput(vi);
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.bindlessFlush();
+    if (timed) a.mNsState += geo_ns(t0);
+    t0 = std::chrono::steady_clock::now();
+    if (r.drawPackets(nullptr, (U32)total, cmds.mBuffer, cmds.mOffset))
+    {
+        if (sStatsEnabled)
+        {
+            sStats.mDone += (U32)total;
+        }
+    }
+    else
+    {
+        ++a.mRefused;
+        ++sStats.mRendererRefused;
+    }
+    sDraws += (U32)total;
+    sDrawsTotal += (U32)total;
+    if (timed) a.mNsDraw += geo_ns(t0);
+    ++a.mRecords;
+    a.mRanges += h.mEntries;
+    a.mCmds += total;
+    if (timed) a.mNsAll += geo_ns(t_all);
+    if (a.mRecords - a.mLast >= 6000)
+    {
+        a.mLast = a.mRecords;
+        const double n = (double)a.mRecords;
+        std::string tail;
+        if (timed)
+        {
+            tail = "; us per record: all " + std::to_string((double)a.mNsAll / 1000.0 / n) + " = tables " + std::to_string((double)a.mNsTables / 1000.0 / n) + " + ranges and copy " + std::to_string((double)a.mNsCopy / 1000.0 / n)
+                + " + state " + std::to_string((double)a.mNsState / 1000.0 / n) + " + draw call " + std::to_string((double)a.mNsDraw / 1000.0 / n);
+        }
+        LL_INFOS("VkScene") << "alpha runs (S5a), worker, over " << a.mRecords << " records: " << (double)a.mRanges / n << " ranges and " << (double)a.mCmds / n << " draws a record; pass tables made " << a.mTables
+            << " times; stale (no prepare this frame) " << a.mStale << ", no program " << a.mNoProgram << ", scratch failures " << a.mScratchFail << ", unknown handles " << a.mUnknown << ", bad ranges " << a.mBadRange
+            << ", refused " << a.mRefused << tail << LL_ENDL;
+    }
+}
+
 void geo_dispatch(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if (h.mKind == 20)
+    if (h.mKind == 29)
+    {
+        geo_alpha_draw(h, blob);
+    }
+    else if (h.mKind == 20)
     {
         geo_retain(h, blob);
     }
@@ -7139,7 +7363,7 @@ static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const 
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if (h.mKind >= 20 && h.mKind <= 24)
+    if ((h.mKind >= 20 && h.mKind <= 24) || h.mKind == 29)
     {
         geo_dispatch(h, blob);      // <FS> S3 G2: the scene geometry table
         return;

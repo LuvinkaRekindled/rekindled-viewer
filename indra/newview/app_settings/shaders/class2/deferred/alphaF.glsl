@@ -305,6 +305,28 @@ void main()
 
     color.rgb = applySkyAndWaterFog(pos.xyz, additive, atten, color).rgb;
 
+#ifdef ALPHA_PULL_DBGF
+    // diagnostics of the scene table alpha path (LL_VK_SCENE_ALPHA_DBGF): the colour is one term of the lighting
+#if ALPHA_PULL_DBGF == 1
+    color.rgb = vec3(shadow);
+#elif ALPHA_PULL_DBGF == 2
+    color.rgb = irradiance;
+#elif ALPHA_PULL_DBGF == 3
+    color.rgb = sunlit_linear;
+#elif ALPHA_PULL_DBGF == 4
+    color.rgb = vec3(final_da);
+#elif ALPHA_PULL_DBGF == 5
+    color.rgb = vec3(frag, 0.0);
+#elif ALPHA_PULL_DBGF == 6
+    color.rgb = norm * 0.5 + 0.5;
+#elif ALPHA_PULL_DBGF == 7
+    color.rgb = amblit;
+#elif ALPHA_PULL_DBGF == 8
+    color.rgb = diffuse_linear.rgb;
+#endif
+    color.a = 1.0;
+#endif
+
 #endif // #else // FOR_IMPOSTOR
     float final_scale = 1;
     if (classic_mode > 0)
