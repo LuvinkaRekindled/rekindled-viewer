@@ -361,6 +361,7 @@ void note_variant(const std::string& name, const PipelineKey& key)
 bool Program::create(const std::string& name, const ProgramInfo& info)
 {
     destroy();
+    mPacketU = PacketUniforms();
     mName = name;
     mInfo = info;
     Context& ctx = Context::instance();
@@ -598,6 +599,24 @@ static void note_uniform_write(const std::string& program, const LooseUniform& u
     ++s.mWrites;
     if (changed) { ++s.mChanges; s.mBytes += bytes; }
     s.mSize = std::max<U32>(s.mSize, bytes);
+}
+
+const Program::PacketUniforms& Program::packetUniforms()
+{
+    if (!mPacketU.mResolved)
+    {
+        auto find = [&](const char* name) -> U32
+        {
+            auto it = mUniformIndex.find(name);
+            return it == mUniformIndex.end() ? ~0u : (U32)it->second;
+        };
+        mPacketU.mTable = find("ll_packet_table");
+        mPacketU.mModels = find("ll_packet_models");
+        mPacketU.mTexmats = find("ll_packet_texmats");
+        mPacketU.mPbr = find("ll_packet_pbr");
+        mPacketU.mResolved = true;
+    }
+    return mPacketU;
 }
 
 bool Program::setFloats(const std::string& name, const F32* data, U32 components, U32 count)
