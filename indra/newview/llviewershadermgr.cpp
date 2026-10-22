@@ -183,6 +183,12 @@ LLShaderProgram            gDeferredPBRAlphaPullSkinProgram;
 bool                       gAlphaRiggedPullReady = false;
 static bool                gAlphaLitSkinReady = false;      // the lit and the fullbright rigged alpha programs exist (they are made before the materials ones)
 bool                       gAlphaPbrSkinReady = false;
+LLShaderProgram            gDeferredEmissivePullProgram;
+LLShaderProgram            gDeferredEmissivePullSkinProgram;
+LLShaderProgram            gPBRGlowPullProgram;
+LLShaderProgram            gPBRGlowPullSkinProgram;
+bool                       gAlphaGlowPullReady = false;
+bool                       gAlphaGlowPbrReady = false;
 LLShaderProgram            gDeferredMaterialPullProgram[16];
 LLShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
 LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
@@ -1192,6 +1198,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAlphaPullSkinProgram.unload();
         gDeferredFullbrightAlphaPullSkinProgram.unload();
         gDeferredPBRAlphaPullSkinProgram.unload();
+        gDeferredEmissivePullProgram.unload();
+        gDeferredEmissivePullSkinProgram.unload();
+        gPBRGlowPullProgram.unload();
+        gPBRGlowPullSkinProgram.unload();
+        gAlphaGlowPullReady = false;
+        gAlphaGlowPbrReady = false;
         gAlphaRiggedPullReady = false;
         gAlphaLitSkinReady = false;
         gAlphaPbrSkinReady = false;
@@ -2241,6 +2253,47 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->unload();
             }
         }
+    }
+
+    // <FS> S5e: the glow second draw of the alpha items from the table: emissiveF / pbrglowF (alpha only) with the vertices read by address, static and rigged. Optional.
+    gAlphaGlowPullReady = false;
+    gAlphaGlowPbrReady = false;
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        auto make_glow = [&](LLShaderProgram* shader, const char* name, const char* vertex, const char* fragment, const char* bindless, bool skin, bool srgb) -> bool
+        {
+            shader->mName = name;
+            shader->mFeatures.hasSrgb = srgb;
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            shader->mShaderFiles.push_back(make_pair(vertex, ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
+            shader->addPermutation(bindless, "1");
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                if (ll_rigged_indexed())
+                {
+                    shader->addPermutation("HAS_INDEXED_DRAW", "1");
+                }
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            if (!shader->createShader())
+            {
+                LL_WARNS("ShadowPackets") << "the " << name << " could not be made: those glow draws stay on the old path" << LL_ENDL;
+                shader->unload();
+                return false;
+            }
+            return true;
+        };
+        bool plain_ok = make_glow(&gDeferredEmissivePullProgram, "Deferred Emissive Pull Shader", "deferred/emissivePullV.glsl", "deferred/emissiveF.glsl", "LL_BINDLESS_DIFFUSE", false, false);
+        plain_ok = plain_ok && gAlphaLitSkinReady && ll_rigged_indexed()
+            && make_glow(&gDeferredEmissivePullSkinProgram, "Deferred Emissive Pull Skin Shader", "deferred/emissivePullV.glsl", "deferred/emissiveF.glsl", "LL_BINDLESS_DIFFUSE", true, false);
+        gAlphaGlowPullReady = plain_ok;
+        bool pbr_ok = gAlphaPbrPullReady && gAlphaPbrSkinReady && make_glow(&gPBRGlowPullProgram, "PBR Glow Pull Shader", "deferred/pbrGlowPullV.glsl", "deferred/pbrglowF.glsl", "LL_BINDLESS_PBR", false, true);
+        pbr_ok = pbr_ok && make_glow(&gPBRGlowPullSkinProgram, "PBR Glow Pull Skin Shader", "deferred/pbrGlowPullV.glsl", "deferred/pbrglowF.glsl", "LL_BINDLESS_PBR", true, true);
+        gAlphaGlowPbrReady = pbr_ok;
     }
 
     if (success)

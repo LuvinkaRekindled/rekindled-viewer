@@ -6039,8 +6039,12 @@ bool ll_alpha_blend_pair(U32 id, int* src, int* dst)
 }
 static int scene_alpha_only()
 {
-    static const int mask = []() { const char* v = getenv("LL_VK_SCENE_ALPHA_ONLY"); return v ? atoi(v) : 127; }();
+    static const int mask = []() { const char* v = getenv("LL_VK_SCENE_ALPHA_ONLY"); return v ? atoi(v) : 255; }();
     return mask;
+}
+bool ll_alpha_glow_table(bool pbr)
+{   // S5e (bit 128 of LL_VK_SCENE_ALPHA_ONLY)
+    return (scene_alpha_only() & 128) != 0 && gAlphaGlowPullReady && (!pbr || gAlphaGlowPbrReady);
 }
 static U64 sAlphaPlanBuilds = 0, sAlphaPlanNs = 0, sAlphaPlanServed = 0, sAlphaPlanOld = 0, sAlphaPlanSegs = 0, sAlphaPlanNoSlot = 0, sAlphaPlanTexMatrix = 0;
 static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f, bool rigged)

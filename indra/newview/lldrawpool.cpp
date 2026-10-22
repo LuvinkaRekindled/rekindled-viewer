@@ -869,6 +869,7 @@ bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry&
     e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
     e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
     e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_TANGENT);
+    e.mEmissiveOffset = vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE) ? vb->getOffset(LLVertexBuffer::TYPE_EMISSIVE) : 0;       // S5e: the glow draw
     if (rigged)
     {
         e.mFlags |= LLVkBridge::GEO_RIGGED;
@@ -897,6 +898,10 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
     e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
     e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
     e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+    if (texture_matrix && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+    {
+        e.mEmissiveOffset = vb->getOffset(LLVertexBuffer::TYPE_EMISSIVE);       // S5e: (the alpha items) the glow draw
+    }
     if (rigged)
     {
         e.mFlags |= LLVkBridge::GEO_RIGGED;

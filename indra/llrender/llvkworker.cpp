@@ -5933,7 +5933,8 @@ struct GeoGpuG
     U32 mSlots[2];
     U32 mPad[2];
     F32 mSpecular[4];
-    F32 mEnvIntensity, mCutoff, mBrightness, mPad2;
+    F32 mEnvIntensity, mCutoff, mBrightness;
+    U32 mEmissiveOffset;        // S5e: the byte offset of the emissive array (alpha items; the glow draw)
     U32 mWeights[2]; U32 mPalette[2]; U32 mJoints; U32 mSkinPad[3];     // S4 B: rigged items (the viewer's per-frame binding writes the palette and the joints)
 };
 static_assert(sizeof(GeoGpuG) == 160, "geometry table entry");
@@ -6406,6 +6407,7 @@ void geo_write_items(GeoFrag& f)
         {
             g.mPad[0] = e.mPad3;            // S5a: the slot of the draw's texture matrix (0 = none)
             g.mPad[1] = (i < f.mPbrOfItem.size() && f.mPbrOfItem[i]) ? f.mPbrOfItem[i] - 1 : 0;       // S5c: its PBR row
+            g.mEmissiveOffset = e.mEmissiveOffset;      // S5e
         }
         if (e.mFlags & LLVkBridge::GEO_RIGGED)
         {

@@ -219,7 +219,8 @@ namespace LLVkBridge
         U32 mTextures[4];           // GL names of the diffuse textures the vertices' texture index picks from, 0 = none (white)
         U32 mNormalMap, mSpecularMap;   // GL names (materials passes), 0 = none
         F32 mSpecular[4];
-        F32 mEnvIntensity, mCutoff, mBrightness, mPad;
+        F32 mEnvIntensity, mCutoff, mBrightness;
+        U32 mEmissiveOffset;        // S5e: byte offset of the emissive array (alpha items; 0 = none)
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
         U32 mWeightOffset, mPaletteOffset, mJoints, mPad3;          // A1 rigged draws: byte offset of the weight4 array, the palette's offset in floats (12 per joint) and its joint count
     };

@@ -252,6 +252,12 @@ extern LLShaderProgram         gDeferredFullbrightAlphaPullSkinProgram;
 extern LLShaderProgram         gDeferredPBRAlphaPullSkinProgram;
 extern bool                    gAlphaRiggedPullReady;         // lit, fullbright and the material blend variants exist
 extern bool                    gAlphaPbrSkinReady;
+extern LLShaderProgram         gDeferredEmissivePullProgram;          // <FS> S5e: the glow second draw of the alpha items from the table (alpha only): plain, rigged, PBR, PBR rigged
+extern LLShaderProgram         gDeferredEmissivePullSkinProgram;
+extern LLShaderProgram         gPBRGlowPullProgram;
+extern LLShaderProgram         gPBRGlowPullSkinProgram;
+extern bool                    gAlphaGlowPullReady;            // the plain static and rigged glow programs exist
+extern bool                    gAlphaGlowPbrReady;             // ... the PBR ones
 extern bool                    gAlphaMaterialPullReady;       // <FS> S5b: the blend variants (masks 1, 5, 9, 13) of gDeferredMaterialPullProgram[] exist
 extern LLShaderProgram         gDeferredDiffusePullProgram;      // <FS> render packets: the deferred diffuse pass, vertices by address, textures from the bindless table
 extern LLShaderProgram         gDeferredMaterialPullProgram[16]; // <FS> render packets: the deferred materials passes (the unskinned indices of gDeferredMaterialProgram)
