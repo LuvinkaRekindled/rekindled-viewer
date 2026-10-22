@@ -123,6 +123,9 @@ out vec2 vary_texcoord0;
 out vec3 vary_norm;
 #endif
 flat out uint vary_slot;
+#ifdef LL_MASK_CUTOFF
+flat out float minimum_alpha;        // S6 X3: the alpha mask cutoff of the draw
+#endif
 
 void main()
 {
@@ -173,6 +176,9 @@ void main()
     uint tex_index = ((pk.flags & 1u) != 0u) ? 0u : (floatBitsToUint(position.w) & 3u);
     uint pair = (tex_index < 2u) ? pk.slots.x : pk.slots.y;
     vary_slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
+#ifdef LL_MASK_CUTOFF
+    minimum_alpha = pk.cutoff;
+#endif
 
 #if defined(ALPHA_PULL_DBG)
     // diagnostics (LL_VK_SCENE_ALPHA_DBG): 1 = the vertex colour's rgb is white, 2 = the stand-in texture (slot 0, white), 3 = both

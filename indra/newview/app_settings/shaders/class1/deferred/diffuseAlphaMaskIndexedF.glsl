@@ -30,7 +30,11 @@ out vec4 frag_data[4];
 in vec3 vary_normal;
 in vec3 vary_position;
 
+#ifdef LL_MASK_CUTOFF
+flat in float minimum_alpha;        // S6 X3: the cutoff of the draw, from the scene table's vertex shader
+#else
 uniform float minimum_alpha;
+#endif
 
 in vec4 vertex_color;
 in vec2 vary_texcoord0;

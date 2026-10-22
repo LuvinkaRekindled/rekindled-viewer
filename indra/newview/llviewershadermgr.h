@@ -249,6 +249,14 @@ extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6
 extern LLShaderProgram         gDeferredFullbrightPullSkinProgram;
 extern bool                    gFullbrightPullReady;
 extern bool                    gFullbrightPullSkinReady;
+extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullProgram;       // <FS> S6 X3: the alpha masked passes from the scene table (static and rigged)
+extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullSkinProgram;
+extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullProgram;
+extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullSkinProgram;
+extern bool                    gDiffuseMaskPullReady;
+extern bool                    gDiffuseMaskPullSkinReady;
+extern bool                    gFullbrightMaskPullReady;
+extern bool                    gFullbrightMaskPullSkinReady;
 extern LLShaderProgram         gDeferredPBRAlphaPullProgram;          // <FS> S5c: the PBR (glTF) blend pass, vertices by address, the four textures from the bindless table
 extern bool                    gAlphaPbrPullReady;
 extern LLShaderProgram         gDeferredAlphaPullSkinProgram;          // <FS> S5d: the rigged variants of the alpha pull programs (weights and palette by address, indexed draws)

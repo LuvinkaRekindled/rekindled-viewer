@@ -176,6 +176,14 @@ LLShaderProgram            gDeferredFullbrightAlphaPullProgram;
 LLShaderProgram            gDeferredFullbrightPullProgram;        // S6 X1: the OPAQUE fullbright pass from the scene table (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF, no alpha, no blending in the shader)
 LLShaderProgram            gDeferredFullbrightPullSkinProgram;
 bool                       gFullbrightPullReady = false;
+LLShaderProgram            gDeferredDiffuseAlphaMaskPullProgram;           // S6 X3: the alpha masked diffuse G-buffer pass and the alpha masked fullbright pass from the table (the cutoff of each draw as a flat varying)
+LLShaderProgram            gDeferredDiffuseAlphaMaskPullSkinProgram;
+LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
+LLShaderProgram            gDeferredFullbrightAlphaMaskPullSkinProgram;
+bool                       gDiffuseMaskPullReady = false;
+bool                       gDiffuseMaskPullSkinReady = false;
+bool                       gFullbrightMaskPullReady = false;
+bool                       gFullbrightMaskPullSkinReady = false;
 bool                       gFullbrightPullSkinReady = false;
 bool                       gAlphaPullReady = false;
 bool                       gAlphaMaterialPullReady = false;
@@ -1212,6 +1220,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightPullSkinProgram.unload();
         gFullbrightPullReady = false;
         gFullbrightPullSkinReady = false;
+        gDeferredDiffuseAlphaMaskPullProgram.unload();
+        gDeferredDiffuseAlphaMaskPullSkinProgram.unload();
+        gDeferredFullbrightAlphaMaskPullProgram.unload();
+        gDeferredFullbrightAlphaMaskPullSkinProgram.unload();
+        gDiffuseMaskPullReady = gDiffuseMaskPullSkinReady = gFullbrightMaskPullReady = gFullbrightMaskPullSkinReady = false;
         gDeferredPBRAlphaPullProgram.unload();
         gDeferredAlphaPullSkinProgram.unload();
         gDeferredFullbrightAlphaPullSkinProgram.unload();
@@ -2330,6 +2343,60 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             {
                 gFullbrightPullReady = true;
             }
+        }
+    }
+
+    // <FS> S6 X3: the alpha masked passes from the table: the diffuse mask G-buffer pass (diffusePullV + diffuseAlphaMaskIndexedF) and the fullbright mask pass (alphaPullV + fullbrightF with HAS_ALPHA_MASK), the cutoff
+    // of each draw read from its row (LL_MASK_CUTOFF: a flat varying instead of the uniform). Optional.
+    gDiffuseMaskPullReady = gDiffuseMaskPullSkinReady = gFullbrightMaskPullReady = gFullbrightMaskPullSkinReady = false;
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        auto make_mask = [&](LLShaderProgram* shader, const char* name, bool fullbright, bool skin) -> bool
+        {
+            shader->mName = name;
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            if (fullbright)
+            {
+                shader->mFeatures.calculatesAtmospherics = true;
+                shader->mFeatures.hasGamma = true;
+                shader->mFeatures.hasAtmospherics = true;
+                shader->mFeatures.hasSrgb = true;
+                shader->mFeatures.isDeferred = true;
+                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+                shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
+                shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
+                shader->addPermutation("HAS_ALPHA_MASK", "1");
+            }
+            else
+            {
+                shader->mFeatures.hasSrgb = true;
+                shader->mShaderFiles.push_back(make_pair("deferred/diffusePullV.glsl", ShaderStage::Vertex));
+                shader->mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskIndexedF.glsl", ShaderStage::Fragment));
+            }
+            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
+            shader->addPermutation("LL_MASK_CUTOFF", "1");
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            if (!shader->createShader())
+            {
+                LL_WARNS("ShadowPackets") << "the " << name << " could not be made: those draws take the old path" << LL_ENDL;
+                shader->unload();
+                return false;
+            }
+            return true;
+        };
+        gDiffuseMaskPullReady = make_mask(&gDeferredDiffuseAlphaMaskPullProgram, "Deferred Diffuse Alpha Mask Pull Shader", false, false);
+        gFullbrightMaskPullReady = make_mask(&gDeferredFullbrightAlphaMaskPullProgram, "Deferred Fullbright Alpha Mask Pull Shader", true, false);
+        if (gAlphaLitSkinReady && ll_rigged_indexed())
+        {
+            gDiffuseMaskPullSkinReady = make_mask(&gDeferredDiffuseAlphaMaskPullSkinProgram, "Deferred Diffuse Alpha Mask Pull Skin Shader", false, true);
+            gFullbrightMaskPullSkinReady = make_mask(&gDeferredFullbrightAlphaMaskPullSkinProgram, "Deferred Fullbright Alpha Mask Pull Skin Shader", true, true);
         }
     }
 

@@ -39,7 +39,11 @@ vec3 srgb_to_linear(vec3 cs);
 vec3 linear_to_srgb(vec3 cl);
 
 #ifdef HAS_ALPHA_MASK
+#ifdef LL_MASK_CUTOFF
+flat in float minimum_alpha;        // S6 X3: the cutoff of the draw, from the scene table's vertex shader
+#else
 uniform float minimum_alpha;
+#endif
 #endif
 
 #ifdef IS_ALPHA

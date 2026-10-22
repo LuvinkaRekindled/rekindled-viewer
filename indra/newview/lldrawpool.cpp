@@ -835,6 +835,8 @@ U32 ll_pass_arrays(U32 type)
     {
     case LLRenderPass::PASS_FULLBRIGHT:
     case LLRenderPass::PASS_FULLBRIGHT_RIGGED:
+    case LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK:
+    case LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED:
         return 0;
     case LLRenderPass::PASS_GLOW:
     case LLRenderPass::PASS_GLOW_RIGGED:
@@ -1009,6 +1011,7 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
             e.mBrightness = params.mFullbright ? 1.f : 0.f;
         }
     }
+    e.mCutoff = params.mAlphaMaskCutoff;        // S6 X3: (the alpha masked passes without materials read it from the row too)
     return true;
 }
 
@@ -1212,6 +1215,7 @@ static void build_geometry(LLGeometryBuild& out)
                 e.mBrightness = params->mFullbright ? 1.f : 0.f;
             }
         }
+        e.mCutoff = params->mAlphaMaskCutoff;       // S6 X3
         entries.push_back(e);
     }
 }

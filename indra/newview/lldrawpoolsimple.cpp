@@ -203,6 +203,48 @@ void LLDrawPoolAlphaMask::renderDeferred(S32 pass)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_ALPHA_MASK_DEFERRED);
     LLShaderProgram* shader = &gDeferredDiffuseAlphaMaskProgram;
 
+    // <FS> S6 X3: the alpha masked draws from the scene table (the cutoff of each draw in its row); what it cannot carry is drawn the old way
+    if (deferredPacketsEnabled() && gDiffuseMaskPullReady)
+    {
+        std::vector<LLDrawInfo*> fallback;
+        gDeferredDiffuseAlphaMaskPullProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK, fallback);
+        if (!fallback.empty())
+        {
+            shader->bind();
+            for (LLDrawInfo* params : fallback)
+            {
+                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
+                pushBatch(*params, true, true);
+            }
+        }
+        if (ll_rigged_packets_enabled() && gDiffuseMaskPullSkinReady)
+        {
+            fallback.clear();
+            gDeferredDiffuseAlphaMaskPullSkinProgram.bind();
+            pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK_RIGGED, fallback, nullptr, true);
+            if (!fallback.empty())
+            {
+                shader->bind(true);
+                const LLVOAvatar* lastAvatar = nullptr;
+                U64 lastMeshId = 0;
+                bool skipLastSkin = false;
+                for (LLDrawInfo* params : fallback)
+                {
+                    LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
+                    if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
+                    {
+                        pushBatch(*params, true, true);
+                    }
+                }
+            }
+            return;
+        }
+        shader->bind(true);
+        pushRiggedMaskBatches(LLRenderPass::PASS_ALPHA_MASK_RIGGED, true, true);
+        return;
+    }
+
     //render static
     shader->bind();
     pushMaskBatches(LLRenderPass::PASS_ALPHA_MASK, true, true);
@@ -325,6 +367,48 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     }
 
     LLRenderState::BlendScope blend(false);
+
+    // <FS> S6 X3: the alpha masked fullbright draws from the scene table; what it cannot carry is drawn the old way. HUDs stay on the old path.
+    if (!LLPipeline::sRenderingHUDs && deferredPacketsEnabled() && gFullbrightMaskPullReady)
+    {
+        std::vector<LLDrawInfo*> fallback;
+        gDeferredFullbrightAlphaMaskPullProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, fallback);
+        if (!fallback.empty())
+        {
+            shader->bind();
+            for (LLDrawInfo* params : fallback)
+            {
+                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
+                pushBatch(*params, true, true);
+            }
+        }
+        if (ll_rigged_packets_enabled() && gFullbrightMaskPullSkinReady)
+        {
+            fallback.clear();
+            gDeferredFullbrightAlphaMaskPullSkinProgram.bind();
+            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, fallback, nullptr, true);
+            if (!fallback.empty())
+            {
+                shader->bind(true);
+                const LLVOAvatar* lastAvatar = nullptr;
+                U64 lastMeshId = 0;
+                bool skipLastSkin = false;
+                for (LLDrawInfo* params : fallback)
+                {
+                    LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
+                    if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
+                    {
+                        pushBatch(*params, true, true);
+                    }
+                }
+            }
+            return;
+        }
+        shader->bind(true);
+        pushRiggedMaskBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true, true);
+        return;
+    }
 
     // render static
     shader->bind();

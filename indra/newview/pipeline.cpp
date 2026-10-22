@@ -5712,6 +5712,8 @@ static const GeoType kGeoTypes[] =
     { LLRenderPass::PASS_NORMSPEC, 12 }, { LLRenderPass::PASS_NORMSPEC_MASK, 14 }, { LLRenderPass::PASS_NORMSPEC_EMISSIVE, 15 },
     { LLRenderPass::PASS_FULLBRIGHT, -1 },          // S6 X1: drawn in the post deferred pass (LLDrawPoolFullbright), the same entries as the diffuse pass
     { LLRenderPass::PASS_GLOW, -1 },                // S6 X2: the glow pass (LLDrawPoolGlow): the emissive array, alpha only
+    { LLRenderPass::PASS_ALPHA_MASK, -1 },          // S6 X3: the alpha masked diffuse G-buffer pass (LLDrawPoolAlphaMask)
+    { LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, -1 },       // S6 X3: the alpha masked fullbright pass (LLDrawPoolFullbrightAlphaMask)
 };
 static const size_t kGeoTypeCount = sizeof(kGeoTypes) / sizeof(kGeoTypes[0]);
 static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (llvkbridge.h)");
@@ -5735,6 +5737,14 @@ static bool geo_type_available(size_t t, bool rigged)
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT)
     {
         return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightPullReady);
+    }
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_ALPHA_MASK)
+    {
+        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gDiffuseMaskPullSkinReady && ll_rigged_packets_enabled()) : gDiffuseMaskPullReady);
+    }
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK)
+    {
+        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightMaskPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightMaskPullReady);
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_GLOW)
     {
