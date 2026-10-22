@@ -6046,6 +6046,11 @@ bool ll_alpha_glow_table(bool pbr)
 {   // S5e (bit 128 of LL_VK_SCENE_ALPHA_ONLY)
     return (scene_alpha_only() & 128) != 0 && gAlphaGlowPullReady && (!pbr || gAlphaGlowPbrReady);
 }
+// S5f F2: why a draw is not served by the table (counted by the plan fill, printed with its log line)
+enum AlphaWhy { WHY_SERVED, WHY_PARTITION, WHY_RIGGED_OFF, WHY_EMPTY, WHY_PBR, WHY_GLTF_MODE, WHY_MATERIAL, WHY_SWITCH, WHY_BLEND, WHY_NOBUF, WHY_IDX32, WHY_LAYOUT, WHY_ARRAYS, WHY_TEXCOUNT, WHY_ENTRY, WHY_MATRIX, WHY_TEXMAT, WHY_COUNT };
+static const char* const sAlphaWhyName[WHY_COUNT] = { "served", "particle / HUD partition", "rigged not ready", "no indices", "glTF blend not ready", "glTF mask / opaque mode", "material mask", "switch bit off", "custom blend unknown", "no buffer ids", "32 bit indices",
+                                                      "vertex layout", "missing normal / texcoord / colour", "more than 4 textures", "entry refused (geometry_packet_ok)", "no matrix slot", "no texture matrix slot" };
+static U64 sAlphaWhy[2][WHY_COUNT] = {};       // [rigged][reason]
 static U64 sAlphaPlanBuilds = 0, sAlphaPlanNs = 0, sAlphaPlanServed = 0, sAlphaPlanOld = 0, sAlphaPlanSegs = 0, sAlphaPlanNoSlot = 0, sAlphaPlanTexMatrix = 0;
 static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f, bool rigged)
 {
@@ -6088,12 +6093,28 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
         // S5c: a draw with a glTF blend material is served by the PBR pull program (the values in a PBR row; double sided = a key bit: the run is drawn with culling off)
         const bool pbr = !LLPipeline::sRenderingHUDs && p->mGLTFMaterial.notNull() && p->mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;
         const bool pbr_ok = pbr && gAlphaPbrPullReady && (!rigged || gAlphaPbrSkinReady) && (scene_alpha_only() & 32) && vb && vb->hasDataType(LLVertexBuffer::TYPE_TANGENT);
+        int why = WHY_SERVED;
         bool served = table && p->mCount && (pbr ? pbr_ok : (!p->mGLTFMaterial && (material ? material_ok : (((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0))))
             && blend_id != ~0u
             && vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16
             && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0
             && vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) && vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && vb->hasDataType(LLVertexBuffer::TYPE_COLOR)
             && (material || pbr || p->mTextureList.size() <= 4);
+        if (!served)
+        {
+            if (!table) why = whole_old ? WHY_PARTITION : WHY_RIGGED_OFF;
+            else if (!p->mCount) why = WHY_EMPTY;
+            else if (pbr && !pbr_ok) why = WHY_PBR;
+            else if (!pbr && p->mGLTFMaterial) why = WHY_GLTF_MODE;
+            else if (material && !material_ok) why = WHY_MATERIAL;
+            else if (!pbr && !material && !(((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0)) why = WHY_SWITCH;
+            else if (blend_id == ~0u) why = WHY_BLEND;
+            else if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId()) why = WHY_NOBUF;
+            else if (vb->getIndicesType() != ComponentType::U16) why = WHY_IDX32;
+            else if (!vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0) why = WHY_LAYOUT;
+            else if (!vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR)) why = WHY_ARRAYS;
+            else why = WHY_TEXCOUNT;
+        }
         LLSceneFragment::GeoItem item = {};
         bool pbr_block = false;
         F32 pbr_values[40] = {};
@@ -6119,6 +6140,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                 textures[2] = gltf->mMetallicRoughnessTexture.notNull() ? (LLViewerTexture*)gltf->mMetallicRoughnessTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get();
                 textures[3] = media ? media : (gltf->mEmissiveTexture.notNull() ? (LLViewerTexture*)gltf->mEmissiveTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
                 served = LLRenderPass::pbrAlphaEntry(*p, item.mE, rigged);
+                if (!served) why = WHY_ENTRY;
                 if (served)
                 {
                     static const int infos[4] = { LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR, LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL, LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS, LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE };
@@ -6138,6 +6160,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
             else
             {
                 served = LLRenderPass::geometryEntry(*p, material ? &material_info : nullptr, item.mE, textures, rigged, true);
+                if (!served) why = WHY_ENTRY;
             }
             if (served)
             {
@@ -6172,6 +6195,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                         slot = scene_moving_acquire(p->mModelMatrix, f);
                     }
                     served = slot != 0;
+                    if (!served) why = WHY_MATRIX;
                 }
                 item.mE.mMatrix = slot;
                 if (served && use_tex_matrix)
@@ -6179,6 +6203,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                     const U32 tslot = (scene_geo_moving_on() && (scene_alpha_only() & 4)) ? scene_moving_acquire(p->mTextureMatrix, f) : 0;
                     item.mE.mPad3 = tslot;
                     served = tslot != 0;
+                    if (!served) why = WHY_TEXMAT;
                     ++sAlphaPlanTexMatrix;
                 }
                 if (!served)
@@ -6187,6 +6212,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                 }
             }
         }
+        ++sAlphaWhy[rigged ? 1 : 0][served ? WHY_SERVED : why];
         const U32 key = (pbr ? 18u : (material ? 2u + mmask : (p->mFullbright ? 1u : 0u))) | (blend_id == ~0u ? 0u : blend_id << 8) | ((pbr && p->mGLTFMaterial->mDoubleSided) ? (1u << 16) : 0u) | (rigged ? (1u << 17) : 0u);
         const U32 index = (U32)ps.mOrder.size();
         ps.mOrder.push_back(p);
@@ -6246,6 +6272,18 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
     {
         LL_INFOS("VkScene") << "alpha plan builds: " << sAlphaPlanBuilds << ", " << (double)sAlphaPlanNs / 1000.0 / sAlphaPlanBuilds << " us each, " << (double)sAlphaPlanServed / sAlphaPlanBuilds << " served draws, "
             << (double)sAlphaPlanOld / sAlphaPlanBuilds << " old draws, " << (double)sAlphaPlanSegs / sAlphaPlanBuilds << " segments each; texture matrices " << sAlphaPlanTexMatrix << ", draws left old for want of a matrix slot " << sAlphaPlanNoSlot << LL_ENDL;
+        for (int rig = 0; rig < 2; ++rig)
+        {   // S5f F2: draws of the plan builds by reason (all builds so far)
+            std::string why_text;
+            for (int w = 0; w < WHY_COUNT; ++w)
+            {
+                if (sAlphaWhy[rig][w])
+                {
+                    why_text += std::string(" | ") + sAlphaWhyName[w] + " " + std::to_string((unsigned long long)sAlphaWhy[rig][w]);
+                }
+            }
+            LL_INFOS("VkScene") << "alpha plan draws by reason (" << (rig ? "rigged" : "static") << "):" << why_text << LL_ENDL;
+        }
     }
 }
 

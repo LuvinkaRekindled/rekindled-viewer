@@ -1046,6 +1046,7 @@ namespace AlphaCensus
 static struct AlphaSceneStats
 {
     U64 mCalls = 0, mRecords = 0, mRanges = 0, mServed = 0, mOld = 0, mMismatch = 0, mBytes = 0, mGlowServed = 0;
+    U64 mOldCtx[6] = {};        // S5f F2: draws the old path made, by context: HUD, impostor, cube snapshot, reflection render, table not serving this pass, particle groups of a serving pass
     U32 mLast = 0;
 } sAlphaScene;
 
@@ -1058,7 +1059,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     AlphaCensus::Call cen(getType() == LLDrawPool::POOL_ALPHA_POST_WATER, rigged, depth_only, mFringePass);       // <FS> S5 A0
     // <FS> S5a-2: the static main-view colour pass draws the plain runs of the groups' plans from the scene table (one record per run, in the loop's order); everything else is drawn by the code below
     const bool post_water = getType() == LLDrawPool::POOL_ALPHA_POST_WATER;
-    const bool alpha_table = !depth_only && !LLPipeline::sImpostorRender && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sReflectionRender && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && ll_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
+    const bool alpha_table = !LLPipeline::sImpostorRender && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sReflectionRender && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && ll_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
     struct PendingRange { U32 mHandle, mFirst, mCount; };
     struct PendingSrc { const LLDrawInfo* const* mInfo; const U32* mWire; U32 mRank, mCount, mHandle; };       // (S5d: where the items of a rigged range are, for their palette bindings)
     static thread_local std::vector<PendingRange> pending;
@@ -1068,8 +1069,36 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // S5e: the glow second draw of the served alpha items, per group: ranges by class (0 plain, 1 glTF, 2 glTF double sided)
     static thread_local std::vector<PendingRange> glow_range[3];
     static thread_local std::vector<PendingSrc> glow_src[3];
-    const bool glow_plain_table = alpha_table && post_water && ll_alpha_glow_table(false);
-    const bool glow_pbr_table = alpha_table && post_water && ll_alpha_glow_table(true);
+    const bool glow_pass = post_water && !depth_only && !mFringePass;       // (the glow second draw is made by the colour passes only)
+    const bool glow_plain_table = alpha_table && glow_pass && ll_alpha_glow_table(false);
+    const bool glow_pbr_table = alpha_table && glow_pass && ll_alpha_glow_table(true);
+    // S5f F1: the depth only passes (the depth of field depth pass: minimum alpha 0.33 on the mask program; the rigged depth prepass: mDepthCutoff) are served by the same runs: the lit key draws with the fullbright
+    // (mask) pull program, as the old code sets simple_shader = fullbright_shader = the mask program for them
+    const bool dof_pass = alpha_table && depth_only && mDepthCutoff <= 0.f;
+    auto min_alpha_of = [&](LLShaderProgram* program) -> F32
+    {
+        if (mDepthCutoff > 0.f)
+        {
+            return mDepthCutoff;
+        }
+        return dof_pass && (program == &gDeferredFullbrightAlphaPullProgram || program == &gDeferredFullbrightAlphaPullSkinProgram) ? 0.33f : MINIMUM_ALPHA;
+    };
+    auto run_key = [&](U32 key) -> int
+    {
+        return depth_only && (key & 0xFF) == 0 ? (int)((key & ~0xFFu) | 1u) : (int)key;
+    };
+    if (dof_pass)
+    {
+        for (LLShaderProgram* program : { &gDeferredFullbrightAlphaPullProgram, &gDeferredFullbrightAlphaPullSkinProgram })
+        {
+            if (program->mProgramObject != 0)
+            {
+                program->bind();
+                program->setMinimumAlpha(0.33f);
+            }
+        }
+        LLShaderProgram::unbind();
+    }
     int pending_key = -1;
     bool pass_begun = false;
     LLShaderProgram* min_alpha_zero_program = nullptr;       // the pull program whose minimum alpha a custom blend run set to 0 (put back by the next run of it with a standard blend)
@@ -1217,7 +1246,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             }
             else if (min_alpha_zero_program == current_shader)
             {
-                current_shader->setMinimumAlpha(mDepthCutoff > 0.f ? mDepthCutoff : MINIMUM_ALPHA);
+                current_shader->setMinimumAlpha(min_alpha_of(current_shader));
                 min_alpha_zero_program = nullptr;
             }
             if (mDepthCutoff > 0.f && !zero_alpha)
@@ -1370,14 +1399,14 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     if (plan_seg < plan.mSegCount && plan.mSegs[plan_seg].mServed && o == plan.mSegs[plan_seg].mFirst)
                     {
                         const LLAlphaPlanSeg& seg = plan.mSegs[plan_seg];
-                        if (pending_key != (int)seg.mKey)
+                        if (pending_key != run_key(seg.mKey))
                         {
                             run_flush();
-                            run_begin((int)seg.mKey);
+                            run_begin(run_key(seg.mKey));
                         }
                         add_range(plan, seg);
                         sAlphaScene.mServed += seg.mCount;
-                        if (post_water)
+                        if (glow_pass)
                         {
                             while (glow_at < plan.mGlowCount && plan.mGlowIdx[glow_at] < seg.mFirst)
                             {
@@ -1421,15 +1450,15 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         const LLAlphaPlanSeg& seg = plan.mSegs[plan_seg];
                         if (o == seg.mFirst)
                         {
-                            if (pending_key != (int)seg.mKey)
+                            if (pending_key != run_key(seg.mKey))
                             {
                                 run_flush();
-                                run_begin((int)seg.mKey);
+                                run_begin(run_key(seg.mKey));
                             }
                             add_range(plan, seg);
                         }
                         ++sAlphaScene.mServed;
-                        if (post_water && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+                        if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
                         {
                             if (glow_add(plan, &params, seg.mRank + (o - seg.mFirst)))
                             {
@@ -1451,6 +1480,14 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 if (alpha_table)
                 {
                     ++sAlphaScene.mOld;
+                    if (is_particle_or_hud_particle)
+                    {
+                        ++sAlphaScene.mOldCtx[5];
+                    }
+                }
+                else
+                {
+                    ++sAlphaScene.mOldCtx[LLPipeline::sRenderingHUDs ? 0 : LLPipeline::sImpostorRender ? 1 : gCubeSnapshot ? 2 : LLPipeline::sReflectionRender ? 3 : 4];
                 }
 
                 LLRenderPass::applyModelMatrix(params);
@@ -1768,14 +1805,29 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     }
 
     run_flush();
+    if (dof_pass)
+    {   // (the mask pull programs go back to the usual minimum alpha)
+        for (LLShaderProgram* program : { &gDeferredFullbrightAlphaPullProgram, &gDeferredFullbrightAlphaPullSkinProgram })
+        {
+            if (program->mProgramObject != 0)
+            {
+                program->bind();
+                program->setMinimumAlpha(MINIMUM_ALPHA);
+            }
+        }
+        LLShaderProgram::unbind();
+    }
     if (alpha_table && gFrameCount >= sAlphaScene.mLast + 600)
     {
         const double frames = (double)std::max<U32>(1, gFrameCount - sAlphaScene.mLast);
         sAlphaScene.mLast = gFrameCount;
         LL_INFOS("VkScene") << "alpha from the scene table (S5a), viewer side per frame: " << (double)sAlphaScene.mCalls / frames << " passes, " << (double)sAlphaScene.mRecords / frames << " records, "
             << (double)sAlphaScene.mRanges / frames << " ranges, " << (double)sAlphaScene.mServed / frames << " draws served, " << (double)sAlphaScene.mOld / frames << " drawn the old way, "
-            << (double)sAlphaScene.mBytes / frames << " bytes sent, glow draws served " << (double)sAlphaScene.mGlowServed / frames << ", plan mismatches " << sAlphaScene.mMismatch << LL_ENDL;
+            << (double)sAlphaScene.mBytes / frames << " bytes sent, glow draws served " << (double)sAlphaScene.mGlowServed / frames << ", plan mismatches " << sAlphaScene.mMismatch
+            << "; old draws by context a frame: HUD " << (double)sAlphaScene.mOldCtx[0] / frames << ", impostor " << (double)sAlphaScene.mOldCtx[1] / frames << ", cube " << (double)sAlphaScene.mOldCtx[2] / frames
+            << ", reflection " << (double)sAlphaScene.mOldCtx[3] / frames << ", not serving " << (double)sAlphaScene.mOldCtx[4] / frames << ", particle groups " << (double)sAlphaScene.mOldCtx[5] / frames << LL_ENDL;
         sAlphaScene.mCalls = sAlphaScene.mRecords = sAlphaScene.mRanges = sAlphaScene.mServed = sAlphaScene.mOld = sAlphaScene.mBytes = sAlphaScene.mGlowServed = 0;
+        for (U64& n : sAlphaScene.mOldCtx) { n = 0; }
     }
 
     gRender.setSceneBlendType(LLRender::BT_ALPHA);
