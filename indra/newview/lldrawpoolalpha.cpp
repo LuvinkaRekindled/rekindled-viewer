@@ -28,6 +28,9 @@
 
 #include "lldrawpoolalpha.h"
 #include <algorithm>
+#include <chrono>
+#include <unordered_set>
+#include <intrin.h>
 
 #include "llrenderheaders.h"
 #include "llviewercontrol.h"
@@ -706,12 +709,257 @@ void LLDrawPoolAlpha::renderRiggedPbrEmissives(std::vector<LLDrawInfo*>& emissiv
     }
 }
 
+// <FS> S5 A0 (doc/vulkan/S5-design.md): census of the alpha pools, log only (LL_VK_ALPHACENSUS=1), per frame over 600 frames. What it answers: how many draws a table could serve (reasons for
+// the others), how long the runs of equal state are in the real order, and where the main-thread time of the loop goes (cycle counter stamps; the stamps cost something, see the stamps line).
+extern bool ll_group_fragment_state(const LLSpatialGroup* group, bool* resident);      // pipeline.cpp
+extern U32 gFrameCount;
+namespace AlphaCensus
+{
+    static const bool sOn = []() { const char* v = getenv("LL_VK_ALPHACENSUS"); return v && atoi(v) != 0; }();
+    enum Reason { R_ELIGIBLE, R_HUDIMP, R_PARTICLE, R_RIGGED, R_NO_FRAGMENT, R_GLTF, R_MATERIAL, R_BLEND, R_TEXMATRIX, R_LAYOUT, R_MANYTEX, R_COUNT };
+    static const char* sReasonName[R_COUNT] = { "plain (S5a)", "hud/impostor", "particle group", "rigged (S5d)", "group without current fragment", "glTF (S5c)", "material (S5b)", "custom blend",
+                                                "texture matrix", "buffer layout", "more than 4 textures" };
+    enum Sect { S_CHOOSE, S_UNIFORMS, S_PALETTE, S_TEXTURES, S_DRAW, S_REST, S_COUNT };
+    static const char* sSectName[S_COUNT] = { "program choice + bind", "per-draw uniforms", "palette upload", "texture setup", "blend + draw call", "rest of the draw" };
+    struct Key
+    {
+        const void* mShader = nullptr; int mSrc = 0, mDst = 0; bool mDouble = false, mNoCull = false;
+        bool operator==(const Key& o) const { return mShader == o.mShader && mSrc == o.mSrc && mDst == o.mDst && mDouble == o.mDouble && mNoCull == o.mNoCull; }
+    };
+    struct Ctx
+    {
+        U64 mCalls = 0, mGroups = 0, mGrpWater = 0, mGrpHidden = 0, mGrpParticle = 0, mGrpBridge = 0, mGrpFragment = 0, mGrpResident = 0, mGrpGlow = 0;
+        U64 mDraws = 0, mTris = 0, mReason[R_COUNT] = {}, mReasonTris[R_COUNT] = {}, mDropped = 0;
+        U64 mFlagGlow = 0, mFlagFullbright = 0, mFlagBatch = 0, mFlagTexMat = 0, mFlagBlend = 0, mFlagMaterial = 0, mFlagGLTF = 0, mFlagModelMatrix = 0, mFlagNoTexture = 0;
+        U64 mShaderBinds = 0, mBlendChanges = 0, mCullChanges = 0;
+        U64 mRuns = 0, mRunHist[7] = {}, mEligRuns = 0, mEligHist[7] = {}, mEligEndedByOther = 0, mEligEndedByGlow = 0, mEligDraws = 0;
+        U64 mGlowDraws[4] = {};
+        U64 mDistinctTex = 0, mTexHist[4] = {};
+        U64 mSect[S_COUNT] = {}, mGroupTicks = 0, mCallTicks = 0, mGlowTicks = 0;
+    };
+    static Ctx sCtx[2][2][2][3];            // view (0 main, 1 other: cube / reflection / impostor / HUD), pool (0 pre water, 1 post), rigged, mode (0 colour, 1 depth only, 2 fringe)
+    static U32 sFrom = 0;
+    static U64 sTscFrom = 0;
+    static std::chrono::steady_clock::time_point sClockFrom;
+    static U64 sStamps = 0;
+    static U32 hist_bucket(U32 n) { return n <= 1 ? 0 : n == 2 ? 1 : n <= 4 ? 2 : n <= 8 ? 3 : n <= 16 ? 4 : n <= 32 ? 5 : 6; }
+
+    struct Call
+    {
+        bool mOn;
+        Ctx* mCtx = nullptr;
+        U64 mT0 = 0, mLast = 0, mGroupT0 = 0, mEmT0 = 0;
+        bool mHudImp = false, mGroupFragment = false, mGroupParticle = false, mDrawn = false, mCurEligible = false, mHaveKey = false;
+        Key mLastKey, mRunKey, mEligKey;
+        U32 mRunLen = 0, mEligLen = 0;
+        std::unordered_set<const void*> mTex;
+        Call(bool post, bool rigged, bool depth_only, bool fringe) : mOn(sOn)
+        {
+            if (!mOn) return;
+            mHudImp = LLPipeline::sImpostorRender || LLPipeline::sRenderingHUDs;
+            const int view = (gCubeSnapshot || LLPipeline::sReflectionRender || mHudImp) ? 1 : 0;
+            mCtx = &sCtx[view][post ? 1 : 0][rigged ? 1 : 0][depth_only ? 1 : fringe ? 2 : 0];
+            ++mCtx->mCalls;
+            mT0 = __rdtsc();
+            if (!sFrom) { sFrom = gFrameCount; sTscFrom = mT0; sClockFrom = std::chrono::steady_clock::now(); }
+        }
+        void endRun() { if (mRunLen) { ++mCtx->mRuns; ++mCtx->mRunHist[hist_bucket(mRunLen)]; mRunLen = 0; } }
+        void endElig(bool by_glow)
+        {
+            if (mEligLen)
+            {
+                ++mCtx->mEligRuns; ++mCtx->mEligHist[hist_bucket(mEligLen)]; mEligLen = 0;
+                if (by_glow) ++mCtx->mEligEndedByGlow; else ++mCtx->mEligEndedByOther;
+            }
+        }
+        // sections: the time since the last stamp goes to the section named
+        void stamp(Sect s) { if (!mOn || !mDrawn) return; const U64 t = __rdtsc(); mCtx->mSect[s] += t - mLast; mLast = t; ++sStamps; }
+        void groupBegin() { if (mOn) { mGroupT0 = __rdtsc(); mGroupFragment = mGroupParticle = false; } }
+        void groupEnd() { if (mOn) { mCtx->mGroupTicks += __rdtsc() - mGroupT0; } }
+        void groupSkip(int why)
+        {
+            if (!mOn) return;
+            ++mCtx->mGroups;
+            if (why == 0) ++mCtx->mGrpWater; else ++mCtx->mGrpHidden;
+        }
+        void groupAccepted(const LLSpatialGroup* group, bool particle, bool bridge)
+        {
+            if (!mOn) return;
+            ++mCtx->mGroups;
+            bool resident = false;
+            mGroupFragment = ll_group_fragment_state(group, &resident);
+            mGroupParticle = particle;
+            if (particle) ++mCtx->mGrpParticle;
+            if (bridge) ++mCtx->mGrpBridge;
+            if (mGroupFragment) ++mCtx->mGrpFragment;
+            if (resident) ++mCtx->mGrpResident;
+        }
+        void drawBegin(const LLDrawInfo& p, bool rigged)
+        {
+            if (!mOn) return;
+            mDrawn = true;
+            Ctx& c = *mCtx;
+            ++c.mDraws;
+            c.mTris += p.mCount / 3;
+            const LLVertexBuffer* vb = p.mVertexBuffer.get();
+            const bool material = !LLPipeline::sRenderingHUDs && p.mMaterial.notNull();
+            const bool custom_blend = p.mBlendFuncSrc != LLRender::BF_SOURCE_ALPHA || p.mBlendFuncDst != LLRender::BF_ONE_MINUS_SOURCE_ALPHA;
+            const bool tex_matrix = p.mTextureMatrix != nullptr;
+            const bool layout_bad = !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0;
+            const bool glow = vb && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE);
+            Reason r = R_ELIGIBLE;
+            if (mHudImp) r = R_HUDIMP;
+            else if (mGroupParticle) r = R_PARTICLE;
+            else if (rigged || p.mAvatar) r = R_RIGGED;
+            else if (!mGroupFragment) r = R_NO_FRAGMENT;
+            else if (p.mGLTFMaterial) r = R_GLTF;
+            else if (material) r = R_MATERIAL;
+            else if (custom_blend) r = R_BLEND;
+            else if (tex_matrix) r = R_TEXMATRIX;
+            else if (layout_bad) r = R_LAYOUT;
+            else if (p.mTextureList.size() > 4) r = R_MANYTEX;
+            ++c.mReason[r];
+            c.mReasonTris[r] += p.mCount / 3;
+            mCurEligible = r == R_ELIGIBLE;
+            if (glow) ++c.mFlagGlow;
+            if (p.mFullbright) ++c.mFlagFullbright;
+            if (p.mTextureList.size() > 1) ++c.mFlagBatch;
+            if (tex_matrix) ++c.mFlagTexMat;
+            if (custom_blend) ++c.mFlagBlend;
+            if (material) ++c.mFlagMaterial;
+            if (p.mGLTFMaterial) ++c.mFlagGLTF;
+            if (p.mModelMatrix) ++c.mFlagModelMatrix;
+            const size_t ntex = p.mTextureList.size() > 1 ? p.mTextureList.size() : 1;
+            if (p.mTexture.isNull() && p.mTextureList.size() <= 1) ++c.mFlagNoTexture;
+            ++c.mTexHist[ntex <= 1 ? 0 : ntex == 2 ? 1 : ntex <= 4 ? 2 : 3];
+            mTex.insert(p.mTexture.get());
+            for (const auto& t : p.mTextureList) mTex.insert(t.get());
+            mLast = __rdtsc();
+        }
+        // the state the draw is made with: runs of equal (program, blend function, culling) in the real order, and the runs of plain draws
+        void state(const void* shader, const LLDrawInfo& p, bool double_sided, bool no_cull)
+        {
+            if (!mOn) return;
+            Key k; k.mShader = shader; k.mSrc = (int)p.mBlendFuncSrc; k.mDst = (int)p.mBlendFuncDst; k.mDouble = double_sided; k.mNoCull = no_cull;
+            if (!mHaveKey)
+            {
+                ++mCtx->mShaderBinds; ++mCtx->mBlendChanges; ++mCtx->mCullChanges;
+            }
+            else
+            {
+                if (k.mShader != mLastKey.mShader) ++mCtx->mShaderBinds;
+                if (k.mSrc != mLastKey.mSrc || k.mDst != mLastKey.mDst) ++mCtx->mBlendChanges;
+                if (k.mDouble != mLastKey.mDouble || k.mNoCull != mLastKey.mNoCull) ++mCtx->mCullChanges;
+            }
+            if (mRunLen && !(k == mRunKey)) endRun();
+            mRunKey = k; ++mRunLen;
+            if (mCurEligible)
+            {
+                ++mCtx->mEligDraws;
+                if (mEligLen && !(k == mEligKey)) endElig(false);
+                mEligKey = k; ++mEligLen;
+            }
+            else
+            {
+                endElig(false);
+            }
+            mLastKey = k; mHaveKey = true;
+        }
+        void dropped() { if (mOn) ++mCtx->mDropped; mDrawn = false; }
+        void drawEnd() { stamp(S_REST); mDrawn = false; }
+        void glowBegin(size_t a, size_t b, size_t c, size_t d)
+        {
+            if (!mOn) return;
+            const size_t n[4] = { a, b, c, d };
+            bool any = false;
+            for (int i = 0; i < 4; ++i) { if (n[i]) { mCtx->mGlowDraws[i] += n[i]; any = true; } }
+            if (any)
+            {
+                ++mCtx->mGrpGlow;
+                endRun();
+                endElig(true);
+                mHaveKey = false;       // the glow draws change program and blend; the next draw starts from a bound state again
+            }
+            mEmT0 = any ? __rdtsc() : 0;
+        }
+        void glowEnd() { if (mOn && mEmT0) { mCtx->mGlowTicks += __rdtsc() - mEmT0; mEmT0 = 0; } }
+        ~Call();
+    };
+
+    static void report();
+    Call::~Call()
+    {
+        if (!mOn) return;
+        endRun();
+        endElig(false);
+        mCtx->mDistinctTex += mTex.size();
+        mCtx->mCallTicks += __rdtsc() - mT0;
+        if (gFrameCount >= sFrom + 600) report();
+    }
+
+    static void report()
+    {
+        const U64 tsc = __rdtsc();
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - sClockFrom).count();
+        const double frames = (double)(gFrameCount - sFrom);
+        const double tick_ms = (double)(tsc - sTscFrom) / ms;       // cycle counter ticks per millisecond
+        auto per = [&](U64 v) { return (double)v / frames; };
+        auto tm = [&](U64 v) { return (double)v / tick_ms / frames; };
+        static const char* sMode[3] = { "colour", "depth only", "fringe" };
+        for (int view = 0; view < 2; ++view) for (int post = 0; post < 2; ++post) for (int rig = 0; rig < 2; ++rig) for (int mode = 0; mode < 3; ++mode)
+        {
+            const Ctx& c = sCtx[view][post][rig][mode];
+            if (!c.mCalls) continue;
+            std::string reasons;
+            for (int r = 0; r < R_COUNT; ++r)
+            {
+                if (c.mReason[r]) reasons += llformat(" | %s %.1f (%.0f tris)", sReasonName[r], per(c.mReason[r]), per(c.mReasonTris[r]));
+            }
+            std::string runs, eligs, texes, sects;
+            for (int h = 0; h < 7; ++h) { runs += llformat(" %.1f", per(c.mRunHist[h])); eligs += llformat(" %.1f", per(c.mEligHist[h])); }
+            for (int h = 0; h < 4; ++h) texes += llformat(" %.1f", per(c.mTexHist[h]));
+            U64 sum = 0;
+            for (int s = 0; s < S_COUNT; ++s) { sects += llformat(" | %s %.3f", sSectName[s], tm(c.mSect[s])); sum += c.mSect[s]; }
+            LL_INFOS("AlphaCensus") << llformat("%s %s %s %s over %d frames: calls %.2f; groups %.1f (water rejected %.1f, hidden particles %.1f, particle %.1f, bridge %.1f, with a current fragment %.1f, resident %.1f, with glow draws %.1f); draws %.1f, triangles %.0f; dropped %.2f",
+                                                 view ? "other views" : "main view", post ? "post water" : "pre water", rig ? "rigged" : "static", sMode[mode], (int)frames, per(c.mCalls), per(c.mGroups), per(c.mGrpWater), per(c.mGrpHidden),
+                                                 per(c.mGrpParticle), per(c.mGrpBridge), per(c.mGrpFragment), per(c.mGrpResident), per(c.mGrpGlow), per(c.mDraws), per(c.mTris), per(c.mDropped))
+                << "; draws a frame by class:" << reasons << LL_ENDL;
+            LL_INFOS("AlphaCensus") << llformat("  flags (not exclusive): glow buffer %.1f, fullbright %.1f, texture batch %.1f, texture matrix %.1f, custom blend %.1f, material %.1f, glTF %.1f, own model matrix %.1f, no texture %.1f; texture count 1 / 2 / 3-4 / 5+:%s; distinct textures a call %.1f",
+                                                 per(c.mFlagGlow), per(c.mFlagFullbright), per(c.mFlagBatch), per(c.mFlagTexMat), per(c.mFlagBlend), per(c.mFlagMaterial), per(c.mFlagGLTF), per(c.mFlagModelMatrix), per(c.mFlagNoTexture),
+                                                 texes.c_str(), (double)c.mDistinctTex / (double)c.mCalls) << LL_ENDL;
+            LL_INFOS("AlphaCensus") << llformat("  state changes a frame: program %.1f, blend function %.1f, culling %.1f; runs of equal (program, blend, cull) in the real order %.1f (length 1 / 2 / 3-4 / 5-8 / 9-16 / 17-32 / 33+:%s); runs of plain draws %.1f for %.1f plain draws (ended by another draw %.1f, by a glow pass %.1f; lengths:%s); glow draws a frame: plain %.1f, PBR %.1f, rigged %.1f, PBR rigged %.1f",
+                                                 per(c.mShaderBinds), per(c.mBlendChanges), per(c.mCullChanges), per(c.mRuns), runs.c_str(), per(c.mEligRuns), per(c.mEligDraws), per(c.mEligEndedByOther), per(c.mEligEndedByGlow), eligs.c_str(),
+                                                 per(c.mGlowDraws[0]), per(c.mGlowDraws[1]), per(c.mGlowDraws[2]), per(c.mGlowDraws[3])) << LL_ENDL;
+            const double group_loop = tm(c.mGroupTicks), draws_ms = tm(sum), glow_ms = tm(c.mGlowTicks);
+            LL_INFOS("AlphaCensus") << llformat("  main thread ms a frame: calls %.3f; group loop %.3f of which draws %.3f (sections%s), glow passes %.3f, group loop overhead (water test, cull scope, emissive vectors, stamps) %.3f",
+                                                 tm(c.mCallTicks), group_loop, draws_ms, sects.c_str(), glow_ms, group_loop - draws_ms - glow_ms) << LL_ENDL;
+        }
+        LL_INFOS("AlphaCensus") << llformat("stamps %.0f a frame (a few ns each: that is part of the draw section numbers above)", (double)sStamps / frames) << LL_ENDL;
+        for (int view = 0; view < 2; ++view) for (int post = 0; post < 2; ++post) for (int rig = 0; rig < 2; ++rig) for (int mode = 0; mode < 3; ++mode)
+        {
+            sCtx[view][post][rig][mode] = Ctx();
+        }
+        sStamps = 0;
+        sFrom = gFrameCount;
+        sTscFrom = tsc;
+        sClockFrom = std::chrono::steady_clock::now();
+    }
+
+    struct GroupScope
+    {
+        Call& mCall;
+        explicit GroupScope(Call& c) : mCall(c) { mCall.groupBegin(); }
+        ~GroupScope() { mCall.groupEnd(); }
+    };
+}
+
 void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     ++sAlphaEpoch;      // <FS> U1: what the loop below last wrote to a program is not known any more
     const bool alpha_values_on = ll_pass_uni_on();
     const bool alpha_values_verify = alpha_values_on && ll_pass_uni_verify();
+    AlphaCensus::Call cen(getType() == LLDrawPool::POOL_ALPHA_POST_WATER, rigged, depth_only, mFringePass);       // <FS> S5 A0
     bool initialized_lighting = false;
     bool light_enabled = true;
 
@@ -748,6 +996,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("renderAlpha - group");
         LLSpatialGroup* group = *i;
+        AlphaCensus::GroupScope census_group(cen);
         llassert(group);
         llassert(group->getSpatialPartition());
 
@@ -764,6 +1013,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 { // reject any spatial groups that have no part above water
                     if (ext[1].getF32ptr()[2] < water_height)
                     {
+                        cen.groupSkip(0);
                         continue;
                     }
                 }
@@ -771,6 +1021,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 { // reject any spatial groups that he no part below water
                     if (ext[0].getF32ptr()[2] > water_height)
                     {
+                        cen.groupSkip(0);
                         continue;
                     }
                 }
@@ -794,12 +1045,14 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                                                  group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_PARTICLE ||
                                                  group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_HUD_PARTICLE))
             {
+                cen.groupSkip(1);
                 continue;
             }
             // </FS:LO>
 
             bool disable_cull = is_particle_or_hud_particle;
             LLRenderState::CullScope cull(false, disable_cull);
+            cen.groupAccepted(group, is_particle_or_hud_particle, bridge != nullptr);
 
             LLSpatialGroup::drawmap_elem_t& draw_info = rigged ? group->mDrawMap[LLRenderPass::PASS_ALPHA_RIGGED] : group->mDrawMap[LLRenderPass::PASS_ALPHA];
 
@@ -812,6 +1065,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 }
 
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("ra - push batch");
+                cen.drawBegin(params, rigged);
 
                 LLRenderPass::applyModelMatrix(params);
 
@@ -835,6 +1089,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     }
 
                     params.mGLTFMaterial->bind(params.mTexture);
+                    cen.stamp(AlphaCensus::S_CHOOSE);
                 }
                 else
                 {
@@ -900,6 +1155,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         }
                     }
 
+                    cen.stamp(AlphaCensus::S_CHOOSE);
                     LLVector4 spec_color(1, 1, 1, 1);
                     F32 env_intensity = 0.0f;
                     F32 brightness = 1.0f;
@@ -956,12 +1212,16 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     }
                 }
 
+                cen.stamp(AlphaCensus::S_UNIFORMS);
                 if (params.mAvatar && !uploadMatrixPalette(params.mAvatar, params.mSkinInfo, lastAvatar, lastMeshId, lastAvatarShader, skipLastSkin))
                 {
+                    cen.dropped();
                     continue;
                 }
 
+                cen.stamp(AlphaCensus::S_PALETTE);
                 bool tex_setup = TexSetup(&params, (mat != nullptr));
+                cen.stamp(AlphaCensus::S_TEXTURES);
 
                 if (mDepthCutoff > 0.f && current_shader)
                 {   // <FS> depth only pass and colour pass of the rigged alpha (hair halo): the shader of this draw cuts at the cutoff instead of 1/255 (a custom blend draw below sets 0 and puts this back)
@@ -973,6 +1233,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 }
 
                 {
+                    cen.state(target_shader, params, gltf_mat && gltf_mat->mDoubleSided, disable_cull);
                     gRender.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
 
                     bool reset_minimum_alpha = false;
@@ -993,6 +1254,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     }
                 }
 
+                cen.stamp(AlphaCensus::S_DRAW);
                 // If this alpha mesh has glow, then draw it a second time to add the destination-alpha (=glow).  Interleaving these state-changing calls is expensive, but glow must be drawn Z-sorted with alpha.
                 if (getType() != LLDrawPool::POOL_ALPHA_PRE_WATER &&
                     params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
@@ -1025,11 +1287,13 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 {
                     LLRenderMatrix::identity(LLRenderMatrix::Kind::Texture0);
                 }
+                cen.drawEnd();
             }
 
             // render emissive faces into alpha channel for bloom effects
             if (!depth_only && !mFringePass)
             {
+                cen.glowBegin(emissives.size(), pbr_emissives.size(), rigged_emissives.size(), pbr_rigged_emissives.size());
                 gPipeline.enableLightsDynamic();
 
                 // install glow-accumulating blend mode
@@ -1077,6 +1341,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 {
                     ++sAlphaEpoch;      // <FS> U1: the emissive passes wrote their own values
                 }
+                cen.glowEnd();
             }
         }
     }
