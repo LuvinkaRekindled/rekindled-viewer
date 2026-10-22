@@ -2951,6 +2951,47 @@ U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImage
     return slot;
 }
 
+int Renderer::bindlessSlotState(U32 table, U32 slot, bool repair)
+{
+    if (!slot || !mSet2Layout || table >= BINDLESS_TABLES)
+    {
+        return 0;
+    }
+    BindlessTable& tbl = mBindlessTbl[table];
+    if (slot >= tbl.mSlots.size() || !tbl.mSlots[slot].mActive)
+    {
+        return 2;
+    }
+    const BindlessSlot& s = tbl.mSlots[slot];
+    const std::vector<VkDescriptorImageInfo>& sh = tbl.mShadow[mSlot];
+    const std::vector<U64>& ids = tbl.mShadowId[mSlot];
+    if (slot < ids.size() && slot < sh.size() && ids[slot] == s.mKey.mViewId && sh[slot].imageView == s.mInfo.imageView && sh[slot].sampler == s.mInfo.sampler)
+    {
+        return 0;
+    }
+    if (repair)
+    {
+        bindlessQueue(tbl, slot, s.mInfo, s.mKey.mViewId);
+    }
+    return 1;
+}
+
+std::string Renderer::bindlessSlotDescribe(U32 table, U32 slot)
+{
+    char buf[400];
+    if (table >= BINDLESS_TABLES || slot >= mBindlessTbl[table].mSlots.size())
+    {
+        return "slot out of the table";
+    }
+    const BindlessTable& tbl = mBindlessTbl[table];
+    const BindlessSlot& s = tbl.mSlots[slot];
+    const U64 shadow_id = slot < tbl.mShadowId[mSlot].size() ? tbl.mShadowId[mSlot][slot] : ~0ull;
+    snprintf(buf, sizeof(buf), "slot %u: %s, pins %u, view id %llu (%ux%u mips %u), created frame %llu, last used frame %llu, writes %u; this frame's set holds view id %lld; frame now %llu",
+             slot, s.mActive ? "active" : "FREE", s.mPins, (unsigned long long)s.mKey.mViewId, s.mDbgW, s.mDbgH, s.mDbgMips, (unsigned long long)s.mCreatedFrame, (unsigned long long)s.mLastUsed, s.mDbgWrites,
+             shadow_id == ~0ull ? -1ll : (long long)shadow_id, (unsigned long long)Context::instance().getFrameNumber());
+    return buf;
+}
+
 void Renderer::bindlessFlush()
 {
     if (!mSet2Layout || mCmd == VK_NULL_HANDLE)

@@ -325,6 +325,10 @@ public:
     bool bindlessTouch(U32 table, U32 slot, U64 view_id, VkImageView view, VkSampler sampler);      // <FS> the slot still holds this view and sampler: keep it alive and written into this frame's set (no table search)
     U32 bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout, U32 hint = 0);     // table 0 2D, 1 cube, 2 cube array, 3 2D shadow
     void bindlessFlush();           // writes the slots taken since the last call into the frame's set and binds it
+    // <FS> crash hunt (2026-10-22): can a draw of this frame read the slot? 0 = yes (the stand-in, or this frame's set holds the slot's descriptor), 1 = the slot is active but this frame's set does not hold its
+    // descriptor yet (with repair: queued, the next flush writes it), 2 = the slot is not active (given back): whoever still names it reads whatever the sets hold
+    int bindlessSlotState(U32 table, U32 slot, bool repair);
+    std::string bindlessSlotDescribe(U32 table, U32 slot);
 
     VkSampler getSampler(const SamplerDesc& desc);
     Image* getWhiteTexture() { return &mWhite; }
