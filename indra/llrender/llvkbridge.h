@@ -245,6 +245,9 @@ namespace LLVkBridge
     //   pull program; the worker draws that type's commands with it.
     // kind 23 RELEASE_GEO: mEntries handles (U32). kind 24 GEO_TEX: mFragment = handle, mEntries x { local texture number, GL name } (the textures whose name changed).
     struct GeoWire { GeoEntry mE; U32 mType; };
+    // kind 33 (S6 LV1): the light volumes of a deferred lighting pass in one record. The viewer has bound the pull light program (pointLightV with LL_LIGHT_PULL) and written the pass's uniforms and
+    // matrices; blob = mEntries x LightVolumeRow. The worker draws each as one 8 vertex triangle fan (the fan of the box as seen from the camera side mCypher), the light read from the table by instance.
+    struct LightVolumeRow { F32 mCenter[3]; F32 mSize; F32 mColor[3]; F32 mFalloff; U32 mCypher; U32 mClassic; U32 mPad[2]; };
     struct GeoFragRef { U32 mId, mNameOffset, mNameCount; };
     struct GeoSlotMatrix { U32 mSlot; F32 mM[16]; };
     bool sceneGeoAvailable();       // the worker can keep and draw them (buffer addresses, indirect draws with a first instance, bindless textures)
