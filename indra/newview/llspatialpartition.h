@@ -97,16 +97,18 @@ void ll_scene_geo_count(U32 what, U64 n);                       // 0 builder dra
 
 // <FS> S5a-1 (doc/vulkan/S5-design.md section 8): the plan of a group's static alpha draws, kept by its fragment (LL_VK_SCENE_ALPHA=1): the draw infos the alpha loop draws, in its order, as segments of
 // draws a table can serve (mServed, equal mKey: one run) and draws it cannot (the old path draws them in place)
-struct LLAlphaPlanSeg { U32 mFirst, mCount, mKey; bool mServed; };
+struct LLAlphaPlanSeg { U32 mFirst, mCount, mKey; bool mServed; U32 mRank; };      // mRank: served segments: the number of the first item among the fragment's alpha items
 struct LLAlphaPlanView
 {
     const class LLDrawInfo* const* mOrder = nullptr;
     U32 mOrderCount = 0;
     const LLAlphaPlanSeg* mSegs = nullptr;
     U32 mSegCount = 0;
+    U32 mHandle = 0;            // the fragment's handle at the worker (0: not attached, nothing is served)
     bool mGlow = false;         // a draw of the group has an emissive buffer (the loop draws a glow pass after the group, post water)
 };
-int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out);      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
+int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out);
+bool ll_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha pass is drawn from the scene table this frame      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
 
 class LLDrawInfo final : public LLRefCount
 {
