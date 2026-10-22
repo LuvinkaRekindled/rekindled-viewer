@@ -828,8 +828,8 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
     }
     if (materials)
     {
-        // the materials passes apply the texture matrix to every texcoord set, and need the maps their program samples
-        if (p.mTextureMatrix)
+        // the materials passes apply the texture matrix to every texcoord set, and need the maps their program samples (S5b: the alpha items carry the matrix in a slot)
+        if (p.mTextureMatrix && !texture_matrix)
         {
             return false;
         }

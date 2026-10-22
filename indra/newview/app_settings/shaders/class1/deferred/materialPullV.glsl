@@ -76,9 +76,11 @@ struct GeoMatrix
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer GeoPackets { GeoPacket p[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer GeoMatrices { GeoMatrix m[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer GeoTexMatrices { mat4 t[]; };
 
 uniform uvec2 ll_packet_table;
 uniform uvec2 ll_packet_models;
+uniform uvec2 ll_packet_texmats;        // S5b: the alpha pass only (the G-buffer rows have pad.x = 0 and never read it)
 
 out vec3 vary_position;
 out vec3 vary_normal;
@@ -168,11 +170,19 @@ void main()
     vary_texcoord0 = GeoVec2(pk.texcoords).t[index];
     vary_normal = normalize(normal_matrix * normal);
 #endif
+    mat4 texmat = mat4(1.0);
+#ifndef HAS_SKIN
+    if (pk.pad.x != 0u)
+    {
+        texmat = GeoTexMatrices(ll_packet_texmats).t[pk.pad.x];
+        vary_texcoord0 = (texmat * vec4(vary_texcoord0, 0.0, 1.0)).xy;
+    }
+#endif
     vertex_color = unpackUnorm4x8(GeoWords(pk.colors).w[index]);
 
 #ifdef HAS_NORMAL_MAP
     vec4 tangent = GeoVec4(pk.tangents).v[index];
-    vary_texcoord1 = GeoVec2(pk.texcoords1).t[index];
+    vary_texcoord1 = (texmat * vec4(GeoVec2(pk.texcoords1).t[index], 0.0, 1.0)).xy;
 #ifdef HAS_SKIN
     vary_tangent = normalize(mv3 * (sm * tangent.xyz));
 #else
@@ -183,7 +193,7 @@ void main()
 #endif
 
 #ifdef HAS_SPECULAR_MAP
-    vary_texcoord2 = GeoVec2(pk.texcoords2).t[index];
+    vary_texcoord2 = (texmat * vec4(GeoVec2(pk.texcoords2).t[index], 0.0, 1.0)).xy;
     vary_slot_specular = pk.mapSlots >> 16;
 #endif
 
