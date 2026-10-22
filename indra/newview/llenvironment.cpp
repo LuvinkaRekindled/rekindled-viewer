@@ -1824,6 +1824,7 @@ void LLEnvironment::update(const LLViewerCamera * cam)
     // <FS> S5a: the alpha pull programs are not on the shader manager's list; they need the sky / atmosphere uniforms (sun and ambient colour) like the programs they stand in for
     gDeferredAlphaPullProgram.mUniformsDirty = true;
     gDeferredFullbrightAlphaPullProgram.mUniformsDirty = true;
+    gDeferredPBRAlphaPullProgram.mUniformsDirty = true;
     for (LLShaderProgram& pull : gDeferredMaterialPullProgram)
     {
         pull.mUniformsDirty = true;     // (S5b: the blend variants are drawn by the alpha pass, which needs the sun and ambient colours)

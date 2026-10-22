@@ -5923,6 +5923,8 @@ namespace
 const U32 kGeoCapacity = 131072;
 const U32 kGeoTypes = 13;
 const U32 kGeoAlphaType = 2 * kGeoTypes;       // S5a: the item type of the alpha items
+const U32 kPbrCapacity = 16384;                // S5c: rows of PBR values (160 bytes each) for the alpha items with a glTF material
+struct PbrWire { U32 mItem; U32 mPad[3]; F32 mV[40]; };        // kind 20, after the texture names: the PBR values of the wire item mItem
 struct GeoGpuG
 {
     U32 mPositions[2]; U32 mNormals[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mIndices[2]; U32 mTangents[2]; U32 mTexcoords1[2]; U32 mTexcoords2[2];
@@ -5945,6 +5947,7 @@ struct GeoFrag
     std::vector<U32> mPin;              // its pin (0 = none)
     std::vector<U32> mTexSlot;          // the slot the entries were last written with
     std::vector<VkDrawIndirectCommand> mCmds;   // the draws of its usable items, sorted by pass type
+    std::vector<U32> mPbrOfItem;                // S5c: per item, its PBR row + 1 (0 = none)
     std::vector<VkDrawIndirectCommand> mACmds;  // S5a: the draws of its alpha items (type 26), in item order, one per item (count 0 when its buffers are not usable): a run names a range of them
     U32 mTypeFirst[kGeoTypes + 1] = {};
     // S4 B: the rigged items (types 13-25, drawn indexed: the hardware reads the indices): commands sorted by rigged type and buffer pair, runs of one pair, the item -> command map
@@ -5985,6 +5988,11 @@ static struct GeoState
     U32 mHigh = 0;
     std::vector<U32> mFree;
     std::vector<std::pair<U32, U64>> mRetired;
+    Buffer mPbrTable;                                   // S5c: the PBR rows
+    F32* mPbrT = nullptr;
+    U32 mPbrHigh = 0;
+    std::vector<U32> mPbrFree;
+    std::vector<std::pair<U32, U64>> mPbrRetired;
     std::vector<GeoFrag*> mBy;                          // by the viewer's dense handle
     std::unordered_multimap<U32, U32> mByBuf;           // buffer name -> handle of a fragment that reads it
     U64 mPreparedFrame = ~0ull;
@@ -6042,6 +6050,15 @@ bool geo_init()
     }
     sGeo.mT = (GeoGpuG*)sGeo.mTable.mMapped;
     memset(sGeo.mT, 0, sizeof(GeoGpuG) * kGeoCapacity);
+    if (ctx.createBuffer((VkDeviceSize)160 * kPbrCapacity, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, sGeo.mPbrTable) && sGeo.mPbrTable.mMapped && sGeo.mPbrTable.mAddress)
+    {
+        sGeo.mPbrT = (F32*)sGeo.mPbrTable.mMapped;
+        memset(sGeo.mPbrT, 0, (size_t)160 * kPbrCapacity);
+    }
+    else
+    {
+        LL_WARNS("VkScene") << "scene geometry table: the PBR rows could not be created: PBR alpha draws are not served" << LL_ENDL;
+    }
     ctx.addAddressDescriber([](unsigned long long at) -> std::string
     {
         const unsigned long long base = (unsigned long long)sGeo.mTable.mAddress, size = (unsigned long long)sizeof(GeoGpuG) * kGeoCapacity;
@@ -6074,6 +6091,19 @@ void geo_reclaim(U64 frame)
         }
     }
     sGeo.mRetired.resize(keep);
+    keep = 0;
+    for (size_t i = 0; i < sGeo.mPbrRetired.size(); ++i)
+    {
+        if (frame >= sGeo.mPbrRetired[i].second + lag)
+        {
+            sGeo.mPbrFree.push_back(sGeo.mPbrRetired[i].first);
+        }
+        else
+        {
+            sGeo.mPbrRetired[keep++] = sGeo.mPbrRetired[i];
+        }
+    }
+    sGeo.mPbrRetired.resize(keep);
 }
 
 GeoFrag* geo_find(U32 handle)
@@ -6117,6 +6147,13 @@ void geo_release(U32 handle)
     for (U32 slot : f->mSlots)
     {
         sGeo.mRetired.push_back({ slot, frame });
+    }
+    for (U32 slot1 : f->mPbrOfItem)
+    {
+        if (slot1)
+        {
+            sGeo.mPbrRetired.push_back({ slot1 - 1, frame });
+        }
     }
     for (size_t k = 0; k < f->mPin.size(); ++k)
     {
@@ -6212,6 +6249,37 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         f->mPairOf.push_back((U32)k);
     }
     f->mAddr.assign(2 * f->mPairs.size(), 0);
+    f->mPbrOfItem.assign(h.mEntries, 0);
+    if (h.mMatrices && sGeo.mPbrT)
+    {
+        const PbrWire* pbr = (const PbrWire*)(names + h.mPaletteFloats);
+        for (U32 k = 0; k < h.mMatrices; ++k)
+        {
+            U32 slot;
+            if (!sGeo.mPbrFree.empty())
+            {
+                slot = sGeo.mPbrFree.back();
+                sGeo.mPbrFree.pop_back();
+            }
+            else if (sGeo.mPbrHigh < kPbrCapacity)
+            {
+                slot = sGeo.mPbrHigh++;
+            }
+            else
+            {
+                continue;       // (the table is full: that item has no PBR row and is not drawn)
+            }
+            if (pbr[k].mItem < h.mEntries)
+            {
+                memcpy(sGeo.mPbrT + (size_t)40 * slot, pbr[k].mV, 160);
+                f->mPbrOfItem[pbr[k].mItem] = slot + 1;
+            }
+            else
+            {
+                sGeo.mPbrRetired.push_back({ slot, Context::instance().getFrameNumber() });
+            }
+        }
+    }
     const size_t textures = h.mPaletteFloats;
     f->mTexName.assign(textures, 0);
     f->mPin.assign(textures, 0);
@@ -6333,6 +6401,7 @@ void geo_write_items(GeoFrag& f)
         if (f.mItems[i].mType == kGeoAlphaType)
         {
             g.mPad[0] = e.mPad3;            // S5a: the slot of the draw's texture matrix (0 = none)
+            g.mPad[1] = (i < f.mPbrOfItem.size() && f.mPbrOfItem[i]) ? f.mPbrOfItem[i] - 1 : 0;       // S5c: its PBR row
         }
         if (e.mFlags & LLVkBridge::GEO_RIGGED)
         {
@@ -7192,6 +7261,12 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (program->hasUniform("ll_packet_texmats"))
     {
         program->setInts("ll_packet_texmats", texmats_words, 2);
+    }
+    if (program->hasUniform("ll_packet_pbr") && sGeo.mPbrT)
+    {
+        const U64 pbr_address = (U64)sGeo.mPbrTable.mAddress;
+        const S32 pbr_words[2] = { (S32)(U32)pbr_address, (S32)(U32)(pbr_address >> 32) };
+        program->setInts("ll_packet_pbr", pbr_words, 2);
     }
     if (!prepare_draw(vi, used_cache))
     {

@@ -412,6 +412,7 @@ public:
     static void pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials = nullptr, bool rigged = false);
     // S3 (doc/vulkan/S3-design.md): the entry a geometry record gets for one draw, with the textures as pointers: textures[0..3] the diffuse ones, [4] the normal map, [5] the specular map; the entry's
     // texture fields hold 1 + the index into textures (0 = none), its matrix is 0. False: the draw takes the old path (the same decision as the builder's). Kept in step with build_geometry by the verify mode.
+    static bool pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& entry);       // S5c: the arrays of a draw with a glTF blend material (textures and values: the caller)
     static bool geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false);
     // the builds of the geometry records start on the async pool at the top of renderGeomDeferred (the main thread draws its own things meanwhile), pushGeometryPackets takes them
     static void kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials = nullptr, bool rigged = false);
