@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llvieweroctree.h"
+#include "lloccensus.h"
 #include "llviewerregion.h"
 #include "pipeline.h"
 #include "llviewercontrol.h"
@@ -1109,20 +1110,39 @@ void LLOcclusionCullingGroup::checkOcclusion()
     if (LLPipeline::sUseOcclusion < 2) return;  // 0 - NoOcclusion, 1 = ReadOnly, 2 = ModifyOcclusionState  TODO: DJH 11-2021 ENUM this
 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_OCTREE;
+    LLOccCensus::Cam* census = LLOccCensus::cam(LLViewerCamera::sCurCameraID);      // <FS> H0 (LL_VK_OCC_CENSUS=1)
+    if (census)
+    {
+        ++census->mChkCalls;
+    }
     LLOcclusionCullingGroup* parent = (LLOcclusionCullingGroup*)getParent();
     if (parent && parent->isOcclusionState(LLOcclusionCullingGroup::OCCLUDED))
     {   //if the parent has been marked as occluded, the child is implicitly occluded
+        if (census)
+        {
+            ++census->mChkParentOccluded;
+        }
         clearOcclusionState(QUERY_PENDING | DISCARD_QUERY);
         return;
     }
 
     if (mOcclusionQuery[LLViewerCamera::sCurCameraID] && isOcclusionState(QUERY_PENDING))
     {
+        struct PendingLap       // <FS> H0: time of the pending branch
+        {
+            LLOccCensus::Cam* mC; U64 mT0;
+            explicit PendingLap(LLOccCensus::Cam* c) : mC(c), mT0(c ? LLOccCensus::now() : 0) { if (c) ++c->mChkPending; }
+            ~PendingLap() { if (mC) mC->mChkTicks += LLOccCensus::now() - mT0; }
+        } pending_lap(census);
         if (isOcclusionState(DISCARD_QUERY))
         {   // delete the query to avoid holding onto hundreds of pending queries
             releaseOcclusionQueryObjectName(mOcclusionQuery[LLViewerCamera::sCurCameraID]);
             mOcclusionQuery[LLViewerCamera::sCurCameraID] = 0;
             // mark non-occluded
+            if (census)
+            {
+                ++census->mChkDiscard;
+            }
             clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
             clearOcclusionState(QUERY_PENDING | DISCARD_QUERY);
         }
@@ -1136,6 +1156,25 @@ void LLOcclusionCullingGroup::checkOcclusion()
             }
 
             static LLCachedControl<U32> occlusion_timeout(gSavedSettings, "RenderOcclusionTimeout", 4);
+
+            if (census)
+            {
+                const int slot = LLOccCensus::age_slot((U32)gFrameCount, (U32)mOcclusionIssued[LLViewerCamera::sCurCameraID]);
+                if (available)
+                {
+                    ++census->mChkAvailable;
+                    ++census->mAge[slot];
+                }
+                else if (mOcclusionCheckCount[LLViewerCamera::sCurCameraID] > occlusion_timeout)
+                {
+                    ++census->mChkForced;
+                    ++census->mAgeForced[slot];
+                }
+                else
+                {
+                    ++census->mChkNotReady;
+                }
+            }
 
             if (available || mOcclusionCheckCount[LLViewerCamera::sCurCameraID] > occlusion_timeout)
             {
@@ -1151,6 +1190,10 @@ void LLOcclusionCullingGroup::checkOcclusion()
                 sPendingQueries.erase(mOcclusionQuery[LLViewerCamera::sCurCameraID]);
 #endif
 
+                if (census)
+                {
+                    ++(query_result > 0 ? census->mChkVisible : census->mChkOccluded);
+                }
                 if (query_result > 0)
                 {
                     clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
@@ -1191,8 +1234,18 @@ void LLOcclusionCullingGroup::doOcclusion(LLCamera* camera, const LLVector4a* sh
             OCCLUSION_FUDGE_Z = 1.;
         }
 
+        LLOccCensus::Cam* census = LLOccCensus::cam(LLViewerCamera::sCurCameraID);      // <FS> H0 (LL_VK_OCC_CENSUS=1)
+        if (census)
+        {
+            ++census->mDoCalls;
+            census->mDoVoCache += shift != NULL;
+        }
         if (earlyFail(camera, bounds))
         {
+            if (census)
+            {
+                ++census->mDoEarlyFail;
+            }
             LL_PROFILE_ZONE_NAMED_CATEGORY_OCTREE("doOcclusion - early fail");
             setOcclusionState(LLOcclusionCullingGroup::DISCARD_QUERY);
             assert_states_valid(this);
@@ -1201,8 +1254,18 @@ void LLOcclusionCullingGroup::doOcclusion(LLCamera* camera, const LLVector4a* sh
         }
         else
         {
+            if (census && isOcclusionState(QUERY_PENDING) && !isOcclusionState(DISCARD_QUERY))
+            {
+                ++census->mDoSkipPending;       // a query of this group is still in flight: no new one
+            }
             if (!isOcclusionState(QUERY_PENDING) || isOcclusionState(DISCARD_QUERY))
             {
+                if (census)
+                {
+                    ++census->mDoIssued;
+                    census->mDoDiscardReissue += isOcclusionState(QUERY_PENDING);
+                    census->mDoWater += mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_WATER || mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_VOIDWATER;
+                }
                 { //no query pending, or previous query to be discarded
                     LL_PROFILE_ZONE_NAMED_CATEGORY_OCTREE("doOcclusion - render");
 
@@ -1292,6 +1355,63 @@ void LLOcclusionCullingGroup::doOcclusion(LLCamera* camera, const LLVector4a* sh
             }
         }
     }
+}
+// <FS> H0 (doc/vulkan/S7-design.md): the per frame numbers of the occlusion queries, one log line per camera that did anything (LL_VK_OCC_CENSUS=1)
+void LLOccCensus::report()
+{
+    using namespace LLOccCensus;
+    LARGE_INTEGER qf, qn;
+    QueryPerformanceFrequency(&qf);
+    QueryPerformanceCounter(&qn);
+    const U64 tsc = __rdtsc();
+    const double window_qpc = (double)std::max<long long>(1, qn.QuadPart - sQpc0);
+    const double ms_per_tick = 1000.0 * window_qpc / (double)qf.QuadPart / (double)std::max<U64>(1, tsc - sTsc0);
+    const double frames = (double)std::max<U64>(1, sFrames);
+    LL_INFOS("OccCensus") << "H0 window: " << sFrames << " world passes, " << window_qpc * 1000.0 / (double)qf.QuadPart / frames << " ms wall each; time of the probe occlusion "
+        << (double)sTicksProbes * ms_per_tick / frames << " ms, processOccluders " << (double)sTicksCache * ms_per_tick / frames << " ms (" << (double)sCachePasses / frames << " calls with groups)"
+        << "; probe queries per frame: calls " << (double)sProbeCalls / frames << ", eye inside " << (double)sProbeInside / frames << ", first query " << (double)sProbeNew / frames
+        << ", result read " << (double)sProbeReady / frames << " (visible " << (double)sProbeVisible / frames << ", occluded " << (double)sProbeOccluded / frames << "), still pending " << (double)sProbePending / frames
+        << ", cube draws " << (double)sProbeIssued / frames << LL_ENDL;
+    static const char* const names[CAMS] = { "world", "cam1", "cam2", "cam3", "cam4", "cam5", "cam6", "cam7" };
+    for (int i = 0; i < CAMS; ++i)
+    {
+        const Cam& c = sCam[i];
+        if (!c.mDoCalls && !c.mChkCalls && !c.mCullEarlyFail && !c.mSortGroups && !sPasses[i])
+        {
+            continue;
+        }
+        std::string ages, ages_forced;
+        for (int a = 0; a < AGES; ++a)
+        {
+            ages += llformat("%s%.1f", a ? " " : "", (double)c.mAge[a] / frames);
+            ages_forced += llformat("%s%.1f", a ? " " : "", (double)c.mAgeForced[a] / frames);
+        }
+        const double reads = (double)(c.mChkVisible + c.mChkOccluded);
+        LL_INFOS("OccCensus") << "camera " << i << " (" << names[i] << ") per frame: doOcclusion passes " << (double)sPasses[i] / frames << ", list " << (double)sListGroups[i] / frames << " groups ("
+            << (double)sListDead[i] / frames << " dead, " << (double)sListOccluded[i] / frames << " OCCLUDED already), time of the pass " << (double)sTicksPass[i] * ms_per_tick / frames << " ms of which the group loop "
+            << (double)sTicksGroups[i] * ms_per_tick / frames << " ms"
+            << " | group->doOcclusion: calls " << (double)c.mDoCalls / frames << " (object cache " << (double)c.mDoVoCache / frames << "), early fail " << (double)c.mDoEarlyFail / frames << ", kept the pending query "
+            << (double)c.mDoSkipPending / frames << ", issued (cube draws + begin/end) " << (double)c.mDoIssued / frames << " (replacing a pending one " << (double)c.mDoDiscardReissue / frames << ", water "
+            << (double)c.mDoWater / frames << ")"
+            << " | checkOcclusion: calls " << (double)c.mChkCalls / frames << ", parent occluded " << (double)c.mChkParentOccluded / frames << ", pending branch " << (double)c.mChkPending / frames << " ("
+            << (double)c.mChkTicks * ms_per_tick / frames << " ms), discard " << (double)c.mChkDiscard / frames << ", ready " << (double)c.mChkAvailable / frames << ", forced by the timeout "
+            << (double)c.mChkForced / frames << ", not ready yet " << (double)c.mChkNotReady / frames << ", results: visible " << (double)c.mChkVisible / frames << ", OCCLUDED " << (double)c.mChkOccluded / frames
+            << " (" << (reads > 0 ? 100.0 * (double)c.mChkOccluded / reads : 0.0) << " % of the results)"
+            << " | age of a ready result in frames (0 1 2 3 4 5 6 7+): " << ages << "; forced reads by age: " << ages_forced
+            << " | cull earlyFail calls " << (double)c.mCullEarlyFail / frames << ", groups dropped as OCCLUDED " << (double)c.mCullDropped / frames
+            << " | stateSort groups " << (double)c.mSortGroups / frames << ", OCCLUDED " << (double)c.mSortOccluded / frames << " (elements " << (double)c.mSortOccludedElems / frames << " of "
+            << (double)c.mSortElems / frames << ")" << LL_ENDL;
+    }
+    for (int i = 0; i < CAMS; ++i)
+    {
+        sCam[i] = Cam();
+        sPasses[i] = sListGroups[i] = sListDead[i] = sListOccluded[i] = sTicksPass[i] = sTicksGroups[i] = 0;
+    }
+    sTicksProbes = sTicksCache = sCachePasses = 0;
+    sProbeCalls = sProbeInside = sProbeNew = sProbeReady = sProbePending = sProbeVisible = sProbeOccluded = sProbeIssued = 0;
+    sFrames = 0;
+    sQpc0 = qn.QuadPart;
+    sTsc0 = tsc;
 }
 //-------------------------------------------------------------------------------------------
 //end of occulsion culling functions and classes

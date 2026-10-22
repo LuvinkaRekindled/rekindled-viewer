@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llgpuzonetimer.h"
+#include "lloccensus.h"
 #include "llasyncpool.h"
 
 #include "llspatialpartition.h"
@@ -1096,6 +1097,11 @@ public:
         {
             group->checkOcclusion();
         }
+        LLOccCensus::Cam* census = LLOccCensus::cam(LLViewerCamera::sCurCameraID);      // <FS> H0 (LL_VK_OCC_CENSUS=1)
+        if (census)
+        {
+            ++census->mCullEarlyFail;
+        }
 
         // <FS> the cheap tests first: the group's own occlusion state before the walk to the octree node and its parent (cache misses)
         if (LLPipeline::sUseOcclusion &&            //ignore occlusion if disabled
@@ -1103,6 +1109,10 @@ public:
             group->getOctreeNode() &&
             group->getOctreeNode()->getParent())    //never occlusion cull the root node
         {
+            if (census)
+            {
+                ++census->mCullDropped;
+            }
             gPipeline.markOccluder(group);
             return true;
         }

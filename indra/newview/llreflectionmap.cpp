@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llreflectionmap.h"
+#include "lloccensus.h"
 #include "pipeline.h"
 #include "llviewerwindow.h"
 #include "llviewerregion.h"
@@ -362,8 +363,16 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
 
     bool do_query = false;
 
+    if (LLOccCensus::sOn)
+    {
+        ++LLOccCensus::sProbeCalls;     // <FS> H0
+    }
     if (o.getLength3().getF32() < dist)
     { // eye is inside radius, don't attempt to occlude
+        if (LLOccCensus::sOn)
+        {
+            ++LLOccCensus::sProbeInside;
+        }
         mOccluded = false;
         return;
     }
@@ -373,6 +382,10 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rmdo - glGenQueries");
         mOcclusionQuery = gPipeline.mReflectionMapManager.allocateQuery();
         do_query = true;
+        if (LLOccCensus::sOn)
+        {
+            ++LLOccCensus::sProbeNew;
+        }
     }
     else
     { // query was previously issued, check it and only issue a new query
@@ -384,15 +397,28 @@ void LLReflectionMap::doOcclusion(const LLVector4a& eye)
             const U64 result = gRender.queryResult(mOcclusionQuery);
             mOccluded = result == 0;
             mOcclusionPendingFrames = 0;
+            if (LLOccCensus::sOn)
+            {
+                ++LLOccCensus::sProbeReady;
+                ++(mOccluded ? LLOccCensus::sProbeOccluded : LLOccCensus::sProbeVisible);
+            }
         }
         else
         {
             mOcclusionPendingFrames++;
+            if (LLOccCensus::sOn)
+            {
+                ++LLOccCensus::sProbePending;
+            }
         }
     }
 
     if (do_query)
     {
+        if (LLOccCensus::sOn)
+        {
+            ++LLOccCensus::sProbeIssued;
+        }
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rmdo - push query");
         gRender.beginQuery(LLRender::QUERY_ANY_SAMPLES, mOcclusionQuery);
 
