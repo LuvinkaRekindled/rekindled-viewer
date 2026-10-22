@@ -228,13 +228,50 @@ public:
     static std::string stampTagName(U32 tag);
     void gpuStamp(U32 tag);
     void drawCheckpoint(U32 tag);
+    void checkpointOnly(U32 tag);       // an NV checkpoint named by a stamp tag, without a timestamp (work that is not a pass: uploads, copies)
     void serialCheckpoint(U64 serial);  // a checkpoint named by a draw's serial number (bit 62 set): see Renderer::noteDraw
     void setDrawDescriber(std::function<std::string(U64)> fn) { mDrawDescriber = std::move(fn); }
     std::function<std::string(U64)> mDrawDescriber;
     // images destroyed lately (view id, frame number): the bindless audit at a device loss names the slots that still point at one of them
     void noteDestroyedView(U64 view_id);
+    U64 destroyedViewCount() const { return mDestroyedCount.load(); }                                  // views destroyed so far (a sequence number)
+    U64 destroyedViewIdAt(U64 seq) const { return mDestroyedIds[seq % DESTROYED_RING]; }                // the view destroyed as number seq (valid for the last DESTROYED_RING)
+    static constexpr size_t destroyedRing() { return DESTROYED_RING; }
     bool destroyedViewFrame(U64 view_id, U64& frame) const;
     void setBindlessAudit(std::function<std::string()> fn) { mBindlessAudit = std::move(fn); }
+    // S4: after a device lost, what an address that is in no arena block belongs to (scratch rings, overflow chunks, the scene tables): each describer returns "" when the address is not its own
+    void addAddressDescriber(std::function<std::string(unsigned long long)> fn) { mAddressDescribers.push_back(std::move(fn)); }
+    std::vector<std::function<std::string(unsigned long long)>> mAddressDescribers;
+    // S4: the dedicated (non arena) buffers with a device address, alive and recently destroyed: after a device lost, a fault address in one of them says which (size, usage, memory, created and destroyed frame)
+    struct DedicatedBuffer { unsigned long long mAddress, mSize; unsigned mUsage, mMemory; unsigned long long mCreated, mDestroyed; bool mAlive; };
+    std::mutex mDedicatedMutex;
+    std::mutex mDeferredNextMutex;
+    std::vector<std::function<void()>> mDeferredNext;      // given up while no frame is being recorded: goes with the next frame (see destroyLater)
+    std::vector<DedicatedBuffer> mDedicated;
+    std::string describeDedicated(unsigned long long at);
+
+    // S4: the flight recorder. A fixed ring of the last events of the GPU side (arena ranges, buffers, writes, flushes, the scene table's prepare / draw, palette segments, frames, snapshot
+    // boundaries, ray scene notes), written with a few stores (no lock, no allocation), dumped to the log when a frame is stuck or the device is lost.
+    enum FlightKind : unsigned
+    {
+        FL_ARENA_ALLOC = 1, FL_ARENA_FREE_REQ, FL_ARENA_FREE_DONE, FL_BUF_CREATE, FL_BUF_DESTROY, FL_BUF_WRITE, FL_BUF_RENAME, FL_FLUSH, FL_GEO_PREPARE, FL_GEO_CMDS, FL_GEO_DRAW,
+        FL_GEO_RETAIN, FL_GEO_RELEASE, FL_GEO_BUF, FL_PAL_SEG, FL_FRAME_BEGIN, FL_FRAME_SUBMIT, FL_SNAPSHOT, FL_RT_NOTE, FL_RT_SCENE, FL_MISC, FL_KINDS
+    };
+    struct FlightEvent { unsigned long long mFrame; unsigned mKind, mThread; unsigned long long a, b, c, d; };
+    static constexpr size_t FLIGHT_EVENTS = 16384;
+    FlightEvent mFlight[FLIGHT_EVENTS] = {};
+    std::atomic<unsigned long long> mFlightNext{ 0 };
+    void flight(unsigned kind, unsigned long long a = 0, unsigned long long b = 0, unsigned long long c = 0, unsigned long long d = 0)
+    {
+        const unsigned long long i = mFlightNext.fetch_add(1, std::memory_order_relaxed);
+        FlightEvent& e = mFlight[i & (FLIGHT_EVENTS - 1)];
+        e.mFrame = (unsigned long long)mFrameNumber;
+        e.mKind = kind;
+        e.mThread = flightThread();
+        e.a = a; e.b = b; e.c = c; e.d = d;
+    }
+    static unsigned flightThread();
+    void dumpFlight(unsigned count, const char* why);
     std::string describeBinding(U64 handle, bool buffer = false) const;      // LL_VK_ADDR_LOG: where the memory of an image (VkImage handle) is
     void setSlotDescriber(std::function<std::string(U32)> fn) { mSlotDescriber = std::move(fn); }
     std::function<std::string(U32)> mSlotDescriber;
@@ -281,6 +318,7 @@ public:
     bool inFrame() const { return mInFrame; }
 
     // Upload memory that lives until this frame's GPU work completes
+    bool isStagingBuffer(VkBuffer buffer) const;        // a block of some frame slot's staging (a copy that names anything else as its source reads memory that is gone)
     StagingAlloc allocStaging(VkDeviceSize size, VkDeviceSize alignment = 16);
 
     // Run f after the GPU has finished every frame submitted so far (safe place to destroy resources)
@@ -333,6 +371,7 @@ private:
         bool mOffscreen = false;                // the off-screen frame the mirror opens after the present (not the frame that is presented)
         std::vector<U32> mStampTags;            // what each per-pass timestamp stands for (see Context::stampTag)
         std::vector<std::function<void()>> mDeferred;
+        std::vector<std::function<void()>> mDeferredLate;      // what mDeferred held one round of this slot ago: destroyed one more round later (a copy flushed into a later frame can still read what was given up)
         std::vector<Buffer> mStagingBlocks;     // blocks used this frame (the first is kept for reuse)
         VkDeviceSize mStagingUsed = 0;
     };

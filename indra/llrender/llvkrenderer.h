@@ -532,6 +532,9 @@ private:
     void bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want, U64 want_id);
     void bindlessSyncPins(BindlessTable& tbl);
     void bindlessSweep(U64 min_idle_frames);
+    void bindlessRetireDestroyed();                 // slots that hold the view of a destroyed image get the stand-in (whoever still names the slot: pins, table rows, ray records)
+    U64 mDestroyedSeen = 0;
+    U64 mRetiredSlots = 0, mRetiredPinned = 0;
     BindlessTable mBindlessTbl[BINDLESS_TABLES];
     U32 mBindlessCap[BINDLESS_TABLES] = {};         // slots per table: the 2D table is the big one
 public:

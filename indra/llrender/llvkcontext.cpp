@@ -183,7 +183,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
     return VK_FALSE;
 }
 
-// LL_VK_ADDR_LOG=1: VK_EXT_device_address_binding_report. Every bind / unbind of GPU memory to a buffer, image or acceleration structure goes into a ring, so the
+// LL_VK_ADDR_LOG (on; =0 turns it off): VK_EXT_device_address_binding_report. Every bind / unbind of GPU memory to a buffer, image or acceleration structure goes into a ring, so the
 // address of a device fault can be traced to the resource that held it and the frame it was given up in (the report lists them)
 struct AddrEvent
 {
@@ -200,6 +200,14 @@ std::mutex sAddrMutex;
 std::vector<AddrEvent> sAddrRing;
 U64 sAddrCount = 0;
 const size_t ADDR_RING = 1u << 20;
+// on unless LL_VK_ADDR_LOG=0: the ring costs a few microseconds per memory bind and is what names the owner of a stale address after a device lost
+static bool addr_log_wanted()
+{
+    char v[8] = {};
+    const DWORD n = GetEnvironmentVariableA("LL_VK_ADDR_LOG", v, sizeof(v));
+    return !(n > 0 && v[0] == '0');
+}
+
 
 U64 addr_micros()
 {
@@ -366,9 +374,14 @@ VkImageAspectFlags aspectForFormat(VkFormat format)
 
 size_t Context::pendingDestroys() const
 {
+    size_t pending_next = 0;
+    {
+        std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mDeferredNextMutex));
+        pending_next = mDeferredNext.size();
+    }
     size_t n = 0;
-    for (const Frame& f : mFrames) n += f.mDeferred.size();
-    return n;
+    for (const Frame& f : mFrames) n += f.mDeferred.size() + f.mDeferredLate.size();
+    return n + pending_next;
 }
 
 U64 Context::deviceLocalBytes() const
@@ -518,7 +531,7 @@ bool Context::createInstance()
         }
     }
     const bool want_validation = GetEnvironmentVariableA("LL_VK_VALIDATION", nullptr, 0) > 0;
-    const bool want_addr_log = GetEnvironmentVariableA("LL_VK_ADDR_LOG", nullptr, 0) > 0;
+    const bool want_addr_log = addr_log_wanted();
     const bool debug_utils = (want_validation || want_addr_log) && has_extension(available, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     if (debug_utils)
     {
@@ -871,7 +884,7 @@ bool Context::createDevice()
         device_extensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
     }
     VkPhysicalDeviceAddressBindingReportFeaturesEXT addr_features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ADDRESS_BINDING_REPORT_FEATURES_EXT };
-    if (GetEnvironmentVariableA("LL_VK_ADDR_LOG", nullptr, 0) > 0)
+    if (addr_log_wanted())
     {
         U32 n = 0;
         vkEnumerateDeviceExtensionProperties(mPhysical, nullptr, &n, nullptr);
@@ -1037,6 +1050,11 @@ bool Context::init(HWND present_window)
 
 void Context::destroyFrameResources(Frame& f)
 {
+    for (auto& fn : f.mDeferredLate)
+    {
+        fn();
+    }
+    f.mDeferredLate.clear();
     for (auto& fn : f.mDeferred)
     {
         fn();
@@ -1063,6 +1081,17 @@ void Context::shutdown()
     {
         vkDeviceWaitIdle(mDevice);
         LLVkDlss::shutdown();
+        {
+            std::vector<std::function<void()>> leftovers;
+            {
+                std::lock_guard<std::mutex> lock(mDeferredNextMutex);
+                leftovers.swap(mDeferredNext);
+            }
+            for (auto& fn : leftovers)
+            {
+                fn();
+            }
+        }
         for (Frame& f : mFrames)
         {
             destroyFrameResources(f);
@@ -1229,7 +1258,7 @@ void Context::reportAddressHistory(const std::vector<VkDeviceFaultAddressInfoEXT
             }
         }
         LL_WARNS("Vulkan") << "  fault page 0x" << std::hex << lo << std::dec << ": " << touched.size() << " events touched it" << LL_ENDL;
-        for (size_t k = touched.size() > 24 ? touched.size() - 24 : 0; k < touched.size(); ++k)
+        for (size_t k = touched.size() > 200 ? touched.size() - 200 : 0; k < touched.size(); ++k)
         {
             const AddrEvent& e = touched[k];
             LL_WARNS("Vulkan") << "    " << (e.mBind ? "BIND  " : "UNBIND") << " " << addr_object_name(e.mObjectType) << (e.mInternal ? " (internal)" : "") << " handle 0x" << std::hex << e.mHandle
@@ -1320,8 +1349,54 @@ void Context::reportAddressHistory(const std::vector<VkDeviceFaultAddressInfoEXT
     }
 }
 
+unsigned Context::flightThread()
+{
+    return (unsigned)GetCurrentThreadId() & 0xFFFFu;
+}
+
+void Context::dumpFlight(unsigned count, const char* why)
+{
+    static const char* const names[FL_KINDS] = { "?", "arena alloc", "arena free req", "arena free done", "buf create", "buf destroy", "buf write", "buf rename", "flush", "geo prepare", "geo cmds", "geo draw",
+        "geo retain", "geo release", "geo buf event", "palette segment", "frame begin", "frame submit", "snapshot", "rt note", "rt scene", "misc" };
+    const unsigned long long next = mFlightNext.load();
+    const unsigned long long have = std::min<unsigned long long>(next, FLIGHT_EVENTS);
+    const unsigned long long n = std::min<unsigned long long>(count, have);
+    LL_WARNS("Vulkan") << "flight recorder (" << why << "): the last " << n << " of " << next << " events, oldest first; fields: [frame thread kind a b c d] in hex" << LL_ENDL;
+    std::string line;
+    unsigned per_line = 0;
+    for (unsigned long long k = next - n; k < next; ++k)
+    {
+        const FlightEvent& e = mFlight[k & (FLIGHT_EVENTS - 1)];
+        char buf[220];
+        snprintf(buf, sizeof(buf), "[%llu t%x %s %llx %llx %llx %llx] ", e.mFrame, e.mThread, e.mKind < FL_KINDS ? names[e.mKind] : "?", e.a, e.b, e.c, e.d);
+        line += buf;
+        if (++per_line == 4)
+        {
+            LL_WARNS("Vulkan") << line << LL_ENDL;
+            line.clear();
+            per_line = 0;
+        }
+    }
+    if (!line.empty())
+    {
+        LL_WARNS("Vulkan") << line << LL_ENDL;
+    }
+}
+
 void Context::reportCheckpoints(const char* when)
 {
+    {
+        static bool dumped_stuck = false;
+        if (strcmp(when, "device lost") == 0)
+        {
+            dumpFlight(1500, when);
+        }
+        else if (!dumped_stuck)
+        {
+            dumped_stuck = true;
+            dumpFlight(700, when);
+        }
+    }
     {
         U64 used = 0, budget = 0;
         if (videoMemory(used, budget))
@@ -1362,6 +1437,10 @@ void Context::reportCheckpoints(const char* when)
                     for (const auto& a : addresses)
                     {
                         const unsigned long long at = (unsigned long long)a.reportedAddress;
+                        if ((int)a.addressType >= 4)
+                        {
+                            continue;       // an instruction pointer (shader code), not data
+                        }
                         bool found = false;
                         for (size_t k = 0; lock.owns_lock() && k < mArenaBlocks.size(); ++k)
                         {
@@ -1375,6 +1454,21 @@ void Context::reportCheckpoints(const char* when)
                         if (!found)
                         {
                             LL_WARNS("Vulkan") << "  address 0x" << std::hex << at << std::dec << " is in no arena block" << (lock.owns_lock() ? "" : " (arena busy: not checked)") << LL_ENDL;
+                            {
+                                const std::string dedicated = describeDedicated(at);
+                                if (!dedicated.empty())
+                                {
+                                    LL_WARNS("Vulkan") << "    which is " << dedicated << LL_ENDL;
+                                }
+                            }
+                            for (const auto& describer : mAddressDescribers)
+                            {
+                                const std::string what = describer ? describer(at) : std::string();
+                                if (!what.empty())
+                                {
+                                    LL_WARNS("Vulkan") << "    which is " << what << LL_ENDL;
+                                }
+                            }
                         }
                     }
                     for (size_t k = 0; lock.owns_lock() && k < mArenaBlocks.size(); ++k)
@@ -1715,12 +1809,27 @@ VkCommandBuffer Context::beginFrame(bool wait)
     f.mOffscreen = mNextOffscreen;
     mNextOffscreen = false;
 
-    // everything queued while this slot was last current is now safe to destroy
-    for (auto& fn : f.mDeferred)
+    // What was queued two rounds of this slot ago is destroyed now; what was queued last round waits one more (the frame it was queued in has completed, but a copy or a draw that names it can have
+    // been recorded into one of the frames after it: pending writes are flushed late, a rename's copy goes into whichever frame is recording when the buffers are flushed).
     {
-        fn();
+        std::vector<std::function<void()>> due;
+        due.swap(f.mDeferredLate);
+        for (auto& fn : due)
+        {
+            fn();
+        }
     }
+    f.mDeferredLate.swap(f.mDeferred);
     f.mDeferred.clear();
+    {
+        // what was given up since the last frame ended goes with this frame: destroyed when this slot comes round again
+        std::lock_guard<std::mutex> lock(mDeferredNextMutex);
+        for (auto& fn : mDeferredNext)
+        {
+            f.mDeferred.push_back(std::move(fn));
+        }
+        mDeferredNext.clear();
+    }
 
     // keep the first staging block, free any extras that were needed
     for (size_t i = 1; i < f.mStagingBlocks.size(); ++i)
@@ -1744,7 +1853,19 @@ VkCommandBuffer Context::beginFrame(bool wait)
         vkCmdWriteTimestamp2(f.mCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, f.mTsPool, 0);
     }
     mInFrame = true;
+    {
+        static const U32 start_tag = stampTag("frame start");
+        gpuStamp(start_tag);            // (the first stamp of the frame: a hang reported with no stamp reached is before this)
+    }
     return f.mCmd;
+}
+
+void Context::checkpointOnly(U32 tag)
+{
+    if (mInFrame && mCaps.mCheckpoints && vkCmdSetCheckpointNV)
+    {
+        vkCmdSetCheckpointNV(mFrames[mFrameSlot].mCmd, (const void*)(uintptr_t)((tag & ~STAMP_DRAW) + 1));
+    }
 }
 
 void Context::endFrame(VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
@@ -1776,6 +1897,7 @@ void Context::endFrame(VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
     si.signalSemaphoreInfoCount = signal_semaphore != VK_NULL_HANDLE ? 1 : 0;
     si.pSignalSemaphoreInfos = &signal;
     vk_ok(vkQueueSubmit2(mQueue, 1, &si, f.mFence), "vkQueueSubmit2");
+    flight(FL_FRAME_SUBMIT, (unsigned long long)mFrameSlot, (unsigned long long)mFrameNumber, (unsigned long long)(uintptr_t)f.mCmd);
 
     mInFrame = false;
     mFrameSlot = (mFrameSlot + 1) % frameCount();
@@ -1834,6 +1956,21 @@ bool Context::frameFinished(U64 n)
     return vkGetFenceStatus(mDevice, mFrames[n % frameCount()].mFence) == VK_SUCCESS;
 }
 
+bool Context::isStagingBuffer(VkBuffer buffer) const
+{
+    for (const Frame& f : mFrames)
+    {
+        for (const Buffer& b : f.mStagingBlocks)
+        {
+            if (b.mBuffer == buffer)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 StagingAlloc Context::allocStaging(VkDeviceSize size, VkDeviceSize alignment)
 {
     Frame& f = mFrames[mFrameSlot];
@@ -1864,6 +2001,7 @@ StagingAlloc Context::allocStaging(VkDeviceSize size, VkDeviceSize alignment)
     }
 
     Buffer& block = f.mStagingBlocks.back();
+    flight(FL_MISC, 3ull, (unsigned long long)mFrameSlot, (unsigned long long)(uintptr_t)block.mBuffer, ((unsigned long long)f.mStagingBlocks.size() << 48) | (unsigned long long)size);
     VkDeviceSize start = (f.mStagingUsed + alignment - 1) / alignment * alignment;
     f.mStagingUsed = start + size;
 
@@ -1874,10 +2012,19 @@ StagingAlloc Context::allocStaging(VkDeviceSize size, VkDeviceSize alignment)
     return a;
 }
 
+// A thing given up while a frame is being recorded is safe to destroy when that frame has completed. A thing given up BETWEEN frames (the worker handles buffer writes, renames and deletes there) is
+// also named by the commands the next frame will record (a pending copy from the range a rename left, the table rows of a buffer that went): it was attached to the frame that had just ended,
+// and was destroyed when that slot came round again, while the frame after it could still be on the GPU (a snapshot's frames follow each other without a pause, and the GPU runs two behind).
+// Now it waits for the next frame to be recorded and goes with that one.
 void Context::destroyLater(std::function<void()> fn)
 {
-    const U32 slot = mInFrame ? mFrameSlot : (mFrameSlot + frameCount() - 1) % frameCount();
-    mFrames[slot].mDeferred.push_back(std::move(fn));
+    if (mInFrame)
+    {
+        mFrames[mFrameSlot].mDeferred.push_back(std::move(fn));
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mDeferredNextMutex);
+    mDeferredNext.push_back(std::move(fn));
 }
 
 bool Context::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory memory, Buffer& out)
@@ -1928,6 +2075,12 @@ bool Context::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory m
         VkBufferDeviceAddressInfo address_info = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
         address_info.buffer = out.mBuffer;
         out.mAddress = vkGetBufferDeviceAddress(mDevice, &address_info);
+        if (out.mAddress)
+        {
+            std::lock_guard<std::mutex> lock(mDedicatedMutex);
+            mDedicated.push_back({ (unsigned long long)out.mAddress, (unsigned long long)size, (unsigned)usage, (unsigned)memory, (unsigned long long)mFrameNumber, 0ull, true });
+            flight(FL_BUF_CREATE, (unsigned long long)out.mAddress, (unsigned long long)size, (unsigned long long)usage, (unsigned long long)memory);
+        }
     }
     if (memory == Memory::UploadDevice)
     {
@@ -1953,8 +2106,60 @@ void Context::destroyBuffer(Buffer& buffer)
     VkBuffer b = buffer.mBuffer;
     VmaAllocation a = buffer.mAllocation;
     VmaAllocator alloc = mAllocator;
+    if (buffer.mAddress)
+    {
+        flight(FL_BUF_DESTROY, (unsigned long long)buffer.mAddress, (unsigned long long)buffer.mSize);
+        std::lock_guard<std::mutex> lock(mDedicatedMutex);
+        for (size_t k = mDedicated.size(); k-- > 0; )
+        {
+            if (mDedicated[k].mAlive && mDedicated[k].mAddress == (unsigned long long)buffer.mAddress)
+            {
+                mDedicated[k].mAlive = false;
+                mDedicated[k].mDestroyed = (unsigned long long)mFrameNumber;
+                break;
+            }
+        }
+        if (mDedicated.size() > 6000)
+        {
+            size_t dead = 0;
+            for (const DedicatedBuffer& d : mDedicated) { dead += d.mAlive ? 0 : 1; }
+            if (dead > 1000)
+            {
+                size_t drop = dead - 600;         // the oldest destroyed ones go
+                std::vector<DedicatedBuffer> keep;
+                keep.reserve(mDedicated.size());
+                for (const DedicatedBuffer& d : mDedicated)
+                {
+                    if (!d.mAlive && drop) { --drop; continue; }
+                    keep.push_back(d);
+                }
+                mDedicated.swap(keep);
+            }
+        }
+    }
     destroyLater([=]() { vmaDestroyBuffer(alloc, b, a); });
     buffer = Buffer();
+}
+
+std::string Context::describeDedicated(unsigned long long at)
+{
+    std::unique_lock<std::mutex> lock(mDedicatedMutex, std::try_to_lock);
+    if (!lock.owns_lock())
+    {
+        return std::string();
+    }
+    std::string out;
+    for (size_t k = mDedicated.size(); k-- > 0; )
+    {
+        const DedicatedBuffer& d = mDedicated[k];
+        if (at + 0x40000 >= d.mAddress && at < d.mAddress + d.mSize + 0x40000)
+        {
+            out += std::string(out.empty() ? "" : "; ") + (d.mAlive ? "dedicated buffer ALIVE" : "dedicated buffer DESTROYED at frame " + std::to_string(d.mDestroyed)) + ": " + std::to_string(d.mSize) + " bytes at 0x"
+                + [&]() { char b[24]; snprintf(b, sizeof(b), "%llx", d.mAddress); return std::string(b); }() + ", offset " + std::to_string((long long)(at - d.mAddress)) + (at >= d.mAddress + d.mSize ? " (PAST THE END)" : "")
+                + ", usage 0x" + [&]() { char b[16]; snprintf(b, sizeof(b), "%x", d.mUsage); return std::string(b); }() + ", memory " + std::to_string(d.mMemory) + ", created at frame " + std::to_string(d.mCreated);
+        }
+    }
+    return out;
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -2053,6 +2258,7 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
         mArenaBlocks.push_back(block);
     }
     ++mArenaCounters.mBlocksCreated;
+    flight(FL_MISC, 1ull, (unsigned long long)block->mAddress, (unsigned long long)block->mSize, ((unsigned long long)(accel ? 1 : 0) << 2) | ((unsigned long long)(host ? 1 : 0) << 1) | (dedicated ? 1ull : 0ull));
     if (host)
     {
         VkMemoryPropertyFlags flags = 0;
@@ -2070,6 +2276,7 @@ void Context::arenaDestroyBlock(ArenaBlock* block)
     {
         if (slot == block) slot = nullptr;
     }
+    flight(FL_MISC, 2ull, (unsigned long long)block->mAddress, (unsigned long long)block->mSize, ((unsigned long long)(block->mAccel ? 1 : 0) << 2) | ((unsigned long long)(block->mHost ? 1 : 0) << 1) | (block->mDedicated ? 1ull : 0ull));
     vmaDestroyVirtualBlock(block->mVirtual);
     vmaDestroyBuffer(mAllocator, block->mBuffer, block->mAllocation);
     ++mArenaCounters.mBlocksReleased;
@@ -2108,6 +2315,7 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
         out.mAddress = b->mAddress ? b->mAddress + offset : 0;
         out.mMapped = b->mMapped ? (U8*)b->mMapped + offset : nullptr;
         out.mAlloc = alloc;
+        flight(FL_ARENA_ALLOC, (unsigned long long)out.mAddress, (unsigned long long)size, ((unsigned long long)kind << 32) | (unsigned long long)offset, (unsigned long long)alignment);
         for (size_t i = 0; i < mArenaBlocks.size(); ++i)
         {
             if (mArenaBlocks[i] == b) { out.mBlock = (U32)i; break; }
@@ -2135,6 +2343,7 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
 
 void Context::arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc)
 {
+    flight(FL_ARENA_FREE_DONE, (unsigned long long)(uintptr_t)block, (unsigned long long)(uintptr_t)alloc, block ? (unsigned long long)block->mAddress : 0ull);
     std::lock_guard<std::mutex> lock(mArenaMutex);
     vmaVirtualFree(block->mVirtual, alloc);
     if (--block->mAllocs != 0)
@@ -2163,6 +2372,7 @@ void Context::arenaFree(ArenaRef& ref)
     {
         return;
     }
+    flight(FL_ARENA_FREE_REQ, (unsigned long long)ref.mAddress, (unsigned long long)ref.mSize, (unsigned long long)ref.mBlock, (unsigned long long)ref.mOffset);
     ArenaBlock* block = nullptr;
     {
         std::lock_guard<std::mutex> lock(mArenaMutex);

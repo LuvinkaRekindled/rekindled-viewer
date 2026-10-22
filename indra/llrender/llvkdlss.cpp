@@ -17,6 +17,9 @@
 #endif
 
 #include <atomic>
+#include <vector>
+#include <mutex>
+#include <algorithm>
 #include <cmath>
 #include <deque>
 #include <string>
@@ -146,14 +149,113 @@ bool ok(NVSDK_NGX_Result r, const char* what)
     return true;
 }
 
+// Features. A snapshot renders at three or four sizes within a few seconds (the preview, the window, the hi-res image, back to the window): a feature per size is created, and the big ones
+// (the 4097x2178 output) cost most of a gigabyte each. Releasing a feature the moment the size changes put the creation (and a wait for the GPU) into every switch; releasing late kept half a dozen
+// of them alive at once, and the video memory went over the budget (2026-10-21: 14.4 GB of 12.8, the machine locked up). So: the feature of the size in use, plus up to two of other sizes kept
+// for when the size comes back; anything pushed out is released as soon as the frame that last used it has completed (a snapshot records several sizes into one frame: the first size's
+// evaluate is still ahead of the GPU when the feature for the second is created).
+struct ParkedFeature { U32 mKey[6]; NVSDK_NGX_Handle* mHandle; U64 mLastFrame; };
+std::vector<ParkedFeature> gParked;                 // other sizes, kept
+std::vector<std::pair<NVSDK_NGX_Handle*, U64>> gRetired;     // pushed out: released when the frame (second) has completed
+U64 gFeatureFrame = 0;                              // the frame the current feature last evaluated in
+const size_t PARKED_MAX = 3;                        // a snapshot cycles through four sizes (the window, the preview, its upscale, the hi-res image): all of them stay for the burst
+const U64 PARKED_IDLE_FRAMES = 360;                 // ... and a parked feature that has not been used for this long (the snapshot is over) is given back
+
+void reap_retired()
+{
+    Context& ctx = Context::instance();
+    const U64 frame_now = ctx.getFrameNumber();
+    for (size_t i = 0; i < gParked.size(); )
+    {
+        if (frame_now > gParked[i].mLastFrame + PARKED_IDLE_FRAMES)
+        {
+            gRetired.emplace_back(gParked[i].mHandle, gParked[i].mLastFrame);
+            gParked.erase(gParked.begin() + i);
+        }
+        else
+        {
+            ++i;
+        }
+    }
+    if (gRetired.empty())
+    {
+        return;
+    }
+    for (size_t i = 0; i < gRetired.size(); )
+    {
+        if (ctx.frameFinished(gRetired[i].second))
+        {
+            NVSDK_NGX_VULKAN_ReleaseFeature(gRetired[i].first);
+            gRetired.erase(gRetired.begin() + i);
+        }
+        else
+        {
+            ++i;
+        }
+    }
+}
+
+// the feature in use goes to the parked ones (the oldest parked one is retired when there are too many)
+void park_feature()
+{
+    if (!gFeature)
+    {
+        return;
+    }
+    ParkedFeature pf;
+    memcpy(pf.mKey, gFeatureKey, sizeof(pf.mKey));
+    pf.mHandle = gFeature;
+    pf.mLastFrame = gFeatureFrame;
+    gParked.push_back(pf);
+    gFeature = nullptr;
+    for (U32& k : gFeatureKey) k = 0;
+    while (gParked.size() > PARKED_MAX)
+    {
+        size_t oldest = 0;
+        for (size_t i = 1; i < gParked.size(); ++i)
+        {
+            if (gParked[i].mLastFrame < gParked[oldest].mLastFrame) oldest = i;
+        }
+        gRetired.emplace_back(gParked[oldest].mHandle, gParked[oldest].mLastFrame);
+        gParked.erase(gParked.begin() + oldest);
+    }
+}
+
+// a parked feature of this size becomes the feature in use
+bool take_parked(const U32* key)
+{
+    for (size_t i = 0; i < gParked.size(); ++i)
+    {
+        if (memcmp(gParked[i].mKey, key, sizeof(gParked[i].mKey)) == 0)
+        {
+            gFeature = gParked[i].mHandle;
+            memcpy(gFeatureKey, key, sizeof(gFeatureKey));
+            gParked.erase(gParked.begin() + i);
+            return true;
+        }
+    }
+    return false;
+}
+
+// shutdown: everything goes, after the GPU is idle
 void release_feature()
 {
+    vkDeviceWaitIdle(gDevice);
     if (gFeature)
     {
-        vkDeviceWaitIdle(gDevice);
         NVSDK_NGX_VULKAN_ReleaseFeature(gFeature);
         gFeature = nullptr;
     }
+    for (const ParkedFeature& pf : gParked)
+    {
+        NVSDK_NGX_VULKAN_ReleaseFeature(pf.mHandle);
+    }
+    gParked.clear();
+    for (const auto& r : gRetired)
+    {
+        NVSDK_NGX_VULKAN_ReleaseFeature(r.first);
+    }
+    gRetired.clear();
     for (U32& k : gFeatureKey) k = 0;
 }
 
@@ -367,9 +469,12 @@ bool evaluate(VkCommandBuffer cmd, const Params& p)
     }
     const U32 flags = (p.mHdr ? NVSDK_NGX_DLSS_Feature_Flags_IsHDR : 0) | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
     const U32 key[6] = { p.mRenderWidth, p.mRenderHeight, p.mOutputWidth, p.mOutputHeight, flags, rr ? (1u | ((U32)p.mPreset << 8)) : 0u };
+    reap_retired();
     if (!gFeature || memcmp(key, gFeatureKey, sizeof(key)) != 0)
     {
-        release_feature();
+        park_feature();
+        if (!take_parked(key))
+        {
         const NVSDK_NGX_PerfQuality_Value quality = quality_for(p.mRenderWidth, p.mOutputWidth);
         if (rr)
         {
@@ -418,7 +523,9 @@ bool evaluate(VkCommandBuffer cmd, const Params& p)
                                << " quality " << (S32)quality << LL_ENDL;
         }
         memcpy(gFeatureKey, key, sizeof(key));
+        }
     }
+    gFeatureFrame = Context::instance().getFrameNumber();
 
     NVSDK_NGX_Resource_VK color = resource_of(*p.mColor, false, VK_IMAGE_ASPECT_COLOR_BIT);
     NVSDK_NGX_Resource_VK depth = resource_of(*p.mDepth, false, VK_IMAGE_ASPECT_DEPTH_BIT);
