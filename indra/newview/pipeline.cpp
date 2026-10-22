@@ -5433,6 +5433,7 @@ std::vector<U32> sMovingRefs(kMovingMax - kMovingBase, 0);
 std::vector<U32> sMovingStamp(kMovingMax - kMovingBase, 0);
 std::unordered_map<const LLMatrix4*, U32> sMovingSlot;
 U64 sMovingAcquired = 0, sMovingFull = 0;
+static std::atomic<U64> sGeoItemsEpoch{0};          // S4: counts every change of a fragment's item lists (filled again, released): a cached list of draw infos is only good for the epoch it was made in
 std::vector<LLSceneFragment*> sGeoFragByHandle;     // S4 B: the fragment of a worker handle (the frame record binds the palettes of the rigged items of the listed ones)
 
 U32 scene_geo_tex_name(LLViewerTexture* tex)
@@ -5577,6 +5578,7 @@ void ll_scene_fragment_free(LLSceneFragment*& fragment)
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
         sFragmentReleases.push_back(fragment->mId);
     }
+    ++sGeoItemsEpoch;
     scene_moving_release(fragment);
     if (fragment->mGeoHandle)
     {
@@ -5721,12 +5723,70 @@ struct GeoBindJob
     U64 mFrame = ~0ull;
 };
 static std::shared_ptr<GeoBindJob> sBindJob;
+
+// S4 B / C: the draw infos of a pass type of the MAIN view, for the passes that are not drawn by the scene table but need to know the draws (the avatar motion vectors, the ray scene's naming of rigged
+// casters): the render map, and, where postSort left a type of a group out because the table serves all of it, those items of the group's fragment (the render map no longer holds them)
+static void collect_main_view_draw_infos(U32 type, std::vector<LLDrawInfo*>& out)
+{
+    out.clear();
+    auto* begin = gPipeline.beginRenderMap(type);
+    auto* end = gPipeline.endRenderMap(type);
+    for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+    {
+        out.push_back(*i);
+        LLCullResult::increment_iterator(i, end);
+    }
+    LLCullResult* cull = gPipeline.getCull();
+    if (!cull || !cull->mGeoElided)
+    {
+        return;
+    }
+    const int tn = ll_scene_geo_type_number(type);
+    if (tn < 0)
+    {
+        return;
+    }
+    static std::vector<LLDrawInfo*> lists[26];
+    static LLCullResult* key_cull = nullptr;
+    static U64 key_frame = ~0ull;
+    static size_t key_handles = 0;
+    static U64 key_epoch = ~0ull;
+    // (a snapshot renders several times in one frame, and rebuilds the groups in between: the draw infos of the first render's list are gone by the second)
+    if (key_cull != cull || key_frame != gFrameCount || key_handles != cull->mGeoHandles.size() || key_epoch != sGeoItemsEpoch.load())
+    {
+        key_cull = cull;
+        key_frame = gFrameCount;
+        key_epoch = sGeoItemsEpoch.load();
+        key_handles = cull->mGeoHandles.size();
+        for (std::vector<LLDrawInfo*>& l : lists)
+        {
+            l.clear();
+        }
+        for (U32 handle : cull->mGeoHandles)
+        {
+            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+            if (!f || !f->mGeoServedMask)
+            {
+                continue;
+            }
+            for (const LLSceneFragment::GeoItem& item : f->mGeo)
+            {
+                if (item.mServed && item.mType < 26 && (f->mGeoServedMask & (1u << item.mType)))
+                {
+                    lists[item.mType].push_back(item.mInfo);
+                }
+            }
+        }
+    }
+    out.insert(out.end(), lists[tn].begin(), lists[tn].end());
+}
 static U64 sBindJobTaken = 0, sBindJobInline = 0;
 static U64 sGeoMovingSent = 0;        // S4 B: palette bindings sent, main thread ns to make them
 
 static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
 {
     const auto t_fill = std::chrono::steady_clock::now();
+    ++sGeoItemsEpoch;
     f.mGeo.clear();
     f.mGeoTex.clear();
     f.mGeoFallback.clear();
@@ -12709,14 +12769,12 @@ void LLPipeline::renderAvatarVelocity()
         struct AvatarState { bool mOk; F32 mDistance; };
         std::unordered_map<const LLVOAvatar*, AvatarState> avatar_ok;
         std::unordered_map<const F32*, bool> palette_still;
+        std::vector<LLDrawInfo*> infos;
         for (U32 type : kVelocityRiggedTypes)
         {
-            auto* begin = beginRenderMap(type);
-            auto* end = endRenderMap(type);
-            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            collect_main_view_draw_infos(type, infos);       // (S4 B: the render map and the draws the scene table serves)
+            for (LLDrawInfo* params : infos)
             {
-                LLDrawInfo* params = *i;
-                LLCullResult::increment_iterator(i, end);
                 LLVOAvatar* avatar = params->mAvatar.get();
                 const LLVertexBuffer* vb = params->mVertexBuffer.get();
                 if (!params->mCount || !avatar || params->mSkinInfo.isNull() || !vb || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))
@@ -12849,12 +12907,10 @@ void LLPipeline::renderAvatarVelocity()
             for (U32 rigged_type : kVelocityRiggedTypes)
             {
                 // the rigged variant of a pass type is the next number
-                auto* begin = beginRenderMap(rigged_type - 1);
-                auto* end = endRenderMap(rigged_type - 1);
-                for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+                static std::vector<LLDrawInfo*> moving_infos;
+                collect_main_view_draw_infos(rigged_type - 1, moving_infos);       // (S4 C: the render map and the draws the scene table serves)
+                for (LLDrawInfo* params : moving_infos)
                 {
-                    LLDrawInfo* params = *i;
-                    LLCullResult::increment_iterator(i, end);
                     const LLMatrix4* matrix = params->mModelMatrix;
                     if (!matrix)
                     {
@@ -15374,12 +15430,10 @@ static void rt_name_rigged_main_view()
         for (const Source& source : sources)
         {
             const U32 type = source.kind != KIND_ALPHA ? source.type + 1 : source.type;       // PASS_ALPHA holds both
-            auto* begin = gPipeline.beginRenderMap(type);
-            auto* end = gPipeline.endRenderMap(type);
-            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            static std::vector<LLDrawInfo*> alpha_infos;
+            collect_main_view_draw_infos(type, alpha_infos);       // (S4 B: the render map and the draws the scene table serves)
+            for (LLDrawInfo* params : alpha_infos)
             {
-                LLDrawInfo* params = *i;
-                LLCullResult::increment_iterator(i, end);
                 add_entry(params, source);
             }
         }

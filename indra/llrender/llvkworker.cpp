@@ -1804,6 +1804,7 @@ void flush_buffer_updates(bool frame_end)
         return;                         // no frame is being recorded: the writes stay queued
     }
     note_flush(frame_end, pending);
+    Context::instance().flight(Context::FL_FLUSH, (unsigned long long)pending, frame_end ? 1ull : 0ull);
     for (U32 n : sPendingBufs)
     {
         auto it = sGL.mBuffers.find(n);
@@ -2023,6 +2024,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
     const bool in_flight = (b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1) || (b.mGeoWatched && geo_in_flight_impl(b.mResName, frame));
+    ctx.flight(Context::FL_BUF_WRITE, (unsigned long long)name, offset, size, (unsigned long long)b.mVk.mAddress | (in_flight ? 1ull : 0ull));
     if (in_flight && b.mVk.valid())
     {
         const auto t0 = std::chrono::steady_clock::now();
@@ -2046,6 +2048,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
                         ++sRenameStats.mShadowlessCopies;
                     }
                 }
+                ctx.flight(Context::FL_BUF_RENAME, (unsigned long long)name, (unsigned long long)b.mArena.mAddress, (unsigned long long)fresh_range.mAddress, (unsigned long long)b.mSize);
                 retire_range(b.mArena);
                 b.mArena = fresh_range;
                 b.mVk = Buffer();
@@ -3863,11 +3866,13 @@ static void on_palette_segment(const LLVkBridge::ShadowPacketsHeader& h, const U
     }
     memcpy(a.mPtr, blob, 4 * (size_t)h.mPaletteFloats);
     sPalSegs.push_back({ h.mFragment, h.mPaletteFloats, (U64)a.mAddress });
+    Context::instance().flight(Context::FL_PAL_SEG, (unsigned long long)h.mFragment, (unsigned long long)h.mPaletteFloats, (unsigned long long)a.mAddress, (unsigned long long)h.mPass);
 }
 
 // the worker side of kinds 6 and 7: rigged draws of the main view, only named to the ray scene (palettes are copied into the frame's scratch memory the scene call reads)
 static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
+    Context::instance().flight(Context::FL_RT_NOTE, (unsigned long long)h.mKind, (unsigned long long)h.mEntries, (unsigned long long)h.mPaletteFloats, (unsigned long long)h.mPass);
     const bool shared_palettes = h.mKind == 6 && h.mFragment == 1;       // S4 A2: the palettes are in the frame's shared list
     if (!Rt::active() || h.mEntries == 0 || (h.mPaletteFloats == 0 && !shared_palettes))
     {
@@ -6035,6 +6040,16 @@ bool geo_init()
     }
     sGeo.mT = (GeoGpuG*)sGeo.mTable.mMapped;
     memset(sGeo.mT, 0, sizeof(GeoGpuG) * kGeoCapacity);
+    ctx.addAddressDescriber([](unsigned long long at) -> std::string
+    {
+        const unsigned long long base = (unsigned long long)sGeo.mTable.mAddress, size = (unsigned long long)sizeof(GeoGpuG) * kGeoCapacity;
+        if (!base || at + 0x10000 < base || at > base + size + 0x100000)
+        {
+            return std::string();
+        }
+        const unsigned long long offset = at - base;
+        return "the scene geometry table, offset " + std::to_string(offset) + " = row " + std::to_string(offset / sizeof(GeoGpuG)) + " of " + std::to_string((unsigned long long)kGeoCapacity) + (offset >= size ? " (PAST THE END)" : "");
+    });
     sGeo.mFailed = false;
     sGeo.mReady = true;
     LL_INFOS("VkScene") << "scene geometry table ready (" << kGeoCapacity << " entries, " << sizeof(GeoGpuG) * kGeoCapacity / (1024 * 1024) << " MB)" << LL_ENDL;
@@ -6122,6 +6137,7 @@ void geo_release(U32 handle)
     }
     sGeo.mBy[handle] = nullptr;
     --sGeo.mFragCount;
+    Context::instance().flight(Context::FL_GEO_RELEASE, (unsigned long long)handle, (unsigned long long)f->mItems.size());
     delete f;
 }
 
@@ -6205,6 +6221,7 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     sGeo.mBy[h.mFragment] = f;
     ++sGeo.mFragCount;
     ++sGeo.mS.mRetains;
+    Context::instance().flight(Context::FL_GEO_RETAIN, (unsigned long long)h.mFragment, (unsigned long long)h.mEntries, (unsigned long long)f->mPairs.size(), (unsigned long long)f->mMaxModel);
     sGeo.mS.mNsRetain += geo_ns(t0);
 }
 
@@ -6437,6 +6454,7 @@ void geo_rebuild(GeoFrag& f, U64 frame_now, bool first)
 void geo_buffer_changed(U32 name)
 {
     ++sGeo.mS.mBufEvents;
+    Context::instance().flight(Context::FL_GEO_BUF, (unsigned long long)name, 0ull);
     auto range = sGeo.mByBuf.equal_range(name);
     for (auto m = range.first; m != range.second; ++m)
     {
@@ -6452,6 +6470,7 @@ void geo_buffer_changed(U32 name)
 void geo_buffer_gone_impl(U32 name)
 {
     ++sGeo.mS.mBufGone;
+    Context::instance().flight(Context::FL_GEO_BUF, (unsigned long long)name, 1ull);
     auto range = sGeo.mByBuf.equal_range(name);
     for (auto m = range.first; m != range.second; ++m)
     {
@@ -6654,6 +6673,10 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         f->mListedFrame = frame_now;
         sGeo.mMaxSlot = std::max(sGeo.mMaxSlot, std::min<U32>(f->mMaxModel, 2047u));
+        for (VkDrawIndexedIndirectCommand& c : f->mRCmds)
+        {
+            c.indexCount = 0;           // S4 B: a rigged item draws only when the viewer bound a palette for it in THIS frame (below): one that was not (its fragment replaced during the frame, ...) would use a palette address of an older frame
+        }
         listed.push_back(f);
         items_frame += f->mItems.size();
         s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size() - f->mRCmds.size();
@@ -6784,6 +6807,11 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (timed) s.mNsCopy += geo_ns(t0);
     geo_flush_if_needed();
     sGeo.mPreparedFrame = frame_now;
+    {
+        Context& fc = Context::instance();
+        fc.flight(Context::FL_GEO_PREPARE, (unsigned long long)h.mEntries, (unsigned long long)items_frame, (unsigned long long)total | ((unsigned long long)rtotal << 32), (unsigned long long)sGeo.mMaxSlot | ((unsigned long long)h.mMatrices << 32));
+        fc.flight(Context::FL_GEO_CMDS, (unsigned long long)sGeo.mCommands.mAddress, (unsigned long long)(sizeof(VkDrawIndirectCommand) * total), (unsigned long long)sGeo.mRCommands.mAddress, (unsigned long long)(sizeof(VkDrawIndexedIndirectCommand) * rtotal));
+    }
     ++s.mPrepares;
     if (timed) s.mNsPrepare += geo_ns(t_all);
     if (s.mPrepares - s.mLastLog >= 600)
@@ -6880,6 +6908,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         ++s.mScratchFail;
         return;
     }
+    Context::instance().flight(Context::FL_GEO_DRAW, (unsigned long long)type, (unsigned long long)count, (unsigned long long)models.mAddress, (unsigned long long)slots);
     F32* out = (F32*)models.mPtr;
     memset(out, 0, 176 * (size_t)slots);
     geo_matrix(view, proj, nullptr, out);               // slot 0: the view alone

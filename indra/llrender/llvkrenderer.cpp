@@ -6,6 +6,7 @@
 #include "linden_common.h"
 
 #include "llvkrenderer.h"
+#include <unordered_set>
 #include <set>
 #include <cmath>
 #include <xmmintrin.h>
@@ -1165,6 +1166,39 @@ bool Renderer::init()
             return false;
         }
     }
+    ctx.addAddressDescriber([this](unsigned long long at) -> std::string
+    {
+        auto close_to = [at](const Buffer& b, unsigned long long& offset) -> bool
+        {
+            const unsigned long long base = (unsigned long long)b.mAddress;
+            if (!base || at + 0x10000 < base || at > base + (unsigned long long)b.mSize + 0x100000)
+            {
+                return false;
+            }
+            offset = at - base;
+            return true;
+        };
+        unsigned long long offset = 0;
+        for (U32 i = 0; i < Context::frameCount(); ++i)
+        {
+            if (close_to(mVertexRing[i], offset))
+            {
+                return "the vertex scratch ring of frame slot " + std::to_string(i) + ", offset " + std::to_string((long long)offset) + " of " + std::to_string((unsigned long long)mVertexRing[i].mSize) + (offset >= (unsigned long long)mVertexRing[i].mSize ? " (PAST THE END)" : "");
+            }
+            for (size_t k = 0; k < mVertexOverflow[i].size(); ++k)
+            {
+                if (close_to(mVertexOverflow[i][k], offset))
+                {
+                    return "overflow chunk " + std::to_string(k) + " of frame slot " + std::to_string(i) + ", offset " + std::to_string((long long)offset) + " of " + std::to_string((unsigned long long)mVertexOverflow[i][k].mSize) + (offset >= (unsigned long long)mVertexOverflow[i][k].mSize ? " (PAST THE END)" : "");
+                }
+            }
+            if (close_to(mRing[i], offset))
+            {
+                return "the uniform ring of frame slot " + std::to_string(i) + ", offset " + std::to_string((long long)offset);
+            }
+        }
+        return std::string();
+    });
     if (!ctx.createBuffer(DUMMY_UBO_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, Context::Memory::UploadDevice, mDummyUbo))
     {
         return false;
@@ -1774,6 +1808,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
         savePipelineCache();
     }
     harvestQueries(frame_slot);
+    bindlessRetireDestroyed();
     mOccPending = mOccActive = -1;
     mCmd = cmd;
     mSlot = frame_slot;
@@ -2636,6 +2671,66 @@ void Renderer::bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorIma
 
 // gives back the slots nothing has used for min_idle_frames frames (the texture is gone, or has not been drawn for a long while). The frames in flight keep their own sets, which still hold
 // the old descriptors (the views they name are destroyed only after those frames), so reusing the slot only ever changes the set of a frame that is just starting.
+// An image that is destroyed keeps its bindless slot for as long as anything pins or names it (the ray scene's records, the scene table's rows); the slot then still holds the view and the GPU
+// samples memory that has been given back (2026-10-21: the device lost after snapshots read a page that had held a 1024x1024 texture; the audit's "used after destroy" only sees draws that asked
+// for the slot this frame, not the ones that carry the number around). The image's memory is given back a few frames after the call, every frame's set is brought up to date before then:
+// from the destroy on the slot holds the stand-in.
+void Renderer::bindlessRetireDestroyed()
+{
+    Context& ctx = Context::instance();
+    const U64 count = ctx.destroyedViewCount();
+    if (count == mDestroyedSeen)
+    {
+        return;
+    }
+    const bool lost = count - mDestroyedSeen > Context::destroyedRing();
+    std::unordered_set<U64> ids;
+    if (!lost)
+    {
+        for (U64 seq = mDestroyedSeen; seq < count; ++seq)
+        {
+            const U64 id = ctx.destroyedViewIdAt(seq);
+            if (id)
+            {
+                ids.insert(id);
+            }
+        }
+    }
+    mDestroyedSeen = count;
+    U32 retired = 0, pinned = 0;
+    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
+    {
+        BindlessTable& tbl = mBindlessTbl[t];
+        for (U32 slot = 1; slot < (U32)tbl.mSlots.size(); ++slot)
+        {
+            BindlessSlot& s = tbl.mSlots[slot];
+            if (!s.mActive || s.mInfo.imageView == VK_NULL_HANDLE || s.mInfo.imageView == tbl.mStandIn.imageView)
+            {
+                continue;
+            }
+            U64 when = 0;
+            if (lost ? ctx.destroyedViewFrame(s.mKey.mViewId, when) : ids.count(s.mKey.mViewId) != 0)
+            {
+                s.mInfo = tbl.mStandIn;
+                if (s.mPins)
+                {
+                    tbl.mPinLog.push_back(slot);        // every frame's set gets the stand-in at its next flush
+                    ++pinned;
+                }
+                bindlessQueue(tbl, slot, s.mInfo, s.mKey.mViewId);
+                ++retired;
+            }
+        }
+    }
+    mRetiredSlots += retired;
+    mRetiredPinned += pinned;
+    static U32 said = 0;
+    if (pinned && said++ < 20)
+    {
+        LL_INFOS("Vulkan") << "bindless: " << pinned << " pinned slot(s) held the view of a destroyed image and now hold the stand-in (" << retired << " slots in all, " << mRetiredPinned << " pinned so far)" << LL_ENDL;
+    }
+}
+
 void Renderer::bindlessSweep(U64 min_idle_frames)
 {
     const U64 frame = Context::instance().getFrameNumber();
@@ -3776,10 +3871,10 @@ U32 Renderer::drawTag(const char* what, U32 count, U32 first, S32 vertex_offset)
     return Context::drawStampTag(text);
 }
 
-// One record per draw in the ring (see DrawRec) and one checkpoint before it. Costs a few tens of nanoseconds a draw; LL_VK_DRAW_RING=0 turns it off.
+// One record per draw in the ring (see DrawRec) and one checkpoint before it. Costs a few tens of nanoseconds a draw; on by default, LL_VK_DRAW_RING=0 turns it off.
 void Renderer::noteDraw(U8 kind, U32 count, U32 first, S32 vertex_offset)
 {
-    static const bool on = getenv("LL_VK_DRAW_RING") ? atoi(getenv("LL_VK_DRAW_RING")) != 0 : (getenv("LL_VK_DIAG") && atoi(getenv("LL_VK_DIAG")) != 0);       // (on with LL_VK_DIAG)
+    static const bool on = getenv("LL_VK_DRAW_RING") ? atoi(getenv("LL_VK_DRAW_RING")) != 0 : true;       // (on unless LL_VK_DRAW_RING=0: after a device lost the report names the draw the GPU had started)
     if (!on || !Context::instance().getCaps().mCheckpoints)
     {
         return;
@@ -4296,6 +4391,14 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
     }
     if (!stage.valid())
     {
+        if (mCmd != VK_NULL_HANDLE)
+        {
+            static U32 said = 0;
+            if (said++ < 10)
+            {
+                LL_WARNS("Vulkan") << "uploadTexture: no staging space in the frame for " << expected << " bytes, a buffer of its own is used (frame " << ctx.getFrameNumber() << ")" << LL_ENDL;
+            }
+        }
         if (!ctx.createBuffer(expected, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, Context::Memory::Upload, own))
         {
             return false;
@@ -4314,6 +4417,15 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
     }
     const bool is_3d = image.mViewType == VK_IMAGE_VIEW_TYPE_3D;
     withCommandBuffer([&](VkCommandBuffer cmd) {
+        {
+            static const U32 tag = Context::stampTag("texture upload copies");
+            static U64 stamped_frame = ~0ull;
+            if (stamped_frame != Context::instance().getFrameNumber())      // (one a frame: there can be hundreds)
+            {
+                stamped_frame = Context::instance().getFrameNumber();
+                Context::instance().gpuStamp(tag);
+            }
+        }
         transition(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkBufferImageCopy c = {};
         c.bufferOffset = stage.mOffset;
@@ -4326,8 +4438,17 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
 
     if (own.valid())
     {
-        ctx.waitIdle();     // the immediate path already waited; this just makes the free unconditional
-        vmaDestroyBuffer(ctx.getAllocator(), own.mBuffer, own.mAllocation);
+        if (mCmd != VK_NULL_HANDLE)
+        {
+            // the copy was recorded into the frame that is being recorded: it runs when that frame does, long after this call (waitIdle cannot wait for a command that has not been submitted;
+            // the buffer used to be destroyed here, and the GPU copied from memory that belonged to something else: the device lost after snapshots, 2026-10-21, "inside [texture upload copies]")
+            ctx.destroyBuffer(own);
+        }
+        else
+        {
+            ctx.waitIdle();     // the immediate path already waited; this just makes the free unconditional
+            vmaDestroyBuffer(ctx.getAllocator(), own.mBuffer, own.mAllocation);
+        }
     }
     LLVkAsync::noteTexWorker(0, fill_us, (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_start).count(), 1);
     return true;
@@ -4496,7 +4617,31 @@ bool Renderer::flushBufferUpdates()
         return true;
     }
     ++mModCount;
+    {
+        // every copy's source must be a staging block that still exists (a block given up reads memory that belongs to something else by now)
+        Context& vctx = Context::instance();
+        static U32 said = 0;
+        U32 bad = 0;
+        for (const BufferCopy& c : mPendingCopies)
+        {
+            if (c.mSrc != VK_NULL_HANDLE && !vctx.isStagingBuffer(c.mSrc))
+            {
+                ++bad;
+                if (said++ < 10)
+                {
+                    LL_WARNS("Vulkan") << "buffer update: a pending copy of " << c.mSize << " bytes into buffer " << (unsigned long long)(uintptr_t)c.mDst << " offset " << c.mDstOffset << " reads staging buffer "
+                                       << (unsigned long long)(uintptr_t)c.mSrc << " offset " << c.mSrcOffset << " which is no staging block of any frame slot (frame " << vctx.getFrameNumber() << ")" << LL_ENDL;
+                }
+            }
+        }
+        vctx.flight(Context::FL_MISC, 4ull, (unsigned long long)mPendingCopies.size(), (unsigned long long)bad, mPendingCopies.empty() ? 0ull : (unsigned long long)(uintptr_t)mPendingCopies.front().mSrc);
+    }
     withCommandBuffer([&](VkCommandBuffer cmd) {
+        {
+            // (timestamp stamps: the device lost report names the stage the GPU never left; the work before the first pass was one lump)
+            static const U32 tag = Context::stampTag("buffer update copies");
+            Context::instance().gpuStamp(tag);
+        }
         // everything recorded so far (and earlier frames still on the GPU) finishes reading before the copies overwrite
         VkMemoryBarrier2 before = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
         before.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
@@ -4524,6 +4669,10 @@ bool Renderer::flushBufferUpdates()
         after.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
         dep.pMemoryBarriers = &after;
         vkCmdPipelineBarrier2(cmd, &dep);
+        {
+            static const U32 tag = Context::stampTag("buffer update copies done");
+            Context::instance().gpuStamp(tag);
+        }
     });
     mPendingCopies.clear();
     return true;

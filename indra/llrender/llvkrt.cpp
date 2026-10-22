@@ -716,6 +716,13 @@ bool device_ready()
     return caps.mRt.mEnabled && caps.mRt.mUsable && vkCmdBuildAccelerationStructuresKHR && vkCreateAccelerationStructureKHR && vkGetAccelerationStructureDeviceAddressKHR;
 }
 
+std::string hex_str(unsigned long long v)
+{
+    char b[24];
+    snprintf(b, sizeof(b), "%llx", v);
+    return b;
+}
+
 // Structures given up lately (address -> the scene call that gave it up). The GPU must never be handed an instance that refers to one: the top-level build reads the structure it refers to, and a
 // destroyed one (its storage is given back after the frames in flight, then reused) is memory that belongs to something else. The instance lists are kept up to date when a structure goes,
 // this is the check that nothing slipped through: such an instance is left out of the scene and reported. An address that is made again is taken out.
@@ -1328,6 +1335,48 @@ bool init(VkDescriptorSetLayout set_layout)
         const bool skin = ensure_skin_pipeline();
         LL_INFOS("VkRt") << "skinning pipeline " << (skin ? "ready" : "not available") << " at start-up after " << (double)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count() / 1000.0 << " ms" << LL_ENDL;
     }
+    // a faulting page that is in no live block: which structure or record set of the scene still names it (read from the thread that reports the loss, only looked at)
+    ctx.addAddressDescriber([](unsigned long long at) -> std::string
+    {
+        std::string out;
+        const unsigned long long window = 0x4000000ull;     // 64 MB: a structure or buffer the address may lie inside
+        auto near_to = [&](unsigned long long a) { return a && at + window > a && at < a + window; };
+        size_t rows = 0, shown = 0;
+        for (size_t i = 0; i < sInstArray.size(); ++i)
+        {
+            const unsigned long long ref = sInstArray[i].accelerationStructureReference;
+            if (near_to(ref))
+            {
+                ++rows;
+                if (shown++ < 4)
+                {
+                    const Group* gp = i < sInstGroup.size() ? sInstGroup[i] : nullptr;
+                    out += "instance row " + std::to_string(i) + " names the structure at 0x" + hex_str(ref) + (gp ? " (vb " + std::to_string(gp->mKey.mVb) + " ib " + std::to_string(gp->mKey.mIb) + " kind " + std::to_string(gp->mKey.mKind) + ", group's own 0x" + hex_str(gp->mBlas ? (unsigned long long)gp->mBlas->mAddress : 0ull) + ")" : std::string()) + "; ";
+                }
+            }
+        }
+        if (rows > shown)
+        {
+            out += std::to_string(rows - shown) + " more instance rows near it; ";
+        }
+        size_t groups = 0;
+        for (const auto& kv : sGroups)
+        {
+            const Group& g = kv.second;
+            if (near_to((unsigned long long)g.mCacheVb) || near_to((unsigned long long)g.mCacheIb))
+            {
+                if (groups++ < 4)
+                {
+                    out += "group vb " + std::to_string(g.mKey.mVb) + " ib " + std::to_string(g.mKey.mIb) + " kind " + std::to_string(g.mKey.mKind) + " has records made with buffers at 0x" + hex_str(g.mCacheVb) + " / 0x" + hex_str(g.mCacheIb) + "; ";
+                }
+            }
+        }
+        if (groups > 4)
+        {
+            out += std::to_string(groups - 4) + " more groups; ";
+        }
+        return out.empty() ? out : "ray scene: " + out;
+    });
     LL_INFOS("VkRt") << "ray tracing scene ready: mode " << shadowMode() << ", " << Context::frameCount() << " frame slots, " << kCalls << " scene calls per frame, instance capacity "
                      << kInstanceCapacity << ", geometry table " << (sGeomBytes >> 10) << " KB per call (" << sMaxRecords << " records), material tables " << (sMatsInit ? "on" : "off")
                      << ", table regions per frame slot " << sTableCalls << LL_ENDL;
@@ -3008,8 +3057,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     }
 
     U32 call = tlas.mCalls++;
+    ctx.flight(Context::FL_RT_SCENE, (unsigned long long)call, (unsigned long long)frame_now, (unsigned long long)ctx.getFrameSlot(), call >= kCalls ? 1ull : 0ull);
     if (call >= kCalls)
     {
+        static U32 logged_extra = 0;
+        if (logged_extra++ < 20)
+        {
+            LL_WARNS("VkRt") << "scene call " << call << " in frame " << frame_now << ": more scene calls than the " << kCalls << " regions, the last region is shared" << LL_ENDL;
+        }
         call = kCalls - 1;                      // more scene calls in one frame than regions: the last region is shared (earlier traces of the frame may see its later content)
         ++sStats.mExtraCalls;
     }

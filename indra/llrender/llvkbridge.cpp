@@ -507,6 +507,7 @@ void LLVkBridge::snapshotBoundaryImpl(S32 mode)
         return;
     }
     LL_INFOS("VkSnap") << "snapshot boundary, variant " << mode << (sMirror.mOffscreen ? " (off-screen frame)" : " (present frame)") << LL_ENDL;
+    LLVk::Context::instance().flight(LLVk::Context::FL_SNAPSHOT, (unsigned long long)mode, sMirror.mOffscreen ? 1ull : 0ull);
     if (mode == 1)
     {
         LLVk::Renderer::instance().flushAndRestart(4);
