@@ -7886,12 +7886,11 @@ layout(set = 0, binding = 0) uniform sampler2D uPyr;
 struct Box { vec4 c; vec4 h; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Boxes { Box b[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { uint o[]; };
-layout(push_constant) uniform PC { mat4 vp; uvec2 boxes; uvec2 outp; uint count; uint levels; vec2 depthSize; uint fine; uint mode; uint first; uint pad2; } pc;
+layout(push_constant) uniform PC { mat4 vp; uvec2 boxes; uvec2 outp; uint count; uint levels; vec2 depthSize; uint fine; uint pad0; uint pad1; uint pad2; } pc;
 void main()
 {
-    uint i = gl_GlobalInvocationID.x + pc.first;
+    uint i = gl_GlobalInvocationID.x;
     if (i >= pc.count) return;
-    if (pc.mode == 2u) { Out(pc.outp).o[3u * i] = 0u; return; }        // (S7 B0 census: no previous pyramid to test against)
     Box bx = Boxes(pc.boxes).b[i];
     bool water = (floatBitsToUint(bx.c.w) & 1u) != 0u;
     float minz = 1e9;
@@ -7941,12 +7940,12 @@ void main()
             Out(pc.outp).o[3u * i + 2u] = floatBitsToUint(maxd);
         }
     }
-    Out(pc.outp).o[3u * i] = result | (pc.mode == 1u ? 0x80000000u : 0u);       // mode 1 (S7 B0 census, the previous frame's pyramid): bit 31 = a valid verdict
+    Out(pc.outp).o[3u * i] = result;
 }
 )GLSL";
 
 constexpr U32 kHizSlots = 8;                // ring slots (the viewer never has more than kHizSlots - 1 serials in flight)
-constexpr U32 kHizCapacity = 32768;         // boxes a slot holds (S7 B0: the census sends the boxes of the table items as well; the second half of the results buffer holds their verdicts against the previous frame's pyramid)
+constexpr U32 kHizCapacity = 4096;          // boxes a slot holds
 
 struct HizState
 {
@@ -8092,11 +8091,11 @@ bool hiz_init()
     {
         return false;
     }
-    if (!ctx.createBuffer((VkDeviceSize)kHizSlots * kHizCapacity * 12 * 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Readback, s.mResults) || !s.mResults.mMapped || !s.mResults.mAddress)
+    if (!ctx.createBuffer((VkDeviceSize)kHizSlots * kHizCapacity * 12, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Readback, s.mResults) || !s.mResults.mMapped || !s.mResults.mAddress)
     {
         return false;
     }
-    memset(s.mResults.mMapped, 0, (size_t)kHizSlots * kHizCapacity * 12 * 2);
+    memset(s.mResults.mMapped, 0, (size_t)kHizSlots * kHizCapacity * 12);
     LLVkBridge::hizSetResults((const U32*)s.mResults.mMapped, kHizCapacity);
     s.mReady = true;
     LL_INFOS("VkHiz") << "Hi-Z occlusion ready: " << kHizSlots << " result slots of " << kHizCapacity << " boxes" << LL_ENDL;
@@ -8116,7 +8115,6 @@ void hiz_poll()
         const HizState::Pending p = s.mPending.front();
         s.mPending.pop_front();
         vmaInvalidateAllocation(ctx.getAllocator(), s.mResults.mAllocation, (VkDeviceSize)p.mSlot * kHizCapacity * 12, (VkDeviceSize)kHizCapacity * 12);
-        vmaInvalidateAllocation(ctx.getAllocator(), s.mResults.mAllocation, ((VkDeviceSize)kHizSlots + p.mSlot) * kHizCapacity * 12, (VkDeviceSize)kHizCapacity * 12);       // (the census half)
         LLVkBridge::hizPublish(p.mSlot, p.mSerial);
         ++s.mPublished;
     }
@@ -8226,17 +8224,7 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     tpc.mDepth[0] = (F32)w; tpc.mDepth[1] = (F32)hgt;
     static const U32 fine = []() { const char* e = getenv("LL_VK_HIZ_FINE"); return e ? (U32)atoi(e) : 5u; }();      // how many pyramid levels finer than "the rectangle spans two texels" the test reads (5: the rectangle spans up to about 9 x 9 texels of a level 4 finer; 3 lost 23 % of the queries' savings, 5 lost 15 %)
     tpc.mFine = fine;
-    tpc.mPad[0] = tpc.mPad[1] = tpc.mPad[2] = 0;       // mode 0, first 0
-    // S7 B0 (LL_VK_VISCENSUS): the boxes from h.mPaletteFloats on are table items; they are tested a second time, before the pyramid is rebuilt, against the previous frame's pyramid with the previous view-projection (the 64 bytes after the boxes)
-    const bool census_prev = h.mMatrices == 1 && h.mPaletteFloats < h.mEntries;
-    TestPc cpc = tpc;
-    if (census_prev)
-    {
-        memcpy(cpc.mVp, blob + 32ull * h.mEntries, sizeof(cpc.mVp));
-        cpc.mOut[0] = (U32)(out_address + (U64)kHizSlots * kHizCapacity * 12); cpc.mOut[1] = (U32)((out_address + (U64)kHizSlots * kHizCapacity * 12) >> 32);
-        cpc.mPad[0] = s.mPyramidInit ? 1u : 2u;
-        cpc.mPad[1] = h.mPaletteFloats;
-    }
+    tpc.mPad[0] = tpc.mPad[1] = tpc.mPad[2] = 0;
     const bool init = !s.mPyramidInit;
     VkImage pyramid_image = s.mPyramid.mImage;
     VkImageView pyramid_view = s.mPyramid.mView;
@@ -8279,19 +8267,6 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         // the depth writes of the passes before, the pyramid and results of the frames before
         barrier(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                 VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-        if (census_prev)
-        {
-            // S7 B0: the table items against the pyramid of the frame before (it is rebuilt below)
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, test);
-            VkDescriptorImageInfo prev_info = { sampler, pyramid_view, VK_IMAGE_LAYOUT_GENERAL };
-            VkWriteDescriptorSet pwr = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-            pwr.dstBinding = 0; pwr.descriptorCount = 1; pwr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; pwr.pImageInfo = &prev_info;
-            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, test_layout, 0, 1, &pwr);
-            vkCmdPushConstants(cmd, test_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(cpc), &cpc);
-            vkCmdDispatch(cmd, (cpc.mCount - cpc.mPad[1] + 63) / 64, 1, 1);
-            ++dispatches;
-            barrier(VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
-        }
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, down);
         U32 src_w = w, src_h = hgt;
         for (U32 m = 0; m < levels; ++m)
