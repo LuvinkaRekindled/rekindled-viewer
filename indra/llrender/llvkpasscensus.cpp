@@ -48,6 +48,7 @@ struct Rec
     U64 mWritten = 0;                       // bytes the stream wrote in this pass into the class blocks it read
     U64 mBindCarried = 0, mBindInherited = 0;
     U64 mKinds[NKIND] = {};                 // packet records by kind
+    std::map<std::string, U64> mProgDraws; // S6.6: draw records by program (what still goes through the draw record)
     U64 mRefused[6] = {};                   // draws the worker refused in this pass: no program, no target, no vertex input, no index buffer, refused by the renderer, outside a frame
     void add(const Rec& o)
     {
@@ -61,6 +62,7 @@ struct Rec
         }
         for (int k = 0; k < NKIND; ++k) mKinds[k] += o.mKinds[k];
         for (int k = 0; k < 6; ++k) mRefused[k] += o.mRefused[k];
+        for (const auto& kv : o.mProgDraws) mProgDraws[kv.first] += kv.second;
     }
 };
 struct Agg { Rec mSum; std::string mFirstProg; };
@@ -202,13 +204,25 @@ void report()
                 ks += kb;
             }
         }
+        std::string pd;
+        {
+            std::vector<std::pair<U64, std::string>> by;
+            for (const auto& kv : s.mProgDraws) by.push_back({ kv.second, kv.first });
+            std::sort(by.rbegin(), by.rend());
+            for (size_t i = 0; i < by.size() && i < 6; ++i)
+            {
+                char pb[160];
+                snprintf(pb, sizeof(pb), " %s x%.1f", by[i].second.c_str(), (double)by[i].first / f);
+                pd += pb;
+            }
+        }
         char rb[160] = "";
         if (s.mRefused[0] | s.mRefused[1] | s.mRefused[2] | s.mRefused[3] | s.mRefused[4] | s.mRefused[5])
         {
             snprintf(rb, sizeof(rb), " | REFUSED per frame: no program %.2f, no target %.2f, no vertex input %.2f, no index buffer %.2f, renderer %.2f, outside a frame %.2f",
                      (double)s.mRefused[0] / f, (double)s.mRefused[1] / f, (double)s.mRefused[2] / f, (double)s.mRefused[3] / f, (double)s.mRefused[4] / f, (double)s.mRefused[5] / f);
         }
-        LL_INFOS("VkPassCensus") << b << " | packet kinds per pass:" << ks << rb << LL_ENDL;
+        LL_INFOS("VkPassCensus") << b << " | packet kinds per pass:" << ks << rb << " | DRAW RECORDS per frame by program:" << pd << LL_ENDL;
     };
     LL_INFOS("VkPassCensus") << "pass census over " << gPresents << " presented frames (ages: written in this pass / earlier in this frame / in an earlier frame / never by the stream; "
         << "uniform class blocks written by the worker itself (bindless slots in the draw class) are not stamped; 'frame start' and 'after present' are the records outside any pass; the table rows are the top by worker time)" << LL_ENDL;
@@ -451,6 +465,7 @@ void packetProgram(const void* program, const char* name)
 void drawProgram(const void* program, const char* name)
 {
     noteProgram(program, name);
+    ++gCur.mProgDraws[name ? name : "(none)"];
 }
 
 void binding(bool carried)

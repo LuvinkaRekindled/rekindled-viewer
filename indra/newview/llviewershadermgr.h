@@ -244,6 +244,10 @@ extern LLShaderProgram         gDeferredShadowSkinPullProgram;   // <FS> render 
 extern LLShaderProgram         gDeferredAlphaPullProgram;            // <FS> S5a: the lit alpha pass drawn from the scene table (alphaPullV + alphaF, textures from the bindless table)
 extern LLShaderProgram         gDeferredFullbrightAlphaPullProgram;  // <FS> S5a: ... and the fullbright alpha pass (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF)
 extern bool                    gAlphaPullReady;
+extern LLShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
+extern bool                    gTerrainPullReady;
+extern LLShaderProgram         gDeferredPBRTerrainPullProgram[];       // <FS> S6.6a: the same for the PBR terrain (one per paint type)
+extern bool                    gTerrainPbrPullReady;
 extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
 extern LLShaderProgram         gDeferredFullbrightPullSkinProgram;
 extern bool                    gFullbrightPullReady;
