@@ -27,7 +27,10 @@ class LLHiz
 public:
     static void begin();                                                // before the boxes of a pass are collected
     static void add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 half_y, F32 half_z, bool water);
-    static void send(const F32* view_proj);                             // one record for the boxes collected; their targets now await its result
+    // S7 B0 (LL_VK_VISCENSUS, doc/vulkan/S7-design.md section 13): a box of a scene table item, tested in the same batch (after the targets' boxes) and tallied by item type, never given to a target.
+    // cpu_outside = the CPU's own frustum verdict for the box (compared with the worker's)
+    static void addItem(const LLVector4a& center, F32 half_x, F32 half_y, F32 half_z, U8 item_type, U32 tris, bool cpu_outside);
+    static void send(const F32* view_proj);                           // one record for the boxes collected; their targets now await its result
     static void apply();                                                // the results of the batches the GPU has finished, to their targets (once per cull of the world camera)
 };
 
