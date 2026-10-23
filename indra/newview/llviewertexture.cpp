@@ -3256,6 +3256,12 @@ extern LLShaderProgram gCopyProgram;
 
 bool LLViewerLODTexture::scaleDown()
 {
+    // <FS> native-vk diagnostic (LL_VK_NO_SCALEDOWN=1): no texture is shrunk in place (to find out whether the white textures of the unfocus downgrade are the shrunk copies)
+    static const bool no_scale_down = getenv("LL_VK_NO_SCALEDOWN") != nullptr;
+    if (no_scale_down)
+    {
+        return false;
+    }
     if (mImageTexp.isNull() || !mImageTexp->getHasImageTexture())
     {
         return false;

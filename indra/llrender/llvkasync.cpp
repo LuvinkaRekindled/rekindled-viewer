@@ -1818,6 +1818,19 @@ void generateMipmap(U32 id)
     pushOp(op);
 }
 
+void dropLevels(U32 id, S32 levels)
+{
+    if (!LLVkAsync::gEnabled)
+    {
+        auto lock = inlineLock();
+        LLVkWorker::tex_drop_levels(id, levels);
+        return;
+    }
+    TexOp op = {};
+    op.mKind = OPK_DROP_LEVELS; op.mTex = id; op.mLevel = levels;
+    pushOp(op);
+}
+
 void copySubImage(U32 id, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source)
 {
     const LLVkFormat::Target tg = LLVkFormat::target(target);
@@ -2310,6 +2323,7 @@ void runOp(Reader& r)
     switch (o.mKind)
     {
     case OPK_MIPMAP: LLVkWorker::tex_mipmap(o.mTex); break;
+    case OPK_DROP_LEVELS: LLVkWorker::tex_drop_levels(o.mTex, o.mLevel); break;
     case OPK_COPY_SUB: LLVkWorker::tex_copy_sub(o.mTex, o.mTarget, o.mLevel, o.mX0, o.mY0, o.mZ0, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
     case OPK_COPY_IMAGE: LLVkWorker::tex_copy_image(o.mTex, o.mTarget, o.mLevel, (LLVkFormat::Store)o.mStore, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
     default:

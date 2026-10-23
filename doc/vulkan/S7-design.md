@@ -557,3 +557,21 @@ Derive mode: the flat kept set against the walk's kept set, per frame, with the 
 **Conclusion: C2 as built does not pay on the main thread in the plaza.** `updateCull` does not shrink: the flat pass (0.43-0.61 ms) costs about what the walk it replaces cost, because what the walk spent was mostly per-group work that C2 still has to do for about 2,000 groups a frame (1,300-1,460 kept + 595-670 topmost occluded: `checkOcclusion`, `markNotCulled`, `markOccluder`, each a pointer access), and not the traversal itself; the estimate of 0.4-0.6 ms in section 18 and in the answer to Adam was too high. **The verdict's margin costs state work while turning**: +29 % groups kept at factor 1 give +0.5 ms in `stateSort` and `postSort`. Correctness is not the problem: derive matched the walk within the margin and the far-limit quirk, use mode ran clean 4 times.
 What would still cut it, if it is ever wanted: skip the pointer access for topmost occluded groups that are already `ACTIVE_OCCLUSION` (a row flag set by the hooks), run the classification (0.17 ms of the 0.43) on a worker thread, a tighter margin (factor 0.5: +17 % groups). Realistic result: 0.1-0.2 ms, not worth the extra moving parts now.
 Status: `LL_VK_CULL_USE=1|2` stays in the tree, default off, verified; the C1 chain (table, delta rows, GPU test, comparison) stays as groundwork for the balancing direction of 13.7. Recommendation: do not enable C2; the bigger lever found on the way is the texture / VRAM budget thrash after turns (15.4 item 6, the side-session notes).
+
+
+## 19. Texture downscale without white (unfocus downgrade)
+
+**Problem.** After the unfocus downgrade (`TextureDiscardBackgroundedTime`), textures turned white. Found by A/B: `LL_VK_NO_SCALEDOWN=1` (skip `LLViewerLODTexture::scaleDown`) gave no white; with it on, about 2.8% of the 3D view went white for about 10 s after refocus (`tex-unfocus2`), and the same textures stay white after a dump recovery. The copies themselves ran and none were dropped (`VkTexCopy` counters), so the white is in what `LLImageTex::scaleDown` produces: it draws the texture small into a render target and copies that back (`copySubImage`) before `generateMipmap`.
+
+**Fix.** A texture that holds its whole mip chain gives up its top k levels by copying levels k.. into a new, smaller image (`OPK_DROP_LEVELS`, `LLVkTex::dropLevels`, worker `drop_levels`, `Renderer::copyMipLevels`). No draw, no render target. The worker refuses (leaves the image as it was, counted as 'drops refused') when the texture is not plain 2D, is compressed or depth, or does not hold its full chain; the viewer does not fall back then, so the texture just keeps its larger image (no white, no memory freed). None were refused in the runs. On by default; `LL_VK_SCALEDOWN_LEVELS=0` restores the old path. `LLImageTex::scaleDown` otherwise keeps its behavior (alloc, options dirty, `mCurrentDiscardLevel`).
+
+**Result (unfocus test, 60 s away, same scene).**
+
+| run | white pixels unfocused | after refocus | note |
+|---|---|---|---|
+| `tex-unfocus2` old path | 2.8% | 0.04% after 10 s | |
+| `tex-unfocus3` no scaledown | 0.01% | 0.01% | |
+| `tex-unfocus5` level drop (env) | 0.01% | 0.01% | 4923 drops, 0 refused |
+| `tex-unfocus6` level drop (default) | 0.28% | 0.28% | a ground light pool that switched on, not a texture |
+
+VRAM still falls about 1 GB on unfocus (9.1 to 8.1 GB) and returns after refocus. Not tested: changing the max texture resolution in Preferences (it uses the same function), and a turn run.

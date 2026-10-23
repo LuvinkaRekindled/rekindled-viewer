@@ -422,6 +422,7 @@ public:
     bool uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, VkDeviceSize bytes, void (*fill)(void* ctx, U8* dst, VkDeviceSize bytes), void* ctx);
     // fills mips 1..n from mip 0 with linear blits (the image must have been created with mips > 1)
     bool generateMipmaps(Image& image);
+    bool copyMipLevels(Image& src, U32 first, Image& dst);     // <FS> levels first.. of src (each the size of the level of dst it goes to) into levels 0.. of dst: a texture that gives up its top levels
     bool copyBaseLevel(Image& src, Image& dst);       // <FS> level 0 of src (the same size) into level 0 of dst: a texture that grows its mip chain moves its data
 
     U32 getDrawCount() const { return mDrawCount; }

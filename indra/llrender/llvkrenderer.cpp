@@ -4669,6 +4669,38 @@ bool Renderer::copyBaseLevel(Image& src, Image& dst)
     return true;
 }
 
+bool Renderer::copyMipLevels(Image& src, U32 first, Image& dst)
+{
+    ++mModCount;
+    if (!src.valid() || !dst.valid() || first >= src.mMipLevels || src.mLayers != dst.mLayers)
+    {
+        return false;
+    }
+    const U32 count = std::min<U32>(dst.mMipLevels, src.mMipLevels - first);
+    // every level must be the size of the level it goes to (the chain of a smaller image is the chain of the larger one, shifted)
+    std::vector<VkImageCopy> regions(count);
+    for (U32 m = 0; m < count; ++m)
+    {
+        const U32 sw = std::max(1u, src.mExtent.width >> (first + m)), sh = std::max(1u, src.mExtent.height >> (first + m));
+        const U32 dw = std::max(1u, dst.mExtent.width >> m), dh = std::max(1u, dst.mExtent.height >> m);
+        if (sw != dw || sh != dh)
+        {
+            return false;
+        }
+        regions[m] = {};
+        regions[m].srcSubresource = { src.mAspect, first + m, 0, src.mLayers };
+        regions[m].dstSubresource = { dst.mAspect, m, 0, dst.mLayers };
+        regions[m].extent = { sw, sh, 1 };
+    }
+    withCommandBuffer([&](VkCommandBuffer cmd) {
+        transition(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdCopyImage(cmd, src.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, count, regions.data());
+        transition(cmd, dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    });
+    return true;
+}
+
 bool Renderer::generateMipmaps(Image& image)
 {
     ++mModCount;
