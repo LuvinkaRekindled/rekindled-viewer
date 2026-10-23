@@ -511,3 +511,49 @@ Verify counts 0 in the still run and the moving run; build time per frame (the t
 - **The cost of the whole C1 chain (table, test input) is now about 0.01-0.02 ms of main thread and 0.04 ms of worker, against 1.0-2.9 ms of main thread for the full walk it started from.**
 
 **Next: C2, using the verdict** (switch default off, the old walk stays; `LL_VK_CULL_VERIFY`-style comparison stays as the gate). Decisions open: the margin factor (0.5: one late group a frame in the fastest turn; 1: almost none, 839 extra groups of 3,108 in that turn), the stock far-limit quirk (15.4 item 1), and which consumers read the GPU set first (render lists of the VOLUME partition, as 12.4 C2 says; the state work (b) of 13.2 stays on the CPU for the groups the set names).
+
+
+## 18. C2 design: the main view's cull from the GPU verdict (2026-10-23)
+
+Adam's decision (2026-10-23): C2 is structural: it is what moves the visibility decision off the octree walk and prepares the balancing of CPU and GPU. Expected main-thread gain 0.4-0.6 ms at best (about 3-4 %), fps only where the main thread limits (13.7, the answer of this session). Default off, the old walk stays as fallback and as the gate.
+
+### 18.1 What the walk does per node, and what the flat version must keep
+
+`LLViewerOctreeCull::traverse` / `LLOctreeCull`: per visited node `earlyFail` = `checkOcclusion()` (two side effects: a group under an `OCCLUDED` parent forgets its awaited Hi-Z verdict; a group that asked to be discarded while its verdict was awaited, `mHizStale`, clears `OCCLUDED` for its branch) then, when `OCCLUDED` and not the root, `markOccluder(group)` (the topmost occluded group goes to the occlusion list: **this is what makes Hi-Z ask again**) and the subtree is skipped; else the frustum test, descent on partial / inside; every group that passes gets `markNotCulled` (empty groups return at once; `setVisible`, `updateDistance`, push to the drawable-group or visible-group list, and to the occlusion list when it needs an update or was not visible last frame). Before the walk `LLSpatialPartition::cull` calls `rebound()` on the root.
+
+### 18.2 The flat version (`LL_VK_CULL_USE`, needs `LL_VK_CULL_SHADOW=1`)
+
+`LL_VK_CULL_USE=1` **derive**: the walk runs as now and is what the pipeline uses; the flat version runs after it and its set is compared with the walk's (the gate). `LL_VK_CULL_USE=2` **use**: the covered partitions are not walked; the flat version produces their lists. `LL_VK_CULL_USE_VARIANT=1..3` picks the margin variant of the verdict (default 2).
+Input: the newest verdict read (a bit set per variant over slots, its slot generations) and the kept table (`sMirror`, whose flags are the CPU's own `OCCLUDED`, skip, empty, dead state as of the last hook). A row's verdict bit is **unknown** (counts as passed) when the group did not exist in that record (slot beyond its size or another generation).
+One pass over the rows with a memo, parent state first:
+- state of a row, given its parent's state (the root's parent counts as passed): parent not passed -> FAIL; row `OCCLUDED` and not the root -> **TOP-OCCLUDED**; else verdict bit set -> PASS, clear -> FAIL. A row whose parent is TOP-OCCLUDED or deeper is skipped (the walk never visits it).
+- **kept** = PASS, not empty, not dead, and its partition's render type is enabled (`hasRenderType`, as the walk's partition loop does: the row carries the partition's drawable type). For kept groups: `checkOcclusion()` (the state may flip), re-read `OCCLUDED`, then `markNotCulled`.
+- **TOP-OCCLUDED** rows: `checkOcclusion()` (a stale verdict clears the branch: then the group counts as kept after all), else `markOccluder(group)`.
+- Pointer access only for the kept and top-occluded groups (about 1,400 + a few hundred of the 8k rows): the rest is the flat table.
+Roots: `rebound()` of each covered partition's root stays (it is what `LLSpatialPartition::cull` did first); the touched rows are refreshed (`cull_process`) before the pass.
+Not covered, still walked: bridge, avatar, control avatar, HUD, HUD particle, VO cache; every cull of a secondary view (cascades, probes, snapshots, mirrors).
+
+### 18.3 Gate and measurements
+
+Derive mode: the flat kept set against the walk's kept set, per frame, with the causes (a group beyond the far limit: the stock sphere quirk; bounds changed; occlusion state changed; the rest = motion): missed must be ~0 at the chosen variant (like 15.3), extra within the margin's cost. Use mode: no device lost, the Hi-Z numbers (groups occluded a frame, probes) unchanged against derive runs, pictures (scripted turns) without missing groups, `updateCull` lap and zone times against a run with the walk, fps A/B only in the same session (13.1). Valid only for the main view's world pass; the walk comes back by itself while no verdict has been read yet (first frames, a refused record).
+
+### 18.4 Results (2026-10-23, runs `c1-stillderive1`, `c1-movederive1` (derive), `c1-stilllapcuse1`, `c1-movelapcuse1` (use, comparison on), `c1-stilllapplain2`, `c1-movelapplain2` (plain walk, laps), `c1-stilllapcusenocmp1`, `c1-movelapcusenocmp1` (use, comparison off, laps); margin variant 3 = factor 1; no device lost in the 8 runs)
+
+**Derive mode** (the flat set next to the walk, margin factor 1): still: the flat pass keeps 1,526 groups and 636 topmost occluded ones in 0.165 ms; the walk keeps 1,507; both 1,495, **missed 12 (11 of them beyond the far limit: the stock sphere quirk of 15.4), extra 30** (the margin, as in 15.3); turning: kept 1.4k-2.4k, missed 1-5 (mostly far limit), extra 240-930 (the margin), 0.11-0.23 ms.
+
+**Use mode against the plain walk, same session, laps (`LL_VK_VISCENSUS=1`), comparison off**, main thread, ms a frame:
+
+| | still, walk | still, C2 | turning, walk | turning, C2 |
+|---|---|---|---|---|
+| `updateCull` | 0.644 | 0.649 | 0.905 | 1.051 |
+| `stateSort` (includes `postSort`) | 1.541 | 1.764 | 1.840 | 2.325 |
+| `postSort` (render map) | 0.781 (0.558) | 0.886 (0.622) | 1.122 (0.549) | 1.505 (0.740) |
+| visible groups a frame | 1,807 | 1,869 (+3 %) | 1,447 | 1,866 (+29 %) |
+| the flat pass itself (`cull_flat`) | - | 0.43 | - | 0.61 |
+| fps median (10 s samples) | 72.4 | 72.2 | 61.4 | 56.8 |
+
+(The first use runs, with the comparison on, showed `updateCull` 0.85 / 1.67 ms: the end-of-frame build and the comparison with the CPU set sit inside that lap.)
+
+**Conclusion: C2 as built does not pay on the main thread in the plaza.** `updateCull` does not shrink: the flat pass (0.43-0.61 ms) costs about what the walk it replaces cost, because what the walk spent was mostly per-group work that C2 still has to do for about 2,000 groups a frame (1,300-1,460 kept + 595-670 topmost occluded: `checkOcclusion`, `markNotCulled`, `markOccluder`, each a pointer access), and not the traversal itself; the estimate of 0.4-0.6 ms in section 18 and in the answer to Adam was too high. **The verdict's margin costs state work while turning**: +29 % groups kept at factor 1 give +0.5 ms in `stateSort` and `postSort`. Correctness is not the problem: derive matched the walk within the margin and the far-limit quirk, use mode ran clean 4 times.
+What would still cut it, if it is ever wanted: skip the pointer access for topmost occluded groups that are already `ACTIVE_OCCLUSION` (a row flag set by the hooks), run the classification (0.17 ms of the 0.43) on a worker thread, a tighter margin (factor 0.5: +17 % groups). Realistic result: 0.1-0.2 ms, not worth the extra moving parts now.
+Status: `LL_VK_CULL_USE=1|2` stays in the tree, default off, verified; the C1 chain (table, delta rows, GPU test, comparison) stays as groundwork for the balancing direction of 13.7. Recommendation: do not enable C2; the bigger lever found on the way is the texture / VRAM budget thrash after turns (15.4 item 6, the side-session notes).
