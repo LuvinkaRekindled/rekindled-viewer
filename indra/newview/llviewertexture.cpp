@@ -558,6 +558,18 @@ void LLViewerTexture::updateClass()
 
     F32 over_pct = (used - target) / target;
 
+    {
+        // <FS> native-vk: the budget logic over time (texture thrash investigation): used / budget / target in MB, the bias, how far over the target, and the texture bytes the viewer counts
+        static LLFrameTimer budget_log_timer;
+        static bool budget_log = getenv("LL_VK_BUDGET_LOG") != nullptr;
+        if (budget_log && budget_log_timer.getElapsedTimeF32() >= 2.f)
+        {
+            budget_log_timer.reset();
+            LL_INFOS("VkBudget") << "used " << (S32)used << " MB, budget " << (S32)budget << ", target " << (S32)target << ", over " << (S32)(over_pct * 1000.f) / 10.f << "%, bias " << sDesiredDiscardBias
+                                 << ", texture bytes counted " << (S32)(LLImageTex::getTextureBytesAllocated() / (1024 * 1024)) << " MB" << LL_ENDL;
+        }
+    }
+
     bool is_sys_low = isSystemMemoryLow();
     bool is_low = is_sys_low || over_pct > 0.f;
 
