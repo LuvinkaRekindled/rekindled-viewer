@@ -275,15 +275,32 @@ Per type the Hi-Z-hidden share is 21-54 % of the items and 5-10 % of the triangl
 What this means for B, in numbers:
 - **Draw commands:** a cull would drop about 1,300 of the roughly 3,900 non-rigged table items a frame (34 %) by Hi-Z (868 + 456) and about 140 (4 %) by the frustum, inside groups the CPU keeps. They are small draws (hidden opaque ones average about 70 triangles, alpha ones about 19).
 - **Triangles:** about 67 k of 9.5 M table triangles a frame (0.7 %). **The frame's triangles are the avatars (8.5 M opaque + 0.85 M alpha rigged = 90 %), which an item cull does not touch.** The vertex-bound gain of the item cull is far below 0.1 ms. What it can save is command-processor and per-draw state work for about 1,300 hidden small draws; their fragments already die at the depth test, so no shading is saved for the opaque ones. I could not measure the GPU gain without building the cull; my estimate (not a measurement) is a few tenths of a ms at most, and the alpha runs (4.0 ms of GPU, fill-bound) would lose about half of their commands but little of their time.
-- **The lever B does not cover is the rigged geometry:** a box per avatar is available (`getLastAnimExtents`); a frustum / Hi-Z cull per avatar, or a cheaper LOD for far and hidden ones, would address the 90 %. That is a different job from the table's item cull and is not measured here (the avatar groups are already culled as groups by the CPU walk; how many of the 529 visible avatar groups are hidden is not known).
+- **The lever B does not cover is the rigged geometry:** a box per avatar is available (`getLastAnimExtents`); a frustum / Hi-Z cull per avatar was guessed to address the 90 %; **13.7 measured it: it would drop nothing** (the avatar groups are already culled with the same extents), so the avatar cost is triangle count (LOD), not visibility.
 
 ### 13.5 What this changes in the plan
 
 - **C (main view only) is worth at most about 1-1.5 ms of main thread, not 3:** the whole main-view chain is 2.5 ms; the decision part (0.5 ms VOLUME walk, 0.14 `checkOcclusion`) and the render map (0.55) could go, the LOD / `updateDistance` / bridge state of active drawables (about 0.5 ms) stays. With the GPU about 13 ms and the main thread 14-17 ms, the frame gain is at most about 1 ms; C1 (flat group table in shadow mode) has no frame gain by itself.
 - **The shadow views' sort (about 3.7 ms of `stateSort` work outside the main view, zone run) is bigger than the main view's whole chain** and is in none of B, C1-C5 as written; it is the cascade cull job of S-retire-views-design.md.
-- **B as designed (item cull) is small in this scene:** 0.7 % of the table's triangles, about 1,300 small commands.
+- **Avatar cull: nothing left to drop (13.7).** **B as designed (item cull) is small in this scene:** 0.7 % of the table's triangles, about 1,300 small commands.
 - OIT (alpha runs, 4.0 ms of GPU, 30 %) and the avatar triangle load stay the biggest GPU levers; neither is a B or C item.
 
 ### 13.6 Decision for Adam
 
-Options: (1) **build neither as designed**; first look at the avatar side (per-avatar frustum / Hi-Z box cull; 90 % of the triangles) or the shadow views' sort (about 3.7 ms), which are bigger than B and C1; (2) **C1 shadow mode** (flat group table + GPU test, compared with the CPU set; no behaviour change, no frame gain by itself, up to 1-1.5 ms only after C2-C5); (3) **B as designed** (about 1,300 small draws a frame, estimated a few tenths of a ms of GPU, never measured; needs the box side array and an indirect-count path). Recommendation: (1), then B by avatars; do not start C before the shadow views have a plan. Not done: a moving-camera run (turn the avatar during the run: how far the previous-frame pyramid agrees under motion) and a second spot.
+Options: (1) **build neither as designed**; first look at the shadow views' sort (about 3.7 ms), which is bigger than B and C1 (the avatar cull that was an option here was measured in 13.7 and has nothing to drop); (2) **C1 shadow mode** (flat group table + GPU test, compared with the CPU set; no behaviour change, no frame gain by itself, up to 1-1.5 ms only after C2-C5); (3) **B as designed** (about 1,300 small draws a frame, estimated a few tenths of a ms of GPU, never measured; needs the box side array and an indirect-count path). Recommendation: (1); do not start C before the shadow views have a plan (see 13.7 for the updated list). Not done: a moving-camera run (turn the avatar during the run: how far the previous-frame pyramid agrees under motion) and a second spot.
+
+
+### 13.7 Avatar cull measured (v1a, same spot, a heavier crowd: frame 21.0 ms; Adam asked for the avatar cull first "if it is blocking")
+
+It is not blocking: B and C1 do not depend on it. I measured what it would drop anyway, with the same machinery: every rigged table item (opaque and alpha) gets the box of its avatar (`getLastAnimExtents`, agent space, padded 25 cm), tested by the CPU frustum and by the worker's Hi-Z against both pyramids. Per frame, over 8 steady windows:
+
+| | items | tris | outside the frustum | hidden by Hi-Z (same-frame / previous-frame pyramid) |
+|---|---|---|---|---|
+| rigged opaque | 758 | 10.75 M | 0 | 0.1 item, **55 tris** / 55 tris |
+| rigged alpha runs | 404 | 1.29 M | 0 | 0 |
+| distinct avatars boxed | 29 a frame | 12.0 M | 0 | - |
+
+(Static items in the same run: 906 of 3,082 opaque items and 471 of 1,102 alpha runs hidden by Hi-Z, 81 and 15 outside the frustum, the same shares as in 13.4.)
+
+**Result: a per-avatar frustum / Hi-Z cull has nothing left to drop in this scene.** The avatar groups are bounded by the same extents and the CPU walk plus the group-level Hi-Z (section 11) already remove every avatar that is off screen or hidden before the table sees it: of the 29 avatars that reach the table, none is outside the frustum and the Hi-Z test hides 55 triangles of 12 M. This corrects the guess in 13.4 and 13.5 ("a box per avatar ... would address the 90 %"): it would not. What the avatars cost is their **triangle count** (12 M triangles for 29 avatars, about 415 k each on average), i.e. LOD / complexity, not visibility. The levers for that are GPU LOD (the rest of S7: a distance LOD select for rigged meshes, which needs all LODs resident; section 12.5), the avatar complexity limits (jelly dolls, `RenderAvatarMaxComplexity`) and impostors; none is a culling job. I did not measure what LOD the viewer picks for those meshes at 18-50 m (not done).
+
+**Updated recommendation:** neither B (small, 13.4) nor a per-avatar cull (nothing left, 13.7) is worth building now. The open choices with real numbers behind them: (1) the shadow views' sort (about 3.7 ms of main thread, 13.1), (2) avatar triangle load by LOD (GPU LOD, needs its own design note and a census of which LOD the rigged meshes use at distance), (3) OIT for the alpha runs (4.0 ms of GPU), (4) C1 only as a step towards (1).

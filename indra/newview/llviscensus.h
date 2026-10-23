@@ -48,6 +48,7 @@ namespace LLVisCensus
     inline U64 sBGroupsPartial = 0, sBGroupsFull = 0;
     // the verdicts of the Hi-Z test for the items the frustum kept (sent N frames earlier): A = against the pyramid of the same frame at the occlusion point, B = against the pyramid of the frame before
     inline U64 sBTested[ITEM_TYPES] = {}, sBTestedTris[ITEM_TYPES] = {}, sBHidA[ITEM_TYPES] = {}, sBHidATris[ITEM_TYPES] = {}, sBHidB[ITEM_TYPES] = {}, sBHidBTris[ITEM_TYPES] = {}, sBValidB[ITEM_TYPES] = {};
+    inline U64 sBAvatars = 0, sBAvatarTris = 0, sBAvatarOutsideItems = 0, sBAvatarOutsideTris = 0;       // rigged draws bounded by their avatar's extents (distinct avatars boxed, their tris, those outside the frustum)
     inline U64 sBBatches = 0, sBBatchesValidB = 0, sBGpuOutside = 0;
 
     inline long long sQpc0 = 0;
