@@ -715,7 +715,7 @@ void LLShaderProgram::vkAnnounce()
 
 void LLShaderProgram::announceBound()
 {
-    if (sCurBoundShaderPtr && LLVkAsync::passClosed() && sCurBoundShaderPtr->mVkEpoch != LLVkAsync::passEpoch())
+    if (sCurBoundShaderPtr && sCurBoundShaderPtr->mVkEpoch != LLVkAsync::passEpoch())
     {
         sCurBoundShaderPtr->vkAnnounce();
     }
@@ -1670,7 +1670,7 @@ void LLShaderProgram::bind()
         }
     }
 
-    if (LLVkAsync::passClosed() && mVkEpoch != LLVkAsync::passEpoch())
+    if (mVkEpoch != LLVkAsync::passEpoch())
     {
         vkAnnounce();       // S6.2: the first use of the program in this pass
     }

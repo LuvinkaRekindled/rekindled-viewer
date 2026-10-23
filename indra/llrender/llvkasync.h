@@ -103,7 +103,6 @@ namespace LLVkAsync
     void passEnd();
     // S6.2: a pass is closed: everything it reads of the state classes that used to persist from the pass before (render state block, program uniform class blocks, texture units, uniform buffer
     // bindings, constant attributes, the program of the packet records, the vertex binding) is sent again at its first use in the pass. passEpoch changes with every pass record.
-    bool passClosed();
     unsigned long long passEpoch();
     void uniformRangeAnnounce(void* program, U32 cls, U32 offset, U32 size, const void* data);      // uniformRange, marked as a full class block announced at the first use of the program in a pass
     // the pass being played (worker thread): what the last pass record said
@@ -200,7 +199,6 @@ namespace LLVkAsync
         CMD_SYNC, CMD_STOP, CMD_WRAP,
         CMD_BUFFER_DATA, CMD_BUFFER_SUBDATA,       // named buffer storage (bufferData / bufferSubData)
         CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (LLVkBridge::shadowPackets)
-        CMD_TEX_PARAMS,                            // texture parameters of the bound texture, several in one record (LLTexUnit sampler state)
         CMD_FBO_ATTACH, CMD_TARGET_STATE,          // render target commands (framebufferAttach, targetState)
         CMD_TEX_SLOTS,                             // texture ids that changed since the last draw, when something other than a draw comes first (a draw record carries them itself)
         CMD_GPU_ZONE,                              // a named GPU timing zone begins or ends here in the command stream (FSGpuZoneTimers)

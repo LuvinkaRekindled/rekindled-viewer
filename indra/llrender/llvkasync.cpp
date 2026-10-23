@@ -181,7 +181,7 @@ long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 2); }
 constexpr int OP_SLOT_CUBE = OP_STAT_SLOTS - 1;     // S7 H0: the draws of 8 indices (the occlusion cubes), also counted in "draw": reported separately, left out of the total
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
-                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bufferData", "bufferSubData", "shadowPackets", "texParams", "fboAttach", "targetState", "texSlots", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "draw", "uniformRange", "pass", "drawScratch" };
+                                  "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bufferData", "bufferSubData", "shadowPackets", "fboAttach", "targetState", "texSlots", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "draw", "uniformRange", "pass", "drawScratch" };
 const char* slotName(int slot) { if (slot == OP_SLOT_CUBE) return "draw of 8 indices (occlusion cubes, included in draw)"; return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
 unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
@@ -500,7 +500,6 @@ void uniformRangeAnnounce(void* program, U32 cls, U32 offset, U32 size, const vo
     struct A { void* mProgram; U32 mClass; U32 mOffset; U32 mSize; U32 mPad; } a = { program, cls, offset, size, 1 };
     uniAppend(CMD_UNIFORM_RANGE, &a, sizeof(a), data, size);
 }
-bool passClosed() { return LLVkPassCensus::sClose != 0; }
 unsigned long long passEpoch() { return gPassEpoch; }
 static unsigned long long gDrawSeq = 0;
 unsigned long long drawSeq() { return gDrawSeq; }
@@ -635,22 +634,19 @@ void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool c
         { (S32)fbo, draw_buffers, (clear_color ? 1u : 0u) | (clear_depth ? 2u : 0u) | ((U32)kind << 8), { rgba[0], rgba[1], rgba[2], rgba[3] }, site, id, parent, 0 };
     rawPush(CMD_PASS, &rec, sizeof(rec));
     ++gPassEpoch;
-    if (LLVkPassCensus::sClose)
+    // S6.2: the pass is closed: what it reads of the state that persisted from the pass before is sent again where it is used: the render state block with the next record that reads it, the draw
+    // context's binding with the next draw, the texture units with the next draw (or a texture record), the uniform buffer bindings and constant attributes now, a program's uniform class
+    // blocks at its bind (LLShaderProgram::bind / announceBound: the bound program is announced by the caller, after this record)
+    LLVkState::forceEmit();
+    Pend& p = pend();
+    p.mDraw.mDirty = true;
+    U32 m = 0;
+    for (U32 u = 0; u < 32; ++u)
     {
-        // S6.2: what the pass reads of the state that persisted from the pass before is sent again where it is used: the render state block with the next record that reads it, the draw
-        // context's binding with the next draw, the texture units with the next draw (or a texture record), the uniform buffer bindings and constant attributes now, a program's uniform class
-        // blocks at its bind (LLShaderProgram::bind / announceBound: the bound program is announced by the caller, after this record)
-        LLVkState::forceEmit();
-        Pend& p = pend();
-        p.mDraw.mDirty = true;
-        U32 m = 0;
-        for (U32 u = 0; u < 32; ++u)
-        {
-            if (p.mTex[u]) m |= 1u << u;
-        }
-        p.mMask |= m;
-        LLVkBuf::reannounce();
+        if (p.mTex[u]) m |= 1u << u;
     }
+    p.mMask |= m;
+    LLVkBuf::reannounce();
 }
 
 void clearTarget(bool color, bool depth, const F32* rgba)
@@ -2822,49 +2818,6 @@ LONG crash_filter(EXCEPTION_POINTERS* info)
 
 void run_loop();
 
-}   // anonymous namespace
-}   // namespace LLVkAsync
-extern void (*gLLNonFiniteHook)();
-namespace LLVkAsync
-{
-namespace
-{
-// S6.2 diagnostics: where a non finite coordinate frame origin came from (the first few, with names from the .pdb)
-void nonFiniteHook()
-{
-    static int n = 0;
-    if (n++ >= 4)
-    {
-        return;
-    }
-    void* frames[24] = {};
-    const USHORT count = CaptureStackBackTrace(1, 24, frames, nullptr);
-    HANDLE proc = GetCurrentProcess();
-    static bool init = false;
-    if (!init)
-    {
-        char exe_path[MAX_PATH] = {};
-        GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
-        char* slash = strrchr(exe_path, '\\');
-        if (slash) *slash = 0;
-        SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
-        SymInitialize(proc, exe_path, TRUE);
-        init = true;
-    }
-    alignas(8) char sym_buf[sizeof(SYMBOL_INFO) + 512] = {};
-    std::string out;
-    for (USHORT i = 0; i < count; ++i)
-    {
-        SYMBOL_INFO* si = (SYMBOL_INFO*)sym_buf;
-        si->SizeOfStruct = sizeof(SYMBOL_INFO);
-        si->MaxNameLen = 500;
-        DWORD64 disp = 0;
-        out += "\n   ";
-        out += SymFromAddr(proc, (DWORD64)frames[i], &disp, si) ? si->Name : "?";
-    }
-    LL_WARNS("VkPassClose") << "non finite origin, called from:" << out << LL_ENDL;
-}
-
 DWORD WINAPI workerMain(LPVOID)
 {
     __try
@@ -3017,7 +2970,6 @@ bool start()
         return true;
     }
     LLVkPassCensus::init();
-    if (LLVkPassCensus::sClose) gLLNonFiniteHook = nonFiniteHook;
     if (getenv("LL_VK_PHASES") || getenv("LL_VK_OPSTATS"))
     {
         gOpStatsPeriodic = getenv("LL_VK_PHASES") == nullptr;
