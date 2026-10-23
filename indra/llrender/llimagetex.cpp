@@ -2385,6 +2385,19 @@ bool LLImageTex::scaleDown(S32 desired_discard)
     S32 desired_width = getWidth(desired_discard);
     S32 desired_height = getHeight(desired_discard);
 
+    // <FS> native-vk (LL_VK_SCALEDOWN_LEVELS=0 turns it off): a texture with a mip chain gives up its top levels in the worker (a copy of the levels below into a smaller image); the draw into a target and the
+    // copy back (below) leave white textures
+    static const bool drop_levels = []{ const char* e = getenv("LL_VK_SCALEDOWN_LEVELS"); return !e || atoi(e) != 0; }();
+    if (drop_levels && mHasMipMaps && mip > 0)
+    {
+        free_tex_image(mTexName);
+        LLVkTex::dropLevels(mTexName, mip);
+        alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
+        markTexOptionsDirty();
+        mCurrentDiscardLevel = desired_discard;
+        return true;
+    }
+
     { // use an FBO to downscale the texture (the only method: the PBO readback method of RenderDownScaleMethod 1 is gone with the GL buffer binds)
         LLVkState::setViewport(0, 0, desired_width, desired_height);
 

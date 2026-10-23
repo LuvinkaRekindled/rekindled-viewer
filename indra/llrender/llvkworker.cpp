@@ -576,6 +576,7 @@ inline void tex_forget(U32 name) { if (name < sTexFlat.size()) sTexFlat[name] = 
 
 
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
+U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
 U64 sOutOfRangeDraws = 0;           // indexed draws left out because their index or vertex range was not inside their buffers (since the start)
 U64 sDrawsTotal = 0;
 std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
@@ -693,6 +694,7 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     ++gPassState.mTargetEpoch;
     if (t.mImage.valid())
     {
+        ++sRespecs;
         if (sVerifySnapshotPending)
         {
             LL_INFOS("VkVerify") << "snapshot: texture re-specified from " << t.mWidth << "x" << t.mHeight << " fmt " << (S32)t.mStore << " to " << w << "x" << h << " fmt " << (S32)st
@@ -761,6 +763,7 @@ bool grow_levels(Tex& t)
     {
         return true;
     }
+    ++sGrows;
     TextureDesc td;
     td.mType = TexType::Tex2D;
     td.mWidth = t.mWidth;
@@ -790,6 +793,61 @@ bool grow_levels(Tex& t)
     destroy_tex_images(t);
     t.mImage = fresh;
     t.mLevels = full;
+    pin_touch(t);
+    for (auto& kv : sGL.mTextures)
+    {
+        if (&kv.second == &t)
+        {
+            Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(kv.first));
+            break;
+        }
+    }
+    return true;
+}
+
+// <FS> native-vk: a plain 2D texture that holds its whole mip chain gives up its top k levels: a new image with the levels below them (a copy, the old image released). The viewer shrinks a texture this way
+// (LLImageTex::scaleDown) instead of drawing it small into a target and copying that. False (nothing changed) when the texture does not hold all of its levels.
+bool drop_levels(Tex& t, U32 k)
+{
+    using namespace LLVkFormat;
+    if (!k || !t.mImage.valid() || t.mDim != DIM_2D || t.mFormat.mDepth || t.mFormat.mCompressed)
+    {
+        return false;
+    }
+    const U32 full = mipLevelCount(t.mWidth, t.mHeight);
+    if (t.mLevels < full || t.mValidLevels < t.mLevels || t.mLevels <= k)
+    {
+        return false;
+    }
+    TextureDesc td;
+    td.mType = TexType::Tex2D;
+    td.mWidth = std::max(1u, t.mWidth >> k);
+    td.mHeight = std::max(1u, t.mHeight >> k);
+    td.mDepth = 1;
+    td.mMips = t.mLevels - k;
+    td.mFormat = t.mFormat.mVk;
+    td.mSwizzle = t.mSwizzleSet ? swizzle_mapping(t) : t.mFormat.mSwizzle;
+    td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (LLVkDlss::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+    {
+        td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
+    }
+    Image fresh;
+    if (!Renderer::instance().createTexture(td, fresh))
+    {
+        return false;
+    }
+    if (!Renderer::instance().copyMipLevels(t.mImage, k, fresh))
+    {
+        Context::instance().destroyImage(fresh);
+        return false;
+    }
+    destroy_tex_images(t);
+    t.mImage = fresh;
+    t.mWidth = td.mWidth;
+    t.mHeight = td.mHeight;
+    t.mLevels = td.mMips;
+    t.mValidLevels = td.mMips;
     pin_touch(t);
     for (auto& kv : sGL.mTextures)
     {
@@ -2284,6 +2342,7 @@ static void copy_to_texture(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 y
     Image* src = read_image(source_fbo);
     if (!t || !t->mImage.valid() || !src || !LLVkBridge::inFrame())
     {
+        ++((!t || !t->mImage.valid()) ? sCopyDropTex : !src ? sCopyDropSrc : sCopyDropFrame);
         return;
     }
     if (level > 0 && !grow_levels(*t))
@@ -2395,6 +2454,18 @@ void tex_mipmap(unsigned id)
 {
     EditScope s(id);
     edit_mipmap();
+}
+
+void tex_drop_levels(unsigned id, int levels)
+{
+    EditScope s(id);
+    Tex* t = edit_texture();
+    if (!t || levels <= 0 || !drop_levels(*t, (U32)levels))
+    {
+        ++sLevelDropsRefused;
+        return;
+    }
+    ++sLevelDrops;
 }
 
 void tex_copy_sub(unsigned id, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source)
@@ -9256,6 +9327,23 @@ void after_frame()
     hiz_poll();     // <FS> S7 H1: publish the Hi-Z results of the frames the GPU has finished
     {
         // <FS> the video memory and what the textures take of it, every 1800 frames (about 30 seconds): after a teleport this shows where the memory went and whether a texture was refused
+        {
+            // <FS> every 300 frames (about 5 s), when something changed: what the texture copies from targets and the re-specified images did in that time (cumulative totals, the difference between two lines is the interval)
+            static U32 copy_frames = 0;
+            static U64 last[8] = {};
+            if (++copy_frames >= 300)
+            {
+                copy_frames = 0;
+                const U64 now_v[8] = { (U64)sCopies, sCopyDropFrame, sCopyDropTex, sCopyDropSrc, sRespecs, sGrows, sLevelDrops, sLevelDropsRefused };
+                if (memcmp(now_v, last, sizeof(now_v)) != 0)
+                {
+                    LL_INFOS("VkTexCopy") << "texture copies from targets done " << now_v[0] << " (+" << now_v[0] - last[0] << "), dropped: not in a frame " << now_v[1] << " (+" << now_v[1] - last[1] << "), no texture image "
+                        << now_v[2] << " (+" << now_v[2] - last[2] << "), no source image " << now_v[3] << " (+" << now_v[3] - last[3] << "); images re-specified " << now_v[4] << " (+" << now_v[4] - last[4]
+                        << "), mip chains grown " << now_v[5] << " (+" << now_v[5] - last[5] << "), levels dropped " << now_v[6] << " (+" << now_v[6] - last[6] << "), drops refused " << now_v[7] << " (+" << now_v[7] - last[7] << ")" << LL_ENDL;
+                    memcpy(last, now_v, sizeof(last));
+                }
+            }
+        }
         static U32 frames = 0;
         if (++frames >= 1800)
         {
