@@ -2796,6 +2796,8 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         bool mOn; U64 mT0;
         ~VisCullEnd() { if (mOn) { LLVisCensus::sCullTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sCullFrames; } }
     } vis_cull_end = { vis_cull, vis_cull ? LLVisCensus::now() : 0 };
+    // <FS> S7 C2 (LL_VK_CULL_USE=2): the covered partitions are not walked, useVerdict makes their lists
+    const bool cull_use = LLCullShadow::sUse == 2 && !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot;
     struct CullShadowEnd
     {
         bool mOn; LLCamera* mCamera;
@@ -2826,6 +2828,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
                     static const char* const part_zones[] = { "updateCull: cull HUD", "updateCull: cull TERRAIN", "updateCull: cull VOIDWATER", "updateCull: cull WATER", "updateCull: cull TREE", "updateCull: cull PARTICLE",
                         "updateCull: cull GRASS", "updateCull: cull VOLUME", "updateCull: cull BRIDGE", "updateCull: cull AVATAR", "updateCull: cull CONTROL_AV", "updateCull: cull HUD_PARTICLE", "updateCull: cull (other)" };
                     LL_CPU_ZONE(part_zones[i < 12 ? i : 12]);
+                    if (cull_use && LLCullShadow::useSkip(part))
+                    {
+                        continue;
+                    }
                     { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
                 }
             }
@@ -2839,6 +2845,12 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
             //vo_part->cull(camera, sUseOcclusion > 0);
             { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive()); }
         }
+    }
+
+    if (cull_use)
+    {
+        LL_CPU_ZONE("updateCull: C2 flat cull");
+        LLCullShadow::useVerdict(camera);
     }
 
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
@@ -7342,6 +7354,9 @@ struct CullStats
     U64 mMissedBounds[LLVkBridge::cullVariants] = {}, mMissedOcc[LLVkBridge::cullVariants] = {}, mMissedMotion[LLVkBridge::cullVariants] = {}, mMissedFar[LLVkBridge::cullVariants] = {};
     U64 mLag[10] = {};
     U64 mDeltaRows = 0, mResets = 0;
+    // C2: the flat version of the cull
+    U64 mUseFrames = 0, mUseKept = 0, mUseTop = 0, mUseBoth = 0, mUseMissed = 0, mUseMissedFar = 0, mUseExtra = 0, mUseUnknown = 0, mUseNoVerdict = 0;
+    double mUseMs = 0;
     double mBuildMs = 0, mProcessMs = 0, mApplyMs = 0, mSendMs = 0, mBytes = 0, mTBound = 0, mABound = 0, mVerifyWalkMs = 0;
     U64 mBuilds = 0, mSends = 0, mRefreshed = 0, mTouches = 0, mAdded = 0, mFreed = 0, mRequeued = 0;
     // LL_VK_CULL_VERIFY: the kept table against a full walk (every 60 builds)
@@ -7406,6 +7421,11 @@ void cull_fill_row(LLSpatialGroup* g, LLVkBridge::CullRow& row)
     LLViewerOctreeGroup* pg = parent ? (LLViewerOctreeGroup*)parent->getListener(0) : nullptr;
     const bool has_parent = pg && pg->mCullId;
     row.mParent = has_parent ? pg->mCullId - 1 : 0;
+    if (part)
+    {
+        const U32 drawable_type = part->mDrawableType;
+        memcpy(&row.mPad0, &drawable_type, 4);        // the partition's drawable type: C2 skips the partitions whose render type is off, as the walk does
+    }
     row.mFlags = (has_parent ? 0u : 1u) | (g->hasState(LLSpatialGroup::SKIP_FRUSTUM_CHECK) ? 2u : 0u) | (g->isOcclusionState(LLSpatialGroup::OCCLUDED) ? 4u : 0u) | (sphere ? 8u : 0u) | (g->isEmpty() ? 16u : 0u);
 }
 
@@ -7533,6 +7553,33 @@ void cull_verify()
     s.mVerifyWalkMs += cull_ms(t0);
 }
 
+// the newest verdict read (the variant C2 uses) with the generations of its slots
+struct CullVerdict
+{
+    bool mValid = false;
+    U32 mCount = 0, mSerial = 0, mFrame = 0;
+    std::vector<U32> mBits;
+    std::vector<U32> mGen;
+};
+CullVerdict sVerdict;
+bool sUseSkipped = false;           // a covered partition was left to useVerdict this frame
+
+void cull_store_verdict(const CullRec& rec, const std::vector<U32>& words)
+{
+    if (!LLCullShadow::sUse)
+    {
+        return;
+    }
+    const U32 W = (rec.mCount + 31) / 32;
+    const U32 v = std::min<U32>(LLCullShadow::sUseVariant, LLVkBridge::cullVariants - 1);
+    sVerdict.mBits.assign(words.begin() + (size_t)v * W, words.begin() + (size_t)(v + 1) * W);
+    sVerdict.mGen = rec.mGen;
+    sVerdict.mCount = rec.mCount;
+    sVerdict.mSerial = rec.mSerial;
+    sVerdict.mFrame = rec.mFrame;
+    sVerdict.mValid = true;
+}
+
 void cull_report()
 {
     CullStats& s = sCullStats;
@@ -7553,6 +7600,13 @@ void cull_report()
         const double v = (double)s.mVerifies;
         snprintf(buf, sizeof(buf), "VERIFY (kept table against a full walk, %.0f walks, %.3f ms each): groups walked %.0f, WITHOUT A ROW %.2f, bounds differ %.2f, extents differ %.2f, parent differs %.2f, flags differ: skip %.2f occluded %.2f sphere %.2f empty %.2f dead-or-root %.2f, live rows without a group in the walk (or the other way) %.2f (per walk)",
             v, s.mVerifyWalkMs / v, (double)s.mVWalked / v, (double)s.mVMissing / v, (double)s.mVBounds / v, (double)s.mVExtents / v, (double)s.mVParent / v, (double)s.mVFlag[1] / v, (double)s.mVFlag[2] / v, (double)s.mVFlag[3] / v, (double)s.mVFlag[4] / v, (double)s.mVFlag[0] / v, (double)s.mVOrphans / v);
+        LL_INFOS("CullShadow") << buf << LL_ENDL;
+    }
+    if (s.mUseFrames)
+    {
+        const double u = (double)s.mUseFrames;
+        snprintf(buf, sizeof(buf), "C2 (the flat cull, variant %u, %.0f frames): kept %.1f groups and %.1f topmost occluded a frame in %.3f ms (%.1f rows without a verdict bit); against the walk (derive mode): both %.1f, MISSED %.2f (of which beyond the far limit %.2f), EXTRA %.1f a frame; %.0f frames without a verdict yet",
+            LLCullShadow::sUseVariant, u, (double)s.mUseKept / u, (double)s.mUseTop / u, s.mUseMs / u, (double)s.mUseUnknown / u, (double)s.mUseBoth / u, (double)s.mUseMissed / u, (double)s.mUseMissedFar / u, (double)s.mUseExtra / u, (double)s.mUseNoVerdict);
         LL_INFOS("CullShadow") << buf << LL_ENDL;
     }
     static const char* const names[] = { "exact (margin 0)", "factor 1", "factor 2", "factor 3" };
@@ -7609,6 +7663,7 @@ void cull_apply()
             sCullRecs.pop_front();
             continue;
         }
+        cull_store_verdict(rec, words);
         CullStats& s = sCullStats;
         ++s.mCompared;
         s.mRows += count;
@@ -7730,6 +7785,10 @@ static void cull_drain()
         {
             break;
         }
+        if (r > 0)
+        {
+            cull_store_verdict(rec, words);
+        }
         ++(r < 0 ? sCullStats.mLost : sCullStats.mCompared);
         LLVkBridge::cullDone(rec.mSerial);
         sCullRecs.pop_front();
@@ -7738,6 +7797,216 @@ static void cull_drain()
             cull_report();
         }
     }
+}
+
+
+// ---- C2 (doc/vulkan/S7-design.md section 18): the main view's visible groups from the verdict and the kept table, without the octree walk ----
+namespace
+{
+enum { CS_UNSET = 0, CS_FAIL = 1, CS_DEEP = 2, CS_PASS = 3, CS_TOP = 4 };
+struct CullClassifier
+{
+    const std::vector<LLVkBridge::CullRow>& mRows;
+    const CullVerdict& mV;
+    std::vector<U8>& mMemo;
+    bool mUseOcc;
+    U64 mUnknown = 0;
+
+    bool bit(U32 s)
+    {
+        if (s >= mV.mCount || s >= mV.mGen.size() || sSlotGen[s] != mV.mGen[s])
+        {
+            ++mUnknown;
+            return true;            // a group the record did not know (made since): not tested, passed
+        }
+        return (mV.mBits[s >> 5] >> (s & 31)) & 1u;
+    }
+    // the state of a row given its ancestors, as the walk would meet it: FAIL (not visited or outside), DEEP (below an occluded group: not visited), PASS (visited and inside), TOP (visited, occluded: dropped)
+    U8 state(U32 s, U32 depth = 0)
+    {
+        if (s >= mRows.size() || depth > 64)
+        {
+            return CS_FAIL;
+        }
+        U8& m = mMemo[s];
+        if (m)
+        {
+            return m;
+        }
+        const LLVkBridge::CullRow& row = mRows[s];
+        if (row.mFlags & 32u)
+        {
+            return m = CS_FAIL;
+        }
+        U8 parent = CS_PASS;
+        if (!(row.mFlags & 1u))
+        {
+            parent = state(row.mParent, depth + 1);
+        }
+        if (parent == CS_FAIL)
+        {
+            return m = CS_FAIL;
+        }
+        if (parent == CS_TOP || parent == CS_DEEP)
+        {
+            return m = CS_DEEP;
+        }
+        if (mUseOcc && (row.mFlags & 5u) == 4u)
+        {
+            return m = CS_TOP;
+        }
+        return m = bit(s) ? CS_PASS : CS_FAIL;
+    }
+};
+}
+
+// derive (use == false): the kept groups are stamped and compared with the walk's; use: the walk's work is done from the verdict (checkOcclusion, markOccluder, markNotCulled)
+static void cull_flat(LLCamera& camera, bool use)
+{
+    CullStats& s = sCullStats;
+    if (!sVerdict.mValid)
+    {
+        ++s.mUseNoVerdict;
+        return;
+    }
+    const auto t0 = CullClock::now();
+    static std::vector<U8> memo;
+    static std::vector<U32> kept, top;
+    kept.clear();
+    top.clear();
+    U64 unknown = 0;
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        memo.assign(sMirror.size(), CS_UNSET);
+        CullClassifier c{ sMirror, sVerdict, memo, LLPipeline::sUseOcclusion != 0 };
+        for (U32 slot = 0; slot < sMirror.size(); ++slot)
+        {
+            const U8 st = c.state(slot);
+            const LLVkBridge::CullRow& row = sMirror[slot];
+            if (st != CS_PASS && st != CS_TOP)
+            {
+                continue;
+            }
+            if ((row.mFlags & (16u | 32u)) && st == CS_PASS)
+            {
+                continue;                       // empty or dead: passes for its children, is not kept
+            }
+            U32 type;
+            memcpy(&type, &row.mPad0, 4);
+            if (!gPipeline.hasRenderType(type))
+            {
+                continue;
+            }
+            (st == CS_PASS ? kept : top).push_back(slot);
+        }
+        unknown = c.mUnknown;
+    }
+    s.mUseUnknown += unknown;
+    ++s.mUseFrames;
+    s.mUseKept += kept.size();
+    s.mUseTop += top.size();
+    if (!use)
+    {
+        // derive: stamp, compare with the walk (the groups with the CPU stamp of this frame)
+        for (U32 slot : kept)
+        {
+            LLViewerOctreeGroup* g = sSlotGroup[slot];
+            if (g)
+            {
+                g->mCullUseStamp = sCullStamp;
+            }
+        }
+        U64 both = 0, extra = 0, missed = 0, missed_far = 0;
+        for (U32 slot : kept)
+        {
+            LLViewerOctreeGroup* g = sSlotGroup[slot];
+            if (g)
+            {
+                (g->mCullCpuStamp == sCullStamp ? both : extra) += 1;
+            }
+        }
+        auto note = [&](LLSpatialGroup* g)
+        {
+            if (g->mCullId && g->mCullCpuStamp == sCullStamp && g->mCullUseStamp != sCullStamp)
+            {
+                ++missed;
+                const LLVector4a* ge = g->getExtents();
+                missed_far += AABBSphereIntersect(ge[0], ge[1], camera.getOrigin(), camera.mFrustumCornerDist) == 0;
+            }
+        };
+        for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i) note(*i);
+        for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i) note(*i);
+        s.mUseBoth += both;
+        s.mUseExtra += extra;
+        s.mUseMissed += missed;
+        s.mUseMissedFar += missed_far;
+    }
+    else
+    {
+        // use: what the walk does at each visited group
+        for (U32 slot : top)
+        {
+            LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+            if (!g || g->isDead())
+            {
+                continue;
+            }
+            g->checkOcclusion();
+            if (LLPipeline::sUseOcclusion && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            {
+                gPipeline.markOccluder(g);      // the topmost occluded group asks Hi-Z again
+            }
+            else
+            {
+                gPipeline.markNotCulled(g, camera);     // its verdict was stale: visible after all
+            }
+        }
+        for (U32 slot : kept)
+        {
+            LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+            if (!g || g->isDead())
+            {
+                continue;
+            }
+            g->checkOcclusion();
+            if (LLPipeline::sUseOcclusion && g->isOcclusionState(LLSpatialGroup::OCCLUDED) && g->getOctreeNode() && g->getOctreeNode()->getParent())
+            {
+                gPipeline.markOccluder(g);
+                continue;
+            }
+            g->mCullUseStamp = sCullStamp;
+            gPipeline.markNotCulled(g, camera);
+        }
+    }
+    s.mUseMs += cull_ms(t0);
+}
+
+bool LLCullShadow::useSkip(LLSpatialPartition* part)
+{
+    if (sUse != 2 || !sVerdict.mValid || !part->mOctree || !gPipeline.hasRenderType(part->mDrawableType))
+    {
+        return false;
+    }
+    const U32 pi = part->mPartitionType;
+    if (pi == LLViewerRegion::PARTITION_HUD || pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV ||
+        pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE)
+    {
+        return false;
+    }
+    ((LLSpatialGroup*)part->mOctree->getListener(0))->rebound();        // what LLSpatialPartition::cull does before its walk
+    sUseSkipped = true;
+    return true;
+}
+
+void LLCullShadow::useVerdict(LLCamera& camera)
+{
+    if (!sUseSkipped)
+    {
+        return;
+    }
+    sUseSkipped = false;
+    cull_process();                     // the touched rows (bounds were rebounded above) before the pass reads them
+    cull_flat(camera, true);
 }
 
 void LLCullShadow::added(LLViewerOctreeGroup* group)
@@ -7868,6 +8137,10 @@ void LLCullShadow::build(LLCamera& camera)
     {
         cull_verify();
     }
+    if (sUse == 1)
+    {
+        cull_flat(camera, false);
+    }
     const auto t2 = CullClock::now();
     if (sCompare)
     {
@@ -7947,8 +8220,8 @@ void LLCullShadow::send(LLCamera& camera)
         if (sCompare)
         {
             rec.mRows = sMirror;            // what the worker's copy will be: the comparison reads the flags and bounds the test saw
-            rec.mGen = sSlotGen;
         }
+        rec.mGen = sSlotGen;
     }
     const U32 serial = LLVkBridge::cullSend(params, slots.data(), rows.data(), (U32)slots.size(), table_size, sNeedReset);
     if (serial)
