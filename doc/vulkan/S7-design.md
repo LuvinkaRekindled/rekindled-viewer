@@ -1,6 +1,6 @@
 # S7 part 1: Hi-Z occlusion and GPU visibility (design only, 2026-10-22)
 
-Scope agreed with Adam: design here, build and test in a new session. Order: this (S7 part 1), then S6 (structure), then the rest of S7 (GPU LOD, OIT). H0-H3 (sections 9-11) are built and tested: world-camera occlusion is the worker's Hi-Z pass, the query code is gone.
+Scope agreed with Adam: design here, build and test in a new session. Sections 12 (2026-10-23) is the plan for B, C, GPU LOD and OIT; the rest of this note is the census and part 1 (done). Order: this (S7 part 1), then S6 (structure), then the rest of S7 (GPU LOD, OIT). H0-H3 (sections 9-11) are built and tested: world-camera occlusion is the worker's Hi-Z pass, the query code is gone.
 
 ## 1. What "visible" means today (census)
 
@@ -166,3 +166,60 @@ End state, no old path: `LLHizTarget` / `LLHiz` (llhiz.h, llvieweroctree.cpp) co
 Found by the first H3 run: probes dropped from 82 % occluded (queries) to 11 % because a box with all corners behind the camera or outside the view was reported visible, while a clipped cube has no samples. Fixed in the shader (bit 19 = wholly behind the camera, bit 17 = outside the view: both OCCLUDED; a box cut by the near plane stays visible): probes 64-65 % occluded (90-130 of 140-200 boxes a frame). London (h3c/h3d, a heavier crowd than the H2 runs: 350-500 boxes a frame of which 140-190 probes): worker draws 862-950 a frame (was 1150-1270 with queries), no cube draw, no query record; `LL_VK_OCC_CENSUS=1` lines "Hi-Z window" and "camera 0" show boxes, results, ages, probes and the main thread ms of each piece. Three clean runs (h3b, h3c, h3d), no device lost, clean quits.
 
 Open / not done: the Hi-Z pyramid can also serve B (fragment cull, S7 later) and SSR; the `mCubeVB` still draws the (non pull) lighting volumes when `LL_VK_LIGHT_PULL=0`; cascade shadow occlusion could come back with a pyramid of the cascade depth if the non-ray mode matters.
+
+
+## 12. B, C and the rest of S7 after S6 (design, 2026-10-23; no code yet)
+
+Written for the session that builds it; the hand-off with the practical details is `S7-handoff.md`. This section replaces section 5 (outline) and the "after S6" row of section 6. Naming: "B" and "C" here are S7's (GPU fragment cull, CPU cull optional); S4 also had a B and C (persistent rigged fragments, moving matrices), both built and on by default.
+
+### 12.1 What changed since sections 1-8
+
+- A (Hi-Z occlusion, sections 9-11) is built and the query machinery is deleted. S6.6 typed every buffer-based draw class (S6-design.md section 9 and its status paragraphs): terrain, water, sky, haze, the avatar bodies and rigged layers, HUD, bump, shiny, the shadow casters of every kind, glTF. What stays on a generic draw record is the UI, the impostor quads and the fullscreen steps, which have no visibility question. The old paths that remain are fallbacks behind switches (`LL_VK_TERRAIN_PULL=0`, `LL_VK_PULL_TWINS=0`) and wait for the 6.7 test list; they do not block anything here.
+- **Typed is not table-served.** "Typed" means the draw goes through a pull program and a record the worker understands. Which classes have a fragment in the scene table (their draws come from a GPU-side list, not from a CPU walk of draw infos) is a smaller set: the static opaque pass types (S3, 13 types), rigged opaque (S4), alpha runs (S5), moving matrices (S4). Terrain, water, sky, the avatar body meshes, bump, shiny, grass, trees and the shadow fallbacks are still chosen and ordered by the CPU pools (face pools, `renderGroups` loops) and only drawn through the new records. The first job of the build session is the exact list (census: for each pass type, the share of draws that come from the table against the pool loops).
+- The measured frame (S6-census.md section 14, London midnight, 70 fps, **taken before S4-S6: re-measure first**): the main thread is the limiter at 14.2 ms (`display()` 9.7: stateSort early 2.7, updateCull 0.9, postSort 1.3, shadow prep waits 1.0; `idle()` 4.2: object update 3.4, avatar motion 2.0); the worker waits 4.0 ms of 14.2; the GPU is about 13 ms (alpha runs 4.0, ray scene builds 1.3, DLSS 1.3, deferred lighting 1.2, main lighting 1.7). The three are close.
+
+### 12.2 What the CPU visibility chain does (the part that is not "a list")
+
+Three different jobs sit inside `updateCull` / `stateSort` / `postSort` (pipeline.cpp 2749, 3427, 4126); only the first moves to the GPU easily.
+
+| job | where | GPU-able? | note |
+|---|---|---|---|
+| (a) the decision: frustum on group bounds, the occlusion verdict (Hi-Z now, applied at the start of the world cull, 2-4 frames old) | `updateCull` octree walk (`LLOctreeCull`), `earlyFail`, `checkOcclusion`, `OCCLUDED` state with `STATE_MODE_DIFF` to children | yes: a flat table of group bounds, one test dispatch, verdict readback | the frustum part must be this frame's or conservative (12.4) |
+| (b) state work on visible groups | `stateSort`: `group->setVisible()` stamp, `markVisible(drawable)` per element, `rebuildMesh()` (dirty geometry is built only for visible groups), `changeLOD()` / `updateDistance()` (distance LOD, alpha sort keys), the avatar render-distance and `isVisible()` filters, selection hiding | partly | CPU *state* that the update code and the builders read; it needs "visible" before the draw of the same frame. This, not the list pushes, is most of the early sort's 2.7 ms (to confirm in C0) |
+| (c) list production | `postSort` render maps, `geo_list` for the table, pool enqueues (`addFace`), the sorted alpha lists | the table-served part, yes | alpha group order is by distance, fixed per frame on the CPU (S5 kept it) |
+
+The consumers of the visible bit (section 1 table) split the same way: texture sizing, the texture list, flexi, particles, the object cache and avatar update tolerate a verdict 1-2 frames late; **the group state work (b) and the lists (c) do not**: a moving camera would pop geometry in at the screen edge.
+
+### 12.3 B: GPU fragment cull for the table-served passes
+
+- **Input:** the fragment rows of the scene table (`GeoGpuG`, 160 B, `llvkworker.cpp` ~6026) **have no bounds**; add them per item (6 floats in a side array, not in the row, so the row stays 160 B and aligned), written when the fragment is made; the pass frustum; the **previous frame's** Hi-Z pyramid (A builds one for its own tests: find where it is built and kept, reuse it).
+- **Output:** compacted indirect draws per pass type; the pull shaders already read their rows by address, so a pass becomes an indirect-count draw over the compacted list. The S2 cull shader (shadow casters, `LL_VK_SCENE_RESIDENT`) is a base. Note `LL_VK_SCENE_GEO` (pipeline.cpp:5508) defaults to 2 = the S3-S4 table with its persistent rigged / moving parts, **not** a GPU cull mode (the S3 text planned one; check whether anything of it was built before assuming).
+- **Honest expectation:** GPU only. The CPU still produces the visible group list, so B removes fragment-level overdraw inside visible groups (fragments of big groups that are off-screen or hidden). Section 3 guessed 0.5-1.5 ms of GPU in dense scenes; unmeasured. **Stage B0 measures before building:** a count-only cull pass reporting, per pass type, how many table draws and triangles are frustum-outside or Hi-Z-hidden inside the groups the CPU keeps.
+- **Gate:** the GPU-visible set must contain every fragment the CPU would draw that is truly visible (verify: with occlusion off the sets are equal up to bounds rounding; with occlusion on, only Hi-Z lag differs); pictures equal; no new device lost over 3 runs.
+
+### 12.4 C: making the CPU cull optional, staged by class
+
+The idea is a **flat table of all spatial groups** (bounds, type flags, parent chain for `OCCLUDED` inheritance) tested on the GPU, with the verdict read back and applied to the CPU state one frame late; the octree walk goes away for classes that have fragments. The central risk is pop-in, so the verdict must be conservative about camera motion:
+
+- The GPU tests last frame's pose against a frustum expanded by a bound on the camera motion over the latency (rotation and translation of recent frames plus a margin); groups in the expanded set get their state work (b) and their draws; B's draw-time test with this frame's exact planes removes the rest. Cost: a few percent more groups carry state work; benefit: no octree walk and no pop-in. Fallback if the margin proves too large in fast turns: keep a CPU frustum test over the flat table (a loop over a few thousand bounds, far cheaper than the walk) and send only occlusion to the GPU.
+- Stages (each behind a switch, old path intact until its gate):
+  - **C0 measure:** zones for `updateCull`, `stateSort` parts (a)(b)(c) and `postSort` now; a census of drawables by class and whether their group has table fragments; a census of every reader of `isVisible`, `setVisible`, `mVisible[camera]`, `OCCLUDED`, `mLastUpdateDistance` (section 1 lists sites; re-grep, the code moved).
+  - **C1 shadow mode:** the flat group table, GPU test and readback, compared every frame with the CPU's visible set (missed = in the CPU set but not in the GPU set must be 0 with the expanded frustum; extra = the cost). No behaviour change.
+  - **C2 lists from the GPU for table-served classes:** their `geo_list` and render-map entries stop coming from `postSort`; the groups of those classes get only the state work (b), from the late verdict.
+  - **C3 consumers read the late bit:** texture sizing, flexi, particles, the object cache, avatar filters (one frame late is the status quo for occlusion already).
+  - **C4 face-pool classes** (terrain, water, sky, avatar bodies, trees, grass, bump, shiny): fragments, or a tiny always-visible CPU list (terrain patches and water are few; avatar bodies are `LLVOAvatar` drawables, not octree groups), or the CPU path stays. This decides how much of the octree walk can go: if any class stays on the walk, the walk stays and C saves only the table-served share. Decide from C0's census, not before.
+  - **C5 remove the walk** for the groups that are fully covered; keep it for shadow cascades, probes, mirror views until they have their own flat tests (the cascade cull job is the partition walk, S-retire-views-design.md).
+- **Not covered by the flat table without extra work:** spatial bridges (avatar attachments and moving objects, `LLSpatialBridge`), HUD, the object cache partition, the particle and water partitions, and every secondary view (shadow cascades, probes, hero / mirror, snapshots).
+- **Honest gain:** removing (a)+(b)+(c) for the covered share is up to about 3 ms of the 14.2 ms main thread (sections 2-3; re-measure in C0). But the GPU (13 ms) is within 1 ms of the main thread: a 3 ms main-thread cut gives roughly the GPU's frame interval, i.e. at most about 1-1.5 ms (7-10 %) in the London scene unless the GPU shrinks too (B, OIT / alpha, scene builds). Say this before building C.
+
+### 12.5 GPU LOD and OIT (own notes, after C0)
+
+- **GPU LOD:** the CPU `changeLOD` / `updateDistance` work and the mesh rebuild per LOD change need all LOD buffers resident and one fragment per LOD with a GPU distance select. Not design-ready: mesh LOD buffers are created lazily by the volume code, prim / sculpt LODs are rebuilt from `LLVolume`. Write the note after C0's census says how much of (b) is LOD.
+- **OIT:** the alpha runs are 4.0 ms of GPU (30 %). A weighted-blended or per-pixel-list OIT replaces the CPU group-distance sort, which also removes the sorted alpha lists from (c). It changes the picture (different blend artefacts) and needs Adam's call on quality and a test list (hair, glass, particles, rigged alpha). The best GPU lever in the list and independent of C.
+
+### 12.6 Decisions for Adam before the build session starts
+
+1. Order: B0 (measure) -> C0 (measure) -> pick B or C1 by the numbers (recommended), or start B regardless of the numbers.
+2. Pop-in policy for C: expanded frustum (recommended) or a CPU frustum over a flat table.
+3. Whether OIT is wanted at all (visual change), and whether it comes before C (the GPU is the closer limiter).
+4. The 6.7 test list (terrain / PBR terrain, shadow-map hill, snapshot, impostors) stays open; it needs no S7 code and can run in any session.
