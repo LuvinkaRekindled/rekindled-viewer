@@ -83,6 +83,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Ge
 
 uniform uvec2 ll_packet_table;
 uniform uvec2 ll_packet_models;
+uniform uvec2 ll_packet_texmats;        // S6.6b: the texture matrices of the record's draws (pad.x of a row: its number, 0 = none: the table's rows never read it)
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer GeoTexMatrices { mat4 t[]; };
 
 #ifdef LL_MASK_CUTOFF
 flat out float minimum_alpha;        // S6 X3: the alpha mask cutoff of the draw (the old pass set it per draw as a uniform)
@@ -153,6 +155,10 @@ void main()
     vary_normal = normalize(mat3(m.n0.xyz, m.n1.xyz, m.n2.xyz) * normal);
 #endif
     vary_texcoord0 = GeoVec2(pk.texcoords).t[index];
+    if (pk.pad.x != 0u)
+    {
+        vary_texcoord0 = (GeoTexMatrices(ll_packet_texmats).t[pk.pad.x] * vec4(vary_texcoord0, 0.0, 1.0)).xy;
+    }
     vertex_color = unpackUnorm4x8(GeoWords(pk.colors).w[index]);
 
     uint tex_index = ((pk.flags & 1u) != 0u) ? 0u : (floatBitsToUint(position.w) & 3u);

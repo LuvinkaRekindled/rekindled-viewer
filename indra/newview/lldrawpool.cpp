@@ -1038,6 +1038,7 @@ struct LLGeometryBuild
     F32 mProj[16];
     std::vector<LLVkBridge::GeoEntry> mEntries;
     std::vector<F32> mMatrices;
+    std::vector<F32> mTexmats;          // S6.6b: the texture matrices of the draws that have one (16 floats each; the entry's mPad3 = its number, from 1)
     std::vector<LLViewerTexture*> mTextures;
     std::vector<LLDrawInfo*> mFallback;
     LLAsyncPool::JobPtr mJob;
@@ -1058,6 +1059,7 @@ static void build_geometry(LLGeometryBuild& out)
     out.mShared = out.mRigged && ll_palette_shared();
     entries.clear();
     matrices.clear();
+    out.mTexmats.clear();
     out.mTextures.clear();
     out.mFallback.clear();
     out.mPalettes.clear();
@@ -1124,7 +1126,10 @@ static void build_geometry(LLGeometryBuild& out)
             ++out.mNotDrawn;    // no palette: the old path draws nothing either
             continue;
         }
-        if (!geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged, false, ll_pass_arrays(out.mType)))
+        // S6.6b: a draw with a texture matrix is an entry too (the record carries the matrix; every pull program of the geometry passes reads its slot); the rigged records with palettes of their own keep
+        // the texture matrix draws old (their blob has the palettes where the matrices would go)
+        const bool texmat_ok = !out.mRigged || out.mShared;
+        if (!geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged, texmat_ok, ll_pass_arrays(out.mType)))
         {
             out.mFallback.push_back(params);
             continue;
@@ -1216,6 +1221,11 @@ static void build_geometry(LLGeometryBuild& out)
             }
         }
         e.mCutoff = params->mAlphaMaskCutoff;       // S6 X3
+        if (texmat_ok && params->mTextureMatrix)
+        {
+            out.mTexmats.insert(out.mTexmats.end(), (const F32*)params->mTextureMatrix->mMatrix, (const F32*)params->mTextureMatrix->mMatrix + 16);
+            e.mPad3 = (U32)(out.mTexmats.size() / 16);
+        }
         entries.push_back(e);
     }
 }
@@ -1446,9 +1456,15 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         {
             ll_frame_palette_flush();       // the palettes the entries name are in the worker's list before the record
         }
-        std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + (own_palettes ? palettes.size() * sizeof(F32) : 0));
+        const std::vector<F32>& texmats = build->mTexmats;
+        header.mFragment = (U32)(texmats.size() / 16);       // S6.6b: the texture matrices follow the matrices (the worker numbers them from 1; 0 = none)
+        std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + texmats.size() * sizeof(F32) + (own_palettes ? palettes.size() * sizeof(F32) : 0));
         memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
         memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+        if (!texmats.empty())
+        {
+            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), texmats.data(), texmats.size() * sizeof(F32));
+        }
         if (own_palettes)
         {
             memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));

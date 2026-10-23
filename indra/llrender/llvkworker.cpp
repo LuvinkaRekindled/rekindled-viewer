@@ -4265,6 +4265,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     // S4 A1: a rigged entry is the 128 bytes of GeoGpu and 32 more (weights, palette, joints), the palettes follow the matrices in the blob
     const size_t stride = 160;       // (S4 B: every record entry has the rigged tail, the pull shaders read one layout)
     const bool own_palettes = rigged && !alpha && h.mPaletteFloats > 0;       // else (S4 A2) they are in the frame's shared list (always for the alpha kind 32: mPaletteFloats counts its PBR rows)
+    const U32 texmat_count = (!alpha && !own_palettes) ? h.mFragment : 0;       // S6.6b: kinds 3 / 25 / 26 carry the texture matrices of their draws after the matrices (kind 32: its own layout below)
     Renderer::ScratchAlloc table = r.allocVertexScratch(stride * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(176 * (size_t)std::max<U32>(h.mMatrices, 1));
     Renderer::ScratchAlloc palettes;
@@ -4322,6 +4323,10 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         {
             g.mPad[0] = e.mPad3;                                // S5f F3: the texture matrix (0 = none)
             g.mPad[1] = e.mPbrRow;                              // ... the PBR row
+        }
+        else if (texmat_count)
+        {
+            g.mPad[0] = e.mPad3;                                // S6.6b: the texture matrix of the draw (0 = none)
         }
         memcpy(&g.mPad2, &e.mEmissiveOffset, sizeof(U32));       // ... the emissive array (the glow draw; S6 X2: the glow pass's own draws too)
         if (rigged)
@@ -4383,6 +4388,23 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     program->setInts("ll_packet_table", table_words, 2);
     program->setInts("ll_packet_models", models_words, 2);
+    if (texmat_count && program->hasUniform("ll_packet_texmats"))
+    {
+        // S6.6b: the texture matrices of the draws of this record (number 0 = identity)
+        const F32* texmat_src = matrices + 44 * (size_t)h.mMatrices;
+        Renderer::ScratchAlloc texmats = r.allocVertexScratch(64 * ((size_t)texmat_count + 1));
+        if (!texmats.mPtr || !texmats.mAddress)
+        {
+            return;
+        }
+        F32* tm = (F32*)texmats.mPtr;
+        memset(tm, 0, 64);
+        tm[0] = tm[5] = tm[10] = tm[15] = 1.f;
+        memcpy(tm + 16, texmat_src, 64 * (size_t)texmat_count);
+        const U64 texmats_address = (U64)texmats.mAddress;
+        const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
+        program->setInts("ll_packet_texmats", texmats_words, 2);
+    }
     if (alpha)
     {
         // S5f F3: the record's texture matrices (number 0 = identity) and PBR rows, in scratch memory of their own
