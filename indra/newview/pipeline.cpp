@@ -145,8 +145,6 @@
 #include "SMAAAreaTex.h"
 #include "SMAASearchTex.h"
 #include "llerror.h"
-#include "llviscensus.h"
-void ll_vis_census_items(LLCamera& camera);        // S7 B0 (below)
 #ifndef LL_WINDOWS
 #define A_GCC 1
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -2785,14 +2783,6 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
-    // <FS> S7 C0 (LL_VK_VISCENSUS=1): the main view's cull
-    const bool vis_cull = LLVisCensus::sOn && !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot;
-    struct VisCullEnd
-    {
-        bool mOn; U64 mT0;
-        ~VisCullEnd() { if (mOn) { LLVisCensus::sCullTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sCullFrames; } }
-    } vis_cull_end = { vis_cull, vis_cull ? LLVisCensus::now() : 0 };
-
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !hud_attachments && !gCubeSnapshot)
     {
         LL_CPU_ZONE("occlusion: Hi-Z results");
@@ -2813,9 +2803,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
             {
                 if (!hud_attachments ? LLViewerRegion::PARTITION_BRIDGE == i || hasRenderType(part->mDrawableType) : hasRenderType(part->mDrawableType))
                 {
-                    const U64 vis_p0 = vis_cull ? LLVisCensus::now() : 0;
                     { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
-                    if (vis_cull) { LLVisCensus::sCullTicksPart[i < LLVisCensus::PARTS ? i : LLVisCensus::PARTS - 1] += LLVisCensus::now() - vis_p0; }
                 }
             }
         }
@@ -2826,9 +2814,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         {
             // <FS:Beq> Fix area search again
             //vo_part->cull(camera, sUseOcclusion > 0);
-            const U64 vis_c0 = vis_cull ? LLVisCensus::now() : 0;
             { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive()); }
-            if (vis_cull) { LLVisCensus::sCullTicksCache += LLVisCensus::now() - vis_c0; }
         }
     }
 
@@ -2859,10 +2845,6 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
     }
 
     group->setVisible();
-    if (LLVisCensus::sOn && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot)
-    {
-        ++LLVisCensus::sCullMarked;
-    }
 
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
@@ -3019,10 +3001,6 @@ void LLPipeline::doOcclusion(LLCamera& camera)
         }
     }
 
-    if (LLVisCensus::sBoxes)
-    {
-        ll_vis_census_items(camera);        // <FS> S7 B0: the table items' boxes ride in the same batch
-    }
     {
         LL_CPU_ZONE("occlusion: Hi-Z send");
         LL_PROFILE_GPU_ZONE("hiz");
@@ -3446,19 +3424,10 @@ void LLPipeline::markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags f
     }
 }
 
-static bool sVisSortOn = false;     // <FS> S7 C0 (LL_VK_VISCENSUS=1): this stateSort is the main view's
-
 void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_pools)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("stateSort");
-
-    sVisSortOn = LLVisCensus::sOn && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs;
-    struct VisSortEnd
-    {
-        U64 mT0;
-        ~VisSortEnd() { if (sVisSortOn) { LLVisCensus::sSortTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sSortCalls; sVisSortOn = false; } }
-    } vis_sort_end = { sVisSortOn ? LLVisCensus::now() : 0 };
 
     mDeferPoolFill = defer_pools;
     if (defer_pools)
@@ -3492,11 +3461,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         {
             continue;
         }
-        {
-            const U64 vis_k0 = sVisSortOn ? LLVisCensus::now() : 0;
-            group->checkOcclusion();
-            if (sVisSortOn) { LLVisCensus::sSortTicksCheck += LLVisCensus::now() - vis_k0; ++LLVisCensus::sSortCheckCalls; ++LLVisCensus::sSortDrawableGroups; }
-        }
+        group->checkOcclusion();
         if (LLOccCensus::sOn)
         {
             LLOccCensus::sortNote(LLViewerCamera::sCurCameraID, group->isOcclusionState(LLSpatialGroup::OCCLUDED), group->getElementCount());
@@ -3504,19 +3469,15 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
-            if (sVisSortOn) { ++LLVisCensus::sSortOccluded; }
         }
         else
         {
             group->setVisible();
-            const U64 vis_m0 = sVisSortOn ? LLVisCensus::now() : 0;
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
                 LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
                 markVisible(drawablep, camera);
-                if (sVisSortOn) { ++LLVisCensus::sSortMarkVisN; }
             }
-            if (sVisSortOn) { LLVisCensus::sSortTicksMarkVis += LLVisCensus::now() - vis_m0; }
 
             { //rebuild mesh as soon as we know it's visible
                 { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
@@ -3542,7 +3503,6 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
                 last_group = group;
             }
 
-            const U64 vis_b0 = sVisSortOn ? LLVisCensus::now() : 0;
             if (!bridge->isDead() && group && !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
             {
                 stateSort(bridge, camera, fov_changed);
@@ -3553,7 +3513,6 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             {
                 last_group->mLastUpdateDistance = last_group->mDistance;
             }
-            if (sVisSortOn) { LLVisCensus::sSortTicksBridge += LLVisCensus::now() - vis_b0; ++LLVisCensus::sSortBridgeCalls; }
 
             last_group = group;
         }
@@ -3574,11 +3533,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         {
             continue;
         }
-        {
-            const U64 vis_k0 = sVisSortOn ? LLVisCensus::now() : 0;
-            group->checkOcclusion();
-            if (sVisSortOn) { LLVisCensus::sSortTicksCheck += LLVisCensus::now() - vis_k0; ++LLVisCensus::sSortCheckCalls; ++LLVisCensus::sSortVisibleGroups; }
-        }
+        group->checkOcclusion();
         if (LLOccCensus::sOn)
         {
             LLOccCensus::sortNote(LLViewerCamera::sCurCameraID, group->isOcclusionState(LLSpatialGroup::OCCLUDED), group->getElementCount());
@@ -3586,7 +3541,6 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
-            if (sVisSortOn) { ++LLVisCensus::sSortOccluded; }
         }
         else
         {
@@ -3708,10 +3662,7 @@ void LLPipeline::checkRenderMapLive(LLCullResult& result)
 
 void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
 {
-    const U64 vis_l0 = sVisSortOn ? LLVisCensus::now() : 0;
-    const bool vis_lod = group->changeLOD();
-    if (sVisSortOn) { LLVisCensus::sSortTicksLod += LLVisCensus::now() - vis_l0; ++LLVisCensus::sSortLodCalls; LLVisCensus::sSortLodTrue += vis_lod; }
-    if (vis_lod)
+    if (group->changeLOD())
     {
         for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
         {
@@ -3739,11 +3690,6 @@ void LLPipeline::stateSort(LLSpatialBridge* bridge, LLCamera& camera, bool fov_c
 void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    struct VisDrawableEnd
-    {
-        U64 mT0;
-        ~VisDrawableEnd() { if (sVisSortOn) { LLVisCensus::sSortTicksDrawable += LLVisCensus::now() - mT0; ++LLVisCensus::sSortDrawableCalls; } }
-    } vis_drawable_end = { sVisSortOn ? LLVisCensus::now() : 0 };
     if (!drawablep
         || drawablep->isDead()
         || !hasRenderType(drawablep->getRenderType()))
@@ -3803,7 +3749,6 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
         //if (drawablep->isVisible()) isVisible() check here is redundant, if it wasn't visible, it wouldn't be here
-        const U64 vis_d0 = sVisSortOn ? LLVisCensus::now() : 0;
         {
             if (!drawablep->isActive())
             {
@@ -3816,24 +3761,10 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
                 drawablep->updateDistance(camera, force_update); // calls vobj->updateLOD() which calls LLVOAvatar::updateVisibility()
             }
         }
-        if (sVisSortOn) { LLVisCensus::sSortTicksDist += LLVisCensus::now() - vis_d0; ++LLVisCensus::sSortDistCalls; }
     }
 
     if (!drawablep->getVOVolume())
     {
-        if (sVisSortOn)
-        {
-            // S7 C0: the drawables the pools take by face (terrain, water, trees, grass, sky, avatars, particles), by the pool of their first face
-            ++LLVisCensus::sPoolDrawables[0];
-            for (LLFace* facep : drawablep->mFaces)
-            {
-                if (facep->hasGeometry() && facep->getPool())
-                {
-                    const U32 pt = facep->getPool()->getType();
-                    ++LLVisCensus::sPoolFaces[pt < (U32)LLVisCensus::POOLS ? pt : LLVisCensus::POOLS - 1];
-                }
-            }
-        }
         if (mDeferPoolFill)
         {
             mDeferredPoolFill.push_back(drawablep);     // queued by refillPools(), after the shadow passes
@@ -4192,17 +4123,9 @@ namespace { int view_jobs_bits(); }      // R1 = 1, R2 = 2 (LL_VK_VIEWJOBS, defi
 static U64 sGeoElideWhole = 0;           // R2: groups postSort did not walk at all (every type of the group is served)
 static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // <FS> S3 G4: what postSort left out of the render map (groups with served draws, type lists skipped, indices)
 
-static void vis_census_alpha(LLSpatialGroup* group);        // S7 C0 (below, after LLSceneFragment)
-
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    const bool vis_post = LLVisCensus::sOn && &camera == LLViewerCamera::getInstance() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs;
-    struct VisPostEnd
-    {
-        bool mOn; U64 mT0;
-        ~VisPostEnd() { if (mOn) { LLVisCensus::sPostTicks += LLVisCensus::now() - mT0; if (++LLVisCensus::sPostCalls % 600 == 0) { LLVisCensus::report(); } } }
-    } vis_post_end = { vis_post, vis_post ? LLVisCensus::now() : 0 };
     const bool scene_stats = scene_stats_on() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot;
 
     assertInitialized();
@@ -4212,7 +4135,6 @@ void LLPipeline::postSort(LLCamera &camera)
 
     if (!gCubeSnapshot)
     {
-        const U64 vis_g0 = vis_post ? LLVisCensus::now() : 0;
         // rebuild drawable geometry
         for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i)
         {
@@ -4226,7 +4148,6 @@ void LLPipeline::postSort(LLCamera &camera)
                 group->rebuildGeom();
             }
         }
-        if (vis_post) { LLVisCensus::sPostTicksRebuildGeom += LLVisCensus::now() - vis_g0; }
         LL_PUSH_CALLSTACKS();
         // rebuild groups
         sCull->assertDrawMapsEmpty();
@@ -4240,7 +4161,6 @@ void LLPipeline::postSort(LLCamera &camera)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("build render map");
         LL_CPU_ZONE("postSort: build render map");
-    const U64 vis_r0 = vis_post ? LLVisCensus::now() : 0;
     // <FS> the thread-local state is looked up once here, not once per draw info (a thread_local with a constructor costs a guard check per access)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
@@ -4274,36 +4194,6 @@ void LLPipeline::postSort(LLCamera &camera)
             group->rebuildGeom();
         }
 
-        if (vis_post)
-        {
-            // S7 C0: the visible group by partition, and its draw infos by pass type: the table's or the render map's
-            const U32 part = group->getSpatialPartition() ? std::min<U32>(group->getSpatialPartition()->mPartitionType, LLVisCensus::PARTS - 1) : LLVisCensus::PARTS - 1;
-            ++LLVisCensus::sPartGroups[part];
-            LLVisCensus::sPartElems[part] += group->getElementCount();
-            LLVisCensus::sPartWithTable[part] += group->mGeoHandle != 0;
-            LLVisCensus::sPartAllServed[part] += group->mGeoAllServed;
-            const U64 served_mask = geo_elide ? group->mGeoServedMask : 0;
-            for (const auto& kv : group->mDrawMap)
-            {
-                if (!hasRenderType(kv.first) || kv.first < LLDrawPool::NUM_POOL_TYPES || kv.first - LLDrawPool::NUM_POOL_TYPES >= (U32)LLVisCensus::PASSES)
-                {
-                    continue;
-                }
-                const U32 idx = kv.first - LLDrawPool::NUM_POOL_TYPES;
-                U64 tris = 0;
-                for (const LLDrawInfo* info : kv.second)
-                {
-                    tris += info->mCount / 3;
-                }
-                const int tn = ll_scene_geo_type_number(kv.first);
-                const bool served = tn >= 0 && (served_mask & (1ull << tn));
-                (served ? LLVisCensus::sPassServedInfos : LLVisCensus::sPassListedInfos)[idx] += kv.second.size();
-                (served ? LLVisCensus::sPassServedTris : LLVisCensus::sPassListedTris)[idx] += tris;
-                LLVisCensus::sPartInfos[part] += kv.second.size();
-                LLVisCensus::sPartTris[part] += tris;
-            }
-            vis_census_alpha(group);
-        }
         if (geo_owner)
         {
             sCull->mGeoGroups.push_back(group);     // <FS> S3: the groups the G-buffer entries are taken from (verify and census only)
@@ -4414,7 +4304,6 @@ void LLPipeline::postSort(LLCamera &camera)
 
             if (rigged_alpha != group->mDrawMap.end())
             {  // store rigged alpha groups for LLDrawPoolAlpha prepass (skip distance update, rigged attachments use depth buffer)
-                if (vis_post) { ++LLVisCensus::sRiggedAlphaGroups; }
                 if (hasRenderType(LLDrawPool::POOL_ALPHA))
                 {
                     sCull->pushRiggedAlphaGroup(group);
@@ -4422,7 +4311,6 @@ void LLPipeline::postSort(LLCamera &camera)
             }
         }
     }
-    if (vis_post) { LLVisCensus::sPostTicksMap += LLVisCensus::now() - vis_r0; }
     }
 
     if (scene_stats)
@@ -4443,12 +4331,10 @@ void LLPipeline::postSort(LLCamera &camera)
     // pack vertex buffers for groups that chose to delay their updates
     {
         LL_PROFILE_GPU_ZONE("rebuildMesh");
-        const U64 vis_m0 = vis_post ? LLVisCensus::now() : 0;
         for (LLSpatialGroup::sg_vector_t::iterator iter = mMeshDirtyGroup.begin(); iter != mMeshDirtyGroup.end(); ++iter)
         {
             (*iter)->rebuildMesh();
         }
-        if (vis_post) { LLVisCensus::sPostTicksMesh += LLVisCensus::now() - vis_m0; }
     }
     }
 
@@ -4467,13 +4353,11 @@ void LLPipeline::postSort(LLCamera &camera)
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("sort alpha groups");
     if (!sShadowRender)
     {
-        const U64 vis_a0 = vis_post ? LLVisCensus::now() : 0;
         // order alpha groups by distance
         std::sort(sCull->beginAlphaGroups(), sCull->endAlphaGroups(), LLSpatialGroup::CompareDepthGreater());
 
         // order rigged alpha groups by avatar attachment order
         std::sort(sCull->beginRiggedAlphaGroups(), sCull->endRiggedAlphaGroups(), LLSpatialGroup::CompareRenderOrder());
-        if (vis_post) { LLVisCensus::sPostTicksAlpha += LLVisCensus::now() - vis_a0; }
     }
     }
 
@@ -7036,359 +6920,6 @@ void ll_scene_fragment_build(LLSpatialGroup* group)
     {
         scene_fragment_ensure(group);
     }
-}
-
-// ---- <FS> S7 B0 / C0 (LL_VK_VISCENSUS=1, doc/vulkan/S7-design.md section 13): measurement only ----
-static const char* const kVisPassNames[] =
-{
-    "SIMPLE",
-    "SIMPLE_RIGGED",
-    "GRASS",
-    "FULLBRIGHT",
-    "FULLBRIGHT_RIGGED",
-    "INVISIBLE",
-    "INVISIBLE_RIGGED",
-    "INVISI_SHINY",
-    "INVISI_SHINY_RIGGED",
-    "FULLBRIGHT_SHINY",
-    "FULLBRIGHT_SHINY_RIGGED",
-    "SHINY",
-    "SHINY_RIGGED",
-    "BUMP",
-    "BUMP_RIGGED",
-    "POST_BUMP",
-    "POST_BUMP_RIGGED",
-    "MATERIAL",
-    "MATERIAL_RIGGED",
-    "MATERIAL_ALPHA",
-    "MATERIAL_ALPHA_RIGGED",
-    "MATERIAL_ALPHA_MASK",
-    "MATERIAL_ALPHA_MASK_RIGGED",
-    "MATERIAL_ALPHA_EMISSIVE",
-    "MATERIAL_ALPHA_EMISSIVE_RIGGED",
-    "SPECMAP",
-    "SPECMAP_RIGGED",
-    "SPECMAP_BLEND",
-    "SPECMAP_BLEND_RIGGED",
-    "SPECMAP_MASK",
-    "SPECMAP_MASK_RIGGED",
-    "SPECMAP_EMISSIVE",
-    "SPECMAP_EMISSIVE_RIGGED",
-    "NORMMAP",
-    "NORMMAP_RIGGED",
-    "NORMMAP_BLEND",
-    "NORMMAP_BLEND_RIGGED",
-    "NORMMAP_MASK",
-    "NORMMAP_MASK_RIGGED",
-    "NORMMAP_EMISSIVE",
-    "NORMMAP_EMISSIVE_RIGGED",
-    "NORMSPEC",
-    "NORMSPEC_RIGGED",
-    "NORMSPEC_BLEND",
-    "NORMSPEC_BLEND_RIGGED",
-    "NORMSPEC_MASK",
-    "NORMSPEC_MASK_RIGGED",
-    "NORMSPEC_EMISSIVE",
-    "NORMSPEC_EMISSIVE_RIGGED",
-    "GLOW",
-    "GLOW_RIGGED",
-    "GLTF_GLOW",
-    "GLTF_GLOW_RIGGED",
-    "ALPHA",
-    "ALPHA_RIGGED",
-    "ALPHA_MASK",
-    "ALPHA_MASK_RIGGED",
-    "FULLBRIGHT_ALPHA_MASK",
-    "FULLBRIGHT_ALPHA_MASK_RIGGED",
-    "ALPHA_INVISIBLE",
-    "ALPHA_INVISIBLE_RIGGED",
-    "GLTF_PBR",
-    "GLTF_PBR_RIGGED",
-    "GLTF_PBR_ALPHA_MASK",
-    "GLTF_PBR_ALPHA_MASK_RIGGED"
-};
-static_assert(sizeof(kVisPassNames) / sizeof(kVisPassNames[0]) <= (size_t)LLVisCensus::PASSES, "pass names");
-
-// alpha draws of a visible group: all of them, and the ones its fragment holds as table items
-static void vis_census_alpha(LLSpatialGroup* group)
-{
-    auto it = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
-    if (it == group->mDrawMap.end())
-    {
-        return;
-    }
-    ++LLVisCensus::sAlphaGroups;
-    LLVisCensus::sAlphaItemsTotal += it->second.size();
-    LLSceneFragment* f = group->mSceneFragment;
-    if (f && f->mSerial == group->mDrawMapSerial)
-    {
-        LLVisCensus::sAlphaServedItems += f->mAlphaSet[0].mItems.size();
-    }
-}
-
-// B0: the boxes of the table items of this frame's visible groups. Items whose box is outside the frustum are counted here (the frustum part of a GPU cull, with the pass's own planes);
-// the rest go to the Hi-Z batch of the frame (LLHiz::addItem) and are tallied when the verdicts come back (LLHiz::apply)
-void ll_vis_census_items(LLCamera& camera)
-{
-    if (!LLVisCensus::sBoxes || !sCull)
-    {
-        return;
-    }
-    ++LLVisCensus::sBFrames;
-    U32 sent = 0;
-    for (LLCullResult::sg_iterator iter = sCull->beginVisibleGroups(); iter != sCull->endVisibleGroups(); ++iter)
-    {
-        LLSpatialGroup* group = *iter;
-        if (group->isDead() || !group->mGeoHandle || !group->mSceneFragment || group->mSceneFragment->mSerial != group->mDrawMapSerial)
-        {
-            continue;
-        }
-        if ((LLPipeline::sUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) ||
-            (LLPipeline::RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > LLPipeline::RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
-        {
-            continue;
-        }
-        const LLVector4a* gb = group->getBounds();
-        const S32 gres = camera.AABBInFrustumNoFarClip(gb[0], gb[1]);
-        ++(gres == 2 ? LLVisCensus::sBGroupsFull : LLVisCensus::sBGroupsPartial);
-        LLSceneFragment* f = group->mSceneFragment;
-        auto visit = [&](const LLSceneFragment::GeoItem& item, U32 type)
-        {
-            const LLDrawInfo* info = item.mInfo;
-            if (!info || type >= (U32)LLVisCensus::ITEM_TYPES)
-            {
-                return;
-            }
-            const U32 tris = info->mCount / 3;
-            ++LLVisCensus::sBItems[type];
-            LLVisCensus::sBTris[type] += tris;
-            const bool rigged = (type >= kGeoTypeCount && type < 2 * kGeoTypeCount) || type == kGeoAlphaItemType + 1;
-            LLVector4a lo, hi;
-            bool boxed = false;
-            const LLVOAvatar* wearer = nullptr;
-            if (rigged)
-            {
-                // S7 B0 avatars: a rigged draw is bounded by its avatar's animated extents (agent space), padded by 25 cm for what the skin and attachments add
-                wearer = info->mAvatar.get();
-                if (wearer)
-                {
-                    const LLVector3* e = wearer->getLastAnimExtents();
-                    const F32 pad = 0.25f;
-                    boxed = e[0].mV[0] < e[1].mV[0] && e[0].mV[1] < e[1].mV[1] && e[0].mV[2] < e[1].mV[2] && fabsf(e[0].mV[0]) < 1.0e7f && fabsf(e[1].mV[0]) < 1.0e7f;
-                    lo.set(e[0].mV[0] - pad, e[0].mV[1] - pad, e[0].mV[2] - pad, 0.f);
-                    hi.set(e[1].mV[0] + pad, e[1].mV[1] + pad, e[1].mV[2] + pad, 0.f);
-                    if (boxed)
-                    {
-                        static std::unordered_set<const LLVOAvatar*> seen;
-                        static U32 seen_frame = 0;
-                        if (seen_frame != (U32)gFrameCount) { seen.clear(); seen_frame = (U32)gFrameCount; }
-                        if (seen.insert(wearer).second) { ++LLVisCensus::sBAvatars; }
-                        LLVisCensus::sBAvatarTris += tris;
-                    }
-                }
-            }
-            else if (info->mHasExtents)
-            {
-                lo = info->mExtents[0];
-                hi = info->mExtents[1];
-                boxed = true;
-            }
-            if (!boxed)
-            {
-                ++LLVisCensus::sBUnbounded[type];
-                return;
-            }
-            if (!rigged && info->mModelMatrix && !(rt_matrix_id(info->mModelMatrix) & 0x80000000u))
-            {
-                // an active drawable's faces are in its own space: the box of the eight corners under its matrix
-                const F32* a = lo.getF32ptr();
-                const F32* b = hi.getF32ptr();
-                LLVector3 mn(1.0e30f, 1.0e30f, 1.0e30f), mx(-1.0e30f, -1.0e30f, -1.0e30f);
-                for (int k = 0; k < 8; ++k)
-                {
-                    const LLVector3 c = LLVector3((k & 1) ? b[0] : a[0], (k & 2) ? b[1] : a[1], (k & 4) ? b[2] : a[2]) * *info->mModelMatrix;
-                    for (int d = 0; d < 3; ++d)
-                    {
-                        mn.mV[d] = llmin(mn.mV[d], c.mV[d]);
-                        mx.mV[d] = llmax(mx.mV[d], c.mV[d]);
-                    }
-                }
-                lo.load3(mn.mV);
-                hi.load3(mx.mV);
-            }
-            LLVector4a center, half;
-            center.setAdd(lo, hi);
-            center.mul(0.5f);
-            half.setSub(hi, lo);
-            half.mul(0.5f);
-            if (camera.AABBInFrustumNoFarClip(center, half) == 0)
-            {
-                ++LLVisCensus::sBOutside[type];
-                LLVisCensus::sBOutsideTris[type] += tris;
-                if (wearer) { LLVisCensus::sBAvatarOutsideTris += tris; ++LLVisCensus::sBAvatarOutsideItems; }
-                return;
-            }
-            if (sent >= 24000)
-            {
-                ++LLVisCensus::sBNoRoom;
-                return;
-            }
-            ++sent;
-            LLHiz::addItem(center, half[0], half[1], half[2], (U8)type, tris);
-        };
-        for (const LLSceneFragment::GeoItem& item : f->mGeo)
-        {
-            if (item.mServed)
-            {
-                visit(item, item.mType);
-            }
-        }
-        for (int set = 0; set < 2; ++set)
-        {
-            for (const LLSceneFragment::GeoItem& item : f->mAlphaSet[set].mItems)
-            {
-                visit(item, kGeoAlphaItemType + set);
-            }
-        }
-    }
-}
-
-void LLVisCensus::report()
-{
-    using namespace LLVisCensus;
-    LARGE_INTEGER q;
-    QueryPerformanceCounter(&q);
-    LARGE_INTEGER qf;
-    QueryPerformanceFrequency(&qf);
-    const U64 tsc = now();
-    double ms_per_tick = 0.0, interval_ms = 0.0;
-    if (sQpc0)
-    {
-        interval_ms = (double)(q.QuadPart - sQpc0) * 1000.0 / (double)qf.QuadPart;
-        ms_per_tick = interval_ms / (double)(tsc - sTsc0);
-    }
-    const bool first_window = sQpc0 == 0;
-    sQpc0 = q.QuadPart;
-    sTsc0 = tsc;
-    if (first_window)
-    {
-        // the first window only sets the clock: what it counted is dropped with the reset below
-        ms_per_tick = 0.0;
-    }
-    const double N = 600.0;
-    auto ms = [&](U64 ticks) { return (double)ticks * ms_per_tick / N; };
-    auto pf = [&](U64 count) { return (double)count / N; };
-    if (!first_window)
-    {
-        char buf[1024];
-        snprintf(buf, sizeof(buf), "frame %.2f ms | updateCull %.3f ms (%.2f calls/frame; partitions", interval_ms / N, ms(sCullTicks), pf(sCullFrames));
-        std::string text = buf;
-        static const char* const part_names[] = { "HUD", "TERRAIN", "VOIDWATER", "WATER", "TREE", "PARTICLE", "GRASS", "VOLUME", "BRIDGE", "AVATAR", "CONTROL_AV", "HUD_PARTICLE", "VO_CACHE", "NONE", "14", "15" };
-        for (int i = 0; i < PARTS; ++i)
-        {
-            if (sCullTicksPart[i])
-            {
-                snprintf(buf, sizeof(buf), " %s %.3f", part_names[i], ms(sCullTicksPart[i]));
-                text += buf;
-            }
-        }
-        snprintf(buf, sizeof(buf), "; VO cache %.3f) octree nodes entered %.0f (frustum checks %.0f, taken whole %.0f), groups marked %.0f", ms(sCullTicksCache), pf(sCullNodes), pf(sCullFrustumChecks), pf(sCullFullIn), pf(sCullMarked));
-        text += buf;
-        LL_INFOS("VisCensus") << text << LL_ENDL;
-        snprintf(buf, sizeof(buf), "stateSort %.3f ms (%.2f calls/frame): checkOcclusion %.3f (%.0f calls) | markVisible loop %.3f (%.0f drawables) | changeLOD %.3f (%.0f calls, %.0f true) | drawable sort %.3f (%.0f calls; updateDistance %.3f for %.0f) | bridges %.3f (%.0f)"
-            " | groups: drawable %.0f, visible %.0f, occluded %.0f", ms(sSortTicks), pf(sSortCalls), ms(sSortTicksCheck), pf(sSortCheckCalls), ms(sSortTicksMarkVis), pf(sSortMarkVisN), ms(sSortTicksLod), pf(sSortLodCalls), pf(sSortLodTrue),
-            ms(sSortTicksDrawable), pf(sSortDrawableCalls), ms(sSortTicksDist), pf(sSortDistCalls), ms(sSortTicksBridge), pf(sSortBridgeCalls), pf(sSortDrawableGroups), pf(sSortVisibleGroups), pf(sSortOccluded));
-        LL_INFOS("VisCensus") << buf << LL_ENDL;
-        snprintf(buf, sizeof(buf), "postSort %.3f ms: rebuildGeom of drawable groups %.3f | build render map %.3f | delayed rebuildMesh %.3f | sort alpha groups %.3f | alpha groups %.0f (items %.0f, in the table %.0f), rigged alpha groups %.0f",
-            ms(sPostTicks), ms(sPostTicksRebuildGeom), ms(sPostTicksMap), ms(sPostTicksMesh), ms(sPostTicksAlpha), pf(sAlphaGroups), pf(sAlphaItemsTotal), pf(sAlphaServedItems), pf(sRiggedAlphaGroups));
-        LL_INFOS("VisCensus") << buf << LL_ENDL;
-        for (int i = 0; i < PARTS; ++i)
-        {
-            if (sPartGroups[i])
-            {
-                snprintf(buf, sizeof(buf), "partition %s: visible groups %.0f, elements %.0f, groups with a table fragment %.0f (all draws served %.0f), draw infos %.0f, tris %.0f", part_names[i], pf(sPartGroups[i]), pf(sPartElems[i]), pf(sPartWithTable[i]), pf(sPartAllServed[i]), pf(sPartInfos[i]), pf(sPartTris[i]));
-                LL_INFOS("VisCensus") << buf << LL_ENDL;
-            }
-        }
-        for (int i = 0; i < PASSES; ++i)
-        {
-            if (sPassServedInfos[i] || sPassListedInfos[i])
-            {
-                snprintf(buf, sizeof(buf), "pass %s: draw infos from the table %.1f (%.0f tris), left to the pool loops %.1f (%.0f tris)", kVisPassNames[i], pf(sPassServedInfos[i]), pf(sPassServedTris[i]), pf(sPassListedInfos[i]), pf(sPassListedTris[i]));
-                LL_INFOS("VisCensus") << buf << LL_ENDL;
-            }
-        }
-        {
-            static const char* const pool_names[] = { "(drawables)", "SKY", "WATEREXCLUSION", "WL_SKY", "SIMPLE", "FULLBRIGHT", "BUMP", "MATERIALS", "GLTF_PBR", "TERRAIN", "GRASS", "GLTF_PBR_ALPHA_MASK", "TREE", "ALPHA_MASK", "FULLBRIGHT_ALPHA_MASK", "AVATAR", "CONTROL_AV", "GLOW", "ALPHA_PRE_WATER", "VOIDWATER", "WATER", "ALPHA_POST_WATER", "ALPHA", "23" };
-            std::string pools;
-            for (int i = 0; i < POOLS; ++i)
-            {
-                if (sPoolFaces[i] || (i == 0 && sPoolDrawables[0]))
-                {
-                    snprintf(buf, sizeof(buf), " %s %.1f", pool_names[i], i == 0 ? pf(sPoolDrawables[0]) : pf(sPoolFaces[i]));
-                    pools += buf;
-                }
-            }
-            LL_INFOS("VisCensus") << "faces of non-volume drawables enqueued into the pools, per frame (first: those drawables):" << pools << LL_ENDL;
-        }
-        {
-            const double cj = (double)sShCull.mJobs.load(), mj = (double)sShMap.mJobs.load();
-            snprintf(buf, sizeof(buf), "shadow prep jobs on the pool, per frame: cull %.2f jobs, %.3f ms of CPU in all, longest job %.3f ms | render map %.2f jobs, %.3f ms of CPU in all, longest job %.3f ms (the main thread waits for these: see the ShadowPrep lines)",
-                cj / N, ms(sShCull.mTicks.load()), (double)sShCull.mMax.load() * ms_per_tick, mj / N, ms(sShMap.mTicks.load()), (double)sShMap.mMax.load() * ms_per_tick);
-            LL_INFOS("VisCensus") << buf << LL_ENDL;
-            sShCull.reset(); sShMap.reset();
-        }
-        if (sBFrames)
-        {
-            const double F = (double)sBFrames;
-            if (sBAvatars)
-        {
-            snprintf(buf, sizeof(buf), "B0 avatars (distinct, boxed): %.1f a frame, %.0f rigged tris of them, outside the frustum %.1f items / %.0f tris", (double)sBAvatars / (double)sBFrames, (double)sBAvatarTris / (double)sBFrames, (double)sBAvatarOutsideItems / (double)sBFrames, (double)sBAvatarOutsideTris / (double)sBFrames);
-            LL_INFOS("VisCensus") << buf << LL_ENDL;
-        }
-        snprintf(buf, sizeof(buf), "B0 table items, per frame over %.0f frames: groups partly in the frustum %.0f, fully in %.0f; batches read %.0f (previous pyramid valid %.0f); GPU says outside %.1f; no room %.1f",
-                F, (double)sBGroupsPartial / F, (double)sBGroupsFull / F, (double)sBBatches, (double)sBBatchesValidB, (double)sBGpuOutside / (double)std::max<U64>(sBBatches, 1), (double)sBNoRoom / F);
-            LL_INFOS("VisCensus") << buf << LL_ENDL;
-            for (int t = 0; t < ITEM_TYPES; ++t)
-            {
-                if (!sBItems[t])
-                {
-                    continue;
-                }
-                std::string name;
-                if (t < (int)kGeoTypeCount * 2)
-                {
-                    name = std::string(kVisPassNames[kGeoTypes[t % kGeoTypeCount].mType - LLDrawPool::NUM_POOL_TYPES]) + (t >= (int)kGeoTypeCount ? " (rigged)" : "");
-                }
-                else
-                {
-                    name = t == (int)kGeoAlphaItemType ? "ALPHA runs" : "ALPHA rigged runs";
-                }
-                const double nb = (double)std::max<U64>(sBBatches, 1);
-                snprintf(buf, sizeof(buf), "B0 %s: items %.1f (%.0f tris), no box %.1f, outside the frustum %.1f (%.0f tris) | Hi-Z tested %.1f (%.0f tris): hidden by the same-frame pyramid %.1f (%.0f tris), by the previous frame's %.1f (%.0f tris, of %.1f valid)",
-                    name.c_str(), (double)sBItems[t] / F, (double)sBTris[t] / F, (double)sBUnbounded[t] / F, (double)sBOutside[t] / F, (double)sBOutsideTris[t] / F,
-                    (double)sBTested[t] / nb, (double)sBTestedTris[t] / nb, (double)sBHidA[t] / nb, (double)sBHidATris[t] / nb, (double)sBHidB[t] / nb, (double)sBHidBTris[t] / nb, (double)sBValidB[t] / nb);
-                LL_INFOS("VisCensus") << buf << LL_ENDL;
-            }
-        }
-    }
-    // the window is done
-    sCullFrames = sCullTicks = sCullTicksCache = sCullTicksSky = sCullNodes = sCullFrustumChecks = sCullFullIn = sCullMarked = 0;
-    memset(sCullTicksPart, 0, sizeof(sCullTicksPart));
-    sSortCalls = sSortTicks = sSortTicksCheck = sSortCheckCalls = sSortTicksMarkVis = sSortMarkVisN = sSortTicksLod = sSortLodCalls = sSortLodTrue = 0;
-    sSortTicksDrawable = sSortDrawableCalls = sSortTicksDist = sSortDistCalls = sSortTicksEnqueue = sSortEnqueueFaces = sSortTicksBridge = sSortBridgeCalls = 0;
-    sSortDrawableGroups = sSortVisibleGroups = sSortBridges = sSortDrawables = sSortOccluded = 0;
-    sPostTicks = sPostTicksRebuildGeom = sPostTicksMap = sPostTicksMesh = sPostTicksAlpha = 0;
-    memset(sPartGroups, 0, sizeof(sPartGroups)); memset(sPartElems, 0, sizeof(sPartElems)); memset(sPartWithTable, 0, sizeof(sPartWithTable));
-    memset(sPartAllServed, 0, sizeof(sPartAllServed)); memset(sPartInfos, 0, sizeof(sPartInfos)); memset(sPartTris, 0, sizeof(sPartTris));
-    memset(sPassServedInfos, 0, sizeof(sPassServedInfos)); memset(sPassServedTris, 0, sizeof(sPassServedTris)); memset(sPassListedInfos, 0, sizeof(sPassListedInfos)); memset(sPassListedTris, 0, sizeof(sPassListedTris));
-    sAlphaGroups = sAlphaServedItems = sAlphaItemsTotal = sRiggedAlphaGroups = 0;
-    memset(sPoolFaces, 0, sizeof(sPoolFaces)); memset(sPoolDrawables, 0, sizeof(sPoolDrawables));
-    sBAvatars = sBAvatarTris = sBAvatarOutsideItems = sBAvatarOutsideTris = 0;
-    sBFrames = sBNoRoom = sBGroupsPartial = sBGroupsFull = sBBatches = sBBatchesValidB = sBGpuOutside = 0;
-    memset(sBItems, 0, sizeof(sBItems)); memset(sBTris, 0, sizeof(sBTris)); memset(sBUnbounded, 0, sizeof(sBUnbounded)); memset(sBOutside, 0, sizeof(sBOutside)); memset(sBOutsideTris, 0, sizeof(sBOutsideTris));
-    memset(sBTested, 0, sizeof(sBTested)); memset(sBTestedTris, 0, sizeof(sBTestedTris)); memset(sBHidA, 0, sizeof(sBHidA)); memset(sBHidATris, 0, sizeof(sBHidATris));
-    memset(sBHidB, 0, sizeof(sBHidB)); memset(sBHidBTris, 0, sizeof(sBHidBTris)); memset(sBValidB, 0, sizeof(sBValidB));
 }
 
 struct SceneGather
@@ -20508,12 +20039,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
 
             lap.mark(PH_SETUP);
-            const std::function<void(size_t)> cull_job = [&](size_t i)
-            {
-                const U64 vis_j0 = LLVisCensus::sOn ? LLVisCensus::now() : 0;
-                shadowPrepCull(pending[i], partitions);
-                if (LLVisCensus::sOn) { LLVisCensus::jobDone(LLVisCensus::sShCull, LLVisCensus::now() - vis_j0); }
-            };
+            const std::function<void(size_t)> cull_job = [&](size_t i) { shadowPrepCull(pending[i], partitions); };
             { LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->run(pending.size(), cull_job); }
             lap.mark(PH_CULL);
 
@@ -20530,12 +20056,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 sViewJobsSkipStatic.store(view_jobs_on() && rt_sun_cascades_unused() && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static,
                                           std::memory_order_relaxed);
             }
-            const std::function<void(size_t)> map_job = [&](size_t i)
-            {
-                const U64 vis_j0 = LLVisCensus::sOn ? LLVisCensus::now() : 0;
-                shadowPrepRenderMap(pending[i]);
-                if (LLVisCensus::sOn) { LLVisCensus::jobDone(LLVisCensus::sShMap, LLVisCensus::now() - vis_j0); }
-            };
+            const std::function<void(size_t)> map_job = [&](size_t i) { shadowPrepRenderMap(pending[i]); };
             { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(pending.size(), map_job); }
             lap.mark(PH_RENDER_MAP);
 
