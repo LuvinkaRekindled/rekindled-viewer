@@ -118,7 +118,7 @@ namespace LLVkBridge
         F32 mTargetWidth = 0.f;     // kind 1: the width of the shadow target (the dithering of semi-transparent casters)
         U32 mPaletteFloats = 0;     // floats of joint matrix palettes (12 per joint) after the model matrices; the rigged entries point into them
         U32 mPass = 0;              // the shadow pass: 0-3 sun cascades, 4-5 spot shadows, 6 other (ray tracing keeps the casters of a cached cascade)
-        U32 mFragment = 0;          // kind 11: the id of the fragment retained (S1, below)
+        U32 mFragment = 0;          // kind 11: the id of the fragment retained (S1, below); kind 0: 1 = drawn only, not named to the ray scene (S6.6c)
         U64 mProgram = ~0ull;       // S6.3: the program (an LLVk::Program*) the record draws with, written by pushData from the producer's draw context; ~0: not named, the worker keeps the one it has
         U32 mFrame = 0;             // S6.3: the producer's frame number (0: unknown); kinds 22 and 29 draw what the frame's kind 21 prepared and are checked against it
     };

@@ -62,7 +62,8 @@ S32 LLDrawPoolTerrain::sPBRDetailMode = 0;
 F32 LLDrawPoolTerrain::sDetailScale = DETAIL_SCALE;
 F32 LLDrawPoolTerrain::sPBRDetailScale = DETAIL_SCALE;
 static LLShaderProgram* sShader = NULL;
-static bool sPull = false;      // S6.6a: the pass being drawn is the pull variant (drawPull)
+static bool sPull = false;
+static bool sShadowPull = false;     // S6.6c: the shadow pass being drawn takes the pull program (drawShadowPull)      // S6.6a: the pass being drawn is the pull variant (drawPull)
 static const bool pull_wanted = []() { const char* e = getenv("LL_VK_TERRAIN_PULL"); return !(e && e[0] == '0'); }();
 static const bool pull_wanted_pbr = pull_wanted;
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_TERRAIN("Terrain Shadow");
@@ -178,6 +179,12 @@ void LLDrawPoolTerrain::beginShadowPass(S32 pass)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_TERRAIN);
     LLFacePool::beginRenderPass(pass);
     gRender.getTexUnit(0)->bindWhite();
+    sShadowPull = pull_wanted && gDeferredShadowPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
+    if (sShadowPull)
+    {
+        gDeferredShadowPullProgram.bind();      // S6.6c
+        return;
+    }
     gDeferredShadowProgram.bind();
 
     LLEnvironment& environment = LLEnvironment::instance();
@@ -200,7 +207,14 @@ void LLDrawPoolTerrain::renderShadow(S32 pass)
     }
     //LLGLEnable offset(GL_POLYGON_OFFSET);
     //glCullFace(GL_FRONT);
-    drawLoop();
+    if (sShadowPull)
+    {
+        drawShadowPull();
+    }
+    else
+    {
+        drawLoop();
+    }
     //glCullFace(GL_BACK);
 }
 
@@ -219,6 +233,74 @@ void LLDrawPoolTerrain::drawLoop()
             facep->renderIndexed();
         }
     }
+}
+
+// S6.6c: the faces of the pool in a shadow pass as one record of untextured casters (kind 0, the programs of the cascades' packets): the region matrix is the entry's model matrix, the pass's
+// view-projection travels in the header
+void LLDrawPoolTerrain::drawShadowPull()
+{
+    gRender.flush();
+    static thread_local std::vector<LLVkBridge::ShadowPacketEntry> entries;
+    static thread_local std::vector<F32> matrices;
+    static thread_local std::vector<const LLMatrix4*> keys;
+    static thread_local std::vector<U8> blob;
+    entries.clear();
+    keys.clear();
+    matrices.assign(16, 0.f);
+    matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;
+    static U32 not_drawn = 0;
+    for (LLFace* facep : mDrawFace)
+    {
+        const LLVertexBuffer* vb = facep->getVertexBuffer();
+        if (!facep->getIndicesCount())
+        {
+            continue;
+        }
+        if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+            || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+        {
+            if (not_drawn++ < 10)
+            {
+                LL_WARNS("VkScene") << "a terrain face its buffer cannot give to the shadow packets is not drawn (buffer " << (void*)vb << ")" << LL_ENDL;
+            }
+            continue;
+        }
+        const LLMatrix4* model = &facep->getDrawable()->getRegion()->mRenderMatrix;
+        U32 matrix = 0;
+        for (size_t k = 0; k < keys.size(); ++k)
+        {
+            if (keys[k] == model)
+            {
+                matrix = (U32)k + 1;
+                break;
+            }
+        }
+        if (!matrix)
+        {
+            keys.push_back(model);
+            matrices.insert(matrices.end(), (const F32*)model->mMatrix, (const F32*)model->mMatrix + 16);
+            matrix = (U32)keys.size();
+        }
+        LLVkBridge::ShadowPacketEntry e = { vb->getVertexBufferId(), vb->getIndexBufferId(), (U32)facep->getIndicesStart(), facep->getIndicesCount(), matrix, 0 };
+        entries.push_back(e);
+    }
+    if (entries.empty())
+    {
+        return;
+    }
+    LLVkBridge::ShadowPacketsHeader header;
+    header.mKind = 0;
+    header.mEntries = (U32)entries.size();
+    header.mMatrices = (U32)(matrices.size() / 16);
+    header.mPass = 6;           // "other" (the ray scene is not told: mFragment)
+    header.mFragment = 1;
+    const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
+    memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
+    const size_t entries_bytes = entries.size() * sizeof(entries[0]), matrix_bytes = matrices.size() * sizeof(F32);
+    blob.resize(entries_bytes + matrix_bytes);
+    memcpy(blob.data(), entries.data(), entries_bytes);
+    memcpy(blob.data() + entries_bytes, matrices.data(), matrix_bytes);
+    LLVkBridge::shadowPackets(header, blob.data(), blob.size());
 }
 
 // S6.6a: the faces of the pool as one record of geometry entries (kind 32): the patch's vertex buffer is read by address, the region's render matrix is the entry's model matrix

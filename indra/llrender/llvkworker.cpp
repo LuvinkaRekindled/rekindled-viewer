@@ -8533,7 +8533,7 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
         }
-        if (Rt::active())
+        if (Rt::active() && h.mFragment != 1)       // (S6.6c: mFragment 1: the draws of this record are only drawn, they are not casters of the ray scene)
         {
             Rt::AlphaInfo info;
             if (Rt::materialsOn())
