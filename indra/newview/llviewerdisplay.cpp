@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include <array>
 #include "llasyncpool.h"
 #include "lltracethreadrecorder.h"
 #include "llvksubstream.h"
@@ -1126,6 +1127,120 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 //
                 //
                 { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
+            }
+        }
+
+        {
+            // <FS> debug (LL_VK_VISDIP=1): what the main view's cull left each frame (visible groups and drawables), the frames where either fell below 80 % of the median of the window are listed: an object
+            // that blinks out of the scene shows as a dip here (the draw path is not involved: the cull has not drawn anything yet)
+            static const bool wanted = getenv("LL_VK_VISDIP") != nullptr;
+            if (wanted && !for_snapshot)
+            {
+                // the groups of the last frame and what they were, to say which ones left at the start of a dip
+                static std::unordered_map<LLSpatialGroup*, std::array<U32, 3> > last_groups;
+                static std::unordered_map<LLSpatialGroup*, std::string> last_descr;
+                static bool last_ok = true;
+                {
+                    std::unordered_map<LLSpatialGroup*, std::array<U32, 3> > now_groups;
+                    std::unordered_map<LLSpatialGroup*, std::string> now_descr;
+                    for (LLCullResult::sg_iterator it = result.beginVisibleGroups(); it != result.endVisibleGroups(); ++it)
+                    {
+                        LLSpatialGroup* g = *it;
+                        if (g && !g->isDead())
+                        {
+                            now_groups[g] = { (U32)g->getSpatialPartition()->mDrawableType, (U32)g->getElementCount(), (U32)g->isOcclusionState(LLSpatialGroup::OCCLUDED) };
+                            {
+                                std::string descr = "empty";
+                                for (LLSpatialGroup::element_iter e = g->getDataBegin(); e != g->getDataEnd(); ++e)
+                                {
+                                    LLDrawable* dr = (LLDrawable*)(*e)->getDrawable();
+                                    LLViewerObject* vo = dr ? dr->getVObj().get() : nullptr;
+                                    if (vo)
+                                    {
+                                        descr = llformat("pcode %u%s%s at (%.1f %.1f %.1f) scale (%.2f %.2f %.2f) id %s", (U32)vo->getPCode(), vo->isAttachment() ? " attached" : "", vo->isAvatar() ? " avatar" : "",
+                                            vo->getPositionAgent().mV[0], vo->getPositionAgent().mV[1], vo->getPositionAgent().mV[2], vo->getScale().mV[0], vo->getScale().mV[1], vo->getScale().mV[2], vo->getID().asString().substr(0, 8).c_str());
+                                        break;
+                                    }
+                                }
+                                now_descr[g] = descr;
+                            }
+                        }
+                    }
+                    const bool ok = now_groups.size() * 10 >= last_groups.size() * 8;
+                    if (last_ok && !ok && !last_groups.empty())
+                    {
+                        std::map<U32, U32> by_type;
+                        U32 occluded = 0, empty = 0, listed = 0;
+                        std::string some;
+                        for (const auto& kv : last_groups)
+                        {
+                            if (!now_groups.count(kv.first))
+                            {
+                                ++by_type[kv.second[0]];
+                                occluded += kv.first->isDead() ? 0 : (U32)kv.first->isOcclusionState(LLSpatialGroup::OCCLUDED);
+                                empty += kv.second[1] == 0;
+                                if (++listed <= 8)
+                                {
+                                    auto di = last_descr.find(kv.first);
+                                    some += " [" + (di != last_descr.end() ? di->second : std::string("?")) + "]";
+                                }
+                            }
+                        }
+                        std::string types;
+                        for (const auto& kv : by_type) types += llformat(" type%u:%u", kv.first, kv.second);
+                        LL_INFOS("VisDip") << "dip starts at frame " << gFrameCount << ": " << last_groups.size() << " groups before, " << now_groups.size() << " now; left by partition type:" << types << "; now OCCLUDED " << occluded << " of " << listed << ", empty " << empty << some << LL_ENDL;
+                    }
+                    // at the start of a dip: the groups that left are remembered; at its end it is counted how many of them are back (the same group objects) and how many are dead
+                    static std::vector<LLSpatialGroup*> missing;
+                    static U32 dip_frame = 0;
+                    if (last_ok && !ok && !last_groups.empty())
+                    {
+                        missing.clear();
+                        dip_frame = gFrameCount;
+                        for (const auto& kv : last_groups)
+                        {
+                            if (!now_groups.count(kv.first)) missing.push_back(kv.first);
+                        }
+                    }
+                    else if (!last_ok && ok && !missing.empty())
+                    {
+                        U32 back = 0, dead = 0;
+                        for (LLSpatialGroup* g : missing)
+                        {
+                            back += (U32)now_groups.count(g);
+                            dead += g->isDead() ? 1u : 0u;
+                        }
+                        LL_INFOS("VisDip") << "dip over after " << (gFrameCount - dip_frame) << " frames: " << back << " of the " << missing.size() << " groups that left are visible again, " << dead << " of them dead" << LL_ENDL;
+                        missing.clear();
+                    }
+                    last_ok = ok;
+                    last_groups.swap(now_groups);
+                    last_descr.swap(now_descr);
+                }
+                static std::vector<std::array<U32, 3> > window;
+                window.push_back({ (U32)gFrameCount, result.getVisibleGroupsSize(), result.getVisibleListSize() });
+                if (window.size() >= 600)
+                {
+                    std::vector<U32> g, l;
+                    for (const auto& w : window) { g.push_back(w[1]); l.push_back(w[2]); }
+                    std::sort(g.begin(), g.end());
+                    std::sort(l.begin(), l.end());
+                    const U32 gm = g[g.size() / 2], lm = l[l.size() / 2];
+                    std::string dips;
+                    U32 count = 0;
+                    for (const auto& w : window)
+                    {
+                        if (w[1] < gm * 8 / 10 || w[2] < lm * 8 / 10)
+                        {
+                            if (++count <= 8)
+                            {
+                                dips += llformat(" [frame %u groups %u drawables %u]", w[0], w[1], w[2]);
+                            }
+                        }
+                    }
+                    LL_INFOS("VisDip") << "visible groups min/median/max " << g.front() << "/" << gm << "/" << g.back() << ", drawables " << l.front() << "/" << lm << "/" << l.back() << " over " << window.size() << " frames; frames below 80 % of the median: " << count << dips << LL_ENDL;
+                    window.clear();
+                }
             }
         }
 
