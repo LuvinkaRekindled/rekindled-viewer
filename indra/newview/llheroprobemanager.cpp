@@ -183,6 +183,24 @@ void LLHeroProbeManager::update()
             }
         }
 
+        // <FS> which mirror is the hero probe's, logged when it changes (a mirror in view doubles the frame's scene work: the log says whether a run had one)
+        {
+            static const LLViewerObject* last_hero = nullptr;
+            const LLViewerObject* now_hero = probe_present ? mNearestHero : nullptr;
+            if (now_hero != last_hero)
+            {
+                last_hero = now_hero;
+                if (now_hero)
+                {
+                    LL_INFOS("HeroProbe") << "hero probe: mirror object " << now_hero->getID() << " at " << now_hero->getPositionAgent() << " scale " << now_hero->getScale() << (now_hero->isAttachment() ? " (attached)" : "") << LL_ENDL;
+                }
+                else
+                {
+                    LL_INFOS("HeroProbe") << "hero probe: no mirror in view" << LL_ENDL;
+                }
+            }
+        }
+
         // Don't even try to do anything if we didn't find a single mirror present.
         if (!probe_present)
             return;
