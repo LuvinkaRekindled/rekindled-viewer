@@ -28,6 +28,7 @@
 #include "llvieweroctree.h"
 #include "lloccensus.h"
 #include "llviscensus.h"
+#include "llcullshadow.h"
 #include <deque>
 #include <unordered_map>
 #include "llviewerregion.h"
@@ -458,7 +459,10 @@ void LLViewerOctreeEntryData::resetVisible() const
 
 LLViewerOctreeGroup::~LLViewerOctreeGroup()
 {
-    //empty here
+    if (mCullId)
+    {
+        LLCullShadow::forget(mCullId);      // <FS> S7 C1
+    }
 }
 
 LLViewerOctreeGroup::LLViewerOctreeGroup(OctreeNode* node)

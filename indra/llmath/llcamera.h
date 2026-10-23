@@ -141,6 +141,7 @@ public:
     LLVector3 mAgentFrustum[AGENT_FRUSTRUM_NUM];  //8 corners of 6-plane frustum
     F32 mFrustumCornerDist;     //distance to corner of frustum against far clip plane
     LLPlane& getAgentPlane(U32 idx) { return mAgentPlanes[idx]; }
+    U32 getPlaneCount() const { return mPlaneCount; }       // <FS> S7 C1: 6, or 7 with a user clip plane
 
 public:
     LLCamera();

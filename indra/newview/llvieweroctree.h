@@ -269,6 +269,12 @@ protected:
     S32         mAnyVisible; //latest visible to any camera
     S32         mVisible[LLViewerCamera::NUM_CAMERAS];
 
+public:
+    // <FS> S7 C1 (LL_VK_CULL_SHADOW, llcullshadow.h): the group's id in the flat table, the build it first appeared in, the stamp of the last frame the CPU cull kept it
+    U32         mCullId = 0;
+    U32         mCullFirstSerial = 0;
+    U32         mCullCpuStamp = 0;
+
 };//LL_ALIGN_POSTFIX(16);
 
 //octree group which has capability to support occlusion culling
