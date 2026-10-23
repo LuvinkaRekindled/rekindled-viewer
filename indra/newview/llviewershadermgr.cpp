@@ -154,7 +154,7 @@ bool                       gTerrainPullReady = false;
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
 {
-constexpr size_t PULL_TWIN_COUNT = 9;
+constexpr size_t PULL_TWIN_COUNT = 22;
 LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
 LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
 bool sPullTwinReady[PULL_TWIN_COUNT] = {};
@@ -201,7 +201,10 @@ void ll_pull_twins_mark_dirty()
 static void make_pull_twins()
 {
     LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDrawColorProgram,
-                                                  &gDeferredAvatarProgram, &gDeferredAvatarAlphaProgram, &gDeferredAvatarShadowProgram, &gDeferredAvatarAlphaShadowProgram, &gDeferredAvatarAlphaMaskShadowProgram };
+                                                  &gDeferredAvatarProgram, &gDeferredAvatarAlphaProgram, &gDeferredAvatarShadowProgram, &gDeferredAvatarAlphaShadowProgram, &gDeferredAvatarAlphaMaskShadowProgram,
+                                                  &gDeferredWLSkyProgram, &gDeferredWLCloudProgram, &gDeferredWLMoonProgram, &gDeferredWLSunProgram, &gDeferredStarProgram,
+                                                  &gHUDFullbrightProgram, &gHUDFullbrightAlphaMaskProgram, &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram, &gDeferredBumpProgram,
+                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gDeferredShadowProgram, &gDeferredPBROpaqueProgram };
     for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
     {
         sPullTwinSources[k] = sources[k];
@@ -209,7 +212,9 @@ static void make_pull_twins()
         LLShaderProgram& src = *sources[k];
         LLShaderProgram& twin = sPullTwins[k];
         static const bool twins_off = []() { const char* e = getenv("LL_VK_PULL_TWINS"); return e && e[0] == '0'; }();       // (the old draws, for a comparison run)
-        if (twins_off || !LLVkBridge::shadowAlphaPacketsAvailable() || src.mProgramObject == 0)
+        static const std::string skip_list = []() { const char* e = getenv("LL_VK_PULL_TWIN_SKIP"); return std::string(",") + (e ? e : "") + ","; }();       // (indices of twins to leave off, e.g. "16,17": a bisect for a comparison run)
+        const bool skipped = skip_list.find("," + std::to_string(k) + ",") != std::string::npos;
+        if (twins_off || skipped || !LLVkBridge::shadowAlphaPacketsAvailable() || src.mProgramObject == 0)
         {
             continue;
         }

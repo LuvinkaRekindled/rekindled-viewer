@@ -951,7 +951,8 @@ void LLHiz::apply()
                 LLOccCensus::sHizWhy[2] += (word >> 18) & 1u;
                 LLOccCensus::sHizWhy[3] += (word >> 19) & 1u;
             }
-            t->hizResult(occluded);
+            static const bool ignore = getenv("LL_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
+            t->hizResult(ignore ? false : occluded);
         }
         LLVkBridge::hizDone(p.mSerial);
         sHizPending.pop_front();

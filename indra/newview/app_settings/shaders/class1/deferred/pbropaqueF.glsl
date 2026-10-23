@@ -63,8 +63,6 @@ uniform float clipSign;
 void mirrorClip(vec3 pos);
 vec4 encodeNormal(vec3 n, float env, float gbuffer_flag);
 
-uniform mat3 normal_matrix;
-
 void main()
 {
     mirrorClip(vary_position);

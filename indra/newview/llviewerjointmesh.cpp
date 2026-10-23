@@ -57,6 +57,7 @@
 #include "llperfstats.h"
 #include "llvkbridge.h"
 
+#include <sstream>
 #include <unordered_set>
 #include <unordered_map>
 #include <array>
@@ -552,6 +553,30 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     U32 offset = mMesh->mFaceIndexOffset;
 
     LLVertexBuffer* buff = mFace->getVertexBuffer();
+
+    {
+        // debug (LL_VK_BODYLOG=1): what a body mesh is drawn with, logged when it changes (a body mesh that is drawn wrong through the pull twin is compared with the ones that are not)
+        static const bool wanted = getenv("LL_VK_BODYLOG") != nullptr;
+        if (wanted && LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender)
+        {
+            static std::unordered_map<const LLViewerJointMesh*, std::string> told;
+            LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;
+            LLVOAvatar* avatar = drawable ? dynamic_cast<LLVOAvatar*>(drawable->getVObj().get()) : nullptr;
+            std::ostringstream sig;
+            sig << "mesh " << LLAvatarJointMesh::getMeshID() << " lod/skinned " << (mMesh->hasWeights() ? 1 : 0) << " texture "
+                << (mTestImageName ? "test" : (!is_dummy && layerset) ? (layerset->hasComposite() ? "composite" : "composite-missing") : (!is_dummy && mTexture.notNull()) ? "texture" : "default")
+                << " color " << mColor.mV[0] << "," << mColor.mV[1] << "," << mColor.mV[2] << "," << mColor.mV[3] << " transparent " << (mIsTransparent ? 1 : 0)
+                << " range " << start << ".." << end << " idx " << offset << "+" << count
+                << " types " << (buff ? buff->getTypeMask() : 0) << " program " << (LLShaderProgram::sCurBoundShaderPtr ? LLShaderProgram::sCurBoundShaderPtr->mName : std::string("none"))
+                << " minalpha " << LLDrawPoolAvatar::sMinimumAlpha;
+            std::string& was = told[this];
+            if (was != sig.str())
+            {
+                was = sig.str();
+                LL_INFOS("BodyLog") << (avatar ? avatar->getFullname() : std::string("?")) << (avatar && avatar->isSelf() ? " (self)" : "") << " " << was << LL_ENDL;
+            }
+        }
+    }
 
     if (mMesh->hasWeights())
     {

@@ -18043,7 +18043,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     if (!gather.mFallback.empty())
                     {
                         gShadowDrawStats.mPacketFallback += gather.mFallback.size();
-                        gDeferredShadowProgram.bind(false);
+                        ll_pull_or(&gDeferredShadowProgram)->bind();        // S6.6
                         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
                         gRenderLastMatrix = NULL;
                         for (LLDrawInfo* params : gather.mFallback)
@@ -18123,7 +18123,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         if (!fallback.empty())
         {
             gShadowDrawStats.mPacketFallback += fallback.size();
-            gDeferredShadowProgram.bind(false);
+            ll_pull_or(&gDeferredShadowProgram)->bind();        // S6.6
             LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
             gRenderLastMatrix = NULL;
             for (LLDrawInfo* params : fallback)

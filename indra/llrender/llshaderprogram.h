@@ -256,6 +256,7 @@ public:
     S32 getAttribLocation(U32 attrib);
     S32 mapUniformTextureChannel(S32 location, bool is_sampler, S32 size);
 
+    bool isVertexPull() const { return mVertexPull; }       // <FS> S6.6: built with LL_VERTEX_PULL (a draw of a vertex buffer under it is an entry of a geometry record)
     void clearPermutations();
     void addPermutation(std::string name, std::string value);
     void addPermutations(const std::map<std::string, std::string>& defines)
@@ -322,6 +323,7 @@ public:
     S32 mTotalUniformSize;
     S32 mActiveTextureChannels;
     S32 mShaderLevel;
+    bool mVertexPull = false;
     S32 mShaderGroup; // see LLShaderProgram::eGroup
     bool mUniformsDirty;
     LLShaderFeatures mFeatures;

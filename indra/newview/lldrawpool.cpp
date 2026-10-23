@@ -455,6 +455,9 @@ void LLFacePool::pushFacesPull(bool region_matrix)
 // S6.6d: one range of a buffer (a body mesh of an avatar) as a record of one entry, drawn with the pull program bound now under the modelview matrix on the stack
 void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count)
 {
+    // (the draw the old way starts with setBuffer(): it flushes a buffer that is still mapped, which a body mesh can be)
+    const_cast<LLVertexBuffer*>(vb)->setBuffer();
+    gRender.syncMatrices();         // (the program's matrix uniforms that are not in the record, projection_matrix of the avatar shaders, are written as a draw writes them)
     gRender.flush();
     LLPullBatch batch;
     batch.add(vb, first_index, index_count, nullptr);

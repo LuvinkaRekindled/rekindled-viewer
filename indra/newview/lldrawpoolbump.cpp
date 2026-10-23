@@ -288,16 +288,17 @@ void LLDrawPoolBump::beginFullbrightShiny()
     sVertexMask = VERTEX_MASK_SHINY | LLVertexBuffer::MAP_TEXCOORD0;
 
     // Second pass: environment map
-    shader = &gDeferredFullbrightShinyProgram;
-    if (LLPipeline::sRenderingHUDs)
-    {
-        shader = &gHUDFullbrightShinyProgram;
-    }
-
+    // S6.6: the static draws take the pull twin; the rigged variant is a program of its own (the twin has none)
+    LLShaderProgram* base_shader = LLPipeline::sRenderingHUDs ? &gHUDFullbrightShinyProgram : &gDeferredFullbrightShinyProgram;
+    shader = base_shader;
     if (mRigged)
     {
         llassert(shader->mRiggedVariant);
         shader = shader->mRiggedVariant;
+    }
+    else
+    {
+        shader = ll_pull_or(base_shader);
     }
 
     // bind exposure map so fullbright shader can cancel out exposure
@@ -545,7 +546,14 @@ void LLDrawPoolBump::renderDeferred(S32 pass)
     for (int i = 0; i < 2; ++i)
     {
         bool rigged = i == 1;
-        gDeferredBumpProgram.bind(rigged);
+        if (rigged)
+        {
+            gDeferredBumpProgram.bind(true);
+        }
+        else
+        {
+            ll_pull_or(&gDeferredBumpProgram)->bind();      // S6.6
+        }
         diffuse_channel = LLShaderProgram::sCurBoundShaderPtr->enableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
         bump_channel = LLShaderProgram::sCurBoundShaderPtr->enableTexture(LLViewerShaderMgr::BUMP_MAP);
         gRender.getTexUnit(diffuse_channel)->bindWhite();

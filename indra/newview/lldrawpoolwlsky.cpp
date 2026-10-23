@@ -73,12 +73,12 @@ LLViewerTexture *LLDrawPoolWLSky::getDebugTexture()
 
 void LLDrawPoolWLSky::beginDeferredPass(S32 pass)
 {
-    sky_shader = &gDeferredWLSkyProgram;
-    cloud_shader = &gDeferredWLCloudProgram;
+    sky_shader = ll_pull_or(&gDeferredWLSkyProgram);        // S6.6: the dome, clouds, sun, moon and stars as entries
+    cloud_shader = ll_pull_or(&gDeferredWLCloudProgram);
 
-    sun_shader = &gDeferredWLSunProgram;
+    sun_shader = ll_pull_or(&gDeferredWLSunProgram);
 
-    moon_shader = &gDeferredWLMoonProgram;
+    moon_shader = ll_pull_or(&gDeferredWLMoonProgram);
 }
 
 void LLDrawPoolWLSky::endDeferredPass(S32 pass)
@@ -234,7 +234,8 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
         return;
     }
 
-    gDeferredStarProgram.bind();
+    LLShaderProgram& star_program = *ll_pull_or(&gDeferredStarProgram);       // S6.6
+    star_program.bind();
 
     LLViewerTexture* tex_a = gSky.mVOSkyp->getBloomTex();
     LLViewerTexture* tex_b = gSky.mVOSkyp->getBloomTexNext();
@@ -263,24 +264,24 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
     LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, camPosLocal.mV[0], camPosLocal.mV[1], camPosLocal.mV[2]);
     LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, gFrameTimeSeconds*0.01f, 0.f, 0.f, 1.f);
-    gDeferredStarProgram.uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
+    star_program.uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
 
     if (LLPipeline::sReflectionRender)
     {
         star_alpha = 1.0f;
     }
-    gDeferredStarProgram.uniform1f(sCustomAlpha, star_alpha);
+    star_program.uniform1f(sCustomAlpha, star_alpha);
 
     sStarTime = (F32)LLFrameTimer::getElapsedSeconds() * 0.5f;
 
-    gDeferredStarProgram.uniform1f(LLShaderMgr::WATER_TIME, sStarTime);
+    star_program.uniform1f(LLShaderMgr::WATER_TIME, sStarTime);
 
     gSky.mVOWLSkyp->drawStars();
 
     gRender.getTexUnit(0)->bindWhite();
     gRender.getTexUnit(1)->bindWhite();
 
-    gDeferredStarProgram.unbind();
+    star_program.unbind();
 
     LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
 }
