@@ -7163,13 +7163,42 @@ void ll_vis_census_items(LLCamera& camera)
             ++LLVisCensus::sBItems[type];
             LLVisCensus::sBTris[type] += tris;
             const bool rigged = (type >= kGeoTypeCount && type < 2 * kGeoTypeCount) || type == kGeoAlphaItemType + 1;
-            if (rigged || !info->mHasExtents)
+            LLVector4a lo, hi;
+            bool boxed = false;
+            const LLVOAvatar* wearer = nullptr;
+            if (rigged)
+            {
+                // S7 B0 avatars: a rigged draw is bounded by its avatar's animated extents (agent space), padded by 25 cm for what the skin and attachments add
+                wearer = info->mAvatar.get();
+                if (wearer)
+                {
+                    const LLVector3* e = wearer->getLastAnimExtents();
+                    const F32 pad = 0.25f;
+                    boxed = e[0].mV[0] < e[1].mV[0] && e[0].mV[1] < e[1].mV[1] && e[0].mV[2] < e[1].mV[2] && fabsf(e[0].mV[0]) < 1.0e7f && fabsf(e[1].mV[0]) < 1.0e7f;
+                    lo.set(e[0].mV[0] - pad, e[0].mV[1] - pad, e[0].mV[2] - pad, 0.f);
+                    hi.set(e[1].mV[0] + pad, e[1].mV[1] + pad, e[1].mV[2] + pad, 0.f);
+                    if (boxed)
+                    {
+                        static std::unordered_set<const LLVOAvatar*> seen;
+                        static U32 seen_frame = 0;
+                        if (seen_frame != (U32)gFrameCount) { seen.clear(); seen_frame = (U32)gFrameCount; }
+                        if (seen.insert(wearer).second) { ++LLVisCensus::sBAvatars; }
+                        LLVisCensus::sBAvatarTris += tris;
+                    }
+                }
+            }
+            else if (info->mHasExtents)
+            {
+                lo = info->mExtents[0];
+                hi = info->mExtents[1];
+                boxed = true;
+            }
+            if (!boxed)
             {
                 ++LLVisCensus::sBUnbounded[type];
                 return;
             }
-            LLVector4a lo = info->mExtents[0], hi = info->mExtents[1];
-            if (info->mModelMatrix && !(rt_matrix_id(info->mModelMatrix) & 0x80000000u))
+            if (!rigged && info->mModelMatrix && !(rt_matrix_id(info->mModelMatrix) & 0x80000000u))
             {
                 // an active drawable's faces are in its own space: the box of the eight corners under its matrix
                 const F32* a = lo.getF32ptr();
@@ -7196,6 +7225,7 @@ void ll_vis_census_items(LLCamera& camera)
             {
                 ++LLVisCensus::sBOutside[type];
                 LLVisCensus::sBOutsideTris[type] += tris;
+                if (wearer) { LLVisCensus::sBAvatarOutsideTris += tris; ++LLVisCensus::sBAvatarOutsideItems; }
                 return;
             }
             if (sent >= 24000)
@@ -7304,7 +7334,12 @@ void LLVisCensus::report()
         if (sBFrames)
         {
             const double F = (double)sBFrames;
-            snprintf(buf, sizeof(buf), "B0 table items, per frame over %.0f frames: groups partly in the frustum %.0f, fully in %.0f; batches read %.0f (previous pyramid valid %.0f); GPU says outside %.1f; no room %.1f",
+            if (sBAvatars)
+        {
+            snprintf(buf, sizeof(buf), "B0 avatars (distinct, boxed): %.1f a frame, %.0f rigged tris of them, outside the frustum %.1f items / %.0f tris", (double)sBAvatars / (double)sBFrames, (double)sBAvatarTris / (double)sBFrames, (double)sBAvatarOutsideItems / (double)sBFrames, (double)sBAvatarOutsideTris / (double)sBFrames);
+            LL_INFOS("VisCensus") << buf << LL_ENDL;
+        }
+        snprintf(buf, sizeof(buf), "B0 table items, per frame over %.0f frames: groups partly in the frustum %.0f, fully in %.0f; batches read %.0f (previous pyramid valid %.0f); GPU says outside %.1f; no room %.1f",
                 F, (double)sBGroupsPartial / F, (double)sBGroupsFull / F, (double)sBBatches, (double)sBBatchesValidB, (double)sBGpuOutside / (double)std::max<U64>(sBBatches, 1), (double)sBNoRoom / F);
             LL_INFOS("VisCensus") << buf << LL_ENDL;
             for (int t = 0; t < ITEM_TYPES; ++t)
@@ -7342,6 +7377,7 @@ void LLVisCensus::report()
     memset(sPassServedInfos, 0, sizeof(sPassServedInfos)); memset(sPassServedTris, 0, sizeof(sPassServedTris)); memset(sPassListedInfos, 0, sizeof(sPassListedInfos)); memset(sPassListedTris, 0, sizeof(sPassListedTris));
     sAlphaGroups = sAlphaServedItems = sAlphaItemsTotal = sRiggedAlphaGroups = 0;
     memset(sPoolFaces, 0, sizeof(sPoolFaces)); memset(sPoolDrawables, 0, sizeof(sPoolDrawables));
+    sBAvatars = sBAvatarTris = sBAvatarOutsideItems = sBAvatarOutsideTris = 0;
     sBFrames = sBNoRoom = sBGroupsPartial = sBGroupsFull = sBBatches = sBBatchesValidB = sBGpuOutside = 0;
     memset(sBItems, 0, sizeof(sBItems)); memset(sBTris, 0, sizeof(sBTris)); memset(sBUnbounded, 0, sizeof(sBUnbounded)); memset(sBOutside, 0, sizeof(sBOutside)); memset(sBOutsideTris, 0, sizeof(sBOutsideTris));
     memset(sBTested, 0, sizeof(sBTested)); memset(sBTestedTris, 0, sizeof(sBTestedTris)); memset(sBHidA, 0, sizeof(sBHidA)); memset(sBHidATris, 0, sizeof(sBHidATris));
