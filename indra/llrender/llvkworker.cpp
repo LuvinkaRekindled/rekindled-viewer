@@ -8441,7 +8441,8 @@ struct CullShadowState
     Buffer mResults;
     struct Pending { U32 mSerial, mSlot; U64 mFrame; U32 mWords; };
     std::deque<Pending> mPending;
-    U64 mRecords = 0, mRows = 0, mTooMany = 0, mNoPipeline = 0, mPublished = 0, mLast = 0;
+    std::vector<LLVkBridge::CullRow> mTable;        // C1c: the worker's copy of the table, kept up to date by the delta rows of the records
+    U64 mRecords = 0, mRows = 0, mDeltaRows = 0, mResets = 0, mBadSlots = 0, mTooMany = 0, mNoPipeline = 0, mPublished = 0, mLast = 0;
 };
 CullShadowState sCullShadow;
 
@@ -8511,34 +8512,72 @@ void cull_poll()
     }
 }
 
-// kind 35
+// kind 35: delta rows for the worker's copy of the table (blob: CullParams, slots[mEntries] padded to 16 bytes, rows[mEntries]); mMatrices = rows of the whole table, mPaletteFloats 1 = start the copy afresh
 void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     CullShadowState& s = sCullShadow;
     ++s.mRecords;
-    s.mRows += h.mEntries;
     Renderer& r = Renderer::instance();
     Context& ctx = Context::instance();
     cull_poll();
-    if (!cull_init() || !h.mEntries)
+    const U32 table = h.mMatrices;
+    if (!table)
     {
         ++s.mNoPipeline;
         return;
     }
-    const U32 words = (h.mEntries + 31) / 32;
+    // the delta goes into the copy first, whatever happens to this record's test: the next record builds on it
+    {
+        LLVkBridge::CullRow dead;
+        memset(&dead, 0, sizeof(dead));
+        dead.mFlags = 33u;
+        if (h.mPaletteFloats == 1)
+        {
+            s.mTable.assign(table, dead);
+            ++s.mResets;
+        }
+        else
+        {
+            s.mTable.resize(table, dead);
+        }
+        const U8* p = blob + sizeof(LLVkBridge::CullParams);
+        const U32* slots = (const U32*)p;
+        const size_t slot_bytes = ((size_t)h.mEntries * 4 + 15) & ~(size_t)15;
+        const U8* rows = p + slot_bytes;
+        for (U32 i = 0; i < h.mEntries; ++i)
+        {
+            U32 slot;
+            memcpy(&slot, slots + i, 4);
+            if (slot >= table)
+            {
+                ++s.mBadSlots;
+                continue;
+            }
+            memcpy(&s.mTable[slot], rows + (size_t)i * sizeof(LLVkBridge::CullRow), sizeof(LLVkBridge::CullRow));
+        }
+        s.mDeltaRows += h.mEntries;
+        s.mRows += table;
+    }
+    if (!cull_init())
+    {
+        ++s.mNoPipeline;
+        return;
+    }
+    const U32 words = (table + 31) / 32;
     if (4 * words > kCullSlotWords)
     {
         ++s.mTooMany;
         return;
     }
-    const size_t bytes = sizeof(LLVkBridge::CullParams) + (size_t)h.mEntries * sizeof(LLVkBridge::CullRow);
+    const size_t bytes = sizeof(LLVkBridge::CullParams) + (size_t)table * sizeof(LLVkBridge::CullRow);
     Renderer::ScratchAlloc sc = r.allocVertexScratch(bytes);
     if (!sc.mPtr || !sc.mAddress)
     {
         ++s.mNoPipeline;
         return;
     }
-    memcpy(sc.mPtr, blob, bytes);
+    memcpy(sc.mPtr, blob, sizeof(LLVkBridge::CullParams));
+    memcpy((U8*)sc.mPtr + sizeof(LLVkBridge::CullParams), s.mTable.data(), (size_t)table * sizeof(LLVkBridge::CullRow));
     const U32 slot = h.mPass % kCullSlots;
     const U64 out_address = (U64)s.mResults.mAddress + (U64)slot * kCullSlotWords * 4;
     const U64 params_address = (U64)sc.mAddress;
@@ -8548,7 +8587,7 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     pc.mRows[0] = (U32)rows_address; pc.mRows[1] = (U32)(rows_address >> 32);
     pc.mParams[0] = (U32)params_address; pc.mParams[1] = (U32)(params_address >> 32);
     pc.mOut[0] = (U32)out_address; pc.mOut[1] = (U32)(out_address >> 32);
-    pc.mCount = h.mEntries;
+    pc.mCount = table;
     pc.mWords = words;
     const VkPipeline pipe = s.mPipe;
     const VkPipelineLayout layout = s.mLayout;
@@ -8580,7 +8619,7 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (s.mRecords - s.mLast >= 600)
     {
         s.mLast = s.mRecords;
-        LL_INFOS("VkCull") << "cull shadow worker over " << s.mRecords << " records: " << (double)s.mRows / (double)s.mRecords << " rows a record, published " << s.mPublished << ", still pending " << s.mPending.size()
+        LL_INFOS("VkCull") << "cull shadow worker over " << s.mRecords << " records: " << (double)s.mRows / (double)s.mRecords << " table rows a record, " << (double)s.mDeltaRows / (double)s.mRecords << " delta rows a record, " << s.mResets << " resets, " << s.mBadSlots << " bad slots, published " << s.mPublished << ", still pending " << s.mPending.size()
             << "; refused: too many rows " << s.mTooMany << ", no pipeline/other " << s.mNoPipeline << LL_ENDL;
     }
 }

@@ -33,7 +33,7 @@ S32 LLVkBridge::hizRead(U32, U32, U32*, bool) { return -1; }
 void LLVkBridge::hizDone(U32) {}
 void LLVkBridge::hizSetResults(const U32*, U32) {}
 void LLVkBridge::hizPublish(U32, U32) {}
-U32 LLVkBridge::cullSend(const CullParams&, const CullRow*, U32) { return 0; }
+U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, U32, U32, bool) { return 0; }
 S32 LLVkBridge::cullRead(U32, U32, U32*) { return -1; }
 void LLVkBridge::cullDone(U32) {}
 void LLVkBridge::cullSetResults(const U32*, U32) {}
@@ -950,14 +950,14 @@ std::atomic<U32> gCullDone{ 0 };
 U32 gCullSerial = 0;        // main thread only
 }
 
-U32 LLVkBridge::cullSend(const CullParams& params, const CullRow* rows, U32 count)
+U32 LLVkBridge::cullSend(const CullParams& params, const U32* slots, const CullRow* rows, U32 count, U32 table_size, bool reset)
 {
-    if (!count || !hizAvailable())
+    if (!table_size || !hizAvailable() || count > table_size)
     {
         return 0;
     }
     const U32 capacity = gCullCapacity.load(std::memory_order_relaxed);
-    if (capacity && (size_t)cullVariants * ((count + 31) / 32) > capacity)
+    if (capacity && (size_t)cullVariants * ((table_size + 31) / 32) > capacity)
     {
         return 0;       // more rows than a slot holds
     }
@@ -970,20 +970,27 @@ U32 LLVkBridge::cullSend(const CullParams& params, const CullRow* rows, U32 coun
     ShadowPacketsHeader header;
     header.mKind = 35;
     header.mEntries = count;
+    header.mMatrices = table_size;
+    header.mPaletteFloats = reset ? 1u : 0u;
     header.mPass = serial % 8;
     header.mFragment = serial;
-    std::vector<U8> blob(sizeof(CullParams) + (size_t)count * sizeof(CullRow));
+    const size_t slot_bytes = ((size_t)count * 4 + 15) & ~(size_t)15;
+    std::vector<U8> blob(sizeof(CullParams) + slot_bytes + (size_t)count * sizeof(CullRow), 0);
     memcpy(blob.data(), &params, sizeof(CullParams));
-    memcpy(blob.data() + sizeof(CullParams), rows, (size_t)count * sizeof(CullRow));
+    if (count)
+    {
+        memcpy(blob.data() + sizeof(CullParams), slots, (size_t)count * 4);
+        memcpy(blob.data() + sizeof(CullParams) + slot_bytes, rows, (size_t)count * sizeof(CullRow));
+    }
     shadowPackets(header, blob.data(), blob.size());
     return serial;
 }
 
-S32 LLVkBridge::cullRead(U32 serial, U32 count, U32* out)
+S32 LLVkBridge::cullRead(U32 serial, U32 table_size, U32* out)
 {
     const U32* results = gCullResults.load(std::memory_order_acquire);
     const U32 capacity = gCullCapacity.load(std::memory_order_relaxed);
-    const size_t words = (size_t)cullVariants * ((count + 31) / 32);
+    const size_t words = (size_t)cullVariants * ((table_size + 31) / 32);
     if (!results || !capacity || words > capacity)
     {
         return 0;

@@ -7328,6 +7328,7 @@ struct CullRec
     U32 mSerial = 0;                // the worker record
     U32 mBuildSerial = 0;           // the build the rows come from (a group with a later first serial did not exist)
     U32 mFrame = 0;                 // gFrameCount when sent
+    U32 mCount = 0;                 // rows of the whole table at the record
     std::vector<U32> mGen;          // slot -> generation when sent (a reused slot is not the same group)
     std::vector<LLVkBridge::CullRow> mRows;
 };
@@ -7340,6 +7341,7 @@ struct CullStats
     U64 mBothF[LLVkBridge::cullVariants] = {}, mMissedF[LLVkBridge::cullVariants] = {}, mExtraF[LLVkBridge::cullVariants] = {}, mCpuF = 0;
     U64 mMissedBounds[LLVkBridge::cullVariants] = {}, mMissedOcc[LLVkBridge::cullVariants] = {}, mMissedMotion[LLVkBridge::cullVariants] = {}, mMissedFar[LLVkBridge::cullVariants] = {};
     U64 mLag[10] = {};
+    U64 mDeltaRows = 0, mResets = 0;
     double mBuildMs = 0, mProcessMs = 0, mApplyMs = 0, mSendMs = 0, mBytes = 0, mTBound = 0, mABound = 0, mVerifyWalkMs = 0;
     U64 mBuilds = 0, mSends = 0, mRefreshed = 0, mTouches = 0, mAdded = 0, mFreed = 0, mRequeued = 0;
     // LL_VK_CULL_VERIFY: the kept table against a full walk (every 60 builds)
@@ -7352,6 +7354,8 @@ std::vector<U32> sSlotGen;                          // slot -> generation (+1 ea
 std::vector<U32> sFreeSlots;
 std::vector<LLViewerOctreeGroup*> sNewGroups;       // constructed, not yet given a slot
 std::vector<U32> sDirtySlots;                       // rows to refresh
+std::vector<U32> sSendSlots;                        // rows changed since the last record that was sent (delta rows)
+bool sNeedReset = true;                             // the worker's copy must be replaced (first record, or a record was refused)
 std::mutex sCullMutex;                              // the lists above (the shadow prep pool can rebound groups too)
 
 CullRec sCullBuilt;
@@ -7459,6 +7463,7 @@ void cull_process()
         }
         g->mCullDirty = false;
         cull_fill_row((LLSpatialGroup*)g, sMirror[slot]);
+        sSendSlots.push_back(slot);
         ++s.mRefreshed;
     }
 }
@@ -7538,9 +7543,9 @@ void cull_report()
     const double n = (double)s.mCompared;
     const double b = (double)std::max<U64>(s.mBuilds, 1);
     char buf[1536];
-    snprintf(buf, sizeof(buf), "records compared %.0f (lost %.0f), rows %.0f a record (dead %.1f, empty %.1f), CPU groups kept in the covered partitions %.0f a frame, new since the record %.1f a frame | build %.3f ms (touched rows made again %.3f ms), send %.3f ms, apply %.3f ms a frame, %.2f MB a record | rows refreshed %.1f a frame (%.1f put back for a pending rebound, %.1f touches, %.2f new groups, %.2f freed) | bounds used: translation %.3f m, rotation %.4f rad",
+    snprintf(buf, sizeof(buf), "records compared %.0f (lost %.0f), rows %.0f a record (dead %.1f, empty %.1f), CPU groups kept in the covered partitions %.0f a frame, new since the record %.1f a frame | build %.3f ms (touched rows made again %.3f ms), send %.3f ms (%.1f delta rows a record, %.0f resets), apply %.3f ms a frame, %.3f MB a record | rows refreshed %.1f a frame (%.1f put back for a pending rebound, %.1f touches, %.2f new groups, %.2f freed) | bounds used: translation %.3f m, rotation %.4f rad",
         n, (double)s.mLost, (double)s.mRows / n, (double)s.mDeadRows / n, (double)s.mEmptyRows / n, (double)s.mCpuGroups / n, (double)s.mNewGroups / n,
-        s.mBuildMs / b, s.mProcessMs / b, s.mSendMs / (double)std::max<U64>(s.mSends, 1), s.mApplyMs / n, s.mBytes / (double)std::max<U64>(s.mSends, 1) / 1.0e6, (double)s.mRefreshed / b, (double)s.mRequeued / b, (double)s.mTouches / b, (double)s.mAdded / b, (double)s.mFreed / b,
+        s.mBuildMs / b, s.mProcessMs / b, s.mSendMs / (double)std::max<U64>(s.mSends, 1), (double)s.mDeltaRows / (double)std::max<U64>(s.mSends, 1), (double)s.mResets, s.mApplyMs / n, s.mBytes / (double)std::max<U64>(s.mSends, 1) / 1.0e6, (double)s.mRefreshed / b, (double)s.mRequeued / b, (double)s.mTouches / b, (double)s.mAdded / b, (double)s.mFreed / b,
         s.mTBound / b, s.mABound / b);
     LL_INFOS("CullShadow") << buf << LL_ENDL;
     if (s.mVerifies)
@@ -7582,7 +7587,7 @@ void cull_apply()
     while (!sCullRecs.empty())
     {
         CullRec& rec = sCullRecs.front();
-        const U32 count = (U32)rec.mRows.size();
+        const U32 count = rec.mCount;
         const U32 W = (count + 31) / 32;
         words.resize((size_t)LLVkBridge::cullVariants * W);
         S32 r = LLVkBridge::cullRead(rec.mSerial, count, words.data());
@@ -7712,6 +7717,29 @@ void cull_apply()
 }
 }
 
+// LL_VK_CULL_COMPARE=0: the verdicts are not looked at, their ring slots are only given back
+static void cull_drain()
+{
+    static std::vector<U32> words;
+    while (!sCullRecs.empty())
+    {
+        CullRec& rec = sCullRecs.front();
+        words.resize((size_t)LLVkBridge::cullVariants * ((rec.mCount + 31) / 32));
+        S32 r = LLVkBridge::cullRead(rec.mSerial, rec.mCount, words.data());
+        if (r == 0 && (U32)gFrameCount - rec.mFrame <= 60)
+        {
+            break;
+        }
+        ++(r < 0 ? sCullStats.mLost : sCullStats.mCompared);
+        LLVkBridge::cullDone(rec.mSerial);
+        sCullRecs.pop_front();
+        if (sCullStats.mCompared >= 600)
+        {
+            cull_report();
+        }
+    }
+}
+
 void LLCullShadow::added(LLViewerOctreeGroup* group)
 {
     std::lock_guard<std::mutex> lock(sCullMutex);
@@ -7731,6 +7759,7 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
             sFreeSlots.push_back(slot);
             memset(&sMirror[slot], 0, sizeof(sMirror[slot]));
             sMirror[slot].mFlags = 33u;
+            sSendSlots.push_back(slot);
             ++sCullStats.mFreed;
         }
         group->mCullId = 0;
@@ -7798,26 +7827,19 @@ void LLCullShadow::build(LLCamera& camera)
     sCullStats.mProcessMs += cull_ms(t1);
 
     // the CPU set: every group the cull kept, in the covered partitions (a group with a slot)
-    for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i)
+    if (sCompare)
     {
-        if ((*i)->mCullId) (*i)->mCullCpuStamp = sCullStamp;
-    }
-    for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
-    {
-        if ((*i)->mCullId) (*i)->mCullCpuStamp = sCullStamp;
+        for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i)
+        {
+            if ((*i)->mCullId) (*i)->mCullCpuStamp = sCullStamp;
+        }
+        for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
+        {
+            if ((*i)->mCullId) (*i)->mCullCpuStamp = sCullStamp;
+        }
     }
 
-    // the table of this frame, as the worker will get it (and the comparison keeps it)
-    {
-        std::lock_guard<std::mutex> lock(sCullMutex);
-        CullRec& rec = sCullBuilt;
-        rec.mSerial = 0;
-        rec.mBuildSerial = sCullBuildSerial;
-        rec.mFrame = (U32)gFrameCount;
-        rec.mRows = sMirror;
-        rec.mGen = sSlotGen;
-        sCullHaveBuilt = true;
-    }
+    sCullHaveBuilt = true;      // the rows changed since the last record are in sSendSlots (and what the comparison needs is copied when the record is sent)
 
     // the camera's motion over the last frames: the bounds the margins are made from
     CullPose pose = { camera.getOrigin(), camera.getAtAxis(), camera.getLeftAxis(), camera.getUpAxis() };
@@ -7847,13 +7869,20 @@ void LLCullShadow::build(LLCamera& camera)
         cull_verify();
     }
     const auto t2 = CullClock::now();
-    cull_apply();
+    if (sCompare)
+    {
+        cull_apply();
+    }
+    else
+    {
+        cull_drain();
+    }
     sCullStats.mApplyMs += cull_ms(t2);
 }
 
 void LLCullShadow::send(LLCamera& camera)
 {
-    if (!sCullHaveBuilt || sCullBuilt.mRows.empty())
+    if (!sCullHaveBuilt)
     {
         return;
     }
@@ -7880,21 +7909,75 @@ void LLCullShadow::send(LLCamera& camera)
     {
         params.mFactors[k] = sCullFactors[k];
     }
-    CullRec& rec = sCullBuilt;
-    const U32 serial = LLVkBridge::cullSend(params, rec.mRows.data(), (U32)rec.mRows.size());
+    static std::vector<U32> slots;
+    static std::vector<LLVkBridge::CullRow> rows;
+    U32 table_size;
+    CullRec rec;
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        table_size = (U32)sMirror.size();
+        if (!table_size)
+        {
+            return;
+        }
+        slots.clear();
+        rows.clear();
+        if (sNeedReset)
+        {
+            // the whole table: the worker's copy is made afresh
+            slots.resize(table_size);
+            for (U32 i = 0; i < table_size; ++i)
+            {
+                slots[i] = i;
+            }
+            rows = sMirror;
+        }
+        else
+        {
+            // the rows changed since the last record sent (a slot can be on the list more than once: its newest row goes once)
+            std::sort(sSendSlots.begin(), sSendSlots.end());
+            sSendSlots.erase(std::unique(sSendSlots.begin(), sSendSlots.end()), sSendSlots.end());
+            slots = sSendSlots;
+            rows.reserve(slots.size());
+            for (U32 slot : slots)
+            {
+                rows.push_back(slot < table_size ? sMirror[slot] : LLVkBridge::CullRow());
+            }
+        }
+        if (sCompare)
+        {
+            rec.mRows = sMirror;            // what the worker's copy will be: the comparison reads the flags and bounds the test saw
+            rec.mGen = sSlotGen;
+        }
+    }
+    const U32 serial = LLVkBridge::cullSend(params, slots.data(), rows.data(), (U32)slots.size(), table_size, sNeedReset);
     if (serial)
     {
         rec.mSerial = serial;
+        rec.mBuildSerial = sCullBuildSerial;
         rec.mFrame = (U32)gFrameCount;
-        sCullStats.mBytes += (double)(sizeof(params) + rec.mRows.size() * sizeof(LLVkBridge::CullRow));
+        rec.mCount = table_size;
+        sCullStats.mBytes += (double)(sizeof(params) + slots.size() * (4 + sizeof(LLVkBridge::CullRow)));
+        sCullStats.mDeltaRows += slots.size();
+        sCullStats.mResets += sNeedReset;
         ++sCullStats.mSends;
+        sNeedReset = false;
+        {
+            std::lock_guard<std::mutex> lock(sCullMutex);
+            sSendSlots.clear();
+        }
         sCullRecs.push_back(std::move(rec));
         while (sCullRecs.size() > 8)
         {
             LLVkBridge::cullDone(sCullRecs.front().mSerial);
             sCullRecs.pop_front();
         }
-        rec = CullRec();
+    }
+    else
+    {
+        sNeedReset = true;                  // not sent: the next record replaces the worker's copy
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        sSendSlots.clear();
     }
     sCullStats.mSendMs += cull_ms(t0);
 }
