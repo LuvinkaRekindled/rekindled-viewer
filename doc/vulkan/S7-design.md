@@ -589,3 +589,18 @@ Run `tex-settleb1` (login, about 160 s of turning and moving, 80 s standing stil
 **The 70-80% GPU is the worker thread, not the GPU.** In the settle phase: frame 17.4 ms (57 fps), worker operations 14-16 ms/frame, worker waited for work about 3 ms, GPU time per frame 12-16.7 ms (so the GPU is busy about 75% of 17 ms). Early in the run (looking away from the crowd): 12-13.6 ms, 73-79 fps, GPU 99%. What grew: draws per frame 6,000-6,700 to 9,000, `shadowPackets` 3.4 to 8 ms, ray scene CPU 0.76 to 1.19 ms/call, skin jobs 123 to 354/frame, avatars drawn 4 to 7/frame, casters named 1243 to 3885/frame. Cost per draw stays about 2 us (it is 2.5-3.3 us during movement), so the extra time follows how much is in view and animating, not a slower worker. The run ends facing the crowd again, the first minute faced away from it; the still runs facing the crowd (`tex-unfocus5/6`) show 6,300-6,850 draws, 13-14.5 ms, 99% GPU. So this run cannot say whether the extra work is the crowd moving or a state left behind by the turn.
 
 Not done: a controlled pair (same view, same time, with and without a turn) to separate crowd from leftover state; the bias hysteresis (counting only textures, or an exit threshold nearer the target); the ray-structure churn.
+
+**Controlled pair (section 20 addendum): 60 s still, 60 s turning in place, 120 s still, facing the crowd all the time** (`run-pts.ps1`, runs `tex-pts1/2/3`; pts2 has the main thread zones, pts3 per-thread CPU time).
+
+| | still before | still after the turn |
+|---|---|---|
+| fps (pts1 / pts3) | 72 / 75 | 62 / 65 |
+| draws per frame | 8,700-9,000 | 8,800-9,100 (the same) |
+| GPU time per frame (sum of passes) | 12.7 ms | 13.0 ms (same, by pass too) |
+| worker operations (ms/frame) | 11.9 | 12.7 |
+| frame interval on the main thread | 14.0-14.5 ms | 16.1-17.0 ms |
+| worker waited for work | 2.0 ms | 3.3 ms |
+| used video memory / bias | 8.5 GB / 1.0 | 11.3 GB / 1.9-2.1 |
+| rt scene instances | 11.8k | 13.9k (+18%) |
+
+So the GPU is not slower; the main thread is: it is at 95-96% CPU in both windows and takes 2.5 ms longer per frame after the turn. Per zone (call counts the same): `display()` +1.7-1.9 ms, `idle()` +0.7-0.9 ms; named: texture list update +0.4 (decode priority calls per frame 188 to 352), `gObjectList.update` +0.3-0.45, `generateSunShadow` +0.25, deferred lighting +0.3, post-deferred geometry +0.3, local lights +0.2, `updateMovedList` +0.2, `stateSort` +0.2. Everything got 10-18% slower, nothing dominates. No thread's CPU time grew (per-thread, same 45 s and 90 s windows: total 281% before, 251% after; the one thread at 34% before, probably decode and fetch, went to 0). So not competition from other threads. Likely reading: after the turn the whole 360 degrees around the avatar holds built geometry, a 18% larger ray scene, more drawables to walk in the object, shadow and lighting passes. This does not show a leak. Not tested: the teleport case Adam described (the slowdown stays after teleporting out of the busy sim), which would separate "more content built" from "state that never goes away".
