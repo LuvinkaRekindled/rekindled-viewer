@@ -237,6 +237,7 @@ public:
     virtual void handleStateChange(const TreeNode* node);
     virtual void handleChildAddition(const OctreeNode* parent, OctreeNode* child);
     virtual void handleChildRemoval(const OctreeNode* parent, const OctreeNode* child);
+    virtual void handleParentChange(const OctreeNode* node);        // <FS> S7 C1b
 
     OctreeNode*          getOctreeNode() {return mOctreeNode;}
     LLViewerOctreeGroup* getParent();
@@ -271,7 +272,8 @@ protected:
 
 public:
     // <FS> S7 C1 (LL_VK_CULL_SHADOW, llcullshadow.h): the group's id in the flat table, the build it first appeared in, the stamp of the last frame the CPU cull kept it
-    U32         mCullId = 0;
+    U32         mCullId = 0;                // slot + 1 in the table (0: none)
+    bool        mCullDirty = false;         // in the list of rows to refresh
     U32         mCullFirstSerial = 0;
     U32         mCullCpuStamp = 0;
 

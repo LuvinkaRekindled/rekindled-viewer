@@ -5,6 +5,7 @@ foreach ($r in $Runs) {
   $name = 'c1-' + $r
   $script = if ($r -like 'move*') { '<work>\run-move.ps1' } else { '<work>\run-s1.ps1' }
   $vars = 'LL_VK_AB_MARK=1;LL_VK_CULL_SHADOW=1;LL_VK_CULL_FACTORS=0.25,0.5,1'
+  if ($r -like '*verify*') { $vars += ';LL_VK_CULL_VERIFY=1' }
   if ($r -like '*plain*') { $vars = 'LL_VK_AB_MARK=1;LL_VK_POSE_LOG=1' }
   "starting $name " + (Get-Date -Format 'HH:mm:ss')
   $smi = Start-Process -FilePath nvidia-smi -ArgumentList '--query-gpu=timestamp,utilization.gpu,memory.used,memory.total --format=csv,noheader -l 1' -RedirectStandardOutput ("<work>\run-logs\$name.smi.csv") -WindowStyle Hidden -PassThru

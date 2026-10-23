@@ -436,3 +436,55 @@ Frustum only (what the GPU would supply; the CPU keeps applying its own `OCCLUDE
 - Cost: the record is cheap (0.036 ms of worker a frame, a few tens of microseconds of GPU); the **table build (full walk) is not**: 0.9-2.5 ms. **C1b, the incremental table (listener hooks, free list, delta upload), is the next step before anything is saved**; without it C1 only costs.
 - Validation: clean for the cull code. Device lost: none in 10 runs.
 - Decisions for Adam: (1) the margin (factor and the speed source), (2) fix the stock far-limit quirk in the CPU cull (about 1.6 % of the kept groups, low risk), (3) go on with C1b, or look at the texture / VRAM budget thrash first since it costs 25-40 points of GPU utilisation in the moving case (15.4 item 6).
+
+
+## 16. C1b design: the group table kept up to date by the groups themselves (2026-10-23)
+
+Why: section 15 measured the full walk that builds the table each frame at 0.9 ms (7.8k rows) to 2.5 ms (16.8k rows); until it is gone C1 only costs. C1b keeps one CPU mirror of the rows, a stable slot per group, and updates only the rows that changed. The GPU still receives the whole mirror each frame in this step (0.5-1 MB, 0.06-0.34 ms measured in 15.1); a resident table with delta records is a later step (C1c) once the mirror is proven.
+
+### 16.1 What changes a row, and where it is hooked (all in llvieweroctree.cpp, behind `LL_VK_CULL_SHADOW`)
+
+| row field | changes in | hook |
+|---|---|---|
+| bounds, extents | only `LLViewerOctreeGroup::rebound()`, which runs after `unbound()` marked the node and every ancestor `DIRTY` | `unbound()` touches the node and each ancestor it marks; a row is refreshed only when its group is no longer `DIRTY` (otherwise it stays in the list) |
+| `SKIP_FRUSTUM_CHECK` | the parent's `rebound()` (3 sites: set on a single child, cleared on children) | touch the child when the flag actually changes |
+| empty | element insert / remove (`handleInsertion`, `handleRemoval`, `removeFromGroup`) | all call `unbound()` |
+| parent link | node creation and removal (`handleChildAddition` / `Removal`, both call `unbound()`) | the new group is registered in its constructor (`added`), its row is built at the next processing |
+| `OCCLUDED` (world camera) | `setOcclusionState` / `clearOcclusionState` (single and all-cameras modes; the branch modes call them per group) | touch when the world camera's `OCCLUDED` bit toggles |
+| dead | `handleDestruction` (flag `DEAD`), the destructor | the destructor frees the slot (generation + 1, row marked dead, slot on the free list) |
+
+`mCullId` becomes slot + 1 (a stable id, no map). The touch list is drained once per frame at the end of `updateCull` (main thread; touches may come from the shadow prep pool, so list and registry are behind one mutex). Only the partitions of 14.2 are registered (`dynamic_cast` to `LLSpatialGroup` and a check of the partition type at the first processing; the VO cache groups are not).
+Dead and free rows carry flags 33 (dead + root) and are ignored by the shader and the comparison. The comparison now names a group by slot and generation, so a reused slot is not compared with the wrong group.
+
+### 16.2 The test of the hooks: `LL_VK_CULL_VERIFY=1`
+
+Every 60 frames the old full walk runs next to the mirror and the two are compared group by group: groups the walk finds without a row, rows without a group in the walk, and differences in bounds, extents, parent, and each flag bit. The log line `CullVerify` gives the counts over the window. Gate: all counts 0 over a moving run (a hook that is missing shows up here before it shows up as a miss in the GPU comparison). `LL_VK_CULL_FULL=1` keeps the full walk as the table source (the C1 behaviour) for A/B timing.
+
+### 16.3 Gate
+
+Verify counts 0 in the still run and the moving run; build time per frame (the touch list, no walk) well under 0.3 ms at 17k rows; the GPU comparison of 15.3 unchanged (missed / extra within noise of the full-walk numbers); no device lost; validation clean once.
+
+### 16.4 Results (2026-10-23, runs `c1-stillverify1/2`, `c1-moveverify1/2`; the plaza facing the crowd, moving = the arrow-key script of 15.2)
+
+**Built as designed** (switches: `LL_VK_CULL_SHADOW=1`, `LL_VK_CULL_VERIFY=1`; the C1 full-walk table source was removed, the walk now exists only as the verify check). Files: `llcullshadow.h`; the hooks in `llvieweroctree.cpp` (constructor, destructor, `unbound`, `rebound` skip flag sites, `handleDestruction`, `setOcclusionState` / `clearOcclusionState`, and the new `handleParentChange`); `lloctree.h` (new listener callback, below); the mirror, slot registry, `cull_process`, `cull_verify` in `pipeline.cpp`; the shader ignores dead rows (flag 32). No device lost in these 4 runs.
+
+**The test found a hook that did not exist.** The first verify runs (`...verify1`) matched on bounds, extents, every flag, row presence and orphans (all 0 over 20 full walks), and differed only in the parent link: 3-5 rows per walk in some windows. Cause: `LLOctreeRoot::balance` (a root with one empty branch child takes that child's children, `addChild(child, true)`, silent) and the root's expansion in `LLOctreeRoot::insert` (`newnode->addChild(child)` before the new node has listeners) change a node's parent without telling any listener, and `setParent` has no hook. Fix: `LLOctreeListener::handleParentChange(node)` (default empty) called from `addChild` for the child's listeners; `LLViewerOctreeGroup` touches its row. After it: **0 differences in every field over 44 report windows (about 440 full-walk comparisons) in the still and the moving runs** (`...verify2`: 24 and 20 windows, 8.4k and 17.4k rows).
+
+| | full walk (C1, 15.1) | kept table (C1b) |
+|---|---|---|
+| rows refreshed a frame | all (7.8k-17k) | **38 still, 124 turning** (touches 38-125: moving objects, avatars' groups, occlusion flips, rebounds) |
+| table build (the part that was the walk) | 0.90 ms (7.8k rows), 2.5 ms (16.8k rows) | **0.003 ms still, 0.009 ms turning** (whole `build` incl. the mirror copy, the CPU set stamps and the camera bounds: 0.11 / 0.18 ms) |
+| `send` (copy of the whole table into the record) | 0.06-0.34 ms | 0.10 ms still, 0.37 ms turning (unchanged: the table is still sent whole) |
+| rows put back for a pending rebound | - | 0 |
+| groups added / freed a frame | - | 0.25 still, 1-2 turning |
+
+- GPU comparison unchanged (frustum-only, against the CPU's exact test): still 3,250 vs 3,250 (missed 0.06 a frame, 0.002 %, down from 0.6 in 15.3: the old walk saw a changed parent only by luck); turning (0.44 m, 0.109 rad over 5 frames): exact misses 63 (2.07 %), factor 0.25: 8.3 (0.27 %) +288 extra (9.4 %), factor 0.5: **0.5 (0.016 %)** +533 (17.4 %), factor 1: **0.06 (0.002 %)** +982 (32 %). Same as 15.3 within the spread between runs.
+- The verify walk itself costs 1.3 ms (8k rows) to 3.9 ms (17k rows): only in verify runs, every 60 frames.
+- What is left of the cost: the two copies of the whole table (into the record's row list for the comparison, and into the queue blob by `cullSend`), 0.1-0.37 ms. fps in these runs are not comparable with section 15 (the crowd differs; `stillverify2` 73.5 fps, 13.3 ms, `moveverify2` 62.5 fps).
+
+### 16.5 Next, and what it opens
+
+- **C1c: resident table with delta records.** The worker keeps the table in a GPU buffer; the viewer sends only the refreshed rows (38-124 rows, 2.4-8 KB) and a few new-slot / dead-slot rows; the comparison keeps its own copy only in verify mode. That takes `send` from 0.1-0.37 ms to a few microseconds and the whole C1 cost to about the 0.04 ms of the dispatch and the 0.003-0.009 ms of the touched rows. The same table is what the Hi-Z group boxes use (`hizCollect` builds its box batch from the occlusion list each frame), so it can feed that too.
+- **C2: use the verdict.** The GPU frustum set (with factor 0.5-1) replaces the CPU octree walk for the covered partitions; the CPU applies its own `OCCLUDED` flags on top (the table already carries them) and runs state work only for the groups left. The fastest CPU saving in 13.2 is the decision (a) at about 1.0 ms and the part of (c) fed by the groups it drops.
+- Decisions for Adam: margin factor (0.5 or 1, or the camera's speed this frame), fix of the stock far-limit quirk (15.4), and whether C1c goes first or C2 directly on the whole-table send (0.1-0.37 ms) as an interim.
+- Scene drift to know about (Adam, 2026-10-23): the plaza got brighter during the day (mean screenshot luminance 44 in the morning, about 90 by 13:00) although the viewer's environment is fixed midnight: **lights in the sim run on the sim's own clock** and turn on over time. The nearby light count in the log went from 580 (morning) to 670-740. So the lighting cost, and fps, drift with sim time on top of the crowd (13.1); compare runs only inside one session or the same hour, and do not read screenshot brightness as a rendering regression.
