@@ -44,6 +44,7 @@
 #include <tuple>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <cstring>
 #include <thread>
 #include <cstdlib>
@@ -364,6 +365,7 @@ struct Tex
     U64 mSamplerSig = 0;
     U32 mBindlessEpoch = 0;                     // <FS> the slot this texture holds in the bindless table, for the frame (epoch) and image view it was taken for
     U32 mBindlessSlot = 0;
+    bool mSeenSampled = false;                  // <FS> diagnostic (blink after load): a draw has sampled this texture with data in it
     VkImageView mBindlessView = VK_NULL_HANDLE;
     U64 mBindlessFullFrame = 0;                 // <FS> the frame of the last full slot lookup (packet_texture_slot): in between only the slot is kept alive
     U32 mPinIndex = 0;                          // <FS> the ray scene's pin of this texture (0 = none): a change of the texture asks for it to be looked at again
@@ -576,7 +578,8 @@ inline void tex_forget(U32 name) { if (name < sTexFlat.size()) sTexFlat[name] = 
 
 
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
-U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
+std::unordered_set<U32> sSeenNames;       // <FS> diagnostic: GL names of textures drawn with a picture at least once
+U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0, sSampleNoName = 0, sSampleNoImage = 0, sSampleBlank = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
 U64 sOutOfRangeDraws = 0;           // indexed draws left out because their index or vertex range was not inside their buffers (since the start)
 U64 sDrawsTotal = 0;
 std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
@@ -3136,7 +3139,28 @@ static U32 packet_texture_slot(Renderer& r, U32 name)
     Tex* t = packet_texture(name);
     if (!t || !t->mImage.valid() || t->mImage.mViewType != VK_IMAGE_VIEW_TYPE_2D)
     {
+        // diagnostic (blink after load): a texture that was drawn with its picture before and now has none (deleted name, or no image)
+        if (name)
+        {
+            if (!t)
+            {
+                if (sSeenNames.erase(name)) ++sSampleNoName;
+            }
+            else if (!t->mImage.valid() && t->mSeenSampled)
+            {
+                ++sSampleNoImage;
+            }
+        }
         return 0;
+    }
+    if (!t->mSeenSampled && t->mValidLevels > 0)
+    {
+        t->mSeenSampled = true;
+        sSeenNames.insert(name);
+    }
+    else if (t->mSeenSampled && t->mValidLevels == 0)
+    {
+        ++sSampleBlank;     // drawn with its picture before; now an image that has had no level defined: it samples as zeros (transparent black)
     }
     // <FS> the ray scene asks for thousands of textures every frame (material tables): a texture whose full lookup was made within the last 32 frames, and whose view has not changed, only
     // has its slot kept alive and written into this frame's set (bindlessTouch); the full lookup (sampler parameters, layout, table search) is repeated every 16 frames, spread by name
@@ -9330,16 +9354,17 @@ void after_frame()
         {
             // <FS> every 300 frames (about 5 s), when something changed: what the texture copies from targets and the re-specified images did in that time (cumulative totals, the difference between two lines is the interval)
             static U32 copy_frames = 0;
-            static U64 last[8] = {};
+            static U64 last[11] = {};
             if (++copy_frames >= 300)
             {
                 copy_frames = 0;
-                const U64 now_v[8] = { (U64)sCopies, sCopyDropFrame, sCopyDropTex, sCopyDropSrc, sRespecs, sGrows, sLevelDrops, sLevelDropsRefused };
+                const U64 now_v[11] = { (U64)sCopies, sCopyDropFrame, sCopyDropTex, sCopyDropSrc, sRespecs, sGrows, sLevelDrops, sLevelDropsRefused, sSampleNoName, sSampleNoImage, sSampleBlank };
                 if (memcmp(now_v, last, sizeof(now_v)) != 0)
                 {
                     LL_INFOS("VkTexCopy") << "texture copies from targets done " << now_v[0] << " (+" << now_v[0] - last[0] << "), dropped: not in a frame " << now_v[1] << " (+" << now_v[1] - last[1] << "), no texture image "
                         << now_v[2] << " (+" << now_v[2] - last[2] << "), no source image " << now_v[3] << " (+" << now_v[3] - last[3] << "); images re-specified " << now_v[4] << " (+" << now_v[4] - last[4]
-                        << "), mip chains grown " << now_v[5] << " (+" << now_v[5] - last[5] << "), levels dropped " << now_v[6] << " (+" << now_v[6] - last[6] << "), drops refused " << now_v[7] << " (+" << now_v[7] - last[7] << ")" << LL_ENDL;
+                        << "), mip chains grown " << now_v[5] << " (+" << now_v[5] - last[5] << "), levels dropped " << now_v[6] << " (+" << now_v[6] - last[6] << "), drops refused " << now_v[7] << " (+" << now_v[7] - last[7] << "); draw samples of a deleted name " << now_v[8] << " (+" << now_v[8] - last[8] << "), of a texture without an image "
+                                         << now_v[9] << " (+" << now_v[9] - last[9] << "), of an image with no level yet " << now_v[10] << " (+" << now_v[10] - last[10] << ")" << LL_ENDL;
                     memcpy(last, now_v, sizeof(last));
                 }
             }
