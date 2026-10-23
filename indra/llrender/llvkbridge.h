@@ -276,8 +276,10 @@ namespace LLVkBridge
     struct CullParams { F32 mPlanes[7][4]; F32 mOrigin[3]; F32 mCornerDist; F32 mMotion[4]; F32 mFactors[4]; U32 mPlaneCount; U32 mPad[7]; };     // 192 bytes; mMotion = translation bound, rotation bound
     struct CullRow { F32 mCenter[3]; U32 mParent; F32 mHalf[3]; U32 mFlags; F32 mExtMin[3]; F32 mPad0; F32 mExtMax[3]; F32 mPad1; };       // mFlags: 1 root, 2 skip frustum check, 4 occluded, 8 sphere test
     static_assert(sizeof(CullParams) == 192 && sizeof(CullRow) == 64, "cull record layout");
-    U32 cullSend(const CullParams& params, const CullRow* rows, U32 count);
-    S32 cullRead(U32 serial, U32 count, U32* out);
+    // C1c: the record carries delta rows: slots[n] (U32 each, padded to 16 bytes) then rows[n]; table_size = the rows of the whole table after the delta; reset = the worker's copy is replaced (first record, or after a record
+    // was refused). The worker keeps the table and uploads all of it for the test. cullRead takes the table size of the record (the words of a variant are ceil(table_size / 32)).
+    U32 cullSend(const CullParams& params, const U32* slots, const CullRow* rows, U32 count, U32 table_size, bool reset);
+    S32 cullRead(U32 serial, U32 table_size, U32* out);
     void cullDone(U32 serial);
     void cullSetResults(const U32* results, U32 capacity_words);    // (worker) the mapped ring: capacity_words per slot
     void cullPublish(U32 slot, U32 serial);                         // (worker)

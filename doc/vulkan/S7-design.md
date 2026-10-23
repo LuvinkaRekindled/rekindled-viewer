@@ -488,3 +488,26 @@ Verify counts 0 in the still run and the moving run; build time per frame (the t
 - **C2: use the verdict.** The GPU frustum set (with factor 0.5-1) replaces the CPU octree walk for the covered partitions; the CPU applies its own `OCCLUDED` flags on top (the table already carries them) and runs state work only for the groups left. The fastest CPU saving in 13.2 is the decision (a) at about 1.0 ms and the part of (c) fed by the groups it drops.
 - Decisions for Adam: margin factor (0.5 or 1, or the camera's speed this frame), fix of the stock far-limit quirk (15.4), and whether C1c goes first or C2 directly on the whole-table send (0.1-0.37 ms) as an interim.
 - Scene drift to know about (Adam, 2026-10-23): the plaza got brighter during the day (mean screenshot luminance 44 in the morning, about 90 by 13:00) although the viewer's environment is fixed midnight: **lights in the sim run on the sim's own clock** and turn on over time. The nearby light count in the log went from 580 (morning) to 670-740. So the lighting cost, and fps, drift with sim time on top of the crowd (13.1); compare runs only inside one session or the same hour, and do not read screenshot brightness as a rendering regression.
+
+
+## 17. C1c: delta rows to a worker-side table (2026-10-23)
+
+**Built, shadow mode, default off** (`LL_VK_CULL_SHADOW=1`; `LL_VK_CULL_COMPARE=0` leaves the comparison with the CPU set out, which is what a use of the verdict would cost). One change from the plan of 15.5: the worker keeps the table in **its own memory** and uploads all of it into the frame's scratch for the test, instead of a GPU-resident buffer with deltas. A resident buffer is read by frames in flight and every touched row would have to be versioned against them (hand-off trap, section 4); the worker copy gives the main thread what was needed, and the whole-table copy stays on the worker, which is not the limiter (0.037 ms a frame, below).
+
+**Record (kind 35):** `CullParams`, then `slots[n]` (padded to 16 bytes), then `rows[n]`; `mMatrices` = rows of the whole table after the delta; `mPaletteFloats` = 1 starts the worker's copy afresh (the first record, and after any record `cullSend` refused: ring full, no worker). The viewer collects the changed slots (every refreshed row, every freed slot) in `sSendSlots`, sorts and uniques them at the send and puts the newest row of each. The worker applies the delta to its copy before anything else, so a record whose test cannot run (no scratch, too many rows) still leaves the copy right for the next one. Files: `llvkbridge.*` (`cullSend(params, slots, rows, n, table_size, reset)`, `cullRead(serial, table_size, out)`), `on_cull_rows` in `llvkworker.cpp`, `LLCullShadow::send` and `cull_drain` in `pipeline.cpp`.
+
+**Results** (runs `c1-stillverify3`, `c1-moveverify3` with the comparison; `c1-stillnocmp1`, `c1-movenocmp1` without; same plaza, the arrow-key script of 15.2; no device lost in the 4 runs; the verify walk of 16.2 was on in the first two):
+
+| main thread, per frame | C1 full walk (15.1) | C1b whole table sent (16.4) | **C1c, comparison off** | C1c, comparison on |
+|---|---|---|---|---|
+| table build (touched rows made again, stamps, camera bounds) | 0.90 ms (7.8k rows), 2.5 ms (16.8k) | 0.11 ms still, 0.18 ms turning | **0.008 ms still, 0.013 ms turning** (touched rows 0.004 / 0.009) | 0.011 / 0.017 |
+| send | 0.06-0.34 ms | 0.10 / 0.37 ms | **0.004 ms still, 0.006 ms turning** | 0.03 / 0.17 (it copies the table for the comparison) |
+| bytes to the worker a record | 0.46-1.1 MB | 0.46-1.1 MB | **3-4 KB still, 8.7 KB turning** (36-60 and 126 delta rows) | same |
+| comparison (diagnostic) | 0.5-1.1 ms | same | 0 | 0.28 / 0.59 ms |
+| **total for the verdict's input** | 1.0-2.9 ms | 0.2-0.55 ms | **0.012 ms still, 0.019 ms turning** | |
+
+- Worker: kind 35 costs **0.037 ms a frame** (37 microseconds a record: the table copy into scratch and the dispatch), unchanged. One reset in 15,600 records (the first), 0 bad slots, the worker's table has 7.3k rows.
+- GPU comparison unchanged by the move to delta rows (frustum-only against the CPU's exact test): still 3,130 vs 3,130 (exact: 0.56 missed a frame, 0.018 %; with margin 0.25, 0.5 or 1: 0.00 missed, +7 / +15 / +26 extra); turning (17.5k rows): exact misses 56 (1.8 %), factor 0.25: 7.1 (0.23 %), factor 0.5: **0.51 (0.017 %)**, factor 1: **0.04 (0.001 %)**, extra 245 / 449 / 839. This is also the check of the worker's copy: if a delta had been lost or applied to the wrong slot the misses would grow while the camera stands still.
+- **The cost of the whole C1 chain (table, test input) is now about 0.01-0.02 ms of main thread and 0.04 ms of worker, against 1.0-2.9 ms of main thread for the full walk it started from.**
+
+**Next: C2, using the verdict** (switch default off, the old walk stays; `LL_VK_CULL_VERIFY`-style comparison stays as the gate). Decisions open: the margin factor (0.5: one late group a frame in the fastest turn; 1: almost none, 839 extra groups of 3,108 in that turn), the stock far-limit quirk (15.4 item 1), and which consumers read the GPU set first (render lists of the VOLUME partition, as 12.4 C2 says; the state work (b) of 13.2 stays on the CPU for the groups the set names).
