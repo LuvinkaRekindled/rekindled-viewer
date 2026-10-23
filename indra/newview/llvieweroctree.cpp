@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 #include "llvieweroctree.h"
 #include "lloccensus.h"
+#include "llviscensus.h"
 #include <deque>
 #include <unordered_map>
 #include "llviewerregion.h"
@@ -801,7 +802,11 @@ U32 sHizNextId = 0;
 U32 sHizBatchSeq = 0;
 std::vector<LLVkBridge::HizBox> sHizBoxes;
 std::vector<LLHizTarget*> sHizBoxTargets;
-struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; };
+std::vector<LLVkBridge::HizBox> sHizItemBoxes;       // S7 B0: the table items' boxes of the pass, and their item type and triangle count
+std::vector<std::pair<U8, U32>> sHizItemInfo;
+F32 sHizPrevVp[16] = {};
+bool sHizHavePrev = false;
+struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; std::vector<std::pair<U8, U32>> mItems; bool mPrev = false; };
 std::deque<HizPending> sHizPending;
 }
 
@@ -813,10 +818,23 @@ LLHizTarget::~LLHizTarget()
     }
 }
 
+void LLHiz::addItem(const LLVector4a& center, F32 half_x, F32 half_y, F32 half_z, U8 item_type, U32 tris)
+{
+    LLVkBridge::HizBox box;
+    box.mCenter[0] = center[0]; box.mCenter[1] = center[1]; box.mCenter[2] = center[2];
+    box.mFlags = 0u;
+    box.mHalf[0] = half_x; box.mHalf[1] = half_y; box.mHalf[2] = half_z;
+    box.mPad = 0.f;
+    sHizItemBoxes.push_back(box);
+    sHizItemInfo.push_back({ item_type, tris });
+}
+
 void LLHiz::begin()
 {
     sHizBoxes.clear();
     sHizBoxTargets.clear();
+    sHizItemBoxes.clear();
+    sHizItemInfo.clear();
     ++sHizBatchSeq;
 }
 
@@ -844,11 +862,26 @@ void LLHiz::add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 h
 void LLHiz::send(const F32* view_proj)
 {
     struct Lap { U64 mT0 = LLOccCensus::sOn ? LLOccCensus::now() : 0; ~Lap() { if (LLOccCensus::sOn) LLOccCensus::sHizTicksSend += LLOccCensus::now() - mT0; } } lap;
-    if (sHizBoxes.empty())
+    if (sHizBoxes.empty() && sHizItemBoxes.empty())
     {
         return;
     }
-    const U32 serial = LLVkBridge::hizSend(sHizBoxes.data(), (U32)sHizBoxes.size(), view_proj);
+    const U32 target_count = (U32)sHizBoxes.size();
+    const bool items = !sHizItemBoxes.empty() && target_count + sHizItemBoxes.size() <= 32768;
+    if (items)
+    {
+        sHizBoxes.insert(sHizBoxes.end(), sHizItemBoxes.begin(), sHizItemBoxes.end());
+    }
+    else
+    {
+        sHizItemInfo.clear();
+    }
+    const U32 serial = LLVkBridge::hizSend(sHizBoxes.data(), (U32)sHizBoxes.size(), view_proj, items && sHizHavePrev ? sHizPrevVp : nullptr, target_count);
+    if (items && serial)
+    {
+        memcpy(sHizPrevVp, view_proj, sizeof(sHizPrevVp));
+        sHizHavePrev = true;
+    }
     if (LLOccCensus::sOn)
     {
         ++(serial ? LLOccCensus::sHizSends : LLOccCensus::sHizRefused);
@@ -863,6 +896,8 @@ void LLHiz::send(const F32* view_proj)
     p.mSerial = serial;
     p.mFrame = (U32)gFrameCount;
     p.mIds.reserve(sHizBoxTargets.size());
+    p.mItems.swap(sHizItemInfo);
+    p.mPrev = items && sHizHavePrev;
     for (LLHizTarget* t : sHizBoxTargets)
     {
         p.mIds.push_back(t->mHizId);
@@ -883,8 +918,9 @@ void LLHiz::apply()
     while (!sHizPending.empty())
     {
         HizPending& p = sHizPending.front();
-        words.resize(3 * p.mIds.size());
-        S32 r = LLVkBridge::hizRead(p.mSerial, (U32)p.mIds.size(), words.data());
+        const size_t all_boxes = p.mIds.size() + p.mItems.size();
+        words.resize(3 * all_boxes);
+        S32 r = LLVkBridge::hizRead(p.mSerial, (U32)all_boxes, words.data());
         if (r == 0)
         {
             if ((U32)gFrameCount - p.mFrame > 60)
@@ -953,6 +989,48 @@ void LLHiz::apply()
             }
             static const bool ignore = getenv("LL_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
             t->hizResult(ignore ? false : occluded);
+        }
+        if (!p.mItems.empty())
+        {
+            // S7 B0: the verdicts for the table items (A: the pyramid of the pass they were sent in; B: the pyramid of the frame before)
+            static std::vector<U32> prev_words;
+            prev_words.resize(words.size());
+            const bool have_b = p.mPrev && LLVkBridge::hizRead(p.mSerial, (U32)all_boxes, prev_words.data(), true) == 1;
+            ++LLVisCensus::sBBatches;
+            LLVisCensus::sBBatchesValidB += have_b;
+            for (size_t k = 0; k < p.mItems.size(); ++k)
+            {
+                const U8 type = p.mItems[k].first;
+                const U32 tris = p.mItems[k].second;
+                const U32 wa = words[3 * (p.mIds.size() + k)];
+                ++LLVisCensus::sBTested[type];
+                LLVisCensus::sBTestedTris[type] += tris;
+                if (wa & 1u)
+                {
+                    if (wa & ((1u << 17) | (1u << 19)))
+                    {
+                        ++LLVisCensus::sBGpuOutside;
+                    }
+                    else
+                    {
+                        ++LLVisCensus::sBHidA[type];
+                        LLVisCensus::sBHidATris[type] += tris;
+                    }
+                }
+                if (have_b)
+                {
+                    const U32 wb = prev_words[3 * (p.mIds.size() + k)];
+                    if (wb & 0x80000000u)
+                    {
+                        ++LLVisCensus::sBValidB[type];
+                        if ((wb & 1u) && !(wb & ((1u << 17) | (1u << 19))))
+                        {
+                            ++LLVisCensus::sBHidB[type];
+                            LLVisCensus::sBHidBTris[type] += tris;
+                        }
+                    }
+                }
+            }
         }
         LLVkBridge::hizDone(p.mSerial);
         sHizPending.pop_front();
@@ -1403,6 +1481,11 @@ void LLViewerOctreeCull::traverse(const OctreeNode* n)
 {
     LL_PROFILE_ZONE_SCOPED;
     LLViewerOctreeGroup* group = (LLViewerOctreeGroup*) n->getListener(0);
+    const bool vis_census = LLVisCensus::sOn && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !LLPipeline::sShadowRender && !LLPipeline::sReflectionRender;       // <FS> S7 C0
+    if (vis_census)
+    {
+        ++LLVisCensus::sCullNodes;
+    }
 
     if (earlyFail(group))
     {
@@ -1413,11 +1496,19 @@ void LLViewerOctreeCull::traverse(const OctreeNode* n)
         (mRes && group->hasState(LLViewerOctreeGroup::SKIP_FRUSTUM_CHECK)))
     {   //fully in, just add everything
         LL_PROFILE_ZONE_NAMED_CATEGORY_OCTREE("AllInside");
+        if (vis_census)
+        {
+            ++LLVisCensus::sCullFullIn;
+        }
         OctreeTraveler::traverse(n);
     }
     else
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_OCTREE("Check inside?");
+        if (vis_census)
+        {
+            ++LLVisCensus::sCullFrustumChecks;
+        }
         mRes = frustumCheck(group);
 
         if (mRes)

@@ -223,3 +223,67 @@ The idea is a **flat table of all spatial groups** (bounds, type flags, parent c
 2. Pop-in policy for C: expanded frustum (recommended) or a CPU frustum over a flat table.
 3. Whether OIT is wanted at all (visual change), and whether it comes before C (the GPU is the closer limiter).
 4. The 6.7 test list (terrain / PBR terrain, shadow-map hill, snapshot, impostors) stays open; it needs no S7 code and can run in any session.
+
+
+## 13. B0 and C0: what the numbers say (2026-10-23, measurement only, nothing of B or C built)
+
+**Tools (all default off).** `LL_VK_VISCENSUS=1` (header `llviscensus.h`, log tag `VisCensus`, every 600 world post sorts; `LL_VK_VISCENSUS_BOXES=0` leaves the box test out): rdtsc laps of the main view's `updateCull` (per partition, octree nodes), `stateSort` (checkOcclusion, mark-visible loop, `changeLOD`, per-drawable sort with `updateDistance`, bridges), `postSort` (render map, rebuildGeom, delayed `rebuildMesh`, alpha sort); visible groups by partition; draw infos by pass type, table-served against left to the pool loops; faces of non-volume drawables by pool. B0: every table-served draw (`LLDrawInfo` now keeps the union of its faces' extents, `mExtents`, set in `registerFace`) gets a world box; the frustum test is done on the CPU with the camera's planes; the survivors ride in the Hi-Z batch of the frame (`LLHiz::addItem`, batch limit 4096 -> 32768 boxes) and are tested twice by the worker: against the same-frame pyramid at the occlusion point (A) and, by a second dispatch before the pyramid is rebuilt, against the previous frame's pyramid with the previous view-projection (B). Verdicts are tallied per item type when they come back (2-4 frames later). Averages of the 13 steady windows: `S7-b0c0-census-v0a.txt`.
+
+**What this is not.** One scene, one run each: London City night (Soho park, about 70 avatars nearby; `v0a` = census, `v0b` = CPU zones; ray shadows, the default; the plaza spot was not run separately), the avatar standing still, so a moving camera is untested and the agreement of A and B below is a best case. The frustum count is CPU, not a GPU cull. Boxes are per draw info (a run of adjacent faces of the same material), the granularity the table has. Rigged items have no box (the skin moves them): they are only counted. The probes cost something (the census frame was 17.0 ms; the zone run, with chrono scopes, 19.7 ms), so the ms below are upper-ish numbers; the counts are exact. The zone run covers all 6.9 views a frame, the census the main view only.
+
+### 13.1 C0 part 1: the main view's CPU visibility chain (v0a, frame 17.0 ms)
+
+| piece | ms / frame | what is in it |
+|---|---|---|
+| `updateCull` | **0.77** | VOLUME partition 0.50, avatar 0.06, bridge 0.03, terrain 0.02, particle 0.01, VO cache 0.04; 3,830 octree nodes entered, 1,030 frustum checks, 2,180 nodes taken whole (fully in), 2,055 groups marked visible (the Hi-Z result apply is in the total, not split out) |
+| `stateSort` (own part, without `postSort`) | **0.93** | `checkOcclusion` 0.14 (2,049 calls), mark-visible loop 0.31 (605 drawables of 193 drawable groups), `changeLOD` 0.03 (1,856 calls, only 68 true), drawable sort 0.27 (499 drawables, of which `updateDistance` 0.19), bridges 0.12 (368) |
+| `postSort` | **0.83** | build render map 0.55 (1,856 visible groups), delayed `rebuildMesh` 0.01, alpha group sort 0.02, `rebuildGeom` 0.00 |
+| **main view total** | **about 2.5** | of a main thread of about 17 ms |
+
+Reading: (a) the decision (frustum + occlusion drop) is mostly the VOLUME octree walk, 0.5 ms; (b) the state work is small: LOD changes on 68 of 1,856 groups a frame, and what is left is `checkOcclusion` calls, the mark-visible loop and `updateDistance` of about 500 drawables, mostly active drawables (avatars, attachments, moving objects) that no group table covers; (c) list production, the render map, is 0.55 ms.
+
+**The other views (v0b zones, inclusive, chrono scopes):** `stateSort` runs 6.9 times a frame (the main view, the sun cascades, spot / projector shadows; ray shadows still sort the cascade casters for the ray scene): `postSort` 3.57 ms in all, of which the render map 3.10, against 0.83 in the main view. So about **2.7 ms of render-map work and about 1 ms more of sorting is in the shadow views**; `display: generateSunShadow` is 5.1 ms of a 15.1 ms `display()`, the main view's `display: stateSort (early)` is 2.1 ms and `display: updateCull` 0.87. A C that replaces only the main view's chain does not touch that pile, which is larger in this scene and a different design problem (the cascade cull job, S-retire-views-design.md).
+
+### 13.2 C0 part 2: table or pool loops, by pass type (draw infos a frame, visible groups only)
+
+Served by the scene table (no render map entry): every static and rigged type of the 20 in `kGeoTypes`: SIMPLE 1,278 infos, MATERIAL 93, MATERIAL_ALPHA_MASK 293, SPECMAP 156, NORMMAP 68, NORMSPEC 293, NORMSPEC_MASK 64, FULLBRIGHT 379, GLOW 172, ALPHA_MASK 264, FULLBRIGHT_ALPHA_MASK 43, GLTF_PBR 46, and their rigged variants (571 rigged infos, 8.5 M triangles). Static alpha: 967 of 974 alpha items are table items (alpha plan; the pass list shows ALPHA and ALPHA_RIGGED as "pool" because they are not in `kGeoTypes`, the alpha plan draws them). Left to the pool loops (still drawn through typed records): FULLBRIGHT 30, FULLBRIGHT_SHINY 21, GLOW 30, INVISIBLE 10, BUMP 6, POST_BUMP 10, NORMMAP_MASK 8, FULLBRIGHT_ALPHA_MASK 39, a few rigged: about **190 draw infos, 20 k triangles**, against about 4,400 table draws. Not draw-info based at all: terrain 204 faces, avatar bodies 116 faces, sky 8, water 7, animesh 24 (249 non-volume drawables a frame, enqueued by `stateSort(drawable)`), plus HUD and particles. **By draw count the table serves about 96 % of the scene geometry; what the CPU still orders is about 190 infos and about 360 faces of terrain / avatars / sky / water.** The partitions behind it: VOLUME 1,271 visible groups (4,381 elements; 1,226 have a table fragment, 758 are fully served), AVATAR 529 groups (3,456 elements, 289 fully served; 9.6 M triangles, 90 % of the frame's triangles), BRIDGE 42, PARTICLE 9 (no fragment), CONTROL_AV 4.
+
+### 13.3 C0 part 3: the readers of the visible bit and the group state (re-grepped)
+
+| reader | sites | needs this frame's value? |
+|---|---|---|
+| `LLDrawable::isVisible` / `LLVOVolume::isVisible` / `LLVOAvatar::isVisible` (own stamp or its group's) | texture sizing (`updateTextureVirtualSize`, llvovolume.cpp 917-950), avatar update / pause / LOD (llvoavatar.cpp 3244, 3609, 5131, 5447, 5938, 6309, 6389, 6986, 7088, 9760, 10455, 10559, 10965, 12327, 12597), `LLDrawable` (650 damped move, 1547), flexible objects (llflexibleobject.cpp 346, 434), `LLSpatialGroup::getUpdateUrgency` (llspatialpartition.cpp 756), debug (`renderNormals`, x-ray, selection) | no: a frame or two late only delays texture loads and pauses animation (avatar ones show as a one-frame freeze on screen entry) |
+| `isRecentlyVisible` / `getVisible` / `mVisible[]` | texture list boost (llviewertexture.cpp 3815, 3831), texture animation (llviewertextureanim.cpp 88), object cache (llvocache.cpp 347-623, 907), attachment visibility (lldrawable.cpp 1559), `markNotCulled` (pipeline.cpp 2884: not visible last frame -> occlusion list), `LLBuilderGuard::beforeMutation` (llspatialpartition.cpp 152, 369: a group of the main view mutated while visible) | no, except the builder guard, which asks whether the group is in this frame's main view |
+| `setVisible()` | `markNotCulled`, the `stateSort` loops, `LLDrawable::setVisible`, sky drawables | it is the stamp the others read: written by the walk and by the sort |
+| `OCCLUDED` / `isOcclusionState` | `updateCull` earlyFail, `stateSort` (3 loops), `postSort` (3 places), `renderGroups` / `renderRiggedGroups` (pipeline.cpp ~20704, 20719), `LLVOCachePartition`, shadow cull (llspatialpartition.cpp 1108, 1199, 1278), `LLHiz::apply` (writes it, children inherit with `STATE_MODE_DIFF`), VisDip debug | yes for the lists (the map and the group loops of the passes); the verdict itself is 2-4 frames old already |
+| `mLastUpdateDistance` | `stateSort` bridge and group loops (pipeline.cpp 3554, 3564, 3724), `LLSpatialGroup::changeLOD` (llspatialpartition.cpp 779), `LLVOVolume` (6050), `LLVOPartGroup` (689) | yes, but it only gates `changeLOD` (true for 68 of 1,856 groups) |
+| `markVisible(drawable)`, `changeLOD()` | the `stateSort` loops, shadow / impostor loops | LOD wants the distance before the draw of the same frame |
+
+The readers that tolerate a late bit (texture, avatar, flexi, particles, cache) are the long list; the ones that need this frame (lists, group loops, builder guard, LOD) are the short one, as in section 12.2.
+
+### 13.4 B0: what a fragment cull over the table items would drop inside the groups the CPU keeps (v0a, per frame)
+
+| class | items | tris | no box | outside the frustum (CPU test) | Hi-Z hidden, same-frame pyramid (A) | Hi-Z hidden, previous frame's pyramid (B) |
+|---|---|---|---|---|---|---|
+| static opaque (19 types) | 2,899 | 906,700 | 9 | 108 items (3.7 %), 21,600 tris (2.4 %) | **868 items (30 %), 58,900 tris (6.5 %)** | 868 items, 58,800 tris |
+| static alpha runs | 967 | 115,200 | 7 | 28 items (2.9 %), 500 tris | **456 items (47 %), 8,700 tris (7.6 %)** | 456 items, 8,700 tris |
+| rigged opaque | 571 | 8,519,900 | all | not tested | not tested | not tested |
+| rigged alpha runs | 263 | 847,400 | all | not tested | not tested | not tested |
+
+Per type the Hi-Z-hidden share is 21-54 % of the items and 5-10 % of the triangles for the big types (SIMPLE 22 % of items, 7.5 % of tris; NORMSPEC 48 % and 5 %; MATERIAL_ALPHA_MASK 54 % and 7 %; FULLBRIGHT 21 % and 10 %; ALPHA runs 47 % and 7.6 %); see the raw file. The GPU says "outside the view" for 0 of the items the CPU frustum kept (the planes agree). The previous-frame pyramid hides within 0.1 % the same items as the same-frame one (standing camera: a best case). The B dispatch ran for every batch (previous pyramid valid in all batches read).
+
+What this means for B, in numbers:
+- **Draw commands:** a cull would drop about 1,300 of the roughly 3,900 non-rigged table items a frame (34 %) by Hi-Z (868 + 456) and about 140 (4 %) by the frustum, inside groups the CPU keeps. They are small draws (hidden opaque ones average about 70 triangles, alpha ones about 19).
+- **Triangles:** about 67 k of 9.5 M table triangles a frame (0.7 %). **The frame's triangles are the avatars (8.5 M opaque + 0.85 M alpha rigged = 90 %), which an item cull does not touch.** The vertex-bound gain of the item cull is far below 0.1 ms. What it can save is command-processor and per-draw state work for about 1,300 hidden small draws; their fragments already die at the depth test, so no shading is saved for the opaque ones. I could not measure the GPU gain without building the cull; my estimate (not a measurement) is a few tenths of a ms at most, and the alpha runs (4.0 ms of GPU, fill-bound) would lose about half of their commands but little of their time.
+- **The lever B does not cover is the rigged geometry:** a box per avatar is available (`getLastAnimExtents`); a frustum / Hi-Z cull per avatar, or a cheaper LOD for far and hidden ones, would address the 90 %. That is a different job from the table's item cull and is not measured here (the avatar groups are already culled as groups by the CPU walk; how many of the 529 visible avatar groups are hidden is not known).
+
+### 13.5 What this changes in the plan
+
+- **C (main view only) is worth at most about 1-1.5 ms of main thread, not 3:** the whole main-view chain is 2.5 ms; the decision part (0.5 ms VOLUME walk, 0.14 `checkOcclusion`) and the render map (0.55) could go, the LOD / `updateDistance` / bridge state of active drawables (about 0.5 ms) stays. With the GPU about 13 ms and the main thread 14-17 ms, the frame gain is at most about 1 ms; C1 (flat group table in shadow mode) has no frame gain by itself.
+- **The shadow views' sort (about 3.7 ms of `stateSort` work outside the main view, zone run) is bigger than the main view's whole chain** and is in none of B, C1-C5 as written; it is the cascade cull job of S-retire-views-design.md.
+- **B as designed (item cull) is small in this scene:** 0.7 % of the table's triangles, about 1,300 small commands.
+- OIT (alpha runs, 4.0 ms of GPU, 30 %) and the avatar triangle load stay the biggest GPU levers; neither is a B or C item.
+
+### 13.6 Decision for Adam
+
+Options: (1) **build neither as designed**; first look at the avatar side (per-avatar frustum / Hi-Z box cull; 90 % of the triangles) or the shadow views' sort (about 3.7 ms), which are bigger than B and C1; (2) **C1 shadow mode** (flat group table + GPU test, compared with the CPU set; no behaviour change, no frame gain by itself, up to 1-1.5 ms only after C2-C5); (3) **B as designed** (about 1,300 small draws a frame, estimated a few tenths of a ms of GPU, never measured; needs the box side array and an indirect-count path). Recommendation: (1), then B by avatars; do not start C before the shadow views have a plan. Not done: a moving-camera run (turn the avatar during the run: how far the previous-frame pyramid agrees under motion) and a second spot.
