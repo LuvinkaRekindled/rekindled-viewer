@@ -506,6 +506,10 @@ void LLDrawPoolBump::beginBump()
         llassert(shader->mRiggedVariant);
         shader = shader->mRiggedVariant;
     }
+    else
+    {
+        shader = ll_pull_or(shader);       // S6.6
+    }
 
     shader->bind();
 

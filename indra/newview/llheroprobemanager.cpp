@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llgpuzonetimer.h"
+#include "llvoavatar.h"
 
 #include "llheroprobemanager.h"
 #include "llreflectionmapmanager.h"
@@ -139,8 +140,15 @@ void LLHeroProbeManager::update()
         float last_distance = 99999.f;
         float camera_center_distance = 99999.f;
         mNearestHero = nullptr;
+        std::vector<std::pair<LLVOVolume*, LLVector3> > candidates;       // <FS> the mirrors that are in view and face the camera
         for (auto vo : mHeroVOList)
         {
+            // <FS> a mirror worn by another avatar (a sword, a handbag: a thin box flagged as a mirror) puts a whole scene render and its shadows on every frame; FSHeroProbeIgnoreOthersAttachments (default on) leaves those out
+            static LLCachedControl<bool> ignore_others(gSavedSettings, "FSHeroProbeIgnoreOthersAttachments", true);
+            if (ignore_others && vo && vo->isAttachment() && vo->getAvatar() && !vo->getAvatar()->isSelf())
+            {
+                continue;
+            }
             if (vo && !vo->isDead() && vo->mDrawable.notNull() && vo->isReflectionProbe() && vo->getReflectionProbeIsBox())
             {
                 float distance = (LLViewerCamera::instance().getOrigin() - vo->getPositionAgent()).magVec();
@@ -169,6 +177,10 @@ void LLHeroProbeManager::update()
                 }
                 // </FS:Beq>
 
+                if (visible)
+                {
+                    candidates.push_back({ vo, reflection_normal });
+                }
                 if (distance < last_distance && center_distance < camera_center_distance && visible)
                 {
                     probe_present = true;
@@ -181,6 +193,42 @@ void LLHeroProbeManager::update()
             else
             {
                 unregisterViewerObject(vo);
+            }
+        }
+
+        // <FS> the probe keeps the mirror it has for at least 60 frames before it takes another one that is in view: two mirrors of about the same distance made it flip several times a second (each
+        // flip starts the cube over)
+        {
+            static LLVOVolume* current = nullptr;
+            static U32 since = 0;
+            if (probe_present)
+            {
+                if (mNearestHero.get() != current)
+                {
+                    bool kept = false;
+                    if (current && gFrameCount - since < 60)
+                    {
+                        for (const auto& c : candidates)
+                        {
+                            if (c.first == current)
+                            {
+                                mNearestHero = current;
+                                mMirrorNormal = c.second;
+                                kept = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!kept)
+                    {
+                        current = mNearestHero.get();
+                        since = gFrameCount;
+                    }
+                }
+            }
+            else
+            {
+                current = nullptr;
             }
         }
 
