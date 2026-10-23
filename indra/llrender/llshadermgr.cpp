@@ -369,6 +369,103 @@ bool LLShaderMgr::attachShaderFeatures(LLShaderProgram * shader)
 //============================================================================
 // Load Shader
 
+// <FS> S6.6 LL_VERTEX_PULL: a vertex shader of the viewer becomes a pull shader (the geometry packet path: the attributes are read by address from the draw's vertex buffer, the matrices from the
+// record's matrix table). The shader text is rewritten line by line: its `in` attributes become globals, the matrix uniforms the record carries (modelview_matrix, modelview_projection_matrix,
+// normal_matrix, texture_matrix0) become globals, and the start of main() fills them from the draw's row. Everything else of the shader stays as it is.
+static bool pull_parse_decl(const std::string& line, const char* keyword, std::string& type, std::string& name)
+{
+    const size_t npos = std::string::npos;
+    size_t p = line.find_first_not_of(" \t");
+    const size_t k = strlen(keyword);
+    if (p == npos || line.compare(p, k, keyword) != 0 || p + k >= line.size() || (line[p + k] != ' ' && line[p + k] != '\t'))
+    {
+        return false;
+    }
+    p += k;
+    const size_t t0 = line.find_first_not_of(" \t", p);
+    if (t0 == npos) return false;
+    const size_t t1 = line.find_first_of(" \t", t0);
+    if (t1 == npos) return false;
+    const size_t n0 = line.find_first_not_of(" \t", t1);
+    if (n0 == npos) return false;
+    const size_t n1 = line.find_first_of(" \t;[", n0);
+    if (n1 == npos || line[n1] == '[') return false;
+    if (line.find(';', n1) == npos) return false;
+    type = line.substr(t0, t1 - t0);
+    name = line.substr(n0, n1 - n0);
+    return true;
+}
+
+static std::string pull_prologue(const std::vector<std::pair<std::string, std::string> >& attrs, const std::vector<std::string>& mats)
+{
+    std::string s;
+    s += "    {\n";
+    s += "        GeoPacket ll_pk = GeoPackets(ll_packet_table).p[gl_InstanceIndex];\n";
+    s += "        uint ll_i = ll_pk.first + uint(gl_VertexIndex);\n";
+    s += "        uint ll_word = GeoWords(ll_pk.indices).w[ll_i >> 1];\n";
+    s += "        uint ll_index = ((ll_i & 1u) != 0u) ? (ll_word >> 16) : (ll_word & 0xFFFFu);\n";
+    s += "        GeoMatrix ll_m = GeoMatrices(ll_packet_models).m[ll_pk.model];\n";
+    for (const auto& a : attrs)
+    {
+        const std::string& type = a.first;
+        const std::string& name = a.second;
+        s += "#ifdef LL_PULL_HAS_" + name + "\n";
+        if (name == "position")
+        {
+            s += "        position = GeoVec4(ll_pk.positions).v[ll_index]" + std::string(type == "vec3" ? ".xyz" : "") + ";\n";
+        }
+        else if (name == "normal")
+        {
+            s += "        normal = GeoVec4(ll_pk.normals).v[ll_index].xyz;\n";
+        }
+        else if (name == "texcoord0")
+        {
+            s += "        texcoord0 = GeoVec2(ll_pk.texcoords).t[ll_index];\n";
+        }
+        else if (name == "texcoord1")
+        {
+            s += "        texcoord1 = GeoVec2(ll_pk.texcoords1).t[ll_index];\n";
+        }
+        else if (name == "texcoord2")
+        {
+            s += "        texcoord2 = GeoVec2(ll_pk.texcoords2).t[ll_index];\n";
+        }
+        else if (name == "diffuse_color")
+        {
+            s += "        diffuse_color = unpackUnorm4x8(GeoWords(ll_pk.colors).w[ll_index]);\n";
+        }
+        else if (name == "tangent")
+        {
+            s += "        tangent = GeoVec4(ll_pk.tangents).v[ll_index];\n";
+        }
+        else if (name == "clothing")
+        {
+            s += "        clothing = GeoVec4(ll_pk.tangents).v[ll_index];\n";          // (the avatar's clothing array travels in the tangent slot: no mesh has both)
+        }
+        else if (name == "weight")
+        {
+            // a float a vertex (the avatar body); GL fills a vec4 attribute from one float as (x, 0, 0, 1)
+            s += type == "vec4" ? "        weight = vec4(GeoFloats(ll_pk.weights).f[ll_index], 0.0, 0.0, 1.0);\n" : "        weight = GeoFloats(ll_pk.weights).f[ll_index];\n";
+        }
+        else
+        {
+            LL_WARNS("ShaderLoading") << "LL_VERTEX_PULL: the attribute '" << name << "' cannot be read from a draw's arrays: it stays 0" << LL_ENDL;
+        }
+        s += "#endif\n";
+    }
+    for (const std::string& m : mats)
+    {
+        s += "#ifdef LL_PULL_HAS_" + m + "\n";
+        if (m == "modelview_matrix") s += "        modelview_matrix = ll_m.mv;\n";
+        else if (m == "modelview_projection_matrix") s += "        modelview_projection_matrix = ll_m.mvp;\n";
+        else if (m == "normal_matrix") s += "        normal_matrix = mat3(ll_m.n0.xyz, ll_m.n1.xyz, ll_m.n2.xyz);\n";
+        else if (m == "texture_matrix0") s += "        texture_matrix0 = (ll_pk.pad.x != 0u) ? GeoTexMatrices(ll_packet_texmats).t[ll_pk.pad.x] : mat4(1.0);\n";
+        s += "#endif\n";
+    }
+    s += "    }\n";
+    return s;
+}
+
 U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level, ShaderStage type, std::map<std::string, std::string>* defines, S32 texture_index_channels)
 {
 
@@ -558,6 +655,28 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
     const bool pull_material = defines && defines->find("LL_BINDLESS_MATERIAL") != defines->end() && type == ShaderStage::Fragment;
     const bool pull_pbr = defines && defines->find("LL_BINDLESS_PBR") != defines->end() && type == ShaderStage::Fragment;
     const bool pull_projector = defines && defines->find("LL_BINDLESS_PROJECTOR") != defines->end() && type == ShaderStage::Fragment;
+    const bool pull_vertex = defines && defines->find("LL_VERTEX_PULL") != defines->end() && type == ShaderStage::Vertex;
+    std::vector<std::pair<std::string, std::string> > pull_attrs;
+    std::vector<std::string> pull_mats;
+    bool pull_main_seen = false, pull_main_done = false;
+    if (pull_vertex)
+    {
+        // S6.6: the declarations of the geometry packet path (the layout of the worker's rows, as diffusePullV.glsl)
+        extra_code_text[extra_code_count++] = strdup(
+            "#extension GL_EXT_buffer_reference : require\n"
+            "#extension GL_EXT_buffer_reference_uvec2 : require\n"
+            "layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer GeoVec4 { vec4 v[]; };\n"
+            "layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer GeoVec2 { vec2 t[]; };\n"
+            "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer GeoWords { uint w[]; };\n"
+            "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer GeoFloats { float f[]; };\n"
+            "struct GeoPacket { uvec2 positions; uvec2 normals; uvec2 texcoords; uvec2 colors; uvec2 indices; uvec2 tangents; uvec2 texcoords1; uvec2 texcoords2; uint first; uint model; uint flags; uint mapSlots;"
+            " uvec2 slots; uvec2 pad; vec4 specular; float envIntensity; float cutoff; float brightness; float pad2; uvec2 weights; uvec2 palette; uint joints; uint skinPad0; uint skinPad1; uint skinPad2; };\n"
+            "struct GeoMatrix { mat4 mv; mat4 mvp; vec4 n0; vec4 n1; vec4 n2; };\n"
+            "layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer GeoPackets { GeoPacket p[]; };\n"
+            "layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer GeoMatrices { GeoMatrix m[]; };\n"
+            "layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer GeoTexMatrices { mat4 t[]; };\n"
+            "uniform uvec2 ll_packet_table;\nuniform uvec2 ll_packet_models;\nuniform uvec2 ll_packet_texmats;\n");
+    }
     if (defines && defines->find("LL_BINDLESS_DIFFUSE") != defines->end() && type == ShaderStage::Fragment)
     {
         // <FS> render packets (Vulkan mirror only): the draw's texture comes from the bindless table (set 2), by the slot the vertex shader passes on, instead of tex0..texN
@@ -801,6 +920,39 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                 replace("uniform float minimum_alpha;", "flat in float minimum_alpha;");
                 shader_code_text[shader_code_count] = (char *)strdup(fixed.c_str());
                 }
+            }
+            else if (pull_vertex)
+            {
+                std::string line((const char*)buff);
+                std::string decl_type, decl_name;
+                if (pull_parse_decl(line, "in", decl_type, decl_name))
+                {
+                    pull_attrs.push_back({ decl_type, decl_name });         // an attribute becomes a global the start of main() fills
+                    line = decl_type + " " + decl_name + ";\n#define LL_PULL_HAS_" + decl_name + " 1\n";
+                }
+                else if (pull_parse_decl(line, "uniform", decl_type, decl_name) && (decl_type == "mat4" || decl_type == "mat3")
+                         && (decl_name == "modelview_matrix" || decl_name == "modelview_projection_matrix" || decl_name == "normal_matrix" || decl_name == "texture_matrix0"))
+                {
+                    pull_mats.push_back(decl_name);
+                    line = decl_type + " " + decl_name + ";\n#define LL_PULL_HAS_" + decl_name + " 1\n";
+                }
+                else if (!pull_main_done)
+                {
+                    if (!pull_main_seen && line.find("void main") != std::string::npos)
+                    {
+                        pull_main_seen = true;
+                    }
+                    if (pull_main_seen)
+                    {
+                        const size_t brace = line.find('{');
+                        if (brace != std::string::npos)
+                        {
+                            line.insert(brace + 1, "\n" + pull_prologue(pull_attrs, pull_mats));
+                            pull_main_done = true;
+                        }
+                    }
+                }
+                shader_code_text[shader_code_count] = (char *)strdup(line.c_str());
             }
             else
             {

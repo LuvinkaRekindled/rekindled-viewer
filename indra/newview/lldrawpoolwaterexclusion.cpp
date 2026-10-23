@@ -44,36 +44,49 @@ void LLDrawPoolWaterExclusion::render(S32 pass)
 {                                             // render invisiprims
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; // LL_RECORD_BLOCK_TIME(FTM_RENDER_INVISIBLE);
 
+    LLShaderProgram* color_program = ll_pull_twin(&gDrawColorProgram);      // S6.6: the water planes and the invisible draws come as records of entries
+    const bool pull = color_program != nullptr;
+    if (!pull)
+    {
+        color_program = &gDrawColorProgram;
+    }
     if (gPipeline.shadersLoaded())
     {
-        gDrawColorProgram.bind();
+        color_program->bind();
     }
 
 
     LLRenderState::DepthScope depth(true);
-    gDrawColorProgram.uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 1, 1, 1);
+    color_program->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 1, 1, 1);
 
     LLDrawPoolWater* pwaterpool = (LLDrawPoolWater*)gPipeline.getPool(LLDrawPool::POOL_WATER);
     if (pwaterpool)
     {
         // Just treat our water planes as double sided for the purposes of generating the exclusion mask.
         LLRenderState::CullScope cullface(false);
-        pwaterpool->pushWaterPlanes(0);
+        pwaterpool->pushWaterPlanes(0, pull);
 
         // Take care of the edge water tiles.
-        pwaterpool->pushWaterPlanes(1);
+        pwaterpool->pushWaterPlanes(1, pull);
     }
 
-    gDrawColorProgram.uniform4f(LLShaderMgr::DIFFUSE_COLOR, 0, 0, 0, 1);
+    color_program->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 0, 0, 0, 1);
 
     static LLStaticHashedString waterSign("waterSign");
-    gDrawColorProgram.uniform1f(waterSign, 1.f);
+    color_program->uniform1f(waterSign, 1.f);
 
-    pushBatches(LLRenderPass::PASS_INVISIBLE, false, false);
+    if (pull)
+    {
+        pushBatchesPull(LLRenderPass::PASS_INVISIBLE);
+    }
+    else
+    {
+        pushBatches(LLRenderPass::PASS_INVISIBLE, false, false);
+    }
 
 
     if (gPipeline.shadersLoaded())
     {
-        gDrawColorProgram.unbind();
+        color_program->unbind();
     }
 }

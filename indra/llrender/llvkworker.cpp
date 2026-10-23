@@ -4329,6 +4329,13 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
             g.mPad[0] = e.mPad3;                                // S6.6b: the texture matrix of the draw (0 = none)
         }
         memcpy(&g.mPad2, &e.mEmissiveOffset, sizeof(U32));       // ... the emissive array (the glow draw; S6 X2: the glow pass's own draws too)
+        if (!rigged && e.mWeightOffset)
+        {
+            U32* x = (U32*)(raw + 128);         // S6.6d: a body mesh: the weights are read by address, its palette is a uniform of the program
+            const U64 wa = pa + e.mWeightOffset;
+            x[0] = (U32)wa;
+            x[1] = (U32)(wa >> 32);
+        }
         if (rigged)
         {
             U32* x = (U32*)(raw + 128);

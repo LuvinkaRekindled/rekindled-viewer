@@ -560,16 +560,30 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
             uploadJointMatrices();
         }
 
-        buff->setBuffer();
-        buff->drawRange(LLRender::TRIANGLES, start, end, count, offset);
+        if (ll_is_pull_twin(LLShaderProgram::sCurBoundShaderPtr))
+        {
+            ll_pull_draw_range(buff, offset, count);        // S6.6d
+        }
+        else
+        {
+            buff->setBuffer();
+            buff->drawRange(LLRender::TRIANGLES, start, end, count, offset);
+        }
     }
     else
     {
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLMatrix4 jointToWorld = getWorldMatrix();
         LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)jointToWorld.mMatrix);
-        buff->setBuffer();
-        buff->drawRange(LLRender::TRIANGLES, start, end, count, offset);
+        if (ll_is_pull_twin(LLShaderProgram::sCurBoundShaderPtr))
+        {
+            ll_pull_draw_range(buff, offset, count);        // S6.6d
+        }
+        else
+        {
+            buff->setBuffer();
+            buff->drawRange(LLRender::TRIANGLES, start, end, count, offset);
+        }
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
     gPipeline.addTrianglesDrawn(count);

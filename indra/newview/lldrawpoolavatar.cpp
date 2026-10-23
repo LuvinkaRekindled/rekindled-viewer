@@ -239,7 +239,7 @@ void LLDrawPoolAvatar::beginPostDeferredPass(S32 pass)
 
     sSkipOpaque = true;
     sShaderLevel = mShaderLevel;
-    sVertexProgram = &gDeferredAvatarAlphaProgram;
+    sVertexProgram = ll_pull_or(&gDeferredAvatarAlphaProgram);
     sRenderingSkinned = true;
 
     gPipeline.bindDeferredShader(*sVertexProgram);
@@ -292,7 +292,7 @@ void LLDrawPoolAvatar::beginShadowPass(S32 pass)
 
     if (pass == SHADOW_PASS_AVATAR_OPAQUE)
     {
-        sVertexProgram = &gDeferredAvatarShadowProgram;
+        sVertexProgram = ll_pull_or(&gDeferredAvatarShadowProgram);
 
         if ((sShaderLevel > 0))  // for hardware blending
         {
@@ -304,7 +304,7 @@ void LLDrawPoolAvatar::beginShadowPass(S32 pass)
     }
     else if (pass == SHADOW_PASS_AVATAR_ALPHA_BLEND)
     {
-        sVertexProgram = &gDeferredAvatarAlphaShadowProgram;
+        sVertexProgram = ll_pull_or(&gDeferredAvatarAlphaShadowProgram);
 
         // bind diffuse tex so we can reference the alpha channel...
         S32 loc = sVertexProgram->getUniformLocation(LLViewerShaderMgr::DIFFUSE_MAP);
@@ -324,7 +324,7 @@ void LLDrawPoolAvatar::beginShadowPass(S32 pass)
     }
     else if (pass == SHADOW_PASS_AVATAR_ALPHA_MASK)
     {
-        sVertexProgram = &gDeferredAvatarAlphaMaskShadowProgram;
+        sVertexProgram = ll_pull_or(&gDeferredAvatarAlphaMaskShadowProgram);
 
         // bind diffuse tex so we can reference the alpha channel...
         S32 loc = sVertexProgram->getUniformLocation(LLViewerShaderMgr::DIFFUSE_MAP);
@@ -646,7 +646,7 @@ void LLDrawPoolAvatar::beginDeferredSkinned()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
     sShaderLevel = mShaderLevel;
-    sVertexProgram = &gDeferredAvatarProgram;
+    sVertexProgram = ll_pull_or(&gDeferredAvatarProgram);
     sRenderingSkinned = true;
 
     sVertexProgram->bind();

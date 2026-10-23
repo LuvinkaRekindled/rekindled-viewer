@@ -1067,6 +1067,39 @@ bool LLShaderProgram::createShader()
 
 bool LLShaderProgram::attachVertexObject(std::string object_path)
 {
+    // <FS> S6.6: a pull program (LL_VERTEX_PULL) takes the library vertex shaders that declare attributes (the avatar skin function reads `weight`) in their rewritten form: loaded once under their own key
+    if (mDefines.find("LL_VERTEX_PULL") != mDefines.end() && object_path == "avatar/avatarSkinV.glsl")
+    {
+        const std::string key = object_path + "#pull";
+        LLShaderMgr* mgr = LLShaderMgr::instance();
+        if (mgr->mVertexShaderObjects.count(key) == 0)
+        {
+            std::map<std::string, std::string> defines;
+            defines["LL_VERTEX_PULL"] = "1";
+            S32 level = 1;
+            const auto original = mgr->mVertexShaderObjects.find(object_path);
+            const bool had_original = original != mgr->mVertexShaderObjects.end();
+            const U32 original_handle = had_original ? original->second : 0;
+            const U32 object = mgr->loadShaderFile(object_path, level, ShaderStage::Vertex, &defines, 0);      // (it registers the object under the file name: put the plain one back)
+            if (had_original)
+            {
+                mgr->mVertexShaderObjects[object_path] = original_handle;
+            }
+            else
+            {
+                mgr->mVertexShaderObjects.erase(object_path);
+            }
+            if (object)
+            {
+                mgr->mVertexShaderObjects[key] = object;
+            }
+        }
+        if (mgr->mVertexShaderObjects.count(key) > 0)
+        {
+            mAttachedObjects.push_back(mgr->mVertexShaderObjects[key]);
+            return true;
+        }
+    }
     if (LLShaderMgr::instance()->mVertexShaderObjects.count(object_path) > 0)
     {
         mAttachedObjects.push_back(LLShaderMgr::instance()->mVertexShaderObjects[object_path]);

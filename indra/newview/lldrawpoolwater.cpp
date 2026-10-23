@@ -207,6 +207,11 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     {
         shader = &gWaterProgram;
     }
+    LLShaderProgram* const water_pull = ll_pull_twin(shader);       // S6.6: the water planes come from one record of entries
+    if (water_pull)
+    {
+        shader = water_pull;
+    }
 
     gPipeline.bindDeferredShader(*shader, nullptr, &gPipeline.mWaterDis);
 
@@ -322,7 +327,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     // They also had the same exact state with the sole exception setting an edge water flag.
     // That flag was not actually used anywhere in the shaders.
     // - Geenz 2025-02-11
-    pushWaterPlanes(0);
+    pushWaterPlanes(0, water_pull != nullptr);
 
     // clean up
     gPipeline.unbindDeferredShader(*shader);
@@ -330,14 +335,21 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     gRender.setColorMask(true, false);
 }
 
-void LLDrawPoolWater::pushWaterPlanes(int pass)
+void LLDrawPoolWater::pushWaterPlanes(int pass, bool pull)
 {
     LLVOWater* water = nullptr;
+    if (pull)
+    {
+        pushFacesPull(false);       // S6.6: the planes as entries; the loop below only keeps its bookkeeping
+    }
     for (LLFace* const& face : mDrawFace)
     {
         water = static_cast<LLVOWater*>(face->getViewerObject());
 
-        face->renderIndexed();
+        if (!pull)
+        {
+            face->renderIndexed();
+        }
 
         // Note non-void water being drawn, updates required
         // Previously we had some logic to determine if this pass was also our water edge pass.

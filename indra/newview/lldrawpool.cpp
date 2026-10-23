@@ -56,6 +56,7 @@
 #include "llvoavatar.h"
 #include "llviewershadermgr.h"
 #include "llvkbridge.h"
+#include "llviewerregion.h"
 #include "llasyncpool.h"
 #include "glm/glm.hpp"
 #include "glm/gtc/type_ptr.hpp"
@@ -329,6 +330,151 @@ void LLFacePool::addFaceReference(LLFace *facep)
         facep->setReferenceIndex(static_cast<S32>(mReferences.size()));
         mReferences.push_back(facep);
     }
+}
+
+// S6.6: entries made from faces or draw infos for the pull programs (the generic LL_VERTEX_PULL rewrite): the arrays the buffer has are named, the model matrices are numbered in a table (0: the view alone)
+namespace
+{
+struct LLPullBatch
+{
+    std::vector<LLVkBridge::GeoEntry> mEntries;
+    std::vector<F32> mMatrices;
+    std::vector<const LLMatrix4*> mKeys;
+    std::vector<U8> mBlob;
+    glm::mat4 mView, mProj;
+    U32 mRefused = 0;
+
+    LLPullBatch()
+    {
+        mView = gRender.getModelviewMatrix();
+        mProj = gRender.getProjectionMatrix();
+        matrix(nullptr);
+    }
+    U32 matrix(const LLMatrix4* model)
+    {
+        for (size_t k = 0; k < mKeys.size(); ++k)
+        {
+            if (mKeys[k] == model)
+            {
+                return (U32)k;
+            }
+        }
+        glm::mat4 mv = mView;
+        if (model)
+        {
+            mv = mView * glm::make_mat4((const F32*)model->mMatrix);
+        }
+        const glm::mat4 mvp = mProj * mv;
+        const glm::mat4 n = glm::transpose(glm::inverse(mv));
+        const size_t at = mMatrices.size();
+        mMatrices.resize(at + 44);
+        memcpy(&mMatrices[at], glm::value_ptr(mv), 64);
+        memcpy(&mMatrices[at + 16], glm::value_ptr(mvp), 64);
+        for (int col = 0; col < 3; ++col)
+        {
+            F32* d = &mMatrices[at + 32 + 4 * col];
+            d[0] = n[col][0];
+            d[1] = n[col][1];
+            d[2] = n[col][2];
+            d[3] = 0.f;
+        }
+        mKeys.push_back(model);
+        return (U32)(at / 44);
+    }
+    bool add(const LLVertexBuffer* vb, U32 first_index, U32 index_count, const LLMatrix4* model)
+    {
+        if (!index_count)
+        {
+            return true;
+        }
+        if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+            || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+        {
+            ++mRefused;
+            return false;
+        }
+        LLVkBridge::GeoEntry e = {};
+        e.mVertexBuffer = vb->getVertexBufferId();
+        e.mIndexBuffer = vb->getIndexBufferId();
+        e.mFirstIndex = first_index;
+        e.mIndexCount = index_count;
+        e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+        e.mTexcoordOffset = vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) ? vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0) : 0;
+        e.mColorOffset = vb->hasDataType(LLVertexBuffer::TYPE_COLOR) ? vb->getOffset(LLVertexBuffer::TYPE_COLOR) : 0;
+        e.mTangentOffset = vb->hasDataType(LLVertexBuffer::TYPE_TANGENT) ? vb->getOffset(LLVertexBuffer::TYPE_TANGENT) : 0;
+        e.mTexcoord1Offset = vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD1) ? vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD1) : 0;
+        e.mTexcoord2Offset = vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD2) ? vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD2) : 0;
+        e.mWeightOffset = vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT) ? vb->getOffset(LLVertexBuffer::TYPE_WEIGHT) : 0;
+        if (!e.mTangentOffset && vb->hasDataType(LLVertexBuffer::TYPE_CLOTHWEIGHT))
+        {
+            e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_CLOTHWEIGHT);        // (the clothing array travels in the tangent slot)
+        }
+        e.mMatrix = matrix(model);
+        mEntries.push_back(e);
+        return true;
+    }
+    void send()
+    {
+        if (mRefused)
+        {
+            static U32 said = 0;
+            if (said++ < 10)
+            {
+                LL_WARNS("VkScene") << mRefused << " draws whose buffers the packet path cannot read are not drawn" << LL_ENDL;
+            }
+        }
+        if (mEntries.empty())
+        {
+            return;
+        }
+        const size_t entries_bytes = mEntries.size() * sizeof(LLVkBridge::GeoEntry), matrix_bytes = mMatrices.size() * sizeof(F32);
+        mBlob.resize(entries_bytes + matrix_bytes);
+        memcpy(mBlob.data(), mEntries.data(), entries_bytes);
+        memcpy(mBlob.data() + entries_bytes, mMatrices.data(), matrix_bytes);
+        LLVkBridge::ShadowPacketsHeader header;
+        header.mKind = 32;
+        header.mEntries = (U32)mEntries.size();
+        header.mMatrices = (U32)(mMatrices.size() / 44);
+        LLVkBridge::shadowPackets(header, mBlob.data(), mBlob.size());
+    }
+};
+}
+
+void LLFacePool::pushFacesPull(bool region_matrix)
+{
+    gRender.flush();
+    LLPullBatch batch;
+    for (LLFace* const& face : mDrawFace)
+    {
+        batch.add(face->getVertexBuffer(), (U32)face->getIndicesStart(), face->getIndicesCount(),
+                  region_matrix ? &face->getDrawable()->getRegion()->mRenderMatrix : nullptr);
+    }
+    batch.send();
+}
+
+// S6.6d: one range of a buffer (a body mesh of an avatar) as a record of one entry, drawn with the pull program bound now under the modelview matrix on the stack
+void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count)
+{
+    gRender.flush();
+    LLPullBatch batch;
+    batch.add(vb, first_index, index_count, nullptr);
+    batch.send();
+}
+
+void LLRenderPass::pushBatchesPull(U32 type)
+{
+    gRender.flush();
+    LLPullBatch batch;
+    LLCullResult* cull = gPipeline.getCull();
+    auto begin = cull->beginRenderMap(type);
+    auto end = cull->endRenderMap(type);
+    for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+    {
+        LLDrawInfo* params = *i;
+        LLCullResult::increment_iterator(i, end);
+        batch.add(params->mVertexBuffer.get(), params->mOffset, params->mCount, params->mModelMatrix);
+    }
+    batch.send();
 }
 
 void LLFacePool::pushFaceGeometry()

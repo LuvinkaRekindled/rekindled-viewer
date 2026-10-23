@@ -246,6 +246,11 @@ extern LLShaderProgram         gDeferredFullbrightAlphaPullProgram;  // <FS> S5a
 extern bool                    gAlphaPullReady;
 extern LLShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
 extern bool                    gTerrainPullReady;
+// <FS> S6.6: the program a face based draw uses instead of `src` (the same files, defines and features, the vertex shader rewritten by LL_VERTEX_PULL: geometry from a record's entries); null: none
+LLShaderProgram* ll_pull_twin(LLShaderProgram* src);
+LLShaderProgram* ll_pull_or(LLShaderProgram* src);          // the twin when there is one, else src
+bool ll_is_pull_twin(const LLShaderProgram* program);       // a pull twin (what is bound decides how a draw is made)
+void ll_pull_twins_mark_dirty();
 extern LLShaderProgram         gDeferredPBRTerrainPullProgram[];       // <FS> S6.6a: the same for the PBR terrain (one per paint type)
 extern bool                    gTerrainPbrPullReady;
 extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
