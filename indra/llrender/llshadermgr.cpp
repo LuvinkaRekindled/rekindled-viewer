@@ -445,6 +445,11 @@ static std::string pull_prologue(const std::vector<std::pair<std::string, std::s
         {
             s += "        clothing = all(equal(ll_pk.tangents, ll_pk.positions)) ? vec4(0.0) : GeoVec4(ll_pk.tangents).v[ll_index];\n";          // (the avatar's clothing array travels in the tangent slot: no mesh has both)
         }
+        else if (name == "texture_index")
+        {
+            // the batched texture index of a face rides in the w of the position (a U32: TYPE_TEXTURE_INDEX is "position.w" in the vertex buffer)
+            s += type == "uint" ? "        texture_index = floatBitsToUint(GeoVec4(ll_pk.positions).v[ll_index].w);\n" : "        texture_index = int(floatBitsToUint(GeoVec4(ll_pk.positions).v[ll_index].w));\n";
+        }
         else if (name == "weight")
         {
             // a float a vertex (the avatar body); GL fills a vec4 attribute from one float as (x, 0, 0, 1)
@@ -663,7 +668,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
     const bool pull_vertex = defines && defines->find("LL_VERTEX_PULL") != defines->end() && type == ShaderStage::Vertex;
     std::vector<std::pair<std::string, std::string> > pull_attrs;
     std::vector<std::string> pull_mats;
-    bool pull_main_seen = false, pull_main_done = false, pull_skin_seen = false;
+    bool pull_main_seen = false, pull_main_done = false, pull_skin_seen = false, pull_index_seen = false;
     if (pull_vertex)
     {
         // S6.6: the declarations of the geometry packet path (the layout of the worker's rows, as diffusePullV.glsl)
@@ -947,6 +952,10 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                     {
                         pull_skin_seen = true;          // (the avatar skin function of the library reads `weight`)
                     }
+                    if (!pull_main_seen && line.find("passTextureIndex") != std::string::npos)
+                    {
+                        pull_index_seen = true;         // (the indexed texture library reads `texture_index`)
+                    }
                     if (!pull_main_seen && line.find("void main") != std::string::npos)
                     {
                         pull_main_seen = true;
@@ -954,6 +963,16 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                         for (const auto& a : pull_attrs)
                         {
                             has_weight = has_weight || a.second == "weight";
+                        }
+                        bool has_index = false;
+                        for (const auto& a : pull_attrs)
+                        {
+                            has_index = has_index || a.second == "texture_index";
+                        }
+                        if (pull_index_seen && !has_index)
+                        {
+                            pull_attrs.push_back({ "int", "texture_index" });
+                            line = "#ifndef LL_PULL_HAS_texture_index\nint texture_index;\n#define LL_PULL_HAS_texture_index 1\n#endif\n" + line;
                         }
                         if (pull_skin_seen && !has_weight)
                         {
