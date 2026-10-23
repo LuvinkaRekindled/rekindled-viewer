@@ -121,3 +121,35 @@ Verification, London midnight (runs s61a baseline, s61b verify, s61c / d / h ful
 ## 8. What is still GL-shaped (left after 6.5)
 
 The translation (`prepare_draw`, `sync_target`, `sync_draw_state`, `sync_textures`, `draw_elements`, `draw_arrays`, the draw records, loose uniform records for sub-streams, the inline mode before the queue starts) is still the path of every draw that is not a typed packet record: about 2,300 draws a frame in London (S6-census section 11, refreshed below). Their classes and what each needs are in the S6.6 plan.
+
+## 9. S6.6: the draw classes that still go through the draw record (plan, 2026-10-23)
+
+Why this stage exists: S7's CPU cull removal (S7-design section 2, C) needs "every drawn thing (terrain, avatar bodies, trees, UI, water, sky) to have a table entry or its own list", and the S6 census (section 11) deferred that to the threading plan. Nobody owned it. It is part of S6, and S7's B / C wait for it (S7-design.md says so). Adam, 2026-10-23: whatever S7 does not cover has to be done.
+
+**Census (run s66a, London midnight, ~99 avatars; innermost CPU zone, per frame; total 1,220 draws, 4,700 records):**
+
+| class | draws | what |
+|---|---|---|
+| UI | ~480 | main panel 236, toolbars / panels ~125, name tags 42, location bar 22, zoom 9, HUD elements 1 (LLRender immediate mode: `drawScratch` 395 calls, UI vertex buffers) |
+| terrain | 308 | face based pool: one `LLFace` per patch, each with its own vertex buffer; region model matrix per face (`applyModelMatrix` + `renderIndexed`) |
+| shadow leftovers | 119 | `renderShadow` draws the packets cannot carry (terrain, avatar bodies, ...: to be split by pool in 6.6c's first build) |
+| texture matrix draws of the G-buffer passes | ~110 | post-deferred geometry 50, fullbright alpha mask 29, fullbright 27, glow 24, bump 16, simple 10, alpha mask 6 |
+| avatar bodies | 52 | `pool: avatar` 21, `post pool: avatar` 31 (the base mesh, face based) |
+| water / sky / atmospherics | ~25 | water 13, sky 5, atmospherics 1.5, fullscreen lights 1, soften 2 |
+| HUD, probes, snapshots, finalize | ~40 | HUD attachments 16, probes + snapshots 6.5, renderFinalize 14 |
+
+Beside the draws, the stream carries the state setup that goes with them: `bindDeferredShaderFast` 770 records and `bindDeferredShader` 267 records (3,000 uniform writes, 7,800 texture binds a frame) for the typed passes' programs: that is the pass setup (the program's pass uniforms and the texture units of the lighting inputs), not geometry.
+
+**Mechanism.** The geometry packet path already draws any buffer based draw: an entry names the vertex and index buffer, the index range, the array offsets, a model matrix and textures, and a pull program reads the vertices by address (kinds 3 / 25 / 26 for the table's passes, kind 32 for transient entries built every frame). A face based class is the same thing with entries made from the face instead of a draw info (the face has its vertex buffer, `getIndicesStart` / `getIndicesCount`, the region matrix and its textures). Each class therefore needs: (1) a pull variant of its vertex shader (`*PullV.glsl`, the arrays read by address), (2) a producer function that makes its entries (transient, built in the pool), (3) the pool's old draw loop deleted. No new record kind except where a class has no buffers (fullscreen passes, immediate mode).
+
+**Order (by draws and by how little each needs):**
+1. **6.6a Terrain** (308 + its shadow draws): transient entries from the faces, pull terrain programs (textures and the PBR variants by paint type), region matrix per entry. Gate: terrain draws 308 -> 0, pictures equal (a parcel border, the water edge, a PBR terrain region if one is reachable), shadows equal.
+2. **6.6b Texture matrix draws** of the G-buffer passes (~110): the row gets the texture matrix (the alpha rows already do), bump gets its image resolved when the entry is made (the reason it was left out in X1-X4 was the draw time resolution: it moves to entry building, which runs on the main thread where `bindBumpMap` is allowed). Gate: those pools' old draws -> 0.
+3. **6.6c Shadow leftovers** (119): split by pool first (log line in the build), then each as 6.6a / 6.6b: terrain and avatar body shadows ride on their classes.
+4. **6.6d Avatar bodies** (52): the base mesh faces (rigged by the avatar's own joints: the palette list exists, S4 A2).
+5. **6.6e Water, sky, atmospherics and the other fullscreen / environment draws** (~25): the ones with buffers as entries; the fullscreen triangles / quads as a typed screen pass step (program, units, uniforms in the pass record: no vertices).
+6. **6.6f HUD, probes, snapshots, finalize** (~40).
+7. **6.6g UI and immediate mode** (~480 draws, 395 scratch draws): the UI is the viewer's toolkit drawing through `LLRender` immediate mode. Typed form: one UI draw list record per UI pass, items = (state delta, program, texture, scissor, vertices inline), executed by the worker's draw path.
+8. **6.7 Delete the translation**: once nothing but the typed forms is left, remove `draw_elements` / `draw_arrays` / `draw_scratch`, the GL type decoding, `prepare_draw` / `sync_*` as a state machine, the loose uniform records, the inline mode branches; the stream's setup records (`bindDeferredShader*`) become the pass description's explicit uniform and texture list.
+
+**Decision for 6.6g / 6.7 (Adam):** what the end state is for UI and the other draws that have no geometry in buffers. My recommendation: ONE typed generic form stays for them (the draw record, now self-contained by the closed passes, executed by the worker's draw path), documented as the only generic path, with every GL concept (names, enable / disable state, bound-unit state machine) gone from the worker; the alternative (a typed UI renderer replacing `LLRender` immediate mode in the viewer) is a rewrite of the UI toolkit's drawing and a separate project. 6.6a to 6.6f do not depend on this decision and start now.
