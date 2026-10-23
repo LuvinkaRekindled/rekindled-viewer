@@ -7331,6 +7331,13 @@ void LLVisCensus::report()
             }
             LL_INFOS("VisCensus") << "faces of non-volume drawables enqueued into the pools, per frame (first: those drawables):" << pools << LL_ENDL;
         }
+        {
+            const double cj = (double)sShCull.mJobs.load(), mj = (double)sShMap.mJobs.load();
+            snprintf(buf, sizeof(buf), "shadow prep jobs on the pool, per frame: cull %.2f jobs, %.3f ms of CPU in all, longest job %.3f ms | render map %.2f jobs, %.3f ms of CPU in all, longest job %.3f ms (the main thread waits for these: see the ShadowPrep lines)",
+                cj / N, ms(sShCull.mTicks.load()), (double)sShCull.mMax.load() * ms_per_tick, mj / N, ms(sShMap.mTicks.load()), (double)sShMap.mMax.load() * ms_per_tick);
+            LL_INFOS("VisCensus") << buf << LL_ENDL;
+            sShCull.reset(); sShMap.reset();
+        }
         if (sBFrames)
         {
             const double F = (double)sBFrames;
@@ -20501,7 +20508,12 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
 
             lap.mark(PH_SETUP);
-            const std::function<void(size_t)> cull_job = [&](size_t i) { shadowPrepCull(pending[i], partitions); };
+            const std::function<void(size_t)> cull_job = [&](size_t i)
+            {
+                const U64 vis_j0 = LLVisCensus::sOn ? LLVisCensus::now() : 0;
+                shadowPrepCull(pending[i], partitions);
+                if (LLVisCensus::sOn) { LLVisCensus::jobDone(LLVisCensus::sShCull, LLVisCensus::now() - vis_j0); }
+            };
             { LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->run(pending.size(), cull_job); }
             lap.mark(PH_CULL);
 
@@ -20518,7 +20530,12 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 sViewJobsSkipStatic.store(view_jobs_on() && rt_sun_cascades_unused() && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static,
                                           std::memory_order_relaxed);
             }
-            const std::function<void(size_t)> map_job = [&](size_t i) { shadowPrepRenderMap(pending[i]); };
+            const std::function<void(size_t)> map_job = [&](size_t i)
+            {
+                const U64 vis_j0 = LLVisCensus::sOn ? LLVisCensus::now() : 0;
+                shadowPrepRenderMap(pending[i]);
+                if (LLVisCensus::sOn) { LLVisCensus::jobDone(LLVisCensus::sShMap, LLVisCensus::now() - vis_j0); }
+            };
             { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(pending.size(), map_job); }
             lap.mark(PH_RENDER_MAP);
 

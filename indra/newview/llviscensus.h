@@ -10,6 +10,7 @@
 
 #include "stdtypes.h"
 #include <cstdlib>
+#include <atomic>
 #include <intrin.h>
 
 namespace LLVisCensus
@@ -50,6 +51,21 @@ namespace LLVisCensus
     inline U64 sBTested[ITEM_TYPES] = {}, sBTestedTris[ITEM_TYPES] = {}, sBHidA[ITEM_TYPES] = {}, sBHidATris[ITEM_TYPES] = {}, sBHidB[ITEM_TYPES] = {}, sBHidBTris[ITEM_TYPES] = {}, sBValidB[ITEM_TYPES] = {};
     inline U64 sBAvatars = 0, sBAvatarTris = 0, sBAvatarOutsideItems = 0, sBAvatarOutsideTris = 0;       // rigged draws bounded by their avatar's extents (distinct avatars boxed, their tris, those outside the frustum)
     inline U64 sBBatches = 0, sBBatchesValidB = 0, sBGpuOutside = 0;
+
+    // the jobs of the parallel shadow preparation (pool threads): count, ticks, longest
+    struct JobStat
+    {
+        std::atomic<U64> mJobs{ 0 }, mTicks{ 0 }, mMax{ 0 };
+        void reset() { mJobs = 0; mTicks = 0; mMax = 0; }
+    };
+    inline JobStat sShCull, sShMap;
+    inline void jobDone(JobStat& st, U64 ticks)
+    {
+        ++st.mJobs;
+        st.mTicks += ticks;
+        U64 cur = st.mMax.load();
+        while (ticks > cur && !st.mMax.compare_exchange_weak(cur, ticks)) {}
+    }
 
     inline long long sQpc0 = 0;
     inline U64 sTsc0 = 0;
