@@ -57,6 +57,7 @@ public:
     /*virtual*/ void renderShadow(S32 pass);
 
     /*virtual*/ void prerender();
+    void drawPull();            // S6.6a: the faces as the entries of one geometry packet record (kind 32), drawn with gDeferredTerrainPullProgram
     /*virtual*/ void dirtyTextures(const std::set<LLViewerFetchedTexture*>& textures);
     /*virtual*/ LLViewerTexture *getTexture();
     /*virtual*/ LLViewerTexture *getDebugTexture();

@@ -49,6 +49,10 @@
 #include "llviewershadermgr.h"
 #include "llrender.h"
 #include "llenvironment.h"
+#include "llvkbridge.h"
+#include "llvertexbuffer.h"
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 #include "llsettingsvo.h"
 
 const F32 DETAIL_SCALE = 1.f/16.f;
@@ -58,6 +62,9 @@ S32 LLDrawPoolTerrain::sPBRDetailMode = 0;
 F32 LLDrawPoolTerrain::sDetailScale = DETAIL_SCALE;
 F32 LLDrawPoolTerrain::sPBRDetailScale = DETAIL_SCALE;
 static LLShaderProgram* sShader = NULL;
+static bool sPull = false;      // S6.6a: the pass being drawn is the pull variant (drawPull)
+static const bool pull_wanted = []() { const char* e = getenv("LL_VK_TERRAIN_PULL"); return !(e && e[0] == '0'); }();
+static const bool pull_wanted_pbr = pull_wanted;
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_TERRAIN("Terrain Shadow");
 
 
@@ -214,6 +221,95 @@ void LLDrawPoolTerrain::drawLoop()
     }
 }
 
+// S6.6a: the faces of the pool as one record of geometry entries (kind 32): the patch's vertex buffer is read by address, the region's render matrix is the entry's model matrix
+void LLDrawPoolTerrain::drawPull()
+{
+    gRender.flush();
+    static thread_local std::vector<LLVkBridge::GeoEntry> entries;
+    static thread_local std::vector<F32> matrices;
+    static thread_local std::vector<const LLMatrix4*> keys;
+    static thread_local std::vector<U8> blob;
+    entries.clear();
+    matrices.clear();
+    keys.clear();
+    const glm::mat4 view = gRender.getModelviewMatrix();
+    const glm::mat4 proj = gRender.getProjectionMatrix();
+    // the matrices the shader would get from LLRender::syncMatrices() for a model matrix: modelview, modelview * projection, the normal matrix as three vec4 columns (matrix 0: the view alone)
+    auto matrix = [&](const LLMatrix4* model) -> U32
+    {
+        for (size_t k = 0; k < keys.size(); ++k)
+        {
+            if (keys[k] == model)
+            {
+                return (U32)k;
+            }
+        }
+        glm::mat4 mv = view;
+        if (model)
+        {
+            mv = view * glm::make_mat4((const F32*)model->mMatrix);
+        }
+        const glm::mat4 mvp = proj * mv;
+        const glm::mat4 n = glm::transpose(glm::inverse(mv));
+        const size_t at = matrices.size();
+        matrices.resize(at + 44);
+        memcpy(&matrices[at], glm::value_ptr(mv), 64);
+        memcpy(&matrices[at + 16], glm::value_ptr(mvp), 64);
+        for (int col = 0; col < 3; ++col)
+        {
+            F32* d = &matrices[at + 32 + 4 * col];
+            d[0] = n[col][0];
+            d[1] = n[col][1];
+            d[2] = n[col][2];
+            d[3] = 0.f;
+        }
+        keys.push_back(model);
+        return (U32)(at / 44);
+    };
+    matrix(nullptr);
+    static U32 not_drawn = 0;
+    for (LLFace* facep : mDrawFace)
+    {
+        const LLVertexBuffer* vb = facep->getVertexBuffer();
+        if (!facep->getIndicesCount())
+        {
+            continue;
+        }
+        if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+            || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD1))
+        {
+            if (not_drawn++ < 10)
+            {
+                LL_WARNS("VkScene") << "a terrain face its buffer cannot give to the packet path is not drawn (buffer " << (void*)vb << ")" << LL_ENDL;
+            }
+            continue;
+        }
+        LLVkBridge::GeoEntry e = {};
+        e.mVertexBuffer = vb->getVertexBufferId();
+        e.mIndexBuffer = vb->getIndexBufferId();
+        e.mFirstIndex = facep->getIndicesStart();
+        e.mIndexCount = facep->getIndicesCount();
+        e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
+        e.mTangentOffset = vb->hasDataType(LLVertexBuffer::TYPE_TANGENT) ? vb->getOffset(LLVertexBuffer::TYPE_TANGENT) : 0;
+        e.mTexcoord1Offset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD1);
+        e.mMatrix = matrix(&facep->getDrawable()->getRegion()->mRenderMatrix);
+        entries.push_back(e);
+    }
+    if (entries.empty())
+    {
+        return;
+    }
+    const size_t entries_bytes = entries.size() * sizeof(LLVkBridge::GeoEntry), matrix_bytes = matrices.size() * sizeof(F32);
+    blob.resize(entries_bytes + matrix_bytes);
+    memcpy(blob.data(), entries.data(), entries_bytes);
+    memcpy(blob.data() + entries_bytes, matrices.data(), matrix_bytes);
+    LLVkBridge::ShadowPacketsHeader header;
+    header.mKind = 32;
+    header.mEntries = (U32)entries.size();
+    header.mMatrices = (U32)(matrices.size() / 44);
+    LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+}
+
 void LLDrawPoolTerrain::renderFullShader()
 {
     const bool use_local_materials = gLocalTerrainMaterials.makeMaterialsReady(true, false);
@@ -225,7 +321,8 @@ void LLDrawPoolTerrain::renderFullShader()
     if (use_textures)
     {
         // Use textures
-        sShader = &gDeferredTerrainProgram;
+        sPull = pull_wanted && gTerrainPullReady;
+        sShader = sPull ? &gDeferredTerrainPullProgram : &gDeferredTerrainProgram;
         sShader->bind();
         renderFullShaderTextures();
     }
@@ -234,7 +331,8 @@ void LLDrawPoolTerrain::renderFullShader()
         // Use materials
         U32 paint_type = use_local_materials ? gLocalTerrainMaterials.getPaintType() : compp->getPaintType();
         paint_type = llclamp(paint_type, 0, TERRAIN_PAINT_TYPE_COUNT);
-        sShader = &gDeferredPBRTerrainProgram[paint_type];
+        sPull = pull_wanted_pbr && gTerrainPbrPullReady;
+        sShader = sPull ? &gDeferredPBRTerrainPullProgram[paint_type] : &gDeferredPBRTerrainProgram[paint_type];
         sShader->bind();
         renderFullShaderPBR(use_local_materials);
     }
@@ -309,7 +407,14 @@ void LLDrawPoolTerrain::renderFullShaderTextures()
     gRender.getTexUnit(alpha_ramp)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
 
     // GL_BLEND disabled by default
-    drawLoop();
+    if (sPull)
+    {
+        drawPull();
+    }
+    else
+    {
+        drawLoop();
+    }
 
     // Disable multitexture
     sShader->disableTexture(LLViewerShaderMgr::TERRAIN_ALPHARAMP);
@@ -560,7 +665,14 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
     shader->uniform4f(LLShaderMgr::TERRAIN_MINIMUM_ALPHAS, minimum_alphas[0], minimum_alphas[1], minimum_alphas[2], minimum_alphas[3]);
 
     // GL_BLEND disabled by default
-    drawLoop();
+    if (sPull)
+    {
+        drawPull();
+    }
+    else
+    {
+        drawLoop();
+    }
 
     // Disable multitexture
 

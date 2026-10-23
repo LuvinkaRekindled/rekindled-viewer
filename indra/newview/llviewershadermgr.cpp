@@ -148,6 +148,10 @@ LLShaderProgram            gDeferredSkinnedDiffuseProgram;
 LLShaderProgram            gDeferredSkinnedBumpProgram;
 LLShaderProgram            gDeferredBumpProgram;
 LLShaderProgram            gDeferredTerrainProgram;
+LLShaderProgram            gDeferredTerrainPullProgram;
+bool                       gTerrainPullReady = false;
+LLShaderProgram            gDeferredPBRTerrainPullProgram[TERRAIN_PAINT_TYPE_COUNT];
+bool                       gTerrainPbrPullReady = false;
 LLShaderProgram            gDeferredTreeProgram;
 LLShaderProgram            gDeferredTreeShadowProgram;
 LLShaderProgram            gDeferredSkinnedTreeShadowProgram;
@@ -1204,6 +1208,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSkinnedBumpProgram.unload();
         gDeferredImpostorProgram.unload();
         gDeferredTerrainProgram.unload();
+        gDeferredTerrainPullProgram.unload();
+        gTerrainPullReady = false;
         gDeferredLightProgram.unload();
         for (U32 i = 0; i < LL_DEFERRED_MULTI_LIGHT_COUNT; ++i)
         {
@@ -1365,6 +1371,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
         {
             gDeferredPBRTerrainProgram[paint_type].unload();
+            gDeferredPBRTerrainPullProgram[paint_type].unload();
         }
 
         // [RLVa:KB] - @setsphere
@@ -1709,6 +1716,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         S32 detail = gSavedSettings.getS32("RenderTerrainPBRDetail");
         detail = llclamp(detail, TERRAIN_PBR_DETAIL_MIN, TERRAIN_PBR_DETAIL_MAX);
         const S32 mapping = clamp_terrain_mapping(gSavedSettings.getS32("RenderTerrainPBRPlanarSampleCount"));
+        gTerrainPbrPullReady = LLVkBridge::shadowAlphaPacketsAvailable();
         for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
         {
             LLShaderProgram* shader = &gDeferredPBRTerrainProgram[paint_type];
@@ -1736,6 +1744,29 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
             success = success && shader->createShader();
             llassert(success);
+
+            // <FS> S6.6a: the pull twin (pbrterrainPullV.glsl: the same permutations, the vertices read by address)
+            if (success && gTerrainPbrPullReady)
+            {
+                LLShaderProgram* pull = &gDeferredPBRTerrainPullProgram[paint_type];
+                pull->mName = shader->mName + " pull";
+                pull->mFeatures = shader->mFeatures;
+                pull->mShaderFiles.clear();
+                pull->mShaderFiles.push_back(make_pair("deferred/pbrterrainPullV.glsl", ShaderStage::Vertex));
+                pull->mShaderFiles.push_back(make_pair("deferred/pbrterrainF.glsl", ShaderStage::Fragment));
+                pull->clearPermutations();
+                pull->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+                pull->addPermutation("TERRAIN_PBR_DETAIL", llformat("%d", detail));
+                pull->addPermutation("TERRAIN_PAINT_TYPE", llformat("%d", paint_type));
+                pull->addPermutation("TERRAIN_PLANAR_TEXTURE_SAMPLE_COUNT", llformat("%d", mapping));
+                add_common_permutations(pull);
+                if (!pull->createShader())
+                {
+                    LL_WARNS("ShadowPackets") << "the " << pull->mName << " could not be made: the PBR terrain is drawn the old way" << LL_ENDL;
+                    pull->unload();
+                    gTerrainPbrPullReady = false;
+                }
+            }
         }
     }
 
@@ -3331,6 +3362,29 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredTerrainProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredTerrainProgram.createShader();
         llassert(success);
+    }
+
+    // <FS> S6.6a: the terrain pass from the geometry packet path: the patch's vertex buffer read by address (terrainPullV.glsl), the fragment shader is the terrain program's own
+    gTerrainPullReady = false;
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        gDeferredTerrainPullProgram.mName = "Deferred Terrain Pull Shader";
+        gDeferredTerrainPullProgram.mFeatures = gDeferredTerrainProgram.mFeatures;
+        gDeferredTerrainPullProgram.mShaderFiles.clear();
+        gDeferredTerrainPullProgram.mShaderFiles.push_back(make_pair("deferred/terrainPullV.glsl", ShaderStage::Vertex));
+        gDeferredTerrainPullProgram.mShaderFiles.push_back(make_pair("deferred/terrainF.glsl", ShaderStage::Fragment));
+        gDeferredTerrainPullProgram.clearPermutations();
+        add_common_permutations(&gDeferredTerrainPullProgram);
+        gDeferredTerrainPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (gDeferredTerrainPullProgram.createShader())
+        {
+            gTerrainPullReady = true;
+        }
+        else
+        {
+            LL_WARNS("ShadowPackets") << "the Deferred Terrain Pull Shader could not be made: the terrain is drawn the old way" << LL_ENDL;
+            gDeferredTerrainPullProgram.unload();
+        }
     }
 
     if (success)
