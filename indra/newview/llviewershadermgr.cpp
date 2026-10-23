@@ -154,7 +154,7 @@ bool                       gTerrainPullReady = false;
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
 {
-constexpr size_t PULL_TWIN_COUNT = 22;
+constexpr size_t PULL_TWIN_COUNT = 27;
 LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
 LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
 bool sPullTwinReady[PULL_TWIN_COUNT] = {};
@@ -204,7 +204,8 @@ static void make_pull_twins()
                                                   &gDeferredAvatarProgram, &gDeferredAvatarAlphaProgram, &gDeferredAvatarShadowProgram, &gDeferredAvatarAlphaShadowProgram, &gDeferredAvatarAlphaMaskShadowProgram,
                                                   &gDeferredWLSkyProgram, &gDeferredWLCloudProgram, &gDeferredWLMoonProgram, &gDeferredWLSunProgram, &gDeferredStarProgram,
                                                   &gHUDFullbrightProgram, &gHUDFullbrightAlphaMaskProgram, &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram, &gDeferredBumpProgram,
-                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gDeferredShadowProgram, &gDeferredPBROpaqueProgram };
+                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gDeferredShadowProgram, &gDeferredPBROpaqueProgram, &gObjectBumpProgram,
+                                                  &gDeferredShadowAlphaMaskProgram, &gDeferredShadowFullbrightAlphaMaskProgram, &gDeferredTreeShadowProgram, &gDeferredShadowGLTFAlphaBlendProgram };
     for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
     {
         sPullTwinSources[k] = sources[k];

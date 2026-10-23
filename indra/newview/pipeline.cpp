@@ -12854,7 +12854,7 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
         {
             if (pparams->mGLTFMaterial)
             {
-                gDeferredShadowGLTFAlphaBlendProgram.bind(rigged);
+                ll_pull_or(&gDeferredShadowGLTFAlphaBlendProgram)->bind(rigged);       // S6.6
                 LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
                 LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
                 LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(ALPHA_BLEND_CUTOFF);
@@ -12862,7 +12862,7 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
             }
             else
             {
-                gDeferredShadowAlphaMaskProgram.bind(rigged);
+                ll_pull_or(&gDeferredShadowAlphaMaskProgram)->bind(rigged);       // S6.6
                 LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
                 LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
                 LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(ALPHA_BLEND_CUTOFF);
@@ -18625,7 +18625,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 return;
             }
             gShadowDrawStats.mAlphaFallback += list.size();
-            program.bind(rigged);
+            (rigged ? &program : ll_pull_or(&program))->bind(rigged);       // S6.6: the static fallbacks through the pull twin (the texture matrix of a draw travels in its record)
             if (alpha_uniforms)
             {
                 LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
@@ -18730,7 +18730,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             // <FS> the glTF casters below are drawn the old way, with the regular shadow program (it was bound here before the packets): the pull programs ignore
             // the vertex input and would draw whatever their table entry 0 holds
-            gDeferredShadowProgram.bind(rigged);
+            (rigged ? &gDeferredShadowProgram : ll_pull_or(&gDeferredShadowProgram))->bind(rigged);       // S6.6: the static glTF casters through the pull twin (the cull mode of each draw rides in the stream)
         }
         renderGLTFObjects(LLRenderPass::PASS_GLTF_PBR, false, rigged);
 

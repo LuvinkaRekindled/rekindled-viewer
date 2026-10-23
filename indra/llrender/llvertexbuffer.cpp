@@ -909,14 +909,26 @@ bool LLVertexBuffer::pullDraw(U32 mode, bool indexed, U32 first, U32 count) cons
     e.mTexcoord1Offset = hasDataType(TYPE_TEXCOORD1) ? getOffset(TYPE_TEXCOORD1) : 0;
     e.mTexcoord2Offset = hasDataType(TYPE_TEXCOORD2) ? getOffset(TYPE_TEXCOORD2) : 0;
     e.mWeightOffset = hasDataType(TYPE_WEIGHT) ? getOffset(TYPE_WEIGHT) : 0;
-    U8 blob[sizeof(LLVkBridge::GeoEntry) + sizeof(matrices)];
+    // a texture matrix on the stack (a draw with a texture animation or a flip) is the one entry's slot 1 of the table after the matrices (the pull programs read texture_matrix0 from it)
+    const glm::mat4& texture_matrix = LLRenderMatrix::get(LLRenderMatrix::Kind::Texture0);
+    const bool has_texture_matrix = texture_matrix != glm::mat4(1.f);
+    if (has_texture_matrix)
+    {
+        e.mPad3 = 1;
+    }
+    U8 blob[sizeof(LLVkBridge::GeoEntry) + sizeof(matrices) + 64];
     memcpy(blob, &e, sizeof(e));
     memcpy(blob + sizeof(e), matrices, sizeof(matrices));
+    if (has_texture_matrix)
+    {
+        memcpy(blob + sizeof(e) + sizeof(matrices), glm::value_ptr(texture_matrix), 64);
+    }
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 32;
     header.mEntries = 1;
     header.mMatrices = 1;
-    LLVkBridge::shadowPackets(header, blob, sizeof(blob));
+    header.mFragment = has_texture_matrix ? 1 : 0;
+    LLVkBridge::shadowPackets(header, blob, sizeof(e) + sizeof(matrices) + (has_texture_matrix ? 64 : 0));
     return true;
 }
 
