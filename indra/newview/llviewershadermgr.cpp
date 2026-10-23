@@ -150,6 +150,87 @@ LLShaderProgram            gDeferredBumpProgram;
 LLShaderProgram            gDeferredTerrainProgram;
 LLShaderProgram            gDeferredTerrainPullProgram;
 bool                       gTerrainPullReady = false;
+
+// S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
+namespace
+{
+constexpr size_t PULL_TWIN_COUNT = 9;
+LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
+LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
+bool sPullTwinReady[PULL_TWIN_COUNT] = {};
+}
+
+LLShaderProgram* ll_pull_twin(LLShaderProgram* src)
+{
+    for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
+    {
+        if (sPullTwinSources[k] == src && sPullTwinReady[k])
+        {
+            return &sPullTwins[k];
+        }
+    }
+    return nullptr;
+}
+
+LLShaderProgram* ll_pull_or(LLShaderProgram* src)
+{
+    LLShaderProgram* twin = ll_pull_twin(src);
+    return twin ? twin : src;
+}
+
+bool ll_is_pull_twin(const LLShaderProgram* program)
+{
+    for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
+    {
+        if (program == &sPullTwins[k])
+        {
+            return sPullTwinReady[k];
+        }
+    }
+    return false;
+}
+
+void ll_pull_twins_mark_dirty()
+{
+    for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
+    {
+        sPullTwins[k].mUniformsDirty = true;
+    }
+}
+
+static void make_pull_twins()
+{
+    LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDrawColorProgram,
+                                                  &gDeferredAvatarProgram, &gDeferredAvatarAlphaProgram, &gDeferredAvatarShadowProgram, &gDeferredAvatarAlphaShadowProgram, &gDeferredAvatarAlphaMaskShadowProgram };
+    for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
+    {
+        sPullTwinSources[k] = sources[k];
+        sPullTwinReady[k] = false;
+        LLShaderProgram& src = *sources[k];
+        LLShaderProgram& twin = sPullTwins[k];
+        static const bool twins_off = []() { const char* e = getenv("LL_VK_PULL_TWINS"); return e && e[0] == '0'; }();       // (the old draws, for a comparison run)
+        if (twins_off || !LLVkBridge::shadowAlphaPacketsAvailable() || src.mProgramObject == 0)
+        {
+            continue;
+        }
+        twin.mName = src.mName + " pull";
+        twin.mFeatures = src.mFeatures;
+        twin.mShaderFiles = src.mShaderFiles;
+        twin.mDefines = src.mDefines;
+        twin.addPermutation("LL_VERTEX_PULL", "1");
+        twin.mShaderLevel = src.mShaderLevel;
+        twin.mShaderGroup = src.mShaderGroup;
+        if (twin.createShader())
+        {
+            sPullTwinReady[k] = true;
+        }
+        else
+        {
+            LL_WARNS("ShadowPackets") << "the " << twin.mName << " could not be made: those draws are made the old way" << LL_ENDL;
+            twin.unload();
+        }
+    }
+}
 LLShaderProgram            gDeferredPBRTerrainPullProgram[TERRAIN_PAINT_TYPE_COUNT];
 bool                       gTerrainPbrPullReady = false;
 LLShaderProgram            gDeferredTreeProgram;
@@ -798,6 +879,10 @@ void LLViewerShaderMgr::setShaders()
     llassert(loaded);
     loaded = loaded && loadShadersDeferred();
     llassert(loaded);
+    if (loaded)
+    {
+        make_pull_twins();
+    }
 
     if (!LLAppViewer::instance()->isSecondInstance())
     {
@@ -1752,9 +1837,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 pull->mName = shader->mName + " pull";
                 pull->mFeatures = shader->mFeatures;
                 pull->mShaderFiles.clear();
-                pull->mShaderFiles.push_back(make_pair("deferred/pbrterrainPullV.glsl", ShaderStage::Vertex));
+                pull->mShaderFiles.push_back(make_pair("deferred/pbrterrainV.glsl", ShaderStage::Vertex));
                 pull->mShaderFiles.push_back(make_pair("deferred/pbrterrainF.glsl", ShaderStage::Fragment));
                 pull->clearPermutations();
+                pull->addPermutation("LL_VERTEX_PULL", "1");
                 pull->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
                 pull->addPermutation("TERRAIN_PBR_DETAIL", llformat("%d", detail));
                 pull->addPermutation("TERRAIN_PAINT_TYPE", llformat("%d", paint_type));
@@ -3371,9 +3457,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredTerrainPullProgram.mName = "Deferred Terrain Pull Shader";
         gDeferredTerrainPullProgram.mFeatures = gDeferredTerrainProgram.mFeatures;
         gDeferredTerrainPullProgram.mShaderFiles.clear();
-        gDeferredTerrainPullProgram.mShaderFiles.push_back(make_pair("deferred/terrainPullV.glsl", ShaderStage::Vertex));
+        gDeferredTerrainPullProgram.mShaderFiles.push_back(make_pair("deferred/terrainV.glsl", ShaderStage::Vertex));
         gDeferredTerrainPullProgram.mShaderFiles.push_back(make_pair("deferred/terrainF.glsl", ShaderStage::Fragment));
         gDeferredTerrainPullProgram.clearPermutations();
+        gDeferredTerrainPullProgram.addPermutation("LL_VERTEX_PULL", "1");
         add_common_permutations(&gDeferredTerrainPullProgram);
         gDeferredTerrainPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (gDeferredTerrainPullProgram.createShader())

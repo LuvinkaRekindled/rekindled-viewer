@@ -1836,6 +1836,7 @@ void LLEnvironment::update(const LLViewerCamera * cam)
     gDeferredAlphaImpostorPullSkinProgram.mUniformsDirty = true;
     gDeferredFullbrightMaskPullProgram.mUniformsDirty = true;
     gDeferredTerrainPullProgram.mUniformsDirty = true;      // (S6.6a)
+    ll_pull_twins_mark_dirty();                              // (S6.6 water, haze, exclusion mask)
     for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
     {
         gDeferredPBRTerrainPullProgram[paint_type].mUniformsDirty = true;

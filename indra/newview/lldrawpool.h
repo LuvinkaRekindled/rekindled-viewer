@@ -122,6 +122,7 @@ public:
     virtual bool isFacePool() { return false; }
     virtual void resetDrawOrders() = 0;
     virtual void pushFaceGeometry() {}
+    virtual void pushFacesPull(bool region_matrix) {}       // S6.6 (LLFacePool)
 
     S32 mShaderLevel;
     S32 mId;
@@ -379,6 +380,8 @@ public:
     // For rendering that doesn't use LLDrawInfo for some reason
     static void applyModelMatrix(const LLMatrix4* model_matrix);
     void pushBatches(U32 type, bool texture = true, bool batch_textures = false);
+    // S6.6: the draw infos of a render map type as one record of entries, drawn with the pull program bound now (draws its buffers cannot give to the packet path are skipped with a warning)
+    void pushBatchesPull(U32 type);
     void pushUntexturedBatches(U32 type);
 
     void pushRiggedBatches(U32 type, bool texture = true, bool batch_textures = false);
@@ -436,6 +439,8 @@ public:
     virtual void renderRiggedGroup(LLSpatialGroup* group, U32 type, bool texture = true);
 };
 
+void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count);       // S6.6d
+
 class LLFacePool : public LLDrawPool
 {
 public:
@@ -477,6 +482,8 @@ public:
 
     // call drawIndexed on every draw face
     void pushFaceGeometry();
+    // S6.6: the faces of the pool as ONE record of geometry entries (kind 32) drawn with the pull program bound now (region_matrix: each face's region render matrix is its model matrix, else none)
+    void pushFacesPull(bool region_matrix);
 
     friend class LLFace;
     friend class LLPipeline;

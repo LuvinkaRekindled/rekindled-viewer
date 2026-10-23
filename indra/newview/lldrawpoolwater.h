@@ -74,7 +74,7 @@ public:
     void setOpaqueTexture(const LLUUID& opaqueTextureId);
     void setNormalMaps(const LLUUID& normalMapId, const LLUUID& nextNormalMapId);
 
-    void pushWaterPlanes(int pass);
+    void pushWaterPlanes(int pass, bool pull = false);       // pull (S6.6): the program bound is the pull twin: the planes go as one record
 
 protected:
     void renderOpaqueLegacyWater();
