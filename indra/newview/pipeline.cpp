@@ -7510,7 +7510,8 @@ static void scene_alpha_frame(U64 frame);
 void ll_scene_geo_palette_kick(LLCullResult* cull)
 {
     sBindJob.reset();
-    if (!scene_geo_rigged_on() || !cull || !ll_scene_geo_serving() || !ll_scene_geo_main_view())
+    static const bool no_job = getenv("LL_VK_NO_BINDJOB") != nullptr;       // (a test: the palettes of the rigged table items are made inline, later in the frame, as the per frame records make theirs)
+    if (no_job || !scene_geo_rigged_on() || !cull || !ll_scene_geo_serving() || !ll_scene_geo_main_view())
     {
         return;
     }
