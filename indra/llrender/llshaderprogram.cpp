@@ -1068,7 +1068,7 @@ bool LLShaderProgram::createShader()
 bool LLShaderProgram::attachVertexObject(std::string object_path)
 {
     // <FS> S6.6: a pull program (LL_VERTEX_PULL) takes the library vertex shaders that declare attributes (the avatar skin function reads `weight`) in their rewritten form: loaded once under their own key
-    if (mDefines.find("LL_VERTEX_PULL") != mDefines.end() && object_path == "avatar/avatarSkinV.glsl")
+    if (mDefines.find("LL_VERTEX_PULL") != mDefines.end() && (object_path == "avatar/avatarSkinV.glsl" || object_path == "objects/indexedTextureV.glsl"))
     {
         const std::string key = object_path + "#pull";
         LLShaderMgr* mgr = LLShaderMgr::instance();
