@@ -24,7 +24,7 @@ namespace LLVkPassCensus
 {
 bool sOn = false;
 int sMode = 1;
-int sClose = 0;
+int sClose = 1;
 int sPoisonMask = 127;
 U64 sPass = 0;
 U64 sFrame = 0;
@@ -296,10 +296,10 @@ void init()
 {
     {
         const char* c = getenv("LL_VK_PASSCLOSE");
-        sClose = c && c[0] >= '0' && c[0] <= '3' ? c[0] - '0' : 0;
+        sClose = c && (c[0] == '2' || c[0] == '3') ? c[0] - '0' : 1;
         const char* pm = getenv("LL_VK_PASSPOISON");
         if (pm && pm[0]) sPoisonMask = atoi(pm);
-        if (sClose)
+        if (sClose > 1)
         {
             LL_INFOS("VkPassClose") << "LL_VK_PASSCLOSE=" << sClose << ": passes are closed" << (sClose == 2 ? " (announced blocks are compared with the worker's)" : sClose == 3 ? " (the worker forgets the inherited state at every pass, mask " : "") << (sClose == 3 ? std::to_string(sPoisonMask) + ")" : std::string()) << LL_ENDL;
         }

@@ -468,7 +468,37 @@ struct BoundVertices
     U32 mArrayBuffer = 0;        // the buffer the next attribute pointers refer to
     U32 mElementBuffer = 0;
 };
-BoundVertices sBound;
+// ---- S6.4: the worker's state, by owner (doc/vulkan/S6-design.md section 7) ----
+// PassState: what the records of a pass read and write that the pass before left behind. Passes are closed (every pass announces again what it reads: LL_VK_PASSCLOSE), poison mode forgets all of it at
+// every pass (LLVkWorker::pass_poison). One instance: the stream is played by one thread; passes decoded on several threads would each have their own.
+struct PassState
+{
+    U32 mUnitTex[32] = {};              // F2.6: the texture each unit holds, by id only; a sampler of dimension 'cls' samples it when the texture has that dimension
+    U32 mDrawFbo = 0;                   // F1.4: the render target draws go to (0: the back buffer): set by the typed pass record only
+    U32 mUboBinding[4] = {};            // GL buffer bound to each named uniform block binding point
+    BoundVertices mBound;               // the vertex arrays the next draw reads (a draw record carries it when it changed)
+    // what sync_target() resolved for the current draw framebuffer, valid until something that can change it happens (bumps mTargetEpoch)
+    U64 mTargetEpoch = 1;
+    const void* mTargetNamesOwner = nullptr;     // whose list of attachment names mCurTargets holds
+    std::vector<U32> mCurTargets;       // textures attached to the current draw framebuffer
+    bool mHasDepth = false;             // does the current render target have a depth attachment
+    U32 mCurTargetW = 1, mCurTargetH = 1;        // size of the first colour target of the current draw framebuffer
+};
+PassState gPassState;
+// FrameState: tables that live for one frame (the palette list the frame's records name by offset, the targets and samplers the debug dump reports), reset where the frame turns over.
+struct PalSeg { U32 mStart, mFloats; U64 mAddress; };
+struct FrameState
+{
+    std::set<U32> mTargets;             // textures rendered into during the current frame (for the debug dump)
+    U32 mRecentTargets[16] = {};        // cheap filter in front of mTargets: ids inserted recently this frame
+    std::map<U32, U32> mSampled;        // textures read by draws this frame, with use counts
+    std::map<U32, U32> mSampledLast;
+    std::vector<PalSeg> mPalSegs;       // S4 A2: the palette list of the viewer's frame mPalFrame, by float offset
+    U32 mPalFrame = ~0u;
+};
+FrameState gFrameState;
+// What is left at file level is owned by the resource tables (sGL: textures, buffers, targets; the bindless table and pins; the arena; the resident and scene fragments; queries), which only the
+// worker writes, or is diagnostics. The Renderer singleton holds the draw state the recorder takes (program, textures, raster / depth / blend, vertex input) and moves with the recorder split.
 
 struct FboAttachment
 {
@@ -493,10 +523,6 @@ thread_local PerContext* sCtxOverride = nullptr;      // set on the async worker
 inline PerContext& current_ctx() { return sCtxOverride ? *sCtxOverride : sCtxTls; }
 #define sCtx (current_ctx())
 
-// F2.6: the texture each unit holds, by id only (draw records, LL_VK_DRAWREC=2); a sampler of dimension 'cls' samples it when the texture has that dimension
-U32 sUnitTex[32] = {};
-// F1.4: the render target draws go to (0: the back buffer): set by the typed target state record only
-U32 sDrawFbo = 0;
 
 struct GLState
 {
@@ -521,7 +547,6 @@ GLState& sGL = *new GLState;
 // <FS> flat lookup of the entries of sGL.mTextures / mBuffers by GL name (the names are small integers from the viewer's name pools). A hash lookup for every sampler of
 // every draw cost more than the rest of the draw's bookkeeping. The pointers are to the nodes of the maps (stable until erased); erasing forgets them.
 std::vector<Tex*> sTexFlat;
-std::vector<Buf*> sBufFlat;
 
 inline Tex* tex_ptr(U32 name)
 {
@@ -549,39 +574,7 @@ inline Tex* tex_ptr(U32 name)
 }
 inline void tex_forget(U32 name) { if (name < sTexFlat.size()) sTexFlat[name] = nullptr; }
 
-inline Buf* buf_ptr(U32 name)
-{
-    if (name < sBufFlat.size())
-    {
-        if (Buf* b = sBufFlat[name])
-        {
-            return b;
-        }
-    }
-    auto it = sGL.mBuffers.find(name);
-    if (it == sGL.mBuffers.end())
-    {
-        return nullptr;
-    }
-    if (name < (1u << 22))
-    {
-        if (name >= sBufFlat.size())
-        {
-            sBufFlat.resize(std::max<size_t>((size_t)name + 1, sBufFlat.size() * 2), nullptr);
-        }
-        sBufFlat[name] = &it->second;
-    }
-    return &it->second;
-}
-inline void buf_forget(U32 name) { if (name < sBufFlat.size()) sBufFlat[name] = nullptr; }
 
-// <FS> what sync_target() resolved for the current draw framebuffer, valid until something that can change it happens (bumps sTargetEpoch)
-U64 sTargetEpoch = 1;
-const void* sTargetNamesOwner = nullptr;      // whose list of attachment names sCurTargets holds
-std::set<U32> sFrameTargets;         // textures rendered into during the current frame (for the debug dump)
-U32 sUboBinding[4] = {};             // GL buffer bound to each named uniform block binding point
-std::map<U32, U32> sFrameSampled;    // textures read by draws this frame, with use counts
-std::map<U32, U32> sFrameSampledLast;
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
 U64 sOutOfRangeDraws = 0;           // indexed draws left out because their index or vertex range was not inside their buffers (since the start)
 U64 sDrawsTotal = 0;
@@ -623,9 +616,6 @@ struct DrawStats
 };
 DrawStats sStats, sStatsLast;
 bool sVerifySnapshotPending = false;   // a snapshot render is being mirrored: report on it when its off-screen frame ends
-std::vector<U32> sCurTargets;        // textures attached to the current draw framebuffer
-U32 sRecentFrameTargets[16] = {};    // cheap filter in front of sFrameTargets: ids inserted recently this frame
-U32 sCurTargetW = 1, sCurTargetH = 1;   // size of the first colour target of the current draw framebuffer
 // the per-draw statistics / pass graph are only gathered when asked for (they cost string work on every draw)
 const bool sStatsEnabled = getenv("LL_VK_STATS") != nullptr || getenv("LL_VK_DEBUG_SHADERS") != nullptr || getenv("LL_VK_VALIDATION") != nullptr;
 bool sDbgMatch = false;                 // the draw being prepared belongs to a program the debug filter selects
@@ -634,7 +624,6 @@ bool sDbgNoDepth = false, sDbgNoDepthWrite = false, sDbgNoDepthTest = false, sDb
 int sDbgMode = 0;                       // debug shader mode from <work>\vk-debug.txt (0 = off)
 std::string sDbgFilter;                 // programs whose name contains this get the mode
 std::string sDbgSampler;                // sampler shown by mode 2
-bool sHasDepth = false;             // does the current render target have a depth attachment
 
 // <FS> F1.2: a texture edit names its texture (LLVkTex): while a scope is open the edit functions below act on that texture and read the unpack state
 // from the record, not from the GL bound-texture / pixel-store emulation. thread_local: the worker replays one record at a time, inline mode runs on the caller.
@@ -661,7 +650,7 @@ inline S32 edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength :
 void destroy_tex_images(Tex& t)
 {
     pin_touch(t);
-    ++sTargetEpoch;
+    ++gPassState.mTargetEpoch;
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
     for (auto& kv : t.mViews)
@@ -701,7 +690,7 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     {
         return true;        // same specification again: keep the image and just upload into it
     }
-    ++sTargetEpoch;
+    ++gPassState.mTargetEpoch;
     if (t.mImage.valid())
     {
         if (sVerifySnapshotPending)
@@ -989,18 +978,18 @@ Image* read_image(U32 fbo)
 
 Image* read_image()
 {
-    return read_image(sDrawFbo);        // readbacks (glReadPixels) read the target that was last made current
+    return read_image(gPassState.mDrawFbo);        // readbacks (glReadPixels) read the target that was last made current
 }
 
 // makes the renderer's render target match the GL draw framebuffer. Returns false if there is nothing to draw to.
 // remembers that a texture was rendered into this frame; the same few textures come back on every draw, so look in a small cache first
 static inline void note_frame_target(U32 texture)
 {
-    U32& slot = sRecentFrameTargets[texture & 15];
+    U32& slot = gFrameState.mRecentTargets[texture & 15];
     if (slot != texture)
     {
         slot = texture;
-        sFrameTargets.insert(texture);
+        gFrameState.mTargets.insert(texture);
     }
 }
 
@@ -1009,12 +998,12 @@ const LLVkState::Block* state_block();
 bool sync_target()
 {
     Renderer& r = Renderer::instance();
-    if (sDrawFbo == 0)
+    if (gPassState.mDrawFbo == 0)
     {
-        sCurTargets.clear();
-        sTargetNamesOwner = nullptr;
+        gPassState.mCurTargets.clear();
+        gPassState.mTargetNamesOwner = nullptr;
     }
-    if (sDrawFbo == 0)
+    if (gPassState.mDrawFbo == 0)
     {
         Image* color = LLVkBridge::backbufferColor();
         Image* depth = LLVkBridge::backbufferDepth();
@@ -1041,34 +1030,34 @@ bool sync_target()
         }
         Image* colors[1] = { color };
         r.setRenderTarget(colors, 1, depth);
-        sHasDepth = depth != nullptr;
-        sCurTargetW = color->mExtent.width;
-        sCurTargetH = color->mExtent.height;
+        gPassState.mHasDepth = depth != nullptr;
+        gPassState.mCurTargetW = color->mExtent.width;
+        gPassState.mCurTargetH = color->mExtent.height;
         return true;
     }
     // the framebuffer's attachments were resolved for an earlier draw and nothing that could change them has happened since (and the frame did not turn over)
     struct TargetCache { U64 mEpoch = 0; U32 mFbo = ~0u; U64 mFrame = ~0ull; Image* mColors[8] = {}; U32 mCount = 0; Image* mDepth = nullptr; bool mOk = false; std::vector<U32> mNames; };
     static TargetCache cache;
     const U64 frame_now = Context::instance().getFrameNumber();
-    if (cache.mEpoch == sTargetEpoch && cache.mFbo == sDrawFbo && cache.mFrame == frame_now && !sDbgMatch && cache.mOk)
+    if (cache.mEpoch == gPassState.mTargetEpoch && cache.mFbo == gPassState.mDrawFbo && cache.mFrame == frame_now && !sDbgMatch && cache.mOk)
     {
-        if (sTargetNamesOwner != &cache)
+        if (gPassState.mTargetNamesOwner != &cache)
         {
-            sCurTargets = cache.mNames;
-            sTargetNamesOwner = &cache;
+            gPassState.mCurTargets = cache.mNames;
+            gPassState.mTargetNamesOwner = &cache;
         }
         r.setRenderTarget(cache.mColors, cache.mCount, cache.mDepth);
-        sHasDepth = cache.mDepth != nullptr;
+        gPassState.mHasDepth = cache.mDepth != nullptr;
         if (cache.mCount)
         {
-            sCurTargetW = cache.mColors[0]->mExtent.width;
-            sCurTargetH = cache.mColors[0]->mExtent.height;
+            gPassState.mCurTargetW = cache.mColors[0]->mExtent.width;
+            gPassState.mCurTargetH = cache.mColors[0]->mExtent.height;
         }
         return true;
     }
-    sTargetNamesOwner = nullptr;
-    sCurTargets.clear();
-    auto it = sGL.mFbos.find(sDrawFbo);
+    gPassState.mTargetNamesOwner = nullptr;
+    gPassState.mCurTargets.clear();
+    auto it = sGL.mFbos.find(gPassState.mDrawFbo);
     if (it == sGL.mFbos.end())
     {
         return false;
@@ -1085,12 +1074,12 @@ bool sync_target()
         }
         colors[count++] = img;
         note_frame_target(fbo.mColor[i].mTexture);
-        sCurTargets.push_back(fbo.mColor[i].mTexture);
+        gPassState.mCurTargets.push_back(fbo.mColor[i].mTexture);
     }
     if (fbo.mDepth.mTexture)
     {
         note_frame_target(fbo.mDepth.mTexture);
-        sCurTargets.push_back(fbo.mDepth.mTexture);
+        gPassState.mCurTargets.push_back(fbo.mDepth.mTexture);
     }
     Image* depth = attachment_image(fbo.mDepth);
     if (sDbgMatch && sDbgNoDepth)
@@ -1102,21 +1091,21 @@ bool sync_target()
         return false;
     }
     r.setRenderTarget(colors, count, depth);
-    sHasDepth = depth != nullptr;
+    gPassState.mHasDepth = depth != nullptr;
     if (count)
     {
-        sCurTargetW = colors[0]->mExtent.width;
-        sCurTargetH = colors[0]->mExtent.height;
+        gPassState.mCurTargetW = colors[0]->mExtent.width;
+        gPassState.mCurTargetH = colors[0]->mExtent.height;
     }
-    cache.mEpoch = sTargetEpoch;
-    cache.mFbo = sDrawFbo;
+    cache.mEpoch = gPassState.mTargetEpoch;
+    cache.mFbo = gPassState.mDrawFbo;
     cache.mFrame = frame_now;
     memcpy(cache.mColors, colors, sizeof(colors));
     cache.mCount = count;
     cache.mDepth = depth;
-    cache.mNames = sCurTargets;
+    cache.mNames = gPassState.mCurTargets;
     cache.mOk = true;
-    sTargetNamesOwner = &cache;
+    gPassState.mTargetNamesOwner = &cache;
     return true;
 }
 
@@ -1275,7 +1264,7 @@ void sync_draw_state(Renderer& r, bool has_depth)
 // the texture a sampler of dimension 'cls' reads from a unit, through the unit's id alone (a texture of another dimension is not what a sampler of this dimension samples)
 inline U32 unit_texture(U32 unit, U32 cls)
 {
-    const U32 name = sUnitTex[unit];
+    const U32 name = gPassState.mUnitTex[unit];
     if (!name)
     {
         return 0;
@@ -1330,8 +1319,8 @@ void sync_textures(Renderer& r, Program& program)
             if (sStatsEnabled)
             {
                 const U32 tname = slot_name;
-                ++sFrameSampled[tname];
-                if (std::find(sCurTargets.begin(), sCurTargets.end(), tname) != sCurTargets.end())
+                ++gFrameState.mSampled[tname];
+                if (std::find(gPassState.mCurTargets.begin(), gPassState.mCurTargets.end(), tname) != gPassState.mCurTargets.end())
                 {
                     ++sStats.mFeedback[program.getName() + " samples " + info.mSamplers[k].mName + " = tex " + std::to_string(tname)];
                 }
@@ -1518,7 +1507,7 @@ bool build_vertex_input(Renderer& r, Program& program, VertexInput& vi, std::vec
     {
         return build_scratch_input(r, program, vi);
     }
-    const BoundVertices& vao = sBound;
+    const BoundVertices& vao = gPassState.mBound;
     const ProgramInfo& info = program.getInfo();
     // bindings made so far: buffer, stride, byte offset of the binding inside the buffer
     struct BindingKey { U32 mBuffer; S32 mStride; U64 mBase; U32 mBinding; };
@@ -1628,8 +1617,8 @@ void sync_uniform_blocks(Renderer& r, std::vector<U32>& used_buffers)
 {
     for (U32 i = 0; i < 4; ++i)
     {
-        if (LLVkPassCensus::sOn && sUboBinding[i]) LLVkPassCensus::uboRead(i);
-        auto it = sUboBinding[i] ? sGL.mBuffers.find(sUboBinding[i]) : sGL.mBuffers.end();
+        if (LLVkPassCensus::sOn && gPassState.mUboBinding[i]) LLVkPassCensus::uboRead(i);
+        auto it = gPassState.mUboBinding[i] ? sGL.mBuffers.find(gPassState.mUboBinding[i]) : sGL.mBuffers.end();
         if (it != sGL.mBuffers.end() && it->second.mVk.valid())
         {
             it->second.mLastUseFrame = Context::instance().getFrameNumber();      // <FS> (mark_used no longer walks the buffers of a draw)
@@ -1675,7 +1664,7 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
     LLVkBridge::gLastLap = 202;
     {
         LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_STATE);
-        sync_draw_state(r, sHasDepth);
+        sync_draw_state(r, gPassState.mHasDepth);
     }
     LLVkBridge::gLastLap = 203;
     {
@@ -1695,7 +1684,7 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
                 sampler = sit == names->end() ? 0 : (S32)(sit - names->begin());
             }
         }
-        const F32 size[2] = { (F32)sCurTargetW, (F32)sCurTargetH };
+        const F32 size[2] = { (F32)gPassState.mCurTargetW, (F32)gPassState.mCurTargetH };
         program->setInts("ll_dbg_mode", &mode, 1);
         program->setInts("ll_dbg_sampler", &sampler, 1);
         program->setFloats("ll_dbg_size", size, 2);
@@ -1704,8 +1693,8 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
     {
         LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_STATS);
         std::string key = program->getName() + " -> ";
-        if (sDrawFbo == 0) key += "SCREEN";
-        for (U32 tname : sCurTargets) key += std::to_string(tname) + " ";
+        if (gPassState.mDrawFbo == 0) key += "SCREEN";
+        for (U32 tname : gPassState.mCurTargets) key += std::to_string(tname) + " ";
         key += "<- ";
         const ProgramInfo& gi = program->getInfo();
         for (size_t k = 0; k < gi.mSamplers.size(); ++k)
@@ -1721,7 +1710,7 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
                 bound = unit_texture(unit, want);
                 break;
             }
-            if (bound && sFrameTargets.count(bound)) key += std::to_string(bound) + " ";
+            if (bound && gFrameState.mTargets.count(bound)) key += std::to_string(bound) + " ";
         }
         auto git = sStats.mGraph.find(key);
         if (git == sStats.mGraph.end())
@@ -1734,7 +1723,7 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
             ++git->second;
         }
     }
-    if (sStatsEnabled && sDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
+    if (sStatsEnabled && gPassState.mDrawFbo == 0 && sStats.mBackbufferEvents.size() < 4000)
     {
         std::string e = program->getName();
         if (e != "UI Shader" && e.compare(0, 3, "HUD") != 0)
@@ -2140,10 +2129,10 @@ void destroy_textures(S32 n, const U32* textures)
             destroy_tex_images(it->second);
             tex_forget(it->first);
             sGL.mTextures.erase(it);
-            ++sTargetEpoch;
+            ++gPassState.mTargetEpoch;
             ++sPacketTextureGeneration;
         }
-        for (U32& n : sUnitTex)
+        for (U32& n : gPassState.mUnitTex)
         {
             if (n == textures[i]) n = 0;
         }
@@ -2160,7 +2149,7 @@ void slot_set(unsigned unit, unsigned name)
     if (unit < 32)
     {
         if (LLVkPassCensus::sOn) LLVkPassCensus::unitSet(unit);
-        sUnitTex[unit] = name;
+        gPassState.mUnitTex[unit] = name;
         if (name)
         {
             sGL.mTextures[name];     // a name that was never generated is still a texture (the first edit makes it)
@@ -2437,8 +2426,8 @@ void destroy_targets(S32 n, const U32* framebuffers)
     for (S32 i = 0; i < n; ++i)
     {
         sGL.mFbos.erase(framebuffers[i]);
-        ++sTargetEpoch;
-        if (sDrawFbo == framebuffers[i]) sDrawFbo = 0;
+        ++gPassState.mTargetEpoch;
+        if (gPassState.mDrawFbo == framebuffers[i]) gPassState.mDrawFbo = 0;
     }
 }
 
@@ -2448,7 +2437,7 @@ void target_attach(unsigned fbo_name, unsigned slot, unsigned texture)
     {
         return;
     }
-    ++sTargetEpoch;
+    ++gPassState.mTargetEpoch;
     Fbo& fbo = sGL.mFbos[fbo_name];
     FboAttachment a;
     a.mTexture = texture;
@@ -2466,8 +2455,8 @@ void target_attach(unsigned fbo_name, unsigned slot, unsigned texture)
 
 void target_state(unsigned fbo_name, int draw_buffers)
 {
-    sDrawFbo = fbo_name;
-    ++sTargetEpoch;
+    gPassState.mDrawFbo = fbo_name;
+    ++gPassState.mTargetEpoch;
     if (!fbo_name)
     {
         return;
@@ -2507,14 +2496,13 @@ void destroy_buffers(S32 n, const U32* buffers)
         if (it != sGL.mBuffers.end())
         {
             release_storage(it->second);
-            buf_forget(it->first);
             res_buffer_gone(it->first);
             geo_buffer_gone_impl(it->first);
             sGL.mBuffers.erase(it);
             ++sPacketBufferGeneration;
         }
-        if (sBound.mArrayBuffer == buffers[i]) sBound.mArrayBuffer = 0;
-        if (sBound.mElementBuffer == buffers[i]) sBound.mElementBuffer = 0;
+        if (gPassState.mBound.mArrayBuffer == buffers[i]) gPassState.mBound.mArrayBuffer = 0;
+        if (gPassState.mBound.mElementBuffer == buffers[i]) gPassState.mBound.mElementBuffer = 0;
     }
 }
 
@@ -2672,7 +2660,7 @@ void uniform_block_bind(unsigned index, unsigned buffer)
     }
     if (index < 4)
     {
-        sUboBinding[index] = buffer;
+        gPassState.mUboBinding[index] = buffer;
     }
 }
 
@@ -2689,10 +2677,10 @@ void pass_poison()
 {
     const int mask = LLVkPassCensus::sPoisonMask;
     if (mask & 1) Program::poisonAll();
-    if (mask & 2) for (U32 u = 0; u < 32; ++u) sUnitTex[u] = 0;
-    if (mask & 4) for (U32 i = 0; i < 4; ++i) sUboBinding[i] = 0;
+    if (mask & 2) for (U32 u = 0; u < 32; ++u) gPassState.mUnitTex[u] = 0;
+    if (mask & 4) for (U32 i = 0; i < 4; ++i) gPassState.mUboBinding[i] = 0;
     if (mask & 8) for (auto& a : sGL.mConstAttrib) { a[0] = a[1] = a[2] = 0.f; a[3] = 1.f; }
-    if (mask & 16) sBound = BoundVertices();
+    if (mask & 16) gPassState.mBound = BoundVertices();
     if (const LLVkState::Block* cur = (mask & 32) ? LLVkState::received() : nullptr)
     {
         LLVkState::Block b = *cur;
@@ -2727,19 +2715,19 @@ void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
     {
         return;
     }
-    sBound.mArrayBuffer = binding->mArray;
+    gPassState.mBound.mArrayBuffer = binding->mArray;
     if (binding->mArray)
     {
         sGL.mBuffers[binding->mArray];
     }
-    sBound.mElementBuffer = binding->mElem;
+    gPassState.mBound.mElementBuffer = binding->mElem;
     if (binding->mElem)
     {
         sGL.mBuffers[binding->mElem];
     }
     for (unsigned i = 0; i < 16; ++i)
     {
-        BoundAttrib& a = sBound.mAttrib[i];
+        BoundAttrib& a = gPassState.mBound.mAttrib[i];
         if (!(binding->mPresent & (1u << i)))
         {
             a.mEnabled = false;
@@ -2755,28 +2743,6 @@ void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
         a.mStride = e.mStride;
         a.mOffset = e.mOffset;
     }
-}
-
-namespace
-{
-struct DrawCheckStats
-{
-    U64 mUniformChecks = 0, mBadUniform = 0;
-    std::map<std::string, U64> mBadPerProgram;
-};
-DrawCheckStats sDc;
-U32 sDcLogged = 0;
-
-void dc_log(const char* what, const std::string& detail)
-{
-    Program* p = LLVkBridge::isReady() ? Renderer::instance().getProgram() : nullptr;
-    const std::string name = p ? p->getName() : std::string("(none)");
-    ++sDc.mBadPerProgram[name];
-    if (sDcLogged++ < 30)
-    {
-        LL_WARNS("VkDrawRec") << "draw record check: " << what << " in program '" << name << "': " << detail << LL_ENDL;
-    }
-}
 }
 
 void constant_attribute(unsigned location, float x, float y, float z, float w)
@@ -2906,7 +2872,7 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
     {
         return;
     }
-    const BoundVertices& vao = sBound;
+    const BoundVertices& vao = gPassState.mBound;
     auto eit = sGL.mBuffers.find(vao.mElementBuffer);
     if (eit == sGL.mBuffers.end() || !eit->second.mVk.valid())
     {
@@ -3875,14 +3841,11 @@ static void on_rt_only_packets(const LLVkBridge::ShadowPacketsHeader& h, const U
 }
 
 // S4 A2: the frame's shared palette list (kind 27): segments of whole palettes, each in scratch memory of this frame, found by the absolute float offset the entries carry
-struct PalSeg { U32 mStart, mFloats; U64 mAddress; };
-static std::vector<PalSeg> sPalSegs;
-static U32 sPalFrame = ~0u;
 static U64 palette_address(U32 offset)
 {
-    for (size_t k = sPalSegs.size(); k-- > 0; )
+    for (size_t k = gFrameState.mPalSegs.size(); k-- > 0; )
     {
-        const PalSeg& s = sPalSegs[k];
+        const PalSeg& s = gFrameState.mPalSegs[k];
         if (offset >= s.mStart && offset < s.mStart + s.mFloats)
         {
             return s.mAddress + 4ull * (offset - s.mStart);
@@ -3893,10 +3856,10 @@ static U64 palette_address(U32 offset)
 
 static void on_palette_segment(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    if (h.mPass != sPalFrame)
+    if (h.mPass != gFrameState.mPalFrame)
     {
-        sPalFrame = h.mPass;
-        sPalSegs.clear();
+        gFrameState.mPalFrame = h.mPass;
+        gFrameState.mPalSegs.clear();
     }
     if (h.mPaletteFloats == 0)
     {
@@ -3908,7 +3871,7 @@ static void on_palette_segment(const LLVkBridge::ShadowPacketsHeader& h, const U
         return;
     }
     memcpy(a.mPtr, blob, 4 * (size_t)h.mPaletteFloats);
-    sPalSegs.push_back({ h.mFragment, h.mPaletteFloats, (U64)a.mAddress });
+    gFrameState.mPalSegs.push_back({ h.mFragment, h.mPaletteFloats, (U64)a.mAddress });
     Context::instance().flight(Context::FL_PAL_SEG, (unsigned long long)h.mFragment, (unsigned long long)h.mPaletteFloats, (unsigned long long)a.mAddress, (unsigned long long)h.mPass);
 }
 
@@ -8839,7 +8802,7 @@ std::string resource_summary()
             const U64 w = std::max<U32>(1, t.mImage.mExtent.width >> m), h = std::max<U32>(1, t.mImage.mExtent.height >> m);
             bytes += ((w + fi.mBlockWidth - 1) / fi.mBlockWidth) * ((h + fi.mBlockHeight - 1) / fi.mBlockHeight) * fi.mBytesPerBlock * std::max<U32>(1, t.mImage.mLayers) * std::max<U32>(1, t.mImage.mExtent.depth);
         }
-        const bool target = (t.mImage.mAspect != VK_IMAGE_ASPECT_COLOR_BIT) || !t.mViews.empty() || sFrameTargets.count(kv.first);
+        const bool target = (t.mImage.mAspect != VK_IMAGE_ASPECT_COLOR_BIT) || !t.mViews.empty() || gFrameState.mTargets.count(kv.first);
         if (target) { rt_bytes += bytes; ++rt_count; } else { tex_bytes += bytes; ++tex_count; }
         // the mip levels above the ones that ever received data (a texture the viewer uses without mips still owns the whole chain)
         for (U32 m = std::max<U32>(1, t.mValidLevels); m < t.mImage.mMipLevels; ++m)
@@ -9209,10 +9172,10 @@ void after_frame()
             }
         }
     }
-    sFrameTargets.clear();
-    memset(sRecentFrameTargets, 0, sizeof(sRecentFrameTargets));
-    sFrameSampledLast = sFrameSampled;
-    sFrameSampled.clear();
+    gFrameState.mTargets.clear();
+    memset(gFrameState.mRecentTargets, 0, sizeof(gFrameState.mRecentTargets));
+    gFrameState.mSampledLast = gFrameState.mSampled;
+    gFrameState.mSampled.clear();
     sStatsLast = sStats;
     sStats = DrawStats();
 }

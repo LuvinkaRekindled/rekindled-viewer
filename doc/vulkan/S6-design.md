@@ -100,3 +100,24 @@ Verification, London midnight (runs s61a baseline, s61b verify, s61c / d / h ful
 - Verify: 604 class blocks announced a frame (290 KB); the ones that differ from what the worker held are the worker's own writes (the packet table / model matrix addresses of the pull programs, written by each record before it draws, so overwriting them is harmless): once a frame per program.
 - Poison: 0 draws refused (no program / target / vertex input) in every pass; pictures right in 4 of 5 full-poison runs (store front, neon sign, shadows, avatars). One run (s61d) showed objects missing, with 1,367 fragments listed a frame against 1,600-1,690 in the others: the intermittent "things not loading" (repeat full poison runs s61h: normal; mask 1 only s61g: normal). "Non Finite mOrigin" viewer warnings (911 to 1,036 in s61c / d / f) did not come back in s61g / s61h with the same flags: scene dependent, not caused by poison (the stack hook that was added to find the caller never fired).
 - Closed (s61e): records 4,579 a frame (baseline 4,594), main thread writing the queue 0.35 ms (0.35), worker draws 844 (846), frame interval 12.3 ms (baseline 13.9, other crowd: noise), pictures equal, no warnings. Announced volume 290 KB a frame costs nothing visible.
+
+### 6.4 and 6.5 built (closed passes are now the default: no off switch, LL_VK_PASSCLOSE=2 / 3 and LL_VK_PASSPOISON stay as checks)
+
+- **6.4** The worker's pass and frame state are objects: `PassState gPassState` (unit textures, draw framebuffer, uniform buffer bindings, vertex binding, the resolved target and its names, depth flag and size) and `FrameState gFrameState` (frame targets and samplers of the debug dump, the frame's palette list). About 100 references moved, no behaviour change (s64a / s65a: pictures right, op counts scale with the crowd, no warnings). Section 7 lists what is left at file level and who owns it.
+- **6.5** Deleted what the checks proved dead: `CMD_TEX_PARAMS`, the flat buffer lookup `buf_ptr` / `sBufFlat`, the draw record check log `dc_log`, the `DrawCtx::mSent` bookkeeping (6.3), the closed-pass off switch. (The compiler's unreferenced-function warning does not see anonymous namespaces; a reference count over the sources found these.) This is all that could be deleted without typing the draw classes in section 8.
+
+## 7. Who owns what in the worker (the base for the threading plan)
+
+| state | owner today | note |
+|---|---|---|
+| `gPassState` (units, draw fbo, UBO bindings, vertex binding, resolved target, depth flag, size), `LLVkState::received()`, `Renderer::mProgram`, program uniform class blocks (`Program::mShadow`) | the stream player (the worker): one pass at a time | closed passes: a pass names everything it reads. One instance now; a pass decoded on another thread needs its own copy, and the program uniform blocks have to become per pass values (the resolved ring offsets), not program state |
+| `gFrameState` (palette list, frame targets, sampled textures) | the worker, reset each frame | the palette list is read by the records that name offsets in it |
+| `sGL` textures / buffers / targets, `sTexFlat`, `sPacketTextureGeneration` / `...BufferGeneration`, bindless table and pins (`Renderer`, `sPin*`), arena ranges, `sProbe*` | the worker alone writes; records see every change that precedes them in the stream | single-owner; readers on other threads would need an epoch / copy-on-write |
+| resident and scene fragments (`sRes*`, `sGeo*`, `sShadowFragments`), Hi-Z (`sHiz`), queries (`sQueries`) | the worker | retained between frames, written by retain / release records |
+| `Renderer` draw state: raster / depth / blend state, vertex input, bound pipeline, pushed descriptors, uniform ring, command buffer | the worker, shared by resolve and record | the resolve / record split of the threading plan starts here: resolve (pipeline, ring offsets, descriptor slots) is state dependent and serial, recording is not |
+| ray scene (`LLVk::Rt`) | the worker, called by CMD_RT_SCENE | serial, 2 to 3 ms: the other threading blocker |
+| other threads' records (`gSide`, sub-streams) | spliced by queue position | opt in (LL_VK_UI_SUBSTREAM, the pipeline sub test) |
+
+## 8. What is still GL-shaped (left after 6.5)
+
+The translation (`prepare_draw`, `sync_target`, `sync_draw_state`, `sync_textures`, `draw_elements`, `draw_arrays`, the draw records, loose uniform records for sub-streams, the inline mode before the queue starts) is still the path of every draw that is not a typed packet record: about 2,300 draws a frame in London (S6-census section 11, refreshed below). Their classes and what each needs are in the S6.6 plan.

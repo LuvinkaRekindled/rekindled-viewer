@@ -33,13 +33,10 @@
 #include "llquaternion.h"
 #include "llcoordframe.h"
 
-void (*gLLNonFiniteHook)() = nullptr;      // <FS> diagnostics: the Vulkan layer logs where a non finite origin came from (LL_VK_PASSCLOSE runs)
-
 #define CHECK_FINITE(var)                                            \
     if (!var.isFinite())                                             \
     {                                                                \
         LL_WARNS() << "Non Finite " << std::string(#var) << LL_ENDL; \
-        if (gLLNonFiniteHook) gLLNonFiniteHook();                    \
         reset();                                                     \
     }
 

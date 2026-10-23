@@ -22,7 +22,7 @@ namespace LLVkPassCensus
 {
     extern bool sOn;
     extern int sPoisonMask;     // LL_VK_PASSPOISON (default 127): which classes poison mode forgets: 1 program uniform blocks, 2 texture units, 4 uniform buffer bindings, 8 constant attributes, 16 vertex binding, 32 render state, 64 renderer program
-    extern int sClose;          // S6.2 LL_VK_PASSCLOSE: 0 off, 1 passes are closed, 2 plus the worker compares every announced class block with what it held, 3 plus the worker forgets the inherited state at every pass (poison)
+    extern int sClose;          // S6.2 LL_VK_PASSCLOSE: 1 passes are closed (always), 2 plus the worker compares every announced class block with what it held, 3 plus the worker forgets the inherited state at every pass (poison)
     extern int sMode;           // 1: the viewer's render target binds are the passes, 2: the Vulkan render passes the renderer begins, 3: the GPU zone phases (needs --set FSGpuZoneTimers,1)
     extern U64 sPass;           // the census pass being played (0: before the first of the run)
     extern U64 sFrame;          // the census frame (counted by CMD_FRAME_BEGIN)
