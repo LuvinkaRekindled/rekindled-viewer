@@ -379,3 +379,60 @@ At the end of `updateCull` the CPU records its set as a bitset over rows (groups
 - Gate for C1 (switch on, compared with a plain run of the same crowd): **missed = 0 at the chosen margin over 5 minutes with the camera turning and walking** (`<work>\rt-flash-scan.ps1` already holds the left arrow for a scripted turn through `keybd_event`; walking forward and a fast turn need the same trick); for a still camera the exact set equals the CPU set; **extra** at the chosen margin a small share (aim under 10 % of the CPU set, about +0.2 ms of state work if applied); build + upload + record under 0.3 ms of main thread in total (it is a full walk, so more than the incremental C1b will cost); no device lost over 3 runs; validation layers clean once (`RT_VALIDATE=1 RT_SYNCVAL=1`).
 - Not decided here: whether `OCCLUDED` stays an input flag (C1) or is computed on the GPU from the Hi-Z results of the same batch (a later step; the rows' boxes are the Hi-Z group boxes); how bridges and avatars join the table (C4); and the policy for groups the GPU does not know (created since the verdict): the real design must treat them as visible until the next upload.
 - Size of the work: table build and the CPU set record in pipeline.cpp (about 150 lines), a new worker kind with one shader (about 200 lines, modeled on `on_hiz_boxes`), the log. About a day; no behaviour change.
+
+
+## 15. C1 results: the flat group table and the shadow-mode GPU frustum test (2026-10-23)
+
+Built as designed in section 14, measure only, off by default. **Switches:** `LL_VK_CULL_SHADOW=1` (table, GPU test, comparison log, tag `CullShadow`), `LL_VK_CULL_FACTORS=a,b,c` (the three margin factors, default 1, 1.5, 2.5), `LL_VK_POSE_LOG=1` (one log line a second with the camera's yaw, for the run scripts). **Code:** `llcullshadow.h`; `LLCullShadow::build / send / poseLog` and the comparison in `pipeline.cpp` (hooks: end of the main view's `updateCull`, and next to `LLHiz::send` in `doOcclusion`); the group fields `mCullId / mCullFirstSerial / mCullCpuStamp` in `LLViewerOctreeGroup`; worker kind 35 (`on_cull_rows`, compute shader `kCullTestShader`, 32 threads a group, 4 bit sets per record) and the ring functions `cullSend / cullRead / cullDone` in `llvkbridge.*`; `LLCamera::getPlaneCount()`. Runs: `<work>\c1-chain.ps1` (names `still*`, `move*`, `*plain*` = no diagnostic, `*settle*` = 300 s with the last 80 s still), `<work>\rt-run-move.ps1` (arrow keys: turn left 4 s, right 4 s, walk forward 3 s, back 3 s, taps; at the end it turns back to the yaw it started with, which the viewer logs).
+
+### 15.1 What the table and the test are
+
+Covered partitions: every agent-space partition of every region except HUD, bridge, avatar, control avatar, HUD particle and VO cache; one row (64 bytes) per octree node, parent before child. Facing the crowd (`still4`): **7,771 rows, of which 1,901 are empty nodes** (the cull never keeps an empty group: `markNotCulled` returns); the CPU keeps 1,445 groups; **3,246 non-empty groups are inside the frustum** (the GPU test and the CPU's own exact test agree on that set to 0.6 groups of 3,246). So the CPU's occlusion state removes 56 % of the frustum set (Hi-Z is the larger cull; the frustum is the smaller part).
+Per record: the table is built by a full walk after `updateCull` (0.90 ms for 7.8k rows, 2.5 ms for 16.8k rows: about 0.11-0.15 microseconds a row), copied (0.46-1.1 MB, 0.06-0.34 ms) and tested by one compute dispatch; the worker spends **0.036 ms a frame** on the record (36 microseconds, op stats). **Latency between the record and its comparison depends on the queue depth**: `still4` (GPU-limited, 99 % utilisation) 4 frames in 49 % of the records and 5 in 35 %, 2-3 in 16 %; `movesettle1` (main-thread-limited, GPU 53-65 %) 2 frames in 67 %, 3 in 29 %, 4-5 in 4.5 %. The margin bound (5 frames of the largest per-frame motion of the last 30) covers both; a margin that used the measured latency would be tighter in the main-thread-limited case, and the still run needs no margin at all. The comparison (0.5-1.1 ms) is diagnostic only and is not part of the cost of the design.
+
+### 15.2 Runs (all with `LL_VK_CULL_SHADOW=1` unless noted; fps are NOT comparable between rows)
+
+| run | what | notes |
+|---|---|---|
+| `c1-still1`, `c1-move1`, `c1-still2`, `c1-move2` | first builds (empties not excluded, no frustum-only metric) | gave the first findings (14.x bugs below); not used for numbers |
+| `c1-still3`, `c1-move3` | **not controls**: the avatar was left facing away from the crowd by the moving run before (Adam's note); 96 fps, 1,100 groups kept | cull comparison valid, fps and group counts not representative |
+| `c1-valid1` | validation + sync validation (`RT_VALIDATE=1 RT_SYNCVAL=1`), 150 s | no message names kind 35 or the cull dispatch; the 24 messages are the old ones (UI shader copy hazard, shadow pull writes, avatar alpha pipeline) |
+| `c1-still4` | still camera, facing the crowd (set by Adam) | the numbers below |
+| `c1-moveplainsettle1` | moving, **no cull diagnostic**, `LL_VK_POSE_LOG=1` only, last 80 s still | engine reference for the moving case |
+| `c1-movesettle1` | moving, diagnostic on, last 80 s still | the moving numbers below |
+
+**No device lost in any of the 10 C1 runs** (the Hi-Z census runs of section 13 had 6 more). Yaw return worked (start -0.88, end -0.84; start -0.92, end -0.89).
+
+### 15.3 Result: the GPU test against the CPU
+
+Frustum only (what the GPU would supply; the CPU keeps applying its own `OCCLUDED` state on top), against the CPU's exact frustum test of every group at the pose of the frame the verdict is compared with (2-3 frames after the record):
+
+| case | margin factor | GPU set | CPU frustum set | MISSED a frame | EXTRA a frame |
+|---|---|---|---|---|---|
+| still (`still4`, 18 windows) | any | 3,246 | 3,246 | 0.60 (0.018 %) | 1 (0.0 %) |
+| moving (`movesettle1`, 14 windows, camera bounds over 5 frames: 0.59 m, 0.142 rad) | exact (0) | 3,131 | 3,130 | **68.5 (2.2 %)** | 69 |
+| | 0.25 | 3,454 | 3,130 | 6.2 (0.20 %) | 330 (10.5 %) |
+| | 0.5 | 3,749 | 3,130 | 0.55 (0.018 %) | 620 (19.8 %) |
+| | 1.0 | 4,267 | 3,130 | **0.03 (0.001 %)** | 1,137 (36 %) |
+| settled after the motion (4 windows) | 0.25 / 0.5 / 1.0 | 3,269 / 3,272 / 3,285 | 3,265 | 0.05 | 5 / 7 / 21 (0.1-0.6 %) |
+
+- **Without a margin an old verdict would miss 2.2 % of the groups while turning** (68 groups a frame at the screen edge): the margin is needed. At factor 1 the miss is one group every 30 frames in the fastest turn, zero when still; at factor 0.5 it is one group a frame in the fastest turn windows (0.018 %), the fastest window of `move3` had 5 groups a frame at factor 0.5 and 0.2 at factor 1.
+- **The price is extra groups only while the camera turns**: +20 % (factor 0.5) to +36 % (factor 1) of the frustum set during a turn at about 0.14 rad over 5 frames (a fast turn), +0.1-0.6 % once it stops. The margin is `t + distance * a` per group, so most of the extra is far groups (a 0.14 rad bound is 28 m at 200 m).
+- **Against the CPU's final kept set** (after its occlusion state and its own quirks) at factor 0.5 in the moving windows: 2.98 missed, of which 2.65 are the far-limit quirk below, 0.28 camera motion, 0.04 occlusion flag changes; at factor 1: 2.47, of which 2.42 the quirk and 0.01 real.
+
+### 15.4 Findings (bugs, waste, room to improve) found by the comparison
+
+1. **The stock cull keeps groups beyond the far limit.** `AABBSphereIntersectR2` (llvieweroctree.cpp 192) returns "2, fully inside" when only the minimum and maximum corners of the extents are within the radius, and `LLViewerOctreeCull::traverse` then takes everything below without testing. Groups at 256.2 m with a far limit of 256 m (the view distance) stay in the CPU set: **about 23 groups a frame (1.6 % of the kept set) in the crowd facing run, 7 while turning**, which the far plane clips anyway. A fix (test all eight corners, or the farthest corner) is small and cuts the cull, state work and render map by those groups. Not done (it changes the CPU cull; Adam's call). The GPU test does not have the quirk.
+2. **A quarter of the octree nodes are empty** (1,901 of 7,771; 4,165 of 16,840). They are visited and tested every frame and the cull throws them away in `markNotCulled`. The flat table needs them as parents only.
+3. **The table size moves a lot between runs** (7.1k to 17.5k rows in the same sim, 17k in both moving runs) while the CPU kept set stays 1,100-1,450: not explained (neighbouring region groups? object churn?). The cost of the full walk follows the row count. C1b (incremental table) removes it.
+4. **Occlusion state flips cost misses in the CPU's own set**: while turning, 1-40 groups a frame were held OCCLUDED at the record and are kept by the CPU 2-3 frames later (the Hi-Z verdict lag). Not a defect of the GPU test; the reason the design supplies only the frustum.
+5. **Texture priorities and the discard run before the frame's cull** (display(): `updateImages` before `updateCull`; idle(): object texture sizing): they read the previous frame's visibility stamps. See the notes in the side-session folder (`texture-discard-at-ram-limit.md`) for the cumulative slowdown, the thrash at the VRAM budget and the proposed test; not a C1 item.
+6. **GPU utilisation after a 360 degree turn** (nvidia-smi, 1 Hz): still 99 %, VRAM 10.1 GB. Plain moving run: 62-73 % while turning with VRAM at 12.5-12.7 GB (the 12,840 MB budget), **87-88 % in the 80 s still tail**, VRAM unchanged at 12.4-12.6 GB. With the cull diagnostic: 53-59 % moving, 62-65 % in the tail (the diagnostic costs the main thread 2.5 + 1.1 ms at 17k rows). fps (median, 10 s samples): still 66.9, plain moving 58.5 (31-74), diagnostic moving 48.2. Adam saw hair and clothes textures lose, gain and lose their texture again at the budget edge, and many things in view still without textures after 80 s.
+
+### 15.5 Gate of section 14.6, and what is left
+
+- Pop-in: **not exactly zero** at any factor in the fastest turns (0.03 groups a frame at factor 1, one group 2-3 frames late at the screen edge every 30 frames); zero when the camera is still. A group whose verdict is late shows one frame late at the edge. The decision for Adam: factor 1 (almost no misses, +36 % groups while turning fast) or 0.5 (one late group a frame in a fast turn, +20 %), or a margin made of the camera's actual speed this frame instead of the maximum of 30 frames.
+- Extra under 10 % of the set: yes when still (0.0-0.6 %); no while turning fast (20-36 % at the factors that avoid misses).
+- Cost: the record is cheap (0.036 ms of worker a frame, a few tens of microseconds of GPU); the **table build (full walk) is not**: 0.9-2.5 ms. **C1b, the incremental table (listener hooks, free list, delta upload), is the next step before anything is saved**; without it C1 only costs.
+- Validation: clean for the cull code. Device lost: none in 10 runs.
+- Decisions for Adam: (1) the margin (factor and the speed source), (2) fix the stock far-limit quirk in the CPU cull (about 1.6 % of the kept groups, low risk), (3) go on with C1b, or look at the texture / VRAM budget thrash first since it costs 25-40 points of GPU utilisation in the moving case (15.4 item 6).

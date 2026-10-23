@@ -146,6 +146,10 @@
 #include "SMAASearchTex.h"
 #include "llerror.h"
 #include "llviscensus.h"
+#include "llcullshadow.h"
+#include <deque>
+#include <chrono>
+#include <mutex>
 void ll_vis_census_items(LLCamera& camera);        // S7 B0 (below)
 #ifndef LL_WINDOWS
 #define A_GCC 1
@@ -2792,6 +2796,11 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         bool mOn; U64 mT0;
         ~VisCullEnd() { if (mOn) { LLVisCensus::sCullTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sCullFrames; } }
     } vis_cull_end = { vis_cull, vis_cull ? LLVisCensus::now() : 0 };
+    struct CullShadowEnd
+    {
+        bool mOn; LLCamera* mCamera;
+        ~CullShadowEnd() { if (mOn) { if (LLCullShadow::sOn) { LLCullShadow::build(*mCamera); } else { LLCullShadow::poseLog(*mCamera); } } }       // <FS> S7 C1: after everything the cull did
+    } cull_shadow_end = { (LLCullShadow::sOn || LLCullShadow::sPoseLog) && !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot, &camera };
 
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !hud_attachments && !gCubeSnapshot)
     {
@@ -3015,6 +3024,10 @@ void LLPipeline::doOcclusion(LLCamera& camera)
         }
     }
 
+    if (LLCullShadow::sOn)
+    {
+        LLCullShadow::send(camera);         // <FS> S7 C1: the flat group table, shadow mode
+    }
     if (LLVisCensus::sBoxes)
     {
         ll_vis_census_items(camera);        // <FS> S7 B0: the table items' boxes ride in the same batch
@@ -7304,6 +7317,415 @@ void LLVisCensus::report()
     memset(sBCpuOut, 0, sizeof(sBCpuOut)); memset(sBCpuOutNotGpu, 0, sizeof(sBCpuOutNotGpu)); memset(sBGpuOutNotCpu, 0, sizeof(sBGpuOutNotCpu));
     memset(sBHidA, 0, sizeof(sBHidA)); memset(sBHidATris, 0, sizeof(sBHidATris)); memset(sBHidB, 0, sizeof(sBHidB)); memset(sBHidBTris, 0, sizeof(sBHidBTris)); memset(sBValidB, 0, sizeof(sBValidB));
     memset(sBDropB, 0, sizeof(sBDropB)); memset(sBDropBTris, 0, sizeof(sBDropBTris));
+}
+
+// ---- <FS> S7 C1 (LL_VK_CULL_SHADOW=1, doc/vulkan/S7-design.md section 14): the flat group table and the shadow-mode GPU frustum test. Measurement only. ----
+namespace
+{
+using CullClock = std::chrono::steady_clock;
+struct CullRec
+{
+    U32 mSerial = 0;                // the worker record
+    U32 mBuildSerial = 0;           // the build the rows come from (a group with a later first serial did not exist)
+    U32 mFrame = 0;                 // gFrameCount when sent
+    std::vector<U32> mIds;          // row -> group id
+    std::vector<LLVkBridge::CullRow> mRows;
+};
+struct CullPose { LLVector3 mOrigin, mAt, mLeft, mUp; };
+struct CullStats
+{
+    U64 mCompared = 0, mLost = 0, mNoVerdictYet = 0;
+    U64 mRows = 0, mDeadRows = 0, mEmptyRows = 0, mCpuGroups = 0, mNewGroups = 0;
+    U64 mBoth[LLVkBridge::cullVariants] = {}, mMissed[LLVkBridge::cullVariants] = {}, mExtra[LLVkBridge::cullVariants] = {};
+    U64 mBothF[LLVkBridge::cullVariants] = {}, mMissedF[LLVkBridge::cullVariants] = {}, mExtraF[LLVkBridge::cullVariants] = {}, mCpuF = 0;
+    U64 mMissedBounds[LLVkBridge::cullVariants] = {}, mMissedOcc[LLVkBridge::cullVariants] = {}, mMissedMotion[LLVkBridge::cullVariants] = {}, mMissedFar[LLVkBridge::cullVariants] = {};
+    U64 mLag[10] = {};
+    double mBuildMs = 0, mApplyMs = 0, mSendMs = 0, mBytes = 0, mTBound = 0, mABound = 0;
+    U64 mBuilds = 0, mSends = 0;
+};
+std::deque<CullRec> sCullRecs;
+CullRec sCullBuilt;
+bool sCullHaveBuilt = false;
+U32 sCullNextId = 0, sCullBuildSerial = 0, sCullStamp = 0;
+std::deque<CullPose> sCullPoses;
+CullStats sCullStats;
+float sCullFactors[3] = { 1.0f, 1.5f, 2.5f };
+float sCullTBound = 0.f, sCullABound = 0.f;
+
+double cull_ms(CullClock::time_point t0)
+{
+    return std::chrono::duration<double, std::milli>(CullClock::now() - t0).count();
+}
+
+void cull_report()
+{
+    CullStats& s = sCullStats;
+    if (!s.mCompared)
+    {
+        return;
+    }
+    const double n = (double)s.mCompared;
+    char buf[1536];
+    snprintf(buf, sizeof(buf), "records compared %.0f (lost %.0f), rows %.0f a record (dead groups %.1f, empty %.1f), CPU groups kept in the covered partitions %.0f a frame, new since the record %.1f a frame | build %.3f ms, send %.3f ms, apply %.3f ms a frame, %.2f MB a record | bounds used: translation %.3f m, rotation %.4f rad",
+        n, (double)s.mLost, (double)s.mRows / n, (double)s.mDeadRows / n, (double)s.mEmptyRows / n, (double)s.mCpuGroups / n, (double)s.mNewGroups / n,
+        s.mBuildMs / (double)std::max<U64>(s.mBuilds, 1), s.mSendMs / (double)std::max<U64>(s.mSends, 1), s.mApplyMs / n, s.mBytes / (double)std::max<U64>(s.mSends, 1) / 1.0e6, s.mTBound / (double)std::max<U64>(s.mBuilds, 1), s.mABound / (double)std::max<U64>(s.mBuilds, 1));
+    LL_INFOS("CullShadow") << buf << LL_ENDL;
+    static const char* const names[] = { "exact (margin 0)", "factor 1", "factor 2", "factor 3" };
+    for (U32 v = 0; v < LLVkBridge::cullVariants; ++v)
+    {
+        const double cpu = (double)(s.mBoth[v] + s.mMissed[v]);
+        snprintf(buf, sizeof(buf), "%s%s: GPU set %.1f, both %.1f, MISSED %.2f a frame (%.3f %% of the CPU set: bounds changed %.2f, occlusion flag changed %.2f, beyond the far limit %.2f, other (camera motion) %.2f) + new groups %.2f, EXTRA %.1f (%.1f %% of the CPU set)",
+            names[v], v ? (std::string(" (") + std::to_string(sCullFactors[v - 1]).substr(0, 4) + ")").c_str() : "", (double)(s.mBoth[v] + s.mExtra[v]) / n, (double)s.mBoth[v] / n, (double)s.mMissed[v] / n, cpu > 0 ? 100.0 * (double)s.mMissed[v] / cpu : 0.0,
+            (double)s.mMissedBounds[v] / n, (double)s.mMissedOcc[v] / n, (double)s.mMissedFar[v] / n, (double)s.mMissedMotion[v] / n, (double)s.mNewGroups / n, (double)s.mExtra[v] / n, cpu > 0 ? 100.0 * (double)s.mExtra[v] / cpu : 0.0);
+        LL_INFOS("CullShadow") << buf << LL_ENDL;
+        const double cpu_f = (double)(s.mBothF[v] + s.mMissedF[v]);
+        snprintf(buf, sizeof(buf), "   frustum only, against the CPU's exact frustum test at the later pose: GPU set %.1f, CPU frustum set %.1f, MISSED %.2f a frame (%.3f %%), EXTRA %.1f a frame (%.1f %%)",
+            (double)(s.mBothF[v] + s.mExtraF[v]) / n, cpu_f / n, (double)s.mMissedF[v] / n, cpu_f > 0 ? 100.0 * (double)s.mMissedF[v] / cpu_f : 0.0, (double)s.mExtraF[v] / n, cpu_f > 0 ? 100.0 * (double)s.mExtraF[v] / cpu_f : 0.0);
+        LL_INFOS("CullShadow") << buf << LL_ENDL;
+    }
+    std::string lag;
+    for (int k = 0; k < 10; ++k)
+    {
+        if (s.mLag[k])
+        {
+            lag += " " + std::to_string(k) + ":" + std::to_string(s.mLag[k]);
+        }
+    }
+    LL_INFOS("CullShadow") << "frames between the record and its comparison:" << lag << LL_ENDL;
+    s = CullStats();
+}
+
+// the verdicts that have come back, against the CPU set of this frame (every group the cull kept has the current stamp)
+void cull_apply()
+{
+    static std::vector<U32> words;
+    while (!sCullRecs.empty())
+    {
+        CullRec& rec = sCullRecs.front();
+        const U32 count = (U32)rec.mIds.size();
+        const U32 W = (count + 31) / 32;
+        words.resize((size_t)LLVkBridge::cullVariants * W);
+        S32 r = LLVkBridge::cullRead(rec.mSerial, count, words.data());
+        if (r == 0)
+        {
+            if ((U32)gFrameCount - rec.mFrame > 60)
+            {
+                r = -1;
+            }
+            else
+            {
+                break;
+            }
+        }
+        if (r < 0)
+        {
+            ++sCullStats.mLost;
+            LLVkBridge::cullDone(rec.mSerial);
+            sCullRecs.pop_front();
+            continue;
+        }
+        CullStats& s = sCullStats;
+        ++s.mCompared;
+        s.mRows += count;
+        ++s.mLag[std::min<U32>((U32)gFrameCount - rec.mFrame, 9)];
+        {
+            std::lock_guard<std::mutex> lock(LLCullShadow::sMutex);
+            for (U32 i = 0; i < count; ++i)
+            {
+                auto it = LLCullShadow::sGroups.find(rec.mIds[i]);
+                if (it == LLCullShadow::sGroups.end())
+                {
+                    ++s.mDeadRows;
+                    continue;
+                }
+                LLSpatialGroup* g = (LLSpatialGroup*)it->second;
+                if (rec.mRows[i].mFlags & 16u)
+                {
+                    ++s.mEmptyRows;         // the cull never keeps a group without elements (markNotCulled returns): not part of either set
+                    continue;
+                }
+                const bool cpu = g->mCullCpuStamp == sCullStamp;
+                // the CPU's own frustum test of this group at the pose of this frame, without the occlusion state: what the GPU set is meant to cover
+                bool cpu_f;
+                {
+                    LLCamera* cam = LLViewerCamera::getInstance();
+                    const LLVector4a* gb = g->getBounds();
+                    S32 res = cam->AABBInFrustumNoFarClip(gb[0], gb[1]);
+                    if (res && (rec.mRows[i].mFlags & 8u))
+                    {
+                        const LLVector4a* ge = g->getExtents();
+                        res = llmin(res, AABBSphereIntersect(ge[0], ge[1], cam->getOrigin(), cam->mFrustumCornerDist));
+                    }
+                    cpu_f = res != 0;
+                    s.mCpuF += cpu_f;
+                }
+                for (U32 v = 0; v < LLVkBridge::cullVariants; ++v)
+                {
+                    const bool gpu = (words[(size_t)v * W + (i >> 5)] >> (i & 31)) & 1u;
+                    if (cpu_f)
+                    {
+                        ++(gpu ? s.mBothF[v] : s.mMissedF[v]);
+                    }
+                    else if (gpu)
+                    {
+                        ++s.mExtraF[v];
+                    }
+                    if (cpu && gpu)
+                    {
+                        ++s.mBoth[v];
+                    }
+                    else if (cpu)
+                    {
+                        ++s.mMissed[v];
+                        const LLVkBridge::CullRow& row = rec.mRows[i];
+                        const LLVector4a* b = g->getBounds();
+                        const bool bounds_changed = b[0][0] != row.mCenter[0] || b[0][1] != row.mCenter[1] || b[0][2] != row.mCenter[2] || b[1][0] != row.mHalf[0] || b[1][1] != row.mHalf[1] || b[1][2] != row.mHalf[2];
+                        // the GPU took the group (or an ancestor) as occluded at the record, and the CPU does not hold it occluded now
+                        bool occ_changed = false;
+                        for (U32 j = i, guard = 0; guard < 64; ++guard)
+                        {
+                            const U32 f = rec.mRows[j].mFlags;
+                            if (f & 1u) break;
+                            if (f & 4u) { occ_changed = true; break; }
+                            j = rec.mRows[j].mParent;
+                        }
+                        // the stock sphere test calls a box "fully inside" when only its min and max corners are, and then takes every group below without testing it: groups a little beyond the far limit stay in the CPU set
+                        bool far_kept = false;
+                        if (row.mFlags & 8u)
+                        {
+                            const LLVector4a* ex2 = g->getExtents();
+                            far_kept = AABBSphereIntersect(ex2[0], ex2[1], LLViewerCamera::getInstance()->getOrigin(), LLViewerCamera::getInstance()->mFrustumCornerDist) == 0;
+                        }
+                        ++(bounds_changed ? s.mMissedBounds[v] : occ_changed ? s.mMissedOcc[v] : far_kept ? s.mMissedFar[v] : s.mMissedMotion[v]);
+                        static U32 dumped = 0;
+                        if (v == 0 && !bounds_changed && !occ_changed && !far_kept && dumped < 12 && (U32)gFrameCount > 1500)
+                        {
+                            // what the CPU's own tests say about a group the GPU does not pass with the exact frustum (a still camera: nothing should differ)
+                            const LLVector4a* ex = g->getExtents();
+                            LLCamera* cam = LLViewerCamera::getInstance();
+                            const S32 fr = cam->AABBInFrustumNoFarClip(b[0], b[1]);
+                            const S32 sp = AABBSphereIntersect(ex[0], ex[1], cam->getOrigin(), cam->mFrustumCornerDist);
+                            ++dumped;
+                            LL_INFOS("CullShadow") << "MISSED group id " << rec.mIds[i] << " row " << i << " partition " << (g->getSpatialPartition() ? (S32)g->getSpatialPartition()->mPartitionType : -1) << " flags " << row.mFlags
+                                << " elements " << g->getElementCount() << " children " << (g->getOctreeNode() ? (S32)g->getOctreeNode()->getChildCount() : -1) << " center " << b[0][0] << "," << b[0][1] << "," << b[0][2] << " half " << b[1][0] << "," << b[1][1] << "," << b[1][2]
+                                << " ext " << ex[0][0] << "," << ex[0][1] << "," << ex[0][2] << " .. " << ex[1][0] << "," << ex[1][1] << "," << ex[1][2] << " | CPU tests now: frustum " << fr << ", sphere " << sp << " (corner dist " << cam->mFrustumCornerDist
+                                << ", origin " << cam->getOrigin().mV[0] << "," << cam->getOrigin().mV[1] << "," << cam->getOrigin().mV[2] << ") first serial " << g->mCullFirstSerial << " of " << rec.mBuildSerial << LL_ENDL;
+                        }
+                    }
+                    else if (gpu)
+                    {
+                        ++s.mExtra[v];
+                    }
+                }
+            }
+        }
+        // the groups the CPU kept now that did not exist when the record was made: no verdict could have named them
+        U64 cpu_groups = 0, new_groups = 0;
+        auto note = [&](LLSpatialGroup* g)
+        {
+            if (g->mCullId && g->mCullCpuStamp == sCullStamp)
+            {
+                ++cpu_groups;
+                new_groups += g->mCullFirstSerial > rec.mBuildSerial;
+            }
+        };
+        for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i) note(*i);
+        for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i) note(*i);
+        s.mCpuGroups += cpu_groups;
+        s.mNewGroups += new_groups;
+        LLVkBridge::cullDone(rec.mSerial);
+        sCullRecs.pop_front();
+        if (s.mCompared >= 600)
+        {
+            cull_report();
+        }
+    }
+}
+}
+
+void LLCullShadow::poseLog(LLCamera& camera)
+{
+    // once a second: where the camera looks (the run scripts turn the avatar back to its starting yaw after a moving run)
+    static U32 pose_log = 0;
+    if (++pose_log % 60 == 0)
+    {
+        const LLVector3 at = camera.getAtAxis();
+        const LLVector3 o = camera.getOrigin();
+        LL_INFOS("CullPose") << "camera yaw " << atan2f(at.mV[1], at.mV[0]) << " pitch " << asinf(llclamp(at.mV[2], -1.f, 1.f)) << " origin " << o.mV[0] << " " << o.mV[1] << " " << o.mV[2] << LL_ENDL;
+    }
+}
+
+void LLCullShadow::build(LLCamera& camera)
+{
+    const auto t0 = CullClock::now();
+    static const bool factors_read = []()
+    {
+        if (const char* e = getenv("LL_VK_CULL_FACTORS"))
+        {
+            float a = 0, b = 0, c = 0;
+            if (sscanf(e, "%f,%f,%f", &a, &b, &c) == 3)
+            {
+                sCullFactors[0] = a; sCullFactors[1] = b; sCullFactors[2] = c;
+            }
+        }
+        return true;
+    }();
+    (void)factors_read;
+    if (!sCull)
+    {
+        return;
+    }
+    ++sCullBuildSerial;
+    ++sCullStamp;
+
+    // the table: a walk of the covered partitions, parent before child
+    CullRec& rec = sCullBuilt;
+    rec = CullRec();
+    rec.mBuildSerial = sCullBuildSerial;
+    rec.mFrame = (U32)gFrameCount;
+    static std::vector<std::pair<const OctreeNode*, U32>> stack;
+    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+    {
+        LLViewerRegion* region = *iter;
+        for (U32 pi = 0; pi < LLViewerRegion::NUM_PARTITIONS; ++pi)
+        {
+            if (pi == LLViewerRegion::PARTITION_HUD || pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV ||
+                pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE)
+            {
+                continue;
+            }
+            LLSpatialPartition* part = region->getSpatialPartition(pi);
+            if (!part || !part->mOctree || !gPipeline.hasRenderType(part->mDrawableType))
+            {
+                continue;
+            }
+            const bool sphere = !(part->mInfiniteFarClip || (!LLPipeline::sUseFarClip && !gCubeSnapshot));       // as LLSpatialPartition::cull picks its culler
+            stack.clear();
+            stack.push_back({ part->mOctree, ~0u });
+            while (!stack.empty())
+            {
+                const auto top = stack.back();
+                stack.pop_back();
+                LLSpatialGroup* g = (LLSpatialGroup*)top.first->getListener(0);
+                if (!g || g->isDead())
+                {
+                    continue;
+                }
+                if (!g->mCullId)
+                {
+                    g->mCullId = ++sCullNextId;
+                    g->mCullFirstSerial = sCullBuildSerial;
+                    std::lock_guard<std::mutex> lock(sMutex);
+                    sGroups[g->mCullId] = g;
+                }
+                const U32 row_index = (U32)rec.mRows.size();
+                LLVkBridge::CullRow row;
+                const LLVector4a* b = g->getBounds();
+                const LLVector4a* e = g->getExtents();
+                for (int k = 0; k < 3; ++k)
+                {
+                    row.mCenter[k] = b[0][k]; row.mHalf[k] = b[1][k]; row.mExtMin[k] = e[0][k]; row.mExtMax[k] = e[1][k];
+                }
+                row.mParent = top.second == ~0u ? 0u : top.second;
+                row.mFlags = (top.second == ~0u ? 1u : 0u) | (g->hasState(LLSpatialGroup::SKIP_FRUSTUM_CHECK) ? 2u : 0u) | (g->isOcclusionState(LLSpatialGroup::OCCLUDED) ? 4u : 0u) | (sphere ? 8u : 0u) | (g->isEmpty() ? 16u : 0u);
+                row.mPad0 = row.mPad1 = 0.f;
+                rec.mRows.push_back(row);
+                rec.mIds.push_back(g->mCullId);
+                for (U32 c = 0; c < top.first->getChildCount(); ++c)
+                {
+                    stack.push_back({ top.first->getChild(c), row_index });
+                }
+            }
+        }
+    }
+    sCullHaveBuilt = true;
+
+    // the CPU set: every group the cull kept, in the covered partitions (a group with an id)
+    for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i)
+    {
+        if ((*i)->mCullId) (*i)->mCullCpuStamp = sCullStamp;
+    }
+    for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
+    {
+        if ((*i)->mCullId) (*i)->mCullCpuStamp = sCullStamp;
+    }
+
+    poseLog(camera);
+
+    // the camera's motion over the last frames: the bounds the margins are made from
+    CullPose pose = { camera.getOrigin(), camera.getAtAxis(), camera.getLeftAxis(), camera.getUpAxis() };
+    float t_max = 0.f, a_max = 0.f;
+    sCullPoses.push_back(pose);
+    while (sCullPoses.size() > 31)
+    {
+        sCullPoses.pop_front();
+    }
+    for (size_t k = 1; k < sCullPoses.size(); ++k)
+    {
+        const CullPose& p0 = sCullPoses[k - 1];
+        const CullPose& p1 = sCullPoses[k];
+        t_max = llmax(t_max, (p1.mOrigin - p0.mOrigin).length());
+        const F32 ang = llmax(acosf(llclamp(p0.mAt * p1.mAt, -1.f, 1.f)), llmax(acosf(llclamp(p0.mLeft * p1.mLeft, -1.f, 1.f)), acosf(llclamp(p0.mUp * p1.mUp, -1.f, 1.f))));
+        a_max = llmax(a_max, ang);
+    }
+    sCullTBound = llmin(t_max * 5.f, 1000.f);       // over the latency to come: 4 frames and the one it is made in
+    sCullABound = llmin(a_max * 5.f, 3.2f);
+    sCullStats.mTBound += sCullTBound;
+    sCullStats.mABound += sCullABound;
+    ++sCullStats.mBuilds;
+    sCullStats.mBuildMs += cull_ms(t0);
+
+    const auto t1 = CullClock::now();
+    cull_apply();
+    sCullStats.mApplyMs += cull_ms(t1);
+}
+
+void LLCullShadow::send(LLCamera& camera)
+{
+    if (!sCullHaveBuilt || sCullBuilt.mRows.empty())
+    {
+        return;
+    }
+    sCullHaveBuilt = false;
+    const auto t0 = CullClock::now();
+    LLVkBridge::CullParams params;
+    memset(&params, 0, sizeof(params));
+    const U32 planes = llmin<U32>(camera.getPlaneCount(), 7);
+    for (U32 p = 0; p < planes; ++p)
+    {
+        const LLPlane& pl = camera.getAgentPlane(p);
+        for (int k = 0; k < 4; ++k)
+        {
+            params.mPlanes[p][k] = pl[k];
+        }
+    }
+    params.mPlaneCount = planes;
+    const LLVector3 origin = camera.getOrigin();
+    params.mOrigin[0] = origin.mV[0]; params.mOrigin[1] = origin.mV[1]; params.mOrigin[2] = origin.mV[2];
+    params.mCornerDist = camera.mFrustumCornerDist;
+    params.mMotion[0] = sCullTBound;
+    params.mMotion[1] = sCullABound;
+    for (int k = 0; k < 3; ++k)
+    {
+        params.mFactors[k] = sCullFactors[k];
+    }
+    CullRec& rec = sCullBuilt;
+    const U32 serial = LLVkBridge::cullSend(params, rec.mRows.data(), (U32)rec.mRows.size());
+    if (serial)
+    {
+        rec.mSerial = serial;
+        rec.mFrame = (U32)gFrameCount;
+        sCullStats.mBytes += (double)(sizeof(params) + rec.mRows.size() * sizeof(LLVkBridge::CullRow));
+        ++sCullStats.mSends;
+        sCullRecs.push_back(std::move(rec));
+        while (sCullRecs.size() > 8)
+        {
+            LLVkBridge::cullDone(sCullRecs.front().mSerial);
+            sCullRecs.pop_front();
+        }
+        rec = CullRec();
+    }
+    sCullStats.mSendMs += cull_ms(t0);
 }
 
 struct SceneGather

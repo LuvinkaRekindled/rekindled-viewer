@@ -269,6 +269,18 @@ namespace LLVkBridge
     void hizDone(U32 serial);
     void hizSetResults(const U32* results, U32 capacity);       // (worker) the mapped ring
     void hizPublish(U32 slot, U32 serial);                      // (worker) the frame of this serial has finished
+    // S7 C1 (doc/vulkan/S7-design.md section 14, LL_VK_CULL_SHADOW=1): kind 35, the flat group table (CullRow, 64 bytes) tested against the camera frustum, shadow mode only. blob = CullParams then
+    // count rows; mViewProj of the header is unused, mEntries = rows, mFragment = the serial. The worker writes cullVariants bit sets of ceil(rows / 32) words (bit i = row i passes) into a ring slot of cached
+    // host memory; cullRead copies them (variants * ceil(count / 32) words): 1 = copied, 0 = not published yet, -1 = lost.
+    constexpr U32 cullVariants = 4;
+    struct CullParams { F32 mPlanes[7][4]; F32 mOrigin[3]; F32 mCornerDist; F32 mMotion[4]; F32 mFactors[4]; U32 mPlaneCount; U32 mPad[7]; };     // 192 bytes; mMotion = translation bound, rotation bound
+    struct CullRow { F32 mCenter[3]; U32 mParent; F32 mHalf[3]; U32 mFlags; F32 mExtMin[3]; F32 mPad0; F32 mExtMax[3]; F32 mPad1; };       // mFlags: 1 root, 2 skip frustum check, 4 occluded, 8 sphere test
+    static_assert(sizeof(CullParams) == 192 && sizeof(CullRow) == 64, "cull record layout");
+    U32 cullSend(const CullParams& params, const CullRow* rows, U32 count);
+    S32 cullRead(U32 serial, U32 count, U32* out);
+    void cullDone(U32 serial);
+    void cullSetResults(const U32* results, U32 capacity_words);    // (worker) the mapped ring: capacity_words per slot
+    void cullPublish(U32 slot, U32 serial);                         // (worker)
     bool sceneGeoAvailable();       // the worker can keep and draw them (buffer addresses, indirect draws with a first instance, bindless textures)
     // ---- ray query shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md) ----
     // 0 = off (or the device cannot), 1 = ray query shadows replace the cascades, 2 = split screen, 3 = disagreement map. Fixed for the run; the shader programs are compiled for it.

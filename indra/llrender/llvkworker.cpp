@@ -8354,6 +8354,237 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 }
 }
 
+// ---- <FS> S7 C1 (doc/vulkan/S7-design.md section 14), kind 35: the flat group table against the camera frustum, shadow mode: nothing reads the bits but the viewer's comparison log ----
+const char* kCullTestShader = R"GLSL(#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(local_size_x = 32) in;
+struct Row { vec4 c; vec4 h; vec4 emin; vec4 emax; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Rows { Row r[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Params { vec4 v[12]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { uint o[]; };
+layout(push_constant) uniform PC { uvec2 rows; uvec2 params; uvec2 outp; uint count; uint words; } pc;
+shared uint sBits[4];
+bool inside(Row r, uint flags, float m)
+{
+    Params P = Params(pc.params);
+    uint planes = floatBitsToUint(P.v[10].x);
+    vec3 c = r.c.xyz;
+    vec3 hh = r.h.xyz + vec3(m);
+    for (uint p = 0u; p < planes; ++p)
+    {
+        if (p == 5u) continue;                          // the far plane: the CPU's NoFarClip test leaves it out, the sphere test is the far limit
+        vec4 pl = P.v[p];
+        if (dot(pl.xyz, c) + pl.w - dot(abs(pl.xyz), hh) > 0.0) return false;
+    }
+    if ((flags & 8u) != 0u)
+    {
+        vec3 origin = P.v[7].xyz;
+        float rad = P.v[7].w;
+        vec3 dd = max(max(r.emin.xyz - vec3(m) - origin, origin - (r.emax.xyz + vec3(m))), vec3(0.0));
+        if (dot(dd, dd) > rad * rad) return false;
+    }
+    return true;
+}
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    uint lid = gl_LocalInvocationID.x;
+    if (lid < 4u) sBits[lid] = 0u;
+    barrier();
+    if (i < pc.count)
+    {
+        Rows rows = Rows(pc.rows);
+        Params P = Params(pc.params);
+        Row r = rows.r[i];
+        uint flags = floatBitsToUint(r.h.w);
+        uint parent = floatBitsToUint(r.c.w);
+        bool occ = (flags & 5u) == 4u;                  // occluded and not the root
+        if ((flags & 1u) == 0u)
+        {
+            uint a = parent;
+            for (int d = 0; d < 32 && !occ; ++d)
+            {
+                uint f = floatBitsToUint(rows.r[a].h.w);
+                if ((f & 1u) != 0u) break;              // the root is never occluded
+                if ((f & 4u) != 0u) occ = true;
+                a = floatBitsToUint(rows.r[a].c.w);
+            }
+        }
+        float dist = length(r.c.xyz - P.v[7].xyz);
+        float margin = P.v[8].x + dist * P.v[8].y;
+        for (uint v = 0u; v < 4u; ++v)
+        {
+            float m = v == 0u ? 0.0 : margin * P.v[9][v - 1u];
+            bool pass = inside(r, flags, m);            // frustum only: the viewer keeps its own occlusion state on top (the Hi-Z verdicts are the CPU's)
+            if (!pass && (flags & 3u) == 2u)            // SKIP_FRUSTUM_CHECK: taken with a parent that passed
+            {
+                Row pr = rows.r[parent];
+                pass = inside(pr, floatBitsToUint(pr.h.w), m);
+            }
+            if (pass) atomicOr(sBits[v], 1u << lid);
+        }
+    }
+    barrier();
+    if (lid < 4u) Out(pc.outp).o[lid * pc.words + gl_WorkGroupID.x] = sBits[lid];
+}
+)GLSL";
+
+constexpr U32 kCullSlots = 8;
+constexpr U32 kCullSlotWords = 4 * 4096;        // 4 variants of 4096 words = 131072 rows a slot
+
+struct CullShadowState
+{
+    bool mTried = false, mReady = false;
+    VkPipelineLayout mLayout = VK_NULL_HANDLE;
+    VkPipeline mPipe = VK_NULL_HANDLE;
+    Buffer mResults;
+    struct Pending { U32 mSerial, mSlot; U64 mFrame; U32 mWords; };
+    std::deque<Pending> mPending;
+    U64 mRecords = 0, mRows = 0, mTooMany = 0, mNoPipeline = 0, mPublished = 0, mLast = 0;
+};
+CullShadowState sCullShadow;
+
+bool cull_init()
+{
+    CullShadowState& s = sCullShadow;
+    if (s.mReady)
+    {
+        return true;
+    }
+    if (s.mTried)
+    {
+        return false;
+    }
+    s.mTried = true;
+    Context& ctx = Context::instance();
+    VkDevice dev = ctx.getDevice();
+    VkShaderModule mod = hiz_compile(kCullTestShader, "cull test");
+    if (mod == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 32 };
+    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &pcr;
+    if (vkCreatePipelineLayout(dev, &li, nullptr, &s.mLayout) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkComputePipelineCreateInfo pi = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    pi.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    pi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pi.stage.pName = "main";
+    pi.stage.module = mod;
+    pi.layout = s.mLayout;
+    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &s.mPipe) != VK_SUCCESS)
+    {
+        return false;
+    }
+    if (!ctx.createBuffer((VkDeviceSize)kCullSlots * kCullSlotWords * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Readback, s.mResults) || !s.mResults.mMapped || !s.mResults.mAddress)
+    {
+        return false;
+    }
+    memset(s.mResults.mMapped, 0, (size_t)kCullSlots * kCullSlotWords * 4);
+    LLVkBridge::cullSetResults((const U32*)s.mResults.mMapped, kCullSlotWords);
+    s.mReady = true;
+    LL_INFOS("VkCull") << "cull shadow ready: " << kCullSlots << " result slots of " << kCullSlotWords << " words" << LL_ENDL;
+    return true;
+}
+
+void cull_poll()
+{
+    CullShadowState& s = sCullShadow;
+    if (!s.mReady)
+    {
+        return;
+    }
+    Context& ctx = Context::instance();
+    while (!s.mPending.empty() && ctx.frameFinished(s.mPending.front().mFrame))
+    {
+        const CullShadowState::Pending p = s.mPending.front();
+        s.mPending.pop_front();
+        vmaInvalidateAllocation(ctx.getAllocator(), s.mResults.mAllocation, (VkDeviceSize)p.mSlot * kCullSlotWords * 4, (VkDeviceSize)p.mWords * 4 * 4);
+        LLVkBridge::cullPublish(p.mSlot, p.mSerial);
+        ++s.mPublished;
+    }
+}
+
+// kind 35
+void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    CullShadowState& s = sCullShadow;
+    ++s.mRecords;
+    s.mRows += h.mEntries;
+    Renderer& r = Renderer::instance();
+    Context& ctx = Context::instance();
+    cull_poll();
+    if (!cull_init() || !h.mEntries)
+    {
+        ++s.mNoPipeline;
+        return;
+    }
+    const U32 words = (h.mEntries + 31) / 32;
+    if (4 * words > kCullSlotWords)
+    {
+        ++s.mTooMany;
+        return;
+    }
+    const size_t bytes = sizeof(LLVkBridge::CullParams) + (size_t)h.mEntries * sizeof(LLVkBridge::CullRow);
+    Renderer::ScratchAlloc sc = r.allocVertexScratch(bytes);
+    if (!sc.mPtr || !sc.mAddress)
+    {
+        ++s.mNoPipeline;
+        return;
+    }
+    memcpy(sc.mPtr, blob, bytes);
+    const U32 slot = h.mPass % kCullSlots;
+    const U64 out_address = (U64)s.mResults.mAddress + (U64)slot * kCullSlotWords * 4;
+    const U64 params_address = (U64)sc.mAddress;
+    const U64 rows_address = params_address + sizeof(LLVkBridge::CullParams);
+    struct CullPc { U32 mRows[2]; U32 mParams[2]; U32 mOut[2]; U32 mCount; U32 mWords; } pc;
+    static_assert(sizeof(CullPc) == 32, "cull push constants");
+    pc.mRows[0] = (U32)rows_address; pc.mRows[1] = (U32)(rows_address >> 32);
+    pc.mParams[0] = (U32)params_address; pc.mParams[1] = (U32)(params_address >> 32);
+    pc.mOut[0] = (U32)out_address; pc.mOut[1] = (U32)(out_address >> 32);
+    pc.mCount = h.mEntries;
+    pc.mWords = words;
+    const VkPipeline pipe = s.mPipe;
+    const VkPipelineLayout layout = s.mLayout;
+    const bool recorded = r.recordExternal({}, [&](VkCommandBuffer cmd) {
+        if (LLVkBridge::gPhaseTiming)
+        {
+            ctx.gpuStamp(Context::stampTag("cull shadow test"));
+        }
+        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; mb.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        mb.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT; mb.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        di.memoryBarrierCount = 1;
+        di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &di);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
+        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdDispatch(cmd, words, 1, 1);
+        mb.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT; mb.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; mb.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier2(cmd, &di);
+    });
+    if (!recorded)
+    {
+        ++s.mNoPipeline;
+        return;
+    }
+    s.mPending.push_back({ h.mFragment, slot, ctx.getFrameNumber(), words });
+    if (s.mRecords - s.mLast >= 600)
+    {
+        s.mLast = s.mRecords;
+        LL_INFOS("VkCull") << "cull shadow worker over " << s.mRecords << " records: " << (double)s.mRows / (double)s.mRecords << " rows a record, published " << s.mPublished << ", still pending " << s.mPending.size()
+            << "; refused: too many rows " << s.mTooMany << ", no pipeline/other " << s.mNoPipeline << LL_ENDL;
+    }
+}
+
 // <FS> S1 retained fragments: the table id -> entries (kinds 11-13 of LLVkBridge::shadowPackets). Ordered with the draws by the queue, so a release never overtakes a pass that uses it.
 static std::unordered_map<U32, std::vector<LLVkBridge::ShadowPacketEntry>> sShadowFragments;
 static U64 sFragmentMissing = 0;
@@ -8544,6 +8775,11 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     if (h.mKind == 34)
     {
         on_hiz_boxes(h, blob);       // <FS> S7 H1
+        return;
+    }
+    if (h.mKind == 35)
+    {
+        on_cull_rows(h, blob);       // <FS> S7 C1
         return;
     }
     if (h.mKind == 3 || h.mKind == 25 || h.mKind == 26)

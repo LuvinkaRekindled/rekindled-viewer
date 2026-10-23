@@ -33,6 +33,11 @@ S32 LLVkBridge::hizRead(U32, U32, U32*, bool) { return -1; }
 void LLVkBridge::hizDone(U32) {}
 void LLVkBridge::hizSetResults(const U32*, U32) {}
 void LLVkBridge::hizPublish(U32, U32) {}
+U32 LLVkBridge::cullSend(const CullParams&, const CullRow*, U32) { return 0; }
+S32 LLVkBridge::cullRead(U32, U32, U32*) { return -1; }
+void LLVkBridge::cullDone(U32) {}
+void LLVkBridge::cullSetResults(const U32*, U32) {}
+void LLVkBridge::cullPublish(U32, U32) {}
 void LLVkBridge::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
 void LLVkBridge::upscale(const UpscaleArgs&) {}
 U32 LLVkBridge::rtShadowMode() { return 0; }
@@ -933,6 +938,84 @@ void LLVkBridge::hizSetResults(const U32* results, U32 capacity)
 void LLVkBridge::hizPublish(U32 slot, U32 serial)
 {
     gHizPublished[slot % 8].store(serial, std::memory_order_release);
+}
+
+// S7 C1: the cull shadow ring, like the Hi-Z one
+namespace
+{
+std::atomic<U32> gCullPublished[8];
+std::atomic<const U32*> gCullResults{ nullptr };
+std::atomic<U32> gCullCapacity{ 0 };
+std::atomic<U32> gCullDone{ 0 };
+U32 gCullSerial = 0;        // main thread only
+}
+
+U32 LLVkBridge::cullSend(const CullParams& params, const CullRow* rows, U32 count)
+{
+    if (!count || !hizAvailable())
+    {
+        return 0;
+    }
+    const U32 capacity = gCullCapacity.load(std::memory_order_relaxed);
+    if (capacity && (size_t)cullVariants * ((count + 31) / 32) > capacity)
+    {
+        return 0;       // more rows than a slot holds
+    }
+    const U32 serial = gCullSerial + 1;
+    if (serial - gCullDone.load(std::memory_order_acquire) > 6)
+    {
+        return 0;       // the ring would wrap onto a serial that has not been read
+    }
+    gCullSerial = serial;
+    ShadowPacketsHeader header;
+    header.mKind = 35;
+    header.mEntries = count;
+    header.mPass = serial % 8;
+    header.mFragment = serial;
+    std::vector<U8> blob(sizeof(CullParams) + (size_t)count * sizeof(CullRow));
+    memcpy(blob.data(), &params, sizeof(CullParams));
+    memcpy(blob.data() + sizeof(CullParams), rows, (size_t)count * sizeof(CullRow));
+    shadowPackets(header, blob.data(), blob.size());
+    return serial;
+}
+
+S32 LLVkBridge::cullRead(U32 serial, U32 count, U32* out)
+{
+    const U32* results = gCullResults.load(std::memory_order_acquire);
+    const U32 capacity = gCullCapacity.load(std::memory_order_relaxed);
+    const size_t words = (size_t)cullVariants * ((count + 31) / 32);
+    if (!results || !capacity || words > capacity)
+    {
+        return 0;
+    }
+    const U32 slot = serial % 8;
+    const U32 published = gCullPublished[slot].load(std::memory_order_acquire);
+    if (published == serial)
+    {
+        memcpy(out, results + (size_t)slot * capacity, words * 4);
+        std::atomic_thread_fence(std::memory_order_acquire);
+        return gCullPublished[slot].load(std::memory_order_relaxed) == serial ? 1 : -1;
+    }
+    return published > serial ? -1 : 0;
+}
+
+void LLVkBridge::cullDone(U32 serial)
+{
+    U32 cur = gCullDone.load(std::memory_order_relaxed);
+    while (serial > cur && !gCullDone.compare_exchange_weak(cur, serial, std::memory_order_release))
+    {
+    }
+}
+
+void LLVkBridge::cullSetResults(const U32* results, U32 capacity_words)
+{
+    gCullCapacity.store(capacity_words, std::memory_order_relaxed);
+    gCullResults.store(results, std::memory_order_release);
+}
+
+void LLVkBridge::cullPublish(U32 slot, U32 serial)
+{
+    gCullPublished[slot % 8].store(serial, std::memory_order_release);
 }
 
 void LLVkBridge::shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob)
