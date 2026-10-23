@@ -223,3 +223,121 @@ The idea is a **flat table of all spatial groups** (bounds, type flags, parent c
 2. Pop-in policy for C: expanded frustum (recommended) or a CPU frustum over a flat table.
 3. Whether OIT is wanted at all (visual change), and whether it comes before C (the GPU is the closer limiter).
 4. The 6.7 test list (terrain / PBR terrain, shadow-map hill, snapshot, impostors) stays open; it needs no S7 code and can run in any session.
+
+
+## 13. B0 and C0 results: what the visibility chain costs, who reads it, what a fragment cull would drop (2026-10-23, the plaza)
+
+Measure only; nothing here changes what is drawn. Code: `llviscensus.h` and the hooks in `pipeline.cpp`, `llvovolume.cpp` (draw extents), `llvieweroctree.cpp` (`LLHiz::addItem`, the verdicts), `llhiz.h`, `llvkbridge.*`, `llvkworker.cpp` (the Hi-Z test shader gets `mode` / `first`, a second dispatch against the previous pyramid, results buffer 2 x 32768 slots). Taken from the saved branch `s7-census-wip` by hand (no checkout, no restore). **Switches, all default off:** `LL_VK_VISCENSUS=1` (laps and counts, log tag `VisCensus`, one report per 600 main-view post sorts), `LL_VK_VISCENSUS_BOXES=0` (leave the box test out). New `FS_CPU_ZONES` zones: one per partition cull, `postSort: rebuildPriorityGroups / delayed rebuildMesh / sort alpha groups`. No GPU zone timers anywhere. Logs: `<work>\run-logs\b0c0-*.log` (`.smi.csv` = nvidia-smi once a second); runs started by `<work>\b0c0-chain.ps1`.
+
+### 13.1 Which diagnostics were on in each run (numbers are compared only within a row group)
+
+| run | exe | switches | fps (10 s samples, median) | frame avg / p50 / p95 ms | main waited for worker / worker waited for work ms | worker operations / `shadowPackets` / `present` / `rtScene` ms | GPU util (nvidia-smi) |
+|---|---|---|---|---|---|---|---|
+| `fix1` (reference) | 10:23 | none | 68.3 | 14.6 / 14.4 / 18.6 | 0.6 / 0.0 | 14.56 / 6.41 / 4.80 / 1.82 | - |
+| `b0c0-base1` | 10:23 (HEAD) | none | 64.6 | 15.4 / 15.3 / 18.9 | 0.1 / 0.7 | 14.69 / 6.74 / 4.36 / 2.00 | - |
+| `b0c0-off` | 10:46 (this tree) | none (census code compiled in, switches off) | 64.0 | 15.6 / 15.2 / 20.3 | 0.8 / 0.1 | 15.53 / 6.88 / 4.90 / 2.07 | **99 %** (p10 96) |
+| `b0c0-zones` | 10:46 | `FS_CPU_ZONES` | 60.0 | 16.7 / 16.6 / 19.0 | 0.0 / 6.2 | 10.38 / 6.49 / 0.62 / 1.95 | 88 % |
+| `b0c0-cen` | 10:46 | `LL_VK_VISCENSUS=1 _BOXES=0` (laps + counts) | 64.3 | 15.6 / 15.6 / 17.7 | 0.0 / 5.0 | 10.59 / 6.36 / 0.85 / 1.97 | 98 % |
+| `b0c0-box` | 10:46 | `LL_VK_VISCENSUS=1` (laps + counts + the box test) | 64.0 | 15.6 / 15.7 / 17.6 | 0.0 / 3.7 | 11.77 / 6.43 / 2.05 / 1.92 | 98 % |
+| `b0c0-box2` | 10:46 | same as `box` | 64.0 | 15.6 / 15.4 / 18.9 | 0.2 / 1.2 | 14.08 / 6.47 / 4.17 / 1.93 | 99 % |
+| `b0c0-box3` | 10:46 | same as `box` | **68.4** | 14.6 / 14.7 / 16.3 | 0.0 / 4.8 | 9.78 / 5.96 / 0.83 / 1.73 | 94 % |
+
+- **The same configuration gives 64.0 to 68.4 fps from run to run, and the crowd explains it.** Joints in palettes at the end of the runs: `off` 587, `box` 414, `box2` 421, `box3` 378 (`fix1` 519, `base1` 510); triangles a frame in the box census: 14.94 M, 14.26 M, 13.72 M. The lightest crowd (`box3`) is the fastest run, with the GPU time histogram showing frames under 12 ms for the first time (3-13 of 600) and `rtScene` 1.73 ms. So the 68.3 of `fix1` and the 64 of today's plain runs are the same code on different crowds; differences under about 5 % between runs of this scene are not code. This is the "scene drift" the hand-off warns about, larger than it said (+-0.3 ms of `display()`).
+- **Reading of the two waits (hand-off section 5), plain runs (`base1`, `off`):** the worker never waits for work (0.1-0.7 ms), the main thread waits 0.1-0.8 ms for the worker, `present` is 4.4-4.9 ms of the worker's 14.7-15.5 ms, GPU utilisation 99 % (nvidia-smi counts "any kernel running": no idle gaps, not how close to the limit). The worker's own CPU work is about 10.3 ms (`operations` minus `present`). That reads as GPU-limited.
+- **In the diagnostic runs the reading flips with the crowd.** `cen`, `box`, `box2`: fps equal to the plain runs (64.0-64.3) although the worker waits for work 1.2-5.0 ms. `box3` (light crowd, 68.4 fps): the worker waits 4.8 ms for work, the main thread never waits for the worker, `present` is 0.8 ms and GPU utilisation 94 %: **there the main thread (with the census laps and the box building, a few tenths of a ms) sets the frame**. The zones run (zones cost about 1.4 ms on the main thread, loop 17.0 ms) is main-thread limited too: 60 fps, GPU 88 %. So the GPU and the main thread are within about 1 ms of each other, as 12.4 said, and which one limits depends on the crowd.
+
+### 13.2 C0: where the main thread's visibility work goes (plaza; laps of the main view only, `b0c0-cen`, 18 windows of 600 frames; zone values from `b0c0-zones` include the zone cost)
+
+| piece | ms / frame | what it is |
+|---|---|---|
+| `updateCull` | **0.85** (zone 0.92) | partition cull 0.87 (zone): VOLUME 0.63, AVATAR 0.105, the rest small; 134 partition culls a frame (main view + cascades); Hi-Z results applied 0.07 |
+| `stateSort (early)`, main view, `postSort` inside it | **2.43** (zone 2.53) | |
+| ... of which `postSort` | 1.15 | build render map 0.70 (2,218 visible groups), `rebuildPriorityGroups` about 0.39 (zone), delayed `rebuildMesh` 0.025, alpha group sort 0.02, `rebuildGeom` of drawable groups 0.005 |
+| ... the rest of the sort | 1.28 | `markVisible` loop (883 drawables of 276 drawable groups) 0.53; per-drawable sort of 610 drawables 0.33 (`updateDistance` 0.22 of it); visible bridges (547) 0.17; `checkOcclusion` 2,510 calls 0.146; `changeLOD` 2,234 calls, 87 true, 0.023 |
+| **main view total, cull + sort** | **3.3** | of a 15.5 ms frame (21 %) |
+
+- `postSort` is nested inside `stateSort (early)`: the S6-census sum "updateCull 0.9 + stateSort 2.7 + postSort 1.3" counted it twice. The "up to about 3 ms" of sections 2-3 is the whole of 3.3 ms, and C could not remove all of it.
+- Job split of section 12.2: **(a) the decision** = `updateCull` 0.85 + `checkOcclusion` 0.15 = about **1.0 ms**; **(b) state work** = `markVisible` 0.53 + drawable sort 0.33 + bridges 0.17 + `changeLOD` 0.02 + `rebuildPriorityGroups` 0.39 + the other rebuilds 0.03 = about **1.5 ms**; **(c) list production** = build render map 0.70 + alpha sort 0.02 = about **0.7 ms**. (b) is the largest part, as 12.2 expected, and it is the part that stays on the CPU unless its consumers move (C3).
+- The cascade prep runs the same functions on the pool (5.1 `postSort` calls a frame in the zones); the main thread only waits 0.43 (cull job) + 0.38 (render map job) ms for them. Not in the table.
+- 2,218 visible groups a frame; 0 are OCCLUDED by the time `stateSort` sees them (the cull already dropped those).
+
+### 13.3 C0: table-served draws against pool-loop draws, per pass type (visible groups of the main view, draw infos a frame; `b0c0-cen`)
+
+"Table" = draw infos the scene table serves (not listed in the render map); "pool" = listed in the render map and drawn through the typed pool records. Alpha is separate.
+
+| group | table draw infos (tris) | pool loops (tris) |
+|---|---|---|
+| static opaque / mask passes | 3,496 (1.17 M) | 171 (20 k) = 4.7 % of the draws, 1.7 % of the tris |
+| rigged opaque / mask passes | 856 (11.7 M) | 64 (190 k) = 7 % of the draws, 1.6 % of the tris |
+| alpha, static | 1,094 of 1,126 items in the table | 32 |
+| alpha, rigged runs | 464 | about 0 (426 rigged alpha draw infos in the map are the table's runs) |
+
+Left to the pool loops, by pass type: FULLBRIGHT 30 (of 450), FULLBRIGHT_SHINY 17.5, INVISIBLE 15, BUMP 9 + BUMP_RIGGED 2 + POST_BUMP 8, NORMMAP_MASK 7, GLOW 27 + GLOW_RIGGED 26, FULLBRIGHT_ALPHA_MASK 38 + RIGGED 28, ALPHA_MASK 6, SIMPLE 13, GLTF_PBR_RIGGED 2 and GLTF_PBR_ALPHA_MASK_RIGGED 4. Everything else (SIMPLE, MATERIAL, SPECMAP, NORMMAP, NORMSPEC and their mask / rigged variants, FULLBRIGHT, GLOW, GLTF_PBR) is 100 % table.
+
+Not draw infos at all (drawables the pools take by face, enqueued by `stateSort (drawable)`): **283 drawables a frame, 449 faces**: TERRAIN 211 faces, AVATAR 161, CONTROL_AV 60, WATER 9, SKY 8. They have no table fragments; C4 would need fragments or a small always-visible list for them.
+
+By partition (visible groups a frame; with a fragment / every draw served): VOLUME 1,323 (1,283 / 764), AVATAR 843 (621 / 420), BRIDGE 39.5 (36.5 / 22), CONTROL_AV 11.6 (7.6 / 4), PARTICLE 17 (0 / 0). Triangles: AVATAR partition 14.0 M, VOLUME 1.07 M; **91 % of the frame's triangles are rigged** (13.6 M of 14.9 M).
+
+Draw calls: the table replaces 3,421 commands in 40 table draw records a frame; the pool loops draw about 60 more in the main view (deferred 29.9: sky 4, bump 11, gltf pbr 4, avatar 7, animesh 3; post-deferred 31.2: fullbright 3, bump 25, fullbright alpha mask 2, water 1).
+
+### 13.4 C0: readers of the visibility state (grep of the tree at 767b771f)
+
+| state | writers | readers (what they do) | tolerates a verdict 1-2 frames late? |
+|---|---|---|---|
+| group `mVisible[cam]`: `setVisible()` / `isVisible()` / `isRecentlyVisible()` | `markNotCulled` / `LLOctreeMarkNotCulled` (the cull), `stateSort` (`group->setVisible()` in the drawable-group and visible-group loops), `LLVOCachePartition::processOccluders` (llvocache 901-924), resets in the group constructor | `LLDrawable::isVisible` (lldrawable 1138: own stamp, else the group's), `LLSpatialGroup::getUpdateUrgency` (llspatialpartition 756), render loops (llspatialpartition 1288, 1847), `LLVOPartGroup` (llvopartgroup 245), `LLViewerPartSim` (817), `LLViewerTextureAnim` (88, `getVisible(id)`), object cache (llvocache 592, 907) | yes, except the render loops and the update urgency |
+| drawable stamp `LLViewerOctreeEntry::mVisible`: `LLDrawable::setVisible`, `markVisible` | `stateSort` via `markVisible`, `LLDrawable::setVisible`, `LLViewerRegion` (1287, 1925-1950), pipeline.cpp 4736-4752 and 11202 (lights), 20450-20523 (the own avatar's attachments, HUD) | `LLVOAvatar::isVisible` (llvoavatar 9755; about 25 uses: animation, motion, LOD, texture requests, attachments 6309 / 6389 / 12327), `LLVOVolume::isVisible` (916-949: texture sizing), `LLFlexibleObject` (346, 434), `llviewertexture.cpp` 3815 / 3831 (`isRecentlyVisible`: texture boost / decay), `llviewertextureanim` 105, lldrawable.cpp 650 (damped move), 1547-1559 (avatars), pipeline.cpp 3733 (avatar filter in `stateSort`), lldrawable.h 236 (sort order) | yes (a frame late shows as a one-frame pose / LOD freeze at screen entry for avatars) |
+| `OCCLUDED` (`mOcclusionState[cam]`, `STATE_MODE_DIFF` to children) | the Hi-Z verdict (`hizResult`, llvieweroctree 1221-1286); parents propagate | the cull's `earlyFail`, both `stateSort` group loops, `postSort` render map (pipeline 4146, 4185 of the old numbering), bridges, shadow / probe loops, llvocache 597 / 847, llspatialpartition 1108 / 1199 / 1278 (render loops) and 3602 (inherited mask) | the verdict is 2-4 frames old by design; the readers want the current stamp |
+| `mLastUpdateDistance` | `stateSort (bridge)` and `stateSort (group)` after `changeLOD()`, llvovolume 6013, llvopartgroup 689, llspatialpartition 385 | only `LLSpatialGroup::changeLOD()` (llspatialpartition 779: the distance slop that decides LOD / rebuild) | it is bookkeeping of the group state work (b); it moves with it |
+
+Debug-only readers (`renderNormals`, llselectmgr 1767, llviewertexturelist 919, the llviewerdisplay VisDip code) do not matter. **For C:** the readers that need the current frame are the render loops and the group state work in `stateSort`; everything about avatars, textures, flexi, particles and the object cache tolerates one frame. That matches 12.2 and shows no new blocker. The `OCCLUDED` readers are about 25 sites in 7 files: removing the octree walk means keeping `OCCLUDED` correct for each of them (or a flat replacement) in every secondary view.
+
+### 13.5 B0: what a fragment cull over the table items would drop (`b0c0-box`, plaza, 18 windows)
+
+The test: every table item of the visible, not-occluded groups gets a box (draw extents for static items, the model matrix applied for active drawables; for rigged items the owning avatar's animated extents padded 0.25 m) and goes in the Hi-Z batch of the frame. The worker tests it twice: against this frame's view-projection and pyramid (built at the occlusion point of the pass) and against the **previous frame's** pyramid with the previous view-projection. Count only; nothing is dropped. **Caveat: the scripted run stands still** (camera still, avatars idle, only the crowd moves), so the previous pyramid is nearly the same as this frame's: the "hidden, this frame" and "hidden, previous frame" counts agree to the second decimal. A moving camera will make the previous-pyramid drop smaller, or need a margin. Numbers for a moving camera need a run with the camera in motion.
+
+Per frame, 5,960 table items, 14.94 M triangles (items / tris of the type; dropped = frustum outside or hidden by the previous pyramid):
+
+| pass type (items; tris) | no box | frustum outside (GPU) | hidden by previous pyramid | dropped |
+|---|---|---|---|---|
+| SIMPLE (1,406; 567 k) | 4.8 | 21.6 (7.6 k) | 301.8 (38.6 k) | 323 = 23 % of items, 8.2 % of tris |
+| MATERIAL (102; 4.4 k) | 0 | 2 | 52.5 | 54.5 = 53 % |
+| MATERIAL_ALPHA_MASK (273; 90 k) | 0 | 1 | 138.3 | 139 = 51 % items, 12.9 % tris |
+| SPECMAP (197; 145 k) | 0 | 1 | 80.4 | 81 = 41 % items, 2.7 % tris |
+| NORMMAP (79; 35 k) | 0 | 10 | 21.4 | 31 = 40 % items, 22 % tris |
+| NORMSPEC (381; 176 k) | 0 | 5.9 | 161.7 | 168 = 44 % items, 3.0 % tris |
+| NORMSPEC_MASK (69; 4.9 k) | 0 | 0 | 26.8 | 27 = 39 % |
+| FULLBRIGHT (428; 73 k) | 2.5 | 15 | 93.5 | 108 = 25 % items, 12 % tris |
+| GLOW (204; 57 k) | 0.8 | 3 | 67.1 | 70 = 34 % items, 12.8 % tris |
+| ALPHA_MASK (264; 12 k) | 1 | 5 | 81.5 | 86.5 = 33 % items, 21 % tris |
+| ALPHA runs (1,137; 142 k) | 8 | 12 | 495 | 507 = 45 % items, 4.8 % tris |
+| **all rigged items** (about 1,330 items including 464 rigged alpha runs; **13.6 M tris**) | 0 | **0** | **0** | **0** |
+| **all items** | | 79.6 (18.4 k tris) | 1,538 (85 k tris) | **1,618 items = 27.2 %; 103.7 k tris = 0.69 %** |
+
+- **The cull would drop 27 % of the table items and 0.7 % of the triangles.** Three box runs with three different crowds: 27.2 % / 0.69 % (`box`), 27.2 % / 0.68 % (`box2`), 27.0 % / 0.72 % (`box3`). The first session's census (26 % / 0.59 %, the row-copy-bug build) agrees in both shares.
+- **No rigged item is ever dropped**: an avatar's extents box is always on screen and never hidden (31.5 distinct avatars boxed a frame). A per-draw bound for rigged items would need the skinned bounds of each draw, which the viewer does not have. Rigged items are **91 % of the triangles**, so a cull of this kind cannot touch the bulk of the GPU work.
+- Frustum: the CPU culls whole groups, not items, so the 79.6 outside items sit in groups it kept (the CPU's own item test says 104.5 outside; the GPU misses 25 of them because its screen rectangle test is conservative, and it never calls an item outside that the CPU calls inside: 0 for every type). The frustum part of B is small (18 k tris).
+- The dropped items are small: 85 k tris in 1,538 hidden items is 55 tris each. Savings are draw commands and the vertex stage, not fill. In proportion to triangles (0.7 % of 14.9 M) the gain is about 0.1 ms of GPU; adding the roughly 1,600 of 3,421 commands dropped, **my estimate of B's GPU gain in the plaza is well under 0.3 ms** (an estimate: nothing was dropped to measure it).
+- Cost of the measurement: the box test adds about 6,000 boxes to the Hi-Z batch; worker `operations` is 11.8 against 10.6 ms (`b0c0-box` against `b0c0-cen`), absorbed by the `present` wait; fps unchanged.
+
+### 13.6 Is the census code what crashed the earlier exe? (the saved code tested alone)
+
+The hand-off's open item: three default-config runs of the 09:48 exe crashed with a device lost within 1-3 minutes at 10.4-11.2 of 12.84 GB. This tree has the same Hi-Z census changes written again by hand (results buffer 2 x 32768 slots = 6.3 MB, the second dispatch, `mode` / `first` push constants) and nothing else of that tree.
+
+| run | switches | VRAM used (nvidia-smi, whole GPU) median / max, MiB (total 16,311; viewer budget 12,840) | result |
+|---|---|---|---|
+| `b0c0-off` | none | 10,974 / 11,138 | clean 200 s, no device lost |
+| `b0c0-zones` | `FS_CPU_ZONES` | 10,778 / 10,959 | clean |
+| `b0c0-cen` | census, no boxes | 10,724 / 10,923 | clean |
+| `b0c0-box` | census + boxes | 10,457 / 10,620 | clean |
+| `b0c0-box2` | census + boxes | 10,096 / 10,296 | clean |
+| `b0c0-box3` | census + boxes | 9,582 / 9,795 | clean |
+
+Six runs, none with a device lost. Each was about 3.5 minutes in the world (login, 40 s settle, 200 s), longer than the 1-3 minutes of the earlier crashes; the first four sat at the VRAM level of the crashed runs (10.4-11.1 GB), the last two a little below it (10.1 and 9.6 GB, the crowd was lighter). **So the census pieces re-applied here, on a tree that has the row-mirror fix (`3c142c98`), did not cause a device lost.** The crashed 09:48 exe was built before that fix. Adam's reading, which fits: the crashes were a combination of the Hi-Z census changes and the table bug fixed shortly before this session. It cannot be dismissed that the table bug only exposed something in the Hi-Z path (the bigger results buffer, the second dispatch, the barriers around it), so a clean run with the fix in does not clear the Hi-Z code. What else differed in the crashed exe is unknown (it had other uncommitted edits; `s7-census-wip` is a snapshot of that tree and I re-applied the Hi-Z, census and box hunks by hand). Not proven gone: a fault that shows once in N runs would not show in this few. If B or C1 builds on the Hi-Z batch, run the validation layers once with the census switches on (`RT_VALIDATE=1 RT_SYNCVAL=1`).
+
+### 13.7 What this means, and the question for Adam
+
+- **GPU and main thread are within about 1 ms of each other** (13.1): in the plain runs of the heavier crowds the GPU sets the frame (99 % utilised, the worker waits in `present`, never for work), in the lightest crowd with diagnostics on the main thread did. So **C's gain is bounded by that gap, about 1 ms (6-7 %), and only in lighter crowds**; in a heavy crowd it is nothing unless the GPU shrinks first. Its whole prize is at most 3.3 ms of main thread, of which about 1.0 ms is the decision, 0.7 the lists and 1.5 the state work that mostly stays; realistically C2 (lists) and the walk are 1.5 ms at best. C also pays on a weaker CPU.
+- **B cuts items, not triangles**: 27 % of the draw items, 0.7 % of the triangles, nothing of the rigged bulk. GPU gain estimated well under 0.3 ms with a still camera. Cost: a bounds side array, a compute pass, indirect draws for 20+ pass types.
+- **What fills the GPU** (S6-census section 14, older; to re-measure with phases): alpha runs 4.0 ms, ray scene builds 1.3, DLSS 1.3, deferred lighting 2.9, and the rigged geometry (13.6 M triangles a frame, 91 % of all). The levers there are **OIT** (the alpha runs: 1,137 static + 464 rigged items) and the **rigged triangle count** (per-avatar GPU LOD select, section 12.5), neither of which is B or C.
+- **Recommendation:** neither B nor C1 first. If one of the two is wanted for its own sake, C1 (shadow mode: the flat group table tested on the GPU, compared with the CPU's visible set) is the cheaper and safer, and its value is structural; B has the weaker case. By these numbers the next GPU-side work is OIT or the rigged triangle count, not the visibility chain. If B is still wanted, first measure it with a moving camera: the 27 % is for a still camera.
+- **Open from this session:** (1) UI and name tag flicker Adam reported (one pixel shift or bolder text for a frame; not investigated, noted in the side-session folder, to be looked at after S7); (2) the run-to-run spread of the plaza (64.0-68.4 fps with the same code, by crowd) is wider than the 0.3 ms the hand-off assumes: compare A/B pairs inside one run (`LL_VK_*_AB`), not runs; (3) a B0 run with a moving camera; (4) the "second dip" and `arenaNewBlock` timing from the hand-off, untouched.

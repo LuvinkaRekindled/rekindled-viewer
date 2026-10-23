@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 #include "llvieweroctree.h"
 #include "lloccensus.h"
+#include "llviscensus.h"
 #include <deque>
 #include <unordered_map>
 #include "llviewerregion.h"
@@ -801,7 +802,12 @@ U32 sHizNextId = 0;
 U32 sHizBatchSeq = 0;
 std::vector<LLVkBridge::HizBox> sHizBoxes;
 std::vector<LLHizTarget*> sHizBoxTargets;
-struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; };
+struct HizItemInfo { U8 mType; bool mCpuOutside; U32 mTris; };
+std::vector<LLVkBridge::HizBox> sHizItemBoxes;       // S7 B0: the table items' boxes of the pass, and their item type, CPU frustum verdict and triangle count
+std::vector<HizItemInfo> sHizItemInfo;
+F32 sHizPrevVp[16] = {};
+bool sHizHavePrev = false;
+struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; std::vector<HizItemInfo> mItems; bool mPrev = false; };
 std::deque<HizPending> sHizPending;
 }
 
@@ -813,10 +819,23 @@ LLHizTarget::~LLHizTarget()
     }
 }
 
+void LLHiz::addItem(const LLVector4a& center, F32 half_x, F32 half_y, F32 half_z, U8 item_type, U32 tris, bool cpu_outside)
+{
+    LLVkBridge::HizBox box;
+    box.mCenter[0] = center[0]; box.mCenter[1] = center[1]; box.mCenter[2] = center[2];
+    box.mFlags = 0u;
+    box.mHalf[0] = half_x; box.mHalf[1] = half_y; box.mHalf[2] = half_z;
+    box.mPad = 0.f;
+    sHizItemBoxes.push_back(box);
+    sHizItemInfo.push_back({ item_type, cpu_outside, tris });
+}
+
 void LLHiz::begin()
 {
     sHizBoxes.clear();
     sHizBoxTargets.clear();
+    sHizItemBoxes.clear();
+    sHizItemInfo.clear();
     ++sHizBatchSeq;
 }
 
@@ -844,11 +863,26 @@ void LLHiz::add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 h
 void LLHiz::send(const F32* view_proj)
 {
     struct Lap { U64 mT0 = LLOccCensus::sOn ? LLOccCensus::now() : 0; ~Lap() { if (LLOccCensus::sOn) LLOccCensus::sHizTicksSend += LLOccCensus::now() - mT0; } } lap;
-    if (sHizBoxes.empty())
+    if (sHizBoxes.empty() && sHizItemBoxes.empty())
     {
         return;
     }
-    const U32 serial = LLVkBridge::hizSend(sHizBoxes.data(), (U32)sHizBoxes.size(), view_proj);
+    const U32 target_count = (U32)sHizBoxes.size();
+    const bool items = !sHizItemBoxes.empty() && target_count + sHizItemBoxes.size() <= 32768;
+    if (items)
+    {
+        sHizBoxes.insert(sHizBoxes.end(), sHizItemBoxes.begin(), sHizItemBoxes.end());
+    }
+    else
+    {
+        sHizItemInfo.clear();
+    }
+    const U32 serial = LLVkBridge::hizSend(sHizBoxes.data(), (U32)sHizBoxes.size(), view_proj, items && sHizHavePrev ? sHizPrevVp : nullptr, target_count);
+    if (items && serial)
+    {
+        memcpy(sHizPrevVp, view_proj, sizeof(sHizPrevVp));
+        sHizHavePrev = true;
+    }
     if (LLOccCensus::sOn)
     {
         ++(serial ? LLOccCensus::sHizSends : LLOccCensus::sHizRefused);
@@ -863,6 +897,8 @@ void LLHiz::send(const F32* view_proj)
     p.mSerial = serial;
     p.mFrame = (U32)gFrameCount;
     p.mIds.reserve(sHizBoxTargets.size());
+    p.mItems.swap(sHizItemInfo);
+    p.mPrev = items && sHizHavePrev;
     for (LLHizTarget* t : sHizBoxTargets)
     {
         p.mIds.push_back(t->mHizId);
@@ -883,8 +919,9 @@ void LLHiz::apply()
     while (!sHizPending.empty())
     {
         HizPending& p = sHizPending.front();
-        words.resize(3 * p.mIds.size());
-        S32 r = LLVkBridge::hizRead(p.mSerial, (U32)p.mIds.size(), words.data());
+        const size_t all_boxes = p.mIds.size() + p.mItems.size();
+        words.resize(3 * all_boxes);
+        S32 r = LLVkBridge::hizRead(p.mSerial, (U32)all_boxes, words.data());
         if (r == 0)
         {
             if ((U32)gFrameCount - p.mFrame > 60)
@@ -953,6 +990,44 @@ void LLHiz::apply()
             }
             static const bool ignore = getenv("LL_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
             t->hizResult(ignore ? false : occluded);
+        }
+        if (!p.mItems.empty())
+        {
+            // S7 B0: the verdicts for the table items. Frustum = bits 17 (rectangle off the screen) / 19 (wholly behind the camera) of the test against this record's own view-projection; hidden A = occluded by the pyramid
+            // of this record (built at the occlusion point of the pass); hidden B = occluded by the pyramid of the record before, tested with the view-projection of that record (bit 31 of its word = a verdict was made)
+            static std::vector<U32> prev_words;
+            prev_words.resize(words.size());
+            const bool have_b = p.mPrev && LLVkBridge::hizRead(p.mSerial, (U32)all_boxes, prev_words.data(), true) == 1;
+            ++LLVisCensus::sBBatches;
+            LLVisCensus::sBBatchesValidB += have_b;
+            const U32 outside_bits = (1u << 17) | (1u << 19);
+            for (size_t k = 0; k < p.mItems.size(); ++k)
+            {
+                using namespace LLVisCensus;
+                const HizItemInfo& it = p.mItems[k];
+                const U32 type = it.mType;
+                const U32 tris = it.mTris;
+                const U32 wa = words[3 * (p.mIds.size() + k)];
+                const bool gpu_out = (wa & 1u) && (wa & outside_bits);
+                ++sBTested[type];
+                sBTestedTris[type] += tris;
+                if (gpu_out) { ++sBGpuOut[type]; sBGpuOutTris[type] += tris; }
+                if (it.mCpuOutside) { ++sBCpuOut[type]; sBCpuOutNotGpu[type] += !gpu_out; }
+                else if (gpu_out) { ++sBGpuOutNotCpu[type]; }
+                if ((wa & 1u) && !gpu_out) { ++sBHidA[type]; sBHidATris[type] += tris; }
+                bool hid_b = false;
+                if (have_b)
+                {
+                    const U32 wb = prev_words[3 * (p.mIds.size() + k)];
+                    if (wb & 0x80000000u)
+                    {
+                        ++sBValidB[type];
+                        hid_b = (wb & 1u) && !(wb & outside_bits);
+                        if (hid_b) { ++sBHidB[type]; sBHidBTris[type] += tris; }
+                    }
+                }
+                if (gpu_out || hid_b) { ++sBDropB[type]; sBDropBTris[type] += tris; }
+            }
         }
         LLVkBridge::hizDone(p.mSerial);
         sHizPending.pop_front();

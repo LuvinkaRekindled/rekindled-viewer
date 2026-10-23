@@ -1,0 +1,45 @@
+[18 win] frame interval 15.137 ms (the main view's laps per frame, 600 post sorts) | updateCull 0.846 ms (1 calls/frame)
+[18 win] stateSort 2.429 ms (1 calls/frame): checkOcclusion 0.146 (2510.167 calls) | markVisible loop 0.53 (858.722 drawables) | changeLOD 0.023 (2233.944 calls, 86.833 true) | drawable sort 0.329 (607.278 calls; updateDistance 0.222 for 607.278) | bridges 0.174 (547.444) | groups: drawable 276.444, visible 2233.944, occluded 0
+[18 win] postSort 1.154 ms: rebuildGeom of drawable groups 0.005 | build render map 0.703 | delayed rebuildMesh 0.025 | sort alpha groups 0.021 | alpha groups 587.556 (items 1125.944, in the table 1093.556), rigged alpha groups 126.611
+[18 win] partition PARTICLE: visible groups 17, elements 21.111, groups with a table fragment 0 (all draws served 0), draw infos 32.333, tris 1828.833
+[18 win] partition VOLUME: visible groups 1322.889, elements 5024.278, groups with a table fragment 1283 (all draws served 764.333), draw infos 4159.722, tris 1066816.389
+[18 win] partition BRIDGE: visible groups 39.5, elements 81.556, groups with a table fragment 36.5 (all draws served 21.944), draw infos 108.444, tris 7572.944
+[18 win] partition AVATAR: visible groups 843.333, elements 5244.222, groups with a table fragment 620.944 (all draws served 420.278), draw infos 1804.667, tris 14034706.444
+[18 win] partition CONTROL_AV: visible groups 11.611, elements 53.722, groups with a table fragment 7.556 (all draws served 3.944), draw infos 34.222, tris 40551.278
+[18 win] pass SIMPLE: draw infos from the table 1389.522 (563187.167 tris), left to the pool loops 13 (380 tris)
+[18 win] pass SIMPLE_RIGGED: draw infos from the table 132.1 (2650950.444 tris), left to the pool loops 0 (0 tris)
+[18 win] pass FULLBRIGHT: draw infos from the table 420.567 (73130.111 tris), left to the pool loops 30.506 (1403.722 tris)
+[18 win] pass FULLBRIGHT_RIGGED: draw infos from the table 12.517 (281738.056 tris), left to the pool loops 2 (23610 tris)
+[18 win] pass INVISIBLE: draw infos from the table 0 (0 tris), left to the pool loops 15 (140 tris)
+[18 win] pass FULLBRIGHT_SHINY: draw infos from the table 0 (0 tris), left to the pool loops 17.311 (1441.667 tris)
+[18 win] pass BUMP: draw infos from the table 0 (0 tris), left to the pool loops 9 (3764 tris)
+[18 win] pass BUMP_RIGGED: draw infos from the table 0 (0 tris), left to the pool loops 2 (68968 tris)
+[18 win] pass POST_BUMP: draw infos from the table 0 (0 tris), left to the pool loops 8 (4419 tris)
+[18 win] pass MATERIAL: draw infos from the table 103.767 (4385.056 tris), left to the pool loops 0 (0 tris)
+[18 win] pass MATERIAL_RIGGED: draw infos from the table 22.994 (172131.833 tris), left to the pool loops 0 (0 tris)
+[18 win] pass MATERIAL_ALPHA_MASK: draw infos from the table 275.439 (83602.444 tris), left to the pool loops 0 (0 tris)
+[18 win] pass MATERIAL_ALPHA_MASK_RIGGED: draw infos from the table 47.867 (1374497.333 tris), left to the pool loops 0 (0 tris)
+[18 win] pass SPECMAP: draw infos from the table 196.794 (145223.833 tris), left to the pool loops 0 (0 tris)
+[18 win] pass SPECMAP_RIGGED: draw infos from the table 91.467 (1003731.222 tris), left to the pool loops 0 (0 tris)
+[18 win] pass SPECMAP_MASK: draw infos from the table 3.939 (3481 tris), left to the pool loops 0 (0 tris)
+[18 win] pass SPECMAP_MASK_RIGGED: draw infos from the table 46.417 (277303.389 tris), left to the pool loops 0 (0 tris)
+[18 win] pass NORMMAP: draw infos from the table 78.078 (35271.111 tris), left to the pool loops 0 (0 tris)
+[18 win] pass NORMMAP_RIGGED: draw infos from the table 91.683 (837280.5 tris), left to the pool loops 0 (0 tris)
+[18 win] pass NORMMAP_MASK: draw infos from the table 2.311 (196 tris), left to the pool loops 7 (7016 tris)
+[18 win] pass NORMMAP_MASK_RIGGED: draw infos from the table 3 (35826 tris), left to the pool loops 0 (0 tris)
+[18 win] pass NORMSPEC: draw infos from the table 381.056 (177622.889 tris), left to the pool loops 0 (0 tris)
+[18 win] pass NORMSPEC_RIGGED: draw infos from the table 250.2 (3592078.167 tris), left to the pool loops 0 (0 tris)
+[18 win] pass NORMSPEC_MASK: draw infos from the table 68.344 (4921.111 tris), left to the pool loops 0 (0 tris)
+[18 win] pass NORMSPEC_MASK_RIGGED: draw infos from the table 118.906 (1231358.278 tris), left to the pool loops 0 (0 tris)
+[18 win] pass GLOW: draw infos from the table 201.983 (56536.611 tris), left to the pool loops 27 (1608 tris)
+[18 win] pass GLOW_RIGGED: draw infos from the table 7.222 (31073.167 tris), left to the pool loops 25.883 (37041.5 tris)
+[18 win] pass ALPHA: draw infos from the table 0 (0 tris), left to the pool loops 1125.894 (137219.389 tris)
+[18 win] pass ALPHA_RIGGED: draw infos from the table 0 (0 tris), left to the pool loops 426.533 (1938995.222 tris)
+[18 win] pass ALPHA_MASK: draw infos from the table 277.5 (15638.667 tris), left to the pool loops 6 (12 tris)
+[18 win] pass FULLBRIGHT_ALPHA_MASK: draw infos from the table 45.033 (1663.111 tris), left to the pool loops 38 (212 tris)
+[18 win] pass FULLBRIGHT_ALPHA_MASK_RIGGED: draw infos from the table 10.294 (49784.556 tris), left to the pool loops 27.883 (16631.5 tris)
+[18 win] pass GLTF_PBR: draw infos from the table 49.872 (1074.333 tris), left to the pool loops 0 (0 tris)
+[18 win] pass GLTF_PBR_RIGGED: draw infos from the table 13.261 (138292.722 tris), left to the pool loops 2 (27280 tris)
+[18 win] pass GLTF_PBR_ALPHA_MASK: draw infos from the table 2 (7709 tris), left to the pool loops 0 (0 tris)
+[18 win] pass GLTF_PBR_ALPHA_MASK_RIGGED: draw infos from the table 8.044 (15100 tris), left to the pool loops 4 (16546 tris)
+[18 win] non-volume drawables enqueued by stateSort: 280.546 a frame; their faces by pool, per frame: SKY 8 TERRAIN 211 AVATAR 160.594 CONTROL_AV 60.256 WATER 9
