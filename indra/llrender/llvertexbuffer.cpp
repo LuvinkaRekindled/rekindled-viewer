@@ -41,6 +41,8 @@
 #include "llshaderprogram.h"
 #include "llmemory.h"
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
+#include "llvkbridge.h"
 
 //Next Highest Power Of Two
 //helper function, returns first number > v that is a power of 2, or v if v is already a power of 2
@@ -858,6 +860,66 @@ void LLVertexBuffer::clone(LLVertexBuffer& target) const
     }
 }
 
+// <FS> S6.6: with a pull program bound (LL_VERTEX_PULL) a draw of this buffer is the one entry of a geometry record (kind 32): the arrays are read by address, the matrices of the stack travel in
+// the record. The uniforms the program keeps besides them are written as before (syncMatrices); the state, texture units and uniforms of the draw ride in the stream in front of the record.
+bool LLVertexBuffer::pullDraw(U32 mode, bool indexed, U32 first, U32 count) const
+{
+    LLShaderProgram* program = LLShaderProgram::sCurBoundShaderPtr;
+    if (!program || !program->isVertexPull())
+    {
+        return false;
+    }
+    if (!mVertexBufferId || (mode != LLRender::TRIANGLES && mode != LLRender::TRIANGLE_STRIP)
+        || (indexed && (!mIndexBufferId || mIndicesType != ComponentType::U16)) || !hasDataType(TYPE_VERTEX) || getOffset(TYPE_VERTEX) != 0)
+    {
+        // a pull program draws nothing through the classic path: say so (once per program and reason), so a missing mesh is not a silent one
+        static std::set<std::string> told;
+        const std::string why = program->mName + (!mVertexBufferId ? ": no vertex buffer" : (mode != LLRender::TRIANGLES && mode != LLRender::TRIANGLE_STRIP) ? ": mode " + std::to_string(mode)
+            : (indexed && !mIndexBufferId) ? ": no index buffer" : (indexed && mIndicesType != ComponentType::U16) ? ": 32 bit indices" : !hasDataType(TYPE_VERTEX) ? ": no positions" : ": position offset");
+        if (told.insert(why).second)
+        {
+            LL_WARNS("ShadowPackets") << "a draw of a pull program is refused (" << why << "): it is not drawn" << LL_ENDL;
+        }
+        return false;
+    }
+    gRender.syncMatrices();
+    const glm::mat4 mv = gRender.getModelviewMatrix();
+    const glm::mat4 mvp = gRender.getProjectionMatrix() * mv;
+    const glm::mat4 n = glm::transpose(glm::inverse(mv));
+    F32 matrices[44];
+    memcpy(matrices, glm::value_ptr(mv), 64);
+    memcpy(matrices + 16, glm::value_ptr(mvp), 64);
+    for (int col = 0; col < 3; ++col)
+    {
+        matrices[32 + 4 * col + 0] = n[col][0];
+        matrices[32 + 4 * col + 1] = n[col][1];
+        matrices[32 + 4 * col + 2] = n[col][2];
+        matrices[32 + 4 * col + 3] = 0.f;
+    }
+    LLVkBridge::GeoEntry e = {};
+    e.mVertexBuffer = mVertexBufferId;
+    e.mIndexBuffer = indexed ? mIndexBufferId : 0;
+    e.mFirstIndex = first;
+    e.mIndexCount = count;
+    e.mFlags = (indexed ? 0u : (U32)LLVkBridge::GEO_NO_INDEX) | (mode == LLRender::TRIANGLE_STRIP ? (U32)LLVkBridge::GEO_STRIP : 0u);
+    e.mNormalOffset = hasDataType(TYPE_NORMAL) ? getOffset(TYPE_NORMAL) : 0;
+    e.mTexcoordOffset = hasDataType(TYPE_TEXCOORD0) ? getOffset(TYPE_TEXCOORD0) : 0;
+    e.mColorOffset = hasDataType(TYPE_COLOR) ? getOffset(TYPE_COLOR) : 0;
+    e.mTangentOffset = hasDataType(TYPE_TANGENT) ? getOffset(TYPE_TANGENT) : (hasDataType(TYPE_CLOTHWEIGHT) ? getOffset(TYPE_CLOTHWEIGHT) : 0);
+    e.mTexcoord1Offset = hasDataType(TYPE_TEXCOORD1) ? getOffset(TYPE_TEXCOORD1) : 0;
+    e.mTexcoord2Offset = hasDataType(TYPE_TEXCOORD2) ? getOffset(TYPE_TEXCOORD2) : 0;
+    e.mWeightOffset = hasDataType(TYPE_WEIGHT) ? getOffset(TYPE_WEIGHT) : 0;
+    U8 blob[sizeof(LLVkBridge::GeoEntry) + sizeof(matrices)];
+    memcpy(blob, &e, sizeof(e));
+    memcpy(blob + sizeof(e), matrices, sizeof(matrices));
+    LLVkBridge::ShadowPacketsHeader header;
+    header.mKind = 32;
+    header.mEntries = 1;
+    header.mMatrices = 1;
+    LLVkBridge::shadowPackets(header, blob, sizeof(blob));
+    return true;
+}
+
 void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indices_offset) const
 {
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_DRAW);
@@ -865,6 +927,10 @@ void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indi
     llassert(validateRange(start, end, count, indices_offset));
     llassert(mVertexBufferId == sRenderBufferId);
     llassert(mIndexBufferId == sRenderIndicesId);
+    if (pullDraw(mode, true, indices_offset, count))
+    {
+        return;
+    }
     gRender.syncMatrices();
     LLVkAsync::drawRangeElements(sPrimitive[mode], start, end, count, mIndicesType, (const void*)(indices_offset * (size_t) mIndicesStride));
 }
@@ -891,6 +957,10 @@ void LLVertexBuffer::drawArrays(U32 mode, U32 first, U32 count) const
     llassert(mVertexBufferId == sRenderBufferId);
     llassert(mIndexBufferId == sRenderIndicesId);
 
+    if (pullDraw(mode, false, first, count))
+    {
+        return;
+    }
     gRender.syncMatrices();
     LLVkAsync::drawArrays(sPrimitive[mode], first, count);
 }

@@ -67,7 +67,7 @@ void LLDrawPoolGLTFPBR::renderDeferred(S32 pass)
         pushGeometryPackets(mRenderType, fallback);
         if (!fallback.empty())
         {
-            gDeferredPBROpaqueProgram.bind();
+            ll_pull_or(&gDeferredPBROpaqueProgram)->bind();       // S6.6
             for (LLDrawInfo* params : fallback)
             {
                 pushGLTFBatch(*params);

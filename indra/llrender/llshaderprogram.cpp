@@ -1299,11 +1299,16 @@ void LLShaderProgram::mapUniform(S32 index)
 void LLShaderProgram::clearPermutations()
 {
     mDefines.clear();
+    mVertexPull = false;
 }
 
 void LLShaderProgram::addPermutation(std::string name, std::string value)
 {
     mDefines[name] = value;
+    if (name == "LL_VERTEX_PULL")
+    {
+        mVertexPull = true;
+    }
 }
 
 void LLShaderProgram::addConstant(const LLShaderProgram::eShaderConsts shader_const)

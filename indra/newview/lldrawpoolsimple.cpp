@@ -287,7 +287,7 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
     LLShaderProgram* shader = nullptr;
     if (LLPipeline::sRenderingHUDs)
     {
-        shader = &gHUDFullbrightProgram;
+        shader = ll_pull_or(&gHUDFullbrightProgram);        // S6.6
     }
     else
     {
@@ -359,7 +359,7 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     LLShaderProgram* shader = nullptr;
     if (LLPipeline::sRenderingHUDs)
     {
-        shader = &gHUDFullbrightAlphaMaskProgram;
+        shader = ll_pull_or(&gHUDFullbrightAlphaMaskProgram);       // S6.6
     }
     else
     {

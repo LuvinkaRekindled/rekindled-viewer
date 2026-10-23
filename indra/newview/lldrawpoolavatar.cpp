@@ -584,7 +584,7 @@ void LLDrawPoolAvatar::beginDeferredRigid()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
-    sVertexProgram = &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
+    sVertexProgram = ll_pull_or(&gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram);       // S6.6
     sDiffuseChannel = sVertexProgram->enableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
     sVertexProgram->bind();
     sVertexProgram->setMinimumAlpha(LLDrawPoolAvatar::sMinimumAlpha);

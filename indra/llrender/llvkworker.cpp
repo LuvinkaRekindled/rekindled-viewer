@@ -4258,6 +4258,12 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     if (h.mEntries == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table") || !r.bindlessAvailable())
     {
         ++sStats.mNoProgram;
+        static std::set<std::string> told;
+        const std::string why = program ? program->getName() + (!program->isValid() ? ": program not valid" : !program->hasUniform("ll_packet_table") ? ": no packet table" : ": bindless not available") : std::string("no program");
+        if (h.mEntries && told.insert(why).second)
+        {
+            LL_WARNS("VkScene") << "a geometry packet record is not drawn (" << why << ")" << LL_ENDL;
+        }
         return;
     }
     const LLVkBridge::GeoEntry* entries = (const LLVkBridge::GeoEntry*)blob;
@@ -4291,13 +4297,22 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         U8* raw = (U8*)table.mPtr + stride * i;
         memset(raw, 0, stride);
         GeoGpu& g = *(GeoGpu*)raw;
+        const bool no_index = (e.mFlags & LLVkBridge::GEO_NO_INDEX) != 0;       // S6.6: a drawArrays: no index buffer
         Buf* vb = packet_buffer(e.mVertexBuffer);
-        Buf* ib = packet_buffer(e.mIndexBuffer);
-        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+        Buf* ib = no_index ? nullptr : packet_buffer(e.mIndexBuffer);
+        if (!vb || !vb->mVk.valid() || !vb->mVk.mAddress || (!no_index && (!ib || !ib->mVk.valid() || !ib->mVk.mAddress)))
         {
+            // (said once per program and reason: a draw that goes missing is not a silent one)
+            static std::set<std::string> told;
+            const std::string why = program->getName() + (!vb ? ": vertex buffer unknown" : !vb->mVk.valid() ? ": vertex buffer not created" : !vb->mVk.mAddress ? ": vertex buffer without an address"
+                : (!no_index && !ib) ? ": index buffer unknown" : (!no_index && !ib->mVk.valid()) ? ": index buffer not created" : ": index buffer without an address");
+            if (told.insert(why).second)
+            {
+                LL_WARNS("VkScene") << "a geometry packet entry is skipped (" << why << ")" << LL_ENDL;
+            }
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
         }
-        const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
+        const U64 pa = (U64)vb->mVk.mAddress, ia = no_index ? 0 : (U64)ib->mVk.mAddress;
         const U64 na = pa + e.mNormalOffset, ta = pa + e.mTexcoordOffset, ca = pa + e.mColorOffset;
         const U64 tga = pa + e.mTangentOffset, t1a = pa + e.mTexcoord1Offset, t2a = pa + e.mTexcoord2Offset;
         g.mPositions[0] = (U32)pa;
@@ -4355,7 +4370,10 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
             // positions are the vec4 array at the start of the vertex buffer, the normals (or the next array) follow it
             const U32 next = e.mNormalOffset ? e.mNormalOffset : e.mTexcoordOffset;
             const U32 verts = next ? next / 16 : (U32)(vb->mVk.mSize / 16);
-            probe_note(e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, verts ? verts - 1 : 0);
+            if (ib)
+            {
+                probe_note(e.mVertexBuffer, e.mIndexBuffer, *vb, *ib, e.mFirstIndex, e.mIndexCount, verts ? verts - 1 : 0);
+            }
         }
         U32 slot[4] = {};
         for (U32 t = 0; t < 4; ++t)
@@ -4377,7 +4395,10 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         counts[i] = e.mIndexCount;
         index_buffers[i] = ib;
         vb->mLastUseFrame = frame_now;
-        ib->mLastUseFrame = frame_now;
+        if (ib)
+        {
+            ib->mLastUseFrame = frame_now;
+        }
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
         {
             packet_used.push_back(e.mVertexBuffer);
@@ -4445,11 +4466,16 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
 
     if (!prepare_draw(vi, used_cache))
     {
+        static std::set<std::string> told;
+        if (told.insert(program->getName()).second)
+        {
+            LL_WARNS("VkScene") << "a geometry packet record is not drawn (" << program->getName() << ": the draw could not be prepared)" << LL_ENDL;
+        }
         return;
     }
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.setTopology(topology(h.mEntries && (entries[0].mFlags & LLVkBridge::GEO_STRIP) ? LLVkFormat::TOP_TRIANGLE_STRIP : LLVkFormat::TOP_TRIANGLES));      // (S6.6: a strip is a record of one entry)
     r.bindlessFlush();
 
     if (indexed)

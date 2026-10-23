@@ -217,7 +217,9 @@ namespace LLVkBridge
     enum GeoFlags : U32
     {
         GEO_ONE_TEXTURE = 1,        // one diffuse texture, mTextures[0]: the vertices carry no texture index
-        GEO_RIGGED = 2              // A1 (kind 25): a rigged draw, mWeightOffset / mPaletteOffset / mJoints are valid
+        GEO_RIGGED = 2,             // A1 (kind 25): a rigged draw, mWeightOffset / mPaletteOffset / mJoints are valid
+        GEO_NO_INDEX = 4,           // S6.6: no index buffer: mFirstIndex is the first vertex, mIndexCount the vertex count (a drawArrays)
+        GEO_STRIP = 8               // S6.6: the draw is a triangle strip (a record of one entry)
     };
     struct GeoEntry
     {

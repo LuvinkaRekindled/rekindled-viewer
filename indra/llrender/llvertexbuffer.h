@@ -276,6 +276,8 @@ public:
     void draw(U32 mode, U32 count, U32 indices_offset) const;
     void drawArrays(U32 mode, U32 offset, U32 count) const;
     void drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indices_offset) const;
+    bool pullDraw(U32 mode, bool indexed, U32 first, U32 count) const;       // <FS> S6.6: the draw as an entry of a geometry record when a pull program is bound
+
 
     // draw without syncing matrices.  If you're positive there have been no matrix
     // since the last call to syncMatrices, this is much faster than drawRange

@@ -402,8 +402,10 @@ static std::string pull_prologue(const std::vector<std::pair<std::string, std::s
     s += "    {\n";
     s += "        GeoPacket ll_pk = GeoPackets(ll_packet_table).p[gl_InstanceIndex];\n";
     s += "        uint ll_i = ll_pk.first + uint(gl_VertexIndex);\n";
-    s += "        uint ll_word = GeoWords(ll_pk.indices).w[ll_i >> 1];\n";
-    s += "        uint ll_index = ((ll_i & 1u) != 0u) ? (ll_word >> 16) : (ll_word & 0xFFFFu);\n";
+    s += "        uint ll_index = ll_i;\n";
+    s += "        if ((ll_pk.flags & 4u) == 0u)\n        {\n";
+    s += "            uint ll_word = GeoWords(ll_pk.indices).w[ll_i >> 1];\n";
+    s += "            ll_index = ((ll_i & 1u) != 0u) ? (ll_word >> 16) : (ll_word & 0xFFFFu);\n        }\n";
     s += "        GeoMatrix ll_m = GeoMatrices(ll_packet_models).m[ll_pk.model];\n";
     for (const auto& a : attrs)
     {
@@ -436,16 +438,19 @@ static std::string pull_prologue(const std::vector<std::pair<std::string, std::s
         }
         else if (name == "tangent")
         {
-            s += "        tangent = GeoVec4(ll_pk.tangents).v[ll_index];\n";
+            // (a mesh without the array has its offset 0, the address of the positions: the attribute is then 0, as the unset attribute of the old draw is)
+            s += "        tangent = all(equal(ll_pk.tangents, ll_pk.positions)) ? vec4(0.0) : GeoVec4(ll_pk.tangents).v[ll_index];\n";
         }
         else if (name == "clothing")
         {
-            s += "        clothing = GeoVec4(ll_pk.tangents).v[ll_index];\n";          // (the avatar's clothing array travels in the tangent slot: no mesh has both)
+            s += "        clothing = all(equal(ll_pk.tangents, ll_pk.positions)) ? vec4(0.0) : GeoVec4(ll_pk.tangents).v[ll_index];\n";          // (the avatar's clothing array travels in the tangent slot: no mesh has both)
         }
         else if (name == "weight")
         {
             // a float a vertex (the avatar body); GL fills a vec4 attribute from one float as (x, 0, 0, 1)
-            s += type == "vec4" ? "        weight = vec4(GeoFloats(ll_pk.weights).f[ll_index], 0.0, 0.0, 1.0);\n" : "        weight = GeoFloats(ll_pk.weights).f[ll_index];\n";
+            // (a draw without the array, a program that skins by the library's `weight` and is drawn rigid, has none: nothing is read)
+            s += type == "vec4" ? "        if (any(notEqual(ll_pk.weights, uvec2(0u)))) weight = vec4(GeoFloats(ll_pk.weights).f[ll_index], 0.0, 0.0, 1.0);\n"
+                                : "        if (any(notEqual(ll_pk.weights, uvec2(0u)))) weight = GeoFloats(ll_pk.weights).f[ll_index];\n";
         }
         else
         {
@@ -658,7 +663,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
     const bool pull_vertex = defines && defines->find("LL_VERTEX_PULL") != defines->end() && type == ShaderStage::Vertex;
     std::vector<std::pair<std::string, std::string> > pull_attrs;
     std::vector<std::string> pull_mats;
-    bool pull_main_seen = false, pull_main_done = false;
+    bool pull_main_seen = false, pull_main_done = false, pull_skin_seen = false;
     if (pull_vertex)
     {
         // S6.6: the declarations of the geometry packet path (the layout of the worker's rows, as diffusePullV.glsl)
@@ -928,19 +933,34 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                 if (pull_parse_decl(line, "in", decl_type, decl_name))
                 {
                     pull_attrs.push_back({ decl_type, decl_name });         // an attribute becomes a global the start of main() fills
-                    line = decl_type + " " + decl_name + ";\n#define LL_PULL_HAS_" + decl_name + " 1\n";
+                    line = "#ifndef LL_PULL_HAS_" + decl_name + "\n" + decl_type + " " + decl_name + ";\n#define LL_PULL_HAS_" + decl_name + " 1\n#endif\n";       // (a shader may declare it in more than one branch)
                 }
                 else if (pull_parse_decl(line, "uniform", decl_type, decl_name) && (decl_type == "mat4" || decl_type == "mat3")
                          && (decl_name == "modelview_matrix" || decl_name == "modelview_projection_matrix" || decl_name == "normal_matrix" || decl_name == "texture_matrix0"))
                 {
                     pull_mats.push_back(decl_name);
-                    line = decl_type + " " + decl_name + ";\n#define LL_PULL_HAS_" + decl_name + " 1\n";
+                    line = "#ifndef LL_PULL_HAS_" + decl_name + "\n" + decl_type + " " + decl_name + ";\n#define LL_PULL_HAS_" + decl_name + " 1\n#endif\n";       // (a shader may declare it in more than one branch)
                 }
                 else if (!pull_main_done)
                 {
+                    if (!pull_main_seen && line.find("getSkinnedTransform") != std::string::npos)
+                    {
+                        pull_skin_seen = true;          // (the avatar skin function of the library reads `weight`)
+                    }
                     if (!pull_main_seen && line.find("void main") != std::string::npos)
                     {
                         pull_main_seen = true;
+                        bool has_weight = false;
+                        for (const auto& a : pull_attrs)
+                        {
+                            has_weight = has_weight || a.second == "weight";
+                        }
+                        if (pull_skin_seen && !has_weight)
+                        {
+                            // the main shader does not declare `weight`, only the library does (the alpha and shadow avatar shaders): it is declared here, so that the start of main() fills it
+                            pull_attrs.push_back({ "vec4", "weight" });
+                            line = "#ifndef LL_PULL_HAS_weight\nvec4 weight;\n#define LL_PULL_HAS_weight 1\n#endif\n" + line;
+                        }
                     }
                     if (pull_main_seen)
                     {
