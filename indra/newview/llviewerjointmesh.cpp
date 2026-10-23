@@ -578,6 +578,41 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         }
     }
 
+    {
+        // debug (LL_VK_POSELAG=1): how far the viewer's own avatar is, when its mesh is drawn, from where its joints are (root joint world position against the render position of the avatar, which
+        // the camera and the views follow): a pose that is a frame old shows as a difference while the avatar moves. Logged every 300 frames of the main view.
+        static const bool wanted = getenv("LL_VK_POSELAG") != nullptr;
+        if (wanted && LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)
+        {
+            LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;
+            LLVOAvatar* avatar = drawable ? dynamic_cast<LLVOAvatar*>(drawable->getVObj().get()) : nullptr;
+            static U32 last_frame = 0, frames = 0, lagging = 0;
+            static F32 worst = 0.f, sum = 0.f, speed_sum = 0.f;
+            static LLVector3 last_pos, last_offset;
+            if (avatar && avatar->isSelf() && last_frame != LLFrameTimer::getFrameCount())
+            {
+                last_frame = LLFrameTimer::getFrameCount();
+                const LLVector3 root = avatar->getRootJoint()->getWorldPosition();
+                const LLVector3 offset = root - avatar->getRenderPosition();
+                const F32 diff = (offset - last_offset).length();       // (the offset is constant while the pose and the position are of the same moment)
+                last_offset = offset;
+                const F32 speed = (avatar->getRenderPosition() - last_pos).length();
+                last_pos = avatar->getRenderPosition();
+                ++frames;
+                sum += diff;
+                speed_sum += speed;
+                lagging += (diff > 0.05f) ? 1 : 0;
+                worst = llmax(worst, diff);
+                if (frames >= 300)
+                {
+                    LL_INFOS("PoseLag") << "own avatar over 300 frames: the offset of the root joint to the render position changes by " << sum / frames << " m a frame on average, worst " << worst << " m, " << lagging << " frames over 5 cm; the avatar moved " << speed_sum / frames << " m a frame on average" << LL_ENDL;
+                    frames = lagging = 0;
+                    worst = sum = speed_sum = 0.f;
+                }
+            }
+        }
+    }
+
     if (mMesh->hasWeights())
     {
         if (first_pass)

@@ -6105,6 +6105,7 @@ static struct GeoState
     struct RDraw { U32 mIbName; U32 mFirst, mCount; };       // (the index buffer by its GL name: looked up again at the draw, a buffer destroyed since the prepare must not be used)
     std::vector<RDraw> mRDraws[kGeoTypes];
     Renderer::ScratchAlloc mRCommands;
+    Renderer::ScratchAlloc mRTable;         // the rows of the rigged items of this frame (copies of the table's rows with the frame's palette), the rigged commands index it
     U64 mRBindings = 0, mRDead = 0, mRCmdsFrame = 0;
     F32 mRegionM[2048][16] = {};       // S4 C: slots 1-255 region matrices, 256-2047 the moving ones (the viewer sends the values of the slots the listed fragments use, every frame)
     U8 mHaveM[2048] = {};
@@ -7061,6 +7062,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         sGeo.mRDraws[rt].clear();
     }
     sGeo.mRCommands = Renderer::ScratchAlloc();
+    sGeo.mRTable = Renderer::ScratchAlloc();
     size_t rtotal = 0;
     for (const GeoFrag* f : listed)
     {
@@ -7090,6 +7092,23 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                         cursor += run.mCount;
                     }
                 }
+            }
+            // The table is one buffer the GPU reads while the next frames are being prepared: a palette written into a row now would be read by the draws of the frames still in flight
+            // (rigged items out of step with each other and with the camera). The rigged items draw from rows of their own, copied for this frame: the command's first instance is the copy.
+            sGeo.mRTable = r.allocVertexScratch(sizeof(GeoGpuG) * (size_t)rtotal);
+            if (sGeo.mRTable.mPtr && sGeo.mRTable.mAddress)
+            {
+                GeoGpuG* rows = (GeoGpuG*)sGeo.mRTable.mPtr;
+                for (size_t i = 0; i < rtotal; ++i)
+                {
+                    rows[i] = sGeo.mT[rout[i].firstInstance];
+                    rout[i].firstInstance = (U32)i;
+                }
+            }
+            else
+            {
+                sGeo.mRTable = Renderer::ScratchAlloc();
+                ++s.mScratchFail;
             }
         }
     }
@@ -7251,7 +7270,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     vi.mBindings.clear();
     vi.mAttributes.clear();
     used_cache.clear();
-    const U64 table_address = (U64)sGeo.mTable.mAddress, models_address = (U64)models.mAddress;
+    const U64 table_address = (rigged_draw && sGeo.mRTable.mAddress) ? (U64)sGeo.mRTable.mAddress : (U64)sGeo.mTable.mAddress, models_address = (U64)models.mAddress;
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
@@ -7503,6 +7522,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         ++a.mScratchFail;
         return;
     }
+    Renderer::ScratchAlloc alpha_rows;
     if (rigged_run)
     {
         VkDrawIndexedIndirectCommand* out = (VkDrawIndexedIndirectCommand*)cmds.mPtr;
@@ -7515,6 +7535,23 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 a.mZeroRigged += src[k].indexCount == 0 ? 1 : 0;       // (an item that draws nothing: no palette this frame, or its buffers are not usable; counted from the source: the scratch is write combined memory, a read of it costs about a microsecond)
             }
             out += t.second.mCount;
+        }
+        // as the rigged G-buffer items: the rows the draw reads are copies made for this draw (the table is read by frames in flight)
+        alpha_rows = r.allocVertexScratch(sizeof(GeoGpuG) * total);
+        if (alpha_rows.mPtr && alpha_rows.mAddress)
+        {
+            VkDrawIndexedIndirectCommand* rc = (VkDrawIndexedIndirectCommand*)cmds.mPtr;
+            GeoGpuG* rows = (GeoGpuG*)alpha_rows.mPtr;
+            for (size_t i = 0; i < total; ++i)
+            {
+                rows[i] = sGeo.mT[rc[i].firstInstance];
+                rc[i].firstInstance = (U32)i;
+            }
+        }
+        else
+        {
+            alpha_rows = Renderer::ScratchAlloc();
+            ++a.mScratchFail;
         }
     }
     else
@@ -7551,7 +7588,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     vi.mBindings.clear();
     vi.mAttributes.clear();
     used_cache.clear();
-    const U64 table_address = (U64)sGeo.mTable.mAddress, models_address = (U64)pass.mModels.mAddress, texmats_address = (U64)pass.mTexmats.mAddress;
+    const U64 table_address = (rigged_run && alpha_rows.mAddress) ? (U64)alpha_rows.mAddress : (U64)sGeo.mTable.mAddress, models_address = (U64)pass.mModels.mAddress, texmats_address = (U64)pass.mTexmats.mAddress;
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
