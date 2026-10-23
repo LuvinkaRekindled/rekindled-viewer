@@ -6087,6 +6087,7 @@ static struct GeoState
 {
     Buffer mTable;
     GeoGpuG* mT = nullptr;
+    std::vector<GeoGpuG> mTCpu;         // the CPU's copy of every row (the table is write-combined memory: reading it costs about a microsecond a float; the per-frame row copies read this)
     bool mReady = false, mFailed = false;
     U32 mHigh = 0;
     std::vector<U32> mFree;
@@ -6155,6 +6156,8 @@ bool geo_init()
     }
     sGeo.mT = (GeoGpuG*)sGeo.mTable.mMapped;
     memset(sGeo.mT, 0, sizeof(GeoGpuG) * kGeoCapacity);
+    sGeo.mTCpu.assign(kGeoCapacity, GeoGpuG());
+    memset(sGeo.mTCpu.data(), 0, sizeof(GeoGpuG) * kGeoCapacity);
     if (ctx.createBuffer((VkDeviceSize)160 * kPbrCapacity, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, sGeo.mPbrTable) && sGeo.mPbrTable.mMapped && sGeo.mPbrTable.mAddress)
     {
         sGeo.mPbrT = (F32*)sGeo.mPbrTable.mMapped;
@@ -6531,6 +6534,7 @@ void geo_write_items(GeoFrag& f)
         g.mCutoff = e.mCutoff;
         g.mBrightness = e.mBrightness;
         sGeo.mT[f.mSlots[i]] = g;
+        sGeo.mTCpu[f.mSlots[i]] = g;
     }
 }
 
@@ -6996,6 +7000,8 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             row.mPalette[0] = (U32)pal;
             row.mPalette[1] = (U32)(pal >> 32);
             row.mJoints = b.mJoints;
+            GeoGpuG& cpu_row = sGeo.mTCpu[f->mSlots[b.mItem]];
+            cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = b.mJoints;
             f->mRCmds[cmd].indexCount = f->mRCount0[cmd];
         }
         else
@@ -7101,7 +7107,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 GeoGpuG* rows = (GeoGpuG*)sGeo.mRTable.mPtr;
                 for (size_t i = 0; i < rtotal; ++i)
                 {
-                    rows[i] = sGeo.mT[rout[i].firstInstance];
+                    rows[i] = sGeo.mTCpu[rout[i].firstInstance];
                     rout[i].firstInstance = (U32)i;
                 }
             }
@@ -7544,7 +7550,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             GeoGpuG* rows = (GeoGpuG*)alpha_rows.mPtr;
             for (size_t i = 0; i < total; ++i)
             {
-                rows[i] = sGeo.mT[rc[i].firstInstance];
+                rows[i] = sGeo.mTCpu[rc[i].firstInstance];
                 rc[i].firstInstance = (U32)i;
             }
         }
@@ -7798,6 +7804,8 @@ void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob
             row.mPalette[0] = (U32)pal;
             row.mPalette[1] = (U32)(pal >> 32);
             row.mJoints = b.mJoints;
+            GeoGpuG& cpu_row = sGeo.mTCpu[f->mSlots[b.mItem]];
+            cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = b.mJoints;
             f->mARCmds[cmd].indexCount = f->mARCount0[cmd];
         }
         else
