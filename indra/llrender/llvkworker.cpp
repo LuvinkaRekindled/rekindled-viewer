@@ -8416,7 +8416,7 @@ void main()
         for (uint v = 0u; v < 4u; ++v)
         {
             float m = v == 0u ? 0.0 : margin * P.v[9][v - 1u];
-            bool pass = inside(r, flags, m);            // frustum only: the viewer keeps its own occlusion state on top (the Hi-Z verdicts are the CPU's)
+            bool pass = (flags & 32u) == 0u && inside(r, flags, m);            // (a free slot: dead) frustum only: the viewer keeps its own occlusion state on top (the Hi-Z verdicts are the CPU's)
             if (!pass && (flags & 3u) == 2u)            // SKIP_FRUSTUM_CHECK: taken with a parent that passed
             {
                 Row pr = rows.r[parent];

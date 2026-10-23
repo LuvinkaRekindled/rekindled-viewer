@@ -68,6 +68,7 @@ public:
 
     virtual void handleChildAddition(const oct_node* parent, oct_node* child) = 0;
     virtual void handleChildRemoval(const oct_node* parent, const oct_node* child) = 0;
+    virtual void handleParentChange(const oct_node* node) {}        // <FS> S7 C1b: a node was given a new parent (the root's balance and expansion do it without telling anyone else)
 };
 
 template <class T, typename T_PTR>
@@ -615,6 +616,10 @@ public:
         mChild[mChildCount] = child;
         ++mChildCount;
         child->setParent(this);
+        for (U32 i = 0; i < child->getListenerCount(); i++)
+        {
+            child->getOctListener(i)->handleParentChange(child);        // <FS> S7 C1b
+        }
 
         if (!silent)
         {
