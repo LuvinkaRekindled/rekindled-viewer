@@ -900,8 +900,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Update hero probes");
             LL_PROFILE_GPU_ZONE("hero manager")
-            gPipeline.mHeroProbeManager.update();
-            gPipeline.mHeroProbeManager.renderProbes();
+            { LL_CPU_ZONE("hero: update"); gPipeline.mHeroProbeManager.update(); }
+            { LL_CPU_ZONE("hero: renderProbes"); gPipeline.mHeroProbeManager.renderProbes(); }
         }
 
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("display - 1");
@@ -1212,6 +1212,50 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                         }
                         LL_INFOS("VisDip") << "dip over after " << (gFrameCount - dip_frame) << " frames: " << back << " of the " << missing.size() << " groups that left are visible again, " << dead << " of them dead" << LL_ENDL;
                         missing.clear();
+                    }
+                    // a flicker: a live group that was visible, is not for a few frames and is visible again (what an object that blinks out of the scene looks like in the cull)
+                    {
+                        static std::unordered_map<LLSpatialGroup*, std::pair<U32, std::string> > absent;
+                        static U32 flickers = 0, flicker_frames = 0, window_start = 0;
+                        static std::string samples;
+                        for (const auto& kv : last_groups)
+                        {
+                            if (!now_groups.count(kv.first) && !kv.first->isDead())
+                            {
+                                auto di = last_descr.find(kv.first);
+                                absent[kv.first] = { (U32)gFrameCount, di != last_descr.end() ? di->second : std::string("?") };
+                            }
+                        }
+                        for (const auto& kv : now_groups)
+                        {
+                            auto it = absent.find(kv.first);
+                            if (it != absent.end())
+                            {
+                                const U32 len = (U32)gFrameCount - it->second.first;
+                                if (len <= 30)
+                                {
+                                    ++flickers;
+                                    flicker_frames += len;
+                                    if (samples.size() < 900)
+                                    {
+                                        samples += llformat(" [%u frames at %u: %s]", len, it->second.first, it->second.second.c_str());
+                                    }
+                                }
+                                absent.erase(it);
+                            }
+                        }
+                        for (auto it = absent.begin(); it != absent.end(); )
+                        {
+                            it = (it->first->isDead() || (U32)gFrameCount - it->second.first > 30) ? absent.erase(it) : std::next(it);
+                        }
+                        if (!window_start) window_start = (U32)gFrameCount;
+                        if ((U32)gFrameCount - window_start >= 600)
+                        {
+                            LL_INFOS("VisDip") << "flickers (a live group out of the visible list for up to 30 frames) in " << ((U32)gFrameCount - window_start) << " frames: " << flickers << " (" << flicker_frames << " group-frames)" << samples << LL_ENDL;
+                            flickers = flicker_frames = 0;
+                            samples.clear();
+                            window_start = (U32)gFrameCount;
+                        }
                     }
                     last_ok = ok;
                     last_groups.swap(now_groups);

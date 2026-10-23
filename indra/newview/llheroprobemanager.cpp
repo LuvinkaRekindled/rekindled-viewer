@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llgpuzonetimer.h"
 
 #include "llheroprobemanager.h"
 #include "llreflectionmapmanager.h"
@@ -308,7 +309,7 @@ void LLHeroProbeManager::renderProbes()
                     updateProbeFace(mProbes[0], i, dynamic, near_clip);
                 }
             }
-            generateRadiance(mProbes[0]);
+            { LL_CPU_ZONE("hero: generateRadiance"); generateRadiance(mProbes[0]); }
         }
 
         mRenderingMirror = false;
@@ -339,7 +340,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
     // hacky hot-swap of camera specific render targets
     gPipeline.mRT = &gPipeline.mHeroProbeRT;
 
-    probe->update(mRenderTarget.getWidth(), face, is_dynamic, near_clip);
+    { LL_CPU_ZONE("hero: face render (scene)"); probe->update(mRenderTarget.getWidth(), face, is_dynamic, near_clip); }
 
     gPipeline.mRT = &gPipeline.mMainRT;
 
