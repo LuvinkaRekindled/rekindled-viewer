@@ -926,6 +926,26 @@ void LLRender::syncLightState()
         return;
     }
 
+    static const bool light_log = getenv("LL_VK_LIGHTLOG") != nullptr;
+    if (light_log)
+    {   // diagnostic: the light state a program is given (and whether it is uploaded at all): one line when the lit slots differ from the last line of this program, or every 300 calls
+        static std::map<const LLShaderProgram*, std::pair<std::string, U32>> last;
+        std::string sig;
+        char buf[160];
+        for (U32 i = 1; i < LL_NUM_LIGHT_UNITS; ++i)
+        {
+            const LLLightState* l = &mLightState[i];
+            snprintf(buf, sizeof(buf), " [%u d=%.2f,%.2f,%.2f z=%.0f w=%.2f]", i, l->mDiffuse.mV[0], l->mDiffuse.mV[1], l->mDiffuse.mV[2], l->mSpecular.mV[2], l->mSpecular.mV[3]);
+            sig += buf;
+        }
+        auto& e = last[shader];
+        if (e.first != sig || ++e.second >= 300)
+        {
+            e.first = sig;
+            e.second = 0;
+            LL_INFOS("LightLog") << "LIGHTLOG frame " << LLFrameTimer::getFrameCount() << " prog " << shader->getName() << (shader->mLightHash != mLightHash ? " UPLOAD" : " same-hash") << sig << LL_ENDL;
+        }
+    }
     if (shader->mLightHash != mLightHash)
     {
         shader->mLightHash = mLightHash;
