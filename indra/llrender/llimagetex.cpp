@@ -1499,6 +1499,7 @@ bool LLImageTex::createImageTexture()
 
     llassert(gDeviceCaps.mInited);
 
+    const U32 old_name_for_alias = mTexName;
     if(mTexName)
     {
         LLImageTex::deleteTextures(1, (reinterpret_cast<U32*>(&mTexName))) ;
@@ -1507,12 +1508,17 @@ bool LLImageTex::createImageTexture()
     }
 
 
+    const U32 predecessor_name = old_name_for_alias;
     LLImageTex::generateTextures(1, &mTexName);
     noteNameChange();
     if (!mTexName)
     {
         LL_WARNS() << "LLImageTex::createImageTexture failed to make an empty texture" << LL_ENDL;
         return false;
+    }
+    if (predecessor_name && predecessor_name != mTexName)
+    {
+        LLVkTex::aliasName(mTexName, predecessor_name);     // <FS> until the new name has data, what names it shows the old image
     }
 
     return true ;
@@ -1666,6 +1672,10 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
     else
     {
         LLImageTex::generateTextures(1, &new_texname);
+        if (old_texname != 0 && old_texname != new_texname)
+        {
+            LLVkTex::aliasName(new_texname, old_texname);       // <FS> until the new name has data (the upload below, from this thread), what names it shows the old image
+        }
         {
             gRender.getTexUnit(0)->bind(this, false, false, new_texname);
             const LLVkFormat::Setting levels[2] = { LLVkFormat::setBaseLevel(0), LLVkFormat::setMaxLevel(mMaxDiscardLevel - discard_level) };
@@ -1713,6 +1723,7 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
             //not on background thread, immediately set mTexName
             if (old_texname != 0 && old_texname != new_texname)
             {
+                LLVkTex::aliasName(new_texname, old_texname);       // <FS> until the new name has data, what names it shows the old image (LL_VK_NAME_ALIAS)
                 LLImageTex::deleteTextures(1, &old_texname);
             }
             mTexName = new_texname;
@@ -1758,6 +1769,7 @@ void LLImageTex::syncTexName(U32 texname)
     {
         if (mTexName != 0 && mTexName != texname)
         {
+            LLVkTex::aliasName(texname, mTexName);      // <FS> until the new name has data, what names it shows the old image (LL_VK_NAME_ALIAS)
             LLImageTex::deleteTextures(1, &mTexName);
         }
         mTexName = texname;

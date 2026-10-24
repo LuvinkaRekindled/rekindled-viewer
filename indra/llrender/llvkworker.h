@@ -38,6 +38,8 @@ namespace LLVkWorker
     void on_upscale(const LLVkBridge::UpscaleArgs& args);
     // the GL texture whose image has this view id (device lost report)
     std::string describe_texture_of_view(U64 view_id);
+    int destroyed_view_kind(U64 view_id);
+    std::string describe_destroyed_view(U64 view_id);      // <FS> what a destroyed texture image was (kind, name, size, what replaced it)
 }
 
 #endif // LL_VULKAN
