@@ -92,6 +92,8 @@ class LLViewerTextureList
     friend class LLLocalBitmap;
 
 public:
+    static void updateCameraEpoch();    // <FS> native-vk (LL_VK_TEXSTAMP): once a frame
+    static U32 sCameraEpoch;    // <FS> native-vk (LL_VK_TEXSTAMP): goes up when the camera (position, direction, field of view, window) moves to another cell of a coarse grid
     static bool sViewSteady;    // <FS> the view has not changed for a while (see updateImagesFetchTextures): slower texture refresh rates
     static bool createUploadFile(LLPointer<LLImageRaw> raw_image,
                                  const std::string& out_filename,

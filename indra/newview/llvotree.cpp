@@ -1185,6 +1185,7 @@ void LLVOTree::updateSpatialExtents(LLVector4a& newMin, LLVector4a& newMax)
         {
             facep->mExtents[0] = newMin;
             facep->mExtents[1] = newMax;
+            facep->stampTextures();
         }
     }
 }

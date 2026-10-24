@@ -1041,6 +1041,7 @@ void LLDrawable::shiftPos(const LLVector4a &shift_vector)
                 facep->mCenterAgent += LLVector3(shift_vector.getF32ptr());
                 facep->mExtents[0].add(shift_vector);
                 facep->mExtents[1].add(shift_vector);
+                facep->stampTextures();
 
                 if (rebuild && facep->hasGeometry())
                 {

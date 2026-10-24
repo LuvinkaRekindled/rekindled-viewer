@@ -976,6 +976,7 @@ void LLViewerTexture::addFace(U32 ch, LLFace* facep)
     facep->setIndexInTex(ch, mNumFaces[ch]);
     mNumFaces[ch]++;
     mLastFaceListUpdateTimer.reset();
+    bumpFaceStamp();
 }
 
 //virtual
@@ -998,6 +999,7 @@ void LLViewerTexture::removeFace(U32 ch, LLFace* facep)
         mNumFaces[ch] = 0;
     }
     mLastFaceListUpdateTimer.reset();
+    bumpFaceStamp();
 }
 
 S32 LLViewerTexture::getTotalNumFaces() const
