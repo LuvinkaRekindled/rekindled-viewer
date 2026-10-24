@@ -387,9 +387,21 @@ void LLFace::switchTexture(U32 ch, LLViewerTexture* new_texture)
     dirtyTexture();
 }
 
+void LLFace::stampTextures()
+{
+    for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
+    {
+        if (mTexture[ch].notNull())
+        {
+            mTexture[ch]->bumpFaceStamp();
+        }
+    }
+}
+
 void LLFace::setTEOffset(const S32 te_offset)
 {
     mTEOffset = te_offset;
+    stampTextures();
 }
 
 
@@ -408,6 +420,7 @@ void LLFace::setDrawable(LLDrawable *drawable)
 {
     mDrawablep  = drawable;
     mXform      = &drawable->mXform;
+    stampTextures();
 }
 
 void LLFace::setSize(S32 num_vertices, S32 num_indices, bool align)
@@ -514,6 +527,7 @@ U16 LLFace::getGeometry(LLStrider<LLVector3> &vertices, LLStrider<LLVector3> &no
 
 void LLFace::updateCenterAgent()
 {
+    stampTextures();
     if (mDrawablep->isActive())
     {
         mCenterAgent = mCenterLocal * getRenderMatrix();
@@ -2727,6 +2741,7 @@ bool LLFace::verify(const U32* indices_array) const
 void LLFace::setViewerObject(LLViewerObject* objp)
 {
     mVObjp = objp;
+    stampTextures();
 }
 
 

@@ -133,6 +133,7 @@ public:
     LLFacePool*     getPool()           const   { return mDrawPoolp; }
     U32             getPoolType()       const   { return mPoolType; }
     LLDrawable*     getDrawable()       const   { return mDrawablep; }
+    void            stampTextures();    // <FS> native-vk: something the texture priority reads from this face changed (see LLViewerTexture::mFaceStamp)
     LLViewerObject* getViewerObject()   const   { return mVObjp; }
     S32             getLOD()            const   { return mVObjp.notNull() ? mVObjp->getLOD() : 0; }
     void            setPoolType(U32 type)       { mPoolType = type; }

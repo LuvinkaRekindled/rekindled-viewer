@@ -1031,6 +1031,19 @@ void LLViewerTextureList::clearFetchingRequests()
 
 extern bool gCubeSnapshot;
 
+namespace
+{
+// <FS> native-vk: LL_VK_TEXSTAMP=1 keeps the result of the face loop of updateImageDecodePriority for textures whose faces are all static and unchanged while the camera stays in one cell of a coarse
+// grid (and the bias in one bucket), for LL_VK_TEXSTAMP_AGE seconds (default 8); =2 runs the loop anyway and counts the cases where it finds something other than the kept result.
+const S32 sStampMode = []{ const char* e = getenv("LL_VK_TEXSTAMP"); return e ? atoi(e) : 0; }();
+const F32 sStampAge = []{ const char* e = getenv("LL_VK_TEXSTAMP_AGE"); return e ? (F32)atof(e) : 8.f; }();
+struct StampStats
+{
+    U64 mHit = 0, mMissNew = 0, mMissFaces = 0, mMissCamera = 0, mMissBias = 0, mMissAge = 0, mVolatile = 0, mVerified = 0, mMismatch = 0, mMismatchFresh = 0, mMismatchOld = 0, mMismatchFaceCount = 0, mOffScreen = 0;
+};
+StampStats sStamp;
+}
+
 void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imagep, bool flush_images)
 {
     llassert(!gCubeSnapshot);
@@ -1049,6 +1062,21 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         U32 face_count = 0;
         U32 max_faces_to_check = 1024;
 
+        // <FS> native-vk (LL_VK_TEXSTAMP): the face loop is skipped while what it read is unchanged (see sStampMode above)
+        bool stamp_use = false, stamp_verify = false, stamp_volatile = false;
+        const S32 stamp_bias = (S32)(LLViewerTexture::sDesiredDiscardBias * 20.f);
+        LLViewerTexture::FaceLoopCache& stamp = imagep->mFaceCache;
+        if (sStampMode)
+        {
+            if (!stamp.mValid) ++sStamp.mMissNew;
+            else if (stamp.mFaceStamp != imagep->mFaceStamp) ++sStamp.mMissFaces;
+            else if (stamp.mCamEpoch != sCameraEpoch) ++sStamp.mMissCamera;
+            else if (stamp.mBias != stamp_bias) ++sStamp.mMissBias;
+            else if (gFrameTimeSeconds - stamp.mTime >= sStampAge) ++sStamp.mMissAge;
+            else if (sStampMode == 1) { stamp_use = true; ++sStamp.mHit; }
+            else { stamp_verify = true; ++sStamp.mHit; }
+        }
+
         // get adjusted bias based on image resolution
         LLImageTex* img = imagep->getImageTexture();
         F32 max_discard = F32(img ? img->getMaxDiscardLevel() : MAX_DISCARD_LEVEL);
@@ -1058,6 +1086,14 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         bias = (F32) llroundf(powf(4, bias - 1.f));
 
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+        if (stamp_use)
+        {
+            max_vsize = stamp.mVSize;
+            on_screen = stamp.mOnScreen;
+            face_count = stamp.mFaceCount;
+        }
+        else
+        { LL_CPU_ZONE("textures: decode priority: face loop");
         for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
         {
             face_count += imagep->getNumFaces(i);
@@ -1071,6 +1107,12 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                 {
                     F32 radius;
                     F32 cos_angle_to_view_dir;
+
+                    if (sStampMode && (face->isState(LLFace::RIGGED) || face->hasMedia() || !face->getDrawable() || face->getDrawable()->isActive()
+                                       || face->getViewerObject()->getPartitionType() == LLViewerRegion::PARTITION_PARTICLE))
+                    {
+                        stamp_volatile = true;        // its position comes from something that moves without telling the texture
+                    }
 
                     if ((gFrameCount - face->mLastTextureUpdate) > 10)
                     { // only call calcPixelArea at most once every 10 frames for a given face
@@ -1130,6 +1172,39 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                 break;
             }
         }
+        } // (face loop zone)
+
+        if (sStampMode && !stamp_use)
+        {
+            // (a difference only counts when it matters: one side is a size the priority treats as seen, and the two are not within a quarter of each other or the screen flag changed)
+            const F32 big = llmax(max_vsize, stamp.mVSize);
+            if (stamp_verify && stamp.mValid && big >= 64.f && (on_screen != stamp.mOnScreen || fabsf(max_vsize - stamp.mVSize) > 0.25f * big))
+            {
+                ++sStamp.mMismatch;
+                if (face_count != stamp.mFaceCount) ++sStamp.mMismatchFaceCount;
+                else if (gFrameTimeSeconds - stamp.mTime < 0.5f) ++sStamp.mMismatchFresh;
+                else ++sStamp.mMismatchOld;
+                static U32 said = 0;
+                if (said++ < 60 && face_count == stamp.mFaceCount && gFrameTimeSeconds - stamp.mTime >= 0.5f)
+                {
+                    LL_INFOS("VkTexStamp") << "kept result differs for " << imagep->getID() << ": size " << stamp.mVSize << " -> " << max_vsize << ", on screen " << stamp.mOnScreen << " -> " << on_screen
+                                           << ", faces " << stamp.mFaceCount << " -> " << face_count << ", age " << gFrameTimeSeconds - stamp.mTime << " s" << LL_ENDL;
+                }
+            }
+            if (stamp_verify) ++sStamp.mVerified;
+            // (a texture with faces whose loop found none on screen is not kept: for a static face that flag is true after a real evaluation, so a false one is a stale first reading)
+            const bool unsettled = face_count > 0 && !on_screen && !stamp_volatile;
+            if (unsettled) ++sStamp.mOffScreen;
+            stamp.mValid = !stamp_volatile && !unsettled && face_count <= max_faces_to_check;
+            if (stamp_volatile) ++sStamp.mVolatile;
+            stamp.mFaceStamp = imagep->mFaceStamp;
+            stamp.mCamEpoch = sCameraEpoch;
+            stamp.mBias = stamp_bias;
+            stamp.mTime = gFrameTimeSeconds;
+            stamp.mVSize = max_vsize;
+            stamp.mOnScreen = on_screen;
+            stamp.mFaceCount = face_count;
+        }
 
         if (face_count > max_faces_to_check)
         { // this texture is used in so many places we should just boost it and not bother checking its vsize
@@ -1163,6 +1238,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 #endif
 
     // make sure to addTextureStats for any spotlights that are using this texture
+    LL_CPU_ZONE("textures: decode priority: spotlights, refs, flush checks");
     for (S32 vi = 0; vi < imagep->getNumVolumes(LLRender::LIGHT_TEX); ++vi)
     {
         LLVOVolume* volume = (*imagep->getVolumeList(LLRender::LIGHT_TEX))[vi];
@@ -1215,6 +1291,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         return; //wait for loading from the fast cache.
     }
 
+    LL_CPU_ZONE("textures: decode priority: processTextureStats");
     imagep->processTextureStats();
 }
 
@@ -1383,6 +1460,50 @@ void LLViewerTextureList::forceImmediateUpdate(LLViewerFetchedTexture* imagep)
 }
 
 bool LLViewerTextureList::sViewSteady = false;
+U32 LLViewerTextureList::sCameraEpoch = 0;
+
+
+void LLViewerTextureList::updateCameraEpoch()
+{
+    if (!sStampMode)
+    {
+        return;
+    }
+    LLViewerCamera* cam = LLViewerCamera::getInstance();
+    const LLVector3 o = cam->getOrigin(), a = cam->getAtAxis(), u = cam->getUpAxis();
+    const S32 v[] = { (S32)floorf(o.mV[0] * 10.f), (S32)floorf(o.mV[1] * 10.f), (S32)floorf(o.mV[2] * 10.f),
+                      (S32)floorf(a.mV[0] * 100.f), (S32)floorf(a.mV[1] * 100.f), (S32)floorf(a.mV[2] * 100.f),
+                      (S32)floorf(u.mV[0] * 100.f), (S32)floorf(u.mV[1] * 100.f), (S32)floorf(u.mV[2] * 100.f),
+                      (S32)(cam->getView() * 1000.f), (S32)(cam->getAspect() * 1000.f), (S32)(LLDrawable::sCurPixelAngle * 100.f),
+                      (S32)gViewerWindow->getWindowWidthRaw(), (S32)gViewerWindow->getWindowHeightRaw() };
+    U64 h = 1469598103934665603ull;
+    for (S32 x : v)
+    {
+        h = (h ^ (U64)(U32)x) * 1099511628211ull;
+    }
+    static U64 last = 0;
+    if (h != last)
+    {
+        last = h;
+        ++sCameraEpoch;
+    }
+    static F32 last_log = 0.f;
+    if (gFrameTimeSeconds - last_log >= 10.f)
+    {
+        static StampStats prev;
+        const StampStats& n = sStamp;
+        if (last_log > 0.f)
+        {
+            LL_INFOS("VkTexStamp") << "mode " << sStampMode << ": face loops kept " << n.mHit - prev.mHit << ", run because new " << n.mMissNew - prev.mMissNew << ", faces changed "
+                                   << n.mMissFaces - prev.mMissFaces << ", camera moved " << n.mMissCamera - prev.mMissCamera << ", bias changed " << n.mMissBias - prev.mMissBias << ", too old "
+                                   << n.mMissAge - prev.mMissAge << "; textures not kept (moving, rigged, particle or media faces) " << n.mVolatile - prev.mVolatile
+                                   << ", with faces but none on screen " << n.mOffScreen - prev.mOffScreen << "; verified " << n.mVerified - prev.mVerified << ", differed " << n.mMismatch - prev.mMismatch << " (faces changed in count " << n.mMismatchFaceCount - prev.mMismatchFaceCount
+                                   << ", same faces within 0.5 s " << n.mMismatchFresh - prev.mMismatchFresh << ", same faces older " << n.mMismatchOld - prev.mMismatchOld << "), camera epoch " << sCameraEpoch << LL_ENDL;
+        }
+        prev = n;
+        last_log = gFrameTimeSeconds;
+    }
+}
 
 F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 {
@@ -1390,6 +1511,8 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     typedef std::vector<LLPointer<LLViewerFetchedTexture> > entries_list_t;
     entries_list_t entries;
+
+    updateCameraEpoch();
 
     // update N textures at beginning of mImageList
     U32 update_count = 0;

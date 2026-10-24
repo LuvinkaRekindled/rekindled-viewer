@@ -208,6 +208,24 @@ protected:
     mutable S32  mMaxVirtualSizeResetInterval;
     LLFrameTimer mLastReferencedTimer;
 
+public:
+    // <FS> native-vk (LL_VK_TEXSTAMP): what the face loop of LLViewerTextureList::updateImageDecodePriority found, kept while nothing it reads has changed. mFaceStamp goes up whenever a face of this
+    // texture is added, removed, moved or re-sized (the hooks are in LLFace and the places that write a face's extents).
+    struct FaceLoopCache
+    {
+        bool mValid = false;
+        bool mOnScreen = false;
+        U32 mFaceStamp = 0;
+        U32 mCamEpoch = 0;
+        S32 mBias = 0;
+        U32 mFaceCount = 0;
+        F32 mVSize = 0.f;
+        F32 mTime = 0.f;
+    };
+    FaceLoopCache mFaceCache;
+    U32 mFaceStamp = 0;
+    void bumpFaceStamp() { ++mFaceStamp; }
+protected:
     ll_face_list_t    mFaceList[LLRender::NUM_TEXTURE_CHANNELS]; //reverse pointer pointing to the faces using this image as texture
     U32               mNumFaces[LLRender::NUM_TEXTURE_CHANNELS];
     LLFrameTimer      mLastFaceListUpdateTimer ;

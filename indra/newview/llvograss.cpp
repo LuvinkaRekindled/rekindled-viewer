@@ -464,6 +464,7 @@ void LLVOGrass::plantBlades()
         const LLVector4a* ext = mDrawable->getSpatialExtents();
         face->mExtents[0] = ext[0];
         face->mExtents[1] = ext[1];
+        face->stampTextures();
     }
 
     mDepth = (face->mCenterLocal - LLViewerCamera::getInstance()->getOrigin())*LLViewerCamera::getInstance()->getAtAxis();
