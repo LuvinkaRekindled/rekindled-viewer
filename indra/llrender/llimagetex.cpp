@@ -1499,7 +1499,6 @@ bool LLImageTex::createImageTexture()
 
     llassert(gDeviceCaps.mInited);
 
-    const U32 old_name_for_alias = mTexName;
     if(mTexName)
     {
         LLImageTex::deleteTextures(1, (reinterpret_cast<U32*>(&mTexName))) ;
@@ -1508,17 +1507,12 @@ bool LLImageTex::createImageTexture()
     }
 
 
-    const U32 predecessor_name = old_name_for_alias;
     LLImageTex::generateTextures(1, &mTexName);
     noteNameChange();
     if (!mTexName)
     {
         LL_WARNS() << "LLImageTex::createImageTexture failed to make an empty texture" << LL_ENDL;
         return false;
-    }
-    if (predecessor_name && predecessor_name != mTexName)
-    {
-        LLVkTex::aliasName(mTexName, predecessor_name);     // <FS> until the new name has data, what names it shows the old image
     }
 
     return true ;
@@ -1662,7 +1656,6 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
         return setImage(data_in, data_hasmips);
     }
 
-    U32 old_texname = mTexName;
     U32 new_texname = 0;
     if (usename != 0)
     {
@@ -1672,10 +1665,6 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
     else
     {
         LLImageTex::generateTextures(1, &new_texname);
-        if (old_texname != 0 && old_texname != new_texname)
-        {
-            LLVkTex::aliasName(new_texname, old_texname);       // <FS> until the new name has data (the upload below, from this thread), what names it shows the old image
-        }
         {
             gRender.getTexUnit(0)->bind(this, false, false, new_texname);
             const LLVkFormat::Setting levels[2] = { LLVkFormat::setBaseLevel(0), LLVkFormat::setMaxLevel(mMaxDiscardLevel - discard_level) };
@@ -1711,7 +1700,7 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
     // things will break if we don't unbind after creation
     gRender.getTexUnit(0)->unbind(mBindTarget);
 
-    //if we're on the image loading thread, be sure to delete old_texname and update mTexName on the main thread
+    //if we're on the image loading thread, the new image takes its place on the main thread (syncTexName)
     if (!defer_copy)
     {
         if (!main_thread)
@@ -1720,15 +1709,8 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
         }
         else
         {
-            //not on background thread, immediately set mTexName
-            if (old_texname != 0 && old_texname != new_texname)
-            {
-                LLVkTex::aliasName(new_texname, old_texname);       // <FS> until the new name has data, what names it shows the old image (LL_VK_NAME_ALIAS)
-                LLImageTex::deleteTextures(1, &old_texname);
-            }
-            mTexName = new_texname;
-            noteNameChange();
-            markTexOptionsDirty();      // <FS> the new GL texture gets its sampler options with the others
+            //not on background thread: the image takes its place at once (a texture that has an image keeps its name: see syncTexName)
+            syncTexName(new_texname);
         }
     }
 
@@ -1763,16 +1745,21 @@ void LLImageTex::syncToMainThread(U32 new_tex_name)
 }
 
 
+// <FS> native-vk (texture handles H2): the texture's name is its id for as long as it has a GL texture, so a new resolution does not make a new name any more. The loader thread prepared the image under
+// a name of its own (`texname`); here, on the main thread, it takes the place of the image of mTexName (LLVkTex::commitImage; `texname` goes with it). A texture without a name yet simply takes
+// `texname` as its name (the first image).
 void LLImageTex::syncTexName(U32 texname)
 {
     if (texname != 0)
     {
         if (mTexName != 0 && mTexName != texname)
         {
-            LLVkTex::aliasName(texname, mTexName);      // <FS> until the new name has data, what names it shows the old image (LL_VK_NAME_ALIAS)
-            LLImageTex::deleteTextures(1, &mTexName);
+            LLVkTex::commitImage(mTexName, texname);
         }
-        mTexName = texname;
+        else
+        {
+            mTexName = texname;
+        }
         noteNameChange();
         markTexOptionsDirty();
     }

@@ -3001,12 +3001,12 @@ bool Renderer::bindlessRetireSlot(U32 table, U32 slot, int cause)
     }
     {   // diagnostic: every slot that loses its view with no successor, counted by cause (id / handle), by the age of its last request (0-2, 3-60, older frames) and by what the image was
         // (kind 0 = not noted, 1 re-specified, 2 grown, 3 levels dropped, 4 name deleted, 5 sampling view rebuilt); one line per 400 slots. The first 20 of the recently requested ones are named.
-        static U64 count[2][4][6] = {};
+        static U64 count[2][4][7] = {};
         static U64 total = 0, named = 0;
         const U64 frame = Context::instance().getFrameNumber();
         const U64 age = frame > s.mLastUsed ? frame - s.mLastUsed : 0;
         const int kind = LLVkWorker::destroyed_view_kind(content_id);
-        ++count[cause ? 1 : 0][!s.mActive ? 3 : (age <= 2 ? 0 : (age <= 60 ? 1 : 2))][kind < 6 ? kind : 0];
+        ++count[cause ? 1 : 0][!s.mActive ? 3 : (age <= 2 ? 0 : (age <= 60 ? 1 : 2))][kind < 7 ? kind : 0];
         if (named < 30)
         {
             ++named;
@@ -3022,14 +3022,14 @@ bool Renderer::bindlessRetireSlot(U32 table, U32 slot, int cause)
                 for (int a = 0; a < 4; ++a)
                 {
                     text += std::string(c ? "handle " : "id ") + ages[a] + ": ";
-                    for (int k = 0; k < 6; ++k)
+                    for (int k = 0; k < 7; ++k)
                     {
-                        text += std::to_string(count[c][a][k]) + (k < 5 ? "/" : "");
+                        text += std::to_string(count[c][a][k]) + (k < 6 ? "/" : "");
                     }
                     text += " | ";
                 }
             }
-            LL_INFOS("Vulkan") << "bindless: slots that lost their view with no successor (" << total << "), by cause and idle frames, then image kind unnoted/respec/grown/dropped/deleted/swizzle: " << text << LL_ENDL;
+            LL_INFOS("Vulkan") << "bindless: slots that lost their view with no successor (" << total << "), by cause and idle frames, then image kind unnoted/respec/grown/dropped/deleted/swizzle/commit: " << text << LL_ENDL;
         }
     }
     s.mInfo = standInFor(table, cause);
