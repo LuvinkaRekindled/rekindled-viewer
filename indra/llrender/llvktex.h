@@ -30,7 +30,7 @@ namespace LLVkTex
 
     // the records (llvkasync.cpp writes and reads them)
     enum TexKind : U32 { K_IMAGE2D, K_IMAGE3D, K_SUB2D, K_SUB3D, K_COMPRESSED2D };
-    enum TexOpKind : U32 { OPK_MIPMAP, OPK_COPY_SUB, OPK_COPY_IMAGE, OPK_SWIZZLE, OPK_DROP_LEVELS, OPK_ALIAS };
+    enum TexOpKind : U32 { OPK_MIPMAP, OPK_COPY_SUB, OPK_COPY_IMAGE, OPK_SWIZZLE, OPK_DROP_LEVELS, OPK_COMMIT };
     struct TexOp { U32 mKind; U32 mTex; LLVkFormat::Target mTarget; U8 mStore; U8 mSwz[4]; U8 mPad8; S32 mLevel; S32 mX0, mY0, mZ0, mX, mY, mW, mH; U32 mSource; };
 
     // ---- handles: the producer allocates the id, the worker makes and destroys the texture in stream order ----
@@ -52,8 +52,9 @@ namespace LLVkTex
     void generateMipmap(U32 id);
     // <FS> native-vk: the texture gives up its top 'levels' mip levels: the image the levels below them make (no draw, no render target). Nothing happens when the texture does not hold its whole mip chain.
     void dropLevels(U32 id, S32 levels);
-    // <FS> native-vk: the texture name `name` replaces `predecessor` (a texture that gets another discard level gets a new name): until `name` has an image with data, what draws name it shows the predecessor's image
-    void aliasName(U32 name, U32 predecessor);
+    // <FS> native-vk (texture handles H2): the image uploaded under the name `staged` becomes the image of the texture `id` (the texture keeps its name and id; `staged` goes). The viewer prepares a new
+    // resolution on a loader thread under a name of its own and commits it here when it is ready: draws and pins that name `id` see the old image until the commit and the new one after it.
+    void commitImage(U32 id, U32 staged);
     // copies from a render target (source: its id, 0 = the back buffer; colour attachment 0) into the texture
     void copySubImage(U32 id, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source);
     void copyImage2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 x, S32 y, S32 width, S32 height, U32 source, const char* file = __builtin_FILE(), int line = __builtin_LINE());
@@ -80,7 +81,7 @@ namespace LLVkWorker
     void tex_swizzle(unsigned id, const LLVkFormat::Swizzle* rgba);
     void tex_mipmap(unsigned id);
     void tex_drop_levels(unsigned id, int levels);
-    void tex_alias_name(unsigned name, unsigned predecessor);
+    void tex_commit_image(unsigned id, unsigned staged);
     void tex_copy_sub(unsigned id, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source);
     void tex_copy_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int x, int y, int width, int height, unsigned source);
     int tex_level_parameter(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Level q);

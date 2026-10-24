@@ -585,7 +585,7 @@ inline void tex_forget(U32 name) { if (name < sTexFlat.size()) sTexFlat[name] = 
 
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
 std::unordered_set<U32> sSeenNames;       // <FS> diagnostic: GL names of textures drawn with a picture at least once
-U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0, sSampleNoName = 0, sSampleNoImage = 0, sSampleBlank = 0, sRetiredNow = 0, sRetiredUsed = 0, sAliasServed = 0, sNoImageNoAlias = 0, sNoImageAliasUnusable = 0, sPinNoSlot = 0, sNoSuccessor = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
+U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0, sSampleNoName = 0, sSampleNoImage = 0, sSampleBlank = 0, sRetiredNow = 0, sRetiredUsed = 0, sPinNoSlot = 0, sNoSuccessor = 0, sCommits = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
 U64 sOutOfRangeDraws = 0;           // indexed draws left out because their index or vertex range was not inside their buffers (since the start)
 U64 sDrawsTotal = 0;
 std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
@@ -662,9 +662,8 @@ inline S32 edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength :
 // (also kept for images that leave nothing behind, mName 0, with what they were: the log of slots lost with no successor says which kind of image went)
 struct ViewSucc { U32 mName; U64 mFrame; U32 mOrigName; U8 mKind; U32 mW, mH, mLevels, mValid; bool mHadAlias; };
 static std::unordered_map<U64, ViewSucc> sViewSucc;
-static std::unordered_map<U32, U32> sNameSucc;          // an old name -> the name that replaces it (the reverse of sNameAlias)
 
-// kind: 1 re-specified, 2 mip chain grown, 3 levels dropped, 4 name deleted (t.mName is then the name that replaces it, orig_name the deleted one), 5 sampling view rebuilt (swizzle)
+// kind: 1 re-specified, 2 mip chain grown, 3 levels dropped, 4 name deleted (t.mName is then 0: nothing replaces it), 5 sampling view rebuilt (swizzle), 6 image replaced by a commit (a new resolution under the same id)
 void note_view_gone(Tex& t, int kind, U32 orig_name)
 {
     if (t.mImage.valid() && t.mImage.mViewId)
@@ -690,61 +689,6 @@ void note_view_gone(Tex& t, int kind, U32 orig_name)
 }
 
 void destroy_tex_images(Tex& t, int kind = 1, U32 orig_name = 0);
-
-// <FS> native-vk (LL_VK_ZOMBIE=0 turns it off): a name that is deleted while the name that replaces it has no image with data yet (the delete came first) keeps its image, off the books, until the
-// replacement has data (or 90 frames): the slots that name its view keep showing it, and the swap to the successor happens when the image really goes (note_view_gone/view_successor), not the stand-in.
-struct Zombie { Image mImage; U32 mOrig, mSucc; U32 mW, mH, mLevels, mValid; U64 mFrame; };
-static std::vector<Zombie> sZombies;
-static U64 sZombiesKept = 0, sZombiesReleased = 0, sZombiesTimedOut = 0;
-
-void zombie_if_successor_waits(Tex& t, U32 orig)
-{
-    static const bool off = getenv("LL_VK_ZOMBIE") && getenv("LL_VK_ZOMBIE")[0] == '0';
-    if (off || !t.mName || !t.mImage.valid() || !t.mImage.mViewId || t.mImage.mViewType != VK_IMAGE_VIEW_TYPE_2D || !t.mViews.empty() || sZombies.size() > 2000)
-    {
-        return;
-    }
-    auto s = sGL.mTextures.find(t.mName);
-    if (s == sGL.mTextures.end() || (s->second.mImage.valid() && s->second.mValidLevels > 0))
-    {
-        return;             // (no successor, or one that is ready: the swap to it is made at the next frame start)
-    }
-    sZombies.push_back({ t.mImage, orig, t.mName, t.mWidth, t.mHeight, t.mLevels, t.mValidLevels, Context::instance().getFrameNumber() });
-    t.mImage = Image();     // (the entry goes on without it)
-    ++sZombiesKept;
-}
-
-void zombies_poll()
-{
-    if (sZombies.empty())
-    {
-        return;
-    }
-    const U64 now = Context::instance().getFrameNumber();
-    for (size_t i = 0; i < sZombies.size();)
-    {
-        Zombie& z = sZombies[i];
-        auto s = sGL.mTextures.find(z.mSucc);
-        const bool ready = s != sGL.mTextures.end() && s->second.mImage.valid() && s->second.mValidLevels > 0;
-        const bool gone = s == sGL.mTextures.end();
-        const bool late = z.mFrame + 90 < now;
-        if (!ready && !gone && !late)
-        {
-            ++i;
-            continue;
-        }
-        if (late && !ready) ++sZombiesTimedOut;
-        ++sZombiesReleased;
-        Tex dead;
-        dead.mImage = z.mImage;
-        dead.mName = gone ? 0 : z.mSucc;
-        dead.mWidth = z.mW; dead.mHeight = z.mH; dead.mLevels = z.mLevels; dead.mValidLevels = z.mValid;
-        const U32 orig = z.mOrig;
-        sZombies[i] = sZombies.back();
-        sZombies.pop_back();
-        destroy_tex_images(dead, 4, orig);
-    }
-}
 
 void destroy_tex_images(Tex& t, int kind, U32 orig_name)
 {
@@ -2276,39 +2220,15 @@ static U64 sPacketTextureGeneration = 0;     // <FS> bumped when a texture entry
 
 namespace { void pin_lost(Tex& t, U32 name); }
 
-// <FS> native-vk (LL_VK_NAME_ALIAS=0 turns it off): a texture that gets another discard level gets a new GL name; the viewer says which name it replaces (LLVkTex::aliasName). Until the new name has an
-// image with data, what draws and pins name it shows the image of the old name (the same texture at the other resolution), not the stand-in. The old name is deleted a few frames after the swap.
-static std::unordered_map<U32, U32> sNameAlias;
-
 void destroy_textures(S32 n, const U32* textures)
 {
     for (S32 i = 0; i < n; ++i)
     {
-        {
-            auto a = sNameAlias.find(textures[i]);
-            if (a != sNameAlias.end())
-            {
-                auto r = sNameSucc.find(a->second);
-                if (r != sNameSucc.end() && r->second == textures[i]) sNameSucc.erase(r);
-                sNameAlias.erase(a);
-            }
-        }
         auto it = sGL.mTextures.find(textures[i]);
         if (it != sGL.mTextures.end())
         {
             pin_lost(it->second, it->first);
-            {
-                auto r = sNameSucc.find(it->first);
-                it->second.mName = r == sNameSucc.end() ? 0 : r->second;       // (the deleted name's image is followed by the name that replaces it)
-                if (r != sNameSucc.end())
-                {
-                    // the successor stops standing in for the deleted name: GL names are handed out again, and a new texture with this number must not be shown under the successor's name
-                    auto al = sNameAlias.find(r->second);
-                    if (al != sNameAlias.end() && al->second == it->first) sNameAlias.erase(al);
-                    sNameSucc.erase(r);
-                }
-            }
-            zombie_if_successor_waits(it->second, it->first);
+            it->second.mName = 0;       // (a deleted texture leaves nothing behind: its slots get the stand-in)
             destroy_tex_images(it->second, 4, it->first);
             tex_forget(it->first);
             sGL.mTextures.erase(it);
@@ -2581,19 +2501,52 @@ void tex_mipmap(unsigned id)
     edit_mipmap();
 }
 
-void tex_alias_name(unsigned name, unsigned predecessor)
+// <FS> native-vk (texture handles H2): the image prepared under `staged` becomes the image of the texture `id`. The texture keeps its entry, its pin, its slot hints and its place in every
+// record; what changes is the image (the old one goes through destroy_tex_images: the slots that name its view get the new one, see view_successor) and the state that describes it.
+void tex_commit_image(unsigned id, unsigned staged)
 {
-    static const bool off = getenv("LL_VK_NAME_ALIAS") && getenv("LL_VK_NAME_ALIAS")[0] == '0';
-    if (off || !name || !predecessor || name == predecessor)
+    if (!id || !staged || id == staged)
     {
         return;
     }
-    if (sNameAlias.size() > 100000)
+    auto sit = sGL.mTextures.find(staged);
+    if (sit == sGL.mTextures.end())
     {
-        sNameAlias.clear();             // (entries go when the name is deleted; this is the guard against names that are never deleted)
+        return;                 // (nothing was prepared: a failed upload)
     }
-    sNameAlias[name] = predecessor;
-    sNameSucc[predecessor] = name;
+    auto dit = sGL.mTextures.find(id);
+    if (dit == sGL.mTextures.end())
+    {
+        const U32 gone = staged;
+        destroy_textures(1, &gone);         // (the texture was deleted while its new image was prepared)
+        return;
+    }
+    Tex& d = dit->second;
+    Tex& st = sit->second;
+    destroy_tex_images(d, 6, id);
+    d.mImage = st.mImage;
+    d.mViews = std::move(st.mViews);
+    d.mDim = st.mDim;
+    d.mWidth = st.mWidth; d.mHeight = st.mHeight; d.mDepth = st.mDepth;
+    d.mLevels = st.mLevels;
+    d.mStore = st.mStore;
+    d.mFormat = st.mFormat;
+    d.mSampler = st.mSampler;
+    d.mValidLevels = st.mValidLevels;
+    for (int k = 0; k < 4; ++k) d.mSwizzle[k] = st.mSwizzle[k];
+    d.mSwizzleSet = st.mSwizzleSet;
+    d.mVkSampler = VK_NULL_HANDLE;
+    d.mSamplerSig = 0;
+    d.mBindlessSlot = 0;                // (the slot of the old view: the next lookup takes the new one)
+    d.mBindlessView = VK_NULL_HANDLE;
+    st.mImage = Image();                // (the image moved: the staged entry goes without destroying it)
+    st.mViews.clear();
+    const U32 staged_name = staged;
+    destroy_textures(1, &staged_name);
+    ++sCommits;
+    ++gPassState.mTargetEpoch;
+    ++sPacketTextureGeneration;
+    pin_touch(d);
 }
 
 void tex_drop_levels(unsigned id, int levels)
@@ -3438,42 +3391,6 @@ static Tex* packet_texture(U32 name)
     return &it->second;
 }
 
-// <FS> native-vk (LL_VK_NAME_ALIAS=0 turns it off): a texture that gets another discard level gets a new GL name; the viewer says which name it replaces (LLVkTex::aliasName). Until the new name has an
-// image with data, what draws and pins name it shows the image of the old name (the same texture at the other resolution), not the stand-in. The old name is deleted a few frames after the swap.
-static Tex* texture_or_predecessor(U32 name, bool* used_predecessor)
-{
-    if (used_predecessor)
-    {
-        *used_predecessor = false;
-    }
-    Tex* t = packet_texture(name);
-    if (t && t->mImage.valid() && t->mValidLevels > 0)
-    {
-        return t;
-    }
-    auto it = sNameAlias.empty() ? sNameAlias.end() : sNameAlias.find(name);
-    if (it == sNameAlias.end())
-    {
-        if (name)
-        {
-            ++sNoImageNoAlias;          // (a name asked for before it has an image, and nothing says what it replaces: a first load, or the viewer did not tell)
-        }
-        return t;
-    }
-    Tex* pred = packet_texture(it->second);
-    if (pred && pred->mImage.valid() && pred->mValidLevels > 0 && pred->mImage.mViewType == VK_IMAGE_VIEW_TYPE_2D)
-    {
-        if (used_predecessor)
-        {
-            *used_predecessor = true;
-        }
-        ++sAliasServed;
-        return pred;
-    }
-    ++sNoImageAliasUnusable;            // (it replaces a name whose image is gone or has no data)
-    return t;
-}
-
 static bool view_successor(U64 old_view_id, VkDescriptorImageInfo& out, U64& out_view_id)
 {
     auto it = sViewSucc.find(old_view_id);
@@ -3522,7 +3439,7 @@ static bool view_successor(U64 old_view_id, VkDescriptorImageInfo& out, U64& out
 // the slot of a texture in the frame's bindless table; 0 (white) for one that has no usable image, which is what the bound-texture path samples then too
 static U32 packet_texture_slot(Renderer& r, U32 name)
 {
-    Tex* t = texture_or_predecessor(name, nullptr);
+    Tex* t = packet_texture(name);
     if (!t || !t->mImage.valid() || t->mImage.mViewType != VK_IMAGE_VIEW_TYPE_2D)
     {
         // diagnostic (blink after load): a texture that was drawn with its picture before and now has none (deleted name, or no image)
@@ -3652,8 +3569,7 @@ void pin_resolve(U32 index)
     ++sPinResolves;
     Renderer& r = Renderer::instance();
     U32 slot = 0;
-    bool of_predecessor = false;
-    Tex* t = texture_or_predecessor(p.mName, &of_predecessor);
+    Tex* t = packet_texture(p.mName);
     if (t && t->mImage.valid() && t->mImage.mViewType == VK_IMAGE_VIEW_TYPE_2D)
     {
         if (t->mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
@@ -3663,10 +3579,7 @@ void pin_resolve(U32 index)
             r.setBarrierCause(prev_cause);
         }
         slot = r.bindlessSlotIn(0, &t->mImage, texture_sampler(r, *t), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, p.mSlot);
-        if (!of_predecessor)
-        {
-            t->mPinIndex = index;           // (the old name's texture keeps the pin it has: this pin only borrows its image until the new one has data)
-        }
+        t->mPinIndex = index;
     }
     if (slot)
     {
@@ -3743,10 +3656,10 @@ std::string describe_destroyed_view(U64 view_id)
     {
         return "not a texture image that went through destroy_tex_images (or its note is gone)";
     }
-    static const char* kinds[] = { "?", "re-specified", "mip chain grown", "levels dropped", "name deleted", "sampling view rebuilt" };
+    static const char* kinds[] = { "?", "re-specified", "mip chain grown", "levels dropped", "name deleted", "sampling view rebuilt", "image replaced by a commit" };
     const ViewSucc& v = it->second;
     char buf[300];
-    snprintf(buf, sizeof(buf), "GL name %u, %s %lld frames ago, %ux%u, %u levels (%u with data), replaced by name %u%s", v.mOrigName, kinds[v.mKind < 6 ? v.mKind : 0],
+    snprintf(buf, sizeof(buf), "GL name %u, %s %lld frames ago, %ux%u, %u levels (%u with data), replaced by name %u%s", v.mOrigName, kinds[v.mKind < 7 ? v.mKind : 0],
              (long long)(Context::instance().getFrameNumber() - v.mFrame), v.mW, v.mH, v.mLevels, v.mValid, v.mName, v.mName ? "" : " (none)");
     return buf;
 }
@@ -9848,25 +9761,30 @@ void after_frame()
         drain_query_results();
     }
     hiz_poll();     // <FS> S7 H1: publish the Hi-Z results of the frames the GPU has finished
-    zombies_poll();
     {
         // <FS> the video memory and what the textures take of it, every 1800 frames (about 30 seconds): after a teleport this shows where the memory went and whether a texture was refused
         {
             // <FS> every 300 frames (about 5 s), when something changed: what the texture copies from targets and the re-specified images did in that time (cumulative totals, the difference between two lines is the interval)
             static U32 copy_frames = 0;
-            static U64 last[22] = {};
+            static U64 last[18] = {};
             if (++copy_frames >= 300)
             {
                 copy_frames = 0;
                 sRetiredNow = Renderer::instance().retiredSlots(); sRetiredUsed = Renderer::instance().retiredUsedThisFrame();
-                const U64 now_v[22] = { (U64)sCopies, sCopyDropFrame, sCopyDropTex, sCopyDropSrc, sRespecs, sGrows, sLevelDrops, sLevelDropsRefused, sSampleNoName, sSampleNoImage, sSampleBlank, sRetiredNow, sRetiredUsed, sAliasServed, sNoImageNoAlias, sNoImageAliasUnusable, sPinNoSlot, Renderer::instance().retireSwapped(), sNoSuccessor, sZombiesKept, sZombiesTimedOut, Renderer::instance().slotsReclaimed() };
+                const U64 now_v[18] = { (U64)sCopies, sCopyDropFrame, sCopyDropTex, sCopyDropSrc, sRespecs, sGrows, sLevelDrops, sLevelDropsRefused, sSampleNoName, sSampleNoImage, sSampleBlank, sRetiredNow, sRetiredUsed,
+                                        sPinNoSlot, Renderer::instance().retireSwapped(), sNoSuccessor, Renderer::instance().slotsReclaimed(), sCommits };
+                static const char* const names[18] = { "texture copies from targets done", "dropped: not in a frame", "no texture image", "no source image", "images re-specified", "mip chains grown", "levels dropped",
+                                                       "drops refused", "draw samples of a deleted name", "of a texture without an image", "of an image with no level yet", "bindless slots given the stand-in",
+                                                       "of them already used by a draw this frame", "pin resolves that ended without a slot", "bindless slots given the successor's view instead of the stand-in",
+                                                       "successors not ready", "given-back slots taken back for rows that still named them", "images committed under the same id (a new resolution)" };
                 if (memcmp(now_v, last, sizeof(now_v)) != 0)
                 {
-                    LL_INFOS("VkTexCopy") << "texture copies from targets done " << now_v[0] << " (+" << now_v[0] - last[0] << "), dropped: not in a frame " << now_v[1] << " (+" << now_v[1] - last[1] << "), no texture image "
-                        << now_v[2] << " (+" << now_v[2] - last[2] << "), no source image " << now_v[3] << " (+" << now_v[3] - last[3] << "); images re-specified " << now_v[4] << " (+" << now_v[4] - last[4]
-                        << "), mip chains grown " << now_v[5] << " (+" << now_v[5] - last[5] << "), levels dropped " << now_v[6] << " (+" << now_v[6] - last[6] << "), drops refused " << now_v[7] << " (+" << now_v[7] - last[7] << "); draw samples of a deleted name " << now_v[8] << " (+" << now_v[8] - last[8] << "), of a texture without an image "
-                                         << now_v[9] << " (+" << now_v[9] - last[9] << "), of an image with no level yet " << now_v[10] << " (+" << now_v[10] - last[10] << "); bindless slots given the stand-in " << now_v[11] << " (+" << now_v[11] - last[11] << "), of them already used by a draw this frame " << now_v[12] << " (+" << now_v[12] - last[12] << "); names served from the name they replace " << now_v[13] << " (+" << now_v[13] - last[13] << "), names without image and without a predecessor "
-                        << now_v[14] << " (+" << now_v[14] - last[14] << "), with an unusable predecessor " << now_v[15] << " (+" << now_v[15] - last[15] << "), pin resolves that ended without a slot " << now_v[16] << " (+" << now_v[16] - last[16] << "); bindless slots given the successor's view instead of the stand-in " << now_v[17] << " (+" << now_v[17] - last[17] << "), successors not ready " << now_v[18] << " (+" << now_v[18] - last[18] << "); images kept for a replacement that had no data " << now_v[19] << " (+" << now_v[19] - last[19] << "), released by the time limit " << now_v[20] << " (+" << now_v[20] - last[20] << "); given-back slots taken back for rows that still named them " << now_v[21] << " (+" << now_v[21] - last[21] << ")" << LL_ENDL;
+                    std::ostringstream os;
+                    for (int k = 0; k < 18; ++k)
+                    {
+                        os << (k ? (k == 1 || k == 5 || k == 8 || k == 11 || k == 13 ? "; " : ", ") : "") << names[k] << " " << now_v[k] << " (+" << now_v[k] - last[k] << ")";
+                    }
+                    LL_INFOS("VkTexCopy") << os.str() << LL_ENDL;
                     memcpy(last, now_v, sizeof(last));
                 }
             }
