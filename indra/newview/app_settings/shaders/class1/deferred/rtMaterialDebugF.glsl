@@ -104,7 +104,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
     }
     uint pair = (tex_index < 2u) ? m.slots.x : m.slots.y;
     uint slot = ll_rt_slot((pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu);       // the material holds pin indices
-    vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod);
+    vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod);
     vec4 vcol = vec4(1.0);
     if ((g.flags & 16u) != 0u)
     {
@@ -149,7 +149,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
                     tangent = normalize(tangent);
                     vec3 bit = cross(n_geo, tangent);
                     bit *= (dot(bit, bitangent) < 0.0) ? -1.0 : 1.0;       // the handedness of the uv layout
-                    vec3 nm = textureLod(ll_rt_tex[nonuniformEXT(normal_slot)], uv, lod).xyz * 2.0 - 1.0;
+                    vec3 nm = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(normal_slot))], uv, lod).xyz * 2.0 - 1.0;
                     dbg_normal_obj = normalize(tangent * nm.x + bit * nm.y + n_geo * nm.z);
                 }
             }
@@ -164,7 +164,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
             uint emissive_slot = ll_rt_slot(emissive_pin);
             if (emissive_slot != 0u)
             {
-                vec3 c = textureLod(ll_rt_tex[nonuniformEXT(emissive_slot)], uv, lod).rgb;
+                vec3 c = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(emissive_slot))], uv, lod).rgb;
                 emissive_tex = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
             }
         }

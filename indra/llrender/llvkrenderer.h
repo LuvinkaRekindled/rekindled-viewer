@@ -527,6 +527,9 @@ private:
     };
     void bindlessStart();
     VkDescriptorSetLayout mSet2Layout = VK_NULL_HANDLE;
+    // <FS> texture handles (H1): the map from a texture id ((table << 16) | slot) to the descriptor index in its table, one per frame in flight (set 2 binding 4); the identity until H3
+    Buffer mHandleMap[Context::FRAMES_IN_FLIGHT];
+    static constexpr U32 HANDLE_MAP_STRIDE = 65536;        // ids per table
     VkDescriptorPool mBindlessPool = VK_NULL_HANDLE;
     VkDescriptorSet mBindlessSet[Context::FRAMES_IN_FLIGHT] = {};
     bool mBindlessFilled = false;       // <FS> every slot of every frame's set holds the stand-in from the first use on: a slot nothing has written yet can be read (a row naming it, a record made before its descriptor arrived) and then shows the stand-in instead of an undefined descriptor

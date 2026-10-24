@@ -1,8 +1,8 @@
-param([string[]]$Runs = @('base1','base2','rt1'), [int]$Wait = 200)
+param([string[]]$Runs = @('base1','base2','rt1'), [int]$Wait = 200, [string]$Prefix = 'h0-')
 # H0 baseline for PLAN-texture-handles.md: the same lap as the texture runs (60 s still, 60 s turn, 120 s still), nvidia-smi once a second. base* = RT off (run-pts.ps1), rt* = ray tracing on (rt-run-pts.ps1 without RT_OFF).
 $vars = 'LL_VK_AB_MARK=1;LL_VK_POSE_LOG=1;LL_VK_BUDGET_LOG=1'
 foreach ($r in $Runs) {
-  $name = 'h0-' + $r
+  $name = $Prefix + $r
   "starting $name " + (Get-Date -Format 'HH:mm:ss')
   $smi = Start-Process -FilePath nvidia-smi -ArgumentList '--query-gpu=timestamp,utilization.gpu,memory.used,memory.total --format=csv,noheader -l 1' -RedirectStandardOutput ("<work>\run-logs\$name.smi.csv") -WindowStyle Hidden -PassThru
   if ($r -like 'rt*') {
