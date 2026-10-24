@@ -113,3 +113,42 @@ Ways a texture id / slot is produced (all must end on the new allocator and the 
 Outside the table and outside this plan's scope, to confirm in H0: passes that bind images of their own and have no texture identity or flashing problem (the Hi-Z pyramid, the skinning pass, the DLSS inputs and outputs, the post chain's own targets). They stay as they are only if H0 shows they never name an image that the viewer replaces; if any does, it joins the table.
 
 Consequence for the steps: the push descriptor path is not unused, so it cannot simply be deleted. It is replaced (H1 gives the pull programs the map macro, H4b moves their fixed samplers to ids written once per pass) and then deleted with the rest at H5. The expected side effect is fewer per-draw descriptor pushes; it must show as equal or better in the plaza numbers (gate 1).
+
+### 10.1 Readers of the name (H0 findings, 2026-10-24)
+
+All uses of `mTexName` / `getTexName()` outside `llimagetex.cpp` and the Vulkan files, 79 lines in 22 files, sorted by what they do with the number:
+- **Pass through to a bind or a manual image call (no meaning attached):** `gRender.getTexUnit(0)->bindManual(...)`, `bindTextureSlot`, `setTexWrap/Filter`, `LLImageTex::setManualImage`, `generateMipmap` (`fsmaniptranslatejoint.cpp`, `llmaniptranslate.cpp`, `gltfscenemanager.cpp`, `lldrawpoolbump.cpp`, `llterrainpaintmap.cpp`, `llfloaterimagepreview.cpp`, `llpostprocess.cpp`, `llcubemap*.cpp`, `llvertexbuffer.*`, `llrendertarget.cpp`). Nothing to change: the number is an id.
+- **"Does it have a texture yet" tests (`== 0` / `!= 0`):** `llviewertexture.cpp:3037`, `pipeline.cpp:5201` and `9434`, `llimagetex.h getHasImageTexture`. The id must stay 0 until the object first creates its texture, and non-zero from then on. (Today it can briefly be 0 in the middle of a change of discard level: the new design removes that gap.)
+- **Redundant bind elision by comparing numbers:** `llrender.cpp:286-289` (`mCurrTexture != getTexName()`). With a stable id the compare says "same texture" across a change of image, which is correct for the Vulkan side (the id resolves to the current image at draw time). Check in H2 that no GL-era caching in `LLTexUnit` assumes a new number means new contents.
+- **Numbers copied into records for the worker:** `pipeline.cpp:5148, 5804, 9371, 9395` (alpha, spot and shadow entries; `getDefaultImageName`): they carry the id once the number is the id; the default image's id is just another id.
+- **Static pointers to well-known textures:** `sWhiteTexture`, `sDefaultImagep`, `sNullImagep`, the grid textures: ids that never change, as now.
+- **Setters that force a number:** `setTexName` (cube maps, cube map arrays) and `syncTexName` (media textures, `llviewermedia.cpp:3156`, and the upgrade path). The cube map ones assign a fresh id; the media one goes through "replace the image of this id".
+
+The change events: `noteNameChange` / `takeNameEvents` / `wantNameEvents` (`llimagetex.cpp:541-570`, consumed by `scene_alpha_frame` in `pipeline.cpp:9239`, which keeps the alpha registry `sAlphaTex` and sends the kind 19 updates `{entry, 4 names, ready}` to the worker). **The viewer side already has an object-level id: `LLImageTex::mTexId`** (an atomic counter, assigned at the first name change, never reused, unique per `LLImageTex` object, reported by the events). So the id of the new design is not a new concept on that side: `mTexId` is promoted (assigned when the object first creates its texture, from the id allocator with an index and a generation, freed with the object), the events carry "image replaced / ready" with a version, and the kind 19 updates carry ids and a ready flag instead of four names. The alpha registry and its fragments keep working on `mTexId` as they do now.
+
+### 10.2 Every place a descriptor is written or pushed (H0 findings, 2026-10-24)
+
+`vkUpdateDescriptorSets` / `vkCmdPushDescriptorSetKHR` appear at ten sites in the Vulkan files, which is the complete list of ways an image reaches a shader:
+- `llvkrenderer.cpp:2799` the initial fill of the bindless sets; `:3539` the flush of the bindless sets (both replaced by the shared set and the immutable descriptors of H3).
+- `llvkrenderer.cpp:4155` the push descriptors of the classic programs (replaced in H1/H4b, deleted in H5).
+- `llvkrenderer.cpp:1289` and `:4226` nine-descriptor writes (the uniform and buffer sets, no textures; unchanged).
+- `llvkrt.cpp:845` the ray scene's own set (acceleration structure and tables; the texture table it reads is the bindless one; unchanged except that its tables hold ids).
+- `llvkworker.cpp:8891, 8908, 8921` the Hi-Z compute pushes (the depth pyramid and its mip views): the images are the render target's, resolved from the current image at each use. They are not viewer textures and have no identity problem, so they stay as they are (confirmed by reading; a resize of the depth target is already followed by `hiz_pyramid`).
+
+DLSS (NGX) and the skinning pass use buffer addresses and NGX resources, no descriptor writes. So the table, the classic push path and the ten sites above are the whole surface of the rework.
+
+## 11. H0 baseline (2026-10-24, tree at checkpoint `6c49cf7d` + plan docs, plaza 935684395466496, 59 people, ray tracing on)
+
+Three laps with `<work>\h0-chain.ps1` (copy in `S7-c1-data/`): 60 s still, 60 s turning left, back to the start yaw, 120 s still; `LL_VK_AB_MARK=1;LL_VK_POSE_LOG=1;LL_VK_BUDGET_LOG=1`; nvidia-smi once a second. Logs and pictures: `<work>un-logs\h0-plaza1`, `h0-plaza2`, `h0-rtplaza1`. **Note:** the harness variable `RT_OFF=1` does not switch ray tracing off in this build (the `FSVkRayTracing` setting wins; all three logs show the ray scene running), so all three are ray-on laps; a true RT-off lap needs the setting off. The first lap of the earlier try (`h0-base1/2`, `h0-rt1`) ran in the new account's empty start region (1109407232679936, 190+ fps, 1,933 textures): not a baseline for the plaza, kept only as a light-scene reading for the cost of the extra map load in H1.
+
+| lap | fps still1 / still2 late | GPU % | frame interval ms | worker waited ms/frame (late) |
+|---|---|---|---|---|
+| plaza1 | 67.4 / 55.7 | 99 / 99 | 15.0 / 17.8 | 0 / 0 |
+| plaza2 | 70.4 / 68.5 | 99 / 93 | 14.3 / 14.3 | 0 / 4.2 |
+| rtplaza1 | 75.0 / 70.0 | 99 / 94 | 13.2 / 14.2 | 0 / 3.1 |
+
+Run to run the spread is about 10 % (the crowd). Gate 1 of section 5 therefore compares medians of at least three laps of the same kind, not one lap.
+
+Texture churn per lap (cumulative counters of the `VkTexCopy` line at the end of a lap, 5 minutes with 60 s of turning): images re-specified 855 / 835 / 1,055; mip chains grown 47,505 / 44,468 / 43,829; levels dropped 25,454 / 26,110 / 22,898; bindless slots given the successor's view 325,693 / 338,497 / 317,686; given the stand-in 710 / 868 / 849 (mostly slots already given back, see section 27 of `S7-design.md`); mirrored textures 21,013 / 21,075 / 20,976 (about 6.1 GB). That is about 240 image replacements per second averaged over the 5-minute lap (grows + drops + re-specs, roughly 71,000 per lap), mostly while turning (the budget bias ping-pong of `S7-design.md` section 20). It is the traffic the new design has to make cheap: each of these is today a copy of mip levels plus a new descriptor and a slot swap, and in H3 it becomes "new image + one map update"; in H6 the grow/drop decisions come from what was sampled, not from the CPU face loops.
+
+Also seen: the ray scene's tlas builds produce slow GPU frames (`h0-plaza1`: 10 frames of 150-180 ms at the start of the turn; `h0-rtplaza1`: 3 frames of 570-590 ms with `rt scene tlas` 310-320 ms). They are not texture-related and not part of this rework; they are the "ray scene cost" item of the open list.
