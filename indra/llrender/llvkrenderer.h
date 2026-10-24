@@ -595,6 +595,7 @@ private:
     Buffer mRing[Context::FRAMES_IN_FLIGHT];
     Buffer mDummyUbo;
     Image mWhite;
+    Image mMagenta;             // <FS> debug (LL_VK_STANDIN_MAGENTA=1): the bindless stand-in is magenta, so a surface that samples it shows
     Image mFallback[4];             // white stand-ins: 2D array, cube, cube array, 3D (mWhite is the 2D one)
     std::map<SamplerDesc, VkSampler> mSamplers;
 
