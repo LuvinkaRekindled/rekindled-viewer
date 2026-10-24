@@ -2882,6 +2882,169 @@ void draw_arrays(unsigned topo, int first, int count)
     ++sDrawsTotal;
 }
 
+
+// <FS> native-vk diagnostic (LL_VK_UIDIFF=1): the immediate-mode draws of every frame (the UI, the name tags and floating text, the crosshair) are kept as a list of hashes (program, texture, vertex
+// count, positions, texture coordinates, colours, box); a frame that differs from the frames on both sides of it (one frame A B A, or two frames A B B A) is logged with the draws that differ, tag VkUiDiff.
+// Equal data with a different picture means the renderer, different data means the viewer sent it.
+namespace
+{
+const bool sUiDiff = getenv("LL_VK_UIDIFF") != nullptr;
+struct UiRec
+{
+    U64 mProg = 0, mPos = 0, mUv = 0, mCol = 0;
+    U32 mTex0 = 0, mTex1 = 0, mCount = 0, mTopo = 0, mMask = 0, mCol0 = 0;
+    F32 mMinX = 0, mMinY = 0, mMaxX = 0, mMaxY = 0;
+    bool mOk = true;
+};
+std::vector<UiRec> sUiCur;
+std::vector<UiRec> sUiHist[4];          // 0 = the frame just ended, 1 = the one before, ...
+U64 sUiHash[4] = {};
+U64 sUiFrames = 0, sUiEvents = 0;
+std::unordered_map<U64, std::string> sUiNames;
+
+U64 ui_fnv(const void* p, size_t n, U64 h = 1469598103934665603ull)
+{
+    const U8* b = (const U8*)p;
+    for (size_t i = 0; i < n; ++i)
+    {
+        h = (h ^ b[i]) * 1099511628211ull;
+    }
+    return h;
+}
+
+void uidiff_note(int count, unsigned topo, unsigned mask, const void* bytes, const std::string& program, bool ok)
+{
+    UiRec r;
+    r.mProg = std::hash<std::string>()(program);
+    sUiNames.emplace(r.mProg, program);
+    r.mTex0 = gPassState.mUnitTex[0];
+    r.mTex1 = gPassState.mUnitTex[1];
+    r.mCount = (U32)count;
+    r.mTopo = topo;
+    r.mMask = mask;
+    r.mOk = ok;
+    const U8* b = (const U8*)bytes;
+    const size_t n = (size_t)count;
+    r.mPos = ui_fnv(b, n * 16);
+    size_t off = n * 16;
+    if (mask & LLVkAsync::SCRATCH_TEXCOORD0)
+    {
+        r.mUv = ui_fnv(b + off, n * 8);
+        off += n * 8;
+    }
+    if (mask & LLVkAsync::SCRATCH_COLOR)
+    {
+        r.mCol = ui_fnv(b + off, n * 4);
+        if (n)
+        {
+            memcpy(&r.mCol0, b + off, 4);
+        }
+    }
+    r.mMinX = r.mMinY = 1e30f;
+    r.mMaxX = r.mMaxY = -1e30f;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const F32* v = (const F32*)(b + i * 16);
+        r.mMinX = std::min(r.mMinX, v[0]); r.mMaxX = std::max(r.mMaxX, v[0]);
+        r.mMinY = std::min(r.mMinY, v[1]); r.mMaxY = std::max(r.mMaxY, v[1]);
+    }
+    sUiCur.push_back(r);
+}
+
+U64 ui_frame_hash(const std::vector<UiRec>& v)
+{
+    U64 h = 1469598103934665603ull;
+    for (const UiRec& r : v)
+    {
+        h = ui_fnv(&r.mProg, sizeof(U64), h);
+        h = ui_fnv(&r.mPos, sizeof(U64), h);
+        h = ui_fnv(&r.mUv, sizeof(U64), h);
+        h = ui_fnv(&r.mCol, sizeof(U64), h);
+        h = ui_fnv(&r.mTex0, sizeof(U32), h);
+        h = ui_fnv(&r.mTex1, sizeof(U32), h);
+        h = ui_fnv(&r.mCount, sizeof(U32), h);
+        h = ui_fnv(&r.mOk, sizeof(bool), h);
+    }
+    return h;
+}
+
+void ui_describe_diff(const char* what, const std::vector<UiRec>& base, const std::vector<UiRec>& odd)
+{
+    std::string text;
+    if (base.size() != odd.size())
+    {
+        text += " draw count " + std::to_string(base.size()) + " -> " + std::to_string(odd.size()) + ";";
+    }
+    if (base.size() != odd.size())
+    {
+        const std::vector<UiRec>& big = base.size() > odd.size() ? base : odd;
+        const std::vector<UiRec>& small = base.size() > odd.size() ? odd : base;
+        // the first position where the two lists stop matching is where the extra draw sits
+        size_t k = 0;
+        while (k < small.size() && big[k].mProg == small[k].mProg && big[k].mPos == small[k].mPos && big[k].mCol == small[k].mCol && big[k].mTex0 == small[k].mTex0 && big[k].mCount == small[k].mCount)
+        {
+            ++k;
+        }
+        if (k < big.size())
+        {
+            const UiRec& x = big[k];
+            char buf[360];
+            snprintf(buf, sizeof(buf), " extra draw in the %s frame at #%zu: %s tex %u/%u, %u vertices, mask %u, box (%.1f,%.1f)-(%.1f,%.1f), first colour %08x;", base.size() > odd.size() ? "base" : "odd", k,
+                     sUiNames.count(x.mProg) ? sUiNames[x.mProg].c_str() : "?", x.mTex0, x.mTex1, x.mCount, x.mMask, x.mMinX, x.mMinY, x.mMaxX, x.mMaxY, x.mCol0);
+            text += buf;
+        }
+    }
+    U32 shown = 0;
+    const size_t n = std::min(base.size(), odd.size());
+    for (size_t i = 0; i < n && shown < 10; ++i)
+    {
+        const UiRec& a = base[i];
+        const UiRec& b = odd[i];
+        if (a.mProg == b.mProg && a.mPos == b.mPos && a.mUv == b.mUv && a.mCol == b.mCol && a.mTex0 == b.mTex0 && a.mTex1 == b.mTex1 && a.mCount == b.mCount && a.mOk == b.mOk)
+        {
+            continue;
+        }
+        ++shown;
+        char buf[480];
+        snprintf(buf, sizeof(buf), " [#%zu %s tex %u/%u -> %u/%u, %u -> %u vertices, %s%s%s%s%s%s box (%.0f,%.0f)-(%.0f,%.0f) -> (%.0f,%.0f)-(%.0f,%.0f), first colour %08x -> %08x]", i,
+                 sUiNames.count(a.mProg) ? sUiNames[a.mProg].c_str() : "?", a.mTex0, a.mTex1, b.mTex0, b.mTex1, a.mCount, b.mCount,
+                 a.mProg != b.mProg ? "program " : "", a.mPos != b.mPos ? "positions " : "", a.mUv != b.mUv ? "texcoords " : "", a.mCol != b.mCol ? "colours " : "",
+                 a.mCount != b.mCount ? "count " : "", a.mOk != b.mOk ? "refused-or-not " : "", a.mMinX, a.mMinY, a.mMaxX, a.mMaxY, b.mMinX, b.mMinY, b.mMaxX, b.mMaxY, a.mCol0, b.mCol0);
+        text += buf;
+    }
+    LL_INFOS("VkUiDiff") << what << " (frame " << sUiFrames << ", " << base.size() << " immediate draws):" << text << LL_ENDL;
+}
+
+void uidiff_frame_end()
+{
+    ++sUiFrames;
+    sUiHist[3].swap(sUiHist[2]);
+    sUiHist[2].swap(sUiHist[1]);
+    sUiHist[1].swap(sUiHist[0]);
+    sUiHist[0].swap(sUiCur);
+    sUiCur.clear();
+    sUiHash[3] = sUiHash[2]; sUiHash[2] = sUiHash[1]; sUiHash[1] = sUiHash[0];
+    sUiHash[0] = ui_frame_hash(sUiHist[0]);
+    if (sUiEvents < 300 && sUiFrames >= 4)
+    {
+        if (sUiHash[0] == sUiHash[2] && sUiHash[0] != sUiHash[1])
+        {
+            ++sUiEvents;
+            ui_describe_diff("one frame differs", sUiHist[0], sUiHist[1]);
+        }
+        else if (sUiHash[0] == sUiHash[3] && sUiHash[1] == sUiHash[2] && sUiHash[0] != sUiHash[1])
+        {
+            ++sUiEvents;
+            ui_describe_diff("two frames differ", sUiHist[0], sUiHist[1]);
+        }
+    }
+    if (sUiFrames % 1800 == 0)
+    {
+        LL_INFOS("VkUiDiff") << sUiFrames << " frames seen, " << sUiEvents << " events logged" << LL_ENDL;
+    }
+}
+}
+
 // F3.1: a non-indexed draw with its vertices given (immediate mode); same path as draw_arrays, the vertex input comes from the given bytes
 void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
 {
@@ -2909,7 +3072,12 @@ void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
     LLVkBridge::PhaseTimer apply_phase(LLVkBridge::PH_D_APPLY);
     r.setVertexInput(vi);
     r.setTopology(topology((LLVkFormat::Topology)topo));
-    if (r.draw((U32)count, 0))
+    const bool drawn = r.draw((U32)count, 0);
+    if (sUiDiff)
+    {
+        uidiff_note(count, topo, mask, bytes, r.getProgram()->getName(), drawn);
+    }
+    if (drawn)
     {
         if (LLVkBridge::gPhaseTiming)
         {
@@ -9344,6 +9512,10 @@ void before_end_frame()
 void after_frame()
 {
     std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
+    if (sUiDiff)
+    {
+        uidiff_frame_end();
+    }
     if (LLVkAsync::gEnabled)
     {
         drain_query_results();
