@@ -1850,6 +1850,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
         savePipelineCache();
     }
     harvestQueries(frame_slot);
+    bindlessFlushForgets();
     bindlessRetireDestroyed();
     mOccPending = mOccActive = -1;
     mCmd = cmd;
@@ -2798,6 +2799,7 @@ void Renderer::bindlessRetireDestroyed()
             U64 when = 0;
             if (lost ? ctx.destroyedViewFrame(s.mKey.mViewId, when) : ids.count(s.mKey.mViewId) != 0)
             {
+                if (s.mLastUsed >= ctx.getFrameNumber()) ++mRetiredUsedThisFrame;
                 s.mInfo = tbl.mStandIn;
                 tbl.mPinLog.push_back(slot);            // every frame's set gets the stand-in at its next flush (pinned or not: a table row or a ray record may still name an unpinned slot, and the other frames' sets would keep the dead view)
                 if (s.mPins)
@@ -2818,7 +2820,55 @@ void Renderer::bindlessRetireDestroyed()
     }
 }
 
+// <FS> native-vk (blink after load): a view given up in the middle of a frame used to put the stand-in into its slots in that same frame's descriptor set, and the draws of the frame that had
+// already named the slot (recorded earlier, run later) sampled the stand-in: white for a frame. The image itself is destroyed several frames later (Context::destroyLater), so the slots keep the old
+// view until the next frame begins; from there on the sets get the stand-in as before, long before the memory goes.
 void Renderer::bindlessForgetView(VkImageView view)
+{
+    static const bool now = getenv("LL_VK_FORGET_NOW") != nullptr;
+    if (!view)
+    {
+        return;
+    }
+    {
+        // (counted when it happens: the slots a draw of this frame had already used)
+        auto it = mViewSlots.find(view);
+        if (it != mViewSlots.end())
+        {
+            for (U32 packed : it->second)
+            {
+                const U32 t = packed >> 28, slot = packed & 0x0FFFFFFFu;
+                if (t < BINDLESS_TABLES && slot && slot < mBindlessTbl[t].mSlots.size() && mBindlessTbl[t].mSlots[slot].mActive && mBindlessTbl[t].mSlots[slot].mInfo.imageView == view
+                    && mBindlessTbl[t].mSlots[slot].mLastUsed >= Context::instance().getFrameNumber())
+                {
+                    ++mRetiredUsedThisFrame;
+                }
+            }
+        }
+    }
+    if (now || mCmd == VK_NULL_HANDLE)
+    {
+        bindlessForgetViewNow(view);
+        return;
+    }
+    mForgetPending.push_back(view);
+}
+
+void Renderer::bindlessFlushForgets()
+{
+    if (mForgetPending.empty())
+    {
+        return;
+    }
+    std::vector<VkImageView> pending;
+    pending.swap(mForgetPending);
+    for (VkImageView v : pending)
+    {
+        bindlessForgetViewNow(v);
+    }
+}
+
+void Renderer::bindlessForgetViewNow(VkImageView view)
 {
     if (!view)
     {
