@@ -2752,8 +2752,109 @@ void LLPipeline::dropOcclusionMarks(LLCullResult& result)
     }
 }
 
+// <FS> native-vk diagnostic (LL_VK_AVLOG=1, LL_VK_AVLOG_NAME=part of a name, any case): every 5 seconds one line per avatar (all of the nearest twelve, or those whose name contains the text): what kind of avatar it is
+// (self, animesh control avatar, fully loaded, impostor, sitting, distance) and its attachments with their faces: rigged or not, mesh, fullbright, glow, blended (alpha below 1), shiny, glTF material. Tag VkAvLog.
+static void vk_avatar_log()
+{
+    static const bool on = getenv("LL_VK_AVLOG") != nullptr;
+    if (!on)
+    {
+        return;
+    }
+    static LLFrameTimer timer;
+    if (timer.getElapsedTimeF32() < 5.f)
+    {
+        return;
+    }
+    timer.reset();
+    static std::string needle = []() {
+        std::string n = getenv("LL_VK_AVLOG_NAME") ? getenv("LL_VK_AVLOG_NAME") : "";
+        std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return (char)tolower(c); });
+        return n;
+    }();
+    const LLVector3 cam = LLViewerCamera::getInstance()->getOrigin();
+    S32 shown = 0;
+    for (LLCharacter* c : LLCharacter::sInstances)
+    {
+        LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
+        if (!av || av->isDead())
+        {
+            continue;
+        }
+        std::string name = av->getFullname();
+        std::string lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) { return (char)tolower(ch); });
+        if (!needle.empty() && lower.find(needle) == std::string::npos)
+        {
+            continue;
+        }
+        if (needle.empty() && ++shown > 12)
+        {
+            break;
+        }
+        std::string text;
+        S32 objects = 0;
+        for (auto& kv : av->mAttachmentPoints)
+        {
+            LLViewerJointAttachment* att = kv.second;
+            if (!att)
+            {
+                continue;
+            }
+            for (auto& obj_ptr : att->mAttachedObjects)
+            {
+                LLViewerObject* root = obj_ptr.get();
+                if (!root)
+                {
+                    continue;
+                }
+                std::vector<LLViewerObject*> prims;
+                prims.push_back(root);
+                for (auto& child : root->getChildren())
+                {
+                    prims.push_back(child);
+                }
+                S32 faces = 0, rigged = 0, mesh = 0, fullbright = 0, glow = 0, blend = 0, shiny = 0, pbr = 0, animesh = 0;
+                for (LLViewerObject* o : prims)
+                {
+                    LLVOVolume* vol = dynamic_cast<LLVOVolume*>(o);
+                    if (vol)
+                    {
+                        mesh += vol->isMesh() ? 1 : 0;
+                        rigged += vol->isRiggedMesh() ? 1 : 0;
+                        animesh += vol->isAnimatedObject() ? 1 : 0;
+                    }
+                    for (U8 i = 0; i < o->getNumTEs(); ++i)
+                    {
+                        const LLTextureEntry* te = o->getTE(i);
+                        if (!te)
+                        {
+                            continue;
+                        }
+                        ++faces;
+                        fullbright += te->getFullbright() ? 1 : 0;
+                        glow += te->getGlow() > 0.f ? 1 : 0;
+                        blend += te->getColor().mV[3] < 0.999f ? 1 : 0;
+                        shiny += te->getShiny() ? 1 : 0;
+                        pbr += te->getGLTFRenderMaterial() ? 1 : 0;
+                    }
+                }
+                char buf[300];
+                snprintf(buf, sizeof(buf), " [%s: %s, %zu prims, %d faces, mesh %d, rigged %d, animesh %d, fullbright %d, glow %d, alpha<1 %d, shiny %d, pbr %d]", att->getName().c_str(), root->getID().asString().substr(0, 8).c_str(),
+                         prims.size(), faces, mesh, rigged, animesh, fullbright, glow, blend, shiny, pbr);
+                text += buf;
+                ++objects;
+            }
+        }
+        LL_INFOS("VkAvLog") << "avatar '" << name << "'" << (av->isSelf() ? " (self)" : "") << (av->isControlAvatar() ? " (animesh control avatar)" : "") << ", " << (av->isFullyLoaded() ? "loaded" : "not fully loaded")
+                            << ", " << (av->isImpostor() ? "impostor" : "full") << ", " << (av->isSitting() ? "sitting" : "not sitting") << ", " << (av->getPositionAgent() - cam).length() << " m, " << objects
+                            << " attached objects:" << text << LL_ENDL;
+    }
+}
+
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
 {
+    vk_avatar_log();
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_CULL);
     LL_PROFILE_GPU_ZONE("updateCull"); // should always be zero GPU time, but drop a timer to flush stuff out
 
