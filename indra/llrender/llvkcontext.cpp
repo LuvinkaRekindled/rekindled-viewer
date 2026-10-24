@@ -2236,7 +2236,10 @@ VkDeviceSize arena_block_bytes()
 {
     static const VkDeviceSize v = []() {
         char b[16] = {};
-        const U32 mb = GetEnvironmentVariableA("LL_VK_ARENA_BLOCK_MB", b, sizeof(b)) > 0 ? (U32)atoi(b) : 256;
+        // <FS> native-vk (S7 measurement, tex-pts15 against tex-pts17): 64 MB blocks leave about half the unused space in the acceleration structure blocks (390 MB instead of 800 MB) and keep the used video
+        // memory under the texture budget (10.7 GB instead of 11.7 GB: the discard bias 1.1 instead of 4.0); a range over a quarter of a block gets a block of its own, so there are more of those (about 15 a second
+        // in a busy scene, 0.07 ms/frame in vmaCreateBuffer at the worst). LL_VK_ARENA_BLOCK_MB=256 is the old size.
+        const U32 mb = GetEnvironmentVariableA("LL_VK_ARENA_BLOCK_MB", b, sizeof(b)) > 0 ? (U32)atoi(b) : 64;
         return (VkDeviceSize)std::max<U32>(mb, 16) * 1024 * 1024;
     }();
     return v;
@@ -2291,10 +2294,25 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
         ai.preferredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     }
     VmaAllocationInfo block_info = {};
+    LARGE_INTEGER t_start, t_end, t_freq;
+    QueryPerformanceFrequency(&t_freq);
+    QueryPerformanceCounter(&t_start);
     if (!vk_ok(vmaCreateBuffer(mAllocator, &bi, &ai, &block->mBuffer, &block->mAllocation, &block_info), "arena block"))
     {
         delete block;
         return nullptr;
+    }
+    QueryPerformanceCounter(&t_end);
+    block->mCreatedFrame = mFrameNumber;
+    if (accel)
+    {
+        ++mArenaCounters.mAccelBlocksCreated;
+        mArenaCounters.mAccelCreatedBytes += block->mSize;
+        mArenaCounters.mAccelCreateMicros += (U64)((t_end.QuadPart - t_start.QuadPart) * 1000000 / t_freq.QuadPart);
+        if (dedicated)
+        {
+            ++mArenaCounters.mAccelDedicatedCreated;
+        }
     }
     block->mMapped = block_info.pMappedData;
     VmaVirtualBlockCreateInfo vi = {};
@@ -2343,6 +2361,15 @@ void Context::arenaDestroyBlock(ArenaBlock* block)
     vmaDestroyVirtualBlock(block->mVirtual);
     vmaDestroyBuffer(mAllocator, block->mBuffer, block->mAllocation);
     ++mArenaCounters.mBlocksReleased;
+    if (block->mAccel)
+    {
+        ++mArenaCounters.mAccelBlocksReleased;
+        if (block->mDedicated)
+        {
+            ++mArenaCounters.mAccelDedicatedReleased;
+            mArenaCounters.mAccelDedicatedLifeFrames += mFrameNumber - block->mCreatedFrame;
+        }
+    }
     delete block;
 }
 
@@ -2361,6 +2388,13 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
     const bool shared = kind == ArenaKind::Shared, host = kind == ArenaKind::Host, accel = kind == ArenaKind::Accel;
     std::lock_guard<std::mutex> lock(mArenaMutex);
     const bool dedicated = size > arena_block_bytes() / 4;
+    if (accel)
+    {
+        ++mArenaCounters.mAccelAllocs;
+        mArenaCounters.mAccelAllocBytes += size;
+        const U32 mb = (U32)(size >> 20);
+        ++mArenaCounters.mAccelBucket[mb < 1 ? 0 : mb < 8 ? 1 : mb < 32 ? 2 : mb < 64 ? 3 : mb < 128 ? 4 : 5];
+    }
     auto place = [&](ArenaBlock* b) {
         VmaVirtualAllocationCreateInfo ci = {};
         ci.size = size;
@@ -2458,7 +2492,22 @@ ArenaStats Context::arenaStats()
     s.mBlockBytes = s.mUsedBytes = s.mLargestFree = 0;
     for (ArenaBlock* b : mArenaBlocks)
     {
-        if (!b || b->mAccel) continue;      // acceleration structure storage has its own report (Rt)
+        if (b && b->mAccel)
+        {
+            VmaDetailedStatistics ast = {};
+            vmaCalculateVirtualBlockStatistics(b->mVirtual, &ast);
+            ++s.mAccelBlocks;
+            s.mAccelBlockBytes += b->mSize;
+            s.mAccelUsedBytes += ast.statistics.allocationBytes;
+            s.mAccelLargestFree = std::max<U64>(s.mAccelLargestFree, ast.unusedRangeSizeMax);
+            if (b->mDedicated)
+            {
+                ++s.mAccelDedicatedAlive;
+                s.mAccelDedicatedBytes += b->mSize;
+            }
+            continue;       // (the rest of the arena report leaves these out: acceleration structure storage has its own report in Rt)
+        }
+        if (!b) continue;
         VmaDetailedStatistics st = {};
         vmaCalculateVirtualBlockStatistics(b->mVirtual, &st);
         if (b->mHost)

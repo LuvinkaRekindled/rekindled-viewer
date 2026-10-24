@@ -1305,8 +1305,10 @@ void LLImageTex::generateTextures(S32 numTextures, U32 *textures)
     }
 }
 
-constexpr int DELETE_DELAY = 3; // number of frames to wait before deleting textures
-static std::vector<U32> sFreeList[DELETE_DELAY+1];
+// <FS> native-vk (blink after load): the number of frames a dropped texture name waits before it is deleted was 3 (the stock value, for the GPU). About 46 draws per run still named a name that had been deleted
+// (a white frame each, counted in VkTexCopy: draw samples of a deleted name), so scene rows and cached draw data can hold a name longer than that. LL_VK_TEX_DELETE_DELAY sets it (default 8, at most 30).
+static const int DELETE_DELAY = []{ const char* e = getenv("LL_VK_TEX_DELETE_DELAY"); const int v = e ? atoi(e) : 8; return v < 3 ? 3 : (v > 30 ? 30 : v); }();
+static std::vector<U32> sFreeList[31+1];
 
 // static
 void LLImageTex::updateClass()
@@ -1315,7 +1317,8 @@ void LLImageTex::updateClass()
 
     // wait a few frames before actually deleting the textures to avoid
     // synchronization issues with the GPU
-    U32 idx = (sFrameCount+DELETE_DELAY) % (DELETE_DELAY+1);
+    // (the list that was filled DELETE_DELAY frames ago: (frame + DELAY) mod (DELAY + 1) is the list of the frame before, so the names went one frame after being dropped whatever the constant said)
+    U32 idx = (sFrameCount+1) % (DELETE_DELAY+1);
 
     if (!sFreeList[idx].empty())
     {

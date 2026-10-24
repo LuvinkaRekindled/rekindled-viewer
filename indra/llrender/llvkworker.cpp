@@ -9669,6 +9669,23 @@ void after_frame()
                                                  << as.mAllocs << " ranges, " << (as.mUsedBytes >> 20) << " MB in use, largest free range " << (as.mLargestFree >> 20) << " MB; host-written (small buffers): "
                                                  << as.mHostBlocks << " blocks, " << (as.mHostBlockBytes >> 20) << " MB reserved, " << as.mHostAllocs << " ranges, " << (as.mHostUsedBytes >> 20)
                                                  << " MB in use; blocks created " << as.mBlocksCreated << ", released " << as.mBlocksReleased << LL_ENDL;
+                            {
+                                // <FS> the acceleration structure arena (the difference between two lines is the interval)
+                                static ArenaStats prev;
+                                const double dt = std::max(1.0, (double)frames);
+                                const U64 made = as.mAccelCreateMicros - prev.mAccelCreateMicros;
+                                const U64 dedicated_released = as.mAccelDedicatedReleased - prev.mAccelDedicatedReleased;
+                                LL_INFOS("VkAsArena") << "acceleration structure arena: " << as.mAccelBlocks << " blocks alive (" << (as.mAccelBlockBytes >> 20) << " MB, " << (as.mAccelUsedBytes >> 20)
+                                                      << " MB in use, largest free range " << (as.mAccelLargestFree >> 20) << " MB), of them " << as.mAccelDedicatedAlive << " dedicated (" << (as.mAccelDedicatedBytes >> 20)
+                                                      << " MB); in this interval: " << as.mAccelAllocs - prev.mAccelAllocs << " ranges asked for (" << ((as.mAccelAllocBytes - prev.mAccelAllocBytes) >> 20)
+                                                      << " MB; <1 MB " << as.mAccelBucket[0] - prev.mAccelBucket[0] << ", <8 " << as.mAccelBucket[1] - prev.mAccelBucket[1] << ", <32 " << as.mAccelBucket[2] - prev.mAccelBucket[2]
+                                                      << ", <64 " << as.mAccelBucket[3] - prev.mAccelBucket[3] << ", <128 " << as.mAccelBucket[4] - prev.mAccelBucket[4] << ", more " << as.mAccelBucket[5] - prev.mAccelBucket[5]
+                                                      << "), blocks made " << as.mAccelBlocksCreated - prev.mAccelBlocksCreated << " (dedicated " << as.mAccelDedicatedCreated - prev.mAccelDedicatedCreated << ", "
+                                                      << ((as.mAccelCreatedBytes - prev.mAccelCreatedBytes) >> 20) << " MB, " << made / 1000.0 << " ms in vmaCreateBuffer = " << made / 1000.0 / dt << " ms/frame), blocks given back "
+                                                      << as.mAccelBlocksReleased - prev.mAccelBlocksReleased << " (dedicated " << dedicated_released << ", lived "
+                                                      << (dedicated_released ? (double)(as.mAccelDedicatedLifeFrames - prev.mAccelDedicatedLifeFrames) / (double)dedicated_released : 0.0) << " frames on average)" << LL_ENDL;
+                                prev = as;
+                            }
                         }
                         if (probe_on())
                         {

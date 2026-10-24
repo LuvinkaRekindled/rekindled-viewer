@@ -155,6 +155,12 @@ struct ArenaStats
     U64 mHostBlockBytes = 0, mHostUsedBytes = 0;
     U64 mBlockBytes = 0, mUsedBytes = 0, mLargestFree = 0;
     U64 mBlocksCreated = 0, mBlocksReleased = 0;
+    // <FS> the acceleration structure storage (ArenaKind::Accel) on its own (S7 measurement): ranges asked for by size class (below 1 MB, 8, 32, 64, 128, more), the blocks made and given back (shared and dedicated),
+    // microseconds spent making them (vmaCreateBuffer), how long the dedicated ones lived, and what the blocks that are alive hold now
+    U64 mAccelAllocs = 0, mAccelAllocBytes = 0, mAccelBucket[6] = {};
+    U64 mAccelBlocksCreated = 0, mAccelBlocksReleased = 0, mAccelDedicatedCreated = 0, mAccelDedicatedReleased = 0, mAccelCreatedBytes = 0, mAccelCreateMicros = 0, mAccelDedicatedLifeFrames = 0;
+    U32 mAccelBlocks = 0, mAccelDedicatedAlive = 0;
+    U64 mAccelBlockBytes = 0, mAccelUsedBytes = 0, mAccelDedicatedBytes = 0, mAccelLargestFree = 0;
 };
 
 struct Image
@@ -426,6 +432,7 @@ private:
         bool mHost = false;
         bool mAccel = false;
         bool mDedicated = false;            // holds one big range: goes away with it
+        U64 mCreatedFrame = 0;
     };
     ArenaBlock* arenaNewBlock(VkDeviceSize min_size, ArenaKind kind, bool dedicated);
     void arenaDestroyBlock(ArenaBlock* block);

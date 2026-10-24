@@ -1383,6 +1383,30 @@ bool Renderer::init()
     ctx.waitIdle();
     vmaDestroyBuffer(ctx.getAllocator(), staging.mBuffer, staging.mAllocation);
 
+    if (getenv("LL_VK_STANDIN_MAGENTA") && ctx.createImage2D(1, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, mMagenta))
+    {
+        Buffer mstaging;
+        if (ctx.createBuffer(16, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, Context::Memory::Upload, mstaging))
+        {
+            const U8 magenta[4] = { 255, 0, 255, 255 };
+            memcpy(mstaging.mMapped, magenta, 4);
+            ctx.immediateSubmit([&](VkCommandBuffer cmd) {
+                imageBarrier(cmd, mMagenta.mImage, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+                VkBufferImageCopy c = {};
+                c.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+                c.imageExtent = { 1, 1, 1 };
+                vkCmdCopyBufferToImage(cmd, mstaging.mBuffer, mMagenta.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+                imageBarrier(cmd, mMagenta.mImage, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            });
+            mMagenta.mLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            ctx.waitIdle();
+            vmaDestroyBuffer(ctx.getAllocator(), mstaging.mBuffer, mstaging.mAllocation);
+        }
+    }
+
     // white stand-ins for samplers of other kinds (an unbound cube-array sampler must still see a cube-array view)
     {
         const TexType types[4] = { TexType::Tex2DArray, TexType::Cube, TexType::CubeArray, TexType::Tex3D };
@@ -1738,6 +1762,12 @@ void Renderer::shutdown()
             vmaDestroyImage(ctx.getAllocator(), mWhite.mImage, mWhite.mAllocation);
         }
         mWhite = Image();
+        if (mMagenta.valid())
+        {
+            vkDestroyImageView(dev, mMagenta.mView, nullptr);
+            vmaDestroyImage(ctx.getAllocator(), mMagenta.mImage, mMagenta.mAllocation);
+        }
+        mMagenta = Image();
         for (Image& f : mFallback)
         {
             if (f.valid())
@@ -2683,6 +2713,7 @@ void Renderer::bindlessStart()
         {
             tbl.mSlots.resize(1);       // slot 0: the stand-in
             const Image* stand_in = &mWhite;
+            if (t == 0 && mMagenta.valid()) stand_in = &mMagenta;       // (debug: LL_VK_STANDIN_MAGENTA=1)
             if (t == 1 && mFallback[1].valid()) stand_in = &mFallback[1];
             if (t == 2 && mFallback[2].valid()) stand_in = &mFallback[2];
             tbl.mStandIn = { getSampler(SamplerDesc()), stand_in->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
