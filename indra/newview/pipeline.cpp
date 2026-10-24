@@ -18231,6 +18231,18 @@ void LLPipeline::renderDeferredLighting()
                         continue;
                     }
                     // </FS:Beq>
+                    // <FS> native-vk (LL_VK_MT_LIGHTS=0 turns it off, S7 main thread growth): the frustum test comes before the colour conversion: the nearby light list holds every light around the camera, in view or
+                    // not, and the conversion is the expensive part. Same lights drawn, same count of visible lights (the count is made after the colour check as before).
+                    static const bool early_light_cull = !getenv("LL_VK_MT_LIGHTS") || getenv("LL_VK_MT_LIGHTS")[0] != '0';
+                    if (early_light_cull)
+                    {
+                        LLVector4a early_sa;
+                        early_sa.splat(s);
+                        if (camera->AABBInFrustumNoFarClip(center, early_sa) == 0)
+                        {
+                            continue;
+                        }
+                    }
                     // send light color to shader in linear space
                     LLColor3 col = volume->getLightLinearColor() * light_scale;
 
@@ -18244,11 +18256,14 @@ void LLPipeline::renderDeferredLighting()
                     //     continue;
                     // }
                     // </FS:Beq>
-                    LLVector4a sa;
-                    sa.splat(s);
-                    if (camera->AABBInFrustumNoFarClip(center, sa) == 0)
+                    if (!early_light_cull)
                     {
-                        continue;
+                        LLVector4a sa;
+                        sa.splat(s);
+                        if (camera->AABBInFrustumNoFarClip(center, sa) == 0)
+                        {
+                            continue;
+                        }
                     }
 
                     sVisibleLightCount++;
