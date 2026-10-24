@@ -1040,8 +1040,11 @@ const F32 sStampAge = []{ const char* e = getenv("LL_VK_TEXSTAMP_AGE"); return e
 struct StampStats
 {
     U64 mHit = 0, mMissNew = 0, mMissFaces = 0, mMissCamera = 0, mMissBias = 0, mMissAge = 0, mVolatile = 0, mVerified = 0, mMismatch = 0, mMismatchFresh = 0, mMismatchOld = 0, mMismatchFaceCount = 0, mOffScreen = 0;
+    U64 mWhyTe = 0, mWhyGeom = 0, mWhyNeither = 0;
+    U64 mWhyGeomKind[5] = {};       // a face that moved without telling the texture, by kind of object: attachment, avatar, tree or grass, prim, other
 };
 StampStats sStamp;
+F32 sStampEpochTime = 0.f;      // gFrameTimeSeconds when the camera epoch last changed: a result is only kept once the camera has stood still for a moment (the face areas it read were then made under that pose, not up to 0.1 s earlier)
 }
 
 void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imagep, bool flush_images)
@@ -1064,6 +1067,9 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 
         // <FS> native-vk (LL_VK_TEXSTAMP): the face loop is skipped while what it read is unchanged (see sStampMode above)
         bool stamp_use = false, stamp_verify = false, stamp_volatile = false;
+        U64 why_te = 1469598103934665603ull, why_geom = 1469598103934665603ull;
+        S32 why_kind = 4;
+        const LLTextureEntry* why_te_entry = nullptr;
         const S32 stamp_bias = (S32)(LLViewerTexture::sDesiredDiscardBias * 20.f);
         LLViewerTexture::FaceLoopCache& stamp = imagep->mFaceCache;
         if (sStampMode)
@@ -1137,6 +1143,21 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                     S32 te_offset = face->getTEOffset();  // offset is -1 if not inited
                     LLViewerObject* objp = face->getViewerObject();
                     const LLTextureEntry* te = (te_offset < 0 || te_offset >= objp->getNumTEs()) ? nullptr : objp->getTE(te_offset);
+                    if (sStampMode == 2)
+                    {
+                        if (te)
+                        {
+                            const F32 sc[2] = { te->getScaleS(), te->getScaleT() };
+                            for (F32 f : sc) { U32 bits; memcpy(&bits, &f, 4); why_te = (why_te ^ bits) * 1099511628211ull; }
+                        }
+                        const LLVector3 c = face->getPositionAgent();
+                        const F32 gv[9] = { c.mV[0], c.mV[1], c.mV[2], face->mExtents[0].getF32ptr()[0], face->mExtents[0].getF32ptr()[1], face->mExtents[0].getF32ptr()[2],
+                                            face->mExtents[1].getF32ptr()[0], face->mExtents[1].getF32ptr()[1], face->mExtents[1].getF32ptr()[2] };
+                        for (F32 f : gv) { U32 bits; memcpy(&bits, &f, 4); why_geom = (why_geom ^ bits) * 1099511628211ull; }
+                        const LLViewerObject* wo = face->getViewerObject();
+                        why_kind = wo->isAttachment() ? 0 : (wo->isAvatar() ? 1 : ((wo->getPCode() == LL_PCODE_LEGACY_TREE || wo->getPCode() == LL_PCODE_LEGACY_GRASS) ? 2 : (wo->getPCode() == LL_PCODE_VOLUME ? 3 : 4)));
+                        why_te_entry = te;
+                    }
                     F32 min_scale = te ? llmin(fabsf(te->getScaleS()), fabsf(te->getScaleT())) : 1.f;
                     min_scale = llclamp(min_scale * min_scale, texture_scale_min(), texture_scale_max());
                     vsize /= min_scale;
@@ -1181,6 +1202,9 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             if (stamp_verify && stamp.mValid && big >= 64.f && (on_screen != stamp.mOnScreen || fabsf(max_vsize - stamp.mVSize) > 0.25f * big))
             {
                 ++sStamp.mMismatch;
+                if (why_te != stamp.mTeHash) ++sStamp.mWhyTe;
+                else if (why_geom != stamp.mGeomHash) { ++sStamp.mWhyGeom; ++sStamp.mWhyGeomKind[why_kind]; }
+                else ++sStamp.mWhyNeither;
                 if (face_count != stamp.mFaceCount) ++sStamp.mMismatchFaceCount;
                 else if (gFrameTimeSeconds - stamp.mTime < 0.5f) ++sStamp.mMismatchFresh;
                 else ++sStamp.mMismatchOld;
@@ -1195,7 +1219,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             // (a texture with faces whose loop found none on screen is not kept: for a static face that flag is true after a real evaluation, so a false one is a stale first reading)
             const bool unsettled = face_count > 0 && !on_screen && !stamp_volatile;
             if (unsettled) ++sStamp.mOffScreen;
-            stamp.mValid = !stamp_volatile && !unsettled && face_count <= max_faces_to_check;
+            stamp.mValid = !stamp_volatile && !unsettled && face_count <= max_faces_to_check && gFrameTimeSeconds - sStampEpochTime > 0.3f;
             if (stamp_volatile) ++sStamp.mVolatile;
             stamp.mFaceStamp = imagep->mFaceStamp;
             stamp.mCamEpoch = sCameraEpoch;
@@ -1204,6 +1228,8 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             stamp.mVSize = max_vsize;
             stamp.mOnScreen = on_screen;
             stamp.mFaceCount = face_count;
+            stamp.mTeHash = why_te;
+            stamp.mGeomHash = why_geom;
         }
 
         if (face_count > max_faces_to_check)
@@ -1486,6 +1512,7 @@ void LLViewerTextureList::updateCameraEpoch()
     {
         last = h;
         ++sCameraEpoch;
+        sStampEpochTime = gFrameTimeSeconds;
     }
     static F32 last_log = 0.f;
     if (gFrameTimeSeconds - last_log >= 10.f)
@@ -1498,7 +1525,10 @@ void LLViewerTextureList::updateCameraEpoch()
                                    << n.mMissFaces - prev.mMissFaces << ", camera moved " << n.mMissCamera - prev.mMissCamera << ", bias changed " << n.mMissBias - prev.mMissBias << ", too old "
                                    << n.mMissAge - prev.mMissAge << "; textures not kept (moving, rigged, particle or media faces) " << n.mVolatile - prev.mVolatile
                                    << ", with faces but none on screen " << n.mOffScreen - prev.mOffScreen << "; verified " << n.mVerified - prev.mVerified << ", differed " << n.mMismatch - prev.mMismatch << " (faces changed in count " << n.mMismatchFaceCount - prev.mMismatchFaceCount
-                                   << ", same faces within 0.5 s " << n.mMismatchFresh - prev.mMismatchFresh << ", same faces older " << n.mMismatchOld - prev.mMismatchOld << "), camera epoch " << sCameraEpoch << LL_ENDL;
+                                   << ", same faces within 0.5 s " << n.mMismatchFresh - prev.mMismatchFresh << ", same faces older " << n.mMismatchOld - prev.mMismatchOld << "); what differed: texture entry scale " << n.mWhyTe - prev.mWhyTe << ", face position or extents " << n.mWhyGeom - prev.mWhyGeom
+                                   << " (attachment " << n.mWhyGeomKind[0] - prev.mWhyGeomKind[0] << ", avatar " << n.mWhyGeomKind[1] - prev.mWhyGeomKind[1] << ", tree or grass " << n.mWhyGeomKind[2] - prev.mWhyGeomKind[2]
+                                   << ", prim " << n.mWhyGeomKind[3] - prev.mWhyGeomKind[3] << ", other " << n.mWhyGeomKind[4] - prev.mWhyGeomKind[4] << "), neither " << n.mWhyNeither - prev.mWhyNeither
+                                   << ", camera epoch " << sCameraEpoch << LL_ENDL;
         }
         prev = n;
         last_log = gFrameTimeSeconds;

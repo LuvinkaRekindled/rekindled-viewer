@@ -389,6 +389,7 @@ void LLFace::switchTexture(U32 ch, LLViewerTexture* new_texture)
 
 void LLFace::stampTextures()
 {
+    mLastPixelAreaUpdate = 0.f;     // the size read by the texture priority is refreshed at most every 0.1 s (calcPixelArea): after a change the next evaluation must not read the old one
     for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
     {
         if (mTexture[ch].notNull())
@@ -1298,6 +1299,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                                 bool rebuild_for_gltf)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_FACE;
+    stampTextures();        // <FS> a rebuild of the face's vertices and texture coordinates is how a change of the texture entry (scale, offset, colour) reaches the face: the texture priority cache starts over
     llassert(verify());
 
     if (face_index < 0 || face_index >= volume.getNumVolumeFaces())
