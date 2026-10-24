@@ -1033,9 +1033,9 @@ extern bool gCubeSnapshot;
 
 namespace
 {
-// <FS> native-vk: LL_VK_TEXSTAMP=1 keeps the result of the face loop of updateImageDecodePriority for textures whose faces are all static and unchanged while the camera stays in one cell of a coarse
+// <FS> native-vk: LL_VK_TEXSTAMP (default 1; 0 is off) keeps the result of the face loop of updateImageDecodePriority for textures whose faces are all static and unchanged while the camera stays in one cell of a coarse
 // grid (and the bias in one bucket), for LL_VK_TEXSTAMP_AGE seconds (default 8); =2 runs the loop anyway and counts the cases where it finds something other than the kept result.
-const S32 sStampMode = []{ const char* e = getenv("LL_VK_TEXSTAMP"); return e ? atoi(e) : 0; }();
+const S32 sStampMode = []{ const char* e = getenv("LL_VK_TEXSTAMP"); return e ? atoi(e) : 1; }();
 const F32 sStampAge = []{ const char* e = getenv("LL_VK_TEXSTAMP_AGE"); return e ? (F32)atof(e) : 8.f; }();
 struct StampStats
 {
