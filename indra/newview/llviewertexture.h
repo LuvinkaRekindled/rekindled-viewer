@@ -221,6 +221,8 @@ public:
         U32 mFaceCount = 0;
         F32 mVSize = 0.f;
         F32 mTime = 0.f;
+        U64 mTeHash = 0;        // verify mode only: what the loop read, to tell what changed when a kept result differs: the texture entry scales of the faces,
+        U64 mGeomHash = 0;      // and the positions and extents of the faces
     };
     FaceLoopCache mFaceCache;
     U32 mFaceStamp = 0;
