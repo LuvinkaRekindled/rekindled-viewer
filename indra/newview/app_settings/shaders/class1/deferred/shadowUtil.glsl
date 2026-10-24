@@ -250,6 +250,17 @@ uniform int rt_hair_soft;
 bool rt_soft_masked = false;            // set by rtShadeSurfaceEx: the last surface looked at was a skinned masked draw taken softly
 uniform int rt_hit_shadow_samples;      // shadow rays per local light at a traced hit: 1 (one ray at the light's centre), 2 or 4 (the light is a disc, soft shadows); 0 = not set (4)
 
+// <FS> the number of masked candidates the sun ray may test before it stops and calls the pixel lit (LL_VK_RT_CANDIDATES, default 96). Under a dense canopy a ray meets hundreds of leaf quads; at 96 whether it reaches
+// an opaque hit or enough leaves depends on the ray's start and the traversal order, so the shadow flips with the view. LL_VK_RT_CAPDEBUG=1: a ray that stopped at the limit is drawn fully shadowed instead of lit.
+#ifndef LL_RT_MAX_CANDIDATES
+#define LL_RT_MAX_CANDIDATES 96u
+#endif
+#ifdef LL_RT_CAP_DEBUG
+#define LL_RT_CAPPED_RESULT 0.0
+#else
+#define LL_RT_CAPPED_RESULT 1.0
+#endif
+
 // 1 = nothing in the way for tmax metres (the sun: 2000, a local light: its distance), 0 = blocked
 float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
 {
@@ -267,11 +278,13 @@ float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
     // a ray is given a limited number of masked candidates: a structure that is not what it should be (garbage geometry spread over the scene) must cost a frame some shadows, not
     // a GPU job that outlasts the 2 seconds the driver allows (VK_ERROR_DEVICE_LOST: the viewer cannot go on). The ray stops with what it has found: no hit, lit.
     uint candidates = 0u;
+    bool capped = false;
     while (rayQueryProceedEXT(rq))
     {
-        if (++candidates > 96u)
+        if (++candidates > LL_RT_MAX_CANDIDATES)
         {
             rayQueryTerminateEXT(rq);
+            capped = true;
             break;
         }
         if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
@@ -282,6 +295,10 @@ float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
                 rayQueryConfirmIntersectionEXT(rq);
             }
         }
+    }
+    if (capped && rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT)
+    {
+        return LL_RT_CAPPED_RESULT;
     }
     return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
 }
@@ -807,17 +824,23 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
     return vec4(mix(color, fallback, fade), 1.0);
 }
 
+// <FS> test switches (LL_VK_RT_SUN_BIAS metres, default 0.015: how far off the surface along the normal the ray starts; LL_VK_RT_SUN_NOFACE=1: a surface facing away from the light is traced too)
+#ifndef LL_RT_SUN_BIAS
+#define LL_RT_SUN_BIAS 0.015
+#endif
 float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
 {
+#ifndef LL_RT_SUN_NOFACE
     if (dot(norm, light_dir) <= 0.0)
     {
         return 0.0;                         // facing away from the light
     }
+#endif
     if (-pos.z > shadow_clip.w)
     {
         return 1.0;                         // beyond the shadow range: lit, as with the cascades
     }
-    vec3 origin = pos + norm * (0.015 + 0.0006 * -pos.z);
+    vec3 origin = pos + norm * (LL_RT_SUN_BIAS + 0.0006 * -pos.z);
     float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
     int samples = (rt_sun_radius > 0.0) ? clamp(rt_sun_samples, 1, 16) : 1;
     if (rt_sun_lod.x > 0.0 && samples > 4)

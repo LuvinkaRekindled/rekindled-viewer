@@ -998,6 +998,37 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         if (const U32 rt_mode = LLVkBridge::rtShadowMode())
         {
             attribs["LL_RT_SHADOWS"] = std::to_string(rt_mode);
+            // <FS> the sun ray's limit of masked candidates (see shadowUtil.glsl) and the debug that shows the rays that stopped at it
+            if (const char* cand = getenv("LL_VK_RT_CANDIDATES"))
+            {
+                const S32 n = atoi(cand);
+                if (n >= 8 && n <= 4096)
+                {
+                    attribs["LL_RT_MAX_CANDIDATES"] = std::to_string(n) + "u";
+                }
+            }
+            if (const char* bias = getenv("LL_VK_RT_SUN_BIAS"))
+            {
+                const F32 b = (F32)atof(bias);
+                if (b > 0.f && b < 5.f)
+                {
+                    attribs["LL_RT_SUN_BIAS"] = llformat("%.4f", b);
+                }
+            }
+            if (const char* noface = getenv("LL_VK_RT_SUN_NOFACE"))
+            {
+                if (noface[0] && noface[0] != '0')
+                {
+                    attribs["LL_RT_SUN_NOFACE"] = "1";
+                }
+            }
+            if (const char* cap = getenv("LL_VK_RT_CAPDEBUG"))
+            {
+                if (cap[0] && cap[0] != '0')
+                {
+                    attribs["LL_RT_CAP_DEBUG"] = "1";
+                }
+            }
         }
 
         if (shadow_detail >= 2)
