@@ -579,7 +579,7 @@ inline void tex_forget(U32 name) { if (name < sTexFlat.size()) sTexFlat[name] = 
 
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
 std::unordered_set<U32> sSeenNames;       // <FS> diagnostic: GL names of textures drawn with a picture at least once
-U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0, sSampleNoName = 0, sSampleNoImage = 0, sSampleBlank = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
+U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0, sSampleNoName = 0, sSampleNoImage = 0, sSampleBlank = 0, sRetiredNow = 0, sRetiredUsed = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
 U64 sOutOfRangeDraws = 0;           // indexed draws left out because their index or vertex range was not inside their buffers (since the start)
 U64 sDrawsTotal = 0;
 std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
@@ -9354,17 +9354,18 @@ void after_frame()
         {
             // <FS> every 300 frames (about 5 s), when something changed: what the texture copies from targets and the re-specified images did in that time (cumulative totals, the difference between two lines is the interval)
             static U32 copy_frames = 0;
-            static U64 last[11] = {};
+            static U64 last[13] = {};
             if (++copy_frames >= 300)
             {
                 copy_frames = 0;
-                const U64 now_v[11] = { (U64)sCopies, sCopyDropFrame, sCopyDropTex, sCopyDropSrc, sRespecs, sGrows, sLevelDrops, sLevelDropsRefused, sSampleNoName, sSampleNoImage, sSampleBlank };
+                sRetiredNow = Renderer::instance().retiredSlots(); sRetiredUsed = Renderer::instance().retiredUsedThisFrame();
+                const U64 now_v[13] = { (U64)sCopies, sCopyDropFrame, sCopyDropTex, sCopyDropSrc, sRespecs, sGrows, sLevelDrops, sLevelDropsRefused, sSampleNoName, sSampleNoImage, sSampleBlank, sRetiredNow, sRetiredUsed };
                 if (memcmp(now_v, last, sizeof(now_v)) != 0)
                 {
                     LL_INFOS("VkTexCopy") << "texture copies from targets done " << now_v[0] << " (+" << now_v[0] - last[0] << "), dropped: not in a frame " << now_v[1] << " (+" << now_v[1] - last[1] << "), no texture image "
                         << now_v[2] << " (+" << now_v[2] - last[2] << "), no source image " << now_v[3] << " (+" << now_v[3] - last[3] << "); images re-specified " << now_v[4] << " (+" << now_v[4] - last[4]
                         << "), mip chains grown " << now_v[5] << " (+" << now_v[5] - last[5] << "), levels dropped " << now_v[6] << " (+" << now_v[6] - last[6] << "), drops refused " << now_v[7] << " (+" << now_v[7] - last[7] << "); draw samples of a deleted name " << now_v[8] << " (+" << now_v[8] - last[8] << "), of a texture without an image "
-                                         << now_v[9] << " (+" << now_v[9] - last[9] << "), of an image with no level yet " << now_v[10] << " (+" << now_v[10] - last[10] << ")" << LL_ENDL;
+                                         << now_v[9] << " (+" << now_v[9] - last[9] << "), of an image with no level yet " << now_v[10] << " (+" << now_v[10] - last[10] << "); bindless slots given the stand-in " << now_v[11] << " (+" << now_v[11] - last[11] << "), of them already used by a draw this frame " << now_v[12] << " (+" << now_v[12] - last[12] << ")" << LL_ENDL;
                     memcpy(last, now_v, sizeof(last));
                 }
             }

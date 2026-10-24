@@ -1892,6 +1892,7 @@ void LLImageTex::destroyImageTexture()
 void LLImageTex::forceToInvalidateGLTexture()
 {
     checkActiveThread();
+    mAnalyzedPixels = 0;        // (new content: the classification starts over)
     if (mTexName != 0)
     {
         destroyImageTexture();
@@ -2038,6 +2039,7 @@ void LLImageTex::setNeedsAlphaAndPickMask(bool need_mask)
     if(mNeedsAlphaAndPickMask != need_mask)
     {
         mNeedsAlphaAndPickMask = need_mask;
+        mAnalyzedPixels = 0;
 
         if(mNeedsAlphaAndPickMask)
         {
@@ -2105,6 +2107,15 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
     {
         return ;
     }
+
+    // <FS> native-vk (blink after load): the mask or not decision made from a bigger level stands when a smaller one is uploaded (a reload after a downgrade climbs through the small levels, and
+    // each of them could turn a cut-out into a blend and back, so the surface changed draw pass at every step). A same size or bigger upload decides again, as before.
+    static const bool alpha_keep = []{ const char* e = getenv("LL_VK_ALPHA_KEEP"); return !e || atoi(e) != 0; }();
+    if (alpha_keep && w * h < mAnalyzedPixels)
+    {
+        return;
+    }
+    mAnalyzedPixels = w * h;
 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -2189,6 +2200,7 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
         upperhalftotal += sample[i];
     }
 
+    const bool was_mask = mIsMask;
     if (midrangetotal > length/48 || // lots of midrange, or
         (lowerhalftotal == length && alphatotal != 0) || // all close to transparent but not all totally transparent, or
         (upperhalftotal == length && alphatotal != 255*length)) // all close to opaque but not all totally opaque
@@ -2198,6 +2210,26 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
     else
     {
         mIsMask = true;
+    }
+
+    {
+        // <FS> native-vk diagnostic (blink after load): how often the mask classification changes from one uploaded level to the next
+        static U64 analyses = 0, flips = 0, flips_seen = 0;
+        static LLTimer log_timer;
+        ++analyses;
+        if (was_mask != mIsMask)
+        {
+            ++flips;
+            if (flips_seen++ < 30)
+            {
+                LL_INFOS("VkAlpha") << "alpha mask flag of texture " << mTexId << " changed " << was_mask << " -> " << mIsMask << " at " << w << "x" << h << " (mid-range " << midrangetotal << " of " << length << ")" << LL_ENDL;
+            }
+        }
+        if (log_timer.getElapsedTimeF32() >= 10.f)
+        {
+            log_timer.reset();
+            LL_INFOS("VkAlpha") << "alpha analyses " << analyses << ", mask flag changes " << flips << " (totals so far)" << LL_ENDL;
+        }
     }
 }
 
@@ -2396,6 +2428,19 @@ bool LLImageTex::scaleDown(S32 desired_discard)
         markTexOptionsDirty();
         mCurrentDiscardLevel = desired_discard;
         return true;
+    }
+
+    {
+        // <FS> native-vk diagnostic (blink after load): the downscales that still go through the draw and copy (a texture without mip maps, or the level drop switched off)
+        static U64 old_path = 0;
+        static LLTimer log_timer;
+        ++old_path;
+        if (old_path <= 30 || log_timer.getElapsedTimeF32() >= 10.f)
+        {
+            log_timer.reset();
+            LL_INFOS("VkAlpha") << "downscale by draw and copy #" << old_path << ": texture " << mTexId << " " << mWidth << "x" << mHeight << " discard " << mCurrentDiscardLevel << " -> " << desired_discard
+                                << ", mip maps " << (S32)mHasMipMaps << " (wanted " << (S32)mUseMipMaps << "), format " << (S32)mFormatInternal << LL_ENDL;
+        }
     }
 
     { // use an FBO to downscale the texture (the only method: the PBO readback method of RenderDownScaleMethod 1 is gone with the GL buffer binds)
