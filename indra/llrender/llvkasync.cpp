@@ -1818,6 +1818,19 @@ void generateMipmap(U32 id)
     pushOp(op);
 }
 
+void aliasName(U32 name, U32 predecessor)
+{
+    if (!LLVkAsync::gEnabled)
+    {
+        auto lock = inlineLock();
+        LLVkWorker::tex_alias_name(name, predecessor);
+        return;
+    }
+    TexOp op = {};
+    op.mKind = OPK_ALIAS; op.mTex = name; op.mLevel = (S32)predecessor;
+    pushOp(op);
+}
+
 void dropLevels(U32 id, S32 levels)
 {
     if (!LLVkAsync::gEnabled)
@@ -2324,6 +2337,7 @@ void runOp(Reader& r)
     {
     case OPK_MIPMAP: LLVkWorker::tex_mipmap(o.mTex); break;
     case OPK_DROP_LEVELS: LLVkWorker::tex_drop_levels(o.mTex, o.mLevel); break;
+    case OPK_ALIAS: LLVkWorker::tex_alias_name(o.mTex, (unsigned)o.mLevel); break;
     case OPK_COPY_SUB: LLVkWorker::tex_copy_sub(o.mTex, o.mTarget, o.mLevel, o.mX0, o.mY0, o.mZ0, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
     case OPK_COPY_IMAGE: LLVkWorker::tex_copy_image(o.mTex, o.mTarget, o.mLevel, (LLVkFormat::Store)o.mStore, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
     default:
