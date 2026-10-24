@@ -28,7 +28,7 @@ flat in float vary_cutoff;
 
 void main()
 {
-    float alpha = texture(ll_bindless_textures[nonuniformEXT(vary_slot)], vary_texcoord0).a;
+    float alpha = texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0).a;
 
     if (alpha < vary_cutoff)
     {

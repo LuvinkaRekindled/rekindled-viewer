@@ -75,8 +75,8 @@ flat in float vary_light_size;
 #define classic_mode vary_light_classic
 #define color vary_light_color
 #define size vary_light_size
-#define PROJECTION_MAP_LOD(tc, lod) textureLod(ll_bindless_textures[nonuniformEXT(vary_proj_slot)], tc, lod)
-#define PROJECTION_MAP(tc) texture(ll_bindless_textures[nonuniformEXT(vary_proj_slot)], tc)
+#define PROJECTION_MAP_LOD(tc, lod) textureLod(ll_bindless_textures[nonuniformEXT(LL_HM(vary_proj_slot))], tc, lod)
+#define PROJECTION_MAP(tc) texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_proj_slot))], tc)
 #else
 uniform sampler2D projectionMap; // rgba
 

@@ -906,7 +906,26 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         }
         for (const SamplerEntry& s : samplers)
         {
-            bindless_decl << "#define " << s.mName << " ll_vk_tbl" << bindless_table(s.mType) << "[ll_ti_" << s.mName << "]\n";
+            bindless_decl << "#define " << s.mName << " ll_vk_tbl" << bindless_table(s.mType) << "[LL_HM(ll_ti_" << s.mName << ")]\n";
+        }
+    }
+
+    // <FS> texture handles: LL_HM(id) is the descriptor index of the texture id (the frame's map, set 2 binding 4), or the id itself with LL_VK_HANDLES=0. Defined for every program (the pull
+    // shaders declare the table themselves and use it in code the shader manager injects); the map is declared where a program has a table of its own, translated samplers or ray queries.
+    std::ostringstream handle_decl;
+    {
+        bool uses_rt = false;
+        for (const StageWork& w : works)
+        {
+            uses_rt = uses_rt || w.mUsesRt;
+        }
+        if (handleMapShaders() && (bindless || has_own_table || uses_rt))
+        {
+            handle_decl << "layout(std430, set = 2, binding = 4) readonly buffer LlHandleMap { uint ll_hm[]; };\n#define LL_HM(id) ll_hm[(id)]\n";
+        }
+        else
+        {
+            handle_decl << "#define LL_HM(id) (id)\n";
         }
     }
 
@@ -1011,7 +1030,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
             text << "#extension GL_EXT_ray_query : require\n#extension GL_EXT_buffer_reference : require\n#extension GL_EXT_buffer_reference_uvec2 : require\n"
                     "#extension GL_EXT_nonuniform_qualifier : enable\n";
         }
-        text << bool_defines.str() << block.str() << bindless_decl.str();
+        text << bool_defines.str() << block.str() << bindless_decl.str() << handle_decl.str();
         if (w.mUsesRt)
         {
             // set 3: the scene (binding 0) and the geometry records of its alpha masked structures (binding 1, GpuGeom in llvkrt.cpp); the frame's 2D table as ll_rt_tex
@@ -1437,6 +1456,8 @@ std::string spirv_cache_key(const std::vector<StageSource>& stages, const Shader
     }
     for (const std::string& n : env.mAttributeNames) h.str(n);
     h.str(env.mBindless ? "|bindless" : "|classic");
+    h.str(handleMapShaders() ? "|handles" : "|nohandles");       // <FS> the translation differs (LL_HM reads the map or is the id): a cached program of the other kind must not be loaded
+
     h.str("|blocks");
     for (const std::string& n : env.mUniformBlockNames) h.str(n);
     return h.hex();
@@ -1509,6 +1530,12 @@ void spirv_cache_store(const std::string& path, const ProgramInfo& info)
 }
 
 U32 sCacheHits = 0, sCacheMisses = 0;
+}
+
+bool handleMapShaders()
+{
+    static const bool off = getenv("LL_VK_HANDLES") && getenv("LL_VK_HANDLES")[0] == '0';
+    return !off && Context::instance().getCaps().mBindlessSlots != 0;
 }
 
 bool bindlessShaders()

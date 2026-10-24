@@ -1083,8 +1083,9 @@ bool Renderer::createLayouts()
         {
             cap[t] = ctx.getCaps().mBindlessSmall;
         }
-        VkDescriptorSetLayoutBinding b2[BINDLESS_TABLES] = {};
-        VkDescriptorBindingFlags binding_flags[BINDLESS_TABLES];
+        const bool handles = handleMapShaders();
+        VkDescriptorSetLayoutBinding b2[BINDLESS_TABLES + 1] = {};
+        VkDescriptorBindingFlags binding_flags[BINDLESS_TABLES + 1] = {};
         for (U32 t = 0; t < BINDLESS_TABLES; ++t)
         {
             b2[t].binding = t;      // 0: 2D (render packets and bindless programs), 1: cube, 2: cube array, 3: 2D shadow
@@ -1100,25 +1101,33 @@ bool Renderer::createLayouts()
                 binding_flags[t] |= VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
             }
         }
+        if (handles)
+        {
+            b2[BINDLESS_TABLES].binding = BINDLESS_TABLES;      // 4: the handle map (a storage buffer of uint, id -> descriptor index)
+            b2[BINDLESS_TABLES].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            b2[BINDLESS_TABLES].descriptorCount = 1;
+            b2[BINDLESS_TABLES].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        const U32 binding_count = BINDLESS_TABLES + (handles ? 1 : 0);
         VkDescriptorSetLayoutBindingFlagsCreateInfo fi = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
-        fi.bindingCount = BINDLESS_TABLES;
+        fi.bindingCount = binding_count;
         fi.pBindingFlags = binding_flags;
         VkDescriptorSetLayoutCreateInfo l2 = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
         l2.pNext = &fi;
         l2.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-        l2.bindingCount = BINDLESS_TABLES;
+        l2.bindingCount = binding_count;
         l2.pBindings = b2;
         bool ok = vk_ok(vkCreateDescriptorSetLayout(dev, &l2, nullptr, &mSet2Layout), "set 2 layout");
         if (ok)
         {
             U32 total = 0;
             for (U32 t = 0; t < BINDLESS_TABLES; ++t) total += cap[t];
-            VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, total * Context::frameCount() };
+            VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, total * Context::frameCount() }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Context::frameCount() } };
             VkDescriptorPoolCreateInfo bi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
             bi.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
             bi.maxSets = Context::frameCount();
-            bi.poolSizeCount = 1;
-            bi.pPoolSizes = &ps;
+            bi.poolSizeCount = handles ? 2 : 1;
+            bi.pPoolSizes = ps;
             ok = vk_ok(vkCreateDescriptorPool(dev, &bi, nullptr, &mBindlessPool), "bindless pool");
         }
         if (ok)
@@ -1130,6 +1139,38 @@ bool Renderer::createLayouts()
             ai.descriptorSetCount = Context::frameCount();
             ai.pSetLayouts = set_layouts;
             ok = vk_ok(vkAllocateDescriptorSets(dev, &ai, mBindlessSet), "allocate bindless sets");
+        }
+        if (ok && handles)
+        {
+            // one map per frame in flight (host visible: a frame is seen as a whole through its own copy); in H1 every entry is its own slot
+            const VkDeviceSize map_bytes = (VkDeviceSize)BINDLESS_TABLES * HANDLE_MAP_STRIDE * sizeof(U32);
+            for (U32 f = 0; f < Context::frameCount() && ok; ++f)
+            {
+                ok = ctx.createBuffer(map_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Upload, mHandleMap[f]) && mHandleMap[f].mMapped;
+                if (ok)
+                {
+                    U32* entries = (U32*)mHandleMap[f].mMapped;
+                    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
+                    {
+                        for (U32 i = 0; i < HANDLE_MAP_STRIDE; ++i)
+                        {
+                            entries[t * HANDLE_MAP_STRIDE + i] = i;
+                        }
+                    }
+                    VkDescriptorBufferInfo bufinfo = { mHandleMap[f].mBuffer, 0, map_bytes };
+                    VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+                    w.dstSet = mBindlessSet[f];
+                    w.dstBinding = BINDLESS_TABLES;
+                    w.descriptorCount = 1;
+                    w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    w.pBufferInfo = &bufinfo;
+                    vkUpdateDescriptorSets(dev, 1, &w, 0, nullptr);
+                }
+            }
+            if (ok)
+            {
+                LL_INFOS("Vulkan") << "texture handles: a map of " << BINDLESS_TABLES * HANDLE_MAP_STRIDE << " ids per frame set (identity)" << LL_ENDL;
+            }
         }
         if (ok)
         {
@@ -1767,6 +1808,11 @@ void Renderer::shutdown()
         if (mBindlessPool) vkDestroyDescriptorPool(dev, mBindlessPool, nullptr);
         if (mSet2Layout) vkDestroyDescriptorSetLayout(dev, mSet2Layout, nullptr);
         if (mSet3Layout) vkDestroyDescriptorSetLayout(dev, mSet3Layout, nullptr);
+        for (Buffer& b : mHandleMap)
+        {
+            if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
+            b = Buffer();
+        }
         for (Buffer& b : mRing)
         {
             if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
@@ -4018,9 +4064,10 @@ void Renderer::applyState()
             const U32 slot = bindlessSlotIn(table, img, sampler, layout, cached.mTable == table ? cached.mSlot : 0);       // (the table checks the slot is still this image's)
             cached = { img->mView, sampler, layout, table, 0, slot };
             U32* dst = (U32*)(mProgram->mShadow[UC_DRAW].data() + mProgram->mSlotOffset[k]);
-            if (*dst != slot)
+            const U32 id = mHandleMap[0].valid() ? ((table << 16) | slot) : slot;      // texture handles: the id of a slot in its table (the shader reads the map with it)
+            if (*dst != id)
             {
-                *dst = slot;
+                *dst = id;
                 mProgram->mDirty[UC_DRAW] = true;
             }
         }

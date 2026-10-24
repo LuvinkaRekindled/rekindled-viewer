@@ -89,6 +89,10 @@ struct ProgramInfo
 // true when programs should be translated with bindless samplers (the device supports it and LL_VK_BINDLESS is not 0)
 bool bindlessShaders();
 
+// <FS> texture handles (doc/vulkan/PLAN-texture-handles.md, H1): programs read a texture through ll_hm[id] (a per-frame map in set 2 binding 4) instead of using the id as the table index;
+// true unless LL_VK_HANDLES=0. The map is the identity in H1 (id = (table << 16) | slot), so the pictures do not change.
+bool handleMapShaders();
+
 // Compile one program. On failure returns false and mError says why. If dump_dir is not empty the
 // rewritten source of a failing stage is written there for inspection.
 bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,

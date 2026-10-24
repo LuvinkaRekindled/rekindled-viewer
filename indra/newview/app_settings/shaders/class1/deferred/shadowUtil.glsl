@@ -133,7 +133,7 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     {
         slot = ll_rt_slot(slot);            // the record holds a pin index (the persistent bindless table)
     }
-    float alpha = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod).a;
+    float alpha = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod).a;
     if ((g.flags & 64u) != 0u)
     {
         // glTF alpha mask: texture alpha times vertex alpha against the material's cutoff, no dithering (pbrShadowAlphaMaskF.glsl)
@@ -203,7 +203,7 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
     {
         slot = ll_rt_slot(slot);
     }
-    float alpha = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod + 2.0).a;
+    float alpha = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod + 2.0).a;
     if ((g.flags & 64u) != 0u || ((g.flags & 2u) == 0u && (g.flags & 1u) == 0u))
     {
         if ((g.flags & 16u) != 0u)
@@ -464,7 +464,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     uint pair = (tex_index < 2u) ? m.slots.x : m.slots.y;
     uint slot = ll_rt_slot((pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu);
     rt_soft_masked = rt_hair_soft != 0 && (mflags & 4u) != 0u && (g.flags & 8192u) != 0u;
-    vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, rt_soft_masked && rt_hair_soft == 3 ? lod + 1.5 : lod);
+    vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, rt_soft_masked && rt_hair_soft == 3 ? lod + 1.5 : lod);
     vec4 vcol = vec4(1.0);
     if ((g.flags & 16u) != 0u)
     {
@@ -497,7 +497,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
             uint emissive_slot = ll_rt_slot(emissive_pin);
             if (emissive_slot != 0u)
             {
-                emissive_tex = rtSrgbToLinear(textureLod(ll_rt_tex[nonuniformEXT(emissive_slot)], uv, lod).rgb);
+                emissive_tex = rtSrgbToLinear(textureLod(ll_rt_tex[nonuniformEXT(LL_HM(emissive_slot))], uv, lod).rgb);
             }
         }
         emissive = m.emissive.xyz * emissive_tex;
@@ -527,7 +527,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
             {
                 // a skinned avatar draw (kRecSkinned): the tangent frame below is made per triangle and the avatar's normals are smooth (skinned by the compute pass): the frame jumps at every triangle edge
                 // and roughens skin, hair edges and hands. Only the alpha of the map (the legacy glossiness mask) is read.
-                normal_alpha = textureLod(ll_rt_tex[nonuniformEXT(normal_slot)], uv, lod).a;
+                normal_alpha = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(normal_slot))], uv, lod).a;
             }
             else if (normal_slot != 0u)
             {
@@ -549,7 +549,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
                         tangent = normalize(tangent);
                         vec3 bit = cross(n_obj, tangent);
                         bit *= (dot(bit, bitangent) < 0.0) ? -1.0 : 1.0;       // the handedness of the uv layout
-                        vec4 nmt = textureLod(ll_rt_tex[nonuniformEXT(normal_slot)], uv, lod);
+                        vec4 nmt = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(normal_slot))], uv, lod);
                         vec3 nm = nmt.xyz * 2.0 - 1.0;
                         normal_alpha = nmt.a;
                         n_shaded = normalize(tangent * nm.x + bit * nm.y + n_obj * nm.z);
@@ -565,7 +565,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
             float metallic = m.params.x, rough = m.params.y;
             if (mr_slot != 0u)
             {
-                vec3 t = textureLod(ll_rt_tex[nonuniformEXT(mr_slot)], uv, lod).rgb;
+                vec3 t = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(mr_slot))], uv, lod).rgb;
                 rough *= t.g;
                 metallic *= t.b;
             }
@@ -574,7 +574,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
         else if (mr_slot != 0u)
         {
             // like the G-buffer pass of legacy materials (materialF.glsl): colour = specular map x the material's specular colour (m.emissive.xyz), glossiness = the exponent / 255 (m.params.w) x normal map alpha
-            vec4 sm = textureLod(ll_rt_tex[nonuniformEXT(mr_slot)], uv, lod);
+            vec4 sm = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(mr_slot))], uv, lod);
             spec = vec4(rtSrgbToLinear(sm.rgb * m.emissive.xyz), m.params.w * normal_alpha);
         }
     }
