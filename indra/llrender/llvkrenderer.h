@@ -17,6 +17,7 @@
 #include <deque>
 #include "llvkcontext.h"
 #include "llvkshader.h"
+#include "llvkhandles.h"
 #include "llvkpasscensus.h"
 
 #include <array>
@@ -319,42 +320,23 @@ public:
     bool drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0);      // <FS> render packets
     // <FS> S4 A1: indexed packet draws: the commands (VkDrawIndexedIndirectCommand, the draw number as first instance) of one run that share the index buffer set with setIndexBuffer(); the hardware reads the indices (vertex reuse)
     bool drawPacketsIndexed(const VkDrawIndexedIndirectCommand* commands, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0);
-    // <FS> bindless sampled images (set 2) for the render packets with textures: one slot per distinct (image view, sampler) pair a frame uses, handed out on first
-    // use; slot 0 is the white image. The caller makes sure the image is in the sampling layout.
+    // <FS> texture handles (doc/vulkan/PLAN-texture-handles.md, H3). Set 2 holds tables of sampled images that shaders index; a program reads a texture through its HANDLE: a dense number that rows,
+    // records and uniforms carry ((table << 16) | handle), which the shader turns into a descriptor index with the frame's map. A descriptor is written once and never changed: a handle that shows
+    // something else gets a new descriptor index, and every frame in flight sees the old or the new mapping as a whole (HandleTable). Table 0 2D, 1 cube, 2 cube array, 3 2D shadow; handle 0 is the placeholder.
     bool bindlessAvailable() const { return mSet2Layout != VK_NULL_HANDLE; }
-    static inline std::atomic<bool> sBindlessPersistent{true};      // FSBindlessPersistent
     U32 bindlessCapacity() const { return mBindlessCap[0]; }       // the 2D table (the others hold far fewer images)
     void gpuZone(const char* name, bool begin);       // a GPU timing zone begins / ends at this point of the command stream
-    U32 bindlessSlot(Image* image, VkSampler sampler);
-    // The persistent table: a slot belongs to an (image view, sampler, layout) for as long as something keeps using it (it is freed after a few hundred idle frames), so slot numbers
-    // mean the same thing from frame to frame. `hint` is the slot the caller got last time for the same thing: checked first, no lookup. Every frame's set has its own copy of the
-    // table; a descriptor is written into the set of the frame that uses it, once (until the slot changes hands).
-    void bindlessPrefetch(U32 table, U32 slot);                                                  // <FS> asks the memory system for the entries bindlessTouch / bindlessSlotIn will read
-    void bindlessPin(U32 table, U32 slot);          // <FS> a pinned slot is never given back by the sweep, and its descriptor reaches every frame's set (no per-frame lookup keeps it alive)
-    void bindlessUnpin(U32 table, U32 slot);
-    bool bindlessTouch(U32 table, U32 slot, U64 view_id, VkImageView view, VkSampler sampler);      // <FS> the slot still holds this view and sampler: keep it alive and written into this frame's set (no table search)
-    U32 bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout, U32 hint = 0);     // table 0 2D, 1 cube, 2 cube array, 3 2D shadow
-    void bindlessFlush();           // writes the slots taken since the last call into the frame's set and binds it
-    // <FS> crash hunt (2026-10-22): can a draw of this frame read the slot? 0 = yes (the stand-in, or this frame's set holds the slot's descriptor), 1 = the slot is active but this frame's set does not hold its
-    // descriptor yet (with repair: queued, the next flush writes it), 2 = the slot is not active (given back): whoever still names it reads whatever the sets hold
-    // the view is being destroyed (called at the point the image or its view is given up, before the deferred destruction): every slot whose info names it holds the stand-in from now on, in every
-    // frame's set (the log), whatever the slot's key or id says. The slot lifetime follows the view: nothing can name a destroyed image through the table, however the destruction came about.
-    void bindlessForgetView(VkImageView view);      // <FS> (blink after load) the swap to the stand-in waits for the next frame (see the .cpp); LL_VK_FORGET_NOW=1 swaps at once as before
-    void bindlessForgetViewNow(VkImageView view);
-    bool bindlessSlotIsStandIn(U32 table, U32 slot) const;
-    // <FS> native-vk (LL_VK_SLOT_RECLAIM=0 turns it off): a slot the sweep gave back that a row still names, and that still shows a live image, becomes active again (true), instead of the rows getting the stand-in
-    bool bindlessReclaim(U32 table, U32 slot);
-    U64 slotsReclaimed() const { return mSlotsReclaimed; }
-    // <FS> audit (LL_VK_SET_AUDIT=1, or LL_VK_STANDIN_MAGENTA=2): the slots the draws of a frame used; after the frame's last flush each is checked against what that frame's set holds, and the misses are logged
-    bool bindlessAuditOn() const { return mAuditOn; }
-    void bindlessAuditNote(U32 slot) { mAuditSlots.push_back(slot); }
-    typedef void (*AuditProviderFn)(std::vector<U32>& slots);       // adds the slots other consumers (scene table fragments, ray scene pins) hold at this moment
-    void setAuditProvider(AuditProviderFn f) { mAuditProvider = f; }      // <FS> diagnostic: the slot holds the stand-in (it is active, but what it shows is the stand-in)
-    void bindlessAlias(U32 table, U32 from, U32 to);        // <FS> the slot `from` shows what `to` shows from now on (a pin moved to a new slot: a row that still names the old one sees the same texture, not the stand-in)
-    void bindlessFlushForgets();
-    int bindlessSlotState(U32 table, U32 slot, bool repair);
-    std::string bindlessSlotDescribe(U32 table, U32 slot);
-
+    U32 handleNew(U32 table);                                                            // a handle that shows the placeholder until handleSet; 0 when the table is full
+    bool handleSet(U32 table, U32 handle, Image* image, VkSampler sampler, VkImageLayout layout);     // the handle shows this image (a new descriptor is queued; the caller made sure the image is in `layout`)
+    void handleClear(U32 table, U32 handle);                                             // the handle shows the placeholder again (its image is gone and nothing replaced it yet)
+    void handleRelease(U32 table, U32 handle);                                           // the handle goes (rows that still name it see the placeholder); its number comes back after the frames that may read it
+    bool handleLive(U32 table, U32 handle) const { return mHandles.live(table, handle); }
+    // a handle by (image view, sampler, layout) that lives as long as the view: for whoever has no stable owner of its own (the bound-texture path, render targets, cube maps)
+    U32 handleForImage(U32 table, Image* image, VkSampler sampler, VkImageLayout layout);
+    void bindlessFlush();           // writes the descriptors queued since the last call into every frame's set and binds the frame's set
+    // the view is being destroyed (the hook of Context::destroyImage): the handles made for it by handleForImage go
+    void forgetViewHandles(VkImageView view);
+    U64 handleSets() const { return mHandles.sets(); }
     VkSampler getSampler(const SamplerDesc& desc);
     Image* getWhiteTexture() { return &mWhite; }
     Program* getProgram() const { return mProgram; }
@@ -513,88 +495,47 @@ private:
     VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorPool mPool = VK_NULL_HANDLE;
     VkDescriptorSet mSet0[Context::FRAMES_IN_FLIGHT] = {};
-    // <FS> bindless table (set 2)
+    // <FS> texture handles (set 2)
     struct BindlessKey
     {
         U64 mViewId = 0;                // Image::mViewId
         VkSampler mSampler = VK_NULL_HANDLE;
         VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        bool operator==(const BindlessKey& o) const { return mViewId == o.mViewId && mSampler == o.mSampler && mLayout == o.mLayout; }
+        U32 mTable = 0;
+        bool operator==(const BindlessKey& o) const { return mViewId == o.mViewId && mSampler == o.mSampler && mLayout == o.mLayout && mTable == o.mTable; }
     };
     struct BindlessKeyHash
     {
-        size_t operator()(const BindlessKey& k) const { return (size_t)((k.mViewId * 0x9E3779B97F4A7C15ull) ^ (((U64)k.mSampler * 0xC2B2AE3D27D4EB4Full) >> 7) ^ ((U64)k.mLayout * 0x165667B19E3779F9ull)); }
+        size_t operator()(const BindlessKey& k) const { return (size_t)((k.mViewId * 0x9E3779B97F4A7C15ull) ^ (((U64)k.mSampler * 0xC2B2AE3D27D4EB4Full) >> 7) ^ ((U64)k.mLayout * 0x165667B19E3779F9ull) ^ ((U64)k.mTable << 40)); }
     };
     void bindlessStart();
     VkDescriptorSetLayout mSet2Layout = VK_NULL_HANDLE;
-    // <FS> texture handles (H1): the map from a texture id ((table << 16) | slot) to the descriptor index in its table, one per frame in flight (set 2 binding 4); the identity until H3
-    Buffer mHandleMap[Context::FRAMES_IN_FLIGHT];
-    static constexpr U32 HANDLE_MAP_STRIDE = 65536;        // ids per table
+    static constexpr U32 BINDLESS_TABLES = HandleTable::TABLES;      // set 2 bindings: 2D, cube, cube array, 2D shadow
+    static constexpr U32 HANDLE_MAP_STRIDE = HandleTable::STRIDE;     // handles per table
+    Buffer mHandleMap[Context::FRAMES_IN_FLIGHT];      // the map of each frame in flight (set 2 binding 4): (table << 16 | handle) -> descriptor index in the table; brought up to date from the log when the frame begins
+    HandleTable mHandles;                              // the bookkeeping (handles, descriptor indices, the log, what comes back when frames have finished)
     VkDescriptorPool mBindlessPool = VK_NULL_HANDLE;
     VkDescriptorSet mBindlessSet[Context::FRAMES_IN_FLIGHT] = {};
-    bool mBindlessFilled = false;       // <FS> every slot of every frame's set holds the stand-in from the first use on: a slot nothing has written yet can be read (a row naming it, a record made before its descriptor arrived) and then shows the stand-in instead of an undefined descriptor
-    static constexpr U32 BINDLESS_TABLES = 4;               // set 2 bindings: 2D, cube, cube array, 2D shadow
-    struct BindlessSlot
+    bool mBindlessFilled = false;       // every descriptor of every frame's set holds the placeholder from the first use on: an index nothing has written yet shows the placeholder, not an undefined descriptor
+    VkDescriptorImageInfo mPlaceholder[BINDLESS_TABLES] = {};        // descriptor index 0 of each table
+    struct PendingWrite { U32 mTable; U32 mDesc; VkDescriptorImageInfo mInfo; };
+    std::vector<PendingWrite> mPendingWrites;          // descriptors to write into every frame's set at the next flush
+    struct HandleInfo                                  // what a handle shows (for the reports of a device lost)
     {
+        U64 mViewId = 0; U64 mImage = 0; VkImageView mView = VK_NULL_HANDLE;
+        U32 mW = 0, mH = 0, mMips = 0, mLayers = 0, mFormat = 0, mLayout = 0;
+        U64 mFrame = 0;                 // the frame of the last handleSet
+        U32 mSets = 0;
+        bool mKeyed = false;            // made by handleForImage
         BindlessKey mKey;
-        VkDescriptorImageInfo mInfo = {};               // what the slot holds
-        U64 mLastUsed = 0;                              // frame number
-        U32 mPins = 0;                                  // pins held (ray scene textures): not swept
-        // what the image looked like when the slot last asked for it (for the device lost audit)
-        U32 mDbgW = 0, mDbgH = 0, mDbgMips = 0, mDbgLayers = 0, mDbgFormat = 0, mDbgLayout = 0;
-        U64 mDbgImage = 0;
-        U64 mCreatedFrame = 0;      // frame number the slot was given to this key
-        U64 mFreedFrame = 0;        // <FS> frame number the sweep gave the slot back
-        U64 mContentId = 0;         // <FS> id of the view the slot holds when that is not the key's (the image was replaced by its successor, or the slot is an alias): 0 = the key's view
-        U32 mDbgWrites = 0;         // descriptor writes flushed for it (all frame sets together)
-        bool mDbgZero = false, mDbgOwned = false;
-        bool mActive = false;
     };
-    // the id of the view a slot holds: its key's, unless the slot was moved to another view (an alias, or the successor of a replaced image)
-    static U64 slotContentId(const BindlessSlot& s) { return s.mContentId ? s.mContentId : s.mKey.mViewId; }
-    struct BindlessTable
-    {
-        std::unordered_map<BindlessKey, U32, BindlessKeyHash> mMap;
-        std::vector<BindlessSlot> mSlots;               // by slot; slot 0 is the stand-in and never handed out
-        std::deque<U32> mFree;                          // slots that can be handed out again, the longest free first (<FS> a slot given back is named by stale rows for a while: it is not reused at once)
-        U32 mActiveCount = 0;
-        VkDescriptorImageInfo mStandIn = {};            // slot 0
-        std::vector<VkDescriptorImageInfo> mShadow[Context::FRAMES_IN_FLIGHT];      // what each frame's set holds by slot (a null view: nothing written yet)
-        std::vector<U64> mShadowId[Context::FRAMES_IN_FLIGHT];                      // ... and the identity (Image::mViewId) of the view it holds: handles can be reused by a later view
-        std::vector<U32> mDirty;                        // slots to write into this frame's set at the next flush
-        std::vector<U8> mQueued;                        // by slot: 1 while the slot is in mDirty
-        std::vector<U32> mPinLog;                       // pinned slots whose descriptor is new or changed, in order (mPinBase = sequence number of the first entry)
-        U64 mPinBase = 0;
-        U64 mPinApplied[Context::FRAMES_IN_FLIGHT] = {};    // how much of the log each frame's set has been given (a set behind the base gets every pinned slot)
-    };
-    void bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want, U64 want_id);
-    void bindlessSyncPins(BindlessTable& tbl);
-    void bindlessSweep(U64 min_idle_frames);
-    bool bindlessRetireSlot(U32 table, U32 slot, int cause);   // <FS> the view in the slot is going: the slot gets the view of the image that replaced it, else the stand-in (true = the successor)
-    void bindlessRetireDestroyed();                 // slots that hold the view of a destroyed image get the stand-in (whoever still names the slot: pins, table rows, ray records)
-    std::unordered_map<VkImageView, std::vector<U32>> mViewSlots;      // the slots (table << 28 | slot) whose info named a view, by view handle: the slot lifetime follows the VIEW, whatever its id says
-    U64 mDestroyedSeen = 0;
-    U64 mRetiredSlots = 0, mRetiredPinned = 0;
-    std::vector<VkImageView> mForgetPending;
-    typedef bool (*ViewSuccessorFn)(U64 old_view_id, VkDescriptorImageInfo& out, U64& out_view_id);
-    U64 mSlotsReclaimed = 0;
-    bool mAuditOn = (getenv("LL_VK_SET_AUDIT") != nullptr) || (getenv("LL_VK_STANDIN_MAGENTA") && getenv("LL_VK_STANDIN_MAGENTA")[0] == '2');
-    std::vector<U32> mAuditSlots;
-    AuditProviderFn mAuditProvider = nullptr;
-    void bindlessAudit();
-    U64 mRetireSwapped = 0;               // <FS> slots that got the successor's view instead of the stand-in
-    ViewSuccessorFn mViewSuccessor = nullptr;
-    U64 mRetiredUsedThisFrame = 0;        // <FS> diagnostic (blink after load): slots given the stand-in in the frame in which a draw had already used them
-public:
-    U64 retiredUsedThisFrame() const { return mRetiredUsedThisFrame; }
-    U64 retiredSlots() const { return mRetiredSlots; }
-    U64 retireSwapped() const { return mRetireSwapped; }
-    // <FS> native-vk (LL_VK_RETIRE_KEEP=0 turns it off): the image that replaced the one with this view id (the next resolution of a texture): when a view goes, the slots naming it get this view, not the stand-in.
-    // false when there is no successor or it is not ready to be sampled (no data yet, not in the sampled layout).
-    void setViewSuccessor(ViewSuccessorFn f) { mViewSuccessor = f; }
-private:
-    BindlessTable mBindlessTbl[BINDLESS_TABLES];
-    U32 mBindlessCap[BINDLESS_TABLES] = {};         // slots per table: the 2D table is the big one
+    std::vector<HandleInfo> mHandleInfo[BINDLESS_TABLES];
+    std::unordered_map<BindlessKey, U32, BindlessKeyHash> mKeyedHandles;    // handleForImage: the handle of a (view id, sampler, layout, table)
+    std::unordered_map<VkImageView, std::vector<std::pair<U32, U32>>> mViewHandles;       // by view handle: the (table, handle) made for it
+    U32 mBindlessCap[BINDLESS_TABLES] = {};         // descriptor indices per table: the 2D table is the big one
+    U32 mHandleEpoch = 1;               // changes when a keyed handle goes: a cache of handles (mUnitSlot) starts over
+    void handlesBeginFrame(U32 frame_slot);
+    void flushPendingWrites();
 public:
     // <FS> what the textures cost and where they fail (logged every 1800 frames by LLVkWorker::after_frame; reset by each read)
     struct TexStats
@@ -626,8 +567,6 @@ private:
     Buffer mRing[Context::FRAMES_IN_FLIGHT];
     Buffer mDummyUbo;
     Image mWhite;
-    Image mDbgStandIn[3];       // <FS> debug (LL_VK_STANDIN_MAGENTA=2): the stand-in a slot gets from the retire by view id (cyan), the forget by view handle (yellow) and the idle sweep (green), so the colour says which
-    VkDescriptorImageInfo standInFor(U32 table, int cause);
     Image mMagenta;             // <FS> debug (LL_VK_STANDIN_MAGENTA=1): the bindless stand-in is magenta, so a surface that samples it shows
     Image mFallback[4];             // white stand-ins: 2D array, cube, cube array, 3D (mWhite is the 2D one)
     std::map<SamplerDesc, VkSampler> mSamplers;
@@ -743,7 +682,7 @@ private:
     Image* mTextures[MAX_TEXTURE_UNITS] = {};
     VkSampler mTextureSamplers[MAX_TEXTURE_UNITS] = {};
     // <FS> the bindless slot a unit's texture got last (this frame's tables): the same texture drawn again costs no table lookup
-    struct UnitSlot { VkImageView mView = VK_NULL_HANDLE; VkSampler mSampler = VK_NULL_HANDLE; VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED; U32 mTable = 0; U32 mEpoch = 0; U32 mSlot = 0; };
+    struct UnitSlot { U64 mViewId = 0; VkSampler mSampler = VK_NULL_HANDLE; VkImageLayout mLayout = VK_IMAGE_LAYOUT_UNDEFINED; U32 mTable = 0; U32 mEpoch = 0; U32 mHandle = 0; };
     UnitSlot mUnitSlot[MAX_TEXTURE_UNITS];
 
     // what has already been recorded

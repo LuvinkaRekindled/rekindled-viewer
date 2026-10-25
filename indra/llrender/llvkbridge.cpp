@@ -322,11 +322,6 @@ void LLVkBridge::stopAsync()
     }
 }
 
-void LLVkBridge::setBindlessPersistent(bool on)
-{
-    LLVk::Renderer::sBindlessPersistent = on;
-}
-
 void LLVkBridge::shutdown()
 {
     LLVkAsync::stop();

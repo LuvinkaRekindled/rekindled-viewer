@@ -2370,17 +2370,6 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSBindlessPersistent</key>
-    <map>
-      <key>Comment</key>
-      <string>Keep the slots of the bindless texture table from frame to frame (S0). Off: every slot not used this frame is given back at once, as the old per-frame table did. Live; for finding which change dropped an object.</string>
-      <key>Persist</key>
-      <integer>0</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>1</integer>
-    </map>
     <key>FSEarlySort</key>
     <map>
       <key>Comment</key>
