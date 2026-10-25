@@ -354,3 +354,13 @@ New: `FS_CPU_ZONES_CPU=1` (with `FS_CPU_ZONES=1`) adds the thread's own cycle co
 `h6b-blocked1` was run at Adam's small home (the harness logs in at the last location): the loop interval 4.96 ms before the turn and 4.92 ms after (no cost that stays), and the main thread ran 98% of its loop (blocked 0.08-0.09 ms): there it is CPU bound in the full sense. In the plaza laps (`h6c` and earlier) the same thread used only 0.72 of a core while the worker waited 4.3 ms a frame for work and the main thread never waited for the worker: about 28% of the loop (3.3 ms), of which 1.0 ms is named pool joins and the alpha builder, is blocked somewhere unnamed. The next plaza lap with `crowded` names it.
 
 CPU use by thread across the project (`threads.csv` of the still phases, 32 logical processors): the whole viewer used 1.2-2.1 cores in every lap from Oct 23 to Oct 25, the main thread 0.72-0.76, the render worker 0.2-0.6; the pools about 0.05 each. No more cores in use than at the start and no overhead growth; Task Manager's 8-11% is mostly other processes (one core is 3.1%).
+
+### 17.18 Open items and where they are written down (2026-10-25)
+
+- **Expiry of what is built out of view**: designed (`EXPIRY-design.md`, decisions agreed: VOLUME partition first, time-based, T1 10 s / T2 60 s). Waiting for the crowded census lap (`h6-fixed.ps1 -Mode crowded`, needs the last session parked at the busy plaza).
+- **Main thread blocked time in the busy plaza** (about 28% of the loop unaccounted, 17.17): same lap.
+- **Low-spec matrix, texture compression, shaders, revisiting old decisions, cleanup pass**: `BACKLOG-lowspec-and-next.md`.
+- **Video memory cap caveat** (`BACKLOG-lowspec-and-next.md`): `FSLimitTextureVRAMUsage` turns the real Vulkan budget numbers off in `LLViewerTexture::updateClass` and falls back to the old GL estimate; the cap should be applied to the real numbers (the lower of the OS budget and the setting) so the setting does not leave a legacy path.
+- **Sudden device losses** (17.15): `LL_VK_HOST_BLOCK_VRAM=0` (launcher `run-viewer-hostmem.bat`) held through several arrivals at the club; not proven, default unchanged.
+- **Avatar update**: no big item; the fat worker job design (records, apply step) is described in conversation only, to be written up if pursued (`ATTACHMENTS-design.md` records why the attachment redesign was dropped).
+- **Arrival hitches**: ray scene top-level build 160 ms for several frames at a teleport, old region dropped about 100 s after (a main thread hitch).
