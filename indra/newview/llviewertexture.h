@@ -234,8 +234,10 @@ public:
     S32 mListIndex = -1;
     U32 mDormantAtFrame = 0;
     U32 mLastWakeFrame = 0;
+    U32 mRecSlot = 0;       // <FS> its slot in LLTexRecs (generation << 24 | index; 0: none)
     void wakeForList() const;
-    void bumpFaceStamp() { ++mFaceStamp; wakeForList(); }
+    void stampChanged();    // after mFaceStamp went up: a dormant texture wakes, LLTexRecs tells its worker
+    void bumpFaceStamp() { ++mFaceStamp; stampChanged(); }
 protected:
     ll_face_list_t    mFaceList[LLRender::NUM_TEXTURE_CHANNELS]; //reverse pointer pointing to the faces using this image as texture
     U32               mNumFaces[LLRender::NUM_TEXTURE_CHANNELS];

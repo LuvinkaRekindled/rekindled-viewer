@@ -9,7 +9,7 @@ for n in sys.argv[1:]:
         m = re.match(r'phase (still1|turn|back|still2|end)', l)
         t = re.search(r'at (\d\d:\d\d:\d\d)Z', l)
         if m and t: marks[m.group(1)] = sec(t.group(1))
-    phases = [('still1', marks['still1'], marks['turn']), ('turn', marks['turn'], marks['back']), ('still2', marks['still2'], marks['end'])]
+    phases = [('still1', marks['still1'], marks['turn']), ('turn', marks['turn'], marks.get('back', marks['turn'] + 60)), ('still2', marks.get('still2', 10**9), marks.get('end', 10**9 + 1))]
     rows = []
     for l in open(f'<work>/run-logs/{n}.log', errors='replace'):
         if '#CpuZones#' not in l: continue

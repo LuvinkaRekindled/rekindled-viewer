@@ -71,6 +71,7 @@
 #include "lldrawable.h"
 #include "llviewerobject.h"
 #include "llspatialpartition.h"
+#include "llviewertexturerecs.h"
 #include <algorithm>
 
 namespace
@@ -84,6 +85,16 @@ struct IdxStats
     U64 mMissWhy[6] = {};                       // ... and why (several can hold): boost, callback, fetching, light projection, a face in view, woken in the last 5 s
 };
 IdxStats sIdx;
+
+// <FS> H6: the worker's result for a texture against the face loop's (LL_VK_TEXREC=1)
+struct RecVerify
+{
+    U64 mNone = 0, mStale = 0, mVolatile = 0, mBig = 0, mCountDiff = 0;       // not comparable: no result yet, one for other faces, volatile faces, more than 1024 faces, another number of faces
+    U64 mCompared = 0, mKept = 0;                                               // compared (of them the loop's answer was a kept one)
+    U64 mSizeDiff = 0, mWorkerBigger = 0, mKeptDiff = 0, mOccDiff = 0;         // the sizes differ by more than a quarter (of them the worker's was the larger; of them the loop's was a kept result); "all faces occluded" differs
+    U64 mUsed = 0, mFellBack = 0;               // LL_VK_TEXREC=2: textures sized from the worker's result / that kept the face loop (no result, stale, volatile faces, another number of faces)
+};
+RecVerify sRecV;
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -390,6 +401,7 @@ void LLViewerTextureList::shutdown()
     mFastCacheList.clear();
 
     idxClear();         // <FS> H6
+    LLTexRecs::stop();
 
     mUUIDMap.clear();
 
@@ -934,7 +946,7 @@ void LLViewerTextureList::wakeTexture(LLViewerTexture* t)
     }
     tex->mWakeQueued = true;
     tex->mLastWakeFrame = gFrameCount;
-    ++tex->mFaceStamp;          // (a kept face loop result is out of date: whatever woke the texture is something the loop reads, or the loop is the way to find out)
+    tex->bumpFaceStamp();       // (a kept face loop result is out of date: whatever woke the texture is something the loop reads, or the loop is the way to find out)
     mWake.push_back(tex);
     ++sIdx.mWakes;
 }
@@ -992,6 +1004,23 @@ void LLViewerTextureList::idxLog()
                              << " " << sIdx.mMissWhy[2] - prev.mMissWhy[2] << " " << sIdx.mMissWhy[3] - prev.mMissWhy[3] << " " << sIdx.mMissWhy[4] - prev.mMissWhy[4] << " " << sIdx.mMissWhy[5] - prev.mMissWhy[5] << LL_ENDL;
     }
     prev = sIdx;
+    if (LLTexRecs::sMode)
+    {
+        static RecVerify pv;
+        const LLTexRecs::Stats st = LLTexRecs::stats();
+        static LLTexRecs::Stats ps;
+        LL_INFOS("VkTexRec") << "mode " << LLTexRecs::sMode << ": " << st.mRecords << " face records in " << st.mSlots << " texture slots; in 10 s: " << st.mDeltas - ps.mDeltas << " records sent in "
+                             << st.mBatches - ps.mBatches << " batches, " << st.mPasses - ps.mPasses << " worker passes (the last " << st.mPassMs << " ms over " << st.mPassRecords << " records) | the face loop against the worker: compared "
+                             << sRecV.mCompared - pv.mCompared << " (loop's answer a kept one " << sRecV.mKept - pv.mKept << "), sizes differ by more than a quarter " << sRecV.mSizeDiff - pv.mSizeDiff << " (worker larger "
+                             << sRecV.mWorkerBigger - pv.mWorkerBigger << ", loop's a kept one " << sRecV.mKeptDiff - pv.mKeptDiff << "), all-occluded differs " << sRecV.mOccDiff - pv.mOccDiff << " | not comparable: no result "
+                             << sRecV.mNone - pv.mNone << ", stale " << sRecV.mStale - pv.mStale << ", volatile " << sRecV.mVolatile - pv.mVolatile << ", over 1024 faces " << sRecV.mBig - pv.mBig << ", other face count "
+                             << sRecV.mCountDiff - pv.mCountDiff << " | main thread: frame() " << (F64)(st.mFrameNs - ps.mFrameNs) / 1.0e6 / llmax<U64>(st.mFrames - ps.mFrames, 1) << " ms a frame, group events "
+                             << (F64)(st.mGroupNs - ps.mGroupNs) / 1.0e6 / llmax<U64>(st.mFrames - ps.mFrames, 1) << " ms a frame (" << st.mGroupEvents - ps.mGroupEvents << " events), faceChanged calls "
+                             << st.mFaceChangedCalls - ps.mFaceChangedCalls << ", records not sent " << st.mSkipped - ps.mSkipped
+                             << " | sized from the worker's result " << sRecV.mUsed - pv.mUsed << ", kept the face loop " << sRecV.mFellBack - pv.mFellBack << LL_ENDL;
+        pv = sRecV;
+        ps = st;
+    }
     last_log = gFrameTimeSeconds;
 }
 
@@ -1274,8 +1303,34 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         // convert bias into a vsize scaler
         bias = (F32) llroundf(powf(4, bias - 1.f));
 
+        // <FS> H6 (LL_VK_TEXREC=2): the worker's result for this texture replaces the face loop when it was made for the faces the texture has now (the stamp), none of them is volatile and the
+        // number of faces is what the worker counted
+        bool rec_use = false;
+        LLTexRecs::Result rec_res;
+        if (LLTexRecs::sMode == 2 && LLTexRecs::result(imagep, rec_res) && rec_res.mStamp == imagep->mFaceStamp && !rec_res.mVolatile)
+        {
+            U32 fc = 0;
+            for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
+            {
+                fc += imagep->getNumFaces(i);
+            }
+            if (fc == rec_res.mFaces && fc <= max_faces_to_check)
+            {
+                rec_use = true;
+                face_count = fc;
+                max_vsize = llmin(llmax(rec_res.mMaxPlain, rec_res.mMaxBiased / bias), LLViewerFetchedTexture::sMaxVirtualSize);
+                on_screen = fc > 0;                 // (every plain face counts as on screen: see calcPixelArea)
+                all_occluded = fc > 0 && rec_res.mOccluded == fc;
+                ++sRecV.mUsed;
+            }
+        }
+        if (LLTexRecs::sMode == 2 && !rec_use) ++sRecV.mFellBack;
+
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-        if (stamp_use)
+        if (rec_use)
+        {
+        }
+        else if (stamp_use)
         {
             max_vsize = stamp.mVSize;
             all_occluded = stamp.mAllOccluded;
@@ -1385,11 +1440,11 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         }
         } // (face loop zone)
 
-        if (!stamp_use)
+        if (!stamp_use && !rec_use)
         {
             all_occluded = face_count > 0 && face_count <= max_faces_to_check && faces_seen == face_count && faces_occluded == faces_seen;
         }
-        if (sStampMode && !stamp_use)
+        if (sStampMode && !stamp_use && !rec_use)
         {
             // (a difference only counts when it matters: one side is a size the priority treats as seen, and the two are not within a quarter of each other or the screen flag changed)
             const F32 big = llmax(max_vsize, stamp.mVSize);
@@ -1425,6 +1480,33 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             stamp.mAllOccluded = all_occluded;
             stamp.mTeHash = why_te;
             stamp.mGeomHash = why_geom;
+        }
+
+        if (LLTexRecs::sMode == 1)
+        {
+            // <FS> H6: what the worker found for this texture (from the records of its faces) against what the face loop (or the kept result of it) found
+            LLTexRecs::Result rr;
+            if (!LLTexRecs::result(imagep, rr)) ++sRecV.mNone;
+            else if (rr.mStamp != imagep->mFaceStamp) ++sRecV.mStale;
+            else if (rr.mVolatile) ++sRecV.mVolatile;
+            else if (face_count > max_faces_to_check) ++sRecV.mBig;
+            else if (rr.mFaces != face_count) ++sRecV.mCountDiff;
+            else
+            {
+                const F32 expect = llmin(llmax(rr.mMaxPlain, rr.mMaxBiased / bias), LLViewerFetchedTexture::sMaxVirtualSize);
+                const F32 got = llmin(max_vsize, LLViewerFetchedTexture::sMaxVirtualSize);
+                const bool occ_rec = rr.mFaces > 0 && rr.mOccluded == rr.mFaces;
+                const F32 hi = llmax(expect, got), lo = llmin(expect, got);
+                ++sRecV.mCompared;
+                sRecV.mKept += stamp_use;
+                if (occ_rec != all_occluded) ++sRecV.mOccDiff;
+                if (hi >= 64.f && lo < 0.75f * hi)
+                {
+                    ++sRecV.mSizeDiff;
+                    sRecV.mWorkerBigger += expect > got;
+                    sRecV.mKeptDiff += stamp_use;
+                }
+            }
         }
 
         if (sFbMode && face_count > 0 && face_count <= max_faces_to_check)
@@ -1881,6 +1963,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     entries_list_t entries;
 
     updateCameraEpoch();
+    LLTexRecs::frame();         // <FS> H6: the records that changed go to the worker, the results it has finished come back
     if (sFbMode)
     {
         static F32 last_fb_log = 0.f;
