@@ -309,7 +309,6 @@ namespace LLVkBridge
     // queues (async) or runs the upscale: colour + depth + motion -> output, all textures the mirror owns
     void upscale(const UpscaleArgs& args);
 
-    void setBindlessPersistent(bool on);        // live switch (FSBindlessPersistent): off gives every slot not used this frame back at once
     // switch the mirror off (window closed, error); the viewer carries on with OpenGL only
     void shutdown();
     // plays what is queued for the mirror thread and stops it (the viewer is quitting); GL calls after this run inline

@@ -1154,7 +1154,7 @@ bool Renderer::createLayouts()
                     {
                         for (U32 i = 0; i < HANDLE_MAP_STRIDE; ++i)
                         {
-                            entries[t * HANDLE_MAP_STRIDE + i] = i;
+                            entries[t * HANDLE_MAP_STRIDE + i] = 0;
                         }
                     }
                     VkDescriptorBufferInfo bufinfo = { mHandleMap[f].mBuffer, 0, map_bytes };
@@ -1169,7 +1169,7 @@ bool Renderer::createLayouts()
             }
             if (ok)
             {
-                LL_INFOS("Vulkan") << "texture handles: a map of " << BINDLESS_TABLES * HANDLE_MAP_STRIDE << " ids per frame set (identity)" << LL_ENDL;
+                LL_INFOS("Vulkan") << "texture handles: a map of " << BINDLESS_TABLES * HANDLE_MAP_STRIDE << " handles per frame in flight" << LL_ENDL;
             }
         }
         if (ok)
@@ -1423,37 +1423,6 @@ bool Renderer::init()
     mWhite.mLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     ctx.waitIdle();
     vmaDestroyBuffer(ctx.getAllocator(), staging.mBuffer, staging.mAllocation);
-
-    if (getenv("LL_VK_STANDIN_MAGENTA") && getenv("LL_VK_STANDIN_MAGENTA")[0] == '2')
-    {
-        const U8 colors[3][4] = { { 0, 255, 255, 255 }, { 255, 255, 0, 255 }, { 0, 255, 0, 255 } };
-        for (int c = 0; c < 3; ++c)
-        {
-            if (!ctx.createImage2D(1, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, mDbgStandIn[c]))
-            {
-                continue;
-            }
-            Buffer cstaging;
-            if (ctx.createBuffer(16, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, Context::Memory::Upload, cstaging))
-            {
-                memcpy(cstaging.mMapped, colors[c], 4);
-                ctx.immediateSubmit([&](VkCommandBuffer cmd) {
-                    imageBarrier(cmd, mDbgStandIn[c].mImage, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                 VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-                    VkBufferImageCopy bc = {};
-                    bc.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-                    bc.imageExtent = { 1, 1, 1 };
-                    vkCmdCopyBufferToImage(cmd, cstaging.mBuffer, mDbgStandIn[c].mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bc);
-                    imageBarrier(cmd, mDbgStandIn[c].mImage, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                 VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-                });
-                mDbgStandIn[c].mLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                ctx.waitIdle();
-                vmaDestroyBuffer(ctx.getAllocator(), cstaging.mBuffer, cstaging.mAllocation);
-            }
-        }
-    }
 
     if (getenv("LL_VK_STANDIN_MAGENTA") && ctx.createImage2D(1, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, mMagenta))
     {
@@ -1864,12 +1833,12 @@ void Renderer::shutdown()
     mSet3Layout = VK_NULL_HANDLE;
     mRtBoundSet = VK_NULL_HANDLE;
     mBindlessPool = VK_NULL_HANDLE;
-    for (BindlessTable& t : mBindlessTbl)
-    {
-        t.mMap.clear(); t.mSlots.clear(); t.mFree.clear(); t.mDirty.clear(); t.mQueued.clear(); t.mActiveCount = 0;
-        for (auto& sh : t.mShadow) sh.clear();
-        for (auto& sh : t.mShadowId) sh.clear();
-    }
+    mHandles = HandleTable();
+    mPendingWrites.clear();
+    mKeyedHandles.clear();
+    mViewHandles.clear();
+    for (auto& v : mHandleInfo) v.clear();
+    mBindlessFilled = false;
     mProgram = nullptr;
     mReady = false;
 }
@@ -1957,9 +1926,8 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
         savePipelineCache();
     }
     harvestQueries(frame_slot);
-    mCmd = cmd;                 // (before the retire: a successor image that is not in the sampled layout yet is moved into it with this frame's commands)
-    bindlessFlushForgets();
-    bindlessRetireDestroyed();
+    mCmd = cmd;
+    handlesBeginFrame(frame_slot);          // what the finished frames gave back is free again; this frame's map catches up with the changes since it last ran
     mOccPending = mOccActive = -1;
     mSlot = frame_slot;
     // buffer writes made between frames get their staging space now
@@ -2019,21 +1987,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mSet0Bound = false;
     if (mSet2Layout)
     {
-        // the table is persistent: what the last frames queued but never flushed is not needed (no draw used it), and slots nobody used for a long while are given back
-        for (BindlessTable& t : mBindlessTbl)
-        {
-            for (U32 slot : t.mDirty) { t.mQueued[slot] = 0; }
-            t.mDirty.clear();
-        }
-        mBindlessBound = false;
-        if (!sBindlessPersistent.load(std::memory_order_relaxed))
-        {
-            bindlessSweep(0);           // switched off: nothing survives the frame (what the old per-frame table did)
-        }
-        else if (Context::instance().getFrameNumber() % 60 == 0)
-        {
-            bindlessSweep(360);
-        }
+        mBindlessBound = false;         // (what was queued and not flushed stays queued: the descriptors are written at the next flush, before the submit of the frame that maps to them)
     }
     mRtBoundSet = VK_NULL_HANDLE;
     for (U32& o : mAppliedDynamicOffset) o = 0xFFFFFFFF;
@@ -2060,16 +2014,11 @@ void Renderer::endFrame()
     finishPassUse();
     flushPendingClear();
     endRendering(PE_FRAME);
-    // descriptors that draws of this frame asked for (render packet textures: bindlessTouch only queues them, a flush comes with the next draw of a bindless program) are written before
-    // the command buffer is submitted; beginFrame throws away what is still queued
+    // descriptors queued during this frame are written before the command buffer is submitted
     static const bool skip_end_flush = getenv("LL_VK_NO_END_FLUSH") != nullptr;
     if (!skip_end_flush)
     {
         bindlessFlush();
-    }
-    if (mAuditOn)
-    {
-        bindlessAudit();
     }
 #if defined(TRACY_ENABLE)
     if (mTracyCtx && mCmd != VK_NULL_HANDLE)
@@ -2777,573 +2726,180 @@ void Renderer::setTexture(U32 unit, Image* image, VkSampler sampler)
 }
 
 // slot 0 of every frame's tables: a stand-in image of the table's kind, what an unbound texture unit samples
+//-----------------------------------------------------------------------------------------------------
+// Texture handles (doc/vulkan/PLAN-texture-handles.md, H3)
+//-----------------------------------------------------------------------------------------------------
+// A handle is a dense number in a table; what it shows is a descriptor index, written once, never changed (HandleTable has the bookkeeping, this has the Vulkan side). Every frame in flight has its
+// own copy of the map (handle -> descriptor index) that is brought up to date from the log when the frame begins, so a frame sees one mapping from its first draw to its last. A descriptor is
+// written into the sets of all frames at once: its index is not in the map of any frame that is running (it was free), and the binding is "update unused while pending".
+
 void Renderer::bindlessStart()
 {
+    if (mBindlessFilled || mBindlessSet[0] == VK_NULL_HANDLE || !mWhite.valid())
+    {
+        return;
+    }
     {
         static bool hooked = false;
         if (!hooked)
         {
             hooked = true;
-            Context::instance().setViewForgetHook([](VkImageView v) { Renderer::instance().bindlessForgetView(v); });
+            Context::instance().setViewForgetHook([](VkImageView v) { Renderer::instance().forgetViewHandles(v); });
         }
     }
     for (U32 t = 0; t < BINDLESS_TABLES; ++t)
     {
-        BindlessTable& tbl = mBindlessTbl[t];
-        if (tbl.mSlots.empty())
-        {
-            tbl.mSlots.resize(1);       // slot 0: the stand-in
-            const Image* stand_in = &mWhite;
-            if (t == 0 && mMagenta.valid()) stand_in = &mMagenta;       // (debug: LL_VK_STANDIN_MAGENTA=1)
-            if (t == 1 && mFallback[1].valid()) stand_in = &mFallback[1];
-            if (t == 2 && mFallback[2].valid()) stand_in = &mFallback[2];
-            tbl.mStandIn = { getSampler(SamplerDesc()), stand_in->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-        }
-        if (tbl.mShadow[mSlot].empty())
-        {
-            tbl.mShadow[mSlot].resize(1);       // nothing written yet: the stand-in goes in with the first flush of this set
-            tbl.mShadowId[mSlot].assign(1, ~0ull);
-        }
-        bindlessQueue(tbl, 0, tbl.mStandIn, 0);
+        const Image* stand_in = &mWhite;
+        if (t == 0 && mMagenta.valid()) stand_in = &mMagenta;       // (debug: LL_VK_STANDIN_MAGENTA)
+        if (t == 1 && mFallback[1].valid()) stand_in = &mFallback[1];
+        if (t == 2 && mFallback[2].valid()) stand_in = &mFallback[2];
+        mPlaceholder[t] = { getSampler(SamplerDesc()), stand_in->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        mHandleInfo[t].assign(1, HandleInfo());
     }
-    if (!mBindlessFilled && mBindlessSet[0] != VK_NULL_HANDLE && !mBindlessTbl[0].mSlots.empty())
+    // every descriptor of every set holds the placeholder: an index nothing has written yet is read as the placeholder, not as an undefined descriptor (GPU assisted validation found that crash on 2026-10-22)
+    std::vector<VkDescriptorImageInfo> infos[BINDLESS_TABLES];
+    std::vector<VkWriteDescriptorSet> writes;
+    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
     {
-        // crash hunt 2026-10-22 (GPU-assisted validation: "descriptor index N is uninitialized / never updated" in table draws): the sets start with the stand-in in every slot. The slots that are really
-        // used are written over it as before (the CPU copy of what the sets hold says "nothing written", so every first write goes through).
-        mBindlessFilled = true;
-        std::vector<VkDescriptorImageInfo> infos[BINDLESS_TABLES];
-        std::vector<VkWriteDescriptorSet> writes;
+        infos[t].assign(mBindlessCap[t], mPlaceholder[t]);
+    }
+    for (U32 set = 0; set < Context::frameCount(); ++set)
+    {
         for (U32 t = 0; t < BINDLESS_TABLES; ++t)
         {
-            infos[t].assign(mBindlessCap[t], mBindlessTbl[t].mStandIn);
-        }
-        if (mDbgStandIn[2].valid() && !infos[0].empty())
-        {
-            // LL_VK_STANDIN_MAGENTA=2: a slot no flush has written into a frame set yet shows green (the sweep no longer uses it), slot 0 and the plain stand-in stay magenta
-            const VkDescriptorImageInfo slot0 = infos[0][0];
-            infos[0].assign(mBindlessCap[0], { mBindlessTbl[0].mStandIn.sampler, mDbgStandIn[2].mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
-            infos[0][0] = slot0;
-        }
-        for (U32 set = 0; set < Context::frameCount(); ++set)
-        {
-            for (U32 t = 0; t < BINDLESS_TABLES; ++t)
-            {
-                if (!mBindlessCap[t])
-                {
-                    continue;
-                }
-                VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-                w.dstSet = mBindlessSet[set];
-                w.dstBinding = t;
-                w.dstArrayElement = 0;
-                w.descriptorCount = mBindlessCap[t];
-                w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                w.pImageInfo = infos[t].data();
-                writes.push_back(w);
-            }
-        }
-        vkUpdateDescriptorSets(Context::instance().getDevice(), (U32)writes.size(), writes.data(), 0, nullptr);
-        LL_INFOS("Vulkan") << "bindless: every slot of the " << Context::frameCount() << " frame sets holds the stand-in (" << mBindlessCap[0] << " 2D slots)" << LL_ENDL;
-    }
-}
-
-// the slot is wanted in this frame's set with this content: queue a write unless the set already holds exactly it. "Exactly" means the same view OBJECT (its id), not the same handle
-// value: a destroyed view's handle can be given to the next view, and a set entry that still describes the old object would show the old image's memory.
-void Renderer::bindlessQueue(BindlessTable& tbl, U32 slot, const VkDescriptorImageInfo& want, U64 want_id)
-{
-    std::vector<VkDescriptorImageInfo>& sh = tbl.mShadow[mSlot];
-    std::vector<U64>& ids = tbl.mShadowId[mSlot];
-    if (sh.size() <= slot)
-    {
-        const size_t n = std::max<size_t>((size_t)slot + 1, sh.size() + sh.size() / 2 + 64);
-        sh.resize(n);
-        ids.resize(n, ~0ull);
-    }
-    const VkDescriptorImageInfo& have = sh[slot];
-    if (ids[slot] == want_id && have.imageView == want.imageView && have.sampler == want.sampler && have.imageLayout == want.imageLayout)
-    {
-        return;
-    }
-    if (tbl.mQueued.size() <= slot)
-    {
-        tbl.mQueued.resize(std::max<size_t>((size_t)slot + 1, tbl.mQueued.size() + tbl.mQueued.size() / 2 + 64), 0);
-    }
-    if (tbl.mQueued[slot])
-    {
-        return;
-    }
-    tbl.mQueued[slot] = 1;
-    tbl.mDirty.push_back(slot);
-}
-
-// gives back the slots nothing has used for min_idle_frames frames (the texture is gone, or has not been drawn for a long while). The frames in flight keep their own sets, which still hold
-// the old descriptors (the views they name are destroyed only after those frames), so reusing the slot only ever changes the set of a frame that is just starting.
-// An image that is destroyed keeps its bindless slot for as long as anything pins or names it (the ray scene's records, the scene table's rows); the slot then still holds the view and the GPU
-// samples memory that has been given back (2026-10-21: the device lost after snapshots read a page that had held a 1024x1024 texture; the audit's "used after destroy" only sees draws that asked
-// for the slot this frame, not the ones that carry the number around). The image's memory is given back a few frames after the call, every frame's set is brought up to date before then:
-// from the destroy on the slot holds the stand-in.
-void Renderer::bindlessRetireDestroyed()
-{
-    Context& ctx = Context::instance();
-    const U64 count = ctx.destroyedViewCount();
-    if (count == mDestroyedSeen)
-    {
-        return;
-    }
-    const bool lost = count - mDestroyedSeen > Context::destroyedRing();
-    std::unordered_set<U64> ids;
-    if (!lost)
-    {
-        for (U64 seq = mDestroyedSeen; seq < count; ++seq)
-        {
-            const U64 id = ctx.destroyedViewIdAt(seq);
-            if (id)
-            {
-                ids.insert(id);
-            }
-        }
-    }
-    mDestroyedSeen = count;
-    U32 retired = 0, pinned = 0;
-    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
-    {
-        BindlessTable& tbl = mBindlessTbl[t];
-        for (U32 slot = 1; slot < (U32)tbl.mSlots.size(); ++slot)
-        {
-            BindlessSlot& s = tbl.mSlots[slot];
-            if (!s.mActive || s.mInfo.imageView == VK_NULL_HANDLE || s.mInfo.imageView == tbl.mStandIn.imageView)
+            if (!mBindlessCap[t])
             {
                 continue;
             }
-            U64 when = 0;
-            const U64 content_id = s.mContentId ? s.mContentId : s.mKey.mViewId;       // (what the slot holds: an aliased or replaced slot holds another view than its key's)
-            if (lost ? ctx.destroyedViewFrame(content_id, when) : ids.count(content_id) != 0)
-            {
-                if (s.mLastUsed >= ctx.getFrameNumber()) ++mRetiredUsedThisFrame;
-                const bool swapped = bindlessRetireSlot(t, slot, 0);        // (no successor: cyan in the debug colours)
-                tbl.mPinLog.push_back(slot);            // every frame's set gets the new content at its next flush (pinned or not: a table row or a ray record may still name an unpinned slot, and the other frames' sets would keep the dead view)
-                if (s.mPins)
-                {
-                    ++pinned;
-                }
-                bindlessQueue(tbl, slot, s.mInfo, slotContentId(s));
-                if (!swapped)
-                {
-                    ++retired;
-                }
-            }
+            VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+            w.dstSet = mBindlessSet[set];
+            w.dstBinding = t;
+            w.dstArrayElement = 0;
+            w.descriptorCount = mBindlessCap[t];
+            w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w.pImageInfo = infos[t].data();
+            writes.push_back(w);
         }
     }
-    mRetiredSlots += retired;
-    mRetiredPinned += pinned;
-    static U32 said = 0;
-    if (pinned && said++ < 20)
-    {
-        LL_INFOS("Vulkan") << "bindless: " << pinned << " pinned slot(s) held the view of a destroyed image and now hold the stand-in (" << retired << " slots in all, " << mRetiredPinned << " pinned so far)" << LL_ENDL;
-    }
+    vkUpdateDescriptorSets(Context::instance().getDevice(), (U32)writes.size(), writes.data(), 0, nullptr);
+    mHandles.init(mBindlessCap, Context::frameCount());
+    mBindlessFilled = true;
+    LL_INFOS("Vulkan") << "texture handles: every descriptor of the " << Context::frameCount() << " frame sets holds the placeholder (" << mBindlessCap[0] << " 2D descriptors)" << LL_ENDL;
 }
 
-// <FS> native-vk (blink after load): a view given up in the middle of a frame used to put the stand-in into its slots in that same frame's descriptor set, and the draws of the frame that had
-// already named the slot (recorded earlier, run later) sampled the stand-in: white for a frame. The image itself is destroyed several frames later (Context::destroyLater), so the slots keep the old
-// view until the next frame begins; from there on the sets get the stand-in as before, long before the memory goes.
-void Renderer::bindlessForgetView(VkImageView view)
+void Renderer::handlesBeginFrame(U32 frame_slot)
 {
-    static const bool now = getenv("LL_VK_FORGET_NOW") != nullptr;
-    if (!view)
+    if (!mHandles.ready())
     {
         return;
     }
+    Context& ctx = Context::instance();
+    mHandles.retire([&ctx](U64 frame) { return ctx.frameFinished(frame); });
+    if (frame_slot < Context::FRAMES_IN_FLIGHT && mHandleMap[frame_slot].valid() && mHandleMap[frame_slot].mMapped)
     {
-        // (counted when it happens: the slots a draw of this frame had already used)
-        auto it = mViewSlots.find(view);
-        if (it != mViewSlots.end())
-        {
-            for (U32 packed : it->second)
-            {
-                const U32 t = packed >> 28, slot = packed & 0x0FFFFFFFu;
-                if (t < BINDLESS_TABLES && slot && slot < mBindlessTbl[t].mSlots.size() && mBindlessTbl[t].mSlots[slot].mActive && mBindlessTbl[t].mSlots[slot].mInfo.imageView == view
-                    && mBindlessTbl[t].mSlots[slot].mLastUsed >= Context::instance().getFrameNumber())
-                {
-                    ++mRetiredUsedThisFrame;
-                }
-            }
-        }
-    }
-    if (now || mCmd == VK_NULL_HANDLE)
-    {
-        bindlessForgetViewNow(view);
-        return;
-    }
-    mForgetPending.push_back(view);
-}
-
-bool Renderer::bindlessRetireSlot(U32 table, U32 slot, int cause)
-{
-    static const bool off = getenv("LL_VK_RETIRE_KEEP") && getenv("LL_VK_RETIRE_KEEP")[0] == '0';
-    BindlessTable& tbl = mBindlessTbl[table];
-    BindlessSlot& s = tbl.mSlots[slot];
-    VkDescriptorImageInfo succ = {};
-    U64 succ_id = 0;
-    const U64 content_id = s.mContentId ? s.mContentId : s.mKey.mViewId;
-    if (!off && mViewSuccessor && table == 0 && mViewSuccessor(content_id, succ, succ_id) && succ.imageView && succ.imageView != s.mInfo.imageView)
-    {
-        s.mInfo.imageView = succ.imageView;         // (the layout of the key stays)
-        if (succ.sampler)
-        {
-            s.mInfo.sampler = succ.sampler;         // the successor's sampler, not the old texture's: it clamps to the levels the new image holds data in
-        }
-        s.mContentId = succ_id;
-        std::vector<U32>& v = mViewSlots[succ.imageView];
-        const U32 packed = (table << 28) | slot;
-        if (v.empty() || v.back() != packed) v.push_back(packed);
-        ++mRetireSwapped;
-        return true;
-    }
-    {   // diagnostic: every slot that loses its view with no successor, counted by cause (id / handle), by the age of its last request (0-2, 3-60, older frames) and by what the image was
-        // (kind 0 = not noted, 1 re-specified, 2 grown, 3 levels dropped, 4 name deleted, 5 sampling view rebuilt); one line per 400 slots. The first 20 of the recently requested ones are named.
-        static U64 count[2][4][7] = {};
-        static U64 total = 0, named = 0;
-        const U64 frame = Context::instance().getFrameNumber();
-        const U64 age = frame > s.mLastUsed ? frame - s.mLastUsed : 0;
-        const int kind = LLVkWorker::destroyed_view_kind(content_id);
-        ++count[cause ? 1 : 0][!s.mActive ? 3 : (age <= 2 ? 0 : (age <= 60 ? 1 : 2))][kind < 7 ? kind : 0];
-        if (named < 30)
-        {
-            ++named;
-            LL_INFOS("Vulkan") << "bindless: slot " << slot << (s.mActive ? "" : " (given back)") << " (used " << age << " frames ago, pins " << s.mPins << ", " << (cause == 0 ? "retire by view id" : "forget by view handle") << ") loses its view with no successor: "
-                               << LLVkWorker::describe_destroyed_view(content_id) << LL_ENDL;
-        }
-        if (++total % 100 == 0)
-        {
-            static const char* ages[] = { "<=2", "3-60", ">60", "given back" };
-            std::string text;
-            for (int c = 0; c < 2; ++c)
-            {
-                for (int a = 0; a < 4; ++a)
-                {
-                    text += std::string(c ? "handle " : "id ") + ages[a] + ": ";
-                    for (int k = 0; k < 7; ++k)
-                    {
-                        text += std::to_string(count[c][a][k]) + (k < 6 ? "/" : "");
-                    }
-                    text += " | ";
-                }
-            }
-            LL_INFOS("Vulkan") << "bindless: slots that lost their view with no successor (" << total << "), by cause and idle frames, then image kind unnoted/respec/grown/dropped/deleted/swizzle/commit: " << text << LL_ENDL;
-        }
-    }
-    s.mInfo = standInFor(table, cause);
-    s.mContentId = 0;
-    return false;
-}
-
-VkDescriptorImageInfo Renderer::standInFor(U32 table, int cause)
-{
-    const BindlessTable& tbl = mBindlessTbl[table];
-    if (cause >= 0 && cause < 3 && mDbgStandIn[cause].valid())
-    {
-        return { tbl.mStandIn.sampler, mDbgStandIn[cause].mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    }
-    return tbl.mStandIn;
-}
-
-bool Renderer::bindlessReclaim(U32 table, U32 slot)
-{
-    static const bool off = getenv("LL_VK_SLOT_RECLAIM") && getenv("LL_VK_SLOT_RECLAIM")[0] == '0';
-    if (off || table >= BINDLESS_TABLES || !slot)
-    {
-        return false;
-    }
-    BindlessTable& tbl = mBindlessTbl[table];
-    if (slot >= tbl.mSlots.size())
-    {
-        return false;
-    }
-    BindlessSlot& s = tbl.mSlots[slot];
-    if (s.mActive)
-    {
-        return true;
-    }
-    // it must still show a live image (a view that was given up is no longer in the list: the slot then holds the stand-in or the successor) and its key must not be held by another slot
-    if (!s.mInfo.imageView || mViewSlots.find(s.mInfo.imageView) == mViewSlots.end() || tbl.mMap.find(s.mKey) != tbl.mMap.end())
-    {
-        return false;
-    }
-    s.mActive = true;
-    s.mLastUsed = Context::instance().getFrameNumber();
-    tbl.mMap.emplace(s.mKey, slot);
-    ++tbl.mActiveCount;
-    ++mSlotsReclaimed;
-    bindlessQueue(tbl, slot, s.mInfo, slotContentId(s));
-    return true;
-}
-
-bool Renderer::bindlessSlotIsStandIn(U32 table, U32 slot) const
-{
-    if (table >= BINDLESS_TABLES || !slot || slot >= mBindlessTbl[table].mSlots.size())
-    {
-        return false;
-    }
-    const BindlessTable& tbl = mBindlessTbl[table];
-    return tbl.mSlots[slot].mActive && tbl.mSlots[slot].mInfo.imageView == tbl.mStandIn.imageView;
-}
-
-void Renderer::bindlessAlias(U32 table, U32 from, U32 to)
-{
-    if (table >= BINDLESS_TABLES || !from || !to || from == to)
-    {
-        return;
-    }
-    BindlessTable& tbl = mBindlessTbl[table];
-    if (from >= tbl.mSlots.size() || to >= tbl.mSlots.size())
-    {
-        return;
-    }
-    BindlessSlot& a = tbl.mSlots[from];
-    const BindlessSlot& b = tbl.mSlots[to];
-    if (!a.mActive || !b.mActive || b.mInfo.imageView == VK_NULL_HANDLE || b.mInfo.imageView == tbl.mStandIn.imageView)
-    {
-        return;
-    }
-    a.mInfo = b.mInfo;
-    a.mContentId = b.mContentId ? b.mContentId : b.mKey.mViewId;
-    {
-        std::vector<U32>& v = mViewSlots[b.mInfo.imageView];        // (when the new view goes, this slot gets the stand-in with the others that name it)
-        const U32 packed = (table << 28) | from;
-        if (v.empty() || v.back() != packed) v.push_back(packed);
-    }
-    tbl.mPinLog.push_back(from);
-    bindlessQueue(tbl, from, a.mInfo, slotContentId(a));
-}
-
-void Renderer::bindlessFlushForgets()
-{
-    if (mForgetPending.empty())
-    {
-        return;
-    }
-    std::vector<VkImageView> pending;
-    pending.swap(mForgetPending);
-    for (VkImageView v : pending)
-    {
-        bindlessForgetViewNow(v);
+        mHandles.applyTo(frame_slot, (U32*)mHandleMap[frame_slot].mMapped);
     }
 }
 
-void Renderer::bindlessForgetViewNow(VkImageView view)
+U32 Renderer::handleNew(U32 table)
 {
-    if (!view)
+    if (!mSet2Layout || table >= BINDLESS_TABLES)
     {
-        return;
-    }
-    auto it = mViewSlots.find(view);
-    if (it == mViewSlots.end())
-    {
-        return;
-    }
-    const std::vector<U32> packed_list = it->second;            // (a copy: a swap adds slots to another view's list)
-    for (U32 packed : packed_list)
-    {
-        const U32 t = packed >> 28, slot = packed & 0x0FFFFFFFu;
-        if (t >= BINDLESS_TABLES || slot == 0)
-        {
-            continue;
-        }
-        BindlessTable& tbl = mBindlessTbl[t];
-        if (slot >= tbl.mSlots.size() || tbl.mSlots[slot].mInfo.imageView != view)
-        {
-            continue;               // (the slot names another view by now)
-        }
-        BindlessSlot& s = tbl.mSlots[slot];
-        {   // census: how often the by-handle rule repairs a slot the id list does not know (the destroyer noted another id, or none): those are the leaks that used to leave a dead view in the sets
-            static U64 hits = 0, id_miss = 0;
-            U64 when = 0;
-            ++hits;
-            if (s.mActive && !Context::instance().destroyedViewFrame(s.mKey.mViewId, when))
-            {
-                if (++id_miss <= 20 || (id_miss % 100) == 0)
-                {
-                    LL_INFOS("Vulkan") << "bindless: the view of slot " << slot << " (table " << t << ", key id " << s.mKey.mViewId << ", pins " << s.mPins << ", " << s.mDbgW << "x" << s.mDbgH << ") is being destroyed and the id list does not know it: repaired by handle (" << id_miss << " of " << hits << " repaired slots so far)" << LL_ENDL;
-                }
-            }
-        }
-        // (a slot the sweep gave back keeps its content for rows that still name it, so it follows its image to the successor as well)
-        const bool swapped = bindlessRetireSlot(t, slot, 1);       // (no successor: yellow in the debug colours)
-        tbl.mPinLog.push_back(slot);
-        if (swapped || s.mActive)
-        {
-            bindlessQueue(tbl, slot, s.mInfo, slotContentId(s));
-        }
-        else
-        {
-            bindlessQueue(tbl, slot, s.mInfo, 0);
-        }
-        if (!swapped)
-        {
-            ++mRetiredSlots;
-        }
-    }
-    mViewSlots.erase(view);             // (not the iterator: a swap adds the slot to the successor's list, which may rehash the map)
-}
-
-void Renderer::bindlessSweep(U64 min_idle_frames)
-{
-    const U64 frame = Context::instance().getFrameNumber();
-    for (BindlessTable& tbl : mBindlessTbl)
-    {
-        for (U32 slot = 1; slot < (U32)tbl.mSlots.size(); ++slot)
-        {
-            BindlessSlot& s = tbl.mSlots[slot];
-            if (s.mActive && !s.mPins && s.mLastUsed + min_idle_frames < frame)
-            {
-                tbl.mMap.erase(s.mKey);
-                s.mActive = false;
-                s.mFreedFrame = frame;
-                tbl.mFree.push_back(slot);
-                --tbl.mActiveCount;
-                // <FS> native-vk (LL_VK_SWEEP_KEEP=0 gives the old behaviour): a slot given back keeps showing the image it showed. Something still names such slots after the sweep (the idle sweep was the most common
-                // colour of the stand-in flashes: 6 s idle, then the texture comes back into view and a stale number is used first); the image is not freed by this, and when it is destroyed the forget by view handle
-                // (every destroyed image goes through it, the slot is still in mViewSlots) gives the slot the stand-in. A slot that is reused is written over by bindlessSlotIn.
-                static const bool keep_content = !(getenv("LL_VK_SWEEP_KEEP") && getenv("LL_VK_SWEEP_KEEP")[0] == '0');
-                if (!keep_content)
-                {
-                    s.mInfo = standInFor(0, 2);         // (the idle sweep: green in the debug colours) (a given back slot holds the stand-in in every frame's set from now on: whatever still names it samples the stand-in, never the memory of a destroyed image)
-                    tbl.mPinLog.push_back(slot);
-                }
-            }
-        }
-    }
-}
-
-U32 Renderer::bindlessSlot(Image* image, VkSampler sampler)
-{
-    return bindlessSlotIn(0, image, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0);
-}
-
-void Renderer::bindlessPin(U32 table, U32 slot)
-{
-    if (table >= BINDLESS_TABLES || !slot)
-    {
-        return;
-    }
-    BindlessTable& tbl = mBindlessTbl[table];
-    if (slot >= tbl.mSlots.size() || !tbl.mSlots[slot].mActive)
-    {
-        return;
-    }
-    ++tbl.mSlots[slot].mPins;
-    tbl.mPinLog.push_back(slot);                // every frame's set gets this descriptor at its next flush
-}
-
-void Renderer::bindlessUnpin(U32 table, U32 slot)
-{
-    if (table >= BINDLESS_TABLES || !slot)
-    {
-        return;
-    }
-    BindlessTable& tbl = mBindlessTbl[table];
-    if (slot < tbl.mSlots.size() && tbl.mSlots[slot].mPins)
-    {
-        --tbl.mSlots[slot].mPins;
-        tbl.mSlots[slot].mLastUsed = Context::instance().getFrameNumber();     // idle from now on
-    }
-}
-
-// the pinned slots that changed since this frame's set was last brought up to date go into its dirty list (bindlessQueue checks what the set already holds)
-void Renderer::bindlessSyncPins(BindlessTable& tbl)
-{
-    const U64 end = tbl.mPinBase + tbl.mPinLog.size();
-    U64& applied = tbl.mPinApplied[mSlot];
-    if (applied == end)
-    {
-        return;
-    }
-    if (applied < tbl.mPinBase || applied > end)
-    {
-        for (U32 slot = 1; slot < (U32)tbl.mSlots.size(); ++slot)       // the log no longer reaches back far enough (or this set was never given anything): every pinned slot
-        {
-            const BindlessSlot& s = tbl.mSlots[slot];
-            if (s.mActive && s.mPins)
-            {
-                bindlessQueue(tbl, slot, s.mInfo, slotContentId(s));
-            }
-        }
-    }
-    else
-    {
-        for (U64 i = applied - tbl.mPinBase; i < tbl.mPinLog.size(); ++i)
-        {
-            const U32 slot = tbl.mPinLog[i];
-            if (slot < tbl.mSlots.size() && tbl.mSlots[slot].mActive)
-            {
-                const BindlessSlot& s = tbl.mSlots[slot];
-                bindlessQueue(tbl, slot, s.mInfo, slotContentId(s));
-            }
-            else if (slot && slot < tbl.mSlots.size())
-            {
-                bindlessQueue(tbl, slot, tbl.mStandIn, 0);          // a slot given back: the stand-in
-            }
-        }
-    }
-    applied = end;
-    if (tbl.mPinLog.size() > 200000)
-    {
-        tbl.mPinBase += tbl.mPinLog.size();      // sets behind the new base start over with all pinned slots
-        tbl.mPinLog.clear();
-    }
-}
-
-void Renderer::bindlessPrefetch(U32 table, U32 slot)
-{
-    if (table >= BINDLESS_TABLES || !slot)
-    {
-        return;
-    }
-    BindlessTable& tbl = mBindlessTbl[table];
-    if (slot < tbl.mSlots.size())
-    {
-        _mm_prefetch((const char*)&tbl.mSlots[slot], _MM_HINT_T0);
-    }
-    if (slot < tbl.mShadow[mSlot].size())
-    {
-        _mm_prefetch((const char*)&tbl.mShadow[mSlot][slot], _MM_HINT_T0);
-    }
-    if (slot < tbl.mShadowId[mSlot].size())
-    {
-        _mm_prefetch((const char*)&tbl.mShadowId[mSlot][slot], _MM_HINT_T0);
-    }
-}
-
-bool Renderer::bindlessTouch(U32 table, U32 slot, U64 view_id, VkImageView view, VkSampler sampler)
-{
-    if (!mSet2Layout || table >= BINDLESS_TABLES || !slot || !view_id)
-    {
-        return false;
-    }
-    BindlessTable& tbl = mBindlessTbl[table];
-    if (slot >= tbl.mSlots.size())
-    {
-        return false;
-    }
-    BindlessSlot& s = tbl.mSlots[slot];
-    if (!s.mActive || s.mKey.mViewId != view_id || s.mInfo.imageView != view || s.mInfo.sampler != sampler || s.mInfo.imageLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-    {
-        return false;
+        return 0;
     }
     bindlessStart();
-    s.mLastUsed = Context::instance().getFrameNumber();
-    bindlessQueue(tbl, slot, s.mInfo, slotContentId(s));
+    const U32 h = mHandles.newHandle(table);
+    if (!h)
+    {
+        ++mStatBindlessRefused;
+        return 0;
+    }
+    if (mHandleInfo[table].size() <= h)
+    {
+        mHandleInfo[table].resize(h + 1);
+    }
+    mHandleInfo[table][h] = HandleInfo();
+    const U32 live = mHandles.liveHandles(table);
+    if (table == 0 && live > mStatBindlessPeak.load(std::memory_order_relaxed))
+    {
+        mStatBindlessPeak.store(live, std::memory_order_relaxed);
+    }
+    return h;
+}
+
+bool Renderer::handleSet(U32 table, U32 handle, Image* image, VkSampler sampler, VkImageLayout layout)
+{
+    if (!mHandles.ready() || table >= BINDLESS_TABLES || !handle || !image || !image->valid() || !sampler)
+    {
+        return false;
+    }
+    const U32 d = mHandles.setContent(table, handle, Context::instance().getFrameNumber());
+    if (!d)
+    {
+        ++mStatBindlessRefused;
+        return false;
+    }
+    mPendingWrites.push_back({ table, d, { sampler, image->mView, layout } });
+    if (mCmd != VK_NULL_HANDLE && mSlot < Context::FRAMES_IN_FLIGHT && mHandleMap[mSlot].valid() && mHandleMap[mSlot].mMapped)
+    {
+        // the frame that is being recorded applied its map when it began: a handle first shown (or changed) in this frame reaches the frame's own copy now, so that its first draw is not the placeholder.
+        // Its descriptor is written (bindlessFlush) before this frame is submitted; the maps of the frames already submitted are not touched (the log gives the next ones the entry).
+        ((U32*)mHandleMap[mSlot].mMapped)[(table << 16) | handle] = d;
+    }
+    if (handle < mHandleInfo[table].size())
+    {
+        HandleInfo& hi = mHandleInfo[table][handle];
+        hi.mViewId = image->mViewId;
+        hi.mImage = (U64)image->mImage;
+        hi.mView = image->mView;
+        hi.mW = image->mExtent.width; hi.mH = image->mExtent.height; hi.mMips = image->mMipLevels; hi.mLayers = image->mLayers; hi.mFormat = (U32)image->mFormat; hi.mLayout = (U32)layout;
+        hi.mFrame = Context::instance().getFrameNumber();
+        ++hi.mSets;
+    }
     return true;
 }
 
-U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImageLayout layout, U32 hint)
+void Renderer::handleClear(U32 table, U32 handle)
+{
+    if (!mHandles.ready() || table >= BINDLESS_TABLES || !handle)
+    {
+        return;
+    }
+    mHandles.clearContent(table, handle, Context::instance().getFrameNumber());
+    if (handle < mHandleInfo[table].size())
+    {
+        HandleInfo& hi = mHandleInfo[table][handle];
+        hi.mView = VK_NULL_HANDLE;
+        hi.mImage = 0;
+    }
+}
+
+void Renderer::handleRelease(U32 table, U32 handle)
+{
+    if (!mHandles.ready() || table >= BINDLESS_TABLES || !handle || !mHandles.live(table, handle))
+    {
+        return;
+    }
+    if (handle < mHandleInfo[table].size())
+    {
+        HandleInfo& hi = mHandleInfo[table][handle];
+        if (hi.mKeyed)
+        {
+            mKeyedHandles.erase(hi.mKey);
+            ++mHandleEpoch;
+        }
+        hi = HandleInfo();
+    }
+    mHandles.release(table, handle, Context::instance().getFrameNumber());
+}
+
+U32 Renderer::handleForImage(U32 table, Image* image, VkSampler sampler, VkImageLayout layout)
 {
     if (!mSet2Layout || table >= BINDLESS_TABLES || !image || !image->valid() || !sampler)
     {
         return 0;
     }
     bindlessStart();
-    BindlessTable& tbl = mBindlessTbl[table];
     if (!image->mViewId)
     {
         image->mViewId = nextViewId();
@@ -3352,240 +2908,108 @@ U32 Renderer::bindlessSlotIn(U32 table, Image* image, VkSampler sampler, VkImage
     key.mViewId = image->mViewId;
     key.mSampler = sampler;
     key.mLayout = layout;
-    U32 slot = 0;
-    if (hint && hint < tbl.mSlots.size() && tbl.mSlots[hint].mActive && tbl.mSlots[hint].mKey == key)
+    key.mTable = table;
+    auto it = mKeyedHandles.find(key);
+    if (it != mKeyedHandles.end())
     {
-        slot = hint;
+        return it->second;
     }
-    else
+    const U32 h = handleNew(table);
+    if (!h)
     {
-        auto it = tbl.mMap.find(key);
-        if (it != tbl.mMap.end())
+        return 0;
+    }
+    if (!handleSet(table, h, image, sampler, layout))
+    {
+        handleRelease(table, h);
+        return 0;
+    }
+    mHandleInfo[table][h].mKeyed = true;
+    mHandleInfo[table][h].mKey = key;
+    mKeyedHandles.emplace(key, h);
+    mViewHandles[image->mView].push_back({ table, h });
+    return h;
+}
+
+void Renderer::forgetViewHandles(VkImageView view)
+{
+    auto it = mViewHandles.find(view);
+    if (it == mViewHandles.end())
+    {
+        return;
+    }
+    const std::vector<std::pair<U32, U32>> list = it->second;
+    mViewHandles.erase(it);
+    for (const auto& p : list)
+    {
+        if (p.second < mHandleInfo[p.first].size() && mHandleInfo[p.first][p.second].mKeyed && mHandleInfo[p.first][p.second].mView == view)
         {
-            slot = it->second;
+            handleRelease(p.first, p.second);
+        }
+    }
+}
+
+void Renderer::flushPendingWrites()
+{
+    if (mPendingWrites.empty())
+    {
+        return;
+    }
+    std::stable_sort(mPendingWrites.begin(), mPendingWrites.end(), [](const PendingWrite& a, const PendingWrite& b) { return a.mTable != b.mTable ? a.mTable < b.mTable : a.mDesc < b.mDesc; });
+    // one entry per descriptor (a later write of the same index wins), runs of consecutive indices are one write
+    std::vector<PendingWrite> list;
+    list.reserve(mPendingWrites.size());
+    for (const PendingWrite& w : mPendingWrites)
+    {
+        if (!list.empty() && list.back().mTable == w.mTable && list.back().mDesc == w.mDesc)
+        {
+            list.back() = w;
         }
         else
         {
-            if (tbl.mFree.empty() && tbl.mSlots.size() >= mBindlessCap[table])
-            {
-                bindlessSweep(60);          // full: give back what has been idle for a second
-            }
-            // a slot given back is reused only when it has been free for a long while (LL_VK_SLOT_QUARANTINE frames, default 1800) or the table is full: rows and records that were written when it was
-            // another texture's keep naming it, and the new texture's picture in it would show on their faces
-            while (!tbl.mFree.empty() && tbl.mSlots[tbl.mFree.front()].mActive)
-            {
-                tbl.mFree.pop_front();          // (taken back by bindlessReclaim)
-            }
-            static const U64 quarantine = []() { const char* e = getenv("LL_VK_SLOT_QUARANTINE"); return e && e[0] ? (U64)atoll(e) : 1800ull; }();
-            const U64 frame_now = Context::instance().getFrameNumber();
-            if (!tbl.mFree.empty() && (tbl.mSlots[tbl.mFree.front()].mFreedFrame + quarantine < frame_now || tbl.mSlots.size() >= mBindlessCap[table]))
-            {
-                slot = tbl.mFree.front();
-                tbl.mFree.pop_front();
-            }
-            else if (tbl.mSlots.size() < mBindlessCap[table])
-            {
-                slot = (U32)tbl.mSlots.size();
-                tbl.mSlots.emplace_back();
-            }
-            else
-            {
-                LL_WARNS_ONCE("Vulkan") << "bindless table " << table << " full: " << mBindlessCap[table] << " slots in use, the textures that need a new one are drawn white" << LL_ENDL;
-                ++mStatBindlessRefused;
-                return 0;
-            }
-            BindlessSlot& s = tbl.mSlots[slot];
-            s.mKey = key;
-            s.mInfo = { sampler, image->mView, layout };
-            {
-                std::vector<U32>& v = mViewSlots[image->mView];
-                if (v.empty() || v.back() != ((table << 28) | slot)) v.push_back((table << 28) | slot);
-            }
-            s.mActive = true;
-            s.mCreatedFrame = Context::instance().getFrameNumber();
-            s.mDbgWrites = 0;
-            tbl.mMap.emplace(key, slot);
-            ++tbl.mActiveCount;
-            if (tbl.mActiveCount > mStatBindlessPeak.load(std::memory_order_relaxed))
-            {
-                mStatBindlessPeak.store(tbl.mActiveCount, std::memory_order_relaxed);
-            }
+            list.push_back(w);
         }
     }
-    BindlessSlot& s = tbl.mSlots[slot];
-    s.mDbgW = image->mExtent.width;
-    s.mDbgH = image->mExtent.height;
-    s.mDbgMips = image->mMipLevels;
-    s.mDbgLayers = image->mLayers;
-    s.mDbgFormat = (U32)image->mFormat;
-    s.mDbgLayout = (U32)image->mLayout;
-    s.mDbgImage = (U64)image->mImage;
-    s.mDbgZero = image->mZeroOnFirstUse;
-    s.mDbgOwned = image->mOwner != nullptr;
-    if (s.mPins && s.mInfo.imageView != image->mView)
+    std::vector<VkDescriptorImageInfo> infos(list.size());
+    for (size_t i = 0; i < list.size(); ++i)
     {
-        tbl.mPinLog.push_back(slot);
+        infos[i] = list[i].mInfo;
     }
-    if (s.mInfo.imageView != image->mView)
+    std::vector<VkWriteDescriptorSet> writes;
+    for (size_t i = 0; i < list.size();)
     {
-        std::vector<U32>& v = mViewSlots[image->mView];
-        if (v.empty() || v.back() != ((table << 28) | slot)) v.push_back((table << 28) | slot);
-    }
-    s.mInfo.imageView = image->mView;           // (the same key, the same view; kept in step in case the handle was ever replaced under the id)
-    s.mContentId = 0;
-    s.mLastUsed = Context::instance().getFrameNumber();
-    bindlessQueue(tbl, slot, s.mInfo, slotContentId(s));
-    return slot;
-}
-
-int Renderer::bindlessSlotState(U32 table, U32 slot, bool repair)
-{
-    if (!slot || !mSet2Layout || table >= BINDLESS_TABLES)
-    {
-        return 0;
-    }
-    BindlessTable& tbl = mBindlessTbl[table];
-    if (slot >= tbl.mSlots.size() || !tbl.mSlots[slot].mActive)
-    {
-        return 2;
-    }
-    const BindlessSlot& s = tbl.mSlots[slot];
-    const std::vector<VkDescriptorImageInfo>& sh = tbl.mShadow[mSlot];
-    const std::vector<U64>& ids = tbl.mShadowId[mSlot];
-    if (slot < ids.size() && slot < sh.size() && ids[slot] == slotContentId(s) && sh[slot].imageView == s.mInfo.imageView && sh[slot].sampler == s.mInfo.sampler)
-    {
-        return 0;
-    }
-    if (repair)
-    {
-        bindlessQueue(tbl, slot, s.mInfo, slotContentId(s));
-    }
-    return 1;
-}
-
-std::string Renderer::bindlessSlotDescribe(U32 table, U32 slot)
-{
-    char buf[400];
-    if (table >= BINDLESS_TABLES || slot >= mBindlessTbl[table].mSlots.size())
-    {
-        return "slot out of the table";
-    }
-    const BindlessTable& tbl = mBindlessTbl[table];
-    const BindlessSlot& s = tbl.mSlots[slot];
-    const U64 shadow_id = slot < tbl.mShadowId[mSlot].size() ? tbl.mShadowId[mSlot][slot] : ~0ull;
-    snprintf(buf, sizeof(buf), "slot %u: %s, pins %u, view id %llu (%ux%u mips %u), created frame %llu, last used frame %llu, writes %u; this frame's set holds view id %lld; frame now %llu",
-             slot, s.mActive ? "active" : "FREE", s.mPins, (unsigned long long)s.mKey.mViewId, s.mDbgW, s.mDbgH, s.mDbgMips, (unsigned long long)s.mCreatedFrame, (unsigned long long)s.mLastUsed, s.mDbgWrites,
-             shadow_id == ~0ull ? -1ll : (long long)shadow_id, (unsigned long long)Context::instance().getFrameNumber());
-    return buf;
-}
-
-void Renderer::bindlessAudit()
-{
-    if (mAuditProvider)
-    {
-        mAuditProvider(mAuditSlots);
-    }
-    std::sort(mAuditSlots.begin(), mAuditSlots.end());
-    mAuditSlots.erase(std::unique(mAuditSlots.begin(), mAuditSlots.end()), mAuditSlots.end());
-    static U64 checked = 0, missed = 0, logged = 0, inactive = 0;
-    const U64 frame = Context::instance().getFrameNumber();
-    BindlessTable& tbl = mBindlessTbl[0];
-    for (U32 slot : mAuditSlots)
-    {
-        ++checked;
-        if (!slot || slot >= tbl.mSlots.size())
+        size_t j = i + 1;
+        while (j < list.size() && list[j].mTable == list[i].mTable && list[j].mDesc == list[j - 1].mDesc + 1)
         {
-            continue;
+            ++j;
         }
-        const int state = bindlessSlotState(0, slot, false);
-        if (state == 0)
+        for (U32 f = 0; f < Context::frameCount(); ++f)
         {
-            continue;
+            VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+            w.dstSet = mBindlessSet[f];
+            w.dstBinding = list[i].mTable;
+            w.dstArrayElement = list[i].mDesc;
+            w.descriptorCount = (U32)(j - i);
+            w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w.pImageInfo = &infos[i];
+            writes.push_back(w);
         }
-        ++missed;
-        if (state == 2)
-        {
-            ++inactive;             // (a slot given back is not active, but its descriptor stays in the sets: counted apart from a real missing write)
-        }
-        static std::unordered_set<U64> said_slots;
-        if (logged < 60 && said_slots.insert(((U64)slot << 8) | (U64)state | ((U64)mSlot << 4)).second)
-        {
-            ++logged;
-            const BindlessSlot& s = tbl.mSlots[slot];
-            const std::vector<VkDescriptorImageInfo>& sh = tbl.mShadow[mSlot];
-            LL_INFOS("Vulkan") << "bindless audit: frame " << frame << " set " << mSlot << " does not hold slot " << slot << " after the last flush (state " << state << (s.mActive ? ", active" : ", NOT active") << ", created " << (frame - s.mCreatedFrame)
-                               << " frames ago, last requested " << (frame - s.mLastUsed) << " ago, written " << s.mDbgWrites << " times in all, pins " << s.mPins << ", content " << (s.mContentId ? "moved to another view" : "its own view")
-                               << ", shadow of this set " << (slot < sh.size() && sh[slot].imageView ? "has a view" : "is empty") << ", dirty list " << tbl.mDirty.size() << ")" << LL_ENDL;
-        }
+        i = j;
     }
-    if ((frame % 600) == 0 && checked)
-    {
-        LL_INFOS("Vulkan") << "bindless audit: " << checked << " slot uses checked, " << missed << " not in the frame's set after the last flush (of them " << inactive << " slots that are given back: their descriptors are still in the sets)" << LL_ENDL;
-    }
-    mAuditSlots.clear();
+    vkUpdateDescriptorSets(Context::instance().getDevice(), (U32)writes.size(), writes.data(), 0, nullptr);
+    mStatBindlessWrites += list.size();
+    mPendingWrites.clear();
 }
 
 void Renderer::bindlessFlush()
 {
-    if (!mSet2Layout || mCmd == VK_NULL_HANDLE)
+    if (!mSet2Layout)
     {
         return;
     }
     bindlessStart();
-    static thread_local std::vector<VkWriteDescriptorSet> writes;
-    writes.clear();
-    U64 written = 0;
-    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
-    {
-        BindlessTable& tbl = mBindlessTbl[t];
-        if (tbl.mShadow[mSlot].empty())
-        {
-            tbl.mShadow[mSlot].resize(1);
-            tbl.mShadowId[mSlot].assign(1, ~0ull);
-        }
-        bindlessSyncPins(tbl);
-        if (tbl.mDirty.empty())
-        {
-            continue;
-        }
-        std::sort(tbl.mDirty.begin(), tbl.mDirty.end());
-        std::vector<VkDescriptorImageInfo>& sh = tbl.mShadow[mSlot];
-        std::vector<U64>& ids = tbl.mShadowId[mSlot];
-        for (size_t i = 0; i < tbl.mDirty.size(); ++i)
-        {
-            const U32 slot = tbl.mDirty[i];
-            sh[slot] = slot == 0 ? tbl.mStandIn : tbl.mSlots[slot].mInfo;
-            if (slot != 0) ++tbl.mSlots[slot].mDbgWrites;
-            ids[slot] = slot == 0 ? 0 : slotContentId(tbl.mSlots[slot]);
-            tbl.mQueued[slot] = 0;
-        }
-        // contiguous runs of slots are one write
-        for (size_t i = 0; i < tbl.mDirty.size(); )
-        {
-            size_t j = i + 1;
-            while (j < tbl.mDirty.size() && tbl.mDirty[j] == tbl.mDirty[j - 1] + 1)
-            {
-                ++j;
-            }
-            VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-            w.dstSet = mBindlessSet[mSlot];
-            w.dstBinding = t;
-            w.dstArrayElement = tbl.mDirty[i];
-            w.descriptorCount = (U32)(j - i);
-            w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            w.pImageInfo = &sh[tbl.mDirty[i]];
-            writes.push_back(w);
-            written += j - i;
-            i = j;
-        }
-        tbl.mDirty.clear();
-    }
-    if (!writes.empty())
-    {
-        vkUpdateDescriptorSets(Context::instance().getDevice(), (U32)writes.size(), writes.data(), 0, nullptr);
-        mStatBindlessWrites += written;
-    }
-    if (!mBindlessBound)
+    flushPendingWrites();
+    if (mCmd != VK_NULL_HANDLE && !mBindlessBound)
     {
         vkCmdBindDescriptorSets(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 2, 1, &mBindlessSet[mSlot], 0, nullptr);
         mBindlessBound = true;
@@ -4061,10 +3485,18 @@ void Renderer::applyState()
             const VkImageLayout layout = is_depth_target ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             const U32 table = mProgram->mSamplerTable[k];
             UnitSlot& cached = mUnitSlot[unit];
-            const U32 slot = bindlessSlotIn(table, img, sampler, layout, cached.mTable == table ? cached.mSlot : 0);       // (the table checks the slot is still this image's)
-            cached = { img->mView, sampler, layout, table, 0, slot };
+            U32 handle;
+            if (img->mViewId && cached.mViewId == img->mViewId && cached.mSampler == sampler && cached.mLayout == layout && cached.mTable == table && cached.mEpoch == mHandleEpoch)
+            {
+                handle = cached.mHandle;           // (the same texture drawn again: no lookup)
+            }
+            else
+            {
+                handle = handleForImage(table, img, sampler, layout);
+                cached = { img->mViewId, sampler, layout, table, mHandleEpoch, handle };
+            }
             U32* dst = (U32*)(mProgram->mShadow[UC_DRAW].data() + mProgram->mSlotOffset[k]);
-            const U32 id = mHandleMap[0].valid() ? ((table << 16) | slot) : slot;      // texture handles: the id of a slot in its table (the shader reads the map with it)
+            const U32 id = (table << 16) | handle;      // the id of a handle in its table (the shader reads the frame's map with it)
             if (*dst != id)
             {
                 *dst = id;
@@ -4277,79 +3709,48 @@ VkDescriptorSet Renderer::uboSet()
     return set;
 }
 
-std::string Renderer::describeSlot(U32 slot) const
+std::string Renderer::describeSlot(U32 id) const
 {
-    const BindlessTable& t0 = mBindlessTbl[0];
+    // (a texture id is (table << 16) | handle)
+    const U32 table = id >> 16, handle = id & 0xFFFF;
     char buf[420];
-    if (slot >= t0.mSlots.size())
+    if (table >= BINDLESS_TABLES || handle >= mHandleInfo[table].size())
     {
-        snprintf(buf, sizeof(buf), "slot %u: beyond the table (%zu slots)", slot, t0.mSlots.size());
+        snprintf(buf, sizeof(buf), "handle %u of table %u: beyond what was ever handed out (%zu)", handle, table, table < BINDLESS_TABLES ? mHandleInfo[table].size() : (size_t)0);
         return buf;
     }
-    const BindlessSlot& s = t0.mSlots[slot];
+    const HandleInfo& s = mHandleInfo[table][handle];
     const U64 frame = Context::instance().getFrameNumber();
     U64 destroyed_at = 0;
-    const bool dead = Context::instance().destroyedViewFrame(s.mKey.mViewId, destroyed_at);
-    snprintf(buf, sizeof(buf), "slot %u: %s, given to its image %lld frames ago, %u descriptor writes, last used %lld frames ago, pins %u, image %ux%u format %u mips %u layers %u layout %u, view id %llu, %s",
-             slot, s.mActive ? "active" : "FREE", (long long)(frame - s.mCreatedFrame), s.mDbgWrites, (long long)(frame - s.mLastUsed), s.mPins, s.mDbgW, s.mDbgH, s.mDbgFormat, s.mDbgMips, s.mDbgLayers, s.mDbgLayout,
-             (unsigned long long)s.mKey.mViewId, dead ? "image DESTROYED" : "image alive");
-    return std::string(buf) + ", image handle " + std::to_string((unsigned long long)s.mDbgImage) + ": " + Context::instance().describeBinding(s.mDbgImage) + " | " + LLVkWorker::describe_texture_of_view(s.mKey.mViewId);
+    const bool dead = s.mViewId && Context::instance().destroyedViewFrame(s.mViewId, destroyed_at);
+    snprintf(buf, sizeof(buf), "handle %u of table %u: %s, descriptor index %u, last set %lld frames ago (%u sets), image %ux%u format %u mips %u layers %u layout %u, view id %llu, %s",
+             handle, table, mHandles.live(table, handle) ? "live" : "FREE", mHandles.descriptorOf(table, handle), (long long)(frame - s.mFrame), s.mSets, s.mW, s.mH, s.mFormat, s.mMips, s.mLayers, s.mLayout,
+             (unsigned long long)s.mViewId, dead ? "image DESTROYED" : "image alive");
+    return std::string(buf) + ", image handle " + std::to_string((unsigned long long)s.mImage) + ": " + Context::instance().describeBinding(s.mImage) + " | " + LLVkWorker::describe_texture_of_view(s.mViewId);
 }
 
 std::string Renderer::auditBindless() const
 {
-    // Slots whose image was destroyed are normal until the sweep gives them back; the dangerous ones were USED after their image was destroyed (the destroy call is deferred until the frame
-    // that recorded it has completed, so a use in the same frame is fine). Also the newest slots (a texture that just arrived) with what they hold.
+    // what the handle tables hold at this moment (a live handle that shows an image destroyed lately is normal until its owner sets it again)
     const Context& ctx = Context::instance();
-    const U64 frame = ctx.getFrameNumber();
-    std::string out;
-    unsigned stale = 0, used_after = 0, recent = 0;
-    char buf[260];
+    unsigned stale = 0;
     for (U32 t = 0; t < BINDLESS_TABLES; ++t)
     {
-        const BindlessTable& tbl = mBindlessTbl[t];
-        for (U32 slot = 1; slot < (U32)tbl.mSlots.size(); ++slot)
+        for (U32 h = 1; h < (U32)mHandleInfo[t].size(); ++h)
         {
-            const BindlessSlot& s = tbl.mSlots[slot];
-            if (!s.mActive)
-            {
-                continue;
-            }
-            if (s.mLastUsed + 3 >= frame)
-            {
-                ++recent;
-            }
+            const HandleInfo& s = mHandleInfo[t][h];
             U64 destroyed_at = 0;
-            if (ctx.destroyedViewFrame(s.mKey.mViewId, destroyed_at))
+            if (mHandles.live(t, h) && s.mViewId && ctx.destroyedViewFrame(s.mViewId, destroyed_at))
             {
                 ++stale;
-                if (s.mLastUsed > destroyed_at && ++used_after <= 24)
-                {
-                    snprintf(buf, sizeof(buf), "[USED AFTER DESTROY: table %u slot %u view id %llu destroyed %lld frames ago, last used %lld frames ago, pins %u] ", t, slot, (unsigned long long)s.mKey.mViewId,
-                             (long long)(frame - destroyed_at), (long long)(frame - s.mLastUsed), s.mPins);
-                    out += buf;
-                }
             }
         }
     }
-    const BindlessTable& t0 = mBindlessTbl[0];
-    unsigned shown = 0;
-    for (U32 slot = (U32)t0.mSlots.size(); slot-- > 1 && shown < 10; )
-    {
-        const BindlessSlot& s = t0.mSlots[slot];
-        if (s.mActive)
-        {
-            ++shown;
-            U64 destroyed_at = 0;
-            const bool dead = ctx.destroyedViewFrame(s.mKey.mViewId, destroyed_at);
-            snprintf(buf, sizeof(buf), "[newest slot %u: view id %llu view handle %llx image %llx %ux%u format %u mips %u layers %u layout %u zero-first %d view-of-owner %d, last used %lld frames ago, %s] ", slot, (unsigned long long)s.mKey.mViewId,
-                     (unsigned long long)(uintptr_t)s.mInfo.imageView, (unsigned long long)s.mDbgImage, s.mDbgW, s.mDbgH, s.mDbgFormat, s.mDbgMips, s.mDbgLayers, s.mDbgLayout, s.mDbgZero ? 1 : 0, s.mDbgOwned ? 1 : 0,
-                     (long long)(frame - s.mLastUsed), dead ? "image DESTROYED" : "image alive");
-            out += buf;
-        }
-    }
-    snprintf(buf, sizeof(buf), "%u active slots point at a destroyed image (%u of them used after it was destroyed), %u slots used in the last 3 frames, table 0 has %zu slots; ", stale, used_after, recent, t0.mSlots.size());
-    return std::string(buf) + out;
+    char buf[400];
+    snprintf(buf, sizeof(buf), "handles live: %u (2D) %u %u %u, descriptors in use %u (2D), %u of the live handles show an image destroyed lately, %llu descriptor sets so far, refused: %llu handles, %llu descriptors, %zu retirements waiting",
+             mHandles.liveHandles(0), mHandles.liveHandles(1), mHandles.liveHandles(2), mHandles.liveHandles(3), mHandles.descriptorsUsed(0), stale, (unsigned long long)mHandles.sets(),
+             (unsigned long long)mHandles.refusedHandles(), (unsigned long long)mHandles.refusedDescriptors(), mHandles.pendingRetirements());
+    return buf;
 }
 
 // One GPU timestamp after a draw, described well enough to find the draw again: when a frame hangs the watchdog (Context::beginFrame) names the first draw whose stamp never

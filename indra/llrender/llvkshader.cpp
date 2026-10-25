@@ -1534,8 +1534,7 @@ U32 sCacheHits = 0, sCacheMisses = 0;
 
 bool handleMapShaders()
 {
-    static const bool off = getenv("LL_VK_HANDLES") && getenv("LL_VK_HANDLES")[0] == '0';
-    return !off && Context::instance().getCaps().mBindlessSlots != 0;
+    return Context::instance().getCaps().mBindlessSlots != 0;      // (the map is how a program reads a texture: it is not optional any more)
 }
 
 bool bindlessShaders()

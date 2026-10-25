@@ -983,8 +983,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         static LLCachedControl<bool> early_sort_setting(gSavedSettings, "FSEarlySort", true);        // live: Debug Settings
         static LLCachedControl<bool> async_builders_setting(gSavedSettings, "FSAsyncBuilders", true);
         LLAsyncPool::sRunInline = !async_builders_setting;
-        static LLCachedControl<bool> bindless_persistent_setting(gSavedSettings, "FSBindlessPersistent", true);
-        LLVkBridge::setBindlessPersistent(bindless_persistent_setting);
         const bool early_sort = early_env_enabled && early_sort_setting && !for_snapshot && gFrameCount > 1 && (!early_alternate || ((gFrameCount / 60) % 2) == 1);
         sFrameMode = early_sort ? 1 : 0;
         unsigned early_epoch = 0;

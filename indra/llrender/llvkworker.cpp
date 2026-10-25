@@ -61,8 +61,6 @@ LLVkBridge::Mutex gMutex;
 // CPU time spent inside the translator's draw/clear hooks (the cost of recording the work into Vulkan), in ticks of the performance counter
 static long long gHookTicks = 0;
 
-static bool view_successor(U64 old_view_id, VkDescriptorImageInfo& out, U64& out_view_id);     // <FS> (defined next to packet_texture_slot)
-
 namespace
 {
 
@@ -365,19 +363,19 @@ struct Tex
     std::map<std::pair<U32, U32>, std::unique_ptr<Image>> mViews;     // (level, layer) -> render-target view
     VkSampler mVkSampler = VK_NULL_HANDLE;      // cached sampler for the parameters hashed in mSamplerSig
     U64 mSamplerSig = 0;
-    U32 mBindlessEpoch = 0;                     // <FS> the slot this texture holds in the bindless table, for the frame (epoch) and image view it was taken for
-    U32 mBindlessSlot = 0;
+    U32 mHandle = 0;                            // <FS> texture handles (doc/vulkan/PLAN-texture-handles.md, H3): its handle in the 2D table, made when the texture first has an image with data and kept until the texture goes:
+                                                //   rows, pins and records carry it; what it shows follows the image (texture_handle)
+    U64 mHandleViewId = 0;                      // ... the view (id) and sampler the handle shows now
+    VkSampler mHandleSampler = VK_NULL_HANDLE;
+    bool mHandleDirty = false;                  // ... in sHandleDirty
     bool mSeenSampled = false;                  // <FS> diagnostic (blink after load): a draw has sampled this texture with data in it
-    VkImageView mBindlessView = VK_NULL_HANDLE;
-    U64 mBindlessFullFrame = 0;                 // <FS> the frame of the last full slot lookup (packet_texture_slot): in between only the slot is kept alive
-    U32 mName = 0;                              // <FS> its GL name (set when the entry is made; at deletion: the name that replaces it, 0 = none)
+    U32 mName = 0;                              // <FS> its GL name, which is its id (set when the entry is made)
     U32 mPinIndex = 0;                          // <FS> the ray scene's pin of this texture (0 = none): a change of the texture asks for it to be looked at again
 };
 
 // <FS> something about this texture that a bindless descriptor depends on changed (image, view, sampler parameters, levels): a pin of it is looked at again at the next ray scene call
 void pin_touch(Tex& t);
 void pin_wake_name(U32 name);
-void note_view_gone(Tex& t, int kind, U32 orig_name);       // <FS> the image (view) of this texture goes: it is remembered with what replaces it (see destroy_tex_images)
 
 VkComponentSwizzle swizzle_component(LLVkFormat::Swizzle s)
 {
@@ -419,15 +417,11 @@ void rebuild_sampling_view(Tex& t)
     VkImageView old = t.mImage.mView;
     VkDevice dev = ctx.getDevice();
     ctx.destroyLater([=]() { vkDestroyImageView(dev, old, nullptr); });
-    // crash hunt 2026-10-22 (fullbright from the table: two device losts, both a table draw sampling the memory of an image destroyed seconds before): the old view is destroyed here, so its id must go into
-    // the destroyed list, else the bindless slot keyed by it keeps the dead view in every frame's set (the slot is never retired), and the image destroyed later is noted under another id (this one is
-    // zeroed below): a row that still names that slot samples freed memory
-    note_view_gone(t, 5, t.mName);              // (the same texture's next view takes the slots over: they were flashing the stand-in on every swizzle change)
-    ctx.noteDestroyedView(t.mImage.mViewId);
-    ctx.forgetView(old);            // (by handle: the slot lifetime follows the view)
+    ctx.noteDestroyedView(t.mImage.mViewId);        // (the destroyed list of the reports)
+    ctx.forgetView(old);            // (the handles made for this view by handleForImage go with it)
     t.mImage.mView = fresh;
-    t.mImage.mViewId = nextViewId();       // a different view: the bindless table must not take it for the old one (a fresh id, not 0, so that the slots of the old view can be handed this one)
-    pin_touch(t);
+    t.mImage.mViewId = nextViewId();       // a different view: whatever keys on the view id must not take it for the old one
+    pin_touch(t);                   // (the handle of this texture shows the new view from the next refresh: the descriptor of the old one stays valid until the old view is destroyed, several frames from now)
 }
 
 struct Buf
@@ -585,7 +579,7 @@ inline void tex_forget(U32 name) { if (name < sTexFlat.size()) sTexFlat[name] = 
 
 U32 sDraws = 0, sDrawsSkipped = 0, sCopies = 0;
 std::unordered_set<U32> sSeenNames;       // <FS> diagnostic: GL names of textures drawn with a picture at least once
-U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0, sSampleNoName = 0, sSampleNoImage = 0, sSampleBlank = 0, sRetiredNow = 0, sRetiredUsed = 0, sPinNoSlot = 0, sNoSuccessor = 0, sCommits = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
+U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0, sSampleNoName = 0, sSampleNoImage = 0, sSampleBlank = 0, sPinNoSlot = 0, sCommits = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
 U64 sOutOfRangeDraws = 0;           // indexed draws left out because their index or vertex range was not inside their buffers (since the start)
 U64 sDrawsTotal = 0;
 std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
@@ -657,42 +651,8 @@ inline S32 edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength :
 // textures
 //-----------------------------------------------------------------------------------------------------
 
-// <FS> native-vk (LL_VK_RETIRE_KEEP=0 turns it off): an image that goes (re-specified, shrunk, grown, or its name deleted) leaves its successor behind: the texture name whose image takes its place. The bindless
-// table asks for it when it retires the slots that name the dead view (Renderer::bindlessRetireSlot): they get the successor's view, not the stand-in (a texture that changes resolution would flash).
-// (also kept for images that leave nothing behind, mName 0, with what they were: the log of slots lost with no successor says which kind of image went)
-struct ViewSucc { U32 mName; U64 mFrame; U32 mOrigName; U8 mKind; U32 mW, mH, mLevels, mValid; bool mHadAlias; };
-static std::unordered_map<U64, ViewSucc> sViewSucc;
-
-// kind: 1 re-specified, 2 mip chain grown, 3 levels dropped, 4 name deleted (t.mName is then 0: nothing replaces it), 5 sampling view rebuilt (swizzle), 6 image replaced by a commit (a new resolution under the same id)
-void note_view_gone(Tex& t, int kind, U32 orig_name)
+void destroy_tex_images(Tex& t)
 {
-    if (t.mImage.valid() && t.mImage.mViewId)
-    {
-        static bool registered = false;
-        static U64 last_prune = 0;
-        if (!registered)
-        {
-            registered = true;
-            Renderer::instance().setViewSuccessor(&view_successor);
-        }
-        const U64 now = Context::instance().getFrameNumber();
-        sViewSucc[t.mImage.mViewId] = { t.mName, now, orig_name ? orig_name : t.mName, (U8)kind, t.mWidth, t.mHeight, t.mLevels, t.mValidLevels, t.mName != 0 && orig_name != 0 };
-        if (sViewSucc.size() > 4096 && last_prune + 120 < now)
-        {
-            last_prune = now;
-            for (auto it = sViewSucc.begin(); it != sViewSucc.end();)
-            {
-                if (it->second.mFrame + 240 < now) it = sViewSucc.erase(it); else ++it;
-            }
-        }
-    }
-}
-
-void destroy_tex_images(Tex& t, int kind = 1, U32 orig_name = 0);
-
-void destroy_tex_images(Tex& t, int kind, U32 orig_name)
-{
-    note_view_gone(t, kind, orig_name);
     pin_touch(t);
     ++gPassState.mTargetEpoch;
     Context& ctx = Context::instance();
@@ -834,7 +794,7 @@ bool grow_levels(Tex& t)
         return false;
     }
     Renderer::instance().copyBaseLevel(t.mImage, fresh);
-    destroy_tex_images(t, 2);
+    destroy_tex_images(t);
     t.mImage = fresh;
     t.mLevels = full;
     pin_touch(t);
@@ -886,7 +846,7 @@ bool drop_levels(Tex& t, U32 k)
         Context::instance().destroyImage(fresh);
         return false;
     }
-    destroy_tex_images(t, 3);
+    destroy_tex_images(t);
     t.mImage = fresh;
     t.mWidth = td.mWidth;
     t.mHeight = td.mHeight;
@@ -2228,8 +2188,12 @@ void destroy_textures(S32 n, const U32* textures)
         if (it != sGL.mTextures.end())
         {
             pin_lost(it->second, it->first);
-            it->second.mName = 0;       // (a deleted texture leaves nothing behind: its slots get the stand-in)
-            destroy_tex_images(it->second, 4, it->first);
+            if (it->second.mHandle)
+            {
+                Renderer::instance().handleRelease(0, it->second.mHandle);      // (rows that still name it see the placeholder; the number comes back when the frames that may read it have finished)
+                it->second.mHandle = 0;
+            }
+            destroy_tex_images(it->second);
             tex_forget(it->first);
             sGL.mTextures.erase(it);
             ++gPassState.mTargetEpoch;
@@ -2502,7 +2466,7 @@ void tex_mipmap(unsigned id)
 }
 
 // <FS> native-vk (texture handles H2): the image prepared under `staged` becomes the image of the texture `id`. The texture keeps its entry, its pin, its slot hints and its place in every
-// record; what changes is the image (the old one goes through destroy_tex_images: the slots that name its view get the new one, see view_successor) and the state that describes it.
+// record; what changes is the image (the old one goes through destroy_tex_images) and the state that describes it; its handle shows the new image from the next refresh (pin_touch, below).
 void tex_commit_image(unsigned id, unsigned staged)
 {
     if (!id || !staged || id == staged)
@@ -2523,7 +2487,7 @@ void tex_commit_image(unsigned id, unsigned staged)
     }
     Tex& d = dit->second;
     Tex& st = sit->second;
-    destroy_tex_images(d, 6, id);
+    destroy_tex_images(d);
     d.mImage = st.mImage;
     d.mViews = std::move(st.mViews);
     d.mDim = st.mDim;
@@ -2537,8 +2501,6 @@ void tex_commit_image(unsigned id, unsigned staged)
     d.mSwizzleSet = st.mSwizzleSet;
     d.mVkSampler = VK_NULL_HANDLE;
     d.mSamplerSig = 0;
-    d.mBindlessSlot = 0;                // (the slot of the old view: the next lookup takes the new one)
-    d.mBindlessView = VK_NULL_HANDLE;
     st.mImage = Image();                // (the image moved: the staged entry goes without destroying it)
     st.mViews.clear();
     const U32 staged_name = staged;
@@ -3391,49 +3353,81 @@ static Tex* packet_texture(U32 name)
     return &it->second;
 }
 
-static bool view_successor(U64 old_view_id, VkDescriptorImageInfo& out, U64& out_view_id)
+// <FS> texture handles (doc/vulkan/PLAN-texture-handles.md, H3): the handle of a texture. It is made when the texture first has an image with data (before that a row names 0, the placeholder) and then
+// belongs to the texture until it is deleted: rows, pins and records keep it whatever happens to the image. What it shows follows the image: a new view is set at once (the caller sees it in the
+// view id), the sampler (the levels with data, the parameters) is looked at every 16 frames, spread by name. The old descriptor stays valid until the old image is destroyed, several frames later.
+static U32 texture_handle(Renderer& r, Tex& t, bool force)
 {
-    auto it = sViewSucc.find(old_view_id);
-    if (it == sViewSucc.end())
+    const bool shows = t.mImage.valid() && t.mImage.mViewType == VK_IMAGE_VIEW_TYPE_2D && t.mValidLevels > 0;
+    if (!t.mHandle)
     {
-        return false;
-    }
-    if (!it->second.mName)
-    {
-        return false;           // (an image that leaves nothing behind: a name deleted with no name replacing it)
-    }
-    Tex* t = packet_texture(it->second.mName);
-    if (t && t->mImage.valid() && t->mImage.mView && !t->mImage.mViewId)
-    {
-        t->mImage.mViewId = nextViewId();       // (an image that has not had a slot yet has no id; the table gives them out on first use, the same here)
-    }
-    if (!t || !t->mImage.valid() || !t->mImage.mView || !t->mImage.mViewId || t->mImage.mViewType != VK_IMAGE_VIEW_TYPE_2D || t->mValidLevels == 0)
-    {
-        ++sNoSuccessor;
-        static U32 said = 0;
-        if (said++ < 12)
+        if (!shows)
         {
-            LL_INFOS("Vulkan") << "bindless: successor (name " << it->second.mName << ") of a view is not usable: " << (t ? "texture" : "NO texture") << (t && t->mImage.valid() ? ", image" : ", NO image") << (t && t->mImage.mView ? ", view" : ", NO view")
-                               << ", view id " << (t ? t->mImage.mViewId : 0) << ", view type " << (t ? (int)t->mImage.mViewType : -1) << ", levels with data " << (t ? t->mValidLevels : 0) << ", " << (t ? t->mWidth : 0) << "x" << (t ? t->mHeight : 0) << LL_ENDL;
+            return 0;
         }
-        return false;
-    }
-    if (t->mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-    {
-        // an image with data that no draw has asked for yet is still in the layout of its upload: the frame that is starting moves it into the sampled one (what the first draw would do)
-        Renderer& r = Renderer::instance();
-        const char* prev_cause = r.setBarrierCause("view successor");
-        r.ensureLayout(t->mImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        r.setBarrierCause(prev_cause);
-        if (t->mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        t.mHandle = r.handleNew(0);
+        if (!t.mHandle)
         {
-            ++sNoSuccessor;
-            return false;
+            return 0;               // (the table is full: the texture shows the placeholder, counted as refused)
         }
     }
-    out = { texture_sampler(Renderer::instance(), *t), t->mImage.mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };       // (the successor's own sampler: it limits the levels to the ones that hold data)
-    out_view_id = t->mImage.mViewId;
-    return true;
+    if (!shows)
+    {
+        if (t.mHandleViewId && !(t.mImage.valid() && t.mImage.mViewType != VK_IMAGE_VIEW_TYPE_2D))
+        {
+            r.handleClear(0, t.mHandle);        // its image is gone and the new one has no data yet: the placeholder, not a descriptor of an image that is about to be destroyed
+            t.mHandleViewId = 0;
+            t.mHandleSampler = VK_NULL_HANDLE;
+        }
+        return t.mHandle;
+    }
+    if (!t.mImage.mViewId)
+    {
+        t.mImage.mViewId = nextViewId();
+    }
+    const U64 frame_now = Context::instance().getFrameNumber();
+    if (!force && t.mHandleViewId == t.mImage.mViewId && ((frame_now + t.mName) & 15u) != 0)
+    {
+        return t.mHandle;
+    }
+    const VkSampler sampler = texture_sampler(r, t);
+    if (t.mHandleViewId != t.mImage.mViewId || t.mHandleSampler != sampler)
+    {
+        if (t.mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        {
+            const char* prev_cause = r.setBarrierCause("texture handle");
+            r.ensureLayout(t.mImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            r.setBarrierCause(prev_cause);
+        }
+        if (r.handleSet(0, t.mHandle, &t.mImage, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+        {
+            t.mHandleViewId = t.mImage.mViewId;
+            t.mHandleSampler = sampler;
+        }
+    }
+    return t.mHandle;
+}
+
+static std::vector<U32> sHandleDirty;       // names of textures whose handle has to be looked at again (their image, view, levels or sampler changed: pin_touch)
+
+// once a frame (and before a scene call): the handles of the textures that changed show their new image
+static void handles_refresh()
+{
+    if (sHandleDirty.empty())
+    {
+        return;
+    }
+    Renderer& r = Renderer::instance();
+    std::vector<U32> names;
+    names.swap(sHandleDirty);
+    for (U32 n : names)
+    {
+        if (Tex* t = packet_texture(n))
+        {
+            t->mHandleDirty = false;
+            texture_handle(r, *t, true);
+        }
+    }
 }
 
 // the slot of a texture in the frame's bindless table; 0 (white) for one that has no usable image, which is what the bound-texture path samples then too
@@ -3454,7 +3448,7 @@ static U32 packet_texture_slot(Renderer& r, U32 name)
                 ++sSampleNoImage;
             }
         }
-        return 0;
+        return t && t->mHandle ? t->mHandle : 0;       // (a texture whose image is being replaced keeps its handle: it shows the placeholder meanwhile)
     }
     if (!t->mSeenSampled && t->mValidLevels > 0)
     {
@@ -3465,34 +3459,12 @@ static U32 packet_texture_slot(Renderer& r, U32 name)
     {
         ++sSampleBlank;     // drawn with its picture before; now an image that has had no level defined: it samples as zeros (transparent black)
     }
-    // <FS> the ray scene asks for thousands of textures every frame (material tables): a texture whose full lookup was made within the last 32 frames, and whose view has not changed, only
-    // has its slot kept alive and written into this frame's set (bindlessTouch); the full lookup (sampler parameters, layout, table search) is repeated every 16 frames, spread by name
-    const U64 frame_now = Context::instance().getFrameNumber();
-    if (t->mBindlessSlot && t->mBindlessView == t->mImage.mView && t->mBindlessFullFrame + 32 > frame_now && ((frame_now + name) & 15u) != 0 && t->mImage.mLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-        && r.bindlessTouch(0, t->mBindlessSlot, t->mImage.mViewId, t->mImage.mView, t->mVkSampler))
-    {
-        if (r.bindlessAuditOn()) r.bindlessAuditNote(t->mBindlessSlot);
-        return t->mBindlessSlot;
-    }
-    if (t->mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-    {
-        const char* prev_cause = r.setBarrierCause("packet texture");
-        r.ensureLayout(t->mImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        r.setBarrierCause(prev_cause);
-    }
-    // the slot this texture held last time is tried first: slots stay with their texture from frame to frame (the table keeps them), the table only checks that the slot still holds this
-    // view and sampler and that this frame's set has it written
-    const U32 slot = r.bindlessSlotIn(0, &t->mImage, texture_sampler(r, *t), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, t->mBindlessSlot);
-    t->mBindlessSlot = slot;
-    t->mBindlessView = t->mImage.mView;
-    t->mBindlessFullFrame = frame_now;
-    if (r.bindlessAuditOn()) r.bindlessAuditNote(slot);
-    return slot;
+    return texture_handle(r, *t, false);
 }
 
 //-----------------------------------------------------------------------------------------------------
 // Pinned textures for the ray scene (doc/vulkan/PLAN-rt-materials.md). The material and geometry rows name a texture by PIN INDEX; a pin owns a bindless slot for as long as anything refers
-// to it, the sets of all frames get its descriptor once (Renderer::bindlessPin), and the GPU reads index -> slot from a table the ray scene keeps (Rt::setPinSlot): nothing is looked up
+// to it (the handle of the texture, which stays), and the GPU reads index -> handle from a table the ray scene keeps (Rt::setPinSlot): nothing is looked up
 // per frame. What can make a slot wrong is a change of the texture: the places that change one call pin_touch, the pin is looked at again before the next scene is built. Missed
 // changes are caught by checking a slice of all pins every frame (every pin once in about 32 frames).
 //-----------------------------------------------------------------------------------------------------
@@ -3528,6 +3500,11 @@ void pin_queue(U32 index)
 
 void pin_touch(Tex& t)
 {
+    if (t.mHandle && !t.mHandleDirty && t.mName)
+    {
+        t.mHandleDirty = true;
+        sHandleDirty.push_back(t.mName);
+    }
     if (t.mPinIndex)
     {
         ++sPinEvents;
@@ -3535,15 +3512,9 @@ void pin_touch(Tex& t)
     }
 }
 
-// <FS> native-vk (LL_VK_PIN_FIX=0 turns it off): the image of a texture appeared and a pin waits for it: no backoff, resolved in this frame's pin pass. Before, a texture with a new GL name (every upgrade
-// of a level, every first load) had its pin resolved before the image existed (slot 0, the stand-in) and tried again only after 8, 16, ... frames, with nothing waking it.
+// the image of a texture appeared and a pin waits for it: no backoff, resolved in this frame's pin pass
 void pin_wake_name(U32 name)
 {
-    static const bool off = getenv("LL_VK_PIN_FIX") && getenv("LL_VK_PIN_FIX")[0] == '0';
-    if (off)
-    {
-        return;
-    }
     auto it = sPinByName.find(name);
     if (it != sPinByName.end() && it->second < sPins.size())
     {
@@ -3552,12 +3523,12 @@ void pin_wake_name(U32 name)
         {
             p.mBackoff = 8;
             p.mNextTry = 0;
-            pin_queue(it->second);          // (also when it holds the slot of the old name: it moves to the new image now)
+            pin_queue(it->second);
         }
     }
 }
 
-// the texture of a pin as it is now: find its slot (the full lookup), pin the slot, tell the ray scene when the slot changed
+// the texture of a pin as it is now: its handle (made when the texture first has data; it stays), told to the ray scene when it was not known yet
 void pin_resolve(U32 index)
 {
     Pin& p = sPins[index];
@@ -3570,16 +3541,13 @@ void pin_resolve(U32 index)
     Renderer& r = Renderer::instance();
     U32 slot = 0;
     Tex* t = packet_texture(p.mName);
-    if (t && t->mImage.valid() && t->mImage.mViewType == VK_IMAGE_VIEW_TYPE_2D)
+    if (t)
     {
-        if (t->mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        slot = texture_handle(r, *t, true);
+        if (slot)
         {
-            const char* prev_cause = r.setBarrierCause("pinned texture");
-            r.ensureLayout(t->mImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            r.setBarrierCause(prev_cause);
+            t->mPinIndex = index;
         }
-        slot = r.bindlessSlotIn(0, &t->mImage, texture_sampler(r, *t), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, p.mSlot);
-        t->mPinIndex = index;
     }
     if (slot)
     {
@@ -3592,19 +3560,6 @@ void pin_resolve(U32 index)
     }
     if (slot != p.mSlot)
     {
-        if (slot)
-        {
-            r.bindlessPin(0, slot);
-        }
-        if (p.mSlot)
-        {
-            static const bool alias_off = getenv("LL_VK_PIN_FIX") && getenv("LL_VK_PIN_FIX")[0] == '0';
-            if (slot && !alias_off)
-            {
-                r.bindlessAlias(0, p.mSlot, slot);      // (rows that still name the old slot until they are written again show the same texture, not the stand-in)
-            }
-            r.bindlessUnpin(0, p.mSlot);
-        }
         p.mSlot = slot;
         Rt::setPinSlot(index, slot);
         if (p.mGeoRefs)
@@ -3623,14 +3578,13 @@ void pin_resolve(U32 index)
     }
 }
 
-// the texture entry goes away: the pin falls back to waiting (the slot is released; the descriptor keeps naming the old view until frames in flight are done, which is how all slots work)
+// the texture entry goes away: the pin falls back to waiting (its handle goes with the texture: rows that still name it see the placeholder)
 void pin_lost(Tex& t, U32 name)
 {
     const U32 index = t.mPinIndex;
     t.mPinIndex = 0;
     if (index && index < sPins.size() && sPins[index].mName == name && sPins[index].mSlot)
     {
-        Renderer::instance().bindlessUnpin(0, sPins[index].mSlot);
         sPins[index].mSlot = 0;
         Rt::setPinSlot(index, 0);
         if (sPins[index].mGeoRefs)
@@ -3648,28 +3602,6 @@ void pin_lost(Tex& t, U32 name)
 } // anonymous namespace (pins)
 
 // the texture behind a view id, for the device lost report (read after the loss, on the thread that found it: no lock, the table is only read)
-// <FS> what the image with this view id was when it went (see destroy_tex_images), for the log of slots that lost their view with no successor
-std::string describe_destroyed_view(U64 view_id)
-{
-    auto it = sViewSucc.find(view_id);
-    if (it == sViewSucc.end())
-    {
-        return "not a texture image that went through destroy_tex_images (or its note is gone)";
-    }
-    static const char* kinds[] = { "?", "re-specified", "mip chain grown", "levels dropped", "name deleted", "sampling view rebuilt", "image replaced by a commit" };
-    const ViewSucc& v = it->second;
-    char buf[300];
-    snprintf(buf, sizeof(buf), "GL name %u, %s %lld frames ago, %ux%u, %u levels (%u with data), replaced by name %u%s", v.mOrigName, kinds[v.mKind < 7 ? v.mKind : 0],
-             (long long)(Context::instance().getFrameNumber() - v.mFrame), v.mW, v.mH, v.mLevels, v.mValid, v.mName, v.mName ? "" : " (none)");
-    return buf;
-}
-
-int destroyed_view_kind(U64 view_id)
-{
-    auto it = sViewSucc.find(view_id);
-    return it == sViewSucc.end() ? 0 : (int)it->second.mKind;       // 0 = not noted; else see note_view_gone
-}
-
 std::string describe_texture_of_view(U64 view_id)
 {
     if (!view_id)
@@ -3683,7 +3615,7 @@ std::string describe_texture_of_view(U64 view_id)
         {
             char buf[300];
             snprintf(buf, sizeof(buf), "GL texture %u: %ux%u, %u levels allocated, %u levels hold data, dim %u, layers %u, bindless slot %u, pin %u, sampler 0x%llx, swizzle %s",
-                     kv.first, t.mWidth, t.mHeight, t.mLevels, t.mValidLevels, (unsigned)t.mDim, t.mImage.mLayers, t.mBindlessSlot, t.mPinIndex, (unsigned long long)(uintptr_t)t.mVkSampler, t.mSwizzleSet ? "set" : "default");
+                     kv.first, t.mWidth, t.mHeight, t.mLevels, t.mValidLevels, (unsigned)t.mDim, t.mImage.mLayers, t.mHandle, t.mPinIndex, (unsigned long long)(uintptr_t)t.mVkSampler, t.mSwizzleSet ? "set" : "default");
             return buf;
         }
     }
@@ -6518,7 +6450,6 @@ struct GeoFrag
     U64 mPinEpochSeen = ~0ull;
     U64 mListedFrame = ~0ull;           // the frame it was last listed (the buffers it reads count as in flight for the frames after)
     U64 mSafetyFrame = ~0ull;           // S5 safety: the frame an alpha record last checked its buffers against the live ones
-    U64 mSlotCheckFrame = ~0ull;        // the frame geo_check_slots last looked at its texture slots
     U32 mHandle = 0;
 };
 struct GeoStats
@@ -7061,119 +6992,6 @@ void geo_build_commands(GeoFrag& f)
     }
 }
 
-// crash hunt (2026-10-22, GPU-assisted validation: "(set = 2, binding = 0) Descriptor index N is uninitialized" in table draws; the user saw the leaves of a big tree blink): a texture slot a fragment's rows name
-// must be readable by this frame's draws: the slot active, and this frame's descriptor set holding its descriptor. The check runs once a frame for a fragment before its rows are used (alpha runs, G-buffer
-// listing); a slot that is only waiting for the sets to catch up is queued (written by the flush before the draw), a slot that was given back is replaced by the white stand-in in the rows (the pin looks at the
-// texture again). Counters and the first cases with all details go to the log.
-struct SlotCheckStats { U64 mChecked = 0, mNotInSet = 0, mFreed = 0, mLast = 0, mNs = 0, mHoldsStandIn = 0; } sSlotCheck;       // (mNs: time spent, LL_VK_SCENE_TIMES)
-
-void audit_provider(std::vector<U32>& slots);
-
-void geo_check_slots(GeoFrag& f, Renderer& r, U64 frame_now)
-{
-    static bool provider_set = false;
-    if (!provider_set)
-    {
-        provider_set = true;
-        if (r.bindlessAuditOn()) r.setAuditProvider(&audit_provider);
-    }
-    if (f.mSlotCheckFrame == frame_now)
-    {
-        return;
-    }
-    f.mSlotCheckFrame = frame_now;
-    bool flushed = false;
-    for (size_t k = 0; k < f.mTexSlot.size(); ++k)
-    {
-        const U32 slot = f.mTexSlot[k];
-        if (!slot || slot == ~0u)
-        {
-            continue;           // (~0u: the pin has not been looked at yet: a new fragment, its rows are written by the rebuild that follows)
-        }
-        ++sSlotCheck.mChecked;
-        if (r.bindlessSlotIsStandIn(0, slot))
-        {
-            ++sSlotCheck.mHoldsStandIn;         // (the rows name a slot that is active and shows the stand-in: that is what draws sample)
-            static U32 said_standin = 0;
-            if (said_standin++ < 30)
-            {
-                const U32 pin = f.mPin[k];
-                LL_WARNS("VkScene") << "[slot check] fragment " << f.mHandle << " texture " << k << " (GL " << f.mTexName[k] << ", pin " << pin << (pin && pin < sPins.size() ? " slot " + std::to_string(sPins[pin].mSlot) + " refs " + std::to_string(sPins[pin].mRefs) + " name " + std::to_string(sPins[pin].mName) : std::string())
-                                    << ") rows name slot " << slot << " which holds the stand-in; " << r.bindlessSlotDescribe(0, slot) << LL_ENDL;
-            }
-        }
-        int state = r.bindlessSlotState(0, slot, false);
-        if (state == 2 && r.bindlessReclaim(0, slot))
-        {
-            state = r.bindlessSlotState(0, slot, false);        // (taken back: the slot shows its image again; this frame's set gets it with the flush below)
-        }
-        if (state == 1 && !flushed)
-        {
-            r.bindlessFlush();          // (the pins the sets still have to catch up with are written now)
-            flushed = true;
-            state = r.bindlessSlotState(0, slot, false);
-        }
-        if (state == 0)
-        {
-            continue;
-        }
-        static U32 said = 0;
-        if (said++ < 40)
-        {
-            const U32 pin = f.mPin[k];
-            LL_WARNS("VkScene") << "[slot check] fragment " << f.mHandle << " texture " << k << " (GL " << f.mTexName[k] << ", pin " << pin << (pin && pin < sPins.size() ? " slot " + std::to_string(sPins[pin].mSlot) + " refs " + std::to_string(sPins[pin].mRefs) + " name " + std::to_string(sPins[pin].mName) : std::string())
-                << ") rows name slot " << slot << ": " << (state == 1 ? "this frame's set does not hold its descriptor" : "the slot is not active") << "; " << r.bindlessSlotDescribe(0, slot) << LL_ENDL;
-        }
-        if (state == 1)
-        {
-            ++sSlotCheck.mNotInSet;
-            r.bindlessSlotState(0, slot, true);         // queued: the flush before the draw writes it
-        }
-        else
-        {
-            ++sSlotCheck.mFreed;
-            f.mTexSlot[k] = 0;                          // the rows get the stand-in at their next write; the pin resolves the texture again
-            f.mDirtyEntries = true;
-            if (f.mPin[k])
-            {
-                pin_queue(f.mPin[k]);
-            }
-        }
-    }
-    if (sSlotCheck.mChecked - sSlotCheck.mLast >= 4000000)
-    {
-        sSlotCheck.mLast = sSlotCheck.mChecked;
-        LL_INFOS("VkScene") << "[slot check] " << sSlotCheck.mChecked << " fragment texture slots checked: " << sSlotCheck.mNotInSet << " not in this frame's set (queued), " << sSlotCheck.mFreed << " given back (rows get the stand-in), " << sSlotCheck.mHoldsStandIn << " naming a slot that holds the stand-in" << LL_ENDL;
-    }
-}
-
-// <FS> audit (LL_VK_SET_AUDIT / colour mode): the slots that scene table fragments and ray scene pins hold now, checked by the renderer after the frame's last flush
-void audit_provider(std::vector<U32>& slots)
-{
-    const U64 frame_now = Context::instance().getFrameNumber();
-    for (const GeoFrag* f : sGeo.mBy)
-    {
-        if (!f || f->mSlotCheckFrame != frame_now)
-        {
-            continue;           // (only the fragments whose rows this frame's draws used: geo_check_slots ran for them)
-        }
-        for (U32 s : f->mTexSlot)
-        {
-            if (s && s != ~0u)
-            {
-                slots.push_back(s);
-            }
-        }
-    }
-    for (const Pin& p : sPins)
-    {
-        if (p.mName && p.mSlot)
-        {
-            slots.push_back(p.mSlot);
-        }
-    }
-}
-
 // the fragment was named by an event (or is new): look at its buffers and textures again, write its entries and commands
 void geo_rebuild(GeoFrag& f, U64 frame_now, bool first)
 {
@@ -7455,11 +7273,6 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             geo_rebuild(*f, frame_now, first);
             if (timed) s.mNsRebuild += geo_ns(t1);
         }
-        {
-            const auto t_chk = std::chrono::steady_clock::now();
-            geo_check_slots(*f, Renderer::instance(), frame_now);       // (after the rebuild: see geo_alpha_draw)
-            if (timed) sSlotCheck.mNs += geo_ns(t_chk);
-        }
         if (f->mDirtyEntries)
         {
             geo_rebuild(*f, frame_now, false);
@@ -7658,7 +7471,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             LL_INFOS("VkScene") << "scene geometry table, worker time per frame (us): prepare " << (double)s.mNsPrepare / 1000.0 / n << " = pins " << (double)s.mNsPins / 1000.0 / n << " + matrices "
                 << (double)s.mNsMatrices / 1000.0 / n << " + buffer events " << (double)s.mNsEvents / 1000.0 / n << " + listing " << (double)s.mNsList / 1000.0 / n << " (of it rebuilds "
-                << (double)s.mNsRebuild / 1000.0 / n << ") + stale check " << (double)s.mNsCheck / 1000.0 / n << " + command copy " << (double)s.mNsCopy / 1000.0 / n << "; slot checks (in listing) " << (double)sSlotCheck.mNs / 1000.0 / n << "; retain " << (double)s.mNsRetain / 1000.0 / n
+                << (double)s.mNsRebuild / 1000.0 / n << ") + stale check " << (double)s.mNsCheck / 1000.0 / n << " + command copy " << (double)s.mNsCopy / 1000.0 / n << "; retain " << (double)s.mNsRetain / 1000.0 / n
                 << ", release " << (double)s.mNsRelease / 1000.0 / n << ", texture updates " << (double)s.mNsTexUpdate / 1000.0 / n << "; draw records " << (double)s.mNsDraw / 1000.0 / n << " (matrices "
                 << (double)s.mNsDrawMatrices / 1000.0 / n << ", state " << (double)s.mNsDrawState / 1000.0 / n << ", draw call " << (double)s.mNsDrawCall / 1000.0 / n << ")" << LL_ENDL;
         }
@@ -8002,7 +7815,6 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             geo_rebuild(*f, frame_now, first);
         }
-        geo_check_slots(*f, r, frame_now);       // (after the rebuild: the rows then hold the pins' current slots; a slot freed or missing in the set is found here, and a rewrite it asks for happens at the next listing)
         if (f->mDirtyEntries)
         {
             geo_rebuild(*f, frame_now, false);   // (a slot given back: the rows get the stand-in now, before they are read)
@@ -9544,7 +9356,6 @@ void rtPinRelease(unsigned int index)
     }
     if (p.mSlot)
     {
-        Renderer::instance().bindlessUnpin(0, p.mSlot);
         p.mSlot = 0;
         Rt::setPinSlot(index, 0);
     }
@@ -9562,6 +9373,7 @@ void rtPinRelease(unsigned int index)
 
 void rtPinUpdate()
 {
+    handles_refresh();
     // 1. pins whose texture changed or that are new
     for (size_t i = 0; i < sPinDirty.size(); ++i)
     {
@@ -9637,12 +9449,12 @@ static void packet_texture_prefetch(U32 name, U32 stage)
         _mm_prefetch(p + 64, _MM_HINT_T0);
         _mm_prefetch(p + 128, _MM_HINT_T0);
         _mm_prefetch((const char*)&t->mVkSampler, _MM_HINT_T0);
-        _mm_prefetch((const char*)&t->mBindlessSlot, _MM_HINT_T0);
-        _mm_prefetch((const char*)&t->mBindlessFullFrame, _MM_HINT_T0);
+        _mm_prefetch((const char*)&t->mHandle, _MM_HINT_T0);
+        _mm_prefetch((const char*)&t->mHandleViewId, _MM_HINT_T0);
     }
     else
     {
-        Renderer::instance().bindlessPrefetch(0, t->mBindlessSlot);
+        _mm_prefetch((const char*)&t->mImage, _MM_HINT_T0);
     }
 }
 
@@ -9761,28 +9573,27 @@ void after_frame()
         drain_query_results();
     }
     hiz_poll();     // <FS> S7 H1: publish the Hi-Z results of the frames the GPU has finished
+    handles_refresh();      // the handles of the textures that changed in this frame show their new image from the next frame on
     {
         // <FS> the video memory and what the textures take of it, every 1800 frames (about 30 seconds): after a teleport this shows where the memory went and whether a texture was refused
         {
             // <FS> every 300 frames (about 5 s), when something changed: what the texture copies from targets and the re-specified images did in that time (cumulative totals, the difference between two lines is the interval)
             static U32 copy_frames = 0;
-            static U64 last[18] = {};
+            static U64 last[14] = {};
             if (++copy_frames >= 300)
             {
                 copy_frames = 0;
-                sRetiredNow = Renderer::instance().retiredSlots(); sRetiredUsed = Renderer::instance().retiredUsedThisFrame();
-                const U64 now_v[18] = { (U64)sCopies, sCopyDropFrame, sCopyDropTex, sCopyDropSrc, sRespecs, sGrows, sLevelDrops, sLevelDropsRefused, sSampleNoName, sSampleNoImage, sSampleBlank, sRetiredNow, sRetiredUsed,
-                                        sPinNoSlot, Renderer::instance().retireSwapped(), sNoSuccessor, Renderer::instance().slotsReclaimed(), sCommits };
-                static const char* const names[18] = { "texture copies from targets done", "dropped: not in a frame", "no texture image", "no source image", "images re-specified", "mip chains grown", "levels dropped",
-                                                       "drops refused", "draw samples of a deleted name", "of a texture without an image", "of an image with no level yet", "bindless slots given the stand-in",
-                                                       "of them already used by a draw this frame", "pin resolves that ended without a slot", "bindless slots given the successor's view instead of the stand-in",
-                                                       "successors not ready", "given-back slots taken back for rows that still named them", "images committed under the same id (a new resolution)" };
+                const U64 now_v[14] = { (U64)sCopies, sCopyDropFrame, sCopyDropTex, sCopyDropSrc, sRespecs, sGrows, sLevelDrops, sLevelDropsRefused, sSampleNoName, sSampleNoImage, sSampleBlank, sPinNoSlot,
+                                        Renderer::instance().handleSets(), sCommits };
+                static const char* const names[14] = { "texture copies from targets done", "dropped: not in a frame", "no texture image", "no source image", "images re-specified", "mip chains grown", "levels dropped",
+                                                       "drops refused", "draw samples of a deleted name", "of a texture without an image", "of an image with no level yet", "pin resolves that ended without a handle",
+                                                       "descriptors written for handles (a new image or sampler)", "images committed under the same id (a new resolution)" };
                 if (memcmp(now_v, last, sizeof(now_v)) != 0)
                 {
                     std::ostringstream os;
-                    for (int k = 0; k < 18; ++k)
+                    for (int k = 0; k < 14; ++k)
                     {
-                        os << (k ? (k == 1 || k == 5 || k == 8 || k == 11 || k == 13 ? "; " : ", ") : "") << names[k] << " " << now_v[k] << " (+" << now_v[k] - last[k] << ")";
+                        os << (k ? (k == 1 || k == 5 || k == 8 || k == 11 ? "; " : ", ") : "") << names[k] << " " << now_v[k] << " (+" << now_v[k] - last[k] << ")";
                     }
                     LL_INFOS("VkTexCopy") << os.str() << LL_ENDL;
                     memcpy(last, now_v, sizeof(last));
