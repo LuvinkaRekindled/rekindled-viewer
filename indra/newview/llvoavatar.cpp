@@ -3182,6 +3182,18 @@ struct AvScope
         }
     }
 };
+
+// What the attachment loop of idleUpdateMisc does per attachment kind (FS_AVATAR_TIMERS=1; logged as AttLoop every 600 frames): doc/vulkan/PLAN-texture-handles.md section 17.13
+struct AttStats
+{
+    U64 avatars = 0, skipFrames = 0, attachments = 0, rigged = 0, rigid = 0, noBridge = 0, skipped = 0, ovApplied = 0, ovSkipped = 0, riggedSelected = 0;
+    U64 rigidFirst = 0, rigidSame = 0, rigidMovedTiny = 0, rigidMoved1mm = 0;      // rigid attachments: the attachment point's world matrix against the one when the loop last saw it (unchanged / more than 0.1 mm / more than 1 mm)
+    U64 nsPre = 0, nsLoop = 0, nsRigged = 0, nsRigid = 0, nsExtents = 0, nsOverride = 0, nsMove = 0, nsBridge = 0, nsText = 0;
+    U32 firstFrame = 0;
+};
+AttStats gAttStats;
+inline std::chrono::steady_clock::time_point att_now() { return gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point(); }
+inline U64 att_ns(std::chrono::steady_clock::time_point since) { return gFSAvTimersOn ? (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count() : 0; }
 }
 
 //------------------------------------------------------------------------
@@ -3585,10 +3597,12 @@ static void override_bbox(LLDrawable* drawable, LLVector4a* extents)
             && fabsf(cur[0] - new_min[0]) < tolerance && fabsf(cur[1] - new_min[1]) < tolerance && fabsf(cur[2] - new_min[2]) < tolerance
             && fabsf(cur_max[0] - new_max[0]) < tolerance && fabsf(cur_max[1] - new_max[1]) < tolerance && fabsf(cur_max[2] - new_max[2]) < tolerance)
         {
+            ++gAttStats.ovSkipped;
             return;
         }
     }
 
+    ++gAttStats.ovApplied;
     LL_CPU_ZONE("octree: avatar override_bbox applied");
     drawable->setSpatialExtents(extents[0], extents[1]);
     drawable->setPositionGroup(LLVector4a(0.f, 0.f, 0.f));
@@ -3612,6 +3626,8 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
     if (detailed_update)
     {
         LL_CPU_ZONE("att: attachment loop (per avatar)");
+        const auto att_loop_t0 = att_now();
+        ++gAttStats.avatars;
         U32 draw_order = 0;
         bool attachment_selected = LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment();
 
@@ -3657,6 +3673,8 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
         {
             mAttBBoxStable = 0;
         }
+        gAttStats.nsPre += att_ns(att_loop_t0);
+        gAttStats.skipFrames += skip_rigged_this_frame;
         for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
         {
             // <FS:Ansariel> Possible crash fix
@@ -3677,6 +3695,10 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                 }
 
                 LLSpatialBridge* bridge = attached_object->mDrawable->getSpatialBridge();
+                const auto att_t0 = att_now();
+                bool att_rigged_kind = false;
+                ++gAttStats.attachments;
+                gAttStats.noBridge += !bridge;
 
                 if (visible || !(bridge && bridge->getRadius() < 2.0f))
                 {
@@ -3686,23 +3708,53 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     {
                         //transform avatar bounding box into attachment's coordinate frame
                         LLVector4a extents[2];
-                        { LL_CPU_ZONE("att: transformExtents"); bridge->transformExtents(mDrawable->getSpatialExtents(), extents); }
+                        { LL_CPU_ZONE("att: transformExtents"); const auto t = att_now(); bridge->transformExtents(mDrawable->getSpatialExtents(), extents); gAttStats.nsExtents += att_ns(t); }
 
                         if (attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
                         {
                             rigged = true;
                             if (!skip_rigged_this_frame)
                             {
+                                const auto t = att_now();
                                 override_bbox(attached_object->mDrawable, extents);
+                                gAttStats.nsOverride += att_ns(t);
                             }
                         }
                     }
                     const bool skip_update = rigged && skip_rigged_this_frame;
+                    att_rigged_kind = rigged;
+                    gAttStats.skipped += skip_update;
+                    if (gFSAvTimersOn && !rigged && bridge)
+                    {
+                        // measurement: does the joint the attachment follows move from one visit to the next?
+                        static std::unordered_map<const LLViewerObject*, LLMatrix4a> sPrevWorld;
+                        const LLMatrix4a& m = attachment->getWorldMatrix4a();
+                        auto ins = sPrevWorld.try_emplace(attached_object.get(), m);
+                        if (ins.second)
+                        {
+                            ++gAttStats.rigidFirst;
+                        }
+                        else
+                        {
+                            const F32* a = ins.first->second.getF32ptr();
+                            const F32* b = m.getF32ptr();
+                            F32 diff = 0.f;
+                            for (int k = 0; k < 16; ++k)
+                            {
+                                diff = std::max(diff, fabsf(a[k] - b[k]));
+                            }
+                            if (diff > 1e-3f) { ++gAttStats.rigidMoved1mm; }
+                            if (diff > 1e-4f) { ++gAttStats.rigidMovedTiny; }
+                            else { ++gAttStats.rigidSame; }
+                            ins.first->second = m;
+                        }
+                    }
 
                     // if selecting any attachments, update all of them as non-damped
                     if (!skip_update)
                     {
                         LL_CPU_ZONE("att: drawable move");
+                        const auto t = att_now();
                         if (attachment_selected)
                         {
                             gPipeline.updateMoveNormalAsync(attached_object->mDrawable);
@@ -3713,6 +3765,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                             // some objects get position updates from server
                             gPipeline.updateMoveDampedAsync(attached_object->mDrawable);
                         }
+                        gAttStats.nsMove += att_ns(t);
                     }
 
                     // override_bbox calls movePartition() and getSpatialPartition(),
@@ -3724,7 +3777,9 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                         if (!rigged)
                         {
                             LL_CPU_ZONE("att: bridge move (not rigged)");
+                            const auto t = att_now();
                             gPipeline.updateMoveNormalAsync(bridge);
+                            gAttStats.nsBridge += att_ns(t);
                         }
                         else
                         {
@@ -3732,9 +3787,11 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                             //specialized impl of updateMoveNormalAsync just for rigged attachment SpatialBridge
                             if (!skip_update)
                             {
+                                const auto t = att_now();
                                 bridge->setState(LLDrawable::MOVE_UNDAMPED);
                                 bridge->updateMove();
                                 bridge->setState(LLDrawable::EARLY_MOVE);
+                                gAttStats.nsBridge += att_ns(t);
                             }
 
                             LLSpatialGroup* group = attached_object->mDrawable->getSpatialGroup();
@@ -3746,8 +3803,38 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                         }
                     }
 
-                    { LL_CPU_ZONE("att: updateText"); attached_object->updateText(); }
+                    { LL_CPU_ZONE("att: updateText"); const auto t = att_now(); attached_object->updateText(); gAttStats.nsText += att_ns(t); }
                 }
+                if (gFSAvTimersOn)
+                {
+                    const U64 ns = att_ns(att_t0);
+                    if (att_rigged_kind) { ++gAttStats.rigged; gAttStats.nsRigged += ns; }
+                    else { ++gAttStats.rigid; gAttStats.nsRigid += ns; }
+                }
+            }
+        }
+        gAttStats.nsLoop += att_ns(att_loop_t0);
+        if (gFSAvTimersOn)
+        {
+            const U32 frame = (U32)LLFrameTimer::getFrameCount();
+            if (!gAttStats.firstFrame)
+            {
+                gAttStats.firstFrame = frame;
+            }
+            if (frame - gAttStats.firstFrame >= 600)
+            {
+                const AttStats& s = gAttStats;
+                const double F = (double)(frame - s.firstFrame);
+                const double R = (double)std::max<U64>(s.rigged, 1);
+                const double G = (double)std::max<U64>(s.rigid, 1);
+                LL_INFOS("AttLoop") << llformat("per frame over %.0f frames: avatars with the loop %.1f (rigged update skipped this frame %.1f), attachments %.1f (rigged %.1f, rigid %.1f, no bridge %.1f), rigged updates skipped %.1f, "
+                    "override_bbox applied %.1f / unchanged %.1f | ms per frame: loop %.3f (stable check %.3f), rigged attachments %.3f (%.2f us each), rigid %.3f (%.2f us each); pieces: transformExtents %.3f, override_bbox %.3f, drawable move %.3f, bridge move %.3f, updateText %.3f",
+                    F, (double)s.avatars / F, (double)s.skipFrames / F, (double)s.attachments / F, (double)s.rigged / F, (double)s.rigid / F, (double)s.noBridge / F, (double)s.skipped / F, (double)s.ovApplied / F, (double)s.ovSkipped / F,
+                    (double)s.nsLoop / 1e6 / F, (double)s.nsPre / 1e6 / F, (double)s.nsRigged / 1e6 / F, (double)s.nsRigged / 1e3 / R, (double)s.nsRigid / 1e6 / F, (double)s.nsRigid / 1e3 / G,
+                    (double)s.nsExtents / 1e6 / F, (double)s.nsOverride / 1e6 / F, (double)s.nsMove / 1e6 / F, (double)s.nsBridge / 1e6 / F, (double)s.nsText / 1e6 / F) << LL_ENDL;
+                LL_INFOS("AttLoop") << llformat("rigid attachments with a bridge, per frame: first seen %.1f, joint matrix unchanged since the last visit (within 0.1 mm) %.1f, moved more than 0.1 mm %.1f (more than 1 mm %.1f)",
+                    (double)s.rigidFirst / F, (double)s.rigidSame / F, (double)s.rigidMovedTiny / F, (double)s.rigidMoved1mm / F) << LL_ENDL;
+                gAttStats = AttStats();
             }
         }
     }
