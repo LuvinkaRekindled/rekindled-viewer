@@ -3636,7 +3636,13 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             {
                 LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
                 markVisible(drawablep, camera);
-                if (sVisSortOn) { ++LLVisCensus::sSortMarkVisN; }
+                if (sVisSortOn)
+                {
+                    ++LLVisCensus::sSortMarkVisN;
+                    LLVisCensus::sMarkActive += drawablep->isActive();
+                    LLVisCensus::sMarkAvatar += drawablep->isAvatar();
+                    LLVisCensus::sMarkBridge += drawablep->isSpatialBridge();
+                }
             }
             if (sVisSortOn) { LLVisCensus::sSortTicksMarkVis += LLVisCensus::now() - vis_m0; }
 
@@ -3926,6 +3932,12 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
     {
         //if (drawablep->isVisible()) isVisible() check here is redundant, if it wasn't visible, it wouldn't be here
         const U64 vis_d0 = sVisSortOn ? LLVisCensus::now() : 0;
+        if (sVisSortOn)
+        {
+            if (drawablep->isAvatar()) { ++LLVisCensus::sDrawAvatar; }
+            else if (drawablep->isActive()) { ++LLVisCensus::sDrawActive; }
+            else { ++LLVisCensus::sDrawStatic; }
+        }
         {
             if (!drawablep->isActive())
             {
@@ -4407,6 +4419,35 @@ void LLPipeline::postSort(LLCamera &camera)
             LLVisCensus::sPartElems[part] += group->getElementCount();
             LLVisCensus::sPartWithTable[part] += group->mGeoHandle != 0;
             LLVisCensus::sPartAllServed[part] += group->mGeoAllServed;
+            {
+                // how much of the visible set is the same as in the frame before (a frame is counted once even if the main view is sorted twice)
+                const U32 fc = (U32)gFrameCount;
+                if (LLVisCensus::sChurnFrame != fc)
+                {
+                    if (LLVisCensus::sChurnFrame + 1 == fc && LLVisCensus::sChurnPrevN >= LLVisCensus::sChurnCurKept)
+                    {
+                        LLVisCensus::sChurnLeft += LLVisCensus::sChurnPrevN - LLVisCensus::sChurnCurKept;
+                    }
+                    LLVisCensus::sChurnPrevN = LLVisCensus::sChurnCurN;
+                    LLVisCensus::sChurnCurN = LLVisCensus::sChurnCurKept = 0;
+                    LLVisCensus::sChurnFrame = fc;
+                    ++LLVisCensus::sChurnFrames;
+                }
+                if (group->mChurnFrame != fc)
+                {
+                    ++LLVisCensus::sChurnGroups;
+                    ++LLVisCensus::sChurnCurN;
+                    if (group->mChurnFrame + 1 == fc)
+                    {
+                        ++LLVisCensus::sChurnKept;
+                        ++LLVisCensus::sChurnCurKept;
+                        LLVisCensus::sChurnSerial += group->mChurnSerial != group->mDrawMapSerial;
+                    }
+                    LLVisCensus::sChurnNewInfo += group->hasState(LLSpatialGroup::NEW_DRAWINFO);
+                    group->mChurnFrame = fc;
+                    group->mChurnSerial = group->mDrawMapSerial;
+                }
+            }
             const U64 served_mask = geo_elide ? group->mGeoServedMask : 0;
             for (const auto& kv : group->mDrawMap)
             {
@@ -7346,6 +7387,15 @@ void LLVisCensus::report()
             " | groups: drawable %.0f, visible %.0f, occluded %.0f", ms(sSortTicks), pf(sSortCalls), ms(sSortTicksCheck), pf(sSortCheckCalls), ms(sSortTicksMarkVis), pf(sSortMarkVisN), ms(sSortTicksLod), pf(sSortLodCalls), pf(sSortLodTrue),
             ms(sSortTicksDrawable), pf(sSortDrawableCalls), ms(sSortTicksDist), pf(sSortDistCalls), ms(sSortTicksBridge), pf(sSortBridgeCalls), pf(sSortDrawableGroups), pf(sSortVisibleGroups), pf(sSortOccluded));
         LL_INFOS("VisCensus") << buf << LL_ENDL;
+        if (sChurnFrames)
+        {
+            const double F = (double)sChurnFrames;
+            snprintf(buf, sizeof(buf), "visible set per frame over %.0f frames: groups in the render map loop %.0f, also there the frame before %.0f (%.1f %%), left since the frame before %.1f, with a draw map changed since the frame before %.1f, with new draw infos %.1f"
+                " | drawables marked visible: active %.1f, avatars %.1f, bridges %.1f of %.0f | drawables sorted: avatars %.1f, other active %.1f, static %.1f",
+                F, (double)sChurnGroups / F, (double)sChurnKept / F, sChurnGroups ? 100.0 * (double)sChurnKept / (double)sChurnGroups : 0.0, (double)sChurnLeft / F, (double)sChurnSerial / F, (double)sChurnNewInfo / F,
+                pf(sMarkActive), pf(sMarkAvatar), pf(sMarkBridge), pf(sSortMarkVisN), pf(sDrawAvatar), pf(sDrawActive), pf(sDrawStatic));
+            LL_INFOS("VisCensus") << buf << LL_ENDL;
+        }
         snprintf(buf, sizeof(buf), "postSort %.3f ms: rebuildGeom of drawable groups %.3f | build render map %.3f | delayed rebuildMesh %.3f | sort alpha groups %.3f | alpha groups %.0f (items %.0f, in the table %.0f), rigged alpha groups %.0f",
             ms(sPostTicks), ms(sPostTicksRebuildGeom), ms(sPostTicksMap), ms(sPostTicksMesh), ms(sPostTicksAlpha), pf(sAlphaGroups), pf(sAlphaItemsTotal), pf(sAlphaServedItems), pf(sRiggedAlphaGroups));
         LL_INFOS("VisCensus") << buf << LL_ENDL;
@@ -7413,6 +7463,8 @@ void LLVisCensus::report()
         }
     }
     // the window is done
+    sChurnGroups = sChurnKept = sChurnSerial = sChurnNewInfo = sChurnLeft = sChurnFrames = 0;
+    sMarkActive = sMarkAvatar = sMarkBridge = sDrawActive = sDrawAvatar = sDrawStatic = 0;
     sCullFrames = sCullTicks = 0;
     sSortCalls = sSortTicks = sSortTicksCheck = sSortCheckCalls = sSortTicksMarkVis = sSortMarkVisN = sSortTicksLod = sSortLodCalls = sSortLodTrue = 0;
     sSortTicksDrawable = sSortDrawableCalls = sSortTicksDist = sSortDistCalls = sSortTicksBridge = sSortBridgeCalls = 0;
