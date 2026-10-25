@@ -2228,6 +2228,11 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
         else if (was_mask != mIsMask)
         {
             ++real_flips;
+            if (real_flips <= 800)
+            {
+                // every real flip: which texture, which way, at which size, the nth analysis of it (a texture that flips back and forth moves its faces between the mask and the blend pools)
+                LL_INFOS("VkAlphaFlip") << "texture " << mTexId << " " << was_mask << " -> " << mIsMask << " at " << w << "x" << h << " analysis " << mAnalysisCount << " (mid-range " << midrangetotal << " of " << length << ")" << LL_ENDL;
+            }
         }
         if (was_mask != mIsMask)
         {
