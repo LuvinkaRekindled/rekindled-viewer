@@ -100,6 +100,7 @@
 #include "llvovolume.h"
 #include "llworld.h"
 #include "pipeline.h"
+#include "llattcensus.h"
 #include "llviewershadermgr.h"
 #include "llsky.h"
 #include "llanimstatelabels.h"
@@ -3628,6 +3629,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
         LL_CPU_ZONE("att: attachment loop (per avatar)");
         const auto att_loop_t0 = att_now();
         ++gAttStats.avatars;
+        LLAttCensus::sAvatarsLooped += LLAttCensus::sOn;
         U32 draw_order = 0;
         bool attachment_selected = LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment();
 
@@ -3724,6 +3726,10 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     const bool skip_update = rigged && skip_rigged_this_frame;
                     att_rigged_kind = rigged;
                     gAttStats.skipped += skip_update;
+                    if (LLAttCensus::sOn && !rigged && bridge)
+                    {
+                        LLAttCensus::classify(attached_object.get(), attached_object->mDrawable);
+                    }
                     if (gFSAvTimersOn && !rigged && bridge)
                     {
                         // measurement: does the joint the attachment follows move from one visit to the next?
@@ -3835,6 +3841,18 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                 LL_INFOS("AttLoop") << llformat("rigid attachments with a bridge, per frame: first seen %.1f, joint matrix unchanged since the last visit (within 0.1 mm) %.1f, moved more than 0.1 mm %.1f (more than 1 mm %.1f)",
                     (double)s.rigidFirst / F, (double)s.rigidSame / F, (double)s.rigidMovedTiny / F, (double)s.rigidMoved1mm / F) << LL_ENDL;
                 gAttStats = AttStats();
+            }
+        }
+    }
+    else if (LLAttCensus::sOn)
+    {
+        // census: an avatar whose attachment loop did not run this frame, and what it wears
+        ++LLAttCensus::sAvatarsHidden;
+        for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
+        {
+            if (attachment)
+            {
+                LLAttCensus::sAttachmentsOnHidden += (U64)attachment->mAttachedObjects.size();
             }
         }
     }

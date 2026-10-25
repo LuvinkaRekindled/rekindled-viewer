@@ -62,6 +62,7 @@
 #include "lltexturefetch.h"
 #include "llimageworker.h"
 #include "lldrawable.h"
+#include "llattcensus.h"
 #include "lldrawpoolalpha.h"
 #include "lldrawpoolavatar.h"
 #include "lldrawpoolbump.h"
@@ -2346,6 +2347,13 @@ void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
             continue;
         }
         bool done = true;
+        if (LLAttCensus::sOn)
+        {
+            const LLAttCensus::Kind kind = LLAttCensus::kindOf(drawablep);
+            ++LLAttCensus::sMovedListIter[kind];
+            if (drawablep->isState(LLDrawable::EARLY_MOVE)) { ++LLAttCensus::sMovedListEarly[kind]; }
+            else if (!drawablep->isDead()) { ++LLAttCensus::sMovedListByUpdate[kind]; }
+        }
         if (!drawablep->isDead() && (!drawablep->isState(LLDrawable::EARLY_MOVE)))
         {
             done = drawablep->updateMove();
