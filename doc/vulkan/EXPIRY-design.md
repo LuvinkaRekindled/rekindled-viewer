@@ -88,9 +88,11 @@ Every stage needs the same A/B: the lap with the switch on and off (`h6-fixed.ps
 
 Bounded by the census. Up to the +1.0 to +3.7 ms of the five laps, of which part is real (shadows and lights that fall into the view from behind) and cannot be recovered; the recoverable part is not known. Memory: up to the roughly 1 GB of vertex buffers and the scene fragments for what is behind. The reverse hitch is the price and must be paid in small frames.
 
-## 10. Decisions for Adam
+## 10. Decisions (Adam, 2026-10-25: yes to all four)
 
-1. Run the stage 0 census lap when London is crowded (and once in a place dense in every direction)?
-2. Start with the VOLUME partition (prims and meshes) only, leaving avatar, terrain, water, sky, HUD out of the first stages by their own relevance rather than by a branch?
-3. Time-based T1/T2 first, pressure coupling afterwards?
-4. Is a 10 s / 60 s starting point for T1 / T2 acceptable, to be replaced by the age histogram of stage 1?
+1. The stage 0 census lap runs when London is crowded, and once in a place dense in every direction.
+2. The VOLUME partition (prims and meshes) first; avatar, terrain, water, sky and HUD stay out of the first stages by their own relevance, not by a branch.
+3. Time-based T1/T2 first, pressure coupling afterwards.
+4. T1 = 10 s, T2 = 60 s as the starting point, replaced by the data of the stage 1 age histogram.
+
+Stage 1 (the age histogram, count only) is part of the same census and is built in the same exe: `LL_VK_SCENECENSUS=1` now also logs, for all groups and for the VOLUME partition alone, how many groups, built groups, draw infos, triangles, geometry bytes, elements and active drawables sit in each age bucket of relevance (< 1 s, 1-5, 5-10, 10-30, 30-60, 60-300, over 300 s, never accepted).
