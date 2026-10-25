@@ -713,7 +713,8 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
     U32 next_frag_output = 0;
     std::set<std::string> attributes;
     std::map<std::string, std::string> attribute_types;
-    bool has_own_table = false;                         // the shader declares a set-2 table itself (the shadow packet shaders)
+    bool has_own_table = false;                         // the shader declares a set-2 table itself (the pull shaders: the textures of their rows)
+    std::string own_table_name, own_table_type;         // ... its name and type: the translated samplers use it as table 0 (no second declaration at binding 0)
 
     for (const StageWork& w : works)
     {
@@ -738,6 +739,8 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                         if (d.mLayout.find("set") != std::string::npos)
                         {
                             has_own_table = true;
+                            own_table_name = dc.mName;
+                            own_table_type = d.mType;
                             continue;       // <FS> a sampler array with a layout of its own (the bindless table, set 2): not one of the program's samplers
                         }
                         if (!sampler_index.count(dc.mName))
@@ -840,8 +843,9 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
     }
 
     // <FS> bindless samplers: every sampler of the program is a plain 2D / cube / cube array / 2D shadow sampler (not an array), no geometry stage, no table of its own.
-    // Each sampler becomes a table slot read from a loose uint uniform (ll_ti_<name>); the viewer's sampler name is a macro for the table element.
-    bool bindless = env.mBindless && !samplers.empty() && !has_own_table;
+    // Each sampler becomes a table slot read from a loose uint uniform (ll_ti_<name>); the viewer's sampler name is a macro for the table element. A program with a 2D table of its own (the pull shaders:
+    // the textures of the rows) takes it as table 0 and has its fixed samplers (the deferred buffers, the shadow maps) translated as well: no push descriptors left.
+    bool bindless = env.mBindless && !samplers.empty() && (!has_own_table || own_table_type == "sampler2D");
     for (const SamplerEntry& s : samplers)
     {
         if (!s.mArray.empty() || bindless_table(s.mType) < 0)
@@ -901,8 +905,20 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         {
             if (used[t])
             {
-                bindless_decl << "layout(set = 2, binding = " << t << ") uniform " << table_types[t] << " ll_vk_tbl" << t << "[];\n";
+                if (t == 0 && has_own_table)
+                {
+                    // the program has a table of its own (declared in the source of one of its stages): it is table 0, declared here for every stage (the source's own declaration is left out below)
+                    bindless_decl << "layout(set = 2, binding = 0) uniform sampler2D " << own_table_name << "[];\n#define ll_vk_tbl0 " << own_table_name << "\n";
+                }
+                else
+                {
+                    bindless_decl << "layout(set = 2, binding = " << t << ") uniform " << table_types[t] << " ll_vk_tbl" << t << "[];\n";
+                }
             }
+        }
+        if (has_own_table && !used[0])
+        {
+            bindless_decl << "layout(set = 2, binding = 0) uniform sampler2D " << own_table_name << "[];\n#define ll_vk_tbl0 " << own_table_name << "\n";
         }
         for (const SamplerEntry& s : samplers)
         {
@@ -1056,6 +1072,30 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
             }
         }
 
+        // a sampler of the program is a macro (the table element): a function parameter declared with the same name (SMAA: `sampler2D blendTex` in the prototypes) would expand to an array declaration.
+        // The parameter and its uses in that function get another name; they mean the parameter there anyway.
+        auto rename_sampler_params = [&](const std::string& in) -> std::string
+        {
+            if (!bindless)
+            {
+                return in;
+            }
+            std::string out = in;
+            for (const SamplerEntry& smp : samplers)
+            {
+                if (out.find(smp.mName) == std::string::npos)
+                {
+                    continue;
+                }
+                const std::regex param("\\bsampler\\w*\\s+" + smp.mName + "\\b");
+                if (std::regex_search(out, param))
+                {
+                    out = std::regex_replace(out, std::regex("\\b" + smp.mName + "\\b"), smp.mName + "_llp");
+                }
+            }
+            return out;
+        };
+
         bool have_main = false;
         for (const Item& item : w.mSplit.mItems)
         {
@@ -1084,7 +1124,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                             continue;
                         }
                     }
-                    text << item.mText << "\n";
+                    text << rename_sampler_params(item.mText) << "\n";
                     continue;
                 }
 
@@ -1113,7 +1153,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
             Decl d = parse_decl(item.mText);
             if (!d.mOk || d.mFunction)
             {
-                text << item.mText << "\n";
+                text << rename_sampler_params(item.mText) << "\n";
                 continue;
             }
 
@@ -1135,6 +1175,10 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                 {
                     if (d.mLayout.find("set") != std::string::npos)
                     {
+                        if (bindless && has_own_table)
+                        {
+                            continue;       // (declared above, for every stage of the program)
+                        }
                         text << item.mText << "\n";        // <FS> the bindless table keeps the layout the shader gave it
                         continue;
                     }
