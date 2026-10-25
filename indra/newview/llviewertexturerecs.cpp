@@ -142,13 +142,21 @@ void note_stamp(U32 slot_handle)
     }
 }
 
+// a face whose position comes from something only the main thread has
+inline bool is_volatile(LLFace* f)
+{
+    LLViewerObject* objp = f->getViewerObject();
+    LLDrawable* drawable = f->getDrawable();
+    return !objp || !drawable || f->isState(LLFace::RIGGED) || f->hasMedia() || drawable->isActive() || objp->getPartitionType() == LLViewerRegion::PARTITION_PARTICLE;
+}
+
 // the record of a face as it is now
 void fill(Rec& r, LLFace* f)
 {
     LLViewerObject* objp = f->getViewerObject();
     LLDrawable* drawable = f->getDrawable();
     U32 flags = F_USE;
-    const bool vol = !objp || !drawable || f->isState(LLFace::RIGGED) || f->hasMedia() || drawable->isActive() || objp->getPartitionType() == LLViewerRegion::PARTITION_PARTICLE;
+    const bool vol = is_volatile(f);
     if (vol)
     {
         flags |= F_VOLATILE;
@@ -504,6 +512,11 @@ void LLTexRecs::frame()
         }
         if (how == 1)
         {
+            if ((sMain[idx].mFlags & F_VOLATILE) && sSent[idx] && is_volatile(f))
+            {
+                ++sStats.mSkipped;                          // a moving face that stays volatile: nothing the worker uses has changed (most of the changes are these)
+                continue;
+            }
             Rec r = sMain[idx];
             fill(r, f);
             if (memcmp(&r, &sMain[idx], sizeof(Rec)) == 0 && sSent[idx])
