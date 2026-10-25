@@ -1557,7 +1557,6 @@ bool LLShaderProgram::link(bool suppress_errors)
     LLVk::ShaderEnv env;
     env.mAttributeNames = mgr->mReservedAttribs;
     env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
-    env.mBindless = LLVk::bindlessShaders();
     const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
 
     LLVk::Program* program = nullptr;

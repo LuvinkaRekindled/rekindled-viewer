@@ -1228,7 +1228,7 @@ bool init(VkDescriptorSetLayout set_layout)
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
     sMatsInit = env_u64("LL_VK_RT_MATERIALS", 0) != 0;
-    sPinsInit = !sMatsInit && env_u64("LL_VK_RT_PINS", 1) != 0 && !(getenv("LL_VK_BINDLESS") && getenv("LL_VK_BINDLESS")[0] == '0');       // pins are slots of the bindless table
+    sPinsInit = !sMatsInit && env_u64("LL_VK_RT_PINS", 1) != 0;       // pins are handles of the texture table
     sGeomBytes = sMatsInit ? kGeomBytesMats : kGeomBytesBase;
     sRegionBytes = sGeomBytes + (sMatsInit ? kMatBytes + kPinBytes : (sPinsInit ? kPinBytes : 0));
     sPinOffset = sMatsInit ? sGeomBytes + kMatBytes : sGeomBytes;

@@ -2419,10 +2419,9 @@ bool LLImageTex::scaleDown(S32 desired_discard)
     S32 desired_width = getWidth(desired_discard);
     S32 desired_height = getHeight(desired_discard);
 
-    // <FS> native-vk (LL_VK_SCALEDOWN_LEVELS=0 turns it off): a texture with a mip chain gives up its top levels in the worker (a copy of the levels below into a smaller image); the draw into a target and the
-    // copy back (below) leave white textures
-    static const bool drop_levels = []{ const char* e = getenv("LL_VK_SCALEDOWN_LEVELS"); return !e || atoi(e) != 0; }();
-    if (drop_levels && mHasMipMaps && mip > 0)
+    // <FS> native-vk: a texture with a mip chain gives up its top levels in the worker (a copy of the levels below into a smaller image). A texture without mip maps is not shrunk here (the draw into a
+    // target and the copy back left white textures, and no texture the viewer shrinks lacks them): false, and the viewer deals with it as with any texture that cannot be made smaller.
+    if (mHasMipMaps && mip > 0)
     {
         free_tex_image(mTexName);
         LLVkTex::dropLevels(mTexName, mip);
@@ -2431,53 +2430,7 @@ bool LLImageTex::scaleDown(S32 desired_discard)
         mCurrentDiscardLevel = desired_discard;
         return true;
     }
-
-    {
-        // <FS> native-vk diagnostic (blink after load): the downscales that still go through the draw and copy (a texture without mip maps, or the level drop switched off)
-        static U64 old_path = 0;
-        static LLTimer log_timer;
-        ++old_path;
-        if (old_path <= 30 || log_timer.getElapsedTimeF32() >= 10.f)
-        {
-            log_timer.reset();
-            LL_INFOS("VkAlpha") << "downscale by draw and copy #" << old_path << ": texture " << mTexId << " " << mWidth << "x" << mHeight << " discard " << mCurrentDiscardLevel << " -> " << desired_discard
-                                << ", mip maps " << (S32)mHasMipMaps << " (wanted " << (S32)mUseMipMaps << "), format " << (S32)mFormatInternal << LL_ENDL;
-        }
-    }
-
-    { // use an FBO to downscale the texture (the only method: the PBO readback method of RenderDownScaleMethod 1 is gone with the GL buffer binds)
-        LLVkState::setViewport(0, 0, desired_width, desired_height);
-
-        // draw a full screen triangle
-        if (gRender.getTexUnit(0)->bind(this, true, true))
-        {
-            LLVertexBuffer::drawNoAttributes(LLRender::TRIANGLES, 0, 3);
-
-            free_tex_image(mTexName);
-            LLVkTex::image2D(mTexName, mTarget, 0, mFormatInternal, desired_width, desired_height, mFormatPrimary, mFormatType, nullptr);
-            LLVkTex::copySubImage(mTexName, mTarget, 0, 0, 0, 0, 0, 0, desired_width, desired_height, LLRenderTarget::currentId());
-            alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
-
-            markTexOptionsDirty();
-
-            if (mHasMipMaps)
-            { // generate mipmaps if needed
-                LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("scaleDown - glGenerateMipmap");
-                gRender.getTexUnit(0)->bind(this);
-                LLVkTex::generateMipmap(mTexName);
-                gRender.getTexUnit(0)->bindWhite();
-            }
-        }
-        else
-        {
-            LL_WARNS_ONCE("LLImageTex") << "Failed to bind texture for downscaling." << LL_ENDL;
-            return false;
-        }
-    }
-
-    mCurrentDiscardLevel = desired_discard;
-
-    return true;
+    return false;
 }
 
 
