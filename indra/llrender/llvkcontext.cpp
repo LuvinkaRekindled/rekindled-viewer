@@ -2246,11 +2246,36 @@ VkDeviceSize arena_block_bytes()
 }
 }
 
+// <FS> the dedicated acceleration structure blocks come in size classes (1.25 steps from 16 MB) so that one that went empty fits the next range of its class; LL_VK_AS_POOL_MB is what the pool may hold (0: no pool, the
+// blocks are made for the range and given back with it, as before)
+static VkDeviceSize as_pool_bytes()
+{
+    static const VkDeviceSize v = []() {
+        char b[16] = {};
+        const U32 mb = GetEnvironmentVariableA("LL_VK_AS_POOL_MB", b, sizeof(b)) > 0 ? (U32)atoi(b) : 512;
+        return (VkDeviceSize)mb << 20;
+    }();
+    return v;
+}
+
+static VkDeviceSize as_class_bytes(VkDeviceSize n)
+{
+    static const U32 kMB[] = { 16, 20, 25, 32, 40, 50, 64, 80, 100, 128, 160, 200, 256, 320, 400, 512 };
+    for (U32 mb : kMB)
+    {
+        if (n <= ((VkDeviceSize)mb << 20))
+        {
+            return (VkDeviceSize)mb << 20;
+        }
+    }
+    return (n + 255) / 256 * 256;
+}
+
 Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kind, bool dedicated)
 {
     const bool shared = kind == ArenaKind::Shared, host = kind == ArenaKind::Host, accel = kind == ArenaKind::Accel;
     ArenaBlock* block = new ArenaBlock();
-    block->mSize = dedicated ? (min_size + 255) / 256 * 256 : std::max(accel ? std::min<VkDeviceSize>(arena_block_bytes(), 128ull << 20) : arena_block_bytes(), min_size);
+    block->mSize = dedicated ? ((accel && as_pool_bytes()) ? as_class_bytes(min_size) : (min_size + 255) / 256 * 256) : std::max(accel ? std::min<VkDeviceSize>(arena_block_bytes(), 128ull << 20) : arena_block_bytes(), min_size);
     block->mShared = shared;
     block->mHost = host;
     block->mAccel = accel;
@@ -2429,6 +2454,33 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
             }
         }
     }
+    if (dedicated && accel && as_pool_bytes())
+    {
+        // <FS> a dedicated acceleration structure block that went empty and waits in the pool: the smallest one that holds the range and is not more than 1.5 times its class
+        const VkDeviceSize need = size + alignment;
+        const VkDeviceSize limit = as_class_bytes(need) * 3 / 2;
+        ArenaBlock* best = nullptr;
+        for (ArenaBlock* b : mArenaBlocks)
+        {
+            if (b && b->mPooled && b->mSize >= need && b->mSize <= limit && (!best || b->mSize < best->mSize))
+            {
+                best = b;
+            }
+        }
+        if (best)
+        {
+            best->mPooled = false;
+            mPoolBytes -= best->mSize;
+            if (place(best))
+            {
+                ++mArenaCounters.mAccelPoolHits;
+                return true;
+            }
+            best->mPooled = true;                   // (it could not hold it after all: back in the pool)
+            mPoolBytes += best->mSize;
+        }
+        ++mArenaCounters.mAccelPoolMisses;
+    }
     ArenaBlock* fresh = arenaNewBlock(size + alignment, kind, dedicated);
     if (!fresh || !place(fresh))
     {
@@ -2438,6 +2490,25 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
     return true;
 }
 
+void Context::arenaTrimPool()
+{
+    if (mFrameNumber - mPoolLastTrim < 60)
+    {
+        return;
+    }
+    mPoolLastTrim = mFrameNumber;
+    for (size_t i = 0; i < mArenaBlocks.size(); ++i)
+    {
+        ArenaBlock* b = mArenaBlocks[i];
+        if (b && b->mPooled && mFrameNumber - b->mIdleSince > 900)         // about 15 seconds without a taker
+        {
+            mPoolBytes -= b->mSize;
+            ++mArenaCounters.mAccelPoolTrimmed;
+            arenaDestroyBlock(b);
+        }
+    }
+}
+
 void Context::arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc)
 {
     flight(FL_ARENA_FREE_DONE, (unsigned long long)(uintptr_t)block, (unsigned long long)(uintptr_t)alloc, block ? (unsigned long long)block->mAddress : 0ull);
@@ -2445,6 +2516,15 @@ void Context::arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc)
     vmaVirtualFree(block->mVirtual, alloc);
     if (--block->mAllocs != 0)
     {
+        return;
+    }
+    if (block->mDedicated && block->mAccel && as_pool_bytes() && mPoolBytes + block->mSize <= as_pool_bytes())
+    {
+        // <FS> kept for the next big range of its size class (the video memory manager is not asked for 1 GB a second and given it back)
+        block->mPooled = true;
+        block->mIdleSince = mFrameNumber;
+        mPoolBytes += block->mSize;
+        arenaTrimPool();
         return;
     }
     // an empty block goes when it is a block of its own, or when another empty one of its kind is already waiting for the next allocation
@@ -2504,6 +2584,11 @@ ArenaStats Context::arenaStats()
             {
                 ++s.mAccelDedicatedAlive;
                 s.mAccelDedicatedBytes += b->mSize;
+            }
+            if (b->mPooled)
+            {
+                ++s.mAccelPooled;
+                s.mAccelPooledBytes += b->mSize;
             }
             continue;       // (the rest of the arena report leaves these out: acceleration structure storage has its own report in Rt)
         }

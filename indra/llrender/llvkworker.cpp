@@ -9770,7 +9770,8 @@ void after_frame()
                                                       << "), blocks made " << as.mAccelBlocksCreated - prev.mAccelBlocksCreated << " (dedicated " << as.mAccelDedicatedCreated - prev.mAccelDedicatedCreated << ", "
                                                       << ((as.mAccelCreatedBytes - prev.mAccelCreatedBytes) >> 20) << " MB, " << made / 1000.0 << " ms in vmaCreateBuffer = " << made / 1000.0 / dt << " ms/frame), blocks given back "
                                                       << as.mAccelBlocksReleased - prev.mAccelBlocksReleased << " (dedicated " << dedicated_released << ", lived "
-                                                      << (dedicated_released ? (double)(as.mAccelDedicatedLifeFrames - prev.mAccelDedicatedLifeFrames) / (double)dedicated_released : 0.0) << " frames on average)" << LL_ENDL;
+                                                      << (dedicated_released ? (double)(as.mAccelDedicatedLifeFrames - prev.mAccelDedicatedLifeFrames) / (double)dedicated_released : 0.0) << " frames on average) | pool of empty dedicated blocks: reused " << as.mAccelPoolHits - prev.mAccelPoolHits << ", not found " << as.mAccelPoolMisses - prev.mAccelPoolMisses
+                                                      << ", given back after a wait " << as.mAccelPoolTrimmed - prev.mAccelPoolTrimmed << ", holding now " << as.mAccelPooled << " blocks (" << (as.mAccelPooledBytes >> 20) << " MB)" << LL_ENDL;
                                 prev = as;
                             }
                         }
