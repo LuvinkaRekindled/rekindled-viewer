@@ -1082,8 +1082,8 @@ bool Renderer::createLayouts()
         {
             cap[t] = ctx.getCaps().mBindlessSmall;
         }
-        VkDescriptorSetLayoutBinding b2[BINDLESS_TABLES + 1] = {};
-        VkDescriptorBindingFlags binding_flags[BINDLESS_TABLES + 1] = {};
+        VkDescriptorSetLayoutBinding b2[BINDLESS_TABLES + 2] = {};
+        VkDescriptorBindingFlags binding_flags[BINDLESS_TABLES + 2] = {};
         for (U32 t = 0; t < BINDLESS_TABLES; ++t)
         {
             b2[t].binding = t;      // 0: 2D (render packets and bindless programs), 1: cube, 2: cube array, 3: 2D shadow
@@ -1100,7 +1100,13 @@ bool Renderer::createLayouts()
             b2[BINDLESS_TABLES].descriptorCount = 1;
             b2[BINDLESS_TABLES].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         }
-        const U32 binding_count = BINDLESS_TABLES + 1;
+        {
+            b2[FB_BINDING].binding = FB_BINDING;                 // 5: what the draws measured of the textures' need (H6): a storage buffer of uint, by handle
+            b2[FB_BINDING].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            b2[FB_BINDING].descriptorCount = 1;
+            b2[FB_BINDING].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        const U32 binding_count = BINDLESS_TABLES + 2;
         VkDescriptorSetLayoutBindingFlagsCreateInfo fi = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
         fi.bindingCount = binding_count;
         fi.pBindingFlags = binding_flags;
@@ -1114,7 +1120,7 @@ bool Renderer::createLayouts()
         {
             U32 total = 0;
             for (U32 t = 0; t < BINDLESS_TABLES; ++t) total += cap[t];
-            VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, total * Context::frameCount() }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Context::frameCount() } };
+            VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, total * Context::frameCount() }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * Context::frameCount() } };
             VkDescriptorPoolCreateInfo bi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
             bi.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
             bi.maxSets = Context::frameCount();
@@ -1162,6 +1168,25 @@ bool Renderer::createLayouts()
             if (ok)
             {
                 LL_INFOS("Vulkan") << "texture handles: a map of " << BINDLESS_TABLES * HANDLE_MAP_STRIDE << " handles per frame in flight" << LL_ENDL;
+                // H6: the measurement buffer (one for all frames: the copy at the end of a frame and the clear at the start of the next are ordered in the queue) and the copies the frame slots keep
+                const VkDeviceSize fb_bytes = (VkDeviceSize)FB_ENTRIES * sizeof(U32);
+                ok = ctx.createBuffer(fb_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Device, mFb);
+                for (U32 f = 0; f < Context::frameCount() && ok; ++f)
+                {
+                    ok = ctx.createBuffer(fb_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Readback, mFbRead[f]) && mFbRead[f].mMapped;
+                    mFbFrame[f] = 0;
+                }
+                for (U32 f = 0; f < Context::frameCount() && ok; ++f)
+                {
+                    VkDescriptorBufferInfo bufinfo = { mFb.mBuffer, 0, fb_bytes };
+                    VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+                    w.dstSet = mBindlessSet[f];
+                    w.dstBinding = FB_BINDING;
+                    w.descriptorCount = 1;
+                    w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    w.pBufferInfo = &bufinfo;
+                    vkUpdateDescriptorSets(dev, 1, &w, 0, nullptr);
+                }
             }
         }
         if (ok)
@@ -1921,6 +1946,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     harvestQueries(frame_slot);
     mCmd = cmd;
     handlesBeginFrame(frame_slot);          // what the finished frames gave back is free again; this frame's map catches up with the changes since it last ran
+    feedbackBeginFrame(frame_slot);         // the measurements the frame that used this slot copied out are read; the buffer starts again (not at a mid-frame flush: the frame goes on)
     mOccPending = mOccActive = -1;
     mSlot = frame_slot;
     // buffer writes made between frames get their staging space now
@@ -2008,6 +2034,7 @@ void Renderer::endFrame()
     endRendering(PE_FRAME);
     // descriptors queued during this frame are written before the command buffer is submitted
     bindlessFlush();
+    feedbackEndFrame();
 #if defined(TRACY_ENABLE)
     if (mTracyCtx && mCmd != VK_NULL_HANDLE)
     {
@@ -2773,6 +2800,90 @@ void Renderer::bindlessStart()
     mHandles.init(mBindlessCap, Context::frameCount());
     mBindlessFilled = true;
     LL_INFOS("Vulkan") << "texture handles: every descriptor of the " << Context::frameCount() << " frame sets holds the placeholder (" << mBindlessCap[0] << " 2D descriptors)" << LL_ENDL;
+}
+
+// LL_VK_FB_OFF=1: none of the H6 per-frame work (the clear, the copy out, the barriers, the harvest); with LL_VK_TEXFB=0 as well the frame is what H5 recorded
+static bool feedbackFrameWorkOff()
+{
+    static const bool off = []{ const char* e = getenv("LL_VK_TEXFB"); return !e || atoi(e) == 0 || getenv("LL_VK_FB_OFF"); }();
+    return off;
+}
+
+void Renderer::feedbackBeginFrame(U32 frame_slot)
+{
+    if (!mFb.valid() || frame_slot >= Context::FRAMES_IN_FLIGHT || feedbackFrameWorkOff())
+    {
+        return;
+    }
+    Context& ctx = Context::instance();
+    if (mFbFrame[frame_slot] && mFbRead[frame_slot].valid())
+    {
+        // the frame that used this slot has finished (the frame wait of the context): its copy is complete
+        const U32 limit = std::min<U32>(FB_ENTRIES, mHandles.handleLimit(0));
+        vmaInvalidateAllocation(ctx.getAllocator(), mFbRead[frame_slot].mAllocation, 0, (VkDeviceSize)limit * sizeof(U32));
+        const U32* words = (const U32*)mFbRead[frame_slot].mMapped;
+        FbBatch batch;
+        batch.mFrame = mFbFrame[frame_slot];
+        for (U32 h = 1; h < limit; ++h)
+        {
+            if (words[h] != 0xFFFFFFFFu)
+            {
+                F32 area;
+                memcpy(&area, &words[h], sizeof(area));
+                batch.mReadings.push_back({ h, area });
+            }
+        }
+        ++mFbFrames;
+        mFbReadings += batch.mReadings.size();
+        mFbFrame[frame_slot] = 0;
+        mFbBatches.push_back(std::move(batch));
+    }
+    if (mRestarting)
+    {
+        return;
+    }
+    const VkDeviceSize fb_bytes = (VkDeviceSize)FB_ENTRIES * sizeof(U32);
+    auto barrier = [this](VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access)
+    {
+        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        mb.srcStageMask = src_stage; mb.srcAccessMask = src_access; mb.dstStageMask = dst_stage; mb.dstAccessMask = dst_access;
+        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        di.memoryBarrierCount = 1;
+        di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(mCmd, &di);
+    };
+    barrier(VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);       // (the copy out of the last frame has read it)
+    vkCmdFillBuffer(mCmd, mFb.mBuffer, 0, fb_bytes, 0xFFFFFFFFu);
+    barrier(VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+}
+
+void Renderer::feedbackEndFrame()
+{
+    if (!mFb.valid() || mSlot >= Context::FRAMES_IN_FLIGHT || !mFbRead[mSlot].valid() || mCmd == VK_NULL_HANDLE || feedbackFrameWorkOff())
+    {
+        return;
+    }
+    const VkDeviceSize fb_bytes = (VkDeviceSize)FB_ENTRIES * sizeof(U32);
+    auto barrier = [this](VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access)
+    {
+        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        mb.srcStageMask = src_stage; mb.srcAccessMask = src_access; mb.dstStageMask = dst_stage; mb.dstAccessMask = dst_access;
+        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        di.memoryBarrierCount = 1;
+        di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(mCmd, &di);
+    };
+    barrier(VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+    VkBufferCopy copy = { 0, 0, fb_bytes };
+    vkCmdCopyBuffer(mCmd, mFb.mBuffer, mFbRead[mSlot].mBuffer, 1, &copy);
+    barrier(VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
+    mFbFrame[mSlot] = Context::instance().getFrameNumber();
+}
+
+void Renderer::feedbackTake(std::vector<FbBatch>& out)
+{
+    out.swap(mFbBatches);
+    mFbBatches.clear();
 }
 
 void Renderer::handlesBeginFrame(U32 frame_slot)

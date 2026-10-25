@@ -223,10 +223,19 @@ public:
         F32 mTime = 0.f;
         U64 mTeHash = 0;        // verify mode only: what the loop read, to tell what changed when a kept result differs: the texture entry scales of the faces,
         U64 mGeomHash = 0;      // and the positions and extents of the faces
+        bool mAllOccluded = false;  // every face (and there is at least one) is in a group Hi-Z calls occluded
     };
     FaceLoopCache mFaceCache;
     U32 mFaceStamp = 0;
-    void bumpFaceStamp() { ++mFaceStamp; }
+    // <FS> H6 (doc/vulkan/PLAN-texture-handles.md): LLViewerTextureList keeps the textures on two lists, the active ones it walks at the normal rate and the dormant ones (no face on screen, nothing
+    // asking for them) at a slow one. mListState: 0 on neither, 1 active, 2 dormant. Whatever a dormant texture depends on changing (a face, a boost, a callback, a group coming into view) wakes it.
+    U8 mListState = 0;
+    bool mWakeQueued = false;
+    S32 mListIndex = -1;
+    U32 mDormantAtFrame = 0;
+    U32 mLastWakeFrame = 0;
+    void wakeForList() const;
+    void bumpFaceStamp() { ++mFaceStamp; wakeForList(); }
 protected:
     ll_face_list_t    mFaceList[LLRender::NUM_TEXTURE_CHANNELS]; //reverse pointer pointing to the faces using this image as texture
     U32               mNumFaces[LLRender::NUM_TEXTURE_CHANNELS];

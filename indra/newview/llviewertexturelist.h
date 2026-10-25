@@ -95,6 +95,15 @@ public:
     static void updateCameraEpoch();    // <FS> native-vk (LL_VK_TEXSTAMP): once a frame
     static U32 sCameraEpoch;    // <FS> native-vk (LL_VK_TEXSTAMP): goes up when the camera (position, direction, field of view, window) moves to another cell of a coarse grid
     static bool sViewSteady;    // <FS> the view has not changed for a while (see updateImagesFetchTextures): slower texture refresh rates
+
+    // <FS> H6 (doc/vulkan/PLAN-texture-handles.md): the textures on two lists, the active ones walked at the normal rate and the dormant ones (no face on screen, nothing asking for them) at a slow one, so the
+    // walk of updateImagesFetchTextures does not visit the whole table. LL_VK_TEXIDX: 0 the old walk over the whole map, 1 the lists, 2 (default) the lists are kept and everything is walked at the old rate while a
+    // dormant texture that is found to be wanted without anything having woken it is counted as a miss (VkTexIdx log line every 10 s).
+    static S32 sIdxMode;
+    static bool sInListUpdate;                      // the list's own pass is running: its addTextureStats calls wake nothing
+    void wakeTexture(LLViewerTexture* tex);         // a dormant texture goes back to the active list at the next pass
+    void idxRemove(LLViewerFetchedTexture* tex);
+    static void wakeGroupTextures(class LLSpatialGroup* group);     // a group came into view: the textures of its faces are looked at again
     static bool createUploadFile(LLPointer<LLImageRaw> raw_image,
                                  const std::string& out_filename,
                                  const S32 max_image_dimentions = LLViewerFetchedTexture::MAX_IMAGE_SIZE_DEFAULT,
@@ -163,6 +172,14 @@ private:
 
     void addImage(LLViewerFetchedTexture *image, ETexListType tex_type);
     void deleteImage(LLViewerFetchedTexture *image);
+
+    // <FS> H6: the lists (raw pointers: the textures are held by mUUIDMap and mImageList; every removal goes through idxRemove)
+    std::vector<LLViewerFetchedTexture*> mActive, mDormant, mWake;
+    size_t mActiveCursor = 0, mDormantCursor = 0;
+    void idxAdd(LLViewerFetchedTexture* tex);
+    void idxMove(LLViewerFetchedTexture* tex, U8 state);
+    void idxClear();
+    void idxLog();
 
     void addImageToList(LLViewerFetchedTexture *image);
     void removeImageFromList(LLViewerFetchedTexture *image);

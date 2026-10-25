@@ -38,6 +38,8 @@
 #include "llshaderprogram.h"
 #include "llviewershadermgr.h"
 #include "lldrawpoolwater.h"
+#include "llspatialpartition.h"
+#include "llviewertexturelist.h"
 
 //-----------------------------------------------------------------------------------
 //static variables definitions
@@ -1258,6 +1260,10 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             {
                 LLCullShadow::touch(this);  // <FS> S7 C1b
             }
+            if (mSpatialPartition && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+            {
+                LLViewerTextureList::wakeGroupTextures(static_cast<LLSpatialGroup*>(this));     // <FS> H6: it came into view: its textures are looked at again
+            }
             mOcclusionState[LLViewerCamera::sCurCameraID] &= ~state;
             break;
 
@@ -1281,6 +1287,10 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             if (LLCullShadow::sOn && (state & OCCLUDED) && (mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 LLCullShadow::touch(this);  // <FS> S7 C1b
+            }
+            if (mSpatialPartition && (state & OCCLUDED) && (mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+            {
+                LLViewerTextureList::wakeGroupTextures(static_cast<LLSpatialGroup*>(this));     // <FS> H6
             }
             for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
             {

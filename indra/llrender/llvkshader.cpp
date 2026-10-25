@@ -650,6 +650,20 @@ static std::string debug_wrap_fragment(const std::string& src, std::vector<std::
     return out + add.str();
 }
 
+// H6: the pull shaders measure the need of each texture (llFbNote); LL_VK_TEXFB=0 turns that off in the shaders (the call sites stay, the function is empty)
+static bool textureFeedbackShaders()
+{
+    // off unless LL_VK_TEXFB is set to something but 0: the pull shaders then have exactly the text they had before the measurement (see fbPlainShaders in llshadermgr.cpp)
+    static const bool on = []{ const char* e = getenv("LL_VK_TEXFB"); return e && atoi(e) != 0 && !getenv("LL_VK_FB_OFF"); }();
+    return on;
+}
+// LL_VK_TEXFB=2 (a test of the cost, not a mode to use: depth is written for fragments that are discarded afterwards): the programs that measure test depth before the shader runs
+static bool textureFeedbackEarlyTests()
+{
+    static const bool on = []{ const char* e = getenv("LL_VK_TEXFB"); return e && atoi(e) == 2; }();
+    return on;
+}
+
 static bool compileProgramUncached(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
                                    ProgramInfo& out, const std::string& dump_dir)
 {
@@ -1023,6 +1037,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
     kept_sources.reserve(works.size());
     glslang::TProgram program;
     std::set<StageSource::Stage> present_stages;
+    bool fb_defined = false;                    // H6: the body of llFbNote goes into one fragment object of the program
 
     for (const StageWork& w : works)
     {
@@ -1043,6 +1058,31 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                     "#extension GL_EXT_nonuniform_qualifier : enable\n";
         }
         text << bool_defines.str() << block.str() << bindless_decl.str() << handle_decl.str();
+        if (w.mStage == StageSource::Fragment && has_own_table && textureFeedbackShaders())
+        {
+            // <FS> H6: what this draw needs of a texture (doc/vulkan/PLAN-texture-handles.md): llFbNote(id, uv) records, per texture id of the 2D table, the smallest area of texture coordinates one pixel
+            // covered (float bits, atomicMin; 0xFFFFFFFF = not sampled). One invocation of each quad writes (the derivatives are the quad's), and only when it is finer than what is there.
+            text << "layout(std430, set = 2, binding = 5) buffer LlFeedback { uint ll_fb[]; };\n";
+            if (textureFeedbackEarlyTests())
+            {
+                text << "layout(early_fragment_tests) in;\n";
+            }
+            if (fb_defined)
+            {
+                text << "void llFbNote(uint id, vec2 uv);\n";        // (the body is in another fragment object of the program: the linker refuses two)
+            }
+            else
+            {
+                fb_defined = true;
+                text << "void llFbNote(uint id, vec2 uv)\n{\n"
+                        "    vec2 dx = dFdx(uv);\n    vec2 dy = dFdy(uv);\n"
+                        "    if (id == 0u || id >= 65536u || ((int(gl_FragCoord.x) | int(gl_FragCoord.y)) & 1) != 0)\n    {\n        return;\n    }\n"
+                        "    float area = abs(dx.x * dy.y - dx.y * dy.x);\n"
+                        "    if (!(area > 1e-12))\n    {\n        return;\n    }\n"
+                        "    uint bits = floatBitsToUint(area);\n"
+                        "    if (bits < ll_fb[id])\n    {\n        atomicMin(ll_fb[id], bits);\n    }\n}\n";
+            }
+        }
         if (w.mUsesRt)
         {
             // set 3: the scene (binding 0) and the geometry records of its alpha masked structures (binding 1, GpuGeom in llvkrt.cpp); the frame's 2D table as ll_rt_tex
@@ -1487,7 +1527,7 @@ std::string spirv_cache_key(const std::vector<StageSource>& stages, const Shader
         h.str(st.mSource);
     }
     for (const std::string& n : env.mAttributeNames) h.str(n);
-    h.str("|handles");       // (the translation: the samplers are ids read through the handle map)
+    h.str(textureFeedbackShaders() ? (textureFeedbackEarlyTests() ? "|handles|fb|early" : "|handles|fb") : "|handles");       // (the translation: the samplers are ids read through the handle map, and the pull shaders measure the need)
 
     h.str("|blocks");
     for (const std::string& n : env.mUniformBlockNames) h.str(n);

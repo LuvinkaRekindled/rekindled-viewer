@@ -826,11 +826,23 @@ void LLViewerTexture::dump()
             << LL_ENDL;
 }
 
+void LLViewerTexture::wakeForList() const
+{
+    if (mListState == 2)
+    {
+        gTextureList.wakeTexture(const_cast<LLViewerTexture*>(this));
+    }
+}
+
 void LLViewerTexture::setBoostLevel(S32 level)
 {
     if(mBoostLevel != level)
     {
         mBoostLevel = level;
+        if (level != LLViewerTexture::BOOST_NONE)
+        {
+            wakeForList();
+        }
         if(mBoostLevel != LLViewerTexture::BOOST_NONE &&
             mBoostLevel != LLViewerTexture::BOOST_SELECTED &&
             mBoostLevel != LLViewerTexture::BOOST_ICON &&
@@ -934,6 +946,10 @@ void LLViewerTexture::addTextureStats(F32 virtual_size, bool needs_gltexture) co
     if(needs_gltexture)
     {
         mNeedsImageTexture = true;
+    }
+    if (virtual_size > 0.f && mListState == 2 && !LLViewerTextureList::sInListUpdate)
+    {
+        wakeForList();      // <FS> H6: somebody other than the list's own pass wants this texture
     }
 
     virtual_size = llmin(virtual_size, LLViewerFetchedTexture::sMaxVirtualSize);
@@ -1282,6 +1298,10 @@ LLViewerFetchedTexture::~LLViewerFetchedTexture()
     if (mHasFetcher && LLAppViewer::getTextureFetch())
     {
         LLAppViewer::getTextureFetch()->deleteRequest(getID(), true);
+    }
+    if (mListState != 0)
+    {
+        gTextureList.idxRemove(this);       // <FS> H6: never leave a pointer on the lists
     }
     cleanup();
 }
@@ -2450,6 +2470,7 @@ void LLViewerFetchedTexture::setLoadedCallback( loaded_callback_func loaded_call
 
     LLLoadedCallbackEntry* entryp = new LLLoadedCallbackEntry(loaded_callback, discard_level, keep_imageraw, userdata, src_callback_list, this, pause);
     mLoadedCallbackList.push_back(entryp);
+    wakeForList();      // <FS> H6: a texture with a callback is not left on the slow list
 
     mNeedsAux |= needs_aux;
     if(keep_imageraw)

@@ -34,6 +34,14 @@
 #include "llsdserialize.h"
 #include "hbxxh.h"
 
+// H6: the pull shaders have exactly the text they had before the texture need was measured (llFbTex is the plain table sample, no llFbNote) unless LL_VK_TEXFB is set to something but 0
+// (the measurement costs about a quarter of the frame rate: stores in the shaders cost them the early depth test; see doc/vulkan/PLAN-texture-handles.md section 17)
+static bool fbPlainShaders()
+{
+    static const bool plain = []{ const char* e = getenv("LL_VK_TEXFB"); return !e || atoi(e) == 0 || getenv("LL_VK_FB_OFF"); }();
+    return plain;
+}
+
 #if LL_DARWIN
 #include "OpenGL/OpenGL.h"
 #endif
@@ -696,6 +704,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot;\n");
         extra_code_text[extra_code_count++] = strdup("vec4 diffuseLookup(vec2 texcoord)\n");
         extra_code_text[extra_code_count++] = strdup("{\n");
+        if (!fbPlainShaders()) extra_code_text[extra_code_count++] = strdup("    llFbNote(vary_slot, texcoord);\n");
         extra_code_text[extra_code_count++] = strdup("    return texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot))], texcoord);\n");
         extra_code_text[extra_code_count++] = strdup("}\n");
     }
@@ -706,6 +715,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         extra_code_text[extra_code_count++] = strdup("#extension GL_EXT_nonuniform_qualifier : require\n");
         extra_code_text[extra_code_count++] = strdup("layout(set = 2, binding = 0) uniform sampler2D ll_bindless_textures[];\n");
         extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot;\n");
+        extra_code_text[extra_code_count++] = strdup(fbPlainShaders() ? "#define llFbTex(slot, uv) texture(ll_bindless_textures[nonuniformEXT(LL_HM(slot))], uv)\n" : "vec4 llFbTex(uint slot, vec2 uv)\n{\n    llFbNote(slot, uv);\n    return texture(ll_bindless_textures[nonuniformEXT(LL_HM(slot))], uv);\n}\n");
         extra_code_text[extra_code_count++] = strdup("#ifdef HAS_NORMAL_MAP\n");
         extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_normal;\n");
         extra_code_text[extra_code_count++] = strdup("#endif\n");
@@ -730,7 +740,8 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_normal;\n");
         extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_specular;\n");
         extra_code_text[extra_code_count++] = strdup("flat in uint vary_slot_emissive;\n");
-        extra_code_text[extra_code_count++] = strdup("vec3 pbrNormalTap(vec2 uv)\n{\n    vec3 tap = texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot_normal))], uv).xyz * 2.0 - 1.0;\n    return vary_slot_normal == 0u ? vec3(0.0, 0.0, 1.0) : tap;\n}\n");
+        extra_code_text[extra_code_count++] = strdup(fbPlainShaders() ? "#define llFbTex(slot, uv) texture(ll_bindless_textures[nonuniformEXT(LL_HM(slot))], uv)\n" : "vec4 llFbTex(uint slot, vec2 uv)\n{\n    llFbNote(slot, uv);\n    return texture(ll_bindless_textures[nonuniformEXT(LL_HM(slot))], uv);\n}\n");
+        extra_code_text[extra_code_count++] = strdup("vec3 pbrNormalTap(vec2 uv)\n{\n    vec3 tap = llFbTex(vary_slot_normal, uv).xyz * 2.0 - 1.0;\n    return vary_slot_normal == 0u ? vec3(0.0, 0.0, 1.0) : tap;\n}\n");
     }
     else if (texture_index_channels > 0 && type == ShaderStage::Fragment)
     {
@@ -907,9 +918,9 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                     replace("uniform sampler2D emissiveMap;", "");
                     replace("uniform sampler2D specularMap;", "");
                     replace("texture(bumpMap, normal_texcoord.xy).xyz*2.0-1.0", "pbrNormalTap(normal_texcoord.xy)");
-                    replace("texture(diffuseMap,", "texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot))],");
-                    replace("texture(specularMap,", "texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot_specular))],");
-                    replace("texture(emissiveMap,", "texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot_emissive))],");
+                    replace("texture(diffuseMap,", "llFbTex(vary_slot,");
+                    replace("texture(specularMap,", "llFbTex(vary_slot_specular,");
+                    replace("texture(emissiveMap,", "llFbTex(vary_slot_emissive,");
                     replace("uniform float metallicFactor;", "flat in float metallicFactor;");
                     replace("uniform float roughnessFactor;", "flat in float roughnessFactor;");
                     replace("uniform vec3 emissiveColor;", "flat in vec3 emissiveColor;");
@@ -921,9 +932,9 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                 replace("uniform sampler2D diffuseMap;", "");
                 replace("uniform sampler2D bumpMap;", "");
                 replace("uniform sampler2D specularMap;", "");
-                replace("texture(diffuseMap,", "texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot))],");
-                replace("texture(bumpMap,", "texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot_normal))],");
-                replace("texture(specularMap,", "texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot_specular))],");
+                replace("texture(diffuseMap,", "llFbTex(vary_slot,");
+                replace("texture(bumpMap,", "llFbTex(vary_slot_normal,");
+                replace("texture(specularMap,", "llFbTex(vary_slot_specular,");
                 replace("uniform float emissive_brightness;", "flat in float emissive_brightness;");
                 replace("uniform float env_intensity;", "flat in float env_intensity;");
                 replace("uniform vec4 specular_color;", "flat in vec4 specular_color;");
