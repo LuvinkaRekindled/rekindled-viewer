@@ -2381,6 +2381,95 @@ void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
     }
 }
 
+// <FS> LL_VK_SCENECENSUS=1: how much the scene holds (objects, drawables, spatial groups with built geometry, draw infos and triangles, lights, queues) against what is inside the world camera's frustum.
+// The cost that stays after a turn (section 17.16) grows with what has been built; this shows how much of it is in view.
+void LLPipeline::sceneStateCensus()
+{
+    static const bool on = getenv("LL_VK_SCENECENSUS") != nullptr;
+    if (!on)
+    {
+        return;
+    }
+    static U32 last = 0;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (frame - last < 600)
+    {
+        return;
+    }
+    last = frame;
+    LLCamera& camera = *LLViewerCamera::getInstance();
+    U64 objects = 0, drawables = 0, active = 0, avatars = 0, attachments = 0, rigged = 0, with_text = 0;
+    std::unordered_set<LLSpatialGroup*> groups;
+    const S32 count = gObjectList.getNumObjects();
+    for (S32 i = 0; i < count; ++i)
+    {
+        LLViewerObject* object = gObjectList.getObject(i);
+        if (!object || object->isDead())
+        {
+            continue;
+        }
+        ++objects;
+        avatars += object->isAvatar();
+        attachments += object->isAttachment();
+        LLDrawable* drawable = object->mDrawable;
+        if (!drawable)
+        {
+            continue;
+        }
+        ++drawables;
+        active += drawable->isState(LLDrawable::ACTIVE);
+        rigged += drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD);
+        with_text += object->mText.notNull();
+        if (LLSpatialGroup* group = drawable->getSpatialGroup())
+        {
+            groups.insert(group);
+        }
+    }
+    U64 built = 0, in_frustum = 0, built_out = 0, infos = 0, infos_in = 0, tris = 0, tris_in = 0, elements = 0, elements_in = 0, visible_flag = 0;
+    for (LLSpatialGroup* group : groups)
+    {
+        if (group->isDead())
+        {
+            continue;
+        }
+        const LLVector4a* b = group->getBounds();
+        const bool in = camera.AABBInFrustum(b[0], b[1]) != 0;
+        U64 group_infos = 0, group_tris = 0;
+        for (const auto& kv : group->mDrawMap)
+        {
+            for (const LLDrawInfo* info : kv.second)
+            {
+                ++group_infos;
+                group_tris += info->mCount / 3;
+            }
+        }
+        const bool has = group_infos > 0;
+        built += has;
+        in_frustum += in;
+        built_out += has && !in;
+        infos += group_infos;
+        tris += group_tris;
+        elements += group->getElementCount();
+        if (in)
+        {
+            infos_in += group_infos;
+            tris_in += group_tris;
+            elements_in += group->getElementCount();
+        }
+        visible_flag += group->isVisible();
+    }
+    U64 lights_visible = 0;
+    for (LLDrawable* light : mLights)
+    {
+        lights_visible += light && light->isVisible();
+    }
+    LL_INFOS("SceneCensus") << "objects " << objects << " (avatars " << avatars << ", attachments " << attachments << ", active objects " << gObjectList.getNumActiveObjects() << "), drawables " << drawables
+        << " (active " << active << ", rigged " << rigged << ", with hover text " << with_text << ") | spatial groups of the objects " << groups.size() << ": with built geometry " << built << ", inside the frustum " << in_frustum
+        << ", built and outside " << built_out << ", flagged visible " << visible_flag << " | draw infos " << infos << " (inside the frustum " << infos_in << "), triangles " << (tris / 1000) << " k (inside " << (tris_in / 1000)
+        << " k), elements " << elements << " (inside " << elements_in << ") | lights " << mLights.size() << " (visible " << lights_visible << ", nearby " << mNearbyLights.size() << ") | queues: moved " << mMovedList.size()
+        << ", moved bridges " << mMovedBridge.size() << ", build " << mBuildQ1.size() << ", groups to rebuild " << mGroupQ1.size() << ", mesh dirty " << mMeshDirtyGroup.size() << ", retextured " << mRetexturedList.size() << LL_ENDL;
+}
+
 void LLPipeline::updateMove()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
