@@ -542,7 +542,7 @@ struct SamplerEntry
     S32 mIndexUniform = -1;
 };
 
-// the bindless table (set 2 binding) a sampler type reads, -1: not supported (the program keeps the push descriptor path)
+// the table (set 2 binding) a sampler type reads, -1: not supported (the program does not compile)
 static int bindless_table(const std::string& type)
 {
     if (type == "sampler2D") return 0;
@@ -844,8 +844,8 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
 
     // <FS> bindless samplers: every sampler of the program is a plain 2D / cube / cube array / 2D shadow sampler (not an array), no geometry stage, no table of its own.
     // Each sampler becomes a table slot read from a loose uint uniform (ll_ti_<name>); the viewer's sampler name is a macro for the table element. A program with a 2D table of its own (the pull shaders:
-    // the textures of the rows) takes it as table 0 and has its fixed samplers (the deferred buffers, the shadow maps) translated as well: no push descriptors left.
-    bool bindless = env.mBindless && !samplers.empty() && (!has_own_table || own_table_type == "sampler2D");
+    // the textures of the rows) takes it as table 0 and has its fixed samplers (the deferred buffers, the shadow maps) translated as well.
+    bool bindless = !samplers.empty() && (!has_own_table || own_table_type == "sampler2D");
     for (const SamplerEntry& s : samplers)
     {
         if (!s.mArray.empty() || bindless_table(s.mType) < 0)
@@ -860,24 +860,20 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
             bindless = false;
         }
     }
-    if (env.mBindless && !bindless)
+    if (!bindless && !samplers.empty())
     {
-        static int sLogged = 0;
-        if (sLogged < 12)
+        // every texture is read through the handle map: a program whose samplers cannot be translated cannot draw
+        std::string why = has_own_table ? "declares a table of its own that is not a plain 2D sampler array" : "";
+        for (const SamplerEntry& s : samplers)
         {
-            ++sLogged;
-            std::string why = samplers.empty() ? "no samplers" : has_own_table ? "declares its own set-2 table" : "";
-            for (const SamplerEntry& s : samplers)
-            {
-                if (!s.mArray.empty()) why = "sampler array " + s.mName + s.mArray;
-                else if (bindless_table(s.mType) < 0) why = "sampler type '" + s.mType + "' (" + s.mName + ")";
-            }
-            for (const StageWork& w : works)
-            {
-                if (w.mStage == StageSource::Geometry) why = "geometry stage";
-            }
-            LL_INFOS("VkShader") << "bindless off for " << program_name << ": " << why << LL_ENDL;
+            if (!s.mArray.empty()) why = "sampler array " + s.mName + s.mArray;
+            else if (bindless_table(s.mType) < 0) why = "sampler type '" + s.mType + "' (" + s.mName + ")";
         }
+        for (const StageWork& w : works)
+        {
+            if (w.mStage == StageSource::Geometry) why = "geometry stage";
+        }
+        return fail("its samplers cannot be read through the texture handles: " + why);
     }
     std::ostringstream bindless_decl;
     if (bindless)
@@ -926,7 +922,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         }
     }
 
-    // <FS> texture handles: LL_HM(id) is the descriptor index of the texture id (the frame's map, set 2 binding 4), or the id itself with LL_VK_HANDLES=0. Defined for every program (the pull
+    // <FS> texture handles: LL_HM(id) is the descriptor index of the texture id (the frame's map, set 2 binding 4). Defined for every program (the pull
     // shaders declare the table themselves and use it in code the shader manager injects); the map is declared where a program has a table of its own, translated samplers or ray queries.
     std::ostringstream handle_decl;
     {
@@ -935,7 +931,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
         {
             uses_rt = uses_rt || w.mUsesRt;
         }
-        if (handleMapShaders() && (bindless || has_own_table || uses_rt))
+        if (bindless || has_own_table || uses_rt)
         {
             handle_decl << "layout(std430, set = 2, binding = 4) readonly buffer LlHandleMap { uint ll_hm[]; };\n#define LL_HM(id) ll_hm[(id)]\n";
         }
@@ -1182,15 +1178,7 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                         text << item.mText << "\n";        // <FS> the bindless table keeps the layout the shader gave it
                         continue;
                     }
-                    if (bindless)
-                    {
-                        continue;       // declared through the tables and the defines above
-                    }
-                    for (const Declarator& dc : d.mDeclarators)
-                    {
-                        const U32 binding = samplers[sampler_index[dc.mName]].mBinding;
-                        emit_with_layout(dc, "set = 1, binding = " + std::to_string(binding), true);
-                    }
+                    continue;       // (a program with samplers is translated: declared through the tables and the defines above)
                 }
                 // loose non-opaque uniforms were moved into the block
                 continue;
@@ -1499,8 +1487,7 @@ std::string spirv_cache_key(const std::vector<StageSource>& stages, const Shader
         h.str(st.mSource);
     }
     for (const std::string& n : env.mAttributeNames) h.str(n);
-    h.str(env.mBindless ? "|bindless" : "|classic");
-    h.str(handleMapShaders() ? "|handles" : "|nohandles");       // <FS> the translation differs (LL_HM reads the map or is the id): a cached program of the other kind must not be loaded
+    h.str("|handles");       // (the translation: the samplers are ids read through the handle map)
 
     h.str("|blocks");
     for (const std::string& n : env.mUniformBlockNames) h.str(n);
@@ -1576,24 +1563,6 @@ void spirv_cache_store(const std::string& path, const ProgramInfo& info)
 U32 sCacheHits = 0, sCacheMisses = 0;
 }
 
-bool handleMapShaders()
-{
-    return Context::instance().getCaps().mBindlessSlots != 0;      // (the map is how a program reads a texture: it is not optional any more)
-}
-
-bool bindlessShaders()
-{
-    static const bool off = getenv("LL_VK_BINDLESS") && getenv("LL_VK_BINDLESS")[0] == '0';
-    const bool on = !off && Context::instance().getCaps().mBindlessSlots != 0;
-    static bool sLogged = false;
-    if (!sLogged)
-    {
-        sLogged = true;
-        LL_INFOS("VkShader") << "bindless shaders: " << (on ? "on" : "off") << " (LL_VK_BINDLESS " << (off ? "0" : "unset") << ", slots " << Context::instance().getCaps().mBindlessSlots << ")" << LL_ENDL;
-    }
-    return on;
-}
-
 bool compileProgramImpl(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
                     ProgramInfo& out, const std::string& dump_dir)
 {
@@ -1612,15 +1581,7 @@ bool compileProgramImpl(const std::string& program_name, const std::vector<Stage
             return true;
         }
     }
-    bool ok = compileProgramUncached(program_name, stages, env, out, dump_dir);
-    if (!ok && env.mBindless)
-    {
-        // the bindless translation did not compile (an unusual use of a sampler): the program keeps the push descriptor path
-        ShaderEnv classic = env;
-        classic.mBindless = false;
-        LL_WARNS("VkShader") << "bindless translation of " << program_name << " failed (" << out.mError.substr(0, 300) << "), using the classic path" << LL_ENDL;
-        ok = compileProgramUncached(program_name, stages, classic, out, dump_dir);
-    }
+    const bool ok = compileProgramUncached(program_name, stages, env, out, dump_dir);
     if (ok && !path.empty())
     {
         ++sCacheMisses;
@@ -1629,33 +1590,9 @@ bool compileProgramImpl(const std::string& program_name, const std::vector<Stage
     return ok;
 }
 
-// LL_VK_BINDLESS_ONLY=name1|name2|... : only the programs with exactly one of these names read their textures through the bindless tables, the rest use the classic push descriptor
-// path. LL_VK_BINDLESS_SKIP=name1|name2 : the listed programs use the classic path. For bisecting a bindless crash (the names are in the log: "program '<name>': bindless").
-static bool name_matches(const std::string& name, const char* list)
-{
-    const std::string rest(list);
-    size_t pos = 0;
-    while (pos <= rest.size())
-    {
-        size_t end = rest.find('|', pos);
-        if (end == std::string::npos) end = rest.size();
-        if (rest.compare(pos, end - pos, name) == 0 && end - pos == name.size()) return true;
-        pos = end + 1;
-    }
-    return false;
-}
-
 bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
                     ProgramInfo& out, const std::string& dump_dir)
 {
-    static const char* only = getenv("LL_VK_BINDLESS_ONLY");
-    static const char* skip = getenv("LL_VK_BINDLESS_SKIP");
-    if (env.mBindless && ((only && !name_matches(program_name, only)) || (skip && name_matches(program_name, skip))))
-    {
-        ShaderEnv classic = env;
-        classic.mBindless = false;
-        return compileProgramImpl(program_name, stages, classic, out, dump_dir);
-    }
     return compileProgramImpl(program_name, stages, env, out, dump_dir);
 }
 

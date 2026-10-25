@@ -401,6 +401,7 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
             mSamplerTable.push_back(s.mType == "samplerCube" ? 1 : s.mType == "samplerCubeArray" ? 2 : s.mType == "sampler2DShadow" ? 3 : 0);
             if (!ok)
             {
+                LL_WARNS("VkShader") << "program '" << mName << "': the sampler " << s.mName << " has no texture id uniform: it draws without its textures" << LL_ENDL;
                 mBindless = false;
             }
         }
@@ -417,14 +418,14 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         }
     }
     {
-        // <FS> how many programs read their textures through the bindless tables (the rest keep the push descriptor path)
+        // <FS> how many programs read their textures through the texture handles
         static U32 sPrograms = 0, sBindlessPrograms = 0, sNoSamplers = 0;
         ++sPrograms;
         if (mBindless) ++sBindlessPrograms;
         if (mInfo.mSamplers.empty()) ++sNoSamplers;
         if (!mInfo.mSamplers.empty())
         {
-            LL_INFOS("VkShader") << "program '" << mName << "': " << (mBindless ? "bindless" : "classic") << ", " << mInfo.mSamplers.size() << " samplers" << LL_ENDL;
+            LL_INFOS("VkShader") << "program '" << mName << "': " << (mBindless ? "texture handles" : "NO TEXTURES") << ", " << mInfo.mSamplers.size() << " samplers" << LL_ENDL;
         }
         if (sPrograms % 50 == 0)
         {
@@ -1055,26 +1056,24 @@ bool Renderer::createLayouts()
         return false;
     }
 
-    // set 1: samplers, pushed with the draw
-    VkDescriptorSetLayoutBinding b1[MAX_TEXTURE_UNITS] = {};
-    for (U32 i = 0; i < MAX_TEXTURE_UNITS; ++i)
-    {
-        b1[i].binding = i;
-        b1[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        b1[i].descriptorCount = 1;
-        b1[i].stageFlags = all_graphics_stages();
-    }
+    // set 1: nothing any more (every texture is read through the handle map of set 2); the empty set stays in the pipeline layouts so that the numbers of sets 2 and 3 do not change
     VkDescriptorSetLayoutCreateInfo l1 = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    l1.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
-    l1.bindingCount = MAX_TEXTURE_UNITS;
-    l1.pBindings = b1;
+    l1.bindingCount = 0;
+    l1.pBindings = nullptr;
     if (!vk_ok(vkCreateDescriptorSetLayout(dev, &l1, nullptr, &mSet1Layout), "set 1 layout"))
     {
         return false;
     }
 
     // <FS> set 2: a table of sampled images that shaders index at run time, written as a frame needs them (render packets with textures). Not needed to run.
-    if (const U32 slots = ctx.getCaps().mBindlessSlots)
+    // (required: every texture is read through the handle map and the tables of this set)
+    const U32 slots = ctx.getCaps().mBindlessSlots;
+    if (!slots || !ctx.getCaps().mBindlessUpdateUnused)
+    {
+        LL_WARNS("Vulkan") << "this device cannot index sampled images at run time with updates while in use (slots " << slots << ", update unused while pending "
+                           << (int)ctx.getCaps().mBindlessUpdateUnused << "): the texture handles need both" << LL_ENDL;
+        return false;
+    }
     {
         // the 2D table is the one a scene fills (a heavy sim names thousands of textures in a frame); cubes, cube arrays and shadow maps are a handful
         U32 cap[BINDLESS_TABLES];
@@ -1083,7 +1082,6 @@ bool Renderer::createLayouts()
         {
             cap[t] = ctx.getCaps().mBindlessSmall;
         }
-        const bool handles = handleMapShaders();
         VkDescriptorSetLayoutBinding b2[BINDLESS_TABLES + 1] = {};
         VkDescriptorBindingFlags binding_flags[BINDLESS_TABLES + 1] = {};
         for (U32 t = 0; t < BINDLESS_TABLES; ++t)
@@ -1093,22 +1091,16 @@ bool Renderer::createLayouts()
             b2[t].descriptorCount = cap[t];
             b2[t].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
             binding_flags[t] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
-            // Entries are written in the middle of recording a frame, while work recorded earlier (a flush, the previous frame of a shared set) may still be pending: without this bit that is
-            // undefined for EVERY entry of the set. LL_VK_BINDLESS_NOUNUSED=1 leaves it out (A/B switch).
-            static const bool leave_out = getenv("LL_VK_BINDLESS_NOUNUSED") != nullptr;
-            if (ctx.getCaps().mBindlessUpdateUnused && !leave_out)
-            {
-                binding_flags[t] |= VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
-            }
+            // Entries are written in the middle of recording a frame, while work recorded earlier may still be pending: without this bit that is undefined for EVERY entry of the set
+            binding_flags[t] |= VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
         }
-        if (handles)
         {
             b2[BINDLESS_TABLES].binding = BINDLESS_TABLES;      // 4: the handle map (a storage buffer of uint, id -> descriptor index)
             b2[BINDLESS_TABLES].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             b2[BINDLESS_TABLES].descriptorCount = 1;
             b2[BINDLESS_TABLES].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         }
-        const U32 binding_count = BINDLESS_TABLES + (handles ? 1 : 0);
+        const U32 binding_count = BINDLESS_TABLES + 1;
         VkDescriptorSetLayoutBindingFlagsCreateInfo fi = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
         fi.bindingCount = binding_count;
         fi.pBindingFlags = binding_flags;
@@ -1126,7 +1118,7 @@ bool Renderer::createLayouts()
             VkDescriptorPoolCreateInfo bi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
             bi.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
             bi.maxSets = Context::frameCount();
-            bi.poolSizeCount = handles ? 2 : 1;
+            bi.poolSizeCount = 2;
             bi.pPoolSizes = ps;
             ok = vk_ok(vkCreateDescriptorPool(dev, &bi, nullptr, &mBindlessPool), "bindless pool");
         }
@@ -1140,7 +1132,7 @@ bool Renderer::createLayouts()
             ai.pSetLayouts = set_layouts;
             ok = vk_ok(vkAllocateDescriptorSets(dev, &ai, mBindlessSet), "allocate bindless sets");
         }
-        if (ok && handles)
+        if (ok)
         {
             // one map per frame in flight (host visible: a frame is seen as a whole through its own copy); in H1 every entry is its own slot
             const VkDeviceSize map_bytes = (VkDeviceSize)BINDLESS_TABLES * HANDLE_MAP_STRIDE * sizeof(U32);
@@ -1183,7 +1175,8 @@ bool Renderer::createLayouts()
             if (mSet2Layout) vkDestroyDescriptorSetLayout(dev, mSet2Layout, nullptr);
             mBindlessPool = VK_NULL_HANDLE;
             mSet2Layout = VK_NULL_HANDLE;
-            LL_WARNS("Vulkan") << "the bindless sampled image table could not be made: render packets with textures stay off" << LL_ENDL;
+            LL_WARNS("Vulkan") << "the texture handle tables could not be made" << LL_ENDL;
+            return false;
         }
     }
 
@@ -1993,7 +1986,6 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     for (U32& o : mAppliedDynamicOffset) o = 0xFFFFFFFF;
     mAppliedSet0 = VK_NULL_HANDLE;
     mAppliedVertexInputValid = false;
-    memset(mPushed, 0, sizeof(mPushed));
     mUboSets[frame_slot].clear();
     if (mUboPool[frame_slot])
     {
@@ -2015,11 +2007,7 @@ void Renderer::endFrame()
     flushPendingClear();
     endRendering(PE_FRAME);
     // descriptors queued during this frame are written before the command buffer is submitted
-    static const bool skip_end_flush = getenv("LL_VK_NO_END_FLUSH") != nullptr;
-    if (!skip_end_flush)
-    {
-        bindlessFlush();
-    }
+    bindlessFlush();
 #if defined(TRACY_ENABLE)
     if (mTracyCtx && mCmd != VK_NULL_HANDLE)
     {
@@ -3468,7 +3456,7 @@ void Renderer::applyState()
     LLVkBridge::gDbg[1] = mSlot;
     LLVkBridge::gDbg[2] = (unsigned long long)mCmd;
     LLVkBridge::gDbg[3] = (unsigned long long)mRing[mSlot].mMapped;
-    // 5b. <FS> bindless programs: the slot of each sampler's texture is written into the loose uniform block (copied to the ring below); no descriptors are pushed
+    // 5b. <FS> the handle of each sampler's texture is written into the loose uniform block (copied to the ring below); nothing is pushed
     if (mProgram->mBindless)
     {
         VkSampler fallback_sampler = getSampler(SamplerDesc());
@@ -3595,45 +3583,6 @@ void Renderer::applyState()
     }
 
     LLVkBridge::phaseLap(LLVkBridge::PH_A_UNI, lap_t);
-    // 7. textures, pushed for exactly the samplers the program declares
-    if (!mProgram->mBindless && !mProgram->mInfo.mSamplers.empty())
-    {
-        VkDescriptorImageInfo infos[MAX_TEXTURE_UNITS];
-        VkWriteDescriptorSet writes[MAX_TEXTURE_UNITS];
-        U32 n = 0;
-        VkSampler fallback = getSampler(SamplerDesc());
-        for (size_t k = 0; k < mProgram->mInfo.mSamplers.size(); ++k)
-        {
-            const SamplerInfo& s = mProgram->mInfo.mSamplers[k];
-            const U32 unit = mProgram->mSamplerUnits[k];
-            if (s.mBinding >= MAX_TEXTURE_UNITS || unit >= MAX_TEXTURE_UNITS)
-            {
-                continue;
-            }
-            Image* img = k < MAX_TEXTURE_UNITS && resolved[k] ? resolved[k] : resolveTexture(k, depth_ro, depth_root);
-            const bool is_depth_target = depth_root && root_of(img) == depth_root;
-            const VkSampler sampler = mTextureSamplers[unit] ? mTextureSamplers[unit] : fallback;
-            const VkImageLayout layout = is_depth_target ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            PushedBinding& pushed = mPushed[s.mBinding];
-            if (pushed.mView == img->mView && pushed.mSampler == sampler && pushed.mLayout == layout)
-            {
-                continue;       // this binding already holds exactly that
-            }
-            pushed = { img->mView, sampler, layout };
-            infos[n] = { sampler, img->mView, layout };
-            writes[n] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-            writes[n].dstBinding = s.mBinding;
-            writes[n].descriptorCount = 1;
-            writes[n].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[n].pImageInfo = &infos[n];
-            ++n;
-        }
-        if (n)
-        {
-            mDiagChanged = true;
-            vkCmdPushDescriptorSetKHR(mCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 1, n, writes);
-        }
-    }
     LLVkBridge::phaseLap(LLVkBridge::PH_A_PUSH, lap_t);
 }
 
@@ -4703,11 +4652,7 @@ bool Renderer::flushAndRestart(U32 why)
     }
     flushPendingClear();
     endRendering(PE_FLUSH_RESTART);
-    static const bool skip_flush_flush = getenv("LL_VK_NO_END_FLUSH") != nullptr;
-    if (!skip_flush_flush)
-    {
-        bindlessFlush();        // the draws recorded so far run before the partial frame returns: their descriptors must be written now (beginFrame below drops the queue)
-    }
+    bindlessFlush();        // the draws recorded so far run before the partial frame returns: their descriptors must be written now (beginFrame below drops the queue)
     Image* colors[8] = {};
     const U32 color_count = mColorCount;
     for (U32 i = 0; i < color_count; ++i)

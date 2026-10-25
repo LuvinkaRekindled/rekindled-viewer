@@ -666,8 +666,6 @@ private:
     bool mUseVertexInput = false;
     VertexInput mAppliedVertexInput;        // what the command buffer's dynamic vertex input state currently holds
     bool mAppliedVertexInputValid = false;
-    struct PushedBinding { VkImageView mView; VkSampler mSampler; VkImageLayout mLayout; };
-    PushedBinding mPushed[MAX_TEXTURE_UNITS] = {};      // what each push-descriptor binding currently holds
     Buffer mVertexRing[Context::FRAMES_IN_FLIGHT];
     U32 mVertexRingUsed = 0;
     // F3.1: chunks that carry the vertex scratch when the ring is full (immediate mode draws its vertices there: a debug draw of every bounding box needs far more than the ring); reused each time a slot

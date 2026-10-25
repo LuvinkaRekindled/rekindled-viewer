@@ -10,7 +10,9 @@
  *   set 0, binding 0        the std140 block of the loose uniforms of the 'pass' class; the other classes (draw, material, light, skin) have blocks of their own at
  *                           bindings 5-8 (UC_BINDING), each copied to the uniform ring only when one of its values changed (F2.3)
  *   set 0, binding 1 + n    the viewer's named uniform blocks (n = index in the viewer's block list)
- *   set 1, binding k        samplers, in order of first appearance (push descriptors)
+ *   set 1                   empty (the number is kept: sets 2 and 3 follow)
+ *   set 2, binding 0-3      the tables of sampled images (2D, cube, cube array, 2D shadow); binding 4: the handle map. A sampler is a macro for a table element read with the id
+ *                           in a loose uint uniform (ll_ti_<name>) through the map
  *   vertex inputs           location = index of the attribute in the viewer's reserved attribute list
  *   varyings                location by name, assigned in order of first appearance in the vertex stage
  *   fragment outputs        locations in order of declaration
@@ -44,7 +46,6 @@ struct ShaderEnv
 {
     std::vector<std::string> mAttributeNames;       // vertex attribute locations, by index
     std::vector<std::string> mUniformBlockNames;    // named uniform blocks, binding = 1 + index
-    bool mBindless = false;                         // <FS> samplers become indices into the bindless tables (set 2) when every sampler of the program allows it
 };
 
 // How often a loose uniform changes (doc/vulkan/uniform-classes.tsv): each class is a block of its own, copied independently
@@ -76,7 +77,7 @@ struct ProgramInfo
     std::vector<LooseUniform> mUniforms;
     U32 mBlockSizes[UC_COUNT] = {};             // bytes of each class's block (0: the program has no uniform of that class)
     std::vector<SamplerInfo> mSamplers;
-    bool mBindless = false;                     // the samplers are read through the bindless tables: the draw writes their slots into the loose uniform block
+    bool mBindless = false;                     // the program has samplers (all translated to texture handles): the draw writes the id of each into the loose uniform block
     bool mUsesRt = false;                       // traces rays against the frame's scene (set 3, binding 0: ll_rt_tlas): the draw binds the ray tracing descriptor set
     std::vector<std::string> mAttributes;       // vertex inputs the program declares
     std::vector<U32> mAttributeLocations;       // their locations (index in the viewer's reserved attribute list)
@@ -85,13 +86,6 @@ struct ProgramInfo
     std::vector<U32> mSpirv[3];                 // indexed by StageSource::Stage
     std::string mError;
 };
-
-// true when programs should be translated with bindless samplers (the device supports it and LL_VK_BINDLESS is not 0)
-bool bindlessShaders();
-
-// <FS> texture handles (doc/vulkan/PLAN-texture-handles.md, H1): programs read a texture through ll_hm[id] (a per-frame map in set 2 binding 4) instead of using the id as the table index;
-// true unless LL_VK_HANDLES=0. The map is the identity in H1 (id = (table << 16) | slot), so the pictures do not change.
-bool handleMapShaders();
 
 // Compile one program. On failure returns false and mError says why. If dump_dir is not empty the
 // rewritten source of a failing stage is written there for inspection.
