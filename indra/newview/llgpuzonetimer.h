@@ -36,6 +36,7 @@ public:
 private:
     const char* mName;
     long long mStart;
+    unsigned long long mStartCycles;      // FS_CPU_ZONES_CPU=1: the thread's cycle counter at the start (the zone then also reports its blocked time)
 };
 #define LL_CPU_ZONE_CAT2(a, b) a##b
 #define LL_CPU_ZONE_CAT(a, b) LL_CPU_ZONE_CAT2(a, b)

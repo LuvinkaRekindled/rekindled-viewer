@@ -189,28 +189,68 @@ namespace
         const char* mName = nullptr;
         long long mNanos = 0;
         unsigned mCalls = 0;
+        unsigned long long mCycles = 0;     // FS_CPU_ZONES_CPU=1: the thread's own cycles inside the zone (what ran; wall time minus this is time spent blocked or descheduled)
+        unsigned mCycleCalls = 0;           // ... over this many calls (only zones nested at most three deep are read: one reading costs about 170 ns)
     };
     CpuZone sCpuZones[512];
     unsigned sCpuZoneCount = 0;
     std::thread::id sCpuMainThread;
     bool sCpuMainThreadKnown = false;
     const bool sCpuZonesOn = getenv("FS_CPU_ZONES") != nullptr;
+    const bool sCpuCyclesOn = sCpuZonesOn && getenv("FS_CPU_ZONES_CPU") != nullptr;
+    double sCyclesPerNs = 0.0;                  // calibrated once (a short busy loop), only used to turn cycles into milliseconds
+    double sCycleReadNs = 0.0;                  // what one QueryThreadCycleTime call costs, measured at the calibration
     unsigned sCpuFrames = 0;
     long long sCpuFirstFrame = 0;
+    unsigned long long sCpuThreadCyclesFirst = 0;
+    int sCpuDepth = 0;
 
     long long cpu_now()
     {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     }
+
+    unsigned long long thread_cycles()
+    {
+        ULONG64 c = 0;
+        QueryThreadCycleTime(GetCurrentThread(), &c);
+        return (unsigned long long)c;
+    }
+
+    void calibrate_cycles()
+    {
+        // 20 ms of pure spinning on this thread: cycles against wall time, and the price of reading the counter
+        const long long t0 = cpu_now();
+        const unsigned long long c0 = thread_cycles();
+        volatile unsigned sink = 0;
+        while (cpu_now() - t0 < 20000000)
+        {
+            sink = sink + 1;
+        }
+        const unsigned long long c1 = thread_cycles();
+        const long long t1 = cpu_now();
+        sCyclesPerNs = (double)(c1 - c0) / (double)(t1 - t0);
+        const long long r0 = cpu_now();
+        for (int i = 0; i < 20000; ++i)
+        {
+            thread_cycles();
+        }
+        sCycleReadNs = (double)(cpu_now() - r0) / 20000.0;
+    }
 }
 
 LLCpuZoneScope::LLCpuZoneScope(const char* name)
-    : mName(nullptr), mStart(0)
+    : mName(nullptr), mStart(0), mStartCycles(0)
 {
     if (sCpuZonesOn && sCpuMainThreadKnown && std::this_thread::get_id() == sCpuMainThread)
     {
         mName = name;
         mStart = cpu_now();
+        ++sCpuDepth;
+        if (sCpuCyclesOn && sCpuDepth <= 3)
+        {
+            mStartCycles = thread_cycles();
+        }
         LLUniCensus::push(name);
     }
 }
@@ -223,11 +263,16 @@ LLCpuZoneScope::~LLCpuZoneScope()
     }
     LLUniCensus::pop();
     const long long d = cpu_now() - mStart;
+    const bool measured = mStartCycles != 0;
+    const unsigned long long cycles = measured ? thread_cycles() - mStartCycles : 0;
+    --sCpuDepth;
     for (unsigned i = 0; i < sCpuZoneCount; ++i)
     {
         if (sCpuZones[i].mName == mName)
         {
             sCpuZones[i].mNanos += d;
+            sCpuZones[i].mCycles += cycles;
+            sCpuZones[i].mCycleCalls += measured;
             ++sCpuZones[i].mCalls;
             return;
         }
@@ -236,6 +281,8 @@ LLCpuZoneScope::~LLCpuZoneScope()
     {
         sCpuZones[sCpuZoneCount].mName = mName;
         sCpuZones[sCpuZoneCount].mNanos = d;
+        sCpuZones[sCpuZoneCount].mCycles = cycles;
+        sCpuZones[sCpuZoneCount].mCycleCalls = measured ? 1 : 0;
         sCpuZones[sCpuZoneCount].mCalls = 1;
         ++sCpuZoneCount;
     }
@@ -399,10 +446,16 @@ void LLCpuZoneScope::frame()
         sCpuMainThread = std::this_thread::get_id();
         sCpuMainThreadKnown = true;
         LLView::sDrawHook = &cpu_view_hook;
+        if (sCpuCyclesOn)
+        {
+            calibrate_cycles();
+            LL_INFOS("CpuZones") << "thread cycles: " << sCyclesPerNs << " per ns, one reading costs " << sCycleReadNs << " ns" << LL_ENDL;
+        }
     }
     if (sCpuFrames == 0)
     {
         sCpuFirstFrame = cpu_now();
+        sCpuThreadCyclesFirst = sCpuCyclesOn ? thread_cycles() : 0;
     }
     if (++sCpuFrames < 600)
     {
@@ -417,13 +470,36 @@ void LLCpuZoneScope::frame()
     for (const CpuZone& z : zones)
     {
         if (++listed > 90) break;
-        text += llformat(" | %s %.2f ms (%.1f calls)", z.mName, (double)z.mNanos / 1.0e6 / frames, (double)z.mCalls / frames);
+        if (sCpuCyclesOn && sCyclesPerNs > 0.0 && z.mCycleCalls == z.mCalls && z.mCalls > 0)
+        {
+            const double wall_ms = (double)z.mNanos / 1.0e6 / frames;
+            const double run_ms = (double)z.mCycles / sCyclesPerNs / 1.0e6 / frames;
+            text += llformat(" | %s %.2f ms (%.1f calls, blocked %.2f)", z.mName, wall_ms, (double)z.mCalls / frames, std::max(0.0, wall_ms - run_ms));
+        }
+        else
+        {
+            text += llformat(" | %s %.2f ms (%.1f calls)", z.mName, (double)z.mNanos / 1.0e6 / frames, (double)z.mCalls / frames);
+        }
     }
-    LL_INFOS("CpuZones") << "main thread per frame over " << sCpuFrames << " frames: loop interval " << interval_ms << " ms (inclusive zones, nested ones count in their parents)" << text << LL_ENDL;
+    std::string blocked_text;
+    if (sCpuCyclesOn && sCyclesPerNs > 0.0)
+    {
+        // the whole thread over the window: how much of the wall time it was running, and what the cycle readings themselves cost (two per zone call)
+        double zone_calls = 0.0;
+        for (unsigned i = 0; i < sCpuZoneCount; ++i)
+        {
+            zone_calls += sCpuZones[i].mCycleCalls;
+        }
+        const double run_ms = (double)(thread_cycles() - sCpuThreadCyclesFirst) / sCyclesPerNs / 1.0e6 / frames;
+        blocked_text = llformat(", the thread ran %.2f ms of the loop (%.0f %%), blocked or descheduled %.2f ms; the cycle readings cost about %.3f ms a frame (%.0f zone calls read a frame)", run_ms, 100.0 * run_ms / interval_ms, std::max(0.0, interval_ms - run_ms), zone_calls * 2.0 * sCycleReadNs / 1.0e6 / frames, zone_calls / frames);
+    }
+    LL_INFOS("CpuZones") << "main thread per frame over " << sCpuFrames << " frames: loop interval " << interval_ms << " ms" << blocked_text << " (inclusive zones, nested ones count in their parents)" << text << LL_ENDL;
     uni_census_report(frames);
     for (unsigned i = 0; i < sCpuZoneCount; ++i)
     {
         sCpuZones[i].mNanos = 0;
+        sCpuZones[i].mCycles = 0;
+        sCpuZones[i].mCycleCalls = 0;
         sCpuZones[i].mCalls = 0;
     }
     sCpuFrames = 0;
