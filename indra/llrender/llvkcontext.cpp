@@ -2316,7 +2316,17 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
         // as Memory::UploadDevice: written by the CPU, read by the GPU every frame; video memory the CPU can map (resizable BAR) when there is room
         ai.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
         ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-        ai.preferredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        // LL_VK_HOST_BLOCK_VRAM=0 (doc/vulkan/PLAN-texture-handles.md section 17.15): the block lives in system memory, the GPU reads it over PCIe. Five sudden device losses on 2026-10-25 faulted on a page-sized
+        // invalid read in the first megabyte of a host-written block that was made one to three seconds before; every one of those blocks lived in video memory.
+        static const bool host_in_vram = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_HOST_BLOCK_VRAM", b, sizeof(b)) == 0 || atoi(b) != 0; }();
+        if (host_in_vram)
+        {
+            ai.preferredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        }
+        else
+        {
+            ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+        }
     }
     VmaAllocationInfo block_info = {};
     LARGE_INTEGER t_start, t_end, t_freq;
