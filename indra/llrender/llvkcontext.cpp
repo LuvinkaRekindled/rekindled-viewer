@@ -1837,11 +1837,14 @@ VkCommandBuffer Context::beginFrame(bool wait)
                 U32 last_tag = 0;
                 const bool slow = micros > 150000;          // a frame the GPU needed more than 150 ms for: say which passes took it
                 std::vector<std::pair<U64, U32>> frame_passes;
+                static const U32 builds_tag = stampTag("rt scene builds");
+                U64 builds_us = 0;                          // the ray scene's builds in this frame: the pacing of the next ones (llvkrt.cpp) reads it
                 for (U32 i = 0; i < n; ++i)
                 {
                     const U64 stamp = r[(2 + i) * 2];
                     const U64 part = to_micros(last, stamp);
                     mPassStats.mMicros[last_tag] += part;
+                    builds_us += last_tag == builds_tag ? part : 0;
                     if (slow) frame_passes.push_back({ part, last_tag });
                     last = stamp;
                     if (!(f.mStampTags[i] & STAMP_DRAW))
@@ -1850,12 +1853,14 @@ VkCommandBuffer Context::beginFrame(bool wait)
                     }
                 }
                 mPassStats.mMicros[last_tag] += to_micros(last, end);
+                builds_us += last_tag == builds_tag ? to_micros(last, end) : 0;
+                mRtBuildMicros[mFrameSlot].store(builds_us, std::memory_order_relaxed);
                 if (slow)
                 {
                     frame_passes.push_back({ to_micros(last, end), last_tag });
                     std::sort(frame_passes.rbegin(), frame_passes.rend());
                     static U32 logged_slow = 0;
-                    if (logged_slow++ < 20)
+                    if (logged_slow++ < 400)         // (20 were used up by one teleport arrival: the spikes of the settled scene, 2026-10-25, need their passes too)
                     {
                         std::string text;
                         for (size_t k = 0; k < frame_passes.size() && k < 6; ++k)
