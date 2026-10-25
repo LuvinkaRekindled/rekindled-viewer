@@ -4,7 +4,7 @@ if ($Zones) { $env:RT_EXTRA_CPU_ZONES = '1' }
 if (Get-Process firestorm-bin -ErrorAction SilentlyContinue) { 'a viewer is running: not starting'; exit 2 }
 $env:LAP_YAW = "$Yaw"
 # (rt-defer-start.ps1 deletes LL_VK_* from the environment: the settings travel in H6_ENV, which h0-chain.ps1 adds to the variables it hands on)
-$env:H6_ENV = @{ h5 = 'LL_VK_TEXFB=0;LL_VK_FB_OFF=1'; off = 'LL_VK_TEXFB=0'; on = 'LL_VK_TEXFB=1'; early = 'LL_VK_TEXFB=2'; poc = 'LL_VK_TEXFB=3'; def = ''; norec = 'LL_VK_TEXREC=0'; phases = 'LL_VK_PHASES=1'; nopool = 'LL_VK_PHASES=1;LL_VK_AS_POOL_MB=0'; rec1 = 'LL_VK_TEXREC=1'; rec2 = 'LL_VK_TEXREC=2'; idx0 = 'LL_VK_TEXFB=0;LL_VK_FB_OFF=1;LL_VK_TEXIDX=0'; idx1 = 'LL_VK_TEXFB=0;LL_VK_FB_OFF=1;LL_VK_TEXIDX=1'; idx2 = 'LL_VK_TEXFB=0;LL_VK_FB_OFF=1;LL_VK_TEXIDX=2' }[$Mode]
+$env:H6_ENV = @{ h5 = 'LL_VK_TEXFB=0;LL_VK_FB_OFF=1'; off = 'LL_VK_TEXFB=0'; on = 'LL_VK_TEXFB=1'; early = 'LL_VK_TEXFB=2'; poc = 'LL_VK_TEXFB=3'; def = ''; norec = 'LL_VK_TEXREC=0'; phases = 'LL_VK_PHASES=1'; nopool = 'LL_VK_PHASES=1;LL_VK_AS_POOL_MB=0'; bigbuild = 'LL_VK_PHASES=1;LL_VK_RT_BUILD_MAX=384;LL_VK_RT_BUILD_TRIS=3000000'; rec1 = 'LL_VK_TEXREC=1'; rec2 = 'LL_VK_TEXREC=2'; idx0 = 'LL_VK_TEXFB=0;LL_VK_FB_OFF=1;LL_VK_TEXIDX=0'; idx1 = 'LL_VK_TEXFB=0;LL_VK_FB_OFF=1;LL_VK_TEXIDX=1'; idx2 = 'LL_VK_TEXFB=0;LL_VK_FB_OFF=1;LL_VK_TEXIDX=2' }[$Mode]
 for ($i = 1; $i -le $Laps; ++$i) {
   & powershell -NoProfile -ExecutionPolicy Bypass -File <work>\h0-chain.ps1 -Runs ("$Mode$i") -Prefix $Prefix
 }
