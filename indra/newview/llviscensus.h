@@ -33,6 +33,10 @@ namespace LLVisCensus
     inline U64 sSortTicksDrawable = 0, sSortDrawableCalls = 0, sSortTicksDist = 0, sSortDistCalls = 0;
     inline U64 sSortTicksBridge = 0, sSortBridgeCalls = 0;
     inline U64 sSortDrawableGroups = 0, sSortVisibleGroups = 0, sSortOccluded = 0;
+    // how much of the visible set and of the sorted drawables changes from one frame to the next (the render map loop's groups against the frame before; the drawables of the two loops by kind)
+    inline U64 sChurnGroups = 0, sChurnKept = 0, sChurnSerial = 0, sChurnNewInfo = 0, sChurnLeft = 0, sChurnFrames = 0;
+    inline U32 sChurnFrame = 0, sChurnCurN = 0, sChurnCurKept = 0, sChurnPrevN = 0;
+    inline U64 sMarkActive = 0, sMarkAvatar = 0, sMarkBridge = 0, sDrawActive = 0, sDrawAvatar = 0, sDrawStatic = 0;
     // postSort (world camera, main view)
     inline U64 sPostCalls = 0, sPostTicks = 0, sPostTicksRebuildGeom = 0, sPostTicksMap = 0, sPostTicksMesh = 0, sPostTicksAlpha = 0;
     // visible groups of the render map loop by partition, and what the table holds of them

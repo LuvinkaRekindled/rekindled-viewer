@@ -397,6 +397,7 @@ public:
     // <FS> S1 phase 0 (doc/vulkan/PLAN-retained-records.md): bumped whenever the draw infos are cleared (every creation of draw infos follows a clear), so the same serial on two frames
     // means the same draw info set. mSceneSeenSerial: what the main view saw last (LL_VK_SCENE_STATS counters only).
     U32 mDrawMapSerial = 1;
+    U32 mChurnFrame = 0, mChurnSerial = 0;     // <FS> census only (LL_VK_VISCENSUS): the frame this group was last in the main view's render map loop and its mDrawMapSerial then
     U32 mSceneSeenSerial = 0;
     U32 mSceneSeenFrame = 0;
     // <FS> S1: the retained shadow fragment of this group (pipeline.cpp), valid while its serial is mDrawMapSerial; freed with the group
