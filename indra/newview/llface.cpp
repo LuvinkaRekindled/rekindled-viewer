@@ -46,6 +46,7 @@
 #include "llsky.h"
 #include "llviewercamera.h"
 #include "llviewertexturelist.h"
+#include "llviewertexturerecs.h"
 #include "llvopartgroup.h"
 #include "llvovolume.h"
 #include "pipeline.h"
@@ -390,6 +391,7 @@ void LLFace::switchTexture(U32 ch, LLViewerTexture* new_texture)
 void LLFace::stampTextures()
 {
     mLastPixelAreaUpdate = 0.f;     // the size read by the texture priority is refreshed at most every 0.1 s (calcPixelArea): after a change the next evaluation must not read the old one
+    LLTexRecs::faceChanged(this);   // <FS> H6: its record is filled again
     for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
     {
         if (mTexture[ch].notNull())

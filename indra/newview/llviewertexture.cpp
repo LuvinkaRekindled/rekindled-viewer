@@ -50,6 +50,7 @@
 #include "lldrawpool.h"
 #include "lltexturefetch.h"
 #include "llviewertexturelist.h"
+#include "llviewertexturerecs.h"
 #include "llviewercontrol.h"
 #include "pipeline.h"
 #include "llappviewer.h"
@@ -769,6 +770,7 @@ LLViewerTexture::LLViewerTexture(const LLImageRaw* raw, bool usemipmaps) :
 LLViewerTexture::~LLViewerTexture()
 {
     // LL_DEBUGS("Avatar") << mID << LL_ENDL;
+    LLTexRecs::textureGone(this);       // <FS> H6
     cleanup();
     sImageCount--;
 }
@@ -824,6 +826,12 @@ void LLViewerTexture::dump()
     LL_INFOS() << "LLViewerTexture"
             << " mID " << mID
             << LL_ENDL;
+}
+
+void LLViewerTexture::stampChanged()
+{
+    wakeForList();
+    LLTexRecs::textureStamped(this);
 }
 
 void LLViewerTexture::wakeForList() const
@@ -992,6 +1000,7 @@ void LLViewerTexture::addFace(U32 ch, LLFace* facep)
     facep->setIndexInTex(ch, mNumFaces[ch]);
     mNumFaces[ch]++;
     mLastFaceListUpdateTimer.reset();
+    LLTexRecs::faceAdded(this, ch, facep);      // <FS> H6
     bumpFaceStamp();
 }
 
@@ -1001,6 +1010,7 @@ void LLViewerTexture::removeFace(U32 ch, LLFace* facep)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     llassert(ch < LLRender::NUM_TEXTURE_CHANNELS);
 
+    LLTexRecs::faceRemoved(this, ch, facep);        // <FS> H6
     if(mNumFaces[ch] > 1)
     {
         S32 index = facep->getIndexInTex(ch);

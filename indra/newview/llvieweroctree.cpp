@@ -40,6 +40,7 @@
 #include "lldrawpoolwater.h"
 #include "llspatialpartition.h"
 #include "llviewertexturelist.h"
+#include "llviewertexturerecs.h"
 
 //-----------------------------------------------------------------------------------
 //static variables definitions
@@ -1180,6 +1181,10 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         {
             LLCullShadow::touch(this);      // <FS> S7 C1b
         }
+        if (mSpatialPartition && LLTexRecs::sMode && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        {
+            LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6: the texture records of its faces are filled again
+        }
         mOcclusionState[LLViewerCamera::sCurCameraID] |= state;
         break;
 
@@ -1203,6 +1208,10 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         if (LLCullShadow::sOn && (state & OCCLUDED) && !(mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
             LLCullShadow::touch(this);      // <FS> S7 C1b
+        }
+        if (mSpatialPartition && LLTexRecs::sMode && (state & OCCLUDED) && !(mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        {
+            LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6
         }
         for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
         {
@@ -1263,6 +1272,7 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             if (mSpatialPartition && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 LLViewerTextureList::wakeGroupTextures(static_cast<LLSpatialGroup*>(this));     // <FS> H6: it came into view: its textures are looked at again
+                LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
             }
             mOcclusionState[LLViewerCamera::sCurCameraID] &= ~state;
             break;
@@ -1291,6 +1301,7 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             if (mSpatialPartition && (state & OCCLUDED) && (mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 LLViewerTextureList::wakeGroupTextures(static_cast<LLSpatialGroup*>(this));     // <FS> H6
+                LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
             }
             for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
             {

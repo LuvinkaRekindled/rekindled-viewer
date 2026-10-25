@@ -28,6 +28,7 @@
 #include "llgpuzonetimer.h"
 
 #include "lldrawable.h"
+#include "llviewertexturerecs.h"
 #include <mutex>
 
 // library includes
@@ -527,6 +528,7 @@ void LLDrawable::makeActive()
     if (!isState(ACTIVE)) // && mGeneration > 0)
     {
         setState(ACTIVE);
+        for (S32 fi = 0; fi < getNumFaces(); ++fi) LLTexRecs::faceChanged(getFace(fi));        // <FS> H6: its faces' texture records are volatile from now on
 
         //parent must be made active first
         if (!isRoot() && !mParent->isActive())
@@ -579,6 +581,7 @@ void LLDrawable::makeStatic(bool warning_enabled)
         !mVObjp->isAnimatedObject())
     {
         clearState(ACTIVE | ANIMATED_CHILD);
+        for (S32 fi = 0; fi < getNumFaces(); ++fi) LLTexRecs::faceChanged(getFace(fi));        // <FS> H6
 
         //drawable became static with active parent, not acceptable
         llassert(mParent.isNull() || !mParent->isActive() || !warning_enabled);

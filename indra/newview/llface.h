@@ -253,6 +253,7 @@ public: //aligned members
 
 private:
     friend class LLViewerTextureList;
+    friend class LLTexRecs;
     F32         adjustPartialOverlapPixelArea(F32 cos_angle_to_view_dir, F32 radius );
     bool        calcPixelArea(F32& cos_angle_to_view_dir, F32& radius) ;
 public:
@@ -283,6 +284,9 @@ public:
     bool mInFrustum = false;
     // value of gFrameCount the last time the face was touched by LLViewerTextureList::updateImageDecodePriority
     U32 mLastTextureUpdate = 0;
+    // <FS> the record of this face for each texture channel in LLTexRecs (0: none)
+    U32 mRecIdx[LLRender::NUM_TEXTURE_CHANNELS] = {};
+    F32 getBoundingSphereRadius() const { return mBoundingSphereRadius; }
 
 private:
     LLPointer<LLVertexBuffer> mVertexBuffer;
