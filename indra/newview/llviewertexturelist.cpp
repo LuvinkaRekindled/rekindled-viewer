@@ -70,6 +70,21 @@
 #include "llface.h"
 #include "lldrawable.h"
 #include "llviewerobject.h"
+#include "llspatialpartition.h"
+#include <algorithm>
+
+namespace
+{
+// <FS> H6: what the active and dormant lists did (cumulative; the log line prints the difference of two readings)
+struct IdxStats
+{
+    U64 mToDormant = 0, mToActive = 0, mWakes = 0, mWakeGroup = 0, mWakeGroupTextures = 0;
+    U64 mVisitsActive = 0, mVisitsDormant = 0, mVisitsWake = 0;
+    U64 mMisses = 0, mMissAge[3] = {};          // verify: a dormant texture found wanted with nothing having woken it, by how long it had been dormant (< 1 s, < 10 s, longer)
+    U64 mMissWhy[6] = {};                       // ... and why (several can hold): boost, callback, fetching, light projection, a face in view, woken in the last 5 s
+};
+IdxStats sIdx;
+}
 
 ////////////////////////////////////////////////////////////////////////////
 
@@ -373,6 +388,8 @@ void LLViewerTextureList::shutdown()
         mCreateTextureList.pop();
     }
     mFastCacheList.clear();
+
+    idxClear();         // <FS> H6
 
     mUUIDMap.clear();
 
@@ -814,12 +831,17 @@ void LLViewerTextureList::addImage(LLViewerFetchedTexture *new_image, ETexListTy
     if (image)
     {
         LL_INFOS() << "Image with ID " << image_id << " already in list" << LL_ENDL;
+        if (image != new_image)
+        {
+            idxRemove(image);       // <FS> H6: the map is about to let go of it
+        }
     }
     sNumImages++;
 
     addImageToList(new_image);
     mUUIDMap[key] = new_image;
     new_image->setTextureListType(tex_type);
+    idxAdd(new_image);
 }
 
 
@@ -833,10 +855,144 @@ void LLViewerTextureList::deleteImage(LLViewerFetchedTexture *image)
             mCallbackList.erase(image);
         }
         LLTextureKey key(image->getID(), (ETexListType)image->getTextureListType());
+        idxRemove(image);       // <FS> H6
         llverify(mUUIDMap.erase(key) == 1);
         sNumImages--;
         removeImageFromList(image);
     }
+}
+
+// <FS> H6: the lists. Every texture of mUUIDMap is on exactly one of mActive and mDormant (mListState 1 / 2, mListIndex its place); a move is a swap with the last entry of its list.
+void LLViewerTextureList::idxAdd(LLViewerFetchedTexture* tex)
+{
+    if (!tex || tex->mListState != 0)
+    {
+        return;
+    }
+    tex->mListState = 1;
+    tex->mListIndex = (S32)mActive.size();
+    mActive.push_back(tex);
+}
+
+void LLViewerTextureList::idxRemove(LLViewerFetchedTexture* tex)
+{
+    if (!tex || tex->mListState == 0)
+    {
+        return;
+    }
+    std::vector<LLViewerFetchedTexture*>& v = tex->mListState == 1 ? mActive : mDormant;
+    const S32 at = tex->mListIndex;
+    if (at >= 0 && (size_t)at < v.size() && v[at] == tex)
+    {
+        LLViewerFetchedTexture* last = v.back();
+        v[at] = last;
+        last->mListIndex = at;
+        v.pop_back();
+    }
+    tex->mListState = 0;
+    tex->mListIndex = -1;
+    if (tex->mWakeQueued)
+    {
+        tex->mWakeQueued = false;
+        mWake.erase(std::remove(mWake.begin(), mWake.end(), tex), mWake.end());
+    }
+}
+
+void LLViewerTextureList::idxMove(LLViewerFetchedTexture* tex, U8 state)
+{
+    if (!tex || tex->mListState == 0 || tex->mListState == state)
+    {
+        return;
+    }
+    idxRemove(tex);
+    std::vector<LLViewerFetchedTexture*>& v = state == 1 ? mActive : mDormant;
+    tex->mListState = state;
+    tex->mListIndex = (S32)v.size();
+    v.push_back(tex);
+    if (state == 2)
+    {
+        tex->mDormantAtFrame = gFrameCount;
+    }
+}
+
+void LLViewerTextureList::idxClear()
+{
+    for (LLViewerFetchedTexture* t : mActive) { t->mListState = 0; t->mListIndex = -1; t->mWakeQueued = false; }
+    for (LLViewerFetchedTexture* t : mDormant) { t->mListState = 0; t->mListIndex = -1; t->mWakeQueued = false; }
+    mActive.clear();
+    mDormant.clear();
+    mWake.clear();
+    mActiveCursor = mDormantCursor = 0;
+}
+
+void LLViewerTextureList::wakeTexture(LLViewerTexture* t)
+{
+    LLViewerFetchedTexture* tex = static_cast<LLViewerFetchedTexture*>(t);
+    if (!tex || tex->mListState != 2 || tex->mWakeQueued)
+    {
+        return;
+    }
+    tex->mWakeQueued = true;
+    tex->mLastWakeFrame = gFrameCount;
+    ++tex->mFaceStamp;          // (a kept face loop result is out of date: whatever woke the texture is something the loop reads, or the loop is the way to find out)
+    mWake.push_back(tex);
+    ++sIdx.mWakes;
+}
+
+// a group of the world camera is not occluded any more: the textures of its faces are looked at again
+void LLViewerTextureList::wakeGroupTextures(LLSpatialGroup* group)
+{
+    if (!sIdxMode || !group)
+    {
+        return;
+    }
+    ++sIdx.mWakeGroup;
+    for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
+    {
+        LLDrawable* drawable = (LLDrawable*)(*i)->getDrawable();
+        if (!drawable)
+        {
+            continue;
+        }
+        for (S32 j = 0; j < drawable->getNumFaces(); ++j)
+        {
+            LLFace* face = drawable->getFace(j);
+            if (!face)
+            {
+                continue;
+            }
+            for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
+            {
+                LLViewerTexture* tex = face->getTexture(ch);
+                if (tex && tex->mListState == 2)
+                {
+                    gTextureList.wakeTexture(tex);
+                    ++sIdx.mWakeGroupTextures;
+                }
+            }
+        }
+    }
+}
+
+void LLViewerTextureList::idxLog()
+{
+    static F32 last_log = 0.f;
+    if (gFrameTimeSeconds - last_log < 10.f)
+    {
+        return;
+    }
+    static IdxStats prev;
+    if (last_log > 0.f)
+    {
+        LL_INFOS("VkTexIdx") << "mode " << sIdxMode << ": active " << mActive.size() << ", dormant " << mDormant.size() << " | in 10 s: visited active " << sIdx.mVisitsActive - prev.mVisitsActive << ", dormant "
+                             << sIdx.mVisitsDormant - prev.mVisitsDormant << ", woken " << sIdx.mVisitsWake - prev.mVisitsWake << " | moved to dormant " << sIdx.mToDormant - prev.mToDormant << ", to active "
+                             << sIdx.mToActive - prev.mToActive << " | wakes " << sIdx.mWakes - prev.mWakes << " (groups unoccluded " << sIdx.mWakeGroup - prev.mWakeGroup << " naming "
+                             << sIdx.mWakeGroupTextures - prev.mWakeGroupTextures << " dormant textures) | verify misses " << sIdx.mMisses - prev.mMisses << " (dormant < 1 s "
+                             << sIdx.mMissAge[0] - prev.mMissAge[0] << ", < 10 s " << sIdx.mMissAge[1] - prev.mMissAge[1] << ", longer " << sIdx.mMissAge[2] - prev.mMissAge[2] << "); why (boost, callback, fetching, light, face in view, woken lately) " << sIdx.mMissWhy[0] - prev.mMissWhy[0] << " " << sIdx.mMissWhy[1] - prev.mMissWhy[1]
+                             << " " << sIdx.mMissWhy[2] - prev.mMissWhy[2] << " " << sIdx.mMissWhy[3] - prev.mMissWhy[3] << " " << sIdx.mMissWhy[4] - prev.mMissWhy[4] << " " << sIdx.mMissWhy[5] - prev.mMissWhy[5] << LL_ENDL;
+    }
+    prev = sIdx;
+    last_log = gFrameTimeSeconds;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1044,6 +1200,28 @@ struct StampStats
     U64 mWhyGeomKind[5] = {};       // a face that moved without telling the texture, by kind of object: attachment, avatar, tree or grass, prim, other
 };
 StampStats sStamp;
+// <FS> H6 (doc/vulkan/PLAN-texture-handles.md): LL_VK_TEXFB (default 1: measure and report, change nothing) compares what the draws measured of each texture's need (LLVkBridge::textureNeed: the whole texture
+// would cover 1 / area pixels) with the result of the face loop, per texture the loop looked at.
+const S32 sFbMode = []{ const char* e = getenv("LL_VK_TEXFB"); return e ? atoi(e) : 0; }();
+struct FbStats
+{
+    U64 mLooked = 0;            // textures with faces the loop looked at
+    U64 mNoData = 0;            // ... with no measurement at all
+    U64 mCpuOnlyBig = 0;        // the loop says on screen with an area of 64 pixels or more; the draws did not sample the texture in the last second
+    U64 mGpuOnly = 0;           // the draws sampled it in the last second; the loop says it is not on screen
+    U64 mBoth = 0;              // both
+    U64 mDiff[9] = {};          // both: log4(loop area / measured area), rounded, -4 or less to 4 or more
+    U64 mNoName = 0;
+    U64 mCpuOnlyKind[5] = {};   // the on-screen ones without a measurement, by the kind of object of the texture's first face: attachment, avatar, tree or grass, prim, other
+    U64 mBothKind[5] = {};
+    U64 mCpuOnlyRigged = 0;     // ... of them with a rigged face
+    U64 mCpuOnlyBoost = 0;      // ... with a boost level above none
+    U64 mUsed = 0, mCapped = 0; // LL_VK_TEXFB=3: textures sized by the measurement / never measured and capped
+    U64 mUnOcc = 0;             // on screen by the loop, not sampled: every face looked at is in an occluded group
+    U64 mUnNoFace = 0;          // ... no face with a drawable
+    U64 mUnPool[32] = {};       // ... otherwise: the draw pool of the first face that is not occluded
+};
+FbStats sFb;
 F32 sStampEpochTime = 0.f;      // gFrameTimeSeconds when the camera epoch last changed: a result is only kept once the camera has stood still for a moment (the face areas it read were then made under that pose, not up to 0.1 s earlier)
 }
 
@@ -1051,6 +1229,9 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 {
     llassert(!gCubeSnapshot);
 
+    // <FS> H6: this pass's own addTextureStats calls do not wake a dormant texture (see LLViewerTexture::addTextureStats)
+    struct ListUpdateScope { ListUpdateScope() { sInListUpdate = true; } ~ListUpdateScope() { sInListUpdate = false; } } list_update_scope;
+    bool idx_dormant = false;
     constexpr F32 BIAS_TRS_OUT_OF_SCREEN = 1.5f;
     constexpr F32 BIAS_TRS_ON_SCREEN = 1.f;
 
@@ -1064,6 +1245,8 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 
         U32 face_count = 0;
         U32 max_faces_to_check = 1024;
+        U32 faces_seen = 0, faces_occluded = 0;     // <FS> H6: the faces the loop looked at, and how many of them are in an occluded group
+        bool all_occluded = false;
 
         // <FS> native-vk (LL_VK_TEXSTAMP): the face loop is skipped while what it read is unchanged (see sStampMode above)
         bool stamp_use = false, stamp_verify = false, stamp_volatile = false;
@@ -1095,6 +1278,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         if (stamp_use)
         {
             max_vsize = stamp.mVSize;
+            all_occluded = stamp.mAllOccluded;
             on_screen = stamp.mOnScreen;
             face_count = stamp.mFaceCount;
         }
@@ -1111,6 +1295,12 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 
                 if (face && face->getViewerObject())
                 {
+                    ++faces_seen;
+                    {
+                        LLDrawable* drw = face->getDrawable();
+                        LLSpatialGroup* grp = drw ? drw->getSpatialGroup() : nullptr;
+                        if (grp && grp->isOcclusionState(LLOcclusionCullingGroup::OCCLUDED)) ++faces_occluded;
+                    }
                     F32 radius;
                     F32 cos_angle_to_view_dir;
 
@@ -1195,6 +1385,10 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         }
         } // (face loop zone)
 
+        if (!stamp_use)
+        {
+            all_occluded = face_count > 0 && face_count <= max_faces_to_check && faces_seen == face_count && faces_occluded == faces_seen;
+        }
         if (sStampMode && !stamp_use)
         {
             // (a difference only counts when it matters: one side is a size the priority treats as seen, and the two are not within a quarter of each other or the screen flag changed)
@@ -1228,8 +1422,116 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             stamp.mVSize = max_vsize;
             stamp.mOnScreen = on_screen;
             stamp.mFaceCount = face_count;
+            stamp.mAllOccluded = all_occluded;
             stamp.mTeHash = why_te;
             stamp.mGeomHash = why_geom;
+        }
+
+        if (sFbMode && face_count > 0 && face_count <= max_faces_to_check)
+        {
+            ++sFb.mLooked;
+            S32 kind = 4;
+            bool rigged = false;
+            for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS && kind == 4 && !rigged; ++ch)
+            {
+                if (imagep->getNumFaces(ch) > 0)
+                {
+                    LLFace* f0 = (*(imagep->getFaceList(ch)))[0];
+                    LLViewerObject* o0 = f0 ? f0->getViewerObject() : nullptr;
+                    if (o0)
+                    {
+                        kind = o0->isAttachment() ? 0 : (o0->isAvatar() ? 1 : ((o0->getPCode() == LL_PCODE_LEGACY_TREE || o0->getPCode() == LL_PCODE_LEGACY_GRASS) ? 2 : (o0->getPCode() == LL_PCODE_VOLUME ? 3 : 4)));
+                        rigged = f0->isState(LLFace::RIGGED);
+                        break;
+                    }
+                }
+            }
+            // the on-screen textures nobody sampled: why? all the faces (up to 16 looked at) in occluded groups, or the pool of the first face that is not occluded
+            auto note_unmeasured = [&]()
+            {
+                ++sFb.mCpuOnlyBig; ++sFb.mCpuOnlyKind[kind]; sFb.mCpuOnlyRigged += rigged; sFb.mCpuOnlyBoost += imagep->getBoostLevel() > 0;
+                U32 looked = 0, occluded = 0, visible_pool = 0xFFFF;
+                for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS && looked < 16; ++ch)
+                {
+                    for (S32 fi = 0; fi < imagep->getNumFaces(ch) && looked < 16; ++fi)
+                    {
+                        LLFace* f = (*(imagep->getFaceList(ch)))[fi];
+                        if (!f || !f->getViewerObject() || !f->getDrawable())
+                        {
+                            continue;
+                        }
+                        ++looked;
+                        LLSpatialGroup* g = f->getDrawable()->getSpatialGroup();
+                        if (g && g->isOcclusionState(LLOcclusionCullingGroup::OCCLUDED))
+                        {
+                            ++occluded;
+                        }
+                        else if (visible_pool == 0xFFFF)
+                        {
+                            visible_pool = f->getPoolType();
+                        }
+                    }
+                }
+                if (!looked) ++sFb.mUnNoFace;
+                else if (occluded == looked) ++sFb.mUnOcc;
+                else ++sFb.mUnPool[std::min<U32>(visible_pool, 31)];
+            };
+            const LLImageTex* it = imagep->getImageTexture();
+            LLVkBridge::TextureNeed need;
+            if (!it || !it->getTexName())
+            {
+                ++sFb.mNoName;
+            }
+            else if (!LLVkBridge::textureNeed(it->getTexName(), need))
+            {
+                ++sFb.mNoData;
+                if (on_screen && max_vsize >= 64.f) note_unmeasured();
+            }
+            else if (need.mAge >= 1.f)
+            {
+                if (on_screen && max_vsize >= 64.f) note_unmeasured();
+            }
+            else if (!on_screen)
+            {
+                ++sFb.mGpuOnly;
+            }
+            else
+            {
+                ++sFb.mBoth;
+                ++sFb.mBothKind[kind];
+                const F32 gpu = llmin(1.f / llmax(need.mWindow, 1.0e-12f), LLViewerFetchedTexture::sMaxVirtualSize);
+                const F32 d = logf(llmax(max_vsize, 1.f) / llmax(gpu, 1.f)) / logf(4.f);
+                ++sFb.mDiff[llclamp((S32)floorf(d + 0.5f) + 4, 0, 8)];
+            }
+        }
+
+        if (sFbMode == 3 && face_count > 0 && face_count <= max_faces_to_check)
+        {
+            // <FS> H6 proof of concept (LL_VK_TEXFB=3): the size of a texture on the screen is what the draws measured (whole texture = 1 / area pixels), not what the faces would cover: a texture that was not
+            // drawn in the last second keeps what it was measured at, divided by the bias like an off-screen face; a texture never measured is capped at a modest size until a draw has sampled it
+            const LLImageTex* it3 = imagep->getImageTexture();
+            LLVkBridge::TextureNeed need3;
+            if (it3 && it3->getTexName())
+            {
+                if (LLVkBridge::textureNeed(it3->getTexName(), need3))
+                {
+                    const bool seen = need3.mAge < 1.f;
+                    const F32 area = seen ? need3.mWindow : need3.mKnown;
+                    F32 vs = llmin(1.f / llmax(area, 1.0e-12f), LLViewerFetchedTexture::sMaxVirtualSize);
+                    if (!seen || LLViewerTexture::sDesiredDiscardBias > 2.f)
+                    {
+                        vs /= bias;
+                    }
+                    max_vsize = vs;
+                    on_screen = seen;
+                    ++sFb.mUsed;
+                }
+                else
+                {
+                    max_vsize = llmin(max_vsize, 256.f * 256.f);
+                    ++sFb.mCapped;
+                }
+            }
         }
 
         if (face_count > max_faces_to_check)
@@ -1251,6 +1553,40 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         }
 
         imagep->addTextureStats(max_vsize);
+
+        // <FS> H6: a texture nobody is looking at and nothing is asking for goes on the dormant list: no face on screen (none at all, or every face in an occluded group), no boost, no callback, not being
+        // fetched, no light projection, and not woken in the last 5 s (a texture that something keeps calling addTextureStats on would go back and forth every frame)
+        if (sIdxMode)
+        {
+            const bool why[6] = { imagep->getBoostLevel() != LLViewerTexture::BOOST_NONE, imagep->hasCallbacks(), imagep->isFetching(), imagep->getNumVolumes(LLRender::LIGHT_TEX) != 0,
+                                  !(face_count == 0 || all_occluded), gFrameCount - imagep->mLastWakeFrame <= 300 };
+            idx_dormant = !(why[0] || why[1] || why[2] || why[3] || why[4] || why[5]);
+            if (imagep->mListState == 2 && !idx_dormant)
+            {
+                for (int k = 0; k < 6; ++k) sIdx.mMissWhy[k] += why[k];       // (for the verify count below: what made the texture wanted)
+            }
+        }
+    }
+
+    if (sIdxMode && imagep->mListState != 0)
+    {
+        if (idx_dormant && imagep->mListState == 1)
+        {
+            idxMove(imagep, 2);
+            ++sIdx.mToDormant;
+        }
+        else if (!idx_dormant && imagep->mListState == 2)
+        {
+            if (sIdxMode == 2)
+            {
+                // verify: this texture was on the slow list, and nothing woke it: the walk of mode 1 would have found it late
+                ++sIdx.mMisses;
+                const U32 age = gFrameCount - imagep->mDormantAtFrame;
+                ++sIdx.mMissAge[age < 60 ? 0 : (age < 600 ? 1 : 2)];
+            }
+            idxMove(imagep, 1);
+            ++sIdx.mToActive;
+        }
     }
 
 #if 0
@@ -1486,6 +1822,8 @@ void LLViewerTextureList::forceImmediateUpdate(LLViewerFetchedTexture* imagep)
 }
 
 bool LLViewerTextureList::sViewSteady = false;
+S32 LLViewerTextureList::sIdxMode = []{ const char* e = getenv("LL_VK_TEXIDX"); return e ? atoi(e) : 1; }();
+bool LLViewerTextureList::sInListUpdate = false;
 U32 LLViewerTextureList::sCameraEpoch = 0;
 
 
@@ -1543,6 +1881,39 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     entries_list_t entries;
 
     updateCameraEpoch();
+    if (sFbMode)
+    {
+        static F32 last_fb_log = 0.f;
+        if (gFrameTimeSeconds - last_fb_log >= 10.f)
+        {
+            static FbStats prev;
+            if (last_fb_log > 0.f)
+            {
+                U64 textures = 0, readings = 0;
+                LLVkBridge::textureNeedStats(textures, readings);
+                static U64 prev_readings = 0;
+                LL_INFOS("VkTexFb") << "need measured by the draws (10 s): " << textures << " textures have a measurement, " << readings - prev_readings << " readings; the face loop looked at " << sFb.mLooked - prev.mLooked
+                                    << " textures: no measurement " << sFb.mNoData - prev.mNoData << " (name 0: " << sFb.mNoName - prev.mNoName << "), on screen by the loop with 64 pixels or more but not sampled in the last second "
+                                    << sFb.mCpuOnlyBig - prev.mCpuOnlyBig << ", sampled but not on screen by the loop " << sFb.mGpuOnly - prev.mGpuOnly << ", both " << sFb.mBoth - prev.mBoth
+                                    << "; log4(loop / measured) -4.." << 4 << ": " << sFb.mDiff[0] - prev.mDiff[0] << " " << sFb.mDiff[1] - prev.mDiff[1] << " " << sFb.mDiff[2] - prev.mDiff[2] << " " << sFb.mDiff[3] - prev.mDiff[3]
+                                    << " [" << sFb.mDiff[4] - prev.mDiff[4] << "] " << sFb.mDiff[5] - prev.mDiff[5] << " " << sFb.mDiff[6] - prev.mDiff[6] << " " << sFb.mDiff[7] - prev.mDiff[7] << " " << sFb.mDiff[8] - prev.mDiff[8]
+                                    << "; on screen by the loop, not sampled, by object (attachment, avatar, tree or grass, prim, other): " << sFb.mCpuOnlyKind[0] - prev.mCpuOnlyKind[0] << " " << sFb.mCpuOnlyKind[1] - prev.mCpuOnlyKind[1] << " "
+                                    << sFb.mCpuOnlyKind[2] - prev.mCpuOnlyKind[2] << " " << sFb.mCpuOnlyKind[3] - prev.mCpuOnlyKind[3] << " " << sFb.mCpuOnlyKind[4] - prev.mCpuOnlyKind[4] << ", rigged " << sFb.mCpuOnlyRigged - prev.mCpuOnlyRigged
+                                    << ", boosted " << sFb.mCpuOnlyBoost - prev.mCpuOnlyBoost << "; both, by object: " << sFb.mBothKind[0] - prev.mBothKind[0] << " " << sFb.mBothKind[1] - prev.mBothKind[1] << " " << sFb.mBothKind[2] - prev.mBothKind[2]
+                                    << " " << sFb.mBothKind[3] - prev.mBothKind[3] << " " << sFb.mBothKind[4] - prev.mBothKind[4] << "; sized by the measurement " << sFb.mUsed - prev.mUsed << ", never measured and capped " << sFb.mCapped - prev.mCapped << LL_ENDL;
+                std::ostringstream why;
+                why << "; not sampled, by cause: every face in an occluded group " << sFb.mUnOcc - prev.mUnOcc << ", no face with a drawable " << sFb.mUnNoFace - prev.mUnNoFace << ", otherwise by pool (type:count)";
+                for (U32 pt = 0; pt < 32; ++pt)
+                {
+                    if (sFb.mUnPool[pt] != prev.mUnPool[pt]) why << " " << pt << ":" << sFb.mUnPool[pt] - prev.mUnPool[pt];
+                }
+                LL_INFOS("VkTexFb") << why.str() << LL_ENDL;
+                prev_readings = readings;
+            }
+            prev = sFb;
+            last_fb_log = gFrameTimeSeconds;
+        }
+    }
 
     // update N textures at beginning of mImageList
     U32 update_count = 0;
@@ -1605,6 +1976,10 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         }
         update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size() / llmax(divisor, 1u));
     }
+    if (sIdxMode)
+    {
+        idxLog();
+    }
     // </FS>
     if (LLViewerTexture::sDesiredDiscardBias > 1.f
         && LLViewerTexture::sBiasTexturesUpdated < (U32)mUUIDMap.size())
@@ -1620,6 +1995,57 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     }
     update_count = llmin(update_count, (U32) mUUIDMap.size());
 
+    if (sIdxMode)
+    { // <FS> H6: the textures that were woken first, then a slice of the active list and a slice of the dormant one (mode 2 walks the dormant ones as often as the old walk did, to find what wakes missed)
+        LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vtluift - copy lists");
+        const size_t n_active = mActive.size(), n_dormant = mDormant.size(), total = n_active + n_dormant;
+        entries.reserve(update_count + mWake.size());
+        for (LLViewerFetchedTexture* tex : mWake)
+        {
+            tex->mWakeQueued = false;
+            idxMove(tex, 1);
+            if (tex->getImageTexture())
+            {
+                entries.push_back(tex);
+                ++sIdx.mVisitsWake;
+            }
+        }
+        mWake.clear();
+        if (total > 0)
+        {
+            const size_t active_take = llmin(n_active, (size_t)((U64)update_count * n_active / total) + 1);
+            size_t dormant_take = (size_t)((U64)update_count * n_dormant / total);
+            if (sIdxMode == 1)
+            {
+                dormant_take = llmin(n_dormant, dormant_take / 8 + 1);      // the slow list: an eighth of the rate
+            }
+            else
+            {
+                dormant_take = llmin(n_dormant, dormant_take + 1);
+            }
+            for (size_t k = 0; k < active_take && !mActive.empty(); ++k)
+            {
+                LLViewerFetchedTexture* tex = mActive[(mActiveCursor + k) % mActive.size()];
+                if (tex->getImageTexture())
+                {
+                    entries.push_back(tex);
+                    ++sIdx.mVisitsActive;
+                }
+            }
+            if (!mActive.empty()) mActiveCursor = (mActiveCursor + active_take) % mActive.size();
+            for (size_t k = 0; k < dormant_take && !mDormant.empty(); ++k)
+            {
+                LLViewerFetchedTexture* tex = mDormant[(mDormantCursor + k) % mDormant.size()];
+                if (tex->getImageTexture())
+                {
+                    entries.push_back(tex);
+                    ++sIdx.mVisitsDormant;
+                }
+            }
+            if (!mDormant.empty()) mDormantCursor = (mDormantCursor + dormant_take) % mDormant.size();
+        }
+    }
+    else
     { // copy entries out of UUID map to avoid iterator invalidation from deletion inside updateImageDecodeProiroty or updateFetch below
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vtluift - copy");
 

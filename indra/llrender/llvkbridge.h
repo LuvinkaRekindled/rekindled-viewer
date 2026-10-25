@@ -269,6 +269,15 @@ namespace LLVkBridge
     void hizDone(U32 serial);
     void hizSetResults(const U32* results, U32 capacity);       // (worker) the mapped ring
     void hizPublish(U32 slot, U32 serial);                      // (worker) the frame of this serial has finished
+    // H6 (doc/vulkan/PLAN-texture-handles.md): what the draws measured of the need of a texture. The table draws record, per texture, the smallest area of texture coordinates one pixel covered (so the
+    // size of the whole texture on the screen is 1 / area pixels); the worker reads that back when the GPU has finished the frame (3 or so frames later) and keeps it by texture id.
+    // mWindow: the smallest area over the last one to two windows (half a second each) in which the texture was drawn (INF: it has not been drawn in them, its windows are older than that); mKnown: the same, kept
+    // when the texture is not drawn any more (INF: never drawn); mAge: seconds since the texture was last drawn. Main thread; false when nothing was ever measured for the id.
+    struct TextureNeed { F32 mWindow = 0.f; F32 mKnown = 0.f; F32 mAge = 0.f; };
+    bool textureNeed(U32 name, TextureNeed& out);
+    void textureNeedStats(U64& textures, U64& readings);
+    void textureNeedReading(U32 name, F32 area);                 // (worker) a reading of one finished frame
+    void textureNeedForget(U32 name);                            // (worker) the texture is gone
     // S7 C1 (doc/vulkan/S7-design.md section 14, LL_VK_CULL_SHADOW=1): kind 35, the flat group table (CullRow, 64 bytes) tested against the camera frustum, shadow mode only. blob = CullParams then
     // count rows; mViewProj of the header is unused, mEntries = rows, mFragment = the serial. The worker writes cullVariants bit sets of ceil(rows / 32) words (bit i = row i passes) into a ring slot of cached
     // host memory; cullRead copies them (variants * ceil(count / 32) words): 1 = copied, 0 = not published yet, -1 = lost.

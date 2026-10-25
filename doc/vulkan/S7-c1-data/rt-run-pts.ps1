@@ -122,6 +122,27 @@ function TurnTo($target, $label) {
     return $true
 }
 function Mark($t) { "phase $t at " + (Get-Date).ToUniversalTime().ToString('HH:mm:ss') + 'Z' }
+# LAP_YAW (an absolute yaw): every lap of a comparison starts facing the same way (a lap ends where it ends, and a crash leaves the avatar anywhere). Short holds, then a wait for the yaw to settle and for the
+# log line (once a second) to show it; the arrow that is wrong for the sign of the error is learned from the first hold that makes the error bigger.
+function SetYaw($target) {
+    $leftIncreases = $true
+    $lastAbs = $null
+    for ($k = 0; $k -lt 30; ++$k) {
+        Start-Sleep -Milliseconds 2500
+        $y = Get-Yaw
+        if ($y -eq $null) { return }
+        $err = Yaw-Diff $y $target
+        if ([math]::Abs($err) -lt 0.04) { break }
+        if ($lastAbs -ne $null -and [math]::Abs($err) -gt $lastAbs + 0.03) { $leftIncreases = -not $leftIncreases }
+        $lastAbs = [math]::Abs($err)
+        $needIncrease = ($err -lt 0)
+        $vk = if ($needIncrease -eq $leftIncreases) { 0x25 } else { 0x27 }
+        $ms = [int][math]::Min(700, [math]::Max(60, [math]::Abs($err) / 1.2 * 800))
+        if (-not (HoldMs $vk $ms)) { return }
+    }
+    Write-Host "set yaw: $(Get-Yaw) (target $target)"
+}
+if ($env:LAP_YAW -and $yaw0 -ne $null) { SetYaw ([double]$env:LAP_YAW); Start-Sleep 2; $yaw0 = Get-Yaw; "start yaw (set): $yaw0" }
 # per-thread CPU time of the viewer at the window edges (milliseconds of processor time per thread id)
 $thr = "<work>/run-logs/$Name.threads.csv"
 "tag,tid,ms" | Out-File $thr -Encoding ascii
@@ -134,8 +155,10 @@ $alive = $true
 Mark 'still1 (60 s)'
 $alive = Nap 15
 if ($alive) { Snap 's1a'; $alive = Nap 45 }
-if ($alive) { Snap 's1b'; Shot 'p1'; Mark 'turn (60 s, left arrow held)'; $alive = Hold 0x25 60 }
-if ($alive -and $yaw0 -ne $null) { Mark 'back to the start yaw'; $alive = TurnTo $yaw0 'end' }
+if ($alive -and $Name -like '*noturn*') { Snap 's1b'; Shot 'p1'; Mark 'no turn (60 s, camera still)'; $alive = Nap 60 }
+elseif ($alive) { Snap 's1b'; Shot 'p1'; Mark 'turn (60 s, left arrow held)'; $alive = Hold 0x25 60 }
+if ($alive -and $yaw0 -ne $null -and $Name -notlike '*noturn*') { Mark 'back to the start yaw'; $alive = TurnTo $yaw0 'end' }
+elseif ($alive) { Mark 'back to the start yaw (no turn)' }
 if ($alive) { Mark 'still2 (120 s)'; $alive = Nap 30 }
 if ($alive) { Snap 's2a'; $alive = Nap 60 }
 if ($alive) { Shot 'p2'; $alive = Nap 30 }

@@ -2180,6 +2180,8 @@ static U64 sPacketTextureGeneration = 0;     // <FS> bumped when a texture entry
 
 namespace { void pin_lost(Tex& t, U32 name); }
 
+static std::vector<U32> sHandleName;       // H6: the name of the texture of each handle of the 2D table (0: none), to give the readings of the draws to the texture
+
 void destroy_textures(S32 n, const U32* textures)
 {
     for (S32 i = 0; i < n; ++i)
@@ -2191,8 +2193,13 @@ void destroy_textures(S32 n, const U32* textures)
             if (it->second.mHandle)
             {
                 Renderer::instance().handleRelease(0, it->second.mHandle);      // (rows that still name it see the placeholder; the number comes back when the frames that may read it have finished)
+                if (it->second.mHandle < sHandleName.size())
+                {
+                    sHandleName[it->second.mHandle] = 0;
+                }
                 it->second.mHandle = 0;
             }
+            LLVkBridge::textureNeedForget(textures[i]);
             destroy_tex_images(it->second);
             tex_forget(it->first);
             sGL.mTextures.erase(it);
@@ -3370,6 +3377,11 @@ static U32 texture_handle(Renderer& r, Tex& t, bool force)
         {
             return 0;               // (the table is full: the texture shows the placeholder, counted as refused)
         }
+        if (sHandleName.size() <= t.mHandle)
+        {
+            sHandleName.resize(t.mHandle + 1024, 0);
+        }
+        sHandleName[t.mHandle] = t.mName;
     }
     if (!shows)
     {
@@ -9573,6 +9585,23 @@ void after_frame()
         drain_query_results();
     }
     hiz_poll();     // <FS> S7 H1: publish the Hi-Z results of the frames the GPU has finished
+    {
+        // <FS> H6: what the draws measured of the textures' need in the frames the GPU has finished, given to the textures by id
+        static std::vector<Renderer::FbBatch> batches;
+        Renderer::instance().feedbackTake(batches);
+        for (const Renderer::FbBatch& b : batches)
+        {
+            for (const Renderer::FbReading& r : b.mReadings)
+            {
+                const U32 name = r.mHandle < sHandleName.size() ? sHandleName[r.mHandle] : 0;
+                if (name)
+                {
+                    LLVkBridge::textureNeedReading(name, r.mArea);
+                }
+            }
+        }
+        batches.clear();
+    }
     handles_refresh();      // the handles of the textures that changed in this frame show their new image from the next frame on
     {
         // <FS> the video memory and what the textures take of it, every 1800 frames (about 30 seconds): after a teleport this shows where the memory went and whether a texture was refused

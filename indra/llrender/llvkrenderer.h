@@ -548,7 +548,23 @@ public:
         U32 mAllocFailedLast[2] = {};   // width and height of the last failure
     };
     TexStats takeTexStats();
+    // <FS> H6 (doc/vulkan/PLAN-texture-handles.md): what the draws measured of the need of each texture. The shaders of the table draws write, per handle of the 2D table, the smallest area of texture
+    // coordinates one pixel covered (float bits; 0xFFFFFFFF: not sampled) into a buffer (set 2 binding 5) that each frame clears when it begins and copies out when it ends; the copy is read when its frame slot
+    // is used again (the frame has finished by then). feedbackTake gives the readings of the frames harvested since the last call.
+    struct FbReading { U32 mHandle; F32 mArea; };
+    struct FbBatch { U64 mFrame; std::vector<FbReading> mReadings; };
+    void feedbackTake(std::vector<FbBatch>& out);
+    void feedbackStats(U64& frames, U64& readings) const { frames = mFbFrames; readings = mFbReadings; }
 private:
+    static constexpr U32 FB_BINDING = BINDLESS_TABLES + 1;           // set 2 binding 5
+    static constexpr U32 FB_ENTRIES = HANDLE_MAP_STRIDE;             // the 2D table: a word per handle
+    Buffer mFb;                                                      // device local, cleared at the start of a frame
+    Buffer mFbRead[Context::FRAMES_IN_FLIGHT];                       // the copy a frame slot made at its end
+    U64 mFbFrame[Context::FRAMES_IN_FLIGHT] = {};                    // the frame number of the copy in each slot (0: none waiting)
+    std::vector<FbBatch> mFbBatches;
+    U64 mFbFrames = 0, mFbReadings = 0;
+    void feedbackBeginFrame(U32 frame_slot);
+    void feedbackEndFrame();
     std::atomic<U32> mStatBindlessPeak{0}, mStatBindlessRefused{0}, mStatAllocFailed{0};
     std::atomic<U64> mStatBindlessWrites{0};
     std::atomic<U64> mStatAllocFailedBytes{0};
