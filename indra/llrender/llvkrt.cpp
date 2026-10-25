@@ -1994,13 +1994,15 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     }
     // Builds per scene call. A structure costs the GPU about 0.18 ms to build whatever its size (a plaza of small objects is a burst of 100 k of them), so on arrival somewhere new the old
     // limit of 256 per call put 33 ms of builds into every frame for two minutes. The nearest structures are built first, the rest follow over the next seconds.
-    static const U64 max_builds_default = env_u64("LL_VK_RT_BUILD_MAX", 128);
+    // 384 per call and 3 M triangles since doc/vulkan/PLAN-texture-handles.md section 17.11: the first turn of a session needs about 1,900 new masked structures at once and 128 per call let the leaf
+    // shadows blink out for a second (the masked records fell to a third); one lap each, the larger limits cleared that backlog, the load of the plaza went through as fast, scratch memory unchanged.
+    static const U64 max_builds_default = env_u64("LL_VK_RT_BUILD_MAX", 384);
     // Ceiling for the memory of the structures (LL_VK_RT_MAX_MB, default 1.5 GB: the steady state of a busy place is about 1 GB). Over it no NEW structure is started, and structures that nothing has
     // named for a short while are given back at once (see below), so that the scene cannot push video memory past the budget the OS grants (over it the driver moves allocations to system memory).
     static const U64 as_ceiling_mb = env_u64("LL_VK_RT_MAX_MB", 1536);
     const U64 as_ceiling = as_ceiling_mb << 20;
     const U64 max_builds = sDbg.mBuildMax ? sDbg.mBuildMax : max_builds_default;
-    static const U64 max_tris = env_u64("LL_VK_RT_BUILD_TRIS", 800000);
+    static const U64 max_tris = env_u64("LL_VK_RT_BUILD_TRIS", 3000000);
     const bool alpha_on = sDbg.mAlpha;
     const bool check_on = sDbg.mCheck;
     const bool skip_bad = sDbg.mSkipBad;
