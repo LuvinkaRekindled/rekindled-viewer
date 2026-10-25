@@ -2216,9 +2216,19 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
 
     {
         // <FS> native-vk diagnostic (blink after load): how often the mask classification changes from one uploaded level to the next
-        static U64 analyses = 0, flips = 0, flips_seen = 0;
+        static U64 analyses = 0, flips = 0, flips_seen = 0, real_flips = 0, first_mask = 0, first_total = 0;
         static LLTimer log_timer;
         ++analyses;
+        ++mAnalysisCount;
+        if (mAnalysisCount == 1)
+        {
+            ++first_total;
+            first_mask += mIsMask ? 1 : 0;
+        }
+        else if (was_mask != mIsMask)
+        {
+            ++real_flips;
+        }
         if (was_mask != mIsMask)
         {
             ++flips;
@@ -2230,7 +2240,7 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
         if (log_timer.getElapsedTimeF32() >= 10.f)
         {
             log_timer.reset();
-            LL_INFOS("VkAlpha") << "alpha analyses " << analyses << ", mask flag changes " << flips << " (totals so far)" << LL_ENDL;
+            LL_INFOS("VkAlpha") << "alpha analyses " << analyses << ", mask flag changes " << flips << " (totals so far); first analyses " << first_total << " (" << first_mask << " masks), flips after the first analysis " << real_flips << LL_ENDL;
         }
     }
 }

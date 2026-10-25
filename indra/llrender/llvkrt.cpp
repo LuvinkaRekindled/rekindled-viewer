@@ -159,7 +159,11 @@ struct Group
     U32 mRecFirst = 0, mRecCount = 0;   // its rows in sRecs
     bool mDirty = false;                // in sDirtyKeys: instance and records are made again at the next scene call
     U64 mCacheVb = 0, mCacheIb = 0;     // the buffer addresses its records were made with
+    U64 mEmptiedFrame = 0;              // diagnostic: the frame tag at which a masked group lost its last held range (0: it has ranges, or is not waiting for one)
+    U32 mEmptiedInterval = 0, mEmptiedTimes = 0;     // diagnostic: the report interval of its latest emptying and how often it was emptied in that interval
 };
+
+U32 sStatsInterval = 1;
 
 struct Job;
 
@@ -217,6 +221,7 @@ struct Stats
     double mPhaseMs[6] = {};        // expire, order, scan (with sort), instances, recording, the rest
     U64 mDropped[2][8] = {};         // instances taken out of the scene while they were in it, by kind (0 opaque, 1 masked) and reason: expired, switched off, no structure, bad matrix, singular matrix, no buffer data, records table full, other
     U64 mMaskedMin = ~0ull, mMaskedMax = 0;     // live alpha records per scene call over the report interval (a dip shows leaves leaving the scene)
+    U64 mEmptied = 0, mEmptiedDistinct = 0, mEmptiedRepeat = 0, mRefillSame = 0, mRefillLater = 0, mRefillGapFrames = 0;     // masked groups whose last held range was released: how often, by how many different groups, how many had been emptied before in the interval, and how soon a range came back (next frame / later, frames summed)
     U64 mProbeCount = 0, mProbeNow = 0, mProbeNoUpdate = 0, mProbeNoUpdateFast = 0, mProbeFast = 0;     // size probe: bytes the new group structures need with the flags used / without ALLOW_UPDATE / without it and with PREFER_FAST_BUILD / with PREFER_FAST_BUILD
     U64 mCompacted = 0, mCompactBefore = 0, mCompactAfter = 0, mCompactSkipped = 0, mCompactFailed = 0;     // compaction: structures replaced, bytes before and after
     U64 mScanChecks = 0, mScanMismatch = 0;       // the candidate lists against a full walk (verify)
@@ -1601,6 +1606,12 @@ void holdRange(const CasterRef& ref, U32 first, U32 count, int delta)
     {
         ++g->mRangeHold[k];
         ++row_hold;
+        if (g->mEmptiedFrame)
+        {
+            const U64 gap = Context::instance().getFrameNumber() + 1 - g->mEmptiedFrame;
+            if (gap == 0) { ++sStats.mRefillSame; } else { ++sStats.mRefillLater; sStats.mRefillGapFrames += gap; }
+            g->mEmptiedFrame = 0;
+        }
         if (g->mKey.mKind == 1)
         {
             g->mManaged = true;                 // masked casters: the structure covers exactly the ranges held (a stale range draws the wrong triangles); opaque ones keep accumulating, as before
@@ -1632,7 +1643,15 @@ void holdRange(const CasterRef& ref, U32 first, U32 count, int delta)
         mark_dirty(*g);
         if (g->mRanges.empty())
         {
-            drop_entry(*g, 7);                  // nothing left to draw: its instance goes (the structure still covers the old ranges until one comes back)
+            if (g->mKey.mKind == 1)
+            {
+                ++sStats.mEmptied;
+                if (g->mEmptiedInterval != sStatsInterval) { g->mEmptiedInterval = sStatsInterval; g->mEmptiedTimes = 0; ++sStats.mEmptiedDistinct; }
+                else { ++sStats.mEmptiedRepeat; }
+                ++g->mEmptiedTimes;
+                g->mEmptiedFrame = Context::instance().getFrameNumber() + 1;
+            }
+            drop_entry(*g, 7);                // nothing left to draw: its instance goes (the structure still covers the old ranges until one comes back)
         }
         const U64 frame_tag = Context::instance().getFrameNumber() + 1;
         if (g->mNotedTag != frame_tag)
@@ -4558,6 +4577,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
 void resetStats()
 {
     sStats = Stats();
+    ++sStatsInterval;
 }
 
 std::string report(double frames)
@@ -4644,6 +4664,11 @@ std::string report(double frames)
         }
         snprintf(dbuf + used, sizeof(dbuf) - used, " (live alpha records per call %llu..%llu)", (unsigned long long)(s.mMaskedMin == ~0ull ? 0 : s.mMaskedMin), (unsigned long long)s.mMaskedMax);
         text += dbuf;
+        char ebuf[300];
+        snprintf(ebuf, sizeof(ebuf), ", masked groups that lost their last range: %llu times by %llu different groups (%llu again in the same interval), a range came back in the same frame %llu, later %llu (%.1f frames on average)",
+                 (unsigned long long)s.mEmptied, (unsigned long long)s.mEmptiedDistinct, (unsigned long long)s.mEmptiedRepeat, (unsigned long long)s.mRefillSame, (unsigned long long)s.mRefillLater,
+                 (double)s.mRefillGapFrames / (double)std::max<U64>(1, s.mRefillLater));
+        text += ebuf;
     }
     if (s.mProbeCount)
     {
