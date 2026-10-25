@@ -161,6 +161,10 @@ struct ArenaStats
     U64 mAccelBlocksCreated = 0, mAccelBlocksReleased = 0, mAccelDedicatedCreated = 0, mAccelDedicatedReleased = 0, mAccelCreatedBytes = 0, mAccelCreateMicros = 0, mAccelDedicatedLifeFrames = 0;
     U32 mAccelBlocks = 0, mAccelDedicatedAlive = 0;
     U64 mAccelBlockBytes = 0, mAccelUsedBytes = 0, mAccelDedicatedBytes = 0, mAccelLargestFree = 0;
+    // <FS> the pool of dedicated acceleration structure blocks that went empty and wait for the next big range (instead of giving 1 GB of video memory a second back to the system and asking for it again)
+    U64 mAccelPoolHits = 0, mAccelPoolMisses = 0, mAccelPoolTrimmed = 0;
+    U32 mAccelPooled = 0;
+    U64 mAccelPooledBytes = 0;
 };
 
 struct Image
@@ -431,9 +435,14 @@ private:
         bool mShared = false;
         bool mHost = false;
         bool mAccel = false;
-        bool mDedicated = false;            // holds one big range: goes away with it
+        bool mDedicated = false;            // holds one big range: goes away with it (an acceleration structure one waits in the pool for the next big range)
+        bool mPooled = false;               // empty, in the pool of dedicated acceleration structure blocks
         U64 mCreatedFrame = 0;
+        U64 mIdleSince = 0;                 // the frame it went into the pool
     };
+    U64 mPoolBytes = 0;                     // what the pool holds now (under mArenaMutex)
+    U64 mPoolLastTrim = 0;
+    void arenaTrimPool();                   // gives back what has waited too long or does not fit (mArenaMutex held)
     ArenaBlock* arenaNewBlock(VkDeviceSize min_size, ArenaKind kind, bool dedicated);
     void arenaDestroyBlock(ArenaBlock* block);
     void arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc);
