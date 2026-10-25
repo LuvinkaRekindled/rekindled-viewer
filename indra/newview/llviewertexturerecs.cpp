@@ -23,7 +23,7 @@
 #include "llviewerregion.h"
 #include "llviewertexture.h"
 
-S32 LLTexRecs::sMode = []{ const char* e = getenv("LL_VK_TEXREC"); return e ? atoi(e) : 0; }();
+S32 LLTexRecs::sMode = []{ const char* e = getenv("LL_VK_TEXREC"); return e ? atoi(e) : 2; }();
 
 namespace
 {
