@@ -221,6 +221,7 @@ struct Stats
     double mPhaseMs[6] = {};        // expire, order, scan (with sort), instances, recording, the rest
     U64 mDropped[2][8] = {};         // instances taken out of the scene while they were in it, by kind (0 opaque, 1 masked) and reason: expired, switched off, no structure, bad matrix, singular matrix, no buffer data, records table full, other
     U64 mMaskedMin = ~0ull, mMaskedMax = 0;     // live alpha records per scene call over the report interval (a dip shows leaves leaving the scene)
+    double mBuildCostMs = 0.0; U64 mBuildFrameCap = 0;      // the pacing of the builds (LL_VK_RT_BUILD_MS): GPU ms per build as measured, builds a frame it allows
     U64 mEmptied = 0, mEmptiedDistinct = 0, mEmptiedRepeat = 0, mRefillSame = 0, mRefillLater = 0, mRefillGapFrames = 0;     // masked groups whose last held range was released: how often, by how many different groups, how many had been emptied before in the interval, and how soon a range came back (next frame / later, frames summed)
     U64 mProbeCount = 0, mProbeNow = 0, mProbeNoUpdate = 0, mProbeNoUpdateFast = 0, mProbeFast = 0;     // size probe: bytes the new group structures need with the flags used / without ALLOW_UPDATE / without it and with PREFER_FAST_BUILD / with PREFER_FAST_BUILD
     U64 mCompacted = 0, mCompactBefore = 0, mCompactAfter = 0, mCompactSkipped = 0, mCompactFailed = 0;     // compaction: structures replaced, bytes before and after
@@ -2001,7 +2002,39 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     // named for a short while are given back at once (see below), so that the scene cannot push video memory past the budget the OS grants (over it the driver moves allocations to system memory).
     static const U64 as_ceiling_mb = env_u64("LL_VK_RT_MAX_MB", 1536);
     const U64 as_ceiling = as_ceiling_mb << 20;
-    const U64 max_builds = sDbg.mBuildMax ? sDbg.mBuildMax : max_builds_default;
+    // Paced by GPU time (doc/vulkan/PLAN-texture-handles.md section 17.19): the count limit above let a teleport arrival put 150-400 ms of builds into single frames (the "rt scene builds" pass, plaza
+    // and club, 2026-10-25) so the fps counter said 60 while the view answered like 20. The pass is timed by the frame's timestamps; the cost of one build (an average over the frames timed so far,
+    // 0.18 ms to start with) and a budget of LL_VK_RT_BUILD_MS a frame (default 8, 0 = the count limits only) give the number of builds the frame may start, over all its scene calls. Nearest first, as before.
+    static const double build_budget_ms = (double)env_u64("LL_VK_RT_BUILD_MS", 8);
+    static double build_cost_ms = 0.18;
+    static U32 builds_by_slot[Context::FRAMES_IN_FLIGHT] = {};
+    static U64 paced_frame = ~0ull;
+    static U64 builds_this_frame = 0;
+    {
+        const U32 slot = ctx.getFrameSlot();
+        if (ctx.getFrameNumber() != paced_frame)
+        {
+            // first scene call of this frame: the frame that used this slot before has been timed when the slot was taken again
+            const U64 us = ctx.rtBuildMicros(slot);
+            if (builds_by_slot[slot] >= 8 && us > 0)
+            {
+                const double sample = std::min(3.0, std::max(0.02, (double)us / 1000.0 / (double)builds_by_slot[slot]));
+                build_cost_ms = 0.9 * build_cost_ms + 0.1 * sample;
+            }
+            builds_by_slot[slot] = 0;
+            builds_this_frame = 0;
+            paced_frame = ctx.getFrameNumber();
+        }
+    }
+    U64 max_builds = sDbg.mBuildMax ? sDbg.mBuildMax : max_builds_default;
+    if (build_budget_ms > 0.0)
+    {
+        const U64 frame_cap = std::max<U64>(8, (U64)(build_budget_ms / build_cost_ms));
+        const U64 left = frame_cap > builds_this_frame ? frame_cap - builds_this_frame : 0;
+        max_builds = std::min<U64>(max_builds, std::max<U64>(left, 4));
+        sStats.mBuildCostMs = build_cost_ms;
+        sStats.mBuildFrameCap = frame_cap;
+    }
     static const U64 max_tris = env_u64("LL_VK_RT_BUILD_TRIS", 3000000);
     const bool alpha_on = sDbg.mAlpha;
     const bool check_on = sDbg.mCheck;
@@ -4369,6 +4402,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         sCompactNext[compact_slot] = 0;
     }
     const VkDeviceAddress scratch_base = (sScratch.mAddress + align - 1) / align * align;
+    builds_by_slot[ctx.getFrameSlot()] += (U32)jobs.size();      // (what this frame's "rt scene builds" pass will be divided by when it is timed)
+    builds_this_frame += jobs.size();
     std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
     std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> ranges;
     for (Job& j : jobs)
@@ -4671,6 +4706,9 @@ std::string report(double frames)
                  (unsigned long long)s.mEmptied, (unsigned long long)s.mEmptiedDistinct, (unsigned long long)s.mEmptiedRepeat, (unsigned long long)s.mRefillSame, (unsigned long long)s.mRefillLater,
                  (double)s.mRefillGapFrames / (double)std::max<U64>(1, s.mRefillLater));
         text += ebuf;
+        char pbuf2[200];
+        snprintf(pbuf2, sizeof(pbuf2), ", builds paced by GPU time: %.3f ms a build as measured, %llu builds a frame allowed", s.mBuildCostMs, (unsigned long long)s.mBuildFrameCap);
+        text += pbuf2;
     }
     if (s.mProbeCount)
     {

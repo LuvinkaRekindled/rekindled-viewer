@@ -325,6 +325,8 @@ public:
     // true once the GPU has finished the frame that was the n-th to be submitted (false while it is still being recorded)
     bool frameFinished(U64 n);
     U32 getFrameSlot() const { return mFrameSlot; }
+    // GPU microseconds the "rt scene builds" pass took in the frame that last used this slot (read from the pass timestamps when the slot was reused; 0 when it had none): the ray scene paces its builds by it
+    U64 rtBuildMicros(U32 slot) const { return slot < FRAMES_IN_FLIGHT ? mRtBuildMicros[slot].load(std::memory_order_relaxed) : 0; }
     bool inFrame() const { return mInFrame; }
 
     // Upload memory that lives until this frame's GPU work completes
@@ -418,6 +420,7 @@ private:
 
     Frame mFrames[FRAMES_IN_FLIGHT];
     U32 mFrameSlot = 0;
+    std::atomic<U64> mRtBuildMicros[FRAMES_IN_FLIGHT] = {};
     U64 mFrameNumber = 0;
     void (*mViewForget)(VkImageView) = nullptr;
     bool mInFrame = false;
