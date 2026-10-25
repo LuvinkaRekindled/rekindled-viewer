@@ -1269,6 +1269,7 @@ void LLViewerObjectList::update(LLAgent &agent)
     //clear avatar LOD change counter
     LLVOAvatar::sNumLODChangesThisFrame = 0;
     LLAttCensus::frame();
+    gPipeline.sceneStateCensus();
 
     const F64 frame_time = LLFrameTimer::getElapsedSeconds();
 
