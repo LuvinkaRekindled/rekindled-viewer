@@ -83,6 +83,7 @@ struct IdxStats
     U64 mVisitsActive = 0, mVisitsDormant = 0, mVisitsWake = 0;
     U64 mMisses = 0, mMissAge[3] = {};          // verify: a dormant texture found wanted with nothing having woken it, by how long it had been dormant (< 1 s, < 10 s, longer)
     U64 mMissWhy[6] = {};                       // ... and why (several can hold): boost, callback, fetching, light projection, a face in view, woken in the last 5 s
+    U64 mDescVisits = 0, mDescChanged = 0, mDescFiner = 0, mDescCoarser = 0, mDescAbs = 0;       // visits that ended in processTextureStats; of them the desired discard level changed (finer, coarser, levels in all)
 };
 IdxStats sIdx;
 
@@ -1001,7 +1002,9 @@ void LLViewerTextureList::idxLog()
                              << sIdx.mToActive - prev.mToActive << " | wakes " << sIdx.mWakes - prev.mWakes << " (groups unoccluded " << sIdx.mWakeGroup - prev.mWakeGroup << " naming "
                              << sIdx.mWakeGroupTextures - prev.mWakeGroupTextures << " dormant textures) | verify misses " << sIdx.mMisses - prev.mMisses << " (dormant < 1 s "
                              << sIdx.mMissAge[0] - prev.mMissAge[0] << ", < 10 s " << sIdx.mMissAge[1] - prev.mMissAge[1] << ", longer " << sIdx.mMissAge[2] - prev.mMissAge[2] << "); why (boost, callback, fetching, light, face in view, woken lately) " << sIdx.mMissWhy[0] - prev.mMissWhy[0] << " " << sIdx.mMissWhy[1] - prev.mMissWhy[1]
-                             << " " << sIdx.mMissWhy[2] - prev.mMissWhy[2] << " " << sIdx.mMissWhy[3] - prev.mMissWhy[3] << " " << sIdx.mMissWhy[4] - prev.mMissWhy[4] << " " << sIdx.mMissWhy[5] - prev.mMissWhy[5] << LL_ENDL;
+                             << " " << sIdx.mMissWhy[2] - prev.mMissWhy[2] << " " << sIdx.mMissWhy[3] - prev.mMissWhy[3] << " " << sIdx.mMissWhy[4] - prev.mMissWhy[4] << " " << sIdx.mMissWhy[5] - prev.mMissWhy[5]
+                             << " | desired level: visits " << sIdx.mDescVisits - prev.mDescVisits << ", changed " << sIdx.mDescChanged - prev.mDescChanged << " (finer " << sIdx.mDescFiner - prev.mDescFiner
+                             << ", coarser " << sIdx.mDescCoarser - prev.mDescCoarser << ", " << sIdx.mDescAbs - prev.mDescAbs << " levels)" << LL_ENDL;
     }
     prev = sIdx;
     if (LLTexRecs::sMode)
@@ -1736,7 +1739,19 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
     }
 
     LL_CPU_ZONE("textures: decode priority: processTextureStats");
+    const S32 desired_before = imagep->getDesiredDiscardLevel();
     imagep->processTextureStats();
+    {
+        // <FS> H6: how often a visit changes the resolution a texture wants, and which way (a smaller discard level is a finer picture)
+        const S32 desired_after = imagep->getDesiredDiscardLevel();
+        ++sIdx.mDescVisits;
+        if (desired_after != desired_before)
+        {
+            ++sIdx.mDescChanged;
+            (desired_after < desired_before ? sIdx.mDescFiner : sIdx.mDescCoarser) += 1;
+            sIdx.mDescAbs += (U64)abs(desired_after - desired_before);
+        }
+    }
 }
 
 F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
