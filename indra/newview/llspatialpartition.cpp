@@ -47,6 +47,7 @@
 #include "llviewerregion.h"
 #include "llcamera.h"
 #include "pipeline.h"
+#include "llattcensus.h"
 #include "llmeshrepository.h"
 #include "llrender.h"
 #include "lldrawpool.h"
@@ -1020,6 +1021,7 @@ void LLSpatialPartition::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool 
 {
     LL_CPU_ZONE("octree: partition move");
     LL_PROFILE_ZONE_SCOPED;
+    LLAttCensus::Scope att_census(LLAttCensus::sPartitionMove, drawablep);
     // sanity check submitted by open source user bushing Spatula
     // who was seeing crashing here. (See VWR-424 reported by Bunny Mayne)
     if (!drawablep)
@@ -1052,6 +1054,10 @@ void LLSpatialPartition::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool 
         return;
     }
 
+    if (LLAttCensus::sOn)
+    {
+        ++LLAttCensus::sPartitionLeftGroup[LLAttCensus::kindOf(drawablep)];
+    }
     //keep drawable from being garbage collected
     LLPointer<LLDrawable> ptr = drawablep;
     if (curp && !remove(drawablep, curp))

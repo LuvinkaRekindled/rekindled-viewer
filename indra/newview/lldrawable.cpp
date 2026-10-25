@@ -28,6 +28,7 @@
 #include "llgpuzonetimer.h"
 
 #include "lldrawable.h"
+#include "llattcensus.h"
 #include "llviewertexturerecs.h"
 #include <mutex>
 
@@ -792,6 +793,7 @@ void LLDrawable::movePartition()
 bool LLDrawable::updateMove()
 {
     LL_CPU_ZONE("drawable: updateMove");
+    LLAttCensus::Scope att_census(LLAttCensus::sDrawableMove, this);
     if (isDead())
     {
         LL_WARNS() << "Update move on dead drawable!" << LL_ENDL;
@@ -1689,6 +1691,7 @@ void LLSpatialBridge::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool imm
 bool LLSpatialBridge::updateMove()
 {
     LL_CPU_ZONE("bridge: updateMove");
+    LLAttCensus::Scope att_census(LLAttCensus::sBridgeMove, mDrawable);
     llassert_always(mDrawable);
     llassert_always(mDrawable->mVObjp);
     llassert_always(mDrawable->getRegion());

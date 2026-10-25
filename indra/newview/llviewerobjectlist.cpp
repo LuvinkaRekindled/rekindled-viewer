@@ -91,6 +91,7 @@
 #include "object_flags.h"
 
 #include "llappviewer.h"
+#include "llattcensus.h"
 #include "llfloaterperms.h"
 #include "llvocache.h"
 #include "llcorehttputil.h"
@@ -1025,6 +1026,128 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
     LLVOAvatar::cullAvatarsByPixelArea();
 }
 
+// <FS> Stage 0 of doc/vulkan/ATTACHMENTS-design.md (LL_VK_ATTCENSUS=1): how much of the move chain belongs to attachments
+LLAttCensus::Kind LLAttCensus::kindOf(const LLDrawable* drawable)
+{
+    const LLViewerObject* object = drawable ? drawable->getVObj() : nullptr;
+    if (!object)
+    {
+        return OTHER;
+    }
+    const LLViewerObject* root = object->getRootEdit();
+    if (!(object->isAttachment() || (root && root->isAttachment())))
+    {
+        return OTHER;
+    }
+    return drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) ? RIGGED : RIGID;
+}
+
+void LLAttCensus::classify(const LLViewerObject* object, const LLDrawable* drawable)
+{
+    ++sReason[R_SEEN];
+    bool not_plain = false;
+    auto flag = [&](Reason r, bool condition)
+    {
+        if (condition)
+        {
+            ++sReason[r];
+            not_plain = true;
+        }
+    };
+    auto check = [&](const LLViewerObject* o)
+    {
+        const LLVOVolume* vol = dynamic_cast<const LLVOVolume*>(o);
+        flag(R_SELECTED, o->isSelected());
+        flag(R_FLEXIBLE, o->isFlexible());
+        flag(R_ANIMATED, o->isAnimatedObject());
+        flag(R_LIGHT, vol && vol->getIsLight());
+        flag(R_SOUND, o->isAudioSource());
+        flag(R_PARTICLES, o->isParticleSource());
+    };
+    check(object);
+    flag(R_HUD, object->isHUDAttachment());
+    if (object->numChildren() > 0)
+    {
+        ++sReason[R_LINKSET];
+        sReason[R_CHILDREN] += (U64)object->numChildren();
+        for (const LLPointer<LLViewerObject>& child : object->getChildren())
+        {
+            if (child.notNull())
+            {
+                check(child.get());
+            }
+        }
+    }
+    ++sReason[not_plain ? R_NOT_PLAIN : R_PLAIN];
+    (void)drawable;
+}
+
+void LLAttCensus::frame()
+{
+    if (!sOn)
+    {
+        return;
+    }
+    const U32 frame_now = (U32)LLFrameTimer::getFrameCount();
+    if (!sFrame0)
+    {
+        sFrame0 = frame_now;
+        sQpc0 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        sTsc0 = now();
+        return;
+    }
+    if (frame_now - sFrame0 < 600)
+    {
+        return;
+    }
+    const double N = (double)(frame_now - sFrame0);
+    const long long wall = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const U64 tsc = now();
+    const double ms_per_tick = (double)(wall - sQpc0) / 1.0e6 / (double)(tsc - sTsc0);
+    static const char* const names[NKIND] = { "other", "rigid attachments", "rigged attachments" };
+    auto line = [&](const char* what, const Cell (&cells)[NKIND])
+    {
+        std::string text;
+        for (int k = 0; k < NKIND; ++k)
+        {
+            text += llformat(" | %s %.1f calls %.3f ms", names[k], (double)cells[k].mCalls / N, (double)cells[k].mTicks * ms_per_tick / N);
+        }
+        LL_INFOS("AttCensus") << what << " per frame:" << text << LL_ENDL;
+    };
+    line("drawable updateMove (inclusive of its partition move)", sDrawableMove);
+    line("bridge updateMove (inclusive)", sBridgeMove);
+    line("octree partition move (inclusive)", sPartitionMove);
+    {
+        std::string text;
+        for (int k = 0; k < NKIND; ++k)
+        {
+            text += llformat(" | %s: moves that left their group %.1f, moved list entries %.1f (already moved this frame %.1f, moved by the list %.1f)", names[k], (double)sPartitionLeftGroup[k] / N,
+                (double)sMovedListIter[k] / N, (double)sMovedListEarly[k] / N, (double)sMovedListByUpdate[k] / N);
+        }
+        LL_INFOS("AttCensus") << "partition moves and the moved list per frame:" << text << LL_ENDL;
+    }
+    {
+        const double seen = (double)std::max<U64>(sReason[R_SEEN], 1);
+        LL_INFOS("AttCensus") << llformat("rigid attachments per frame in the loop: %.1f (plain %.1f, not plain %.1f = %.0f %%); reasons (an attachment can have several): selected %.1f, flexible %.1f, animated object %.1f, light %.1f, sound %.1f, particles %.1f, HUD %.1f; linksets %.1f (%.1f children); avatars without the loop %.1f wearing %.1f attachments, avatars with the loop %.1f",
+            (double)sReason[R_SEEN] / N, (double)sReason[R_PLAIN] / N, (double)sReason[R_NOT_PLAIN] / N, 100.0 * (double)sReason[R_NOT_PLAIN] / seen, (double)sReason[R_SELECTED] / N, (double)sReason[R_FLEXIBLE] / N,
+            (double)sReason[R_ANIMATED] / N, (double)sReason[R_LIGHT] / N, (double)sReason[R_SOUND] / N, (double)sReason[R_PARTICLES] / N, (double)sReason[R_HUD] / N, (double)sReason[R_LINKSET] / N,
+            (double)sReason[R_CHILDREN] / N, (double)sAvatarsHidden / N, (double)sAttachmentsOnHidden / N, (double)sAvatarsLooped / N) << LL_ENDL;
+    }
+    for (int k = 0; k < NKIND; ++k)
+    {
+        sDrawableMove[k] = sBridgeMove[k] = sPartitionMove[k] = Cell();
+        sPartitionLeftGroup[k] = sMovedListIter[k] = sMovedListEarly[k] = sMovedListByUpdate[k] = 0;
+    }
+    for (int r = 0; r < R_COUNT; ++r)
+    {
+        sReason[r] = 0;
+    }
+    sAvatarsHidden = sAttachmentsOnHidden = sAvatarsLooped = 0;
+    sFrame0 = frame_now;
+    sQpc0 = wall;
+    sTsc0 = tsc;
+}
+
 // <FS> avatar update timing (see llvoavatar.cpp), logged every 300 frames
 extern U64 gFSAvStatNs[32];
 extern U32 gFSAvStatCount[32];
@@ -1145,6 +1268,7 @@ void LLViewerObjectList::update(LLAgent &agent)
 
     //clear avatar LOD change counter
     LLVOAvatar::sNumLODChangesThisFrame = 0;
+    LLAttCensus::frame();
 
     const F64 frame_time = LLFrameTimer::getElapsedSeconds();
 
