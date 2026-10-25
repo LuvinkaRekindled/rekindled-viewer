@@ -2426,6 +2426,13 @@ void LLPipeline::sceneStateCensus()
         }
     }
     U64 built = 0, in_frustum = 0, built_out = 0, infos = 0, infos_in = 0, tris = 0, tris_in = 0, elements = 0, elements_in = 0, visible_flag = 0;
+    constexpr int kAgeBuckets = 8;
+    struct AgeBucket { U64 mGroups = 0, mBuilt = 0, mInfos = 0, mTris = 0, mBytes = 0, mElements = 0, mActive = 0; };
+    AgeBucket ages[2][kAgeBuckets];
+    static std::chrono::steady_clock::time_point last_time;
+    const auto now_time = std::chrono::steady_clock::now();
+    const F64 seconds_per_frame = last_time.time_since_epoch().count() ? std::chrono::duration<F64>(now_time - last_time).count() / 600.0 : 0.0166;
+    last_time = now_time;
     for (LLSpatialGroup* group : groups)
     {
         if (group->isDead())
@@ -2457,6 +2464,56 @@ void LLPipeline::sceneStateCensus()
             elements_in += group->getElementCount();
         }
         visible_flag += group->isVisible();
+        {
+            // stage 1 of doc/vulkan/EXPIRY-design.md: the age of the group's relevance, the latest frame any camera accepted it (world, cascades, reflection probes, mirrors, snapshots)
+            S32 latest = 0;
+            for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
+            {
+                latest = std::max(latest, group->getVisible((LLViewerCamera::eCameraID)c));
+            }
+            S32 bucket = kAgeBuckets - 1;     // never accepted
+            if (latest > 0)
+            {
+                const F64 age_s = (F64)(LLViewerOctreeEntryData::getCurrentFrame() - latest) * seconds_per_frame;
+                bucket = age_s < 1.0 ? 0 : age_s < 5.0 ? 1 : age_s < 10.0 ? 2 : age_s < 30.0 ? 3 : age_s < 60.0 ? 4 : age_s < 300.0 ? 5 : 6;
+            }
+            U64 group_active = 0;
+            for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
+            {
+                const LLDrawable* d = (const LLDrawable*)(*i)->getDrawable();
+                group_active += d && d->isState(LLDrawable::ACTIVE);
+            }
+            const bool volume = group->getSpatialPartition() && group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_VOLUME;
+            for (int set = 0; set < 2; ++set)
+            {
+                if (set == 1 && !volume)
+                {
+                    continue;
+                }
+                AgeBucket& a = ages[set][bucket];
+                ++a.mGroups;
+                a.mBuilt += has;
+                a.mInfos += group_infos;
+                a.mTris += group_tris;
+                a.mBytes += group->mGeometryBytes;
+                a.mElements += group->getElementCount();
+                a.mActive += group_active;
+            }
+        }
+    }
+    {
+        static const char* const names[kAgeBuckets] = { "<1 s", "1-5 s", "5-10 s", "10-30 s", "30-60 s", "60-300 s", ">300 s", "never" };
+        for (int set = 0; set < 2; ++set)
+        {
+            std::string text;
+            for (int k = 0; k < kAgeBuckets; ++k)
+            {
+                const AgeBucket& a = ages[set][k];
+                text += llformat(" [%s: %llu groups, %llu built, %llu draw infos, %llu k tris, %.1f MB, %llu elements, %llu active]", names[k], (unsigned long long)a.mGroups, (unsigned long long)a.mBuilt,
+                    (unsigned long long)a.mInfos, (unsigned long long)(a.mTris / 1000), (double)a.mBytes / 1048576.0, (unsigned long long)a.mElements, (unsigned long long)a.mActive);
+            }
+            LL_INFOS("SceneCensus") << "age of relevance (" << (set ? "VOLUME partition" : "all groups of the objects") << ", " << seconds_per_frame * 1000.0 << " ms a frame):" << text << LL_ENDL;
+        }
     }
     U64 lights_visible = 0;
     for (LLDrawable* light : mLights)
