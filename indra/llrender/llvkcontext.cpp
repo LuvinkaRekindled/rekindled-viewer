@@ -1837,6 +1837,7 @@ VkCommandBuffer Context::beginFrame(bool wait)
                 U32 last_tag = 0;
                 const bool slow = micros > 150000;          // a frame the GPU needed more than 150 ms for: say which passes took it
                 std::vector<std::pair<U64, U32>> frame_passes;
+                std::vector<std::pair<U64, U32>> frame_draws;       // the draws of a slow frame by the time up to their stamp (a draw stamp follows the draw): the slowest ones are named below
                 static const U32 builds_tag = stampTag("rt scene builds");
                 U64 builds_us = 0;                          // the ray scene's builds in this frame: the pacing of the next ones (llvkrt.cpp) reads it
                 for (U32 i = 0; i < n; ++i)
@@ -1845,6 +1846,10 @@ VkCommandBuffer Context::beginFrame(bool wait)
                     const U64 part = to_micros(last, stamp);
                     mPassStats.mMicros[last_tag] += part;
                     builds_us += last_tag == builds_tag ? part : 0;
+                    if (slow && (f.mStampTags[i] & STAMP_DRAW))
+                    {
+                        frame_draws.push_back({ part, f.mStampTags[i] });
+                    }
                     if (slow) frame_passes.push_back({ part, last_tag });
                     last = stamp;
                     if (!(f.mStampTags[i] & STAMP_DRAW))
@@ -1868,6 +1873,16 @@ VkCommandBuffer Context::beginFrame(bool wait)
                             text += "[" + stampTagName(frame_passes[k].second) + "] " + std::to_string((double)frame_passes[k].first / 1000.0) + " ms | ";
                         }
                         LL_WARNS("VkPhases") << "slow GPU frame (" << (f.mOffscreen ? "off-screen" : "presented") << "): " << (double)micros / 1000.0 << " ms; longest passes: " << text << LL_ENDL;
+                        if (!frame_draws.empty())
+                        {
+                            std::sort(frame_draws.rbegin(), frame_draws.rend());
+                            std::string draws;
+                            for (size_t k = 0; k < frame_draws.size() && k < 3; ++k)
+                            {
+                                draws += "[" + stampTagName(frame_draws[k].second) + "] " + std::to_string((double)frame_draws[k].first / 1000.0) + " ms | ";
+                            }
+                            LL_WARNS("VkPhases") << "slow GPU frame: slowest draws (" << frame_draws.size() << " draws stamped): " << draws << LL_ENDL;
+                        }
                     }
                 }
             }
