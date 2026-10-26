@@ -418,3 +418,19 @@ So the same work takes longer, which a count of the work cannot show. What the p
 **17.22 follow-up: Cold, first cut, lap `cold1-cold1` (`LL_VK_EXPIRY=2`, commit 7310b8d9).** What it does: a group no camera accepted for 600 frames (about 10 s) is Cold; the moved list leaves plain root objects (no avatar, attachment, rigged, child) alone while they stay inside the group's bounds (and marks them undamped so they jump on wake), and animated textures of objects in Cold groups are not stepped. Counters in the scene census: moved list entries looked at 150 per frame after the turn (39 before), 46 of them skipped; animated texture objects 164, 48 skipped.
 
 Second settle against first settle, four laps (the three without Cold, then Cold): loop interval +2.83 / +1.81 / +2.55 / **+1.62** ms; updateMovedList +0.19 / +0.18 / +0.18 / **+0.13**; partition move +0.09 / +0.08 / +0.08 / **+0.04**; group updateInGroup +0.08 / +0.06 / +0.07 / **+0.03**; texanim per object +0.05 / +0.04 / +0.03 / **+0.00**; drawable updateMove +0.10 / +0.07 / +0.08 / +0.06. The zones it targets lost about 0.2-0.3 ms of their growth, as the zone reading predicted; the loop interval growth is 0.8 ms below the mean of the three, inside the lap-to-lap spread (1.8 to 2.8), so one lap does not show more than the zones do. The shadow zone (+0.31) and the cull (+0.05) grew as before; GPU use at the second settle 79% (81 / 83 / 75 before). No picture check yet: the lap cannot see an object that slides or pops when its group comes back.
+
+**17.22 follow-up: Released, first cut, lap `rel1-released1` (`LL_VK_EXPIRY=3`, `LL_VK_REL_FRAMES=5400`, commit 0cffdd3b; Cold is on in this mode).** No crash, no slow frames. 7,525 groups released between the 190 s and 240 s marks (22,389 draw infos; the 193 that went stale during the turn woke when the camera came back: woken 193, wake queue never above the 48 a frame), after which built groups fell 13.3k -> 6.0k and draw infos 39.1k -> 17.2k, the first settle's level (18.3k). The same lap before and after the release, same place and view:
+
+| | A first settle | B second settle, before the release | C after the release |
+|---|---|---|---|
+| loop interval | 11.85 ms | 13.80 | 13.35 |
+| frame average | 11.87 | 13.74 | 13.33 |
+| shadow passes | 0.71 | 0.92 | 0.84 |
+| partition cull | 0.52 | 0.66 | 0.62 |
+| stateSort postSort | 0.53 | 0.63 | 0.58 |
+| moved list | 0.13 | 0.30 | 0.28 |
+| main_view (UI) | 0.64 | 0.76 | 0.75 |
+| worker idle per frame | 0.03 | 5.38 | 5.47 |
+| nvidia-smi GPU use | 98% | 81% | 84% |
+
+Releasing the draw infos and scene fragments of the stale half gave back 0.44 ms of the 1.95 ms gap (23%, from three-to-five 10-second samples, so within the noise of about 0.3); the UI zones, which have no relation to draw infos, did not move at all (0.76 -> 0.75). With the draw infos back at the first settle's count, the scene still holds twice the objects (47.5k against 26k), twice the groups (14.3k against 7.8k), five times the moved list (106 against 20), and the main thread still waits on nothing: the worker idles 5.4 ms a frame as before. So the draw infos (the working set the culls and packet builders walk) are about a fifth of the lasting cost; Cold plus Released together take about a third at best. The rest is not in the draw infos and not in the zones we can name; the UI growing with it points at the thread's environment (where and beside what it runs) as much as at the scene.
