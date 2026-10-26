@@ -111,3 +111,15 @@ Stage 1 (the age histogram, count only) is part of the same census and is built 
 - **Ray scene and the rest**: the structure memory ceiling (`LL_VK_RT_MAX_MB`) and the AS pool answer to the same budget; the order under pressure is dormant textures, then dormant groups' geometry (sections 4-6), then structures, then the bias.
 
 **Stages**: 0 the age census (built into the texture summary; run it through a home -> plaza -> club -> plaza teleport sequence); 1 count only: log what would be released at the watermarks and the bytes; 2 use, behind `LL_VK_TEX_EXPIRY`, with the bias as the last resort. Gate: the same teleport sequence without a frame over 200 ms from memory, the OS usage under the budget, the bias not above 1.5, no white flashes (the deferred stand-in swap stays), the disk cache refetch after a return not visible as a hitch.
+
+## 12. Regions beyond draw distance expire at once (Adam, 2026-10-25: the leftover crosses sims, "unless you're right on a neighboring sim border")
+
+The residue in the home -> plaza -> club sequence did not depend on being near the places: home's content was still there at the club, 2 teleports later (902 images at home, 20,900 at the plaza, 29,400 at the club arrival). A left region lingers about 100 s before its circuit is dropped (the log shows the "still dead, dropping" and a hitch with it), and its textures and built geometry wait for memory pressure.
+
+Rule to add to the relevance of sections 4 and 11: content belongs to a region, and a region whose bounds are farther from the camera than the draw distance (plus the cull margin) is not relevant at all, independent of its age; one that is within draw distance (a neighbour, a border) is relevant by the ordinary rules. A teleport to a region that is not a neighbour therefore:
+- puts the left region's textures at the front of the eviction order (section 11) when the soft watermark is reached;
+- moves its groups to Cold at once and to Released as soon as they are not needed (section 4), without the 10 s and 60 s;
+- leaves its objects and circuit alone until the normal disconnect, so a quick teleport back is not slower than today; and
+- makes the drop of the region itself (the main thread hitch about 100 s later) a budgeted release of its drawables, not one block.
+
+The neighbour case needs no special code: the distance test is the rule.
