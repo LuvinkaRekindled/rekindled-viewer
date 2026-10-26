@@ -39,6 +39,7 @@
 #include "llvkasync.h"
 #endif
 #include "glm/gtc/type_ptr.hpp"
+#include <intrin.h>
 #include "llvkstate.h"
 #include "llrendermatrix.h"
 #include "llframetimer.h"
@@ -75,6 +76,44 @@ LLVector2 LLRender::sUIGLScaleFactor = LLVector2(1.f, 1.f);
 bool LLRender::sClassicMode = false;
 
 static thread_local std::list<LLVertexBufferData> *sBufferDataList = nullptr;
+
+bool LLRender::sUiHashing = false;
+U64 LLRender::sUiHashAccum = 0;
+U64 LLRender::sUiHashCycles = 0;
+
+U64 LLRender::uiMix(U64 h, const void* data, size_t bytes)
+{
+    const unsigned char* p = (const unsigned char*)data;
+    while (bytes >= 8)
+    {
+        U64 w;
+        memcpy(&w, p, 8);
+        h = (h ^ w) * 0x100000001b3ULL;
+        p += 8;
+        bytes -= 8;
+    }
+    if (bytes)
+    {
+        U64 w = 0;
+        memcpy(&w, p, bytes);
+        h = (h ^ w) * 0x100000001b3ULL;
+    }
+    return h;
+}
+
+void LLRender::uiHashCachedDraw(const void* vb, U32 mode, U32 count, U32 tex_name, const glm::mat4& model_view)
+{
+    const U64 t0 = __rdtsc();
+    U64 h = sUiHashAccum;
+    h = uiMix(h, &vb, sizeof(vb));
+    h = uiMix(h, &mode, sizeof(mode));
+    h = uiMix(h, &count, sizeof(count));
+    h = uiMix(h, &tex_name, sizeof(tex_name));
+    h = uiMix(h, glm::value_ptr(model_view), sizeof(glm::mat4));
+    h = uiMix(h, glm::value_ptr(gRender.matrixOf(MM_MODELVIEW)), sizeof(glm::mat4));
+    sUiHashAccum = h;
+    sUiHashCycles += __rdtsc() - t0;
+}
 
 static const TextureTarget sTextureTarget[] =
 {
@@ -1892,6 +1931,21 @@ void LLRender::flush()
                     LL_WARNS_ONCE("Vulkan") << "immediate mode: the bound shader reads attributes (mask 0x" << std::hex << attribute_mask << std::dec << ") that immediate vertices do not have: they read the constant value" << LL_ENDL;
                 }
                 TexUnitVerify::note(mBatchHasTexCoord, count, mBatchTexFile, mBatchTexLine);
+                if (sUiHashing)
+                {
+                    const U64 t0 = __rdtsc();
+                    U64 h = sUiHashAccum;
+                    h = uiMix(h, mVerticesp.get(), count * sizeof(LLVector4a));
+                    h = uiMix(h, mTexcoordsp.get(), count * sizeof(LLVector2));
+                    h = uiMix(h, mColorsp.get(), count * sizeof(LLColor4U));
+                    h = uiMix(h, glm::value_ptr(matrixOf(MM_MODELVIEW)), sizeof(glm::mat4));
+                    const U32 mode = (U32)mMode;
+                    h = uiMix(h, &mode, sizeof(mode));
+                    const auto tex = gRender.getTexUnit(0)->mCurrTexture;
+                    h = uiMix(h, &tex, sizeof(tex));
+                    sUiHashAccum = h;
+                    sUiHashCycles += __rdtsc() - t0;
+                }
                 LLVkAsync::FrontLap draw_lap(LLVkAsync::FP_DRAW);
                 ++LLVertexBuffer::sDrawCalls;
                 gRender.syncMatrices();

@@ -545,6 +545,14 @@ public:
     static LLVector2 sUIGLScaleFactor;
     static bool sClassicMode; // classic sky mode active
 
+    // census only (newview/llitemcensus.h): a running hash of everything the UI emits (immediate batches and cached text buffers), to find the views whose output
+    // is the same as in the previous frame
+    static bool sUiHashing;
+    static U64 sUiHashAccum;
+    static U64 sUiHashCycles;           // processor cycles spent hashing (the census subtracts them)
+    static U64 uiMix(U64 h, const void* data, size_t bytes);
+    static void uiHashCachedDraw(const void* vb, U32 mode, U32 count, U32 tex_name, const glm::mat4& model_view);
+
 private:
     friend class LLLightState;
 

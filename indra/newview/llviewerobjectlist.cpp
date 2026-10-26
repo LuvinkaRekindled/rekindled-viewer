@@ -1277,6 +1277,7 @@ void LLViewerObjectList::update(LLAgent &agent)
     LLAttCensus::frame();
     gPipeline.sceneStateCensus();
     ItemCensus::frame();
+    HitchWatch::frame();
     gPipeline.pinMainThread();
     gPipeline.cpuProbe();
     gPipeline.releaseScan();
