@@ -15878,6 +15878,7 @@ void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
 }
 
 S32 rrDebugMode();      // the test switch of ray reconstruction (below)
+S32 rrBlurForce();
 // <FS> Temporal accumulation of the ray traced sun shadow. Between the sun lightmap pass and its blur: last frame's accumulated shadow is found again for every pixel (camera matrices, or the
 // avatar velocity for avatar pixels) and blended with this frame's, see shadowAccumF.glsl. Returns the target whose attachment 0 is the lightmap for the blur, or null when nothing was done.
 // noteSceneMatrices runs at the end of the lighting: here mViewProjCur and gRenderLastModelView are still last frame's.
@@ -15967,7 +15968,9 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 // 7 ray reconstruction without the traced reflection guides, 8 show the reflection motion vectors, 10 the hit distance + matrices guide instead of the motion vectors
 static S32 sRrHairMode = 0;         // the second number of the file: how the traced mirror takes hair (rt_hair_soft in shadowUtil.glsl)
 static S32 sRrAlphaSunOld = 0;      // the third number: 1 = the alpha pass (hair) traces its one hard sun ray as it did before, 0 = the soft sun like the lightmap
+static S32 sRrBlurForce = 0;        // the fourth number: 1 = the lightmap blur runs although the upscaler is on (test of RenderShadowBlurWithDLSS)
 S32 rrAlphaSunOld() { rrDebugMode(); return sRrAlphaSunOld; }
+S32 rrBlurForce() { rrDebugMode(); return sRrBlurForce; }
 S32 rrDebugMode()
 {
     static S32 mode = 0;
@@ -15979,10 +15982,11 @@ S32 rrDebugMode()
         mode = 0;
         sRrHairMode = 0;
         sRrAlphaSunOld = 0;
+        sRrBlurForce = 0;
         std::ifstream in("D:/claude/rr-debug.txt");
         if (in)
         {
-            in >> mode >> sRrHairMode >> sRrAlphaSunOld;
+            in >> mode >> sRrHairMode >> sRrAlphaSunOld >> sRrBlurForce;
         }
     }
     return mode;
@@ -18438,7 +18442,27 @@ void LLPipeline::renderDeferredLighting()
 
         LLRenderTarget* accumulated = (RenderDeferredSSAO && !gCubeSnapshot) ? accumulateSunShadow(deferred_light_target) : nullptr;       // <FS> the blur reads the accumulated sun shadow when there is one
 
-        if (RenderDeferredSSAO && !gCubeSnapshot)
+        // <FS> with the upscaler on, the lightmap blur (two passes of 13 depth tests and taps a pixel, 12% of the pixel shader warps in the GPU Trace of 2026-10-26) is left out: the sun shadow is
+        // accumulated over frames (RenderRTShadowAccumulate) or denoised by the upscaler, and the upscaler averages the SSAO noise. RenderShadowBlurWithDLSS brings it back.
+        static LLCachedControl<bool> blur_with_dlss(gSavedSettings, "RenderShadowBlurWithDLSS", false);
+        const bool skip_blur = sDLSS && !blur_with_dlss && !rrBlurForce();
+        if (RenderDeferredSSAO && !gCubeSnapshot && skip_blur)
+        {
+            if (accumulated)
+            {
+                // the accumulated lightmap goes where the blur's second pass would have written it
+                LL_PROFILE_GPU_ZONE("lightmap copy");
+                RenderPassScope pass(*deferred_light_target);
+                LLRenderState::BlendScope blend(false);
+                LLRenderState::DepthScope depth(false, false);
+                gCopyProgram.bind();
+                gRender.getTexUnit(0)->bind(accumulated);
+                mScreenTriangleVB->setBuffer();
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+            }
+            // (without accumulation the sun pass wrote the lightmap into deferred_light_target already)
+        }
+        else if (RenderDeferredSSAO && !gCubeSnapshot)
         {
             // soften direct lighting lightmap
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - soften shadow");
