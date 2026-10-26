@@ -118,6 +118,7 @@ protected:
     /*virtual*/ void updateLoop();
 
     /*virtual*/ bool isLost() const { return mLost; }
+    /*virtual*/ void debugStealHandle();
 
     void set3DMode(bool use3d);
     bool checkLost(int fmod_result);   // true (and the channel marked lost) when the handle is stale

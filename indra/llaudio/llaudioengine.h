@@ -483,6 +483,7 @@ protected:
     virtual void playSynced(LLAudioChannel *channelp) = 0;
     virtual void cleanup() = 0;
     virtual bool isPlaying() = 0;
+    virtual void debugStealHandle()             {}   // test only (LL_AUDIO_TEST_STEAL): make the backend handle of this channel stale, as if the backend had reused the voice
     virtual bool isLost() const                 { return false; }   // the backend lost the sound of this channel (FMOD reused the handle for another sound): the engine takes the source off the channel
     void setWaiting(const bool waiting)         { mWaiting = waiting; }
     bool isWaiting() const                      { return mWaiting; }

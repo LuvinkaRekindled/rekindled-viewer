@@ -333,6 +333,29 @@ void LLAudioEngine::idle()
     }
 
 
+    // test only: LL_AUDIO_TEST_STEAL=<seconds> makes the handle of one playing channel stale every <seconds> (the voice-reuse case of
+    // LLAudioChannelFMODSTUDIO::checkLost), the log shows "audio channel lost to the backend" and the source starts again
+    {
+        static const F32 steal_every = []() { const char* e = getenv("LL_AUDIO_TEST_STEAL"); return e ? (F32)atof(e) : 0.f; }();
+        static LLTimer steal_timer;
+        static S32 steal_next = 0;
+        if (steal_every > 0.f && steal_timer.getElapsedTimeF32() > steal_every)
+        {
+            steal_timer.reset();
+            for (S32 n = 0; n < LL_MAX_AUDIO_CHANNELS; n++)
+            {
+                LLAudioChannel* chp = mChannels[(steal_next + n) % LL_MAX_AUDIO_CHANNELS];
+                if (chp && chp->getSource() && chp->isPlaying() && !chp->isLost())
+                {
+                    LL_INFOS("AudioEngine") << "test: making the handle of the channel of source " << chp->getSource()->getID() << " stale" << LL_ENDL;
+                    chp->debugStealHandle();
+                    steal_next = (steal_next + n + 1) % LL_MAX_AUDIO_CHANNELS;
+                    break;
+                }
+            }
+        }
+    }
+
     // Do this BEFORE we update the channels
     // Update the channels to sync up with any changes that the source made,
     // such as changing what sound was playing.
