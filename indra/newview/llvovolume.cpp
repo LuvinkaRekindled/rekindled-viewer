@@ -749,6 +749,19 @@ void LLVOVolume::animateTextures()
     LL_CPU_ZONE("texanim: per object");
     if (!mDead && mDrawable) // <FS:Beq/> FIRE-34601 - bugsplat accessing null drawable.
     {
+        if (LLPipeline::coldMode() > 0 && !isAttachment() && !isAvatar())
+        {
+            // <FS> Cold (EXPIRY-design section 4): the texture animation of an object whose group nobody has looked at for a while is not stepped (it is computed from the time, so it is right when looked at again)
+            ++LLPipeline::sColdTexAnimSeen;
+            if (LLPipeline::coldGroup(mDrawable->getSpatialGroup()))
+            {
+                ++LLPipeline::sColdTexAnimSkipped;
+                if (LLPipeline::coldMode() >= 2)
+                {
+                    return;
+                }
+            }
+        }
         { LL_CPU_ZONE("texanim: shrinkWrap"); shrinkWrap(); }
         F32 off_s = 0.f, off_t = 0.f, scale_s = 1.f, scale_t = 1.f, rot = 0.f;
         S32 result;
