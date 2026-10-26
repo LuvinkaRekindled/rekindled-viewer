@@ -263,6 +263,13 @@ LLShaderProgram            gDeferredShadowSkinPullProgram;
 LLShaderProgram            gDeferredDiffusePullProgram;
 LLShaderProgram            gDeferredAlphaPullProgram;
 LLShaderProgram            gDeferredFullbrightAlphaPullProgram;
+// LL_VK_ALPHA_NOSHADOW=1 (test): the alpha programs are made without the sun shadow lookup (the ray queries of the traced sun shadow are the bulk of their fragment cost: Nsight GPU Trace of 2026-10-26)
+static bool alpha_noshadow()
+{
+    static const bool v = []() { const char* e = getenv("LL_VK_ALPHA_NOSHADOW"); return e && atoi(e) != 0; }();
+    return v;
+}
+
 LLShaderProgram            gDeferredFullbrightPullProgram;        // S6 X1: the OPAQUE fullbright pass from the scene table (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF, no alpha, no blending in the shader)
 LLShaderProgram            gDeferredFullbrightPullSkinProgram;
 bool                       gFullbrightPullReady = false;
@@ -1789,7 +1796,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         add_common_permutations(shader);
 
-        if (use_sun_shadow)
+        if (use_sun_shadow && !alpha_noshadow())
         {
             shader->addPermutation("HAS_SUN_SHADOW", "1");
         }
@@ -2138,7 +2145,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->addPermutation("USE_VERTEX_COLOR", "1");
             shader->addPermutation("HAS_ALPHA_MASK", "1");
             shader->addPermutation("USE_INDEXED_TEX", "1");
-            if (use_sun_shadow)
+            if (use_sun_shadow && !alpha_noshadow())
             {
                 shader->addPermutation("HAS_SUN_SHADOW", "1");
             }
@@ -2205,7 +2212,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->addPermutation("HAS_SKIN", "1");
             }
 
-            if (use_sun_shadow)
+            if (use_sun_shadow && !alpha_noshadow())
             {
                 shader->addPermutation("HAS_SUN_SHADOW", "1");
             }
@@ -2266,7 +2273,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->addPermutation("USE_VERTEX_COLOR", "1");
                 shader->addPermutation("HAS_ALPHA_MASK", "1");
                 shader->addPermutation("USE_INDEXED_TEX", "1");
-                if (use_sun_shadow)
+                if (use_sun_shadow && !alpha_noshadow())
                 {
                     shader->addPermutation("HAS_SUN_SHADOW", "1");
                 }
@@ -2328,7 +2335,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->addPermutation("USE_VERTEX_COLOR", "1");
         shader->addPermutation("LL_BINDLESS_PBR", "1");
         add_common_permutations(shader);
-        if (use_sun_shadow)
+        if (use_sun_shadow && !alpha_noshadow())
         {
             shader->addPermutation("HAS_SUN_SHADOW", "1");
         }
@@ -2387,7 +2394,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->addPermutation("USE_VERTEX_COLOR", "1");
                 shader->addPermutation("HAS_ALPHA_MASK", "1");
                 shader->addPermutation("USE_INDEXED_TEX", "1");
-                if (use_sun_shadow)
+                if (use_sun_shadow && !alpha_noshadow())
                 {
                     shader->addPermutation("HAS_SUN_SHADOW", "1");
                 }
