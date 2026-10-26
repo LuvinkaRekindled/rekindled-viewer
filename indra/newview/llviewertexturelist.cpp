@@ -1249,6 +1249,9 @@ void LLViewerTextureList::expiryCount()
         return;
     }
     static bool was_over = false;
+    static U32 flagged_total = 0;       // textures released (mode 2) and not woken since
+    static U64 released_total_bytes = 0;
+    static U32 quick_wakes = 0, wakes = 0;
     const double fraction = (double)used / (double)budget;
     const bool over = fraction > (was_over ? 0.80 : 0.85);
     if (over != was_over)
@@ -1257,17 +1260,25 @@ void LLViewerTextureList::expiryCount()
         LL_INFOS("TexExpiry") << (over ? "above" : "back below") << " the soft watermark: the OS sees " << (used >> 20) << " MB of a budget of " << (budget >> 20) << " MB (" << (int)(fraction * 100.0) << " %), bias "
             << LLViewerTexture::sDesiredDiscardBias << LL_ENDL;
     }
-    if (!over)
+    if (!over && !(mode >= 2 && flagged_total > 0))
     {
         return;
     }
+    const bool only_released = !over;       // below the watermark only the released textures are looked at (do their faces need them again?)
     const LLVector3 cam = LLViewerCamera::getInstance()->getOrigin();
     const F32 far_limit = LLViewerCamera::getInstance()->getFar() + 64.f;
-    U32 count[3] = {}, excluded = 0, late_wake_candidates = 0;
+    U32 count[3] = {}, excluded = 0;
     U64 bytes[3] = {}, excluded_bytes = 0;
+    struct Candidate { LLViewerFetchedTexture* mTex; U64 mMem; int mClass; double mAge; };
+    std::vector<Candidate> candidates;
+    U32 woken_now = 0, quick_now = 0;
     for (const LLPointer<LLViewerFetchedTexture>& image_ptr : mImageList)
     {
         LLViewerFetchedTexture* image = image_ptr.get();
+        if (only_released && !image->mExpired)
+        {
+            continue;
+        }
         if (!image->hasImageTexture())
         {
             continue;
@@ -1277,6 +1288,11 @@ void LLViewerTextureList::expiryCount()
         {
             ++excluded;
             excluded_bytes += mem;
+            if (image->mExpired)
+            {
+                image->mExpired = false;        // (it got a boost or a callback: whoever asked for it gets it back)
+                --flagged_total;
+            }
             continue;
         }
         bool any_face = false, all_far = true, no_group = false;
@@ -1320,41 +1336,85 @@ void LLViewerTextureList::expiryCount()
             }
         }
         int cls = 2;
+        double age = 0.0;
         if (!no_group)
         {
             if (!any_face || all_far)
             {
                 cls = 0;
+                age = 1.0e9;
             }
             else
             {
-                const double age = latest > 0 ? (double)(LLViewerOctreeEntryData::getCurrentFrame() - std::min(LLViewerOctreeEntryData::getCurrentFrame(), latest)) * spf : 1.0e9;
+                age = latest > 0 ? (double)(LLViewerOctreeEntryData::getCurrentFrame() - std::min(LLViewerOctreeEntryData::getCurrentFrame(), latest)) * spf : 1.0e9;
                 cls = age > 10.0 ? 1 : 2;
             }
         }
+        if (image->mExpired && cls == 2)
+        {
+            // something needs it again: the priority pass takes over (the wanted size comes back with the next visit)
+            image->mExpired = false;
+            --flagged_total;
+            ++woken_now;
+            quick_now += (frame_now - std::min(frame_now, image->mExpiredAtFrame)) * spf < 30.0;
+            continue;
+        }
+        if (only_released)
+        {
+            continue;
+        }
         ++count[cls];
         bytes[cls] += mem;
+        if (cls < 2 && !image->mExpired)
+        {
+            candidates.push_back({ image, mem, cls, age });
+        }
     }
-    // what an eviction would take: down to 80% of the budget, class by class, 99% of a texture's memory each
+    wakes += woken_now;
+    quick_wakes += quick_now;
+    if (only_released)
+    {
+        if (woken_now)
+        {
+            LL_INFOS("TexExpiry") << "released textures woken (a camera accepted a group of their faces): " << woken_now << ", of them within 30 s of the release " << quick_now << "; still released " << flagged_total << LL_ENDL;
+        }
+        return;
+    }
+    // what an eviction takes: down to 80% of the budget, class by class, oldest first, 99% of a texture's memory each
     const double need = std::max(0.0, (double)used - 0.80 * (double)budget);
     double freed = 0.0;
     U64 taken_bytes[2] = {};
     U32 taken_count[2] = {};
-    for (int cls = 0; cls < 2 && freed < need; ++cls)
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.mClass != b.mClass ? a.mClass < b.mClass : a.mAge > b.mAge; });
+    constexpr U32 kMaxPerCall = 2000;
+    U32 released_now = 0;
+    for (const Candidate& c : candidates)
     {
-        const double available = 0.99 * (double)bytes[cls];
-        const double take = std::min(available, need - freed);
-        freed += take;
-        taken_bytes[cls] = (U64)take;
-        taken_count[cls] = available > 0.0 ? (U32)((double)count[cls] * take / available) : 0;
+        if (freed >= need || released_now >= kMaxPerCall)
+        {
+            break;
+        }
+        freed += 0.99 * (double)c.mMem;
+        taken_bytes[c.mClass] += c.mMem;
+        ++taken_count[c.mClass];
+        ++released_now;
+        if (mode >= 2)
+        {
+            c.mTex->mExpired = true;
+            c.mTex->mExpiredAtFrame = frame_now;
+            c.mTex->mMaxVirtualSize = 0.f;
+            ++flagged_total;
+            released_total_bytes += c.mMem;
+            forceImmediateUpdate(c.mTex);      // (processTextureStats: it wants the smallest level now, the downscale queue takes it from here)
+        }
     }
     LL_INFOS("TexExpiry") << "over the watermark: the OS sees " << (used >> 20) << " of " << (budget >> 20) << " MB (" << (int)(fraction * 100.0) << " %), bias " << LLViewerTexture::sDesiredDiscardBias << "; needs " << (U64)(need / 1048576.0)
         << " MB to get to 80 % | textures by class (per-texture sums): region beyond draw distance or no face " << count[0] << " / " << (bytes[0] >> 20) << " MB, stale for over 10 s " << count[1] << " / " << (bytes[1] >> 20)
-        << " MB, in use " << count[2] << " / " << (bytes[2] >> 20) << " MB, excluded (boost or callbacks) " << excluded << " / " << (excluded_bytes >> 20) << " MB | an eviction in that order would take about "
+        << " MB, in use " << count[2] << " / " << (bytes[2] >> 20) << " MB, excluded (boost or callbacks) " << excluded << " / " << (excluded_bytes >> 20) << " MB | an eviction in that order takes about "
         << taken_count[0] << " textures (" << (taken_bytes[0] >> 20) << " MB) of the first class and " << taken_count[1] << " (" << (taken_bytes[1] >> 20) << " MB) of the second, " << (U64)(freed / 1048576.0) << " MB of the "
-        << (U64)(need / 1048576.0) << " MB needed" << LL_ENDL;
+        << (U64)(need / 1048576.0) << " MB needed" << (mode >= 2 ? "; RELEASED " : "; (count only) ") << released_now << " this second, " << flagged_total << " released and not woken (" << (released_total_bytes >> 20) << " MB released in all), woken "
+        << wakes << " (within 30 s of the release " << quick_wakes << ")" << LL_ENDL;
     LL_INFOS("TexExpiry") << memory_by_consumer_text(bytes[0] + bytes[1] + bytes[2] + excluded_bytes, used) << LL_ENDL;
-    (void)late_wake_candidates;
 }
 
 void LLViewerTextureList::updateImages(F32 max_time)
@@ -1878,6 +1938,11 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         if (on_screen)
         {
             imagep->mLastOnScreenFrame = gFrameCount;
+        }
+        if (imagep->mExpired)
+        {
+            max_vsize = 0.f;                      // (LL_VK_TEX_EXPIRY=2: released until a camera accepts a group of its faces again, see expiryCount)
+            imagep->mMaxVirtualSize = 0.f;
         }
         imagep->addTextureStats(max_vsize);
 
