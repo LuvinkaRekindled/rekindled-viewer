@@ -1190,9 +1190,139 @@ void LLViewerTextureList::logSummary()
     LL_INFOS("VkTex") << LLRenderPass::geometryBuildStats() << "; the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
 }
 
+// <FS> LL_VK_TEX_EXPIRY=1, stage 1 of the texture eviction in doc/vulkan/EXPIRY-design.md section 11: count only, nothing is released. Once a second, while the OS reports video memory above a soft watermark
+// (85% of the budget, left again below 80%), the textures in memory are sorted into the classes of section 12 and what releasing them in that order would free is logged:
+//   class 0: no face at all, or every face in a region beyond the draw distance (whatever the age);  class 1: faces only in groups no camera has accepted for 10 s;  class 2: in use (never touched).
+// Textures with a boost level or callbacks are excluded. The release would drop a texture to a very small level (about 99% of its memory).
+void LLViewerTextureList::expiryCount()
+{
+    static const int mode = getenv("LL_VK_TEX_EXPIRY") ? atoi(getenv("LL_VK_TEX_EXPIRY")) : 0;
+    if (mode <= 0)
+    {
+        return;
+    }
+    static LLTimer timer;
+    static U32 last_frame = 0;
+    if (timer.getElapsedTimeF32() < 1.f)
+    {
+        return;
+    }
+    const F32 seconds = timer.getElapsedTimeF32();
+    timer.reset();
+    const U32 frame_now = (U32)gFrameCount;
+    const double spf = last_frame && frame_now > last_frame ? (double)seconds / (double)(frame_now - last_frame) : 0.0166;
+    last_frame = frame_now;
+    U64 used = 0, budget = 0;
+    if (!LLVkBridge::videoMemory(used, budget) || !budget)
+    {
+        return;
+    }
+    static bool was_over = false;
+    const double fraction = (double)used / (double)budget;
+    const bool over = fraction > (was_over ? 0.80 : 0.85);
+    if (over != was_over)
+    {
+        was_over = over;
+        LL_INFOS("TexExpiry") << (over ? "above" : "back below") << " the soft watermark: the OS sees " << (used >> 20) << " MB of a budget of " << (budget >> 20) << " MB (" << (int)(fraction * 100.0) << " %), bias "
+            << LLViewerTexture::sDesiredDiscardBias << LL_ENDL;
+    }
+    if (!over)
+    {
+        return;
+    }
+    const LLVector3 cam = LLViewerCamera::getInstance()->getOrigin();
+    const F32 far_limit = LLViewerCamera::getInstance()->getFar() + 64.f;
+    U32 count[3] = {}, excluded = 0, late_wake_candidates = 0;
+    U64 bytes[3] = {}, excluded_bytes = 0;
+    for (const LLPointer<LLViewerFetchedTexture>& image : mImageList)
+    {
+        if (!image->hasImageTexture())
+        {
+            continue;
+        }
+        const U64 mem = (U64)image->getTextureMemory().value();
+        if (image->getBoostLevel() != LLViewerTexture::BOOST_NONE || image->hasCallbacks())
+        {
+            ++excluded;
+            excluded_bytes += mem;
+            continue;
+        }
+        bool any_face = false, all_far = true, no_group = false;
+        S32 latest = 0;
+        for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
+        {
+            const LLViewerTexture::ll_face_list_t* faces = image->getFaceList(ch);
+            const S32 n_faces = image->getNumFaces(ch);
+            for (S32 i = 0; i < n_faces && i < (S32)faces->size(); ++i)
+            {
+                const LLFace* face = (*faces)[i];
+                any_face = true;
+                const LLDrawable* drawable = face ? face->getDrawable() : nullptr;
+                const LLSpatialGroup* group = drawable ? drawable->getSpatialGroup() : nullptr;
+                if (!group)
+                {
+                    no_group = true;
+                    all_far = false;
+                    continue;
+                }
+                const LLViewerRegion* region = group->getSpatialPartition() ? group->getSpatialPartition()->mRegionp : nullptr;
+                bool far_region = false;
+                if (region)
+                {
+                    const LLVector3 o = region->getOriginAgent();
+                    const F32 w = region->getWidth();
+                    const F32 dx = llmax(llmax(o.mV[VX] - cam.mV[VX], cam.mV[VX] - (o.mV[VX] + w)), 0.f);
+                    const F32 dy = llmax(llmax(o.mV[VY] - cam.mV[VY], cam.mV[VY] - (o.mV[VY] + w)), 0.f);
+                    far_region = sqrtf(dx * dx + dy * dy) > far_limit;
+                }
+                all_far = all_far && far_region;
+                for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
+                {
+                    latest = std::max(latest, group->getVisible((LLViewerCamera::eCameraID)c));
+                }
+            }
+        }
+        int cls = 2;
+        if (!no_group)
+        {
+            if (!any_face || all_far)
+            {
+                cls = 0;
+            }
+            else
+            {
+                const double age = latest > 0 ? (double)(LLViewerOctreeEntryData::getCurrentFrame() - std::min(LLViewerOctreeEntryData::getCurrentFrame(), latest)) * spf : 1.0e9;
+                cls = age > 10.0 ? 1 : 2;
+            }
+        }
+        ++count[cls];
+        bytes[cls] += mem;
+    }
+    // what an eviction would take: down to 80% of the budget, class by class, 99% of a texture's memory each
+    const double need = std::max(0.0, (double)used - 0.80 * (double)budget);
+    double freed = 0.0;
+    U64 taken_bytes[2] = {};
+    U32 taken_count[2] = {};
+    for (int cls = 0; cls < 2 && freed < need; ++cls)
+    {
+        const double available = 0.99 * (double)bytes[cls];
+        const double take = std::min(available, need - freed);
+        freed += take;
+        taken_bytes[cls] = (U64)take;
+        taken_count[cls] = available > 0.0 ? (U32)((double)count[cls] * take / available) : 0;
+    }
+    LL_INFOS("TexExpiry") << "over the watermark: the OS sees " << (used >> 20) << " of " << (budget >> 20) << " MB (" << (int)(fraction * 100.0) << " %), bias " << LLViewerTexture::sDesiredDiscardBias << "; needs " << (U64)(need / 1048576.0)
+        << " MB to get to 80 % | textures by class (per-texture sums): region beyond draw distance or no face " << count[0] << " / " << (bytes[0] >> 20) << " MB, stale for over 10 s " << count[1] << " / " << (bytes[1] >> 20)
+        << " MB, in use " << count[2] << " / " << (bytes[2] >> 20) << " MB, excluded (boost or callbacks) " << excluded << " / " << (excluded_bytes >> 20) << " MB | an eviction in that order would take about "
+        << taken_count[0] << " textures (" << (taken_bytes[0] >> 20) << " MB) of the first class and " << taken_count[1] << " (" << (taken_bytes[1] >> 20) << " MB) of the second, " << (U64)(freed / 1048576.0) << " MB of the "
+        << (U64)(need / 1048576.0) << " MB needed" << LL_ENDL;
+    (void)late_wake_candidates;
+}
+
 void LLViewerTextureList::updateImages(F32 max_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    expiryCount();
     {
         static U32 calls = 0;
         if (++calls >= 1800)
