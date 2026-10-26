@@ -2461,6 +2461,7 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
             return false;
         }
         ++b->mAllocs;
+        b->mUsed += size;
         out.mBuffer = b->mBuffer;
         out.mOffset = offset;
         out.mSize = size;
@@ -2476,6 +2477,31 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
     };
     if (!dedicated)
     {
+        // LL_VK_ARENA_FULLEST (default on, 0 = the first block with room, as before): the fullest block that still has room for the range goes first. With first fit the old blocks fill unevenly and stay
+        // half empty for good (the club run of 2026-10-25 had 48 acceleration structure blocks with 1.0 GB in use of 2.6 GB); filling the fullest first lets the sparse ones drain, and an empty block is given back
+        static const bool fullest = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_ARENA_FULLEST", b, sizeof(b)) == 0 || atoi(b) != 0; }();
+        if (fullest)
+        {
+            arenaTrimPool();
+            ArenaBlock* best = nullptr;
+            VkDeviceSize best_free = ~0ull;
+            for (ArenaBlock* b : mArenaBlocks)
+            {
+                if (b && !b->mDedicated && !b->mPooled && b->mShared == shared && b->mHost == host && b->mAccel == accel)
+                {
+                    const VkDeviceSize free_bytes = b->mSize > b->mUsed ? b->mSize - b->mUsed : 0;
+                    if (free_bytes >= size + alignment && free_bytes < best_free)
+                    {
+                        best = b;
+                        best_free = free_bytes;
+                    }
+                }
+            }
+            if (best && place(best))
+            {
+                return true;
+            }
+        }
         for (ArenaBlock* b : mArenaBlocks)
         {
             if (b && !b->mDedicated && b->mShared == shared && b->mHost == host && b->mAccel == accel && place(b))
@@ -2536,6 +2562,24 @@ void Context::arenaTrimPool()
             ++mArenaCounters.mAccelPoolTrimmed;
             arenaDestroyBlock(b);
         }
+        else if (b && !b->mPooled && !b->mDedicated && b->mAllocs == 0 && mFrameNumber - b->mEmptyFrame > 600)
+        {
+            // an empty regular block that nothing has taken for about 10 seconds: given back, unless it is the one spare of its kind (the next allocation finds it)
+            bool other_empty = false;
+            for (ArenaBlock* o : mArenaBlocks)
+            {
+                if (o && o != b && !o->mDedicated && !o->mPooled && o->mShared == b->mShared && o->mHost == b->mHost && o->mAccel == b->mAccel && o->mAllocs == 0)
+                {
+                    other_empty = true;
+                    break;
+                }
+            }
+            if (other_empty)
+            {
+                ++mArenaCounters.mIdleTrimmed;
+                arenaDestroyBlock(b);
+            }
+        }
     }
 }
 
@@ -2543,11 +2587,17 @@ void Context::arenaFreeNow(ArenaBlock* block, VmaVirtualAllocation alloc)
 {
     flight(FL_ARENA_FREE_DONE, (unsigned long long)(uintptr_t)block, (unsigned long long)(uintptr_t)alloc, block ? (unsigned long long)block->mAddress : 0ull);
     std::lock_guard<std::mutex> lock(mArenaMutex);
+    {
+        VmaVirtualAllocationInfo info = {};
+        vmaGetVirtualAllocationInfo(block->mVirtual, alloc, &info);
+        block->mUsed = block->mUsed > info.size ? block->mUsed - info.size : 0;
+    }
     vmaVirtualFree(block->mVirtual, alloc);
     if (--block->mAllocs != 0)
     {
         return;
     }
+    block->mEmptyFrame = mFrameNumber;
     if (block->mDedicated && block->mAccel && as_pool_bytes() && mPoolBytes + block->mSize <= as_pool_bytes())
     {
         // <FS> kept for the next big range of its size class (the video memory manager is not asked for 1 GB a second and given it back)
