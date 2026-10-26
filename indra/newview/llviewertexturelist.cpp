@@ -1234,8 +1234,9 @@ void LLViewerTextureList::expiryCount()
     const F32 far_limit = LLViewerCamera::getInstance()->getFar() + 64.f;
     U32 count[3] = {}, excluded = 0, late_wake_candidates = 0;
     U64 bytes[3] = {}, excluded_bytes = 0;
-    for (const LLPointer<LLViewerFetchedTexture>& image : mImageList)
+    for (const LLPointer<LLViewerFetchedTexture>& image_ptr : mImageList)
     {
+        LLViewerFetchedTexture* image = image_ptr.get();
         if (!image->hasImageTexture())
         {
             continue;
@@ -1258,7 +1259,7 @@ void LLViewerTextureList::expiryCount()
                 const LLFace* face = (*faces)[i];
                 any_face = true;
                 const LLDrawable* drawable = face ? face->getDrawable() : nullptr;
-                const LLSpatialGroup* group = drawable ? drawable->getSpatialGroup() : nullptr;
+                LLSpatialGroup* group = drawable ? drawable->getSpatialGroup() : nullptr;
                 if (!group)
                 {
                     no_group = true;
