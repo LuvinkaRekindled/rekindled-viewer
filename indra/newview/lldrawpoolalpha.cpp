@@ -138,7 +138,8 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
         static LLCachedControl<S32> rt_samples(gSavedSettings, "RenderRTShadowSamples", 2);
         static LLStaticHashedString radius_s("rt_sun_radius"), samples_s("rt_sun_samples"), frame_s("rt_noise_frame");
         F32 scale = 2.f;                    // chosen by eye (Adam, plaza: a logo on the floor next to the ground): twice the sun disc, 6 rays per sample setting
-        S32 samples = rt_samples() * 6;
+        static LLCachedControl<S32> alpha_rays(gSavedSettings, "RenderRTShadowAlphaRays", 1);
+        S32 samples = alpha_rays() > 0 ? alpha_rays() : rt_samples() * 6;      // (one jittered ray by default: doc/vulkan/MAINTHREAD-candidates.md, the alpha sun ray count; 0 = the old 12)
         if (alpha_sun == 3) { scale = 4.f; samples = rt_samples() * 6; }
         else if (alpha_sun == 4) { scale = 8.f; samples = rt_samples() * 6; }
         else if (alpha_sun >= 5 && alpha_sun <= 8) { samples = alpha_sun == 5 ? 6 : (alpha_sun == 6 ? 3 : (alpha_sun == 7 ? 2 : 1)); }       // test (rr-debug.txt third number): the default disc with 6 / 3 / 2 rays, 8: ONE ray on the disc (a different point of it every frame, the upscaler averages)
