@@ -52,6 +52,9 @@
 #include <algorithm>
 #include <string>
 
+std::atomic<int> gFsWorkerCpu{ -1 };
+std::atomic<unsigned> gFsWorkerTid{ 0 };
+
 namespace LLVkWorker
 {
 
@@ -9600,6 +9603,8 @@ void before_end_frame()
 
 void after_frame()
 {
+    gFsWorkerCpu.store((int)GetCurrentProcessorNumber(), std::memory_order_relaxed);        // <FS> LL_VK_CPUPROBE core census (pipeline.cpp)
+    gFsWorkerTid.store((unsigned)GetCurrentThreadId(), std::memory_order_relaxed);
     std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
     if (sUiDiff)
     {
