@@ -282,6 +282,7 @@ private:
     // <FS:ND> Protect against corrupted sounds
 
     std::map<LLUUID,U32> mCorruptData;
+    U32 mLostChannels = 0;      // channels taken off a source because the backend lost their sound (FMOD reused the voice)
 
 public:
     void markSoundCorrupt( LLUUID const & );
@@ -482,6 +483,7 @@ protected:
     virtual void playSynced(LLAudioChannel *channelp) = 0;
     virtual void cleanup() = 0;
     virtual bool isPlaying() = 0;
+    virtual bool isLost() const                 { return false; }   // the backend lost the sound of this channel (FMOD reused the handle for another sound): the engine takes the source off the channel
     void setWaiting(const bool waiting)         { mWaiting = waiting; }
     bool isWaiting() const                      { return mWaiting; }
 

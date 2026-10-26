@@ -43,6 +43,7 @@
 #include "llapr.h"
 
 #include "sound_ids.h"
+#include "llaudiostall.h"
 
 // <FS:minerjr> [FIRE-36022] - Removing my USB headset crashes entire viewer
 using namespace std::chrono_literals; // Needed for shared timed mutex to use time
@@ -135,6 +136,7 @@ static FMOD_RESULT F_CALL systemCallback(FMOD_SYSTEM *system, FMOD_SYSTEM_CALLBA
             {
                 // <FS:minerjr> [FIRE-36022] - Removing my USB headset crashes entire viewer
                 // Attempt to lock the access to the audio device, wait up to 1 second for other threads to unlock.
+                LLAudioStallTimer stall("FMOD device list changed (lock + set_device + device list)", 5);
                 std::unique_lock lock(gAudioDeviceMutex, 1s);
                 // If the lock could not be accessed, return as we don't have hardware access and will need to try again another pass.
                 // Prevents threads from interacting with the hardware at the same time as other audio/voice threads.
@@ -714,6 +716,7 @@ bool LLAudioChannelFMODSTUDIO::updateBuffer()
         // setup.
         if (!mChannelp)
         {
+            LLAudioStallTimer stall("FMOD::System::playSound", 10);
             FMOD_RESULT result = getSystem()->playSound(soundp, NULL /*free channel?*/, true, &mChannelp);
             Check_FMOD_Error(result, "FMOD::System::playSound");
         }
@@ -773,14 +776,17 @@ void LLAudioChannelFMODSTUDIO::update3DPosition()
         LLVector3 float_pos;
         float_pos.setVec(mCurrentSourcep->getPositionGlobal());
         FMOD_RESULT result = mChannelp->set3DAttributes((FMOD_VECTOR*)float_pos.mV, (FMOD_VECTOR*)mCurrentSourcep->getVelocity().mV);
-        Check_FMOD_Error(result, "FMOD::Channel::set3DAttributes");
+        if (!checkLost(result))
+        {
+            Check_FMOD_Error(result, "FMOD::Channel::set3DAttributes");
+        }
     }
 }
 
 
 void LLAudioChannelFMODSTUDIO::updateLoop()
 {
-    if (!mChannelp)
+    if (!mChannelp || mLost)
     {
         // May want to clear up the loop/sample counters.
         return;
@@ -791,8 +797,13 @@ void LLAudioChannelFMODSTUDIO::updateLoop()
     // sample position looks like it's going backwards.  Not reliable; may
     // yield false negatives.
     //
-    U32 cur_pos;
-    Check_FMOD_Error(mChannelp->getPosition(&cur_pos, FMOD_TIMEUNIT_PCMBYTES), "FMOD::Channel::getPosition");
+    U32 cur_pos = 0;
+    FMOD_RESULT pos_result = mChannelp->getPosition(&cur_pos, FMOD_TIMEUNIT_PCMBYTES);
+    if (checkLost(pos_result))
+    {
+        return;
+    }
+    Check_FMOD_Error(pos_result, "FMOD::Channel::getPosition");
 
     if (cur_pos < (U32)mLastSamplePos)
     {
@@ -811,10 +822,15 @@ void LLAudioChannelFMODSTUDIO::cleanup()
     }
 
     //Cleaning up channel mChannelID
-    Check_FMOD_Error(mChannelp->stop(), "FMOD::Channel::stop");
+    FMOD_RESULT stop_result = mChannelp->stop();
+    if (!checkLost(stop_result))
+    {
+        Check_FMOD_Error(stop_result, "FMOD::Channel::stop");
+    }
 
     mCurrentBufferp = NULL;
     mChannelp = NULL;
+    mLost = false;
 }
 
 
@@ -865,9 +881,22 @@ bool LLAudioChannelFMODSTUDIO::isPlaying()
         return false;
     }
 
-    bool paused, playing;
-    Check_FMOD_Error(mChannelp->getPaused(&paused),"FMOD::Channel::getPaused");
-    Check_FMOD_Error(mChannelp->isPlaying(&playing),"FMOD::Channel::isPlaying");
+    // (the flags start false: when FMOD says the handle is stale, the sound is gone. Before, they were left uninitialised on an error, so a
+    // channel whose handle FMOD had reused for another sound could read as playing for good and stayed on its source, 3 failed FMOD calls
+    // and 3 warnings every frame until the viewer quit: doc/vulkan/PLAN-audio-main-thread.md)
+    bool paused = false, playing = false;
+    FMOD_RESULT result = mChannelp->getPaused(&paused);
+    if (checkLost(result))
+    {
+        return false;
+    }
+    Check_FMOD_Error(result, "FMOD::Channel::getPaused");
+    result = mChannelp->isPlaying(&playing);
+    if (checkLost(result))
+    {
+        return false;
+    }
+    Check_FMOD_Error(result, "FMOD::Channel::isPlaying");
     return !paused && playing;
 }
 
@@ -915,6 +944,8 @@ bool LLAudioBufferFMODSTUDIO::loadWAV(const std::string& filename)
         mSoundp = NULL;
     }
 
+    LLAudioStallTimer stall("FMOD::System::createSound", 10);
+    stall.setDetail(filename);
     FMOD_MODE base_mode = FMOD_LOOP_NORMAL;
     FMOD_CREATESOUNDEXINFO exinfo;
     memset(&exinfo, 0, sizeof(exinfo));
@@ -955,10 +986,27 @@ U32 LLAudioBufferFMODSTUDIO::getLength()
 }
 
 
+// A channel handle goes stale when FMOD reuses the voice for another sound (FMOD_ERR_CHANNEL_STOLEN) or the sound ended (FMOD_ERR_INVALID_HANDLE).
+// The viewer used to keep such a channel on its source: a looped source never ends, so 3 failed FMOD calls and 3 warnings every frame for the
+// rest of the session (84,000 lines in one 5 minute lap) and the loop was silent. Now the channel is marked lost, the engine takes the source off
+// it (LLAudioEngine::idle) and the source gets a channel again through the normal priority path.
+bool LLAudioChannelFMODSTUDIO::checkLost(int fmod_result)
+{
+    if (fmod_result == FMOD_ERR_CHANNEL_STOLEN || fmod_result == FMOD_ERR_INVALID_HANDLE)
+    {
+        mLost = true;
+        return true;
+    }
+    return false;
+}
+
 void LLAudioChannelFMODSTUDIO::set3DMode(bool use3d)
 {
     FMOD_MODE current_mode;
-    if (Check_FMOD_Error(mChannelp->getMode(&current_mode), "FMOD::Channel::getMode"))
+    FMOD_RESULT mode_result = mChannelp->getMode(&current_mode);
+    if (checkLost(mode_result))
+        return;
+    if (Check_FMOD_Error(mode_result, "FMOD::Channel::getMode"))
         return;
     FMOD_MODE new_mode = current_mode;
     new_mode &= ~(use3d ? FMOD_2D : FMOD_3D);
