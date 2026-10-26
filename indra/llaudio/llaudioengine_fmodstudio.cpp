@@ -990,6 +990,14 @@ U32 LLAudioBufferFMODSTUDIO::getLength()
 // The viewer used to keep such a channel on its source: a looped source never ends, so 3 failed FMOD calls and 3 warnings every frame for the
 // rest of the session (84,000 lines in one 5 minute lap) and the loop was silent. Now the channel is marked lost, the engine takes the source off
 // it (LLAudioEngine::idle) and the source gets a channel again through the normal priority path.
+void LLAudioChannelFMODSTUDIO::debugStealHandle()
+{
+    if (mChannelp)
+    {
+        mChannelp->stop();   // the handle stays in mChannelp and is invalid from now on, the state FMOD leaves behind when it reuses a voice
+    }
+}
+
 bool LLAudioChannelFMODSTUDIO::checkLost(int fmod_result)
 {
     if (fmod_result == FMOD_ERR_CHANNEL_STOLEN || fmod_result == FMOD_ERR_INVALID_HANDLE)
