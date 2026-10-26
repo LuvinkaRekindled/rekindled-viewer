@@ -5489,26 +5489,42 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
         ++part_index;
     }
 
-    // the drawable groups: what stateSort does with them when there is no occlusion culling, less the mesh rebuild
-    for (LLCullResult::sg_iterator iter = result.beginDrawableGroups(); iter != result.endDrawableGroups(); ++iter)
+    // (the marking of the groups the walks found is shadowPrepMark, in chunks)
+}
+
+// worker: mark a range of the cascade's groups visible, and their drawables. Kind 0: the drawable groups (what stateSort does with them when there is no occlusion culling, less the mesh rebuild); kind 1: the visible groups
+// (stateSort(group), less the mesh rebuild). Every group and every drawable belongs to one range, so chunks of the same cascade do not meet.
+void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    ShadowPrepScope scope(prep);
+    LLCamera& camera = prep.mCamera;
+    LLCullResult& result = *prep.mResult;
+
+    if (kind == 0)
     {
-        LLSpatialGroup* group = *iter;
-        if (group->isDead())
+        LLCullResult::sg_iterator groups = result.beginDrawableGroups();
+        for (U32 k = begin; k < end; ++k)
         {
-            continue;
+            LLSpatialGroup* group = groups[k];
+            if (group->isDead())
+            {
+                continue;
+            }
+            group->setVisible();
+            for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
+            {
+                LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
+                markVisible(drawablep, camera);
+            }
         }
-        group->setVisible();
-        for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
-        {
-            LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
-            markVisible(drawablep, camera);
-        }
+        return;
     }
 
-    // the visible groups: stateSort(group), less the mesh rebuild
-    for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
+    LLCullResult::sg_iterator groups = result.beginVisibleGroups();
+    for (U32 k = begin; k < end; ++k)
     {
-        LLSpatialGroup* group = *iter;
+        LLSpatialGroup* group = groups[k];
         if (group->isDead())
         {
             continue;
@@ -5531,7 +5547,7 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
             }
             if (!drawablep->getVOVolume())
             {
-                prep.mDeferred.push_back(drawablep); // pools: the main thread
+                deferred.push_back(drawablep); // pools: the main thread
                 continue;
             }
             if (!drawablep->isState(LLDrawable::INVISIBLE | LLDrawable::FORCE_INVISIBLE))
@@ -19924,6 +19940,8 @@ struct PrepJobCensus
     U64 mJobs[2] = {};
     double mCascadeMs[2][4] = {};
     U64 mCascadeJobs[2][4] = {};
+    double mMarkWallMs = 0.0;               // the marking chunks' fork-join
+    U64 mMarkChunks = 0;
 };
 static PrepJobCensus sPrepJobCensus;
 
@@ -19948,7 +19966,7 @@ static void shadow_census_report(U32 frames)
         }
         snprintf(buf, sizeof(buf), "shadow prep jobs over %llu runs: jobs per run %.2f; cull: wall %.3f ms, sum of jobs %.3f, longest %.3f; render map: wall %.3f ms, sum %.3f, longest %.3f; ",
                  (unsigned long long)c.mRuns, c.mJobs[0] / n, c.mWallMs[0] / n, c.mSumMs[0] / n, c.mLongestMs[0] / n, c.mWallMs[1] / n, c.mSumMs[1] / n, c.mLongestMs[1] / n);
-        LL_INFOS("SceneCensus") << buf << by << LL_ENDL;
+        LL_INFOS("SceneCensus") << buf << by << "mark chunks: wall " << c.mMarkWallMs / n << " ms, " << c.mMarkChunks / n << " chunks a run" << LL_ENDL;
         sPrepJobCensus = PrepJobCensus();
         // the partitions: per cull job, the time of each, largest first
         std::vector<std::pair<double, std::string>> parts;
@@ -22165,6 +22183,37 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             };
             const auto cull_wall0 = std::chrono::steady_clock::now();
             { LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->run(pending.size(), cull_job); }
+            {
+                // the marking of the found groups, in chunks over the pool (LL_VK_PREP_CHUNK = groups a chunk, default 128, 0: one chunk a list as before)
+                static const U32 chunk_size = getenv("LL_VK_PREP_CHUNK") ? (U32)atoi(getenv("LL_VK_PREP_CHUNK")) : 128;
+                struct MarkChunk { size_t mPrep; int mKind; U32 mBegin, mEnd; std::vector<LLDrawable*> mDeferred; };
+                std::vector<MarkChunk> chunks;
+                for (size_t p = 0; p < pending.size(); ++p)
+                {
+                    LLCullResult& r = *pending[p].mResult;
+                    for (int kind = 0; kind < 2; ++kind)
+                    {
+                        const U32 n = kind == 0 ? r.getDrawableGroupsSize() : r.getVisibleGroupsSize();
+                        const U32 step = chunk_size ? chunk_size : std::max<U32>(n, 1u);
+                        for (U32 b = 0; b < n; b += step)
+                        {
+                            chunks.push_back({ p, kind, b, std::min(n, b + step), {} });
+                        }
+                    }
+                }
+                const std::function<void(size_t)> mark_job = [&](size_t c) { shadowPrepMark(pending[chunks[c].mPrep], chunks[c].mKind, chunks[c].mBegin, chunks[c].mEnd, chunks[c].mDeferred); };
+                const auto mark_wall0 = std::chrono::steady_clock::now();
+                if (!chunks.empty()) { LL_CPU_ZONE("shadow prep: mark job (wait for the pool)"); prep_pool->run(chunks.size(), mark_job); }
+                for (MarkChunk& c : chunks)
+                {
+                    pending[c.mPrep].mDeferred.insert(pending[c.mPrep].mDeferred.end(), c.mDeferred.begin(), c.mDeferred.end());      // (chunk order is list order)
+                }
+                if (job_census)
+                {
+                    sPrepJobCensus.mMarkWallMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - mark_wall0).count();
+                    sPrepJobCensus.mMarkChunks += chunks.size();
+                }
+            }
             if (job_census)
             {
                 PrepJobCensus& c = sPrepJobCensus;
