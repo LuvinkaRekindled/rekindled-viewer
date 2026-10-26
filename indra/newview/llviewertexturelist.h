@@ -166,6 +166,7 @@ public:
 private:
     F32  updateImagesCreateTextures(F32 max_time);
     void logSummary();      // <FS> the state of the texture system, one line in the log (every 1800 frames, see updateImages)
+    void expiryCount();     // <FS> LL_VK_TEX_EXPIRY=1 (doc/vulkan/EXPIRY-design.md section 11): once a second, over the soft memory watermark, what an eviction by class would release (count only)
     F32  updateImagesFetchTextures(F32 max_time);
     void updateImagesUpdateStats();
     F32  updateImagesLoadingFastCache(F32 max_time);
