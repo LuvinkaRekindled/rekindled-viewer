@@ -140,7 +140,8 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
         F32 scale = 2.f;                    // chosen by eye (Adam, plaza: a logo on the floor next to the ground): twice the sun disc, 6 rays per sample setting
         S32 samples = rt_samples() * 6;
         if (alpha_sun == 3) { scale = 4.f; samples = rt_samples() * 6; }
-        else if (alpha_sun >= 4) { scale = 8.f; samples = rt_samples() * 6; }
+        else if (alpha_sun == 4) { scale = 8.f; samples = rt_samples() * 6; }
+        else if (alpha_sun >= 5 && alpha_sun <= 8) { samples = alpha_sun == 5 ? 6 : (alpha_sun == 6 ? 3 : (alpha_sun == 7 ? 2 : 1)); }       // test (rr-debug.txt third number): the default disc with 6 / 3 / 2 rays, 8: ONE ray on the disc (a different point of it every frame, the upscaler averages)
         shader->uniform1f(radius_s, alpha_sun == 1 ? 0.f : tanf(llclamp(rt_softness() * scale, 0.f, 20.f) * DEG_TO_RAD));
         shader->uniform1i(samples_s, alpha_sun == 1 ? 1 : llclamp(samples, 1, 16));
         shader->uniform1f(frame_s, LLPipeline::sDLSS ? (F32)(gPipeline.mJitterIndex % 64) : 0.f);
