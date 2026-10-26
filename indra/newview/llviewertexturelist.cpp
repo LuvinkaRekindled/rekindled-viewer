@@ -1148,6 +1148,8 @@ void LLViewerTextureList::logSummary()
             {
                 const std::string by_consumer = memory_by_consumer_text(texture_total, vk_used2);
                 if (!by_consumer.empty()) LL_INFOS("VkTex") << by_consumer << LL_ENDL;
+                const std::string census = LLVkBridge::accelCensus();
+                if (!census.empty()) LL_INFOS("VkTex") << census << LL_ENDL;
             }
         }
     }

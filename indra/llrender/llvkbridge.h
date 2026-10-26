@@ -38,6 +38,7 @@ namespace LLVkBridge
         U64 mBlockBytes = 0, mBlockUsed = 0, mHostBytes = 0, mHostUsed = 0, mAccelBytes = 0, mAccelUsed = 0, mAccelPooledBytes = 0, mRtStructureBytes = 0;
     };
     bool memoryByConsumer(MemoryByConsumer& out);
+    std::string accelCensus();      // the AS census text of Context::arenaAccelCensus (empty when Vulkan is not up)
     // false: reading a texture back now would make the main thread wait for a render worker that is far behind (or too many were made this frame): ask again in a later frame. True without the worker.
     bool readbackAffordable();
 

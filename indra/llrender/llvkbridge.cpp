@@ -12,6 +12,7 @@
 bool LLVkBridge::isReady() { return false; }
 bool LLVkBridge::videoMemory(U64&, U64&) { return false; }
 bool LLVkBridge::memoryByConsumer(MemoryByConsumer&) { return false; }
+std::string LLVkBridge::accelCensus() { return std::string(); }
 bool LLVkBridge::readbackAffordable() { return true; }
 bool LLVkBridge::ensureReady() { return false; }
 void LLVkBridge::setMainWindow(void*) {}
@@ -210,6 +211,11 @@ bool LLVkBridge::readbackAffordable()
 bool LLVkBridge::videoMemory(U64& usage_bytes, U64& budget_bytes)
 {
     return sMirror.mReady && !sMirror.mFailed && LLVk::Context::instance().videoMemory(usage_bytes, budget_bytes);
+}
+
+std::string LLVkBridge::accelCensus()
+{
+    return sMirror.mReady && !sMirror.mFailed ? LLVk::Context::instance().arenaAccelCensus() : std::string();
 }
 
 bool LLVkBridge::memoryByConsumer(MemoryByConsumer& out)
