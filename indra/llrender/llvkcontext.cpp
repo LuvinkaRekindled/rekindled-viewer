@@ -532,7 +532,9 @@ bool Context::createInstance()
     }
     const bool want_validation = GetEnvironmentVariableA("LL_VK_VALIDATION", nullptr, 0) > 0;
     const bool want_addr_log = addr_log_wanted();
-    const bool debug_utils = (want_validation || want_addr_log) && has_extension(available, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    // LL_VK_LABELS=1: every GPU stamp also inserts a debug label with its name, so a capture in Nsight Graphics (GPU Trace) shows where the passes begin
+    const bool want_labels = GetEnvironmentVariableA("LL_VK_LABELS", nullptr, 0) > 0;
+    const bool debug_utils = (want_validation || want_addr_log || want_labels) && has_extension(available, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     if (debug_utils)
     {
         wanted.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -1717,6 +1719,20 @@ void Context::gpuStamp(U32 tag)
     if (mCaps.mCheckpoints && vkCmdSetCheckpointNV)
     {
         vkCmdSetCheckpointNV(f.mCmd, (const void*)(uintptr_t)((tag & ~STAMP_DRAW) + 1));
+    }
+    {
+        static const bool labels = GetEnvironmentVariableA("LL_VK_LABELS", nullptr, 0) > 0;
+        if (labels && !(tag & STAMP_DRAW))
+        {
+            static PFN_vkCmdInsertDebugUtilsLabelEXT insert_label = (PFN_vkCmdInsertDebugUtilsLabelEXT)vkGetInstanceProcAddr(mInstance, "vkCmdInsertDebugUtilsLabelEXT");
+            if (insert_label)
+            {
+                const std::string name = stampTagName(tag);
+                VkDebugUtilsLabelEXT label = { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT };
+                label.pLabelName = name.c_str();
+                insert_label(f.mCmd, &label);
+            }
+        }
     }
     const U32 n = (U32)f.mStampTags.size();
     if (!f.mTsPool || n >= MAX_GPU_STAMPS)
