@@ -1331,10 +1331,9 @@ bool init(VkDescriptorSetLayout set_layout)
         return false;
     }
     sInit = true;
-    if (diag_on())
-    {
-        Context::instance().setHangReporter(report_recent_scene_calls);
-    }
+    // always, not only under LL_VK_DIAG: the ring of the last scene calls (sRecent) is always kept, and the sun shader hangs of 2026-10-26 (doc/vulkan/PLAN-texture-handles.md 17.24, 17.25) came with no report of the
+    // transforms, scales and references of the newest scene calls (nothing runs until a hang)
+    Context::instance().setHangReporter(report_recent_scene_calls);
     {
         // the skinning compute shader is compiled here, at start-up, not by the first scene call after login (the worker built nothing for about a second then: the GPU idled and the main thread waited)
         const auto t0 = std::chrono::steady_clock::now();
