@@ -112,3 +112,21 @@ Candidates left from this list: the local light set (about 0.3 ms recoverable) a
 - **Downstream of the loop (inclusive, a frame):** drawable `updateMove` other 0.043 / rigid 0.065 / rigged 0.025 ms; bridge `updateMove` 0.028 / 0.079 / 0.033; octree partition move 0.079 / 0.079 / 0.017; moved list entries 111 / **260 (243 of them already moved this frame)** / 46. So what a bulk matrix pass would take out for the plain rigid attachments is about 0.4 ms of the loop plus about 0.15-0.25 ms downstream (about 0.6 ms in this crowd, about 0.9 ms in the heavy one), less the cost of the pass itself (matrix products: a few hundredths of a ms) and the 23% that stay on the old path.
 - **Small pieces** (per frame): `updateOrientation` 0.148 ms (5.4 us each over 27 avatars; **the world matrix + euler angles are 0.1 us of it and the ground height lookup of the root step 0.2 us: neither is the cost**), root position and rotation 0.313 in all, name tag 0.097, appearance animation 0.131 (3.1 us each), joint matrices 0.079, `idleUpdateMisc` 0.97 in all (the loop 0.86), own avatar inline: motion update 0.143 + post-character 0.100 (one avatar, 0.24 ms).
 - **Reading:** the whole serial avatar update is about 3 ms (light crowd: idle loop 0.88 + completion loop 1.15 + the parallel blend 0.39 wall), of which a realistic cut is about 1 ms (bulk attachment matrices 0.6-0.9, the own avatar's inline update 0.1-0.2 if it can join the batch), 6-8% of the loop.
+
+## The cheap avatar batch from the Fable avatar report (lap avt2- against avt1-, short laps, no yaw alignment; the crowds differ: loop 12.0 against 14.5-15.2 ms, attachments 229 against 385 a frame, so figures are per avatar or per attachment)
+
+Changes: `LLJoint::setRotation` skips a rotation that does not change (the commented-out test is back) and `touch()` counts a `sTouchSerial`; the root rotation of `updateOrientation` is not set when the turn is under 0.03 degrees; the world matrix walk of `updateCharacterPostMotion` is skipped for deferred avatars when nothing touched a joint since the blend (the serial); `updateFootstepSounds` returns before the two ground lookups when no footstep animation is signaled; the attachment loop's stable check compares a revision counter of the attached object lists (`LLViewerJointAttachment::sRevision`) instead of summing the lists of 55 points; `transformExtents` only for rigged attachments that take it.
+
+| piece | before | after |
+|---|---|---|
+| `updateOrientation` | 0.150 ms (5.4 us each) | 0.012 ms |
+| root position+rotation | 7.6 us per avatar | 2.8 us |
+| `updateCharacter` | 13.1 us per avatar | 8.4 us |
+| `idleUpdate` | 11.2 us per avatar | 9.6 us |
+| joint matrices (post-motion walk) | 0.078 ms | 0.008 ms |
+| attachment loop stable check | 0.105 ms | 0.003 ms |
+| rigid attachment in the loop | 4.96 us | 3.97 us |
+| rigged attachment in the loop | 1.58 us | 1.16 us |
+| idle loop total | 0.891 ms | 0.733 ms |
+
+Together about **0.4 ms** of the serial main thread in a crowd like avt1-, as estimated. Deferred completion per avatar went up (28 to 33 us) only because the avatars of avt2- wear more attachments each (11 against 7.6). Device lost 0. Visual check by Adam pending.

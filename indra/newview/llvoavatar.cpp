@@ -3643,14 +3643,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
         bool skip_rigged_this_frame = false;
         if (skip_static_rigged && !isSelf() && !attachment_selected && mDrawable.notNull())
         {
-            U32 attachment_count = 0;
-            for (const auto& [id, point] : mAttachmentPoints)
-            {
-                if (point)
-                {
-                    attachment_count += (U32)point->mAttachedObjects.size();
-                }
-            }
+            const U32 attachment_count = LLViewerJointAttachment::sRevision;      // (was: the sum of the sizes of the lists of all 55 points, every frame)
             const LLVector4a* box = mDrawable->getSpatialExtents();
             const F32* box_min = box[0].getF32ptr();
             const F32* box_max = box[1].getF32ptr();
@@ -3711,7 +3704,9 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     if (bridge)
                     {
                         //transform avatar bounding box into attachment's coordinate frame
+                        // (only for a rigged attachment that will take it: the rigid ones threw it away, one 4x4 inverse each)
                         LLVector4a extents[2];
+                        if (attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) && !skip_rigged_this_frame)
                         { LL_CPU_ZONE("att: transformExtents"); const auto t = att_now(); bridge->transformExtents(mDrawable->getSpatialExtents(), extents); gAttStats.nsExtents += att_ns(t); }
 
                         if (attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
@@ -5453,6 +5448,15 @@ void LLVOAvatar::updateFootstepSounds()
         return;
     }
 
+    // <FS> the two ground height lookups below were done for every avatar every frame and only used when a footstep animation is signaled
+    {
+        const LLUUID FOOTSTEP_ANIMS[] = { ANIM_AGENT_WALK, ANIM_AGENT_RUN, ANIM_AGENT_LAND };
+        if (!gAudiop || !isAnyAnimationSignaled(FOOTSTEP_ANIMS, LL_ARRAY_SIZE(FOOTSTEP_ANIMS)))
+        {
+            return;
+        }
+    }
+
     //-------------------------------------------------------------------------
     // Find the ground under each foot, these are used for a variety
     // of things that follow
@@ -5782,7 +5786,15 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
 
     F32 u = llclamp((delta_time / pelvis_lag_time), 0.0f, 1.0f);
 
-            mRoot->setWorldRotation( slerp(u, mRoot->getWorldRotation(), wQv) );
+            {
+                // <FS> an avatar that stands still comes out of the slerp with the rotation it had, give or take the last bit: do not touch the skeleton for that
+                const LLQuaternion current_rotation = mRoot->getWorldRotation();
+                const LLQuaternion new_rotation = slerp(u, current_rotation, wQv);
+                if (dot(current_rotation, new_rotation) < 0.9999999f)
+                {
+                    mRoot->setWorldRotation(new_rotation);
+                }
+            }
 }
 
 //------------------------------------------------------------------------
@@ -6251,7 +6263,8 @@ void LLVOAvatar::completeDeferredMotionUpdate()
     }
 
     AvScope done_scope(AV_DEFERRED_DONE);
-    updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible);
+    // (the blend job cleaned the skeleton's world matrices: the walk of updateCharacterPostMotion only runs when something dirtied a joint since)
+    updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial);
     idleUpdatePostCharacter(mDeferredDetailedUpdate);
 }
 
@@ -6259,7 +6272,7 @@ void LLVOAvatar::completeDeferredMotionUpdate()
 // updateCharacterPostMotion()
 // Everything updateCharacter() does after the motions have been updated.
 //-----------------------------------------------------------------------------
-void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible)
+void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible, U32 clean_serial)
 {
     // Special handling for sitting on ground.
     if (!getParent() && (isSitting() || was_sit_ground_constrained))
@@ -6289,6 +6302,7 @@ void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool
     }
 
     // Update child joints as needed.
+    if (clean_serial != LLJoint::sTouchSerial)
     {
         AvScope s(AV_PM_MATRIX);
         mRoot->updateWorldMatrixChildren();

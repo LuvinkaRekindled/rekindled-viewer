@@ -150,6 +150,7 @@ public:
 
     // debug statics
     static S32      sNumTouches;
+    static U32      sTouchSerial;       // counts every touch that dirtied a joint, never reset (LLVOAvatar::completeDeferredMotionUpdate: did anything dirty a skeleton since the blend cleaned it)
     static S32      sNumUpdates;
     typedef std::set<std::string> debug_joint_name_t;
     static debug_joint_name_t s_debugJointNames;

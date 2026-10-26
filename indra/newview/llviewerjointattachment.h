@@ -98,6 +98,7 @@ public:
     // list of attachments for this joint
     typedef std::vector<LLPointer<LLViewerObject> > attachedobjs_vec_t;
     attachedobjs_vec_t mAttachedObjects;
+    static U32 sRevision;       // bumped whenever an attached object list of any attachment point changes (LLVOAvatar::idleUpdateMisc: the stable check does not count the objects every frame)
 
 protected:
     void calcLOD();
