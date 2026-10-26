@@ -202,6 +202,7 @@
 #include "llproxy.h"
 #include "llcachename.h"
 #include "llaudioengine.h"
+#include "llaudiostall.h"
 #include "llstreamingaudio.h"
 #include "llviewermenu.h"
 #include "llselectmgr.h"
@@ -6477,9 +6478,12 @@ void LLAppViewer::idle()
 
         if (gAudiop)
         {
-            audio_update_volume(false);
-            audio_update_listener();
-            audio_update_wind(false);
+            {
+                LLAudioStallTimer stall("audio_update_volume/listener/wind (before idle)");
+                audio_update_volume(false);
+                audio_update_listener();
+                audio_update_wind(false);
+            }
 
             // this line actually commits the changes we've made to source positions, etc.
             { LL_CPU_ZONE("idle: audio"); gAudiop->idle(); }

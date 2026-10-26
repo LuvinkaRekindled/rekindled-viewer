@@ -117,12 +117,16 @@ protected:
     /*virtual*/ void update3DPosition();
     /*virtual*/ void updateLoop();
 
+    /*virtual*/ bool isLost() const { return mLost; }
+
     void set3DMode(bool use3d);
+    bool checkLost(int fmod_result);   // true (and the channel marked lost) when the handle is stale
 protected:
     FMOD::System *getSystem()   const {return mSystemp;}
     FMOD::System *mSystemp;
     FMOD::Channel *mChannelp;
     S32 mLastSamplePos;
+    bool mLost = false;
 };
 
 

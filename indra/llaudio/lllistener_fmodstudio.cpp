@@ -28,6 +28,7 @@
 #include "linden_common.h"
 #include "llaudioengine.h"
 #include "lllistener_fmodstudio.h"
+#include "llaudiostall.h"
 #include "fmodstudio/fmod.hpp"
 
 //-----------------------------------------------------------------------
@@ -96,6 +97,7 @@ void LLListener_FMODSTUDIO::commitDeferredChanges()
         return;
     }
 
+    LLAudioStallTimer stall("FMOD::System::update", 10);
     mSystem->update();
 }
 

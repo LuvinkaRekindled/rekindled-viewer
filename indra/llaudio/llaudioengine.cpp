@@ -38,6 +38,7 @@
 #include "llfilesystem.h"
 #include "lldir.h"
 #include "llaudiodecodemgr.h"
+#include "llaudiostall.h"
 #include "llassetstorage.h"
 
 
@@ -224,6 +225,7 @@ std::string LLAudioEngine::getInternetStreamURL()
 
 void LLAudioEngine::updateChannels()
 {
+    LLAudioStallTimer stall("LLAudioEngine::updateChannels");
     S32 i;
     for (i = 0; i < LL_MAX_AUDIO_CHANNELS; i++)
     {
@@ -243,6 +245,7 @@ void LLAudioEngine::idle()
     // Primarily does position updating, cleanup of unused audio sources.
     // Also does regeneration of the current priority of each audio source.
 
+    LLAudioStallTimer stall_idle("LLAudioEngine::idle (all)");
     S32 i;
     for (i = 0; i < LL_MAX_AUDIO_BUFFERS; i++)
     {
@@ -262,6 +265,19 @@ void LLAudioEngine::idle()
         // Update this source
         sourcep->update();
         sourcep->updatePriority();
+
+        // The backend lost the sound of its channel (FMOD reused the voice): free the channel, the source gets one again below
+        // through the priority path and starts over (a looped source otherwise holds a dead channel for good)
+        if (LLAudioChannel* lostp = sourcep->getChannel())
+        {
+            if (lostp->isLost())
+            {
+                sourcep->setChannel(NULL);
+                lostp->setSource(NULL);
+                ++mLostChannels;
+                LL_INFOS("AudioEngine") << "audio channel lost to the backend (voice reused), source " << sourcep->getID() << (sourcep->isLoop() ? " (loop)" : "") << ", " << mLostChannels << " so far" << LL_ENDL;
+            }
+        }
 
         if (sourcep->isDone())
         {
@@ -455,7 +471,10 @@ void LLAudioEngine::idle()
     }
 
     // Sync up everything that the audio engine needs done.
-    commitDeferredChanges();
+    {
+        LLAudioStallTimer stall("LLAudioEngine::commitDeferredChanges (FMOD update)");
+        commitDeferredChanges();
+    }
 
     // Flush unused buffers that are stale enough
     for (i = 0; i < LL_MAX_AUDIO_BUFFERS; i++)
@@ -483,14 +502,23 @@ void LLAudioEngine::idle()
     }
 
     // Decode audio files
-    LLAudioDecodeMgr::getInstance()->processQueue();
+    {
+        LLAudioStallTimer stall("LLAudioDecodeMgr::processQueue");
+        LLAudioDecodeMgr::getInstance()->processQueue();
+    }
 
     // Call this every frame, just in case we somehow
     // missed picking it up in all the places that can add
     // or request new data.
-    startNextTransfer();
+    {
+        LLAudioStallTimer stall("LLAudioEngine::startNextTransfer");
+        startNextTransfer();
+    }
 
-    updateInternetStream();
+    {
+        LLAudioStallTimer stall("LLAudioEngine::updateInternetStream");
+        updateInternetStream();
+    }
 }
 
 
@@ -1957,6 +1985,8 @@ bool LLAudioData::load()
         return false;
     }
 
+    LLAudioStallTimer stall_load("LLAudioData::load (buffer + file)");
+    stall_load.setId(mID);
     mBufferp = gAudiop->getFreeBuffer();
     if (!mBufferp)
     {
