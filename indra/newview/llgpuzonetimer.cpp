@@ -504,3 +504,237 @@ void LLCpuZoneScope::frame()
     }
     sCpuFrames = 0;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------
+// LL_VK_HITCHWATCH=<ms>: where is the main thread when a frame takes seconds?
+//
+// The 2.4 s hitches of 2026-10-26 (frame max 2453.9 and 2361.3 ms, the 0% GPU dips) were blocked time inside whatever zone the main thread was in (idle: audio in one
+// lap, idle: idleNetwork in the next), and the log went quiet for the whole process, so the cause is not a call but a wait. This watcher thread looks at the time of
+// the last finished frame every 25 ms; past the threshold it suspends each thread in turn, unwinds its stack from the context (no allocation while it is suspended),
+// resumes it and writes the stacks to the log, with symbol names when the pdb is next to the executable. Off unless the variable is set.
+#include <atomic>
+#include <mutex>
+#include <tlhelp32.h>
+#include <dbghelp.h>
+
+namespace
+{
+    struct HwCap
+    {
+        DWORD mTid = 0;
+        int mCount = 0;
+        DWORD64 mPc[20] = {};
+    };
+
+    std::atomic<long long> sHwLastFrame{ 0 };
+    std::atomic<unsigned long long> sHwFrameNo{ 0 };
+    std::atomic<DWORD> sHwMainTid{ 0 };
+
+    long long hw_now()
+    {
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        return t.QuadPart;
+    }
+
+    void hw_capture(DWORD tid, HwCap& cap)
+    {
+        cap.mTid = tid;
+        cap.mCount = 0;
+        HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
+        if (!h)
+        {
+            return;
+        }
+        if (SuspendThread(h) != (DWORD)-1)
+        {
+            CONTEXT ctx;
+            memset(&ctx, 0, sizeof(ctx));
+            ctx.ContextFlags = CONTEXT_FULL;
+            if (GetThreadContext(h, &ctx))
+            {
+                for (int i = 0; i < 20 && ctx.Rip; i++)
+                {
+                    cap.mPc[cap.mCount++] = ctx.Rip;
+                    DWORD64 base = 0;
+                    PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
+                    if (!fn)
+                    {
+                        DWORD64 ret = 0;
+                        if (!ctx.Rsp || !ReadProcessMemory(GetCurrentProcess(), (const void*)ctx.Rsp, &ret, sizeof(ret), nullptr))
+                        {
+                            break;
+                        }
+                        ctx.Rip = ret;
+                        ctx.Rsp += 8;
+                    }
+                    else
+                    {
+                        PVOID handler = nullptr;
+                        DWORD64 frame = 0;
+                        RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, fn, &ctx, &handler, &frame, nullptr);
+                    }
+                }
+            }
+            ResumeThread(h);
+        }
+        CloseHandle(h);
+    }
+
+    typedef BOOL(WINAPI* SymInitializeFn)(HANDLE, PCSTR, BOOL);
+    typedef BOOL(WINAPI* SymFromAddrFn)(HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO);
+    typedef DWORD(WINAPI* SymSetOptionsFn)(DWORD);
+
+    std::string hw_describe(DWORD64 pc, SymFromAddrFn sym_from_addr)
+    {
+        char name[MAX_PATH] = {};
+        HMODULE module = nullptr;
+        std::string text;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)pc, &module))
+        {
+            GetModuleFileNameA(module, name, MAX_PATH);
+            const char* base = strrchr(name, '\\');
+            text = llformat("%s+0x%llx", base ? base + 1 : name, (unsigned long long)(pc - (DWORD64)module));
+        }
+        else
+        {
+            text = llformat("0x%llx", (unsigned long long)pc);
+        }
+        if (sym_from_addr)
+        {
+            alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 256] = {};
+            SYMBOL_INFO* info = (SYMBOL_INFO*)buffer;
+            info->SizeOfStruct = sizeof(SYMBOL_INFO);
+            info->MaxNameLen = 255;
+            DWORD64 displacement = 0;
+            if (sym_from_addr(GetCurrentProcess(), pc, &displacement, info))
+            {
+                text += llformat(" %s+0x%llx", info->Name, (unsigned long long)displacement);
+            }
+        }
+        return text;
+    }
+
+    void hw_thread(double threshold_ms)
+    {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        const double ticks_per_ms = (double)f.QuadPart / 1000.0;
+        SymFromAddrFn sym_from_addr = nullptr;
+        bool sym_tried = false;
+        unsigned long long episode = ~0ull;
+        double next_capture = 0.0;
+        double peak = 0.0;
+        int captures = 0;
+        std::vector<HwCap> caps;
+        for (;;)
+        {
+            Sleep(25);
+            const long long last = sHwLastFrame.load();
+            if (!last)
+            {
+                continue;
+            }
+            const unsigned long long frame_no = sHwFrameNo.load();
+            const double age = (double)(hw_now() - last) / ticks_per_ms;
+            if (age < threshold_ms)
+            {
+                if (episode != ~0ull && frame_no != episode)
+                {
+                    LL_WARNS("HitchWatch") << "the frame came back, it took about " << peak << " ms" << LL_ENDL;
+                    episode = ~0ull;
+                    peak = 0.0;
+                }
+                continue;
+            }
+            peak = llmax(peak, age);
+            if (frame_no != episode)
+            {
+                episode = frame_no;
+                next_capture = threshold_ms;
+                captures = 0;
+            }
+            if (age < next_capture || captures >= 6)
+            {
+                continue;
+            }
+            next_capture += 500.0;
+            ++captures;
+            if (!sym_tried)
+            {
+                sym_tried = true;
+                if (HMODULE dbghelp = LoadLibraryA("dbghelp.dll"))
+                {
+                    SymSetOptionsFn set_options = (SymSetOptionsFn)GetProcAddress(dbghelp, "SymSetOptions");
+                    SymInitializeFn init = (SymInitializeFn)GetProcAddress(dbghelp, "SymInitialize");
+                    char exe[MAX_PATH] = {};
+                    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+                    if (char* slash = strrchr(exe, '\\'))
+                    {
+                        *slash = 0;
+                    }
+                    if (set_options && init)
+                    {
+                        set_options(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
+                        init(GetCurrentProcess(), exe, TRUE);   // (it fails if the viewer's crash handler already did it: the calls below still work)
+                    }
+                    sym_from_addr = (SymFromAddrFn)GetProcAddress(dbghelp, "SymFromAddr");
+                }
+            }
+            std::vector<DWORD> tids;
+            if (HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0))
+            {
+                THREADENTRY32 te;
+                te.dwSize = sizeof(te);
+                for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te))
+                {
+                    if (te.th32OwnerProcessID == GetCurrentProcessId() && te.th32ThreadID != GetCurrentThreadId())
+                    {
+                        tids.push_back(te.th32ThreadID);
+                    }
+                }
+                CloseHandle(snap);
+            }
+            caps.assign(tids.size(), HwCap());
+            for (size_t i = 0; i < tids.size(); i++)
+            {
+                hw_capture(tids[i], caps[i]);
+            }
+            const DWORD main_tid = sHwMainTid.load();
+            LL_WARNS("HitchWatch") << "the main loop has not finished frame " << frame_no << " for " << age << " ms (capture " << captures << " of the stall), " << caps.size() << " threads" << LL_ENDL;
+            for (const HwCap& cap : caps)
+            {
+                if (!cap.mCount)
+                {
+                    continue;
+                }
+                const bool is_main = cap.mTid == main_tid;
+                const int shown = is_main ? cap.mCount : llmin(cap.mCount, 6);
+                std::string stack;
+                for (int i = 0; i < shown; i++)
+                {
+                    stack += (i ? " < " : "") + hw_describe(cap.mPc[i], sym_from_addr);
+                }
+                LL_WARNS("HitchWatch") << (is_main ? "MAIN " : "thread ") << cap.mTid << ": " << stack << LL_ENDL;
+            }
+        }
+    }
+}
+
+void HitchWatch::frame()
+{
+    static const double threshold = []()
+    {
+        const char* e = getenv("LL_VK_HITCHWATCH");
+        return e ? atof(e) : 0.0;
+    }();
+    if (threshold <= 0.0)
+    {
+        return;
+    }
+    static std::once_flag started;
+    std::call_once(started, []() { std::thread(hw_thread, threshold).detach(); });
+    sHwMainTid.store(GetCurrentThreadId());
+    sHwFrameNo.fetch_add(1);
+    sHwLastFrame.store(hw_now());
+}

@@ -640,6 +640,11 @@ void LLVertexBufferData::draw()
         gRender.getTexUnit(0)->bindWhite();
     }
 
+    if (LLRender::sUiHashing)
+    {
+        LLRender::uiHashCachedDraw(mVB.get(), mMode, mCount, mTexName, mModelView);
+    }
+
     mVB->setBuffer();
     mVB->drawArrays(mMode, 0, mCount);
 }

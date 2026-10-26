@@ -13,6 +13,10 @@
 
 #include "linden_common.h"
 #include "llframetimer.h"
+#include "llview.h"
+#include "llrender.h"
+#include <unordered_map>
+#include <vector>
 #include <intrin.h>
 #include <chrono>
 
@@ -68,12 +72,75 @@ namespace ItemCensus
         }
     };
 
+    // the UI: for each view down to depth 6 (the views LLView::drawChildren reports to sDrawHook): how many, how much time inclusive, and how much of that time the view
+    // emitted exactly what it emitted in the previous frame (the hash of its vertices and matrices, children included); the time of the hashing itself is subtracted
+    struct UiDepth
+    {
+        unsigned long long mViews = 0, mCycles = 0, mSameViews = 0, mSameCycles = 0;
+    };
+    inline UiDepth sUiDepth[8];
+    inline std::unordered_map<const LLView*, unsigned long long> sUiLast;
+    struct UiFrame
+    {
+        const LLView* mView;
+        unsigned long long mStart, mHashCyclesStart, mSavedAccum;
+    };
+    inline std::vector<UiFrame> sUiStack;
+    inline void (*sUiPrevHook)(const LLView*, bool) = nullptr;
+
+    inline void ui_hook(const LLView* view, bool begin)
+    {
+        if (sUiPrevHook && begin)
+        {
+            sUiPrevHook(view, begin);
+        }
+        if (begin)
+        {
+            sUiStack.push_back({ view, __rdtsc(), LLRender::sUiHashCycles, LLRender::sUiHashAccum });
+            LLRender::sUiHashAccum = 0;
+        }
+        else if (!sUiStack.empty())
+        {
+            const UiFrame f = sUiStack.back();
+            sUiStack.pop_back();
+            const unsigned long long view_hash = LLRender::sUiHashAccum;
+            const unsigned long long total = __rdtsc() - f.mStart;
+            const unsigned long long hashing = LLRender::sUiHashCycles - f.mHashCyclesStart;
+            const unsigned long long own = total > hashing ? total - hashing : 0;
+            LLRender::sUiHashAccum = (f.mSavedAccum ^ view_hash) * 0x100000001b3ULL;
+            const size_t depth = llmin<size_t>(sUiStack.size() + 1, 7);
+            unsigned long long& last = sUiLast[f.mView];
+            const bool same = last == view_hash;
+            last = view_hash;
+            UiDepth& d = sUiDepth[depth];
+            ++d.mViews;
+            d.mCycles += own;
+            if (same)
+            {
+                ++d.mSameViews;
+                d.mSameCycles += own;
+            }
+        }
+        if (sUiPrevHook && !begin)
+        {
+            sUiPrevHook(view, begin);
+        }
+    }
+
     // once a frame; logs and restarts the window every 600 frames
     inline void frame()
     {
         if (!on())
         {
             return;
+        }
+        static int sCalls = 0;
+        if (++sCalls == 5)
+        {
+            // after the cpu zones installed their own hook (they do it in the first frame): ours calls it
+            sUiPrevHook = LLView::sDrawHook;
+            LLView::sDrawHook = &ui_hook;
+            LLRender::sUiHashing = true;
         }
         static unsigned long long sTsc0 = 0;
         static std::chrono::steady_clock::time_point sTime0;
@@ -100,6 +167,19 @@ namespace ItemCensus
             const Acc& acc = sAcc[i];
             line += llformat(" | %s %.3f ms, %.1f calls, a %.1f, b %.1f", names[i], 1000.0 * (double)acc.mCycles / hz / frames, (double)acc.mCalls / frames, (double)acc.mA / frames, (double)acc.mB / frames);
             sAcc[i] = Acc();
+        }
+        {
+            static unsigned long long sHashCycles0 = 0;
+            std::string ui;
+            for (int d = 1; d <= 7; d++)
+            {
+                const UiDepth& u = sUiDepth[d];
+                ui += llformat(" | depth %d%s: %.1f views, %.3f ms, %.3f ms unchanged (%.1f views)", d, d == 7 ? "+" : "", (double)u.mViews / frames, 1000.0 * (double)u.mCycles / hz / frames,
+                               1000.0 * (double)u.mSameCycles / hz / frames, (double)u.mSameViews / frames);
+                sUiDepth[d] = UiDepth();
+            }
+            LL_INFOS("ItemCensus") << "ui views per frame (hashing excluded, it cost " << 1000.0 * (double)(LLRender::sUiHashCycles - sHashCycles0) / hz / frames << " ms a frame):" << ui << LL_ENDL;
+            sHashCycles0 = LLRender::sUiHashCycles;
         }
         LL_INFOS("ItemCensus") << "per frame over " << frames << " frames (" << seconds << " s, loop " << 1000.0 * seconds / frames << " ms)" << line << LL_ENDL;
         sTsc0 = __rdtsc();
