@@ -1034,6 +1034,8 @@ void LLViewerTextureList::idxLog()
 // <FS> Where the textures are: how many have data, how many wait for it (being fetched, waiting to be created as GL textures), how many the server refused, what the viewer thinks they cost
 // and the discard bias it works against. Next to the VkTex line of the Vulkan layer (the video memory the device really holds): a face that stays on the placeholder in a busy region shows up
 // here as a long queue or a count of refused textures.
+static std::string memory_by_consumer_text(U64 texture_bytes, U64 os_used);     // (below, with the eviction count)
+
 void LLViewerTextureList::logSummary()
 {
     U32 total = 0, with_gl = 0, no_data = 0, fetching = 0, missing = 0;
@@ -1138,6 +1140,16 @@ void LLViewerTextureList::logSummary()
             text += llformat(" [%s: %u textures, %.0f MB]", names[k], count[k], (double)bytes[k] / 1048576.0);
         }
         LL_INFOS("VkTex") << "texture memory by time since a group of its faces was accepted by a camera:" << text << "; of all of them on the dormant list: " << dormant_count << " textures, " << (dormant_bytes >> 20) << " MB" << LL_ENDL;
+        {
+            U64 vk_used2 = 0, vk_budget2 = 0;
+            U64 texture_total = 0;
+            for (int k = 0; k < 6; ++k) texture_total += bytes[k];
+            if (LLVkBridge::videoMemory(vk_used2, vk_budget2))
+            {
+                const std::string by_consumer = memory_by_consumer_text(texture_total, vk_used2);
+                if (!by_consumer.empty()) LL_INFOS("VkTex") << by_consumer << LL_ENDL;
+            }
+        }
     }
     {
         // census (clothing of the crowd that never loads: 65-156 images with no data and nothing fetching, in every run since before the scene table): what those images are and why nothing asks for them
@@ -1189,6 +1201,24 @@ void LLViewerTextureList::logSummary()
     }
     extern U32 gEarlySortResorts;
     LL_INFOS("VkTex") << LLRenderPass::geometryBuildStats() << "; the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
+}
+
+// <FS> doc/vulkan/EXPIRY-design.md: where the video memory the OS reports goes. Textures are the per-texture sums of the images with a GL texture; the rest are the arena blocks (bytes alive, bytes in use), the
+// acceleration structure blocks and the structures in them, the idle blocks the pool holds, and the vertex buffers the viewer counts. "Remainder" is what these do not name (render targets, DLSS, mirrored
+// textures, staging, the driver's own).
+static std::string memory_by_consumer_text(U64 texture_bytes, U64 os_used)
+{
+    LLVkBridge::MemoryByConsumer m;
+    if (!LLVkBridge::memoryByConsumer(m))
+    {
+        return std::string();
+    }
+    const U64 vb = (U64)LLVertexBuffer::getBytesAllocated();
+    const U64 named = texture_bytes + m.mBlockBytes + m.mHostBytes + m.mAccelBytes + vb;
+    auto mb = [](U64 b) { return (unsigned long long)(b >> 20); };
+    return llformat("memory by consumer (MB): OS %llu = textures %llu + arena blocks %llu (in use %llu, %u blocks) + host-written %llu (in use %llu, %u blocks, in system memory or video) + acceleration structure blocks %llu (in use %llu, structures %llu, idle in the pool %llu, %u blocks) + vertex buffers %llu + remainder %lld",
+        mb(os_used), mb(texture_bytes), mb(m.mBlockBytes), mb(m.mBlockUsed), m.mBlocks, mb(m.mHostBytes), mb(m.mHostUsed), m.mHostBlocks, mb(m.mAccelBytes), mb(m.mAccelUsed), mb(m.mRtStructureBytes), mb(m.mAccelPooledBytes), m.mAccelBlocks,
+        mb(vb), (long long)(os_used >> 20) - (long long)(named >> 20));
 }
 
 // <FS> LL_VK_TEX_EXPIRY=1, stage 1 of the texture eviction in doc/vulkan/EXPIRY-design.md section 11: count only, nothing is released. Once a second, while the OS reports video memory above a soft watermark
@@ -1323,6 +1353,7 @@ void LLViewerTextureList::expiryCount()
         << " MB, in use " << count[2] << " / " << (bytes[2] >> 20) << " MB, excluded (boost or callbacks) " << excluded << " / " << (excluded_bytes >> 20) << " MB | an eviction in that order would take about "
         << taken_count[0] << " textures (" << (taken_bytes[0] >> 20) << " MB) of the first class and " << taken_count[1] << " (" << (taken_bytes[1] >> 20) << " MB) of the second, " << (U64)(freed / 1048576.0) << " MB of the "
         << (U64)(need / 1048576.0) << " MB needed" << LL_ENDL;
+    LL_INFOS("TexExpiry") << memory_by_consumer_text(bytes[0] + bytes[1] + bytes[2] + excluded_bytes, used) << LL_ENDL;
     (void)late_wake_candidates;
 }
 

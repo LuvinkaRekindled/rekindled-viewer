@@ -11,6 +11,7 @@
 
 bool LLVkBridge::isReady() { return false; }
 bool LLVkBridge::videoMemory(U64&, U64&) { return false; }
+bool LLVkBridge::memoryByConsumer(MemoryByConsumer&) { return false; }
 bool LLVkBridge::readbackAffordable() { return true; }
 bool LLVkBridge::ensureReady() { return false; }
 void LLVkBridge::setMainWindow(void*) {}
@@ -209,6 +210,28 @@ bool LLVkBridge::readbackAffordable()
 bool LLVkBridge::videoMemory(U64& usage_bytes, U64& budget_bytes)
 {
     return sMirror.mReady && !sMirror.mFailed && LLVk::Context::instance().videoMemory(usage_bytes, budget_bytes);
+}
+
+bool LLVkBridge::memoryByConsumer(MemoryByConsumer& out)
+{
+    if (!sMirror.mReady || sMirror.mFailed)
+    {
+        return false;
+    }
+    const LLVk::ArenaStats s = LLVk::Context::instance().arenaStats();
+    out.mBlocks = s.mBlocks;
+    out.mHostBlocks = s.mHostBlocks;
+    out.mAccelBlocks = s.mAccelBlocks;
+    out.mAccelPooled = s.mAccelPooled;
+    out.mBlockBytes = s.mBlockBytes;
+    out.mBlockUsed = s.mUsedBytes;
+    out.mHostBytes = s.mHostBlockBytes;
+    out.mHostUsed = s.mHostUsedBytes;
+    out.mAccelBytes = s.mAccelBlockBytes;
+    out.mAccelUsed = s.mAccelUsedBytes;
+    out.mAccelPooledBytes = s.mAccelPooledBytes;
+    out.mRtStructureBytes = LLVk::Rt::structureBytes();
+    return true;
 }
 
 LLVk::Image* LLVkBridge::backbufferColor()
