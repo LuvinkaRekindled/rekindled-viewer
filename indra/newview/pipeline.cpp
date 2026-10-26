@@ -2332,6 +2332,30 @@ void LLPipeline::updateMoveNormalAsync(LLDrawable* drawablep)
     }
 }
 
+int LLPipeline::coldMode()
+{
+    static const int mode = getenv("LL_VK_EXPIRY") ? atoi(getenv("LL_VK_EXPIRY")) : 0;
+    return mode;
+}
+
+U64 LLPipeline::sColdMovedSeen = 0, LLPipeline::sColdMovedSkipped = 0, LLPipeline::sColdTexAnimSeen = 0, LLPipeline::sColdTexAnimSkipped = 0, LLPipeline::sColdMovedWoken = 0;
+
+bool LLPipeline::coldGroup(const LLSpatialGroup* group)
+{
+    static const S32 cold_frames = getenv("LL_VK_COLD_FRAMES") ? atoi(getenv("LL_VK_COLD_FRAMES")) : 600;
+    if (!group)
+    {
+        return false;
+    }
+    S32 latest = 0;
+    for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
+    {
+        latest = std::max(latest, group->getVisible((LLViewerCamera::eCameraID)c));
+    }
+    // (a group that was never accepted is not Cold: it may be new, and nothing is known about it yet)
+    return latest > 0 && LLViewerOctreeEntryData::getCurrentFrame() - latest > cold_frames;
+}
+
 void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
 {
     LL_CPU_ZONE("pipeline: updateMovedList");
@@ -2347,6 +2371,37 @@ void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
             continue;
         }
         bool done = true;
+        if (coldMode() > 0 && !drawablep->isDead() && drawablep->isRoot() && !drawablep->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD | LLDrawable::EARLY_MOVE))
+        {
+            // Cold (see coldGroup): a plain root object whose group nobody has looked at for a while, and which is still inside that group, is left on the list unmoved; it is marked undamped so that it
+            // jumps to where it is when the group is looked at again instead of sliding there
+            LLViewerObject* vobj = drawablep->getVObj();
+            LLSpatialGroup* group = drawablep->getSpatialGroup();
+            if (vobj && group && !vobj->isAvatar() && !vobj->isAttachment() && !vobj->isHUDAttachment())
+            {
+                ++sColdMovedSeen;
+                if (coldGroup(group))
+                {
+                    const LLVector4a* b = group->getBounds();
+                    LLVector4a p;
+                    p.load3(vobj->getPositionAgent().mV);
+                    LLVector4a d;
+                    d.setSub(p, b[0]);
+                    d.setAbs(d);
+                    LLVector4a over;
+                    over.setSub(d, b[1]);
+                    if (over.getF32ptr()[0] <= 0.f && over.getF32ptr()[1] <= 0.f && over.getF32ptr()[2] <= 0.f)
+                    {
+                        ++sColdMovedSkipped;
+                        if (coldMode() >= 2)
+                        {
+                            drawablep->setState(LLDrawable::MOVE_UNDAMPED);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
         if (LLAttCensus::sOn)
         {
             const LLAttCensus::Kind kind = LLAttCensus::kindOf(drawablep);
@@ -2400,6 +2455,12 @@ void LLPipeline::sceneStateCensus()
     }
     last = frame;
     shadow_census_report(600);
+    if (coldMode() > 0)
+    {
+        LL_INFOS("SceneCensus") << "Cold (LL_VK_EXPIRY=" << coldMode() << "): over 600 frames, moved list entries looked at " << sColdMovedSeen / 600.0 << "/frame, " << (coldMode() >= 2 ? "skipped " : "that would be skipped ")
+            << sColdMovedSkipped / 600.0 << "/frame; animated texture objects looked at " << sColdTexAnimSeen / 600.0 << "/frame, " << (coldMode() >= 2 ? "skipped " : "that would be skipped ") << sColdTexAnimSkipped / 600.0 << "/frame" << LL_ENDL;
+        sColdMovedSeen = sColdMovedSkipped = sColdTexAnimSeen = sColdTexAnimSkipped = 0;
+    }
     LLCamera& camera = *LLViewerCamera::getInstance();
     U64 objects = 0, drawables = 0, active = 0, avatars = 0, attachments = 0, rigged = 0, with_text = 0;
     std::unordered_set<LLSpatialGroup*> groups;

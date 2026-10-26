@@ -464,6 +464,11 @@ public:
     bool verify();                      // Verify that all data in the pipeline is "correct"
 
     S32  getLightCount() const { return static_cast<S32>(mLights.size()); }
+    // <FS> LL_VK_EXPIRY (doc/vulkan/EXPIRY-design.md section 4, state Cold): 0 off, 1 counts what would be skipped, 2 skips. A group no camera has accepted for LL_VK_COLD_FRAMES (default 600, about 10 s) is Cold:
+    // the moved list leaves the plain root objects in it alone while they stay inside the group, and animated textures of its objects are not stepped. The counters are logged with the scene census.
+    static bool coldGroup(const LLSpatialGroup* group);
+    static int coldMode();
+    static U64 sColdMovedSeen, sColdMovedSkipped, sColdTexAnimSeen, sColdTexAnimSkipped, sColdMovedWoken;
     void cpuProbe();                    // <FS> LL_VK_CPUPROBE=1: three fixed benchmarks on the main thread each frame, as CPU zones (does the thread itself get slower after a turn?)
     void sceneStateCensus();            // <FS> LL_VK_SCENECENSUS=1 (doc/vulkan/PLAN-texture-handles.md section 17.16): what the scene holds against what is in view, logged every 600 frames
 
