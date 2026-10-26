@@ -2383,6 +2383,8 @@ void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
 
 // <FS> LL_VK_SCENECENSUS=1: how much the scene holds (objects, drawables, spatial groups with built geometry, draw infos and triangles, lights, queues) against what is inside the world camera's frustum.
 // The cost that stays after a turn (section 17.16) grows with what has been built; this shows how much of it is in view.
+static void shadow_census_report(U32 frames);       // (below, with the shadow pass)
+
 void LLPipeline::sceneStateCensus()
 {
     static const bool on = getenv("LL_VK_SCENECENSUS") != nullptr;
@@ -2397,6 +2399,7 @@ void LLPipeline::sceneStateCensus()
         return;
     }
     last = frame;
+    shadow_census_report(600);
     LLCamera& camera = *LLViewerCamera::getInstance();
     U64 objects = 0, drawables = 0, active = 0, avatars = 0, attachments = 0, rigged = 0, with_text = 0;
     std::unordered_set<LLSpatialGroup*> groups;
@@ -19589,6 +19592,77 @@ static U32 shadow_pass_index()
     return 6;
 }
 
+// <FS> LL_VK_SCENECENSUS=1 (doc/vulkan/PLAN-texture-handles.md section 17.22): what each shadow pass takes in. After a turn the shadow packet zones are 0.3-0.4 ms slower with the same draw counts; this counts, per pass
+// (the sun cascades 0-3, the spot shadows 4-5, other 6), the groups its cull accepted, how many of them the world camera also accepted this frame, and their draw infos and triangles (all types), averaged per frame.
+struct ShadowPassCensus
+{
+    U64 mCalls = 0, mGroups = 0, mGroupsInWorld = 0, mInfos = 0, mInfosInWorld = 0, mTris = 0, mTrisInWorld = 0, mBuilt = 0;
+};
+static ShadowPassCensus sShadowCensus[7];
+
+static void shadow_pass_census(LLCullResult& result, U32 pass)
+{
+    static const bool on = getenv("LL_VK_SCENECENSUS") != nullptr;
+    if (!on)
+    {
+        return;
+    }
+    ShadowPassCensus& c = sShadowCensus[std::min<U32>(pass, 6)];
+    ++c.mCalls;
+    const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
+    for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
+    {
+        LLSpatialGroup* group = *i;
+        if (!group || group->isDead())
+        {
+            continue;
+        }
+        const bool in_world = group->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame - 1;
+        U64 infos = 0, tris = 0;
+        for (const auto& kv : group->mDrawMap)
+        {
+            for (const LLDrawInfo* info : kv.second)
+            {
+                ++infos;
+                tris += info->mCount / 3;
+            }
+        }
+        ++c.mGroups;
+        c.mBuilt += infos > 0;
+        c.mInfos += infos;
+        c.mTris += tris;
+        if (in_world)
+        {
+            ++c.mGroupsInWorld;
+            c.mInfosInWorld += infos;
+            c.mTrisInWorld += tris;
+        }
+    }
+}
+
+static void shadow_census_report(U32 frames)
+{
+    std::string text;
+    for (U32 p = 0; p < 7; ++p)
+    {
+        const ShadowPassCensus& c = sShadowCensus[p];
+        if (!c.mCalls)
+        {
+            continue;
+        }
+        const double n = (double)c.mCalls;
+        char buf[320];
+        snprintf(buf, sizeof(buf), "[pass %u: %.2f calls/frame, per call %.0f groups (%.0f also accepted by the world camera, %.0f built), %.0f draw infos (%.0f in those), %.0f k triangles (%.0f k in those)] ", p, n / std::max(1u, frames),
+                 c.mGroups / n, c.mGroupsInWorld / n, c.mBuilt / n, c.mInfos / n, c.mInfosInWorld / n, c.mTris / n / 1000.0, c.mTrisInWorld / n / 1000.0);
+        text += buf;
+        sShadowCensus[p] = ShadowPassCensus();
+    }
+    if (!text.empty())
+    {
+        LL_INFOS("SceneCensus") << "shadow passes, what each cull took in: " << text << LL_ENDL;
+    }
+}
+
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
 {
     LL_CPU_ZONE("renderShadow (all passes)");
@@ -19650,6 +19724,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
         }
     }
+
+    shadow_pass_census(result, shadow_pass_index());       // <FS>
 
     //generate shadow map
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
