@@ -9616,16 +9616,6 @@ void after_frame()
                 const DWORD_PTR previous = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << cpu);
                 LL_INFOS("CpuProbe") << "render worker thread pinned to logical cpu " << cpu << (previous ? " (done)" : " (FAILED)") << LL_ENDL;
             }
-            // LL_VK_IDEAL_WORKER=<logical cpu>: the soft form, a preference the scheduler may follow or not
-            if (GetEnvironmentVariableA("LL_VK_IDEAL_WORKER", pin, sizeof(pin)) > 0)
-            {
-                PROCESSOR_NUMBER wanted = {};
-                wanted.Group = 0;
-                wanted.Number = (BYTE)atoi(pin);
-                PROCESSOR_NUMBER previous = {};
-                const BOOL ok = SetThreadIdealProcessorEx(GetCurrentThread(), &wanted, &previous);
-                LL_INFOS("CpuProbe") << "render worker thread ideal processor " << (int)wanted.Number << (ok ? " (done)" : " (FAILED)") << LL_ENDL;
-            }
         }
     }
     gFsWorkerCpu.store((int)GetCurrentProcessorNumber(), std::memory_order_relaxed);        // <FS> LL_VK_CPUPROBE core census (pipeline.cpp)

@@ -2727,15 +2727,6 @@ void LLPipeline::pinMainThread()
         const DWORD_PTR previous = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << cpu);
         LL_INFOS("CpuProbe") << "main thread pinned to logical cpu " << cpu << (previous ? " (done)" : " (FAILED)") << LL_ENDL;
     }
-    if (GetEnvironmentVariableA("LL_VK_IDEAL_MAIN", pin, sizeof(pin)) > 0)
-    {
-        PROCESSOR_NUMBER wanted = {};
-        wanted.Group = 0;
-        wanted.Number = (BYTE)atoi(pin);
-        PROCESSOR_NUMBER previous = {};
-        const BOOL ok = SetThreadIdealProcessorEx(GetCurrentThread(), &wanted, &previous);
-        LL_INFOS("CpuProbe") << "main thread ideal processor " << (int)wanted.Number << (ok ? " (done)" : " (FAILED)") << LL_ENDL;
-    }
 }
 
 // <FS> LL_VK_CPUPROBE core census: which logical processor the main thread runs on each frame (and the one the render worker last ran on at its frame end), how often either moves, and how often they sit on the same physical
