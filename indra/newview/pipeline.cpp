@@ -2527,6 +2527,56 @@ void LLPipeline::sceneStateCensus()
         << ", moved bridges " << mMovedBridge.size() << ", build " << mBuildQ1.size() << ", groups to rebuild " << mGroupQ1.size() << ", mesh dirty " << mMeshDirtyGroup.size() << ", retextured " << mRetexturedList.size() << LL_ENDL;
 }
 
+// <FS> LL_VK_CPUPROBE=1 (doc/vulkan/PLAN-texture-handles.md section 17.22): after a turn the main thread loop is 2.8 ms slower and zones that do not depend on the scene (the UI) are 14-26% slower too.
+// Three fixed pieces of work with the same input every frame, in zones of their own: a chain of dependent adds and multiplies (clock speed, a busy sibling thread), a pointer chase through 128 KB
+// (the L2 cache) and through 128 MB (past the L3 cache, to memory). If they get slower after the turn the thread itself is slower (cache, clock, scheduling) and not only the work it does.
+void LLPipeline::cpuProbe()
+{
+    static const bool on = getenv("LL_VK_CPUPROBE") != nullptr;
+    if (!on)
+    {
+        return;
+    }
+    static std::vector<U32> small_chain, big_chain;
+    if (small_chain.empty())
+    {
+        auto make = [](std::vector<U32>& chain, size_t count)
+        {
+            chain.resize(count);
+            std::vector<U32> order(count);
+            for (size_t i = 0; i < count; ++i) order[i] = (U32)i;
+            U64 s = 0x9E3779B97F4A7C15ull;
+            for (size_t i = count - 1; i > 0; --i)      // (a fixed shuffle: one cycle through every element)
+            {
+                s = s * 6364136223846793005ull + 1442695040888963407ull;
+                std::swap(order[i], order[(size_t)((s >> 33) % (i + 1))]);
+            }
+            for (size_t i = 0; i < count; ++i) chain[order[i]] = order[(i + 1) % count];
+        };
+        make(small_chain, 32768);           // 128 KB
+        make(big_chain, 32u << 20);         // 128 MB
+    }
+    static volatile U64 sink = 0;
+    {
+        LL_CPU_ZONE("probe: dependent arithmetic (100k)");
+        U64 x = 12345;
+        for (int i = 0; i < 100000; ++i) x = x * 2862933555777941757ull + 3037000493ull;
+        sink = x;
+    }
+    {
+        LL_CPU_ZONE("probe: pointer chase 128 KB (20k)");
+        U32 p = 0;
+        for (int i = 0; i < 20000; ++i) p = small_chain[p];
+        sink = p;
+    }
+    {
+        LL_CPU_ZONE("probe: pointer chase 128 MB (1k)");
+        static U32 q = 0;
+        for (int i = 0; i < 1000; ++i) q = big_chain[q];
+        sink = q;
+    }
+}
+
 void LLPipeline::updateMove()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
