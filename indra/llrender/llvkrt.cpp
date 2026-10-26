@@ -591,6 +591,8 @@ struct SceneRecord
     U32 mZeroRefs = 0;                  // instances that refer to no structure
     U32 mUnknownRefs = 0;               // instances that refer to a structure this scene does not know (checked on the stuck frame only)
     float mMaxTranslation = 0.f, mMaxScale = 0.f;
+    float mMaxExtent = 0.f;             // the largest side of the box of a vertex range checked for a structure build since the previous scene call (LL_VK_RT_CHECK; host-written data only)
+    U32 mUnchecked = 0;                 // structure builds since the previous scene call over data the CPU cannot see (device path buffers): not checked
     float mOrigin[3] = {}, mCamera[3] = {};
     U64 mScratchNeeded = 0, mInstanceOffset = 0;
     std::vector<U64> mRefs;             // the structure addresses of the instances (the latest call only is kept in full)
@@ -598,6 +600,8 @@ struct SceneRecord
 };
 SceneRecord sRecent[6];
 U32 sRecentNext = 0;
+float sCallMaxExtent = 0.f;             // (collected by the build checks, taken by the next scene record)
+U32 sCallUnchecked = 0;
 U32 sLastBuilt = 0;
 U32 sTableOffset = 0;
 U32 sSlotCacheName[16384] = {};
@@ -1214,6 +1218,7 @@ void report_recent_scene_calls()
                 LL_WARNS("VkRt") << "  unknown structure in the newest scene call: instance " << i << " refers to " << addr << ", from " << text << LL_ENDL;
             }
         }
+        LL_WARNS("VkRt") << "  scene call " << r.mSceneCall << ": the largest side of a checked vertex range box since the call before was " << r.mMaxExtent << ", " << r.mUnchecked << " structure builds over data the CPU cannot see (not checked)" << LL_ENDL;
         LL_WARNS("VkRt") << "  scene call " << r.mSceneCall << " frame " << r.mFrame << " slot call " << r.mCall << ": " << r.mInstances << " instances of " << r.mCapacity << ", " << r.mJobs
                          << " structure builds, " << r.mSkinChunks << " skin chunks, " << r.mRecords << " records, scratch " << (r.mScratchNeeded >> 20) << " MB, instance buffer offset " << r.mInstanceOffset
                          << "; transforms with NaN/Inf " << r.mBadTransforms << ", references 0: " << r.mZeroRefs << ", unknown (newest only): " << r.mUnknownRefs << "; largest translation " << r.mMaxTranslation
@@ -2484,6 +2489,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         job.mPrims = (U32)prims;
         // LL_VK_RT_CHECK (default on): the vertices the structure will be built over, when the CPU can see them (host-written buffers), must be finite and not absurd, and the
         // indices must name vertices of the buffer. A range that fails is left out of the structure (LL_VK_RT_SKIPBAD=0 keeps it).
+        if (!(vi.mCpu && ii.mCpu))
+        {
+            ++sCallUnchecked;
+        }
         if (check_on && vi.mCpu && ii.mCpu)
         {
             ++sStats.mChecked;
@@ -2531,6 +2540,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                             lo[a] = std::min(lo[a], c);
                             hi[a] = std::max(hi[a], c);
                         }
+                    }
+                }
+                for (int a = 0; a < 3; ++a)
+                {
+                    if (hi[a] >= lo[a])
+                    {
+                        sCallMaxExtent = std::max(sCallMaxExtent, hi[a] - lo[a]);
                     }
                 }
                 if (out_of_range || bad_coords)
@@ -4143,6 +4159,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         r.mRecords = records;
         r.mBadTransforms = r.mZeroRefs = r.mUnknownRefs = 0;
         r.mMaxTranslation = r.mMaxScale = 0.f;
+        r.mMaxExtent = sCallMaxExtent;
+        r.mUnchecked = sCallUnchecked;
+        sCallMaxExtent = 0.f;
+        sCallUnchecked = 0;
         r.mScratchNeeded = scratch_needed;
         r.mInstanceOffset = instance_offset;
         for (int i = 0; i < 3; ++i)

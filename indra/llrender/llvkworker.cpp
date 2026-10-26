@@ -1833,22 +1833,24 @@ U64 sResCause[3] = {};                  // writes of watched buffers by what cha
 static U64 sGeoPinEpoch = 0;                 // <FS> S3: bumped when a pin a scene geometry fragment uses gets another bindless slot
 void geo_buffer_gone_impl(U32 name);      // (defined with the scene geometry table below)
 bool geo_in_flight_impl(U32 name, U64 frame, U64 min_listed = 0);
-// <FS> the two switches of the host-block race (doc/vulkan/crash-brief/ANALYSIS.md, doc/vulkan/PLAN-texture-handles.md 17.23); both default off
+std::string geo_explain_address(unsigned long long at);
+// <FS> the two switches of the host-block race (doc/vulkan/crash-brief/ANALYSIS.md, doc/vulkan/PLAN-texture-handles.md 17.23); both default ON since 2026-10-26 (LL_VK_RENAME_ONCE=0 / LL_VK_GEO_ROWCOPY=0)
 // LL_VK_RENAME_ONCE=1: a buffer renamed in this frame is not renamed again by every further write of the frame unless a fragment listed it after the rename (the chains of 5 to 53 renames that emptied the host arena in one frame)
 // LL_VK_GEO_ROWCOPY=1: the static table draws (the G-buffer types and the alpha run) read rows copied for this frame, as the rigged ones do, not the one table the worker rewrites in place while frames are in flight
-static bool rename_once_on()
+static bool env_default_on(const char* name)
 {
-    // (not without the row copies: alone, the second write of a frame goes in place into a range an in-flight frame can see through the live table row, which is the race itself)
-    static const bool on = []()
-    {
-        char b[8] = {}, c[8] = {};
-        return GetEnvironmentVariableA("LL_VK_RENAME_ONCE", b, sizeof(b)) > 0 && atoi(b) != 0 && GetEnvironmentVariableA("LL_VK_GEO_ROWCOPY", c, sizeof(c)) > 0 && atoi(c) != 0;
-    }();
-    return on;
+    char b[8] = {};
+    return GetEnvironmentVariableA(name, b, sizeof(b)) == 0 || atoi(b) != 0;
 }
 static bool geo_rowcopy_on()
 {
-    static const bool on = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_GEO_ROWCOPY", b, sizeof(b)) > 0 && atoi(b) != 0; }();
+    static const bool on = env_default_on("LL_VK_GEO_ROWCOPY");       // on since 2026-10-26 (0 turns it off)
+    return on;
+}
+static bool rename_once_on()
+{
+    // (not without the row copies: alone, the second write of a frame goes in place into a range an in-flight frame can see through the live table row, which is the race itself)
+    static const bool on = env_default_on("LL_VK_RENAME_ONCE") && env_default_on("LL_VK_GEO_ROWCOPY");       // on since 2026-10-26 (0 turns it off)
     return on;
 }
 std::vector<U32> sGeoChanged;           // S3: names of the buffers a scene geometry fragment reads whose storage changed (causes 0 and 2) since the last prepare
@@ -6517,6 +6519,7 @@ static struct GeoState
 {
     Buffer mTable;
     GeoGpuG* mT = nullptr;
+    std::vector<U32> mRowFrame;         // the frame each row was last written in (the device lost report: which rows name the faulting address, and when they were written)
     std::vector<GeoGpuG> mTCpu;         // the CPU's copy of every row (the table is write-combined memory: reading it costs about a microsecond a float; the per-frame row copies read this)
     bool mReady = false, mFailed = false;
     U32 mHigh = 0;
@@ -6589,6 +6592,10 @@ bool geo_init()
     memset(sGeo.mT, 0, sizeof(GeoGpuG) * kGeoCapacity);
     sGeo.mTCpu.assign(kGeoCapacity, GeoGpuG());
     memset(sGeo.mTCpu.data(), 0, sizeof(GeoGpuG) * kGeoCapacity);
+    sGeo.mRowFrame.assign(kGeoCapacity, 0u);
+    ctx.addAddressDescriber(geo_explain_address);
+    LL_INFOS("VkScene") << "host-block race fixes: static table draws read " << (geo_rowcopy_on() ? "rows copied for the frame (LL_VK_GEO_ROWCOPY, on)" : "the live table (LL_VK_GEO_ROWCOPY=0)") << "; a buffer renamed this frame is "
+                        << (rename_once_on() ? "not renamed again (LL_VK_RENAME_ONCE, on)" : "renamed again by every write (LL_VK_RENAME_ONCE off)") << LL_ENDL;
     if (ctx.createBuffer((VkDeviceSize)160 * kPbrCapacity, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, sGeo.mPbrTable) && sGeo.mPbrTable.mMapped && sGeo.mPbrTable.mAddress)
     {
         sGeo.mPbrT = (F32*)sGeo.mPbrTable.mMapped;
@@ -6912,6 +6919,66 @@ U32 geo_pin_slot(U32 pin)
 }
 
 // the entries of a fragment from the pairs and slots as they are now (the pairs have been looked at)
+// The device lost report asks this for every data fault address (Context::addAddressDescriber): the GL buffers whose arena range holds the address or ends just below it (name, size, renames and the frame of the last
+// one), and the table rows (the CPU's copy) that have a pointer within 2 MB below it (the pull shaders read up to a megabyte past an array base), with the frame each row was last written in.
+std::string geo_explain_address(unsigned long long at)
+{
+    std::string text;
+    int shown = 0;
+    for (const auto& kv : sGL.mBuffers)
+    {
+        const Buf& b = kv.second;
+        const U64 base = (U64)b.mVk.mAddress;
+        if (!base || !b.mArena.valid())
+        {
+            continue;
+        }
+        const U64 size = b.mSize;
+        if (at >= base && at < base + size + 0x1000)
+        {
+            char buf[320];
+            snprintf(buf, sizeof(buf), "GL buffer %u (%llu bytes at 0x%llx, offset %llu in it): renamed %llu times in all, last rename in frame %lld, renames in that frame %u, last used by a draw in frame %lld; ", kv.first,
+                     (unsigned long long)size, (unsigned long long)base, (unsigned long long)(at - base), (unsigned long long)b.mMoves, (long long)(b.mRenamedFrame == ~0ull ? -1 : (long long)b.mRenamedFrame), b.mRenamesInFrame,
+                     (long long)(b.mLastUseFrame == ~0ull ? -1 : (long long)b.mLastUseFrame));
+            text += buf;
+            if (++shown >= 3)
+            {
+                break;
+            }
+        }
+    }
+    if (shown == 0)
+    {
+        text += "no GL buffer holds it; ";
+    }
+    struct Field { const char* mName; const U32* mPtr; };
+    int rows = 0;
+    for (U32 slot = 0; slot < (U32)sGeo.mTCpu.size() && rows < 6; ++slot)
+    {
+        const GeoGpuG& g = sGeo.mTCpu[slot];
+        const Field fields[] = { { "positions", g.mPositions }, { "normals", g.mNormals }, { "texcoords", g.mTexcoords }, { "colors", g.mColors }, { "indices", g.mIndices }, { "tangents", g.mTangents },
+                                 { "texcoords1", g.mTexcoords1 }, { "texcoords2", g.mTexcoords2 }, { "weights", g.mWeights }, { "palette", g.mPalette } };
+        for (const Field& f : fields)
+        {
+            const U64 p = (U64)f.mPtr[0] | ((U64)f.mPtr[1] << 32);
+            if (p && at >= p && at - p < 0x200000)
+            {
+                char buf[240];
+                snprintf(buf, sizeof(buf), "table row %u, %s at 0x%llx (the address is %llu bytes past it), row written in frame %u (first %u, model %u, flags 0x%x); ", slot, f.mName, (unsigned long long)p,
+                         (unsigned long long)(at - p), sGeo.mRowFrame.size() > slot ? sGeo.mRowFrame[slot] : 0u, g.mFirst, g.mModel, g.mFlags);
+                text += buf;
+                ++rows;
+                break;
+            }
+        }
+    }
+    if (rows == 0)
+    {
+        text += "no table row has a pointer within 2 MB below it (the live table's CPU copy)";
+    }
+    return text;
+}
+
 void geo_write_items(GeoFrag& f)
 {
     for (size_t i = 0; i < f.mItems.size(); ++i)
@@ -6966,6 +7033,7 @@ void geo_write_items(GeoFrag& f)
         g.mBrightness = e.mBrightness;
         sGeo.mT[f.mSlots[i]] = g;
         sGeo.mTCpu[f.mSlots[i]] = g;
+        sGeo.mRowFrame[f.mSlots[i]] = (U32)Context::instance().getFrameNumber();
     }
 }
 
@@ -7695,6 +7763,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     vi.mAttributes.clear();
     used_cache.clear();
     const U64 table_address = (rigged_draw && sGeo.mRTable.mAddress) ? (U64)sGeo.mRTable.mAddress : (!rigged_draw && sGeo.mSTable.mAddress) ? (U64)sGeo.mSTable.mAddress : (U64)sGeo.mTable.mAddress, models_address = (U64)models.mAddress;
+    Context::instance().flight(Context::FL_GEO_DRAW, 100ull + type, table_address, (unsigned long long)((rigged_draw ? sGeo.mRTable.mAddress : sGeo.mSTable.mAddress) ? 1 : 0), (unsigned long long)count);       // (a static or rigged type draw: which table, 1 = rows copied for the frame)
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
@@ -8041,6 +8110,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     vi.mAttributes.clear();
     used_cache.clear();
     const U64 table_address = alpha_rows.mAddress ? (U64)alpha_rows.mAddress : (U64)sGeo.mTable.mAddress, models_address = (U64)pass.mModels.mAddress, texmats_address = (U64)pass.mTexmats.mAddress;
+    Context::instance().flight(Context::FL_GEO_DRAW, 98ull, table_address, (unsigned long long)(alpha_rows.mAddress ? 1 : 0), (unsigned long long)total);       // (the alpha run: which table, 1 = rows copied for this draw)
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };

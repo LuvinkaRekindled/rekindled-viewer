@@ -1229,9 +1229,14 @@ static void write_device_lost_dump()
     const auto start = std::chrono::steady_clock::now();
     const BOOL ok = write(GetCurrentProcess(), GetCurrentProcessId(), file,
                           (MINIDUMP_TYPE)(MiniDumpWithPrivateReadWriteMemory | MiniDumpWithDataSegs | MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules), nullptr, nullptr, nullptr);
+    const DWORD dump_error = ok ? 0 : GetLastError();
     LARGE_INTEGER size = {};
     GetFileSizeEx(file, &size);
     CloseHandle(file);
+    if (!ok)
+    {
+        LL_WARNS("Vulkan") << "device lost: the process dump failed with error 0x" << std::hex << (unsigned long)dump_error << std::dec << " (0x8007012b = part of the memory could not be read)" << LL_ENDL;
+    }
     LL_WARNS("Vulkan") << "device lost: process dump " << (ok ? "written" : "FAILED") << " (" << (unsigned long long)(size.QuadPart >> 20) << " MB, "
                        << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() << " ms): " << path << LL_ENDL;
 }
@@ -1512,6 +1517,16 @@ void Context::reportCheckpoints(const char* when)
                             {
                                 found = true;
                                 LL_WARNS("Vulkan") << "  address 0x" << std::hex << at << std::dec << " is in arena block " << k << " (" << (b->mAccel ? "accel" : (b->mHost ? "host" : (b->mShared ? "shared" : "device"))) << ", " << (b->mSize >> 20) << " MB, starts at 0x" << std::hex << (unsigned long long)b->mAddress << std::dec << ", offset " << (at - (unsigned long long)b->mAddress) << ")" << LL_ENDL;
+                                LL_WARNS("Vulkan") << "    that block was made in frame " << b->mCreatedFrame << ", " << (mFrameNumber - b->mCreatedFrame) << " frames before this report (frame " << mFrameNumber << "); it holds "
+                                                   << b->mAllocs << " ranges, " << (b->mUsed >> 20) << " MB in use" << LL_ENDL;
+                                for (const auto& describer : mAddressDescribers)
+                                {
+                                    const std::string what = describer ? describer(at) : std::string();
+                                    if (!what.empty())
+                                    {
+                                        LL_WARNS("Vulkan") << "    which is " << what << LL_ENDL;
+                                    }
+                                }
                             }
                         }
                         if (!found)
