@@ -1010,9 +1010,46 @@ protected:
             }
         };
     };
-    typedef std::set< Light, Light::compare > light_set_t;
+    // The nearby lights, sorted by distance (begin() is the closest). A sorted vector, not a std::set: the set was rebuilt and copied every frame
+    // (two node allocations and frees for each of the 1,400 lights at a crowded plaza, 0.46 ms a frame: doc/vulkan/MAINTHREAD-candidates.md); the
+    // vector is updated in place and sorted only when the order changed.
+    class light_set_t
+    {
+    public:
+        typedef std::vector<Light>::iterator iterator;
+        typedef std::vector<Light>::const_iterator const_iterator;
+        typedef std::vector<Light>::reverse_iterator reverse_iterator;
+
+        iterator begin() { return mLights.begin(); }
+        iterator end() { return mLights.end(); }
+        const_iterator begin() const { return mLights.begin(); }
+        const_iterator end() const { return mLights.end(); }
+        reverse_iterator rbegin() { return mLights.rbegin(); }
+        size_t size() const { return mLights.size(); }
+        bool empty() const { return mLights.empty(); }
+        void clear() { mLights.clear(); }
+        iterator insert(const Light& light)
+        {
+            return mLights.insert(std::upper_bound(mLights.begin(), mLights.end(), light, Light::compare()), light);
+        }
+        iterator erase(iterator it) { return mLights.erase(it); }
+        std::vector<Light>& vec() { return mLights; }
+        void sortIfNeeded()
+        {
+            if (!std::is_sorted(mLights.begin(), mLights.end(), Light::compare()))
+            {
+                std::sort(mLights.begin(), mLights.end(), Light::compare());
+            }
+        }
+    private:
+        std::vector<Light> mLights;
+    };
 
     LLDrawable::ordered_drawable_set_t  mLights;
+    U32                             mLightsVersion = 0;     // counts the inserts and erases of mLights
+    U32                             mLightScanFrame = 0;    // the frame of the last scan of mLights for new nearby lights, its camera position and mLightsVersion
+    U32                             mLightScanVersion = ~0u;
+    LLVector3                       mLightScanPos;
     light_set_t                     mNearbyLights; // lights near camera
     LLColor4                        mHWLightColors[8];
 

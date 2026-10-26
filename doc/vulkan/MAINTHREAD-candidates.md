@@ -65,3 +65,5 @@ Nothing here is large alone; the frame is a sum of many 0.2-1 ms blocks, and the
 | octree balance (12) | 0.001-0.003 | 48 trees | **dead** |
 
 Candidates left from this list: the local light set (about 0.3 ms recoverable) and the apparent angle pass (about 0.15 ms).
+
+**Light set reworked (lap itm2-, same scene):** `LLPipeline::light_set_t` is now a sorted `std::vector` updated in place (kept lights moved down over dropped ones, `std::is_sorted` before any sort), the not-removable mark is made in the update loop instead of a third pass, and with the deferred renderer the walk over all of `mLights` for new nearby lights runs when the camera moved 2 m, a light was added or removed (`mLightsVersion`), or every 15 frames. `calcNearbyLights`: 0.46-0.48 ms to 0.17-0.18 ms at 1,690 lights (1,450 kept nearby, the same counts as before); loop 11.0 to 10.7 ms. No picture check yet.
