@@ -2712,6 +2712,23 @@ void LLPipeline::sceneStateCensus()
 extern std::atomic<int> gFsWorkerCpu;
 extern std::atomic<unsigned> gFsWorkerTid;
 
+void LLPipeline::pinMainThread()
+{
+    static bool done = false;
+    if (done)
+    {
+        return;
+    }
+    done = true;
+    char pin[16] = {};
+    if (GetEnvironmentVariableA("LL_VK_PIN_MAIN", pin, sizeof(pin)) > 0)
+    {
+        const int cpu = atoi(pin);
+        const DWORD_PTR previous = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << cpu);
+        LL_INFOS("CpuProbe") << "main thread pinned to logical cpu " << cpu << (previous ? " (done)" : " (FAILED)") << LL_ENDL;
+    }
+}
+
 // <FS> LL_VK_CPUPROBE core census: which logical processor the main thread runs on each frame (and the one the render worker last ran on at its frame end), how often either moves, and how often they sit on the same physical
 // core (logical processors 2k and 2k+1 are the two threads of a core on this chip) or in the same group of 16 (one CCD, assuming the numbering). Logged every 600 frames.
 static void core_census()

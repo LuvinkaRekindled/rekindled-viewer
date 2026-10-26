@@ -9603,6 +9603,21 @@ void before_end_frame()
 
 void after_frame()
 {
+    {
+        // <FS> LL_VK_PIN_WORKER=<logical cpu>: a test of what a core of its own does for the render worker (doc/vulkan/PLAN-texture-handles.md section 17.22)
+        static bool pinned = false;
+        if (!pinned)
+        {
+            pinned = true;
+            char pin[16] = {};
+            if (GetEnvironmentVariableA("LL_VK_PIN_WORKER", pin, sizeof(pin)) > 0)
+            {
+                const int cpu = atoi(pin);
+                const DWORD_PTR previous = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << cpu);
+                LL_INFOS("CpuProbe") << "render worker thread pinned to logical cpu " << cpu << (previous ? " (done)" : " (FAILED)") << LL_ENDL;
+            }
+        }
+    }
     gFsWorkerCpu.store((int)GetCurrentProcessorNumber(), std::memory_order_relaxed);        // <FS> LL_VK_CPUPROBE core census (pipeline.cpp)
     gFsWorkerTid.store((unsigned)GetCurrentThreadId(), std::memory_order_relaxed);
     std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
