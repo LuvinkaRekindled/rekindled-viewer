@@ -2700,6 +2700,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>RenderRTShadowAlphaRays</key>
+    <map>
+      <key>Comment</key>
+      <string>Ray traced sun shadow on alpha blended surfaces (hair, glass, decals): the number of rays traced for each pixel on the sun's disc. 1 (the default) traces one ray at a different point of the disc every frame and lets the temporal upscaler average them: the soft edge of 12 rays for about 1.3 ms less GPU time in a crowd (2026-10-26, doc/vulkan/MAINTHREAD-candidates.md). 0 = the old number, RenderRTShadowSamples x 6 (12).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>RenderRTShadowAlphaLodNear</key>
     <map>
       <key>Comment</key>
