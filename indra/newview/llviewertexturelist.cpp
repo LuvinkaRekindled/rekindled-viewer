@@ -1069,8 +1069,8 @@ void LLViewerTextureList::logSummary()
     }
     LL_CONT << LL_ENDL;
     {
-        // doc/vulkan/EXPIRY-design.md section 11: how long the textures in memory have been dormant (no face in view needing them), with the bytes the viewer counts for each age. The memory that a teleport leaves
-        // behind shows here; the bias logic does not look at it (it lowers everything's quality by the percentage over budget).
+        // doc/vulkan/EXPIRY-design.md section 11: how long ago a face of each texture in memory was last on screen (the dormant list only skips occluded and faceless textures, so it does not say this),
+        // with the bytes the viewer counts for each age. The memory that a teleport leaves behind shows here; the bias logic does not look at it (it lowers everything's quality by the percentage over budget).
         static U32 last_frame = 0;
         static LLTimer last_time;
         const U32 frame_now = (U32)LLFrameTimer::getFrameCount();
@@ -1078,9 +1078,11 @@ void LLViewerTextureList::logSummary()
         const double spf = last_frame && frame_now > last_frame ? (double)seconds / (double)(frame_now - last_frame) : 0.0166;
         last_frame = frame_now;
         last_time.reset();
-        static const char* const names[6] = { "in use", "dormant < 10 s", "10-60 s", "60-300 s", "> 300 s", "not listed" };
+        static const char* const names[6] = { "on screen < 1 s", "1-10 s ago", "10-60 s", "60-300 s", "> 300 s", "never seen" };
         U32 count[6] = {};
         U64 bytes[6] = {};
+        U32 dormant_count = 0;
+        U64 dormant_bytes = 0;
         for (const LLPointer<LLViewerFetchedTexture>& image : mImageList)
         {
             if (!image->hasImageTexture())
@@ -1088,24 +1090,26 @@ void LLViewerTextureList::logSummary()
                 continue;
             }
             int b = 5;
-            if (image->mListState == 1)
+            if (image->mLastOnScreenFrame)
             {
-                b = 0;
+                const double age = (double)(frame_now - std::min(frame_now, image->mLastOnScreenFrame)) * spf;
+                b = age < 1.0 ? 0 : age < 10.0 ? 1 : age < 60.0 ? 2 : age < 300.0 ? 3 : 4;
             }
-            else if (image->mListState == 2)
-            {
-                const double age = (double)(frame_now - std::min(frame_now, image->mDormantAtFrame)) * spf;
-                b = age < 10.0 ? 1 : age < 60.0 ? 2 : age < 300.0 ? 3 : 4;
-            }
+            const U64 mem = (U64)image->getTextureMemory().value();
             ++count[b];
-            bytes[b] += (U64)image->getTextureMemory().value();
+            bytes[b] += mem;
+            if (image->mListState == 2)
+            {
+                ++dormant_count;
+                dormant_bytes += mem;
+            }
         }
         std::string text;
         for (int k = 0; k < 6; ++k)
         {
             text += llformat(" [%s: %u textures, %.0f MB]", names[k], count[k], (double)bytes[k] / 1048576.0);
         }
-        LL_INFOS("VkTex") << "texture memory by dormant age:" << text << LL_ENDL;
+        LL_INFOS("VkTex") << "texture memory by time since a face was on screen:" << text << "; of all of them on the dormant list: " << dormant_count << " textures, " << (dormant_bytes >> 20) << " MB" << LL_ENDL;
     }
     {
         // census (clothing of the crowd that never loads: 65-156 images with no data and nothing fetching, in every run since before the scene table): what those images are and why nothing asks for them
@@ -1676,6 +1680,10 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             }
         }
 
+        if (on_screen)
+        {
+            imagep->mLastOnScreenFrame = gFrameCount;
+        }
         imagep->addTextureStats(max_vsize);
 
         // <FS> H6: a texture nobody is looking at and nothing is asking for goes on the dormant list: no face on screen (none at all, or every face in an occluded group), no boost, no callback, not being
