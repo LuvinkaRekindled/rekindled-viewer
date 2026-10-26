@@ -6934,6 +6934,31 @@ void geo_write_items(GeoFrag& f)
     }
 }
 
+// An item's index range has to lie inside its index buffer (16-bit indices). Nothing checked that: a range left over from before a buffer was rewritten smaller (or a buffer given a new allocation under
+// the same name) made the pull shader read indices past the end and so vertices anywhere in memory. Giant triangles over a whole alpha pass, 100-700 ms frames inside the alpha run, and the hangs
+// past the driver's 2 s limit that ended five of today's runs are what that would look like. A failing item is not drawn (count 0), counted, and the first ones are logged.
+static U64 sGeoBadRange = 0;
+static bool geo_item_ok(const GeoFrag& f, size_t i)
+{
+    const ResPair& p = f.mPairs[f.mPairOf[i]];
+    if (!p.mOk)
+    {
+        return false;
+    }
+    const LLVkBridge::GeoEntry& e = f.mItems[i].mE;
+    const U64 end = ((U64)e.mFirstIndex + (U64)e.mIndexCount) * 2ull;
+    if (p.mPib && end > (U64)p.mPib->mVk.mSize)
+    {
+        if (++sGeoBadRange <= 30)
+        {
+            LL_WARNS("VkScene") << "scene table item left out: its index range is past the end of its index buffer: first index " << e.mFirstIndex << " count " << e.mIndexCount << " (" << end << " bytes of indices) in a buffer of "
+                                << (U64)p.mPib->mVk.mSize << " bytes, index buffer name " << p.mIb << ", vertex buffer name " << p.mVb << ", type " << f.mItems[i].mType << " (" << sGeoBadRange << " so far)" << LL_ENDL;
+        }
+        return false;
+    }
+    return true;
+}
+
 // the draw commands of the usable items, sorted by pass type
 void geo_build_commands(GeoFrag& f)
 {
@@ -6943,7 +6968,7 @@ void geo_build_commands(GeoFrag& f)
         f.mTypeFirst[t] = (U32)f.mCmds.size();
         for (size_t i = 0; i < f.mItems.size(); ++i)
         {
-            if (f.mItems[i].mType == t && f.mPairs[f.mPairOf[i]].mOk)
+            if (f.mItems[i].mType == t && geo_item_ok(f, i))
             {
                 f.mCmds.push_back({ f.mItems[i].mE.mIndexCount, 1u, 0u, f.mSlots[i] });
             }
@@ -6963,7 +6988,7 @@ void geo_build_commands(GeoFrag& f)
             const U32 first = (U32)f.mRCmds.size();
             for (size_t i = 0; i < f.mItems.size(); ++i)
             {
-                if (f.mItems[i].mType == kGeoTypes + rt && f.mPairOf[i] == k && f.mPairs[k].mOk)
+                if (f.mItems[i].mType == kGeoTypes + rt && f.mPairOf[i] == k && geo_item_ok(f, i))
                 {
                     f.mRItemCmd[i] = (U32)f.mRCmds.size();
                     f.mRCmds.push_back({ f.mPalAddr[i] ? f.mItems[i].mE.mIndexCount : 0u, 1u, f.mItems[i].mE.mFirstIndex, 0, f.mSlots[i] });
@@ -6986,7 +7011,7 @@ void geo_build_commands(GeoFrag& f)
     {
         if (f.mItems[i].mType == kGeoAlphaRiggedType)
         {
-            const bool ok = f.mPairs[f.mPairOf[i]].mOk;
+            const bool ok = geo_item_ok(f, i);
             f.mARItemCmd[i] = (U32)f.mARCmds.size();
             f.mARItem.push_back((U32)i);
             f.mARCmds.push_back({ ok && f.mPalAddr[i] ? f.mItems[i].mE.mIndexCount : 0u, 1u, f.mItems[i].mE.mFirstIndex, 0, f.mSlots[i] });
@@ -6999,7 +7024,7 @@ void geo_build_commands(GeoFrag& f)
     {
         if (f.mItems[i].mType == kGeoAlphaType)
         {
-            f.mACmds.push_back({ f.mPairs[f.mPairOf[i]].mOk ? f.mItems[i].mE.mIndexCount : 0u, 1u, 0u, f.mSlots[i] });
+            f.mACmds.push_back({ geo_item_ok(f, i) ? f.mItems[i].mE.mIndexCount : 0u, 1u, 0u, f.mSlots[i] });
         }
     }
 }
