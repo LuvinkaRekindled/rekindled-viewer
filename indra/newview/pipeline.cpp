@@ -393,6 +393,10 @@ bool    LLPipeline::sRenderTextures = true;
 // EventHost API LLPipeline listener.
 static LLPipelineListener sPipelineListener;
 
+// <FS> LL_VK_SCENECENSUS=1: the cull time of each partition in the cascade culls (index in the partitions list), summed over the workers
+static std::atomic<U64> sPartCullNs[96];
+static std::atomic<U64> sPartCullCalls[96];
+static std::atomic<U32> sPartCullType[96];
 static thread_local LLCullResult* sCull = NULL; // <FS> per thread: the parallel shadow cascade preparation culls into several results at once
 
 // Add color attachments for deferred rendering
@@ -5466,9 +5470,23 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
     result.clear();
     prep.mDeferred.clear();
 
+    static const bool part_census = getenv("LL_VK_SCENECENSUS") != nullptr;
+    size_t part_index = 0;
     for (LLSpatialPartition* part : partitions)
     {
-        { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
+        if (part_census && part_index < 96)
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
+            sPartCullNs[part_index].fetch_add((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count(), std::memory_order_relaxed);
+            sPartCullCalls[part_index].fetch_add(1, std::memory_order_relaxed);
+            sPartCullType[part_index].store(part->mPartitionType, std::memory_order_relaxed);
+        }
+        else
+        {
+            { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
+        }
+        ++part_index;
     }
 
     // the drawable groups: what stateSort does with them when there is no occlusion culling, less the mesh rebuild
@@ -19932,6 +19950,32 @@ static void shadow_census_report(U32 frames)
                  (unsigned long long)c.mRuns, c.mJobs[0] / n, c.mWallMs[0] / n, c.mSumMs[0] / n, c.mLongestMs[0] / n, c.mWallMs[1] / n, c.mSumMs[1] / n, c.mLongestMs[1] / n);
         LL_INFOS("SceneCensus") << buf << by << LL_ENDL;
         sPrepJobCensus = PrepJobCensus();
+        // the partitions: per cull job, the time of each, largest first
+        std::vector<std::pair<double, std::string>> parts;
+        double total = 0.0;
+        size_t count = 0;
+        for (size_t i = 0; i < 96; ++i)
+        {
+            const U64 calls = sPartCullCalls[i].exchange(0);
+            const U64 ns = sPartCullNs[i].exchange(0);
+            if (!calls)
+            {
+                continue;
+            }
+            ++count;
+            char b[80];
+            const double ms = ns / 1.0e6 / (double)calls;
+            snprintf(b, sizeof(b), "#%zu type %u %.3f ms", i, sPartCullType[i].load(), ms);
+            parts.push_back({ ms, b });
+            total += ms;
+        }
+        std::sort(parts.begin(), parts.end(), [](const auto& a, const auto& c) { return a.first > c.first; });
+        std::string list;
+        for (size_t k = 0; k < parts.size() && k < 8; ++k)
+        {
+            list += "[" + parts[k].second + "] ";
+        }
+        LL_INFOS("SceneCensus") << "shadow cull by partition: " << count << " partitions culled, the sum of their average times per job " << total << " ms; the largest: " << list << LL_ENDL;
     }
     std::string text;
     for (U32 p = 0; p < 7; ++p)
