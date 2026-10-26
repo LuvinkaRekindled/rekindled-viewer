@@ -477,6 +477,7 @@ public:
     static U64 sRelReleased, sRelReleasedInfos, sRelWoken, sRelScans;
     static int coldMode();
     static U64 sColdMovedSeen, sColdMovedSkipped, sColdTexAnimSeen, sColdTexAnimSkipped, sColdMovedWoken;
+    void pinMainThread();               // <FS> LL_VK_PIN_MAIN=<logical cpu>: pins the main thread (a test, doc/vulkan/PLAN-texture-handles.md section 17.22)
     void cpuProbe();                    // <FS> LL_VK_CPUPROBE=1: three fixed benchmarks on the main thread each frame, as CPU zones (does the thread itself get slower after a turn?)
     void sceneStateCensus();            // <FS> LL_VK_SCENECENSUS=1 (doc/vulkan/PLAN-texture-handles.md section 17.16): what the scene holds against what is in view, logged every 600 frames
 

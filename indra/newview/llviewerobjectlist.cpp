@@ -1270,6 +1270,7 @@ void LLViewerObjectList::update(LLAgent &agent)
     LLVOAvatar::sNumLODChangesThisFrame = 0;
     LLAttCensus::frame();
     gPipeline.sceneStateCensus();
+    gPipeline.pinMainThread();
     gPipeline.cpuProbe();
     gPipeline.releaseScan();
 
