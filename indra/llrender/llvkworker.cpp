@@ -9797,6 +9797,7 @@ void after_frame()
                                                       << as.mAccelBlocksReleased - prev.mAccelBlocksReleased << " (dedicated " << dedicated_released << ", lived "
                                                       << (dedicated_released ? (double)(as.mAccelDedicatedLifeFrames - prev.mAccelDedicatedLifeFrames) / (double)dedicated_released : 0.0) << " frames on average) | pool of empty dedicated blocks: reused " << as.mAccelPoolHits - prev.mAccelPoolHits << ", not found " << as.mAccelPoolMisses - prev.mAccelPoolMisses
                                                       << ", given back after a wait " << as.mAccelPoolTrimmed - prev.mAccelPoolTrimmed << ", holding now " << as.mAccelPooled << " blocks (" << (as.mAccelPooledBytes >> 20) << " MB)" << LL_ENDL;
+                                LL_INFOS("VkAsArena") << Context::instance().arenaAccelCensus() << LL_ENDL;
                                 prev = as;
                             }
                         }

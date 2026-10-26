@@ -348,6 +348,7 @@ public:
     bool arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind kind, ArenaRef& out);
     void arenaFree(ArenaRef& ref);
     ArenaStats arenaStats();
+    std::string arenaAccelCensus();         // text: how full the acceleration structure blocks are and what draining the sparsest ones would take (measurement only)
     bool createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkFormat format, VkImageUsageFlags usage, Image& out);
     void destroyImage(Image& image);        // deferred
     void setViewForgetHook(void (*fn)(VkImageView)) { mViewForget = fn; }       // called with every sampling view given up (the bindless table: its slots naming the view get the stand-in)

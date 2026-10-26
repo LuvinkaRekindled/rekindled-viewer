@@ -2692,6 +2692,77 @@ ArenaStats Context::arenaStats()
     return s;
 }
 
+// <FS> native-vk (S7 census, no behaviour change): the question is whether compacting the acceleration structure blocks (rebuilding the structures of the sparsest blocks into the free space of the others, so that those blocks can be
+// given back) would return enough memory to be worth building. Regular (shared) blocks: fill histogram, and the sparsest-first drain: how many blocks could go, how many MB and how many structures would have to be rebuilt
+// (an upper bound on the gain: it ignores that a moved structure must fit a free range, not just free bytes in total). Dedicated blocks hold one structure each: only their size-class slack is counted.
+std::string Context::arenaAccelCensus()
+{
+    std::lock_guard<std::mutex> lock(mArenaMutex);
+    struct Row { U64 mSize, mUsed; U32 mAllocs; };
+    std::vector<Row> regular;
+    U64 ded_size = 0, ded_used = 0, pooled_size = 0;
+    U32 ded_n = 0, pooled_n = 0;
+    for (ArenaBlock* b : mArenaBlocks)
+    {
+        if (!b || !b->mAccel)
+        {
+            continue;
+        }
+        if (b->mPooled)
+        {
+            ++pooled_n;
+            pooled_size += b->mSize;
+        }
+        else if (b->mDedicated)
+        {
+            ++ded_n;
+            ded_size += b->mSize;
+            ded_used += b->mUsed;
+        }
+        else
+        {
+            regular.push_back({ (U64)b->mSize, b->mUsed, b->mAllocs });
+        }
+    }
+    std::sort(regular.begin(), regular.end(), [](const Row& a, const Row& c) { return a.mUsed < c.mUsed; });
+    U64 reg_size = 0, reg_used = 0, reg_allocs = 0;
+    U32 hist[5] = {};       // empty, <25 %, <50 %, <75 %, 75 % and more
+    for (const Row& r : regular)
+    {
+        reg_size += r.mSize;
+        reg_used += r.mUsed;
+        reg_allocs += r.mAllocs;
+        const double f = r.mSize ? (double)r.mUsed / (double)r.mSize : 0.0;
+        ++hist[r.mUsed == 0 ? 0 : f < 0.25 ? 1 : f < 0.5 ? 2 : f < 0.75 ? 3 : 4];
+    }
+    // the drain: take blocks sparsest first while what they hold fits in the free bytes of the blocks that stay
+    U32 freed = 0, moved_allocs = 0;
+    U64 moved = 0, freed_mb = 0;
+    for (size_t k = 0; k < regular.size(); ++k)
+    {
+        U64 free_rest = 0;
+        for (size_t j = k + 1; j < regular.size(); ++j)
+        {
+            free_rest += regular[j].mSize - regular[j].mUsed;
+        }
+        if (moved + regular[k].mUsed > free_rest * 9 / 10)      // (keep 10 % back for fragmentation and for new ranges)
+        {
+            break;
+        }
+        moved += regular[k].mUsed;
+        moved_allocs += regular[k].mAllocs;
+        freed_mb += regular[k].mSize;
+        ++freed;
+    }
+    const U64 packed_blocks = regular.empty() ? 0 : (reg_used * 11 / 10 + (64ull << 20) - 1) / (64ull << 20);
+    std::string out = "AS census: shared blocks " + std::to_string(regular.size()) + " (" + std::to_string(reg_size >> 20) + " MB, " + std::to_string(reg_used >> 20) + " MB in use, " + std::to_string(reg_allocs) + " structures)"
+        + " fill: empty " + std::to_string(hist[0]) + ", <25% " + std::to_string(hist[1]) + ", <50% " + std::to_string(hist[2]) + ", <75% " + std::to_string(hist[3]) + ", more " + std::to_string(hist[4])
+        + " | draining the sparsest: " + std::to_string(freed) + " blocks (" + std::to_string(freed_mb >> 20) + " MB) could go, moving " + std::to_string(moved >> 20) + " MB = " + std::to_string(moved_allocs) + " structures to rebuild"
+        + "; fully packed with 10% slack it would be " + std::to_string(packed_blocks) + " blocks (" + std::to_string(packed_blocks * 64) + " MB)"
+        + " | dedicated blocks " + std::to_string(ded_n) + " (" + std::to_string(ded_size >> 20) + " MB, " + std::to_string(ded_used >> 20) + " MB in use) | pooled empty " + std::to_string(pooled_n) + " (" + std::to_string(pooled_size >> 20) + " MB)";
+    return out;
+}
+
 void Context::arenaShutdown()
 {
     std::lock_guard<std::mutex> lock(mArenaMutex);
