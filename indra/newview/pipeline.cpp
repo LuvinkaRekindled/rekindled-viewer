@@ -5305,6 +5305,12 @@ struct ShadowPrepScope
         sShadowCascadeCull.mMargin = prep.mCullMargin;
     }
 
+    // the same, pushing into `cull` instead of the cascade's own result (the marking chunks: markVisible pushes drawables and bridges, and a result is not safe for two threads)
+    ShadowPrepScope(const LLPipeline::ShadowCascadePrep& prep, LLCullResult* cull) : ShadowPrepScope(prep)
+    {
+        sCull = cull;
+    }
+
     ~ShadowPrepScope()
     {
         LLViewerCamera::sCurCameraID = mCameraID;
@@ -5494,10 +5500,10 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
 
 // worker: mark a range of the cascade's groups visible, and their drawables. Kind 0: the drawable groups (what stateSort does with them when there is no occlusion culling, less the mesh rebuild); kind 1: the visible groups
 // (stateSort(group), less the mesh rebuild). Every group and every drawable belongs to one range, so chunks of the same cascade do not meet.
-void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred)
+void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred, LLCullResult& local)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    ShadowPrepScope scope(prep);
+    ShadowPrepScope scope(prep, &local);        // (what markVisible pushes lands in `local`, and is appended to the cascade's result in list order afterwards)
     LLCamera& camera = prep.mCamera;
     LLCullResult& result = *prep.mResult;
 
@@ -22186,7 +22192,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             {
                 // the marking of the found groups, in chunks over the pool (LL_VK_PREP_CHUNK = groups a chunk, default 128, 0: one chunk a list as before)
                 static const U32 chunk_size = getenv("LL_VK_PREP_CHUNK") ? (U32)atoi(getenv("LL_VK_PREP_CHUNK")) : 128;
-                struct MarkChunk { size_t mPrep; int mKind; U32 mBegin, mEnd; std::vector<LLDrawable*> mDeferred; };
+                struct MarkChunk { size_t mPrep; int mKind; U32 mBegin, mEnd; std::vector<LLDrawable*> mDeferred; std::unique_ptr<LLCullResult> mLocal; };
                 std::vector<MarkChunk> chunks;
                 for (size_t p = 0; p < pending.size(); ++p)
                 {
@@ -22197,16 +22203,25 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                         const U32 step = chunk_size ? chunk_size : std::max<U32>(n, 1u);
                         for (U32 b = 0; b < n; b += step)
                         {
-                            chunks.push_back({ p, kind, b, std::min(n, b + step), {} });
+                            chunks.push_back({ p, kind, b, std::min(n, b + step), {}, std::make_unique<LLCullResult>() });
                         }
                     }
                 }
-                const std::function<void(size_t)> mark_job = [&](size_t c) { shadowPrepMark(pending[chunks[c].mPrep], chunks[c].mKind, chunks[c].mBegin, chunks[c].mEnd, chunks[c].mDeferred); };
+                const std::function<void(size_t)> mark_job = [&](size_t c) { shadowPrepMark(pending[chunks[c].mPrep], chunks[c].mKind, chunks[c].mBegin, chunks[c].mEnd, chunks[c].mDeferred, *chunks[c].mLocal); };
                 const auto mark_wall0 = std::chrono::steady_clock::now();
                 if (!chunks.empty()) { LL_CPU_ZONE("shadow prep: mark job (wait for the pool)"); prep_pool->run(chunks.size(), mark_job); }
                 for (MarkChunk& c : chunks)
                 {
                     pending[c.mPrep].mDeferred.insert(pending[c.mPrep].mDeferred.end(), c.mDeferred.begin(), c.mDeferred.end());      // (chunk order is list order)
+                    LLCullResult& into = *pending[c.mPrep].mResult;
+                    for (LLCullResult::drawable_iterator d = c.mLocal->beginVisibleList(); d != c.mLocal->endVisibleList(); ++d)
+                    {
+                        into.pushDrawable(*d);
+                    }
+                    for (LLCullResult::bridge_iterator b = c.mLocal->beginVisibleBridge(); b != c.mLocal->endVisibleBridge(); ++b)
+                    {
+                        into.pushBridge(*b);
+                    }
                 }
                 if (job_census)
                 {

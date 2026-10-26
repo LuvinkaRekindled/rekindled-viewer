@@ -371,7 +371,7 @@ public:
     };
     void shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions);
     // the marking half of the cull, for a range of the cascade's drawable groups (kind 0) or visible groups (kind 1): chunks of it run on the pool (MAINTHREAD-candidates.md, A); the drawables left to the main thread go into `deferred`
-    void shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred);
+    void shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred, LLCullResult& local);
     void shadowPrepRenderMap(ShadowCascadePrep& prep);
     void shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps);
     void shadowPrepSubmitBuilds(ShadowCascadePrep& prep);
