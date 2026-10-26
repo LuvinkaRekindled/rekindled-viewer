@@ -48,6 +48,7 @@
 #include "llstatusbar.h"
 #include "llmenugl.h"
 #include "pipeline.h"
+#include "llitemcensus.h"
 #include <boost/tokenizer.hpp>
 
 
@@ -735,6 +736,7 @@ void LLHUDNameTag::updateSize()
 void LLHUDNameTag::updateAll()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
+    ItemCensus::Scope census_scope(ItemCensus::NAMETAGS);
     // iterate over all text objects, calculate their restoration forces,
     // and add them to the visible set if they are on screen and close enough
     sVisibleTextObjects.clear();
@@ -780,6 +782,7 @@ void LLHUDNameTag::updateAll()
         current_screen_area += (F32)(textp->mSoftScreenRect.getWidth() * textp->mSoftScreenRect.getHeight());
     }
 
+    ItemCensus::add(ItemCensus::NAMETAGS, sVisibleTextObjects.size());
     LLTrace::CountStatHandle<>* camera_vel_stat = LLViewerCamera::getVelocityStat();
     F32 camera_vel = (F32)LLTrace::get_frame_recording().getLastRecording().getPerSec(*camera_vel_stat);
     if (camera_vel > MAX_STABLE_CAMERA_VELOCITY)
