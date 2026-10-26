@@ -2709,6 +2709,57 @@ void LLPipeline::sceneStateCensus()
 // <FS> LL_VK_CPUPROBE=1 (doc/vulkan/PLAN-texture-handles.md section 17.22): after a turn the main thread loop is 2.8 ms slower and zones that do not depend on the scene (the UI) are 14-26% slower too.
 // Three fixed pieces of work with the same input every frame, in zones of their own: a chain of dependent adds and multiplies (clock speed, a busy sibling thread), a pointer chase through 128 KB
 // (the L2 cache) and through 128 MB (past the L3 cache, to memory). If they get slower after the turn the thread itself is slower (cache, clock, scheduling) and not only the work it does.
+extern std::atomic<int> gFsWorkerCpu;
+extern std::atomic<unsigned> gFsWorkerTid;
+
+// <FS> LL_VK_CPUPROBE core census: which logical processor the main thread runs on each frame (and the one the render worker last ran on at its frame end), how often either moves, and how often they sit on the same physical
+// core (logical processors 2k and 2k+1 are the two threads of a core on this chip) or in the same group of 16 (one CCD, assuming the numbering). Logged every 600 frames.
+static void core_census()
+{
+    static U32 hist_main[64] = {}, hist_worker[64] = {};
+    static int prev_main = -1, prev_worker = -1;
+    static U64 frames = 0, main_moves = 0, main_ccd_moves = 0, worker_moves = 0, worker_ccd_moves = 0, same_core = 0, same_ccd = 0, worker_is_main = 0;
+    const int m = (int)GetCurrentProcessorNumber();
+    const int w = gFsWorkerCpu.load(std::memory_order_relaxed);
+    ++frames;
+    ++hist_main[m & 63];
+    if (prev_main >= 0 && m != prev_main) { ++main_moves; main_ccd_moves += (m >> 4) != (prev_main >> 4); }
+    prev_main = m;
+    if (w >= 0)
+    {
+        ++hist_worker[w & 63];
+        if (prev_worker >= 0 && w != prev_worker) { ++worker_moves; worker_ccd_moves += (w >> 4) != (prev_worker >> 4); }
+        prev_worker = w;
+        same_core += (m >> 1) == (w >> 1);
+        same_ccd += (m >> 4) == (w >> 4);
+        worker_is_main += gFsWorkerTid.load(std::memory_order_relaxed) == (unsigned)GetCurrentThreadId();
+    }
+    if (frames < 600)
+    {
+        return;
+    }
+    auto top = [](const U32* hist)
+    {
+        std::string text;
+        for (int k = 0; k < 4; ++k)
+        {
+            int best = -1;
+            for (int i = 0; i < 64; ++i) if (hist[i] && (best < 0 || hist[i] > hist[best])) best = i;
+            if (best < 0) break;
+            char buf[48];
+            snprintf(buf, sizeof(buf), "cpu %d %.0f%%  ", best, hist[best] * 100.0 / 600.0);
+            text += buf;
+        }
+        return text;
+    };
+    LL_INFOS("CpuProbe") << "core census over 600 frames: main thread on [" << top(hist_main) << "] moved " << main_moves / 600.0 << "/frame (to the other group of 16: " << main_ccd_moves / 600.0
+        << "); render worker (at its frame end) on [" << top(hist_worker) << "] moved " << worker_moves / 600.0 << "/frame (other group: " << worker_ccd_moves / 600.0 << "); same physical core "
+        << same_core * 100.0 / 600.0 << "% of frames, same group of 16 " << same_ccd * 100.0 / 600.0 << "%" << (worker_is_main ? " (the worker sample came from the main thread itself)" : "") << LL_ENDL;
+    memset(hist_main, 0, sizeof(hist_main));
+    memset(hist_worker, 0, sizeof(hist_worker));
+    frames = main_moves = main_ccd_moves = worker_moves = worker_ccd_moves = same_core = same_ccd = worker_is_main = 0;
+}
+
 void LLPipeline::cpuProbe()
 {
     static const bool on = getenv("LL_VK_CPUPROBE") != nullptr;
@@ -2716,6 +2767,7 @@ void LLPipeline::cpuProbe()
     {
         return;
     }
+    core_census();
     static std::vector<U32> small_chain, big_chain;
     if (small_chain.empty())
     {
