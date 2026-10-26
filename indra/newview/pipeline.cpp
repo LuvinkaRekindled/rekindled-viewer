@@ -19895,8 +19895,44 @@ static void shadow_pass_census(LLCullResult& result, U32 pass)
     }
 }
 
+// <FS> LL_VK_SCENECENSUS=1: the shadow prep jobs (doc/vulkan/MAINTHREAD-candidates.md, A). One cull job and one render map job per cascade run on the shared fork-join pool; the cascades rotate, so a frame usually has a small job and a big one.
+// Per run: the wall time of the fork-join, the time of each job (by cascade), the sum and the longest. If the longest job is most of the wall time, finer jobs are what shortens it.
+struct PrepJobCensus
+{
+    U64 mRuns = 0;
+    double mWallMs[2] = {};                 // cull, render map
+    double mSumMs[2] = {};
+    double mLongestMs[2] = {};
+    U64 mJobs[2] = {};
+    double mCascadeMs[2][4] = {};
+    U64 mCascadeJobs[2][4] = {};
+};
+static PrepJobCensus sPrepJobCensus;
+
 static void shadow_census_report(U32 frames)
 {
+    if (sPrepJobCensus.mRuns)
+    {
+        const PrepJobCensus& c = sPrepJobCensus;
+        const double n = (double)c.mRuns;
+        char buf[900];
+        std::string by;
+        for (int k = 0; k < 2; ++k)
+        {
+            by += k == 0 ? "cull" : "render map";
+            by += " by cascade [";
+            for (int i = 0; i < 4; ++i)
+            {
+                snprintf(buf, sizeof(buf), "%d: %.3f ms x %.2f/run ", i, c.mCascadeJobs[k][i] ? c.mCascadeMs[k][i] / c.mCascadeJobs[k][i] : 0.0, c.mCascadeJobs[k][i] / n);
+                by += buf;
+            }
+            by += "] ";
+        }
+        snprintf(buf, sizeof(buf), "shadow prep jobs over %llu runs: jobs per run %.2f; cull: wall %.3f ms, sum of jobs %.3f, longest %.3f; render map: wall %.3f ms, sum %.3f, longest %.3f; ",
+                 (unsigned long long)c.mRuns, c.mJobs[0] / n, c.mWallMs[0] / n, c.mSumMs[0] / n, c.mLongestMs[0] / n, c.mWallMs[1] / n, c.mSumMs[1] / n, c.mLongestMs[1] / n);
+        LL_INFOS("SceneCensus") << buf << by << LL_ENDL;
+        sPrepJobCensus = PrepJobCensus();
+    }
     std::string text;
     for (U32 p = 0; p < 7; ++p)
     {
@@ -22075,8 +22111,32 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
 
             lap.mark(PH_SETUP);
-            const std::function<void(size_t)> cull_job = [&](size_t i) { shadowPrepCull(pending[i], partitions); };
+            static const bool job_census = getenv("LL_VK_SCENECENSUS") != nullptr;
+            std::vector<double> job_ms(pending.size(), 0.0);
+            const std::function<void(size_t)> cull_job = [&](size_t i)
+            {
+                const auto t0 = job_census ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+                shadowPrepCull(pending[i], partitions);
+                if (job_census) { job_ms[i] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+            };
+            const auto cull_wall0 = std::chrono::steady_clock::now();
             { LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->run(pending.size(), cull_job); }
+            if (job_census)
+            {
+                PrepJobCensus& c = sPrepJobCensus;
+                ++c.mRuns;
+                c.mWallMs[0] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cull_wall0).count();
+                double longest = 0.0;
+                for (size_t i = 0; i < pending.size(); ++i)
+                {
+                    c.mSumMs[0] += job_ms[i];
+                    longest = std::max(longest, job_ms[i]);
+                    ++c.mJobs[0];
+                    c.mCascadeMs[0][pending[i].mIndex & 3] += job_ms[i];
+                    ++c.mCascadeJobs[0][pending[i].mIndex & 3];
+                }
+                c.mLongestMs[0] += longest;
+            }
             lap.mark(PH_CULL);
 
             { LL_CPU_ZONE("shadow prep: rebuild"); shadowPrepRebuild(pending); }
@@ -22092,8 +22152,30 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 sViewJobsSkipStatic.store(view_jobs_on() && rt_sun_cascades_unused() && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static,
                                           std::memory_order_relaxed);
             }
-            const std::function<void(size_t)> map_job = [&](size_t i) { shadowPrepRenderMap(pending[i]); };
+            std::vector<double> map_ms(pending.size(), 0.0);
+            const std::function<void(size_t)> map_job = [&](size_t i)
+            {
+                const auto t0 = job_census ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+                shadowPrepRenderMap(pending[i]);
+                if (job_census) { map_ms[i] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+            };
+            const auto map_wall0 = std::chrono::steady_clock::now();
             { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(pending.size(), map_job); }
+            if (job_census)
+            {
+                PrepJobCensus& c = sPrepJobCensus;
+                c.mWallMs[1] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - map_wall0).count();
+                double longest = 0.0;
+                for (size_t i = 0; i < pending.size(); ++i)
+                {
+                    c.mSumMs[1] += map_ms[i];
+                    longest = std::max(longest, map_ms[i]);
+                    ++c.mJobs[1];
+                    c.mCascadeMs[1][pending[i].mIndex & 3] += map_ms[i];
+                    ++c.mCascadeJobs[1][pending[i].mIndex & 3];
+                }
+                c.mLongestMs[1] += longest;
+            }
             lap.mark(PH_RENDER_MAP);
 
             for (ShadowCascadePrep& prep : pending)
