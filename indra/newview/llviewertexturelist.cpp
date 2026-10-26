@@ -1073,7 +1073,7 @@ void LLViewerTextureList::logSummary()
         // with the bytes the viewer counts for each age. The memory that a teleport leaves behind shows here; the bias logic does not look at it (it lowers everything's quality by the percentage over budget).
         static U32 last_frame = 0;
         static LLTimer last_time;
-        const U32 frame_now = (U32)LLFrameTimer::getFrameCount();
+        const U32 frame_now = (U32)gFrameCount  /* (the counter the texture passes stamp with) */;
         const F32 seconds = last_time.getElapsedTimeF32();
         const double spf = last_frame && frame_now > last_frame ? (double)seconds / (double)(frame_now - last_frame) : 0.0166;
         last_frame = frame_now;
