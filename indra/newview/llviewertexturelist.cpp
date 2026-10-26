@@ -1069,6 +1069,45 @@ void LLViewerTextureList::logSummary()
     }
     LL_CONT << LL_ENDL;
     {
+        // doc/vulkan/EXPIRY-design.md section 11: how long the textures in memory have been dormant (no face in view needing them), with the bytes the viewer counts for each age. The memory that a teleport leaves
+        // behind shows here; the bias logic does not look at it (it lowers everything's quality by the percentage over budget).
+        static U32 last_frame = 0;
+        static LLTimer last_time;
+        const U32 frame_now = (U32)LLFrameTimer::getFrameCount();
+        const F32 seconds = last_time.getElapsedTimeF32();
+        const double spf = last_frame && frame_now > last_frame ? (double)seconds / (double)(frame_now - last_frame) : 0.0166;
+        last_frame = frame_now;
+        last_time.reset();
+        static const char* const names[6] = { "in use", "dormant < 10 s", "10-60 s", "60-300 s", "> 300 s", "not listed" };
+        U32 count[6] = {};
+        U64 bytes[6] = {};
+        for (const LLPointer<LLViewerFetchedTexture>& image : mImageList)
+        {
+            if (!image->hasImageTexture())
+            {
+                continue;
+            }
+            int b = 5;
+            if (image->mListState == 1)
+            {
+                b = 0;
+            }
+            else if (image->mListState == 2)
+            {
+                const double age = (double)(frame_now - std::min(frame_now, image->mDormantAtFrame)) * spf;
+                b = age < 10.0 ? 1 : age < 60.0 ? 2 : age < 300.0 ? 3 : 4;
+            }
+            ++count[b];
+            bytes[b] += (U64)image->getTextureMemory().value();
+        }
+        std::string text;
+        for (int k = 0; k < 6; ++k)
+        {
+            text += llformat(" [%s: %u textures, %.0f MB]", names[k], count[k], (double)bytes[k] / 1048576.0);
+        }
+        LL_INFOS("VkTex") << "texture memory by dormant age:" << text << LL_ENDL;
+    }
+    {
         // census (clothing of the crowd that never loads: 65-156 images with no data and nothing fetching, in every run since before the scene table): what those images are and why nothing asks for them
         U32 vsize_zero = 0, vsize_pos = 0, with_faces = 0, wants_data = 0, deleted = 0, listed = 0;
         std::map<S32, U32> by_boost;
