@@ -464,6 +464,7 @@ public:
     bool verify();                      // Verify that all data in the pipeline is "correct"
 
     S32  getLightCount() const { return static_cast<S32>(mLights.size()); }
+    void cpuProbe();                    // <FS> LL_VK_CPUPROBE=1: three fixed benchmarks on the main thread each frame, as CPU zones (does the thread itself get slower after a turn?)
     void sceneStateCensus();            // <FS> LL_VK_SCENECENSUS=1 (doc/vulkan/PLAN-texture-handles.md section 17.16): what the scene holds against what is in view, logged every 600 frames
 
     void calcNearbyLights(LLCamera& camera);
