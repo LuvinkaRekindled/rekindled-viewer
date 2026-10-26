@@ -235,6 +235,8 @@ public:
     U32 mDormantAtFrame = 0;
     U32 mLastWakeFrame = 0;
     U32 mLastOnScreenFrame = 0;    // <FS> EXPIRY-design.md section 11: the last frame the priority pass found a face of this texture on screen (0: never)
+    bool mExpired = false;         // <FS> LL_VK_TEX_EXPIRY=2 (EXPIRY-design.md section 11): released to its smallest level because nothing in view needed it while memory was short; the priority pass keeps its wanted size at 0 until a camera accepts a group of its faces again
+    U32 mExpiredAtFrame = 0;
     U32 mRecSlot = 0;       // <FS> its slot in LLTexRecs (generation << 24 | index; 0: none)
     void wakeForList() const;
     void stampChanged();    // after mFaceStamp went up: a dormant texture wakes, LLTexRecs tells its worker
