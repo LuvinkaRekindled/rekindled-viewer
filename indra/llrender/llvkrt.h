@@ -135,6 +135,7 @@ U32 tableOffset(U32 frame_slot);
 
 // one log line: structures, memory, builds, refits, time
 std::string report(double frames);
+U64 structureBytes();      // the bytes of the acceleration structures the ray scene holds (a read for the logs; the scene thread updates it)
 void resetStats();
 
 } // namespace Rt

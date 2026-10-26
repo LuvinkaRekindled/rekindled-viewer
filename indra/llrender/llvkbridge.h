@@ -30,6 +30,14 @@ namespace LLVkBridge
     bool isReady();
     // video memory as the OS sees this process (what it uses, what it may use before the driver pages allocations out), for the viewer's texture budget; false when no Vulkan device
     bool videoMemory(U64& usage_bytes, U64& budget_bytes);
+    // where the video memory goes besides the textures (doc/vulkan/EXPIRY-design.md): the arena blocks (geometry and other device blocks, host-written blocks, acceleration structure blocks: bytes alive and bytes in use),
+    // the idle dedicated acceleration structure blocks the pool holds, and the bytes of the ray scene's structures; false until Vulkan is up
+    struct MemoryByConsumer
+    {
+        U32 mBlocks = 0, mHostBlocks = 0, mAccelBlocks = 0, mAccelPooled = 0;
+        U64 mBlockBytes = 0, mBlockUsed = 0, mHostBytes = 0, mHostUsed = 0, mAccelBytes = 0, mAccelUsed = 0, mAccelPooledBytes = 0, mRtStructureBytes = 0;
+    };
+    bool memoryByConsumer(MemoryByConsumer& out);
     // false: reading a texture back now would make the main thread wait for a render worker that is far behind (or too many were made this frame): ask again in a later frame. True without the worker.
     bool readbackAffordable();
 

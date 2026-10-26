@@ -4617,6 +4617,11 @@ void resetStats()
     ++sStatsInterval;
 }
 
+U64 structureBytes()
+{
+    return sBlasStorageBytes;
+}
+
 std::string report(double frames)
 {
     if (!sInit)
