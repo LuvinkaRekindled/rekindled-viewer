@@ -107,6 +107,7 @@
 
 #include "fsareasearch.h" // <FS:Cron> Added to provide the ability to update the impact costs in area search. </FS:Cron>
 #include "llavataractions.h"
+#include "llitemcensus.h"
 
 extern F32 gMinObjectDistance;
 extern bool gAnimateTextures;
@@ -949,6 +950,7 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
     }
     S32 i;
     LLViewerObject *objectp;
+    ItemCensus::Scope census_scope(ItemCensus::ANGLES);
 
     S32 num_updates, max_value;
     if (NUM_BINS - 1 == mCurBin)
@@ -967,6 +969,10 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
     for (i = mCurLazyUpdateIndex; i < max_value; i++)
     {
         objectp = mObjects[i];
+        if (ItemCensus::on())
+        {
+            ItemCensus::add(ItemCensus::ANGLES, 1, (objectp->mDrawable.notNull() && objectp->mDrawable->isVisible()) ? 1 : 0);
+        }
         if (!objectp->isDead())
         {
             //  Update distance & gpw
@@ -1270,6 +1276,7 @@ void LLViewerObjectList::update(LLAgent &agent)
     LLVOAvatar::sNumLODChangesThisFrame = 0;
     LLAttCensus::frame();
     gPipeline.sceneStateCensus();
+    ItemCensus::frame();
     gPipeline.pinMainThread();
     gPipeline.cpuProbe();
     gPipeline.releaseScan();
@@ -1350,6 +1357,22 @@ void LLViewerObjectList::update(LLAgent &agent)
         {
             objectp = *idle_iter;
             llassert(objectp->isActive());
+                if (ItemCensus::on())
+                {
+                    ItemCensus::Slot cls = ItemCensus::IDLE_AV;
+                    if (!objectp->isAvatar())
+                    {
+                        cls = objectp->isAttachment() ? ItemCensus::IDLE_ATT
+                            : (objectp->getVelocity().isExactlyZero() && objectp->getAcceleration().isExactlyZero() && objectp->getAngularVelocity().isExactlyZero()) ? ItemCensus::IDLE_STILL : ItemCensus::IDLE_MOVING;
+                        if (cls == ItemCensus::IDLE_STILL)
+                        {
+                            ItemCensus::add(cls, objectp->mDrawable.notNull() ? 1 : 0);
+                        }
+                    }
+                    ItemCensus::Scope census_scope(cls);
+                    objectp->idleUpdate(agent, frame_time);
+                }
+                else
                 { LL_CPU_ZONE(objectp->isAvatar() ? "objectlist: idleUpdate (avatars)" : "objectlist: idleUpdate (other objects)"); objectp->idleUpdate(agent, frame_time); }
         }
         if (gFSAvTimersOn)

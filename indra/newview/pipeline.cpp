@@ -162,6 +162,7 @@ void ll_vis_census_items(LLCamera& camera);        // S7 B0 (below)
 #endif
 #define A_CPU 1
 #include "app_settings/shaders/class1/deferred/CASF.glsl" // This is also C++
+#include "llitemcensus.h"
 
 extern bool gSnapshot;
 bool gShiftFrame = false;
@@ -2858,6 +2859,7 @@ void LLPipeline::updateMove()
 
     //balance octrees
     LL_CPU_ZONE("octree: balance (all partitions)");
+    ItemCensus::Scope census_scope(ItemCensus::BALANCE);
     for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
         iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
     {
@@ -2868,6 +2870,7 @@ void LLPipeline::updateMove()
             if (part)
             {
                 part->mOctree->balance();
+                ItemCensus::add(ItemCensus::BALANCE, 1);
             }
         }
 
@@ -13015,6 +13018,8 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
     }
 
     static LLCachedControl<S32> local_light_count(gSavedSettings, "RenderLocalLightCount", 256);
+    ItemCensus::Scope census_scope(ItemCensus::LIGHTS);
+    ItemCensus::add(ItemCensus::LIGHTS, mLights.size(), mNearbyLights.size());
 
     if (local_light_count >= 1)
     {

@@ -51,3 +51,17 @@ Nothing here is large alone; the frame is a sum of many 0.2-1 ms blocks, and the
 - **G (texture priority): already done by `LL_VK_TEXSTAMP` (default 1) and `LL_VK_TEXREC=2`** (the face loop is kept while the faces are static and unchanged; the worker computes the face sizes). About 24,000 textures stay out of the cache because they have moving, rigged, particle or media faces (avatars, attachments): their loops legitimately rerun. About 0.4 ms is left in the per-texture loop plus 0.4 ms of fetch dispatch bookkeeping.
 - **C/D (objects, avatars, moved list): Cold (0.2-0.3 ms) and Released (0.4 ms) are built, off by default, no picture check yet** (`PLAN-texture-handles.md` 17.22).
 - **Remaining sum on the CPU: tenths of a millisecond each.** The big steps left are structural (the overlap of B; the UI at 2.2-2.5 ms; the per-frame cost that scales with the scene after a turn), not another pass of the same kind.
+
+## Census of the small items from the Fable overview (2026-10-26, lap itm1-, `LL_VK_ITEMCENSUS=1`, host blocks in VRAM)
+
+`indra/newview/llitemcensus.h`: one "ItemCensus" log line every 600 frames (time stamp counter timing, ms a frame and counts a frame). Second settle of the crowded plaza (72 avatars, loop 11 ms), the last 7 windows agree to within 0.01 ms:
+
+| item (report idea) | ms a frame | counts a frame | reading |
+|---|---|---|---|
+| active objects that are still (4) | 0.000 | 2 still, 160 moving, 6 attachments, 72 avatars | **dead**: nothing to remove; the idle loop is the avatars (0.73-0.75 ms) and 0.02 ms for the 160 moving objects |
+| `calcNearbyLights` (6) | 0.46-0.48 | 1,650 lights in `mLights`, 1,420 kept nearby (before the turn: 540 / 473 and 0.14-0.15 ms) | **real**, about 0.29 us a light, scales with the scene; larger than the report's 0.15-0.3 ms |
+| `updateApparentAngles` (5) | 0.20 | 360 objects visited, 48 with a visible drawable (13%) | **real**: 87% of the visits are to objects that are not visible (about 0.55 us each); 0.15 ms is the most a skip could return |
+| name tags `updateAll` (9) | 0.007 | 3 visible tags | **dead** at this layout (tags are mostly off or hidden; the O(n^2) only matters with many tags on screen) |
+| octree balance (12) | 0.001-0.003 | 48 trees | **dead** |
+
+Candidates left from this list: the local light set (about 0.3 ms recoverable) and the apparent angle pass (about 0.15 ms).
