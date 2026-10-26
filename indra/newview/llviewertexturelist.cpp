@@ -56,6 +56,7 @@
 #include "llviewermedia.h"
 #include "llviewernetwork.h"
 #include "llviewerregion.h"
+#include "llworld.h"
 #include "llviewercamera.h"
 #include "llviewerstats.h"
 #include "pipeline.h"
@@ -1266,7 +1267,12 @@ void LLViewerTextureList::expiryCount()
                     all_far = false;
                     continue;
                 }
-                const LLViewerRegion* region = group->getSpatialPartition() ? group->getSpatialPartition()->mRegionp : nullptr;
+                // (the region of the object, and only if the world still lists it: the pointer of a partition outlives its region, which the first version of this pass followed into a crash when the old region was removed)
+                const LLViewerRegion* region = drawable->getVObj() ? drawable->getRegion() : nullptr;
+                if (region && !LLWorld::getInstance()->isRegionListed(region))
+                {
+                    region = nullptr;
+                }
                 bool far_region = false;
                 if (region)
                 {
