@@ -285,7 +285,7 @@ public:
     virtual void    updateDebugText();
     virtual bool    computeNeedsUpdate();
     virtual bool    updateCharacter(LLAgent &agent);
-    void            updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible);
+    void            updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible, U32 clean_serial = ~0u);
     void            idleUpdatePostCharacter(bool detailed_update);
     bool            canDeferMotionUpdate() const;
     // Runs the deferred pose blend phase. Safe to call from a worker thread

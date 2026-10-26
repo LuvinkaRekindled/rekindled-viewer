@@ -36,6 +36,7 @@
 
 S32 LLJoint::sNumUpdates = 0;
 S32 LLJoint::sNumTouches = 0;
+U32 LLJoint::sTouchSerial = 0;
 
 template <class T>
 bool attachment_map_iter_compare_key(const T& a, const T& b)
@@ -200,6 +201,7 @@ void LLJoint::touch(U32 flags)
     if ((flags | mDirtyFlags) != mDirtyFlags)
     {
         sNumTouches++;
+        sTouchSerial++;
         mDirtyFlags |= flags;
         U32 child_flags = flags;
         if (flags & ROTATION_DIRTY)
@@ -801,7 +803,9 @@ void LLJoint::setRotation( const LLQuaternion& rot )
 {
     if (rot.isFinite())
     {
-    //  if (mXform.getRotation() != rot)
+        // <FS> a rotation that does not change dirties nothing: the blend sets every joint of every avatar each frame, and a standing avatar's joints mostly come out the same
+        // (the test was commented out; every avatar then dirtied and walked its whole skeleton every frame)
+        if (mXform.getRotation() != rot)
         {
             mXform.setRotation(rot);
             touch(MATRIX_DIRTY | ROTATION_DIRTY);
