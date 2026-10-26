@@ -2338,6 +2338,117 @@ int LLPipeline::coldMode()
     return mode;
 }
 
+U64 LLPipeline::sRelReleased = 0, LLPipeline::sRelReleasedInfos = 0, LLPipeline::sRelWoken = 0, LLPipeline::sRelScans = 0;
+
+// <FS> the groups of the VOLUME partitions that nobody has accepted for LL_VK_REL_FRAMES: release their draw infos
+class LLReleaseTraveler : public OctreeTraveler
+{
+public:
+    S32 mMinAge = 3600;
+    U32 mLimit = 200;
+    U32 mReleased = 0;
+    virtual void visit(const OctreeNode* node)
+    {
+        if (mReleased >= mLimit)
+        {
+            return;
+        }
+        LLSpatialGroup* group = (LLSpatialGroup*)node->getListener(0);
+        if (!group || group->isDead() || group->isEmpty() || group->mDrawMap.empty() || group->isHUDGroup() || !group->mBridgeList.empty())
+        {
+            return;
+        }
+        if (group->hasState(LLSpatialGroup::IN_BUILD_Q1 | LLSpatialGroup::IN_BUILD_Q2 | LLSpatialGroup::FS_RELEASED | LLSpatialGroup::FS_WAKING | LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::ALPHA_DIRTY))
+        {
+            return;
+        }
+        S32 latest = 0;
+        for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
+        {
+            latest = std::max(latest, group->getVisible((LLViewerCamera::eCameraID)c));
+        }
+        if (latest <= 0 || LLViewerOctreeEntryData::getCurrentFrame() - latest <= mMinAge)
+        {
+            return;
+        }
+        U64 infos = 0;
+        for (const auto& kv : group->mDrawMap)
+        {
+            infos += kv.second.size();
+        }
+        group->clearDrawMap();
+        group->setState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::FS_RELEASED);
+        ++mReleased;
+        ++LLPipeline::sRelReleased;
+        LLPipeline::sRelReleasedInfos += infos;
+    }
+};
+
+void LLPipeline::releaseScan()
+{
+    if (coldMode() < 3)
+    {
+        return;
+    }
+    static const S32 min_age = getenv("LL_VK_REL_FRAMES") ? atoi(getenv("LL_VK_REL_FRAMES")) : 3600;
+    static U32 last = 0;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (frame - last < 60)
+    {
+        return;
+    }
+    last = frame;
+    LL_CPU_ZONE("expiry: release scan");
+    ++sRelScans;
+    LLReleaseTraveler traveler;
+    traveler.mMinAge = min_age;
+    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    {
+        if (LLSpatialPartition* part = region->getSpatialPartition(LLViewerRegion::PARTITION_VOLUME))
+        {
+            traveler.traverse(part->mOctree);
+        }
+    }
+}
+
+void LLPipeline::wakeRequest(LLSpatialGroup* group)
+{
+    if (!group->hasState(LLSpatialGroup::FS_WAKING))
+    {
+        group->setState(LLSpatialGroup::FS_WAKING);
+        mWakeQ.push_back(group);
+    }
+}
+
+void LLPipeline::wakeForget(LLSpatialGroup* group)
+{
+    mWakeQ.erase(std::remove(mWakeQ.begin(), mWakeQ.end(), group), mWakeQ.end());
+}
+
+void LLPipeline::wakeGroups()
+{
+    if (mWakeQ.empty())
+    {
+        return;
+    }
+    LL_CPU_ZONE("expiry: wake groups");
+    static const size_t per_frame = getenv("LL_VK_WAKE_PER_FRAME") ? (size_t)atoi(getenv("LL_VK_WAKE_PER_FRAME")) : 48;
+    const size_t n = std::min(per_frame, mWakeQ.size());
+    std::partial_sort(mWakeQ.begin(), mWakeQ.begin() + n, mWakeQ.end(), [](const LLSpatialGroup* a, const LLSpatialGroup* b) { return a->mDistance < b->mDistance; });
+    std::vector<LLSpatialGroup*> now(mWakeQ.begin(), mWakeQ.begin() + n);
+    mWakeQ.erase(mWakeQ.begin(), mWakeQ.begin() + n);
+    for (LLSpatialGroup* group : now)
+    {
+        group->clearState(LLSpatialGroup::FS_WAKING);
+        if (!group->isDead() && group->hasState(LLSpatialGroup::FS_RELEASED))
+        {
+            group->setState(LLSpatialGroup::GEOM_DIRTY);
+            markRebuild(group);
+            ++sRelWoken;
+        }
+    }
+}
+
 U64 LLPipeline::sColdMovedSeen = 0, LLPipeline::sColdMovedSkipped = 0, LLPipeline::sColdTexAnimSeen = 0, LLPipeline::sColdTexAnimSkipped = 0, LLPipeline::sColdMovedWoken = 0;
 
 bool LLPipeline::coldGroup(const LLSpatialGroup* group)
@@ -2460,6 +2571,10 @@ void LLPipeline::sceneStateCensus()
         LL_INFOS("SceneCensus") << "Cold (LL_VK_EXPIRY=" << coldMode() << "): over 600 frames, moved list entries looked at " << sColdMovedSeen / 600.0 << "/frame, " << (coldMode() >= 2 ? "skipped " : "that would be skipped ")
             << sColdMovedSkipped / 600.0 << "/frame; animated texture objects looked at " << sColdTexAnimSeen / 600.0 << "/frame, " << (coldMode() >= 2 ? "skipped " : "that would be skipped ") << sColdTexAnimSkipped / 600.0 << "/frame" << LL_ENDL;
         sColdMovedSeen = sColdMovedSkipped = sColdTexAnimSeen = sColdTexAnimSkipped = 0;
+        if (coldMode() >= 3)
+        {
+            LL_INFOS("SceneCensus") << "Released: " << sRelReleased << " groups released so far (" << sRelReleasedInfos << " draw infos), woken " << sRelWoken << ", waiting in the wake queue " << mWakeQ.size() << ", scans " << sRelScans << LL_ENDL;
+        }
     }
     LLCamera& camera = *LLViewerCamera::getInstance();
     U64 objects = 0, drawables = 0, active = 0, avatars = 0, attachments = 0, rigged = 0, with_text = 0;
@@ -3248,6 +3363,11 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
         return;
     }
 
+    if (group->hasState(LLSpatialGroup::FS_RELEASED))
+    {
+        wakeRequest(group);        // <FS> Released: a camera wants it again
+    }
+
     group->setVisible();
 
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
@@ -3531,6 +3651,8 @@ void LLPipeline::rebuildPriorityGroups()
     assertInitialized();
 
     gMeshRepo.notifyLoadedMeshes();
+
+    wakeGroups();       // <FS> Released groups a camera wants again, a few at a time
 
     mGroupQ1Locked = true;
     // Iterate through all drawables on the priority build queue,

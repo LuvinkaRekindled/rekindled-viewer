@@ -1271,6 +1271,7 @@ void LLViewerObjectList::update(LLAgent &agent)
     LLAttCensus::frame();
     gPipeline.sceneStateCensus();
     gPipeline.cpuProbe();
+    gPipeline.releaseScan();
 
     const F64 frame_time = LLFrameTimer::getElapsedSeconds();
 

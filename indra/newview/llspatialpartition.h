@@ -322,6 +322,8 @@ public:
         NEW_DRAWINFO            = (MESH_DIRTY << 1),
         IN_BUILD_Q1             = (NEW_DRAWINFO << 1),
         IN_BUILD_Q2             = (IN_BUILD_Q1 << 1),
+        FS_RELEASED             = (IN_BUILD_Q2 << 1),       // <FS> Released (EXPIRY-design section 4): the draw infos and scene fragment were dropped because no camera accepted the group for a long time; the vertex data stays
+        FS_WAKING               = (FS_RELEASED << 1),       // <FS> a camera accepted a Released group: it waits in the paced wake queue (LLPipeline::wakeGroups)
         STATE_MASK              = 0x0000FFFF,
     } eSpatialState;
 
