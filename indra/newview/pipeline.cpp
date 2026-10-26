@@ -2738,8 +2738,10 @@ static void core_census()
     {
         return;
     }
-    auto top = [](const U32* hist)
+    auto top = [](const U32* hist_in)
     {
+        U32 hist[64];
+        memcpy(hist, hist_in, sizeof(hist));
         std::string text;
         for (int k = 0; k < 4; ++k)
         {
@@ -2749,6 +2751,7 @@ static void core_census()
             char buf[48];
             snprintf(buf, sizeof(buf), "cpu %d %.0f%%  ", best, hist[best] * 100.0 / 600.0);
             text += buf;
+            hist[best] = 0;
         }
         return text;
     };
