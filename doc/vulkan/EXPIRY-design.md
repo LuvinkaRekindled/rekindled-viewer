@@ -123,3 +123,5 @@ Rule to add to the relevance of sections 4 and 11: content belongs to a region, 
 - makes the drop of the region itself (the main thread hitch about 100 s later) a budgeted release of its drawables, not one block.
 
 The neighbour case needs no special code: the distance test is the rule.
+
+**Eviction order under pressure (Adam, 2026-10-25: "even at 0.1 s you would want that to be the first evicted if you need memory")**: age is a tie-breaker, not the criterion. 1. Content of regions beyond draw distance, whatever its age (a tenth of a second after the teleport is enough). 2. Relevant content that nothing needs right now, oldest first. 3. What is in use: touched only as the last resort, by the global quality bias. In the home -> plaza -> club log none of the leftover was released by this order: it stayed until the bias slammed to 4.
