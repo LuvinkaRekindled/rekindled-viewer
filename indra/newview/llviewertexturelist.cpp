@@ -1365,7 +1365,9 @@ void LLViewerTextureList::expiryCount()
         }
         ++count[cls];
         bytes[cls] += mem;
-        if (cls < 2 && !image->mExpired)
+        // (the first run of stage 2: stale textures released at 85 % while the camera turned were needed again within seconds, 6,600 of them in 30 s: the stale class is only released
+        // above 95 % of the budget and after 30 s; the first class, regions beyond the draw distance and textures with no face, is never needed back soon)
+        if (cls < 2 && !image->mExpired && (cls == 0 || (fraction > 0.95 && age > 30.0)))
         {
             candidates.push_back({ image, mem, cls, age });
         }
@@ -1405,7 +1407,8 @@ void LLViewerTextureList::expiryCount()
             c.mTex->mMaxVirtualSize = 0.f;
             ++flagged_total;
             released_total_bytes += c.mMem;
-            forceImmediateUpdate(c.mTex);      // (processTextureStats: it wants the smallest level now, the downscale queue takes it from here)
+            forceImmediateUpdate(c.mTex);      // (processTextureStats: it wants the smallest level now)
+            c.mTex->scaleDown();               // ... and the downscale is queued here: the branch of processTextureStats for a size of 0 sets the wanted level but never queues it (the run before this showed the released textures still holding 4 GB a minute later)
         }
     }
     LL_INFOS("TexExpiry") << "over the watermark: the OS sees " << (used >> 20) << " of " << (budget >> 20) << " MB (" << (int)(fraction * 100.0) << " %), bias " << LLViewerTexture::sDesiredDiscardBias << "; needs " << (U64)(need / 1048576.0)
