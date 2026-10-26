@@ -1078,7 +1078,7 @@ void LLViewerTextureList::logSummary()
         const double spf = last_frame && frame_now > last_frame ? (double)seconds / (double)(frame_now - last_frame) : 0.0166;
         last_frame = frame_now;
         last_time.reset();
-        static const char* const names[6] = { "on screen < 1 s", "1-10 s ago", "10-60 s", "60-300 s", "> 300 s", "never seen" };
+        static const char* const names[6] = { "group accepted < 1 s", "1-10 s ago", "10-60 s", "60-300 s", "> 300 s", "no face / never" };
         U32 count[6] = {};
         U64 bytes[6] = {};
         U32 dormant_count = 0;
@@ -1089,10 +1089,37 @@ void LLViewerTextureList::logSummary()
             {
                 continue;
             }
-            int b = 5;
-            if (image->mLastOnScreenFrame)
+            // the freshest of the groups its faces sit in: the latest frame any camera (world, cascades, probes, mirrors) accepted one of them. A texture with a face in no group (UI, avatar parts) counts as in use.
+            S32 latest = 0;
+            bool no_group = false;
+            for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS && latest < (S32)gFrameCount; ++ch)
             {
-                const double age = (double)(frame_now - std::min(frame_now, image->mLastOnScreenFrame)) * spf;
+                const LLViewerTexture::ll_face_list_t* faces = image->getFaceList(ch);
+                const S32 n_faces = image->getNumFaces(ch);
+                for (S32 i = 0; i < n_faces && i < (S32)faces->size(); ++i)
+                {
+                    const LLFace* face = (*faces)[i];
+                    const LLDrawable* drawable = face ? face->getDrawable() : nullptr;
+                    const LLSpatialGroup* group = drawable ? drawable->getSpatialGroup() : nullptr;
+                    if (!group)
+                    {
+                        no_group = true;
+                        continue;
+                    }
+                    for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
+                    {
+                        latest = std::max(latest, group->getVisible((LLViewerCamera::eCameraID)c));
+                    }
+                }
+            }
+            int b = 5;
+            if (no_group)
+            {
+                b = 0;
+            }
+            else if (latest > 0)
+            {
+                const double age = (double)(LLViewerOctreeEntryData::getCurrentFrame() - std::min(LLViewerOctreeEntryData::getCurrentFrame(), latest)) * spf;
                 b = age < 1.0 ? 0 : age < 10.0 ? 1 : age < 60.0 ? 2 : age < 300.0 ? 3 : 4;
             }
             const U64 mem = (U64)image->getTextureMemory().value();
@@ -1109,7 +1136,7 @@ void LLViewerTextureList::logSummary()
         {
             text += llformat(" [%s: %u textures, %.0f MB]", names[k], count[k], (double)bytes[k] / 1048576.0);
         }
-        LL_INFOS("VkTex") << "texture memory by time since a face was on screen:" << text << "; of all of them on the dormant list: " << dormant_count << " textures, " << (dormant_bytes >> 20) << " MB" << LL_ENDL;
+        LL_INFOS("VkTex") << "texture memory by time since a group of its faces was accepted by a camera:" << text << "; of all of them on the dormant list: " << dormant_count << " textures, " << (dormant_bytes >> 20) << " MB" << LL_ENDL;
     }
     {
         // census (clothing of the crowd that never loads: 65-156 images with no data and nothing fetching, in every run since before the scene table): what those images are and why nothing asks for them
