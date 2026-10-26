@@ -2553,28 +2553,13 @@ void Context::arenaTrimPool()
         return;
     }
     mPoolLastTrim = mFrameNumber;
-    // The empty dedicated blocks wait for the next big range for about 15 s (a vmaCreateBuffer of 1 GB costs ms and an allocation failure under pressure costs more). Over 85 % of the video memory budget they
-    // are given back after about 2 s instead: the club census of 2026-10-26 had 0.2-0.5 GB sitting in the pool while the texture bias was being raised. LL_VK_POOL_PRESSURE=0 turns this off.
-    static const bool pressure_trim = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_POOL_PRESSURE", b, sizeof(b)) == 0 || atoi(b) != 0; }();
-    bool pressure = false;
-    if (pressure_trim && mPoolBytes > 0)
-    {
-        U64 used = 0, budget = 0;
-        pressure = videoMemory(used, budget) && budget && (double)used > 0.85 * (double)budget;
-    }
-    const U64 pool_wait = pressure ? 120 : 900;
     for (size_t i = 0; i < mArenaBlocks.size(); ++i)
     {
         ArenaBlock* b = mArenaBlocks[i];
-        if (b && b->mPooled && mFrameNumber - b->mIdleSince > pool_wait)   // about 15 seconds without a taker (2 under pressure)
+        if (b && b->mPooled && mFrameNumber - b->mIdleSince > 900)         // about 15 seconds without a taker
         {
             mPoolBytes -= b->mSize;
             ++mArenaCounters.mAccelPoolTrimmed;
-            if (pressure && mFrameNumber - b->mIdleSince <= 900)
-            {
-                ++mArenaCounters.mPoolPressureTrimmed;
-                mArenaCounters.mPoolPressureBytes += b->mSize;
-            }
             arenaDestroyBlock(b);
         }
         else if (b && !b->mPooled && !b->mDedicated && b->mAllocs == 0 && mFrameNumber - b->mEmptyFrame > 600)
@@ -2774,7 +2759,7 @@ std::string Context::arenaAccelCensus()
         + " fill: empty " + std::to_string(hist[0]) + ", <25% " + std::to_string(hist[1]) + ", <50% " + std::to_string(hist[2]) + ", <75% " + std::to_string(hist[3]) + ", more " + std::to_string(hist[4])
         + " | draining the sparsest: " + std::to_string(freed) + " blocks (" + std::to_string(freed_mb >> 20) + " MB) could go, moving " + std::to_string(moved >> 20) + " MB = " + std::to_string(moved_allocs) + " structures to rebuild"
         + "; fully packed with 10% slack it would be " + std::to_string(packed_blocks) + " blocks (" + std::to_string(packed_blocks * 64) + " MB)"
-        + " | dedicated blocks " + std::to_string(ded_n) + " (" + std::to_string(ded_size >> 20) + " MB, " + std::to_string(ded_used >> 20) + " MB in use) | pooled empty " + std::to_string(pooled_n) + " (" + std::to_string(pooled_size >> 20) + " MB), given back early under pressure so far " + std::to_string(mArenaCounters.mPoolPressureTrimmed) + " (" + std::to_string(mArenaCounters.mPoolPressureBytes >> 20) + " MB)";
+        + " | dedicated blocks " + std::to_string(ded_n) + " (" + std::to_string(ded_size >> 20) + " MB, " + std::to_string(ded_used >> 20) + " MB in use) | pooled empty " + std::to_string(pooled_n) + " (" + std::to_string(pooled_size >> 20) + " MB)";
     return out;
 }
 

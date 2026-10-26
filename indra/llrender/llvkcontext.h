@@ -163,7 +163,6 @@ struct ArenaStats
     U64 mAccelBlockBytes = 0, mAccelUsedBytes = 0, mAccelDedicatedBytes = 0, mAccelLargestFree = 0;
     // <FS> the pool of dedicated acceleration structure blocks that went empty and wait for the next big range (instead of giving 1 GB of video memory a second back to the system and asking for it again)
     U64 mAccelPoolHits = 0, mAccelPoolMisses = 0, mAccelPoolTrimmed = 0;
-    U64 mPoolPressureTrimmed = 0, mPoolPressureBytes = 0;     // pooled empty blocks given back early because the video memory was over 85% of its budget (arenaTrimPool)
     U64 mIdleTrimmed = 0;       // empty regular blocks given back after sitting idle (arenaTrimPool)
     U32 mAccelPooled = 0;
     U64 mAccelPooledBytes = 0;
