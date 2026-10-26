@@ -467,6 +467,14 @@ public:
     // <FS> LL_VK_EXPIRY (doc/vulkan/EXPIRY-design.md section 4, state Cold): 0 off, 1 counts what would be skipped, 2 skips. A group no camera has accepted for LL_VK_COLD_FRAMES (default 600, about 10 s) is Cold:
     // the moved list leaves the plain root objects in it alone while they stay inside the group, and animated textures of its objects are not stepped. The counters are logged with the scene census.
     static bool coldGroup(const LLSpatialGroup* group);
+    // Released (LL_VK_EXPIRY=3): a VOLUME group no camera accepted for LL_VK_REL_FRAMES (default 3600, about 60 s) drops its draw infos and scene fragment (the vertex data stays) and is marked FS_RELEASED; when a camera
+    // accepts it again it joins the wake queue, from which LL_VK_WAKE_PER_FRAME (default 48) groups a frame, nearest first, are rebuilt the way a dirty group is.
+    void releaseScan();
+    void wakeGroups();
+    void wakeRequest(LLSpatialGroup* group);
+    void wakeForget(LLSpatialGroup* group);
+    std::vector<LLSpatialGroup*> mWakeQ;
+    static U64 sRelReleased, sRelReleasedInfos, sRelWoken, sRelScans;
     static int coldMode();
     static U64 sColdMovedSeen, sColdMovedSkipped, sColdTexAnimSeen, sColdTexAnimSkipped, sColdMovedWoken;
     void cpuProbe();                    // <FS> LL_VK_CPUPROBE=1: three fixed benchmarks on the main thread each frame, as CPU zones (does the thread itself get slower after a turn?)

@@ -137,6 +137,11 @@ LLSpatialGroup::~LLSpatialGroup()
 
     sNodeCount--;
 
+    if (hasState(FS_WAKING))
+    {
+        gPipeline.wakeForget(this);
+    }
+
     clearDrawMap();
     ll_scene_fragment_free(mSceneFragment);
 }
@@ -348,6 +353,7 @@ bool LLSpatialGroup::addObject(LLDrawable *drawablep)
 
 void LLSpatialGroup::rebuildGeom()
 {
+    clearState(FS_RELEASED | FS_WAKING);        // <FS> whatever asked for this rebuild, the draw infos are back after it (a stale entry in the wake queue is skipped)
     if (!isDead())
     {
         getSpatialPartition()->rebuildGeom(this);
