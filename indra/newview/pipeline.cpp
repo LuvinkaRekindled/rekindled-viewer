@@ -2132,6 +2132,7 @@ void LLPipeline::unlinkDrawable(LLDrawable *drawable)
     }
 
     mLights.erase(drawablep);
+    ++mLightsVersion;
 
     for (light_set_t::iterator iter = mNearbyLights.begin();
                 iter != mNearbyLights.end(); iter++)
@@ -2171,6 +2172,7 @@ void LLPipeline::removeMutedAVsLights(LLVOAvatar* muted_avatar)
             && vobj->getAvatar() == muted_avatar)
         {
             gPipeline.mLights.erase(iter->drawable);
+            ++gPipeline.mLightsVersion;
             iter = gPipeline.mNearbyLights.erase(iter);
         }
         else
@@ -13038,12 +13040,12 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
             max_dist = llmin(RenderFarClip, LIGHT_MAX_RADIUS * 4.f);
         }
 
-        // UPDATE THE EXISTING NEARBY LIGHTS
-        light_set_t cur_nearby_lights;
-        for (light_set_t::iterator iter = mNearbyLights.begin();
-            iter != mNearbyLights.end(); iter++)
+        // UPDATE THE EXISTING NEARBY LIGHTS (in place: the kept lights are moved down over the dropped ones, then the order is fixed if it changed)
+        std::vector<Light>& nearby = mNearbyLights.vec();
+        size_t kept = 0;
+        for (size_t read = 0; read < nearby.size(); read++)
         {
-            const Light* light = &(*iter);
+            Light* light = &nearby[read];
             LLDrawable* drawable = light->drawable;
             const LLViewerObject *vobj = light->drawable->getVObj();
             if(vobj && vobj->getAvatar()
@@ -13102,13 +13104,32 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
                     fade -= LIGHT_FADE_TIME;
                 }
             }
-            cur_nearby_lights.insert(Light(drawable, dist, fade));
+            light->dist = dist;
+            light->fade = fade;
+            ((LLViewerOctreeEntryData*) drawable)->setVisible();     // nearby lights are not removable
+            if (kept != read)
+            {
+                nearby[kept] = std::move(*light);
+            }
+            ++kept;
         }
-        mNearbyLights = cur_nearby_lights;
+        nearby.erase(nearby.begin() + kept, nearby.end());
+        mNearbyLights.sortIfNeeded();
 
         // FIND NEW LIGHTS THAT ARE IN RANGE
+        // (a scan walks all of mLights and reads each drawable: with the deferred renderer the far lights are far from the range, so it runs when the
+        // camera moved 2 m, when a light was added or removed, and at the latest every 15 frames)
         light_set_t new_nearby_lights;
-        for (LLDrawable::ordered_drawable_set_t::iterator iter = mLights.begin();
+        const U32 scan_frame = LLFrameTimer::getFrameCount();
+        const bool scan = !LLPipeline::sRenderDeferred || mLightScanVersion != mLightsVersion || scan_frame - mLightScanFrame >= 15
+                          || (cam_pos - mLightScanPos).magVecSquared() > 4.f;
+        if (scan)
+        {
+            mLightScanFrame = scan_frame;
+            mLightScanVersion = mLightsVersion;
+            mLightScanPos = cam_pos;
+        }
+        for (LLDrawable::ordered_drawable_set_t::iterator iter = scan ? mLights.begin() : mLights.end();
              iter != mLights.end(); ++iter)
         {
             LLDrawable* drawable = *iter;
@@ -13154,6 +13175,7 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
             {
                 mNearbyLights.insert(*light);
                 ((LLDrawable*) light->drawable)->setState(LLDrawable::NEARBY_LIGHT);
+                ((LLViewerOctreeEntryData*) light->drawable)->setVisible();     // nearby lights are not removable
             }
             else
             {
@@ -13187,13 +13209,7 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
             }
         }
 
-        //mark nearby lights not-removable.
-        for (light_set_t::iterator iter = mNearbyLights.begin();
-             iter != mNearbyLights.end(); iter++)
-        {
-            const Light* light = &(*iter);
-            ((LLViewerOctreeEntryData*) light->drawable)->setVisible();
-        }
+        // (the lights that stay nearby were marked not-removable in the update loop above, the new ones when they were inserted)
     }
 }
 
@@ -13730,12 +13746,14 @@ void LLPipeline::setLight(LLDrawable *drawablep, bool is_light)
         if (is_light)
         {
             mLights.insert(drawablep);
+            ++mLightsVersion;
             drawablep->setState(LLDrawable::LIGHT);
         }
         else
         {
             drawablep->clearState(LLDrawable::LIGHT);
             mLights.erase(drawablep);
+            ++mLightsVersion;
         }
     }
 }
