@@ -1407,9 +1407,9 @@ void LLViewerObjectList::update(LLAgent &agent)
             LL_INFOS("AvatarUpdate") << "per frame over " << gFSAvFrames << " frames:" << line << LL_ENDL;
             {
                 static const char* const sub_names[] = { "voice visualizer", "name tag position", "idleUpdateMisc", "appearance animation", "lipsync+loading+water+wind",
-                    "name tag", "render complexity", "debug info", "head offset", "footsteps", "joint matrices", "updateOrientation" };
+                    "name tag", "render complexity", "debug info", "head offset", "footsteps", "joint matrices", "updateOrientation", "ground height", "orientation matrix+euler" };
                 std::string sub;
-                for (int i = 14; i < 26; ++i)
+                for (int i = 14; i < 28; ++i)
                 {
                     sub += llformat(" [%s: %.3f ms/frame, %.1f us each over %.1f/frame]", sub_names[i - 14], (double)gFSAvStatNs[i] / 1.0e6 / gFSAvFrames,
                         gFSAvStatCount[i] ? (double)gFSAvStatNs[i] / 1.0e3 / gFSAvStatCount[i] : 0.0, (double)gFSAvStatCount[i] / gFSAvFrames);
