@@ -3160,6 +3160,8 @@ enum
     AV_PM_FOOTSTEP,
     AV_PM_MATRIX,
     AV_ROOT_ORIENT,     // updateOrientation inside updateRootPositionAndRotation
+    AV_ROOT_HEIGHT,     // resolveHeightGlobal (the ground under the pelvis) inside updateRootPositionAndRotation
+    AV_ORIENT_MATRIX,   // the root's world matrix and its euler angles inside updateOrientation
     AV_COUNT
 };
 
@@ -5668,9 +5670,12 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
                 }
             }
 
-            LLQuaternion root_rotation = mRoot->getWorldMatrix().quaternion();
             F32 root_roll, root_pitch, root_yaw;
-            root_rotation.getEulerAngles(&root_roll, &root_pitch, &root_yaw);
+            {
+                AvScope matrix_scope(AV_ORIENT_MATRIX);
+                LLQuaternion root_rotation = mRoot->getWorldMatrix().quaternion();
+                root_rotation.getEulerAngles(&root_roll, &root_pitch, &root_yaw);
+            }
 
             // When moving very slow, the pelvis is allowed to deviate from the
     // forward direction to allow it to hold its position while the torso
@@ -5877,7 +5882,10 @@ void LLVOAvatar::updateRootPositionAndRotation(LLAgent& agent, F32 speed, bool w
         root_pos.mdV[VZ] += getVisualParamWeight(AVATAR_HOVER);
 
         LLVector3 normal;
-        resolveHeightGlobal(root_pos, ground_under_pelvis, normal);
+        {
+            AvScope height_scope(AV_ROOT_HEIGHT);
+            resolveHeightGlobal(root_pos, ground_under_pelvis, normal);
+        }
         F32 foot_to_ground = (F32) (root_pos.mdV[VZ] - mPelvisToFoot - ground_under_pelvis.mdV[VZ]);
         bool in_air = ((!LLWorld::getInstance()->getRegionFromPosGlobal(ground_under_pelvis)) ||
                         foot_to_ground > FOOT_GROUND_COLLISION_TOLERANCE);
