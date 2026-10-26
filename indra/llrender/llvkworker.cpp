@@ -448,6 +448,7 @@ struct Buf
     unsigned mRtName = 0;               // its GL name, for the list of changed watched buffers
     bool mResWatched = false;           // S2: a resident fragment of the ray scene reads it: a change (epoch, moves, version) is logged by name (sResChanged)
     U32 mResName = 0;
+    U32 mRenamesInFrame = 0;            // the renames of this buffer in the frame mRenamedFrame (a chain: every write of a frame renamed again)
     U64 mRenamedFrame = ~0ull;          // the frame of the last rename of this buffer (LL_VK_RENAME_ONCE: a range allocated this frame has not been listed by any fragment yet)
     bool mGeoWatched = false;           // S3: a scene geometry fragment reads it: a change of its storage (epoch, moves) is logged by name (sGeoChanged), and the write path asks whether the fragments listed it lately
     bool mRtWatched = false;            // the ray scene reads this buffer at trace time (alpha records): a change of its storage is counted (sBufferTopology)
@@ -1837,7 +1838,12 @@ bool geo_in_flight_impl(U32 name, U64 frame, U64 min_listed = 0);
 // LL_VK_GEO_ROWCOPY=1: the static table draws (the G-buffer types and the alpha run) read rows copied for this frame, as the rigged ones do, not the one table the worker rewrites in place while frames are in flight
 static bool rename_once_on()
 {
-    static const bool on = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_RENAME_ONCE", b, sizeof(b)) > 0 && atoi(b) != 0; }();
+    // (not without the row copies: alone, the second write of a frame goes in place into a range an in-flight frame can see through the live table row, which is the race itself)
+    static const bool on = []()
+    {
+        char b[8] = {}, c[8] = {};
+        return GetEnvironmentVariableA("LL_VK_RENAME_ONCE", b, sizeof(b)) > 0 && atoi(b) != 0 && GetEnvironmentVariableA("LL_VK_GEO_ROWCOPY", c, sizeof(c)) > 0 && atoi(c) != 0;
+    }();
     return on;
 }
 static bool geo_rowcopy_on()
@@ -2021,6 +2027,9 @@ struct RenameStats
     U64 mBytes = 0;
     U64 mMicros = 0;
     U64 mShadowlessCopies = 0;
+    U32 mChained = 0;                   // renames of a buffer that was already renamed in the same frame (the chain's second link and on)
+    U32 mMaxChain = 0;                  // the longest chain of one buffer in one frame
+    U32 mBlocks = 0;                    // host-written arena blocks created in the window
     std::chrono::steady_clock::time_point mWindowStart = std::chrono::steady_clock::now();
 };
 RenameStats sRenameStats;
@@ -2055,6 +2064,9 @@ void report_renames()
     {
         return;
     }
+    // (every 5 s, always: the exposure of the host-block race of doc/vulkan/PLAN-texture-handles.md 17.23 is the chains: a buffer renamed again and again in one frame empties the host arena and forces a new block)
+    LL_INFOS("VkGL") << "rename chains in the last 5 s: " << sRenameStats.mCount << " renames, " << sRenameStats.mChained << " of them a repeat in the same frame, the longest chain " << sRenameStats.mMaxChain
+                     << (rename_once_on() ? " (LL_VK_RENAME_ONCE on)" : "") << (geo_rowcopy_on() ? " (LL_VK_GEO_ROWCOPY on)" : "") << LL_ENDL;
     if (sRenameStats.mMicros > 20000)
     {
         U64 shadow_bytes = 0;
@@ -2141,6 +2153,9 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
                     note_topology_change(b);
                 }
                 b.mLastUseFrame = ~0ull;
+                b.mRenamesInFrame = (b.mRenamedFrame == frame) ? b.mRenamesInFrame + 1 : 1;
+                sRenameStats.mChained += b.mRenamesInFrame > 1;
+                sRenameStats.mMaxChain = std::max(sRenameStats.mMaxChain, b.mRenamesInFrame);
                 b.mRenamedFrame = frame;
                 ++sRenameStats.mCount;
                 sRenameStats.mBytes += keep;
