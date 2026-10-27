@@ -3192,6 +3192,7 @@ struct AttStats
 {
     U64 avatars = 0, skipFrames = 0, attachments = 0, rigged = 0, rigid = 0, noBridge = 0, skipped = 0, ovApplied = 0, ovSkipped = 0, riggedSelected = 0;
     U64 clearRigid = 0, clearRigged = 0, clearFaces = 0, noFaces = 0;      // census: attachments (root and children) whose faces all have a colour alpha of 0, and how many faces that is; attachments with no face at all
+    U64 riggedByDist[5] = {}, riggedRanByDist[5] = {}, riggedNsByDist[5] = {}, riggedRanNsByDist[5] = {};      // census: rigged attachments by the avatar's distance (under 8, 8-16, 16-32, 32-64, over 64 m): visited, run in full (not skipped), their time, the time of the ones run in full
     U64 rigidSkipped = 0;      // rigid attachments whose drawable and bridge move were left out (FSSkipStaticRigidAttachmentUpdates)
     U64 rigidFirst = 0, rigidSame = 0, rigidMovedTiny = 0, rigidMoved1mm = 0;      // rigid attachments: the attachment point's world matrix against the one when the loop last saw it (unchanged / more than 0.1 mm / more than 1 mm)
     U64 nsPre = 0, nsLoop = 0, nsRigged = 0, nsRigid = 0, nsExtents = 0, nsOverride = 0, nsMove = 0, nsBridge = 0, nsText = 0;
@@ -3723,13 +3724,15 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
         const U32 rigid_frame = (U32)LLFrameTimer::getFrameCount();
         // the tolerance is a quarter of a pixel on the screen at the avatar's distance (1 mm up close, up to 2 cm far away)
         F32 rigid_tolerance = 0.001f;
-        if (skip_static_rigid && !isSelf())
+        F32 att_distance = 0.f;
+        if ((skip_static_rigid && !isSelf()) || gFSAvTimersOn)
         {
             LLViewerCamera* view_camera = LLViewerCamera::getInstance();
             const F32 height_px = (F32)llmax(gViewerWindow->getWorldViewHeightRaw(), 1);
-            const F32 distance = dist_vec(getPositionAgent(), view_camera->getOrigin());
-            rigid_tolerance = llclamp(distance * 0.25f * 2.f * tanf(0.5f * view_camera->getView()) / height_px, 0.001f, 0.02f);
+            att_distance = dist_vec(getPositionAgent(), view_camera->getOrigin());
+            rigid_tolerance = llclamp(att_distance * 0.25f * 2.f * tanf(0.5f * view_camera->getView()) / height_px, 0.001f, 0.02f);
         }
+        const int att_bucket = att_distance < 8.f ? 0 : (att_distance < 16.f ? 1 : (att_distance < 32.f ? 2 : (att_distance < 64.f ? 3 : 4)));
         bool skip_rigged_this_frame = false;
         if (skip_static_rigged && !isSelf() && !attachment_selected && mDrawable.notNull())
         {
@@ -3739,6 +3742,11 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
             const F32* box_max = box[1].getF32ptr();
             constexpr F32 tolerance = 0.01f;
             bool same = attachment_count == mAttCountLast;
+            F32 box_move = 0.f;     // how far the box moved since the last frame it changed (the avatar's speed, in metres a frame)
+            for (S32 axis = 0; axis < 3; ++axis)
+            {
+                box_move = llmax(box_move, fabsf(box_min[axis] - mAttBBoxLast[0].mV[axis]), fabsf(box_max[axis] - mAttBBoxLast[1].mV[axis]));
+            }
             for (S32 axis = 0; axis < 3 && same; ++axis)
             {
                 same = fabsf(box_min[axis] - mAttBBoxLast[0].mV[axis]) < tolerance && fabsf(box_max[axis] - mAttBBoxLast[1].mV[axis]) < tolerance;
@@ -3755,6 +3763,15 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                 mAttCountLast = attachment_count;
             }
             skip_rigged_this_frame = mAttBBoxStable >= 2 && ((LLFrameTimer::getFrameCount() + mID.mData[0]) & 7) != 0;
+            // <FS> the same for an avatar that moves, when it is far: its rigged attachments are drawn with the avatar's joints (the skinning does not need the attachment's move), so what
+            // they would update here is the octree box and the bridge, a cull that lags by a frame or three at 16-64 m by less than the avatar's step. 2 frames beyond 16 m, 4 beyond 32 m;
+            // an avatar that moves more than 10 cm a frame (a vehicle, a run) and one that is selected are updated in full.
+            static LLCachedControl<bool> stagger_far(gSavedSettings, "FSStaggerFarRiggedAttachments", true);
+            if (stagger_far && !skip_rigged_this_frame && box_move < 0.1f)
+            {
+                const U32 period = att_distance >= 32.f ? 4 : (att_distance >= 16.f ? 2 : 1);
+                skip_rigged_this_frame = period > 1 && ((LLFrameTimer::getFrameCount() + mID.mData[0]) % period) != 0;
+            }
         }
         else
         {
@@ -3787,6 +3804,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                 ++gAttStats.attachments;
                 gAttStats.noBridge += !bridge;
 
+                bool att_run_full = false;
                 if (visible || !(bridge && bridge->getRadius() < 2.0f))
                 {
                     //override rigged attachments' octree spatial extents with this avatar's bounding box
@@ -3811,6 +3829,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                         }
                     }
                     const bool skip_update = rigged && skip_rigged_this_frame;
+                    att_run_full = !skip_update;
                     att_rigged_kind = rigged;
                     gAttStats.skipped += skip_update;
                     if (LLAttCensus::sOn && !rigged && bridge)
@@ -3935,7 +3954,14 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                 if (gFSAvTimersOn)
                 {
                     const U64 ns = att_ns(att_t0);
-                    if (att_rigged_kind) { ++gAttStats.rigged; gAttStats.nsRigged += ns; }
+                    if (att_rigged_kind)
+                    {
+                        ++gAttStats.rigged;
+                        gAttStats.nsRigged += ns;
+                        ++gAttStats.riggedByDist[att_bucket];
+                        gAttStats.riggedNsByDist[att_bucket] += ns;
+                        if (att_run_full) { ++gAttStats.riggedRanByDist[att_bucket]; gAttStats.riggedRanNsByDist[att_bucket] += ns; }
+                    }
                     else { ++gAttStats.rigid; gAttStats.nsRigid += ns; }
                 }
             }
@@ -3960,6 +3986,15 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     (double)s.nsLoop / 1e6 / F, (double)s.nsPre / 1e6 / F, (double)s.nsRigged / 1e6 / F, (double)s.nsRigged / 1e3 / R, (double)s.nsRigid / 1e6 / F, (double)s.nsRigid / 1e3 / G,
                     (double)s.nsExtents / 1e6 / F, (double)s.nsOverride / 1e6 / F, (double)s.nsMove / 1e6 / F, (double)s.nsBridge / 1e6 / F, (double)s.nsText / 1e6 / F) << LL_ENDL;
                 LL_INFOS("AttLoop") << llformat("attachments with every face fully transparent (alpha 0, no glow, no glTF), per frame: rigid %.1f, rigged %.1f (%.1f faces in them), attachments with no face at all %.1f", (double)s.clearRigid / F, (double)s.clearRigged / F, (double)s.clearFaces / F, (double)s.noFaces / F) << LL_ENDL;
+                {
+                    static const char* const names[5] = { "<8 m", "8-16 m", "16-32 m", "32-64 m", ">64 m" };
+                    std::string text;
+                    for (int b = 0; b < 5; ++b)
+                    {
+                        text += llformat(" | %s: %.1f visited, %.1f run in full, %.3f ms (%.3f ms of the ones run in full)", names[b], (double)s.riggedByDist[b] / F, (double)s.riggedRanByDist[b] / F, (double)s.riggedNsByDist[b] / 1e6 / F, (double)s.riggedRanNsByDist[b] / 1e6 / F);
+                    }
+                    LL_INFOS("AttLoop") << "rigged attachments by the distance of their avatar, per frame:" << text << LL_ENDL;
+                }
                 LL_INFOS("AttLoop") << llformat("rigid attachments whose drawable and bridge move were skipped (joint within 1 mm / 0.06 degrees of the last applied), per frame: %.1f", (double)s.rigidSkipped / F) << LL_ENDL;
                 LL_INFOS("AttLoop") << llformat("rigid attachments with a bridge, per frame: first seen %.1f, joint matrix unchanged since the last visit (within 0.1 mm) %.1f, moved more than 0.1 mm %.1f (more than 1 mm %.1f)",
                     (double)s.rigidFirst / F, (double)s.rigidSame / F, (double)s.rigidMovedTiny / F, (double)s.rigidMoved1mm / F) << LL_ENDL;
