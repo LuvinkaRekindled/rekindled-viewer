@@ -12981,7 +12981,7 @@ bool LLVOAvatar::shouldImpostor(const F32 rank_factor)
     }
     {
         const F32 max_distance = impostor_max_distance();
-        if (max_distance > 0.f && mDrawable.notNull() && mDrawable->mDistanceWRTCamera > max_distance)
+        if (max_distance > 0.f && mDrawable.notNull() && mDrawable->mDistanceWRTCamera * LLPipeline::farDistanceScale() > max_distance)
         {
             return true;
         }

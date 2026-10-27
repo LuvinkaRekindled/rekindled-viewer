@@ -9671,6 +9671,7 @@ void on_rt_scene(const LLVkBridge::RtSceneArgs& args)
     }
     flush_buffer_updates();         // the structures are built over the vertex data: writes that are still pending are recorded first
     res_ray_membership(Context::instance().getFrameNumber());
+    Rt::setDistanceScale(args.mDistanceScale);
     Rt::buildScene(args.mView, [](U32 name) { return packet_texture_slot(Renderer::instance(), name); }, packet_texture_prefetch);
 }
 
