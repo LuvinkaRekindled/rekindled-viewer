@@ -33,6 +33,7 @@ uniform float ssao_factor_inv;
 
 uniform mat4 inv_proj;
 uniform vec2 screen_res;
+uniform float rt_noise_frame;    // <FS> set by the sun lightmap pass (the frame of the jitter sequence, 0 without the upscaler): the noise lookup of the AO moves on every frame so that the upscaler averages it
 
 vec2 getScreenCoordinateAo(vec2 screenpos)
 {
@@ -78,7 +79,10 @@ float calcAmbientOcclusion(vec4 pos, vec3 norm, vec2 pos_screen)
 {
     float ret = 1.0;
     vec3 pos_world = pos.xyz;
-    vec2 noise_reflect = texture(noiseMap, pos_screen.xy * (screen_res / 128)).xy;
+    // <FS> the lookup moves by whole texels from frame to frame (a golden ratio sequence, 64 frames long): the same pattern every frame is a fixed grain that nothing averages (the lightmap blur that
+    // used to smooth it is left out when the upscaler is on); with a pattern that changes the upscaler's accumulation turns it into a smooth value
+    vec2 noise_shift = floor(fract(rt_noise_frame * vec2(0.7548776662, 0.5698402910)) * 128.0) / 128.0;
+    vec2 noise_reflect = texture(noiseMap, pos_screen.xy * (screen_res / 128) + noise_shift).xy;
 
     float angle_hidden = 0.0;
     float points = 0;
