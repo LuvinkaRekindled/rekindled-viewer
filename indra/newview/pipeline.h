@@ -42,6 +42,7 @@
 #include "llreflectionmapmanager.h"
 #include "llheroprobemanager.h"
 
+#include <atomic>
 #include <stack>
 
 namespace LLVkBridge { struct SpotVolumeRow; }
@@ -342,7 +343,7 @@ public:
     // =2 is the check: the loops run twice, deferred (nothing applied, the fields they write put back) and then as before with the same list recorded, and the two lists are compared.
     struct SortDelta
     {
-        enum Kind : U8 { REBUILD_DRAWABLE = 0, PARTITION_MOVE, REBUILD_GROUP, OBJECT_LOD, REBUILD_MESH };
+        enum Kind : U8 { REBUILD_DRAWABLE = 0, PARTITION_MOVE, REBUILD_GROUP, OBJECT_LOD, REBUILD_MESH, BRIDGE_DEAD, WAKE_GROUP };
         Kind mKind;
         U32 mFlag;                  // REBUILD_DRAWABLE: the LLDrawable::EDrawableFlags
         LLDrawable* mDrawable;
@@ -351,11 +352,16 @@ public:
     };
     static thread_local std::vector<SortDelta>* sSortSink;      // set: the effects are recorded, not made
     static thread_local std::vector<SortDelta>* sSortTee;       // set: recorded and made (the check's second run)
+    static thread_local std::vector<LLDrawable*>* sSortPoolSink;     // set: the drawables the pools take by face are listed here, not in mDeferredPoolFill (a chunk of the parallel sort)
     static bool sSortJournalOn;                                  // set: the fields the loops write are saved first (the check's first run)
     static void sortJournalVolume(LLVOVolume* volume);
     void applySortDeltas(std::vector<SortDelta>& deltas);
     void sortLoops(LLCamera& camera, LLCullResult& read);
     void sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger_a, std::vector<SortDelta>& ledger_b);
+    // stage 2: the compute on the pool (LL_VK_SORT_SPLIT=3; =4 checks it against the serial compute). False: the sort has to stay serial (no pool, a group whose occlusion state the main thread must change).
+    bool sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::vector<SortDelta>& ledger, void* journal);
+    void sortDryRun(LLCamera& camera, bool parallel, void* result);
+    void sortParallelCheck(LLCamera& camera);
     void refillPools(LLCullResult& result);
     void checkRenderMapLive(LLCullResult& result);     // LL_VK_BUILDER_VERIFY: every draw info in the render map is still one of its group's
     void stateSort(LLSpatialGroup* group, LLCamera& camera);
@@ -807,7 +813,7 @@ public:
     S32                      mDebugSculptUploadCost;
     S32                      mDebugMeshUploadCost;
 
-    S32                      mNumVisibleFaces;
+    std::atomic<S32>         mNumVisibleFaces;      // (<FS> the chunks of the parallel sort add to it)
 
     S32                     mPoissonOffset;
 

@@ -3446,7 +3446,18 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 
     if (group->hasState(LLSpatialGroup::FS_RELEASED))
     {
-        wakeRequest(group);        // <FS> Released: a camera wants it again
+        if (sSortSink)
+        {
+            sSortSink->push_back({ SortDelta::WAKE_GROUP, 0, nullptr, group, 0.f });      // <FS> stateSort split: the wake queue is the main thread's
+        }
+        else
+        {
+            if (sSortTee)
+            {
+                sSortTee->push_back({ SortDelta::WAKE_GROUP, 0, nullptr, group, 0.f });
+            }
+            wakeRequest(group);        // <FS> Released: a camera wants it again
+        }
     }
 
     group->setVisible();
@@ -3997,6 +4008,7 @@ void LLPipeline::markRenderRebuild(LLRenderUpdate* glu)
 
 thread_local std::vector<LLPipeline::SortDelta>* LLPipeline::sSortSink = nullptr;
 thread_local std::vector<LLPipeline::SortDelta>* LLPipeline::sSortTee = nullptr;
+thread_local std::vector<LLDrawable*>* LLPipeline::sSortPoolSink = nullptr;
 bool LLPipeline::sSortJournalOn = false;
 
 void LLPipeline::markPartitionMove(LLDrawable* drawable)
@@ -4117,7 +4129,7 @@ struct SortJournal
     std::vector<Vol> mVols;
     std::vector<Grp> mGroups;
 };
-SortJournal* sSortJournal = nullptr;
+thread_local SortJournal* sSortJournal = nullptr;
 
 int sort_split_setting()
 {
@@ -4149,6 +4161,10 @@ int sort_split_setting()
 // <FS> a rebuildMesh of the loops: recorded in the ledger (and made at the apply pass) when a sink is set, made here and recorded when the check tees
 static void sort_rebuild_mesh(LLSpatialGroup* group)
 {
+    if (!group->hasState(LLSpatialGroup::MESH_DIRTY))
+    {
+        return;         // (LLSpatialGroup::rebuildMesh does nothing for a group whose mesh is not dirty, and nothing the loops do before it makes one dirty: the 2,000 calls of a sort are not recorded)
+    }
     if (LLPipeline::sSortSink)
     {
         LLPipeline::sSortSink->push_back({ LLPipeline::SortDelta::REBUILD_MESH, 0, nullptr, group, 0.f });
@@ -4199,9 +4215,9 @@ static int sort_split_mode(LLCamera& camera, bool defer_pools)
     }
     if (mode >= 2 && !defer_pools)
     {
-        return 0;       // (the check does not run the loops twice where they fill the pools)
+        return mode == 3 ? 1 : 0;       // (the check does not run the loops twice where they fill the pools; the parallel sort needs the pool lists deferred)
     }
-    return mode >= 2 ? 2 : 1;
+    return mode > 4 ? 1 : mode;
 }
 
 void LLPipeline::applySortDeltas(std::vector<SortDelta>& deltas)
@@ -4235,6 +4251,18 @@ void LLPipeline::applySortDeltas(std::vector<SortDelta>& deltas)
             if (d.mGroup && !d.mGroup->isDead())
             {
                 d.mGroup->rebuildMesh();
+            }
+            break;
+        case SortDelta::BRIDGE_DEAD:
+            if (d.mDrawable)
+            {
+                d.mDrawable->markDead();
+            }
+            break;
+        case SortDelta::WAKE_GROUP:
+            if (d.mGroup)
+            {
+                wakeRequest(d.mGroup);
             }
             break;
         }
@@ -4321,6 +4349,546 @@ void LLPipeline::sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger
                               << (double)kinds[0] / checked << ", partition move " << (double)kinds[1] / checked << ", rebuild group " << (double)kinds[2] / checked << ", object LOD " << (double)kinds[3] / checked
                               << ", rebuild mesh " << (double)kinds[4] / checked << ")" << LL_ENDL;
     }
+}
+
+// <FS> ---- stage 2: the compute on the pool ----
+// The four loops are split into chunks of their lists. Fork-join 1: the drawable groups (the visible drawables and bridges are pushed into a result of the chunk's own, appended in chunk order) and the visible
+// groups. Between: the bridges' group decisions (the order dependent part of the bridge loop) are made serially. Fork-join 2: the bridges' distances and the visible drawables. Every chunk records
+// the effects it asks for in a ledger of its own; the ledgers are joined in the order of the loops (drawable groups, bridges, visible groups, visible drawables), which is the order of the serial sort.
+// A sort stays serial when there is no pool, when it is not the early sort, or when a group needs the main thread to change its occlusion state.
+namespace
+{
+struct SortChunk
+{
+    U8 mKind = 0;                       // 0 drawable groups, 1 visible groups, 2 bridges, 3 visible drawables
+    U32 mBegin = 0, mEnd = 0;
+    std::vector<LLPipeline::SortDelta> mLedger;
+    std::vector<LLDrawable*> mPool;
+    LLCullResult* mLocal = nullptr;
+    SortJournal mJournal;
+};
+
+// the thread-local state of a chunk, put back afterwards (the calling thread runs chunks too)
+struct SortTaskScope
+{
+    LLCullResult* mCull = sCull;
+    std::vector<LLPipeline::SortDelta>* mSink = LLPipeline::sSortSink;
+    std::vector<LLDrawable*>* mPool = LLPipeline::sSortPoolSink;
+    SortJournal* mJournal = sSortJournal;
+    bool mParallel = LLPipeline::sParallelPrep;
+
+    SortTaskScope(SortChunk& chunk, bool journaling)
+    {
+        LLPipeline::sParallelPrep = true;       // (the bridges' octrees are locked while they are culled, and the statistics are not shared)
+        if (chunk.mLocal)
+        {
+            sCull = chunk.mLocal;
+        }
+        LLPipeline::sSortSink = &chunk.mLedger;
+        LLPipeline::sSortPoolSink = &chunk.mPool;
+        sSortJournal = journaling ? &chunk.mJournal : nullptr;
+    }
+    ~SortTaskScope()
+    {
+        sCull = mCull;
+        LLPipeline::sSortSink = mSink;
+        LLPipeline::sSortPoolSink = mPool;
+        sSortJournal = mJournal;
+        LLPipeline::sParallelPrep = mParallel;
+    }
+};
+
+std::vector<std::unique_ptr<LLCullResult>> sSortLocals;
+
+U32 sort_chunk_size(size_t items, size_t workers)
+{
+    static const U32 forced = getenv("LL_VK_SORT_CHUNK") ? (U32)atoi(getenv("LL_VK_SORT_CHUNK")) : 0;
+    if (forced)
+    {
+        return forced;
+    }
+    const size_t tasks = (workers + 1) * 2;
+    return (U32)std::max<size_t>(24, (items + tasks - 1) / tasks);
+}
+}
+
+bool LLPipeline::sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::vector<SortDelta>& ledger, void* journal_ptr)
+{
+    LLForkJoinPool* pool = LLForkJoinPool::shared();
+    if (!pool || &read != sCull || !mDeferPoolFill || LLGpuZoneTimer::isActive())
+    {
+        return false;
+    }
+    SortJournal* journal = (SortJournal*)journal_ptr;
+    const U32 n_dg = read.getDrawableGroupsSize();
+    const U32 n_vg = read.getVisibleGroupsSize();
+    if (n_dg + n_vg < 600)
+    {
+        return false;       // (too little work to be worth a wake-up)
+    }
+    if (sUseOcclusion > 1)
+    {
+        // checkOcclusion and markOccluder change the occlusion state of a group, its parent and its subtree: the main thread's, when any group needs it
+        for (LLCullResult::sg_iterator i = read.beginDrawableGroups(); i != read.endDrawableGroups(); ++i)
+        {
+            LLSpatialGroup* g = *i;
+            if (!g->isDead() && (g->isOcclusionState(LLSpatialGroup::OCCLUDED) || g->hizNeedsMainThread())) return false;
+        }
+        for (LLCullResult::sg_iterator i = read.beginVisibleGroups(); i != read.endVisibleGroups(); ++i)
+        {
+            LLSpatialGroup* g = *i;
+            if (!g->isDead() && (g->isOcclusionState(LLSpatialGroup::OCCLUDED) || g->hizNeedsMainThread())) return false;
+        }
+    }
+    const bool journaling = journal != nullptr;
+    const size_t workers = pool->workerCount();
+
+    // the body of the first loop for one group, and of the third: the same on a chunk and in the serial passes below
+    auto first_loop_body = [&](LLSpatialGroup* group)
+    {
+        if (group->isDead())
+        {
+            return;
+        }
+        group->checkOcclusion();
+        if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        {
+            markOccluder(group);
+        }
+        else
+        {
+            group->setVisible();
+            for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
+            {
+                markVisible((LLDrawable*)(*i)->getDrawable(), camera);
+            }
+            sort_rebuild_mesh(group);
+        }
+    };
+    auto third_loop_body = [&](LLSpatialGroup* group)
+    {
+        if (group->isDead())
+        {
+            return;
+        }
+        group->checkOcclusion();
+        if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        {
+            markOccluder(group);
+        }
+        else
+        {
+            group->setVisible();
+            stateSort(group, camera);
+            sort_rebuild_mesh(group);
+        }
+    };
+
+    // ---- fork-join 1: the drawable groups and the visible groups the cull found
+    std::vector<SortChunk> first;
+    {
+        const U32 cs0 = sort_chunk_size(n_dg, workers), cs1 = sort_chunk_size(n_vg, workers);
+        for (U32 b = 0; b < n_dg; b += cs0)
+        {
+            first.emplace_back();
+            first.back().mKind = 0;
+            first.back().mBegin = b;
+            first.back().mEnd = std::min(n_dg, b + cs0);
+        }
+        const size_t n_first_dg = first.size();
+        for (U32 b = 0; b < n_vg; b += cs1)
+        {
+            first.emplace_back();
+            first.back().mKind = 1;
+            first.back().mBegin = b;
+            first.back().mEnd = std::min(n_vg, b + cs1);
+        }
+        for (size_t c = 0; c < n_first_dg; ++c)
+        {
+            if (sSortLocals.size() <= c)
+            {
+                sSortLocals.push_back(std::make_unique<LLCullResult>());
+            }
+            sSortLocals[c]->clear();
+            first[c].mLocal = sSortLocals[c].get();
+        }
+    }
+    LLCullResult::sg_iterator drawable_groups = read.beginDrawableGroups();
+    LLCullResult::sg_iterator visible_groups = read.beginVisibleGroups();
+    const std::function<void(size_t)> first_job = [&](size_t c)
+    {
+        SortChunk& chunk = first[c];
+        SortTaskScope scope(chunk, journaling);
+        for (U32 k = chunk.mBegin; k < chunk.mEnd; ++k)
+        {
+            if (chunk.mKind == 0)
+            {
+                first_loop_body(drawable_groups[k]);
+            }
+            else
+            {
+                third_loop_body(visible_groups[k]);
+            }
+        }
+    };
+    { LL_CPU_ZONE("stateSort: compute 1 (wait for the pool)"); pool->run(first.size(), first_job); }
+
+    // what the first loop found, in chunk order: the visible drawables and bridges, and the groups that a bridge's own cull (LLSpatialBridge::setVisible) added to the lists
+    for (SortChunk& chunk : first)
+    {
+        if (chunk.mKind != 0)
+        {
+            continue;
+        }
+        for (LLCullResult::drawable_iterator d = chunk.mLocal->beginVisibleList(); d != chunk.mLocal->endVisibleList(); ++d) sCull->pushDrawable(*d);
+        for (LLCullResult::bridge_iterator b = chunk.mLocal->beginVisibleBridge(); b != chunk.mLocal->endVisibleBridge(); ++b) sCull->pushBridge(*b);
+        for (LLCullResult::sg_iterator g = chunk.mLocal->beginDrawableGroups(); g != chunk.mLocal->endDrawableGroups(); ++g) sCull->pushDrawableGroup(*g);
+        for (LLCullResult::sg_iterator g = chunk.mLocal->beginVisibleGroups(); g != chunk.mLocal->endVisibleGroups(); ++g) sCull->pushVisibleGroup(*g);
+        for (LLCullResult::sg_iterator g = chunk.mLocal->beginOcclusionGroups(); g != chunk.mLocal->endOcclusionGroups(); ++g) sCull->pushOcclusionGroup(*g);
+    }
+
+    // ---- serial: the drawable groups added by the bridges (the first loop of the serial sort goes on over them: its end is the end of the list as it grows)
+    std::vector<SortDelta> ledger_x;
+    {
+        SortJournal* saved_journal = sSortJournal;
+        std::vector<SortDelta>* saved_sink = sSortSink;
+        sSortJournal = journal;
+        sSortSink = &ledger_x;
+        for (U32 k = n_dg; k < read.getDrawableGroupsSize(); ++k)
+        {
+            first_loop_body(read.beginDrawableGroups()[k]);
+        }
+        sSortSink = saved_sink;
+        sSortJournal = saved_journal;
+    }
+
+    // ---- between the two: the bridges' group decisions, in list order (they depend on each other through mLastUpdateDistance)
+    const U32 n_br = read.getVisibleBridgeSize();
+    const U32 n_vd = read.getVisibleListSize();
+    std::vector<char> do_distance(n_br, 0);
+    {
+        SortJournal* saved_journal = sSortJournal;
+        sSortJournal = journal;
+        if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
+        {
+            LLCullResult::bridge_iterator bridges = read.beginVisibleBridge();
+            LLSpatialGroup* last_group = NULL;
+            const bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
+            for (U32 k = 0; k < n_br; ++k)
+            {
+                LLSpatialBridge* bridge = bridges[k];
+                LLSpatialGroup* group = bridge->getSpatialGroup();
+                if (last_group == NULL)
+                {
+                    last_group = group;
+                }
+                if (!bridge->isDead() && group && !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                {
+                    do_distance[k] = group->changeLOD() || fov_changed;
+                }
+                if (last_group && last_group != group && last_group->changeLOD())
+                {
+                    sort_journal_group(last_group);
+                    last_group->mLastUpdateDistance = last_group->mDistance;
+                }
+                last_group = group;
+            }
+            if (last_group && last_group->changeLOD())
+            {
+                sort_journal_group(last_group);
+                last_group->mLastUpdateDistance = last_group->mDistance;
+            }
+        }
+        sSortJournal = saved_journal;
+    }
+
+    // ---- fork-join 2: the bridges' distances and the visible drawables
+    std::vector<SortChunk> second;
+    {
+        const U32 cs2 = sort_chunk_size(n_br, workers), cs3 = sort_chunk_size(n_vd, workers);
+        for (U32 b = 0; b < n_br; b += cs2)
+        {
+            second.emplace_back();
+            second.back().mKind = 2;
+            second.back().mBegin = b;
+            second.back().mEnd = std::min(n_br, b + cs2);
+        }
+        for (U32 b = 0; b < n_vd; b += cs3)
+        {
+            second.emplace_back();
+            second.back().mKind = 3;
+            second.back().mBegin = b;
+            second.back().mEnd = std::min(n_vd, b + cs3);
+        }
+    }
+    LLCullResult::bridge_iterator bridges = read.beginVisibleBridge();
+    LLCullResult::drawable_iterator visible_list = read.beginVisibleList();
+    const std::function<void(size_t)> second_job = [&](size_t c)
+    {
+        SortChunk& chunk = second[c];
+        SortTaskScope scope(chunk, journaling);
+        if (chunk.mKind == 2)
+        {
+            for (U32 k = chunk.mBegin; k < chunk.mEnd; ++k)
+            {
+                if (do_distance[k])
+                {
+                    bool force_update = false;
+                    bridges[k]->updateDistance(camera, force_update);
+                }
+            }
+        }
+        else
+        {
+            for (U32 k = chunk.mBegin; k < chunk.mEnd; ++k)
+            {
+                LLDrawable* drawablep = visible_list[k];
+                if (!drawablep->isDead())
+                {
+                    stateSort(drawablep, camera);
+                }
+            }
+        }
+    };
+    { LL_CPU_ZONE("stateSort: compute 2 (wait for the pool)"); pool->run(second.size(), second_job); }
+
+    // ---- serial: the visible groups the bridges' culls added (the third loop of the serial sort goes over the whole list, these at its end)
+    std::vector<SortDelta> ledger_y;
+    std::vector<LLDrawable*> pool_y;
+    {
+        SortJournal* saved_journal = sSortJournal;
+        std::vector<SortDelta>* saved_sink = sSortSink;
+        std::vector<LLDrawable*>* saved_pool = sSortPoolSink;
+        sSortJournal = journal;
+        sSortSink = &ledger_y;
+        sSortPoolSink = &pool_y;
+        for (U32 k = n_vg; k < read.getVisibleGroupsSize(); ++k)
+        {
+            third_loop_body(read.beginVisibleGroups()[k]);
+        }
+        sSortPoolSink = saved_pool;
+        sSortSink = saved_sink;
+        sSortJournal = saved_journal;
+    }
+
+    // ---- the ledgers in the order of the serial loops, and the pool lists (visible groups, visible drawables)
+    {
+        LL_CPU_ZONE("stateSort: join");
+        for (SortChunk& chunk : first) if (chunk.mKind == 0) ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
+        ledger.insert(ledger.end(), ledger_x.begin(), ledger_x.end());
+        for (SortChunk& chunk : second) if (chunk.mKind == 2) ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
+        for (SortChunk& chunk : first)
+        {
+            if (chunk.mKind == 1)
+            {
+                ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
+                mDeferredPoolFill.insert(mDeferredPoolFill.end(), chunk.mPool.begin(), chunk.mPool.end());
+            }
+        }
+        ledger.insert(ledger.end(), ledger_y.begin(), ledger_y.end());
+        mDeferredPoolFill.insert(mDeferredPoolFill.end(), pool_y.begin(), pool_y.end());
+        for (SortChunk& chunk : second)
+        {
+            if (chunk.mKind == 3)
+            {
+                ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
+                mDeferredPoolFill.insert(mDeferredPoolFill.end(), chunk.mPool.begin(), chunk.mPool.end());
+            }
+        }
+        if (journaling)
+        {
+            for (SortChunk& chunk : first)
+            {
+                journal->mVols.insert(journal->mVols.end(), chunk.mJournal.mVols.begin(), chunk.mJournal.mVols.end());
+                journal->mGroups.insert(journal->mGroups.end(), chunk.mJournal.mGroups.begin(), chunk.mJournal.mGroups.end());
+            }
+            for (SortChunk& chunk : second)
+            {
+                journal->mVols.insert(journal->mVols.end(), chunk.mJournal.mVols.begin(), chunk.mJournal.mVols.end());
+                journal->mGroups.insert(journal->mGroups.end(), chunk.mJournal.mGroups.begin(), chunk.mJournal.mGroups.end());
+            }
+        }
+    }
+    return true;
+}
+
+// what one run of the loops left, for the parallel check
+namespace
+{
+struct SortDryResult
+{
+    std::vector<LLPipeline::SortDelta> mLedger;
+    std::vector<LLDrawable*> mPool, mVisible;
+    std::vector<LLSpatialBridge*> mBridges;
+    std::vector<std::pair<LLVOVolume*, LLVOVolume::LODState>> mFinalVols;
+    std::vector<std::pair<LLSpatialGroup*, F32>> mFinalGroups;
+    std::vector<LLSpatialGroup*> mVisibleGroups, mDrawableGroups;       // the group lists the run worked from, as the run left them
+    bool mParallel = false;
+};
+
+bool lod_state_equal(const LLVOVolume::LODState& a, const LLVOVolume::LODState& b)
+{
+    return memcmp(&a.mLOD, &b.mLOD, sizeof(S32)) == 0 && a.mLODDistance == b.mLODDistance && a.mLODAdjustedDistance == b.mLODAdjustedDistance && a.mLODRadius == b.mLODRadius
+        && a.mAppAngle == b.mAppAngle && a.mLODChanged == b.mLODChanged;
+}
+}
+
+// the loops deferred into a scratch copy of the cull lists (serial or on the pool): nothing applied, the fields they write put back, what they asked for and left kept in 'result'
+void LLPipeline::sortDryRun(LLCamera& camera, bool parallel, void* result_ptr)
+{
+    SortDryResult& out = *(SortDryResult*)result_ptr;
+    static LLCullResult scratch_serial, scratch_parallel;
+    LLCullResult& scratch = parallel ? scratch_parallel : scratch_serial;
+    LLCullResult& real = *sCull;
+    scratch.clear();
+    for (LLCullResult::sg_iterator i = real.beginDrawableGroups(); i != real.endDrawableGroups(); ++i) { scratch.pushDrawableGroup(*i); }
+    for (LLCullResult::sg_iterator i = real.beginVisibleGroups(); i != real.endVisibleGroups(); ++i) { scratch.pushVisibleGroup(*i); }
+    for (LLCullResult::sg_iterator i = real.beginOcclusionGroups(); i != real.endOcclusionGroups(); ++i) { scratch.pushOcclusionGroup(*i); }
+    for (LLCullResult::bridge_iterator i = real.beginVisibleBridge(); i != real.endVisibleBridge(); ++i) { scratch.pushBridge(*i); }
+    for (LLCullResult::drawable_iterator i = real.beginVisibleList(); i != real.endVisibleList(); ++i) { scratch.pushDrawable(*i); }
+
+    SortJournal journal;
+    sSortJournal = &journal;
+    sSortJournalOn = true;
+    std::vector<LLDrawable*> pool_save;
+    pool_save.swap(mDeferredPoolFill);
+    out.mLedger.clear();
+    sCull = &scratch;
+    out.mParallel = parallel && sortLoopsParallel(camera, scratch, out.mLedger, &journal);
+    if (!out.mParallel)
+    {
+        out.mLedger.clear();
+        mDeferredPoolFill.clear();
+        sSortSink = &out.mLedger;
+        sortLoops(camera, scratch);
+        sSortSink = nullptr;
+    }
+    sCull = &real;
+    out.mPool = mDeferredPoolFill;
+    mDeferredPoolFill.swap(pool_save);
+    out.mBridges.assign(scratch.beginVisibleBridge(), scratch.endVisibleBridge());
+    out.mVisibleGroups.assign(scratch.beginVisibleGroups(), scratch.endVisibleGroups());
+    out.mDrawableGroups.assign(scratch.beginDrawableGroups(), scratch.endDrawableGroups());
+    out.mVisible.assign(scratch.beginVisibleList(), scratch.endVisibleList());
+    sSortJournalOn = false;
+    sSortJournal = nullptr;
+
+    // what the loops left in the fields they wrote (one entry per object), then put back what they found
+    out.mFinalVols.clear();
+    out.mFinalGroups.clear();
+    {
+        std::vector<LLVOVolume*> vols;
+        for (const auto& v : journal.mVols) vols.push_back(v.mVol);
+        std::sort(vols.begin(), vols.end());
+        vols.erase(std::unique(vols.begin(), vols.end()), vols.end());
+        for (LLVOVolume* v : vols) out.mFinalVols.push_back({ v, v->saveLODState() });
+        std::vector<LLSpatialGroup*> groups;
+        for (const auto& g : journal.mGroups) groups.push_back(g.mGroup);
+        std::sort(groups.begin(), groups.end());
+        groups.erase(std::unique(groups.begin(), groups.end()), groups.end());
+        for (LLSpatialGroup* g : groups) out.mFinalGroups.push_back({ g, g->mLastUpdateDistance });
+    }
+    for (auto it = journal.mVols.rbegin(); it != journal.mVols.rend(); ++it) it->mVol->restoreLODState(it->mState);
+    for (auto it = journal.mGroups.rbegin(); it != journal.mGroups.rend(); ++it) it->mGroup->mLastUpdateDistance = it->mDistance;
+}
+
+// LL_VK_SORT_SPLIT=4: the compute on this thread against the compute on the pool, on the same input; then the sort runs as before (the frame is made by the old loops)
+void LLPipeline::sortParallelCheck(LLCamera& camera)
+{
+    LL_CPU_ZONE("stateSort: parallel check");
+    static U64 checked = 0, same_count = 0, differed = 0, serial_only = 0;
+    static SortDryResult a, b;
+    sortDryRun(camera, false, &a);
+    sortDryRun(camera, true, &b);
+    if (!b.mParallel)
+    {
+        ++serial_only;
+    }
+    else
+    {
+        ++checked;
+        std::string why;
+        {
+            // the lists of effects: sizes, by kind, and the first place where they part
+            U32 count_a[6] = {}, count_b[6] = {};
+            for (const SortDelta& d : a.mLedger) ++count_a[d.mKind];
+            for (const SortDelta& d : b.mLedger) ++count_b[d.mKind];
+            const size_t common = std::min(a.mLedger.size(), b.mLedger.size());
+            size_t first = 0;
+            for (; first < common; ++first)
+            {
+                const SortDelta& x = a.mLedger[first];
+                const SortDelta& y = b.mLedger[first];
+                if (x.mKind != y.mKind || x.mFlag != y.mFlag || x.mDrawable != y.mDrawable || x.mGroup != y.mGroup || memcmp(&x.mDistance, &y.mDistance, sizeof(F32)) != 0) break;
+            }
+            if (first < common || a.mLedger.size() != b.mLedger.size())
+            {
+                why = "ledger sizes " + std::to_string(a.mLedger.size()) + " / " + std::to_string(b.mLedger.size()) + ", first difference at " + std::to_string(first) + " (kind "
+                    + (first < a.mLedger.size() ? std::to_string(a.mLedger[first].mKind) : std::string("end")) + " / " + (first < b.mLedger.size() ? std::to_string(b.mLedger[first].mKind) : std::string("end"))
+                    + "), by kind serial / pool: rebuild drawable " + std::to_string(count_a[0]) + "/" + std::to_string(count_b[0]) + ", partition move " + std::to_string(count_a[1]) + "/" + std::to_string(count_b[1])
+                    + ", object LOD " + std::to_string(count_a[3]) + "/" + std::to_string(count_b[3]) + ", rebuild mesh " + std::to_string(count_a[4]) + "/" + std::to_string(count_b[4]) + ", bridge dead " + std::to_string(count_a[5]) + "/" + std::to_string(count_b[5]);
+            }
+        }
+        if (why.empty() && a.mPool != b.mPool) why = "pool lists " + std::to_string(a.mPool.size()) + " / " + std::to_string(b.mPool.size());
+        if (why.empty() && a.mBridges != b.mBridges) why = "visible bridges " + std::to_string(a.mBridges.size()) + " / " + std::to_string(b.mBridges.size());
+        if (why.empty() && a.mVisible != b.mVisible) why = "visible drawables " + std::to_string(a.mVisible.size()) + " / " + std::to_string(b.mVisible.size());
+        if (why.empty() && a.mFinalVols.size() != b.mFinalVols.size()) why = "volumes touched " + std::to_string(a.mFinalVols.size()) + " / " + std::to_string(b.mFinalVols.size());
+        for (size_t k = 0; why.empty() && k < a.mFinalVols.size(); ++k)
+        {
+            if (a.mFinalVols[k].first != b.mFinalVols[k].first || !lod_state_equal(a.mFinalVols[k].second, b.mFinalVols[k].second)) why = "volume LOD state of entry " + std::to_string(k);
+        }
+        if (why.empty() && a.mFinalGroups.size() != b.mFinalGroups.size()) why = "groups touched " + std::to_string(a.mFinalGroups.size()) + " / " + std::to_string(b.mFinalGroups.size());
+        for (size_t k = 0; why.empty() && k < a.mFinalGroups.size(); ++k)
+        {
+            if (a.mFinalGroups[k].first != b.mFinalGroups[k].first || a.mFinalGroups[k].second != b.mFinalGroups[k].second) why = "group distance of entry " + std::to_string(k);
+        }
+        if (why.empty())
+        {
+            ++same_count;
+        }
+        else
+        {
+            ++differed;
+            static U32 said = 0;
+            if (said++ < 12)
+            {
+                LL_WARNS("SortSplit") << "parallel check: the compute on the pool differs from the serial one: " << why << LL_ENDL;
+                // the groups whose mesh rebuild the serial run recorded and the pool did not
+                std::unordered_map<LLSpatialGroup*, int> in_pool;
+                for (const SortDelta& d : b.mLedger) if (d.mKind == SortDelta::REBUILD_MESH) ++in_pool[d.mGroup];
+                int shown = 0;
+                for (size_t k = 0; k < a.mLedger.size() && shown < 4; ++k)
+                {
+                    const SortDelta& d = a.mLedger[k];
+                    if (d.mKind != SortDelta::REBUILD_MESH) continue;
+                    auto it = in_pool.find(d.mGroup);
+                    if (it != in_pool.end() && it->second > 0) { --it->second; continue; }
+                    ++shown;
+                    int in_visible = -1, in_drawable = -1, at = 0;
+                    for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i, ++at) if (*i == d.mGroup) { in_visible = at; break; }
+                    at = 0;
+                    for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i, ++at) if (*i == d.mGroup) { in_drawable = at; break; }
+ int in_a_visible = -1, in_b_visible = -1, in_a_drawable = -1, in_b_drawable = -1;
+                    for (size_t q = 0; q < a.mVisibleGroups.size(); ++q) if (a.mVisibleGroups[q] == d.mGroup) { in_a_visible = (int)q; break; }
+                    for (size_t q = 0; q < b.mVisibleGroups.size(); ++q) if (b.mVisibleGroups[q] == d.mGroup) { in_b_visible = (int)q; break; }
+                    for (size_t q = 0; q < a.mDrawableGroups.size(); ++q) if (a.mDrawableGroups[q] == d.mGroup) { in_a_drawable = (int)q; break; }
+                    for (size_t q = 0; q < b.mDrawableGroups.size(); ++q) if (b.mDrawableGroups[q] == d.mGroup) { in_b_drawable = (int)q; break; }
+                    LL_WARNS("SortSplit") << "  lists the runs worked from: visible groups serial " << in_a_visible << " (of " << a.mVisibleGroups.size() << ") pool " << in_b_visible << " (of " << b.mVisibleGroups.size()
+                                          << "), drawable groups serial " << in_a_drawable << " (of " << a.mDrawableGroups.size() << ") pool " << in_b_drawable << " (of " << b.mDrawableGroups.size() << ")" << LL_ENDL;
+                    LL_WARNS("SortSplit") << "  missing in the pool: ledger entry " << k << ", group partition " << (d.mGroup->getSpatialPartition() ? (int)d.mGroup->getSpatialPartition()->mPartitionType : -1)
+                                          << ", at " << in_visible << " in the visible groups (of " << sCull->getVisibleGroupsSize() << "), " << in_drawable << " in the drawable groups (of " << sCull->getDrawableGroupsSize()
+                                          << "), MESH_DIRTY now " << d.mGroup->hasState(LLSpatialGroup::MESH_DIRTY) << ", dead " << d.mGroup->isDead() << LL_ENDL;
+                }
+            }
+        }
+    }
+    if ((checked + serial_only) % 600 == 0)
+    {
+        LL_INFOS("SortSplit") << "parallel check: " << checked << " sorts compared, " << differed << " differed, " << serial_only << " could not run on the pool (per sort: " << a.mLedger.size() << " effects, "
+                              << a.mVisible.size() << " visible drawables, " << a.mBridges.size() << " bridges, " << a.mFinalVols.size() << " volumes with their LOD computed)" << LL_ENDL;
+    }
+    // the frame is made by the old loops
+    sortLoops(camera, *sCull);
 }
 
 // the loops of stateSort for the main view: the occlusion check and the visibility stamp of every group and drawable the cull found, the distance and LOD of the bridges and drawables, and the mesh
@@ -4503,11 +5071,12 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
 
     // <FS> the split (see sortLoops): 0 as before, 1 compute then apply, 2 the check
     const int split = sort_split_mode(camera, defer_pools);
-    // (the loops and the apply pass timed per mode, logged every 600 sorts of the main view: mode 0 is the loops as before, 1 the split)
-    static double time_loops[2] = {}, time_apply = 0.0;
-    static U32 sorts[2] = {}, effects = 0, window = 0;
-    const bool timed = split <= 1 && defer_pools;
+    // (the loops and the apply pass timed per path, logged every 600 sorts of the main view: 0 the loops as before, 1 the split run serially, 2 the split with the compute on the pool)
+    static double time_compute[3] = {}, time_apply[3] = {};
+    static U32 sorts[3] = {}, effects[3] = {}, window = 0, fallbacks = 0;
+    const bool timed = split != 2 && split != 4 && defer_pools;
     const auto t_start = std::chrono::steady_clock::now();
+    int path = 0;
     if (split == 0)
     {
         sortLoops(camera, *sCull);
@@ -4515,12 +5084,28 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     else
     {
         static std::vector<SortDelta> ledger_a, ledger_b;
-        if (split == 1)
+        if (split == 1 || split == 3)
         {
             ledger_a.clear();
-            sSortSink = &ledger_a;
-            sortLoops(camera, *sCull);
-            sSortSink = nullptr;
+            path = 1;
+            if (split == 3)
+            {
+                if (sortLoopsParallel(camera, *sCull, ledger_a, nullptr))
+                {
+                    path = 2;
+                }
+                else
+                {
+                    ++fallbacks;
+                    ledger_a.clear();
+                }
+            }
+            if (path == 1)
+            {
+                sSortSink = &ledger_a;
+                sortLoops(camera, *sCull);
+                sSortSink = nullptr;
+            }
             const auto t_mid = std::chrono::steady_clock::now();
             {
                 LL_CPU_ZONE("stateSort: apply deltas");
@@ -4528,11 +5113,15 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             }
             if (timed)
             {
-                time_apply += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_mid).count();
-                time_loops[1] += std::chrono::duration<double, std::milli>(t_mid - t_start).count();
-                effects += (U32)ledger_a.size();
-                ++sorts[1];
+                time_apply[path] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_mid).count();
+                time_compute[path] += std::chrono::duration<double, std::milli>(t_mid - t_start).count();
+                effects[path] += (U32)ledger_a.size();
+                ++sorts[path];
             }
+        }
+        else if (split == 4)
+        {
+            sortParallelCheck(camera);
         }
         else
         {
@@ -4541,16 +5130,23 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     }
     if (timed && split == 0)
     {
-        time_loops[0] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_start).count();
+        time_compute[0] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_start).count();
         ++sorts[0];
     }
-    if (timed && sort_split_setting() >= 0 && sort_split_setting() <= 1 && ++window % 600 == 0)
+    if (timed && ++window % 600 == 0)
     {
-        LL_INFOS("SortSplit") << "stateSort loops (early sort, ms per sort): split off " << (sorts[0] ? time_loops[0] / sorts[0] : 0.0) << " over " << sorts[0] << " sorts; split on: compute "
-                              << (sorts[1] ? time_loops[1] / sorts[1] : 0.0) << " + apply " << (sorts[1] ? time_apply / sorts[1] : 0.0) << " = " << (sorts[1] ? (time_loops[1] + time_apply) / sorts[1] : 0.0)
-                              << " over " << sorts[1] << " sorts, " << (sorts[1] ? (double)effects / sorts[1] : 0.0) << " effects a sort" << LL_ENDL;
-        time_loops[0] = time_loops[1] = time_apply = 0.0;
-        sorts[0] = sorts[1] = effects = 0;
+        static const char* const names[3] = { "split off (the loops as before)", "split on, compute on this thread", "split on, compute on the pool" };
+        std::string line;
+        for (int k = 0; k < 3; ++k)
+        {
+            if (sorts[k])
+            {
+                line += llformat(" | %s: %.3f ms compute + %.3f apply = %.3f over %u sorts, %.0f effects a sort", names[k], time_compute[k] / sorts[k], time_apply[k] / sorts[k], (time_compute[k] + time_apply[k]) / sorts[k], sorts[k], (double)effects[k] / sorts[k]);
+            }
+            time_compute[k] = time_apply[k] = 0.0;
+            sorts[k] = effects[k] = 0;
+        }
+        LL_INFOS("SortSplit") << "stateSort loops (early sort, ms per sort):" << line << "; sorts the pool could not take " << fallbacks << LL_ENDL;
     }
 
     { LL_CPU_ZONE("stateSort: postSort"); postSort(camera); }
@@ -4783,7 +5379,14 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
         }
         if (mDeferPoolFill)
         {
-            mDeferredPoolFill.push_back(drawablep);     // queued by refillPools(), after the shadow passes
+            if (sSortPoolSink)
+            {
+                sSortPoolSink->push_back(drawablep);        // <FS> a chunk of the parallel sort: merged into mDeferredPoolFill in chunk order
+            }
+            else
+            {
+                mDeferredPoolFill.push_back(drawablep);     // queued by refillPools(), after the shadow passes
+            }
         }
         else
         for (LLDrawable::face_list_t::iterator iter = drawablep->mFaces.begin();
@@ -4805,7 +5408,7 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
         }
     }
 
-    mNumVisibleFaces += drawablep->getNumFaces();
+    mNumVisibleFaces.fetch_add(drawablep->getNumFaces(), std::memory_order_relaxed);
 }
 
 
