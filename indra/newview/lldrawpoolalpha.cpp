@@ -947,6 +947,15 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             LLSpatialBridge* bridge = group->getSpatialPartition()->asBridge();
             const LLVector4a* ext = bridge ? bridge->getSpatialExtents() : group->getExtents();
 
+            // <FS> the fringe pass (the soft texels of the rigged alpha, drawn a second time over the static alpha) is left out for the avatars farther than RenderRiggedAlphaFringeMaxDistance:
+            // the halo of a hair texture is a fraction of a pixel there (0.37 ms of GPU a frame in a crowd)
+            static LLCachedControl<F32> fringe_max_distance(gSavedSettings, "RenderRiggedAlphaFringeMaxDistance", 32.f);
+            if (mFringePass && rigged && fringe_max_distance > 0.f && group->mAvatarp && !group->mAvatarp->isSelf() && group->mAvatarp->mDrawable.notNull()
+                && group->mAvatarp->mDrawable->mDistanceWRTCamera > fringe_max_distance)
+            {
+                continue;
+            }
+
             if (!LLPipeline::sRenderingHUDs) // ignore above/below water for HUD render
             {
                 if (above_water)
