@@ -3243,7 +3243,8 @@ inline int att_all_clear(const LLViewerObject* root, U64& faces)
             {
                 ++seen;
                 const LLTextureEntry* te = f->getTextureEntry();
-                if (!te || te->getColor().mV[3] > 0.f)
+                // visible: any alpha, a glow (it shows through an alpha of 0), or a glTF material (its own base colour alpha decides)
+                if (!te || te->getColor().mV[3] > 0.f || te->getGlow() > 0.f || te->getGLTFRenderMaterial())
                 {
                     return false;
                 }
@@ -3844,9 +3845,10 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
 
                     if (gFSAvTimersOn && bridge)
                     {
-                        const int clear = att_all_clear(attached_object.get(), gAttStats.clearFaces);
-                        if (clear > 0) { if (rigged) ++gAttStats.clearRigged; else ++gAttStats.clearRigid; }
-                        else if (clear < 0) { ++gAttStats.noFaces; }
+                        // census: attachments of which nothing is drawn (every face alpha 0, no glow, no glTF material)
+                        const int clear_verdict = att_all_clear(attached_object.get(), gAttStats.clearFaces);
+                        if (clear_verdict > 0) { if (rigged) ++gAttStats.clearRigged; else ++gAttStats.clearRigid; }
+                        else if (clear_verdict < 0) { ++gAttStats.noFaces; }
                     }
                     bool skip_rigid = false;
                     if (skip_static_rigid && !rigged && bridge && !attachment_selected && !isSelf())
@@ -3957,7 +3959,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     F, (double)s.avatars / F, (double)s.skipFrames / F, (double)s.attachments / F, (double)s.rigged / F, (double)s.rigid / F, (double)s.noBridge / F, (double)s.skipped / F, (double)s.ovApplied / F, (double)s.ovSkipped / F,
                     (double)s.nsLoop / 1e6 / F, (double)s.nsPre / 1e6 / F, (double)s.nsRigged / 1e6 / F, (double)s.nsRigged / 1e3 / R, (double)s.nsRigid / 1e6 / F, (double)s.nsRigid / 1e3 / G,
                     (double)s.nsExtents / 1e6 / F, (double)s.nsOverride / 1e6 / F, (double)s.nsMove / 1e6 / F, (double)s.nsBridge / 1e6 / F, (double)s.nsText / 1e6 / F) << LL_ENDL;
-                LL_INFOS("AttLoop") << llformat("attachments with every face fully transparent (colour alpha 0), per frame: rigid %.1f, rigged %.1f (%.1f faces in them), attachments with no face at all %.1f", (double)s.clearRigid / F, (double)s.clearRigged / F, (double)s.clearFaces / F, (double)s.noFaces / F) << LL_ENDL;
+                LL_INFOS("AttLoop") << llformat("attachments with every face fully transparent (alpha 0, no glow, no glTF), per frame: rigid %.1f, rigged %.1f (%.1f faces in them), attachments with no face at all %.1f", (double)s.clearRigid / F, (double)s.clearRigged / F, (double)s.clearFaces / F, (double)s.noFaces / F) << LL_ENDL;
                 LL_INFOS("AttLoop") << llformat("rigid attachments whose drawable and bridge move were skipped (joint within 1 mm / 0.06 degrees of the last applied), per frame: %.1f", (double)s.rigidSkipped / F) << LL_ENDL;
                 LL_INFOS("AttLoop") << llformat("rigid attachments with a bridge, per frame: first seen %.1f, joint matrix unchanged since the last visit (within 0.1 mm) %.1f, moved more than 0.1 mm %.1f (more than 1 mm %.1f)",
                     (double)s.rigidFirst / F, (double)s.rigidSame / F, (double)s.rigidMovedTiny / F, (double)s.rigidMoved1mm / F) << LL_ENDL;
