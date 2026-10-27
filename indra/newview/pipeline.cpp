@@ -3995,8 +3995,22 @@ void LLPipeline::markRenderRebuild(LLRenderUpdate* glu)
     }
 }
 
+thread_local std::vector<LLPipeline::SortDelta>* LLPipeline::sSortSink = nullptr;
+thread_local std::vector<LLPipeline::SortDelta>* LLPipeline::sSortTee = nullptr;
+bool LLPipeline::sSortJournalOn = false;
+
 void LLPipeline::markPartitionMove(LLDrawable* drawable)
 {
+    if (sSortSink || sSortTee)
+    {
+        const SortDelta delta = { SortDelta::PARTITION_MOVE, 0, drawable, nullptr, 0.f };
+        if (sSortSink)
+        {
+            sSortSink->push_back(delta);
+            return;
+        }
+        sSortTee->push_back(delta);
+    }
     if (!drawable->isState(LLDrawable::PARTITION_MOVE) &&
         !drawable->getPositionGroup().equals3(LLVector4a::getZero()))
     {
@@ -4033,6 +4047,16 @@ void LLPipeline::markMeshDirty(LLSpatialGroup* group)
 
 void LLPipeline::markRebuild(LLSpatialGroup* group)
 {
+    if (sSortSink || sSortTee)
+    {
+        const SortDelta delta = { SortDelta::REBUILD_GROUP, 0, nullptr, group, 0.f };
+        if (sSortSink)
+        {
+            sSortSink->push_back(delta);
+            return;
+        }
+        sSortTee->push_back(delta);
+    }
     if (group && !group->isDead() && group->getSpatialPartition())
     {
         if (!group->hasState(LLSpatialGroup::IN_BUILD_Q1))
@@ -4047,6 +4071,16 @@ void LLPipeline::markRebuild(LLSpatialGroup* group)
 
 void LLPipeline::markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags flag)
 {
+    if (sSortSink || sSortTee)
+    {
+        const SortDelta delta = { SortDelta::REBUILD_DRAWABLE, (U32)flag, drawablep, nullptr, 0.f };
+        if (sSortSink)
+        {
+            sSortSink->push_back(delta);
+            return;
+        }
+        sSortTee->push_back(delta);
+    }
     if (drawablep && !drawablep->isDead() && assertInitialized())
     {
         if (!drawablep->isState(LLDrawable::IN_REBUILD_Q))
@@ -4068,44 +4102,235 @@ void LLPipeline::markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags f
 
 static bool sVisSortOn = false;     // <FS> S7 C0 (LL_VK_VISCENSUS=1): this stateSort is the main view's
 
-void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_pools)
+// <FS> ---- the stateSort split (doc/vulkan/PLAN-statesort-offmain.md, stage 1) ----
+// The loops of the main view's stateSort write to state that other code shares: the rebuild queue and the partition move queue (markRebuild, markPartitionMove, called from LLVOVolume::updateLOD),
+// the LOD update of avatars and other objects that are not volumes (LLDrawable::updateDistance), and the mesh rebuilds. With a sink set (sSortSink) those calls only record a SortDelta; the apply
+// pass makes them in the order they were recorded, which is the order the loops made them, so nothing that reads that state sees a different value, except the code inside the loops itself:
+// the check (LL_VK_SORT_SPLIT=2) finds out whether any of it does, by running the loops deferred and then as before and comparing what each one asked for.
+// LL_VK_SORT_SPLIT=<mode> (0 off, default); test switch (LL_VK_FARTIER_FILE=1): <work>/sort-split.txt, read every 60 frames.
+namespace
 {
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    LL_PROFILE_GPU_ZONE("stateSort");
+struct SortJournal
+{
+    struct Vol { LLVOVolume* mVol; LLVOVolume::LODState mState; };
+    struct Grp { LLSpatialGroup* mGroup; F32 mDistance; };
+    std::vector<Vol> mVols;
+    std::vector<Grp> mGroups;
+};
+SortJournal* sSortJournal = nullptr;
 
-    sVisSortOn = LLVisCensus::sOn && &camera == LLViewerCamera::getInstance() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs;
-    struct VisSortEnd
+int sort_split_setting()
+{
+    static const int env_mode = getenv("LL_VK_SORT_SPLIT") ? atoi(getenv("LL_VK_SORT_SPLIT")) : 0;
+    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
+    if (!file_on)
     {
-        U64 mT0;
-        ~VisSortEnd() { if (sVisSortOn) { LLVisCensus::sSortTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sSortCalls; sVisSortOn = false; } }
-    } vis_sort_end = { sVisSortOn ? LLVisCensus::now() : 0 };
+        return env_mode;
+    }
+    static U32 last_frame = ~0u;
+    static int value = -1;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (frame != last_frame && frame % 60 == 0)
+    {
+        last_frame = frame;
+        value = -1;
+        if (FILE* f = fopen("<work>/sort-split.txt", "rb"))
+        {
+            char text[24] = {};
+            fread(text, 1, sizeof(text) - 1, f);
+            fclose(f);
+            value = atoi(text);
+        }
+    }
+    return value >= 0 ? value : env_mode;
+}
+}
 
-    mDeferPoolFill = defer_pools;
-    if (defer_pools)
+// <FS> a rebuildMesh of the loops: recorded in the ledger (and made at the apply pass) when a sink is set, made here and recorded when the check tees
+static void sort_rebuild_mesh(LLSpatialGroup* group)
+{
+    if (LLPipeline::sSortSink)
     {
-        mDeferredPoolFill.clear();
+        LLPipeline::sSortSink->push_back({ LLPipeline::SortDelta::REBUILD_MESH, 0, nullptr, group, 0.f });
+        return;
+    }
+    if (LLPipeline::sSortTee)
+    {
+        LLPipeline::sSortTee->push_back({ LLPipeline::SortDelta::REBUILD_MESH, 0, nullptr, group, 0.f });
+    }
+    group->rebuildMesh();
+}
+
+// the field of a group the loops write (the check puts it back after the deferred run)
+static void sort_journal_group(LLSpatialGroup* group)
+{
+    if (sSortJournal)
+    {
+        sSortJournal->mGroups.push_back({ group, group->mLastUpdateDistance });
+    }
+}
+
+//static
+void LLPipeline::sortJournalVolume(LLVOVolume* volume)
+{
+    if (sSortJournal)
+    {
+        sSortJournal->mVols.push_back({ volume, volume->saveLODState() });
+    }
+}
+
+static int sort_split_mode(LLCamera& camera, bool defer_pools)
+{
+    const int mode = sort_split_setting();
+    if (mode <= 0)
+    {
+        return 0;
+    }
+    static const bool census = getenv("LL_VK_VISCENSUS") != nullptr || getenv("LL_VK_OCCCENSUS") != nullptr;
+    static LLCachedControl<bool> debug_lods(gSavedSettings, "DebugObjectLODs", false);
+    if (census || sVisSortOn || LLOccCensus::sOn || debug_lods || gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TRIANGLE_COUNT) || gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_LOD_INFO))
+    {
+        return 0;
+    }
+    if (&camera != LLViewerCamera::getInstance() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || LLPipeline::sShadowRender || LLPipeline::sReflectionRender || gCubeSnapshot
+        || LLPipeline::sRenderingHUDs)
+    {
+        return 0;
+    }
+    if (mode >= 2 && !defer_pools)
+    {
+        return 0;       // (the check does not run the loops twice where they fill the pools)
+    }
+    return mode >= 2 ? 2 : 1;
+}
+
+void LLPipeline::applySortDeltas(std::vector<SortDelta>& deltas)
+{
+    sSortSink = nullptr;
+    sSortTee = nullptr;
+    for (const SortDelta& d : deltas)
+    {
+        switch (d.mKind)
+        {
+        case SortDelta::REBUILD_DRAWABLE:
+            markRebuild(d.mDrawable, (LLDrawable::EDrawableFlags)d.mFlag);
+            break;
+        case SortDelta::PARTITION_MOVE:
+            markPartitionMove(d.mDrawable);
+            break;
+        case SortDelta::REBUILD_GROUP:
+            markRebuild(d.mGroup);
+            break;
+        case SortDelta::OBJECT_LOD:
+            if (d.mDrawable && !d.mDrawable->isDead())
+            {
+                d.mDrawable->mDistanceWRTCamera = d.mDistance;
+                if (LLViewerObject* object = d.mDrawable->getVObj())
+                {
+                    object->updateLOD();
+                }
+            }
+            break;
+        case SortDelta::REBUILD_MESH:
+            if (d.mGroup && !d.mGroup->isDead())
+            {
+                d.mGroup->rebuildMesh();
+            }
+            break;
+        }
+    }
+}
+
+// the check: the loops deferred (into a scratch result, nothing applied, what they write put back), then as before with every call recorded, and the two lists compared
+void LLPipeline::sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger_a, std::vector<SortDelta>& ledger_b)
+{
+    LL_CPU_ZONE("stateSort: split check");
+    static LLCullResult scratch;
+    static U64 checked = 0, mismatched = 0, entries = 0, kinds[5] = {};
+    LLCullResult& real = *sCull;
+    scratch.clear();
+    // the deferred run reads and pushes into its own copy of the lists the loops use (the visible drawables and bridges are made by the first loop and read by the later ones)
+    for (LLCullResult::sg_iterator i = real.beginDrawableGroups(); i != real.endDrawableGroups(); ++i) { scratch.pushDrawableGroup(*i); }
+    for (LLCullResult::sg_iterator i = real.beginVisibleGroups(); i != real.endVisibleGroups(); ++i) { scratch.pushVisibleGroup(*i); }
+    for (LLCullResult::sg_iterator i = real.beginOcclusionGroups(); i != real.endOcclusionGroups(); ++i) { scratch.pushOcclusionGroup(*i); }
+    for (LLCullResult::bridge_iterator i = real.beginVisibleBridge(); i != real.endVisibleBridge(); ++i) { scratch.pushBridge(*i); }
+    for (LLCullResult::drawable_iterator i = real.beginVisibleList(); i != real.endVisibleList(); ++i) { scratch.pushDrawable(*i); }
+
+    SortJournal journal;
+    sSortJournal = &journal;
+    LLPipeline::sSortJournalOn = true;
+    std::vector<LLDrawable*> pool_save;
+    pool_save.swap(mDeferredPoolFill);
+    ledger_a.clear();
+    LLPipeline::sSortSink = &ledger_a;
+    sCull = &scratch;
+    sortLoops(camera, scratch);
+    sCull = &real;
+    LLPipeline::sSortSink = nullptr;
+    mDeferredPoolFill.swap(pool_save);
+    LLPipeline::sSortJournalOn = false;
+    sSortJournal = nullptr;
+    for (auto it = journal.mVols.rbegin(); it != journal.mVols.rend(); ++it)
+    {
+        it->mVol->restoreLODState(it->mState);
+    }
+    for (auto it = journal.mGroups.rbegin(); it != journal.mGroups.rend(); ++it)
+    {
+        it->mGroup->mLastUpdateDistance = it->mDistance;
     }
 
-    if (!defer_pools && hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
-                      LLPipeline::RENDER_TYPE_CONTROL_AV,
-                      LLPipeline::RENDER_TYPE_TERRAIN,
-                      LLPipeline::RENDER_TYPE_TREE,
-                      LLPipeline::RENDER_TYPE_SKY,
-                      LLPipeline::RENDER_TYPE_VOIDWATER,
-                      LLPipeline::RENDER_TYPE_WATER,
-                      LLPipeline::END_RENDER_TYPES))
+    ledger_b.clear();
+    LLPipeline::sSortTee = &ledger_b;
+    sortLoops(camera, real);
+    LLPipeline::sSortTee = nullptr;
+
+    ++checked;
+    entries += ledger_b.size();
+    for (const LLPipeline::SortDelta& d : ledger_b)
     {
-        //clear faces from face pools
-        gPipeline.resetDrawOrders();
+        ++kinds[d.mKind];
     }
+    bool same = ledger_a.size() == ledger_b.size();
+    size_t first = 0;
+    const size_t common = std::min(ledger_a.size(), ledger_b.size());
+    for (; first < common; ++first)
+    {
+        const LLPipeline::SortDelta& x = ledger_a[first];
+        const LLPipeline::SortDelta& y = ledger_b[first];
+        if (x.mKind != y.mKind || x.mFlag != y.mFlag || x.mDrawable != y.mDrawable || x.mGroup != y.mGroup || memcmp(&x.mDistance, &y.mDistance, sizeof(F32)) != 0)
+        {
+            same = false;
+            break;
+        }
+    }
+    if (!same)
+    {
+        ++mismatched;
+        static U32 said = 0;
+        if (said++ < 12)
+        {
+            const size_t at = first;
+            LL_WARNS("SortSplit") << "check: deferred run asked for " << ledger_a.size() << " effects, the direct run for " << ledger_b.size() << "; the first difference is at " << at << ": deferred "
+                                  << (at < ledger_a.size() ? std::to_string(ledger_a[at].mKind) + " flag " + std::to_string(ledger_a[at].mFlag) : std::string("(end)")) << ", direct "
+                                  << (at < ledger_b.size() ? std::to_string(ledger_b[at].mKind) + " flag " + std::to_string(ledger_b[at].mFlag) : std::string("(end)")) << LL_ENDL;
+        }
+    }
+    if (checked % 600 == 0)
+    {
+        LL_INFOS("SortSplit") << "check: " << checked << " sorts, " << mismatched << " with a different list of effects; per sort " << (double)entries / (double)checked << " effects (rebuild drawable "
+                              << (double)kinds[0] / checked << ", partition move " << (double)kinds[1] / checked << ", rebuild group " << (double)kinds[2] / checked << ", object LOD " << (double)kinds[3] / checked
+                              << ", rebuild mesh " << (double)kinds[4] / checked << ")" << LL_ENDL;
+    }
+}
 
-    //LLVertexBuffer::unbind();
-
-    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
+// the loops of stateSort for the main view: the occlusion check and the visibility stamp of every group and drawable the cull found, the distance and LOD of the bridges and drawables, and the mesh
+// rebuilds. They read the cull result they are given and push what is visible into sCull.
+void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
+{
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("checkOcclusionAndRebuildMesh");
         LL_CPU_ZONE("stateSort: drawable groups (occlusion + rebuild)");
-    for (LLCullResult::sg_iterator iter = sCull->beginDrawableGroups(); iter != sCull->endDrawableGroups(); ++iter)
+    for (LLCullResult::sg_iterator iter = read.beginDrawableGroups(); iter != read.endDrawableGroups(); ++iter)
     {
         LLSpatialGroup* group = *iter;
         if (group->isDead())
@@ -4145,7 +4370,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             if (sVisSortOn) { LLVisCensus::sSortTicksMarkVis += LLVisCensus::now() - vis_m0; }
 
             { //rebuild mesh as soon as we know it's visible
-                { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
+                { LL_CPU_ZONE("stateSort: rebuildMesh"); sort_rebuild_mesh(group); }
             }
         }
     }
@@ -4157,7 +4382,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         LL_CPU_ZONE("stateSort: visible bridges");
         LLSpatialGroup* last_group = NULL;
         bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
-        for (LLCullResult::bridge_iterator i = sCull->beginVisibleBridge(); i != sCull->endVisibleBridge(); ++i)
+        for (LLCullResult::bridge_iterator i = read.beginVisibleBridge(); i != read.endVisibleBridge(); ++i)
         {
             LLCullResult::bridge_iterator cur_iter = i;
             LLSpatialBridge* bridge = *cur_iter;
@@ -4177,7 +4402,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
                 last_group != group && last_group->changeLOD())
             {
-                last_group->mLastUpdateDistance = last_group->mDistance;
+                sort_journal_group(last_group); last_group->mLastUpdateDistance = last_group->mDistance;
             }
             if (sVisSortOn) { LLVisCensus::sSortTicksBridge += LLVisCensus::now() - vis_b0; ++LLVisCensus::sSortBridgeCalls; }
 
@@ -4187,13 +4412,13 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
             last_group && last_group->changeLOD())
         {
-            last_group->mLastUpdateDistance = last_group->mDistance;
+            sort_journal_group(last_group); last_group->mLastUpdateDistance = last_group->mDistance;
         }
     }
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("StateSort: visible groups");
         LL_CPU_ZONE("stateSort: visible groups");
-    for (LLCullResult::sg_iterator iter = sCull->beginVisibleGroups(); iter != sCull->endVisibleGroups(); ++iter)
+    for (LLCullResult::sg_iterator iter = read.beginVisibleGroups(); iter != read.endVisibleGroups(); ++iter)
     {
         LLSpatialGroup* group = *iter;
         if (group->isDead())
@@ -4220,7 +4445,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             stateSort(group, camera);
 
             { //rebuild mesh as soon as we know it's visible
-                { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
+                { LL_CPU_ZONE("stateSort: rebuildMesh"); sort_rebuild_mesh(group); }
             }
         }
     }}
@@ -4228,8 +4453,8 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWABLE("stateSort"); // LL_RECORD_BLOCK_TIME(FTM_STATESORT_DRAWABLE);
         LL_CPU_ZONE("stateSort: visible drawables");
-        for (LLCullResult::drawable_iterator iter = sCull->beginVisibleList();
-             iter != sCull->endVisibleList(); ++iter)
+        for (LLCullResult::drawable_iterator iter = read.beginVisibleList();
+             iter != read.endVisibleList(); ++iter)
         {
             LLDrawable *drawablep = *iter;
             if (!drawablep->isDead())
@@ -4237,6 +4462,95 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
                 stateSort(drawablep, camera);
             }
         }
+    }
+
+}
+
+void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_pools)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    LL_PROFILE_GPU_ZONE("stateSort");
+
+    sVisSortOn = LLVisCensus::sOn && &camera == LLViewerCamera::getInstance() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs;
+    struct VisSortEnd
+    {
+        U64 mT0;
+        ~VisSortEnd() { if (sVisSortOn) { LLVisCensus::sSortTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sSortCalls; sVisSortOn = false; } }
+    } vis_sort_end = { sVisSortOn ? LLVisCensus::now() : 0 };
+
+    mDeferPoolFill = defer_pools;
+    if (defer_pools)
+    {
+        mDeferredPoolFill.clear();
+    }
+
+    if (!defer_pools && hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
+                      LLPipeline::RENDER_TYPE_CONTROL_AV,
+                      LLPipeline::RENDER_TYPE_TERRAIN,
+                      LLPipeline::RENDER_TYPE_TREE,
+                      LLPipeline::RENDER_TYPE_SKY,
+                      LLPipeline::RENDER_TYPE_VOIDWATER,
+                      LLPipeline::RENDER_TYPE_WATER,
+                      LLPipeline::END_RENDER_TYPES))
+    {
+        //clear faces from face pools
+        gPipeline.resetDrawOrders();
+    }
+
+    //LLVertexBuffer::unbind();
+
+    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
+
+    // <FS> the split (see sortLoops): 0 as before, 1 compute then apply, 2 the check
+    const int split = sort_split_mode(camera, defer_pools);
+    // (the loops and the apply pass timed per mode, logged every 600 sorts of the main view: mode 0 is the loops as before, 1 the split)
+    static double time_loops[2] = {}, time_apply = 0.0;
+    static U32 sorts[2] = {}, effects = 0, window = 0;
+    const bool timed = split <= 1 && defer_pools;
+    const auto t_start = std::chrono::steady_clock::now();
+    if (split == 0)
+    {
+        sortLoops(camera, *sCull);
+    }
+    else
+    {
+        static std::vector<SortDelta> ledger_a, ledger_b;
+        if (split == 1)
+        {
+            ledger_a.clear();
+            sSortSink = &ledger_a;
+            sortLoops(camera, *sCull);
+            sSortSink = nullptr;
+            const auto t_mid = std::chrono::steady_clock::now();
+            {
+                LL_CPU_ZONE("stateSort: apply deltas");
+                applySortDeltas(ledger_a);
+            }
+            if (timed)
+            {
+                time_apply += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_mid).count();
+                time_loops[1] += std::chrono::duration<double, std::milli>(t_mid - t_start).count();
+                effects += (U32)ledger_a.size();
+                ++sorts[1];
+            }
+        }
+        else
+        {
+            sortSplitCheck(camera, ledger_a, ledger_b);
+        }
+    }
+    if (timed && split == 0)
+    {
+        time_loops[0] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_start).count();
+        ++sorts[0];
+    }
+    if (timed && sort_split_setting() >= 0 && sort_split_setting() <= 1 && ++window % 600 == 0)
+    {
+        LL_INFOS("SortSplit") << "stateSort loops (early sort, ms per sort): split off " << (sorts[0] ? time_loops[0] / sorts[0] : 0.0) << " over " << sorts[0] << " sorts; split on: compute "
+                              << (sorts[1] ? time_loops[1] / sorts[1] : 0.0) << " + apply " << (sorts[1] ? time_apply / sorts[1] : 0.0) << " = " << (sorts[1] ? (time_loops[1] + time_apply) / sorts[1] : 0.0)
+                              << " over " << sorts[1] << " sorts, " << (sorts[1] ? (double)effects / sorts[1] : 0.0) << " effects a sort" << LL_ENDL;
+        time_loops[0] = time_loops[1] = time_apply = 0.0;
+        sorts[0] = sorts[1] = effects = 0;
     }
 
     { LL_CPU_ZONE("stateSort: postSort"); postSort(camera); }
@@ -4347,6 +4661,7 @@ void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
 
         if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
         { //avoid redundant stateSort calls
+            sort_journal_group(group);
             group->mLastUpdateDistance = group->mDistance;
         }
     }
