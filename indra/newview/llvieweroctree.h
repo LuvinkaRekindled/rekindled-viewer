@@ -316,6 +316,7 @@ public:
     // adds the group's box to the Hi-Z batch when it has none awaited (shift: the object cache's region origin, to agent space)
     void hizCollect(LLCamera* camera, const LLVector4a* shift = NULL);
     void hizInvalidate() { mHizStale = true; }  // the group changed (an object was added): the verdict awaited, if any, is out of date
+    bool hizNeedsMainThread() const { return mHizStale && isHizAwaiting(); }   // <FS> checkOcclusion would clear the occlusion state of the subtree (the parallel stateSort leaves such a sort to the main thread)
     virtual void hizResult(bool occluded);
     bool isOcclusionState(U32 state) const { return mOcclusionState[LLViewerCamera::sCurCameraID] & state; }
     U32  getOcclusionState() const { return mOcclusionState[LLViewerCamera::sCurCameraID];}

@@ -1649,6 +1649,15 @@ void LLSpatialBridge::updateDistance(LLCamera& camera_in, bool force_update)
 
     if (mDrawable == NULL)
     {
+        if (LLPipeline::sSortSink)
+        {
+            LLPipeline::sSortSink->push_back({ LLPipeline::SortDelta::BRIDGE_DEAD, 0, this, nullptr, 0.f });       // <FS> stateSort split
+            return;
+        }
+        if (LLPipeline::sSortTee)
+        {
+            LLPipeline::sSortTee->push_back({ LLPipeline::SortDelta::BRIDGE_DEAD, 0, this, nullptr, 0.f });
+        }
         markDead();
         return;
     }
