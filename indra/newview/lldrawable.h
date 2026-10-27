@@ -288,6 +288,10 @@ public:
 
     F32             mDistanceWRTCamera;
 
+    // <FS> a rigid attachment: the world matrix of its attachment point when its move chain last ran (LLVOAvatar::idleUpdateMisc skips the chain while the joint stays within a millimetre / 0.06 degrees of it)
+    F32             mAttJointApplied[15];
+    bool            mAttJointValid = false;
+
     static F32 sCurPixelAngle; //current pixels per radian
 
 private:

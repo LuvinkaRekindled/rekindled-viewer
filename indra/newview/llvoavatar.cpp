@@ -87,6 +87,7 @@
 #include "lltoolmgr.h"
 #include "lltoolmorph.h"
 #include "llviewercamera.h"
+#include "llviewerwindow.h"
 #include "llviewertexlayer.h"
 #include "llviewertexturelist.h"
 #include "llviewermenu.h"
@@ -3190,11 +3191,39 @@ struct AvScope
 struct AttStats
 {
     U64 avatars = 0, skipFrames = 0, attachments = 0, rigged = 0, rigid = 0, noBridge = 0, skipped = 0, ovApplied = 0, ovSkipped = 0, riggedSelected = 0;
+    U64 rigidSkipped = 0;      // rigid attachments whose drawable and bridge move were left out (FSSkipStaticRigidAttachmentUpdates)
     U64 rigidFirst = 0, rigidSame = 0, rigidMovedTiny = 0, rigidMoved1mm = 0;      // rigid attachments: the attachment point's world matrix against the one when the loop last saw it (unchanged / more than 0.1 mm / more than 1 mm)
     U64 nsPre = 0, nsLoop = 0, nsRigged = 0, nsRigid = 0, nsExtents = 0, nsOverride = 0, nsMove = 0, nsBridge = 0, nsText = 0;
     U32 firstFrame = 0;
 };
 AttStats gAttStats;
+// an attachment that only follows its joint: nothing selected, flexible, animated, lighted, sounding or emitting particles in it or its children, not a HUD
+inline bool att_plain(const LLViewerObject* root)
+{
+    auto plain = [](const LLViewerObject* o)
+    {
+        if (o->isSelected() || o->isFlexible() || o->isAnimatedObject() || o->isAudioSource() || o->isParticleSource())
+        {
+            return false;
+        }
+        return !(o->getPCode() == LL_PCODE_VOLUME && static_cast<const LLVOVolume*>(o)->getIsLight());
+    };
+    if (root->isHUDAttachment() || !plain(root))
+    {
+        return false;
+    }
+    if (root->numChildren() > 0)
+    {
+        for (const LLPointer<LLViewerObject>& child : root->getChildren())
+        {
+            if (child.notNull() && !plain(child.get()))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 inline std::chrono::steady_clock::time_point att_now() { return gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point(); }
 inline U64 att_ns(std::chrono::steady_clock::time_point since) { return gFSAvTimersOn ? (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count() : 0; }
 }
@@ -3640,6 +3669,20 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
         // When the avatar's box and its attachments have been the same for a couple of frames, the rigged attachments are only updated every 8th frame
         // (staggered per avatar); anything that moves the avatar, changes what it wears, or selects an attachment brings the full update back at once.
         static LLCachedControl<bool> skip_static_rigged(gSavedSettings, "FSSkipStaticRiggedAttachmentUpdates", true);
+        // <FS> the same for the rigid ones, one by one: while the attachment point's world matrix is within 1 mm / 0.06 degrees of the one the attachment's last move was made with, its drawable move,
+        // bridge move and everything downstream of them (moved list, partition moves) would come out the same. Not for the viewer's own avatar, a selected attachment, one that is not plain (light,
+        // flexible, particles, sound, animesh, HUD, linksets with those) or one whose object changed (MOVED); every 8th frame (staggered per attachment) runs in full anyway.
+        static LLCachedControl<bool> skip_static_rigid(gSavedSettings, "FSSkipStaticRigidAttachmentUpdates", true);
+        const U32 rigid_frame = (U32)LLFrameTimer::getFrameCount();
+        // the tolerance is a quarter of a pixel on the screen at the avatar's distance (1 mm up close, up to 2 cm far away)
+        F32 rigid_tolerance = 0.001f;
+        if (skip_static_rigid && !isSelf())
+        {
+            LLViewerCamera* view_camera = LLViewerCamera::getInstance();
+            const F32 height_px = (F32)llmax(gViewerWindow->getWorldViewHeightRaw(), 1);
+            const F32 distance = dist_vec(getPositionAgent(), view_camera->getOrigin());
+            rigid_tolerance = llclamp(distance * 0.25f * 2.f * tanf(0.5f * view_camera->getView()) / height_px, 0.001f, 0.02f);
+        }
         bool skip_rigged_this_frame = false;
         if (skip_static_rigged && !isSelf() && !attachment_selected && mDrawable.notNull())
         {
@@ -3753,8 +3796,32 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                         }
                     }
 
+                    bool skip_rigid = false;
+                    if (skip_static_rigid && !rigged && bridge && !attachment_selected && !isSelf())
+                    {
+                        LLDrawable* att_drawable = attached_object->mDrawable;
+                        const F32* joint = attachment->getWorldMatrix4a().getF32ptr();
+                        if (att_drawable->mAttJointValid && ((rigid_frame + attached_object->mID.mData[1]) & 7) != 0 && !attached_object->isChanged(LLXform::MOVED))
+                        {
+                            const F32* last = att_drawable->mAttJointApplied;
+                            const F32 tolerance = rigid_tolerance;      // metres in the translation, the same number in the rotation elements (a lever of a metre)
+                            bool same = true;
+                            for (int k = 0; k < 15 && same; ++k)
+                            {
+                                same = fabsf(joint[k] - last[k]) <= tolerance;
+                            }
+                            skip_rigid = same && att_plain(attached_object.get());
+                        }
+                        if (!skip_rigid)
+                        {
+                            memcpy(att_drawable->mAttJointApplied, joint, sizeof(att_drawable->mAttJointApplied));
+                            att_drawable->mAttJointValid = true;
+                        }
+                        gAttStats.rigidSkipped += skip_rigid;
+                    }
+
                     // if selecting any attachments, update all of them as non-damped
-                    if (!skip_update)
+                    if (!skip_update && !skip_rigid)
                     {
                         LL_CPU_ZONE("att: drawable move");
                         const auto t = att_now();
@@ -3779,10 +3846,13 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     {
                         if (!rigged)
                         {
-                            LL_CPU_ZONE("att: bridge move (not rigged)");
-                            const auto t = att_now();
-                            gPipeline.updateMoveNormalAsync(bridge);
-                            gAttStats.nsBridge += att_ns(t);
+                            if (!skip_rigid)
+                            {
+                                LL_CPU_ZONE("att: bridge move (not rigged)");
+                                const auto t = att_now();
+                                gPipeline.updateMoveNormalAsync(bridge);
+                                gAttStats.nsBridge += att_ns(t);
+                            }
                         }
                         else
                         {
@@ -3835,6 +3905,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     F, (double)s.avatars / F, (double)s.skipFrames / F, (double)s.attachments / F, (double)s.rigged / F, (double)s.rigid / F, (double)s.noBridge / F, (double)s.skipped / F, (double)s.ovApplied / F, (double)s.ovSkipped / F,
                     (double)s.nsLoop / 1e6 / F, (double)s.nsPre / 1e6 / F, (double)s.nsRigged / 1e6 / F, (double)s.nsRigged / 1e3 / R, (double)s.nsRigid / 1e6 / F, (double)s.nsRigid / 1e3 / G,
                     (double)s.nsExtents / 1e6 / F, (double)s.nsOverride / 1e6 / F, (double)s.nsMove / 1e6 / F, (double)s.nsBridge / 1e6 / F, (double)s.nsText / 1e6 / F) << LL_ENDL;
+                LL_INFOS("AttLoop") << llformat("rigid attachments whose drawable and bridge move were skipped (joint within 1 mm / 0.06 degrees of the last applied), per frame: %.1f", (double)s.rigidSkipped / F) << LL_ENDL;
                 LL_INFOS("AttLoop") << llformat("rigid attachments with a bridge, per frame: first seen %.1f, joint matrix unchanged since the last visit (within 0.1 mm) %.1f, moved more than 0.1 mm %.1f (more than 1 mm %.1f)",
                     (double)s.rigidFirst / F, (double)s.rigidSame / F, (double)s.rigidMovedTiny / F, (double)s.rigidMoved1mm / F) << LL_ENDL;
                 gAttStats = AttStats();
