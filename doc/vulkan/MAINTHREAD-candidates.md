@@ -182,3 +182,15 @@ Next: add a Defender exclusion for the cache folder (the user's call, a security
 - **Census (rg1-, per frame, 230 rigged attachments):** under 8 m 11.0 visited / 11.0 in full (0.040 ms); 16-32 m 17.8 / 7.7 (0.044); **32-64 m 199.5 / 58.8 (0.51 ms, 0.28 ms of it for the ones run in full)**; over 64 m 1.7 / 0.4. The plaza crowd is at 32-64 m and its moving avatars (box not stable) were updated in full every frame.
 - **Built `FSStaggerFarRiggedAttachments` (default true):** beyond 16 m the rigged attachments of a moving avatar are updated every 2nd frame, beyond 32 m every 4th (staggered by id), while the avatar's box moves less than 10 cm a frame (faster: full). They are still skinned with the avatar's joints every frame; what lags is the octree box and the bridge (the cull) by less than the avatar's step.
 - **Result (rg2- against rg1-):** run in full at 32-64 m 58.8 -> 29.4 a frame (0.281 -> 0.145 ms), deferred completion 36.6 -> 32.4 us per avatar, the loop 1.452 -> 1.272 ms (380 against 408 attachments, so per attachment 3.56 -> 3.35 us); about 0.15 ms of main thread. Device lost 0; Adam: everything looked good.
+
+## The shadow render map job in chunks (2026-10-26, lap mc1- against sp1-, `crowded`)
+
+`shadowPrepRenderMap` now takes a range of the cascade's visible groups and a result of its own (`LL_VK_MAP_CHUNK`, default 192 groups; 0 = one chunk a cascade as before): `generateSunShadow` runs the chunks on the pool and appends them to the cascade's result in chunk order (draw infos by pass type, alpha and rigged alpha groups, `mSceneGroups`, the verify owner map), the pattern of the marking chunks. The biggest cascade's job was the longest wait on the pool.
+
+| | sp1- | mc1- |
+|---|---|---|
+| render map wait | 0.31 ms (0.21 blocked) | 0.09 ms (0 blocked) |
+| render map phase (`note_shadow_prep_frame`) | 0.309 ms | 0.121 ms |
+| `generateSunShadow` | 2.04 ms (0.35 blocked) | 1.90 ms (0.15 blocked) |
+
+About 0.15 ms of main thread (the crowds differ: the loop was 13.4 against 14.1 ms with the thread running 13.0 against 13.9). Draw infos per cascade pass came out the same within the crowd's noise (alpha 725 x 525 jobs against 127 x 2,775 chunks, 381k against 352k). Device lost 0. Visual check of the shadows by Adam pending.

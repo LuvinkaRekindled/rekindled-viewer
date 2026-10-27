@@ -10537,10 +10537,10 @@ static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPip
 }
 
 // worker: the render map of the cascade (the loop in postSort)
-void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
+void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end, LLCullResult& local)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    ShadowPrepScope scope(prep);
+    ShadowPrepScope scope(prep, &local);        // (what is pushed lands in `local`, and is appended to the cascade's result in chunk order afterwards: a result is not safe for two threads)
 
     LLCullResult& result = *prep.mResult;
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
@@ -10550,9 +10550,10 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
     const bool skip_static = sViewJobsSkipStatic.load(std::memory_order_relaxed);
     U64 n_groups = 0, n_resident = 0, n_static = 0, n_rigged = 0, n_alpha = 0, n_other = 0, n_skipped = 0;
 
-    for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
+    LLCullResult::sg_iterator visible_groups = result.beginVisibleGroups();
+    for (U32 gi = begin; gi < end; ++gi)
     {
-        LLSpatialGroup* group = *i;
+        LLSpatialGroup* group = visible_groups[gi];
 
         if (group->isDead())
         {
@@ -10572,7 +10573,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep)
             const LLSceneFragment* fragment = group->mSceneFragment;
             if (!(fragment && fragment->mSerial == group->mDrawMapSerial && fragment->mResident))
             {
-                result.mSceneGroups.push_back(group);
+                local.mSceneGroups.push_back(group);
             }
             else
             {
@@ -22422,27 +22423,66 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 sViewJobsSkipStatic.store(view_jobs_on() && rt_sun_cascades_unused() && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static,
                                           std::memory_order_relaxed);
             }
-            std::vector<double> map_ms(pending.size(), 0.0);
-            const std::function<void(size_t)> map_job = [&](size_t i)
+            // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
+            // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
+            static const U32 map_chunk_size = getenv("LL_VK_MAP_CHUNK") ? (U32)atoi(getenv("LL_VK_MAP_CHUNK")) : 192;
+            struct MapChunk { size_t mPrep; U32 mBegin, mEnd; std::unique_ptr<LLCullResult> mLocal; double mMs; };
+            std::vector<MapChunk> map_chunks;
+            for (size_t p = 0; p < pending.size(); ++p)
+            {
+                const U32 n = pending[p].mResult->getVisibleGroupsSize();
+                const U32 step = map_chunk_size ? map_chunk_size : std::max<U32>(n, 1u);
+                for (U32 b = 0; b < n || (b == 0 && n == 0); b += step)
+                {
+                    map_chunks.push_back({ p, b, std::min(n, b + step), std::make_unique<LLCullResult>(), 0.0 });
+                    if (n == 0) { break; }
+                }
+            }
+            const std::function<void(size_t)> map_job = [&](size_t c)
             {
                 const auto t0 = job_census ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
-                shadowPrepRenderMap(pending[i]);
-                if (job_census) { map_ms[i] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+                shadowPrepRenderMap(pending[map_chunks[c].mPrep], map_chunks[c].mBegin, map_chunks[c].mEnd, *map_chunks[c].mLocal);
+                if (job_census) { map_chunks[c].mMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
             };
             const auto map_wall0 = std::chrono::steady_clock::now();
-            { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(pending.size(), map_job); }
+            { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(map_chunks.size(), map_job); }
+            for (MapChunk& c : map_chunks)
+            {
+                LLCullResult& into = *pending[c.mPrep].mResult;
+                LLCullResult& from = *c.mLocal;
+                for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
+                {
+                    for (LLCullResult::drawinfo_iterator d = from.beginRenderMap(type); d != from.endRenderMap(type); ++d)
+                    {
+                        into.pushDrawInfo(type, *d);
+                    }
+                }
+                for (LLCullResult::sg_iterator g = from.beginAlphaGroups(); g != from.endAlphaGroups(); ++g)
+                {
+                    into.pushAlphaGroup(*g);
+                }
+                for (LLCullResult::sg_iterator g = from.beginRiggedAlphaGroups(); g != from.endRiggedAlphaGroups(); ++g)
+                {
+                    into.pushRiggedAlphaGroup(*g);
+                }
+                into.mSceneGroups.insert(into.mSceneGroups.end(), from.mSceneGroups.begin(), from.mSceneGroups.end());
+                if (!from.mGeoOwner.empty())
+                {
+                    into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());
+                }
+            }
             if (job_census)
             {
                 PrepJobCensus& c = sPrepJobCensus;
                 c.mWallMs[1] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - map_wall0).count();
                 double longest = 0.0;
-                for (size_t i = 0; i < pending.size(); ++i)
+                for (const MapChunk& chunk : map_chunks)
                 {
-                    c.mSumMs[1] += map_ms[i];
-                    longest = std::max(longest, map_ms[i]);
+                    c.mSumMs[1] += chunk.mMs;
+                    longest = std::max(longest, chunk.mMs);
                     ++c.mJobs[1];
-                    c.mCascadeMs[1][pending[i].mIndex & 3] += map_ms[i];
-                    ++c.mCascadeJobs[1][pending[i].mIndex & 3];
+                    c.mCascadeMs[1][pending[chunk.mPrep].mIndex & 3] += chunk.mMs;
+                    ++c.mCascadeJobs[1][pending[chunk.mPrep].mIndex & 3];
                 }
                 c.mLongestMs[1] += longest;
             }
