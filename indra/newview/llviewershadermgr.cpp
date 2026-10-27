@@ -213,7 +213,7 @@ static void make_pull_twins()
         LLShaderProgram& src = *sources[k];
         LLShaderProgram& twin = sPullTwins[k];
         static const bool twins_off = []() { const char* e = getenv("LL_VK_PULL_TWINS"); return e && e[0] == '0'; }();       // (the old draws, for a comparison run)
-        static const std::string skip_list = []() { const char* e = getenv("LL_VK_PULL_TWIN_SKIP"); return std::string(",") + (e ? e : "") + ","; }();       // (indices of twins to leave off, e.g. "16,17": a bisect for a comparison run)
+        static const std::string skip_list = []() { const char* e = getenv("LL_VK_PULL_TWIN_SKIP"); return std::string(",") + (e ? e : "0,1,2") + ","; }();       // <FS> 0, 1, 2 (water, underwater, water haze) are off by default: with the water twin the water reflection flickered and did not reflect right (2026-10-27, found with LL_VK_PULL_TWINS=0); an empty value turns them back on       // (indices of twins to leave off, e.g. "16,17": a bisect for a comparison run)
         const bool skipped = skip_list.find("," + std::to_string(k) + ",") != std::string::npos;
         if (twins_off || skipped || !LLVkBridge::shadowAlphaPacketsAvailable() || src.mProgramObject == 0)
         {
