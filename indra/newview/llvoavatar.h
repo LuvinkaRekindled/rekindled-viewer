@@ -622,6 +622,11 @@ private:
     bool        mDeferredMatricesOnly = false; // <FS> hidden avatar: only its skeleton's world matrices are worked out on the worker (no pose blend)
     bool        mDeferredSitGroundConstrained = false;
     bool        mDeferredVisible = false;
+public:
+    U64         mRtNameLast = 0;                // the frame the main view last named this avatar's rigged draws to the ray scene (pipeline.cpp rt_name_rigged_main_view)
+    U64         mRtNameChecked = ~0ull;         // the frame mRtNameDue was decided in
+    bool        mRtNameDue = true;
+private:
     bool        mDeferredDetailedUpdate = false;
 
     S32         mUpdatePeriod;

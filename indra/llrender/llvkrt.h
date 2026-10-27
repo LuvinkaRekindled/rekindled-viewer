@@ -29,6 +29,7 @@ S32 hitRays();             // hitrays=N: shadow rays per local light at a traced
 S32 hitQuality();          // hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 main pass lighting at the hit)
 S32 debugView();        // view=N: the material debug view mode to show (0 = the setting RenderRTMaterialDebug)
 bool bodyRename();
+U32 skinPeriod(float distance);        // viewer frames between two new poses of an avatar this far from the eye (1 near, up to the skinperiod switch): the scene call skins an avatar no more often
 
 // LL_VK_RT_SHADOWS: 0 off, 1 ray query shadows replace the cascades, 2 split screen (left cascades, right rays), 3 disagreement map. Decided once, before the shaders compile.
 U32 shadowMode();

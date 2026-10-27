@@ -17927,10 +17927,42 @@ static U32 rt_avatar_kind(LLVOAvatar* avatar)
     return kind;
 }
 
+// Should the main view name this avatar's rigged draws to the ray scene in this frame? The scene call gives an avatar a new pose only every LLVkBridge::rtSkinPeriod(distance) viewer
+// frames (1 within 8 m, up to 4 beyond 28 m) and keeps its last structure in between, so naming a far avatar's draws every frame was main thread work (palettes, entries, texture checks)
+// that nothing used: 0.5 ms and more in a crowd. An avatar is named when its period has passed since it was last named (the shadow passes name it too, on their own cadence), the viewer's
+// own and the near ones every frame. FSRtNameByDistance = false names every avatar every frame as before.
+static bool rt_name_avatar_due(LLVOAvatar* avatar)
+{
+    static LLCachedControl<bool> by_distance(gSavedSettings, "FSRtNameByDistance", true);
+    if (!by_distance || avatar->isSelf())
+    {
+        return true;
+    }
+    if (avatar->mRtNameChecked == (U64)gFrameCount)
+    {
+        return avatar->mRtNameDue;
+    }
+    avatar->mRtNameChecked = (U64)gFrameCount;
+    const F32 distance = dist_vec(avatar->getRenderPosition(), LLViewerCamera::getInstance()->getOrigin());
+    const U32 period = LLVkBridge::rtSkinPeriod(distance);
+    const bool due = period <= 1 || avatar->mRtNameLast == 0 || (U64)gFrameCount >= avatar->mRtNameLast + period;
+    avatar->mRtNameDue = due;
+    if (due)
+    {
+        avatar->mRtNameLast = (U64)gFrameCount;
+    }
+    return due;
+}
+
 static void rt_name_rigged_main_view()
 {
+    // census (LL_VK_SCENECENSUS): what the naming sends each frame, averaged over 600 frames
+    static const bool census_on = getenv("LL_VK_SCENECENSUS") != nullptr;
+    static U64 cs_frames = 0, cs_opaque = 0, cs_frag = 0, cs_alpha = 0, cs_pal_opaque = 0, cs_pal_alpha = 0, cs_matrices = 0, cs_blob_bytes = 0;
+    U32 cs_opaque_entries = 0;
     if (LLVkBridge::rtBodyRename())
     {
+        LL_CPU_ZONE("rt name: body meshes");
         LLViewerJointMesh::noteRecentBodyMeshes();      // the body meshes drawn after the lighting (hair, skirt, eyelashes) would be named a frame late otherwise
     }
     if (rt_materials_on())
@@ -17988,6 +18020,10 @@ static void rt_name_rigged_main_view()
                 {
                     return;
                 }
+                if (!rt_name_avatar_due(params->mAvatar.get()))
+                {
+                    return;
+                }
                 LLVkBridge::ShadowSkinEntry e = {};
                 if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
                 {
@@ -18023,19 +18059,24 @@ static void rt_name_rigged_main_view()
                 }
                 entries.push_back(e);
         };
-        for (U32 type : types)
         {
-            auto* begin = gPipeline.beginRenderMap(type + 1);       // the rigged variant of a pass type is the next number
-            auto* end = gPipeline.endRenderMap(type + 1);
-            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            LL_CPU_ZONE("rt name: opaque render maps");
+            for (U32 type : types)
             {
-                LLDrawInfo* params = *i;
-                LLCullResult::increment_iterator(i, end);
-                name_one(params);
+                auto* begin = gPipeline.beginRenderMap(type + 1);       // the rigged variant of a pass type is the next number
+                auto* end = gPipeline.endRenderMap(type + 1);
+                for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+                {
+                    LLDrawInfo* params = *i;
+                    LLCullResult::increment_iterator(i, end);
+                    name_one(params);
+                }
             }
         }
+        cs_opaque_entries = (U32)entries.size();
         if (scene_geo_rigged_on() && ll_scene_geo_serving())
         {
+            LL_CPU_ZONE("rt name: fragments");
             // S4 B: the render map no longer holds the rigged draws the table serves: they are named from the fragments listed for this frame
             if (LLCullResult* cull = gPipeline.getCull())
             {
@@ -18055,6 +18096,11 @@ static void rt_name_rigged_main_view()
         }
         if (!entries.empty())
         {
+            LL_CPU_ZONE("rt name: opaque blob + shadowPackets");
+            cs_frag += entries.size() - cs_opaque_entries;
+            cs_opaque += cs_opaque_entries;
+            cs_pal_opaque += palettes.size();
+            cs_matrices += matrices.size() / 16;
             LLVkBridge::ShadowPacketsHeader header;
             header.mKind = 6;
             header.mEntries = (U32)entries.size();
@@ -18064,6 +18110,7 @@ static void rt_name_rigged_main_view()
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
+            cs_blob_bytes += blob.size();
             LLVkBridge::shadowPackets(header, blob.data(), blob.size());
         }
     }
@@ -18116,6 +18163,10 @@ static void rt_name_rigged_main_view()
             if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || (source.kind == KIND_GLTF && !params->mGLTFMaterial))
             {
                 if (params->mAvatar) note_why(params, 0);
+                return;
+            }
+            if (!rt_name_avatar_due(params->mAvatar.get()))
+            {
                 return;
             }
             if (!shadow_alpha_packet_ok(*params, batch, true, source.kind == KIND_GLTF))
@@ -18224,19 +18275,23 @@ static void rt_name_rigged_main_view()
             }
             entries.push_back(e);
         };
-        for (const Source& source : sources)
         {
-            const U32 type = source.kind != KIND_ALPHA ? source.type + 1 : source.type;       // PASS_ALPHA holds both
-            static std::vector<LLDrawInfo*> alpha_infos;
-            collect_main_view_draw_infos(type, alpha_infos);       // (S4 B: the render map and the draws the scene table serves)
-            for (LLDrawInfo* params : alpha_infos)
+            LL_CPU_ZONE("rt name: alpha sources");
+            for (const Source& source : sources)
             {
-                add_entry(params, source);
+                const U32 type = source.kind != KIND_ALPHA ? source.type + 1 : source.type;       // PASS_ALPHA holds both
+                static std::vector<LLDrawInfo*> alpha_infos;
+                collect_main_view_draw_infos(type, alpha_infos);       // (S4 B: the render map and the draws the scene table serves)
+                for (LLDrawInfo* params : alpha_infos)
+                {
+                    add_entry(params, source);
+                }
             }
         }
         // alpha BLENDED rigged draws (the blond hair layer of a mesh head, clothes) are not in the render maps: the alpha pool walks the rigged alpha groups and their draw maps (LLDrawPoolAlpha::renderAlpha),
         // so the ray scene never saw them: the reflection showed the opaque layer under the hair only
         {
+            LL_CPU_ZONE("rt name: blended groups");
             static const Source blended = { LLRenderPass::PASS_ALPHA, KIND_ALPHA };
             // debug aid (about once in 600 frames): what the rigged alpha groups hold and which check turns the viewer's own avatar's blended draws away
             static U64 last_blend_log = 0;
@@ -18318,6 +18373,10 @@ static void rt_name_rigged_main_view()
         }
         if (!entries.empty())
         {
+            LL_CPU_ZONE("rt name: alpha blob + shadowPackets");
+            cs_alpha += entries.size();
+            cs_pal_alpha += palettes.size();
+            cs_matrices += matrices.size() / 16;
             LLVkBridge::ShadowPacketsHeader header;
             header.mKind = 7;
             header.mEntries = (U32)entries.size();
@@ -18327,8 +18386,16 @@ static void rt_name_rigged_main_view()
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
+            cs_blob_bytes += blob.size();
             LLVkBridge::shadowPackets(header, blob.data(), blob.size());
         }
+    }
+    if (census_on && ++cs_frames == 600)
+    {
+        const double n = 600.0;
+        LL_INFOS("RtNameCensus") << "rigged naming per frame (600 frames): opaque entries " << cs_opaque / n << ", fragment entries " << cs_frag / n << ", alpha entries " << cs_alpha / n
+                                 << ", palette floats opaque " << cs_pal_opaque / n << " alpha " << cs_pal_alpha / n << ", matrices " << cs_matrices / n << ", blob bytes " << cs_blob_bytes / n << LL_ENDL;
+        cs_frames = cs_opaque = cs_frag = cs_alpha = cs_pal_opaque = cs_pal_alpha = cs_matrices = cs_blob_bytes = 0;
     }
 }
 
@@ -18379,19 +18446,20 @@ void LLPipeline::renderDeferredLighting()
 
         glm::mat4 mat = get_current_modelview();
 
-        setupHWLights();  // to set mSun/MoonDir;
+        { LL_CPU_ZONE("lighting: setupHWLights"); setupHWLights(); }  // to set mSun/MoonDir;
 
         // <FS> ray query shadows: the casters the shadow passes named become this frame's scene (acceleration structures), traced by the lighting below
         if (RenderShadowDetail > 0 && LLVkBridge::rtShadowMode())
         {
             if (!gCubeSnapshot)
             {
+                LL_CPU_ZONE("lighting: rt name rigged");
                 rt_name_rigged_main_view();         // the avatars of the main view, whatever the shadow passes did this frame
             }
-            rt_flush_materials();
+            { LL_CPU_ZONE("lighting: rt flush materials"); rt_flush_materials(); }
             LLVkBridge::RtSceneArgs scene;
             memcpy(scene.mView, glm::value_ptr(mat), sizeof(scene.mView));
-            LLVkBridge::rtScene(scene);
+            { LL_CPU_ZONE("lighting: rtScene call"); LLVkBridge::rtScene(scene); }
         }
 
         glm::vec4 tc(mSunDir);
@@ -18440,7 +18508,11 @@ void LLPipeline::renderDeferredLighting()
             }
         }
 
-        LLRenderTarget* accumulated = (RenderDeferredSSAO && !gCubeSnapshot) ? accumulateSunShadow(deferred_light_target) : nullptr;       // <FS> the blur reads the accumulated sun shadow when there is one
+        LLRenderTarget* accumulated = nullptr;
+        {
+            LL_CPU_ZONE("lighting: accumulate sun shadow");
+            accumulated = (RenderDeferredSSAO && !gCubeSnapshot) ? accumulateSunShadow(deferred_light_target) : nullptr;       // <FS> the blur reads the accumulated sun shadow when there is one
+        }
 
         // <FS> with the upscaler on, the lightmap blur (two passes of 13 depth tests and taps a pixel, 12% of the pixel shader warps in the GPU Trace of 2026-10-26) is left out: the sun shadow is
         // accumulated over frames (RenderRTShadowAccumulate) or denoised by the upscaler, and the upscaler averages the SSAO noise. RenderShadowBlurWithDLSS brings it back.
