@@ -18000,6 +18000,12 @@ static bool rt_name_avatar_due(LLVOAvatar* avatar)
 
 static void rt_name_rigged_main_view()
 {
+    // census (LL_VK_ITEMCENSUS): how far the pose of an avatar moved between two namings (the ray scene refits an avatar's structure as often as it is named): the largest change of a joint matrix element
+    // of its biggest skin, in metres for the translation and as a plain number for the rotation (about metres at a lever of a metre), by distance
+    static const bool pose_census = ItemCensus::on();
+    static U64 pose_hist[4][9] = {}, pose_calls = 0, pose_first = 0;
+    static std::unordered_map<LLVOAvatar*, const std::vector<F32>*> pose_best;
+    pose_best.clear();
     // census (LL_VK_SCENECENSUS): what the naming sends each frame, averaged over 600 frames
     static const bool census_on = getenv("LL_VK_SCENECENSUS") != nullptr;
     static U64 cs_frames = 0, cs_opaque = 0, cs_frag = 0, cs_alpha = 0, cs_pal_opaque = 0, cs_pal_alpha = 0, cs_matrices = 0, cs_blob_bytes = 0;
@@ -18072,6 +18078,15 @@ static void rt_name_rigged_main_view()
                 if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
                 {
                     return;
+                }
+                if (pose_census)
+                {
+                    const LLVOAvatar::MatrixPaletteCache& mpc = params->mAvatar->updateSkinInfoMatrixPalette(params->mSkinInfo);
+                    auto best = pose_best.find(params->mAvatar.get());
+                    if (best == pose_best.end() || best->second->size() < mpc.mGLMp.size())
+                    {
+                        pose_best[params->mAvatar.get()] = &mpc.mGLMp;
+                    }
                 }
                 e.mVertexBuffer = vb->getVertexBufferId();
                 e.mIndexBuffer = vb->getIndexBufferId();
@@ -18432,6 +18447,53 @@ static void rt_name_rigged_main_view()
             memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
             cs_blob_bytes += blob.size();
             LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+        }
+    }
+    if (pose_census)
+    {
+        const LLVector3 camera_origin = LLViewerCamera::getInstance()->getOrigin();
+        for (auto& entry : pose_best)
+        {
+            LLVOAvatar* avatar = entry.first;
+            const std::vector<F32>& now = *entry.second;
+            if (avatar->mRtPosePrev.size() == now.size() && !now.empty())
+            {
+                F32 worst = 0.f;
+                for (size_t k = 0; k < now.size(); ++k)
+                {
+                    worst = std::max(worst, fabsf(now[k] - avatar->mRtPosePrev[k]));
+                }
+                const F32 distance = dist_vec(avatar->getRenderPosition(), camera_origin);
+                const int d = distance < 16.f ? 0 : (distance < 32.f ? 1 : (distance < 64.f ? 2 : 3));
+                static const F32 edges[8] = { 0.0001f, 0.0005f, 0.001f, 0.0025f, 0.005f, 0.01f, 0.02f, 0.05f };
+                int b = 0;
+                while (b < 8 && worst >= edges[b])
+                {
+                    ++b;
+                }
+                ++pose_hist[d][b];
+            }
+            avatar->mRtPosePrev = now;
+        }
+        if (++pose_calls % 600 == 0)
+        {
+            static const char* const names[4] = { "<16 m", "16-32 m", "32-64 m", ">64 m" };
+            std::string text;
+            for (int d = 0; d < 4; ++d)
+            {
+                U64 total = 0;
+                for (int b = 0; b < 9; ++b) { total += pose_hist[d][b]; }
+                text += llformat(" | %s (%llu namings): ", names[d], (unsigned long long)total);
+                U64 below = 0;
+                static const char* const labels[9] = { "0.1mm", "0.5mm", "1mm", "2.5mm", "5mm", "10mm", "20mm", "50mm", "more" };
+                for (int b = 0; b < 9; ++b)
+                {
+                    below += pose_hist[d][b];
+                    if (b < 8) { text += llformat("<%s %.0f%% ", labels[b], total ? 100.0 * (double)below / (double)total : 0.0); }
+                }
+            }
+            LL_INFOS("PoseCensus") << "pose change of an avatar between two namings to the ray scene (cumulative share of namings with a largest joint matrix element change below):" << text << LL_ENDL;
+            memset(pose_hist, 0, sizeof(pose_hist));
         }
     }
     if (census_on && ++cs_frames == 600)
