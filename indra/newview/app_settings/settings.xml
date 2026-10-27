@@ -2725,13 +2725,13 @@
     <key>FSImpostorMaxDistance</key>
     <map>
       <key>Comment</key>
-      <string>Avatars farther than this many metres are impostors whatever their visibility rank (RenderAvatarMaxNonImpostors only orders the nearer ones). 0 = only the rank decides. An impostor skips the avatar's draw and most of its update.</string>
+      <string>Avatars farther than this many metres are impostors whatever their visibility rank (RenderAvatarMaxNonImpostors only orders the nearer ones). 0 = only the rank decides. Default 45 (2026-10-27, doc/vulkan/MAINTHREAD-candidates.md: 2.2 ms of main thread in a crowd). An impostor skips the avatar's draw and most of its update.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0</real>
+      <real>45</real>
     </map>
     <key>RenderFarAvatarDistance</key>
     <map>
