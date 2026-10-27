@@ -4944,6 +4944,34 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
     }
 }
 
+// <FS> the render map loop of postSort for the main view in chunks over the pool (the cascades' render map job does the same, shadowPrepRenderMap): LL_VK_MAIN_MAP_CHUNK = visible groups a chunk
+// (default 192, 0 = the serial loop). Test switch (LL_VK_FARTIER_FILE=1): <work>/main-map.txt holding a chunk size replaces it, read every 60 frames, for same lap comparisons.
+static U32 main_map_chunk()
+{
+    static const U32 env_chunk = getenv("LL_VK_MAIN_MAP_CHUNK") ? (U32)atoi(getenv("LL_VK_MAIN_MAP_CHUNK")) : 192;
+    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
+    if (!file_on)
+    {
+        return env_chunk;
+    }
+    static U32 last_frame = ~0u;
+    static S64 value = -1;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (frame != last_frame && frame % 60 == 0)
+    {
+        last_frame = frame;
+        value = -1;
+        if (FILE* f = fopen("<work>/main-map.txt", "rb"))
+        {
+            char text[24] = {};
+            fread(text, 1, sizeof(text) - 1, f);
+            fclose(f);
+            value = atoi(text);
+        }
+    }
+    return value >= 0 ? (U32)value : env_chunk;
+}
+
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -5015,7 +5043,177 @@ void LLPipeline::postSort(LLCamera &camera)
     {
         sCull->mGeoElided = true;
     }
-    for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
+    // <FS> the main view's map in chunks over the pool: the groups are filtered and rebuilt here first (the rebuilds are GL work), the chunks then only read them and push into results of their
+    // own, which are appended in chunk order (the same lists, the same order). Left serial when a census wants its counters in the loop.
+    bool parallel_map = false;
+    {
+        static const U32 min_groups = 256;
+        const U32 chunk_size = main_map_chunk();
+        const U32 n_groups = sCull->getVisibleGroupsSize();
+        if (chunk_size && n_groups >= min_groups && !vis_post && !geo_owner && !scene_stats && !cascade_cull_active && !LLGpuZoneTimer::isActive()
+            && &camera == LLViewerCamera::getInstance() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs)
+        {
+            LLForkJoinPool* pool = LLForkJoinPool::shared();
+            if (pool)
+            {
+                parallel_map = true;
+                LL_CPU_ZONE("postSort: render map (chunks)");
+                {
+                    LL_CPU_ZONE("postSort: render map (rebuilds)");
+                    for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
+                    {
+                        LLSpatialGroup* group = *i;
+                        if (group->isDead()
+                            || (sUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                            || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
+                        {
+                            continue;
+                        }
+                        if (group->hasState(LLSpatialGroup::NEW_DRAWINFO) && group->hasState(LLSpatialGroup::GEOM_DIRTY))
+                        {
+                            group->rebuildGeom();
+                        }
+                    }
+                }
+                ll_scene_geo_type_number(0);        // (makes the lookup table once, on this thread)
+                struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; };
+                static std::vector<std::unique_ptr<LLCullResult>> locals;
+                std::vector<MapChunk> chunks;
+                for (U32 b = 0; b < n_groups; b += chunk_size)
+                {
+                    const size_t c = chunks.size();
+                    if (locals.size() <= c)
+                    {
+                        locals.push_back(std::make_unique<LLCullResult>());
+                    }
+                    locals[c]->clear();
+                    chunks.push_back({ b, std::min(n_groups, b + chunk_size), locals[c].get() });
+                }
+                LLCullResult::sg_iterator visible_groups = sCull->beginVisibleGroups();
+                const bool no_far_skip = far_skip.empty();
+                const std::function<void(size_t)> map_job = [&](size_t c)
+                {
+                    MapChunk& chunk = chunks[c];
+                    LLCullResult& local = *chunk.mLocal;
+                    for (U32 gi = chunk.mBegin; gi < chunk.mEnd; ++gi)
+                    {
+                        LLSpatialGroup* group = visible_groups[gi];
+                        if (group->isDead()
+                            || (sUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                            || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
+                        {
+                            continue;
+                        }
+                        if (!no_far_skip && far_skip.count(group))
+                        {
+                            continue;
+                        }
+                        if (geo_list && group->mGeoHandle)
+                        {
+                            local.mGeoHandles.push_back(group->mGeoHandle);
+                            if (geo_elide && group->mGeoServedTris)
+                            {
+                                ++chunk.mElideGroups;
+                                chunk.mElideTris += group->mGeoServedTris;
+                                chunk.mIndices += group->mGeoServedTris;
+                            }
+                            if (geo_elide && group->mGeoAllServed && r2_whole_groups)
+                            {
+                                ++chunk.mElideWhole;
+                                continue;
+                            }
+                        }
+                        for (LLSpatialGroup::draw_map_t::iterator j = group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
+                        {
+                            LLSpatialGroup::drawmap_elem_t& src_vec = j->second;
+                            if (!hasRenderType(j->first))
+                            {
+                                continue;
+                            }
+                            if (geo_elide && group->mGeoServedMask)
+                            {
+                                const int tn = ll_scene_geo_type_number(j->first);
+                                if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)))
+                                {
+                                    ++chunk.mElideTypes;
+                                    continue;
+                                }
+                            }
+                            for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
+                            {
+                                LLDrawInfo* info = *k;
+                                local.pushDrawInfo(j->first, info);
+                                chunk.mIndices += info->mCount;
+                            }
+                        }
+                        if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+                        {
+                            if (group->mDrawMap.find(LLRenderPass::PASS_ALPHA) != group->mDrawMap.end())
+                            {
+                                local.pushAlphaGroup(group);            // (the distance is updated by the main thread when the lists are joined)
+                            }
+                            if (group->mDrawMap.find(LLRenderPass::PASS_ALPHA_RIGGED) != group->mDrawMap.end())
+                            {
+                                local.pushRiggedAlphaGroup(group);
+                            }
+                        }
+                    }
+                };
+                { LL_CPU_ZONE("postSort: render map job (wait for the pool)"); pool->run(chunks.size(), map_job); }
+                {
+                    LL_CPU_ZONE("postSort: render map join");
+                    const bool alpha_pool = hasRenderType(LLDrawPool::POOL_ALPHA);
+                    S32 indices = 0;
+                    for (MapChunk& chunk : chunks)
+                    {
+                        LLCullResult& from = *chunk.mLocal;
+                        for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
+                        {
+                            for (LLCullResult::drawinfo_iterator d = from.beginRenderMap(type); d != from.endRenderMap(type); ++d)
+                            {
+                                sCull->pushDrawInfo(type, *d);
+                            }
+                        }
+                        for (LLCullResult::sg_iterator g = from.beginAlphaGroups(); g != from.endAlphaGroups(); ++g)
+                        {
+                            LLSpatialGroup* group = *g;
+                            LLSpatialBridge* bridge = group->getSpatialPartition()->asBridge();
+                            if (bridge)
+                            {
+                                LLCamera trans_camera = bridge->transformCamera(camera);
+                                group->updateDistance(trans_camera);
+                            }
+                            else
+                            {
+                                group->updateDistance(camera);
+                            }
+                            if (alpha_pool)
+                            {
+                                sCull->pushAlphaGroup(group);
+                            }
+                        }
+                        if (alpha_pool)
+                        {
+                            for (LLCullResult::sg_iterator g = from.beginRiggedAlphaGroups(); g != from.endRiggedAlphaGroups(); ++g)
+                            {
+                                sCull->pushRiggedAlphaGroup(*g);
+                            }
+                        }
+                        sCull->mGeoHandles.insert(sCull->mGeoHandles.end(), from.mGeoHandles.begin(), from.mGeoHandles.end());
+                        sGeoElideGroups += chunk.mElideGroups;
+                        sGeoElideTypes += chunk.mElideTypes;
+                        sGeoElideWhole += chunk.mElideWhole;
+                        sGeoElideTris += chunk.mElideTris;
+                        indices += chunk.mIndices;
+                    }
+                    addTrianglesDrawn(indices);
+                }
+            }
+        }
+    }
+    // (the serial loop below does nothing when the chunks made the map: its range is empty)
+    const LLCullResult::sg_iterator serial_end = parallel_map ? sCull->beginVisibleGroups() : sCull->endVisibleGroups();
+    for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != serial_end; ++i)
     {
         LLSpatialGroup *group = *i;
 
