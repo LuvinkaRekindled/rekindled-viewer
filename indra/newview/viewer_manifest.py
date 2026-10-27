@@ -1196,7 +1196,13 @@ class Windows_x86_64_Manifest(ViewerManifest):
                     nsis_path = possible_path
                     break
 
-        self.run_command([possible_path, '/V2', self.dst_path_of(tempfile)])
+        # <FS> local builds without NSIS installed: the base package (the files under Release) is made, the installer is not (the build used to fail here with FileNotFoundError)
+        if nsis_path == "makensis.exe" and shutil.which("makensis.exe") is None:
+            print("NSIS (makensis.exe) is not installed: skipping the installer")
+            self.package_file = installer_file      # (llmanifest.main prints it; no file of that name is made)
+            return
+
+        self.run_command([nsis_path, '/V2', self.dst_path_of(tempfile)])
 
         self.fs_sign_win_installer(substitution_strings) # <FS:ND/> Sign files, step two. Sign installer.
         self.fs_save_windows_symbols()
