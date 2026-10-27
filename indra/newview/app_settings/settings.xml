@@ -2722,6 +2722,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSAvatarFarUpdateDistance</key>
+    <map>
+      <key>Comment</key>
+      <string>A fully rendered avatar farther than this many metres (not an impostor, not your own, not sitting, not moving fast) updates its pose, position and attachments every 2nd frame, beyond 1.6 times this distance every 3rd; the pose is held in between and the animation catches up at the next update. 0 = every frame (the default: the gain was about 0.15 ms and an avatar at 23 m looked like a slideshow in a test, 2026-10-27). The camera zoom is taken into account (a zoomed in view counts as nearer).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0</real>
+    </map>
     <key>FSImpostorMaxDistance</key>
     <map>
       <key>Comment</key>
