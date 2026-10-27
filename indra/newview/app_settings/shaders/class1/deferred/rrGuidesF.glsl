@@ -29,11 +29,23 @@
  * $/LicenseInfo$
  */
 
-out vec4 frag_data[3];
+out vec4 frag_data[4];
 
 in vec2 vary_fragcoord;
 
 uniform mat3 view_to_world;     // the rotation from the eye space the G-buffer normals are in to the world space the denoiser is told about
+
+// <FS> the fourth output is the motion vector of what the traced reflection shows (what rrReflMotionF.glsl made in a pass of its own): the reads and the maths are the same
+uniform sampler2D diffuseMap;       // the surface motion vectors (rg, pixels)
+uniform sampler2D bumpMap;          // the traced reflection's hit distance (r, metres from the surface; 0 = not traced)
+uniform mat4 inv_scene;             // jittered clip space of this frame -> world
+uniform mat4 view_proj_cur;         // world -> unjittered clip space of this frame
+uniform mat4 view_proj_prev;        // world -> unjittered clip space of the last frame
+uniform vec3 cam_pos;               // the camera in the world
+uniform vec2 render_res;
+uniform float use_refl;             // 0: the hit distance is not valid yet (the output is the surface motion)
+
+vec4 getNorm(vec2 pos_screen);
 
 vec4 getPosition(vec2 pos_screen);
 float getDepth(vec2 pos_screen);
@@ -101,4 +113,22 @@ void main()
     frag_data[0] = vec4(clamp(diffuse, 0.0, 1.0), 1.0);
     frag_data[1] = vec4(clamp(specular, 0.0, 1.0), 1.0);
     frag_data[2] = vec4(n, rough);
+
+    vec2 mv = texture(diffuseMap, tc).rg;
+    float t = use_refl > 0.5 ? texture(bumpMap, tc).r : 0.0;
+    if (t > 0.0 && depth < 1.0)
+    {
+        vec4 w = inv_scene * vec4(tc * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+        vec3 p = w.xyz / w.w;
+        vec3 nw = normalize(view_to_world * getNorm(tc).xyz);
+        vec3 r = reflect(normalize(p - cam_pos), nw);
+        vec4 h = vec4(p + r * t, 1.0);
+        vec4 cur = view_proj_cur * h;
+        vec4 prev = view_proj_prev * h;
+        if (cur.w > 0.0 && prev.w > 0.0)
+        {
+            mv = (prev.xy / prev.w - cur.xy / cur.w) * 0.5 * render_res;
+        }
+    }
+    frag_data[3] = vec4(mv, 0.0, 0.0);
 }

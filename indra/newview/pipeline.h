@@ -186,7 +186,7 @@ public:
     LLRenderTarget          mRRHitDist;     // render size R16F: metres from a glossy pixel to what its reflection ray hit (0: not traced)
     bool                    mRRHitDistPending = false;      // the soften pass of this frame writes the distance
     bool                    mRRHitDistValid = false;        // mRRHitDist holds this frame's distances
-    LLRenderTarget          mRRGuides;      // render size: 0 diffuse albedo, 1 specular albedo, 2 world normal + roughness (all RGBA16F)
+    LLRenderTarget          mRRGuides;      // render size: 0 diffuse albedo, 1 specular albedo, 2 world normal + roughness (all RGBA16F), 3 the reflection motion (RG16F)
     LLRenderTarget          mRRHdr;         // window size RGBA16F: what ray reconstruction outputs
     LLRenderTarget          mRRPing;        // window size RGBA16F: the post chain after the upscale
     LLRenderTarget          mRRPong;
