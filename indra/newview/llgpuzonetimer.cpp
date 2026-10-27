@@ -15,6 +15,7 @@
 #include "llfasttimer.h"
 #include "llrenderheaders.h"
 #include "llvkzones.h"
+#include "llvkbridge.h"
 #include "lluniformcensus.h"
 #include "llshaderprogram.h"
 #include "llviewercontrol.h"
@@ -635,8 +636,21 @@ namespace
             {
                 continue;
             }
-            const unsigned long long frame_no = sHwFrameNo.load();
-            const double age = (double)(hw_now() - last) / ticks_per_ms;
+            unsigned long long frame_no = sHwFrameNo.load();
+            double age = (double)(hw_now() - last) / ticks_per_ms;
+            const char* clock_name = "the main loop has not finished frame";
+            // the worker's presents are the second clock: a frame the main thread finished on time can still reach the screen late (the GPU, the swap chain, the worker waiting)
+            const long long present = LLVkBridge::lastPresentTicks();
+            if (present)
+            {
+                const double present_age = (double)(hw_now() - present) / ticks_per_ms;
+                if (present_age > age)
+                {
+                    age = present_age;
+                    frame_no = ~(unsigned long long)present;        // (an id of its own: the stall ends when a present comes)
+                    clock_name = "the worker has not presented since main frame";
+                }
+            }
             if (age < threshold_ms)
             {
                 if (episode != ~0ull && frame_no != episode)
@@ -701,7 +715,7 @@ namespace
                 hw_capture(tids[i], caps[i]);
             }
             const DWORD main_tid = sHwMainTid.load();
-            LL_WARNS("HitchWatch") << "the main loop has not finished frame " << frame_no << " for " << age << " ms (capture " << captures << " of the stall), " << caps.size() << " threads" << LL_ENDL;
+            LL_WARNS("HitchWatch") << clock_name << " " << sHwFrameNo.load() << " for " << age << " ms (capture " << captures << " of the stall), " << caps.size() << " threads" << LL_ENDL;
             for (const HwCap& cap : caps)
             {
                 if (!cap.mCount)

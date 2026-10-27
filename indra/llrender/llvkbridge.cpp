@@ -58,6 +58,7 @@ bool LLVkBridge::rtBodyRename() { return false; }
 U32 LLVkBridge::rtSkinPeriod(float) { return 1; }
 void LLVkBridge::rtScene(const RtSceneArgs&) {}
 void LLVkBridge::presentFrame() {}
+long long LLVkBridge::lastPresentTicks() { return 0; }
 void LLVkBridge::shutdown() {}
 void LLVkBridge::setBindlessPersistent(bool) {}
 void LLVkBridge::stopAsync() {}
@@ -728,6 +729,11 @@ void LLVkBridge::endFrame()
     }
     endFrameImpl();
     maybe_start_async();
+}
+
+long long LLVkBridge::lastPresentTicks()
+{
+    return LLVkAsync::lastPresentTicks();
 }
 
 void LLVkBridge::presentFrame()

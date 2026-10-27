@@ -532,6 +532,8 @@ static PassInfo gPass;      // worker thread: the pass the last CMD_PASS began
 static U32 gPrepareFrame = 0;                       // S6.3: the producer frame of the last kind 21 record
 static U64 gFrameRefReads = 0, gFrameRefStale = 0;  // ... and the kind 22 / 29 records checked against it, and the ones from another frame
 static U32 gClosePresents = 0;
+static std::atomic<long long> sLastPresentTicks{ 0 };
+long long LLVkAsync::lastPresentTicks() { return sLastPresentTicks.load(std::memory_order_relaxed); }
 const PassInfo& currentPass() { return gPass; }
 
 void framebufferAttach(U32 fbo, U32 slot, U32 texture)
@@ -2443,6 +2445,11 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     }
     case CMD_PRESENT:
         LLVkBridge::presentFrameImpl();
+        {
+            LARGE_INTEGER present_now;
+            QueryPerformanceCounter(&present_now);
+            sLastPresentTicks.store(present_now.QuadPart, std::memory_order_relaxed);
+        }
         if (LLVkPassCensus::sOn) LLVkPassCensus::present();
         if (++gClosePresents >= 600)
         {
