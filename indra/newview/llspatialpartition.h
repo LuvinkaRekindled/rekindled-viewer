@@ -479,6 +479,9 @@ public:
     bool visibleObjectsInFrustum(LLCamera& camera);
     /*virtual*/ S32 cull(LLCamera &camera, bool do_occlusion=false); // Cull on arbitrary frustum
     S32 cull(LLCamera &camera, std::vector<LLDrawable *>* results, bool for_select); // Cull on arbitrary frustum
+    // <FS> stage 3a: cull(camera) in pieces (see LLViewerOctreeCull::traverseTop); the main view only (no shadow culler)
+    void cullSplit(LLCamera& camera, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task);
+    void cullTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task);
 
     bool isVisible(const LLVector3& v);
     bool isHUDPartition() ;
