@@ -83,6 +83,23 @@ U64 LLRender::sUiHashCycles = 0;
 U64 LLRender::sUiCensusCycles[LLRender::UI_CENSUS_SLOTS] = {};
 U64 LLRender::sUiCensusCalls[LLRender::UI_CENSUS_SLOTS] = {};
 U64 LLRender::sUiCensusVerts = 0;
+U32 LLRender::sSegmentEpoch = 1;
+
+// static
+void LLRender::segmentBoundary()
+{
+    gRender.flush();        // immediate mode batches vertices until the next state change: the batch of the widget drawn last belongs to the stretch of records it was drawn in, with its texture
+    LLVkAsync::segmentBoundary();
+    ++sSegmentEpoch;
+    for (LLTexUnit& unit : gRender.mTexUnits)
+    {
+        unit.mCurrTexture = 0;
+    }
+    if (LLVkAsync::mainOnlyProducer())
+    {
+        LLShaderProgram::announceBound();
+    }
+}
 LLRender::UiCensusScope::UiCensusScope(int slot) : mSlot(sUiHashing ? slot : -1), mStart(sUiHashing ? __rdtsc() : 0) {}
 LLRender::UiCensusScope::~UiCensusScope()
 {
@@ -1058,6 +1075,15 @@ void LLRender::syncMatrices()
     };
 
     LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    if (shader && shader->mMatEpoch != sSegmentEpoch)
+    {
+        // <FS> a UI segment was recorded or replayed since: what this shader was given is unknown, send the matrices again
+        for (U32 k = 0; k < NUM_MATRIX_MODES; ++k)
+        {
+            shader->mMatHash[k] = 0xFFFFFFFF;
+        }
+        shader->mMatEpoch = sSegmentEpoch;
+    }
 
     static glm::mat4 cached_mvp;
     static glm::mat4 cached_inv_mdv;

@@ -2722,6 +2722,28 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSUIRecordCache</key>
+    <map>
+      <key>Comment</key>
+      <string>Cache the draw records of the larger parts of the interface (floaters, toolbars, bars) and play them again on most frames instead of drawing the widgets again; a part is drawn again while the mouse is over it or it has the keyboard focus, and every few frames otherwise (see FSUIRecordCacheHz). 0 = off, 1 = on.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
+    <key>FSUIRecordCacheHz</key>
+    <map>
+      <key>Comment</key>
+      <string>FSUIRecordCache: how often a part of the interface that nothing is touching is drawn again, in times a second (at most every 4th frame whatever the frame rate: 90 fps at 30 gives every 3rd frame).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>30</real>
+    </map>
     <key>FSAvatarFarUpdateDistance</key>
     <map>
       <key>Comment</key>

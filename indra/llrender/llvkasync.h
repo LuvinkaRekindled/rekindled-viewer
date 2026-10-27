@@ -19,6 +19,7 @@
 #include "llrenderformat.h"
 
 #include <functional>
+#include <vector>
 #include <string>
 
 namespace LLVkAsync
@@ -59,6 +60,10 @@ namespace LLVkAsync
         void end();                 // on the same thread: the pending slots and uniform writes go into the buffer
         void splice();              // on the main thread: appends the buffer to the queue, then resets it
         U32 records() const;
+        // UI record cache (doc/vulkan/PLAN-ui-record-cache.md)
+        void reseed();              // main thread: the render state the next begin() starts from is the main producer's now
+        const std::vector<U8>& bytes() const;   // the records written since begin() (before splice())
+        bool leftState() const;     // end() found the render state different from where begin() started
     private:
         SubStream(const SubStream&) = delete;
         SubStream& operator=(const SubStream&) = delete;
@@ -105,6 +110,29 @@ namespace LLVkAsync
     // S6.2: a pass is closed: everything it reads of the state classes that used to persist from the pass before (render state block, program uniform class blocks, texture units, uniform buffer
     // bindings, constant attributes, the program of the packet records, the vertex binding) is sent again at its first use in the pass. passEpoch changes with every pass record.
     unsigned long long passEpoch();
+    // UI record cache: a segment of records (a view's draw, recorded in a sub-stream on the main thread) that can be played again later. segmentBoundary() is what the end of a pass does to
+    // the producer's beliefs (render state, draw binding, texture units, uniform buffer bindings and constant attributes are sent again at their first use) without a pass record; call it
+    // right before a segment is recorded or replayed and right after (then what the producer believes and what the worker holds agree again, whichever of the two ran).
+    void segmentBoundary();
+    struct SegmentScan
+    {
+        bool mCacheable = true;         // only records a replay may repeat: state, draws, texture slots, uniforms, program binds, sampler units, constant attributes
+        U16 mBadOp = 0;                 // the first record that is not (the Cmd), when not cacheable
+        U32 mRecords = 0, mDraws = 0;
+        std::vector<U32> mTextures;     // the texture ids the draws and slot records name (sorted, unique)
+        std::vector<U32> mBuffers;      // the vertex / index buffer names the draws' bindings name (sorted, unique): a replay draws from them by name
+    };
+    void scanSegment(const U8* data, size_t size, SegmentScan& out);
+    void replaySegment(const U8* data, size_t size);        // main producer: appends the records to the queue as a splice does (no state adopted)
+    void spliceSideEffects(const U8* data, size_t size);    // main producer: only the records of a recording that are not state, draws, texture slots, uniforms, program binds, sampler units or constant attributes
+                                                            // (texture and glyph uploads, buffer writes, resource creation: what a draw did to the worker besides drawing)
+    std::string describeSegmentDifference(const U8* a, size_t a_size, const U8* b, size_t b_size);       // the first record that differs (empty: equal)
+    void uiCacheNameTextures(const U32* ids, size_t count);  // the ids a cached segment names: a freed one of these bumps the epoch
+    void uiCacheTextureFreed(U32 id);                        // LLImageTex::deleteTextures
+    void uiCacheNameBuffers(const U32* names, size_t count);
+    void uiCacheBufferTouched(U32 name);                     // a named buffer is recycled, destroyed or written: a cached segment that draws from it is stale
+    void uiCacheInvalidate();                                // every cached segment is stale (a skin or colour reload, a window resize)
+    unsigned long long uiCacheEpoch();                       // changes when a program is destroyed, a named texture is freed, or uiCacheInvalidate() is called: every cached segment is stale
     void uniformRangeAnnounce(void* program, U32 cls, U32 offset, U32 size, const void* data);      // uniformRange, marked as a full class block announced at the first use of the program in a pass
     // the pass being played (worker thread): what the last pass record said
     struct PassInfo { U32 mId = 0, mParent = 0, mFbo = 0; S32 mBuffers = 0; U32 mSite = 0, mKind = 0; };

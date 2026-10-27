@@ -548,6 +548,10 @@ public:
     // census only (newview/llitemcensus.h): a running hash of everything the UI emits (immediate batches and cached text buffers), to find the views whose output
     // is the same as in the previous frame
     static bool sUiHashing;
+    // <FS> UI record cache: the beliefs of the CPU side that a recorded or replayed stretch of records makes wrong. Calls LLVkAsync::segmentBoundary(), forgets which texture each unit holds and which
+    // matrices each shader was given, and (on the main producer) announces the bound program's uniform blocks. Before and after a segment is recorded or replayed.
+    static void segmentBoundary();
+    static U32 sSegmentEpoch;
     static U64 sUiHashAccum;
     // LL_VK_ITEMCENSUS: inclusive time (processor cycles) and calls of the UI drawing entry points while sUiHashing is on: 0 text (LLFontGL::render), 1 images, 2 rects / lines, 3 flush
     enum { UI_CENSUS_SLOTS = 11 };      // 0 text, 1 images, 2 rects, 3 flush with vertices, 4 matrix push/pop/translate, 5 clip rects, 6 texture binds, 7 calcScreenRect, 8 views drawn (calls only), 9 empty flush calls (calls only), 10 views drawn entirely outside the clip rect (inclusive draw time)
