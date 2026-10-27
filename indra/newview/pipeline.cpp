@@ -1099,7 +1099,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         {
             // <FS> ray reconstruction (the albedos are 16 bit: linear 8 bit bands in the darks): the guides at the render size, its output and the post chain that follows at the window size. The chain is 16 bit
             // too: it used to run at the render size before the upscale, whose temporal averaging hid the 8 bit steps of dark gradients; after the upscale nothing hides them
-            if (!mRRGuides.allocate(resX, resY, TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F)
+            if (!mRRGuides.allocate(resX, resY, TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RG16F)
                 || !mRRHitDist.allocate(resX, resY, TexelFormat::R16F) || !mRRReflMotion.allocate(resX, resY, TexelFormat::RG16F) || !mRRHdr.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F))
             {
                 LL_WARNS("VkDlss") << "the ray reconstruction targets could not be made: ray reconstruction stays off" << LL_ENDL;
@@ -17849,19 +17849,34 @@ F32 LLPipeline::farDistanceScale()
 bool LLPipeline::rayReconstructionActive()
 {
     return rrDebugMode() != 5 && sRR && sDLSS && !gCubeSnapshot && mMotionMap.isComplete() && mUpscaledMap.isComplete() && mRRGuides.isComplete() && mRRHdr.isComplete() && mRRPing.isComplete() && mRRPong.isComplete()
-           && mRRGuides.getNumTextures() >= 3 && gRRGuidesProgram.isComplete() && LLVkBridge::rayReconstructionAvailable() && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
+           && mRRGuides.getNumTextures() >= 4 && gRRGuidesProgram.isComplete() && LLVkBridge::rayReconstructionAvailable() && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
 }
 
 // <FS> The guide buffers ray reconstruction wants, from the G-buffer (rrGuidesF.glsl)
 void LLPipeline::generateRRGuides(LLRenderTarget* dst)
 {
     LL_PROFILE_GPU_ZONE("rr guides");
-    const glm::mat3 view_to_world = glm::mat3(glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview)));
+    const glm::mat4 view_inv = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
+    const glm::mat3 view_to_world = glm::mat3(view_inv);
     static LLStaticHashedString view_to_world_s("view_to_world");
+    // <FS> the fourth output of the pass is the reflection motion (what generateRRReflectionMotion made in a pass of its own: one full screen pass less)
+    const glm::dmat4 inv_scene = glm::inverse(glm::dmat4(LLViewerCamera::sJitteredProjection) * glm::dmat4(LLViewerCamera::sJitterModelview));
+    const glm::mat4 inv_scene_f = glm::mat4(inv_scene);
+    const glm::mat4 view_proj_cur = mViewProjCur;
+    const glm::mat4 view_proj_prev = mViewProjPrevValid ? mViewProjPrev : mViewProjCur;
+    static LLStaticHashedString inv_scene_s("inv_scene"), cur_s("view_proj_cur"), prev_s("view_proj_prev"), cam_s("cam_pos"), res_s("render_res"), use_s("use_refl");
 
     RenderPassScope pass(*dst);
     bindDeferredShader(gRRGuidesProgram);
     gRRGuidesProgram.uniformMatrix3fv(view_to_world_s, 1, false, glm::value_ptr(view_to_world));
+    gRRGuidesProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mMotionMap, false, LLTexUnit::TFO_POINT, 0);
+    gRRGuidesProgram.bindTexture(LLShaderMgr::BUMP_MAP, &mRRHitDist, false, LLTexUnit::TFO_POINT, 0);
+    gRRGuidesProgram.uniformMatrix4fv(inv_scene_s, 1, false, glm::value_ptr(inv_scene_f));
+    gRRGuidesProgram.uniformMatrix4fv(cur_s, 1, false, glm::value_ptr(view_proj_cur));
+    gRRGuidesProgram.uniformMatrix4fv(prev_s, 1, false, glm::value_ptr(view_proj_prev));
+    gRRGuidesProgram.uniform3f(cam_s, view_inv[3][0], view_inv[3][1], view_inv[3][2]);
+    gRRGuidesProgram.uniform2f(res_s, (F32)dst->getWidth(), (F32)dst->getHeight());
+    gRRGuidesProgram.uniform1f(use_s, mRRHitDistValid ? 1.f : 0.f);
     {
         LLRenderState::BlendScope blend(false);
         LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
@@ -17899,9 +17914,9 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
         a.mSpecularAlbedo = mRRGuides.getTexture(1);
         a.mNormals = mRRGuides.getTexture(2);
         a.mExposure = mExposureMap.getTexture(0);
-        if (mRRReflMotionValid && mRRReflMotion.isComplete())
+        if (mRRReflMotionValid && mRRGuides.getNumTextures() >= 4)
         {
-            a.mReflectionMotion = mRRReflMotion.getTexture(0);      // what the traced reflections show, moved by the camera
+            a.mReflectionMotion = mRRGuides.getTexture(3);      // what the traced reflections show, moved by the camera (the fourth output of the guides pass)
         }
         if (mRRHitDistValid && mRRHitDist.isComplete() && rrDebugMode() == 10)       // test: the hit distance guide with matrices instead of the motion vectors
         {
@@ -18797,11 +18812,10 @@ void LLPipeline::renderFinalize()
         if (dlss && rayReconstructionActive())
         {
             generateRRGuides(&mRRGuides);
-            mRRReflMotionValid = false;
-            if (mRRHitDistValid && mRRReflMotion.isComplete() && gRRReflMotionProgram.isComplete() && rrDebugMode() != 7)
+            mRRReflMotionValid = mRRHitDistValid && rrDebugMode() != 7;        // (the reflection motion is the fourth output of the guides pass)
+            if (rrDebugMode() == 8 && mRRHitDistValid && mRRReflMotion.isComplete() && gRRReflMotionProgram.isComplete())
             {
-                generateRRReflectionMotion(&mRRReflMotion);
-                mRRReflMotionValid = true;
+                generateRRReflectionMotion(&mRRReflMotion);                    // the debug view of it (mode 8) reads the target of the old pass
             }
             if (rrDebugMode() == 1)
             {
