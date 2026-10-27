@@ -151,6 +151,9 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
         static LLCachedControl<F32> rt_lod_far(gSavedSettings, "RenderRTShadowAlphaLodFar", 20.f);
         static LLStaticHashedString lod_s("rt_sun_lod");
         shader->uniform2f(lod_s, alpha_sun == 1 ? 0.f : rt_lod_near(), rt_lod_far());
+        static LLCachedControl<F32> rt_max_dist(gSavedSettings, "RenderRTShadowAlphaMaxDistance", 48.f);
+        static LLStaticHashedString maxdist_s("rt_sun_maxdist");
+        shader->uniform1f(maxdist_s, rt_max_dist());
     }
 
     if (LLPipeline::sRenderingHUDs)
@@ -768,6 +771,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         header.mKind = 29;
         header.mEntries = (U32)pending.size();
         header.mPass = rigged ? 1 : 0;
+        header.mFragment = depth_only ? 2u : (mFringePass ? 1u : 0u);       // (the worker names the GPU time of the kinds of pass: 1 the rigged fringe, 2 a depth only pass)
         {
             LLRenderState::CullScope cull_face(false, ((pending_key >> 16) & 1) != 0 || ((pending_key >> 18) & 1) != 0);       // a double sided glTF material, a particle group: culling off for its run
             LLVkBridge::shadowPackets(header, pending.data(), pending.size() * sizeof(PendingRange));

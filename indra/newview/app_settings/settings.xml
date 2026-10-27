@@ -2722,6 +2722,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>RenderRTShadowAlphaMaxDistance</key>
+    <map>
+      <key>Comment</key>
+      <string>Ray traced sun shadow on alpha blended surfaces (hair, glass, foliage, decals): a blended pixel farther than this many metres from the camera is lit without a shadow ray (the ground behind it keeps its shadow). The rays were about 1.2 ms of GPU in a crowd (2026-10-27, doc/vulkan/MAINTHREAD-candidates.md). 0 = no limit (rays at every distance up to the shadow range).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>48</real>
+    </map>
     <key>RenderRTShadowAlphaRays</key>
     <map>
       <key>Comment</key>
