@@ -46,6 +46,7 @@
 #include "llviewertexturelist.h"    // For debugging
 #include "llviewerobjectlist.h" // For debugging
 #include "llviewerwindow.h"
+#include "llitemcensus.h"
 #include "pipeline.h"
 #include "llvkbridge.h"          // <FS> rtShadowMode()
 #include "llalphatransient.h"      // <FS> S5f F3
@@ -228,7 +229,8 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     }
 
     // final pass, render to depth for depth of field effects
-    if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    // (<FS> not when ray reconstruction is on: the depth of field is skipped there (postProcess: !rr_done), so this pass would draw all the alpha again for a depth nothing reads)
+    if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER && !gPipeline.rayReconstructionActive())
     {
         // mask off color buffer writes as we're only writing to depth buffer
         gRender.setColorMask(false, false);
@@ -604,6 +606,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         {
             return;
         }
+        ItemCensus::Scope census_scope(ItemCensus::ALPHA_TR_FLUSH);
+        ItemCensus::add(ItemCensus::ALPHA_TR_FLUSH, tr.mEntries.size());
         const size_t entries_bytes = tr.mEntries.size() * sizeof(LLVkBridge::GeoEntry), matrix_bytes = tr.mMatrices.size() * sizeof(F32), texmat_bytes = tr.mTexmats.size() * sizeof(F32), pbr_bytes = tr.mPbr.size() * sizeof(F32);
         tr.mBlob.resize(entries_bytes + matrix_bytes + texmat_bytes + pbr_bytes);
         U8* at = tr.mBlob.data();
@@ -648,6 +652,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // an entry for the draw (its GL names made now: the old bind marks a texture in use, regenerates a deleted one and applies its sampler options, prepareFast does the same)
     auto tr_add = [&](const LLAlphaTransient& t, const LLDrawInfo& draw)
     {
+        ItemCensus::Scope census_scope(ItemCensus::ALPHA_TR_ADD);
+        ItemCensus::add(ItemCensus::ALPHA_TR_ADD, tr_rigged ? 1 : 0);
         if (tr.mMatrices.empty())
         {
             tr_matrix(nullptr);         // matrix 0: the view alone
@@ -690,6 +696,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         {
             return;
         }
+        ItemCensus::Scope census_scope(ItemCensus::ALPHA_RUN_FLUSH);
+        ItemCensus::add(ItemCensus::ALPHA_RUN_FLUSH, pending.size());
         if (!pass_begun)
         {   // the pass's matrices, once: the runs that follow carry only their ranges
             F32 matrices[32];
@@ -806,6 +814,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // a new run: the pull program of its key bound, the blend function, the per-draw values a plain draw has (spec 1, env 0, brightness 1)
     auto run_begin = [&](int key)
     {
+        ItemCensus::Scope census_scope(ItemCensus::ALPHA_RUN_BEGIN);
         const int pkey = key & 0xFF;        // the program: 0 lit, 1 fullbright, 2 + mask a material, 18 PBR; the blend function pair id is in bits 8-15, bit 16: double sided, bit 17: rigged
         const bool skinned = ((key >> 17) & 1) != 0;
         LLShaderProgram* pull;
@@ -973,7 +982,12 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 
             bool disable_cull = is_particle_or_hud_particle;
             LLAlphaPlanView plan;
-            const bool group_plan = alpha_table && !is_particle_or_hud_particle && ll_alpha_plan(group, plan, rigged) == 1 && plan.mHandle != 0;
+            bool group_plan;
+            {
+                ItemCensus::Scope census_scope(ItemCensus::ALPHA_PLAN);
+                group_plan = alpha_table && !is_particle_or_hud_particle && ll_alpha_plan(group, plan, rigged) == 1 && plan.mHandle != 0;
+                ItemCensus::add(ItemCensus::ALPHA_PLAN, group_plan ? 1 : 0);
+            }
             U32 plan_ord = 0, plan_seg = 0;
             if (!group_plan)
             {
