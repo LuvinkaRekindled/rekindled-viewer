@@ -1930,6 +1930,11 @@ bool LLVOVolume::updateLOD()
 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VOLUME;
 
+    if (LLPipeline::sSortJournalOn)
+    {
+        LLPipeline::sortJournalVolume(this);        // <FS> stateSort split check: what calcLOD is about to write
+    }
+
     bool lod_changed = false;
 
     if (!LLSculptIDSize::instance().isUnloaded(getVolume()->getParams().getSculptID()))

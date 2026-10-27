@@ -964,7 +964,19 @@ void LLDrawable::updateDistance(LLCamera& camera, bool force_update)
         }
 
         pos -= camera.getOrigin();
-        mDistanceWRTCamera = ll_round(pos.magVec(), 0.01f);
+        const F32 new_distance = ll_round(pos.magVec(), 0.01f);
+        if (mVObjp && !getVOVolume() && (LLPipeline::sSortSink || LLPipeline::sSortTee))
+        {
+            // <FS> stateSort split: an avatar, grass, a terrain patch: the distance and the LOD update (joint LODs, mesh data, rebuilds) are made by the apply pass, in the order they were asked for
+            const LLPipeline::SortDelta delta = { LLPipeline::SortDelta::OBJECT_LOD, 0, this, nullptr, new_distance };
+            if (LLPipeline::sSortSink)
+            {
+                LLPipeline::sSortSink->push_back(delta);
+                return;
+            }
+            LLPipeline::sSortTee->push_back(delta);
+        }
+        mDistanceWRTCamera = new_distance;
         if (mVObjp)
         {
             mVObjp->updateLOD();

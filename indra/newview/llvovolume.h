@@ -453,6 +453,10 @@ public:
     //<FS:Beq> FIRE-21445
     void forceLOD(S32 lod);
     //</FS:Beq>
+    // <FS> the fields calcLOD writes (stateSort split check: LLPipeline::sortJournalVolume)
+    struct LODState { S32 mLOD; F32 mLODDistance, mLODAdjustedDistance, mLODRadius, mAppAngle; bool mLODChanged; };
+    LODState saveLODState() const { return { mLOD, mLODDistance, mLODAdjustedDistance, mLODRadius, mAppAngle, mLODChanged }; }
+    void restoreLODState(const LODState& s) { mLOD = s.mLOD; mLODDistance = s.mLODDistance; mLODAdjustedDistance = s.mLODAdjustedDistance; mLODRadius = s.mLODRadius; mAppAngle = s.mAppAngle; mLODChanged = s.mLODChanged; }
     LLViewerTextureAnim *mTextureAnimp;
     U8 mTexAnimMode;
     F32 mLODDistance;

@@ -52,6 +52,7 @@ class LLViewerObject;
 class LLTextureEntry;
 class LLCullResult;
 class LLVOAvatar;
+class LLVOVolume;
 class LLVOPartGroup;
 class LLShaderProgram;
 class LLDrawPoolAlpha;
@@ -335,6 +336,26 @@ public:
     // <FS> defer_pools: the sort for the main view run BEFORE the shadow passes. It does everything except the pool face lists (which the shadow passes reset and fill for themselves):
     // the drawables that would be queued in a pool are remembered, and refillPools() queues them after the shadows, in the same order
     void stateSort(LLCamera& camera, LLCullResult& result, bool defer_pools = false);
+
+    // <FS> the stateSort split (doc/vulkan/PLAN-statesort-offmain.md, stage 1): the loops of stateSort make their writes to shared state (the rebuild and partition move queues, the LOD update of
+    // avatars and other objects, the mesh rebuilds) through one list of deltas that is applied in the order it was recorded. LL_VK_SORT_SPLIT=1 sorts that way (compute everything, then apply);
+    // =2 is the check: the loops run twice, deferred (nothing applied, the fields they write put back) and then as before with the same list recorded, and the two lists are compared.
+    struct SortDelta
+    {
+        enum Kind : U8 { REBUILD_DRAWABLE = 0, PARTITION_MOVE, REBUILD_GROUP, OBJECT_LOD, REBUILD_MESH };
+        Kind mKind;
+        U32 mFlag;                  // REBUILD_DRAWABLE: the LLDrawable::EDrawableFlags
+        LLDrawable* mDrawable;
+        LLSpatialGroup* mGroup;
+        F32 mDistance;              // OBJECT_LOD: the distance the drawable gets
+    };
+    static thread_local std::vector<SortDelta>* sSortSink;      // set: the effects are recorded, not made
+    static thread_local std::vector<SortDelta>* sSortTee;       // set: recorded and made (the check's second run)
+    static bool sSortJournalOn;                                  // set: the fields the loops write are saved first (the check's first run)
+    static void sortJournalVolume(LLVOVolume* volume);
+    void applySortDeltas(std::vector<SortDelta>& deltas);
+    void sortLoops(LLCamera& camera, LLCullResult& read);
+    void sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger_a, std::vector<SortDelta>& ledger_b);
     void refillPools(LLCullResult& result);
     void checkRenderMapLive(LLCullResult& result);     // LL_VK_BUILDER_VERIFY: every draw info in the render map is still one of its group's
     void stateSort(LLSpatialGroup* group, LLCamera& camera);
