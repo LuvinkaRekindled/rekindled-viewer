@@ -173,6 +173,7 @@ public:
     // <FS> DLSS ray reconstruction (FSVkRayReconstruction, needs DLSS): the denoiser / upscaler takes the noisy linear HDR picture (mRT->screen) before the tonemap, with guide buffers made from the
     // G-buffer, and gives back a window sized HDR picture; the tonemap, CAS, glow and the rest of the post chain then run at the window size on mRRPing / mRRPong.
     static bool sRR;
+    static F32 farDistanceScale();      // the factor the far avatar rules (tiers, impostor distance, fringe pass) apply to a distance: 1 at the normal field of view, less when the camera zooms in (a zoomed in avatar is looked at closely whatever its distance)
     bool rayReconstructionActive();     // sRR and everything it needs exists (targets, program, device support, no zoomed snapshot)
     void generateRRGuides(LLRenderTarget* dst);
     // the traced reflections' hit distance (specular hit distance guide): the soften pass leaves it in the alpha of the lit picture, this moves it to mRRHitDist and clears the alpha again

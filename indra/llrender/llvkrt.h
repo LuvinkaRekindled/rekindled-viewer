@@ -128,6 +128,7 @@ void holdRange(const CasterRef& ref, U32 first, U32 count, int delta);
 // Builds what the casters noted since the last call need (a budget per call), then the top-level structure for this view: the instances are transformed into eye space
 // (view * model), the space the lighting shaders work in. Recorded into the current frame outside any render pass. view: 16 floats column-major.
 void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefetch = nullptr);
+void setDistanceScale(float scale);        // the factor of the far avatar rules for the next scene call (1 at the normal field of view)
 
 // the set to bind as set 3 for the frame slot (always valid once active())
 VkDescriptorSet descriptorSet(U32 frame_slot);

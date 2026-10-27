@@ -2742,7 +2742,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>30</real>
+      <real>20</real>
     </map>
     <key>RenderFarAvatarDistance2</key>
     <map>
@@ -2753,7 +2753,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>60</real>
+      <real>40</real>
     </map>
     <key>RenderFarAvatarTriangles</key>
     <map>
@@ -2764,7 +2764,7 @@
       <key>Type</key>
       <string>S32</string>
       <key>Value</key>
-      <integer>300000</integer>
+      <integer>400000</integer>
     </map>
     <key>RenderFarAvatarTriangles2</key>
     <map>
@@ -2775,7 +2775,7 @@
       <key>Type</key>
       <string>S32</string>
       <key>Value</key>
-      <integer>150000</integer>
+      <integer>200000</integer>
     </map>
     <key>RenderRiggedAlphaFringeMaxDistance</key>
     <map>
@@ -2786,7 +2786,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>32</real>
+      <real>20</real>
     </map>
     <key>RenderRTShadowAlphaMaxDistance</key>
     <map>

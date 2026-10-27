@@ -4854,10 +4854,10 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
             return;
         }
     }
-    static LLCachedControl<F32> distance1(gSavedSettings, "RenderFarAvatarDistance", 30.f);
-    static LLCachedControl<F32> distance2(gSavedSettings, "RenderFarAvatarDistance2", 60.f);
-    static LLCachedControl<S32> budget1(gSavedSettings, "RenderFarAvatarTriangles", 300000);
-    static LLCachedControl<S32> budget2(gSavedSettings, "RenderFarAvatarTriangles2", 150000);
+    static LLCachedControl<F32> distance1(gSavedSettings, "RenderFarAvatarDistance", 20.f);
+    static LLCachedControl<F32> distance2(gSavedSettings, "RenderFarAvatarDistance2", 40.f);
+    static LLCachedControl<S32> budget1(gSavedSettings, "RenderFarAvatarTriangles", 400000);
+    static LLCachedControl<S32> budget2(gSavedSettings, "RenderFarAvatarTriangles2", 200000);
     if (budget1 <= 0 && budget2 <= 0)
     {
         return;
@@ -4894,7 +4894,7 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
     for (auto& entry : by_avatar)
     {
         LLVOAvatar* avatar = entry.first;
-        const F32 distance = avatar->mDrawable->mDistanceWRTCamera;
+        const F32 distance = avatar->mDrawable->mDistanceWRTCamera * LLPipeline::farDistanceScale();
         U8 tier = avatar->mFarTierMain;
         if (tier == 0 && distance >= distance1) tier = 1;
         else if (tier >= 1 && distance < distance1 * 0.875f) tier = 0;
@@ -16225,6 +16225,17 @@ void LLPipeline::extractRRHitDistance(LLRenderTarget* screen)
     mRRHitDistValid = true;
 }
 
+F32 LLPipeline::farDistanceScale()
+{
+    LLViewerCamera* camera = LLViewerCamera::getInstance();
+    const F32 default_fov = camera->getDefaultFOV();
+    if (default_fov <= 0.f || camera->getView() <= 0.f)
+    {
+        return 1.f;
+    }
+    return llclamp(tanf(0.5f * camera->getView()) / tanf(0.5f * default_fov), 0.05f, 1.f);
+}
+
 bool LLPipeline::rayReconstructionActive()
 {
     return rrDebugMode() != 5 && sRR && sDLSS && !gCubeSnapshot && mMotionMap.isComplete() && mUpscaledMap.isComplete() && mRRGuides.isComplete() && mRRHdr.isComplete() && mRRPing.isComplete() && mRRPong.isComplete()
@@ -18697,6 +18708,7 @@ void LLPipeline::renderDeferredLighting()
             { LL_CPU_ZONE("lighting: rt flush materials"); rt_flush_materials(); }
             LLVkBridge::RtSceneArgs scene;
             memcpy(scene.mView, glm::value_ptr(mat), sizeof(scene.mView));
+            scene.mDistanceScale = farDistanceScale();
             { LL_CPU_ZONE("lighting: rtScene call"); LLVkBridge::rtScene(scene); }
         }
 

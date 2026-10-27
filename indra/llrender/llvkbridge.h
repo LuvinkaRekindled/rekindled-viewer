@@ -318,7 +318,7 @@ namespace LLVkBridge
     U32 rtSkinPeriod(float distance);      // viewer frames between two poses the ray scene takes of an avatar this far from the eye (1 when ray tracing is off)
     // Builds the scene the shadow passes of this frame named (their casters) for the camera view: bottom-level structures as the budget allows, then the top-level structure in
     // eye space. Call before the lighting that samples the sun shadow. view: the camera's view matrix, column-major.
-    struct RtSceneArgs { F32 mView[16] = {}; };
+    struct RtSceneArgs { F32 mView[16] = {}; F32 mDistanceScale = 1.f; };       // (mDistanceScale: what the far avatar rules multiply a distance by, less than 1 when the camera zooms in)
     void rtScene(const RtSceneArgs& args);
     // the device can read buffers by address and the mirror is running
     bool shadowPacketsAvailable();
