@@ -1197,8 +1197,9 @@ class Windows_x86_64_Manifest(ViewerManifest):
                     break
 
         # <FS> local builds without NSIS installed: the base package (the files under Release) is made, the installer is not (the build used to fail here with FileNotFoundError)
-        if nsis_path == "makensis.exe" and shutil.which("makensis.exe") is None:
-            print("NSIS (makensis.exe) is not installed: skipping the installer")
+        # FS_SKIP_INSTALLER=1 skips it too (a build to run, not to hand out: the files under Release are updated either way)
+        if os.environ.get('FS_SKIP_INSTALLER') or (nsis_path == "makensis.exe" and shutil.which("makensis.exe") is None):
+            print("Installer step skipped (FS_SKIP_INSTALLER set, or NSIS (makensis.exe) is not installed)")
             self.package_file = installer_file      # (llmanifest.main prints it; no file of that name is made)
             return
 
