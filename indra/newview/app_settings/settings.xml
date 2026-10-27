@@ -2854,6 +2854,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSStaggerFarRiggedAttachments</key>
+    <map>
+      <key>Comment</key>
+      <string>Avatars: the rigged attachments of a moving avatar farther than 16 m are updated (octree box, bridge) only every 2nd frame, beyond 32 m every 4th, while the avatar moves less than 10 cm a frame; they are still drawn with the avatar's joints every frame. False updates them every frame as long as the avatar moves.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSReduceHiddenAvatarUpdates</key>
     <map>
       <key>Comment</key>
