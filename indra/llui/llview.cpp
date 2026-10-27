@@ -1297,32 +1297,11 @@ void LLView::draw()
 }
 
 // <FS> a child entirely outside the innermost clip rect (a row of a scrolled list that is not in the visible part, a tab that is scrolled away) is drawn and then discarded by the scissor: nothing
-// of it can be seen. LL_VK_UI_CULL=1 does not draw it (default 0 for now); with LL_VK_ITEMCENSUS the time of such draws is counted either way (UI census slot 10). Test switch
-// (LL_VK_FARTIER_FILE=1): <work>/ui-cull.txt holding 0 or 1 replaces the variable, read every 60 frames, for same lap comparisons.
+// of it can be seen. LL_VK_UI_CULL=1 does not draw it (default 0 for now); with LL_VK_ITEMCENSUS the time of such draws is counted either way (UI census slot 10).
 static bool ui_cull_clipped()
 {
     static const bool env_on = getenv("LL_VK_UI_CULL") && atoi(getenv("LL_VK_UI_CULL")) != 0;
-    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
-    if (!file_on)
-    {
-        return env_on;
-    }
-    static U32 last_frame = ~0u;
-    static S32 value = -1;
-    const U32 frame = (U32)LLFrameTimer::getFrameCount();
-    if (frame != last_frame && frame % 60 == 0)
-    {
-        last_frame = frame;
-        value = -1;
-        if (FILE* f = fopen("<work>/ui-cull.txt", "rb"))
-        {
-            char text[24] = {};
-            fread(text, 1, sizeof(text) - 1, f);
-            fclose(f);
-            value = atoi(text);
-        }
-    }
-    return value >= 0 ? value != 0 : env_on;
+    return env_on;
 }
 
 // true when the view (its bounding rect when it has one: it may draw outside its rect) has no pixel inside the innermost clip rect
@@ -1347,7 +1326,7 @@ static bool ui_view_clipped_out(const LLView* viewp, const LLRect& screen_rect)
 // worker is sent again). A unit is drawn live when its key changed (rect, clip, scale, matrix, entry render state, epoch), while the mouse is over it, while it holds the keyboard focus or
 // the mouse capture (and for 15 frames after), and every Nth frame (N from the frame rate and LL_VK_UI_CACHE hz), staggered between the units.
 // LL_VK_UI_CACHE=<mode> [<hz>]: 0 off (default), 1 record only (named units: LL_VK_UI_CACHE_UNITS=a,b: drawn live and recorded every frame, nothing replayed), 2 sliced replay. LL_VK_UI_CACHE_VERIFY=1:
-// on a replay frame the live draw is recorded too (not spliced) and compared with the saved bytes. Test switch (LL_VK_FARTIER_FILE=1): <work>/ui-cache.txt holding "<mode> [<hz>]".
+// on a replay frame the live draw is recorded too (not spliced) and compared with the saved bytes.
 #include "llvksubstream.h"
 #include "llrendermatrix.h"
 #include <chrono>
@@ -1409,11 +1388,10 @@ const UiCacheCfg& ui_cache_cfg()
     static UiCacheCfg cfg;
     static bool read_env = false;
     static bool env_set = false;
-    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
-    // the settings (FSUIRecordCache: 0 off, 1 on; FSUIRecordCacheHz: the UI refresh rate to aim for); the variable and the test file below override them
+    // the settings (FSUIRecordCache: 0 off, 1 on; FSUIRecordCacheHz: the UI refresh rate to aim for); the variable below overrides them
     static LLUICachedControl<S32> setting_on("FSUIRecordCache", 0);
     static LLUICachedControl<F32> setting_hz("FSUIRecordCacheHz", 30.f);
-    if (!env_set && !file_on)
+    if (!env_set)
     {
         cfg.mMode = setting_on > 0 ? 2 : 0;
         cfg.mHz = std::max(10.f, (F32)setting_hz);
@@ -1446,31 +1424,6 @@ const UiCacheCfg& ui_cache_cfg()
                 at = comma + 1;
             }
         }
-    }
-    if (file_on)
-    {
-        static U32 last_frame = ~0u;
-        static UiCacheCfg file_cfg = cfg;
-        const U32 frame = (U32)LLFrameTimer::getFrameCount();
-        if (frame != last_frame && frame % 60 == 0)
-        {
-            last_frame = frame;
-            file_cfg = cfg;
-            if (FILE* f = fopen("<work>/ui-cache.txt", "rb"))
-            {
-                char text[48] = {};
-                fread(text, 1, sizeof(text) - 1, f);
-                fclose(f);
-                int mode = -1;
-                float hz = 0.f;
-                if (sscanf(text, "%d%*[ ,;]%f", &mode, &hz) >= 1 && mode >= 0)
-                {
-                    file_cfg.mMode = mode;
-                    if (hz > 0.f) file_cfg.mHz = hz;
-                }
-            }
-        }
-        return file_cfg;
     }
     return cfg;
 }

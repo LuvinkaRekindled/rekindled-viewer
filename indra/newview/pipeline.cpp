@@ -3324,33 +3324,13 @@ static void vk_avatar_log()
 // Every partition has an octree of its own and the walk of one writes only what belongs to its groups (visibility stamps, distances, occlusion state, the group's alpha-dirty bit), to the lists of the
 // cull result, and, through markNotCulled, to the rebuild queue (calcDistance) and the wake queue. The partitions are cut into runs of the list they come in (a run is a job); each job culls into a result
 // of its own and records the queue writes in a ledger (sSortSink); the results are appended and the ledgers applied in list order, which is the order the serial loop made them in.
-// LL_VK_CULL_SPLIT=<mode> (3 on the pool, default; 0 off; 4 check: the pool's lists are compared with the serial loop's, which makes the frame); test switch (LL_VK_FARTIER_FILE=1): <work>/cull-split.txt.
+// LL_VK_CULL_SPLIT=<mode> (3 on the pool, default; 0 off; 4 check: the pool's lists are compared with the serial loop's, which makes the frame).
 namespace
 {
 int cull_split_setting()
 {
     static const int env_mode = getenv("LL_VK_CULL_SPLIT") ? atoi(getenv("LL_VK_CULL_SPLIT")) : 3;
-    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
-    if (!file_on)
-    {
-        return env_mode;
-    }
-    static U32 last_frame = ~0u;
-    static int value = -1;
-    const U32 frame = (U32)LLFrameTimer::getFrameCount();
-    if (frame != last_frame && frame % 60 == 0)
-    {
-        last_frame = frame;
-        value = -1;
-        if (FILE* f = fopen("<work>/cull-split.txt", "rb"))
-        {
-            char text[24] = {};
-            fread(text, 1, sizeof(text) - 1, f);
-            fclose(f);
-            value = atoi(text);
-        }
-    }
-    return value >= 0 ? value : env_mode;
+    return env_mode;
 }
 
 // what a job does: the walk of a whole partition, or of one subtree of a partition that was split (mSplit)
@@ -4619,7 +4599,7 @@ static bool sVisSortOn = false;     // <FS> S7 C0 (LL_VK_VISCENSUS=1): this stat
 // the LOD update of avatars and other objects that are not volumes (LLDrawable::updateDistance), and the mesh rebuilds. With a sink set (sSortSink) those calls only record a SortDelta; the apply
 // pass makes them in the order they were recorded, which is the order the loops made them, so nothing that reads that state sees a different value, except the code inside the loops itself:
 // the check (LL_VK_SORT_SPLIT=2) finds out whether any of it does, by running the loops deferred and then as before and comparing what each one asked for.
-// LL_VK_SORT_SPLIT=<mode> (3 = the compute on the pool, default; 0 off, 1 serial split, 2 and 4 checks); test switch (LL_VK_FARTIER_FILE=1): <work>/sort-split.txt, read every 60 frames.
+// LL_VK_SORT_SPLIT=<mode> (3 = the compute on the pool, default; 0 off, 1 serial split, 2 and 4 checks).
 namespace
 {
 struct SortJournal
@@ -4634,27 +4614,7 @@ thread_local SortJournal* sSortJournal = nullptr;
 int sort_split_setting()
 {
     static const int env_mode = getenv("LL_VK_SORT_SPLIT") ? atoi(getenv("LL_VK_SORT_SPLIT")) : 3;
-    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
-    if (!file_on)
-    {
-        return env_mode;
-    }
-    static U32 last_frame = ~0u;
-    static int value = -1;
-    const U32 frame = (U32)LLFrameTimer::getFrameCount();
-    if (frame != last_frame && frame % 60 == 0)
-    {
-        last_frame = frame;
-        value = -1;
-        if (FILE* f = fopen("<work>/sort-split.txt", "rb"))
-        {
-            char text[24] = {};
-            fread(text, 1, sizeof(text) - 1, f);
-            fclose(f);
-            value = atoi(text);
-        }
-    }
-    return value >= 0 ? value : env_mode;
+    return env_mode;
 }
 }
 
@@ -6251,27 +6211,6 @@ static void vis_census_alpha(LLSpatialGroup* group);        // S7 C0 (below, aft
 static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpatialGroup*>& skip)
 {
     skip.clear();         // (nothing is skipped any more: the verdict is per avatar, see above)
-    {
-        // test switch (LL_VK_FARTIER_FILE=1): <work>/far-tier.txt holding 0 turns the tier off, read every 60 frames, so one lap can compare the two with the same crowd
-        static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
-        static int file_value = -1;
-        static U32 file_calls = 0;
-        if (file_on && ++file_calls % 60 == 1)
-        {
-            file_value = -1;
-            if (FILE* f = fopen("<work>/far-tier.txt", "rb"))
-            {
-                char text[16] = {};
-                fread(text, 1, sizeof(text) - 1, f);
-                fclose(f);
-                file_value = atoi(text);
-            }
-        }
-        if (file_value == 0)
-        {
-            return;
-        }
-    }
     static LLCachedControl<F32> distance1(gSavedSettings, "RenderFarAvatarDistance", 20.f);
     static LLCachedControl<F32> distance2(gSavedSettings, "RenderFarAvatarDistance2", 40.f);
     static LLCachedControl<S32> budget1(gSavedSettings, "RenderFarAvatarTriangles", 400000);
@@ -6357,31 +6296,11 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
 }
 
 // <FS> the render map loop of postSort for the main view in chunks over the pool (the cascades' render map job does the same, shadowPrepRenderMap): LL_VK_MAIN_MAP_CHUNK = visible groups a chunk
-// (default 192, 0 = the serial loop). Test switch (LL_VK_FARTIER_FILE=1): <work>/main-map.txt holding a chunk size replaces it, read every 60 frames, for same lap comparisons.
+// (default 192, 0 = the serial loop).
 static U32 main_map_chunk()
 {
     static const U32 env_chunk = getenv("LL_VK_MAIN_MAP_CHUNK") ? (U32)atoi(getenv("LL_VK_MAIN_MAP_CHUNK")) : 192;
-    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
-    if (!file_on)
-    {
-        return env_chunk;
-    }
-    static U32 last_frame = ~0u;
-    static S64 value = -1;
-    const U32 frame = (U32)LLFrameTimer::getFrameCount();
-    if (frame != last_frame && frame % 60 == 0)
-    {
-        last_frame = frame;
-        value = -1;
-        if (FILE* f = fopen("<work>/main-map.txt", "rb"))
-        {
-            char text[24] = {};
-            fread(text, 1, sizeof(text) - 1, f);
-            fclose(f);
-            value = atoi(text);
-        }
-    }
-    return value >= 0 ? (U32)value : env_chunk;
+    return env_chunk;
 }
 
 void LLPipeline::postSort(LLCamera &camera)
