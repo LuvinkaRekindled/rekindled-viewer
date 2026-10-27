@@ -60,17 +60,22 @@ public:
 
     void run(size_t count, const std::function<void(size_t)>& fn)
     {
+        unsigned long long generation;
         {
             std::lock_guard<std::mutex> lock(mMutex);
             mFn = &fn;
-            mCount = count;
-            mNext = 0;
-            mRemaining = count;
-            mGeneration.store(mGeneration.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+            mCount.store(count, std::memory_order_relaxed);
+            mRemaining.store(count, std::memory_order_relaxed);
+            generation = mGeneration.load(std::memory_order_relaxed) + 1;
+            // the run's number (high 32 bits) and the next index to hand out (low 32 bits) are one word: a worker that is late from the run before cannot take an index of this one by mistake
+            // (with the index and the count read apart, a stale index could be valid against the new count: that job ran twice, the count of finished jobs hit zero early, run() returned while
+            // a job was still writing into results its caller was about to free)
+            mClaim.store((generation & 0xFFFFFFFFull) << 32, std::memory_order_release);
+            mGeneration.store(generation, std::memory_order_release);
         }
         mWake.notify_all();
 
-        drain();
+        drain(generation);
 
         // the last jobs are usually a moment from done: spin for a short while before sleeping on the condition variable (a wake-up costs tens of microseconds)
         if (!spinUntil([this] { return mRemaining.load(std::memory_order_acquire) == 0; }, 100))
@@ -121,14 +126,24 @@ private:
         }
     }
 
-    void drain()
+    void drain(unsigned long long generation)
     {
+        const unsigned long long tag = generation & 0xFFFFFFFFull;
         for (;;)
         {
-            const size_t index = mNext.fetch_add(1);
-            if (index >= mCount)
+            unsigned long long claim = mClaim.load(std::memory_order_acquire);
+            if ((claim >> 32) != tag)
+            {
+                return;                 // a later run has begun: this one is over
+            }
+            const size_t index = (size_t)(claim & 0xFFFFFFFFull);
+            if (index >= mCount.load(std::memory_order_relaxed))
             {
                 return;
+            }
+            if (!mClaim.compare_exchange_weak(claim, claim + 1, std::memory_order_acq_rel))
+            {
+                continue;
             }
             (*mFn)(index);
             if (mRemaining.fetch_sub(1) == 1)
@@ -155,7 +170,7 @@ private:
                 return;
             }
             seen_generation = mGeneration.load(std::memory_order_acquire);
-            drain();
+            drain(seen_generation);
         }
     }
 
@@ -165,7 +180,7 @@ private:
     std::condition_variable mDone;
     const std::function<void(size_t)>* mFn = nullptr;
     std::atomic<size_t> mCount{ 0 };
-    std::atomic<size_t> mNext{ 0 };
+    std::atomic<unsigned long long> mClaim{ 0 };      // run number << 32 | next index
     std::atomic<size_t> mRemaining{ 0 };
     std::atomic<unsigned long long> mGeneration{ 0 };
     std::atomic<bool> mStop{ false };
