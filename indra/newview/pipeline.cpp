@@ -3324,12 +3324,12 @@ static void vk_avatar_log()
 // Every partition has an octree of its own and the walk of one writes only what belongs to its groups (visibility stamps, distances, occlusion state, the group's alpha-dirty bit), to the lists of the
 // cull result, and, through markNotCulled, to the rebuild queue (calcDistance) and the wake queue. The partitions are cut into runs of the list they come in (a run is a job); each job culls into a result
 // of its own and records the queue writes in a ledger (sSortSink); the results are appended and the ledgers applied in list order, which is the order the serial loop made them in.
-// LL_VK_CULL_SPLIT=<mode> (0 off, default; 3 on the pool; 4 check: the pool's lists are compared with the serial loop's, which makes the frame); test switch (LL_VK_FARTIER_FILE=1): <work>/cull-split.txt.
+// LL_VK_CULL_SPLIT=<mode> (3 on the pool, default; 0 off; 4 check: the pool's lists are compared with the serial loop's, which makes the frame); test switch (LL_VK_FARTIER_FILE=1): <work>/cull-split.txt.
 namespace
 {
 int cull_split_setting()
 {
-    static const int env_mode = getenv("LL_VK_CULL_SPLIT") ? atoi(getenv("LL_VK_CULL_SPLIT")) : 0;
+    static const int env_mode = getenv("LL_VK_CULL_SPLIT") ? atoi(getenv("LL_VK_CULL_SPLIT")) : 3;
     static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
     if (!file_on)
     {
