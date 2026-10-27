@@ -266,6 +266,7 @@ struct DebugSwitches
     bool mVerify = false;           // every 120 scene calls: make the whole cached scene again from the groups and compare it with the one kept up to date (log line "scene cache check")
     U64 mFarTris[2] = { 100000, 40000 };   // an avatar beyond mFarDist[0] / mFarDist[1] metres gets a structure of at most this many triangles (whole draws, the largest that fit first; 0 = no limit): LL_VK_RT_FAR_TRIS / LL_VK_RT_VERYFAR_TRIS, live fartris / verytris
     F32 mFarDist[2] = { 32.f, 64.f };      // LL_VK_RT_FAR_DIST / LL_VK_RT_VERYFAR_DIST, live fardist / verydist; the tier is left again 12.5 % nearer (hysteresis)
+    U32 mSelfPeriod = 1;           // the viewer's own avatar is refit every this many viewer frames (1 = every frame; LL_VK_RT_SELF_PERIOD, live selfperiod): its structure is about 1 M triangles, 0.5 ms of GPU
     U32 mSkinPeriodMax = 4;         // avatars farther than LL_VK_RT_SKIN_NEAR (8 m) are refreshed (skinned and refitted) every 2..this many viewer frames, by distance (1 = every frame for all)
     bool mPreflush = true;          // before the builds and the skinning: record the queued writes of video-memory buffers (they are only recorded when a draw reads the buffer, which a build does not)
     bool mAvatarLog = false;
@@ -319,6 +320,7 @@ void read_debug_switches()
     d.mRigged = env_u64("LL_VK_RT_RIGGED", 1) != 0;
     d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_PERIOD_MAX", 4));
     d.mFarTris[0] = env_u64("LL_VK_RT_FAR_TRIS", 100000);
+    d.mSelfPeriod = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SELF_PERIOD", 1));
     d.mFarTris[1] = env_u64("LL_VK_RT_VERYFAR_TRIS", 40000);
     d.mFarDist[0] = (F32)env_u64("LL_VK_RT_FAR_DIST", 32);
     d.mFarDist[1] = (F32)env_u64("LL_VK_RT_VERYFAR_DIST", 64);
@@ -384,6 +386,7 @@ void read_debug_switches()
                 else if (k == "verify") d.mVerify = v != 0;
                 else if (k == "skinperiod") d.mSkinPeriodMax = (U32)std::max<long long>(1, v);
                 else if (k == "fartris") d.mFarTris[0] = (U64)std::max<long long>(0, v);
+                else if (k == "selfperiod") d.mSelfPeriod = (U32)std::max<long long>(1, v);
                 else if (k == "verytris") d.mFarTris[1] = (U64)std::max<long long>(0, v);
                 else if (k == "fardist") d.mFarDist[0] = (F32)std::max<long long>(1, v);
                 else if (k == "verydist") d.mFarDist[1] = (F32)std::max<long long>(1, v);
@@ -2852,9 +2855,17 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         }
         const bool has_structure = a.mBlas->mAs != VK_NULL_HANDLE && !a.mSig.empty() && a.mLastBuildTag;
         double urgency;
-        if (a.mSelf)
+        if (a.mSelf && sDbg.mSelfPeriod <= 1)
         {
             urgency = 1e12;
+        }
+        else if (a.mSelf && has_structure)
+        {
+            urgency = (double)(av_tag - a.mLastBuildTag) / (2.0 * (double)sDbg.mSelfPeriod);        // (the own avatar on a period of its own: due, it goes first)
+            if (urgency >= 1.0)
+            {
+                urgency = 1e12;
+            }
         }
         else if (!has_structure)
         {

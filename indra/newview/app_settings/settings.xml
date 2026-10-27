@@ -2722,6 +2722,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>RenderRiggedAlphaFringeMaxDistance</key>
+    <map>
+      <key>Comment</key>
+      <string>The second draw of the rigged alpha (the soft texels around hair and clothes textures, RenderRiggedAlphaDepthCutoff) is left out for the avatars farther than this many metres: the halo is a fraction of a pixel there and the pass was 0.37 ms of GPU a frame in a crowd. 0 = every avatar.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>32</real>
+    </map>
     <key>RenderRTShadowAlphaMaxDistance</key>
     <map>
       <key>Comment</key>
