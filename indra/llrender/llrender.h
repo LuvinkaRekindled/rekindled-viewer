@@ -549,6 +549,17 @@ public:
     // is the same as in the previous frame
     static bool sUiHashing;
     static U64 sUiHashAccum;
+    // LL_VK_ITEMCENSUS: inclusive time (processor cycles) and calls of the UI drawing entry points while sUiHashing is on: 0 text (LLFontGL::render), 1 images, 2 rects / lines, 3 flush
+    enum { UI_CENSUS_SLOTS = 11 };      // 0 text, 1 images, 2 rects, 3 flush with vertices, 4 matrix push/pop/translate, 5 clip rects, 6 texture binds, 7 calcScreenRect, 8 views drawn (calls only), 9 empty flush calls (calls only), 10 views drawn entirely outside the clip rect (inclusive draw time)
+    static U64 sUiCensusCycles[UI_CENSUS_SLOTS];
+    static U64 sUiCensusCalls[UI_CENSUS_SLOTS];
+    static U64 sUiCensusVerts;       // vertices the UI flushed while sUiHashing is on
+    struct UiCensusScope
+    {
+        int mSlot; U64 mStart;
+        explicit UiCensusScope(int slot);
+        ~UiCensusScope();
+    };
     static U64 sUiHashCycles;           // processor cycles spent hashing (the census subtracts them)
     static U64 uiMix(U64 h, const void* data, size_t bytes);
     static void uiHashCachedDraw(const void* vb, U32 mode, U32 count, U32 tex_name, const glm::mat4& model_view);

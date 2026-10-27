@@ -80,6 +80,18 @@ static thread_local std::list<LLVertexBufferData> *sBufferDataList = nullptr;
 bool LLRender::sUiHashing = false;
 U64 LLRender::sUiHashAccum = 0;
 U64 LLRender::sUiHashCycles = 0;
+U64 LLRender::sUiCensusCycles[LLRender::UI_CENSUS_SLOTS] = {};
+U64 LLRender::sUiCensusCalls[LLRender::UI_CENSUS_SLOTS] = {};
+U64 LLRender::sUiCensusVerts = 0;
+LLRender::UiCensusScope::UiCensusScope(int slot) : mSlot(sUiHashing ? slot : -1), mStart(sUiHashing ? __rdtsc() : 0) {}
+LLRender::UiCensusScope::~UiCensusScope()
+{
+    if (mSlot >= 0)
+    {
+        sUiCensusCycles[mSlot] += __rdtsc() - mStart;
+        ++sUiCensusCalls[mSlot];
+    }
+}
 
 U64 LLRender::uiMix(U64 h, const void* data, size_t bytes)
 {
@@ -308,6 +320,7 @@ U32 LLTexUnit::prepareFast(LLTexture* texture)
 
 bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 {
+    LLRender::UiCensusScope ui_census(6);
     if (LLUniCensus::sOn) LLUniCensus::note_tex();
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -373,6 +386,7 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 
 bool LLTexUnit::bind(LLImageTex* texture, bool for_rendering, bool forceBind, S32 usename)
 {
+    LLRender::UiCensusScope ui_census(6);
     if (LLUniCensus::sOn) LLUniCensus::note_tex();
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
     if (mIndex < 0) return false;
@@ -477,6 +491,7 @@ bool LLTexUnit::bind(LLRenderTarget* renderTarget, bool bindDepth)
 
 bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const char* file, int line)
 {
+    LLRender::UiCensusScope ui_census(6);
     if (LLUniCensus::sOn) LLUniCensus::note_tex();
     sNextFile = file;
     sNextLine = line;
@@ -1864,8 +1879,21 @@ void note(bool has_texcoord, U32 count, const char* tex_file, int tex_line)
 
 void LLRender::flush()
 {
+    if (mCount <= 0)
+    {
+        if (sUiHashing)
+        {
+            ++sUiCensusCalls[9];
+        }
+        return;
+    }
+    LLRender::UiCensusScope ui_census(3);
     if (mCount > 0)
     {
+        if (sUiHashing)
+        {
+            sUiCensusVerts += mCount;
+        }
         LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
         LLVkAsync::FrontLap front_lap(LLVkAsync::FP_FLUSH);
         llassert_always(LLShaderProgram::sCurBoundShaderPtr != nullptr);

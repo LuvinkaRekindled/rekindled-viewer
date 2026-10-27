@@ -113,6 +113,7 @@ void gl_rect_2d_offset_local( S32 left, S32 top, S32 right, S32 bottom, S32 pixe
 
 void gl_rect_2d(S32 left, S32 top, S32 right, S32 bottom, bool filled )
 {
+    LLRender::UiCensusScope ui_census(2);
     gRender.getTexUnit(0)->bindWhite();
 
     // Counterclockwise quad will face the viewer
@@ -144,6 +145,7 @@ void gl_rect_2d(S32 left, S32 top, S32 right, S32 bottom, bool filled )
 
 void gl_rect_2d(S32 left, S32 top, S32 right, S32 bottom, const LLColor4 &color, bool filled )
 {
+    LLRender::UiCensusScope ui_census(2);
     gRender.color4fv( color.mV );
     gl_rect_2d( left, top, right, bottom, filled );
 }
@@ -160,6 +162,7 @@ void gl_rect_2d( const LLRect& rect, const LLColor4& color, bool filled )
 // and along the bottom it has height "lines".
 void gl_drop_shadow(S32 left, S32 top, S32 right, S32 bottom, const LLColor4 &start_color, S32 lines)
 {
+    LLRender::UiCensusScope ui_census(2);
     gRender.getTexUnit(0)->bindWhite();
 
     // HACK: Overlap with the rectangle by a single pixel.
@@ -240,6 +243,7 @@ void gl_drop_shadow(S32 left, S32 top, S32 right, S32 bottom, const LLColor4 &st
 
 void gl_line_2d(S32 x1, S32 y1, S32 x2, S32 y2 )
 {
+    LLRender::UiCensusScope ui_census(2);
     gRender.getTexUnit(0)->bindWhite();
 
     gRender.begin(LLRender::LINES);
@@ -316,6 +320,7 @@ void gl_corners_2d(S32 left, S32 top, S32 right, S32 bottom, S32 length, F32 max
 
 void gl_draw_image( S32 x, S32 y, LLTexture* image, const LLColor4& color, const LLRectf& uv_rect )
 {
+    LLRender::UiCensusScope ui_census(1);
     if (NULL == image)
     {
         LL_WARNS() << "image == NULL; aborting function" << LL_ENDL;
@@ -331,6 +336,7 @@ void gl_draw_scaled_target(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* 
 
 void gl_draw_scaled_image(S32 x, S32 y, S32 width, S32 height, LLTexture* image, const LLColor4& color, const LLRectf& uv_rect)
 {
+    LLRender::UiCensusScope ui_census(1);
     if (NULL == image)
     {
         LL_WARNS() << "image == NULL; aborting function" << LL_ENDL;
@@ -341,6 +347,7 @@ void gl_draw_scaled_image(S32 x, S32 y, S32 width, S32 height, LLTexture* image,
 
 void gl_draw_scaled_image_with_border(S32 x, S32 y, S32 border_width, S32 border_height, S32 width, S32 height, LLTexture* image, const LLColor4& color, bool solid_color, const LLRectf& uv_rect, bool scale_inner)
 {
+    LLRender::UiCensusScope ui_census(1);
     if (NULL == image)
     {
         LL_WARNS() << "image == NULL; aborting function" << LL_ENDL;
@@ -357,6 +364,7 @@ void gl_draw_scaled_image_with_border(S32 x, S32 y, S32 border_width, S32 border
 
 void gl_draw_scaled_image_with_border(S32 x, S32 y, S32 width, S32 height, LLTexture* image, const LLColor4& color, bool solid_color, const LLRectf& uv_outer_rect, const LLRectf& center_rect, bool scale_inner)
 {
+    LLRender::UiCensusScope ui_census(1);
 
     if (NULL == image)
     {
@@ -1103,6 +1111,7 @@ void gl_segmented_rect_2d_tex(const S32 left,
                               const S32 border_size,
                               const U32 edges)
 {
+    LLRender::UiCensusScope ui_census(1);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
 
     S32 width = llabs(right - left);
@@ -1316,6 +1325,7 @@ void gl_segmented_rect_2d_fragment_tex(const LLRect& rect,
     const F32 end_fragment,
     const U32 edges)
 {
+    LLRender::UiCensusScope ui_census(1);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
     const S32 left = rect.mLeft;
     const S32 right = rect.mRight;
@@ -1757,6 +1767,7 @@ LLRender2D::~LLRender2D()
 // static
 void LLRender2D::translate(F32 x, F32 y, F32 z)
 {
+    LLRender::UiCensusScope ui_census(4);
     gRender.translateUI(x,y,z);
     LLFontGL::sCurOrigin.mX += (S32) x;
     LLFontGL::sCurOrigin.mY += (S32) y;
@@ -1766,6 +1777,7 @@ void LLRender2D::translate(F32 x, F32 y, F32 z)
 // static
 void LLRender2D::pushMatrix()
 {
+    LLRender::UiCensusScope ui_census(4);
     gRender.pushUIMatrix();
     LLFontGL::sOriginStack.push_back(std::make_pair(LLFontGL::sCurOrigin, LLFontGL::sCurDepth));
 }
@@ -1773,6 +1785,7 @@ void LLRender2D::pushMatrix()
 // static
 void LLRender2D::popMatrix()
 {
+    LLRender::UiCensusScope ui_census(4);
     gRender.popUIMatrix();
     LLFontGL::sCurOrigin = LLFontGL::sOriginStack.back().first;
     LLFontGL::sCurDepth = LLFontGL::sOriginStack.back().second;

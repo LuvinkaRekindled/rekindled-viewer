@@ -35,6 +35,8 @@
 #include <boost/bind.hpp>
 
 #include "llrender.h"
+#include "lllocalcliprect.h"
+#include "llframetimer.h"
 #include "llevent.h"
 #include "llfocusmgr.h"
 #include "llrect.h"
@@ -1291,6 +1293,50 @@ void LLView::draw()
     drawChildren();
 }
 
+// <FS> a child entirely outside the innermost clip rect (a row of a scrolled list that is not in the visible part, a tab that is scrolled away) is drawn and then discarded by the scissor: nothing
+// of it can be seen. LL_VK_UI_CULL=1 does not draw it (default 0 for now); with LL_VK_ITEMCENSUS the time of such draws is counted either way (UI census slot 10). Test switch
+// (LL_VK_FARTIER_FILE=1): D:/claude/ui-cull.txt holding 0 or 1 replaces the variable, read every 60 frames, for same lap comparisons.
+static bool ui_cull_clipped()
+{
+    static const bool env_on = getenv("LL_VK_UI_CULL") && atoi(getenv("LL_VK_UI_CULL")) != 0;
+    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
+    if (!file_on)
+    {
+        return env_on;
+    }
+    static U32 last_frame = ~0u;
+    static S32 value = -1;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (frame != last_frame && frame % 60 == 0)
+    {
+        last_frame = frame;
+        value = -1;
+        if (FILE* f = fopen("D:/claude/ui-cull.txt", "rb"))
+        {
+            char text[24] = {};
+            fread(text, 1, sizeof(text) - 1, f);
+            fclose(f);
+            value = atoi(text);
+        }
+    }
+    return value >= 0 ? value != 0 : env_on;
+}
+
+// true when the view (its bounding rect when it has one: it may draw outside its rect) has no pixel inside the innermost clip rect
+static bool ui_view_clipped_out(const LLView* viewp, const LLRect& screen_rect)
+{
+    LLRect clip;
+    if (!LLScreenClipRect::getClipRect(clip))
+    {
+        return false;
+    }
+    if (clip.overlaps(screen_rect))
+    {
+        return false;
+    }
+    return !viewp->getUseBoundingRect() || !clip.overlaps(viewp->calcScreenBoundingRect());
+}
+
 void LLView::drawChildren()
 {
     if (!mChildList.empty())
@@ -1313,14 +1359,23 @@ void LLView::drawChildren()
                 LLRect screen_rect = viewp->calcScreenRect();
                 if ( rootp->getLocalRect().overlaps(screen_rect)  && sDirtyRect.overlaps(screen_rect))
                 {
+                    const bool clipped_out = (LLRender::sUiHashing || ui_cull_clipped()) && ui_view_clipped_out(viewp, screen_rect);
+                    if (clipped_out && ui_cull_clipped())
+                    {
+                        continue;
+                    }
                     LLUI::pushMatrix();
                     {
                         LLUI::translate((F32)viewp->getRect().mLeft, (F32)viewp->getRect().mBottom);
                         // flag the fact we are in draw here, in case overridden draw() method attempts to remove this widget
                         viewp->mInDraw = true;
-                        if (sDrawHook && sDepth <= 6) sDrawHook(viewp, true);
-                        viewp->draw();
-                        if (sDrawHook && sDepth <= 6) sDrawHook(viewp, false);
+                        if (sDrawHook && sDepth <= 20) sDrawHook(viewp, true);
+                        if (LLRender::sUiHashing) { ++LLRender::sUiCensusCalls[8]; }
+                        {
+                            LLRender::UiCensusScope clipped_scope(clipped_out ? 10 : -1);
+                            viewp->draw();
+                        }
+                        if (sDrawHook && sDepth <= 20) sDrawHook(viewp, false);
                         viewp->mInDraw = false;
 
                         if (sDebugRects)
@@ -1459,12 +1514,22 @@ void LLView::drawChild(LLView* childp, S32 x_offset, S32 y_offset, bool force_dr
         if ((childp->getVisible() && childp->getRect().isValid())
             || force_draw)
         {
-            LLUI::pushMatrix();
+            const bool clipped_out = !force_draw && (LLRender::sUiHashing || ui_cull_clipped()) && ui_view_clipped_out(childp, childp->calcScreenRect());
+            if (!(clipped_out && ui_cull_clipped()))
             {
-                LLUI::translate((F32)childp->getRect().mLeft + x_offset, (F32)childp->getRect().mBottom + y_offset);
-                childp->draw();
+                LLUI::pushMatrix();
+                {
+                    LLUI::translate((F32)childp->getRect().mLeft + x_offset, (F32)childp->getRect().mBottom + y_offset);
+                    if (sDrawHook && sDepth <= 20) sDrawHook(childp, true);
+                    if (LLRender::sUiHashing) { ++LLRender::sUiCensusCalls[8]; }
+                    {
+                        LLRender::UiCensusScope clipped_scope(clipped_out ? 10 : -1);
+                        childp->draw();
+                    }
+                    if (sDrawHook && sDepth <= 20) sDrawHook(childp, false);
+                }
+                LLUI::popMatrix();
             }
-            LLUI::popMatrix();
         }
 
         --sDepth;
@@ -1619,6 +1684,7 @@ void LLView::updateBoundingRect()
 
 LLRect LLView::calcScreenRect() const
 {
+    LLRender::UiCensusScope ui_census(7);
     LLRect screen_rect;
     localPointToScreen(0, 0, &screen_rect.mLeft, &screen_rect.mBottom);
     localPointToScreen(getRect().getWidth(), getRect().getHeight(), &screen_rect.mRight, &screen_rect.mTop);
