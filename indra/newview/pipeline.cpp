@@ -6244,13 +6244,13 @@ static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // 
 
 static void vis_census_alpha(LLSpatialGroup* group);        // S7 C0 (below, after LLSceneFragment)
 
-// <FS> far avatar tier of the main view. An avatar that is fully rendered but far away (beyond RenderFarAvatarDistance, then RenderFarAvatarDistance2) draws its rigged attachments up to a
-// triangle budget (RenderFarAvatarTriangles / RenderFarAvatarTriangles2, 0 = off, the default since 2026-10-27): whole attachment groups, the largest that still fit first. A group that does not fit is
-// dropped whole, and nothing here knows which one is the body: a mesh body over the budget disappeared (the user, 2026-10-27), so the tier is off until it keeps the largest group. The avatar is a few dozen pixels tall there. The groups left out are not listed (no render map, no fragment handle, no alpha list), so the G-buffer, the alpha
+// <FS> far avatar tier of the main view. An avatar that is far away (beyond RenderFarAvatarDistance, then RenderFarAvatarDistance2) and whose rigged attachments add up to more than the triangle
+// budget of its tier (RenderFarAvatarTriangles / RenderFarAvatarTriangles2, 0 = off) is drawn as an impostor (LLVOAvatar::shouldImpostor reads mFarTierHeavy): the picture of the whole avatar. The first
+// version dropped attachment groups that did not fit the budget, and a group is an octree node of the avatar's attachments, not one attachment: it cut avatars apart (a body missing in chunks, 2026-10-27). The avatar is a few dozen pixels tall there. The groups left out are not listed (no render map, no fragment handle, no alpha list), so the G-buffer, the alpha
 // pool, the ray scene naming and the palettes of those draws are all saved. The tier is left again 12.5 % nearer (hysteresis); the viewer's own avatar is never limited.
 static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpatialGroup*>& skip)
 {
-    skip.clear();
+    skip.clear();         // (nothing is skipped any more: the verdict is per avatar, see above)
     {
         // test switch (LL_VK_FARTIER_FILE=1): D:/claude/far-tier.txt holding 0 turns the tier off, read every 60 frames, so one lap can compare the two with the same crowd
         static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
@@ -6274,8 +6274,8 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
     }
     static LLCachedControl<F32> distance1(gSavedSettings, "RenderFarAvatarDistance", 20.f);
     static LLCachedControl<F32> distance2(gSavedSettings, "RenderFarAvatarDistance2", 40.f);
-    static LLCachedControl<S32> budget1(gSavedSettings, "RenderFarAvatarTriangles", 0);
-    static LLCachedControl<S32> budget2(gSavedSettings, "RenderFarAvatarTriangles2", 0);
+    static LLCachedControl<S32> budget1(gSavedSettings, "RenderFarAvatarTriangles", 400000);
+    static LLCachedControl<S32> budget2(gSavedSettings, "RenderFarAvatarTriangles2", 200000);
     if (budget1 <= 0 && budget2 <= 0)
     {
         return;
@@ -6323,41 +6323,35 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
         const S32 budget = tier == 2 ? budget2 : (tier == 1 ? budget1 : 0);
         if (budget <= 0)
         {
+            avatar->mFarTierHeavy = false;
             continue;
         }
-        std::vector<Piece>& pieces = entry.second;
         U64 total = 0;
-        for (const Piece& p : pieces)
+        for (const Piece& p : entry.second)
         {
             total += p.mTris;
         }
-        if (total <= (U64)budget)
+        // over the budget: an impostor, until it is nearer than the tier again or its attachments weigh clearly less (a count of nothing, an avatar whose groups are not listed as an impostor, keeps the verdict)
+        if (total > (U64)budget)
         {
-            tris_kept += total;
-            continue;
+            avatar->mFarTierHeavy = true;
+            ++groups_skipped;           // (counted: avatars over their budget)
+            tris_skipped += total;
         }
-        std::stable_sort(pieces.begin(), pieces.end(), [](const Piece& l, const Piece& r) { return l.mTris > r.mTris; });
-        U64 left = (U64)budget;
-        for (const Piece& p : pieces)
+        else
         {
-            if (p.mTris <= left)
+            if (total > 0 && total <= (U64)budget * 8 / 10)
             {
-                left -= p.mTris;
-                tris_kept += p.mTris;
+                avatar->mFarTierHeavy = false;
             }
-            else
-            {
-                skip.insert(p.mGroup);
-                ++groups_skipped;
-                tris_skipped += p.mTris;
-            }
+            tris_kept += total;
         }
     }
     static const bool census_on = getenv("LL_VK_SCENECENSUS") != nullptr;
     if (census_on && ++frames % 600 == 0)
     {
         LL_INFOS("FarTier") << "far avatar tier of the main view, per frame over 600: avatars with rigged attachments full " << avatars_t[0] / 600.0 << ", far " << avatars_t[1] / 600.0 << ", very far " << avatars_t[2] / 600.0
-                            << "; attachment groups left out " << groups_skipped / 600.0 << ", triangles left out " << tris_skipped / 600.0 << ", kept in the far ones " << tris_kept / 600.0 << LL_ENDL;
+                            << "; far avatars over their budget (impostors) " << groups_skipped / 600.0 << " with " << tris_skipped / 600.0 << " triangles, far avatars within it " << tris_kept / 600.0 << " triangles" << LL_ENDL;
         avatars_t[0] = avatars_t[1] = avatars_t[2] = groups_skipped = tris_skipped = tris_kept = 0;
     }
 }
