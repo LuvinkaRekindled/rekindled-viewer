@@ -4826,6 +4826,124 @@ static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // 
 
 static void vis_census_alpha(LLSpatialGroup* group);        // S7 C0 (below, after LLSceneFragment)
 
+// <FS> far avatar tier of the main view. An avatar that is fully rendered but far away (beyond RenderFarAvatarDistance, then RenderFarAvatarDistance2) draws its rigged attachments up to a
+// triangle budget (RenderFarAvatarTriangles / RenderFarAvatarTriangles2, 0 = off): whole attachment groups, the largest that still fit first, so the body stays and the monsters of hair and
+// clothes of 200k triangles go. The avatar is a few dozen pixels tall there. The groups left out are not listed (no render map, no fragment handle, no alpha list), so the G-buffer, the alpha
+// pool, the ray scene naming and the palettes of those draws are all saved. The tier is left again 12.5 % nearer (hysteresis); the viewer's own avatar is never limited.
+static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpatialGroup*>& skip)
+{
+    skip.clear();
+    {
+        // test switch (LL_VK_FARTIER_FILE=1): <work>/far-tier.txt holding 0 turns the tier off, read every 60 frames, so one lap can compare the two with the same crowd
+        static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
+        static int file_value = -1;
+        static U32 file_calls = 0;
+        if (file_on && ++file_calls % 60 == 1)
+        {
+            file_value = -1;
+            if (FILE* f = fopen("<work>/far-tier.txt", "rb"))
+            {
+                char text[16] = {};
+                fread(text, 1, sizeof(text) - 1, f);
+                fclose(f);
+                file_value = atoi(text);
+            }
+        }
+        if (file_value == 0)
+        {
+            return;
+        }
+    }
+    static LLCachedControl<F32> distance1(gSavedSettings, "RenderFarAvatarDistance", 30.f);
+    static LLCachedControl<F32> distance2(gSavedSettings, "RenderFarAvatarDistance2", 60.f);
+    static LLCachedControl<S32> budget1(gSavedSettings, "RenderFarAvatarTriangles", 300000);
+    static LLCachedControl<S32> budget2(gSavedSettings, "RenderFarAvatarTriangles2", 150000);
+    if (budget1 <= 0 && budget2 <= 0)
+    {
+        return;
+    }
+    struct Piece { U32 mTris; LLSpatialGroup* mGroup; };
+    static std::unordered_map<LLVOAvatar*, std::vector<Piece>> by_avatar;
+    by_avatar.clear();
+    for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
+    {
+        LLSpatialGroup* group = *i;
+        if (!group || group->isDead() || !group->mAvatarp)
+        {
+            continue;
+        }
+        LLVOAvatar* avatar = group->mAvatarp;
+        if (!LLVOAvatar::isLiveInstance(avatar) || avatar->isSelf() || avatar->mDrawable.isNull())
+        {
+            continue;
+        }
+        U32 tris = 0;
+        for (const auto& entry : group->mDrawMap)
+        {
+            for (const LLDrawInfo* info : entry.second)
+            {
+                tris += info->mCount / 3;
+            }
+        }
+        if (tris)
+        {
+            by_avatar[avatar].push_back({ tris, group });
+        }
+    }
+    static U64 frames = 0, avatars_t[3] = {}, groups_skipped = 0, tris_skipped = 0, tris_kept = 0;
+    for (auto& entry : by_avatar)
+    {
+        LLVOAvatar* avatar = entry.first;
+        const F32 distance = avatar->mDrawable->mDistanceWRTCamera;
+        U8 tier = avatar->mFarTierMain;
+        if (tier == 0 && distance >= distance1) tier = 1;
+        else if (tier >= 1 && distance < distance1 * 0.875f) tier = 0;
+        if (tier == 1 && distance >= distance2) tier = 2;
+        else if (tier == 2 && distance < distance2 * 0.875f) tier = 1;
+        avatar->mFarTierMain = tier;
+        ++avatars_t[tier];
+        const S32 budget = tier == 2 ? budget2 : (tier == 1 ? budget1 : 0);
+        if (budget <= 0)
+        {
+            continue;
+        }
+        std::vector<Piece>& pieces = entry.second;
+        U64 total = 0;
+        for (const Piece& p : pieces)
+        {
+            total += p.mTris;
+        }
+        if (total <= (U64)budget)
+        {
+            tris_kept += total;
+            continue;
+        }
+        std::stable_sort(pieces.begin(), pieces.end(), [](const Piece& l, const Piece& r) { return l.mTris > r.mTris; });
+        U64 left = (U64)budget;
+        for (const Piece& p : pieces)
+        {
+            if (p.mTris <= left)
+            {
+                left -= p.mTris;
+                tris_kept += p.mTris;
+            }
+            else
+            {
+                skip.insert(p.mGroup);
+                ++groups_skipped;
+                tris_skipped += p.mTris;
+            }
+        }
+    }
+    static const bool census_on = getenv("LL_VK_SCENECENSUS") != nullptr;
+    if (census_on && ++frames % 600 == 0)
+    {
+        LL_INFOS("FarTier") << "far avatar tier of the main view, per frame over 600: avatars with rigged attachments full " << avatars_t[0] / 600.0 << ", far " << avatars_t[1] / 600.0 << ", very far " << avatars_t[2] / 600.0
+                            << "; attachment groups left out " << groups_skipped / 600.0 << ", triangles left out " << tris_skipped / 600.0 << ", kept in the far ones " << tris_kept / 600.0 << LL_ENDL;
+        avatars_t[0] = avatars_t[1] = avatars_t[2] = groups_skipped = tris_skipped = tris_kept = 0;
+    }
+}
+
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -4871,6 +4989,15 @@ void LLPipeline::postSort(LLCamera &camera)
 
     LL_PUSH_CALLSTACKS();
 
+    // the far avatars' attachment groups over their budget (the main view only)
+    static std::unordered_set<const LLSpatialGroup*> far_skip;
+    far_skip.clear();
+    if (&camera == LLViewerCamera::getInstance() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs)
+    {
+        LL_CPU_ZONE("postSort: far avatar tier");
+        far_avatar_tier(sCull, far_skip);
+    }
+
     // build render map
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("build render map");
@@ -4907,6 +5034,11 @@ void LLPipeline::postSort(LLCamera &camera)
         if (group->hasState(LLSpatialGroup::NEW_DRAWINFO) && group->hasState(LLSpatialGroup::GEOM_DIRTY) && !gCubeSnapshot)
         {  // no way this group is going to be drawable without a rebuild
             group->rebuildGeom();
+        }
+
+        if (!far_skip.empty() && far_skip.count(group))
+        {
+            continue;       // <FS> a far avatar's attachment over its triangle budget (far_avatar_tier)
         }
 
         if (vis_post)

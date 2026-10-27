@@ -3689,6 +3689,26 @@ static void override_bbox(LLDrawable* drawable, LLVector4a* extents)
     drawable->movePartition();
 }
 
+bool LLVOAvatar::isLiveInstance(const LLVOAvatar* avatar)
+{
+    static U32 frame = ~0u;
+    static std::unordered_set<const LLVOAvatar*> live;
+    const U32 now = (U32)LLFrameTimer::getFrameCount();
+    if (frame != now)
+    {
+        frame = now;
+        live.clear();
+        for (const LLCharacter* c : LLCharacter::sInstances)
+        {
+            if (const LLVOAvatar* a = dynamic_cast<const LLVOAvatar*>(c))
+            {
+                live.insert(a);
+            }
+        }
+    }
+    return avatar && live.count(avatar) != 0;
+}
+
 void LLVOAvatar::idleUpdateMisc(bool detailed_update)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
@@ -12925,11 +12945,46 @@ bool LLVOAvatar::isImpostor()
 // </FS:Beq>
 }
 
+// <FS> FSImpostorMaxDistance: an avatar farther than that is an impostor whatever its visibility rank (0 = only the rank decides, as before). Test switch (LL_VK_FARTIER_FILE=1): <work>/imp-dist.txt
+// holding a distance in metres (0 = off) replaces the setting, read every 60 frames, so one lap can compare with the same crowd.
+static F32 impostor_max_distance()
+{
+    static LLCachedControl<F32> setting(gSavedSettings, "FSImpostorMaxDistance", 0.f);
+    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
+    if (!file_on)
+    {
+        return setting;
+    }
+    static U32 last_frame = ~0u;
+    static F32 value = -1.f;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (frame != last_frame && frame % 60 == 0)
+    {
+        last_frame = frame;
+        value = -1.f;
+        if (FILE* f = fopen("<work>/imp-dist.txt", "rb"))
+        {
+            char text[24] = {};
+            fread(text, 1, sizeof(text) - 1, f);
+            fclose(f);
+            value = (F32)atof(text);
+        }
+    }
+    return value >= 0.f ? value : (F32)setting;
+}
+
 bool LLVOAvatar::shouldImpostor(const F32 rank_factor)
 {
     if (isSelf())
     {
         return false;
+    }
+    {
+        const F32 max_distance = impostor_max_distance();
+        if (max_distance > 0.f && mDrawable.notNull() && mDrawable->mDistanceWRTCamera > max_distance)
+        {
+            return true;
+        }
     }
     if (isVisuallyMuted())
     {

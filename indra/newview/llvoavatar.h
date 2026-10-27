@@ -623,6 +623,8 @@ private:
     bool        mDeferredSitGroundConstrained = false;
     bool        mDeferredVisible = false;
 public:
+    U8          mFarTierMain = 0;               // the far avatar tier of the main view (pipeline.cpp far_avatar_tier): 0 full, 1 beyond RenderFarAvatarDistance, 2 beyond RenderFarAvatarDistance2 (hysteresis)
+    static bool isLiveInstance(const LLVOAvatar* avatar);     // a pointer a spatial group kept (LLSpatialGroup::mAvatarp) may name an avatar that is gone: true when it is one of the characters alive now (a set made once a frame)
     std::vector<F32> mRtPosePrev;           // census (LL_VK_ITEMCENSUS): the palette of its biggest skin when the main view last named it to the ray scene
     U64         mRtNameLast = 0;                // the frame the main view last named this avatar's rigged draws to the ray scene (pipeline.cpp rt_name_rigged_main_view)
     U64         mRtNameChecked = ~0ull;         // the frame mRtNameDue was decided in
