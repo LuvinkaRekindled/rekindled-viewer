@@ -209,6 +209,7 @@ struct Stats
     U64 mCeilingHeld = 0;                // new structures held back by the acceleration structure memory ceiling
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
     U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0, mSkinThrottled = 0;
+    U64 mFarAvatars[3] = {}, mFarDropDraws = 0, mFarDropTris = 0, mFarKeptTris = 0;       // far avatar triangle budget: avatars refit by tier (near, far, very far), draws and triangles left out, triangles kept
     U64 mAvatarInstances = 0, mAvatarStale = 0, mAvatarStaleFrames = 0, mAvatarStaleMax = 0;
     U64 mOverCap = 0, mExtraCalls = 0, mBadVertices = 0, mBadMatrices = 0, mChecked = 0, mCheckUs = 0, mSingular = 0, mCompared = 0, mMismatched = 0;
     F32 mMaxScale = 0.f;
@@ -262,6 +263,8 @@ struct DebugSwitches
     bool mDynCasters = true;        // include casters with a matrix of their own (avatar attachments, moving linksets); they flashed before the preflush, fine since (see PLAN-rt-shadows.md)
     bool mCallLog = false;          // one line per scene call into <work>/rt-calls.log (wall clock, frame, call, jobs, instances)
     bool mVerify = false;           // every 120 scene calls: make the whole cached scene again from the groups and compare it with the one kept up to date (log line "scene cache check")
+    U64 mFarTris[2] = { 100000, 40000 };   // an avatar beyond mFarDist[0] / mFarDist[1] metres gets a structure of at most this many triangles (whole draws, the largest that fit first; 0 = no limit): LL_VK_RT_FAR_TRIS / LL_VK_RT_VERYFAR_TRIS, live fartris / verytris
+    F32 mFarDist[2] = { 32.f, 64.f };      // LL_VK_RT_FAR_DIST / LL_VK_RT_VERYFAR_DIST, live fardist / verydist; the tier is left again 12.5 % nearer (hysteresis)
     U32 mSkinPeriodMax = 4;         // avatars farther than LL_VK_RT_SKIN_NEAR (8 m) are refreshed (skinned and refitted) every 2..this many viewer frames, by distance (1 = every frame for all)
     bool mPreflush = true;          // before the builds and the skinning: record the queued writes of video-memory buffers (they are only recorded when a draw reads the buffer, which a build does not)
     bool mAvatarLog = false;
@@ -314,6 +317,10 @@ void read_debug_switches()
     d.mSkinTest = env_u64("LL_VK_RT_SKINTEST", 0) != 0;
     d.mRigged = env_u64("LL_VK_RT_RIGGED", 1) != 0;
     d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_PERIOD_MAX", 4));
+    d.mFarTris[0] = env_u64("LL_VK_RT_FAR_TRIS", 100000);
+    d.mFarTris[1] = env_u64("LL_VK_RT_VERYFAR_TRIS", 40000);
+    d.mFarDist[0] = (F32)env_u64("LL_VK_RT_FAR_DIST", 32);
+    d.mFarDist[1] = (F32)env_u64("LL_VK_RT_VERYFAR_DIST", 64);
     d.mCompact = env_u64("LL_VK_RT_COMPACT", 0) != 0;       // off by default: saved only about 5 % of the memory here and the tree leaf shadows disappeared with it on (PLAN-rt-shadows.md)
     d.mMats = sMatsInit;
     d.mSkinFast = env_u64("LL_VK_RT_SKIN_FAST", 1) != 0;       // on by default: builds and refits of the avatar structures 38 % cheaper, traces unchanged (measured 2026-10-12)
@@ -375,6 +382,10 @@ void read_debug_switches()
                 else if (k == "preflush") d.mPreflush = v != 0;
                 else if (k == "verify") d.mVerify = v != 0;
                 else if (k == "skinperiod") d.mSkinPeriodMax = (U32)std::max<long long>(1, v);
+                else if (k == "fartris") d.mFarTris[0] = (U64)std::max<long long>(0, v);
+                else if (k == "verytris") d.mFarTris[1] = (U64)std::max<long long>(0, v);
+                else if (k == "fardist") d.mFarDist[0] = (F32)std::max<long long>(1, v);
+                else if (k == "verydist") d.mFarDist[1] = (F32)std::max<long long>(1, v);
                 else if (k == "dyncasters") d.mDynCasters = v != 0;
                 else if (k == "compare") d.mCompare = v != 0;
                 else if (k == "maxvtx") d.mMaxVtx = (U32)v;
@@ -444,6 +455,8 @@ struct Avatar
     U64 mProcessedTag = 0;              // frame whose jobs were made
     U64 mOverTag = 0;                   // frame in which it was named but left alone (vertex budget, job tables full, no data)
     U64 mLastVerts = 0, mLastTris = 0;  // what its structure was last made of (skinned vertices, triangles)
+    F32 mDist = 0.f;                    // its distance from the eye at the last scene call that looked at it
+    U32 mFarTier = 0;                   // 0 near, 1 beyond mFarDist[0], 2 beyond mFarDist[1] (with hysteresis)
     U64 mLastTag = 0;
     U64 mLastBuildTag = 0;              // frame of the latest build or refit
     bool mLastWasRefit = false;
@@ -2826,6 +2839,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             const float ez = view[2] * a.mPos[0] + view[6] * a.mPos[1] + view[10] * a.mPos[2] + view[14];
             dist = sqrtf(ex * ex + ey * ey + ez * ez);
         }
+        a.mDist = dist;
         if (sDbg.mSkinMaxDist > 0.f && dist > sDbg.mSkinMaxDist)
         {
             continue;
@@ -2932,6 +2946,61 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             {
                 total_verts += d.mVertexCount;
                 chunks_needed += (d.mVertexCount + kSkinChunkVerts - 1) / kSkinChunkVerts;
+            }
+        }
+        if (!a.mSelf && a.mHasPos && (sDbg.mFarTris[0] || sDbg.mFarTris[1]))
+        {
+            // A far avatar's shadow is a few dozen pixels: its structure is made of at most a budget of triangles (whole draws, the largest that still fit first, so the body and the big clothes
+            // stay and the monsters of 200k triangles and the small trimmings go), by tier with a margin on the way back so that an avatar drifting across a limit does not rebuild every call
+            U32 tier = a.mFarTier;
+            if (tier == 0 && a.mDist >= sDbg.mFarDist[0]) tier = 1;
+            else if (tier >= 1 && a.mDist < sDbg.mFarDist[0] * 0.875f) tier = 0;
+            if (tier == 1 && a.mDist >= sDbg.mFarDist[1]) tier = 2;
+            else if (tier == 2 && a.mDist < sDbg.mFarDist[1] * 0.875f) tier = 1;
+            a.mFarTier = tier;
+            const U64 budget = tier == 2 ? sDbg.mFarTris[1] : (tier == 1 ? sDbg.mFarTris[0] : 0);
+            if (budget)
+            {
+                U64 total_tris = 0;
+                for (SkinDraw* d : cur)
+                {
+                    total_tris += d->mCount / 3;
+                }
+                if (total_tris > budget)
+                {
+                    std::vector<SkinDraw*> order = cur;
+                    std::stable_sort(order.begin(), order.end(), [](const SkinDraw* l, const SkinDraw* r) { return l->mCount > r->mCount; });
+                    std::unordered_set<const SkinDraw*> keep;
+                    U64 left = budget;
+                    for (SkinDraw* d : order)
+                    {
+                        const U64 tris = d->mCount / 3;
+                        if (tris <= left)
+                        {
+                            keep.insert(d);
+                            left -= tris;
+                        }
+                    }
+                    std::vector<SkinDraw*> kept;
+                    total_verts = 0;
+                    chunks_needed = 0;
+                    for (SkinDraw* d : cur)
+                    {
+                        if (keep.count(d))
+                        {
+                            kept.push_back(d);
+                            if (d->mNotedTag != 0 && d->mNotedTag + 2 >= av_tag)
+                            {
+                                total_verts += d->mVertexCount;
+                                chunks_needed += (d->mVertexCount + kSkinChunkVerts - 1) / kSkinChunkVerts;
+                            }
+                        }
+                    }
+                    sStats.mFarDropDraws += cur.size() - kept.size();
+                    sStats.mFarDropTris += total_tris - (budget - left);
+                    sStats.mFarKeptTris += budget - left;
+                    cur.swap(kept);
+                }
             }
         }
         if (sDbg.mAvatarLog && a.mSelf)
@@ -3150,6 +3219,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         }
         a.mProcessedTag = av_tag;
         a.mLastBuildTag = av_tag;
+        ++sStats.mFarAvatars[std::min<U32>(a.mFarTier, 2u)];
         a.mLastWasRefit = job.mUpdate;
         a.mAddressNow = job.mUpdate ? b.mAddress : job.mNewAddress;
         b.mLastSeen = sSceneCalls;
@@ -4751,6 +4821,13 @@ std::string report(double frames)
         snprintf(cbuf, sizeof(cbuf), ", compaction (%s): %llu structures replaced by a compacted copy, %.0f MB -> %.0f MB, kept as they were (not worth it) %llu, failed %llu", sDbg.mCompact ? "on" : "off", (unsigned long long)s.mCompacted,
                  (double)s.mCompactBefore / 1048576.0, (double)s.mCompactAfter / 1048576.0, (unsigned long long)s.mCompactSkipped, (unsigned long long)s.mCompactFailed);
         text += cbuf;
+    }
+    {
+        char fbuf[400];
+        snprintf(fbuf, sizeof(fbuf), ", far avatar triangle budget (%llu beyond %.0f m, %llu beyond %.0f m): avatars refit near %.2f far %.2f very far %.2f /frame, draws left out %.2f/frame, triangles left out %.0f/frame, kept in the far ones %.0f/frame",
+                 (unsigned long long)sDbg.mFarTris[0], sDbg.mFarDist[0], (unsigned long long)sDbg.mFarTris[1], sDbg.mFarDist[1], (double)s.mFarAvatars[0] / f, (double)s.mFarAvatars[1] / f, (double)s.mFarAvatars[2] / f,
+                 (double)s.mFarDropDraws / f, (double)s.mFarDropTris / f, (double)s.mFarKeptTris / f);
+        text += fbuf;
     }
     {
         // why instances left the scene: leaves flickering on a camera turn show as masked drops and as a dip of the live alpha records

@@ -204,3 +204,17 @@ About 0.15 ms of main thread (the crowds differ: the loop was 13.4 against 14.1 
 ## The multi-second stalls after the Defender exclusion (2026-10-26, lap pc1-)
 
 Defender exclusion for `F:\Games\SL` added 22:50 (Defender event 5007). A 3,163 ms stall at 23:44 (frame 1077), six captures with the main thread in the same call: `NtCreateFile < CreateFileW < FMOD_OS_File_Open < FMOD::System::createSound < LLAudioBufferFMODSTUDIO::loadWAV < LLAudioData::load < LLAudioSource::update`. Same signature as the animation asset read of hw2- (a file open on the main thread blocked 2-3 s), so the stalls are not the Defender scan of that path. Write-then-open test (300 files of 64 KB, `opentest.ps1`): `F:\Games\SL\cache` median 0.13 ms, max 2.3 ms, none over 100 ms; `<work>` (not excluded) median 3.3 ms. No disk, NVMe or NTFS events in the System log for 6 hours; Samsung reliability counters need administrator. Remaining suspects: a storage stall under the viewer's heavy write load, or another process holding an oplock. Next test: the cache on another drive for a session (`CacheLocation`).
+
+## Far avatar triangle budget for the ray scene (2026-10-27, lap ft1- against mc1-, `crowded`)
+
+An avatar beyond 32 m (tier 1) gets a structure of at most 100,000 triangles, beyond 64 m (tier 2) at most 40,000: whole draws only, the largest that still fit first (a draw that does not fit what is left is skipped), the viewer's own avatar and everything nearer never; the tier is left again 12.5% nearer (hysteresis). `LL_VK_RT_FAR_TRIS` / `LL_VK_RT_VERYFAR_TRIS` / `LL_VK_RT_FAR_DIST` / `LL_VK_RT_VERYFAR_DIST` (0 triangles = no limit), live keys `fartris`, `verytris`, `fardist`, `verydist` in `rt-debug.txt`. Why it is safe: the avatars at the plaza are 0.4-1.1 M triangles each at any distance (mesh makers upload the same triangle count for every detail level, so a lower level does not help), and a shadow of an avatar 40 m away covers a few dozen pixels.
+
+| per frame | mc1- | ft1- |
+|---|---|---|
+| refits / triangles refit | 7.59 / 3.39 M | 7.68 / 1.79 M |
+| skin jobs / vertices | 391 / 1.40 M | 229 / 1.22 M |
+| `rt scene builds` GPU | 1.74 ms | 1.06 ms |
+| avatars refit near / far / very far | | 3.2 / 3.75 / 1.1 |
+| draws and triangles left out | | 326 and 2.41 M (280k kept in the far ones) |
+
+About 0.7 ms of GPU. The other GPU differences of that lap are the scene (a 2569x2569 depth pass of 1.4 ms, a spot or projector shadow map, and more alpha), not the budget; GPU time per lap is not comparable across crowds, per pass it is. Device lost 0. Visual check of distant shadows by Adam pending.
