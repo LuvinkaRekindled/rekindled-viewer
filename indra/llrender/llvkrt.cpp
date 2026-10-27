@@ -1120,6 +1120,17 @@ S32 debugView() { return sViewLive.load(std::memory_order_relaxed); }
 bool loadingGates() { return sGateLive.load(std::memory_order_relaxed); }
 bool bodyRename() { return sBodyNameLive.load(std::memory_order_relaxed); }
 
+U32 skinPeriod(float distance)
+{
+    static const float skin_near = (float)env_u64("LL_VK_RT_SKIN_NEAR", 8);
+    static const float skin_step = (float)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_STEP", 10));
+    if (distance <= skin_near || sDbg.mSkinPeriodMax <= 1)
+    {
+        return 1;       // (the same rule as the avatars' turn in the scene call)
+    }
+    return (U32)std::min<U64>(sDbg.mSkinPeriodMax, 2 + (U64)((distance - skin_near) / skin_step));
+}
+
 U32 shadowMode()
 {
     static const U32 mode = []() {

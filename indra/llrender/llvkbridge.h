@@ -314,6 +314,7 @@ namespace LLVkBridge
     S32 rtHitQuality();            // rt-debug.txt hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 the main pass lighting at the hit)
     S32 rtDebugView();      // rt-debug.txt view=N: the ray scene material debug view mode to show, 0 = the setting RenderRTMaterialDebug decides
     bool rtBodyRename();
+    U32 rtSkinPeriod(float distance);      // viewer frames between two poses the ray scene takes of an avatar this far from the eye (1 when ray tracing is off)
     // Builds the scene the shadow passes of this frame named (their casters) for the camera view: bottom-level structures as the budget allows, then the top-level structure in
     // eye space. Call before the lighting that samples the sun shadow. view: the camera's view matrix, column-major.
     struct RtSceneArgs { F32 mView[16] = {}; };

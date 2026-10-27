@@ -2711,6 +2711,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>FSRtNameByDistance</key>
+    <map>
+      <key>Comment</key>
+      <string>Ray traced shadows: the main view names the rigged draws of an avatar to the ray scene only as often as the scene gives that avatar a new pose (every frame within 8 m and for your own avatar, every 2 to 4 frames farther away). False names every avatar every frame (about 0.5 ms more main thread in a crowd).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>RenderRTShadowAlphaRays</key>
     <map>
       <key>Comment</key>

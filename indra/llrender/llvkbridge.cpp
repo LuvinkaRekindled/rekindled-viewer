@@ -55,6 +55,7 @@ S32 LLVkBridge::rtHitRays() { return -1; }
 S32 LLVkBridge::rtGlossyReflections() { return 0; }
 bool LLVkBridge::rtMaterialsAvailable() { return false; }
 bool LLVkBridge::rtBodyRename() { return false; }
+U32 LLVkBridge::rtSkinPeriod(float) { return 1; }
 void LLVkBridge::rtScene(const RtSceneArgs&) {}
 void LLVkBridge::presentFrame() {}
 void LLVkBridge::shutdown() {}
@@ -841,6 +842,11 @@ bool LLVkBridge::rtLoadingGates()
 bool LLVkBridge::rtBodyRename()
 {
     return rtShadowMode() != 0 && LLVk::Rt::bodyRename();
+}
+
+U32 LLVkBridge::rtSkinPeriod(float distance)
+{
+    return rtShadowMode() != 0 ? LLVk::Rt::skinPeriod(distance) : 1u;
 }
 
 void LLVkBridge::rtScene(const RtSceneArgs& args)
