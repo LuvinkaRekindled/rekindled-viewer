@@ -150,3 +150,17 @@ Together about **0.4 ms** of the serial main thread in a crowd like avt1-, as es
 - **Census (`LL_VK_ITEMCENSUS=1`, new slots `alpha plans / tr_add / tr_flush / run_flush / run_begin`)** per frame in the crowded plaza, 6 passes of the main view: 770 records of 1,140 ranges (2,050 draws served from fragments), 670 transient entries in 19 records. Time: `run_begin` 0.36 ms (660 runs, 0.55 us each), `run_flush` 0.19 ms (770 calls), plan lookups 0.01, transient entries 0.01, flushes of transient records 0.006: of the 0.76 ms of `post pool: alpha (post water)` the cost is the number of runs (a new run is a program or blend change in the back-to-front order, about 110 a pass), not the work per draw or entry.
 - **No cheap cut found.** The runs follow the blend order of the draws; `syncLightState` is already gated by a hash, so `run_begin` is the program bind (`bindDeferredShaderFast`, about 0.3 us a switch) and the blend state. Fewer runs would need a different way to draw alpha (sorting by program loses the blend order), or one table draw for several keys.
 - **Built (harmless, only matters with ray reconstruction on, `FSVkRayReconstruction`, default off):** the depth of field alpha depth pass is skipped when ray reconstruction is active (the depth of field is skipped there anyway: `postProcess` `!rr_done`). Laps al1-/al2- run with it off: the pass count stayed 6.
+
+## b0: rigid attachments whose joint did not move are not moved (2026-10-26, laps b01- and b02- against avt2-, `avtotal`, short, no yaw; the crowds differ: 385 / 363 / 307 attachments a frame, so per attachment)
+
+`FSSkipStaticRigidAttachmentUpdates` (default true, `LLVOAvatar::idleUpdateMisc`): a plain rigid attachment of another avatar (no light, flexible, particles, sound, animesh, selection, HUD, in the root or its children; the object not changed `MOVED`) is not moved (drawable move, bridge move, and so what follows in the moved list and the partitions) while the world matrix of its attachment point is within a tolerance of the one its last move was made with (`LLDrawable::mAttJointApplied`), and every 8th frame (staggered per attachment) is made in full. The tolerance first was 1 mm / 0.001 (0.06 degrees), then a quarter of a pixel at the avatar's distance (1 mm up close up to 2 cm: 2 mm at 10 m, 6 mm at 30 m, with the field of view and the window height).
+
+| | avt2- (before) | b01- (1 mm) | b02- (quarter pixel) |
+|---|---|---|---|
+| rigid attachments a frame | 160 | 191 | 161 |
+| skipped a frame | 0 | 51 (27%) | 62 (39%) |
+| rigid in the loop, per attachment | 3.97 us | 3.21 us | 2.74 us |
+| rigid in the loop, ms | 0.637 | 0.614 | 0.442 |
+| deferred completion, per avatar | 33.3 us | 34.6 us | 29.4 us |
+
+About 0.2 ms in the loop at 160 rigid attachments plus about 0.1 downstream, roughly 0.3 ms: less than the 0.4 of the plan because in this crowd 61% of the rigid attachments move more than 1 mm between two visits (avt2-: 49%), and the not-plain 23% and the forced 1 in 8 are never skipped. Device lost 0 in both laps. Visual check by Adam pending.
