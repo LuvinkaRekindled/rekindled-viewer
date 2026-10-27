@@ -225,6 +225,7 @@ struct Stats
     U64 mEmptied = 0, mEmptiedDistinct = 0, mEmptiedRepeat = 0, mRefillSame = 0, mRefillLater = 0, mRefillGapFrames = 0;     // masked groups whose last held range was released: how often, by how many different groups, how many had been emptied before in the interval, and how soon a range came back (next frame / later, frames summed)
     U64 mProbeCount = 0, mProbeNow = 0, mProbeNoUpdate = 0, mProbeNoUpdateFast = 0, mProbeFast = 0;     // size probe: bytes the new group structures need with the flags used / without ALLOW_UPDATE / without it and with PREFER_FAST_BUILD / with PREFER_FAST_BUILD
     U64 mCompacted = 0, mCompactBefore = 0, mCompactAfter = 0, mCompactSkipped = 0, mCompactFailed = 0;     // compaction: structures replaced, bytes before and after
+    U64 mStaleRanges = 0;           // builds that had ranges of the old structure past the end of the index buffer (left out)
     U64 mScanChecks = 0, mScanMismatch = 0;       // the candidate lists against a full walk (verify)
     U64 mForceWhy[5] = {};          // the whole cache was made again because: eviction, camera too far from the origin, alpha switch, material switch, compaction
     double mTblMs[4] = {};          // inside the table part: record slot patch, record write, material slot patch, material write
@@ -2365,6 +2366,26 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 grew = true;
             }
         }
+        {
+            // the ranges taken over from the structure (b.mBuilt) were checked against the index buffer they were built over: a rebuild after the buffer shrank or was rewritten smaller
+            // (ib_changed) would read the indices of a stale range past the end of the buffer, and with the buffer at the end of a block, past the end of the block
+            const size_t before = want.size();
+            want.erase(std::remove_if(want.begin(), want.end(), [&](const Range& r) { return ((U64)r.mFirst + r.mCount) * 2 > ii.mSize; }), want.end());
+            if (want.size() != before)
+            {
+                grew = true;
+                ++sStats.mStaleRanges;
+                static U32 logged_stale = 0;
+                if (logged_stale++ < 40)
+                {
+                    LL_WARNS("VkRt") << "structure build: " << (before - want.size()) << " of " << before << " built ranges of vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " lie past the end of the index buffer now (" << ii.mSize << " bytes), left out" << LL_ENDL;
+                }
+                if (want.empty())
+                {
+                    continue;
+                }
+            }
+        }
         if (g.mManaged && b.mAs != VK_NULL_HANDLE)
         {
             std::vector<Range> sorted = want;
@@ -2487,6 +2508,17 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             prims += range.primitiveCount;
         }
         job.mPrims = (U32)prims;
+        if (!job.mUpdate)
+        {
+            // flight recorder: what a full build will read (vertex bytes by maxVertex, index bytes to the end of the last range), to be set against the faulting address of a lost device
+            U64 index_end = 0;
+            for (const Range& r : want)
+            {
+                index_end = std::max(index_end, ((U64)r.mFirst + r.mCount) * 2);
+            }
+            ctx.flight(Context::FL_MISC, 5ull, (unsigned long long)(vertex_address + (U64)max_vertex * 16 + 16), (unsigned long long)(ii.mAddress + index_end),
+                       ((unsigned long long)g.mKey.mVb << 40) ^ ((unsigned long long)g.mKey.mIb << 16) ^ (prims & 0xffff));
+        }
         // LL_VK_RT_CHECK (default on): the vertices the structure will be built over, when the CPU can see them (host-written buffers), must be finite and not absurd, and the
         // indices must name vertices of the buffer. A range that fails is left out of the structure (LL_VK_RT_SKIPBAD=0 keeps it).
         if (!(vi.mCpu && ii.mCpu))
