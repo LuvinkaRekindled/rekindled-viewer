@@ -2791,24 +2791,24 @@
     <key>RenderFarAvatarTriangles</key>
     <map>
       <key>Comment</key>
-      <string>Far avatar tier: triangles of rigged attachments a fully rendered avatar beyond RenderFarAvatarDistance still draws. 0 = no limit (with RenderFarAvatarTriangles2 also 0 the tier is off).</string>
+      <string>Far avatar tier: triangles of rigged attachments a fully rendered avatar beyond RenderFarAvatarDistance still draws. 0 = no limit (with RenderFarAvatarTriangles2 also 0 the tier is off). Off by default since 2026-10-27: a group that does not fit the budget is dropped whole, which can take an avatar's body with it (400000 was the tested value).</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>S32</string>
       <key>Value</key>
-      <integer>400000</integer>
+      <integer>0</integer>
     </map>
     <key>RenderFarAvatarTriangles2</key>
     <map>
       <key>Comment</key>
-      <string>Far avatar tier: triangles of rigged attachments a fully rendered avatar beyond RenderFarAvatarDistance2 still draws. 0 = no limit.</string>
+      <string>Far avatar tier: triangles of rigged attachments a fully rendered avatar beyond RenderFarAvatarDistance2 still draws. 0 = no limit. Off by default since 2026-10-27 (see RenderFarAvatarTriangles; 200000 was the tested value).</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>S32</string>
       <key>Value</key>
-      <integer>200000</integer>
+      <integer>0</integer>
     </map>
     <key>RenderRiggedAlphaFringeMaxDistance</key>
     <map>

@@ -6245,8 +6245,8 @@ static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // 
 static void vis_census_alpha(LLSpatialGroup* group);        // S7 C0 (below, after LLSceneFragment)
 
 // <FS> far avatar tier of the main view. An avatar that is fully rendered but far away (beyond RenderFarAvatarDistance, then RenderFarAvatarDistance2) draws its rigged attachments up to a
-// triangle budget (RenderFarAvatarTriangles / RenderFarAvatarTriangles2, 0 = off): whole attachment groups, the largest that still fit first, so the body stays and the monsters of hair and
-// clothes of 200k triangles go. The avatar is a few dozen pixels tall there. The groups left out are not listed (no render map, no fragment handle, no alpha list), so the G-buffer, the alpha
+// triangle budget (RenderFarAvatarTriangles / RenderFarAvatarTriangles2, 0 = off, the default since 2026-10-27): whole attachment groups, the largest that still fit first. A group that does not fit is
+// dropped whole, and nothing here knows which one is the body: a mesh body over the budget disappeared (the user, 2026-10-27), so the tier is off until it keeps the largest group. The avatar is a few dozen pixels tall there. The groups left out are not listed (no render map, no fragment handle, no alpha list), so the G-buffer, the alpha
 // pool, the ray scene naming and the palettes of those draws are all saved. The tier is left again 12.5 % nearer (hysteresis); the viewer's own avatar is never limited.
 static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpatialGroup*>& skip)
 {
@@ -6274,8 +6274,8 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
     }
     static LLCachedControl<F32> distance1(gSavedSettings, "RenderFarAvatarDistance", 20.f);
     static LLCachedControl<F32> distance2(gSavedSettings, "RenderFarAvatarDistance2", 40.f);
-    static LLCachedControl<S32> budget1(gSavedSettings, "RenderFarAvatarTriangles", 400000);
-    static LLCachedControl<S32> budget2(gSavedSettings, "RenderFarAvatarTriangles2", 200000);
+    static LLCachedControl<S32> budget1(gSavedSettings, "RenderFarAvatarTriangles", 0);
+    static LLCachedControl<S32> budget2(gSavedSettings, "RenderFarAvatarTriangles2", 0);
     if (budget1 <= 0 && budget2 <= 0)
     {
         return;
