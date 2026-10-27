@@ -2722,6 +2722,61 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSImpostorMaxDistance</key>
+    <map>
+      <key>Comment</key>
+      <string>Avatars farther than this many metres are impostors whatever their visibility rank (RenderAvatarMaxNonImpostors only orders the nearer ones). 0 = only the rank decides. An impostor skips the avatar's draw and most of its update.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0</real>
+    </map>
+    <key>RenderFarAvatarDistance</key>
+    <map>
+      <key>Comment</key>
+      <string>Far avatar tier: a fully rendered avatar farther than this many metres draws its rigged attachments only up to RenderFarAvatarTriangles (whole attachments, the largest that fit first). The viewer's own avatar is never limited.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>30</real>
+    </map>
+    <key>RenderFarAvatarDistance2</key>
+    <map>
+      <key>Comment</key>
+      <string>Far avatar tier: beyond this many metres the budget is RenderFarAvatarTriangles2.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>60</real>
+    </map>
+    <key>RenderFarAvatarTriangles</key>
+    <map>
+      <key>Comment</key>
+      <string>Far avatar tier: triangles of rigged attachments a fully rendered avatar beyond RenderFarAvatarDistance still draws. 0 = no limit (with RenderFarAvatarTriangles2 also 0 the tier is off).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>300000</integer>
+    </map>
+    <key>RenderFarAvatarTriangles2</key>
+    <map>
+      <key>Comment</key>
+      <string>Far avatar tier: triangles of rigged attachments a fully rendered avatar beyond RenderFarAvatarDistance2 still draws. 0 = no limit.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>150000</integer>
+    </map>
     <key>RenderRiggedAlphaFringeMaxDistance</key>
     <map>
       <key>Comment</key>
