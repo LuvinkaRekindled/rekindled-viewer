@@ -4119,7 +4119,7 @@ static bool sVisSortOn = false;     // <FS> S7 C0 (LL_VK_VISCENSUS=1): this stat
 // the LOD update of avatars and other objects that are not volumes (LLDrawable::updateDistance), and the mesh rebuilds. With a sink set (sSortSink) those calls only record a SortDelta; the apply
 // pass makes them in the order they were recorded, which is the order the loops made them, so nothing that reads that state sees a different value, except the code inside the loops itself:
 // the check (LL_VK_SORT_SPLIT=2) finds out whether any of it does, by running the loops deferred and then as before and comparing what each one asked for.
-// LL_VK_SORT_SPLIT=<mode> (0 off, default); test switch (LL_VK_FARTIER_FILE=1): <work>/sort-split.txt, read every 60 frames.
+// LL_VK_SORT_SPLIT=<mode> (3 = the compute on the pool, default; 0 off, 1 serial split, 2 and 4 checks); test switch (LL_VK_FARTIER_FILE=1): <work>/sort-split.txt, read every 60 frames.
 namespace
 {
 struct SortJournal
@@ -4133,7 +4133,7 @@ thread_local SortJournal* sSortJournal = nullptr;
 
 int sort_split_setting()
 {
-    static const int env_mode = getenv("LL_VK_SORT_SPLIT") ? atoi(getenv("LL_VK_SORT_SPLIT")) : 0;
+    static const int env_mode = getenv("LL_VK_SORT_SPLIT") ? atoi(getenv("LL_VK_SORT_SPLIT")) : 3;
     static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
     if (!file_on)
     {
