@@ -230,6 +230,7 @@ void rtSceneFrame(out mat3 to_scene, out vec3 camera)
 // (blurLightF.glsl) smooths them. Both uniforms are set by the sun lightmap pass only; every other shader that samples the sun shadow (alpha, water) leaves them 0 and gets one hard ray.
 uniform float rt_sun_radius;
 uniform int rt_sun_samples;
+uniform float rt_sun_maxdist;          // <FS> metres: a blended (alpha) pixel farther than this is lit without a shadow ray (set by the alpha passes; 0 = no limit, every other shader)
 uniform vec2 rt_sun_lod;                // <FS> (near, far) metres: the rays of the sun disc go from rt_sun_samples at `near` down to a quarter of them (at least 2) at `far` and beyond; 0 = all of them (set by the alpha pass only)
 uniform float rt_noise_frame;
 
@@ -839,6 +840,10 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     if (-pos.z > shadow_clip.w)
     {
         return 1.0;                         // beyond the shadow range: lit, as with the cascades
+    }
+    if (rt_sun_maxdist > 0.0 && -pos.z > rt_sun_maxdist)
+    {
+        return 1.0;                         // <FS> a blended surface this far away: the shadow ray is not worth its cost (a few pixels of hair, glass or foliage), the opaque ground behind it keeps its shadow
     }
     vec3 origin = pos + norm * (LL_RT_SUN_BIAS + 0.0006 * -pos.z);
     float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);

@@ -8092,14 +8092,17 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (timed) a.mNsCopy += geo_ns(t0);
     t0 = std::chrono::steady_clock::now();
     {
-        static U32 tag = 0;
+        static U32 tags[4] = {};
         static bool made = false;
         if (!made)
         {
             made = true;
-            tag = Context::stampTag("scene table draw, alpha run");
+            tags[0] = Context::stampTag("scene table draw, alpha run");
+            tags[1] = Context::stampTag("scene table draw, alpha run rigged");       // (the passes of the alpha pool: their own lines in the GPU time by pass)
+            tags[2] = Context::stampTag("scene table draw, alpha run rigged fringe");
+            tags[3] = Context::stampTag("scene table draw, alpha run depth only");
         }
-        Context::instance().gpuStamp(tag);
+        Context::instance().gpuStamp(tags[h.mFragment == 2 ? 3 : (h.mFragment == 1 ? 2 : (h.mPass == 1 ? 1 : 0))]);
     }
     Context::instance().flight(Context::FL_GEO_DRAW, 99ull, (unsigned long long)total, (unsigned long long)pass.mModels.mAddress, (unsigned long long)(sGeo.mMaxSlot + 1));
     if (timed) { a.mNsStamp += geo_ns(t0); t0 = std::chrono::steady_clock::now(); }

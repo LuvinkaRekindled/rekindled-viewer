@@ -209,6 +209,7 @@ struct Stats
     U64 mCeilingHeld = 0;                // new structures held back by the acceleration structure memory ceiling
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
     U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0, mSkinThrottled = 0;
+    U64 mKindRefit[7] = {}, mKindTris[7] = {};      // avatar structures refit by what the viewer says the avatar is: animated object, impostor, own, jelly doll, invisible, too slow, still loading; and their triangles
     U64 mFarAvatars[3] = {}, mFarDropDraws = 0, mFarDropTris = 0, mFarKeptTris = 0;       // far avatar triangle budget: avatars refit by tier (near, far, very far), draws and triangles left out, triangles kept
     U64 mAvatarInstances = 0, mAvatarStale = 0, mAvatarStaleFrames = 0, mAvatarStaleMax = 0;
     U64 mOverCap = 0, mExtraCalls = 0, mBadVertices = 0, mBadMatrices = 0, mChecked = 0, mCheckUs = 0, mSingular = 0, mCompared = 0, mMismatched = 0;
@@ -3220,6 +3221,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         a.mProcessedTag = av_tag;
         a.mLastBuildTag = av_tag;
         ++sStats.mFarAvatars[std::min<U32>(a.mFarTier, 2u)];
+        for (int bit = 0; bit < 7; ++bit)
+        {
+            if (a.mAvatarKind & (1u << bit))
+            {
+                ++sStats.mKindRefit[bit];
+                sStats.mKindTris[bit] += prims;
+            }
+        }
         a.mLastWasRefit = job.mUpdate;
         a.mAddressNow = job.mUpdate ? b.mAddress : job.mNewAddress;
         b.mLastSeen = sSceneCalls;
@@ -4828,6 +4837,12 @@ std::string report(double frames)
                  (unsigned long long)sDbg.mFarTris[0], sDbg.mFarDist[0], (unsigned long long)sDbg.mFarTris[1], sDbg.mFarDist[1], (double)s.mFarAvatars[0] / f, (double)s.mFarAvatars[1] / f, (double)s.mFarAvatars[2] / f,
                  (double)s.mFarDropDraws / f, (double)s.mFarDropTris / f, (double)s.mFarKeptTris / f);
         text += fbuf;
+        char kbuf[500];
+        snprintf(kbuf, sizeof(kbuf), ", avatar structures refit by kind per frame (count / M triangles): animated object %.2f / %.3f, impostor %.2f / %.3f, own %.2f / %.3f, jelly doll %.2f / %.3f, invisible %.2f / %.3f, too slow %.2f / %.3f, loading %.2f / %.3f",
+                 (double)s.mKindRefit[0] / f, (double)s.mKindTris[0] / 1e6 / f, (double)s.mKindRefit[1] / f, (double)s.mKindTris[1] / 1e6 / f, (double)s.mKindRefit[2] / f, (double)s.mKindTris[2] / 1e6 / f,
+                 (double)s.mKindRefit[3] / f, (double)s.mKindTris[3] / 1e6 / f, (double)s.mKindRefit[4] / f, (double)s.mKindTris[4] / 1e6 / f, (double)s.mKindRefit[5] / f, (double)s.mKindTris[5] / 1e6 / f,
+                 (double)s.mKindRefit[6] / f, (double)s.mKindTris[6] / 1e6 / f);
+        text += kbuf;
     }
     {
         // why instances left the scene: leaves flickering on a camera turn show as masked drops and as a dip of the live alpha records
