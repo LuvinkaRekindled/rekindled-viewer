@@ -125,3 +125,7 @@ Rule to add to the relevance of sections 4 and 11: content belongs to a region, 
 The neighbour case needs no special code: the distance test is the rule.
 
 **Eviction order under pressure (Adam, 2026-10-25: "even at 0.1 s you would want that to be the first evicted if you need memory")**: age is a tie-breaker, not the criterion. 1. Content of regions beyond draw distance, whatever its age (a tenth of a second after the teleport is enough). 2. Relevant content that nothing needs right now, oldest first. 3. What is in use: touched only as the last resort, by the global quality bias. In the home -> plaza -> club log none of the leftover was released by this order: it stayed until the bias slammed to 4.
+
+## Note (2026-10-26): region removal and the scene table's slot pointers
+
+`sSlotMatrix` (pipeline.cpp, S3 scene geometry table) holds raw pointers to `LLViewerRegion::mRenderMatrix`. `LLWorld::removeRegion` frees the region; the per-frame copy in `ll_scene_geo_frame` read the freed matrix (access violation 0xc0000005 at `ll_scene_geo_frame+0x17f`, pipeline.cpp:9588, clean launcher, 6 minutes in, a neighbour's capability timed out in the same second). Fixed in the same commit as this note: a slot whose region is not in `LLWorld::getRegionList()` now gets the identity, as the full table already did. Anything the expiry / release work keeps per region or per group must be checked the same way against region removal, which the viewer does by itself (a dropped neighbour, a teleport), not only against its own cold / released states.

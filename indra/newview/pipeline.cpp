@@ -9579,13 +9579,29 @@ void ll_scene_geo_frame(LLCullResult* cull)
     matrices.clear();
     ++s.mFrames;
     const auto t0 = std::chrono::steady_clock::now();
+    // the slots hold pointers to the render matrices of regions, and a region can be gone (a neighbour dropped, a teleport): reading the matrix of a freed region is an access violation
+    // (crash of 2026-10-26 21:31, a neighbour's capability timed out in the same second). A slot whose region is gone is the identity, as in the full table below.
+    static std::vector<const LLMatrix4*> live_regions;
+    live_regions.clear();
+    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    {
+        live_regions.push_back(&region->mRenderMatrix);
+    }
     for (U32 slot = 1; slot < 256 && slot < sSlotMatrix.size(); ++slot)
     {
         if (sSlotMatrix[slot])
         {
             LLVkBridge::GeoSlotMatrix m;
             m.mSlot = slot;
-            memcpy(m.mM, sSlotMatrix[slot]->mMatrix, sizeof(m.mM));
+            if (std::find(live_regions.begin(), live_regions.end(), sSlotMatrix[slot]) != live_regions.end())
+            {
+                memcpy(m.mM, sSlotMatrix[slot]->mMatrix, sizeof(m.mM));
+            }
+            else
+            {
+                memset(m.mM, 0, sizeof(m.mM));
+                m.mM[0] = m.mM[5] = m.mM[10] = m.mM[15] = 1.f;
+            }
             matrices.push_back(m);
         }
     }
