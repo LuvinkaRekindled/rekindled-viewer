@@ -623,6 +623,7 @@ private:
     bool        mDeferredSitGroundConstrained = false;
     bool        mDeferredVisible = false;
 public:
+    bool        mFarTierHeavy = false;          // the avatar's rigged attachments are over the budget of its far tier: it is drawn as an impostor (shouldImpostor), never cut apart
     U8          mFarTierMain = 0;               // the far avatar tier of the main view (pipeline.cpp far_avatar_tier): 0 full, 1 beyond RenderFarAvatarDistance, 2 beyond RenderFarAvatarDistance2 (hysteresis)
     U32         farUpdatePeriod();              // 1 near, or 2 / 3 for a visible avatar beyond FSAvatarFarUpdateDistance (see llvoavatar.cpp)
     static bool isLiveInstance(const LLVOAvatar* avatar);     // a pointer a spatial group kept (LLSpatialGroup::mAvatarp) may name an avatar that is gone: true when it is one of the characters alive now (a set made once a frame)

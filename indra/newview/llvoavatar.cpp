@@ -13077,6 +13077,20 @@ bool LLVOAvatar::shouldImpostor(const F32 rank_factor)
         return false;
     }
     // </FS:minerjr> [FIRE-35735]
+    if (mFarTierHeavy)
+    {
+        // <FS> far avatar tier (pipeline.cpp far_avatar_tier): over its triangle budget, a whole picture of it instead of the parts of it that fit. The verdict ends when the avatar is nearer than the tier again
+        // (the tier's own pass does not see an avatar whose groups are not listed)
+        static LLCachedControl<F32> tier_distance(gSavedSettings, "RenderFarAvatarDistance", 20.f);
+        if (mDrawable.notNull() && mDrawable->mDistanceWRTCamera * LLPipeline::farDistanceScale() < tier_distance * 0.875f)
+        {
+            mFarTierHeavy = false;
+        }
+        else
+        {
+            return true;
+        }
+    }
     if (isTooSlowWithoutShadows())
     {
         return true;
