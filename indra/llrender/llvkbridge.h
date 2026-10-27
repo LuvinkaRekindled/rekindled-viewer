@@ -77,6 +77,7 @@ namespace LLVkBridge
     // viewer still renders until the frame is released (probe updates clear and reuse the default framebuffer) is recorded in
     // a second, off-screen frame so it cannot disturb the image that was just presented.
     void presentFrame();
+    long long lastPresentTicks();       // QueryPerformanceCounter ticks of the worker's last present (0 before the first): the hitch watcher's second clock
 
     // While held, endFrame() does nothing and a nested beginFrame() joins the open frame. The main loop holds the frame
     // across display() and the work that follows it (reflection probe updates, snapshots), then releases it and ends it.

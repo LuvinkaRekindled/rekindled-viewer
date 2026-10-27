@@ -25,6 +25,7 @@ namespace LLVkAsync
 {
     // true while the worker thread runs and GL calls are queued instead of translated inline
     extern bool gEnabled;
+    long long lastPresentTicks();       // QueryPerformanceCounter ticks of the last present the worker made (0 before the first)
 
     // LL_VK_ASYNC is set (and the mirror owns the resources)
     bool requested();
