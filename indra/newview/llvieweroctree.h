@@ -27,6 +27,7 @@
 #ifndef LL_VIEWEROCTREE_H
 #define LL_VIEWEROCTREE_H
 
+#include <functional>
 #include <vector>
 #include <map>
 
@@ -373,6 +374,14 @@ public:
         : mCamera(camera), mRes(0) { }
 
     virtual void traverse(const OctreeNode* n);
+
+    // <FS> stage 3a (PLAN-statesort-offmain.md): traverse() with its top `levels` levels done on the calling thread and the subtrees below them handed out as tasks, in the order the serial walk reaches them
+    // (on_task is called when one is emitted, so what the top levels did after it comes after it). A task is traverseTask()ed on any thread. mRes at the node is part of it: a sibling's walk starts with
+    // the value the one before left, which the top walk reproduces (0 after a node that was checked, unchanged after one that was wholly inside; a subtree whose end state cannot be told is walked at once).
+    struct SplitTask { const OctreeNode* mNode; S32 mRes; };
+    // `levels` is the deepest the top may go; a node at a level above it is walked here only when descend_more(node) says so (its subtree cost too much the last time), else it is a task
+    void traverseTop(const OctreeNode* n, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const SplitTask&)>& on_task);
+    void traverseTask(const SplitTask& task);
 
 protected:
     virtual bool earlyFail(LLViewerOctreeGroup* group);

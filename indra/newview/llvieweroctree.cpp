@@ -1585,6 +1585,52 @@ void LLViewerOctreeCull::traverse(const OctreeNode* n)
 
 //------------------------------------------
 //agent space group culling
+void LLViewerOctreeCull::traverseTop(const OctreeNode* n, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const SplitTask&)>& on_task)
+{
+    LLViewerOctreeGroup* group = (LLViewerOctreeGroup*) n->getListener(0);
+
+    if (earlyFail(group))
+    {
+        return;
+    }
+
+    // `transparent`: the node is wholly inside by the flag of the node and not by its parent's verdict (mRes 1): what mRes is after its subtree depends on what its children do, so it cannot be a task.
+    // Its own work is done here and its children are looked at as if it were not a level (a chain of such nodes is how the root of a sparse octree looks).
+    auto descend = [&](bool transparent)
+    {
+        if (!transparent && (levels <= 0 || !descend_more(n)))
+        {
+            on_task({ n, mRes });
+            return;
+        }
+        n->accept(this);
+        for (U32 i = 0; i < n->getChildCount(); i++)
+        {
+            traverseTop(n->getChild(i), transparent ? levels : levels - 1, descend_more, on_task);
+        }
+    };
+
+    if (mRes == 2 || (mRes && group->hasState(LLViewerOctreeGroup::SKIP_FRUSTUM_CHECK)))
+    {
+        descend(mRes != 2);
+    }
+    else
+    {
+        mRes = frustumCheck(group);
+        if (mRes)
+        {
+            descend(false);
+        }
+        mRes = 0;
+    }
+}
+
+void LLViewerOctreeCull::traverseTask(const SplitTask& task)
+{
+    mRes = task.mRes;
+    OctreeTraveler::traverse(task.mNode);
+}
+
 S32 LLViewerOctreeCull::AABBInFrustumNoFarClipGroupBounds(const LLViewerOctreeGroup* group)
 {
     return mCamera->AABBInFrustumNoFarClip(group->mBounds[0], group->mBounds[1]);

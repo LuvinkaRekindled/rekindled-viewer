@@ -151,6 +151,10 @@
 #include <deque>
 #include <chrono>
 #include <mutex>
+#include <memory>
+#include <functional>
+#include <unordered_map>
+#include <unordered_set>
 void ll_vis_census_items(LLCamera& camera);        // S7 B0 (below)
 #ifndef LL_WINDOWS
 #define A_GCC 1
@@ -3316,6 +3320,466 @@ static void vk_avatar_log()
     }
 }
 
+// <FS> ---- the main view's cull on the pool (doc/vulkan/PLAN-statesort-offmain.md, stage 3a) ----
+// Every partition has an octree of its own and the walk of one writes only what belongs to its groups (visibility stamps, distances, occlusion state, the group's alpha-dirty bit), to the lists of the
+// cull result, and, through markNotCulled, to the rebuild queue (calcDistance) and the wake queue. The partitions are cut into runs of the list they come in (a run is a job); each job culls into a result
+// of its own and records the queue writes in a ledger (sSortSink); the results are appended and the ledgers applied in list order, which is the order the serial loop made them in.
+// LL_VK_CULL_SPLIT=<mode> (0 off, default; 3 on the pool; 4 check: the pool's lists are compared with the serial loop's, which makes the frame); test switch (LL_VK_FARTIER_FILE=1): D:/claude/cull-split.txt.
+namespace
+{
+int cull_split_setting()
+{
+    static const int env_mode = getenv("LL_VK_CULL_SPLIT") ? atoi(getenv("LL_VK_CULL_SPLIT")) : 0;
+    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
+    if (!file_on)
+    {
+        return env_mode;
+    }
+    static U32 last_frame = ~0u;
+    static int value = -1;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (frame != last_frame && frame % 60 == 0)
+    {
+        last_frame = frame;
+        value = -1;
+        if (FILE* f = fopen("D:/claude/cull-split.txt", "rb"))
+        {
+            char text[24] = {};
+            fread(text, 1, sizeof(text) - 1, f);
+            fclose(f);
+            value = atoi(text);
+        }
+    }
+    return value >= 0 ? value : env_mode;
+}
+
+// what a job does: the walk of a whole partition, or of one subtree of a partition that was split (mSplit)
+struct CullItem
+{
+    LLSpatialPartition* mPart = nullptr;
+    bool mTask = false;
+    LLViewerOctreeCull::SplitTask mSplit = { nullptr, 0 };
+    float mUs = 0.f;
+};
+
+// a unit of the result, in the order of the serial loop: a segment (what the top levels of a split partition did, on the calling thread, before the jobs) or a run of items (a job)
+struct CullChunk
+{
+    size_t mBegin = 0, mEnd = 0;
+    bool mSegment = false;
+    std::vector<LLPipeline::SortDelta> mLedger;
+    LLCullResult* mLocal = nullptr;
+    double mUs = 0.0;
+};
+
+// the thread-local state of a cull job, put back afterwards (the calling thread runs jobs too)
+struct CullTaskScope
+{
+    LLCullResult* mCull = sCull;
+    std::vector<LLPipeline::SortDelta>* mSink = LLPipeline::sSortSink;
+    bool mParallel = LLPipeline::sParallelPrep;
+
+    CullTaskScope(CullChunk& chunk)
+    {
+        LLPipeline::sParallelPrep = true;       // (no shared statistics: mNumVisibleNodes is added by the caller)
+        sCull = chunk.mLocal;
+        LLPipeline::sSortSink = &chunk.mLedger;
+    }
+    ~CullTaskScope()
+    {
+        sCull = mCull;
+        LLPipeline::sSortSink = mSink;
+        LLPipeline::sParallelPrep = mParallel;
+    }
+};
+
+std::vector<std::unique_ptr<LLCullResult>> sCullLocals;
+std::unordered_map<LLSpatialPartition*, float> sCullCostUs;     // the last measured cost of a partition's walk (smoothed), the weight when the runs are cut
+LLCullResult* sCullCheckResult = nullptr;
+std::unordered_map<const void*, float> sCullNodeUs;       // the same for the subtrees that were jobs (smoothed): a node that cost more than the limit is walked on the calling thread, its children are the jobs
+
+struct CullSplitStats
+{
+    U32 mCalls[2] = {};             // 0: the serial loop, 1: the pool path
+    double mMs[2] = {};
+    double mApplyMs = 0.0, mLongestUs = 0.0, mSumUs = 0.0, mTopUs = 0.0;
+    U64 mChunks = 0, mInline = 0, mSegments = 0;
+    U64 mCheckRuns = 0, mCheckBad = 0, mCkJobs = 0, mCkSegments = 0;
+    double mCkTopUs = 0.0, mCkSumUs = 0.0, mCkLongestUs = 0.0;
+    U32 mReport = 0;
+};
+CullSplitStats sCullSplitStats;
+std::vector<LLSpatialPartition*> sCullParts;
+
+void cull_split_report()
+{
+    CullSplitStats& s = sCullSplitStats;
+    const double pool_n = std::max<U32>(s.mCalls[1], 1), ser_n = std::max<U32>(s.mCalls[0], 1);
+    std::string list;
+    {
+        std::vector<std::pair<float, LLSpatialPartition*>> v;
+        double total = 0.0;
+        for (LLSpatialPartition* p : sCullParts)
+        {
+            auto it = sCullCostUs.find(p);
+            if (it != sCullCostUs.end())
+            {
+                v.push_back({ it->second, p });
+                total += it->second;
+            }
+        }
+        std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        char b[96];
+        snprintf(b, sizeof(b), "%zu partitions, the sum of their costs %.0f us; the largest: ", v.size(), total);
+        list = b;
+        for (size_t k = 0; k < v.size() && k < 8; ++k)
+        {
+            snprintf(b, sizeof(b), "[type %u %.0f us] ", v[k].second->mPartitionType, v[k].first);
+            list += b;
+        }
+    }
+    LL_INFOS("CullSplit") << "main cull, partition stage (ms per frame): serial loop " << s.mMs[0] / ser_n << " over " << s.mCalls[0] << " frames | pool " << s.mMs[1] / pool_n << " over " << s.mCalls[1]
+        << " frames (of it the apply pass " << s.mApplyMs / pool_n << "; " << (double)s.mChunks / pool_n << " jobs a frame, sum of the jobs " << s.mSumUs / pool_n << " us, the longest " << s.mLongestUs / pool_n << " us, the top levels of the split partitions " << s.mTopUs / pool_n << " us in " << (double)s.mSegments / pool_n << " segments"
+        << " us; " << s.mInline << " frames run inline) | check: " << s.mCheckRuns << " runs, " << s.mCheckBad << " differ (pool run: " << (double)s.mCkJobs / std::max<U64>(s.mCheckRuns, 1) << " jobs, sum " << s.mCkSumUs / std::max<U64>(s.mCheckRuns, 1) << " us, longest " << s.mCkLongestUs / std::max<U64>(s.mCheckRuns, 1) << " us, top levels " << s.mCkTopUs / std::max<U64>(s.mCheckRuns, 1) << " us in " << (double)s.mCkSegments / std::max<U64>(s.mCheckRuns, 1) << " segments) | " << list << LL_ENDL;
+    s = CullSplitStats();
+}
+
+// the lists of two culls of the same camera must be the same, in the same order
+bool cull_lists_equal(LLCullResult& a, LLCullResult& b)
+{
+    bool same = true;
+    auto cmp = [&](const char* name, LLCullResult::sg_iterator ab, LLCullResult::sg_iterator ae, LLCullResult::sg_iterator bb, LLCullResult::sg_iterator be)
+    {
+        const size_t na = ae - ab, nb = be - bb;
+        size_t first = ~(size_t)0;
+        for (size_t k = 0; k < std::min(na, nb); ++k)
+        {
+            if (ab[k] != bb[k])
+            {
+                first = k;
+                break;
+            }
+        }
+        if (na != nb || first != ~(size_t)0)
+        {
+            same = false;
+            static int logged = 0;
+            if (++logged <= 8)
+            {
+                LL_WARNS("CullSplit") << "cull check: " << name << " differ: pool " << na << " entries, serial " << nb << ", first difference at " << (S64)first << LL_ENDL;
+            }
+        }
+    };
+    cmp("drawable groups", a.beginDrawableGroups(), a.endDrawableGroups(), b.beginDrawableGroups(), b.endDrawableGroups());
+    cmp("visible groups", a.beginVisibleGroups(), a.endVisibleGroups(), b.beginVisibleGroups(), b.endVisibleGroups());
+    // (markOccluder lists a group twice when it is the first of its parent's children to be listed, and a flag left on a parent by an earlier frame changes that: the first occurrences are compared)
+    auto first_occurrences = [](LLCullResult& r)
+    {
+        std::vector<LLSpatialGroup*> v;
+        std::unordered_set<LLSpatialGroup*> seen;
+        for (LLCullResult::sg_iterator g = r.beginOcclusionGroups(); g != r.endOcclusionGroups(); ++g)
+        {
+            if (seen.insert(*g).second)
+            {
+                v.push_back(*g);
+            }
+        }
+        return v;
+    };
+    std::vector<LLSpatialGroup*> occ_a = first_occurrences(a), occ_b = first_occurrences(b);
+    cmp("occlusion groups", occ_a.data(), occ_a.data() + occ_a.size(), occ_b.data(), occ_b.data() + occ_b.size());
+    if (a.getVisibleListSize() != b.getVisibleListSize() || a.getVisibleBridgeSize() != b.getVisibleBridgeSize())
+    {
+        same = false;
+        LL_WARNS("CullSplit") << "cull check: the drawable or bridge lists differ in size" << LL_ENDL;
+    }
+    return same;
+}
+
+// the walks of the partitions of every region, as jobs. into == nullptr: the result is the real one (sCull) and the object cache is culled too, 1 is returned.
+// into != nullptr (the check): the results go there, the queue writes are made, the occlusion flags the walks set are cleared again so that the serial loop that follows sees what the first run saw; 2 is returned.
+int cull_partitions_parallel(LLCamera& camera, LLCullResult* into)
+{
+    LLForkJoinPool* pool = LLForkJoinPool::shared();
+    if (!pool)
+    {
+        return 0;
+    }
+    std::vector<LLSpatialPartition*>& parts = sCullParts;
+    parts.clear();
+    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+    {
+        for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
+        {
+            LLSpatialPartition* part = (*iter)->getSpatialPartition(i);
+            if (part && (LLViewerRegion::PARTITION_BRIDGE == i || gPipeline.hasRenderType(part->mDrawableType)))
+            {
+                parts.push_back(part);
+            }
+        }
+    }
+    if (parts.empty())
+    {
+        return 0;
+    }
+
+    const auto t_start = std::chrono::steady_clock::now();
+    const size_t workers = pool->workerCount();
+
+    // the runs: contiguous stretches of the list of about the same cost (the cost of a partition is what its walk took the last time)
+    std::vector<float> cost(parts.size(), 0.f);
+    double known_sum = 0.0;
+    size_t known = 0;
+    for (size_t k = 0; k < parts.size(); ++k)
+    {
+        auto it = sCullCostUs.find(parts[k]);
+        if (it != sCullCostUs.end())
+        {
+            cost[k] = it->second;
+            known_sum += it->second;
+            ++known;
+        }
+        else
+        {
+            cost[k] = -1.f;
+        }
+    }
+    const float unknown_cost = known ? (float)(known_sum / known) : 6.f;
+    double total = 0.0;
+    for (float& c : cost)
+    {
+        if (c < 0.f)
+        {
+            c = unknown_cost;
+        }
+        total += c;
+    }
+    const double target = std::max(total / (double)((workers + 1) * 2), 12.0);
+
+    // the units, in the order of the serial loop. A partition that cost more than split_cost the last time is walked in pieces: its top levels here (a segment of the result), the subtrees below them as
+    // jobs of their own (each between two segments); the other partitions go into runs of about the same cost, one job a run.
+    static const double split_cost = getenv("LL_VK_CULL_SPLIT_US") ? atof(getenv("LL_VK_CULL_SPLIT_US")) : 80.0;
+    std::deque<CullChunk> chunks;
+    std::vector<CullItem> items;
+    items.reserve(parts.size() + 64);
+    auto new_chunk = [&](bool segment) -> CullChunk&
+    {
+        chunks.emplace_back();
+        CullChunk& c = chunks.back();
+        const size_t idx = chunks.size() - 1;
+        if (sCullLocals.size() <= idx)
+        {
+            sCullLocals.push_back(std::make_unique<LLCullResult>());
+        }
+        sCullLocals[idx]->clear();
+        c.mLocal = sCullLocals[idx].get();
+        c.mSegment = segment;
+        c.mBegin = c.mEnd = items.size();
+        return c;
+    };
+    std::unordered_map<LLSpatialPartition*, float> part_us;     // what each partition cost this time (its top levels and every job together)
+    double top_us = 0.0;
+    size_t segments = 0;
+    {
+        CullChunk* run = nullptr;
+        double run_cost = 0.0;
+        for (size_t k = 0; k < parts.size(); ++k)
+        {
+            LLSpatialPartition* part = parts[k];
+            if (cost[k] > split_cost)
+            {
+                run = nullptr;
+                static const double node_split = getenv("LL_VK_CULL_NODE_US") ? atof(getenv("LL_VK_CULL_NODE_US")) : 100.0;
+                const auto w0 = std::chrono::steady_clock::now();
+                CullChunk& first_segment = new_chunk(true);
+                ++segments;
+                CullTaskScope scope(first_segment);
+                const OctreeNode* root = part->mOctree;
+                part->cullSplit(camera, 8, [&](const OctreeNode* n)
+                {
+                    if (n == root)
+                    {
+                        return true;
+                    }
+                    auto it = sCullNodeUs.find(n);
+                    return it != sCullNodeUs.end() && it->second > node_split;
+                }, [&](const LLViewerOctreeCull::SplitTask& task)
+                {
+                    CullChunk& w = new_chunk(false);
+                    items.push_back({ part, true, task, 0.f });
+                    w.mEnd = items.size();
+                    CullChunk& next_segment = new_chunk(true);
+                    ++segments;
+                    sCull = next_segment.mLocal;                    // (the scope puts the thread's own back at the end)
+                    LLPipeline::sSortSink = &next_segment.mLedger;
+                });
+                const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - w0).count();
+                top_us += us;
+                part_us[part] += (float)us;
+            }
+            else
+            {
+                if (!run)
+                {
+                    run = &new_chunk(false);
+                    run_cost = 0.0;
+                }
+                items.push_back({ part, false, { nullptr, 0 }, 0.f });
+                run->mEnd = items.size();
+                run_cost += cost[k];
+                if (run_cost >= target)
+                {
+                    run = nullptr;
+                }
+            }
+        }
+    }
+    std::vector<size_t> work;
+    for (size_t c = 0; c < chunks.size(); ++c)
+    {
+        if (!chunks[c].mSegment)
+        {
+            work.push_back(c);
+        }
+    }
+
+    const std::function<void(size_t)> job = [&](size_t w)
+    {
+        CullChunk& chunk = chunks[work[w]];
+        CullTaskScope scope(chunk);
+        const auto t0 = std::chrono::steady_clock::now();
+        for (size_t k = chunk.mBegin; k < chunk.mEnd; ++k)
+        {
+            CullItem& item = items[k];
+            const auto p0 = std::chrono::steady_clock::now();
+            {
+                LL_CPU_ZONE("updateCull: partition cull");
+                if (item.mTask)
+                {
+                    item.mPart->cullTask(camera, item.mSplit);
+                }
+                else
+                {
+                    item.mPart->cull(camera);
+                }
+            }
+            item.mUs = (float)std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - p0).count();
+        }
+        chunk.mUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    };
+    // (a frame whose walks cost less than a wake-up is run here, in the same units: the costs go on being measured)
+    const bool inline_run = total < 100.0;
+    if (inline_run)
+    {
+        for (size_t w = 0; w < work.size(); ++w)
+        {
+            job(w);
+        }
+    }
+    else
+    {
+        LL_CPU_ZONE("updateCull: partition cull jobs (wait for the pool)");
+        pool->run(work.size(), job);
+    }
+
+    // the results in the order of the units, the ledgers applied in the same order
+    LLCullResult& target_result = into ? *into : *sCull;
+    if (into)
+    {
+        into->clear();
+    }
+    const auto t_apply = std::chrono::steady_clock::now();
+    std::vector<LLPipeline::SortDelta> ledger;
+    size_t pushed = 0;
+    double longest = 0.0, sum = 0.0;
+    for (CullChunk& chunk : chunks)
+    {
+        LLCullResult& l = *chunk.mLocal;
+        for (LLCullResult::drawable_iterator d = l.beginVisibleList(); d != l.endVisibleList(); ++d) target_result.pushDrawable(*d);
+        for (LLCullResult::bridge_iterator b = l.beginVisibleBridge(); b != l.endVisibleBridge(); ++b) target_result.pushBridge(*b);
+        for (LLCullResult::sg_iterator g = l.beginDrawableGroups(); g != l.endDrawableGroups(); ++g) { target_result.pushDrawableGroup(*g); ++pushed; }
+        for (LLCullResult::sg_iterator g = l.beginVisibleGroups(); g != l.endVisibleGroups(); ++g) { target_result.pushVisibleGroup(*g); ++pushed; }
+        for (LLCullResult::sg_iterator g = l.beginOcclusionGroups(); g != l.endOcclusionGroups(); ++g) target_result.pushOcclusionGroup(*g);
+        ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
+        if (!chunk.mSegment)
+        {
+            longest = std::max(longest, chunk.mUs);
+            sum += chunk.mUs;
+        }
+    }
+    gPipeline.applySortDeltas(ledger);
+    for (const CullItem& item : items)
+    {
+        part_us[item.mPart] += item.mUs;
+        if (item.mTask)
+        {
+            float& c = sCullNodeUs[item.mSplit.mNode];
+            c = c > 0.f ? c * 0.7f + item.mUs * 0.3f : item.mUs;
+        }
+    }
+    if (sCullNodeUs.size() > 8192)
+    {
+        sCullNodeUs.clear();
+    }
+    for (LLSpatialPartition* part : parts)
+    {
+        float& c = sCullCostUs[part];
+        const float now_us = part_us[part];
+        c = c > 0.f ? c * 0.8f + now_us * 0.2f : now_us;
+    }
+    if (sCullCostUs.size() > 4096)
+    {
+        sCullCostUs.clear();        // (partitions of regions that are gone: the weights come back within a frame)
+    }
+
+    int result = 1;
+    if (into)
+    {
+        for (LLCullResult::sg_iterator g = into->beginOcclusionGroups(); g != into->endOcclusionGroups(); ++g)
+        {
+            (*g)->clearOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);        // (the parents markOccluder flagged stay flagged: that only changes which entries are listed twice)
+        }
+        result = 2;
+    }
+    else
+    {
+        gPipeline.mNumVisibleNodes += (S32)pushed;
+        for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+        {
+            LLVOCachePartition* vo_part = (*iter)->getVOCachePartition();
+            if (vo_part)
+            {
+                LL_CPU_ZONE("updateCull: VO cache cull");
+                vo_part->cull(camera, LLPipeline::sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive());
+            }
+        }
+    }
+
+    CullSplitStats& s = sCullSplitStats;
+    if (into)
+    {
+        s.mCkJobs += work.size();
+        s.mCkSegments += segments;
+        s.mCkTopUs += top_us;
+        s.mCkSumUs += sum;
+        s.mCkLongestUs += longest;
+    }
+    if (!into)
+    {
+        ++s.mCalls[1];
+        s.mMs[1] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_start).count();
+        s.mApplyMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_apply).count();
+        s.mChunks += work.size();
+        s.mSegments += segments;
+        s.mTopUs += top_us;
+        s.mSumUs += sum;
+        s.mLongestUs += longest;
+        s.mInline += inline_run;
+    }
+    return result;
+}
+}
+
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
 {
     vk_avatar_log();
@@ -3377,8 +3841,23 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
     sCull->clear();
 
+    // <FS> stage 3a: the main view's partition walks on the pool (see cull_partitions_parallel)
+    const bool main_cull = !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && &camera == LLViewerCamera::getInstance() && !sShadowRender && !sReflectionRender && !gCubeSnapshot
+        && !cull_use && !vis_cull && !LLOccCensus::sOn && !LLCullShadow::sOn && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
+    const int cull_mode = main_cull ? cull_split_setting() : 0;
+    int cull_done = 0;
+    if (cull_mode >= 3)
+    {
+        if (cull_mode == 4 && !sCullCheckResult)
+        {
+            sCullCheckResult = new LLCullResult();
+        }
+        cull_done = cull_partitions_parallel(camera, cull_mode == 4 ? sCullCheckResult : nullptr);
+    }
+    const auto serial_t0 = main_cull && cull_done != 1 ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+
     for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
-            iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+            cull_done != 1 && iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
     {
         LLViewerRegion* region = *iter;
 
@@ -3409,6 +3888,27 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
             // <FS:Beq> Fix area search again
             //vo_part->cull(camera, sUseOcclusion > 0);
             { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive()); }
+        }
+    }
+    if (main_cull)
+    {
+        CullSplitStats& s = sCullSplitStats;
+        if (cull_done != 1)
+        {
+            ++s.mCalls[0];
+            s.mMs[0] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - serial_t0).count();
+        }
+        if (cull_done == 2)
+        {
+            ++s.mCheckRuns;
+            if (!cull_lists_equal(*sCullCheckResult, *sCull))
+            {
+                ++s.mCheckBad;
+            }
+        }
+        if (++s.mReport >= 600)
+        {
+            cull_split_report();
         }
     }
 
