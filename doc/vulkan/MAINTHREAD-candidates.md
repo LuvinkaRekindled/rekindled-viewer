@@ -164,3 +164,8 @@ Together about **0.4 ms** of the serial main thread in a crowd like avt1-, as es
 | deferred completion, per avatar | 33.3 us | 34.6 us | 29.4 us |
 
 About 0.2 ms in the loop at 160 rigid attachments plus about 0.1 downstream, roughly 0.3 ms: less than the 0.4 of the plan because in this crowd 61% of the rigid attachments move more than 1 mm between two visits (avt2-: 49%), and the not-plain 23% and the forced 1 in 8 are never skipped. Device lost 0 in both laps. Visual check by Adam pending.
+
+## rebuildPriorityGroups and the fully transparent attachments (2026-10-26, laps q1-, tr2-)
+
+- **`rebuildPriorityGroups` is not a target:** per call (it runs 4 times a frame) 3.8 particle groups (about 100 kcycles = 23 us) and 1.8-2 avatar groups (17-48 kcycles); 0.17 ms a frame in lap q1-. The 0.49 ms of an earlier heavy-crowd lap was mostly other work in the zone (mesh repo notifications, `wakeGroups`) and the crowd.
+- **Fully transparent attachments (tr2-, `FS_AVATAR_TIMERS`; every face of the root and its children has a texture entry colour alpha of 0):** per frame 24.3 rigid (of 168) and 7.0 rigged (of 169) attachments, 565 faces in them (18 a piece): 9% of the attachments (magic fireballs, hidden private parts, alpha spacers), none with no face at all. Their faces are registered in `PASS_ALPHA_INVISIBLE` and drawn by nobody (`llvovolume.cpp` 7242), but the loop moves them every frame: drawable move, bridge move, `updateCenterAgent` of every face, partition moves. Estimated worth: 0.1-0.2 ms (24 rigid x 2.7 us after b0 + 7 rigged x 3 us + 565 face centres + their bridges in the cull and the sort). A first census read `LLFace::getFaceColor()` (an override colour, red by default) and found none: the prim's alpha is the texture entry's.

@@ -3736,13 +3736,40 @@ void LLPipeline::rebuildPriorityGroups()
     wakeGroups();       // <FS> Released groups a camera wants again, a few at a time
 
     mGroupQ1Locked = true;
+    // census (LL_VK_ITEMCENSUS=1): the groups rebuilt here, by partition type: how many a frame and the time of their rebuildGeom
+    static const bool q1_census = ItemCensus::on();
+    static U64 q1_groups[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_cycles[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_frames = 0, q1_calls = 0;
     // Iterate through all drawables on the priority build queue,
     for (LLSpatialGroup::sg_vector_t::iterator iter = mGroupQ1.begin();
          iter != mGroupQ1.end(); ++iter)
     {
         LLSpatialGroup* group = *iter;
+        const unsigned long long q1_t0 = q1_census ? __rdtsc() : 0;
         group->rebuildGeom();
+        if (q1_census)
+        {
+            const U32 part = group->getSpatialPartition() ? std::min<U32>(group->getSpatialPartition()->mPartitionType, LLViewerRegion::NUM_PARTITIONS) : LLViewerRegion::NUM_PARTITIONS;
+            ++q1_groups[part];
+            q1_cycles[part] += __rdtsc() - q1_t0;
+        }
         group->clearState(LLSpatialGroup::IN_BUILD_Q1);
+    }
+    if (q1_census && ++q1_calls % 2400 == 0)
+    {
+        // (rebuildPriorityGroups runs several times a frame: the shadow passes and the main view; the rates are per call)
+        const double hz = 1.0e9 * 3.0;       // (a rough cycles to ms: the ItemCensus calibration is not shared; the cycles are logged raw too)
+        std::string line;
+        for (U32 k = 0; k <= LLViewerRegion::NUM_PARTITIONS; ++k)
+        {
+            if (q1_groups[k])
+            {
+                line += llformat(" | partition %u: %.2f groups a call, %.1f kcycles a call", k, (double)q1_groups[k] / 2400.0, (double)q1_cycles[k] / 2400.0 / 1000.0);
+            }
+        }
+        LL_INFOS("Q1Census") << "rebuildPriorityGroups per call over 2400 calls:" << line << LL_ENDL;
+        memset(q1_groups, 0, sizeof(q1_groups));
+        memset(q1_cycles, 0, sizeof(q1_cycles));
+        (void)hz; (void)q1_frames;
     }
 
     mGroupSaveQ1 = mGroupQ1;
