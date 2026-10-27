@@ -6183,6 +6183,70 @@ void LLVOAvatar::updateRootPositionAndRotation(LLAgent& agent, F32 speed, bool w
 // Most of the logic here is to figure out when to periodically update impostors.
 // Non-impostors have mUpdatePeriod == 1 and will need update every frame.
 //------------------------------------------------------------------------
+// <FS> FSAvatarFarUpdateDistance: a visible avatar (not an impostor) beyond this distance updates its pose, root and attachments every 2nd frame, beyond 1.6 times that every 3rd; the pose is
+// held in between (the animation time still runs: the next update catches up). Not the viewer's own avatar, a sitting one (it follows its seat), a fast one (over 3 m/s), an animated
+// object, a UI avatar. Test switch (LL_VK_FARTIER_FILE=1): <work>/avatar-update.txt holding a distance (0 = off) replaces the setting, read every 60 frames, for same lap comparisons.
+static F32 far_update_distance()
+{
+    static LLCachedControl<F32> setting(gSavedSettings, "FSAvatarFarUpdateDistance", 0.f);
+    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
+    if (!file_on)
+    {
+        return setting;
+    }
+    static U32 last_frame = ~0u;
+    static F32 value = -1.f;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (frame != last_frame && frame % 60 == 0)
+    {
+        last_frame = frame;
+        value = -1.f;
+        if (FILE* f = fopen("<work>/avatar-update.txt", "rb"))
+        {
+            char text[24] = {};
+            fread(text, 1, sizeof(text) - 1, f);
+            fclose(f);
+            value = (F32)atof(text);
+        }
+    }
+    return value >= 0.f ? value : (F32)setting;
+}
+
+U32 LLVOAvatar::farUpdatePeriod()
+{
+    // census (LL_VK_SCENECENSUS): why the avatars the rule looked at did or did not get a longer period, per frame over 600 frames
+    static const bool census_on = getenv("LL_VK_SCENECENSUS") != nullptr;
+    static U64 reasons[9] = {}, calls = 0;
+    auto done = [&](int reason, U32 period) -> U32
+    {
+        if (census_on)
+        {
+            ++reasons[reason];
+            if (++calls % (600 * 40) == 0)
+            {
+                LL_INFOS("FarUpdate") << "far avatar update rule, avatar visits a frame (about 40 avatars): off " << reasons[0] / 600.0 << ", self " << reasons[1] / 600.0 << ", dummy/control/animesh/UI " << reasons[2] / 600.0
+                                      << ", sitting " << reasons[3] / 600.0 << ", fast " << reasons[4] / 600.0 << ", no drawable or not visible " << reasons[5] / 600.0 << ", near " << reasons[6] / 600.0
+                                      << ", period 2 " << reasons[7] / 600.0 << ", period 3 " << reasons[8] / 600.0 << LL_ENDL;
+                memset(reasons, 0, sizeof(reasons));
+            }
+        }
+        return period;
+    };
+    const F32 distance_setting = far_update_distance();
+    if (distance_setting <= 0.f) return done(0, 1);
+    if (isSelf()) return done(1, 1);
+    if (mIsDummy || mIsControlAvatar || mIsAnimesh || isUIAvatar()) return done(2, 1);
+    if (getParent()) return done(3, 1);
+    if (mSpeed > 3.f) return done(4, 1);
+    if (mDrawable.isNull() || !isVisible()) return done(5, 1);
+    const F32 distance = mDrawable->mDistanceWRTCamera * LLPipeline::farDistanceScale();
+    if (distance < distance_setting)
+    {
+        return done(6, 1);
+    }
+    return distance >= distance_setting * 1.6f ? done(8, 3) : done(7, 2);
+}
+
 bool LLVOAvatar::computeNeedsUpdate()
 {
     const F32 MAX_IMPOSTOR_INTERVAL = 4.0f;
@@ -6192,6 +6256,16 @@ bool LLVOAvatar::computeNeedsUpdate()
 
     bool needs_update_by_max_time = ((gFrameTimeSeconds-mLastImpostorUpdateFrameTime)> MAX_IMPOSTOR_INTERVAL);
     bool needs_update = needs_update_by_frame_count || needs_update_by_max_time;
+    if (needs_update && mUpdatePeriod == 1)
+    {
+        // a full avatar far away: every 2nd or 3rd frame (impostors have their own, longer period). (needs_update_by_max_time is always true for a full avatar: its impostor time never
+        // resets, so it must not decide here)
+        const U32 far_period = farUpdatePeriod();
+        if (far_period > 1 && ((LLDrawable::getCurrentFrame() + mID.mData[0]) % far_period) != 0)
+        {
+            needs_update = false;
+        }
+    }
 
     if (needs_update && !isSelf())
     {
