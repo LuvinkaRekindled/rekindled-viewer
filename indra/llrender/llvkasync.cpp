@@ -31,6 +31,7 @@
 #include <deque>
 #include <mutex>
 #include <set>
+#include <unordered_set>
 #include <algorithm>
 #include <intrin.h>
 #include <vector>
@@ -58,6 +59,8 @@ namespace LLVkBridge
 
 namespace LLVkAsync
 {
+
+void uiCacheBufferTouched(U32 name);       // (UI record cache, below)
 
 bool gEnabled = false;
 bool gTexOneCopy = false;   // C4: opt-in (LL_VK_TEXONECOPY=1), the measured gain was nil
@@ -777,6 +780,7 @@ void bufferData(U32 name, BufferKind buffer_kind, S64 size, const void* data)
         return;
     }
     MainLap lap;
+    uiCacheBufferTouched(name);
     const NamedBufArgs a = { name, kind, 0, 0, 0, size };
     pushData(CMD_BUFFER_DATA, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
 }
@@ -790,6 +794,7 @@ void bufferSubData(U32 name, S64 offset, S64 size, const void* data)
         return;
     }
     MainLap lap;
+    uiCacheBufferTouched(name);
     const NamedBufArgs a = { name, 0, 0, 0, offset, size };
     pushData(CMD_BUFFER_SUBDATA, &a, sizeof(a), data, data ? (size_t)std::max<S64>(size, 0) : 0);
 }
@@ -803,6 +808,7 @@ void bufferRecycle(U32 name)
         return;
     }
     MainLap lap;
+    uiCacheBufferTouched(name);
     const NamedBufArgs a = { name, 0, 0, 0, 0, 0 };
     pushData(CMD_BUFFER_RECYCLE, &a, sizeof(a), nullptr, 0);
 }
@@ -836,7 +842,10 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
         }
         const U32 payload2 = (U32)(sizeof(DrawHeader2) + bb + idb + uni2 + vbytes);
         U8* p2 = mainReserve(payload2, scratch ? CMD_DRAW_SCRATCH : CMD_DRAW, 0);
-        DrawHeader2 h2 = { { kind, mode, start, end, count, type, indices, pend().mMask, n2, uni2 }, d.mProgram, bb, 0 };
+        DrawHeader2 h2;
+        memset(&h2, 0, sizeof(h2));       // (the padding too: the records of a UI segment are compared and cached as bytes)
+        h2.mDraw.mKind = kind; h2.mDraw.mMode = mode; h2.mDraw.mStart = start; h2.mDraw.mEnd = end; h2.mDraw.mCount = count; h2.mDraw.mType = type; h2.mDraw.mIndices = indices;
+        h2.mDraw.mMask = pend().mMask; h2.mDraw.mCountTex = n2; h2.mDraw.mUniBytes = uni2; h2.mProgram = d.mProgram; h2.mBindBytes = bb;
         memcpy(p2, &h2, sizeof(h2));
         if (bb)
         {
@@ -1309,7 +1318,8 @@ void programBind(void* program)
     drawProgram(program);
     push(CMD_PROGRAM_BIND, &program, sizeof(program));
 }
-void programDestroy(void* program) { push(CMD_PROGRAM_DESTROY, &program, sizeof(program)); }
+static std::atomic<unsigned long long> gUiCacheEpoch{ 1 };
+void programDestroy(void* program) { ++gUiCacheEpoch; push(CMD_PROGRAM_DESTROY, &program, sizeof(program)); }
 void samplerUnit(void* program, unsigned sampler_index, unsigned unit)
 {
     struct A { void* p; unsigned i, u; } a = { program, sampler_index, unit };
@@ -3146,6 +3156,27 @@ void SubStream::splice()
     gMainPend.mDraw.mDirty = true;
 }
 
+void SubStream::reseed()
+{
+    Impl& s = *mImpl;
+    if (s.mSeed)
+    {
+        LLVkState::destroyContext(s.mSeed);
+    }
+    s.mSeed = LLVkState::cloneContext();
+    s.mSeedDraw = gMainPend.mDraw;
+}
+
+const std::vector<U8>& SubStream::bytes() const
+{
+    return mImpl->mBuf.mBuf;
+}
+
+bool SubStream::leftState() const
+{
+    return !mImpl->mLeft.empty();
+}
+
 U32 SubStream::records() const
 {
     U32 count = 0;
@@ -3158,6 +3189,240 @@ U32 SubStream::records() const
     }
     return count;
 }
+
+// ---- UI record cache ----
+void segmentBoundary()
+{
+    if (!produces())
+    {
+        return;
+    }
+    ++gPassEpoch;
+    LLVkState::forceEmit();
+    Pend& p = pend();
+    p.mDraw.mDirty = true;
+    U32 m = 0;
+    for (U32 u = 0; u < 32; ++u)
+    {
+        if (p.mTex[u]) m |= 1u << u;
+    }
+    p.mMask |= m;
+    LLVkBuf::reannounce();
+}
+
+void scanSegment(const U8* data, size_t size, SegmentScan& out)
+{
+    out = SegmentScan();
+    for (size_t off = 0; off < size; )
+    {
+        RecHeader h;
+        memcpy(&h, data + off, sizeof(h));
+        if (h.mSize < sizeof(RecHeader) || off + h.mSize > size)
+        {
+            out.mCacheable = false;
+            out.mBadOp = 0xFFFF;
+            return;
+        }
+        ++out.mRecords;
+        const U8* payload = data + off + sizeof(RecHeader);
+        switch (h.mOp)
+        {
+        case CMD_STATE: case CMD_UNIFORM_BATCH: case CMD_UNIFORM_RANGE: case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR: case CMD_UNIFORM_MATRIX: case CMD_UNIFORM_BLOCK:
+        case CMD_CONST_ATTRIB: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND: case CMD_TEX_PARAMS_ID:
+            break;
+        case CMD_TEX_SLOTS:
+            {
+                U32 head[2];
+                memcpy(&head, payload, sizeof(head));
+                const U32* ids = reinterpret_cast<const U32*>(payload + sizeof(head));
+                for (U32 k = 0; k < head[1]; ++k)
+                {
+                    U32 id;
+                    memcpy(&id, ids + k, sizeof(id));
+                    out.mTextures.push_back(id);
+                }
+            }
+            break;
+        case CMD_DRAW: case CMD_DRAW_SCRATCH:
+            {
+                ++out.mDraws;
+                DrawHeader2 h2;
+                memcpy(&h2, payload, sizeof(h2));
+                if (h2.mBindBytes)
+                {
+                    DrawBinding b;
+                    drawBindingRead(payload + sizeof(h2), b);
+                    if (b.mArray) out.mBuffers.push_back(b.mArray);
+                    if (b.mElem) out.mBuffers.push_back(b.mElem);
+                }
+                const U8* ids = payload + sizeof(h2) + h2.mBindBytes;
+                for (U32 k = 0; k < h2.mDraw.mCountTex; ++k)
+                {
+                    U32 id;
+                    memcpy(&id, ids + k * sizeof(U32), sizeof(id));
+                    out.mTextures.push_back(id);
+                }
+            }
+            break;
+        default:
+            if (out.mCacheable)
+            {
+                out.mCacheable = false;
+                out.mBadOp = h.mOp;
+            }
+            break;
+        }
+        if (h.mFlags != 0 && out.mCacheable)
+        {
+            out.mCacheable = false;         // data that follows as a heap pointer: owned elsewhere, not for a replay
+            out.mBadOp = h.mOp;
+        }
+        off += h.mSize;
+    }
+    std::sort(out.mTextures.begin(), out.mTextures.end());
+    out.mTextures.erase(std::unique(out.mTextures.begin(), out.mTextures.end()), out.mTextures.end());
+    std::sort(out.mBuffers.begin(), out.mBuffers.end());
+    out.mBuffers.erase(std::unique(out.mBuffers.begin(), out.mBuffers.end()), out.mBuffers.end());
+}
+
+static bool isDrawingOp(U16 op)
+{
+    switch (op)
+    {
+    case CMD_STATE: case CMD_DRAW: case CMD_DRAW_SCRATCH: case CMD_TEX_SLOTS: case CMD_UNIFORM_BATCH: case CMD_UNIFORM_RANGE: case CMD_UNIFORM_SCALAR: case CMD_UNIFORM_VECTOR:
+    case CMD_UNIFORM_MATRIX: case CMD_UNIFORM_BLOCK: case CMD_CONST_ATTRIB: case CMD_SAMPLER_UNIT: case CMD_PROGRAM_BIND:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void spliceSideEffects(const U8* data, size_t size)
+{
+    for (size_t off = 0; off < size; )
+    {
+        RecHeader h;
+        memcpy(&h, data + off, sizeof(h));
+        if (!isDrawingOp(h.mOp))
+        {
+            const size_t payload = h.mSize - sizeof(RecHeader);
+            U8* w = mainReserve(payload, h.mOp, h.mFlags);
+            memcpy(w, data + off + sizeof(RecHeader), payload);
+            mainCommit(payload);
+            ++gMainRecords;
+        }
+        off += h.mSize;
+    }
+}
+
+std::string describeSegmentDifference(const U8* a, size_t a_size, const U8* b, size_t b_size)
+{
+    size_t oa = 0, ob = 0;
+    int index = 0;
+    while (oa < a_size && ob < b_size)
+    {
+        RecHeader ha, hb;
+        memcpy(&ha, a + oa, sizeof(ha));
+        memcpy(&hb, b + ob, sizeof(hb));
+        const int slot = std::min((int)(ha.mOp - CMD_BASE), (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) - 1);
+        char buf[300];
+        if (ha.mOp != hb.mOp || ha.mSize != hb.mSize)
+        {
+            snprintf(buf, sizeof(buf), "record %d: op %u (%s) size %u against op %u size %u", index, (unsigned)ha.mOp, slot >= 0 ? kCmdNames[slot] : "?", (unsigned)ha.mSize, (unsigned)hb.mOp, (unsigned)hb.mSize);
+            return buf;
+        }
+        const size_t n = ha.mSize - sizeof(RecHeader);
+        const U8* pa = a + oa + sizeof(RecHeader);
+        const U8* pb = b + ob + sizeof(RecHeader);
+        for (size_t k = 0; k < n; ++k)
+        {
+            if (pa[k] != pb[k])
+            {
+                snprintf(buf, sizeof(buf), "record %d of %s: op %u (%s) size %u, first differing payload byte %zu of %zu (0x%02x against 0x%02x)", index, "the segment", (unsigned)ha.mOp,
+                         slot >= 0 ? kCmdNames[slot] : "?", (unsigned)ha.mSize, k, n, (unsigned)pa[k], (unsigned)pb[k]);
+                return buf;
+            }
+        }
+        oa += ha.mSize;
+        ob += hb.mSize;
+        ++index;
+    }
+    if (oa != a_size || ob != b_size)
+    {
+        char buf[160];
+        snprintf(buf, sizeof(buf), "the first %d records are equal, then one side ends (%zu of %zu bytes against %zu of %zu)", index, oa, a_size, ob, b_size);
+        return buf;
+    }
+    return std::string();
+}
+
+void replaySegment(const U8* data, size_t size)
+{
+    coFlushAll();                                   // the main producer's own pending writes come first
+    for (size_t off = 0; off < size; )
+    {
+        RecHeader h;
+        memcpy(&h, data + off, sizeof(h));
+        const size_t payload = h.mSize - sizeof(RecHeader);
+        U8* w = mainReserve(payload, h.mOp, h.mFlags);
+        memcpy(w, data + off + sizeof(RecHeader), payload);
+        mainCommit(payload);
+        ++gMainRecords;
+        off += h.mSize;
+    }
+}
+
+static std::mutex gUiCacheTexMutex;
+static std::unordered_set<U32> gUiCacheTextures;
+
+void uiCacheNameTextures(const U32* ids, size_t count)
+{
+    std::lock_guard<std::mutex> lock(gUiCacheTexMutex);
+    for (size_t i = 0; i < count; ++i)
+    {
+        gUiCacheTextures.insert(ids[i]);
+    }
+}
+
+void uiCacheTextureFreed(U32 id)
+{
+    std::lock_guard<std::mutex> lock(gUiCacheTexMutex);
+    if (!gUiCacheTextures.empty() && gUiCacheTextures.erase(id))
+    {
+        ++gUiCacheEpoch;
+    }
+}
+
+static std::mutex gUiCacheBufMutex;
+static std::unordered_set<U32> gUiCacheBuffers;
+static std::atomic<size_t> gUiCacheBufferCount{ 0 };
+
+void uiCacheNameBuffers(const U32* names, size_t count)
+{
+    std::lock_guard<std::mutex> lock(gUiCacheBufMutex);
+    for (size_t i = 0; i < count; ++i)
+    {
+        gUiCacheBuffers.insert(names[i]);
+    }
+    gUiCacheBufferCount.store(gUiCacheBuffers.size());
+}
+
+void uiCacheBufferTouched(U32 name)
+{
+    if (gUiCacheBufferCount.load(std::memory_order_relaxed) == 0)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(gUiCacheBufMutex);
+    if (gUiCacheBuffers.erase(name))
+    {
+        ++gUiCacheEpoch;
+        gUiCacheBufferCount.store(gUiCacheBuffers.size());
+    }
+}
+
+unsigned long long uiCacheEpoch() { return gUiCacheEpoch.load(); }
+void uiCacheInvalidate() { ++gUiCacheEpoch; }
 
 } // namespace LLVkAsync
 
@@ -3184,5 +3449,44 @@ void LLVkSubStream::begin() { ((LLVkAsync::SubStream*)mImpl)->begin(); }
 void LLVkSubStream::end() { ((LLVkAsync::SubStream*)mImpl)->end(); }
 void LLVkSubStream::splice() { ((LLVkAsync::SubStream*)mImpl)->splice(); }
 unsigned LLVkSubStream::records() const { return ((LLVkAsync::SubStream*)mImpl)->records(); }
+void LLVkSubStream::reseed() { ((LLVkAsync::SubStream*)mImpl)->reseed(); }
+bool LLVkSubStream::takeBytes(std::vector<unsigned char>& out) const { out = ((LLVkAsync::SubStream*)mImpl)->bytes(); return true; }
+bool LLVkSubStream::leftState() const { return ((LLVkAsync::SubStream*)mImpl)->leftState(); }
+void LLVkSubStream::segmentBoundary() { LLVkAsync::segmentBoundary(); }
+void LLVkSubStream::replay(const unsigned char* data, size_t size) { LLVkAsync::replaySegment(data, size); }
+void LLVkSubStream::replaySideEffects(const unsigned char* data, size_t size) { LLVkAsync::spliceSideEffects(data, size); }
+std::string LLVkSubStream::describeDifference(const unsigned char* a, size_t a_size, const unsigned char* b, size_t b_size) { return LLVkAsync::describeSegmentDifference(a, a_size, b, b_size); }
+bool LLVkSubStream::scan(const unsigned char* data, size_t size, Scan& out)
+{
+    LLVkAsync::SegmentScan s;
+    LLVkAsync::scanSegment(data, size, s);
+    out.mCacheable = s.mCacheable;
+    out.mBadOp = s.mBadOp;
+    out.mRecords = s.mRecords;
+    out.mDraws = s.mDraws;
+    out.mTextures = s.mTextures;
+    out.mBuffers = s.mBuffers;
+    return s.mCacheable;
+}
+void LLVkSubStream::cacheInvalidate() { LLVkAsync::uiCacheInvalidate(); }
+void LLVkSubStream::nameTextures(const unsigned* ids, size_t count) { LLVkAsync::uiCacheNameTextures(ids, count); }
+void LLVkSubStream::nameBuffers(const unsigned* names, size_t count) { LLVkAsync::uiCacheNameBuffers(names, count); }
+unsigned long long LLVkSubStream::cacheEpoch() { return LLVkAsync::uiCacheEpoch(); }
+void LLVkSubStream::stateSnapshot(std::vector<unsigned char>& out)
+{
+    const LLVkState::Block& b = LLVkState::current();
+    out.resize(sizeof(LLVkState::Block));
+    memcpy(out.data(), &b, sizeof(b));
+}
+bool LLVkSubStream::stateEqual(const std::vector<unsigned char>& snapshot)
+{
+    if (snapshot.size() != sizeof(LLVkState::Block))
+    {
+        return false;
+    }
+    LLVkState::Block old;
+    memcpy(&old, snapshot.data(), sizeof(old));
+    return old == LLVkState::current();
+}
 
 #endif // LL_VULKAN

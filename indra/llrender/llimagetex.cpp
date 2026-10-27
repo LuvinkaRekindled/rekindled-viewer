@@ -1338,6 +1338,7 @@ void LLImageTex::deleteTextures(S32 numTextures, const U32 *textures)
         for (S32 i = 0; i < numTextures; ++i)
         {
             sFreeList[idx].push_back(textures[i]);
+            LLVkAsync::uiCacheTextureFreed(textures[i]);        // <FS> UI record cache: a cached segment that draws with it is stale
         }
     }
 }

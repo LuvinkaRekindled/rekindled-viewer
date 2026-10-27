@@ -174,8 +174,11 @@ LLView::LLView(const LLView::Params& p)
     // </FS:ND>
 }
 
+void ui_cache_forget(const LLView* view);       // <FS> UI record cache (below)
+
 LLView::~LLView()
 {
+    ui_cache_forget(this);
     dirtyRect();
     //LL_INFOS() << "Deleting view " << mName << ":" << (void*) this << LL_ENDL;
     if (LLView::sIsDrawing)
@@ -1337,6 +1340,507 @@ static bool ui_view_clipped_out(const LLView* viewp, const LLRect& screen_rect)
     return !viewp->getUseBoundingRect() || !clip.overlaps(viewp->calcScreenBoundingRect());
 }
 
+
+// ---- <FS> UI record cache (doc/vulkan/PLAN-ui-record-cache.md) ----
+// A view that costs enough to draw is recorded as a segment of draw records (LLVkSubStream on this thread, spliced at once: the stream is what a live draw writes) and, on most frames,
+// the saved records are played again instead of calling draw(). The segment is made self-contained by LLRender::segmentBoundary() before and after (what the producer believes about the
+// worker is sent again). A unit is drawn live when its key changed (rect, clip, scale, matrix, entry render state, epoch), while the mouse is over it, while it holds the keyboard focus or
+// the mouse capture (and for 15 frames after), and every Nth frame (N from the frame rate and LL_VK_UI_CACHE hz), staggered between the units.
+// LL_VK_UI_CACHE=<mode> [<hz>]: 0 off (default), 1 record only (named units: LL_VK_UI_CACHE_UNITS=a,b: drawn live and recorded every frame, nothing replayed), 2 sliced replay. LL_VK_UI_CACHE_VERIFY=1:
+// on a replay frame the live draw is recorded too (not spliced) and compared with the saved bytes. Test switch (LL_VK_FARTIER_FILE=1): D:/claude/ui-cache.txt holding "<mode> [<hz>]".
+#include "llvksubstream.h"
+#include "llrendermatrix.h"
+#include <chrono>
+#include <typeinfo>
+#include <glm/gtc/type_ptr.hpp>
+
+namespace
+{
+struct UiCacheCfg
+{
+    int mMode = 0;
+    float mHz = 30.f;
+    bool mVerify = false;
+    std::vector<std::string> mOnly;
+};
+
+struct UiUnit
+{
+    std::string mName;
+    std::vector<unsigned char> mBytes, mEntryState;
+    std::vector<unsigned> mTextures;
+    U64 mKey = 0, mEpoch = 0;
+    U32 mRecordedFrame = 0, mActiveFrame = 0, mPhase = 0, mRecords = 0, mDraws = 0;
+    float mLiveUs = 0.f, mReplayUs = 0.f;         // moving averages
+    bool mValid = false, mUncacheable = false;       // mUncacheable: the draw leaves the render state changed (structural: never again)
+    unsigned short mBadOp = 0;                       // the last record that made a recording not cacheable
+    const char* mWhy = "";
+    U32 mRecordings = 0, mRejected = 0, mRejectStreak = 0, mRetryFrame = 0;     // recordings made / not cacheable / in a row / do not record again before this frame
+    U32 mBadOps[8] = {};                             // the bad ops of the rejected recordings by op - CMD_TEX_PARAMS_ID (a histogram of the first 8 distinct)
+    U16 mBadOpKinds[8] = {};
+    // since the last report
+    U32 mLive = 0, mReplayed = 0, mForced = 0, mKeyMiss = 0, mChecked = 0, mMismatch = 0;
+    double mSavedUs = 0.0;
+};
+
+std::unordered_map<const LLView*, UiUnit> sUiUnits;
+LLVkSubStream* sUiRecorder = nullptr;
+bool sUiRecording = false;
+U32 sUiPhaseCounter = 0;
+size_t sUiCacheBytes = 0;
+
+struct UiCacheFrame
+{
+    U32 mFrame = ~0u;
+    S32 mMouseX = -1, mMouseY = -1;
+    const LLView* mFocus = nullptr;
+    const LLView* mCapture = nullptr;
+    U32 mN = 1;
+    double mFrameMs = 11.0;
+    std::chrono::steady_clock::time_point mLast;
+    // counters of the report window
+    U32 mFrames = 0;
+    double mLiveUs = 0.0, mReplayUs = 0.0, mSavedUs = 0.0, mRecordOverheadUs = 0.0, mVerifyUs = 0.0;
+    U32 mLiveN = 0, mReplayN = 0, mUncacheableN = 0, mEvicted = 0;
+} sUiFrame;
+
+const UiCacheCfg& ui_cache_cfg()
+{
+    static UiCacheCfg cfg;
+    static bool read_env = false;
+    static bool env_set = false;
+    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
+    // the settings (FSUIRecordCache: 0 off, 1 on; FSUIRecordCacheHz: the UI refresh rate to aim for); the variable and the test file below override them
+    static LLUICachedControl<S32> setting_on("FSUIRecordCache", 0);
+    static LLUICachedControl<F32> setting_hz("FSUIRecordCacheHz", 30.f);
+    if (!env_set && !file_on)
+    {
+        cfg.mMode = setting_on > 0 ? 2 : 0;
+        cfg.mHz = std::max(10.f, (F32)setting_hz);
+    }
+    if (!read_env)
+    {
+        read_env = true;
+        if (const char* e = getenv("LL_VK_UI_CACHE"))
+        {
+            env_set = true;
+            float hz = 30.f;
+            int mode = 0;
+            if (sscanf(e, "%d%*[ ,;]%f", &mode, &hz) >= 1)
+            {
+                cfg.mMode = mode;
+                if (hz > 0.f) cfg.mHz = hz;
+            }
+        }
+        cfg.mVerify = getenv("LL_VK_UI_CACHE_VERIFY") && atoi(getenv("LL_VK_UI_CACHE_VERIFY")) != 0;
+        if (const char* u = getenv("LL_VK_UI_CACHE_UNITS"))
+        {
+            std::string list(u);
+            size_t at = 0;
+            while (at <= list.size())
+            {
+                const size_t comma = list.find(',', at);
+                const std::string item = list.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+                if (!item.empty()) cfg.mOnly.push_back(item);
+                if (comma == std::string::npos) break;
+                at = comma + 1;
+            }
+        }
+    }
+    if (file_on)
+    {
+        static U32 last_frame = ~0u;
+        static UiCacheCfg file_cfg = cfg;
+        const U32 frame = (U32)LLFrameTimer::getFrameCount();
+        if (frame != last_frame && frame % 60 == 0)
+        {
+            last_frame = frame;
+            file_cfg = cfg;
+            if (FILE* f = fopen("D:/claude/ui-cache.txt", "rb"))
+            {
+                char text[48] = {};
+                fread(text, 1, sizeof(text) - 1, f);
+                fclose(f);
+                int mode = -1;
+                float hz = 0.f;
+                if (sscanf(text, "%d%*[ ,;]%f", &mode, &hz) >= 1 && mode >= 0)
+                {
+                    file_cfg.mMode = mode;
+                    if (hz > 0.f) file_cfg.mHz = hz;
+                }
+            }
+        }
+        return file_cfg;
+    }
+    return cfg;
+}
+
+U64 ui_mix(U64 h, const void* data, size_t bytes)
+{
+    const unsigned char* p = (const unsigned char*)data;
+    for (size_t i = 0; i < bytes; ++i)
+    {
+        h = (h ^ p[i]) * 0x100000001b3ULL;
+    }
+    return h;
+}
+
+std::string ui_view_path(const LLView* v)
+{
+    std::string path = v->getName();
+    for (const LLView* p = v->getParent(); p && p->getParent(); p = p->getParent())
+    {
+        path = p->getName() + "/" + path;
+    }
+    return path;
+}
+
+bool ui_cache_blacklisted(const LLView* v)
+{
+    const char* n = typeid(*v).name();
+    return strstr(n, "Menu") || strstr(n, "ToolTip") || strstr(n, "Popup") || strstr(n, "DebugView") || strstr(n, "HUDView") || strstr(n, "Console");
+}
+
+double ui_now_us()
+{
+    return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void ui_cache_report(const UiCacheCfg& cfg);
+
+void ui_cache_frame(const UiCacheCfg& cfg)
+{
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    if (sUiFrame.mFrame == frame)
+    {
+        return;
+    }
+    if (sUiFrame.mFrames >= 600)
+    {
+        ui_cache_report(cfg);
+    }
+    sUiFrame.mFrame = frame;
+    const auto now = std::chrono::steady_clock::now();
+    if (sUiFrame.mLast.time_since_epoch().count() != 0)
+    {
+        const double ms = std::chrono::duration<double, std::milli>(now - sUiFrame.mLast).count();
+        if (ms > 0.0 && ms < 500.0)
+        {
+            sUiFrame.mFrameMs += 0.05 * (ms - sUiFrame.mFrameMs);
+        }
+    }
+    sUiFrame.mLast = now;
+    const double fps = 1000.0 / std::max(1.0, sUiFrame.mFrameMs);
+    sUiFrame.mN = (U32)llclamp((int)std::lround(fps / std::max(1.f, cfg.mHz)), 1, 4);
+    LLUI::getInstance()->getMousePositionScreen(&sUiFrame.mMouseX, &sUiFrame.mMouseY);
+    sUiFrame.mFocus = dynamic_cast<const LLView*>(gFocusMgr.getKeyboardFocus());
+    sUiFrame.mCapture = dynamic_cast<const LLView*>(gFocusMgr.getMouseCapture());
+    ++sUiFrame.mFrames;
+}
+
+void ui_cache_drop_all()
+{
+    for (auto& e : sUiUnits)
+    {
+        e.second.mValid = false;
+        e.second.mBytes.clear();
+        e.second.mBytes.shrink_to_fit();
+    }
+    sUiCacheBytes = 0;
+}
+
+void ui_cache_report(const UiCacheCfg& cfg)
+{
+    if (sUiFrame.mFrames < 600)
+    {
+        return;
+    }
+    const double frames = (double)sUiFrame.mFrames;
+    struct Row { const UiUnit* mUnit; };
+    std::vector<const UiUnit*> rows;
+    size_t cacheable = 0, uncacheable = 0, valid = 0;
+    for (const auto& e : sUiUnits)
+    {
+        const UiUnit& u = e.second;
+        if (u.mUncacheable) ++uncacheable;
+        if (u.mValid) { ++valid; ++cacheable; }
+        if (u.mLive || u.mReplayed) rows.push_back(&u);
+    }
+    std::sort(rows.begin(), rows.end(), [](const UiUnit* a, const UiUnit* b) { return a->mSavedUs > b->mSavedUs; });
+    std::string top;
+    for (size_t i = 0; i < rows.size() && i < 14; ++i)
+    {
+        const UiUnit& u = *rows[i];
+        char buf[480];
+        snprintf(buf, sizeof(buf), " | %s: live %.1f us, replay %.1f us, %.2f live / %.2f replayed / %.2f forced (input) / %.2f key misses a frame, %u records %u draws %zu KB, recordings %u rejected %u, saved %.3f ms a frame",
+                 u.mName.c_str(), u.mLiveUs, u.mReplayUs, u.mLive / frames, u.mReplayed / frames, u.mForced / frames, u.mKeyMiss / frames, u.mRecords, u.mDraws, u.mBytes.size() / 1024, u.mRecordings, u.mRejected,
+                 u.mSavedUs / 1000.0 / frames);
+        top += buf;
+        if (u.mRejected)
+        {
+            top += std::string(" [rejected for:") + (u.mUncacheable ? " left the render state changed;" : "");
+            for (int k = 0; k < 8; ++k)
+            {
+                if (u.mBadOps[k]) top += " op " + std::to_string(u.mBadOpKinds[k]) + " x" + std::to_string(u.mBadOps[k]) + ";";
+            }
+            top += "]";
+        }
+        if (u.mChecked)
+        {
+            top += " [verified " + std::to_string(u.mChecked) + " mismatched " + std::to_string(u.mMismatch) + "]";
+        }
+    }
+    LL_INFOS("UiCache") << "mode " << cfg.mMode << " hz " << cfg.mHz << " (N " << sUiFrame.mN << ", frame " << sUiFrame.mFrameMs << " ms) over " << sUiFrame.mFrames << " frames: units " << sUiUnits.size()
+                        << ", with a saved segment " << valid << " (" << sUiCacheBytes / 1024 << " KB), not cacheable " << uncacheable << "; per frame: live draws " << sUiFrame.mLiveN / frames << " (" << sUiFrame.mLiveUs / 1000.0 / frames
+                        << " ms, recording overhead " << sUiFrame.mRecordOverheadUs / 1000.0 / frames << " ms), replays " << sUiFrame.mReplayN / frames << " (" << sUiFrame.mReplayUs / 1000.0 / frames
+                        << " ms), estimated saving " << sUiFrame.mSavedUs / 1000.0 / frames << " ms, verify draws " << sUiFrame.mVerifyUs / 1000.0 / frames << " ms, evictions " << sUiFrame.mEvicted << top << LL_ENDL;
+    for (auto& e : sUiUnits)
+    {
+        UiUnit& u = e.second;
+        u.mLive = u.mReplayed = u.mForced = u.mKeyMiss = u.mChecked = u.mMismatch = u.mRecordings = u.mRejected = 0;
+        memset(u.mBadOps, 0, sizeof(u.mBadOps));
+        u.mSavedUs = 0.0;
+    }
+    sUiFrame.mFrames = 0;
+    sUiFrame.mLiveUs = sUiFrame.mReplayUs = sUiFrame.mSavedUs = sUiFrame.mRecordOverheadUs = sUiFrame.mVerifyUs = 0.0;
+    sUiFrame.mLiveN = sUiFrame.mReplayN = sUiFrame.mUncacheableN = sUiFrame.mEvicted = 0;
+}
+}
+
+void ui_cache_forget(const LLView* view)
+{
+    if (!sUiUnits.empty())
+    {
+        auto it = sUiUnits.find(view);
+        if (it != sUiUnits.end())
+        {
+            sUiCacheBytes -= std::min(sUiCacheBytes, it->second.mBytes.size());
+            sUiUnits.erase(it);
+        }
+    }
+}
+
+// draws the view, from the saved records when it can be. Called with the view's translation already applied, where viewp->draw() was.
+static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
+{
+    const UiCacheCfg& cfg = ui_cache_cfg();
+    if (cfg.mMode == 0 || sUiRecording || !LLVkSubStream::usable() || LLView::sDepth < 3 || LLView::sDepth > 7)
+    {
+        viewp->draw();
+        return;
+    }
+    ui_cache_frame(cfg);
+
+    // the size rule: a view that covers a quarter of the window or more holds many independent things
+    LLView* rootp = LLUI::getInstance()->getRootView();
+    const LLRect root_rect = rootp->getLocalRect();
+    if ((F32)screen_rect.getWidth() * (F32)screen_rect.getHeight() > 0.25f * (F32)root_rect.getWidth() * (F32)root_rect.getHeight() || ui_cache_blacklisted(viewp))
+    {
+        viewp->draw();
+        return;
+    }
+
+    auto found = sUiUnits.find(viewp);
+    if (found == sUiUnits.end())
+    {
+        UiUnit fresh;
+        fresh.mName = ui_view_path(viewp);
+        fresh.mPhase = sUiPhaseCounter++;
+        found = sUiUnits.emplace(viewp, std::move(fresh)).first;
+    }
+    UiUnit& u = found->second;
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+
+    bool named = false;
+    for (const std::string& n : cfg.mOnly)
+    {
+        if (u.mName == n || viewp->getName() == n)
+        {
+            named = true;
+        }
+    }
+    // mode 1 records only the named units; mode 2 takes the views that cost enough (measured on their live draws)
+    const bool eligible = cfg.mMode == 1 ? named : (named || u.mLiveUs >= 25.f);
+    if (!eligible || u.mUncacheable || frame < u.mRetryFrame)
+    {
+        const double t0 = ui_now_us();
+        viewp->draw();
+        const double us = ui_now_us() - t0;
+        u.mLiveUs = u.mLiveUs == 0.f ? (float)us : u.mLiveUs + 0.1f * ((float)us - u.mLiveUs);
+        return;
+    }
+
+    // the key
+    U64 key = 0xcbf29ce484222325ULL;
+    key = ui_mix(key, &screen_rect, sizeof(screen_rect));
+    LLRect clip;
+    const bool has_clip = LLScreenClipRect::getClipRect(clip);
+    key = ui_mix(key, &has_clip, sizeof(has_clip));
+    if (has_clip) key = ui_mix(key, &clip, sizeof(clip));
+    key = ui_mix(key, LLUI::getScaleFactor().mV, sizeof(F32) * 2);
+    key = ui_mix(key, &LLFontGL::sCurOrigin, sizeof(LLFontGL::sCurOrigin));
+    key = ui_mix(key, glm::value_ptr(LLRenderMatrix::get(LLRenderMatrix::Kind::Modelview)), sizeof(glm::mat4));
+    const U64 epoch = LLVkSubStream::cacheEpoch();
+    const bool key_ok = u.mValid && u.mKey == key && u.mEpoch == epoch && LLVkSubStream::stateEqual(u.mEntryState);
+    if (u.mValid && !key_ok)
+    {
+        ++u.mKeyMiss;
+    }
+
+    // input: the mouse over it, the focus or the capture in it
+    bool active = false;
+    {
+        LLRect r = screen_rect;
+        r.stretch(2);
+        active = r.pointInRect(sUiFrame.mMouseX, sUiFrame.mMouseY)
+                 || (sUiFrame.mFocus && (sUiFrame.mFocus == viewp || sUiFrame.mFocus->hasAncestor(viewp)))
+                 || (sUiFrame.mCapture && (sUiFrame.mCapture == viewp || sUiFrame.mCapture->hasAncestor(viewp)));
+    }
+    if (active)
+    {
+        u.mActiveFrame = frame;
+    }
+    const bool forced = frame - u.mActiveFrame < 15;
+    const U32 n = sUiFrame.mN;
+    const U32 age = frame - u.mRecordedFrame;
+    const bool due = n <= 1 || age >= 2 * n || (age >= 1 && ((frame + u.mPhase) % n) == 0);
+    const bool replay = cfg.mMode >= 2 && key_ok && !forced && !due;
+
+    if (replay)
+    {
+        const double t0 = ui_now_us();
+        LLRender::segmentBoundary();
+        LLVkSubStream::replay(u.mBytes.data(), u.mBytes.size());
+        LLRender::segmentBoundary();
+        const double us = ui_now_us() - t0;
+        u.mReplayUs = u.mReplayUs == 0.f ? (float)us : u.mReplayUs + 0.1f * ((float)us - u.mReplayUs);
+        ++u.mReplayed;
+        const double saved = std::max(0.0, (double)u.mLiveUs - us);
+        u.mSavedUs += saved;
+        sUiFrame.mReplayUs += us;
+        sUiFrame.mSavedUs += saved;
+        ++sUiFrame.mReplayN;
+        if (cfg.mVerify)
+        {
+            // the live draw, recorded and not spliced: what a live frame would have written
+            const double v0 = ui_now_us();
+            if (!sUiRecorder) sUiRecorder = new LLVkSubStream();
+            sUiRecording = true;
+            LLRender::segmentBoundary();
+            sUiRecorder->reseed();
+            sUiRecorder->begin();
+            LLRender::segmentBoundary();
+            viewp->draw();
+            gRender.flush();
+            sUiRecorder->end();
+            sUiRecording = false;
+            std::vector<unsigned char> fresh;
+            sUiRecorder->takeBytes(fresh);
+            LLRender::segmentBoundary();
+            // the draws of this recording are not played (the replay is on screen) but what the live draw did besides drawing is not undone: a glyph or an icon it uploaded is known to the CPU side from now on
+            LLVkSubStream::replaySideEffects(fresh.data(), fresh.size());
+            ++u.mChecked;
+            if (fresh != u.mBytes)
+            {
+                ++u.mMismatch;
+                static U32 said = 0;
+                if (said < 24 && (u.mMismatch <= 2))
+                {
+                    ++said;
+                    LL_INFOS("UiCache") << "verify: " << u.mName << " live " << fresh.size() << " bytes against the saved " << u.mBytes.size() << ": "
+                                        << LLVkSubStream::describeDifference(u.mBytes.data(), u.mBytes.size(), fresh.data(), fresh.size()) << LL_ENDL;
+                }
+            }
+            sUiFrame.mVerifyUs += ui_now_us() - v0;
+        }
+        return;
+    }
+
+    // a live draw: recorded and spliced at once
+    if (!sUiRecorder) sUiRecorder = new LLVkSubStream();
+    std::vector<unsigned char> entry_state;
+    LLVkSubStream::stateSnapshot(entry_state);
+    const double t0 = ui_now_us();
+    sUiRecording = true;
+    LLRender::segmentBoundary();
+    sUiRecorder->reseed();
+    sUiRecorder->begin();
+    LLRender::segmentBoundary();
+    const double d0 = ui_now_us();
+    viewp->draw();
+    gRender.flush();            // (the last widget's batch is part of the recording)
+    const double d1 = ui_now_us();
+    sUiRecorder->end();
+    sUiRecording = false;
+    std::vector<unsigned char> bytes;
+    sUiRecorder->takeBytes(bytes);
+    const bool left = sUiRecorder->leftState();
+    sUiRecorder->splice();
+    LLRender::segmentBoundary();
+    const double t1 = ui_now_us();
+
+    const double draw_us = d1 - d0;
+    u.mLiveUs = u.mLiveUs == 0.f ? (float)draw_us : u.mLiveUs + 0.1f * ((float)draw_us - u.mLiveUs);
+    ++u.mLive;
+    if (forced) ++u.mForced;
+    sUiFrame.mLiveUs += draw_us;
+    sUiFrame.mRecordOverheadUs += (t1 - t0) - draw_us;
+    ++sUiFrame.mLiveN;
+
+    LLVkSubStream::Scan scan;
+    LLVkSubStream::scan(bytes.data(), bytes.size(), scan);
+    ++u.mRecordings;
+    if (!scan.mCacheable || left)
+    {
+        // this recording cannot be played again (a buffer was recycled or written, a texture uploaded, ...): the draw was live and is on screen; try again later, and back off when it keeps happening
+        ++u.mRejected;
+        ++u.mRejectStreak;
+        u.mBadOp = scan.mBadOp;
+        u.mWhy = left ? "left the render state changed" : "a record a replay may not repeat";
+        if (left)
+        {
+            u.mUncacheable = true;      // (a draw that changes the render state for good is not a pure draw)
+        }
+        else
+        {
+            for (int k = 0; k < 8; ++k)
+            {
+                if (u.mBadOpKinds[k] == scan.mBadOp || u.mBadOps[k] == 0)
+                {
+                    u.mBadOpKinds[k] = scan.mBadOp;
+                    ++u.mBadOps[k];
+                    break;
+                }
+            }
+        }
+        sUiCacheBytes -= std::min(sUiCacheBytes, u.mBytes.size());
+        u.mBytes.clear();
+        u.mValid = false;
+        u.mRetryFrame = frame + (u.mRejectStreak < 4 ? 1 : (u.mRejectStreak < 12 ? 20 : 120));
+        ++sUiFrame.mUncacheableN;
+        return;
+    }
+    u.mRejectStreak = 0;
+    sUiCacheBytes -= std::min(sUiCacheBytes, u.mBytes.size());
+    u.mBytes = std::move(bytes);
+    u.mEntryState = std::move(entry_state);
+    u.mTextures = scan.mTextures;
+    LLVkSubStream::nameTextures(scan.mTextures.data(), scan.mTextures.size());
+    LLVkSubStream::nameBuffers(scan.mBuffers.data(), scan.mBuffers.size());
+    u.mKey = key;
+    u.mEpoch = epoch;
+    u.mRecordedFrame = frame;
+    u.mRecords = scan.mRecords;
+    u.mDraws = scan.mDraws;
+    u.mValid = true;
+    sUiCacheBytes += u.mBytes.size();
+    if (sUiCacheBytes > (8u << 20))
+    {
+        ui_cache_drop_all();
+        ++sUiFrame.mEvicted;
+    }
+}
+
 void LLView::drawChildren()
 {
     if (!mChildList.empty())
@@ -1373,7 +1877,7 @@ void LLView::drawChildren()
                         if (LLRender::sUiHashing) { ++LLRender::sUiCensusCalls[8]; }
                         {
                             LLRender::UiCensusScope clipped_scope(clipped_out ? 10 : -1);
-                            viewp->draw();
+                            ui_draw_view(viewp, screen_rect);
                         }
                         if (sDrawHook && sDepth <= 20) sDrawHook(viewp, false);
                         viewp->mInDraw = false;
@@ -1524,7 +2028,7 @@ void LLView::drawChild(LLView* childp, S32 x_offset, S32 y_offset, bool force_dr
                     if (LLRender::sUiHashing) { ++LLRender::sUiCensusCalls[8]; }
                     {
                         LLRender::UiCensusScope clipped_scope(clipped_out ? 10 : -1);
-                        childp->draw();
+                        ui_draw_view(childp, childp->calcScreenRect());
                     }
                     if (sDrawHook && sDepth <= 20) sDrawHook(childp, false);
                 }

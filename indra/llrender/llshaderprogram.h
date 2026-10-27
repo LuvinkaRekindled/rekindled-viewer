@@ -299,6 +299,7 @@ public:
     static void unbind();
 
     U32 mMatHash[LLRender::NUM_MATRIX_MODES];
+    U32 mMatEpoch = 0;                  // <FS> LLRender::sSegmentEpoch when mMatHash was last valid (UI record cache: a segment boundary makes the hashes unknown)
     U32 mLightHash;
 
     U32 mProgramObject;
