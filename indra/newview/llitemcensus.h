@@ -32,6 +32,11 @@ namespace ItemCensus
         NAMETAGS,       // LLHUDNameTag::updateAll (a: visible tags)
         BALANCE,        // octree balance of all partitions (a: trees balanced)
         ANGLES,         // LLViewerObjectList::updateApparentAngles (a: objects visited, b: of these with a visible drawable)
+        ALPHA_PLAN,     // LLDrawPoolAlpha::renderAlpha: ll_alpha_plan of each group (a: groups with a plan)
+        ALPHA_TR_ADD,   // ... tr_add: one transient entry (a: rigged ones)
+        ALPHA_TR_FLUSH, // ... tr_flush: a record of transient entries to the worker (a: entries)
+        ALPHA_RUN_FLUSH,// ... run_flush: a record of ranges to the worker, palette bindings included (a: ranges)
+        ALPHA_RUN_BEGIN,// ... run_begin: a new run's program and state
         SLOT_COUNT
     };
 
@@ -160,7 +165,7 @@ namespace ItemCensus
         }
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - sTime0).count();
         const double hz = (double)(__rdtsc() - sTsc0) / seconds;
-        static const char* const names[SLOT_COUNT] = { "idle avatars", "idle attachments", "idle other moving", "idle other still", "nearby lights", "name tags", "octree balance", "apparent angles" };
+        static const char* const names[SLOT_COUNT] = { "idle avatars", "idle attachments", "idle other moving", "idle other still", "nearby lights", "name tags", "octree balance", "apparent angles", "alpha plans", "alpha tr_add", "alpha tr_flush", "alpha run_flush", "alpha run_begin" };
         std::string line;
         for (int i = 0; i < SLOT_COUNT; i++)
         {
