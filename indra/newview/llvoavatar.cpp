@@ -6185,31 +6185,11 @@ void LLVOAvatar::updateRootPositionAndRotation(LLAgent& agent, F32 speed, bool w
 //------------------------------------------------------------------------
 // <FS> FSAvatarFarUpdateDistance: a visible avatar (not an impostor) beyond this distance updates its pose, root and attachments every 2nd frame, beyond 1.6 times that every 3rd; the pose is
 // held in between (the animation time still runs: the next update catches up). Not the viewer's own avatar, a sitting one (it follows its seat), a fast one (over 3 m/s), an animated
-// object, a UI avatar. Test switch (LL_VK_FARTIER_FILE=1): D:/claude/avatar-update.txt holding a distance (0 = off) replaces the setting, read every 60 frames, for same lap comparisons.
+// object, a UI avatar.
 static F32 far_update_distance()
 {
     static LLCachedControl<F32> setting(gSavedSettings, "FSAvatarFarUpdateDistance", 0.f);
-    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
-    if (!file_on)
-    {
-        return setting;
-    }
-    static U32 last_frame = ~0u;
-    static F32 value = -1.f;
-    const U32 frame = (U32)LLFrameTimer::getFrameCount();
-    if (frame != last_frame && frame % 60 == 0)
-    {
-        last_frame = frame;
-        value = -1.f;
-        if (FILE* f = fopen("D:/claude/avatar-update.txt", "rb"))
-        {
-            char text[24] = {};
-            fread(text, 1, sizeof(text) - 1, f);
-            fclose(f);
-            value = (F32)atof(text);
-        }
-    }
-    return value >= 0.f ? value : (F32)setting;
+    return setting;
 }
 
 U32 LLVOAvatar::farUpdatePeriod()
@@ -13019,32 +12999,11 @@ bool LLVOAvatar::isImpostor()
 // </FS:Beq>
 }
 
-// <FS> FSImpostorMaxDistance: an avatar farther than that is an impostor whatever its visibility rank (0 = only the rank decides, as before). Test switch (LL_VK_FARTIER_FILE=1): D:/claude/imp-dist.txt
-// holding a distance in metres (0 = off) replaces the setting, read every 60 frames, so one lap can compare with the same crowd.
+// <FS> FSImpostorMaxDistance: an avatar farther than that is an impostor whatever its visibility rank (0 = only the rank decides, as before).
 static F32 impostor_max_distance()
 {
     static LLCachedControl<F32> setting(gSavedSettings, "FSImpostorMaxDistance", 0.f);
-    static const bool file_on = getenv("LL_VK_FARTIER_FILE") != nullptr;
-    if (!file_on)
-    {
-        return setting;
-    }
-    static U32 last_frame = ~0u;
-    static F32 value = -1.f;
-    const U32 frame = (U32)LLFrameTimer::getFrameCount();
-    if (frame != last_frame && frame % 60 == 0)
-    {
-        last_frame = frame;
-        value = -1.f;
-        if (FILE* f = fopen("D:/claude/imp-dist.txt", "rb"))
-        {
-            char text[24] = {};
-            fread(text, 1, sizeof(text) - 1, f);
-            fclose(f);
-            value = (F32)atof(text);
-        }
-    }
-    return value >= 0.f ? value : (F32)setting;
+    return setting;
 }
 
 bool LLVOAvatar::shouldImpostor(const F32 rank_factor)
