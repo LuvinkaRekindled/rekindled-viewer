@@ -156,6 +156,7 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, const LLRectf& rec
 S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, const LLColor4 &color, HAlign halign, VAlign valign, U8 style,
                      ShadowType shadow, S32 max_chars, S32 max_pixels, F32* right_x, bool use_ellipses, bool use_color) const
 {
+    LLRender::UiCensusScope ui_census(0);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
 
     if(!sDisplayFont) //do not display texts

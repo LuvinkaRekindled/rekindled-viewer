@@ -41,6 +41,8 @@ public:
     LLScreenClipRect(const LLRect& rect, bool enabled = true);
     virtual ~LLScreenClipRect();
 
+    static bool getClipRect(LLRect& rect);      // the innermost clip rect in screen coordinates (false: none)
+
 private:
     static void pushClipRect(const LLRect& rect);
     static void popClipRect();

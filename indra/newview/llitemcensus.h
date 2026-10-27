@@ -15,6 +15,9 @@
 #include "llframetimer.h"
 #include "llview.h"
 #include "llrender.h"
+#include <algorithm>
+#include <typeinfo>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #include <intrin.h>
@@ -84,12 +87,21 @@ namespace ItemCensus
         unsigned long long mViews = 0, mCycles = 0, mSameViews = 0, mSameCycles = 0;
     };
     inline UiDepth sUiDepth[8];
-    inline std::unordered_map<const LLView*, unsigned long long> sUiLast;
+    struct UiLast { unsigned long long mHash = 0; unsigned mFrameChanged = 0; };
+    inline std::unordered_map<const LLView*, UiLast> sUiLast;
+    inline unsigned long long sUiAgeHist[9] = {};          // frames since a depth 4+ view last changed, when it changes: 1, 2, 3-4, 5-8, 9-16, 17-60, 61-300, over 300, first time
+    inline unsigned long long sUiFramesAny = 0, sUiFramesAll = 0, sUiD4Changed = 0;     // frames with at least one depth 4 view changed / frames counted / depth 4 views changed in them
+    inline bool sUiFrameChanged = false;
+    inline unsigned sUiFrameNo = 0;
+    // by name (depth 1-4, the path of the view): views, time, time and views of the unchanged ones
+    inline std::unordered_map<std::string, UiDepth> sUiByName;
     struct UiFrame
     {
         const LLView* mView;
         unsigned long long mStart, mHashCyclesStart, mSavedAccum;
+        unsigned long long mChildCycles = 0;       // the time of the views drawn inside this one (inclusive of the hashing), for the exclusive time by class
     };
+    inline std::unordered_map<std::string, UiDepth> sUiByClass;       // exclusive time (own code, children and hashing left out) by widget class
     inline std::vector<UiFrame> sUiStack;
     inline void (*sUiPrevHook)(const LLView*, bool) = nullptr;
 
@@ -101,7 +113,7 @@ namespace ItemCensus
         }
         if (begin)
         {
-            sUiStack.push_back({ view, __rdtsc(), LLRender::sUiHashCycles, LLRender::sUiHashAccum });
+            sUiStack.push_back({ view, __rdtsc(), LLRender::sUiHashCycles, LLRender::sUiHashAccum, 0 });
             LLRender::sUiHashAccum = 0;
         }
         else if (!sUiStack.empty())
@@ -112,11 +124,30 @@ namespace ItemCensus
             const unsigned long long total = __rdtsc() - f.mStart;
             const unsigned long long hashing = LLRender::sUiHashCycles - f.mHashCyclesStart;
             const unsigned long long own = total > hashing ? total - hashing : 0;
+            const unsigned long long exclusive = total > f.mChildCycles + hashing ? total - f.mChildCycles - hashing : 0;       // (the children's hashing is inside their time: close enough)
+            if (!sUiStack.empty())
+            {
+                sUiStack.back().mChildCycles += total;
+            }
             LLRender::sUiHashAccum = (f.mSavedAccum ^ view_hash) * 0x100000001b3ULL;
             const size_t depth = llmin<size_t>(sUiStack.size() + 1, 7);
-            unsigned long long& last = sUiLast[f.mView];
-            const bool same = last == view_hash;
-            last = view_hash;
+            UiLast& last = sUiLast[f.mView];
+            const bool same = last.mHash == view_hash;
+            last.mHash = view_hash;
+            if (!same)
+            {
+                if (depth >= 4)
+                {
+                    const unsigned age = last.mFrameChanged ? sUiFrameNo - last.mFrameChanged : 0;
+                    ++sUiAgeHist[!last.mFrameChanged ? 8 : age <= 1 ? 0 : age == 2 ? 1 : age <= 4 ? 2 : age <= 8 ? 3 : age <= 16 ? 4 : age <= 60 ? 5 : age <= 300 ? 6 : 7];
+                }
+                if (depth == 4)
+                {
+                    sUiFrameChanged = true;
+                    ++sUiD4Changed;
+                }
+                last.mFrameChanged = sUiFrameNo;
+            }
             UiDepth& d = sUiDepth[depth];
             ++d.mViews;
             d.mCycles += own;
@@ -124,6 +155,32 @@ namespace ItemCensus
             {
                 ++d.mSameViews;
                 d.mSameCycles += own;
+            }
+            {
+                UiDepth& c = sUiByClass[typeid(*f.mView).name()];
+                ++c.mViews;
+                c.mCycles += exclusive;
+                if (same)
+                {
+                    ++c.mSameViews;
+                    c.mSameCycles += exclusive;
+                }
+            }
+            if (depth <= 6)
+            {
+                std::string path = f.mView->getName();
+                for (const LLView* p = f.mView->getParent(); p && p->getParent(); p = p->getParent())
+                {
+                    path = p->getName() + "/" + path;
+                }
+                UiDepth& n = sUiByName[std::to_string(depth) + " " + path];
+                ++n.mViews;
+                n.mCycles += own;
+                if (same)
+                {
+                    ++n.mSameViews;
+                    n.mSameCycles += own;
+                }
             }
         }
         if (sUiPrevHook && !begin)
@@ -140,6 +197,13 @@ namespace ItemCensus
             return;
         }
         static int sCalls = 0;
+        ++sUiFrameNo;
+        if (sUiFrameNo > 5)
+        {
+            ++sUiFramesAll;
+            sUiFramesAny += sUiFrameChanged;
+        }
+        sUiFrameChanged = false;
         if (++sCalls == 5)
         {
             // after the cpu zones installed their own hook (they do it in the first frame): ours calls it
@@ -182,6 +246,71 @@ namespace ItemCensus
                 ui += llformat(" | depth %d%s: %.1f views, %.3f ms, %.3f ms unchanged (%.1f views)", d, d == 7 ? "+" : "", (double)u.mViews / frames, 1000.0 * (double)u.mCycles / hz / frames,
                                1000.0 * (double)u.mSameCycles / hz / frames, (double)u.mSameViews / frames);
                 sUiDepth[d] = UiDepth();
+            }
+            {
+                std::vector<std::pair<std::string, UiDepth>> rows(sUiByName.begin(), sUiByName.end());
+                std::sort(rows.begin(), rows.end(), [](const auto& l, const auto& r) { return l.second.mCycles > r.second.mCycles; });
+                std::string top;
+                for (size_t i = 0; i < rows.size() && i < 40; ++i)
+                {
+                    const UiDepth& u = rows[i].second;
+                    top += llformat(" | %s: %.3f ms (%.3f unchanged, %.1f views)", rows[i].first.c_str(), 1000.0 * (double)u.mCycles / hz / frames, 1000.0 * (double)u.mSameCycles / hz / frames, (double)u.mViews / frames);
+                }
+                LL_INFOS("ItemCensus") << "ui views by path, top by time:" << top << LL_ENDL;
+                sUiByName.clear();
+                std::vector<std::pair<std::string, UiDepth>> classes(sUiByClass.begin(), sUiByClass.end());
+                std::sort(classes.begin(), classes.end(), [](const auto& l, const auto& r) { return l.second.mCycles > r.second.mCycles; });
+                std::string by_class;
+                for (size_t i = 0; i < classes.size() && i < 30; ++i)
+                {
+                    const UiDepth& u = classes[i].second;
+                    by_class += llformat(" | %s: %.3f ms exclusive (%.3f in unchanged views), %.1f views (%.1f changed)", classes[i].first.c_str(), 1000.0 * (double)u.mCycles / hz / frames, 1000.0 * (double)u.mSameCycles / hz / frames,
+                                         (double)u.mViews / frames, (double)(u.mViews - u.mSameViews) / frames);
+                }
+                LL_INFOS("ItemCensus") << "ui views by class (exclusive time, depth 1-6):" << by_class << LL_ENDL;
+                sUiByClass.clear();
+            }
+            {
+                static const char* const slot_names[LLRender::UI_CENSUS_SLOTS] = { "text (LLFontGL::render)", "images (gl_draw_*image*, segmented rects)", "rects / lines / shadows", "flush with vertices (inside the others)", "matrix push/pop/translate",
+                                                                                     "clip rects (ctor + dtor)", "texture binds (inside the others)", "calcScreenRect", "views drawn, all depths (calls only)", "empty flush calls (calls only)", "views drawn entirely outside the clip rect (calls = views)" };
+                // what one timing scope costs, to be subtracted from the slots with many calls
+                static double scope_ns = 0.0;
+                if (scope_ns == 0.0)
+                {
+                    const unsigned long long c0 = __rdtsc();
+                    for (int k = 0; k < 20000; ++k)
+                    {
+                        LLRender::UiCensusScope probe(9);
+                    }
+                    scope_ns = 1.0e9 * (double)(__rdtsc() - c0) / hz / 20000.0;
+                    LLRender::sUiCensusCycles[9] = 0;
+                    LLRender::sUiCensusCalls[9] = 0;
+                }
+                std::string parts;
+                for (int k = 0; k < LLRender::UI_CENSUS_SLOTS; ++k)
+                {
+                    parts += llformat(" | %s: %.3f ms (about %.3f of it the timing itself), %.1f calls", slot_names[k], 1000.0 * (double)LLRender::sUiCensusCycles[k] / hz / frames,
+                                      (k == 8 || k == 9) ? 0.0 : 1.0e-6 * scope_ns * (double)LLRender::sUiCensusCalls[k] / frames, (double)LLRender::sUiCensusCalls[k] / frames);
+                    LLRender::sUiCensusCycles[k] = 0;
+                    LLRender::sUiCensusCalls[k] = 0;
+                }
+                LL_INFOS("ItemCensus") << "ui drawing entry points per frame (inclusive; the hashing is inside them; one timing scope costs " << scope_ns << " ns), vertices flushed " << (double)LLRender::sUiCensusVerts / frames << " a frame ("
+                                       << 28.0 * (double)LLRender::sUiCensusVerts / frames / 1024.0 << " KB of record bytes):" << parts << LL_ENDL;
+                LLRender::sUiCensusVerts = 0;
+                {
+                    static const char* const age_names[9] = { "1", "2", "3-4", "5-8", "9-16", "17-60", "61-300", "over 300", "first" };
+                    std::string ages;
+                    unsigned long long total_changes = 0;
+                    for (int k = 0; k < 9; ++k) { total_changes += sUiAgeHist[k]; }
+                    for (int k = 0; k < 9; ++k)
+                    {
+                        ages += llformat(" | %s frames: %.2f%%", age_names[k], total_changes ? 100.0 * (double)sUiAgeHist[k] / (double)total_changes : 0.0);
+                        sUiAgeHist[k] = 0;
+                    }
+                    LL_INFOS("ItemCensus") << "ui: depth 4+ views changing, " << (double)total_changes / frames << " per frame, by frames since their last change:" << ages
+                                           << "; frames where some depth 4 view changed " << (sUiFramesAll ? 100.0 * (double)sUiFramesAny / (double)sUiFramesAll : 0.0) << "% (" << (sUiFramesAll ? (double)sUiD4Changed / (double)sUiFramesAll : 0.0) << " depth 4 views a frame)" << LL_ENDL;
+                    sUiFramesAny = sUiFramesAll = sUiD4Changed = 0;
+                }
             }
             LL_INFOS("ItemCensus") << "ui views per frame (hashing excluded, it cost " << 1000.0 * (double)(LLRender::sUiHashCycles - sHashCycles0) / hz / frames << " ms a frame):" << ui << LL_ENDL;
             sHashCycles0 = LLRender::sUiHashCycles;

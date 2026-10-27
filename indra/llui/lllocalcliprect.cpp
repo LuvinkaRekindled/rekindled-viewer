@@ -36,6 +36,7 @@ LLScreenClipRect::LLScreenClipRect(const LLRect& rect, bool enabled)
 :   mScissorState(LLRenderState::Keep{}),
     mEnabled(enabled)
 {
+    LLRender::UiCensusScope ui_census(5);
     if (mEnabled)
     {
         pushClipRect(rect);
@@ -46,6 +47,7 @@ LLScreenClipRect::LLScreenClipRect(const LLRect& rect, bool enabled)
 
 LLScreenClipRect::~LLScreenClipRect()
 {
+    LLRender::UiCensusScope ui_census(5);
     if (mEnabled)
     {
         popClipRect();
@@ -69,6 +71,17 @@ void LLScreenClipRect::pushClipRect(const LLRect& rect)
         }
     }
     sClipRectStack.push(combined_clip_rect);
+}
+
+//static
+bool LLScreenClipRect::getClipRect(LLRect& rect)
+{
+    if (sClipRectStack.empty())
+    {
+        return false;
+    }
+    rect = sClipRectStack.top();
+    return true;
 }
 
 //static
