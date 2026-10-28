@@ -317,13 +317,31 @@ float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
 #ifndef LL_RT_SUN_SELF_NEAR
 #define LL_RT_SUN_SELF_NEAR 0.8
 #endif
-#define LL_RT_SUN_SELF_NEAR0 (LL_RT_SUN_SELF_NEAR * 0.4)
+// LL_VK_RT_SUN_SELFFADE (fraction of SELFNEAR, default 0.4): where the fade of the floor starts; 1 = no fade (the floor is the same for every close avatar surface: no contours of the head's layers in a shadow)
+#ifndef LL_RT_SUN_SELF_FADE
+#define LL_RT_SUN_SELF_FADE 0.4
+#endif
+#define LL_RT_SUN_SELF_NEAR0 (LL_RT_SUN_SELF_NEAR * LL_RT_SUN_SELF_FADE)
 // LL_VK_RT_SUN_PENUMBRA (metres, default 0 = off): the width of the penumbra of a close avatar self shadow on the skin. A ray from 5 cm away gives a crisp edge (a copy of the lips on the neck, the fingers on the shoulder),
 // where skin scatters light a few millimetres sideways and blurs it. When the first ray of a pixel hit a close skinned surface at distance t, the other rays of the pixel go to a disc of radius PENUMBRA / t (at most 0.35).
 #ifndef LL_RT_SUN_PENUMBRA
 #define LL_RT_SUN_PENUMBRA 0.0
 #endif
+// LL_VK_RT_SUN_PENUMBRA_RAYS (default 8, at most 16): the rays of a pixel whose first ray met a close skinned surface. Two rays on a wide disc give a handful of levels per pixel, and a snapshot has no accumulation to
+// smooth them: the soft edge is a stack of steps (the lips and the jaw drawn as contours in the shadow on the neck). Only those pixels pay.
+#ifndef LL_RT_SUN_PENUMBRA_RAYS
+#define LL_RT_SUN_PENUMBRA_RAYS 8
+#endif
 float rt_near_skin_t = 0.0;                 // out of rtShadowRaySoftS: the distance of the nearest close skinned surface its ray met (0 = none)
+// how much of the floor (1 - strength) a close skinned surface at distance t keeps: 1 up to LL_RT_SUN_SELF_NEAR0, fading to 0 at LL_RT_SUN_SELF_NEAR (a plain cut when there is no fade: smoothstep is undefined then)
+float rtSelfFloorScale(float t)
+{
+    if (LL_RT_SUN_SELF_NEAR0 >= LL_RT_SUN_SELF_NEAR)
+    {
+        return t < LL_RT_SUN_SELF_NEAR ? 1.0 : 0.0;
+    }
+    return 1.0 - smoothstep(LL_RT_SUN_SELF_NEAR0, LL_RT_SUN_SELF_NEAR, t);
+}
 // Self shadows of an avatar are translucent: a skinned avatar surface (a hair card, the chin, a strand over the cheek, an arm over the torso) within LL_RT_SUN_SELF_NEAR metres of the pixel it shadows lets
 // light through (scattering in hair and skin, bounced light): together they block at most `strength` of the light. Farther away, and everything that is not an avatar, blocks what it covers (the ground shadow
 // of an avatar stays dark). Nothing here has to know which object is hair: rigged hair and a mesh head are both just skinned records, and the distance decides.
@@ -341,7 +359,8 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
     rt_near_skin_t = 0.0;
     float transmit = 1.0;                       // the light that gets past everything but close skinned avatar surfaces
     float skin = 1.0;                           // the light that gets past the close skinned avatar surfaces: their product, but never less than the floor (a cap on the TOTAL, a lock of hair is dozens of cards)
-    float t_skin = 0.0;                         // the farthest of those surfaces: the floor 1 - strength fades to 0 between LL_RT_SUN_SELF_NEAR0 and LL_RT_SUN_SELF_NEAR of it
+                                                // (the floor 1 - strength fades to 0 between LL_RT_SUN_SELF_NEAR0 and LL_RT_SUN_SELF_NEAR of the NEAREST of those surfaces, rt_near_skin_t: the first occluder decides
+                                                // how dark the shadow is and what is behind it adds nothing, a silhouette; the farthest one made fingers behind a hand darken the shadow through the hand)
     const float skin_floor = 1.0 - strength;
     float t_start = 0.005;
     bool capped = false;                        // the candidate limit (LL_VK_RT_CANDIDATES, default 96) was reached: the walk stopped before it met everything on the way
@@ -370,14 +389,13 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
                 if (skinned && close)
                 {
                     skin *= 1.0 - cover;
-                    t_skin = max(t_skin, t_cand);
                     rt_near_skin_t = (rt_near_skin_t == 0.0) ? t_cand : min(rt_near_skin_t, t_cand);
                 }
                 else
                 {
                     transmit *= 1.0 - cover;
                 }
-                if (transmit * max(skin, skin_floor * (1.0 - smoothstep(LL_RT_SUN_SELF_NEAR0, LL_RT_SUN_SELF_NEAR, t_skin))) < 0.03)
+                if (transmit * max(skin, skin_floor * rtSelfFloorScale(rt_near_skin_t)) < 0.03)
                 {
                     rayQueryTerminateEXT(rq);
 #if LL_RT_SUN_DEBUG == 1
@@ -401,7 +419,6 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
         if (skin_floor > 0.0 && skinned && t_hit < LL_RT_SUN_SELF_NEAR && segment < 3)
         {
             skin = 0.0;
-            t_skin = max(t_skin, t_hit);
             rt_near_skin_t = (rt_near_skin_t == 0.0) ? t_hit : min(rt_near_skin_t, t_hit);
             t_start = t_hit + 0.002;
             continue;
@@ -415,7 +432,7 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
         return 0.0;                         // test (LL_VK_RT_CAPDEBUG=1): a ray that stopped at the limit is drawn fully shadowed
     }
 #endif
-    const float floor_now = skin_floor * (1.0 - smoothstep(LL_RT_SUN_SELF_NEAR0, LL_RT_SUN_SELF_NEAR, t_skin));
+    const float floor_now = skin_floor * rtSelfFloorScale(rt_near_skin_t);
 #if LL_RT_SUN_DEBUG == 1
     return none ? 1.0 : 0.0;                // test (LL_VK_RT_SUN_DEBUG=1): only solid (opaque) hits make a shadow, what the alpha loop found is ignored
 #elif LL_RT_SUN_DEBUG == 2
@@ -1000,6 +1017,10 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
         if (i == 0)
         {
             skin_t = rt_near_skin_t;
+            if (skin_t > 0.0 && LL_RT_SUN_PENUMBRA > 0.0)
+            {
+                samples = clamp(max(samples, LL_RT_SUN_PENUMBRA_RAYS), 1, 16);
+            }
         }
     }
     return lit / float(samples);

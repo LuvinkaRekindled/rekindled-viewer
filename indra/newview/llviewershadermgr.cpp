@@ -1038,6 +1038,22 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["LL_RT_SUN_PENUMBRA"] = llformat("%.4f", w);       // metres: the penumbra width of a close avatar self shadow on the skin (0 = off)
                 }
             }
+            if (const char* pen_rays = getenv("LL_VK_RT_SUN_PENUMBRA_RAYS"))
+            {
+                const S32 n = atoi(pen_rays);
+                if (n >= 1 && n <= 16)
+                {
+                    attribs["LL_RT_SUN_PENUMBRA_RAYS"] = std::to_string(n);    // the rays of a pixel whose first ray met a close avatar surface
+                }
+            }
+            if (const char* fade = getenv("LL_VK_RT_SUN_SELFFADE"))
+            {
+                const F32 f = (F32)atof(fade);
+                if (f > 0.f && f <= 1.f)
+                {
+                    attribs["LL_RT_SUN_SELF_FADE"] = llformat("%.3f", f);      // fraction of SELFNEAR where the floor starts to fade (1 = no fade)
+                }
+            }
             if (const char* near_s = getenv("LL_VK_RT_SUN_SELFNEAR"))
             {
                 const F32 n = (F32)atof(near_s);

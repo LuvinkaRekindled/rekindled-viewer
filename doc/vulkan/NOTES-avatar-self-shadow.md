@@ -19,3 +19,15 @@ Goal (Adam): hair and attachments cast lighter, softer sun shadows on the avatar
 
 ## Next
 Use the nearest close hit for the fade (the x-ray fix), then judge the penumbra; then a setting (`RenderRTShadowHairStrength` / distance) and a default strength (about 0.6); a same-lap cost check (rays through avatars now walk past solid hits, up to four segments).
+
+## Update, end of the session (2026-10-28 01:10): where it stands
+Tried after the first commit, all off by default (`LL_VK_RT_SUN_...` knobs): the fade of the floor now uses the NEAREST close hit (fixed the fingers showing through a hand: Adam, "that helped with the fingers"); `PENUMBRA_RAYS` (default 8: a pixel whose first ray met a close skinned surface takes more rays on the wide disc); `SELFFADE` (fraction of SELFNEAR where the fade starts, 1 = no fade; `rtSelfFloorScale` handles that case).
+
+**Not solved, and why (read before trying again):**
+- The shadow of the lips and the head under the chin is still a **projection** (a stack of contours: a lighter outer region, a darker disc, two horizontal lines) in a snapshot. Removing the distance fade (`SELFFADE=1`, near 1.2 m) did not change it (Adam, 01:10). So the contours are not (only) the fade.
+- The wide disc only widens a pixel whose FIRST ray hit a close surface, so the blur stops at the silhouette edge and the outer edge stays crisp. A symmetric answer needs something that does not depend on the first ray: a screen-space bilateral blur of the sun lightmap on avatar pixels (the plan's option C: avatar mask = alpha of the avatar velocity map, depth aware, a few pixels), or a probe ray with an instance mask for avatars.
+- A snapshot has no shadow accumulation and 2 rays per pixel (`accumulateSunShadow` returns early for `gSnapshot`); more rays or a blur is the only smoothing there. The live view accumulates 6-8 frames.
+- The geometry of the shadow is physically right (the sun does shine past the lips onto the neck); what is wrong is what it looks like: a real face scatters light a few millimetres under the skin. That is why a ray test alone looks like a projection.
+- Things that were wrong guesses, to not repeat: hair identified from the skin's joint list (it cannot tell hair from a mesh head), the candidate limit, the scene membership (the avatar's draws are steady), soft-alpha strength as a per-card factor.
+
+**Where to start next time:** option C (a blur of the sun lightmap on avatar pixels with a radius from the depth gap), judged in a snapshot of the chin; or accept the current default look, which Adam rated "getting closer" for hair and not for the chin. The defaults committed so far (soft alpha 12 m, start offset 0.003 / 0.015) are what a normal launch uses.
