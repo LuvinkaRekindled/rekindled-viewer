@@ -114,6 +114,7 @@ namespace LLVkBridge
         // the output size, mDepth and mMotion at the render size); mPreset, mMotionScaleX/Y and mReset are shared with the upscale
         S32 mNeuralRender = 0;
         S32 mNrQuality = 1, mNrAutoMask = 0;
+        F32 mNrScalingRatio = 0.f;          // > 0: the network's size as a fraction of the output (DLSSNR.ScalingRatio at creation)
         F32 mNrStyle = 0.f, mNrIntensity = 1.f, mNrGlobalTone = 0.5f, mNrLocalTone = 0.5f, mNrLocalStructure = 0.5f, mNrSkinStructure = 0.5f;
     };
     // DLSS is initialised and usable (decided when the Vulkan device was created)

@@ -17892,11 +17892,11 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
 }
 
 // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two). The look controls and the create-time choices come from D:/claude/nr-debug.txt, read once a second:
-// "intensity style gtone ltone lstruct skin quality preset automask mvscale run" (defaults 1 0 0.5 0.5 0.5 0.5 1 0 0 1 1); a change of quality or preset recreates the feature;
-// run 0 skips the evaluate altogether (the normal picture, no NR cost): the live off state of a same-run cost A/B
+// "intensity style gtone ltone lstruct skin quality preset automask mvscale run ratio" (defaults 1 0 1 1 1 -1 1 0 1 1 1 0, the bundle's documented ones); a change of quality, preset,
+// style or ratio recreates the feature; run 0 skips the evaluate altogether (the normal picture, no NR cost): the live off state of a same-run cost A/B; ratio > 0 is DLSSNR.ScalingRatio
 namespace
 {
-struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 0.5f, mLocalTone = 0.5f, mLocalStructure = 0.5f, mSkinStructure = 0.5f, mMotionScale = 1.f; S32 mQuality = 1, mPreset = 0, mAutoMask = 0, mRun = 1; };
+struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f, mMotionScale = 1.f, mScalingRatio = 0.f; S32 mQuality = 1, mPreset = 0, mAutoMask = 1, mRun = 1; };
 const NrDebug& nrDebug()
 {
     static NrDebug d;
@@ -17912,6 +17912,8 @@ const NrDebug& nrDebug()
             in >> n.mIntensity >> n.mStyle >> n.mGlobalTone >> n.mLocalTone >> n.mLocalStructure >> n.mSkinStructure >> n.mQuality >> n.mPreset >> n.mAutoMask >> n.mMotionScale;
             S32 run = 1;
             if (in >> run) n.mRun = run;        // an older ten-field file keeps the default (a failed extraction would write 0)
+            F32 ratio = 0.f;
+            if (in >> ratio) n.mScalingRatio = ratio;
             d = n;
         }
     }
@@ -17953,6 +17955,7 @@ bool LLPipeline::applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst)
     a.mNrQuality = d.mQuality;
     a.mPreset = d.mPreset;
     a.mNrAutoMask = d.mAutoMask;
+    a.mNrScalingRatio = d.mScalingRatio;
     a.mNrStyle = d.mStyle;
     a.mNrIntensity = d.mIntensity;
     a.mNrGlobalTone = d.mGlobalTone;
