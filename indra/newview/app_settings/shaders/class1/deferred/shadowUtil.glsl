@@ -245,6 +245,7 @@ uniform float rt_sun_alpha;            // <FS> 1 in the alpha passes (blended su
 uniform float rt_sun_maxdist;          // <FS> metres: a blended (alpha) pixel farther than this is lit without a shadow ray (set by the alpha passes; 0 = no limit, every other shader)
 uniform vec2 rt_sun_lod;                // <FS> (near, far) metres: the rays of the sun disc go from rt_sun_samples at `near` down to a quarter of them (at least 2) at `far` and beyond; 0 = all of them (set by the alpha pass only)
 uniform float rt_noise_frame;
+uniform float rt_sun_self_off;         // <FS> 1: the avatar self shadow work off (an avatar blocks fully, no receiver probe, no start disc); rt-debug.txt sunself=0, a same-lap cost A/B. 0 (unset) = as the defines say
 
 // A ray whose origin or direction is NaN or infinite (a pixel whose eye space position was rebuilt from a zero or far-plane depth, a scene frame record not written yet) is undefined for a
 // ray query (GPU-assisted validation: "Ray Origin contains a NaN"): no ray is cast, the caller takes the no-hit answer.
@@ -1054,11 +1055,12 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     // a frame of tangents on the receiver for the start disc (LL_RT_SUN_SSS)
     vec3 b1 = normalize(cross(norm, abs(norm.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
     vec3 b2 = cross(norm, b1);
-    float strength = LL_RT_SUN_ALPHA_STRENGTH;  // this pixel's: 1 (avatar surfaces block fully) once the probe says the receiver is not an avatar
+    const bool self_on = rt_sun_self_off < 0.5;
+    float strength = self_on ? LL_RT_SUN_ALPHA_STRENGTH : 1.0;  // this pixel's: 1 (avatar surfaces block fully) once the probe says the receiver is not an avatar
     if (samples == 1 && rt_sun_radius <= 0.0)
     {
         vec3 o = origin;
-        if (LL_RT_SUN_SSS > 0.0)
+        if (LL_RT_SUN_SSS > 0.0 && self_on)
         {
             o += (b1 * cos(rot) + b2 * sin(rot)) * (LL_RT_SUN_SSS * 0.7);
         }
@@ -1085,7 +1087,7 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
         float phi = rot + float(i) * 2.3999632;
         vec3 dir = normalize(light_dir + (t1 * cos(phi) + t2 * sin(phi)) * r);
         vec3 o = origin;
-        if (LL_RT_SUN_SSS > 0.0)
+        if (LL_RT_SUN_SSS > 0.0 && self_on)
         {
             // the start disc: the same spiral as the sun's disc, turned so the two do not line up
             float rs = sqrt((float(i) + 0.5) / float(samples)) * LL_RT_SUN_SSS;
