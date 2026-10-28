@@ -58,3 +58,16 @@ Not run: the scaling ratio callback (`LL_VK_DLSS_NR_RATIO=1`, a guessed conventi
 
 ## Crash 2026-10-28 09:33:35 while switching styles (not NR's)
 Two style recreates worked (style 1 at 09:32:54, 58 ms; style 0 at 09:33:12, 64 ms), the viewer crashed 23 s later. Minidump `<user-profile>\AppData\Local\CrashDumps\firestorm-bin.exe.24884.dmp` (copied with the log to `<work>\crash-nr-2026-10-28\`). Stack (cdb, the build's pdb): a fork-join worker in `LLPipeline::generateSunShadow` lambda -> `shadowPrepMark` -> `markVisible` -> `LLCullResult::pushDrawable` -> `vector::push_back` reallocation -> `memcpy` reading address 0 (NULL_POINTER_READ): a cull result's vector with a null buffer, the signature of two workers pushing into one `LLCullResult`. The NR path (the Vulkan worker thread, `renderFinalize` on the main thread) is not on the stack and shares nothing with the shadow prep; the launcher runs with `FSParallelShadowPrepCheck 0` like the other launchers.
+
+## Cost, measured 2026-10-28 (Adam's spot, flag 3, the viewer's 10 s fps lines, the debug file stepped every 32 s)
+| setting | fps | frame |
+|---|---|---|
+| run 0 (the evaluate skipped) | 114.7 | 8.7 ms |
+| run 1, ratio not set | 47.0 | 21.3 ms |
+| `DLSSNR.ScalingRatio` 0.67 | 47.0 | 21.3 ms |
+| `DLSSNR.ScalingRatio` 0.5 | 47.4 | 21.1 ms |
+| `DLSSNR.ScalingRatio` 1.0 | 46.8 | 21.4 ms |
+
+**NR costs about 12.6 ms a frame at 2558x1341**, more than the rest of the frame. The scaling ratio callback works with the `DLSSOptimalSettingsCallback` convention: performance mode 2 (quality) returns Success and ratio 1.0, modes 0 and 1 return UnsupportedParameter (the snippet supports the quality mode only). Setting `DLSSNR.ScalingRatio` at creation is accepted (the feature is recreated, 58 ms) but **does not change the cost**: whatever the snippet's "network = output x scale" is, this parameter does not drive it from outside (NGX logging, `ngx_log_verbose.reg`, would show the "CreateFeature begin requested resolution (network %ux%u)" line and settle whether the network size moved at all). The bundle's own "working scale" is therefore its own downscale of the colour it hands the feature, not this parameter.
+
+What is left for the cost: **run NR before the upscaler at the render size** (1713x898, 45 % of the pixels; the bundle's recommended placement), expected about 6 ms if the cost follows the pixels; the model then sees the jittered, pre-tonemap render and DLSS upscales its output. A different position in the frame (before `applyUpscale` in `renderFinalize`, on `mRT->screen` with the HDR question of the plan's section 2), about a day.

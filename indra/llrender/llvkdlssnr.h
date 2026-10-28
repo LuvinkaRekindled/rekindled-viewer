@@ -47,6 +47,7 @@ namespace LLVkDlssNr
         U32 mQuality = 1;                   // PerfQualityValue (the feature's "performance mode"): 0 performance, 1 balanced, 2 quality, 3 ultra performance, 4 ultra quality, 5 DLAA
         S32 mPreset = 0;                    // DLSSNR.Hint.Render.Preset
         S32 mAutoMask = 0;                  // > 0: DLSSNR.UseAutoMask is set to it
+        float mScalingRatio = 0.f;          // > 0: DLSSNR.ScalingRatio at creation (the network runs at the output size times this and its answer is upsampled; cost falls with the square)
         // the look controls (ranges unknown; 0..1 assumed)
         float mStyle = 0.f, mIntensity = 1.f, mGlobalTone = 0.5f, mLocalTone = 0.5f, mLocalStructure = 0.5f, mSkinStructure = 0.5f;
     };

@@ -10795,6 +10795,7 @@ void on_neural_render(const LLVkBridge::UpscaleArgs& a)
     p.mQuality = (U32)llmax(a.mNrQuality, 0);
     p.mPreset = a.mPreset;
     p.mAutoMask = a.mNrAutoMask;
+    p.mScalingRatio = a.mNrScalingRatio;
     p.mStyle = a.mNrStyle;
     p.mIntensity = a.mNrIntensity;
     p.mGlobalTone = a.mNrGlobalTone;

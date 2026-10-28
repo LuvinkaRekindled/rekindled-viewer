@@ -58,7 +58,7 @@ bool gAvailable = false;            // the core said DLSSNR.Available and the re
 bool gFailed = false;               // a creation failed: off for the session
 NVSDK_NGX_Parameter* gParams = nullptr;
 NVSDK_NGX_Handle* gFeature = nullptr;
-U32 gFeatureKey[5] = {};            // output w/h, quality, preset, style (the bundle's config says preset and style are baked into the feature)
+U32 gFeatureKey[6] = {};            // output w/h, quality, preset, style (the bundle's config says preset and style are baked into the feature), scaling ratio x 1000
 U64 gFeatureFrame = 0;
 std::vector<std::pair<NVSDK_NGX_Handle*, U64>> gRetired;     // released when the frame has completed
 
@@ -316,7 +316,7 @@ bool evaluate(VkCommandBuffer cmd, const Params& p)
         return false;
     }
     reap_retired();
-    const U32 key[5] = { p.mOutputWidth, p.mOutputHeight, p.mQuality, (U32)p.mPreset, (U32)(p.mStyle + 0.5f) };
+    const U32 key[6] = { p.mOutputWidth, p.mOutputHeight, p.mQuality, (U32)p.mPreset, (U32)(p.mStyle + 0.5f), (U32)(p.mScalingRatio * 1000.f + 0.5f) };
     if (!gFeature || memcmp(key, gFeatureKey, sizeof(key)) != 0)
     {
         if (gFeature)
@@ -335,6 +335,10 @@ bool evaluate(VkCommandBuffer cmd, const Params& p)
         NVSDK_NGX_Parameter_SetUI(gParams, "DLSSNR.Hint.Render.Preset", (unsigned int)p.mPreset);
         NVSDK_NGX_Parameter_SetI(gParams, "DLSSNR.DepthInverted", 0);
         NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.Style", (float)(U32)(p.mStyle + 0.5f));      // 0 standard, 1 natural, 2 cinematic: part of the feature
+        if (p.mScalingRatio > 0.f)
+        {
+            NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.ScalingRatio", p.mScalingRatio);
+        }
         const auto t0 = std::chrono::steady_clock::now();
         const NVSDK_NGX_Result r = NVSDK_NGX_VULKAN_CreateFeature1(gDevice, cmd, (NVSDK_NGX_Feature)featureId(), gParams, &gFeature);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -349,7 +353,7 @@ bool evaluate(VkCommandBuffer cmd, const Params& p)
             return false;
         }
         memcpy(gFeatureKey, key, sizeof(key));
-        LL_INFOS("VkDlssNr") << "DLSS-NR feature created: " << p.mOutputWidth << "x" << p.mOutputHeight << " quality " << p.mQuality << " preset " << p.mPreset << " style " << (U32)(p.mStyle + 0.5f) << " in " << ms << " ms"
+        LL_INFOS("VkDlssNr") << "DLSS-NR feature created: " << p.mOutputWidth << "x" << p.mOutputHeight << " quality " << p.mQuality << " preset " << p.mPreset << " style " << (U32)(p.mStyle + 0.5f) << " scaling ratio " << p.mScalingRatio << " (0 = not set) in " << ms << " ms"
                              << (have_init ? ", FeatureInitResult " + hex((unsigned int)init_result) : std::string()) << LL_ENDL;
     }
     gFeatureFrame = Context::instance().getFrameNumber();
