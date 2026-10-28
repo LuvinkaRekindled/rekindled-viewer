@@ -27,6 +27,7 @@
 #include "llvkquery.h"
 #include "llvkformat.h"
 #include "llvkupscale.h"
+#include "llvkdlssnr.h"
 #include "llvkrt.h"
 #include "llvkpasscensus.h"
 #include <glslang/Public/ShaderLang.h>
@@ -10754,9 +10755,78 @@ void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, voi
     }
 }
 
+// <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the finished window-size colour through the neural renderer; depth and motion at the render size
+void on_neural_render(const LLVkBridge::UpscaleArgs& a)
+{
+    static U32 failures = 0;
+    if (!gActive || !LLVkDlssNr::ready())
+    {
+        return;
+    }
+    auto find = [](U32 name) -> Tex* {
+        auto it = sGL.mTextures.find(name);
+        return it != sGL.mTextures.end() && it->second.mImage.valid() ? &it->second : nullptr;
+    };
+    Tex* color = find(a.mColor);
+    Tex* depth = find(a.mDepth);
+    Tex* motion = find(a.mMotion);
+    Tex* output = find(a.mOutput);
+    if (!color || !depth || !motion || !output)
+    {
+        if (failures++ < 5)
+        {
+            LL_WARNS("VkDlssNr") << "neural render: a texture is missing (colour " << (color != nullptr) << ", depth " << (depth != nullptr) << ", motion " << (motion != nullptr)
+                                 << ", output " << (output != nullptr) << ")" << LL_ENDL;
+        }
+        return;
+    }
+    LLVkDlssNr::Params p;
+    p.mColor = &color->mImage;
+    p.mDepth = &depth->mImage;
+    p.mMotion = &motion->mImage;
+    p.mOutput = &output->mImage;
+    p.mRenderWidth = a.mRenderWidth;
+    p.mRenderHeight = a.mRenderHeight;
+    p.mOutputWidth = a.mOutputWidth;
+    p.mOutputHeight = a.mOutputHeight;
+    p.mMotionScaleX = a.mMotionScaleX;
+    p.mMotionScaleY = a.mMotionScaleY;
+    p.mReset = a.mReset != 0;
+    p.mQuality = (U32)llmax(a.mNrQuality, 0);
+    p.mPreset = a.mPreset;
+    p.mAutoMask = a.mNrAutoMask;
+    p.mStyle = a.mNrStyle;
+    p.mIntensity = a.mNrIntensity;
+    p.mGlobalTone = a.mNrGlobalTone;
+    p.mLocalTone = a.mNrLocalTone;
+    p.mLocalStructure = a.mNrLocalStructure;
+    p.mSkinStructure = a.mNrSkinStructure;
+    std::vector<std::pair<Image*, VkImageLayout>> needs = {
+        { p.mColor, LLVkDlss::inputLayout(*p.mColor) },
+        { p.mDepth, LLVkDlss::inputLayout(*p.mDepth) },
+        { p.mMotion, LLVkDlss::inputLayout(*p.mMotion) },
+        { p.mOutput, LLVkDlss::outputLayout() },
+    };
+    bool done = false;
+    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDlssNr::evaluate(cmd, p); });
+    if (done)
+    {
+        output->mValidLevels = 1;
+    }
+    else if (failures++ < 5)
+    {
+        LL_WARNS("VkDlssNr") << "the neural render did not run" << LL_ENDL;
+    }
+}
+
 void on_upscale(const LLVkBridge::UpscaleArgs& a)
 {
     static U32 failures = 0;
+    if (a.mNeuralRender)
+    {
+        on_neural_render(a);
+        return;
+    }
     if (!gActive || !LLVkUpscale::ready())
     {
         return;

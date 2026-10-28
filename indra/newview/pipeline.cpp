@@ -1087,12 +1087,22 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             if (!mMotionMap.allocate(resX, resY, TexelFormat::RG16F)) return false;
             if (!mAvatarVelocityMap.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
             if (!mUpscaledMap.allocate(window_res_x, window_res_y, TexelFormat::RGBA8)) return false;
+            // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the neural renderer's output, window size
+            if (LLVkBridge::neuralRenderMode() >= 2)
+            {
+                if (!mNROutput.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F)) return false;
+            }
+            else
+            {
+                mNROutput.release();
+            }
         }
         else
         {
             mMotionMap.release();
             mAvatarVelocityMap.release();
             mUpscaledMap.release();
+            mNROutput.release();
         }
 
         if (sRR && LLVkBridge::rayReconstructionAvailable())
@@ -1501,6 +1511,7 @@ void LLPipeline::releaseScreenBuffers()
     mShadowAccum[0].release();
     mShadowAccum[1].release();
     mUpscaledMap.release();
+    mNROutput.release();
     mRRGuides.release();
     mRRHitDist.release();
     mRRReflMotion.release();
@@ -17880,6 +17891,81 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
     return true;
 }
 
+// <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two). The look controls and the create-time choices come from D:/claude/nr-debug.txt, read once a second:
+// "intensity style gtone ltone lstruct skin quality preset automask mvscale" (defaults 1 0 0.5 0.5 0.5 0.5 1 0 0 1); a change of quality or preset recreates the feature
+namespace
+{
+struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 0.5f, mLocalTone = 0.5f, mLocalStructure = 0.5f, mSkinStructure = 0.5f, mMotionScale = 1.f; S32 mQuality = 1, mPreset = 0, mAutoMask = 0; };
+const NrDebug& nrDebug()
+{
+    static NrDebug d;
+    static U32 checked = 0;
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (frame - checked >= 60 || frame < checked)
+    {
+        checked = frame;
+        std::ifstream in("D:/claude/nr-debug.txt");
+        if (in)
+        {
+            NrDebug n;
+            in >> n.mIntensity >> n.mStyle >> n.mGlobalTone >> n.mLocalTone >> n.mLocalStructure >> n.mSkinStructure >> n.mQuality >> n.mPreset >> n.mAutoMask >> n.mMotionScale;
+            d = n;
+        }
+    }
+    return d;
+}
+}
+
+bool LLPipeline::applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst)
+{
+    if (!LLVkBridge::upscaleAvailable() || !LLVkBridge::neuralRenderAvailable() || !src || !dst || !mMotionMap.isComplete())
+    {
+        return false;
+    }
+    static U32 last_frame = ~0u;
+    static U32 last_size[2] = {};
+    const U32 frame = LLFrameTimer::getFrameCount();
+    const NrDebug& d = nrDebug();
+    LLVkBridge::UpscaleArgs a;
+    a.mNeuralRender = 1;
+    a.mColor = src->getTexture(0);
+    a.mDepth = mRT->deferredScreen.getDepth();
+    a.mMotion = mMotionMap.getTexture(0);
+    a.mOutput = dst->getTexture(0);
+    a.mRenderWidth = mMotionMap.getWidth();
+    a.mRenderHeight = mMotionMap.getHeight();
+    a.mOutputWidth = dst->getWidth();
+    a.mOutputHeight = dst->getHeight();
+    a.mMotionScaleX = d.mMotionScale;
+    a.mMotionScaleY = d.mMotionScale;
+    a.mReset = (!mViewProjPrevValid || frame != last_frame + 1 || last_size[0] != a.mOutputWidth || last_size[1] != a.mOutputHeight) ? 1 : 0;
+    last_frame = frame;
+    last_size[0] = a.mOutputWidth;
+    last_size[1] = a.mOutputHeight;
+    a.mNrQuality = d.mQuality;
+    a.mPreset = d.mPreset;
+    a.mNrAutoMask = d.mAutoMask;
+    a.mNrStyle = d.mStyle;
+    a.mNrIntensity = d.mIntensity;
+    a.mNrGlobalTone = d.mGlobalTone;
+    a.mNrLocalTone = d.mLocalTone;
+    a.mNrLocalStructure = d.mLocalStructure;
+    a.mNrSkinStructure = d.mSkinStructure;
+    if (!a.mColor || !a.mDepth || !a.mMotion || !a.mOutput)
+    {
+        return false;
+    }
+    LL_PROFILE_GPU_ZONE("dlss nr");
+    static U32 logged = 0;
+    if (logged++ < 3)
+    {
+        LL_INFOS("VkDlssNr") << "neural render call " << logged << ": colour " << a.mOutputWidth << "x" << a.mOutputHeight << ", depth and motion " << a.mRenderWidth << "x" << a.mRenderHeight
+                             << ", reset " << a.mReset << ", quality " << a.mNrQuality << ", preset " << a.mPreset << ", intensity " << a.mNrIntensity << LL_ENDL;
+    }
+    LLVkBridge::upscale(a);
+    return true;
+}
+
 void LLPipeline::applyCAS(LLRenderTarget* src, LLRenderTarget* dst)
 {
     static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
@@ -18934,6 +19020,14 @@ void LLPipeline::renderFinalize()
     else if (dlss && applyUpscale(sourceBuffer, &mUpscaledMap))
     {
         sourceBuffer = &mUpscaledMap;
+    }
+
+    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the finished window-size picture through the neural renderer, before the present pass and the UI.
+    // LL_VK_DLSS_NR=2 evaluates and leaves the picture alone (gate G2), 3 shows the result (gate G3)
+    if (dlss && !gSnapshot && LLVkBridge::neuralRenderMode() >= 2 && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth() && sourceBuffer->getHeight() == mNROutput.getHeight()
+        && applyNeuralRender(sourceBuffer, &mNROutput) && LLVkBridge::neuralRenderMode() >= 3)
+    {
+        sourceBuffer = &mNROutput;
     }
 
     // Present the screen target.

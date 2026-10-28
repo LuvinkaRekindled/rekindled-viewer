@@ -110,11 +110,19 @@ namespace LLVkBridge
         S32 mPreset = 0;
         F32 mCameraNear = 0.1f, mCameraFar = 512.f, mCameraFovY = 1.f;      // <FS> the FSR backend wants them (metres, radians)
         F32 mFrameTimeMs = 16.6f;
+        // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): mNeuralRender set means this is not an upscale but the neural renderer on the finished window-size colour (mColor and mOutput at
+        // the output size, mDepth and mMotion at the render size); mPreset, mMotionScaleX/Y and mReset are shared with the upscale
+        S32 mNeuralRender = 0;
+        S32 mNrQuality = 1, mNrAutoMask = 0;
+        F32 mNrStyle = 0.f, mNrIntensity = 1.f, mNrGlobalTone = 0.5f, mNrLocalTone = 0.5f, mNrLocalStructure = 0.5f, mNrSkinStructure = 0.5f;
     };
     // DLSS is initialised and usable (decided when the Vulkan device was created)
     bool upscaleAvailable();
     // DLSS ray reconstruction can run here (DLSS is ready and NGX reports the feature)
     bool rayReconstructionAvailable();
+    // <FS> the value of LL_VK_DLSS_NR (0 unset, 1 probe, 2 evaluate, 3 show), and whether the feature can run (probe said yes, nothing failed since)
+    S32 neuralRenderMode();
+    bool neuralRenderAvailable();
     // the texture mip bias DLSS wants for the current render scale (log2 of it, 0 at 100% or with DLSS off); samplers made afterwards use it
     void setUpscaleLodBias(float bias);
 

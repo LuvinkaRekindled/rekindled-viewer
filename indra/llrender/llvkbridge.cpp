@@ -25,6 +25,8 @@ void LLVkBridge::setPresentPreference(S32, bool) {}
 void LLVkBridge::snapshotBoundary(S32) {}
 bool LLVkBridge::upscaleAvailable() { return false; }
 bool LLVkBridge::rayReconstructionAvailable() { return false; }
+S32 LLVkBridge::neuralRenderMode() { return 0; }
+bool LLVkBridge::neuralRenderAvailable() { return false; }
 void LLVkBridge::setUpscaleLodBias(float) {}
 bool LLVkBridge::shadowPacketsAvailable() { return false; }
 bool LLVkBridge::shadowAlphaPacketsAvailable() { return false; }
@@ -69,6 +71,7 @@ void LLVkBridge::stopAsync() {}
 #include <psapi.h>
 #include "llvkcontext.h"
 #include "llvkupscale.h"
+#include "llvkdlssnr.h"
 #include "llvkrenderer.h"
 #include "llvkasync.h"
 #include "llvktex.h"
@@ -779,6 +782,16 @@ bool LLVkBridge::upscaleAvailable()
 bool LLVkBridge::rayReconstructionAvailable()
 {
     return sMirror.mReady && LLVkUpscale::rayReconstructionAvailable();
+}
+
+S32 LLVkBridge::neuralRenderMode()
+{
+    return LLVkDlssNr::requested();
+}
+
+bool LLVkBridge::neuralRenderAvailable()
+{
+    return sMirror.mReady && LLVkDlssNr::ready();
 }
 
 void LLVkBridge::upscale(const UpscaleArgs& args)

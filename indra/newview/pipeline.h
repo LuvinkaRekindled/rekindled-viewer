@@ -170,7 +170,8 @@ public:
     void updateJitter();                                // call right before the main scene's setup3DRender
     void noteSceneMatrices();                           // call at the end of the main scene render
     void generateMotionVectors(LLRenderTarget* dst);    // camera motion from depth and the last two view-projection matrices, in render pixels
-    bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction = false);    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
+    bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction = false);
+    bool applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst);    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): src (window size, finished) -> dst; false: nothing was done    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
     static bool sDLSS;
     // <FS> DLSS ray reconstruction (FSVkRayReconstruction, needs DLSS): the denoiser / upscaler takes the noisy linear HDR picture (mRT->screen) before the tonemap, with guide buffers made from the
     // G-buffer, and gives back a window sized HDR picture; the tonemap, CAS, glow and the rest of the post chain then run at the window size on mRRPing / mRRPong.
@@ -208,6 +209,7 @@ public:
     bool                    mAvatarVelocityDrawn = false;       // the pass ran this frame: generateMotionVectors takes the target
     LLRenderTarget          mMotionMap;
     LLRenderTarget          mUpscaledMap;
+    LLRenderTarget          mNROutput;      // <FS> DLSS-NR: window size RGBA16F, only with LL_VK_DLSS_NR >= 2
     glm::mat4               mViewProjCur = glm::mat4(1.f);          // unjittered, this frame's
     glm::mat4               mViewProjPrev = glm::mat4(1.f);         // unjittered, last frame's
     bool                    mViewProjPrevValid = false;

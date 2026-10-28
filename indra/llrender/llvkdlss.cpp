@@ -432,6 +432,7 @@ void shutdown()
     {
         return;
     }
+    LLVkDlssNr::shutdown();
     release_feature();
     if (gParams)
     {
