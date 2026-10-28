@@ -1070,6 +1070,26 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["LL_RT_SUN_DEBUG"] = std::to_string(d);        // test: 1 only solid hits make a sun shadow, 2 only what the alpha loop of the soft ray found
                 }
             }
+            if (const char* recv = getenv("LL_VK_RT_SUN_SELFRECV"))
+            {
+                const F32 r = (F32)atof(recv);
+                if (r >= 0.f && r < 1.f)
+                {
+                    attribs["LL_RT_SUN_SELF_RECV"] = llformat("%.4f", r);       // metres: the probe through the receiver's surface that says it is an avatar (the floor applies only then); 0 = off
+                }
+            }
+            if (const char* sss = getenv("LL_VK_RT_SUN_SSS"))
+            {
+                const F32 s = (F32)atof(sss);
+                if (s >= 0.f && s < 0.1f)
+                {
+                    attribs["LL_RT_SUN_SSS"] = llformat("%.4f", s);             // metres: radius of the disc on the receiver where a pixel's rays start (skin scattering: a soft edge on both sides); 0 = off
+                }
+            }
+            if (const char* blend = getenv("LL_VK_RT_SUN_BLENDCOVER"))
+            {
+                attribs["LL_RT_SUN_BLEND_COVER"] = (blend[0] && blend[0] != '0') ? "1" : "0";     // 0: a blended card covers by the masked ramp around the cutoff again (the look before)
+            }
             if (const char* all = getenv("LL_VK_RT_SUN_STRENGTH_ALL"))
             {
                 if (all[0] && all[0] != '0')

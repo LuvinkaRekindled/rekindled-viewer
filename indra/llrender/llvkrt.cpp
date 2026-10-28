@@ -4147,7 +4147,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             inst.transform.matrix[row][3] = -sOrigin[row];
         }
         inst.instanceCustomIndex = custom_index;
-        inst.mask = 1u | (any_alpha ? 2u : 0u) | 4u;        // opaque (bit 0) and masked (bit 1) casters, what the shadow rays trace; bit 2 marks avatars (mode 4 shows only these)
+        inst.mask = 4u | (any_alpha ? 8u : 0u);             // avatars: bit 2 (mode 4 shows only these), bit 3 with masked geometry; the world has bits 0 (opaque) and 1 (masked). A ray traces all of
+                                                            // it with 0x0F, or the world alone with 0x03 (the sun ray behind the first close avatar surface it met)
         inst.instanceShaderBindingTableRecordOffset = 0;
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         inst.accelerationStructureReference = a.mAddressNow;
@@ -4271,7 +4272,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             for (const VkAccelerationStructureInstanceKHR& inst : instances)
             {
                 avatar_inst += (inst.mask & 4u) ? 1 : 0;
-                masked_inst += (inst.mask & 2u) ? 1 : 0;
+                masked_inst += (inst.mask & 8u) ? 1 : 0;
             }
             fprintf(inst_log, "%lld frame %llu SCENEINST %u instances %zu (avatars %zu, with masked geometry %zu) groups %zu records %u\n", wall, (unsigned long long)frame_now, call, instances.size(), avatar_inst, masked_inst, sGroups.size(), records);
             fflush(inst_log);

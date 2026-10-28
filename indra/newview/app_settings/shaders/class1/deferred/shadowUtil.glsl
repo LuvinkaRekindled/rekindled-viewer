@@ -169,6 +169,11 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
 
 // Coverage (0..1) of a masked or blended candidate for the SOFT shadows of traced hits (rtShadowRaySoft): the texture alpha is read from a blurred mip (hair strands and foliage are cut-outs finer than a
 // pixel: a binary ray gives hard stripes where the main view's filtered shadow maps give a soft shade), and a ramp around the cutoff turns it into a fraction.
+// LL_VK_RT_SUN_BLENDCOVER (default 1): a BLENDED card (record flag 512, the alpha pool's draws: most hair) covers by its alpha itself, which is what blending draws (a texel at alpha 0.4 lets 60 % through).
+// The ramp around the cutoff is for masked cards; applied to blended hair (cutoff 0.598, the shadow maps' cut) it dropped every wisp under 0.43 from the shadow and made everything over 0.76 a solid.
+#ifndef LL_RT_SUN_BLEND_COVER
+#define LL_RT_SUN_BLEND_COVER 1
+#endif
 float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
 {
     if (record == 0u || record >= ll_rt_geoms.g[0].first)
@@ -212,6 +217,12 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
             alpha *= (float(col.c[ix[0]] >> 24) * w.x + float(col.c[ix[1]] >> 24) * w.y + float(col.c[ix[2]] >> 24) * w.z) * (1.0 / 255.0);
         }
     }
+#if LL_RT_SUN_BLEND_COVER
+    if ((g.flags & 512u) != 0u)
+    {
+        return clamp(alpha, 0.0, 1.0);
+    }
+#endif
     return clamp((alpha - g.cutoff) * 3.0 + 0.5, 0.0, 1.0);
 }
 
@@ -276,7 +287,7 @@ float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
         return 1.0;
     }
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, ray_origin, 0.005, ray_dir, tmax);
+    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x0F, ray_origin, 0.005, ray_dir, tmax);
     // a ray is given a limited number of masked candidates: a structure that is not what it should be (garbage geometry spread over the scene) must cost a frame some shadows, not
     // a GPU job that outlasts the 2 seconds the driver allows (VK_ERROR_DEVICE_LOST: the viewer cannot go on). The ray stops with what it has found: no hit, lit.
     uint candidates = 0u;
@@ -363,13 +374,16 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
                                                 // how dark the shadow is and what is behind it adds nothing, a silhouette; the farthest one made fingers behind a hand darken the shadow through the hand)
     const float skin_floor = 1.0 - strength;
     float t_start = 0.005;
+    uint mask = 0x0Fu;                          // everything; behind the first close solid avatar surface only the world (0x03)
     bool capped = false;                        // the candidate limit (LL_VK_RT_CANDIDATES, default 96) was reached: the walk stopped before it met everything on the way
     bool none = true;
-    // a close solid avatar hit does not end the ray: it counts as covering fully (so the floor applies) and the walk goes on behind it, up to four times
-    for (int segment = 0; segment < 4; ++segment)
+    // a close solid avatar hit does not end the ray: it counts as covering fully (so the floor applies) and one more ray goes on behind it through the WORLD alone, for a tree or an awning over the
+    // avatar. It no longer walks the avatar: a mesh head is several closed shells (the face, the mouth bag, two rows of teeth, the tongue, the eyes) and a walk through them that gave up after four
+    // solid hits drew the shells' contours in the chin's shadow on the neck (a darker disc for the mouth, two lines for the teeth). The nearest surface decides the shadow; the rest is a silhouette.
+    for (int segment = 0; segment < 2; ++segment)
     {
         rayQueryEXT rq;
-        rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsNoneEXT, 0x03, ray_origin, t_start, ray_dir, tmax);
+        rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsNoneEXT, mask, ray_origin, t_start, ray_dir, tmax);
         uint candidates = 0u;
         while (rayQueryProceedEXT(rq))
         {
@@ -416,11 +430,12 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
         const uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, true));
         const bool skinned = record != 0u && record < ll_rt_geoms.g[0].first && (ll_rt_geoms.g[record].flags & 8192u) != 0u;
 #if LL_RT_SUN_DEBUG == 0
-        if (skin_floor > 0.0 && skinned && t_hit < LL_RT_SUN_SELF_NEAR && segment < 3)
+        if (skin_floor > 0.0 && skinned && t_hit < LL_RT_SUN_SELF_NEAR && segment == 0)
         {
             skin = 0.0;
             rt_near_skin_t = (rt_near_skin_t == 0.0) ? t_hit : min(rt_near_skin_t, t_hit);
             t_start = t_hit + 0.002;
+            mask = 0x03u;
             continue;
         }
 #endif
@@ -788,7 +803,7 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
         return false;
     }
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x03, ray_origin, 0.02, ray_dir, tmax);
+    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x0F, ray_origin, 0.02, ray_dir, tmax);
     float lod_start = rt_hit_shadow_variant == 4 ? 0.0 : clamp(0.5 * log2(max(length(origin), 1.0)) - 1.0, 0.0, 4.0);
     uint steps = 0u;
     // the nearest blended candidate seen so far (its place in the scene, kept until the ray is done)
@@ -937,11 +952,12 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
 #ifndef LL_RT_SUN_BIAS_ALPHA
 #define LL_RT_SUN_BIAS_ALPHA 0.015
 #endif
-// LL_VK_RT_SUN_ALPHA_STRENGTH (0..1, default 1): with the soft alpha ray, how much of its coverage a hair card blocks: hair is translucent, light passes through strands and bounces off the hair around them, so the
-// shadow of a lock is never as dark as an opaque object's. 0.65 = a card blocks at most 65 % of the light.
+// LL_VK_RT_SUN_ALPHA_STRENGTH (0..1, default 0.6; 1 = an avatar blocks its own light fully, the look before 2026-10-28): the most light the close surfaces of an avatar may block together on that same
+// avatar (rtShadowRaySoftS: hair on the face, a hand on the shoulder, the chin on the chest). Hair and skin are translucent and bounce light, so a self shadow is never as dark as an opaque object's.
+// 0.6 is Adam's choice by eye (2026-10-28, with SELFNEAR 0.8, the receiver probe and the 4 mm start disc).
 // LL_VK_RT_SUN_HAIRFILL (0..1, default 0): the shadow of a blended surface (the hair itself) is lifted toward lit by this fraction: bounced light and scattering fill the shadows hair has on itself.
 #ifndef LL_RT_SUN_ALPHA_STRENGTH
-#define LL_RT_SUN_ALPHA_STRENGTH 1.0
+#define LL_RT_SUN_ALPHA_STRENGTH 0.6
 #endif
 #ifndef LL_RT_SUN_HAIRFILL
 #define LL_RT_SUN_HAIRFILL 0.0
@@ -957,14 +973,54 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
 #ifndef LL_RT_SUN_SOFTALPHA
 #define LL_RT_SUN_SOFTALPHA 12.0
 #endif
-float rtSunRayAt(vec3 origin, vec3 dir, vec2 pos_screen, float lod, float view_dist)
+float rtSunRayAt(vec3 origin, vec3 dir, vec2 pos_screen, float lod, float view_dist, float strength)
 {
     if (view_dist < LL_RT_SUN_SOFTALPHA)
     {
-        return rtShadowRaySoftS(origin, dir, 2000.0, lod, LL_RT_SUN_ALPHA_STRENGTH);
+        return rtShadowRaySoftS(origin, dir, 2000.0, lod, strength);
     }
     return rtSunRay(origin, dir, pos_screen, lod);
 }
+
+// LL_VK_RT_SUN_SELFRECV (metres, default 0.02, 0 = off): the translucent self shadow is for an avatar surface shadowing the SAME avatar (hair on the face, the chin on the chest). The ground at the feet is
+// within SELFNEAR of the legs too, and its shadow faded out toward the feet (Adam's snapshot, 2026-10-28 01:31). The G-buffer does not say what a pixel is, the ray scene does: a probe through the
+// receiver's own surface (from this far under it to this far over it, along its normal) into the avatar structures alone (mask 0x0C) hits when the receiver is avatar geometry. Only a pixel whose first
+// ray met a close avatar surface pays the probe; a receiver that is not an avatar traces that ray again at full strength. (Verified 02:13 with a stripes view: hits the whole avatar, hair included, nothing else.)
+#ifndef LL_RT_SUN_SELF_RECV
+#define LL_RT_SUN_SELF_RECV 0.02
+#endif
+bool rtReceiverIsAvatar(vec3 pos, vec3 norm)
+{
+    mat3 to_scene;
+    vec3 camera;
+    rtSceneFrame(to_scene, camera);
+    const vec3 ray_origin = to_scene * (pos - norm * LL_RT_SUN_SELF_RECV) + camera;
+    const vec3 ray_dir = to_scene * norm;
+    if (!rtRayOk(ray_origin, ray_dir))
+    {
+        return false;
+    }
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0x0C, ray_origin, 0.0, ray_dir, 2.0 * LL_RT_SUN_SELF_RECV);
+    uint steps = 0u;
+    while (rayQueryProceedEXT(rq))
+    {
+        if (++steps > 16u)
+        {
+            rayQueryTerminateEXT(rq);
+            break;
+        }
+    }
+    return rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+// LL_VK_RT_SUN_SSS (metres, default 0.004, 0 = off; Adam chose 4 mm by eye, 2026-10-28): each ray of a pixel starts at a random point of a disc of this radius on the receiver's surface (the tangent plane), not at the pixel itself. Skin scatters
+// the light it receives a few millimetres sideways, so the shadow a face shows is the shadow averaged over that much of its surface: a soft edge on BOTH sides of the caster's silhouette. A wider sun disc
+// (LL_RT_SUN_PENUMBRA) could only widen the rays of a pixel whose first ray had already met a caster, so the outside of every edge stayed crisp. A few millimetres on the ground is nothing next to the
+// sun's own penumbra, so it applies to every receiver. No extra rays; the accumulation smooths the noise of the random start.
+#ifndef LL_RT_SUN_SSS
+#define LL_RT_SUN_SSS 0.004
+#endif
 
 float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
 {
@@ -992,15 +1048,30 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
         float k = smoothstep(rt_sun_lod.x, max(rt_sun_lod.y, rt_sun_lod.x + 1.0), -pos.z);
         samples = clamp(int(mix(float(samples), float(max(samples / 4, 2)), k) + 0.5), 1, 16);
     }
-    if (samples == 1 && rt_sun_radius <= 0.0)
-    {
-        return rtSunRayAt(origin, light_dir, pos_screen, lod, -pos.z);
-    }
-    // a frame of tangents for the sun's disc, a per pixel rotation (interleaved gradient noise, shifted by the frame when it changes every frame) and a golden angle spiral
-    vec3 t1 = normalize(cross(light_dir, abs(light_dir.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-    vec3 t2 = cross(light_dir, t1);
+    // a per pixel rotation (interleaved gradient noise, shifted by the frame when it changes every frame), used by the sun's disc and by the start disc on the receiver
     vec2 px = gl_FragCoord.xy + vec2(5.588238, 5.588238) * rt_noise_frame;
     float rot = fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+    // a frame of tangents on the receiver for the start disc (LL_RT_SUN_SSS)
+    vec3 b1 = normalize(cross(norm, abs(norm.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+    vec3 b2 = cross(norm, b1);
+    float strength = LL_RT_SUN_ALPHA_STRENGTH;  // this pixel's: 1 (avatar surfaces block fully) once the probe says the receiver is not an avatar
+    if (samples == 1 && rt_sun_radius <= 0.0)
+    {
+        vec3 o = origin;
+        if (LL_RT_SUN_SSS > 0.0)
+        {
+            o += (b1 * cos(rot) + b2 * sin(rot)) * (LL_RT_SUN_SSS * 0.7);
+        }
+        float one = rtSunRayAt(o, light_dir, pos_screen, lod, -pos.z, strength);
+        if (strength < 1.0 && rt_near_skin_t > 0.0 && LL_RT_SUN_SELF_RECV > 0.0 && !rtReceiverIsAvatar(pos, norm))
+        {
+            one = rtSunRayAt(o, light_dir, pos_screen, lod, -pos.z, 1.0);
+        }
+        return one;
+    }
+    // a frame of tangents for the sun's disc and a golden angle spiral
+    vec3 t1 = normalize(cross(light_dir, abs(light_dir.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+    vec3 t2 = cross(light_dir, t1);
     float lit = 0.0;
     float skin_t = 0.0;                         // the distance of the close avatar surface the first ray met (0 = none): the other rays of the pixel get a wider disc (LL_RT_SUN_PENUMBRA)
     for (int i = 0; i < samples; ++i)
@@ -1013,15 +1084,29 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
         float r = sqrt((float(i) + 0.5) / float(samples)) * radius;
         float phi = rot + float(i) * 2.3999632;
         vec3 dir = normalize(light_dir + (t1 * cos(phi) + t2 * sin(phi)) * r);
-        lit += rtSunRayAt(origin, dir, pos_screen, lod, -pos.z);
+        vec3 o = origin;
+        if (LL_RT_SUN_SSS > 0.0)
+        {
+            // the start disc: the same spiral as the sun's disc, turned so the two do not line up
+            float rs = sqrt((float(i) + 0.5) / float(samples)) * LL_RT_SUN_SSS;
+            float ps = rot + 1.0 + float(i) * 2.3999632;
+            o += (b1 * cos(ps) + b2 * sin(ps)) * rs;
+        }
+        float one = rtSunRayAt(o, dir, pos_screen, lod, -pos.z, strength);
         if (i == 0)
         {
+            if (strength < 1.0 && rt_near_skin_t > 0.0 && LL_RT_SUN_SELF_RECV > 0.0 && !rtReceiverIsAvatar(pos, norm))
+            {
+                strength = 1.0;
+                one = rtSunRayAt(o, dir, pos_screen, lod, -pos.z, strength);
+            }
             skin_t = rt_near_skin_t;
             if (skin_t > 0.0 && LL_RT_SUN_PENUMBRA > 0.0)
             {
                 samples = clamp(max(samples, LL_RT_SUN_PENUMBRA_RAYS), 1, 16);
             }
         }
+        lit += one;
     }
     return lit / float(samples);
 }
