@@ -1022,12 +1022,59 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["LL_RT_SUN_BIAS"] = llformat("%.4f", b);
                 }
             }
+            if (const char* strength = getenv("LL_VK_RT_SUN_ALPHA_STRENGTH"))
+            {
+                const F32 s = (F32)atof(strength);
+                if (s > 0.f && s <= 1.f)
+                {
+                    attribs["LL_RT_SUN_ALPHA_STRENGTH"] = llformat("%.3f", s);     // how much of its coverage a hair card blocks (soft alpha sun ray)
+                }
+            }
+            if (const char* dbg = getenv("LL_VK_RT_SUN_DEBUG"))
+            {
+                const S32 d = atoi(dbg);
+                if (d == 1 || d == 2)
+                {
+                    attribs["LL_RT_SUN_DEBUG"] = std::to_string(d);        // test: 1 only solid hits make a sun shadow, 2 only what the alpha loop of the soft ray found
+                }
+            }
+            if (const char* all = getenv("LL_VK_RT_SUN_STRENGTH_ALL"))
+            {
+                if (all[0] && all[0] != '0')
+                {
+                    attribs["LL_RT_SUN_STRENGTH_ALL"] = "1";
+                }
+            }
+            if (const char* fill = getenv("LL_VK_RT_SUN_HAIRFILL"))
+            {
+                const F32 f = (F32)atof(fill);
+                if (f > 0.f && f <= 1.f)
+                {
+                    attribs["LL_RT_SUN_HAIRFILL"] = llformat("%.3f", f);           // how much of the shadow on a blended surface (hair) is filled in
+                }
+            }
+            if (const char* bias_alpha = getenv("LL_VK_RT_SUN_BIAS_ALPHA"))
+            {
+                const F32 b = (F32)atof(bias_alpha);
+                if (b > 0.f && b < 5.f)
+                {
+                    attribs["LL_RT_SUN_BIAS_ALPHA"] = llformat("%.4f", b);
+                }
+            }
             if (const char* tmin = getenv("LL_VK_RT_SUN_TMIN"))
             {
                 const F32 t = (F32)atof(tmin);
                 if (t >= 0.f && t < 5.f)            // (0 switches the minimum distance off)
                 {
                     attribs["LL_RT_SUN_TMIN"] = llformat("%.4f", t);
+                }
+            }
+            if (const char* soft = getenv("LL_VK_RT_SUN_SOFTALPHA"))
+            {
+                const F32 d = (F32)atof(soft);
+                if (d >= 0.f && d < 5000.f)
+                {
+                    attribs["LL_RT_SUN_SOFTALPHA"] = llformat("%.1f", d);      // metres (0 = off): up to this view distance the sun ray lets masked and blended cards through by their alpha
                 }
             }
             if (const char* noface = getenv("LL_VK_RT_SUN_NOFACE"))

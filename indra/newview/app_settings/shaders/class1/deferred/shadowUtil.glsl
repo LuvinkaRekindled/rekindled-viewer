@@ -230,6 +230,7 @@ void rtSceneFrame(out mat3 to_scene, out vec3 camera)
 // (blurLightF.glsl) smooths them. Both uniforms are set by the sun lightmap pass only; every other shader that samples the sun shadow (alpha, water) leaves them 0 and gets one hard ray.
 uniform float rt_sun_radius;
 uniform int rt_sun_samples;
+uniform float rt_sun_alpha;            // <FS> 1 in the alpha passes (blended surfaces: hair), 0 elsewhere (an opaque surface)
 uniform float rt_sun_maxdist;          // <FS> metres: a blended (alpha) pixel farther than this is lit without a shadow ray (set by the alpha passes; 0 = no limit, every other shader)
 uniform vec2 rt_sun_lod;                // <FS> (near, far) metres: the rays of the sun disc go from rt_sun_samples at `near` down to a quarter of them (at least 2) at `far` and beyond; 0 = all of them (set by the alpha pass only)
 uniform float rt_noise_frame;
@@ -311,7 +312,7 @@ float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
 
 // Soft version for the shadows of traced hits (the glossy mirror, local lights and the sun at a hit): masked and blended candidates do not stop the ray, each one lets through the fraction its blurred
 // alpha leaves (rtAlphaCover), the product is the light that arrives; an opaque hit blocks all. 1 = lit, 0 = blocked.
-float rtShadowRaySoft(vec3 origin, vec3 dir, float tmax, float lod)
+float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float strength)
 {
     mat3 to_scene;
     vec3 camera;
@@ -324,27 +325,68 @@ float rtShadowRaySoft(vec3 origin, vec3 dir, float tmax, float lod)
     }
     rayQueryEXT rq;
     rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsNoneEXT, 0x03, ray_origin, 0.005, ray_dir, tmax);
-    float transmit = 1.0;
+    float transmit = 1.0;                       // the light that gets past everything but skinned avatar cards
+    float skin = 1.0;                           // the light that gets past the skinned avatar cards (hair): their product, but never less than 1 - strength (a cap on the TOTAL, a lock of hair is dozens of cards)
+    const float skin_floor = 1.0 - strength;
     uint candidates = 0u;
+    bool capped = false;                        // the limit (LL_VK_RT_CANDIDATES, default 96) was reached: the walk stopped before it met everything on the way (before the solid triangle behind a lock of hair)
     while (rayQueryProceedEXT(rq))
     {
-        if (++candidates > 96u)
+        if (++candidates > LL_RT_MAX_CANDIDATES)
         {
             rayQueryTerminateEXT(rq);
+            capped = true;
             break;
         }
         if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
         {
             uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
-            transmit *= 1.0 - rtAlphaCover(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod);
-            if (transmit < 0.03)
+            // the strength cap only for skinned avatar draws (record flag 8192: rigged hair, rigged alpha clothes): trees, glass and the rest block what their coverage says
+#ifdef LL_RT_SUN_STRENGTH_ALL
+            const bool skinned = true;      // test (LL_VK_RT_SUN_STRENGTH_ALL=1): the cap for every masked or blended candidate: tells whether the hair carries the skinned flag
+#else
+            const bool skinned = record != 0u && record < ll_rt_geoms.g[0].first && (ll_rt_geoms.g[record].flags & 8192u) != 0u;
+#endif
+            const float cover = rtAlphaCover(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod);
+            if (skinned)
+            {
+                skin *= 1.0 - cover;
+            }
+            else
+            {
+                transmit *= 1.0 - cover;
+            }
+            if (transmit * max(skin, skin_floor) < 0.03)
             {
                 rayQueryTerminateEXT(rq);
+#if LL_RT_SUN_DEBUG == 1
+                return 1.0;                 // test: only solid (opaque) hits make a shadow
+#else
                 return 0.0;
+#endif
             }
         }
     }
-    return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? transmit : 0.0;
+    const bool none = rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT;
+#ifdef LL_RT_CAP_DEBUG
+    if (capped && none)
+    {
+        return 0.0;                         // test (LL_VK_RT_CAPDEBUG=1): a ray that stopped at the limit is drawn fully shadowed
+    }
+#endif
+#if LL_RT_SUN_DEBUG == 1
+    return none ? 1.0 : 0.0;                // test (LL_VK_RT_SUN_DEBUG=1): only solid (opaque) hits make a shadow, what the alpha loop found is ignored
+#elif LL_RT_SUN_DEBUG == 2
+    return none ? transmit * max(skin, skin_floor) : 1.0;      // test (=2): only what the alpha loop found makes a shadow, solid hits are ignored
+#else
+    return none ? transmit * max(skin, skin_floor) : 0.0;
+#endif
+}
+
+// strength: the most light the skinned avatar cards (hair) may block together (1 = all, as before; only masked and blended candidates reach the loop: opaque geometry is a committed hit and blocks everything)
+float rtShadowRaySoft(vec3 origin, vec3 dir, float tmax, float lod)
+{
+    return rtShadowRaySoftS(origin, dir, tmax, lod, 1.0);
 }
 
 // what the traced hits call (the sun at a hit and, through rtShadowRayArea, the local lights)
@@ -825,17 +867,47 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
     return vec4(mix(color, fallback, fade), 1.0);
 }
 
-// <FS> test switches (LL_VK_RT_SUN_BIAS metres, default 0.015: how far off the surface along the normal the ray starts; LL_VK_RT_SUN_NOFACE=1: a surface facing away from the light is traced too)
+// <FS> test switches (LL_VK_RT_SUN_BIAS metres, default 0.003: how far off the surface along the normal the ray starts. It was 0.015 until 2026-10-27: anything closer to a surface than that could not shadow
+// it, so the shadow of a strand of hair gave out where the strand came close to the face; 0.003 is what the user found right by eye. LL_VK_RT_SUN_NOFACE=1: a surface facing away from the light is traced too)
 #ifndef LL_RT_SUN_BIAS
-#define LL_RT_SUN_BIAS 0.015
+#define LL_RT_SUN_BIAS 0.003
 #endif
-// LL_VK_RT_SUN_TMIN (metres, default 0.04, 0 = off): the sun ray starts this far along the light direction: whatever is closer to the surface than that along the light cannot shadow it (hair lying on
-// skin, the cleavage: hard dark streaks, the user 2026-10-27), while a shadow from farther up (a chin on the chest) keeps its whole shape (a bias along the normal moves the start sideways relative to
-// the occluder and cut such shadows)
+// LL_VK_RT_SUN_TMIN (metres, default 0 = off): the sun ray starts this far along the light direction: whatever is closer to the surface than that along the light cannot shadow it, while a shadow from farther up
+// (a chin on the chest) keeps its whole shape. The first answer to the hard streaks of hair on skin (0.04), not needed since the soft alpha ray and the small start offset (below) give hair a continuous shadow.
+// LL_VK_RT_SUN_BIAS_ALPHA (metres, default 0.015): the same for blended surfaces (hair cards a few millimetres apart shade each other, grey strands in the hair, when it is as small as the one of skin)
+#ifndef LL_RT_SUN_BIAS_ALPHA
+#define LL_RT_SUN_BIAS_ALPHA 0.015
+#endif
+// LL_VK_RT_SUN_ALPHA_STRENGTH (0..1, default 1): with the soft alpha ray, how much of its coverage a hair card blocks: hair is translucent, light passes through strands and bounces off the hair around them, so the
+// shadow of a lock is never as dark as an opaque object's. 0.65 = a card blocks at most 65 % of the light.
+// LL_VK_RT_SUN_HAIRFILL (0..1, default 0): the shadow of a blended surface (the hair itself) is lifted toward lit by this fraction: bounced light and scattering fill the shadows hair has on itself.
+#ifndef LL_RT_SUN_ALPHA_STRENGTH
+#define LL_RT_SUN_ALPHA_STRENGTH 1.0
+#endif
+#ifndef LL_RT_SUN_HAIRFILL
+#define LL_RT_SUN_HAIRFILL 0.0
+#endif
+#ifndef LL_RT_SUN_DEBUG
+#define LL_RT_SUN_DEBUG 0
+#endif
 #ifndef LL_RT_SUN_TMIN
-#define LL_RT_SUN_TMIN 0.04
+#define LL_RT_SUN_TMIN 0.0
 #endif
-float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
+// LL_VK_RT_SUN_SOFTALPHA (metres, default 12, 0 = off): up to this view distance the sun ray lets each masked or blended card (hair) through by the fraction its blurred alpha leaves (rtShadowRaySoft) instead of
+// the yes/no alpha test of rtShadowRay: a lock of hair then casts a continuous, partly transparent shadow, not one that is a full shadow or nothing per pixel (gaps, stair steps along the cards)
+#ifndef LL_RT_SUN_SOFTALPHA
+#define LL_RT_SUN_SOFTALPHA 12.0
+#endif
+float rtSunRayAt(vec3 origin, vec3 dir, vec2 pos_screen, float lod, float view_dist)
+{
+    if (view_dist < LL_RT_SUN_SOFTALPHA)
+    {
+        return rtShadowRaySoftS(origin, dir, 2000.0, lod, LL_RT_SUN_ALPHA_STRENGTH);
+    }
+    return rtSunRay(origin, dir, pos_screen, lod);
+}
+
+float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
 {
 #ifndef LL_RT_SUN_NOFACE
     if (dot(norm, light_dir) <= 0.0)
@@ -851,7 +923,7 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     {
         return 1.0;                         // <FS> a blended surface this far away: the shadow ray is not worth its cost (a few pixels of hair, glass or foliage), the opaque ground behind it keeps its shadow
     }
-    vec3 origin = pos + norm * (LL_RT_SUN_BIAS + 0.0006 * -pos.z) + light_dir * LL_RT_SUN_TMIN;
+    vec3 origin = pos + norm * ((rt_sun_alpha > 0.5 ? LL_RT_SUN_BIAS_ALPHA : LL_RT_SUN_BIAS) + 0.0006 * -pos.z) + light_dir * LL_RT_SUN_TMIN;
     float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
     int samples = (rt_sun_radius > 0.0) ? clamp(rt_sun_samples, 1, 16) : 1;
     if (rt_sun_lod.x > 0.0 && samples > 4)
@@ -863,7 +935,7 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     }
     if (samples == 1 && rt_sun_radius <= 0.0)
     {
-        return rtSunRay(origin, light_dir, pos_screen, lod);
+        return rtSunRayAt(origin, light_dir, pos_screen, lod, -pos.z);
     }
     // a frame of tangents for the sun's disc, a per pixel rotation (interleaved gradient noise, shifted by the frame when it changes every frame) and a golden angle spiral
     vec3 t1 = normalize(cross(light_dir, abs(light_dir.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
@@ -876,9 +948,19 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
         float r = sqrt((float(i) + 0.5) / float(samples)) * rt_sun_radius;
         float phi = rot + float(i) * 2.3999632;
         vec3 dir = normalize(light_dir + (t1 * cos(phi) + t2 * sin(phi)) * r);
-        lit += rtSunRay(origin, dir, pos_screen, lod);
+        lit += rtSunRayAt(origin, dir, pos_screen, lod, -pos.z);
     }
     return lit / float(samples);
+}
+
+float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
+{
+    float lit = rtSunShadowCore(pos, norm, light_dir, pos_screen);
+    if (rt_sun_alpha > 0.5)
+    {
+        lit = mix(lit, 1.0, LL_RT_SUN_HAIRFILL);        // <FS> a blended surface (hair): bounced light and scattering fill part of the shadows it has on itself
+    }
+    return lit;
 }
 #endif
 
