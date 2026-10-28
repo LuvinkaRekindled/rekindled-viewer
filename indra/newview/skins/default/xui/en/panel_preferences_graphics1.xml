@@ -1937,11 +1937,11 @@ If you do not understand the distinction then leave this control alone."
        control_name="FSVkDLSS"
        height="16"
        initial_value="false"
-       label="Use NVIDIA DLSS / DLAA (RTX graphics cards, experimental)"
+       label="Upscale with DLSS / FSR (experimental)"
        layout="topleft"
        left_delta="0"
        name="FSVkDLSS"
-       tool_tip="Draws the world with NVIDIA DLSS. Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. DLAA draws at the full window size and uses the same neural network only to smooth edges: the sharpest picture, no speed gain. Needs an NVIDIA RTX card and the Vulkan renderer. If the viewer was started with this off, restart it after turning it on; once DLSS is running, switching it off and changing the mode apply at once."
+       tool_tip="Draws the world with an upscaler: NVIDIA DLSS (RTX graphics cards) or AMD FSR 3.1 (any graphics card). Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. DLAA / 100% draws at the full window size and only smooths edges: the sharpest picture, no speed gain. Needs the Vulkan renderer. If the viewer was started with this off, restart it after turning it on; once DLSS is running, switching it off and changing the mode apply at once."
        top_pad="8"
        width="400"/>
       <text
@@ -1951,10 +1951,45 @@ If you do not understand the distinction then leave this control alone."
        height="14"
        layout="topleft"
        left_delta="18"
+       name="FSVkUpscalerText"
+       top_pad="8"
+       width="200">
+        Upscaler (restart to change):
+      </text>
+      <combo_box
+       control_name="FSVkUpscaler"
+       enabled_control="FSVkDLSS"
+       height="23"
+       layout="topleft"
+       left_delta="0"
+       name="FSVkUpscaler"
+       tool_tip="Automatic uses NVIDIA DLSS where the graphics card has it and AMD FSR 3.1 otherwise. FSR 3.1 works on any graphics card but has no ray reconstruction. Takes effect after a restart."
+       top_pad="3"
+       width="250">
+        <combo_box.item
+         label="Automatic (DLSS, else FSR)"
+         name="0"
+         value="0"/>
+        <combo_box.item
+         label="NVIDIA DLSS"
+         name="1"
+         value="1"/>
+        <combo_box.item
+         label="AMD FSR 3.1"
+         name="2"
+         value="2"/>
+      </combo_box>
+      <text
+       type="string"
+       length="1"
+       follows="left|top"
+       height="14"
+       layout="topleft"
+       left_delta="0"
        name="FSVkDLSSQualityText"
        top_pad="8"
        width="200">
-        DLSS mode:
+        Upscaling mode:
       </text>
       <combo_box
        control_name="FSVkDLSSQuality"

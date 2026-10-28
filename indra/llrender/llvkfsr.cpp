@@ -79,11 +79,14 @@ VkDevice gDevice = VK_NULL_HANDLE;
 HMODULE gModule = nullptr;
 ffxFunctions gFn = {};
 
-// A context per size (render w/h, output w/h, flags). A snapshot renders at several sizes within a few seconds; contexts of other sizes are kept for when the size comes back and given
-// back once the frame that last used them has completed (the same scheme as the DLSS features).
+// A context is made for a maximum render and output size (a little over the first request) and serves every request that fits inside it and is not much smaller (the dispatch carries the
+// real sizes, the context is made with FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION): the live view at 1713x898 and the snapshot at 1713x911 share one, where a context per exact size made a new one
+// (memory the viewer's own accounting does not see) for every snapshot, at the exit one with the video memory at 93% (device lost, 2026-10-27). Contexts of clearly different sizes (a hi-res
+// snapshot) are kept for when the size comes back and given back once the frame that last used them has completed (the same scheme as the DLSS features).
 struct Ctx
 {
-    U32 mKey[5] = {};
+    U32 mFlags = 0;                                  // the creation flags the caller asked for (without the dynamic resolution bit)
+    U32 mMaxRenderW = 0, mMaxRenderH = 0, mMaxOutW = 0, mMaxOutH = 0;
     ffxContext mContext = nullptr;
     U64 mLastFrame = 0;
 };
@@ -152,13 +155,25 @@ void reap()
     }
 }
 
-// the context for these sizes: the one in use, a kept one, or a new one (the oldest other context is pushed out when there are too many)
-ffxContext context_for(const U32* key, const LLVkDlss::Params& p)
+// a context serves a request when it was made for at least these sizes and is not much bigger (within 1.6 times the pixels: a context made for a hi-res snapshot is not used for the window)
+bool fits(const Ctx& c, U32 flags, const LLVkDlss::Params& p)
+{
+    if (c.mFlags != flags || p.mRenderWidth > c.mMaxRenderW || p.mRenderHeight > c.mMaxRenderH || p.mOutputWidth > c.mMaxOutW || p.mOutputHeight > c.mMaxOutH)
+    {
+        return false;
+    }
+    const double render_ratio = (double)c.mMaxRenderW * c.mMaxRenderH / ((double)p.mRenderWidth * p.mRenderHeight);
+    const double out_ratio = (double)c.mMaxOutW * c.mMaxOutH / ((double)p.mOutputWidth * p.mOutputHeight);
+    return render_ratio <= 1.6 && out_ratio <= 1.6;
+}
+
+// the context for this request: one that fits, or a new one (the oldest other context is pushed out when there are too many)
+ffxContext context_for(U32 flags, const LLVkDlss::Params& p)
 {
     reap();
     for (size_t i = 0; i < gContexts.size(); ++i)
     {
-        if (memcmp(gContexts[i].mKey, key, sizeof(gContexts[i].mKey)) == 0)
+        if (fits(gContexts[i], flags, p))
         {
             gCurrent = i;
             return gContexts[i].mContext;
@@ -184,9 +199,12 @@ ffxContext context_for(const U32* key, const LLVkDlss::Params& p)
     ffxCreateContextDescUpscale create = {};
     create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
     create.header.pNext = &backend.header;
-    create.flags = key[4];
-    create.maxRenderSize = { p.mRenderWidth, p.mRenderHeight };
-    create.maxUpscaleSize = { p.mOutputWidth, p.mOutputHeight };
+    // 4 % over the request in each direction: the next snapshot or window resize of a few pixels fits in this context
+    const U32 max_render_w = (U32)ceilf(p.mRenderWidth * 1.04f), max_render_h = (U32)ceilf(p.mRenderHeight * 1.04f);
+    const U32 max_out_w = (U32)ceilf(p.mOutputWidth * 1.04f), max_out_h = (U32)ceilf(p.mOutputHeight * 1.04f);
+    create.flags = flags | FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
+    create.maxRenderSize = { max_render_w, max_render_h };
+    create.maxUpscaleSize = { max_out_w, max_out_h };
     create.fpMessage = [](uint32_t type, const wchar_t* message)
     {
         char text[512] = {};
@@ -200,12 +218,17 @@ ffxContext context_for(const U32* key, const LLVkDlss::Params& p)
         return nullptr;
     }
     Ctx c;
-    memcpy(c.mKey, key, sizeof(c.mKey));
+    c.mFlags = flags;
+    c.mMaxRenderW = max_render_w;
+    c.mMaxRenderH = max_render_h;
+    c.mMaxOutW = max_out_w;
+    c.mMaxOutH = max_out_h;
     c.mContext = context;
     gContexts.push_back(c);
     gCurrent = gContexts.size() - 1;
-    LL_INFOS("VkFsr") << "FSR upscale context created: " << p.mRenderWidth << "x" << p.mRenderHeight << " -> " << p.mOutputWidth << "x" << p.mOutputHeight
-                      << " flags 0x" << std::hex << create.flags << std::dec << LL_ENDL;
+    LL_INFOS("VkFsr") << "FSR upscale context created for " << p.mRenderWidth << "x" << p.mRenderHeight << " -> " << p.mOutputWidth << "x" << p.mOutputHeight << " (made for up to "
+                      << max_render_w << "x" << max_render_h << " -> " << max_out_w << "x" << max_out_h << "), flags 0x" << std::hex << create.flags << std::dec
+                      << ", " << (gContexts.size()) << " contexts" << LL_ENDL;
     return context;
 }
 
@@ -296,8 +319,7 @@ bool evaluate(VkCommandBuffer cmd, const LLVkDlss::Params& p)
     {
         flags |= FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE;
     }
-    const U32 key[5] = { p.mRenderWidth, p.mRenderHeight, p.mOutputWidth, p.mOutputHeight, flags };
-    ffxContext context = context_for(key, p);
+    ffxContext context = context_for(flags, p);
     if (!context)
     {
         return false;

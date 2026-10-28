@@ -2623,6 +2623,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSVkUpscaler</key>
+    <map>
+      <key>Comment</key>
+      <string>Which upscaler FSVkDLSS uses: 0 automatic (NVIDIA DLSS where the card has it, else AMD FSR 3.1), 1 DLSS only, 2 FSR 3.1 only (works on any graphics card; no ray reconstruction). Takes effect after a restart. LL_VK_UPSCALER=dlss|fsr overrides it.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSVkDLSS</key>
     <map>
       <key>Comment</key>

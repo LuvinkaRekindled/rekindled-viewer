@@ -3898,6 +3898,14 @@ bool LLAppViewer::initWindow()
         if (gSavedSettings.getBOOL("FSVkDLSS") && !getenv("LL_VK_DLSS"))
         {
             _putenv_s("LL_VK_DLSS", "1");       // NVIDIA DLSS upscaling (experimental)
+            if (!getenv("LL_VK_UPSCALER"))      // <FS> which upscaler: 0 automatic (DLSS first), 1 DLSS, 2 AMD FSR 3.1 (llvkupscale.h)
+            {
+                const S32 upscaler = gSavedSettings.getS32("FSVkUpscaler");
+                if (upscaler == 1 || upscaler == 2)
+                {
+                    _putenv_s("LL_VK_UPSCALER", upscaler == 1 ? "dlss" : "fsr");
+                }
+            }
             _putenv_s("LL_VK_DLSS_SCALE", std::to_string(LLPipeline::getDLSSScale()).c_str());     // the render scale, for the texture LOD bias
         }
         if (gSavedSettings.getBOOL("FSVkRayTracing") && !getenv("LL_VK_RT") && !getenv("LL_VK_RT_SHADOWS"))
