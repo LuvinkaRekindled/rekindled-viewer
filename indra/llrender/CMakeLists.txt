@@ -35,6 +35,7 @@ set(llrender_SOURCE_FILES
     llvertexbuffer.cpp
     llvkcontext.cpp
     llvkdlss.cpp
+    llvkdlssnr.cpp
     llvkfsr.cpp
     llvkupscale.cpp
     llvkasync.cpp
@@ -85,6 +86,7 @@ set(llrender_HEADER_FILES
     llvertexbuffer.h
     llvkcontext.h
     llvkdlss.h
+    llvkdlssnr.h
     llvkfsr.h
     llvkupscale.h
     llvkfunctions.inl

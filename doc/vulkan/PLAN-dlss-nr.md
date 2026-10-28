@@ -128,3 +128,11 @@ What: `nr-debug.txt` with `intensity style gtone ltone lstruct skin` read once a
 - **Embedded weights.** If the signed snippet logs "No embedded weights for config", it depends on the bundle's loader feeding it the `nvfp4/` files, and the plan stops (section 0).
 - **What the look controls do to Second Life content.** Skin structure and local tone on creator-made avatar skins and textures may fight the intended look; "intensity" is the dial. This is a by-eye question for Adam, not a measurement, and the no-quality-cut rule means NR could only ever be an opt-in overlay even if it shipped, which it cannot.
 - **VRAM.** Pools "up to 4 GB" on top of the viewer's 12 GB high-water mark; G4 reads the video memory graph. If NR pushes the card into the VRAM cap, the test runs at a lower performance mode or stops.
+
+## Status 2026-10-28
+
+- **Step one built and run.** `indra/llrender/llvkdlssnr.{h,cpp}` (`LLVkDlssNr::requested / featureId / probe`), hooked into `LLVkDlss::addDeviceExtensions` (feature 18's extensions join the loop when the flag is set) and `LLVkDlss::init` (the probe runs while the capability object is in hand). Launcher `<work>/run-viewer-dlss-nr.bat`; `nvngx_dlssnr.dll` (the signed one) copied by hand into Release.
+- **G1 passes** (the table in `NOTES-dlss-nr.md`): `DLSSNR.Available` 1, driver minimum 615.0, `FeatureInitResult` Success, requirements for id 18 **Supported** with minimum architecture 0x1b0, both snippet callbacks present, device extensions = DLSS's plus `VK_KHR_push_descriptor` (already enabled). Ids 14-17 fail their requirement query (no snippets for them): 18 is DLSS-NR. The custom project id is not denied at this level.
+- **G0** half checked: with the flag set nothing else in the start-up changed (DLSS and the upscaler came up as before). A run with the flag unset after the build was not done; the code path is a single `if (requested() > 0)`.
+- **Not run:** the scaling ratio callback (`LL_VK_DLSS_NR_RATIO=1`). NGX logging (`ngx_log_verbose.reg`) was not switched on; not needed for G1.
+- **Next:** step two (create behind `LL_VK_DLSS_NR=2`, evaluate and show behind 3). Open from G1: nothing new; the questions of section 7 that remain are the colour space, render-size depth/motion with an output-size colour, the callback convention, embedded weights and VRAM, all of which step two answers.

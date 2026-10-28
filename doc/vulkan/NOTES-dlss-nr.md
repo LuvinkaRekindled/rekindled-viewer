@@ -21,3 +21,22 @@ The NGX feature id of NR (the SL id 1004 is not the NGX one; RR is 13), the para
 
 ## Update 2026-10-28
 Most of the "not known" list is answered in `PLAN-dlss-nr.md` section 1.2 from the installed driver's NGX core (`_nvngx.dll`, 617.42): the core has `DLSSNR.Available` and friends, and its feature table puts DLSSNR at NGX feature id **18** (`NVSDK_NGX_Feature_Reserved18`; 14-17 are TrueHDR, Latewarp, VSR, FGX). The snippet itself adds `DLSSNR.Enabled`, `.ScalingRatio`, `.MaskBlendMode` and the callbacks `DLSSNRComputeScalingRatioCallback` / `DLSSNRGetStatsCallback`, needs at least Blackwell2, and wants Color + Output (+ MVec, Depth) as a minimum. The plan has the probe build and the gates.
+
+## Probe run 2026-10-28 (step one of the plan, `run-viewer-dlss-nr.bat`, LL_VK_DLSS_NR=1, driver 617.42, RTX 5060 Ti)
+What the NGX core answered at device creation (`#VkDlssNr#` lines in Firestorm.log; nothing created, the viewer ran on to the login screen as before):
+
+| question | answer |
+|---|---|
+| `DLSSNR.Available` / `.NeedsUpdatedDriver` | 1 / 0 |
+| `DLSSNR.MinDriverVersionMajor.Minor` | 615.0 |
+| `DLSSNR.FeatureInitResult` | 1 (= `NVSDK_NGX_Result_Success`) |
+| `DLSSNR.Enabled`, `.Width`, `.Height` on the capability object | not set (UnsupportedParameter): per-feature parameters, not capabilities |
+| `DLSSNRComputeScalingRatioCallback`, `DLSSNRGetStatsCallback` | both non-null (the snippet is loaded and hands them out like `DLSSOptimalSettingsCallback`) |
+| `GetFeatureRequirements(18)` | **Supported**, min hardware architecture 0x1b0, min OS 10.0.0 (so GB206 passes the Blackwell2 check, and the custom project id is not denied) |
+| `GetFeatureRequirements(14..17)` | the query fails with an unnamed result for TrueHDR, Latewarp, VSR, FGX (no snippet for them here): consistent with the table reading, 18 is the one that answers |
+| feature 18 instance extensions | `VK_KHR_get_physical_device_properties2` |
+| feature 18 device extensions | `VK_NVX_binary_import`, `VK_NVX_image_view_handle`, `VK_KHR_buffer_device_address` (DLSS's set) + `VK_KHR_push_descriptor` (already on the device: no "enabling" line) |
+| `GetScratchBufferSize(18)` | PlatformError, 0 bytes (the SDK documents the scratch size as unused for the DLSS features; same here) |
+| for comparison | `SuperSampling.Available` 1, `SuperSamplingDenoising.Available` 1, `FrameGeneration.Available` 0 (no `nvngx_dlssg.dll` next to the exe) |
+
+Not run: the scaling ratio callback (`LL_VK_DLSS_NR_RATIO=1`, a guessed convention). Gate G1 of the plan passes; G2/G3 (create, evaluate) are step two.

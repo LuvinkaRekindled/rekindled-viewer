@@ -8,6 +8,7 @@
 #if defined(LL_VULKAN)
 
 #include "llvkdlss.h"
+#include "llvkdlssnr.h"
 
 #if defined(LL_DLSS)
 #include "nvsdk_ngx_vk.h"
@@ -323,12 +324,17 @@ void addDeviceExtensions(VkInstance instance, VkPhysicalDevice device, std::vect
     available.resize(n);
     vkEnumerateDeviceExtensionProperties(device, nullptr, &n, available.data());
     // C6: super resolution first, then ray reconstruction (its extensions are enabled too so that the capability query in init() can say yes)
-    for (NVSDK_NGX_Feature feature : { NVSDK_NGX_Feature_SuperSampling, NVSDK_NGX_Feature_RayReconstruction })
+    std::vector<NVSDK_NGX_Feature> features = { NVSDK_NGX_Feature_SuperSampling, NVSDK_NGX_Feature_RayReconstruction };
+    if (LLVkDlssNr::requested() > 0)
+    {
+        features.push_back((NVSDK_NGX_Feature)LLVkDlssNr::featureId());       // the DLSS-NR probe (doc/vulkan/PLAN-dlss-nr.md): its extensions on the device too, so step two needs no second build
+    }
+    for (NVSDK_NGX_Feature feature : features)
     {
         NVSDK_NGX_FeatureDiscoveryInfo info = discovery_info(feature);
         uint32_t count = 0;
         VkExtensionProperties* props = nullptr;
-        if (ok(NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(instance, device, &info, &count, &props), feature == NVSDK_NGX_Feature_SuperSampling ? "NGX device extension query" : "NGX ray reconstruction extension query"))
+        if (ok(NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(instance, device, &info, &count, &props), feature == NVSDK_NGX_Feature_SuperSampling ? "NGX device extension query" : (feature == NVSDK_NGX_Feature_RayReconstruction ? "NGX ray reconstruction extension query" : "NGX DLSS-NR extension query")))
         {
             add_all(out, count, props, &available);
         }
@@ -392,6 +398,11 @@ bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
         LL_INFOS("VkDlss") << "ray reconstruction: " << (gRayReconstruction ? "available" : "not available") << (rr_needs_driver ? " (needs a newer driver)" : "")
                            << (rr_req_ok ? (rr_req.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported ? ", hardware and system supported" : ", not supported by the system: reasons 0x") : ", requirement query failed")
                            << (rr_req_ok && rr_req.FeatureSupported != NVSDK_NGX_FeatureSupportResult_Supported ? std::to_string((U32)rr_req.FeatureSupported) : std::string()) << LL_ENDL;
+    }
+    // the DLSS-NR probe (doc/vulkan/PLAN-dlss-nr.md step one, LL_VK_DLSS_NR=1): logs what the core says about feature 18 while the capability object is in hand
+    if (LLVkDlssNr::requested() > 0)
+    {
+        LLVkDlssNr::probe(instance, physical, device, gParams, discovery_info());
     }
     // the capability object is owned by NGX; evaluation needs one of our own
     gParams = nullptr;
