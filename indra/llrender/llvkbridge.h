@@ -113,7 +113,7 @@ namespace LLVkBridge
         F32 mFrameTimeMs = 16.6f;
         // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): mNeuralRender set means this is not an upscale but the neural renderer on the finished window-size colour (mColor and mOutput at
         // the output size, mDepth and mMotion at the render size); mPreset, mMotionScaleX/Y and mReset are shared with the upscale
-        S32 mNeuralRender = 0;
+        S32 mNeuralRender = 0;              // 1 evaluate, 2 release the feature (the mode went off; nothing else in the args is read)
         S32 mNrQuality = 1, mNrAutoMask = 0;
         F32 mNrScalingRatio = 0.f;          // > 0: the network's size as a fraction of the output (DLSSNR.ScalingRatio at creation)
         F32 mNrStyle = 0.f, mNrIntensity = 1.f, mNrGlobalTone = 0.5f, mNrLocalTone = 0.5f, mNrLocalStructure = 0.5f, mNrSkinStructure = 0.5f;

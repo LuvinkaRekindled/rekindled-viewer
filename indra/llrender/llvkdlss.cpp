@@ -324,11 +324,8 @@ void addDeviceExtensions(VkInstance instance, VkPhysicalDevice device, std::vect
     available.resize(n);
     vkEnumerateDeviceExtensionProperties(device, nullptr, &n, available.data());
     // C6: super resolution first, then ray reconstruction (its extensions are enabled too so that the capability query in init() can say yes)
-    std::vector<NVSDK_NGX_Feature> features = { NVSDK_NGX_Feature_SuperSampling, NVSDK_NGX_Feature_RayReconstruction };
-    if (LLVkDlssNr::requested() > 0)
-    {
-        features.push_back((NVSDK_NGX_Feature)LLVkDlssNr::featureId());       // the DLSS-NR probe (doc/vulkan/PLAN-dlss-nr.md): its extensions on the device too, so step two needs no second build
-    }
+    // DLSS-NR (doc/vulkan/PLAN-dlss-nr.md) too: its extensions are DLSS's own plus push descriptors, and the preference switches it on without a restart
+    std::vector<NVSDK_NGX_Feature> features = { NVSDK_NGX_Feature_SuperSampling, NVSDK_NGX_Feature_RayReconstruction, (NVSDK_NGX_Feature)LLVkDlssNr::featureId() };
     for (NVSDK_NGX_Feature feature : features)
     {
         NVSDK_NGX_FeatureDiscoveryInfo info = discovery_info(feature);

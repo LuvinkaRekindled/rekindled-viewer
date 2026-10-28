@@ -3907,10 +3907,7 @@ bool LLAppViewer::initWindow()
                 }
             }
             _putenv_s("LL_VK_DLSS_SCALE", std::to_string(LLPipeline::getDLSSScale()).c_str());     // the render scale, for the texture LOD bias
-            if (gSavedSettings.getBOOL("FSVkNeuralRender") && !getenv("LL_VK_DLSS_NR"))
-            {
-                _putenv_s("LL_VK_DLSS_NR", "3");        // <FS> DLSS-NR (neural rendering): create, evaluate and show (doc/vulkan/PLAN-dlss-nr.md; local testing only)
-            }
+            // <FS> DLSS-NR (neural rendering, doc/vulkan/PLAN-dlss-nr.md): FSVkNeuralRenderMode is read live by the pipeline; LL_VK_DLSS_NR stays the launchers' test override
         }
         if (gSavedSettings.getBOOL("FSVkRayTracing") && !getenv("LL_VK_RT") && !getenv("LL_VK_RT_SHADOWS"))
         {

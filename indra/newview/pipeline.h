@@ -172,7 +172,10 @@ public:
     void generateMotionVectors(LLRenderTarget* dst);    // camera motion from depth and the last two view-projection matrices, in render pixels
     bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction = false);
     bool applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst);    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): src (window size, finished) -> dst; false: nothing was done
-    bool applyNeuralRenderRimLift(LLRenderTarget* nr, LLRenderTarget* src, LLRenderTarget* dst);    // <FS> DLSS-NR: the rim lift (nrRimLiftF.glsl) of nr against its input src into dst; false: nothing was done    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
+    bool applyNeuralRenderRimLift(LLRenderTarget* nr, LLRenderTarget* src, LLRenderTarget* dst);
+    // <FS> DLSS-NR: what the frame should do now: 0 nothing, 1 evaluate and show, 2 only while a snapshot renders, 3 evaluate but show the normal picture (the launcher's test flag)
+    static S32 neuralRenderMode();
+    S32 mNRReleaseFrames = 0;       // <FS> DLSS-NR: frames left to tell the worker to release the feature after the mode went off    // <FS> DLSS-NR: the rim lift (nrRimLiftF.glsl) of nr against its input src into dst; false: nothing was done    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
     static bool sDLSS;
     // <FS> DLSS ray reconstruction (FSVkRayReconstruction, needs DLSS): the denoiser / upscaler takes the noisy linear HDR picture (mRT->screen) before the tonemap, with guide buffers made from the
     // G-buffer, and gives back a window sized HDR picture; the tonemap, CAS, glow and the rest of the post chain then run at the window size on mRRPing / mRRPong.

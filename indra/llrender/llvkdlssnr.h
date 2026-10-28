@@ -37,8 +37,11 @@ namespace LLVkDlssNr
     // the core said available and supported (the preferences checkbox is enabled on this)
     bool available();
 
-    // the flag asks for the feature (2 or 3), the core said available and supported, and no creation has failed since
+    // the core said available and supported, and no creation has failed since (whether to evaluate is the caller's: the preference, live, or the launcher's flag)
     bool ready();
+
+    // the feature is not wanted for now (the preference went off): it is released once the frame that last used it has completed; call for a few frames
+    void release();
 
     struct Params
     {
