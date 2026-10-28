@@ -17892,10 +17892,11 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
 }
 
 // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two). The look controls and the create-time choices come from <work>/nr-debug.txt, read once a second:
-// "intensity style gtone ltone lstruct skin quality preset automask mvscale" (defaults 1 0 0.5 0.5 0.5 0.5 1 0 0 1); a change of quality or preset recreates the feature
+// "intensity style gtone ltone lstruct skin quality preset automask mvscale run" (defaults 1 0 0.5 0.5 0.5 0.5 1 0 0 1 1); a change of quality or preset recreates the feature;
+// run 0 skips the evaluate altogether (the normal picture, no NR cost): the live off state of a same-run cost A/B
 namespace
 {
-struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 0.5f, mLocalTone = 0.5f, mLocalStructure = 0.5f, mSkinStructure = 0.5f, mMotionScale = 1.f; S32 mQuality = 1, mPreset = 0, mAutoMask = 0; };
+struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 0.5f, mLocalTone = 0.5f, mLocalStructure = 0.5f, mSkinStructure = 0.5f, mMotionScale = 1.f; S32 mQuality = 1, mPreset = 0, mAutoMask = 0, mRun = 1; };
 const NrDebug& nrDebug()
 {
     static NrDebug d;
@@ -17909,6 +17910,8 @@ const NrDebug& nrDebug()
         {
             NrDebug n;
             in >> n.mIntensity >> n.mStyle >> n.mGlobalTone >> n.mLocalTone >> n.mLocalStructure >> n.mSkinStructure >> n.mQuality >> n.mPreset >> n.mAutoMask >> n.mMotionScale;
+            S32 run = 1;
+            if (in >> run) n.mRun = run;        // an older ten-field file keeps the default (a failed extraction would write 0)
             d = n;
         }
     }
@@ -17926,6 +17929,11 @@ bool LLPipeline::applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst)
     static U32 last_size[2] = {};
     const U32 frame = LLFrameTimer::getFrameCount();
     const NrDebug& d = nrDebug();
+    if (d.mRun <= 0)
+    {
+        last_frame = ~0u;       // the history is useless when it comes back
+        return false;
+    }
     LLVkBridge::UpscaleArgs a;
     a.mNeuralRender = 1;
     a.mColor = src->getTexture(0);
@@ -19023,8 +19031,9 @@ void LLPipeline::renderFinalize()
     }
 
     // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the finished window-size picture through the neural renderer, before the present pass and the UI.
-    // LL_VK_DLSS_NR=2 evaluates and leaves the picture alone (gate G2), 3 shows the result (gate G3)
-    if (dlss && !gSnapshot && LLVkBridge::neuralRenderMode() >= 2 && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth() && sourceBuffer->getHeight() == mNROutput.getHeight()
+    // LL_VK_DLSS_NR=2 evaluates and leaves the picture alone (gate G2), 3 shows the result (gate G3). Snapshots go through it too (Adam 2026-10-28, to compare stills): the
+    // snapshot's sizes each get a feature of their own, created on the first use and released once the frame that last used it has completed
+    if (dlss && LLVkBridge::neuralRenderMode() >= 2 && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth() && sourceBuffer->getHeight() == mNROutput.getHeight()
         && applyNeuralRender(sourceBuffer, &mNROutput) && LLVkBridge::neuralRenderMode() >= 3)
     {
         sourceBuffer = &mNROutput;
