@@ -1030,6 +1030,22 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["LL_RT_SUN_ALPHA_STRENGTH"] = llformat("%.3f", s);     // how much of its coverage a hair card blocks (soft alpha sun ray)
                 }
             }
+            if (const char* pen = getenv("LL_VK_RT_SUN_PENUMBRA"))
+            {
+                const F32 w = (F32)atof(pen);
+                if (w >= 0.f && w < 1.f)
+                {
+                    attribs["LL_RT_SUN_PENUMBRA"] = llformat("%.4f", w);       // metres: the penumbra width of a close avatar self shadow on the skin (0 = off)
+                }
+            }
+            if (const char* near_s = getenv("LL_VK_RT_SUN_SELFNEAR"))
+            {
+                const F32 n = (F32)atof(near_s);
+                if (n > 0.f && n < 20.f)
+                {
+                    attribs["LL_RT_SUN_SELF_NEAR"] = llformat("%.3f", n);      // metres: a skinned avatar surface this close to the pixel it shadows counts as a translucent self shadow
+                }
+            }
             if (const char* dbg = getenv("LL_VK_RT_SUN_DEBUG"))
             {
                 const S32 d = atoi(dbg);
