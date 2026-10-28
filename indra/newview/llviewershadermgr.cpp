@@ -365,6 +365,7 @@ LLShaderProgram            gAvatarVelocityPullProgram;     // <FS> avatar motion
 LLShaderProgram            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
 LLShaderProgram            gShadowAccumProgram;            // <FS> temporal accumulation of the ray traced sun shadow
 LLShaderProgram            gRRHitDistProgram;              // <FS> DLSS ray reconstruction: the hit distance of the traced reflections out of the alpha of the lit picture
+LLShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
 LLShaderProgram            gRRReflMotionProgram;           // <FS> DLSS ray reconstruction: motion vectors of what the traced reflections show
 LLShaderProgram            gRRGuidesProgram;               // <FS> DLSS ray reconstruction: diffuse / specular albedo and normal + roughness from the G-buffer
 LLShaderProgram            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
@@ -1553,6 +1554,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gRRGuidesProgram.unload();
         gRRReflMotionProgram.unload();
         gRRHitDistProgram.unload();
+        gNRRimLiftProgram.unload();
         gAvatarVelocityDebugProgram.unload();
         gRtMaterialDebugProgram.unload();
         gDeferredPostGammaCorrectProgram.unload();
@@ -3839,6 +3841,17 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gRRHitDistProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the ray reconstruction hit distance program did not compile: no hit distance guide" << LL_ENDL;
+        }
+
+        gNRRimLiftProgram.mName = "DLSS-NR Rim Lift";
+        gNRRimLiftProgram.mShaderFiles.clear();
+        gNRRimLiftProgram.clearPermutations();
+        gNRRimLiftProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
+        gNRRimLiftProgram.mShaderFiles.push_back(make_pair("deferred/nrRimLiftF.glsl", ShaderStage::Fragment));
+        gNRRimLiftProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gNRRimLiftProgram.createShader())
+        {
+            LL_WARNS("VkDlssNr") << "the DLSS-NR rim lift program did not compile: no rim lift" << LL_ENDL;
         }
 
         gAvatarVelocityDebugProgram.mName = "Avatar Velocity Debug";

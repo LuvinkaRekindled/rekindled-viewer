@@ -406,6 +406,7 @@ bool LLDeviceCaps::initFromDevice()
     mHasRayTracing = dev.mRayTracingUsable;
     mRayTracingEnabled = dev.mRayTracingEnabled;
     mHasRayReconstruction = dev.mRayReconstruction;
+    mHasNeuralRender = dev.mNeuralRender;
 
     LL_INFOS("RenderInit") << "GL_VENDOR:     " << sDeviceVendor << LL_ENDL;
     LL_INFOS("RenderInit") << "GL_RENDERER:   " << sDeviceRenderer << LL_ENDL;
@@ -415,7 +416,7 @@ bool LLDeviceCaps::initFromDevice()
         << ", depth texture " << mMaxDepthTextureSamples << ", integer " << mMaxIntegerSamples << "), sample mask words " << mMaxSampleMaskWords << ", varying vectors " << mMaxVaryingVectors
         << ", uniform block " << mMaxUniformBlockSize << ", draw range vertices " << mVertexRangeLimit << " indices " << mIndexRangeLimit << ", anisotropy " << mMaxAnisotropy << LL_ENDL;
     LL_INFOS("RenderInit") << "capabilities:  memory bandwidth " << mMemoryBandwidthGBps << " GB/s, ray tracing " << (mHasRayTracing ? "yes" : "no") << " (acceleration structure " << mHasAccelStructure
-        << ", ray query " << mHasRayQuery << ", pipeline " << mHasRayTracingPipeline << ", enabled " << mRayTracingEnabled << "), DLSS ray reconstruction " << mHasRayReconstruction << LL_ENDL;
+        << ", ray query " << mHasRayQuery << ", pipeline " << mHasRayTracingPipeline << ", enabled " << mRayTracingEnabled << "), DLSS ray reconstruction " << mHasRayReconstruction << ", DLSS-NR " << mHasNeuralRender << LL_ENDL;
 
     return true;
 }

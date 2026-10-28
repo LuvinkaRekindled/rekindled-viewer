@@ -321,6 +321,7 @@ bool LLVkBridge::describeDevice(DeviceInfo& out)
     out.mRayTracingUsable = caps.mRt.mUsable;
     out.mRayTracingEnabled = caps.mRt.mEnabled;
     out.mRayReconstruction = LLVkUpscale::rayReconstructionAvailable();
+    out.mNeuralRender = LLVkUpscale::ready() && LLVkDlssNr::available();
     return true;
 }
 

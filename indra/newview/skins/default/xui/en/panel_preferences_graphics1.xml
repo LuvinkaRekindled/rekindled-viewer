@@ -2031,6 +2031,17 @@ If you do not understand the distinction then leave this control alone."
        top_pad="8"
        width="400"/>
       <check_box
+       control_name="FSVkNeuralRender"
+       height="16"
+       initial_value="false"
+       label="Neural rendering (DLSS 5, experimental, local test)"
+       layout="topleft"
+       left_delta="0"
+       name="FSVkNeuralRender"
+       tool_tip="DLSS 5 neural rendering restyles the picture (lighting, shading, skin detail) before the upscale, at about 7 ms a frame. Enabled only when DLSS is on, the graphics card and driver support it (RTX 50, driver 615 or newer) and nvngx_dlssnr.dll is next to the viewer. Takes effect after a restart. The look controls live in <work>/nr-debug.txt."
+       top_pad="8"
+       width="400"/>
+      <check_box
        control_name="FSVkRayTracing"
        height="16"
        initial_value="false"

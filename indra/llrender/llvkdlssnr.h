@@ -31,7 +31,13 @@ namespace LLVkDlssNr
     // whether the core said the feature is available. Only with requested() > 0.
     void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSDK_NGX_Parameter* capabilities, const NVSDK_NGX_FeatureDiscoveryInfo& base);
 
-    // the probe ran, the core said available and supported, and no creation has failed since
+    // Always, after NGX is initialised (the flag need not be set): asks the core whether DLSS-NR is available and supported here (DLSSNR.Available, the feature
+    // requirements of id 18; both say no when nvngx_dlssnr.dll is not next to the viewer) and remembers the answer and the device. One log line.
+    void queryAvailability(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSDK_NGX_Parameter* capabilities, const NVSDK_NGX_FeatureDiscoveryInfo& base);
+    // the core said available and supported (the preferences checkbox is enabled on this)
+    bool available();
+
+    // the flag asks for the feature (2 or 3), the core said available and supported, and no creation has failed since
     bool ready();
 
     struct Params

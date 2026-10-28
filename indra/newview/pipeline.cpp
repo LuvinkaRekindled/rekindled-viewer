@@ -1092,11 +1092,15 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             {
                 if (!mNROutput.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F)) return false;
                 if (!mNROutputRender.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
+                if (!mNRLift.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F)) return false;
+                if (!mNRLiftRender.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
             }
             else
             {
                 mNROutput.release();
                 mNROutputRender.release();
+                mNRLift.release();
+                mNRLiftRender.release();
             }
         }
         else
@@ -1106,6 +1110,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mUpscaledMap.release();
             mNROutput.release();
             mNROutputRender.release();
+            mNRLift.release();
+            mNRLiftRender.release();
         }
 
         if (sRR && LLVkBridge::rayReconstructionAvailable())
@@ -1516,6 +1522,8 @@ void LLPipeline::releaseScreenBuffers()
     mUpscaledMap.release();
     mNROutput.release();
     mNROutputRender.release();
+    mNRLift.release();
+    mNRLiftRender.release();
     mRRGuides.release();
     mRRHitDist.release();
     mRRReflMotion.release();
@@ -17896,12 +17904,14 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
 }
 
 // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two). The look controls and the create-time choices come from <work>/nr-debug.txt, read once a second:
-// "intensity style gtone ltone lstruct skin quality preset automask mvscale run ratio pos" (defaults 1 0 1 1 1 -1 2 0 1 1 1 0 1: the bundle's documented look, the one supported quality mode, the render-size position; Adam 2026-10-28); a change of quality, preset,
-// style or ratio recreates the feature; run 0 skips the evaluate altogether (the normal picture, no NR cost): the live off state of a same-run cost A/B; ratio > 0 is DLSSNR.ScalingRatio;
-// pos 0 runs NR after the upscale on the window-size picture, 1 before it on the render-size picture (45 % of the pixels; the bundle's recommended placement; not with ray reconstruction)
+// "intensity style gtone ltone lstruct skin quality preset automask mvscale run ratio pos rimwidth rimstrength rimedge" (defaults 1 0 1 1 1 -1 2 0 1 1 1 0 1 2 0.7 0.02: the bundle's
+// documented look, the one supported quality mode, the render-size position; Adam 2026-10-28); a change of quality, preset, style or ratio recreates the feature; run 0 skips the evaluate
+// altogether (the normal picture, no NR cost): the live off state of a same-run cost A/B; ratio > 0 is DLSSNR.ScalingRatio; pos 0 runs NR after the upscale on the window-size picture,
+// 1 before it on the render-size picture (45 % of the pixels; the bundle's recommended placement; not with ray reconstruction); the rim lift (nrRimLiftF.glsl) runs after NR with
+// rimstrength > 0: within rimwidth depth pixels of a depth step of rimedge (relative), pixels NR darkened are lifted back toward the input's luminance
 namespace
 {
-struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f, mMotionScale = 1.f, mScalingRatio = 0.f; S32 mQuality = 2, mPreset = 0, mAutoMask = 1, mRun = 1, mPosition = 1; };
+struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f, mMotionScale = 1.f, mScalingRatio = 0.f, mRimWidth = 2.f, mRimStrength = 0.7f, mRimEdge = 0.02f; S32 mQuality = 2, mPreset = 0, mAutoMask = 1, mRun = 1, mPosition = 1; };
 const NrDebug& nrDebug()
 {
     static NrDebug d;
@@ -17921,6 +17931,10 @@ const NrDebug& nrDebug()
             if (in >> ratio) n.mScalingRatio = ratio;
             S32 pos = 0;
             if (in >> pos) n.mPosition = pos;
+            F32 rw = 0.f, rs = 0.f, re = 0.f;
+            if (in >> rw) n.mRimWidth = rw;
+            if (in >> rs) n.mRimStrength = rs;
+            if (in >> re) n.mRimEdge = re;
             d = n;
         }
     }
@@ -17981,6 +17995,35 @@ bool LLPipeline::applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst)
                              << ", reset " << a.mReset << ", quality " << a.mNrQuality << ", preset " << a.mPreset << ", intensity " << a.mNrIntensity << LL_ENDL;
     }
     LLVkBridge::upscale(a);
+    return true;
+}
+
+bool LLPipeline::applyNeuralRenderRimLift(LLRenderTarget* nr, LLRenderTarget* src, LLRenderTarget* dst)
+{
+    const NrDebug& d = nrDebug();
+    if (d.mRimStrength <= 0.f || !gNRRimLiftProgram.isComplete() || !nr || !src || !dst || !nr->isComplete() || !dst->isComplete() || !mRT->deferredScreen.isComplete())
+    {
+        return false;
+    }
+    LL_PROFILE_GPU_ZONE("dlss nr rim lift");
+    static LLStaticHashedString depth_res_s("depth_res"), clip_s("clip_planes"), width_s("rim_width"), strength_s("rim_strength"), edge_s("rim_edge");
+    RenderPassScope pass(*dst);
+    gNRRimLiftProgram.bind();
+    gNRRimLiftProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, nr, false, LLTexUnit::TFO_POINT);
+    gNRRimLiftProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, src, false, LLTexUnit::TFO_POINT);
+    gNRRimLiftProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
+    gNRRimLiftProgram.uniform2f(depth_res_s, (F32)mRT->deferredScreen.getWidth(), (F32)mRT->deferredScreen.getHeight());
+    gNRRimLiftProgram.uniform2f(clip_s, LLViewerCamera::getInstance()->getNear(), LLViewerCamera::getInstance()->getFar());
+    gNRRimLiftProgram.uniform1f(width_s, llclamp((F32)d.mRimWidth, 0.5f, 8.f));
+    gNRRimLiftProgram.uniform1f(strength_s, llclamp((F32)d.mRimStrength, 0.f, 1.f));
+    gNRRimLiftProgram.uniform1f(edge_s, llmax((F32)d.mRimEdge, 0.001f));
+    {
+        LLRenderState::BlendScope blend(false);
+        LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+    gNRRimLiftProgram.unbind();
     return true;
 }
 
@@ -19042,7 +19085,7 @@ void LLPipeline::renderFinalize()
         if (LLVkBridge::neuralRenderMode() >= 2 && nrDebug().mPosition == 1 && mNROutputRender.isComplete() && sourceBuffer->getWidth() == mNROutputRender.getWidth()
             && sourceBuffer->getHeight() == mNROutputRender.getHeight() && applyNeuralRender(sourceBuffer, &mNROutputRender) && LLVkBridge::neuralRenderMode() >= 3)
         {
-            sourceBuffer = &mNROutputRender;
+            sourceBuffer = applyNeuralRenderRimLift(&mNROutputRender, sourceBuffer, &mNRLiftRender) ? &mNRLiftRender : &mNROutputRender;
         }
         if (applyUpscale(sourceBuffer, &mUpscaledMap))
         {
@@ -19056,7 +19099,7 @@ void LLPipeline::renderFinalize()
     if (dlss && LLVkBridge::neuralRenderMode() >= 2 && (nrDebug().mPosition != 1 || rr_done) && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth()
         && sourceBuffer->getHeight() == mNROutput.getHeight() && applyNeuralRender(sourceBuffer, &mNROutput) && LLVkBridge::neuralRenderMode() >= 3)
     {
-        sourceBuffer = &mNROutput;
+        sourceBuffer = applyNeuralRenderRimLift(&mNROutput, sourceBuffer, &mNRLift) ? &mNRLift : &mNROutput;
     }
 
     // Present the screen target.

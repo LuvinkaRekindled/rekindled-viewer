@@ -399,7 +399,9 @@ bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
                            << (rr_req_ok ? (rr_req.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported ? ", hardware and system supported" : ", not supported by the system: reasons 0x") : ", requirement query failed")
                            << (rr_req_ok && rr_req.FeatureSupported != NVSDK_NGX_FeatureSupportResult_Supported ? std::to_string((U32)rr_req.FeatureSupported) : std::string()) << LL_ENDL;
     }
-    // the DLSS-NR probe (doc/vulkan/PLAN-dlss-nr.md step one, LL_VK_DLSS_NR=1): logs what the core says about feature 18 while the capability object is in hand
+    // DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): whether the feature is usable here, always (the preferences checkbox depends on it); the probe logs everything the core says
+    // about feature 18 when LL_VK_DLSS_NR is set, while the capability object is in hand
+    LLVkDlssNr::queryAvailability(instance, physical, device, gParams, discovery_info());
     if (LLVkDlssNr::requested() > 0)
     {
         LLVkDlssNr::probe(instance, physical, device, gParams, discovery_info());

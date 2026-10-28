@@ -44,6 +44,8 @@ void probe(VkInstance, VkPhysicalDevice, VkDevice, NVSDK_NGX_Parameter*, const N
 {
     LL_WARNS("VkDlssNr") << "LL_VK_DLSS_NR is set but this build has no NGX support" << LL_ENDL;
 }
+void queryAvailability(VkInstance, VkPhysicalDevice, VkDevice, NVSDK_NGX_Parameter*, const NVSDK_NGX_FeatureDiscoveryInfo&) {}
+bool available() { return false; }
 bool ready() { return false; }
 bool evaluate(VkCommandBuffer, const Params&) { return false; }
 void shutdown() {}
@@ -298,6 +300,29 @@ void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSD
                          << (requested() >= 2 && gAvailable ? ", it will be on the first frame" : "") << LL_ENDL;
 }
 
+void queryAvailability(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSDK_NGX_Parameter* caps, const NVSDK_NGX_FeatureDiscoveryInfo& base)
+{
+    gDevice = device;
+    int available = 0;
+    if (caps)
+    {
+        NVSDK_NGX_Parameter_GetI(caps, "DLSSNR.Available", &available);
+    }
+    NVSDK_NGX_FeatureDiscoveryInfo info = base;
+    info.FeatureID = (NVSDK_NGX_Feature)featureId();
+    NVSDK_NGX_FeatureRequirement req = {};
+    const NVSDK_NGX_Result r = NVSDK_NGX_VULKAN_GetFeatureRequirements(instance, physical, &info, &req);
+    const bool supported = NVSDK_NGX_SUCCEED(r) && req.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported;
+    gAvailable = available != 0 && supported;
+    LL_INFOS("VkDlssNr") << "DLSS-NR (neural rendering): " << (gAvailable ? "available" : "not available") << " (DLSSNR.Available " << available << ", feature 18 "
+                         << (NVSDK_NGX_SUCCEED(r) ? support_bits((unsigned int)req.FeatureSupported) : "requirements query " + named(r)) << "; needs nvngx_dlssnr.dll next to the viewer)" << LL_ENDL;
+}
+
+bool available()
+{
+    return gAvailable;
+}
+
 bool ready()
 {
     return requested() >= 2 && gAvailable && !gFailed && gDevice != VK_NULL_HANDLE;
@@ -376,10 +401,7 @@ bool evaluate(VkCommandBuffer cmd, const Params& p)
     NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.MVecScaleY", p.mMotionScaleY);
     NVSDK_NGX_Parameter_SetI(gParams, "DLSSNR.DepthInverted", 0);
     NVSDK_NGX_Parameter_SetI(gParams, "DLSSNR.Reset", p.mReset ? 1 : 0);
-    if (p.mAutoMask > 0)
-    {
-        NVSDK_NGX_Parameter_SetI(gParams, "DLSSNR.UseAutoMask", p.mAutoMask);
-    }
+    NVSDK_NGX_Parameter_SetI(gParams, "DLSSNR.UseAutoMask", p.mAutoMask > 0 ? 1 : 0);      // always: a parameter keeps its last value, so "not set" would mean "as before"
     NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.Style", p.mStyle);
     NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.Intensity", p.mIntensity);
     NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.GlobalToneStrength", p.mGlobalTone);

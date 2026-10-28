@@ -60,6 +60,7 @@ namespace LLVkBridge
         bool mAccelStruct = false, mRayQuery = false, mRayTracingPipeline = false, mRayTracingUsable = false;
         bool mRayTracingEnabled = false;    // switched on at device creation (LL_VK_RT=1)
         bool mRayReconstruction = false;    // DLSS ray reconstruction can run (needs DLSS on and its DLL)
+        bool mNeuralRender = false;         // <FS> DLSS-NR (neural rendering) can run (DLSS on, NGX says the feature is available and supported, nvngx_dlssnr.dll next to the viewer)
     };
     // The device the viewer renders with, starting Vulkan if needed. False if Vulkan cannot be started.
     bool describeDevice(DeviceInfo& out);
