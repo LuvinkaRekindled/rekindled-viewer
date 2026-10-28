@@ -35,3 +35,9 @@ The renderer already makes everything a temporal upscaler wants: render-size col
 - ffx VK backend wants features the Vulkan device here does not enable: found at step 1 from the log.
 - Layout / state mismatches show up as validation errors or a black picture: the validation layer run is part of step 1.
 - On a non-NVIDIA card the first time anything of the RT path runs is the beta: Adam's call whether the first AMD build gets RT on by default.
+
+## Status 2026-10-27
+- Step 1 done and run on the NVIDIA machine (`LL_VK_UPSCALER=fsr`, `<work>\run-viewer-fsr.bat`): FSR context created (1713x898 -> 2558x1341, formats colour RGBA8 / depth D32 / motion RG16F), fps as plain DLSS (about 110 fps), and Adam sees LESS ghosting than plain DLSS with RR off (the fair upscaler against upscaler comparison; by eye, no same-lap capture). RR is not active with FSR: `rayReconstructionAvailable()` is false, the RR guides are not allocated, our own RT shadow accumulation runs). First run crashed in `ffxCreateContext`: the backend calls `vkGetBufferMemoryRequirements2KHR` unchecked, so `VK_KHR_get_memory_requirements2` / `VK_KHR_dedicated_allocation` (and `VK_AMD_buffer_marker` where present) are enabled on the device when FSR is a possible backend (`LLVkFsr::addDeviceExtensions`).
+- Not measured: FSR against plain DLSS (RR off) on the same lap (fps, ghosting captures); the ghosting verdict so far is Adam's eye.
+- `FSVkUpscaler` (0 automatic, 1 DLSS, 2 FSR; restart) with a combo in the graphics preferences and the `LL_VK_UPSCALER` translation in `llappviewer.cpp`: written, built and tested next.
+- The upscaler DLLs (`nvngx_dlss*.dll`, `amd_fidelityfx_vk.dll`) are copied by hand into Release; neither the manifest nor CMake packages them. Packaging is open for both.
