@@ -142,3 +142,43 @@ What: `nr-debug.txt` with `intensity style gtone ltone lstruct skin` read once a
 - **Render-size position built and measured (same day):** `nr-debug.txt` pos 1 runs NR on the render-size picture before `applyUpscale` (not with RR). 62 fps against 47 at the window size and 114.6 off: 7.4 ms against 12.6 ms. Adam: works, the model's dark edge rims are more pronounced (enlarged by DLSS). Both positions stay switchable. Steps A-C of section 6 are done; step 4 (keep as a local toy or delete) is Adam's call; the halo rims and the RR combination are the open quality items.
 - **Preference (Adam's decision, same day):** the boundary "never a preference" is relaxed to a checkbox that is enabled only when the device reports the feature usable, which needs the DLL next to the viewer; the DLL is still never packaged, so nothing ships. Built and verified. Open: a "snapshots only" mode, the rim lift's reworked version to judge, the halo rims, RR + NR.
 - **Live mode (same day, evening):** the preference is a three-way choice applying at once (off / on / snapshots only); verified. The restart requirement is gone. What remains open is quality only (the edge rims, RR + NR); the feature is complete as a local, just-for-fun and group-snapshot option.
+
+## 8. Next: ray reconstruction and the neural render in a clean order ("denoise first"; planned 2026-10-28, not started)
+
+Adam's decision: the next piece of DLSS-NR work, after any bugs. Today the two features stack (65 fps with NR and RT, 44 with RR on top, a mid-sized region) and the picture holds, but the order is the rough one.
+
+### 8.1 What the frame does today with both on
+
+`renderFinalize` (pipeline.cpp about line 18920): `mRT->screen` (render size, noisy linear radiance) -> `generateRRGuides` -> `applyUpscale(screen -> mRRHdr, RR)`: RR denoises **and upscales** to the window size in one feature -> tonemap, CAS, glow, DoF at the window size on `mRRPing/Pong` -> NR at the **window-size** position (pos 1 is refused with RR because the pre-upscale picture is the noisy radiance) -> present -> UI. So NR works on the finished, upscaled picture: 12.6 ms instead of the render-size 7.4, and its edit is never resolved by an upscaler. Both NGX features run at the window size.
+
+### 8.2 The orders possible
+
+- **A. Denoise first (the bundle's recommended order; the candidate).** RR runs at a one-to-one ratio (render size in, render size out: the DLAA quality value, which `quality_for` already picks when the sizes match) into a render-size HDR target. From there the frame is the **plain path**: tonemap and the post chain at the render size on `mPostPing/Pong`, NR at the render-size position (7.4 ms), then plain DLSS super resolution to the window size with the **jitter passed as zero** (the denoised image is already resolved; the bundle does exactly this: "upscale the NR'd clean image with a private plain DLSS SR, zero jitter"). Expected cost: RR at 1713x898 in and out (less than today's RR to 2558x1341; to measure), NR 7.4, SR about 1.3: the stack should land near the plain-DLSS-plus-NR figure rather than today's RR-plus-12.6. Two NGX features of the DLSS family are alive at once (RR 1:1 and SR); the DLSS backend keys features by size and kind already, so both can be parked.
+- **B. NR between RR and the tonemap, on the HDR output.** Same window-size cost as today (12.6 ms), only the order changes; NR would see linear HDR with no exposure input (the plan's colour-space question). Not worth a build on its own.
+- **C. NR on a downscaled copy of RR's output with our own upsample.** What the ratio parameter was supposed to do and did not; our own upsample would blur NR's detail. Rejected.
+
+### 8.3 What A needs (files)
+
+1. **A render-size RR output**: `mRRDenoised` (resX x resY, RGBA16F) allocated with the RR targets (pipeline.cpp about line 1122); `mRRHdr / mRRPing / mRRPong` are not used in this order (keep them for the old order, which stays as the fallback and the A/B partner).
+2. **The RR call at 1:1**: `applyUpscale(&mRT->screen, &mRRDenoised, true)`: `UpscaleArgs` carries the sizes, so the DLSS backend creates the RR feature with `InTargetWidth = InWidth` (quality DLAA from `quality_for`, llvkdlss.cpp about line 489). Gate: the feature is created and evaluates at that ratio (RR's DLAA mode is documented; the guides, hit distance and exposure are unchanged).
+3. **The branch in `renderFinalize`**: with "denoise first" on, after the RR call the frame continues as the non-RR path with `mRT->screen` replaced by `mRRDenoised` (the tonemap source, the glow alpha copy at about line 18942 is not needed since the alpha stays at the render size), `post_ping / post_pong` stay `mPostPing/Pong`, `rr_done` stays false so the plain-path tail runs: NR at pos 1, then `applyUpscale(sourceBuffer, &mUpscaledMap)` for SR.
+4. **SR with zero jitter**: a flag in `UpscaleArgs` (`mJitterIsResolved` or simply `mJitterX/Y = 0` set by the caller when the source is RR's output) and `mReset` as today. The texture LOD bias and `updateJitter` stay as they are: the G-buffer is still rendered jittered for RR's sake; only the SR call says zero. Gate: no shimmer or ghosting against today's RR picture (RR's output is temporally resolved, so SR's history sees a stable input; the bundle reports this works; if DLSS SR insists on jitter, the DLAA-like fallback is SR at a one-to-one ratio plus our own upscale, which would be a quality loss and the end of option A).
+5. **The switch**: `rr-debug.txt` first number gets a value for "denoise first" (live, the A/B partner is the current order), later the default for the RR + NR combination if it wins; the old order stays selectable.
+6. **Depth of field** is not applied with RR today (the RR setting's comment); in order A the post chain runs at the render size as in the plain path, so DoF comes back for free. Check that it does.
+
+### 8.4 Gates
+
+- G1: RR creates and evaluates at 1:1; the denoised render-size picture is clean (the same denoise as today, by eye).
+- G2: SR with zero jitter on RR's output: no shimmer, no ghosting, no softness against today's RR picture at the same spot (snapshots side by side, the same framing).
+- G3: NR at pos 1 on the denoised, tonemapped render: the look of the plain path (fabric, skin) with RR's clean reflections; the edge rims no worse.
+- G4: cost, same lap: the stack today (RR to window + NR at window) against order A (RR 1:1 + NR render + SR), the three zones `external (DLSS)` (twice) and `dlss nr`. The target is the plain-DLSS-plus-NR frame time plus RR's 1:1 cost.
+- G5: snapshots in snapshots-only mode go through the same order at the snapshot's sizes (RR 1:1 at 4100x2178 is a feature of its own; its creation time and VRAM to note).
+
+### 8.5 Order and size
+
+1. Steps 1-3 with the switch, RR 1:1 only (NR off, SR with the jitter as today): G1, and whether SR on a resolved input shimmers (G2) without NR in the picture.
+2. SR with zero jitter (step 4): G2 settled.
+3. NR at pos 1 in the new order: G3, G4.
+4. Default and the snapshot path: G5.
+
+About two days; the first step tells whether DLSS SR accepts a resolved input, which is the one real risk.
