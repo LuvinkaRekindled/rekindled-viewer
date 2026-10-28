@@ -1022,6 +1022,14 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["LL_RT_SUN_BIAS"] = llformat("%.4f", b);
                 }
             }
+            if (const char* tmin = getenv("LL_VK_RT_SUN_TMIN"))
+            {
+                const F32 t = (F32)atof(tmin);
+                if (t >= 0.f && t < 5.f)            // (0 switches the minimum distance off)
+                {
+                    attribs["LL_RT_SUN_TMIN"] = llformat("%.4f", t);
+                }
+            }
             if (const char* noface = getenv("LL_VK_RT_SUN_NOFACE"))
             {
                 if (noface[0] && noface[0] != '0')
