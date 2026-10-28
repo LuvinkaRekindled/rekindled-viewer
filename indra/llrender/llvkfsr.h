@@ -14,6 +14,10 @@
 
 namespace LLVkFsr
 {
+    // before the device is created: the extensions the FSR backend assumes the application enabled (it loads their functions by the KHR names and calls them without a check: with
+    // VK_KHR_get_memory_requirements2 not enabled the pointer is null and ffxCreateContext crashed, 2026-10-27). Only the ones the device has are added.
+    void addDeviceExtensions(VkPhysicalDevice device, std::vector<const char*>& out);
+
     // after the device exists: loads the DLL; false (and a log line saying why) if FSR cannot be used here
     bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device);
     bool ready();

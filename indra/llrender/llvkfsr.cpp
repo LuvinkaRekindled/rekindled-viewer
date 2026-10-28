@@ -36,6 +36,26 @@ VkImageLayout outputLayout()
     return VK_IMAGE_LAYOUT_GENERAL;
 }
 
+void addDeviceExtensions(VkPhysicalDevice device, std::vector<const char*>& out)
+{
+    std::vector<VkExtensionProperties> available;
+    uint32_t n = 0;
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &n, nullptr);
+    available.resize(n);
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &n, available.data());
+    for (const char* wanted : { VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME, VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME, VK_AMD_BUFFER_MARKER_EXTENSION_NAME })
+    {
+        bool have = false, exists = false;
+        for (const char* e : out) have = have || strcmp(e, wanted) == 0;
+        for (const auto& a : available) exists = exists || strcmp(a.extensionName, wanted) == 0;
+        if (exists && !have)
+        {
+            out.push_back(wanted);          // (the macros are string literals: they outlive the device creation)
+            LL_INFOS("VkFsr") << "enabling extension " << wanted << " for FSR" << LL_ENDL;
+        }
+    }
+}
+
 #if !defined(LL_FSR)
 
 bool init(VkInstance, VkPhysicalDevice, VkDevice)
