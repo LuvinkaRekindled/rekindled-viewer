@@ -11790,13 +11790,13 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderAvatarMotionVectors</key>
   <map>
     <key>Comment</key>
-    <string>Per-object motion vectors for avatars (skinned body and rigged attachments) for the upscaler: a velocity pass after the G-buffer (doc/vulkan/PLAN-ray-tracing.md, item 6). Needs DLSS.</string>
+    <string>Per-object motion vectors for avatars (skinned body and rigged attachments) for the upscaler (DLSS or FSR): a velocity pass after the G-buffer (doc/vulkan/PLAN-ray-tracing.md, item 6). Without it an upscaler only knows the camera's motion, and small movements of an avatar (eyes, idle animation) ghost and soften. Only runs while an upscaler is on; no measurable cost on 2026-10-27 (about 1 ms of GPU in a crowd on 2026-10-12).</string>
     <key>Persist</key>
-    <integer>0</integer>
+    <integer>1</integer>
     <key>Type</key>
     <string>Boolean</string>
     <key>Value</key>
-    <integer>0</integer>
+    <integer>1</integer>
   </map>
   <key>RenderAvatarMotionVectorsPackets</key>
   <map>
