@@ -108,6 +108,8 @@ namespace LLVkBridge
         U32 mSpecularHitDistance = 0;                   // render size R16F: metres from the surface to what its reflection ray hit (0: not traced); 0 here = no such guide
         F32 mWorldToView[16] = {}, mViewToClip[16] = {};    // column-major, no jitter: only used with the hit distance
         S32 mPreset = 0;
+        F32 mCameraNear = 0.1f, mCameraFar = 512.f, mCameraFovY = 1.f;      // <FS> the FSR backend wants them (metres, radians)
+        F32 mFrameTimeMs = 16.6f;
     };
     // DLSS is initialised and usable (decided when the Vulkan device was created)
     bool upscaleAvailable();

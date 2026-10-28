@@ -68,7 +68,7 @@ void LLVkBridge::stopAsync() {}
 #include "llrenderheaders.h"
 #include <psapi.h>
 #include "llvkcontext.h"
-#include "llvkdlss.h"
+#include "llvkupscale.h"
 #include "llvkrenderer.h"
 #include "llvkasync.h"
 #include "llvktex.h"
@@ -317,7 +317,7 @@ bool LLVkBridge::describeDevice(DeviceInfo& out)
     out.mRayTracingPipeline = caps.mRt.mPipeline;
     out.mRayTracingUsable = caps.mRt.mUsable;
     out.mRayTracingEnabled = caps.mRt.mEnabled;
-    out.mRayReconstruction = LLVkDlss::rayReconstructionAvailable();
+    out.mRayReconstruction = LLVkUpscale::rayReconstructionAvailable();
     return true;
 }
 
@@ -768,17 +768,17 @@ void LLVkBridge::snapshotBoundary(S32 mode)
 
 void LLVkBridge::setUpscaleLodBias(float bias)
 {
-    LLVkDlss::setLodBias(bias);
+    LLVkUpscale::setLodBias(bias);
 }
 
 bool LLVkBridge::upscaleAvailable()
 {
-    return sMirror.mReady && LLVkDlss::ready();
+    return sMirror.mReady && LLVkUpscale::ready();
 }
 
 bool LLVkBridge::rayReconstructionAvailable()
 {
-    return sMirror.mReady && LLVkDlss::rayReconstructionAvailable();
+    return sMirror.mReady && LLVkUpscale::rayReconstructionAvailable();
 }
 
 void LLVkBridge::upscale(const UpscaleArgs& args)

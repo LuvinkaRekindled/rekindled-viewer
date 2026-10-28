@@ -18,7 +18,7 @@
 #endif
 #include "llvkasync.h"
 #include "llvkworker.h"
-#include "llvkdlss.h"
+#include "llvkupscale.h"
 #include "llvkbridge.h"
 #include "llvkrt.h"
 
@@ -1899,7 +1899,7 @@ void Renderer::savePipelineCache()
 VkSampler Renderer::getSampler(const SamplerDesc& wanted)
 {
     SamplerDesc desc = wanted;
-    desc.mLodBias = (!desc.mCompare && desc.mMip == VK_SAMPLER_MIPMAP_MODE_LINEAR) ? LLVkDlss::lodBias() : 0.f;      // DLSS: sample textures sharper to make up for the smaller render size
+    desc.mLodBias = (!desc.mCompare && desc.mMip == VK_SAMPLER_MIPMAP_MODE_LINEAR) ? LLVkUpscale::lodBias() : 0.f;      // DLSS: sample textures sharper to make up for the smaller render size
     auto it = mSamplers.find(desc);
     if (it != mSamplers.end())
     {

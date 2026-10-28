@@ -6,7 +6,7 @@
 #include "linden_common.h"
 
 #include "llvkcontext.h"
-#include "llvkdlss.h"
+#include "llvkupscale.h"
 
 #if defined(LL_VULKAN)
 
@@ -518,9 +518,9 @@ bool Context::createInstance()
     vkEnumerateInstanceExtensionProperties(nullptr, &count, available.data());
 
     std::vector<const char*> wanted = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
-    if (LLVkDlss::requested())
+    if (LLVkUpscale::requested())
     {
-        LLVkDlss::addInstanceExtensions(wanted);
+        LLVkUpscale::addInstanceExtensions(wanted);
     }
     for (const char* name : wanted)
     {
@@ -939,9 +939,9 @@ bool Context::createDevice()
         }
         tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&fault_features);
     }
-    if (LLVkDlss::requested())
+    if (LLVkUpscale::requested())
     {
-        LLVkDlss::addDeviceExtensions(mInstance, mPhysical, device_extensions);
+        LLVkUpscale::addDeviceExtensions(mInstance, mPhysical, device_extensions);
     }
     dci.enabledExtensionCount = (U32)device_extensions.size();
     dci.ppEnabledExtensionNames = device_extensions.data();
@@ -980,9 +980,9 @@ bool Context::createDevice()
     {
         return false;
     }
-    if (LLVkDlss::requested())
+    if (LLVkUpscale::requested())
     {
-        LLVkDlss::init(mInstance, mPhysical, mDevice);      // not fatal: without it the viewer just does not upscale
+        LLVkUpscale::init(mInstance, mPhysical, mDevice);      // not fatal: without it the viewer just does not upscale
     }
     return true;
 }
@@ -1082,7 +1082,7 @@ void Context::shutdown()
     if (mDevice != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(mDevice);
-        LLVkDlss::shutdown();
+        LLVkUpscale::shutdown();
         {
             std::vector<std::function<void()>> leftovers;
             {

@@ -35,6 +35,8 @@ set(llrender_SOURCE_FILES
     llvertexbuffer.cpp
     llvkcontext.cpp
     llvkdlss.cpp
+    llvkfsr.cpp
+    llvkupscale.cpp
     llvkasync.cpp
     llvkpasscensus.cpp
     llvkbridge.cpp
@@ -83,6 +85,8 @@ set(llrender_HEADER_FILES
     llvertexbuffer.h
     llvkcontext.h
     llvkdlss.h
+    llvkfsr.h
+    llvkupscale.h
     llvkfunctions.inl
     llvkasync.h
     llvkpasscensus.h
@@ -149,6 +153,13 @@ if (USE_VULKAN)
     target_include_directories(llrender SYSTEM PRIVATE "${DLSS_SDK_DIR}/include")
     target_compile_definitions(llrender PRIVATE LL_DLSS=1)
     target_link_libraries(llrender "${DLSS_SDK_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
+  endif ()
+  # AMD FSR 3.1 upscaler (optional): headers of the FidelityFX SDK v1.1.4 (the last release with Vulkan), ffx-api. amd_fidelityfx_vk.dll is loaded at run time, nothing is linked.
+  set(FFX_SDK_DIR "D:/claude/FidelityFX-SDK-1.1.4" CACHE PATH "AMD FidelityFX SDK v1.1.4 root (ffx-api/include/ffx_api/ffx_upscale.h)")
+  if (EXISTS "${FFX_SDK_DIR}/ffx-api/include/ffx_api/ffx_upscale.h")
+    message(STATUS "FidelityFX SDK found at ${FFX_SDK_DIR}")
+    target_include_directories(llrender SYSTEM PRIVATE "${FFX_SDK_DIR}/ffx-api/include")
+    target_compile_definitions(llrender PRIVATE LL_FSR=1)
   endif ()
 endif ()
 

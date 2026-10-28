@@ -17825,6 +17825,10 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
     a.mOutputHeight = dst->getHeight();
     a.mJitterX = LLViewerCamera::sJitterPixels.x;
     a.mJitterY = LLViewerCamera::sJitterPixels.y;
+    a.mCameraNear = LLViewerCamera::getInstance()->getNear();       // (the FSR backend wants the camera and the frame time; DLSS ignores them)
+    a.mCameraFar = LLViewerCamera::getInstance()->getFar();
+    a.mCameraFovY = LLViewerCamera::getInstance()->getView();
+    a.mFrameTimeMs = llclamp(gFrameIntervalSeconds.value() * 1000.f, 1.f, 100.f);
     if (ray_reconstruction)
     {
         a.mRayReconstruction = 1;
