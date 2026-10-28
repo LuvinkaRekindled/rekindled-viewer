@@ -2931,6 +2931,17 @@
       <key>Value</key>
       <real>0</real>
     </map>
+    <key>FSVkNeuralRender</key>
+    <map>
+      <key>Comment</key>
+      <string>With FSVkDLSS on an RTX 50 card and nvngx_dlssnr.dll next to the viewer: DLSS 5 neural rendering restyles the picture (lighting, shading, skin detail) before the upscale. Local testing only; costs about 7 ms a frame. Takes effect after a restart; the look controls live in D:/claude/nr-debug.txt.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSVkRayReconstruction</key>
     <map>
       <key>Comment</key>

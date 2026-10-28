@@ -4019,6 +4019,12 @@ bool LLPanelPreferenceGraphics::postBuild()
 }
 void LLPanelPreferenceGraphics::draw()
 {
+    // <FS> DLSS-NR: the checkbox is enabled only when DLSS is on and the device said the feature is usable (the DLL next to the viewer, an RTX 50 card, driver 615+)
+    static LLCachedControl<bool> vk_dlss(gSavedSettings, "FSVkDLSS", false);
+    if (LLView* nr = findChild<LLView>("FSVkNeuralRender"))
+    {
+        nr->setEnabled(vk_dlss() && gDeviceCaps.mHasNeuralRender);
+    }
     LLPanelPreference::draw();
 }
 

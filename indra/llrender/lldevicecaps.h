@@ -102,6 +102,7 @@ public:
     bool mHasRayTracing = false;            // acceleration structures + ray query + device addresses: the ray tracing steps can be built on this device
     bool mRayTracingEnabled = false;        // ... and switched on at device creation (LL_VK_RT=1)
     bool mHasRayReconstruction = false;     // DLSS ray reconstruction can run here
+    bool mHasNeuralRender = false;          // <FS> DLSS-NR (neural rendering) can run here: DLSS on, the NGX core says yes, nvngx_dlssnr.dll next to the viewer
 
     // GL 4.x capabilities
     bool mHasCubeMapArray = false;

@@ -335,6 +335,7 @@ extern LLShaderProgram         gObjectVelocityPullProgram;
 extern LLShaderProgram         gShadowAccumProgram;
 extern LLShaderProgram         gRRGuidesProgram;
 extern LLShaderProgram         gRRHitDistProgram;
+extern LLShaderProgram         gNRRimLiftProgram;             // <FS> DLSS-NR: the rim lift after the neural renderer (nrRimLiftF.glsl)
 extern LLShaderProgram         gRRReflMotionProgram;
 extern LLShaderProgram         gAvatarVelocityDebugProgram;
 extern LLShaderProgram         gRtMaterialDebugProgram;
