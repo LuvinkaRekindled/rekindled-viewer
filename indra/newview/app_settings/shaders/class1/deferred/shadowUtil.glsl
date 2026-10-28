@@ -245,7 +245,8 @@ uniform float rt_sun_alpha;            // <FS> 1 in the alpha passes (blended su
 uniform float rt_sun_maxdist;          // <FS> metres: a blended (alpha) pixel farther than this is lit without a shadow ray (set by the alpha passes; 0 = no limit, every other shader)
 uniform vec2 rt_sun_lod;                // <FS> (near, far) metres: the rays of the sun disc go from rt_sun_samples at `near` down to a quarter of them (at least 2) at `far` and beyond; 0 = all of them (set by the alpha pass only)
 uniform float rt_noise_frame;
-uniform float rt_sun_self_off;         // <FS> 1: the avatar self shadow work off (an avatar blocks fully, no receiver probe, no start disc); rt-debug.txt sunself=0, a same-lap cost A/B. 0 (unset) = as the defines say
+uniform float rt_sun_self_off;         // <FS> 1: the avatar self shadow work off (an avatar blocks fully, no receiver probe, no start disc); rt-debug.txt sunself=0, a same-lap cost A/B. 0 (unset) = as the defines say;
+                                       //      2: on, but the soft walk through hair runs to the end instead of ending once the floor has the answer (sunself=2)
 
 // A ray whose origin or direction is NaN or infinite (a pixel whose eye space position was rebuilt from a zero or far-plane depth, a scene frame record not written yet) is undefined for a
 // ray query (GPU-assisted validation: "Ray Origin contains a NaN"): no ray is cast, the caller takes the no-hit answer.
@@ -375,12 +376,17 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
                                                 // how dark the shadow is and what is behind it adds nothing, a silhouette; the farthest one made fingers behind a hand darken the shadow through the hand)
     const float skin_floor = 1.0 - strength;
     float t_start = 0.005;
-    uint mask = 0x0Fu;                          // everything; behind the first close solid avatar surface only the world (0x03)
+    uint mask = 0x0Fu;                          // everything; once the avatar's side of the answer is final, only the world (0x03)
     bool capped = false;                        // the candidate limit (LL_VK_RT_CANDIDATES, default 96) was reached: the walk stopped before it met everything on the way
     bool none = true;
-    // a close solid avatar hit does not end the ray: it counts as covering fully (so the floor applies) and one more ray goes on behind it through the WORLD alone, for a tree or an awning over the
-    // avatar. It no longer walks the avatar: a mesh head is several closed shells (the face, the mouth bag, two rows of teeth, the tongue, the eyes) and a walk through them that gave up after four
-    // solid hits drew the shells' contours in the chin's shadow on the neck (a darker disc for the mouth, two lines for the teeth). The nearest surface decides the shadow; the rest is a silhouette.
+    bool settled = false;                       // the walk through everything ended early: the avatar's side of the answer is final (see below), the world pass follows
+    // The avatar's side of the answer becomes final in two ways, and then one more query goes through the WORLD alone, over the whole ray again (so a world card counted once is not counted twice: the
+    // candidates come in no order), for a tree or an awning over the avatar:
+    // - a close solid avatar hit: it counts as covering fully (so the floor applies). The walk does not go on through the avatar: a mesh head is several closed shells (the face, the mouth bag, two rows of
+    //   teeth, the tongue, the eyes) and a walk through them that gave up after four solid hits drew the shells' contours in the chin's shadow on the neck. The nearest surface decides; the rest is a silhouette.
+    // - the cards' product `skin` is under the floor while the nearest of them is inside the no-fade range: max(skin, floor) is the floor from here on whatever the remaining cards cover, so the walk
+    //   through them (an alpha read per card, dozens in a lock) is wasted; it cost 0.3 ms of GPU a frame in the hair's own pixels (lap ss1-sunself1, 2026-10-28). rt-debug.txt sunself=2 keeps the
+    //   full walk for an A/B.
     for (int segment = 0; segment < 2; ++segment)
     {
         rayQueryEXT rq;
@@ -405,6 +411,12 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
                 {
                     skin *= 1.0 - cover;
                     rt_near_skin_t = (rt_near_skin_t == 0.0) ? t_cand : min(rt_near_skin_t, t_cand);
+                    if (skin_floor > 0.0 && skin <= skin_floor && rt_near_skin_t < LL_RT_SUN_SELF_NEAR0 && rt_sun_self_off < 1.5)
+                    {
+                        rayQueryTerminateEXT(rq);
+                        settled = true;
+                        break;
+                    }
                 }
                 else
                 {
@@ -421,6 +433,14 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
                 }
             }
         }
+        if (settled)
+        {
+            // the world pass: the whole ray again through the world alone, its cards counted from scratch
+            settled = false;
+            transmit = 1.0;
+            mask = 0x03u;
+            continue;
+        }
         none = rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT;
         if (none)
         {
@@ -435,7 +455,7 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
         {
             skin = 0.0;
             rt_near_skin_t = (rt_near_skin_t == 0.0) ? t_hit : min(rt_near_skin_t, t_hit);
-            t_start = t_hit + 0.002;
+            transmit = 1.0;
             mask = 0x03u;
             continue;
         }
@@ -1055,7 +1075,7 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     // a frame of tangents on the receiver for the start disc (LL_RT_SUN_SSS)
     vec3 b1 = normalize(cross(norm, abs(norm.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
     vec3 b2 = cross(norm, b1);
-    const bool self_on = rt_sun_self_off < 0.5;
+    const bool self_on = rt_sun_self_off < 0.5 || rt_sun_self_off > 1.5;      // 1 = off; 2 = on with the full hair walk (the early exit of rtShadowRaySoftS off)
     float strength = self_on ? LL_RT_SUN_ALPHA_STRENGTH : 1.0;  // this pixel's: 1 (avatar surfaces block fully) once the probe says the receiver is not an avatar
     if (samples == 1 && rt_sun_radius <= 0.0)
     {
