@@ -829,6 +829,12 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
 #ifndef LL_RT_SUN_BIAS
 #define LL_RT_SUN_BIAS 0.015
 #endif
+// LL_VK_RT_SUN_TMIN (metres, default 0.04, 0 = off): the sun ray starts this far along the light direction: whatever is closer to the surface than that along the light cannot shadow it (hair lying on
+// skin, the cleavage: hard dark streaks, Adam 2026-10-27), while a shadow from farther up (a chin on the chest) keeps its whole shape (a bias along the normal moves the start sideways relative to
+// the occluder and cut such shadows)
+#ifndef LL_RT_SUN_TMIN
+#define LL_RT_SUN_TMIN 0.04
+#endif
 float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
 {
 #ifndef LL_RT_SUN_NOFACE
@@ -845,7 +851,7 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     {
         return 1.0;                         // <FS> a blended surface this far away: the shadow ray is not worth its cost (a few pixels of hair, glass or foliage), the opaque ground behind it keeps its shadow
     }
-    vec3 origin = pos + norm * (LL_RT_SUN_BIAS + 0.0006 * -pos.z);
+    vec3 origin = pos + norm * (LL_RT_SUN_BIAS + 0.0006 * -pos.z) + light_dir * LL_RT_SUN_TMIN;
     float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
     int samples = (rt_sun_radius > 0.0) ? clamp(rt_sun_samples, 1, 16) : 1;
     if (rt_sun_lod.x > 0.0 && samples > 4)
