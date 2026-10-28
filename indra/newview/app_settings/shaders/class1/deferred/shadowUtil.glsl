@@ -312,6 +312,21 @@ float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
 
 // Soft version for the shadows of traced hits (the glossy mirror, local lights and the sun at a hit): masked and blended candidates do not stop the ray, each one lets through the fraction its blurred
 // alpha leaves (rtAlphaCover), the product is the light that arrives; an opaque hit blocks all. 1 = lit, 0 = blocked.
+// LL_VK_RT_SUN_SELFNEAR (metres, default 0.8): the distance up to which a skinned avatar surface counts as a translucent self shadow (see rtShadowRaySoftS). The floor of the light fades out between 40 % of it and
+// all of it, so a hand held at that distance does not cast two shadows (a light one for the fingers inside the limit and a dark one for the wrist outside it)
+#ifndef LL_RT_SUN_SELF_NEAR
+#define LL_RT_SUN_SELF_NEAR 0.8
+#endif
+#define LL_RT_SUN_SELF_NEAR0 (LL_RT_SUN_SELF_NEAR * 0.4)
+// LL_VK_RT_SUN_PENUMBRA (metres, default 0 = off): the width of the penumbra of a close avatar self shadow on the skin. A ray from 5 cm away gives a crisp edge (a copy of the lips on the neck, the fingers on the shoulder),
+// where skin scatters light a few millimetres sideways and blurs it. When the first ray of a pixel hit a close skinned surface at distance t, the other rays of the pixel go to a disc of radius PENUMBRA / t (at most 0.35).
+#ifndef LL_RT_SUN_PENUMBRA
+#define LL_RT_SUN_PENUMBRA 0.0
+#endif
+float rt_near_skin_t = 0.0;                 // out of rtShadowRaySoftS: the distance of the nearest close skinned surface its ray met (0 = none)
+// Self shadows of an avatar are translucent: a skinned avatar surface (a hair card, the chin, a strand over the cheek, an arm over the torso) within LL_RT_SUN_SELF_NEAR metres of the pixel it shadows lets
+// light through (scattering in hair and skin, bounced light): together they block at most `strength` of the light. Farther away, and everything that is not an avatar, blocks what it covers (the ground shadow
+// of an avatar stays dark). Nothing here has to know which object is hair: rigged hair and a mesh head are both just skinned records, and the distance decides.
 float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float strength)
 {
     mat3 to_scene;
@@ -323,63 +338,90 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
     {
         return 1.0;
     }
-    rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsNoneEXT, 0x03, ray_origin, 0.005, ray_dir, tmax);
-    float transmit = 1.0;                       // the light that gets past everything but skinned avatar cards
-    float skin = 1.0;                           // the light that gets past the skinned avatar cards (hair): their product, but never less than 1 - strength (a cap on the TOTAL, a lock of hair is dozens of cards)
+    rt_near_skin_t = 0.0;
+    float transmit = 1.0;                       // the light that gets past everything but close skinned avatar surfaces
+    float skin = 1.0;                           // the light that gets past the close skinned avatar surfaces: their product, but never less than the floor (a cap on the TOTAL, a lock of hair is dozens of cards)
+    float t_skin = 0.0;                         // the farthest of those surfaces: the floor 1 - strength fades to 0 between LL_RT_SUN_SELF_NEAR0 and LL_RT_SUN_SELF_NEAR of it
     const float skin_floor = 1.0 - strength;
-    uint candidates = 0u;
-    bool capped = false;                        // the limit (LL_VK_RT_CANDIDATES, default 96) was reached: the walk stopped before it met everything on the way (before the solid triangle behind a lock of hair)
-    while (rayQueryProceedEXT(rq))
+    float t_start = 0.005;
+    bool capped = false;                        // the candidate limit (LL_VK_RT_CANDIDATES, default 96) was reached: the walk stopped before it met everything on the way
+    bool none = true;
+    // a close solid avatar hit does not end the ray: it counts as covering fully (so the floor applies) and the walk goes on behind it, up to four times
+    for (int segment = 0; segment < 4; ++segment)
     {
-        if (++candidates > LL_RT_MAX_CANDIDATES)
+        rayQueryEXT rq;
+        rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsNoneEXT, 0x03, ray_origin, t_start, ray_dir, tmax);
+        uint candidates = 0u;
+        while (rayQueryProceedEXT(rq))
         {
-            rayQueryTerminateEXT(rq);
-            capped = true;
-            break;
-        }
-        if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
-        {
-            uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
-            // the strength cap only for skinned avatar draws (record flag 8192: rigged hair, rigged alpha clothes): trees, glass and the rest block what their coverage says
-#ifdef LL_RT_SUN_STRENGTH_ALL
-            const bool skinned = true;      // test (LL_VK_RT_SUN_STRENGTH_ALL=1): the cap for every masked or blended candidate: tells whether the hair carries the skinned flag
-#else
-            const bool skinned = record != 0u && record < ll_rt_geoms.g[0].first && (ll_rt_geoms.g[record].flags & 8192u) != 0u;
-#endif
-            const float cover = rtAlphaCover(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod);
-            if (skinned)
-            {
-                skin *= 1.0 - cover;
-            }
-            else
-            {
-                transmit *= 1.0 - cover;
-            }
-            if (transmit * max(skin, skin_floor) < 0.03)
+            if (++candidates > LL_RT_MAX_CANDIDATES)
             {
                 rayQueryTerminateEXT(rq);
+                capped = true;
+                break;
+            }
+            if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
+            {
+                uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
+                const bool skinned = record != 0u && record < ll_rt_geoms.g[0].first && (ll_rt_geoms.g[record].flags & 8192u) != 0u;
+                const float t_cand = rayQueryGetIntersectionTEXT(rq, false);
+                const bool close = t_cand < LL_RT_SUN_SELF_NEAR;
+                const float cover = rtAlphaCover(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod);
+                if (skinned && close)
+                {
+                    skin *= 1.0 - cover;
+                    t_skin = max(t_skin, t_cand);
+                    rt_near_skin_t = (rt_near_skin_t == 0.0) ? t_cand : min(rt_near_skin_t, t_cand);
+                }
+                else
+                {
+                    transmit *= 1.0 - cover;
+                }
+                if (transmit * max(skin, skin_floor * (1.0 - smoothstep(LL_RT_SUN_SELF_NEAR0, LL_RT_SUN_SELF_NEAR, t_skin))) < 0.03)
+                {
+                    rayQueryTerminateEXT(rq);
 #if LL_RT_SUN_DEBUG == 1
-                return 1.0;                 // test: only solid (opaque) hits make a shadow
+                    return 1.0;             // test: only solid (opaque) hits make a shadow
 #else
-                return 0.0;
+                    return 0.0;
 #endif
+                }
             }
         }
+        none = rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT;
+        if (none)
+        {
+            break;
+        }
+        // a solid hit: a close skinned avatar surface is translucent too (only when there is a floor to apply), anything else blocks
+        const float t_hit = rayQueryGetIntersectionTEXT(rq, true);
+        const uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, true));
+        const bool skinned = record != 0u && record < ll_rt_geoms.g[0].first && (ll_rt_geoms.g[record].flags & 8192u) != 0u;
+#if LL_RT_SUN_DEBUG == 0
+        if (skin_floor > 0.0 && skinned && t_hit < LL_RT_SUN_SELF_NEAR && segment < 3)
+        {
+            skin = 0.0;
+            t_skin = max(t_skin, t_hit);
+            rt_near_skin_t = (rt_near_skin_t == 0.0) ? t_hit : min(rt_near_skin_t, t_hit);
+            t_start = t_hit + 0.002;
+            continue;
+        }
+#endif
+        break;
     }
-    const bool none = rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT;
 #ifdef LL_RT_CAP_DEBUG
     if (capped && none)
     {
         return 0.0;                         // test (LL_VK_RT_CAPDEBUG=1): a ray that stopped at the limit is drawn fully shadowed
     }
 #endif
+    const float floor_now = skin_floor * (1.0 - smoothstep(LL_RT_SUN_SELF_NEAR0, LL_RT_SUN_SELF_NEAR, t_skin));
 #if LL_RT_SUN_DEBUG == 1
     return none ? 1.0 : 0.0;                // test (LL_VK_RT_SUN_DEBUG=1): only solid (opaque) hits make a shadow, what the alpha loop found is ignored
 #elif LL_RT_SUN_DEBUG == 2
-    return none ? transmit * max(skin, skin_floor) : 1.0;      // test (=2): only what the alpha loop found makes a shadow, solid hits are ignored
+    return none ? transmit * max(skin, floor_now) : 1.0;      // test (=2): only what the alpha loop found makes a shadow, solid hits are ignored
 #else
-    return none ? transmit * max(skin, skin_floor) : 0.0;
+    return none ? transmit * max(skin, floor_now) : 0.0;
 #endif
 }
 
@@ -943,12 +985,22 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     vec2 px = gl_FragCoord.xy + vec2(5.588238, 5.588238) * rt_noise_frame;
     float rot = fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715)))) * 6.2831853;
     float lit = 0.0;
+    float skin_t = 0.0;                         // the distance of the close avatar surface the first ray met (0 = none): the other rays of the pixel get a wider disc (LL_RT_SUN_PENUMBRA)
     for (int i = 0; i < samples; ++i)
     {
-        float r = sqrt((float(i) + 0.5) / float(samples)) * rt_sun_radius;
+        float radius = rt_sun_radius;
+        if (i > 0 && skin_t > 0.0 && LL_RT_SUN_PENUMBRA > 0.0)
+        {
+            radius = clamp(LL_RT_SUN_PENUMBRA / skin_t, rt_sun_radius, 0.35);
+        }
+        float r = sqrt((float(i) + 0.5) / float(samples)) * radius;
         float phi = rot + float(i) * 2.3999632;
         vec3 dir = normalize(light_dir + (t1 * cos(phi) + t2 * sin(phi)) * r);
         lit += rtSunRayAt(origin, dir, pos_screen, lod, -pos.z);
+        if (i == 0)
+        {
+            skin_t = rt_near_skin_t;
+        }
     }
     return lit / float(samples);
 }

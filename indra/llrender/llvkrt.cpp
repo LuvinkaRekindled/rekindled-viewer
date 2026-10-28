@@ -4043,6 +4043,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 const bool with_material = sDbg.mMats && d.mAlpha.mMaterial != 0;
                 if (d.mKind != 1 && !with_material)
                 {
+                    rec.mFlags = kRecSkinned;       // (the sun ray reads this flag of the solid hit it stops at: a close skinned avatar surface is a translucent self shadow)
                     continue;                       // an opaque geometry: its candidates never reach the alpha test
                 }
                 if (!usable[k])
