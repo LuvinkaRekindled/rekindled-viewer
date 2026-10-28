@@ -16274,6 +16274,10 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                         e.mTextures[0] = texture_ref(params->mTexture.get());
                     }
                 }
+                if (source.kind == KIND_ALPHA)
+                {
+                    flags |= LLVkBridge::ALPHA_BLENDED;
+                }
                 e.mFlags = flags;
                 e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
                 if (rt_materials_on())
@@ -16390,6 +16394,10 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
                 {
                     e.mTextures[0] = texture_ref(params->mTexture.get());
                 }
+            }
+            if (source.kind == KIND_ALPHA)
+            {
+                flags |= LLVkBridge::ALPHA_BLENDED;
             }
             e.mFlags = flags;
             e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;

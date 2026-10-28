@@ -207,7 +207,7 @@ void main()
     dbgSceneFrame(to_scene, camera);
     float lod = clamp(0.5 * log2(max(depth, 1.0)) - 1.0, 0.0, 4.0);
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x03, camera, 0.01, to_scene * (pos / depth), depth * 1.5 + 5.0);
+    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x0F, camera, 0.01, to_scene * (pos / depth), depth * 1.5 + 5.0);
     uint steps = 0u;
     while (rayQueryProceedEXT(rq))
     {

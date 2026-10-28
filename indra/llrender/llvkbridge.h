@@ -166,7 +166,8 @@ namespace LLVkBridge
         ALPHA_RIGGED = 32,          // mWeightOffset, mPaletteOffset and mJoints are valid
         ALPHA_HARD = 64,            // ray tracing: a plain cut at mCutoff on texture alpha times vertex alpha (glTF alpha mask): no dithering
         ALPHA_RAY_ONLY = 128,       // ray tracing: an opaque caster (no alpha test); kind 5 records only
-        ALPHA_NOT_READY = 256       // kind 18 / 19 only: a texture of the entry has no data yet (ray scene loading gate): the entry stays out of the scene
+        ALPHA_NOT_READY = 256,      // kind 18 / 19 only: a texture of the entry has no data yet (ray scene loading gate): the entry stays out of the scene
+        ALPHA_BLENDED = 512         // ray tracing: an alpha BLENDED draw (the alpha pool, KIND_ALPHA): the soft sun ray takes its alpha as its coverage (rtAlphaCover), not the masked ramp
     };
     struct ShadowAlphaEntry
     {
