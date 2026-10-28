@@ -2931,14 +2931,14 @@
       <key>Value</key>
       <real>0</real>
     </map>
-    <key>FSVkNeuralRender</key>
+    <key>FSVkNeuralRenderMode</key>
     <map>
       <key>Comment</key>
-      <string>With FSVkDLSS on an RTX 50 card and nvngx_dlssnr.dll next to the viewer: DLSS 5 neural rendering restyles the picture (lighting, shading, skin detail) before the upscale. Local testing only; costs about 7 ms a frame. Takes effect after a restart; the look controls live in <work>/nr-debug.txt.</string>
+      <string>With FSVkDLSS on an RTX 50 card and nvngx_dlssnr.dll next to the viewer: DLSS 5 neural rendering restyles the picture (lighting, shading, skin detail) before the upscale. 0 off, 1 on (about 7 ms a frame), 2 snapshots only (the live picture untouched, every snapshot through it). Applies at once while DLSS is running. Local testing only; the look controls live in <work>/nr-debug.txt.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
-      <string>Boolean</string>
+      <string>S32</string>
       <key>Value</key>
       <integer>0</integer>
     </map>

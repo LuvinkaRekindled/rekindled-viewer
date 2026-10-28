@@ -2030,17 +2030,40 @@ If you do not understand the distinction then leave this control alone."
        tool_tip="DLSS ray reconstruction replaces the plain DLSS upscaling: it removes the noise of ray traced reflections and shadows and keeps reflected moving objects steady. Needs DLSS on (and ray tracing to have anything to denoise). Depth of field is not applied while it is on. Applies at once."
        top_pad="8"
        width="400"/>
-      <check_box
-       control_name="FSVkNeuralRender"
-       height="16"
-       initial_value="false"
-       label="Neural rendering (DLSS 5, experimental, local test)"
+      <text
+       type="string"
+       length="1"
+       follows="left|top"
+       height="14"
        layout="topleft"
        left_delta="0"
-       name="FSVkNeuralRender"
-       tool_tip="DLSS 5 neural rendering restyles the picture (lighting, shading, skin detail) before the upscale, at about 7 ms a frame. Enabled only when DLSS is on, the graphics card and driver support it (RTX 50, driver 615 or newer) and nvngx_dlssnr.dll is next to the viewer. Takes effect after a restart. The look controls live in <work>/nr-debug.txt."
+       name="FSVkNeuralRenderModeText"
        top_pad="8"
-       width="400"/>
+       width="300">
+        Neural rendering (DLSS 5, experimental, local test):
+      </text>
+      <combo_box
+       control_name="FSVkNeuralRenderMode"
+       height="23"
+       layout="topleft"
+       left_delta="0"
+       name="FSVkNeuralRenderMode"
+       tool_tip="DLSS 5 neural rendering restyles the picture (lighting, shading, skin detail) before the upscale: On costs about 7 ms a frame; Snapshots only leaves the live picture untouched and puts every snapshot through it. Enabled only when DLSS is on, the graphics card and driver support it (RTX 50, driver 615 or newer) and nvngx_dlssnr.dll is next to the viewer. Applies at once. The look controls live in <work>/nr-debug.txt."
+       top_pad="3"
+       width="250">
+        <combo_box.item
+         label="Off"
+         name="0"
+         value="0"/>
+        <combo_box.item
+         label="On"
+         name="1"
+         value="1"/>
+        <combo_box.item
+         label="Snapshots only"
+         name="2"
+         value="2"/>
+      </combo_box>
       <check_box
        control_name="FSVkRayTracing"
        height="16"

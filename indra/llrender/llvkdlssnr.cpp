@@ -48,6 +48,7 @@ void queryAvailability(VkInstance, VkPhysicalDevice, VkDevice, NVSDK_NGX_Paramet
 bool available() { return false; }
 bool ready() { return false; }
 bool evaluate(VkCommandBuffer, const Params&) { return false; }
+void release() {}
 void shutdown() {}
 
 #else
@@ -325,7 +326,22 @@ bool available()
 
 bool ready()
 {
-    return requested() >= 2 && gAvailable && !gFailed && gDevice != VK_NULL_HANDLE;
+    return gAvailable && !gFailed && gDevice != VK_NULL_HANDLE;
+}
+
+void release()
+{
+    if (gFeature)
+    {
+        gRetired.emplace_back(gFeature, gFeatureFrame);
+        gFeature = nullptr;
+        for (U32& k : gFeatureKey) k = 0;
+        LL_INFOS("VkDlssNr") << "DLSS-NR feature retired (the mode went off); released once its frame has completed" << LL_ENDL;
+    }
+    if (!gRetired.empty())
+    {
+        reap_retired();
+    }
 }
 
 bool evaluate(VkCommandBuffer cmd, const Params& p)

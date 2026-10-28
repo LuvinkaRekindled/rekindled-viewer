@@ -10759,7 +10759,16 @@ void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, voi
 void on_neural_render(const LLVkBridge::UpscaleArgs& a)
 {
     static U32 failures = 0;
-    if (!gActive || !LLVkDlssNr::ready())
+    if (!gActive)
+    {
+        return;
+    }
+    if (a.mNeuralRender == 2)
+    {
+        LLVkDlssNr::release();
+        return;
+    }
+    if (!LLVkDlssNr::ready())
     {
         return;
     }

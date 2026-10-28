@@ -1088,7 +1088,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             if (!mAvatarVelocityMap.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
             if (!mUpscaledMap.allocate(window_res_x, window_res_y, TexelFormat::RGBA8)) return false;
             // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the neural renderer's output, window size
-            if (LLVkBridge::neuralRenderMode() >= 2)
+            if (neuralRenderMode() != 0 && LLVkBridge::neuralRenderAvailable())
             {
                 if (!mNROutput.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F)) return false;
                 if (!mNROutputRender.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
@@ -17943,6 +17943,19 @@ const NrDebug& nrDebug()
 }
 }
 
+// static
+S32 LLPipeline::neuralRenderMode()
+{
+    // the launcher's flag (LL_VK_DLSS_NR) overrides: 1 is the probe only, 2 evaluate without showing, 3 show; unset: the preference, live
+    const S32 flag = LLVkBridge::neuralRenderMode();
+    if (flag > 0)
+    {
+        return flag >= 3 ? 1 : (flag == 2 ? 3 : 0);
+    }
+    static LLCachedControl<S32> mode(gSavedSettings, "FSVkNeuralRenderMode", 0);
+    return llclamp((S32)mode, 0, 2);
+}
+
 bool LLPipeline::applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst)
 {
     if (!LLVkBridge::upscaleAvailable() || !LLVkBridge::neuralRenderAvailable() || !src || !dst || !mMotionMap.isComplete())
@@ -18875,6 +18888,23 @@ void LLPipeline::renderFinalize()
         generateMotionVectors(&mMotionMap);
     }
 
+    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): what this frame does, from the preference (live) or the launcher's flag. The feature is created on the first frame that
+    // asks for it and retired when the mode goes off (the worker is told for a few frames so the retired feature is released once its frame has completed)
+    const S32 nr_mode = neuralRenderMode();
+    const bool nr_now = dlss && LLVkBridge::neuralRenderAvailable() && (nr_mode == 1 || nr_mode == 3 || (nr_mode == 2 && gSnapshot));
+    const bool nr_show = nr_mode != 3;
+    if (nr_now)
+    {
+        mNRReleaseFrames = 4;
+    }
+    else if (mNRReleaseFrames > 0 && LLVkBridge::upscaleAvailable())
+    {
+        --mNRReleaseFrames;
+        LLVkBridge::UpscaleArgs a;
+        a.mNeuralRender = 2;
+        LLVkBridge::upscale(a);
+    }
+
     // <FS> ray reconstruction: upscale and denoise the HDR picture here, the post chain below then runs at the window size on mRRPing / mRRPong
     LLRenderTarget* post_ping = &mPostPingMap;
     LLRenderTarget* post_pong = &mPostPongMap;
@@ -19083,8 +19113,8 @@ void LLPipeline::renderFinalize()
     {
         // <FS> DLSS-NR before the upscale (nr-debug.txt pos 1): the render-size picture through the neural renderer, DLSS then upscales its output (the bundle's recommended placement:
         // 45 % of the pixels of the window-size position). The model sees the jittered, tonemapped render; depth and motion match it exactly
-        if (LLVkBridge::neuralRenderMode() >= 2 && nrDebug().mPosition == 1 && mNROutputRender.isComplete() && sourceBuffer->getWidth() == mNROutputRender.getWidth()
-            && sourceBuffer->getHeight() == mNROutputRender.getHeight() && applyNeuralRender(sourceBuffer, &mNROutputRender) && LLVkBridge::neuralRenderMode() >= 3)
+        if (nr_now && nrDebug().mPosition == 1 && mNROutputRender.isComplete() && sourceBuffer->getWidth() == mNROutputRender.getWidth()
+            && sourceBuffer->getHeight() == mNROutputRender.getHeight() && applyNeuralRender(sourceBuffer, &mNROutputRender) && nr_show)
         {
             sourceBuffer = applyNeuralRenderRimLift(&mNROutputRender, sourceBuffer, &mNRLiftRender) ? &mNRLiftRender : &mNROutputRender;
         }
@@ -19097,8 +19127,8 @@ void LLPipeline::renderFinalize()
     // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the finished window-size picture through the neural renderer, before the present pass and the UI (nr-debug.txt pos 0).
     // LL_VK_DLSS_NR=2 evaluates and leaves the picture alone (gate G2), 3 shows the result (gate G3). Snapshots go through it too (Adam 2026-10-28, to compare stills): the
     // snapshot's sizes each get a feature of their own, created on the first use and released once the frame that last used it has completed
-    if (dlss && LLVkBridge::neuralRenderMode() >= 2 && (nrDebug().mPosition != 1 || rr_done) && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth()
-        && sourceBuffer->getHeight() == mNROutput.getHeight() && applyNeuralRender(sourceBuffer, &mNROutput) && LLVkBridge::neuralRenderMode() >= 3)
+    if (dlss && nr_now && (nrDebug().mPosition != 1 || rr_done) && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth()
+        && sourceBuffer->getHeight() == mNROutput.getHeight() && applyNeuralRender(sourceBuffer, &mNROutput) && nr_show)
     {
         sourceBuffer = applyNeuralRenderRimLift(&mNROutput, sourceBuffer, &mNRLift) ? &mNRLift : &mNROutput;
     }
