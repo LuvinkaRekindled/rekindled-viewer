@@ -1091,10 +1091,12 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             if (LLVkBridge::neuralRenderMode() >= 2)
             {
                 if (!mNROutput.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F)) return false;
+                if (!mNROutputRender.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
             }
             else
             {
                 mNROutput.release();
+                mNROutputRender.release();
             }
         }
         else
@@ -1103,6 +1105,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mAvatarVelocityMap.release();
             mUpscaledMap.release();
             mNROutput.release();
+            mNROutputRender.release();
         }
 
         if (sRR && LLVkBridge::rayReconstructionAvailable())
@@ -1512,6 +1515,7 @@ void LLPipeline::releaseScreenBuffers()
     mShadowAccum[1].release();
     mUpscaledMap.release();
     mNROutput.release();
+    mNROutputRender.release();
     mRRGuides.release();
     mRRHitDist.release();
     mRRReflMotion.release();
@@ -17892,11 +17896,12 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
 }
 
 // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two). The look controls and the create-time choices come from <work>/nr-debug.txt, read once a second:
-// "intensity style gtone ltone lstruct skin quality preset automask mvscale run ratio" (defaults 1 0 1 1 1 -1 1 0 1 1 1 0, the bundle's documented ones); a change of quality, preset,
-// style or ratio recreates the feature; run 0 skips the evaluate altogether (the normal picture, no NR cost): the live off state of a same-run cost A/B; ratio > 0 is DLSSNR.ScalingRatio
+// "intensity style gtone ltone lstruct skin quality preset automask mvscale run ratio pos" (defaults 1 0 1 1 1 -1 1 0 1 1 1 0 0, the bundle's documented ones); a change of quality, preset,
+// style or ratio recreates the feature; run 0 skips the evaluate altogether (the normal picture, no NR cost): the live off state of a same-run cost A/B; ratio > 0 is DLSSNR.ScalingRatio;
+// pos 0 runs NR after the upscale on the window-size picture, 1 before it on the render-size picture (45 % of the pixels; the bundle's recommended placement; not with ray reconstruction)
 namespace
 {
-struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f, mMotionScale = 1.f, mScalingRatio = 0.f; S32 mQuality = 1, mPreset = 0, mAutoMask = 1, mRun = 1; };
+struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f, mMotionScale = 1.f, mScalingRatio = 0.f; S32 mQuality = 1, mPreset = 0, mAutoMask = 1, mRun = 1, mPosition = 0; };
 const NrDebug& nrDebug()
 {
     static NrDebug d;
@@ -17914,6 +17919,8 @@ const NrDebug& nrDebug()
             if (in >> run) n.mRun = run;        // an older ten-field file keeps the default (a failed extraction would write 0)
             F32 ratio = 0.f;
             if (in >> ratio) n.mScalingRatio = ratio;
+            S32 pos = 0;
+            if (in >> pos) n.mPosition = pos;
             d = n;
         }
     }
@@ -19028,16 +19035,26 @@ void LLPipeline::renderFinalize()
     {
         // already at the window size
     }
-    else if (dlss && applyUpscale(sourceBuffer, &mUpscaledMap))
+    else if (dlss)
     {
-        sourceBuffer = &mUpscaledMap;
+        // <FS> DLSS-NR before the upscale (nr-debug.txt pos 1): the render-size picture through the neural renderer, DLSS then upscales its output (the bundle's recommended placement:
+        // 45 % of the pixels of the window-size position). The model sees the jittered, tonemapped render; depth and motion match it exactly
+        if (LLVkBridge::neuralRenderMode() >= 2 && nrDebug().mPosition == 1 && mNROutputRender.isComplete() && sourceBuffer->getWidth() == mNROutputRender.getWidth()
+            && sourceBuffer->getHeight() == mNROutputRender.getHeight() && applyNeuralRender(sourceBuffer, &mNROutputRender) && LLVkBridge::neuralRenderMode() >= 3)
+        {
+            sourceBuffer = &mNROutputRender;
+        }
+        if (applyUpscale(sourceBuffer, &mUpscaledMap))
+        {
+            sourceBuffer = &mUpscaledMap;
+        }
     }
 
-    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the finished window-size picture through the neural renderer, before the present pass and the UI.
+    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the finished window-size picture through the neural renderer, before the present pass and the UI (nr-debug.txt pos 0).
     // LL_VK_DLSS_NR=2 evaluates and leaves the picture alone (gate G2), 3 shows the result (gate G3). Snapshots go through it too (Adam 2026-10-28, to compare stills): the
     // snapshot's sizes each get a feature of their own, created on the first use and released once the frame that last used it has completed
-    if (dlss && LLVkBridge::neuralRenderMode() >= 2 && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth() && sourceBuffer->getHeight() == mNROutput.getHeight()
-        && applyNeuralRender(sourceBuffer, &mNROutput) && LLVkBridge::neuralRenderMode() >= 3)
+    if (dlss && LLVkBridge::neuralRenderMode() >= 2 && (nrDebug().mPosition != 1 || rr_done) && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth()
+        && sourceBuffer->getHeight() == mNROutput.getHeight() && applyNeuralRender(sourceBuffer, &mNROutput) && LLVkBridge::neuralRenderMode() >= 3)
     {
         sourceBuffer = &mNROutput;
     }

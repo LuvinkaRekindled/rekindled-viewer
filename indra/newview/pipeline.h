@@ -209,7 +209,8 @@ public:
     bool                    mAvatarVelocityDrawn = false;       // the pass ran this frame: generateMotionVectors takes the target
     LLRenderTarget          mMotionMap;
     LLRenderTarget          mUpscaledMap;
-    LLRenderTarget          mNROutput;      // <FS> DLSS-NR: window size RGBA16F, only with LL_VK_DLSS_NR >= 2
+    LLRenderTarget          mNROutput;      // <FS> DLSS-NR: window size RGBA16F, only with LL_VK_DLSS_NR >= 2 (the position after the upscale)
+    LLRenderTarget          mNROutputRender;    // <FS> DLSS-NR: render size RGBA16F (the position before the upscale)
     glm::mat4               mViewProjCur = glm::mat4(1.f);          // unjittered, this frame's
     glm::mat4               mViewProjPrev = glm::mat4(1.f);         // unjittered, last frame's
     bool                    mViewProjPrevValid = false;

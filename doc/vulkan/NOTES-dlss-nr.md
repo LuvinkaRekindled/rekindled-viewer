@@ -71,3 +71,14 @@ Two style recreates worked (style 1 at 09:32:54, 58 ms; style 0 at 09:33:12, 64 
 **NR costs about 12.6 ms a frame at 2558x1341**, more than the rest of the frame. The scaling ratio callback works with the `DLSSOptimalSettingsCallback` convention: performance mode 2 (quality) returns Success and ratio 1.0, modes 0 and 1 return UnsupportedParameter (the snippet supports the quality mode only). Setting `DLSSNR.ScalingRatio` at creation is accepted (the feature is recreated, 58 ms) but **does not change the cost**: whatever the snippet's "network = output x scale" is, this parameter does not drive it from outside (NGX logging, `ngx_log_verbose.reg`, would show the "CreateFeature begin requested resolution (network %ux%u)" line and settle whether the network size moved at all). The bundle's own "working scale" is therefore its own downscale of the colour it hands the feature, not this parameter.
 
 What is left for the cost: **run NR before the upscaler at the render size** (1713x898, 45 % of the pixels; the bundle's recommended placement), expected about 6 ms if the cost follows the pixels; the model then sees the jittered, pre-tonemap render and DLSS upscales its output. A different position in the frame (before `applyUpscale` in `renderFinalize`, on `mRT->screen` with the HDR question of the plan's section 2), about a day.
+
+## Position A/B 2026-10-28 (`nr-debug.txt` pos, the thirteenth number; same session, the file stepped every 35 s)
+| position | fps | frame | NR cost |
+|---|---|---|---|
+| off (run 0) | 114.6 | 8.7 ms | |
+| pos 0: after the upscale, 2558x1341 | 47 | 21.3 ms | 12.6 ms |
+| pos 1: before the upscale, 1713x898 (the feature recreated at the render size, DLSS upscales its output) | 62 | 16.1 ms | 7.4 ms |
+
+The cost follows the pixels (45 % of them, 59 % of the cost: a little fixed overhead). Adam at pos 1: "the outlines were more pronounced but it worked": the dark rims the model draws along edges are drawn in render pixels and DLSS enlarges them 1.5x; the look otherwise holds, and the jittered input did not show as flicker. Pos 1 is not used with ray reconstruction (the pre-upscale picture is the noisy radiance then; pos 0 runs instead).
+
+Where it stands: NR is a 7.4 ms (render size) or 12.6 ms (window size) opt-in on this card for a look change Adam judges as touched-up shadows, lighting, skin texture and eyes, with dark edge rims as the artifact to live with (the bundle has a halo suppression pass of its own for them). Everything stays behind `LL_VK_DLSS_NR`; nothing ships.
