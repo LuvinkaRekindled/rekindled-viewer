@@ -53,6 +53,10 @@ void addDeviceExtensions(VkInstance instance, VkPhysicalDevice device, std::vect
     {
         LLVkDlss::addDeviceExtensions(instance, device, out);
     }
+    if (forced() != DLSS)
+    {
+        LLVkFsr::addDeviceExtensions(device, out);
+    }
 }
 
 bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
