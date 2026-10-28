@@ -18,3 +18,6 @@ It wraps an NGX feature (`DLSSNRBackendNGX`, "Created DLSS-NR NGX feature %ux%u 
 
 ## Not known
 The NGX feature id of NR (the SL id 1004 is not the NGX one; RR is 13), the parameter types (resource / int / float) and the create and evaluate calls, the hardware and driver requirements, the licence terms for the DLL. A Streamline hookup is blocked on the missing `sl_dlss_nr.h`. An NGX level probe (feature requirements query with candidate ids, then the parameter names above) is possible in a test build only; the NVIDIA signed `streamline/` files are the ones to use.
+
+## Update 2026-10-28
+Most of the "not known" list is answered in `PLAN-dlss-nr.md` section 1.2 from the installed driver's NGX core (`_nvngx.dll`, 617.42): the core has `DLSSNR.Available` and friends, and its feature table puts DLSSNR at NGX feature id **18** (`NVSDK_NGX_Feature_Reserved18`; 14-17 are TrueHDR, Latewarp, VSR, FGX). The snippet itself adds `DLSSNR.Enabled`, `.ScalingRatio`, `.MaskBlendMode` and the callbacks `DLSSNRComputeScalingRatioCallback` / `DLSSNRGetStatsCallback`, needs at least Blackwell2, and wants Color + Output (+ MVec, Depth) as a minimum. The plan has the probe build and the gates.
