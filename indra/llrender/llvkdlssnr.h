@@ -44,12 +44,12 @@ namespace LLVkDlssNr
         U32 mOutputWidth = 0, mOutputHeight = 0;    // of the colour and the output
         float mMotionScaleX = 1.f, mMotionScaleY = 1.f;
         bool mReset = false;                // history is useless (camera cut)
-        U32 mQuality = 1;                   // PerfQualityValue (the feature's "performance mode"): 0 performance, 1 balanced, 2 quality, 3 ultra performance, 4 ultra quality, 5 DLAA
+        U32 mQuality = 2;                   // PerfQualityValue (the feature's "performance mode"): 2 quality is the only one the snippet supports (the ratio callback rejects 0 and 1)
         S32 mPreset = 0;                    // DLSSNR.Hint.Render.Preset
         S32 mAutoMask = 0;                  // > 0: DLSSNR.UseAutoMask is set to it
         float mScalingRatio = 0.f;          // > 0: DLSSNR.ScalingRatio at creation (the network runs at the output size times this and its answer is upsampled; cost falls with the square)
-        // the look controls (ranges unknown; 0..1 assumed)
-        float mStyle = 0.f, mIntensity = 1.f, mGlobalTone = 0.5f, mLocalTone = 0.5f, mLocalStructure = 0.5f, mSkinStructure = 0.5f;
+        // the look controls (the bundle's config: intensity, local tone and local structure 0..2 with 1 the model's own answer; skin -1..2, -1 follows structure; style 0 standard, 1 natural, 2 cinematic)
+        float mStyle = 0.f, mIntensity = 1.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f;
     };
 
     // Records the evaluation into 'cmd'. The images must already be in the layouts LLVkDlss::inputLayout / outputLayout name. Creates the feature on first

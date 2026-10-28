@@ -17896,12 +17896,12 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
 }
 
 // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two). The look controls and the create-time choices come from D:/claude/nr-debug.txt, read once a second:
-// "intensity style gtone ltone lstruct skin quality preset automask mvscale run ratio pos" (defaults 1 0 1 1 1 -1 1 0 1 1 1 0 0, the bundle's documented ones); a change of quality, preset,
+// "intensity style gtone ltone lstruct skin quality preset automask mvscale run ratio pos" (defaults 1 0 1 1 1 -1 2 0 1 1 1 0 1: the bundle's documented look, the one supported quality mode, the render-size position; the user 2026-10-28); a change of quality, preset,
 // style or ratio recreates the feature; run 0 skips the evaluate altogether (the normal picture, no NR cost): the live off state of a same-run cost A/B; ratio > 0 is DLSSNR.ScalingRatio;
 // pos 0 runs NR after the upscale on the window-size picture, 1 before it on the render-size picture (45 % of the pixels; the bundle's recommended placement; not with ray reconstruction)
 namespace
 {
-struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f, mMotionScale = 1.f, mScalingRatio = 0.f; S32 mQuality = 1, mPreset = 0, mAutoMask = 1, mRun = 1, mPosition = 0; };
+struct NrDebug { F32 mIntensity = 1.f, mStyle = 0.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f, mMotionScale = 1.f, mScalingRatio = 0.f; S32 mQuality = 2, mPreset = 0, mAutoMask = 1, mRun = 1, mPosition = 1; };
 const NrDebug& nrDebug()
 {
     static NrDebug d;
