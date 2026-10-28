@@ -156,6 +156,8 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
         shader->uniform1f(maxdist_s, rt_max_dist());
         static LLStaticHashedString alpha_pass_s("rt_sun_alpha");
         shader->uniform1f(alpha_pass_s, 1.f);        // <FS> a blended surface (hair): its sun ray starts off the surface by LL_RT_SUN_BIAS_ALPHA, not LL_RT_SUN_BIAS (cards must not shade the cards next to them)
+        static LLStaticHashedString self_off_s("rt_sun_self_off");
+        shader->uniform1f(self_off_s, LLVkBridge::rtSunSelfShadow() == 0 ? 1.f : 0.f);      // rt-debug.txt sunself=0: the avatar self shadow work off (a same-lap cost A/B)
     }
 
     if (LLPipeline::sRenderingHUDs)

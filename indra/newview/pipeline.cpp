@@ -20301,6 +20301,8 @@ void LLPipeline::renderDeferredLighting()
                     sun_shader.uniform1i(samples_s, llclamp(rt_samples(), 1, 16));
                     // the noise changes every frame when the upscaler is there to accumulate it, else it stays put and the blur alone smooths it
                     sun_shader.uniform1f(frame_s, sDLSS ? (F32)(mJitterIndex % 64) : 0.f);
+                    static LLStaticHashedString self_off_s("rt_sun_self_off");
+                    sun_shader.uniform1f(self_off_s, LLVkBridge::rtSunSelfShadow() == 0 ? 1.f : 0.f);      // rt-debug.txt sunself=0: the avatar self shadow work off (a same-lap cost A/B)
                 }
 
                 {

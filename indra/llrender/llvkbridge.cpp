@@ -825,6 +825,11 @@ S32 LLVkBridge::rtHitQuality()
     return rtShadowMode() != 0 ? LLVk::Rt::hitQuality() : -1;
 }
 
+S32 LLVkBridge::rtSunSelfShadow()
+{
+    return rtShadowMode() != 0 ? LLVk::Rt::sunSelfShadow() : 1;
+}
+
 S32 LLVkBridge::rtHitRays()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::hitRays() : -1;
