@@ -55,6 +55,10 @@ namespace LLVkDlss
         float mWorldToView[16] = {}, mViewToClip[16] = {};
         LLVk::Image* mExposure = nullptr;           // 1x1 R16F: the factor the tonemap multiplies the radiance with (the network works on exposed values)
         S32 mPreset = 0;                            // the ray reconstruction model: 0 default, 4 D, 5 E (transformer), 6 F
+        // <FS> what the FSR backend wants and DLSS does not (llvkfsr.cpp)
+        float mCameraNear = 0.1f, mCameraFar = 512.f;   // metres
+        float mCameraFovY = 1.f;                        // vertical field of view, radians
+        float mFrameTimeMs = 16.6f;                     // the time since the last frame
     };
 
     // Records the upscale into 'cmd'. The images must already be in the layouts layoutNeeded() names. Creates the DLSS feature on first use

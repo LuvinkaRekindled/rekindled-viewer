@@ -26,7 +26,7 @@
 #include "llvktarget.h"
 #include "llvkquery.h"
 #include "llvkformat.h"
-#include "llvkdlss.h"
+#include "llvkupscale.h"
 #include "llvkrt.h"
 #include "llvkpasscensus.h"
 #include <glslang/Public/ShaderLang.h>
@@ -728,7 +728,7 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     else if (!fm.mCompressed)
     {
         td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        if (LLVkDlss::ready() && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+        if (LLVkUpscale::ready() && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
         {
             td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;        // DLSS writes its output into an image like this
         }
@@ -788,7 +788,7 @@ bool grow_levels(Tex& t)
     else if (!t.mFormat.mCompressed)
     {
         td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        if (LLVkDlss::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+        if (LLVkUpscale::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
         {
             td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
         }
@@ -837,7 +837,7 @@ bool drop_levels(Tex& t, U32 k)
     td.mFormat = t.mFormat.mVk;
     td.mSwizzle = t.mSwizzleSet ? swizzle_mapping(t) : t.mFormat.mSwizzle;
     td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    if (LLVkDlss::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+    if (LLVkUpscale::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
     {
         td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
@@ -1250,7 +1250,7 @@ VkSampler texture_sampler(Renderer& r, Tex& t)
     memcpy(&aniso_bits, &sp.mAnisotropy, 4);
     mix(aniso_bits); mix(t.mLevels); mix(t.mValidLevels);
     {
-        const float bias = LLVkDlss::lodBias();      // a new DLSS mode changes it: the sampler is made again
+        const float bias = LLVkUpscale::lodBias();      // a new DLSS mode changes it: the sampler is made again
         U32 bias_bits;
         memcpy(&bias_bits, &bias, 4);
         mix(bias_bits);
@@ -10757,7 +10757,7 @@ void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, voi
 void on_upscale(const LLVkBridge::UpscaleArgs& a)
 {
     static U32 failures = 0;
-    if (!gActive || !LLVkDlss::ready())
+    if (!gActive || !LLVkUpscale::ready())
     {
         return;
     }
@@ -10784,7 +10784,7 @@ void on_upscale(const LLVkBridge::UpscaleArgs& a)
         }
         return;
     }
-    LLVkDlss::Params p;
+    LLVkUpscale::Params p;
     p.mColor = &color->mImage;
     p.mDepth = &depth->mImage;
     p.mMotion = &motion->mImage;
@@ -10799,11 +10799,15 @@ void on_upscale(const LLVkBridge::UpscaleArgs& a)
     p.mMotionScaleY = a.mMotionScaleY;
     p.mReset = a.mReset != 0;
     p.mHdr = a.mHdr != 0;
+    p.mCameraNear = a.mCameraNear;
+    p.mCameraFar = a.mCameraFar;
+    p.mCameraFovY = a.mCameraFovY;
+    p.mFrameTimeMs = a.mFrameTimeMs;
     std::vector<std::pair<Image*, VkImageLayout>> needs = {
-        { p.mColor, LLVkDlss::inputLayout(*p.mColor) },
-        { p.mDepth, LLVkDlss::inputLayout(*p.mDepth) },
-        { p.mMotion, LLVkDlss::inputLayout(*p.mMotion) },
-        { p.mOutput, LLVkDlss::outputLayout() },
+        { p.mColor, LLVkUpscale::inputLayout(*p.mColor) },
+        { p.mDepth, LLVkUpscale::inputLayout(*p.mDepth) },
+        { p.mMotion, LLVkUpscale::inputLayout(*p.mMotion) },
+        { p.mOutput, LLVkUpscale::outputLayout() },
     };
     if (a.mRayReconstruction)
     {
@@ -10812,29 +10816,29 @@ void on_upscale(const LLVkBridge::UpscaleArgs& a)
         p.mSpecularAlbedo = &specular->mImage;
         p.mNormals = &normals->mImage;
         p.mPreset = a.mPreset;
-        needs.push_back({ p.mDiffuseAlbedo, LLVkDlss::inputLayout(*p.mDiffuseAlbedo) });
-        needs.push_back({ p.mSpecularAlbedo, LLVkDlss::inputLayout(*p.mSpecularAlbedo) });
-        needs.push_back({ p.mNormals, LLVkDlss::inputLayout(*p.mNormals) });
+        needs.push_back({ p.mDiffuseAlbedo, LLVkUpscale::inputLayout(*p.mDiffuseAlbedo) });
+        needs.push_back({ p.mSpecularAlbedo, LLVkUpscale::inputLayout(*p.mSpecularAlbedo) });
+        needs.push_back({ p.mNormals, LLVkUpscale::inputLayout(*p.mNormals) });
         if (refl_motion)
         {
             p.mReflectionMotion = &refl_motion->mImage;
-            needs.push_back({ p.mReflectionMotion, LLVkDlss::inputLayout(*p.mReflectionMotion) });
+            needs.push_back({ p.mReflectionMotion, LLVkUpscale::inputLayout(*p.mReflectionMotion) });
         }
         if (hit_distance)
         {
             p.mHitDistance = &hit_distance->mImage;
             memcpy(p.mWorldToView, a.mWorldToView, sizeof(p.mWorldToView));
             memcpy(p.mViewToClip, a.mViewToClip, sizeof(p.mViewToClip));
-            needs.push_back({ p.mHitDistance, LLVkDlss::inputLayout(*p.mHitDistance) });
+            needs.push_back({ p.mHitDistance, LLVkUpscale::inputLayout(*p.mHitDistance) });
         }
         if (exposure)
         {
             p.mExposure = &exposure->mImage;
-            needs.push_back({ p.mExposure, LLVkDlss::inputLayout(*p.mExposure) });
+            needs.push_back({ p.mExposure, LLVkUpscale::inputLayout(*p.mExposure) });
         }
     }
     bool done = false;
-    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDlss::evaluate(cmd, p); });
+    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkUpscale::evaluate(cmd, p); });
     if (done)
     {
         output->mValidLevels = 1;       // what was written counts as the texture's content
