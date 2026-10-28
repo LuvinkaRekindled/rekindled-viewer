@@ -1,6 +1,6 @@
 /**
  * @file llvkdlssnr.cpp
- * @brief DLSS-NR probe (see llvkdlssnr.h and doc/vulkan/PLAN-dlss-nr.md)
+ * @brief DLSS-NR probe, creation and evaluation (see llvkdlssnr.h and doc/vulkan/PLAN-dlss-nr.md)
  */
 
 #include "linden_common.h"
@@ -14,12 +14,15 @@
 #include "nvsdk_ngx_helpers_vk.h"
 #endif
 
+#include <chrono>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 namespace LLVkDlssNr
 {
+
+using namespace LLVk;
 
 int requested()
 {
@@ -41,11 +44,23 @@ void probe(VkInstance, VkPhysicalDevice, VkDevice, NVSDK_NGX_Parameter*, const N
 {
     LL_WARNS("VkDlssNr") << "LL_VK_DLSS_NR is set but this build has no NGX support" << LL_ENDL;
 }
+bool ready() { return false; }
+bool evaluate(VkCommandBuffer, const Params&) { return false; }
+void shutdown() {}
 
 #else
 
 namespace
 {
+
+VkDevice gDevice = VK_NULL_HANDLE;
+bool gAvailable = false;            // the core said DLSSNR.Available and the requirements query said supported
+bool gFailed = false;               // a creation failed: off for the session
+NVSDK_NGX_Parameter* gParams = nullptr;
+NVSDK_NGX_Handle* gFeature = nullptr;
+U32 gFeatureKey[4] = {};            // output w/h, quality, preset
+U64 gFeatureFrame = 0;
+std::vector<std::pair<NVSDK_NGX_Handle*, U64>> gRetired;     // released when the frame has completed
 
 const char* result_name(NVSDK_NGX_Result r)
 {
@@ -81,6 +96,11 @@ std::string hex(unsigned int v)
     return buf;
 }
 
+std::string named(NVSDK_NGX_Result r)
+{
+    return std::string(result_name(r)) + " (" + hex((unsigned int)r) + ")";
+}
+
 // the feature names of the NGX core's capability table, in feature id order (read from the driver's _nvngx.dll, 617.42; 0..13 match the public enum)
 const char* feature_name(int id)
 {
@@ -103,12 +123,14 @@ std::string support_bits(unsigned int bits)
     return s.empty() ? hex(bits) : s.substr(1);
 }
 
-void log_int(NVSDK_NGX_Parameter* p, const char* name)
+bool log_int(NVSDK_NGX_Parameter* p, const char* name, int* out = nullptr)
 {
     int v = 0;
     const NVSDK_NGX_Result r = NVSDK_NGX_Parameter_GetI(p, name, &v);
     if (NVSDK_NGX_SUCCEED(r)) LL_INFOS("VkDlssNr") << name << " = " << v << LL_ENDL;
     else LL_INFOS("VkDlssNr") << name << ": not set (" << result_name(r) << ")" << LL_ENDL;
+    if (out) *out = NVSDK_NGX_SUCCEED(r) ? v : 0;
+    return NVSDK_NGX_SUCCEED(r);
 }
 
 void log_uint(NVSDK_NGX_Parameter* p, const char* name)
@@ -128,28 +150,58 @@ void* log_pointer(NVSDK_NGX_Parameter* p, const char* name)
     return NVSDK_NGX_SUCCEED(r) ? v : nullptr;
 }
 
+NVSDK_NGX_Resource_VK resource_of(const LLVk::Image& image, bool write, VkImageAspectFlags aspect)
+{
+    const VkImageSubresourceRange range = { aspect, 0, 1, 0, 1 };
+    return NVSDK_NGX_Create_ImageView_Resource_VK(image.mView, image.mImage, range, image.mFormat, image.mExtent.width, image.mExtent.height, write);
+}
+
+void set_subrect(NVSDK_NGX_Parameter* p, const char* image, U32 w, U32 h)
+{
+    const std::string base = std::string("DLSSNR.") + image + "Subrect";
+    NVSDK_NGX_Parameter_SetUI(p, (base + "BaseX").c_str(), 0);
+    NVSDK_NGX_Parameter_SetUI(p, (base + "BaseY").c_str(), 0);
+    NVSDK_NGX_Parameter_SetUI(p, (base + "Width").c_str(), w);
+    NVSDK_NGX_Parameter_SetUI(p, (base + "Height").c_str(), h);
+}
+
+void reap_retired()
+{
+    Context& ctx = Context::instance();
+    for (size_t i = 0; i < gRetired.size(); )
+    {
+        if (ctx.frameFinished(gRetired[i].second))
+        {
+            NVSDK_NGX_VULKAN_ReleaseFeature(gRetired[i].first);
+            gRetired.erase(gRetired.begin() + i);
+        }
+        else
+        {
+            ++i;
+        }
+    }
+}
+
 }
 
 void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSDK_NGX_Parameter* caps, const NVSDK_NGX_FeatureDiscoveryInfo& base)
 {
-    (void)device;
     if (requested() <= 0)
     {
         return;
     }
+    gDevice = device;
     LL_INFOS("VkDlssNr") << "DLSS-NR probe (LL_VK_DLSS_NR=" << requested() << "): what the NGX core says about feature " << featureId() << " (" << feature_name(featureId()) << ")" << LL_ENDL;
 
     // 1. the capability parameters: the names the driver's NGX core has for DLSSNR (set when it found a snippet and judged it)
+    int available = 0;
     if (caps)
     {
-        log_int(caps, "DLSSNR.Available");
+        log_int(caps, "DLSSNR.Available", &available);
         log_int(caps, "DLSSNR.NeedsUpdatedDriver");
         log_uint(caps, "DLSSNR.MinDriverVersionMajor");
         log_uint(caps, "DLSSNR.MinDriverVersionMinor");
         log_int(caps, "DLSSNR.FeatureInitResult");
-        log_int(caps, "DLSSNR.Enabled");
-        log_uint(caps, "DLSSNR.Width");
-        log_uint(caps, "DLSSNR.Height");
         log_pointer(caps, "DLSSNRGetStatsCallback");
         void* ratio_cb = log_pointer(caps, "DLSSNRComputeScalingRatioCallback");
         // for comparison: the same reads for the features the viewer uses
@@ -175,7 +227,7 @@ void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSD
                     const NVSDK_NGX_Result r = ((Callback)ratio_cb)(p);
                     float ratio = 0.f;
                     const NVSDK_NGX_Result rr = NVSDK_NGX_Parameter_GetF(p, "DLSSNR.ScalingRatio", &ratio);
-                    LL_INFOS("VkDlssNr") << "scaling ratio callback for quality " << quality << ": " << result_name(r) << ", DLSSNR.ScalingRatio "
+                    LL_INFOS("VkDlssNr") << "scaling ratio callback for quality " << quality << ": " << named(r) << ", DLSSNR.ScalingRatio "
                                          << (NVSDK_NGX_SUCCEED(rr) ? std::to_string(ratio) : std::string("not set (") + result_name(rr) + ")") << LL_ENDL;
                 }
                 NVSDK_NGX_VULKAN_DestroyParameters(p);
@@ -188,6 +240,7 @@ void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSD
     }
 
     // 2. the feature requirements of ids 14..18: 18 is the one that matters, 14..17 (TrueHDR, Latewarp, VSR, FGX) check the table reading
+    bool supported = false;
     for (int id = 14; id <= 18; ++id)
     {
         NVSDK_NGX_FeatureDiscoveryInfo info = base;
@@ -198,10 +251,11 @@ void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSD
         {
             LL_INFOS("VkDlssNr") << "feature " << id << " (" << feature_name(id) << ") requirements: " << support_bits((unsigned int)req.FeatureSupported)
                                  << ", min hardware architecture " << hex(req.MinHWArchitecture) << ", min OS " << req.MinOSVersion << LL_ENDL;
+            if (id == featureId()) supported = req.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported;
         }
         else
         {
-            LL_INFOS("VkDlssNr") << "feature " << id << " (" << feature_name(id) << ") requirements query failed: " << result_name(r) << LL_ENDL;
+            LL_INFOS("VkDlssNr") << "feature " << id << " (" << feature_name(id) << ") requirements query failed: " << named(r) << LL_ENDL;
         }
     }
 
@@ -239,7 +293,140 @@ void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSD
             NVSDK_NGX_VULKAN_DestroyParameters(p);
         }
     }
-    LL_INFOS("VkDlssNr") << "DLSS-NR probe done (nothing created)" << LL_ENDL;
+    gAvailable = available != 0 && supported;
+    LL_INFOS("VkDlssNr") << "DLSS-NR probe done (nothing created); the feature " << (gAvailable ? "can" : "cannot") << " be created here"
+                         << (requested() >= 2 && gAvailable ? ", it will be on the first frame" : "") << LL_ENDL;
+}
+
+bool ready()
+{
+    return requested() >= 2 && gAvailable && !gFailed && gDevice != VK_NULL_HANDLE;
+}
+
+bool evaluate(VkCommandBuffer cmd, const Params& p)
+{
+    if (!ready() || !p.mColor || !p.mDepth || !p.mMotion || !p.mOutput)
+    {
+        return false;
+    }
+    if (!gParams && !NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_AllocateParameters(&gParams)))
+    {
+        LL_WARNS("VkDlssNr") << "no parameter object" << LL_ENDL;
+        gFailed = true;
+        return false;
+    }
+    reap_retired();
+    const U32 key[4] = { p.mOutputWidth, p.mOutputHeight, p.mQuality, (U32)p.mPreset };
+    if (!gFeature || memcmp(key, gFeatureKey, sizeof(key)) != 0)
+    {
+        if (gFeature)
+        {
+            gRetired.emplace_back(gFeature, gFeatureFrame);
+            gFeature = nullptr;
+        }
+        // creation: the output size is the feature's size (the plugin creates with "%ux%u preset=%u performanceMode=%u"); the generic names too, in case the core reads them
+        NVSDK_NGX_Parameter_SetUI(gParams, "DLSSNR.Width", p.mOutputWidth);
+        NVSDK_NGX_Parameter_SetUI(gParams, "DLSSNR.Height", p.mOutputHeight);
+        NVSDK_NGX_Parameter_SetUI(gParams, NVSDK_NGX_Parameter_Width, p.mOutputWidth);
+        NVSDK_NGX_Parameter_SetUI(gParams, NVSDK_NGX_Parameter_Height, p.mOutputHeight);
+        NVSDK_NGX_Parameter_SetUI(gParams, NVSDK_NGX_Parameter_OutWidth, p.mOutputWidth);
+        NVSDK_NGX_Parameter_SetUI(gParams, NVSDK_NGX_Parameter_OutHeight, p.mOutputHeight);
+        NVSDK_NGX_Parameter_SetUI(gParams, NVSDK_NGX_Parameter_PerfQualityValue, p.mQuality);
+        NVSDK_NGX_Parameter_SetUI(gParams, "DLSSNR.Hint.Render.Preset", (unsigned int)p.mPreset);
+        NVSDK_NGX_Parameter_SetI(gParams, "DLSSNR.DepthInverted", 0);
+        const auto t0 = std::chrono::steady_clock::now();
+        const NVSDK_NGX_Result r = NVSDK_NGX_VULKAN_CreateFeature1(gDevice, cmd, (NVSDK_NGX_Feature)featureId(), gParams, &gFeature);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        int init_result = 0;
+        const bool have_init = NVSDK_NGX_SUCCEED(NVSDK_NGX_Parameter_GetI(gParams, "DLSSNR.FeatureInitResult", &init_result));
+        if (!NVSDK_NGX_SUCCEED(r) || !gFeature)
+        {
+            LL_WARNS("VkDlssNr") << "creating the DLSS-NR feature failed: " << named(r) << " after " << ms << " ms"
+                                 << (have_init ? ", FeatureInitResult " + hex((unsigned int)init_result) : std::string()) << "; off for this session" << LL_ENDL;
+            gFeature = nullptr;
+            gFailed = true;
+            return false;
+        }
+        memcpy(gFeatureKey, key, sizeof(key));
+        LL_INFOS("VkDlssNr") << "DLSS-NR feature created: " << p.mOutputWidth << "x" << p.mOutputHeight << " quality " << p.mQuality << " preset " << p.mPreset << " in " << ms << " ms"
+                             << (have_init ? ", FeatureInitResult " + hex((unsigned int)init_result) : std::string()) << LL_ENDL;
+    }
+    gFeatureFrame = Context::instance().getFrameNumber();
+
+    NVSDK_NGX_Resource_VK color = resource_of(*p.mColor, false, VK_IMAGE_ASPECT_COLOR_BIT);
+    NVSDK_NGX_Resource_VK depth = resource_of(*p.mDepth, false, VK_IMAGE_ASPECT_DEPTH_BIT);
+    NVSDK_NGX_Resource_VK motion = resource_of(*p.mMotion, false, VK_IMAGE_ASPECT_COLOR_BIT);
+    NVSDK_NGX_Resource_VK output = resource_of(*p.mOutput, true, VK_IMAGE_ASPECT_COLOR_BIT);
+    NVSDK_NGX_Parameter_SetVoidPointer(gParams, "DLSSNR.Color", &color);
+    NVSDK_NGX_Parameter_SetVoidPointer(gParams, "DLSSNR.Depth", &depth);
+    NVSDK_NGX_Parameter_SetVoidPointer(gParams, "DLSSNR.MVec", &motion);
+    NVSDK_NGX_Parameter_SetVoidPointer(gParams, "DLSSNR.Output", &output);
+    set_subrect(gParams, "Color", p.mOutputWidth, p.mOutputHeight);
+    set_subrect(gParams, "Output", p.mOutputWidth, p.mOutputHeight);
+    set_subrect(gParams, "Depth", p.mRenderWidth, p.mRenderHeight);
+    set_subrect(gParams, "MVec", p.mRenderWidth, p.mRenderHeight);
+    NVSDK_NGX_Parameter_SetUI(gParams, "DLSSNR.Width", p.mOutputWidth);
+    NVSDK_NGX_Parameter_SetUI(gParams, "DLSSNR.Height", p.mOutputHeight);
+    NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.MVecScaleX", p.mMotionScaleX);
+    NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.MVecScaleY", p.mMotionScaleY);
+    NVSDK_NGX_Parameter_SetI(gParams, "DLSSNR.DepthInverted", 0);
+    NVSDK_NGX_Parameter_SetI(gParams, "DLSSNR.Reset", p.mReset ? 1 : 0);
+    if (p.mAutoMask > 0)
+    {
+        NVSDK_NGX_Parameter_SetI(gParams, "DLSSNR.UseAutoMask", p.mAutoMask);
+    }
+    NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.Style", p.mStyle);
+    NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.Intensity", p.mIntensity);
+    NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.GlobalToneStrength", p.mGlobalTone);
+    NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.LocalToneStrength", p.mLocalTone);
+    NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.LocalStructureStrength", p.mLocalStructure);
+    NVSDK_NGX_Parameter_SetF(gParams, "DLSSNR.SkinStructureStrength", p.mSkinStructure);
+
+    const NVSDK_NGX_Result r = NVSDK_NGX_VULKAN_EvaluateFeature_C(cmd, gFeature, gParams, nullptr);
+    static U32 logged = 0, failures = 0;
+    if (!NVSDK_NGX_SUCCEED(r))
+    {
+        if (failures++ < 5)
+        {
+            LL_WARNS("VkDlssNr") << "evaluating DLSS-NR failed: " << named(r) << LL_ENDL;
+        }
+        return false;
+    }
+    if (logged++ < 3)
+    {
+        LL_INFOS("VkDlssNr") << "evaluate " << logged << ": colour " << p.mOutputWidth << "x" << p.mOutputHeight << " (format " << p.mColor->mFormat << "), output format " << p.mOutput->mFormat
+                             << ", depth and motion " << p.mRenderWidth << "x" << p.mRenderHeight << ", motion scale " << p.mMotionScaleX << ", reset " << p.mReset
+                             << ", intensity " << p.mIntensity << ", style " << p.mStyle << LL_ENDL;
+    }
+    return true;
+}
+
+void shutdown()
+{
+    if (gDevice == VK_NULL_HANDLE)
+    {
+        return;
+    }
+    if (gFeature || !gRetired.empty())
+    {
+        vkDeviceWaitIdle(gDevice);
+        if (gFeature)
+        {
+            NVSDK_NGX_VULKAN_ReleaseFeature(gFeature);
+            gFeature = nullptr;
+        }
+        for (const auto& r : gRetired)
+        {
+            NVSDK_NGX_VULKAN_ReleaseFeature(r.first);
+        }
+        gRetired.clear();
+    }
+    if (gParams)
+    {
+        NVSDK_NGX_VULKAN_DestroyParameters(gParams);
+        gParams = nullptr;
+    }
+    gDevice = VK_NULL_HANDLE;
 }
 
 #endif // LL_DLSS

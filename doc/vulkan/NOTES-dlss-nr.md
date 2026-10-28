@@ -40,3 +40,11 @@ What the NGX core answered at device creation (`#VkDlssNr#` lines in Firestorm.l
 | for comparison | `SuperSampling.Available` 1, `SuperSamplingDenoising.Available` 1, `FrameGeneration.Available` 0 (no `nvngx_dlssg.dll` next to the exe) |
 
 Not run: the scaling ratio callback (`LL_VK_DLSS_NR_RATIO=1`, a guessed convention). Gate G1 of the plan passes; G2/G3 (create, evaluate) are step two.
+
+## Step two run 2026-10-28 (create and evaluate behind LL_VK_DLSS_NR=2, shown behind 3)
+- **Create** (`NVSDK_NGX_VULKAN_CreateFeature1(device, cmd, 18, params, &handle)` with `DLSSNR.Width/Height` = 2558x1341, `PerfQualityValue` 1, `DLSSNR.Hint.Render.Preset` 0, `DLSSNR.DepthInverted` 0): Success, **179 ms** the first time, 133 ms in the next session (no multi-second stall; the 254 MB snippet was already mapped by the probe). No `VK_ERROR_DEVICE_LOST`. Gate G2 passes.
+- **Evaluate** (`DLSSNR.Color` RGBA8 window size, `.Output` RGBA16F window size, `.Depth` D32 and `.MVec` RG16F at the render size 1713x898 with their subrects, `.MVecScaleX/Y` 1, `.Reset`, the six look floats): Success every frame, two sessions, zero failures. **Render-size depth and motion with an output-size colour are accepted**, as are the mixed formats.
+- **Picture** (flag 3, Adam by eye at his spot): a real picture, "everything looks the same mostly but shadows are touched up, some shading". Not black, not tiled, not shifted; the UI draws over it. Gate G3 passes.
+- **Cost, not measured yet:** the fps counter read 44-46 with the GPU at 99 % while NR ran (the frame was about 12.8 ms = 78 fps at his yaw before); a same-run A/B needs a live skip switch (next). Process memory 2.9 GB, GPU memory 6.0 of 16 GB with the world loaded.
+- **Snapshots** do not include NR: `applyNeuralRender` is skipped while `gSnapshot` is set (the plan's skip rule); a saved snapshot shows the normal picture.
+- Live controls: `<work>/nr-debug.txt` (`intensity style gtone ltone lstruct skin quality preset automask mvscale`), read once a second; what intensity 0 does is not reported yet.
