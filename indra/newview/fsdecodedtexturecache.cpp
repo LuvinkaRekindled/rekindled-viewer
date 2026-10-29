@@ -148,7 +148,7 @@ bool FSDecodedTextureCache::post(std::function<void()> work)
 void FSDecodedTextureCache::update()
 {
     static LLCachedControl<bool> on(gSavedSettings, "FSDecodedTextureCache", true);
-    static LLCachedControl<U32> cap_mb(gSavedSettings, "FSDecodedTextureCacheSizeMB", 4096);
+    static LLCachedControl<U32> cap_mb(gSavedSettings, "FSDecodedTextureCacheSizeMB", 8192);
     static LLCachedControl<bool> compress(gSavedSettings, "RenderCompressTextures", false);
     mEnabled.store(mInitialised && on(), std::memory_order_relaxed);
     mCapBytes.store((U64)llmax(256u, (U32)cap_mb) << 20, std::memory_order_relaxed);

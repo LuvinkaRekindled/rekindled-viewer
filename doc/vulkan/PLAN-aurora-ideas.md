@@ -65,7 +65,7 @@ Measured at the hub (Adam's account, the same spot, two sessions one after the o
 
 So 98 % of the second login's decodes came from the cache; the first-minute decode work at a spot (2500 JPEG 2000 decodes over 8 threads) is gone on a revisit. Two fixes after the run, rebuilt: the index log line counted after a swap; a write updated the index before the file was renamed into place, so a reader in between found no file and deleted the entry (now: file, then index, then the old level's file; an open failure is a plain miss and removes nothing).
 
-What the numbers also say for stage b: one spot is 1.2 GB of RGBA8 chains; the 4 GB cap holds about three such places. BC7 would make it twelve, which is the second reason for stage b after video memory.
+What the numbers also say for stage b: one spot is 1.2 GB of RGBA8 chains; the 4 GB cap holds about three such places. BC7 would make it twelve, which is the second reason for stage b after video memory. (The cap was raised to 8 GB on 2026-10-29 after the Citadel runs: 12,000 files filled 4 GB and every heavy place evicted a few hundred; Adam: "you can raise the cap".)
 
 **Time to textured, measured (2026-10-29, the stamp in `FSDecodedTextureCache::update`: once a session, the time from STATE_STARTED to the texture fetch and decode queues staying empty for 3 s; `run-viewer-deccache.bat 0|1` forces the cache off or on, nothing else differs; the same spot, the J2K cache and the decoded cache both warm):**
 
