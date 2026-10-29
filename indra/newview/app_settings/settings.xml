@@ -2945,13 +2945,13 @@
     <key>FSDecodedTextureCacheSizeMB</key>
     <map>
       <key>Comment</key>
-      <string>Size cap of the decoded texture cache in MB (the textures read least recently are removed first).</string>
+      <string>Size cap of the decoded texture cache in MB (the textures read least recently are removed first). About 12,000 textures fit in 4 GB, three or four heavy places; 8 GB keeps a week of places on a disk that has it.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>4096</integer>
+      <integer>8192</integer>
     </map>
     <key>FSVkNeuralRenderMode</key>
     <map>
