@@ -1,6 +1,6 @@
-# Plan: five speed ideas read from the Aurora Viewer (2026-10-28) — Adam: "have a plan ready, we'll work them in as it seems appropriate"
+# Plan: five speed ideas read from the Aurora Viewer (2026-10-28), and a sixth of our own — Adam: "have a plan ready, we'll work them in as it seems appropriate"
 
-Status: **plans only, nothing built.** None of this is the next piece; the next piece after bugs is the denoise-first order of RR and NR (`PLAN-dlss-nr.md` section 8). These are kept ready so that when one side of the frame wants more speed, the right one can be picked without reading Aurora again.
+Status: **idea 2 built (both stages, 2026-10-29, sections 2.1-2.3); idea 6 (texture arrival pacing) is a measurement plan, Adam's likely next step ("pacing might be the next step"); the rest are plans.** They are kept ready so that when one side of the frame wants more speed, the right one can be picked without reading Aurora again.
 
 ## 0. Where the ideas come from, and how far to trust the numbers
 
@@ -17,6 +17,7 @@ Which side each idea helps:
 | 3. one cascade per opaque caster, maps merged | GPU and worker, **RT off only** | the low-spec matrix (`BACKLOG-lowspec-and-next.md`) | 2 days |
 | 4. rigged bounds from the joint palette on the GPU | main thread | the avatar update is the limit; after C1b/C2 | 1-2 days, after C |
 | 5. two-phase occlusion without pop-in | GPU-driven passes | when C makes the main passes GPU-driven | part of C2 |
+| 6. texture arrival pacing (ours, not Aurora's) | loading: time to a textured scene, and the main thread while it loads | a place takes 30 s to look right though the decode is now a disk read | measure first (1 day), then what it says |
 
 ## 1. Texture animation evaluated in the vertex shader
 
@@ -32,7 +33,7 @@ Where: the record layout in `llvkbridge.h` / `llvkscenegeo.h` (one more field pe
 
 **Risks.** The clock: the CPU uses `LLFrameTimer::getElapsedSeconds()` quantised by the animation rate; a GPU evaluating against a float clock drifts after hours (precision). Use a double-derived cycle count sent per frame, not seconds. Faces below `MIN_TEX_ANIM_SIZE` are skipped by the CPU today (llvovolume.cpp 790); the GPU should keep animating them (it costs nothing), a visible improvement, not a regression, but note it. Records that hold the parameters make animated faces batchable with their neighbours again, which changes draw counts: expected, measure.
 
-## 2. BC7 at decode with a per-texture check, and a decoded-texture disk cache (stage a built 2026-10-29, see 2.1; stage b not started)
+## 2. BC7 at decode with a per-texture check, and a decoded-texture disk cache (both stages built 2026-10-29, see 2.1-2.3)
 
 **What Aurora does** (`aurora-render/src/bc7.rs`, `scene/texture_cache.rs`). After the JPEG 2000 decode, the RGBA8 mip chain is BC7-encoded with Intel's ISPC texture compressor in its fastest profile (about 70 Mpx/s a thread, a third of the J2K decode's cost), decoded back, compared with the source, and a texture with too many blocks off stays RGBA8; alpha texels at 0 and 255 are kept exact in every block (a mask cutoff at an end turns the smallest error into holes). About 85 % pass; 2.9 times less texture memory overall, median PSNR 53 dB. The result, BC7 or RGBA8, is written to a disk cache by its own thread (bounded queue, 256 MB), and a revisited place skips the decode.
 
@@ -110,7 +111,7 @@ A third off at the same scene; the compressed textures hold a quarter of what th
 
 **The check in practice** (first minute of a box-on session): 1461 compressed, 155 kept raw (9.6 %), 10.7 s of thread time over 8 decode threads. **Adam's eye** (2026-10-29): skin looks good, nothing downgraded on clothing; the hub has little material mapping, a texture-heavy place is the next look. No refusal from the pixel operations in any session.
 
-**Launchers:** `<work>un-viewer-bc7.bat 0|1` forces the box; the worker's memory line now reads "mirrored textures N (MB, of which block compressed n (MB))".
+**Launchers:** `<work>\run-viewer-bc7.bat 0|1` forces the box; the worker's memory line now reads "mirrored textures N (MB, of which block compressed n (MB))".
 
 ## 3. One cascade per opaque caster, with the finer map merged into the coarser (RT off only)
 
@@ -146,13 +147,48 @@ A third off at the same scene; the compressed textures hold a quarter of what th
 
 **Gates.** The H1 compare table's "Hi-Z OCCLUDED where the query saw samples" column at zero at the tight level, with the "lost saving" column near zero too.
 
-## 6. Smaller ones, kept as notes
+## 6. Texture arrival pacing (ours; Adam 2026-10-29: "pacing might be the next step ... it's really the basis of everything")
+
+**Why it is here.** The decoded cache took the decode out of a revisit (2279 of 2351 decodes served from disk in the first minute) and the time to a textured scene did not move: 29.6 s with the cache against 30.3 s without, at the hub, every session in the 27-39 s band. So the decode was never what set the pace; something upstream or downstream of it does, and until it is named, nothing in the loading path can be sped up on purpose. Adam's experience is the thing to fix: "we might not see it in the time, but definitely can feel it when trying to move around a loading world".
+
+**The stages a texture goes through, and what paces each today** (all from the code; none of the numbers below is measured yet):
+
+| stage | where | pace set by |
+|---|---|---|
+| wanted | `updateImagesFetchTextures` (llviewertexturelist.cpp 2285) | visits `TextureFetchUpdateMinCount` (32) textures a frame, or the list size over a divisor, scaled by the discard bias; the camera-cell stamp (`LL_VK_TEXSTAMP`) and the active/dormant split decide which; each visited texture gets its priority and desired discard from its faces |
+| fetched | `LLTextureFetchWorker`, HTTP | `TextureFetchConcurrency` (0 = the fetcher's own high water: 40 connections unpipelined, 100 pipelined); the throttle's bandwidth cap (`mMaxBandwidth`); one request per texture per discard step, a range request for the bytes that discard needs (`mRequestedSize`), so a texture that goes from 5 to 0 in steps costs several round trips |
+| decoded | `LLImageDecodeThread`, 8 threads | the pool; with the cache a hit is a read, a miss a J2K decode; BC7 adds the encode on the first visit after the switch |
+| created | `updateImagesCreateTextures` (2069) | one frame's budget: `updateImages` gets 2-5 ms a frame (llviewerdisplay.cpp 640, 50 ms a second clamped), fetch dispatch takes its share first, the create loop takes what is left, at least one texture; `createTexture` is the upload to the worker plus the alpha/pick mask on the main thread (not for BC7 chains) |
+| drawn | the worker's upload and the next frame | the worker's staging and upload queue (`texUploadReport`) |
+
+Adam's own feeling (a world that fills in while walking) says the limit is not only the end-to-end time but the order: what is in front of the camera arrives no sooner than what is behind it when the dispatch visits a fixed count a frame regardless of the camera's motion.
+
+**Step one, the measurement (the plan is this; the fix follows what it says).** A per-texture arrival trace behind a debug switch (`FSTextureArrivalTrace`, off by default, writes `<log dir>/texture-arrival.csv`): for each texture that reaches the GPU, the time it was first wanted, the time of each fetch request with its discard and bytes, the time the fetch completed, the time the decode (or cache read) started and finished, the time it was created, and the discard at each step; plus its screen size and distance when first wanted. From that file, offline (a scratchpad script, like the BC7 check):
+
+1. Where the time goes per texture: wanted-to-requested (the dispatch's queue), requested-to-fetched (network and connection wait), fetched-to-decoded (the pool's queue), decoded-to-created (the create loop's budget). The stage with the largest median is the limit; the one with the largest tail is what Adam feels.
+2. How many round trips a texture takes to its final discard (the ladder), and how many bytes the intermediate levels cost that the final one includes again (J2K is progressive, so a range request for discard 0 contains the earlier bytes; the question is whether the intermediate requests were needed for anything but a quicker first appearance).
+3. The create budget: frames in which the create loop broke on its time limit with textures still queued, and the queue depth then (a counter, logged with the minute report).
+4. The order: arrival time against the texture's screen size when wanted. Big near things should arrive first; the trace says whether they do.
+5. The main-thread cost while loading: the `textures: ...` zones (fetch dispatch, decode priority, create from decoded) in the first 30 s against the steady state, from the existing zone dump.
+
+**What the fix could be, by what the measurement says** (not chosen yet; each is its own small plan):
+
+- The dispatch is the limit (textures wait long before their first request): visit more a frame while the camera moves or after a teleport (the count is already scaled by the discard bias; scale it by the fetch queue's emptiness too), or let the worker's visibility verdicts (H6) order the visits.
+- The network is the limit: more connections while loading (the high water is a constant; make it a setting with a loading-time value), pipelining on by default where the grid allows, or fewer round trips (ask for the final discard at once for textures whose screen size is already known, skipping the ladder).
+- The create loop is the limit (queue depth grows while frames break on the budget): a larger budget while loading (the 50 ms a second is a GL-era number from when the upload was the main thread's; here the upload is a worker message, and a BC7 chain needs no mask pass), or the create work moved behind the worker entirely.
+- The order is wrong: priority from the screen size at the time of the request, not when first wanted; a teleport resets the priorities.
+
+**Gates.** G1: the trace runs with no measurable cost when off and under 0.1 ms a frame when on. G2 for any fix: time to textured (the arrival stamp) and the trace's per-stage medians at the same spot, before and after; Adam walking through a loading place and saying whether it fills in sooner in front of him. G3: no texture arrives at a coarser final level than before (the ladder's end does not move; count textures at their desired discard after 60 s, before and after).
+
+**Risks.** The fetch pipeline is shared with the whole viewer (the HTTP high water is also what the grid's CDN sees from each viewer; a higher count is a politeness question, not only a speed one); the create budget was limited for a reason (frame time while loading, and the GL driver's stalls, which do not apply here but the frame time does); the J2K progressive property makes "skip the ladder" a bandwidth cost if the screen size estimate is wrong. Everything here needs the measurement first.
+
+## 7. Smaller ones, kept as notes
 
 - **Light sets by screen column, row and depth slice** (`light_tiles.rs`: 32 columns, 32 rows, 32 slices, 64 lights, three 64-bit sets per fragment walked by intersection). Our deferred local lights already draw bounded boxes (S6 LV1: one record of boxes, `renderDeferredLighting` "local lights (boxes)"), so a fragment is only touched by lights whose box covers it; the forward alpha pass loops over the 8 nearest lights set by the CPU (`light_position[8]`). The sets would only prune that loop. Measure the alpha pass with lights off first; if the lights are not a visible share of its 1.4 ms, drop this.
 - **Frame threads one priority step above normal** (`frame_priority.rs`: main, render, pool helpers at above normal; decoders below). We have `LL_VK_PIN_MAIN/WORKER` (local only, `project-hard-pin-local-only`) and the worker's job threads at below normal. A cheap experiment on a loaded machine (compiler, browser): `SetThreadPriority(ABOVE_NORMAL)` on the main thread and the render worker behind an env knob, a lap each way. If it helps only under outside load, it is a shipping default (above normal is what games do), unlike the pin.
 - **One VkDeviceMemory per texture page** (`dedicated.rs`): freed textures give memory back to the driver at once instead of leaving allocator blocks mostly empty past the budget. Relevant to the VRAM cap caveat (`project-open-items-2026-10-25`) if `usage` stays high after texture drops; check VMA's statistics (block count and unused bytes) at that moment before building anything; VMA can be told to use dedicated allocations above a size, which is the one-line version.
 - **Decode threads writing texels straight into mapped staging** (`upload.rs`). Here the worker fills the staging buffer from the held pixels (`PixelHold`, `noteTexWorker` fill time); the main thread does not copy. The worker has slack (S6-census section 14), so this is a measurement (`texUploadReport` fill microseconds in a loading burst), not a plan.
 
-## 7. Excluded by Adam's rules (`feedback-no-visual-quality-cuts`)
+## 8. Excluded by Adam's rules (`feedback-no-visual-quality-cuts`)
 
 meshoptimizer-generated LODs for rigged meshes in the shadow cascades and the far view; the coarsest cascade drawn every other frame (we already reuse far cascades on an interval, which is the same lever); a lower shadow resolution or distance (Aurora also excludes these).
