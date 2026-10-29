@@ -2787,7 +2787,7 @@ LLTextureFetch::~LLTextureFetch()
 }
 
 S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
-    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http, bool needs_raw)
+    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http, bool needs_raw, S32 guess_discard)
 {
     LL_PROFILE_ZONE_SCOPED;
     if (mDebugPause)
@@ -2847,6 +2847,16 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         // this will calculate how much data we need without having to parse the header
 
         desired_size = LLImageJ2C::calcDataSizeJ2C(w, h, c, desired_discard);
+    }
+    else if (guess_discard >= 0)
+    {
+        // <FS> the texture plan 6.5: the size is not known yet, but the screen size is, so the first request asks for the level that size implies under a
+        // 1024-square assumption instead of 600 bytes of discovery; the JPEG 2000 header in those bytes tells the real size, the decode takes what the bytes
+        // allow (the stream is progressive), and a second request happens only when the guess was too coarse. Cold, the discovery was a whole fetch cycle a texture.
+        static LLCachedControl<U32> guess_size(gSavedSettings, "FSTextureFetchGuessSize", 1024);
+        const S32 assumed = (S32)llclamp((U32)guess_size(), 256u, 4096u);
+        desired_discard = llclamp(guess_discard, 0, MAX_DISCARD_LEVEL);
+        desired_size = desired_discard == 0 ? MAX_IMAGE_DATA_SIZE : LLImageJ2C::calcDataSizeJ2C(assumed, assumed, 4, desired_discard);
     }
     else
     {
