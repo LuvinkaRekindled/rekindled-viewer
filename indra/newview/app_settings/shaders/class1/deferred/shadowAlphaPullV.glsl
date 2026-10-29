@@ -59,6 +59,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Al
 uniform uvec2 ll_packet_table;
 uniform uvec2 ll_packet_models;
 uniform mat4 ll_view_proj;
+uniform int shadow_alpha_indexed;   // 1: an indexed draw (the hardware read the index buffer: gl_VertexIndex is the vertex), 0: a draw over the index list that reads the indices here
 uniform float ll_target_width;
 
 out vec4 post_pos;
@@ -73,8 +74,12 @@ void main()
 {
     AlphaPacket pk = AlphaPackets(ll_packet_table).p[gl_InstanceIndex];
     uint i = pk.first + uint(gl_VertexIndex);
-    uint word = AlphaIndices(pk.indices).w[i >> 1];
-    uint index = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+    uint index = uint(gl_VertexIndex);
+    if (shadow_alpha_indexed == 0)
+    {
+        uint word = AlphaIndices(pk.indices).w[i >> 1];
+        index = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+    }
     vec4 position = AlphaPositions(pk.positions).v[index];
     vec3 local = position.xyz;
     if ((pk.flags & 32u) != 0u)
