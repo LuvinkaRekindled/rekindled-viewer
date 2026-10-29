@@ -2942,6 +2942,28 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSTextureFetchGuessLevel</key>
+    <map>
+      <key>Comment</key>
+      <string>The first fetch of a texture whose size is not known yet asks for the level its screen size implies (assuming 1024x1024) instead of a 600-byte discovery request followed by a second request. Off: the discovery. Measured 2026-10-29; the switch goes once one path is kept.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
+    <key>FSTextureFetchGuessSize</key>
+    <map>
+      <key>Comment</key>
+      <string>The full size (square) assumed when the first fetch of a texture guesses its level from the screen size (FSTextureFetchGuessLevel). Larger asks for more bytes at once and needs a second request less often.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>1024</integer>
+    </map>
     <key>FSTextureFetchHighWater</key>
     <map>
       <key>Comment</key>

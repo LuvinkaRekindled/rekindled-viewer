@@ -2336,8 +2336,20 @@ bool LLViewerFetchedTexture::updateFetch()
         // bypass texturefetch directly by pulling from LLTextureCache
         S32 fetch_request_response = -1;
         S32 worker_discard = -1;
+        // <FS> PLAN-aurora-ideas.md 6.5: the first request of a texture whose size is not known yet guesses its level from the screen size (a 1024-square assumption)
+        S32 guess_discard = -1;
+        {
+            static LLCachedControl<bool> guess_on(gSavedSettings, "FSTextureFetchGuessLevel", true);
+            static LLCachedControl<U32> guess_size(gSavedSettings, "FSTextureFetchGuessSize", 1024);        // the assumed full size (a finer assumption absorbs the screen size growing a frame after the request)
+            if (guess_on() && w == 0 && mMaxVirtualSize > 0.f && mUrl.empty() && mFTType == FTT_DEFAULT && !needsAux())
+            {
+                const F32 px = sqrtf(mMaxVirtualSize);                                      // the texture's largest extent on screen, in pixels
+                guess_discard = llclamp((S32)llround(log2f((F32)llclamp((U32)guess_size(), 256u, 4096u) / llmax(px, 1.f))), 0, (S32)MAX_DISCARD_LEVEL);
+                if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("guess", mID, guess_discard, desired_discard, 0, mMaxVirtualSize);
+            }
+        }
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
-            w, h, c, desired_discard, needsAux(), mCanUseHTTP, needsRawPixels());
+            w, h, c, desired_discard, needsAux(), mCanUseHTTP, needsRawPixels(), guess_discard);
 
         if (fetch_request_response >= 0) // positive values and 0 are discard values
         {

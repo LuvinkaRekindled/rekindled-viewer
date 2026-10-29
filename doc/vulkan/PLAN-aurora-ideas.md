@@ -1,6 +1,6 @@
 # Plan: five speed ideas read from the Aurora Viewer (2026-10-28), and a sixth of our own — Adam: "have a plan ready, we'll work them in as it seems appropriate"
 
-Status: **idea 2 built (both stages, 2026-10-29, sections 2.1-2.3; the cache's hit path fixed the same night, see 6); idea 6 (texture arrival pacing) under way: the arrival trace is built and read at the hub, the completion wake built from it (6.1: a texture's way from wanted to the GPU 0.72 -> 0.17 s median), next the create budget while loading and the Citadel trace; the rest are plans.** They are kept ready so that when one side of the frame wants more speed, the right one can be picked without reading Aurora again.
+Status: **idea 2 built (both stages, 2026-10-29, sections 2.1-2.3; the cache's hit path fixed the same night, see 6); idea 6 (texture arrival pacing) built through the night of 2026-10-29 (6.1-6.5: the arrival trace, the completion wake, the alpha and pick-mask passes off the main thread, one-copy by default, the worker's mip chain always, 16 connections and a 200 window, the bandwidth slider to 10000, the discovery round trip replaced by a guess): warm, a texture is on the GPU 0.14 s after its face appears; cold, 1.2 s behind the sim's object stream; the rest are plans.** They are kept ready so that when one side of the frame wants more speed, the right one can be picked without reading Aurora again.
 
 ## 0. Where the ideas come from, and how far to trust the numbers
 
@@ -280,7 +280,26 @@ The sim honours more than 3000: the objects arrive a fifth sooner (not three tim
 
 **Decided (Adam, 2026-10-29: "Yes, both"): 16 connections and a window of 200 are the defaults (`TextureFetchConcurrency` 16, `FSTextureFetchHighWater` 200), and the bandwidth slider runs to 10000 with its default left at 3000 and its labels redrawn (Wi-Fi, DSL, Cable, then Fibre with the note that the sim sends objects faster above 3000).** Measured: 16 connections and a window of 200 (the setting's clamp is 64 so the experiment could run; the shipped Linden default is 8, the old clamp 12). The CDN's tolerance of 16 per viewer is the risk; the texture CDN is a Cloudfront-style edge and 16 is what a browser opens per host.
 
-**What the fix could be, by what the measurement says** (the hub's answers are in 6.1 and 6.2, the network's in 6.3 and 6.4):
+### 6.5 The discovery round trip skipped (2026-10-29 morning; Adam: "Discovery skip")
+
+**What it was.** `LLTextureFetch::createRequest` asked for 600 bytes at discard 5 whenever the texture's size was not known yet ("we fetch the smallest amount of data at the lowest resolution"), so that the JPEG 2000 header could give the size and the real level could be computed; the real level was then a second request, a second slot wait, a second decode and a second visit by the texture list. Cold, every texture paid it (3092 discovery requests at Citadel; 1980 of 3984 textures took two requests), and warm nobody did (the texture cache keeps the header), which is why it was invisible until the cold trace.
+
+**What it is now** (`FSTextureFetchGuessLevel`, default on, a switch while it is measured; `FSTextureFetchGuessSize`, 1024): when the size is not known but a face has given the texture a screen size, the first request asks for the level that size implies under a square assumption of 1024 (`llround(log2(1024 / pixels))`, clamped 0..5), with the bytes `calcDataSizeJ2C` gives for that level of a 1024 square (the whole file for level 0). The header in those bytes tells the real size, the decode takes the level the bytes allow (the stream is progressive), and the second request happens only when the guess was too coarse. Textures with no screen size yet, aux requests and url textures keep the discovery.
+
+| cold Citadel, 16/200 | discovery (600 B) | guess, 1024 | guess, 2048 |
+|---|---|---|---|
+| HTTP requests in 120 s | 5456 | **4541** | 5222 |
+| textures that took two or more requests | 1980 of 3438 | **1084** of 3416 | 1762 of 3419 |
+| formatted bytes held at the end | 171 MB | 172 MB | 169 MB |
+| wanted -> the texture's real level | 3.19 s median, 4.5 p90 | **1.17 s median, 2.3 p90** | 1.59 median, 4.0 p90 |
+| textures created, 50 / 90 % by | 9.0 / 18.1 s | **6.2 / 16.2 s** | 7.0 / 18.1 s |
+| wait for a slot, per request | 0.54 s | 0.51 s | 1.21 s |
+
+The 1024 assumption takes a cold texture's lag behind its object from 3.2 s to 1.2 s and the scene's halfway mark from 9 to 6 s, for the same bytes. 2048 is worse than 1024 on every line: the bigger first requests hold the connections longer (the slot wait doubles), the screen size has grown further by the time they land, and more textures need a second request after all. The second requests that remain at 1024 are mostly one level finer than the guess (sequences 5-4, 4-3, 3-2): the screen size the first face reports grows over the next frames as the camera settles, which a bigger assumption cannot fix without paying in bytes and slot time; a short wait before the first request would, at the cost of latency on every texture, and is not worth it at 1.2 s.
+
+**Where cold loading stands after the night** (Citadel, the caches empty): the objects arrive over 20-25 s at the sim's throttle (10000 brings that in by a fifth), and each texture is on the GPU at its real level 1.2 s after its face appears, down from 3.6 s at the start of the night's network work and 0.14 s warm. The switches to delete once Adam has lived with them: `FSTextureFetchWake`, `FSTextureFetchGuessLevel` (and its size), `LL_VK_TEXONECOPY`.
+
+**What the fix could be, by what the measurement says** (the hub's answers are in 6.1 and 6.2, the network's in 6.3 to 6.5):
 
 - The dispatch is the limit (textures wait long before their first request): visit more a frame while the camera moves or after a teleport (the count is already scaled by the discard bias; scale it by the fetch queue's emptiness too), or let the worker's visibility verdicts (H6) order the visits.
 - The network is the limit: more connections while loading (the high water is a constant; make it a setting with a loading-time value), pipelining on by default where the grid allows, or fewer round trips (ask for the final discard at once for textures whose screen size is already known, skipping the ladder).

@@ -94,7 +94,7 @@ public:
     // returns discard on success, fail code otherwise
     // <FS> needs_raw: the texture reads texels on the CPU, so the decode may not answer with a BC7 chain (llimagebc7.h)
     S32 createRequest(FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
-                       S32 w, S32 h, S32 c, S32 discard, bool needs_aux, bool can_use_http, bool needs_raw = false);
+                       S32 w, S32 h, S32 c, S32 discard, bool needs_aux, bool can_use_http, bool needs_raw = false, S32 guess_discard = -1);
 
     // Requests that a fetch operation be deleted from the queue.
     // If @cancel is true, also stops any I/O operations pending.
