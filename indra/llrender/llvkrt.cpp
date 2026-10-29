@@ -488,6 +488,7 @@ struct Avatar
     U64 mLastTag = 0;
     U64 mLastBuildTag = 0;              // frame of the latest build or refit
     bool mLastWasRefit = false;
+    U32 mSnapSerial = 0;                // the snapshot (sSnapshotSerial) whose renders already made this avatar's structure: the world is frozen while it renders, the later renders keep it
     VkDeviceAddress mAddressNow = 0;    // the structure the scene uses (a new one when it is being built this call)
 };
 
@@ -2016,8 +2017,13 @@ U32 tableOffset(U32 frame_slot)
 
 static float sDistanceScale = 1.f;
 static bool sSnapshotScene = false;
+static U32 sSnapshotSerial = 0;         // counts the snapshots (a run of scene calls with the snapshot flag)
 void setSnapshotScene(bool snapshot)
 {
+    if (snapshot && !sSnapshotScene)
+    {
+        ++sSnapshotSerial;
+    }
     sSnapshotScene = snapshot;
 }
 void setDistanceScale(float scale)
@@ -2876,6 +2882,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         {
             continue;
         }
+        // A snapshot renders 18 times in a row and the world does not move in between (display() runs without idle()): each avatar's structure is made once, by a full build in the first render
+        // that has the avatar, every avatar due in it, and the later renders keep it. (Refitted structures made some of the renders take seconds, and one device lost: snaprebuild=0 puts the old way back.)
+        const bool snap_pass = sSnapshotScene && sDbg.mSnapRebuild;
+        if (snap_pass && a.mSnapSerial == sSnapshotSerial)
+        {
+            continue;
+        }
         float dist = 0.f;
         if (a.mHasPos && !a.mSelf)
         {
@@ -2915,6 +2928,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         else
         {
             urgency = (double)(av_tag - a.mLastBuildTag) / (2.0 * (double)period);        // frame slots: two per viewer frame
+        }
+        if (snap_pass)
+        {
+            urgency = 1e12;                         // a snapshot shows every avatar as it is now
         }
         if (urgency < 1.0)
         {
@@ -3286,6 +3303,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         }
         a.mProcessedTag = av_tag;
         a.mLastBuildTag = av_tag;
+        if (sSnapshotScene)
+        {
+            a.mSnapSerial = sSnapshotSerial;
+        }
         ++sStats.mFarAvatars[std::min<U32>(a.mFarTier, 3u)];
         for (int bit = 0; bit < 7; ++bit)
         {
