@@ -42,8 +42,8 @@ public:
     void shutdown();
 
     // LLDecodedImageCache (decode pool threads)
-    LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard, bool allow_compressed) override;
-    void write(const LLUUID& id, S32 discard, const LLImageRaw* raw) override;
+    LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard, bool allow_compressed, bool* checked_raw) override;
+    void write(const LLUUID& id, S32 discard, const LLImageRaw* raw, bool checked_raw) override;
 
     // Main thread, every frame (cheap): reads the settings, logs a report once a minute while anything happened, stamps the texture arrival once a session
     void update();
@@ -70,7 +70,7 @@ private:
     std::string fileName(const LLUUID& id, S32 discard, U8 format) const;
     std::string subDir(const LLUUID& id) const;
     void scanIndex();                                   // writer thread, at init
-    void writeFile(const LLUUID& id, S32 discard, LLPointer<LLImageRaw> raw);     // writer thread
+    void writeFile(const LLUUID& id, S32 discard, LLPointer<LLImageRaw> raw, bool checked_raw);     // writer thread
     void touch(const LLUUID& id);                       // writer thread: the file's time and the index
     void evict();                                       // writer thread, index lock held by the caller
     bool post(std::function<void()> work);              // to the writer; false when closed
