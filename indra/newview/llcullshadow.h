@@ -8,6 +8,7 @@
 #define LL_LLCULLSHADOW_H
 
 #include "stdtypes.h"
+#include <atomic>
 #include <cstdlib>
 
 class LLCamera;
@@ -21,10 +22,12 @@ namespace LLCullShadow
     inline const bool sCompare = sOn && !(getenv("LL_VK_CULL_COMPARE") && getenv("LL_VK_CULL_COMPARE")[0] == '0');     // LL_VK_CULL_COMPARE=0: no comparison with the CPU set (the production cost of the table and its test)
     // C2 (doc/vulkan/S7-design.md section 18): LL_VK_CULL_USE=1 derives the main view's visible groups from the GPU verdict next to the walk and compares them (the walk is still what is used); =2 the covered partitions
     // are not walked, their lists come from the verdict. LL_VK_CULL_USE_VARIANT=1..3 picks the margin variant (default 2).
-    inline const unsigned sUse = sOn && getenv("LL_VK_CULL_USE") ? (unsigned)atoi(getenv("LL_VK_CULL_USE")) : 0u;
+    inline const unsigned sUseEnv = sOn && getenv("LL_VK_CULL_USE") ? (unsigned)atoi(getenv("LL_VK_CULL_USE")) : 0u;
+    inline std::atomic<unsigned> sUse{ sUseEnv };      // (live while the table runs: rt-debug.txt culluse=0/1/2 overrides it, a same-lap A/B of the walk against the verdict)
     inline const unsigned sUseVariant = getenv("LL_VK_CULL_USE_VARIANT") ? (unsigned)atoi(getenv("LL_VK_CULL_USE_VARIANT")) : 2u;
     bool useSkip(class LLSpatialPartition* part);   // the partition is handled by useVerdict this frame (its root is rebound here): the caller does not walk it
     void useVerdict(LLCamera& camera);              // after the partition loop of the main view's updateCull: the lists of the skipped partitions
+    bool useMatches(LLCamera& camera);              // the verdict was made for a frustum of this shape (aspect, field of view, far limit): the margins cover the camera's motion, not a change of shape (a snapshot has no UI: another aspect); false = this frame is walked
     void poseLog(LLCamera& camera);
 
     // C1b: the hooks (each call site tests sOn first, so a run without the switch pays one branch)
