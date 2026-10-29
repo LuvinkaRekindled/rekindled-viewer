@@ -27,6 +27,7 @@ S32 glossyReflections();   // glossyrt: ray traced reflections on glossy surface
 S32 waterReflections();    // waterrt=1: ray traced water reflections
 S32 hitRays();             // hitrays=N: shadow rays per local light at a traced hit (-1 not set)
 S32 hitQuality();          // hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 main pass lighting at the hit)
+S32 sunSamples();          // sunsamples=N (default 0: RenderRTShadowSamples decides): rays per pixel of the sun lightmap pass, a same-lap A/B
 S32 texAnim();            // texanim=0/1/2 (default -1: the setting decides): texture animation by the CPU / by the vertex shader / CPU with the shader's twin compared
 S32 sunSelfShadow();       // sunself=0/1 (default 1): the translucent, soft avatar self shadows of the sun; 0 = an avatar blocks fully, no start disc (a cost A/B within one lap)
 S32 debugView();        // view=N: the material debug view mode to show (0 = the setting RenderRTMaterialDebug)
