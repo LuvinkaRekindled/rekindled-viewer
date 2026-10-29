@@ -222,7 +222,34 @@ The remaining 0.11 ms per MB is not named yet (the texture object's own bookkeep
 
 **The mip chain, found on the way (fixed the same night, Adam: "drop it"):** a raw upload's mip chain was generated on the worker only under `RenderGLContextCoreProfile` (Adam's saved setting; the shipped default is off), and the other branch was the legacy GL_GENERATE_MIPMAP parameter, an empty block under Vulkan, so a fresh install filled no level below 0 (the by-hand chain of the third branch, 0.3-0.5 ms per MB on the main thread, was never the one in use). Now one path: level 0 uploaded, the chain generated on the worker, always; the by-hand branch and `mAutoGenMips` are gone (135 lines). Proof: a hub login with the setting forced off (`<work>un-viewer-mips.bat`), the memory line's "mip levels that hold no data" at 0 MB through the login where the code said it would have been the whole chain. One GL-era read of the flag remains in `setManualImage` (the alpha and luminance swizzle conversions); the Vulkan format table maps those formats itself, so it is likely dead too, not touched tonight.
 
-**What the fix could be, by what the measurement says** (the hub's answers are above; the network side waits for the Citadel trace):
+### 6.3 The network side: Citadel warm and cold (2026-10-29 night)
+
+**Citadel warm** (both caches hold the place; Adam's texture-shop spot, 2864 textures fetched, 15 over the network), per fetch cycle: fetch 0.04 s, decode 0.02 s, decoded -> created 0.08 s, **the whole way 0.14 s median, 0.64 s p90**; half the scene created by 0.85 s after the world appeared, 95 % by 1.1 s. With the night's changes a warm place is on the GPU in about a second.
+
+**Citadel cold** (the caches pointed at an empty folder, `<work>\run-viewer-cold.bat`: every texture over the network, 3984 textures, 5430 HTTP requests, 6040 decodes and 1684 BC7 encodes in the first two minutes):
+
+| per fetch cycle | median | p90 | p99 |
+|---|---|---|---|
+| wanted -> first request | 0.00 s | 0.06 s | 2.1 s |
+| **request -> bytes in hand (network)** | **0.51 s** | **2.44 s** | 3.1 s |
+| bytes -> decoded | 0.02 s | 0.88 s | 1.05 s |
+| decoded -> created | 0.12 s | 0.40 s | 0.69 s |
+| wanted -> first created, the whole way | 0.81 s | 2.74 s | 4.4 s |
+
+Half the scene created by 6.0 s, 90 % by 21 s, 99 % by 31 s; settled at 44.6 s. The order by size holds cold (the largest quarter created at a median 3.5 s, the smallest at 18 s): what is in front arrives first. The create loop is out of the picture (52 ms in the first 10 s). **The time is the network stage, and inside it, per HTTP request:**
+
+| per HTTP request (5430) | median | p90 | p99 |
+|---|---|---|---|
+| **wait for a connection** (WAIT_HTTP_RESOURCE -> SEND) | **0.48 s** | **1.31 s** | 6.4 s |
+| request issued -> bytes in hand | 0.087 s | 0.21 s | 0.44 s |
+
+So five sixths of the fetch stage is the viewer's own queue in front of its connection limit (`HTTP_NONPIPE_REQUESTS_HIGH_WATER` 40, `HTTP_PIPE_REQUESTS_HIGH_WATER` 100, constants in lltexturefetch.cpp; the CDN answers in 87 ms once asked). **And the ladder is real cold:** 1980 of the 3984 textures took two requests; the sequences are (5, then 4 / 3 / 2 / 1 / 0): the first request of every texture asks for 600 bytes at discard 5 to learn the texture's size, and the real level is a second request, a second connection wait and a second decode (3092 such discovery requests). The texture cache keeps that header, which is why a warm place has no ladder. Failures in the two minutes: 10 curl timeouts, 16 403s, 2 5xx.
+
+**What the fix could be, cold, in order of expected gain:** (1) the connection limit: a setting instead of a constant, measured at 40 / 100 / 200 at cold Citadel (the wait should fall toward the 87 ms round trip; the CDN's and the pipelining's tolerance are the risk); (2) the discovery round trip: for a texture whose screen size is known when the request is made (the wanted row carries it), ask at once for the bytes of the level that size implies under a 1024-square assumption (the JPEG 2000 header in those bytes corrects the size), so the second request happens only when the guess was coarse; (3) the retry backoff (10 s minimum, doubling) for the timeouts. Not started; Adam's call which first.
+
+**Also found by this run:** the alpha classifier's 2x2 walk read a row or a column past the texels of an odd-sided image (a debug-only assert in the old main-thread code, which rarely met one); run on the decode pool for every image it took the viewer down at the login screen on the first cold start; guarded in both copies.
+
+**What the fix could be, by what the measurement says** (the hub's answers are in 6.1 and 6.2, the network's in 6.3):
 
 - The dispatch is the limit (textures wait long before their first request): visit more a frame while the camera moves or after a teleport (the count is already scaled by the discard bias; scale it by the fetch queue's emptiness too), or let the worker's visibility verdicts (H6) order the visits.
 - The network is the limit: more connections while loading (the high water is a constant; make it a setting with a loading-time value), pipelining on by default where the grid allows, or fewer round trips (ask for the final discard at once for textures whose screen size is already known, skipping the ladder).

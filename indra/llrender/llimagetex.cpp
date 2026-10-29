@@ -2062,7 +2062,7 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
     // this will mid-skew the data (and thus increase the chances of not
     // being used as a mask) from high-frequency alpha maps which
     // suffer the worst from aliasing when used as alpha masks.
-    if (w >= 2 && h >= 2)
+    if (w >= 2 && h >= 2 && (w & 1) == 0 && (h & 1) == 0)       // <FS> the 2x2 walk needs even sides (the asserts below were debug-only; an odd side read past the texels)
     {
         llassert(w % 2 == 0);
         llassert(h % 2 == 0);

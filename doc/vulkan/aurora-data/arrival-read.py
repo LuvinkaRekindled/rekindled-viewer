@@ -73,8 +73,8 @@ for id_, evs in by_id.items():
         elif ev == "WAIT_HTTP_REQ": cur["http"] += 1; cur["http_bytes"] += by
         elif ev == "DECODE_IMAGE" and cur["bytes"] is None: cur["bytes"] = t; cur["fmt"] = by
         elif ev == "dechit": cur["dechit"] = True
-        elif ev == "DONE" and cur["done"] is None: cur["done"] = t
-        elif ev == "created" and cur["done"] is not None and cur["created"] is None: cur["created"] = t
+        elif ev in ("WRITE_TO_CACHE", "DONE") and cur["done"] is None: cur["done"] = t       # the decode is over when the worker moves on to the cache write (or straight to DONE); DONE itself waits for that write
+        elif ev == "created" and cur["bytes"] is not None and cur["created"] is None: cur["created"] = t   # the main thread creates from the decoded result, often before the worker reaches DONE
     # the request row that opened each cycle: the last 'request' at or before its INIT
     for c in cycles:
         rq = [t for t in reqs if t <= c["init"] + 0.001]
