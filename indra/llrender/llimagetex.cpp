@@ -908,137 +908,18 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
         }
         else if (!is_compressed)
         {
-            if (mAutoGenMips)
+            // <FS> the mip chain is generated on the render worker (a blit cascade), always: the GL-era choice between the legacy GL_GENERATE_MIPMAP parameter (an empty block
+            // under Vulkan, so with RenderGLContextCoreProfile off, the shipped default, no level below 0 was ever filled) and a chain built by hand on the main thread
+            // (0.3-0.5 ms per MB) is gone (PLAN-aurora-ideas.md 6.2, 2026-10-29)
+            S32 w = getWidth(mCurrentDiscardLevel);
+            S32 h = getHeight(mCurrentDiscardLevel);
+            mMipLevels = wpo2(llmax(w, h));
+            LLImageTex::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h, mFormatPrimary, mFormatType, data_in, mAllowCompression);
+            analyzeAlpha(data_in, w, h);
+            updatePickMask(w, h, data_in);
             {
-                {
-
-                    S32 w = getWidth(mCurrentDiscardLevel);
-                    S32 h = getHeight(mCurrentDiscardLevel);
-
-                    mMipLevels = wpo2(llmax(w, h));
-
-                    //use legacy mipmap generation mode (note: making this condional can cause rendering issues)
-                    // -- but making it not conditional triggers deprecation warnings when core profile is enabled
-                    //      (some rendering issues while core profile is enabled are acceptable at this point in time)
-                    if (!LLRender::sGLCoreProfile)
-                    {
-                    }
-
-                    LLImageTex::setManualImage(edit_name, mTarget, 0, mFormatInternal,
-                                 w, h,
-                                 mFormatPrimary, mFormatType,
-                                 data_in, mAllowCompression);
-                    analyzeAlpha(data_in, w, h);
-
-                    updatePickMask(w, h, data_in);
-
-
-                    if (LLRender::sGLCoreProfile)
-                    {
-                        LL_PROFILE_GPU_ZONE("generate mip map");
-                        LLVkTex::generateMipmap(edit_name);
-                    }
-                }
-            }
-            else
-            {
-                // Create mips by hand
-                // ~4x faster than gluBuild2DMipmaps
-                S32 width = getWidth(mCurrentDiscardLevel);
-                S32 height = getHeight(mCurrentDiscardLevel);
-                S32 nummips = mMaxDiscardLevel - mCurrentDiscardLevel + 1;
-                S32 w = width, h = height;
-
-
-                const U8* new_data = 0;
-                (void)new_data;
-
-                const U8* prev_mip_data = 0;
-                const U8* cur_mip_data = 0;
-#ifdef SHOW_ASSERT
-                S32 cur_mip_size = 0;
-#endif
-                mMipLevels = nummips;
-
-                for (int m=0; m<nummips; m++)
-                {
-                    if (m==0)
-                    {
-                        cur_mip_data = data_in;
-#ifdef SHOW_ASSERT
-                        cur_mip_size = width * height * mComponents;
-#endif
-                    }
-                    else
-                    {
-                        S32 bytes = w * h * mComponents;
-#ifdef SHOW_ASSERT
-                        llassert(prev_mip_data);
-                        llassert(cur_mip_size == bytes*4);
-#endif
-                        U8* new_data = new(std::nothrow) U8[bytes];
-                        if (!new_data)
-                        {
-
-                            if (prev_mip_data)
-                            {
-                                if (prev_mip_data != cur_mip_data)
-                                    delete[] prev_mip_data;
-                                prev_mip_data = nullptr;
-                            }
-                            if (cur_mip_data)
-                            {
-                                delete[] cur_mip_data;
-                                cur_mip_data = nullptr;
-                            }
-
-                            mImageTextureCreated = false;
-                            return false;
-                        }
-                        else
-                        {
-
-#ifdef SHOW_ASSERT
-                            llassert(prev_mip_data);
-                            llassert(cur_mip_size == bytes * 4);
-#endif
-
-                            LLImageBase::generateMip(prev_mip_data, new_data, w, h, mComponents);
-                            cur_mip_data = new_data;
-#ifdef SHOW_ASSERT
-                            cur_mip_size = bytes;
-#endif
-                        }
-
-                    }
-                    llassert(w > 0 && h > 0 && cur_mip_data);
-                    (void)cur_mip_data;
-                    {
-
-                        LLImageTex::setManualImage(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data, mAllowCompression);
-                        if (m == 0)
-                        {
-                            analyzeAlpha(data_in, w, h);
-                        }
-                        if (m == 0)
-                        {
-                            updatePickMask(w, h, cur_mip_data);
-                        }
-
-                    }
-                    if (prev_mip_data && prev_mip_data != data_in)
-                    {
-                        delete[] prev_mip_data;
-                    }
-                    prev_mip_data = cur_mip_data;
-                    w >>= 1;
-                    h >>= 1;
-                }
-                if (prev_mip_data && prev_mip_data != data_in)
-                {
-                    delete[] prev_mip_data;
-                    prev_mip_data = NULL;
-                }
+                LL_PROFILE_GPU_ZONE("generate mip map");
+                LLVkTex::generateMipmap(edit_name);
             }
         }
         else
@@ -1681,10 +1562,6 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
         *tex_name = new_texname;
     }
 
-    if (mUseMipMaps)
-    {
-        mAutoGenMips = true;
-    }
 
     mCurrentDiscardLevel = discard_level;
 
