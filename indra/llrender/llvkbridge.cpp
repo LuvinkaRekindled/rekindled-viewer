@@ -839,6 +839,11 @@ S32 LLVkBridge::rtHitQuality()
     return rtShadowMode() != 0 ? LLVk::Rt::hitQuality() : -1;
 }
 
+S32 LLVkBridge::rtSnapTest()
+{
+    return rtShadowMode() != 0 ? LLVk::Rt::snapTest() : 0;
+}
+
 S32 LLVkBridge::rtCullUse()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::cullUse() : -1;
