@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "lltexturecache.h"
+#include "fsdecodedtexturecache.h"
 
 #include "llapr.h"
 #include "lldir.h"
@@ -954,6 +955,7 @@ void LLTextureCache::setDirNames(ELLPath location)
 
 void LLTextureCache::purgeCache(ELLPath location, bool remove_dir)
 {
+    FSDecodedTextureCache::instance().purgeAll();       // <FS> the decoded copies go with the cache
     LLMutexLock lock(&mHeaderMutex);
 
     if (!mReadOnly)
@@ -2376,6 +2378,7 @@ void LLTextureCache::removeEntry(S32 idx, Entry& entry, std::string& filename)
 bool LLTextureCache::removeFromCache(const LLUUID& id)
 {
     //LL_WARNS() << "Removing texture from cache: " << id << LL_ENDL;
+    FSDecodedTextureCache::instance().remove(id);       // <FS> a texture found corrupt: its decoded copy goes too
     bool ret = false ;
     if (!mReadOnly)
     {

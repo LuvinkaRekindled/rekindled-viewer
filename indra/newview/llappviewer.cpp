@@ -188,6 +188,7 @@
 #include "lllfsthread.h"
 #include "llworkerthread.h"
 #include "lltexturecache.h"
+#include "fsdecodedtexturecache.h"
 #include "lltexturefetch.h"
 #include "llimageworker.h"
 #include "llevents.h"
@@ -2544,6 +2545,7 @@ bool LLAppViewer::cleanup()
     sTextureFetch->shutdown();
     sTextureCache->shutdown();
     sImageDecodeThread->shutdown();
+    FSDecodedTextureCache::instance().shutdown();       // <FS> after the decode pool: no reader runs any more
     sPurgeDiskCacheThread->shutdown();
     if (mGeneralThreadPool)
     {
@@ -5611,6 +5613,7 @@ bool LLAppViewer::initCache()
     // </FS:Ansariel>
 
     LLAppViewer::getTextureCache()->initCache(LL_PATH_CACHE, texture_cache_size, texture_cache_mismatch);
+    FSDecodedTextureCache::instance().init(LL_PATH_CACHE, texture_cache_mismatch);      // <FS> the decoded textures, next to the texture cache
 
     const U32 CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS = 128;
     LLVOCache::getInstance()->initCache(LL_PATH_CACHE, CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS, getObjectCacheVersion());

@@ -29,7 +29,19 @@
 
 #include "llimage.h"
 #include "llpointer.h"
+#include "lluuid.h"
 #include "threadpool_fwd.h"
+
+// <FS> A cache of decoded images the decode pool asks before decoding (fsdecodedtexturecache.h implements it; the texture plan section 2).
+// read: the image of 'id' at exactly 'discard', or null. write: the decode just produced this image at this discard level (the cache copies what it keeps). Both run on the decode
+// pool's threads and must not block for long.
+class LLDecodedImageCache
+{
+public:
+    virtual ~LLDecodedImageCache() {}
+    virtual LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard) = 0;
+    virtual void write(const LLUUID& id, S32 discard, const LLImageRaw* raw) = 0;
+};
 
 class LLImageDecodeThread
 {
@@ -48,9 +60,14 @@ public:
 
     // meant to resemble LLQueuedThread::handle_t
     typedef U32 handle_t;
+    // <FS> cache_id: the texture asset id, when the decoded image may come from / go to the decoded cache (null: never, as for local files and bakes)
     handle_t decodeImage(const LLPointer<LLImageFormatted>& image,
                          S32 discard, bool needs_aux,
-                         const LLPointer<Responder>& responder);
+                         const LLPointer<Responder>& responder,
+                         const LLUUID& cache_id = LLUUID::null);
+    // <FS> the decoded cache the pool asks (null: none); set before any decode runs and cleared after the pool has shut down
+    static void setDecodedCache(LLDecodedImageCache* cache);
+    static LLDecodedImageCache* getDecodedCache();
     size_t getPending();
     size_t update(F32 max_time_ms);
     S32 getTotalDecodeCount() { return mDecodeCount; }

@@ -43,6 +43,7 @@
 
 #include "llagent.h"
 #include "lltexturecache.h"
+#include "fsdecodedtexturecache.h"
 #include "llviewercontrol.h"
 #include "llviewertexturelist.h"
 #include "llviewertexture.h"
@@ -2004,10 +2005,12 @@ bool LLTextureFetchWorker::doWork(S32 param)
         // In case worked manages to request decode, be shut down,
         // then init and request decode again with first decode
         // still in progress, assign a sufficiently unique id
+        // <FS> an asset texture (no url: not a local file, not a bake) may come from the decoded cache instead of the decode, and what the decode produces goes there
         mDecodeHandle = LLAppViewer::getImageDecodeThread()->decodeImage(mFormattedImage,
                                                                        discard,
                                                                        mNeedsAux,
-                                                                       new DecodeResponder(mFetcher, mID, this));
+                                                                       new DecodeResponder(mFetcher, mID, this),
+                                                                       mUrl.empty() ? mID : LLUUID::null);
         if (mDecodeHandle == 0)
         {
             // Abort, failed to put into queue.
@@ -3289,6 +3292,7 @@ void LLTextureFetch::commonUpdate()
 //virtual
 size_t LLTextureFetch::update(F32 max_time_ms)
 {
+    FSDecodedTextureCache::instance().update();      // <FS> settings and the once-a-minute report of the decoded cache
     LL_PROFILE_ZONE_SCOPED;
 
     {
