@@ -38,7 +38,8 @@ public:
                  S32 discard,
                  bool needs_aux,
                  const LLPointer<LLImageDecodeThread::Responder>& responder,
-                 U32 request_id);
+                 U32 request_id,
+                 const LLUUID& cache_id);
     virtual ~ImageRequest();
 
     /*virtual*/ bool processRequest();
@@ -52,6 +53,7 @@ private:
     S32 mDiscardLevel;
     U32 mRequestId;
     bool mNeedsAux;
+    LLUUID mCacheID;        // <FS> null: the decoded cache is not asked
     // output
     LLPointer<LLImageRaw> mDecodedImageRaw;
     LLPointer<LLImageRaw> mDecodedImageAux;
@@ -88,11 +90,17 @@ size_t LLImageDecodeThread::getPending()
     return mThreadPool->getQueue().size();
 }
 
+// <FS> the decoded cache (fsdecodedtexturecache.cpp)
+static LLDecodedImageCache* sDecodedCache = nullptr;
+void LLImageDecodeThread::setDecodedCache(LLDecodedImageCache* cache) { sDecodedCache = cache; }
+LLDecodedImageCache* LLImageDecodeThread::getDecodedCache() { return sDecodedCache; }
+
 LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     const LLPointer<LLImageFormatted>& image,
     S32 discard,
     bool needs_aux,
-    const LLPointer<LLImageDecodeThread::Responder>& responder)
+    const LLPointer<LLImageDecodeThread::Responder>& responder,
+    const LLUUID& cache_id)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -102,7 +110,7 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
 
     // Instantiate the ImageRequest right in the lambda, why not?
     bool posted = mThreadPool->getQueue().post(
-        [req = ImageRequest(image, discard, needs_aux, responder, decode_id)]
+        [req = ImageRequest(image, discard, needs_aux, responder, decode_id, cache_id)]
         () mutable
         {
             auto done = req.processRequest();
@@ -132,14 +140,16 @@ ImageRequest::ImageRequest(const LLPointer<LLImageFormatted>& image,
                            S32 discard,
                            bool needs_aux,
                            const LLPointer<LLImageDecodeThread::Responder>& responder,
-                           U32 request_id)
+                           U32 request_id,
+                           const LLUUID& cache_id)
     : mFormattedImage(image),
       mDiscardLevel(discard),
       mNeedsAux(needs_aux),
       mDecodedRaw(false),
       mDecodedAux(false),
       mResponder(responder),
-      mRequestId(request_id)
+      mRequestId(request_id),
+      mCacheID(cache_id)
 {
 }
 
@@ -186,6 +196,19 @@ bool ImageRequest::processRequest()
             {
                 mFormattedImage->setDiscardLevel(mDiscardLevel);
             }
+            // <FS> the decoded cache first: a hit is the image this decode would have produced, at this discard level (no aux channel through the cache)
+            LLDecodedImageCache* cache = sDecodedCache;
+            if (cache && mCacheID.notNull() && !mNeedsAux)
+            {
+                LLPointer<LLImageRaw> cached = cache->read(mCacheID, mFormattedImage->getDiscardLevel());
+                if (cached.notNull() && cached->getData() && cached->getComponents() == mFormattedImage->getComponents()
+                    && cached->getWidth() == mFormattedImage->getWidth() && cached->getHeight() == mFormattedImage->getHeight())
+                {
+                    mDecodedImageRaw = cached;
+                    mDecodedRaw = true;
+                    return true;
+                }
+            }
             mDecodedImageRaw = new LLImageRaw(mFormattedImage->getWidth(),
                                               mFormattedImage->getHeight(),
                                               mFormattedImage->getComponents());
@@ -205,6 +228,14 @@ bool ImageRequest::processRequest()
 
         // some decoders are removing data when task is complete and there were errors
         mDecodedRaw = done && mDecodedImageRaw->getData();
+        // <FS> what the decode produced goes to the decoded cache (it copies)
+        if (mDecodedRaw && mCacheID.notNull() && !mNeedsAux)
+        {
+            if (LLDecodedImageCache* cache = sDecodedCache)
+            {
+                cache->write(mCacheID, mFormattedImage->getDiscardLevel(), mDecodedImageRaw);
+            }
+        }
 
         // Pick up errors from decoding
         mErrorString = LLImage::getLastThreadError();

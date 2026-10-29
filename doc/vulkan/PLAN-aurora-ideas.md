@@ -32,7 +32,7 @@ Where: the record layout in `llvkbridge.h` / `llvkscenegeo.h` (one more field pe
 
 **Risks.** The clock: the CPU uses `LLFrameTimer::getElapsedSeconds()` quantised by the animation rate; a GPU evaluating against a float clock drifts after hours (precision). Use a double-derived cycle count sent per frame, not seconds. Faces below `MIN_TEX_ANIM_SIZE` are skipped by the CPU today (llvovolume.cpp 790); the GPU should keep animating them (it costs nothing), a visible improvement, not a regression, but note it. Records that hold the parameters make animated faces batchable with their neighbours again, which changes draw counts: expected, measure.
 
-## 2. BC7 at decode with a per-texture check, and a decoded-texture disk cache
+## 2. BC7 at decode with a per-texture check, and a decoded-texture disk cache (stage a built 2026-10-29, see 2.1; stage b not started)
 
 **What Aurora does** (`aurora-render/src/bc7.rs`, `scene/texture_cache.rs`). After the JPEG 2000 decode, the RGBA8 mip chain is BC7-encoded with Intel's ISPC texture compressor in its fastest profile (about 70 Mpx/s a thread, a third of the J2K decode's cost), decoded back, compared with the source, and a texture with too many blocks off stays RGBA8; alpha texels at 0 and 255 are kept exact in every block (a mask cutoff at an end turns the smallest error into holes). About 85 % pass; 2.9 times less texture memory overall, median PSNR 53 dB. The result, BC7 or RGBA8, is written to a disk cache by its own thread (bounded queue, 256 MB), and a revisited place skips the decode.
 
@@ -47,6 +47,35 @@ Where: the record layout in `llvkbridge.h` / `llvkscenegeo.h` (one more field pe
 **Gates.** G1 (cache): second login at the same spot, `decodeImage` calls near zero for the textures the first login decoded; time to a fully textured scene measured against the first login (log the "all visible textures at full discard" moment). G2 (BC7): video memory held by textures (the budget line of the log) down by the expected factor at the same spot; the texture level drops of S7-design section 20 fewer under the same budget. G3: Adam's eye on a snapshot pair and on the known-bad classes (fine normal maps, thin alpha lattices, skin) with the box on; the check's rejection rate logged (expect about one in ten). G4: decode thread time per texture, before and after, from the fetch stats (expect about +30 %).
 
 **Risks.** The decode thread is also where texture arrival pace is set; a third more work there slows loading in a busy place unless the cache (stage a) pays it back, which is why a comes first. Disk: a decoded cache is 4-8 times the J2K size at RGBA8, 1-2 times at BC7; cap it (2-4 GB default) and say so in the preference. The old `GenericCompressed` removal changes behaviour for anyone with the box ticked today: strictly safer (fewer textures compressed, each checked), but the label and the release note must say what it does now.
+
+### 2.1 Stage a built: the decoded-texture cache (2026-10-29, Adam's go "let's start on that")
+
+`indra/newview/fsdecodedtexturecache.{h,cpp}`, the `LLDecodedImageCache` hook in `llimageworker.{h,cpp}` (the decode pool asks the cache before decoding and hands it what it decoded), the fetch worker names the asset id for textures with no url (`lltexturefetch.cpp`), `LLAppViewer` creates it after the texture cache and closes it after the decode pool, the texture cache's purge and corrupt-removal take the decoded copy with them. Settings `FSDecodedTextureCache` (on, live) and `FSDecodedTextureCacheSizeMB` (4096).
+
+Format: `<cache>/decodedcache/<hex>/<uuid>_<finest discard>.dec`: a 20-byte header (magic FSDC, version 1, finest width and height, components, levels, finest discard, format 0 = raw), the texture comment, then the mip chain from the finest level down (2x2 box filter, up to 8 levels). A request for discard d reads level d minus finest, one seek and one read, no scaling. Texture assets are immutable by id, so no source key; a finer decode replaces the file. Reads on the decode pool; writes copy the image and queue it (256 MB cap, drops beyond) to one writer thread, which scans the index at start (one directory listing, the discard in the name), builds the chains, and evicts the least recently read files past the cap (a hit touches the file). One report line a minute (`DecodedCache`).
+
+Measured at the hub (Adam's account, the same spot, two sessions one after the other, the J2K cache warm in both):
+
+| | first session (cache empty) | second session |
+|---|---|---|
+| first minute after login | 2552 decodes, 2552 writes (1229 MB), 0 drops | **2195 hits (690 MB read in place of a decode), 45 misses** (34 not stored, 9 stored coarser than asked, 2 not found at open), 45 writes |
+| index scan at start | 0 textures, 1 ms | 2446 textures, 1241 MB, 2 ms |
+| textures with a GL texture at the first summary after login | 6677 at +25 s | 6284 at +16 s (the summaries are 16 s apart: finer timing needs a stamp) |
+
+So 98 % of the second login's decodes came from the cache; the first-minute decode work at a spot (2500 JPEG 2000 decodes over 8 threads) is gone on a revisit. Two fixes after the run, rebuilt: the index log line counted after a swap; a write updated the index before the file was renamed into place, so a reader in between found no file and deleted the entry (now: file, then index, then the old level's file; an open failure is a plain miss and removes nothing).
+
+What the numbers also say for stage b: one spot is 1.2 GB of RGBA8 chains; the 4 GB cap holds about three such places. BC7 would make it twelve, which is the second reason for stage b after video memory.
+
+**Time to textured, measured (2026-10-29, the stamp in `FSDecodedTextureCache::update`: once a session, the time from STATE_STARTED to the texture fetch and decode queues staying empty for 3 s; `run-viewer-deccache.bat 0|1` forces the cache off or on, nothing else differs; the same spot, the J2K cache and the decoded cache both warm):**
+
+| | textures settled after the world appeared | first-minute decodes |
+|---|---|---|
+| cache off (today's path) | 30.3 s | all decoded |
+| cache on | 29.6 s | 2279 from the cache, 72 decoded |
+
+So at this spot on this machine (8 decode threads, a fast CPU) the decode is not what gates arrival: the fetch pipeline's own pacing is, and the clock does not move. What the cache removes is the CPU work of the arrival burst (2300 JPEG 2000 decodes), which matters on fewer cores and as less competition with the frame, and it is the carrier stage b needs: a BC7 encode at decode time is only affordable once its result is kept. Kept on by default on that reasoning; the disk cost is about 1.3 GB a busy spot at RGBA8 until stage b.
+
+Not done in stage a: the aux channel (alpha for bump maps) is not cached, those textures decode as before; local files and bakes are never cached (no asset id).
 
 ## 3. One cascade per opaque caster, with the finer map merged into the coarser (RT off only)
 
