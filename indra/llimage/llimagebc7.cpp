@@ -166,7 +166,7 @@ S8 classifyAlpha(const U8* data, U32 w, U32 h, U32 components)
     U32 length = w * h;
     U32 alphatotal = 0;
     U32 sample[16] = {};
-    if (w >= 2 && h >= 2)
+    if (w >= 2 && h >= 2 && (w & 1) == 0 && (h & 1) == 0)       // the 2x2 walk needs even sides: an odd one read a row or a column past the texels
     {
         const U8* rowstart = data + offset;
         for (U32 y = 0; y < h; y += 2)
