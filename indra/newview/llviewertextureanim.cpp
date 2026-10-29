@@ -32,6 +32,9 @@
 #include "llspatialpartition.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
+#include <chrono>
+#include "llvkbridge.h"
+#include "llvktexanim.h"
 
 #include "llmath.h"
 #include "llerror.h"
@@ -93,20 +96,76 @@ static bool seen_by_other_cameras(LLDrawable* drawable)
     return false;
 }
 
+LLViewerTextureAnim::Stats LLViewerTextureAnim::sStats;
+
+static void report_texture_anim(LLViewerTextureAnim::Stats& st, S32 mode)
+{
+    if (st.mFrames == 0)
+    {
+        return;
+    }
+    LL_INFOS("TexAnim") << "texture animation, " << st.mFrames << " frames, " << (mode == 1 ? "shader" : (mode == 2 ? "main thread, compared" : "main thread")) << ": update loop " << (double)st.mNs / 1.0e6 / st.mFrames << " ms a frame, animations "
+        << st.mInstances / st.mFrames << " a frame (" << st.mHidden / st.mFrames << " not in view), main thread calls " << st.mCpuCalls / st.mFrames << ", shader path checks " << st.mGpuChecked / st.mFrames
+        << ", faces on the shader path " << st.mGpuFaces / st.mFrames << ", small faces left alone " << st.mSmallFaces / st.mFrames << ", parameter writes " << st.mGpuWrites
+        << "; compare: " << st.mCompared << " faces, " << st.mMismatched << " differ by more than 0.001, largest difference " << st.mMaxDiff << LL_ENDL;
+    st = LLViewerTextureAnim::Stats();
+}
+
 void LLViewerTextureAnim::updateClass()
 {
     // <FS> an object that is not in view does not need its animated texture advanced this frame: the frame counter is a function of the timer (and the smooth
     // modes accumulate the time since their last call), so the next call that happens brings it to the right state. Seen again, it can be one frame late at most.
     static LLCachedControl<bool> skip_hidden(gSavedSettings, "FSSkipHiddenTextureAnim", true);
+    static LLCachedControl<bool> on_gpu(gSavedSettings, "FSTexAnimOnGPU", false);
     const bool skip = skip_hidden;
+    // <FS> FSTexAnimOnGPU (llvktexanim.h): 1 = the faces' matrix slots hold the animation's parameters and the vertex shader makes the matrices against this clock; 0 = the matrices
+    // are made here; 2 = as 0, with the shader's formula compared against them. rt-debug.txt texanim=N decides while it is set (a same-lap A/B), the setting otherwise.
+    LLVkTexAnim::setClock(LLFrameTimer::getElapsedSeconds());
+    const S32 live = LLVkBridge::rtTexAnim();
+    const S32 mode = live >= 0 ? llmin(live, 2) : (on_gpu ? 1 : 0);
+    const auto update_start = std::chrono::steady_clock::now();
+    Stats& st = sStats;
+    static S32 last_mode = mode;
+    if (mode != last_mode)
+    {
+        report_texture_anim(st, last_mode);         // (a report is always of one mode)
+        last_mode = mode;
+    }
+    ++st.mFrames;
     for (std::vector<LLViewerTextureAnim*>::iterator iter = sInstanceList.begin(); iter != sInstanceList.end(); ++iter)
     {
-        LLVOVolume* vobj = (*iter)->mVObj;
+        LLViewerTextureAnim* anim = *iter;
+        LLVOVolume* vobj = anim->mVObj;
+        ++st.mInstances;
         if (skip && vobj->mDrawable.notNull() && !vobj->mDrawable->isVisible() && !seen_by_other_cameras(vobj->mDrawable))
         {
+            ++st.mHidden;
             continue;
         }
+        if (mode == 1)
+        {
+            ++st.mGpuChecked;
+            vobj->animateTexturesGpu();
+            continue;
+        }
+        if (anim->mGpuWritten)
+        {
+            // the matrices of this animation's faces hold parameters: made matrices again, and written again at the next frame change
+            vobj->resolveTexAnimMatrices();
+            anim->mGpuWritten = false;
+            anim->forceRecalc();
+        }
+        ++st.mCpuCalls;
         vobj->animateTextures();
+        if (mode == 2)
+        {
+            vobj->compareTexAnimGpu();
+        }
+    }
+    st.mNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - update_start).count();
+    if (st.mFrames >= 600)
+    {
+        report_texture_anim(st, mode);
     }
 }
 

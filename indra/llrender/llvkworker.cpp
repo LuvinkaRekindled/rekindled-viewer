@@ -15,6 +15,7 @@
 #if defined(LL_VULKAN)
 
 #include "llvkbridge.h"
+#include "llvktexanim.h"
 #include "llshaderprogram.h"
 #include "llshadermgr.h"
 #include "llvkshader.h"
@@ -4870,8 +4871,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
             return;
         }
         F32* tm = (F32*)texmats.mPtr;
-        memset(tm, 0, 64);
-        tm[0] = tm[5] = tm[10] = tm[15] = 1.f;
+        LLVkTexAnim::writeSlot0(tm);
         memcpy(tm + 16, texmat_src, 64 * (size_t)texmat_count);
         const U64 texmats_address = (U64)texmats.mAddress;
         const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
@@ -4890,8 +4890,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
             return;
         }
         F32* tm = (F32*)texmats.mPtr;
-        memset(tm, 0, 64);
-        tm[0] = tm[5] = tm[10] = tm[15] = 1.f;
+        LLVkTexAnim::writeSlot0(tm);
         memcpy(tm + 16, texmat_src, 64 * (size_t)texmat_count);
         memset(pbr_rows.mPtr, 0, 160 * (size_t)std::max<U32>(pbr_count, 1));
         memcpy(pbr_rows.mPtr, pbr_src, 160 * (size_t)pbr_count);
@@ -7925,6 +7924,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 t[0] = t[5] = t[10] = t[15] = 1.f;
             }
         }
+        LLVkTexAnim::writeSlot0(tex);       // (slot 0 is never a matrix: the clock of the texture animations whose slots hold parameters)
         pass.mFrame = frame_now;
         pass.mPrepares = s.mPrepares;
         memcpy(pass.mVP, view, sizeof(pass.mVP));

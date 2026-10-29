@@ -380,6 +380,89 @@ bool LLShaderMgr::attachShaderFeatures(LLShaderProgram * shader)
 // <FS> S6.6 LL_VERTEX_PULL: a vertex shader of the viewer becomes a pull shader (the geometry packet path: the attributes are read by address from the draw's vertex buffer, the matrices from the
 // record's matrix table). The shader text is rewritten line by line: its `in` attributes become globals, the matrix uniforms the record carries (modelview_matrix, modelview_projection_matrix,
 // normal_matrix, texture_matrix0) become globals, and the start of main() fills them from the draw's row. Everything else of the shader stays as it is.
+// <FS> texture animation on the GPU (llvktexanim.h has the layout and the CPU twin of this function, line for line): the matrix of a face whose slot holds animation parameters.
+// m is the 16 floats as stored (GLSL m[i / 4][i % 4] = float i), clk the clock (whole seconds, the rest). Injected once into every main vertex shader that reads texture matrices.
+static const char* const kTexAnimCore =
+    "mat4 ll_texanim_core(mat4 m, vec2 clk)\n"
+    "{\n"
+    "    uint bits = floatBitsToUint(m[0][0]);\n"
+    "    uint mode = bits & 0xFFu;\n"
+    "    float size_x = float((bits >> 8) & 0xFFu), size_y = float((bits >> 16) & 0xFFu);\n"
+    "    float rate = m[0][1], start = m[0][2], len = m[0][3];\n"
+    "    float elapsed = max((clk.x - m[1][0]) + (clk.y - m[1][1]), 0.0);\n"
+    "    float num_frames = len != 0.0 ? len : max(1.0, size_x * size_y);\n"
+    "    float full_length = num_frames;\n"
+    "    if ((mode & 8u) != 0u)\n"
+    "    {\n"
+    "        if ((mode & 16u) != 0u) full_length = 2.0 * num_frames;\n"
+    "        else if ((mode & 2u) != 0u) full_length = max(1.0, 2.0 * num_frames - 2.0);\n"
+    "        else full_length = max(1.0, 2.0 * num_frames - 1.0);\n"
+    "    }\n"
+    "    float fc = elapsed * rate;\n"
+    "    if ((mode & 2u) != 0u) fc = fc - full_length * trunc(fc / full_length);\n"
+    "    else fc = min(full_length - 1.0, fc);\n"
+    "    if ((mode & 16u) == 0u)\n"
+    "    {\n"
+    "        fc = floor(fc + 0.01);\n"
+    "        fc = min(full_length - 1.0, fc);\n"
+    "    }\n"
+    "    if ((mode & 8u) != 0u && fc >= num_frames)\n"
+    "    {\n"
+    "        fc = ((mode & 16u) != 0u) ? num_frames - (fc - num_frames) : (num_frames - 1.99) - (fc - num_frames);\n"
+    "    }\n"
+    "    if ((mode & 4u) != 0u)\n"
+    "    {\n"
+    "        fc = ((mode & 16u) != 0u) ? num_frames - fc : (num_frames - 0.99) - fc;\n"
+    "    }\n"
+    "    fc += start;\n"
+    "    if ((mode & 16u) == 0u) fc = floor(fc + 0.5);\n"
+    "    float off_s = m[1][2], off_t = m[1][3], scale_s = m[2][0], scale_t = m[2][1], rot = m[2][2];\n"
+    "    if ((mode & 32u) != 0u)\n"
+    "    {\n"
+    "        rot = fc;\n"
+    "    }\n"
+    "    else if ((mode & 64u) != 0u)\n"
+    "    {\n"
+    "        scale_s = fc;\n"
+    "        scale_t = fc;\n"
+    "    }\n"
+    "    else if (size_x != 0.0 && size_y != 0.0)\n"
+    "    {\n"
+    "        scale_s = 1.0 / size_x;\n"
+    "        scale_t = 1.0 / size_y;\n"
+    "        float x_frame = fc - size_x * trunc(fc / size_x);\n"
+    "        float y_frame = float(int(fc / size_x));\n"
+    "        off_s = (-0.5 + 0.5 * scale_s) + x_frame * scale_s;\n"
+    "        off_t = (0.5 - 0.5 * scale_t) - y_frame * scale_t;\n"
+    "    }\n"
+    "    else\n"
+    "    {\n"
+    "        off_s = fc;\n"
+    "        off_t = 0.0;\n"
+    "    }\n"
+    "    float c = cos(rot), s = sin(rot) * m[2][3];\n"
+    "    float m00 = c, m01 = -s, m10 = s, m11 = c;\n"
+    "    return mat4(vec4(m00 * scale_s, m01 * scale_t, 0.0, 0.0),\n"
+    "                vec4(m10 * scale_s, m11 * scale_t, 0.0, 0.0),\n"
+    "                vec4(0.0, 0.0, 1.0, 0.0),\n"
+    "                vec4(-0.5 * (m00 + m10) * scale_s + off_s + 0.5, -0.5 * (m01 + m11) * scale_t + off_t + 0.5, 0.0, 1.0));\n"
+    "}\n";
+
+// the main vertex shaders that read texture matrices from a record's table without the generic rewrite
+static bool texanim_hand_written_pull(const std::string& filename)
+{
+    static const char* const names[] = { "alphaPullV.glsl", "diffusePullV.glsl", "emissivePullV.glsl", "materialPullV.glsl", "pbrAlphaPullV.glsl", "pbrGlowPullV.glsl" };
+    for (const char* n : names)
+    {
+        const size_t len = strlen(n);
+        if (filename.size() >= len && filename.compare(filename.size() - len, len, n) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool pull_parse_decl(const std::string& line, const char* keyword, std::string& type, std::string& name)
 {
     const size_t npos = std::string::npos;
@@ -477,7 +560,12 @@ static std::string pull_prologue(const std::vector<std::pair<std::string, std::s
         if (m == "modelview_matrix") s += "        modelview_matrix = ll_m.mv;\n";
         else if (m == "modelview_projection_matrix") s += "        modelview_projection_matrix = ll_m.mvp;\n";
         else if (m == "normal_matrix") s += "        normal_matrix = mat3(ll_m.n0.xyz, ll_m.n1.xyz, ll_m.n2.xyz);\n";
-        else if (m == "texture_matrix0") s += "        texture_matrix0 = (ll_pk.pad.x != 0u) ? GeoTexMatrices(ll_packet_texmats).t[ll_pk.pad.x] : mat4(1.0);\n";
+        else if (m == "texture_matrix0")
+        {
+            s += "        texture_matrix0 = (ll_pk.pad.x != 0u) ? GeoTexMatrices(ll_packet_texmats).t[ll_pk.pad.x] : mat4(1.0);\n";
+            // <FS> a texture animation's matrix slot holds its parameters (0 in the last float, llvktexanim.h): the matrix is made here, against the clock in slot 0
+            s += "        if (texture_matrix0[3][3] == 0.0) texture_matrix0 = ll_texanim_core(texture_matrix0, GeoTexMatrices(ll_packet_texmats).t[0][0].yz);\n";
+        }
         s += "#endif\n";
     }
     s += "    }\n";
@@ -677,6 +765,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
     std::vector<std::pair<std::string, std::string> > pull_attrs;
     std::vector<std::string> pull_mats;
     bool pull_main_seen = false, pull_main_done = false, pull_skin_seen = false, pull_index_seen = false;
+    bool texanim_core_here = false;
     if (pull_vertex)
     {
         // S6.6: the declarations of the geometry packet path (the layout of the worker's rows, as diffusePullV.glsl)
@@ -695,6 +784,9 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
             "layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer GeoTexMatrices { mat4 t[]; };\n"
             "uniform uvec2 ll_packet_table;\nuniform uvec2 ll_packet_models;\nuniform uvec2 ll_packet_texmats;\n");
     }
+    // <FS> the texture animation function, once per program: the generic pull rewrite puts it before main() (only the main file has one: a library file of the same program defining it
+    // too would not link); the hand written pull shaders get it after their own #extension lines (below, in the line loop)
+    const bool texanim_after_extension = type == ShaderStage::Vertex && !pull_vertex && texanim_hand_written_pull(filename);
     if (defines && defines->find("LL_BINDLESS_DIFFUSE") != defines->end() && type == ShaderStage::Fragment)
     {
         // <FS> render packets (Vulkan mirror only): the draw's texture comes from the bindless table (set 2), by the slot the vertex shader passes on, instead of tex0..texN
@@ -970,6 +1062,7 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                     if (!pull_main_seen && line.find("void main") != std::string::npos)
                     {
                         pull_main_seen = true;
+                        texanim_core_here = true;
                         bool has_weight = false;
                         for (const auto& a : pull_attrs)
                         {
@@ -1001,8 +1094,17 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                             pull_main_done = true;
                         }
                     }
+                    if (texanim_core_here)
+                    {
+                        line = kTexAnimCore + line;         // (before main(): its prologue uses it for the texture matrix of a texture animation)
+                        texanim_core_here = false;
+                    }
                 }
                 shader_code_text[shader_code_count] = (char *)strdup(line.c_str());
+            }
+            else if (texanim_after_extension && strstr((const char*)buff, "GL_EXT_buffer_reference_uvec2"))
+            {
+                shader_code_text[shader_code_count] = (char *)strdup((std::string((const char*)buff) + kTexAnimCore).c_str());
             }
             else
             {

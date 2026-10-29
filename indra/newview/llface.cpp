@@ -62,6 +62,7 @@
 #include "rlvhandler.h"
 // [/RLVa:KB]
 #include "llperfstats.h"
+#include "llvktexanim.h"
 
 #if LL_LINUX
 // Work-around spurious used before init warning on Vector4a
@@ -774,6 +775,18 @@ void LLFace::printDebugInfo() const
 }
 
 // Transform the texture coordinates for this face.
+// <FS> a face's texture matrix slot holds the parameters of its animation when FSTexAnimOnGPU is on (llvktexanim.h; the vertex shader makes the matrix): what is baked into texture
+// coordinates (small faces, a rebuild before the face is in the animated state) is the matrix the parameters give at this moment
+static const LLMatrix4& bake_tex_matrix(const LLMatrix4* m, LLMatrix4& scratch)
+{
+    if (!LLVkTexAnim::isParams((const F32*)m->mMatrix))
+    {
+        return *m;
+    }
+    LLVkTexAnim::evaluateNow((const F32*)m->mMatrix, (F32*)scratch.mMatrix);
+    return scratch;
+}
+
 static void xform(LLVector2 &tex_coord, F32 cosAng, F32 sinAng, F32 offS, F32 offT, F32 magS, F32 magT)
 {
     // New, good way
@@ -963,7 +976,8 @@ LLVector2 LLFace::surfaceToTexture(LLVector2 surface_coord, const LLVector4a& po
     if (mTextureMatrix) // if we have a texture matrix, use it
     {
         LLVector3 tc3(tc);
-        tc3 = tc3 * *mTextureMatrix;
+        LLMatrix4 tex_mat_scratch;
+        tc3 = tc3 * bake_tex_matrix(mTextureMatrix, tex_mat_scratch);
         tc = LLVector2(tc3);
     }
 
@@ -1790,6 +1804,8 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
             // For GLTF materials: Transforms will be applied later
             bool do_tex_mat = tex_mode && mTextureMatrix && !gltf_mat;
+            LLMatrix4 tex_mat_scratch;       // <FS> (a texture animation's slot may hold parameters: the matrix baked into coordinates is the one they give now)
+            const LLMatrix4* bake_matrix = mTextureMatrix ? &bake_tex_matrix(mTextureMatrix, tex_mat_scratch) : nullptr;
 
             if (!do_bump)
             { //not bump mapped, might be able to do a cheap update
@@ -1857,7 +1873,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                             LLVector2 tc(vf.mTexCoords[i]);
 
                             LLVector3 tmp(tc.mV[0], tc.mV[1], 0.f);
-                            tmp = tmp * *mTextureMatrix;
+                            tmp = tmp * *bake_matrix;
                             tc.mV[0] = tmp.mV[0];
                             tc.mV[1] = tmp.mV[1];
                             *tex_coords0++ = tc;
@@ -1879,7 +1895,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                             planarProjection(tc, norm, center, vec);
 
                             LLVector3 tmp(tc.mV[0], tc.mV[1], 0.f);
-                            tmp = tmp * *mTextureMatrix;
+                            tmp = tmp * *bake_matrix;
                             tc.mV[0] = tmp.mV[0];
                             tc.mV[1] = tmp.mV[1];
 
@@ -2007,7 +2023,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                                 if (tex_mode && mTextureMatrix)
                                 {
                                     LLVector3 tmp(tc.mV[0], tc.mV[1], 0.f);
-                                    tmp = tmp * *mTextureMatrix;
+                                    tmp = tmp * *bake_matrix;
                                     tc.mV[0] = tmp.mV[0];
                                     tc.mV[1] = tmp.mV[1];
                                 }
@@ -2030,7 +2046,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                                 if (tex_mode && mTextureMatrix)
                                 {
                                     LLVector3 tmp(tc.mV[0], tc.mV[1], 0.f);
-                                    tmp = tmp * *mTextureMatrix;
+                                    tmp = tmp * *bake_matrix;
                                     tc.mV[0] = tmp.mV[0];
                                     tc.mV[1] = tmp.mV[1];
                                 }

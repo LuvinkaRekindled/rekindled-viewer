@@ -64,6 +64,7 @@
 #include "llviewerobjectlist.h"
 #include "llviewerregion.h"
 #include "llviewertextureanim.h"
+#include "llvktexanim.h"
 #include "llworld.h"
 #include "llselectmgr.h"
 #include "pipeline.h"
@@ -916,6 +917,240 @@ void LLVOVolume::animateTextures()
                 gPipeline.markTextured(mDrawable);
                 mFaceMappingChanged = true;
                 mTexAnimMode = 0;
+            }
+        }
+    }
+}
+
+// <FS> FSTexAnimOnGPU (llvktexanim.h). The sine's sign of texanim_matrix: found once by making a matrix with the products animateTextures used to build and seeing which closed form
+// it equals (the same test sTexAnimConvention does, on a fixed rotation)
+static F32 texanim_sine_sign()
+{
+    static F32 sign = 0.f;
+    if (sign != 0.f)
+    {
+        return sign;
+    }
+    const F32 off_s = 0.2f, off_t = 0.3f, scale_s = 0.5f, scale_t = 0.25f, rot = 0.7f;
+    LLMatrix4 tex_mat;
+    tex_mat.setIdentity();
+    LLVector3 trans(off_s + 0.5f, off_t + 0.5f, 0.f);
+    tex_mat.translate(LLVector3(-0.5f, -0.5f, 0.f));
+    LLQuaternion quat;
+    quat.setQuat(rot, 0, 0, -1.f);
+    tex_mat.rotate(quat);
+    LLMatrix4 mat;
+    mat.initAll(LLVector3(scale_s, scale_t, 1.f), LLQuaternion(), LLVector3());
+    tex_mat *= mat;
+    tex_mat.translate(trans);
+    for (int convention = 1; convention <= 2; ++convention)
+    {
+        LLMatrix4 mine;
+        texanim_matrix(mine, off_s, off_t, scale_s, scale_t, rot, convention);
+        bool same = true;
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                same = same && fabsf(mine.mMatrix[r][c] - tex_mat.mMatrix[r][c]) <= 1e-4f;
+        if (same)
+        {
+            sign = convention == 1 ? 1.f : -1.f;
+            return sign;
+        }
+    }
+    LL_WARNS("TexAnim") << "texture animation matrices: neither closed form matches the matrix products, FSTexAnimOnGPU cannot match the main thread" << LL_ENDL;
+    sign = 1.f;
+    return sign;
+}
+
+static void texanim_source(const LLViewerTextureAnim* anim, LLVkTexAnim::Source& src)
+{
+    src.mMode = anim->mMode;
+    src.mSizeX = anim->mSizeX;
+    src.mSizeY = anim->mSizeY;
+    src.mRate = anim->mRate;
+    src.mStart = anim->mStart;
+    src.mLength = anim->mLength;
+    src.mOrigin = anim->getTimerOrigin();
+    src.mSineSign = texanim_sine_sign();
+}
+
+// the faces animateTextures drives: the animation's face, or all
+static void texanim_face_range(const LLVOVolume* vobj, const LLViewerTextureAnim* anim, S32& start, S32& end)
+{
+    start = 0;
+    end = vobj->mDrawable->getNumFaces() - 1;
+    if (anim->mFace >= 0 && anim->mFace <= end)
+    {
+        start = end = anim->mFace;
+    }
+}
+
+void LLVOVolume::resolveTexAnimMatrices()
+{
+    if (!mDrawable)
+    {
+        return;
+    }
+    for (S32 i = 0, n = mDrawable->getNumFaces(); i < n; ++i)
+    {
+        LLFace* facep = mDrawable->getFace(i);
+        if (facep && facep->mTextureMatrix && LLVkTexAnim::isParams((const F32*)facep->mTextureMatrix->mMatrix))
+        {
+            F32 evaluated[16];
+            LLVkTexAnim::evaluateNow((const F32*)facep->mTextureMatrix->mMatrix, evaluated);
+            memcpy(facep->mTextureMatrix->mMatrix, evaluated, sizeof(evaluated));
+        }
+    }
+}
+
+void LLVOVolume::animateTexturesGpu()
+{
+    if (mDead || !mDrawable || !mTextureAnimp)
+    {
+        return;
+    }
+    LLViewerTextureAnim* anim = mTextureAnimp;
+    // not for the shader: an animation that is off, and one with no rate (animateTextures bakes its final state into the texture entries once)
+    if (!(anim->mMode & LLTextureAnim::ON) || anim->mRate == 0.f)
+    {
+        if (anim->mGpuWritten)
+        {
+            resolveTexAnimMatrices();
+            anim->mGpuWritten = false;
+            anim->forceRecalc();
+        }
+        ++LLViewerTextureAnim::sStats.mCpuCalls;
+        animateTextures();
+        return;
+    }
+    if (LLPipeline::coldMode() > 0 && !isAttachment() && !isAvatar())
+    {
+        ++LLPipeline::sColdTexAnimSeen;
+        if (LLPipeline::coldGroup(mDrawable->getSpatialGroup()))
+        {
+            ++LLPipeline::sColdTexAnimSkipped;
+            if (LLPipeline::coldMode() >= 2)
+            {
+                return;
+            }
+        }
+    }
+    shrinkWrap();
+    if (!mTexAnimMode)
+    {
+        mFaceMappingChanged = true;
+        gPipeline.markTextured(mDrawable);
+    }
+    mTexAnimMode = LLVkTexAnim::resultBits(anim->mMode, anim->mSizeX, anim->mSizeY) | anim->mMode;
+
+    LLVkTexAnim::Source src;
+    texanim_source(anim, src);
+    LLViewerTextureAnim::Stats& stats = LLViewerTextureAnim::sStats;
+    S32 start, end;
+    texanim_face_range(this, anim, start, end);
+    for (S32 i = start; i <= end; i++)
+    {
+        LLFace* facep = mDrawable->getFace(i);
+        if (!facep) continue;
+        const bool small = facep->getVirtualSize() <= MIN_TEX_ANIM_SIZE;
+        if (small && facep->mTextureMatrix)
+        {
+            ++stats.mSmallFaces;        // (as animateTextures: a small face keeps the matrix it has)
+            continue;
+        }
+        const LLTextureEntry* te = facep->getTextureEntry();
+        if (!te)
+        {
+            continue;
+        }
+        te->getOffset(&src.mOffS, &src.mOffT);
+        te->getScale(&src.mScaleS, &src.mScaleT);
+        te->getRotation(&src.mRot);
+        F32 params[16];
+        LLVkTexAnim::makeParams(params, src);
+        if (!facep->mTextureMatrix)
+        {
+            facep->mTextureMatrix = new LLMatrix4();
+            if (!small)
+            {
+                // the one edge case of LLVOVolume::updateTextureVirtualSize when the matrix is not yet present (as animateTextures)
+                gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_TCOORD);
+                LLSpatialGroup* group = mDrawable->getSpatialGroup();
+                if (group)
+                {
+                    group->dirtyGeom();
+                    gPipeline.markRebuild(group);
+                }
+            }
+            memset(facep->mTextureMatrix->mMatrix, 0, 64);
+        }
+        if (small)
+        {
+            // a face too small to be drawn with the matrix: it is baked into its texture coordinates once, as animateTextures does, from the matrix of this moment
+            ++stats.mSmallFaces;
+            LLVkTexAnim::evaluateNow(params, (F32*)facep->mTextureMatrix->mMatrix);
+            continue;
+        }
+        ++stats.mGpuFaces;
+        if (memcmp(facep->mTextureMatrix->mMatrix, params, 64) != 0)
+        {
+            memcpy(facep->mTextureMatrix->mMatrix, params, 64);
+            ++stats.mGpuWrites;
+            anim->mGpuWritten = true;
+        }
+    }
+}
+
+// the compare mode (texanim=2): animateTextures has just made the matrices; the shader's formula (the C++ twin in llvktexanim.h) is evaluated for the same faces at the same clock
+void LLVOVolume::compareTexAnimGpu()
+{
+    if (mDead || !mDrawable || !mTextureAnimp || !mTexAnimMode)
+    {
+        return;
+    }
+    LLViewerTextureAnim* anim = mTextureAnimp;
+    if (!(anim->mMode & LLTextureAnim::ON) || anim->mRate == 0.f)
+    {
+        return;
+    }
+    LLVkTexAnim::Source src;
+    texanim_source(anim, src);
+    LLViewerTextureAnim::Stats& stats = LLViewerTextureAnim::sStats;
+    S32 start, end;
+    texanim_face_range(this, anim, start, end);
+    for (S32 i = start; i <= end; i++)
+    {
+        LLFace* facep = mDrawable->getFace(i);
+        if (!facep || !facep->mTextureMatrix || facep->getVirtualSize() <= MIN_TEX_ANIM_SIZE || LLVkTexAnim::isParams((const F32*)facep->mTextureMatrix->mMatrix))
+        {
+            continue;
+        }
+        const LLTextureEntry* te = facep->getTextureEntry();
+        if (!te)
+        {
+            continue;
+        }
+        te->getOffset(&src.mOffS, &src.mOffT);
+        te->getScale(&src.mScaleS, &src.mScaleT);
+        te->getRotation(&src.mRot);
+        F32 params[16], mine[16];
+        LLVkTexAnim::makeParams(params, src);
+        LLVkTexAnim::evaluateNow(params, mine);
+        const F32* theirs = (const F32*)facep->mTextureMatrix->mMatrix;
+        F32 diff = 0.f;
+        for (int k : { 0, 1, 4, 5, 12, 13 })
+        {
+            diff = fmaxf(diff, fabsf(mine[k] - theirs[k]));
+        }
+        ++stats.mCompared;
+        stats.mMaxDiff = fmaxf(stats.mMaxDiff, diff);
+        if (diff > 1e-3f)
+        {
+            if (++stats.mMismatched <= 8)
+            {
+                LL_WARNS("TexAnim") << "texture animation compare: mode " << (U32)anim->mMode << " size " << (U32)anim->mSizeX << "x" << (U32)anim->mSizeY << " rate " << anim->mRate
+                    << " start " << anim->mStart << " length " << anim->mLength << ": shader formula " << mine[0] << " " << mine[1] << " " << mine[4] << " " << mine[5] << " " << mine[12] << " " << mine[13]
+                    << " against " << theirs[0] << " " << theirs[1] << " " << theirs[4] << " " << theirs[5] << " " << theirs[12] << " " << theirs[13] << LL_ENDL;
             }
         }
     }

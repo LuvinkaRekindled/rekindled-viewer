@@ -138,7 +138,10 @@ void main()
     vec2 texcoord = GeoVec2(pk.texcoords).t[index];
     if (pk.pad.x != 0u)
     {
-        texcoord = (GeoTexMatrices(ll_packet_texmats).t[pk.pad.x] * vec4(texcoord, 0.0, 1.0)).xy;
+        // <FS> a texture animation's slot holds its parameters (llvktexanim.h): the matrix is made against the clock in slot 0
+        mat4 ll_tm = GeoTexMatrices(ll_packet_texmats).t[pk.pad.x];
+        if (ll_tm[3][3] == 0.0) ll_tm = ll_texanim_core(ll_tm, GeoTexMatrices(ll_packet_texmats).t[0][0].yz);
+        texcoord = (ll_tm * vec4(texcoord, 0.0, 1.0)).xy;
     }
     vary_texcoord0 = texcoord;
 
