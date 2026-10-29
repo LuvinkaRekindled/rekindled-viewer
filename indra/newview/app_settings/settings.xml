@@ -2942,6 +2942,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSTextureFetchHighWater</key>
+    <map>
+      <key>Comment</key>
+      <string>Texture fetch requests allowed in flight at once (the low water is half). 0: the built-in 100 when HTTP pipelining is on, 40 when off. Measured 2026-10-29; see TextureFetchConcurrency for the connection count.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSTextureFetchWake</key>
     <map>
       <key>Comment</key>

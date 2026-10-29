@@ -80,7 +80,7 @@ static const struct
     },
     // </FS:Beq>
     { // AP_TEXTURE
-        8,      1,      12,     0,      true,
+        8,      1,      64,     0,      true,       // <FS> the clamp was 12; the texture plan 6.3 measures the connection count cold
         "TextureFetchConcurrency",
         "texture fetch"
     },

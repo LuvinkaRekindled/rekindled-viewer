@@ -3265,7 +3265,14 @@ void LLTextureFetch::commonUpdate()
     // Update low/high water levels based on pipelining.  We pick
     // up setting eventually, so the semaphore/request level can
     // fall outside the [0..HIGH_WATER] range.  Expect that.
-    if (LLAppViewer::instance()->getAppCoreHttp().isPipelined(LLAppCoreHttp::AP_TEXTURE))
+    // <FS> the texture plan 6.3: the window of requests in flight is a setting while it is measured (0: the constants, 100/50 pipelined, 40/20 not)
+    static LLCachedControl<U32> high_water(gSavedSettings, "FSTextureFetchHighWater", 0);
+    if (high_water() > 0)
+    {
+        mHttpHighWater = (S32)llclamp((U32)high_water(), 4u, 4096u);
+        mHttpLowWater = mHttpHighWater / 2;
+    }
+    else if (LLAppViewer::instance()->getAppCoreHttp().isPipelined(LLAppCoreHttp::AP_TEXTURE))
     {
         mHttpHighWater = HTTP_PIPE_REQUESTS_HIGH_WATER;
         mHttpLowWater = HTTP_PIPE_REQUESTS_LOW_WATER;
