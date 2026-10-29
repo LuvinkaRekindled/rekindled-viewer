@@ -299,6 +299,19 @@ The 1024 assumption takes a cold texture's lag behind its object from 3.2 s to 1
 
 **Where cold loading stands after the night** (Citadel, the caches empty): the objects arrive over 20-25 s at the sim's throttle (10000 brings that in by a fifth), and each texture is on the GPU at its real level 1.2 s after its face appears, down from 3.6 s at the start of the night's network work and 0.14 s warm. The switches to delete once Adam has lived with them: `FSTextureFetchWake`, `FSTextureFetchGuessLevel` (and its size), `LL_VK_TEXONECOPY`.
 
+### 6.6 The object stream: what was tried and did not help (2026-10-29 morning; Adam: "is there any optimization to be had receiving the object list?")
+
+The viewer is not the bound on receiving: it reads UDP for up to 20 ms a frame and stretches that by 3.5 % a frame when behind. Two viewer-side ideas were measured cold at Citadel, the wanted curve (when a face first asks for a texture, i.e. when the object and its mesh are there) as the gauge:
+
+| cold Citadel, 16/200, the guess on | objects wanted, 50 / 80 / 90 / 95 % by |
+|---|---|
+| the shipped throttle split, 3000 | 8.4 / 17.7 / 20.5 / 24.3 s |
+| the texture category's share (a third, the dead UDP texture stream) moved to the object updates, 3000 | 12.1 / 18.8 / 21.6 / 25.6 s (the 12.1 is a different crowd; the rest is the same curve) |
+| the same, plus the mesh fetch at 32 connections instead of 8 | 8.0 / 17.9 / 20.6 / 24.4 s |
+| the shipped split at 10000 (6.4) | 7.0 / 15.3 / 17.3 / 20.3 s |
+
+Neither the split nor the mesh connections move the curve; only the total does. So the sim paces its object stream by the total the viewer asks for, not by the task category's share, and the mesh fetch is not what gates a face's appearance. Both changes were reverted (nothing kept without a measured gain). What is left on the object side is the total itself, a slider the user owns, and the sim.
+
 **What the fix could be, by what the measurement says** (the hub's answers are in 6.1 and 6.2, the network's in 6.3 to 6.5):
 
 - The dispatch is the limit (textures wait long before their first request): visit more a frame while the camera moves or after a teleport (the count is already scaled by the discard bias; scale it by the fetch queue's emptiness too), or let the worker's visibility verdicts (H6) order the visits.
