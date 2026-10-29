@@ -206,7 +206,7 @@ namespace LLVkAsync
     void drawBindingGet(DrawBinding& out);                  // the producer's current binding
 
     // ---- texture pixels without a copy (C4) ----
-    // LL_VK_TEXONECOPY=1 turns the one-copy upload path on (off by default: no measured gain, see PLAN-cleanup-before-rt.md C4)
+    // LL_VK_TEXONECOPY=0 turns the one-copy upload path off (on by default since 2026-10-29, the texture plan 6.2; it measured nil in C4 while the alpha passes hid it, see PLAN-cleanup-before-rt.md C4)
     extern bool gTexOneCopy;
     // Decoded pixels the caller keeps alive and unchanged: while a hold is set on the main thread, a texture upload whose pixels lie inside [mBase, mBase+mSize)
     // is queued as a reference (mRef is called now, mUnref by the worker once the pixels are in the staging buffer) instead of a copy of the bytes.
