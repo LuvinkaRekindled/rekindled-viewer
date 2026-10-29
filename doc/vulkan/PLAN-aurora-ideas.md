@@ -249,7 +249,26 @@ So five sixths of the fetch stage is the viewer's own queue in front of its conn
 
 **Also found by this run:** the alpha classifier's 2x2 walk read a row or a column past the texels of an odd-sided image (a debug-only assert in the old main-thread code, which rarely met one); run on the decode pool for every image it took the viewer down at the login screen on the first cold start; guarded in both copies.
 
-**What the fix could be, by what the measurement says** (the hub's answers are in 6.1 and 6.2, the network's in 6.3):
+### 6.4 The connection limit measured cold (2026-10-29 night; Adam: "Connection limit")
+
+**What the limit is.** The texture policy of LLCore HTTP allows 8 connections per host (`TextureFetchConcurrency`, 0 = 8, clamped to 12 until now, 64 from this commit) with a pipelining depth of 5, so 40 requests on the wire; the fetcher's window (`HTTP_PIPE_REQUESTS_HIGH_WATER` 100, now the setting `FSTextureFetchHighWater`, 0 = the constants) queues the rest in front of its semaphore. Three cold logins at Citadel, the caches at an empty folder each time:
+
+| cold Citadel | 8 connections, window 100 | 16, 200 | 32, 400 |
+|---|---|---|---|
+| wait for a slot, per request | 0.48 s median, 1.3 p90 | 0.54 median, 2.7 p90 (fewer requests wait at all: 2399 of 5453 against 3333 of 5430) | 2.1 median, 3.9 p90 |
+| request issued -> bytes, per request | 0.087 s | 0.054 s | 0.070 s |
+| the fetch stage, per cycle | 0.51 s median, 2.44 p90 | 0.26 median, 1.77 p90 | 1.25 median, 2.88 p90 |
+| wanted -> the texture's real level | 3.56 s median, 5.8 p90 | 3.19 median, 4.5 p90 | 4.44 median, 6.0 p90 |
+| textures created, 50 / 90 % by | 9.2 / 18.0 s | 9.0 / 18.1 s | 9.9 / 19.5 s |
+| fps while loading | 104-108 | 100-110 | 95-106 |
+
+16 and 200 is the sweet spot of the three: the fetch stage halves and a texture reaches its real level 0.4 s sooner at the median, 1.3 s at the p90. 32 and 400 is worse than the baseline on every line (the wider window stacks requests in libcurl's queues, and the frame rate drops with them). **The scene did not fill sooner at any setting**, and the trace says why: cold, the textures become *wanted* over 25 s (half by 8.5 s, 90 % by 22 s), because the sim's objects arrive over that time with the object cache empty and every mesh fetched; warm they are all wanted by 1 s. The texture pipeline runs 3.2-3.6 s behind the object stream cold, so the limit moves the lag, not the curve. The object stream itself (the object cache, the mesh fetch policy, the interest list) is a different investigation, outside this plan.
+
+**Of the 3.2 s lag at 16/200, about a whole fetch cycle is the discovery round trip** (6.3): the first request is 600 bytes at discard 5, and the real level is a second request, a second slot wait, a second decode and a second visit by the texture list. That is the next lever on the texture side, and it is the viewer's own.
+
+**Decision open:** the default. Measured: 16 connections and a window of 200 (the setting's clamp is 64 so the experiment could run; the shipped Linden default is 8, the old clamp 12). The CDN's tolerance of 16 per viewer is the risk; the texture CDN is a Cloudfront-style edge and 16 is what a browser opens per host.
+
+**What the fix could be, by what the measurement says** (the hub's answers are in 6.1 and 6.2, the network's in 6.3 and 6.4):
 
 - The dispatch is the limit (textures wait long before their first request): visit more a frame while the camera moves or after a teleport (the count is already scaled by the discard bias; scale it by the fetch queue's emptiness too), or let the worker's visibility verdicts (H6) order the visits.
 - The network is the limit: more connections while loading (the high water is a constant; make it a setting with a loading-time value), pipelining on by default where the grid allows, or fewer round trips (ask for the final discard at once for textures whose screen size is already known, skipping the ladder).
