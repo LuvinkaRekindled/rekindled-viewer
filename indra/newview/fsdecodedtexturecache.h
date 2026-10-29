@@ -1,19 +1,20 @@
 /**
  * @file fsdecodedtexturecache.h
- * @brief A disk cache of decoded textures (doc/vulkan/PLAN-aurora-ideas.md section 2, stage a).
+ * @brief A disk cache of decoded textures (doc/vulkan/PLAN-aurora-ideas.md section 2, stages a and b).
  *
  * The texture cache keeps the JPEG 2000 bytes, so every session decodes every texture again. This cache keeps what the decode produced: one file per texture
- * id with the finest level decoded so far and its mip chain below it (a 2x2 box filter per level), so that a request for any discard level from the finest
- * one down is one read of one level, no decode and no scaling. Texture assets are immutable by id, so a stored level is valid for ever; the only
- * invalidations are the user's "clear cache", a format version change, and the texture cache removing a texture it found corrupt.
+ * id with the finest level decoded so far and its mip chain below it, so that a request for any discard level from the finest one down is one read, no decode
+ * and no scaling. Two file formats: raw texels (<uuid>_<discard>.dec, a 2x2 box filter per level) and a BC7 chain (<uuid>_<discard>.dc7, what BC7 at decode
+ * produced, llimagebc7.h), the format in the name so the index needs no file opened. Texture assets are immutable by id, so a stored level is valid for ever;
+ * the only invalidations are the user's "clear cache", a format version change, and the texture cache removing a texture it found corrupt.
  *
  * Threads: reads run on the image decode pool, in place of the decode (LLDecodedImageCache, llimageworker.h); writes are queued (a copy of the decoded
  * image, 256 MB of queue at most, a full queue drops the write and the texture is decoded again next time) to one writer thread, which also builds the
- * index at start-up (one directory listing: the discard level is in the file name) and keeps the cache under its size cap by removing the files read
- * least recently (a hit touches the file's time). Nothing here runs on the main thread except the once-a-minute report and the settings read.
+ * index at start-up (one directory listing) and keeps the cache under its size cap by removing the files read least recently (a hit touches the file's time).
+ * Nothing here runs on the main thread except the once-a-minute report and the settings read.
  *
- * Settings: FSDecodedTextureCache (on/off, live: off means no read and no write, today's path), FSDecodedTextureCacheSizeMB (the cap).
- * Stage b (BC7 at decode, taking over RenderCompressTextures) will add a format to the file header; the chain layout is made for it.
+ * Settings: FSDecodedTextureCache (on/off, live: off means no read and no write, today's path), FSDecodedTextureCacheSizeMB (the cap). RenderCompressTextures
+ * decides whether BC7 chains are produced and may be served (off: a BC7 file is a miss, and a raw decode replaces it).
  */
 
 #ifndef FS_DECODEDTEXTURECACHE_H
@@ -21,14 +22,13 @@
 
 #include "llimageworker.h"
 #include "lldir.h"
+#include "threadpool_fwd.h"     // LL::ThreadPool is an alias there
 
 #include <atomic>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <string>
-
-#include "threadpool_fwd.h"     // LL::ThreadPool is an alias there
 
 class FSDecodedTextureCache : public LLDecodedImageCache
 {
@@ -42,10 +42,10 @@ public:
     void shutdown();
 
     // LLDecodedImageCache (decode pool threads)
-    LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard) override;
+    LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard, bool allow_compressed) override;
     void write(const LLUUID& id, S32 discard, const LLImageRaw* raw) override;
 
-    // Main thread, every frame (cheap): reads the settings, logs a report once a minute while anything happened
+    // Main thread, every frame (cheap): reads the settings, logs a report once a minute while anything happened, stamps the texture arrival once a session
     void update();
 
     // the texture cache removed this texture (corrupt): ours goes too. Any thread.
@@ -62,11 +62,12 @@ private:
     struct Entry
     {
         S32 mDiscard = 0;       // the finest level in the file
+        U8 mFormat = 0;         // 0 raw texels, LLImageBC7::FORMAT_BC7 a BC7 chain
         U64 mSize = 0;          // bytes on disk
         S64 mTime = 0;          // last read or write, seconds (the eviction order)
     };
 
-    std::string fileName(const LLUUID& id, S32 discard) const;
+    std::string fileName(const LLUUID& id, S32 discard, U8 format) const;
     std::string subDir(const LLUUID& id) const;
     void scanIndex();                                   // writer thread, at init
     void writeFile(const LLUUID& id, S32 discard, LLPointer<LLImageRaw> raw);     // writer thread
@@ -87,7 +88,7 @@ private:
     std::atomic<S64> mQueuedBytes { 0 };                // decoded bytes waiting on the writer
 
     // statistics since the last report
-    std::atomic<U32> mHits { 0 }, mMissAbsent { 0 }, mMissCoarser { 0 }, mMissBad { 0 }, mWrites { 0 }, mDrops { 0 }, mSkips { 0 }, mEvictions { 0 };
+    std::atomic<U32> mHits { 0 }, mHitsBC7 { 0 }, mMissAbsent { 0 }, mMissCoarser { 0 }, mMissFormat { 0 }, mMissBad { 0 }, mWrites { 0 }, mWritesBC7 { 0 }, mDrops { 0 }, mSkips { 0 }, mEvictions { 0 };
     std::atomic<U64> mHitBytes { 0 }, mWriteBytes { 0 };
     F64 mLastReport = 0.0;
 };

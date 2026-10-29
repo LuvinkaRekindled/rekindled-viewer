@@ -526,6 +526,7 @@ void LLGLTexMemBar::draw()
     for (auto& image : gTextureList)
     {
         const LLImageRaw* raw_image = image->getRawImage();
+        if (raw_image && raw_image->isCompressed()) raw_image = nullptr;        // <FS> a BC7 chain is not drawable here
 
         if (raw_image)
         {

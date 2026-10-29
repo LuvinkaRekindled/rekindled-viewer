@@ -28,6 +28,7 @@
 
 #include "llimageworker.h"
 #include "llimage.h"
+#include "llimagebc7.h"      // <FS> the compressed form
 
 #include "llmath.h"
 #include "v4coloru.h"
@@ -930,6 +931,7 @@ void LLImageRaw::setDataAndSize(U8 *data, S32 width, S32 height, S8 components)
 
 bool LLImageRaw::resize(U16 width, U16 height, S8 components)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::resize on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
     LLImageDataLock lock(this);
 
     if ((getWidth() == width) && (getHeight() == height) && (getComponents() == components) && !isBufferInvalid())
@@ -947,6 +949,7 @@ bool LLImageRaw::resize(U16 width, U16 height, S8 components)
 bool LLImageRaw::setSubImage(U32 x_pos, U32 y_pos, U32 width, U32 height,
                              const U8 *data, U32 stride, bool reverse_y)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::setSubImage on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
     LLImageDataLock lock(this);
 
     if (!getData())
@@ -975,6 +978,7 @@ bool LLImageRaw::setSubImage(U32 x_pos, U32 y_pos, U32 width, U32 height,
 
 void LLImageRaw::clear(U8 r, U8 g, U8 b, U8 a)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::clear on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     llassert( getComponents() <= 4 );
 
     LLImageDataLock lock(this);
@@ -1019,6 +1023,7 @@ void LLImageRaw::clear(U8 r, U8 g, U8 b, U8 a)
 // Reverses the order of the rows in the image
 void LLImageRaw::verticalFlip()
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::verticalFlip on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageDataLock lock(this);
 
     S32 row_bytes = getWidth() * getComponents();
@@ -1038,6 +1043,7 @@ void LLImageRaw::verticalFlip()
 
 bool LLImageRaw::checkHasTransparentPixels()
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::checkHasTransparentPixels on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
     if (getComponents() != 4)
     {
         return false;
@@ -1060,6 +1066,7 @@ bool LLImageRaw::checkHasTransparentPixels()
 
 bool LLImageRaw::optimizeAwayAlpha()
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::optimizeAwayAlpha on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
     LLImageDataLock lock(this);
 
     if (getComponents() == 4)
@@ -1099,6 +1106,7 @@ bool LLImageRaw::optimizeAwayAlpha()
 
 bool LLImageRaw::makeAlpha()
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::makeAlpha on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
     if (getComponents() == 3)
     {
         U8* data = getData();
@@ -1127,6 +1135,7 @@ bool LLImageRaw::makeAlpha()
 
 void LLImageRaw::expandToPowerOfTwo(S32 max_dim, bool scale_image)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::expandToPowerOfTwo on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageDataLock lock(this);
 
     // Find new sizes
@@ -1138,6 +1147,7 @@ void LLImageRaw::expandToPowerOfTwo(S32 max_dim, bool scale_image)
 
 void LLImageRaw::contractToPowerOfTwo(S32 max_dim, bool scale_image)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::contractToPowerOfTwo on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageDataLock lock(this);
 
     // Find new sizes
@@ -1189,6 +1199,7 @@ S32 LLImageRaw::contractDimToPowerOfTwo(S32 curr_dim, S32 min_dim)
 
 void LLImageRaw::biasedScaleToPowerOfTwo(S32 max_dim)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::biasedScaleToPowerOfTwo on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageDataLock lock(this);
 
     // Find new sizes
@@ -1209,6 +1220,7 @@ inline U8 LLImageRaw::fastFractionalMult( U8 a, U8 b )
 
 void LLImageRaw::composite( const LLImageRaw* src )
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::composite on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataSharedLock lockIn(src);
@@ -1255,6 +1267,7 @@ void LLImageRaw::composite( const LLImageRaw* src )
 // Src and dst can be any size.  Src has 4 components.  Dst has 3 components.
 void LLImageRaw::compositeScaled4onto3(const LLImageRaw* src)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::compositeScaled4onto3 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LL_INFOS() << "compositeScaled4onto3" << LL_ENDL;
 
     LLImageRaw* dst = this;  // Just for clarity.
@@ -1284,6 +1297,7 @@ void LLImageRaw::compositeScaled4onto3(const LLImageRaw* src)
 // Src and dst are same size.  Src has 4 components.  Dst has 3 components.
 void LLImageRaw::compositeUnscaled4onto3( const LLImageRaw* src )
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::compositeUnscaled4onto3 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataLock lock(this);
@@ -1345,6 +1359,7 @@ void LLImageRaw::compositeUnscaled4onto3( const LLImageRaw* src )
 
 void LLImageRaw::copyUnscaledAlphaMask( const LLImageRaw* src, const LLColor4U& fill)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyUnscaledAlphaMask on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataSharedLock lockIn(src);
@@ -1377,6 +1392,7 @@ void LLImageRaw::copyUnscaledAlphaMask( const LLImageRaw* src, const LLColor4U& 
 // Fill the buffer with a constant color
 void LLImageRaw::fill( const LLColor4U& color )
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::fill on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageDataLock lock(this);
 
     if (isBufferInvalid())
@@ -1411,6 +1427,7 @@ void LLImageRaw::fill( const LLColor4U& color )
 
 void LLImageRaw::tint( const LLColor3& color )
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::tint on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     llassert( (3 == getComponents()) || (4 == getComponents()) );
     if (isBufferInvalid())
     {
@@ -1433,8 +1450,38 @@ void LLImageRaw::tint( const LLColor3& color )
     }
 }
 
+// <FS> BC7 at decode: the compressed form (llimagebc7.h)
+const U8* LLImageRaw::getFinestLevelData() const
+{
+    if (!isCompressed() || !getData()) return getData();
+    const U64 finest = LLImageBC7::blockBytes(getWidth(), getHeight());
+    return finest <= (U64)getDataSize() ? getData() + (getDataSize() - finest) : getData();
+}
+
+void LLImageRaw::setCompressedChain(U8* data, S32 size, U16 width, U16 height, S8 components, U8 format, U8 levels, S8 alpha_is_mask)
+{
+    deleteData();
+    setSize(width, height, components);
+    LLImageBase::setDataAndSize(data, size);
+    mCompressedFormat = format;
+    mLevels = levels;
+    mAlphaIsMask = alpha_is_mask;
+}
+
 LLPointer<LLImageRaw> LLImageRaw::duplicate()
 {
+    if (isCompressed())
+    {
+        // <FS> the chain, copied
+        LLImageDataSharedLock lock(this);
+        U8* data = (U8*)ll_aligned_malloc_16(getDataSize());
+        if (!data) return nullptr;
+        memcpy(data, getData(), getDataSize());
+        LLPointer<LLImageRaw> dup = new LLImageRaw();
+        dup->setCompressedChain(data, getDataSize(), getWidth(), getHeight(), getComponents(), mCompressedFormat, mLevels, mAlphaIsMask);
+        dup->mComment = mComment;
+        return dup;
+    }
     if(getNumRefs() < 2)
     {
         return this; //nobody else refences to this image, no need to duplicate.
@@ -1450,6 +1497,7 @@ LLPointer<LLImageRaw> LLImageRaw::duplicate()
 // Src and dst can be any size.  Src and dst can each have 3 or 4 components.
 void LLImageRaw::copy(const LLImageRaw* src)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copy on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataSharedLock lockIn(src);
@@ -1502,6 +1550,7 @@ void LLImageRaw::copy(const LLImageRaw* src)
 // Src and dst are same size.  Src and dst have same number of components.
 void LLImageRaw::copyUnscaled(const LLImageRaw* src)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyUnscaled on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataLock lock(this);
@@ -1529,6 +1578,7 @@ void LLImageRaw::copyScaled3onto4(const LLImageRaw* src)
 // Src and dst can be any size.  Src has 4 components.  Dst has 3 components.
 void LLImageRaw::copyScaled4onto3(const LLImageRaw* src)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyScaled4onto3 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     llassert( (4 == src->getComponents()) && (3 == getComponents()) );
 
     // Slow, but simple.  Optimize later if needed.
@@ -1541,6 +1591,7 @@ void LLImageRaw::copyScaled4onto3(const LLImageRaw* src)
 // Src and dst are same size.  Src has 4 components.  Dst has 3 components.
 void LLImageRaw::copyUnscaled4onto3( const LLImageRaw* src )
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyUnscaled4onto3 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataLock lock(this);
@@ -1565,6 +1616,7 @@ void LLImageRaw::copyUnscaled4onto3( const LLImageRaw* src )
 // Src and dst are same size.  Src has 3 components.  Dst has 4 components.
 void LLImageRaw::copyUnscaled3onto4( const LLImageRaw* src )
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyUnscaled3onto4 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataLock lock(this);
@@ -1591,6 +1643,7 @@ void LLImageRaw::copyUnscaled3onto4( const LLImageRaw* src )
 // Src and dst can be any size.  Src and dst have same number of components.
 void LLImageRaw::copyScaled( const LLImageRaw* src )
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyScaled on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataSharedLock lockIn(src);
@@ -1637,6 +1690,7 @@ void LLImageRaw::copyScaled( const LLImageRaw* src )
 
 bool LLImageRaw::scale( S32 new_width, S32 new_height, bool scale_image_data )
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::scale on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
     LLImageDataLock lock(this);
 
     S32 components = getComponents();
@@ -1723,6 +1777,7 @@ bool LLImageRaw::scale( S32 new_width, S32 new_height, bool scale_image_data )
 
 LLPointer<LLImageRaw> LLImageRaw::scaled(S32 new_width, S32 new_height)
 {
+    if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::scaled on a compressed image (BC7 chain): refused" << LL_ENDL; return nullptr; }      // <FS>
     LLPointer<LLImageRaw> result;
 
     LLImageDataLock lock(this);

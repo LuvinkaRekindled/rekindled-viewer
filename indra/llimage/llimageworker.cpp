@@ -27,6 +27,7 @@
 #include "linden_common.h"
 
 #include "llimageworker.h"
+#include "llimagebc7.h"
 #include "llimagedxt.h"
 #include "threadpool.h"
 
@@ -39,7 +40,8 @@ public:
                  bool needs_aux,
                  const LLPointer<LLImageDecodeThread::Responder>& responder,
                  U32 request_id,
-                 const LLUUID& cache_id);
+                 const LLUUID& cache_id,
+                 bool allow_compressed);
     virtual ~ImageRequest();
 
     /*virtual*/ bool processRequest();
@@ -54,6 +56,7 @@ private:
     U32 mRequestId;
     bool mNeedsAux;
     LLUUID mCacheID;        // <FS> null: the decoded cache is not asked
+    bool mAllowCompressed;  // <FS> the result may be a BC7 chain
     // output
     LLPointer<LLImageRaw> mDecodedImageRaw;
     LLPointer<LLImageRaw> mDecodedImageAux;
@@ -100,7 +103,8 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     S32 discard,
     bool needs_aux,
     const LLPointer<LLImageDecodeThread::Responder>& responder,
-    const LLUUID& cache_id)
+    const LLUUID& cache_id,
+    bool allow_compressed)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -110,7 +114,7 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
 
     // Instantiate the ImageRequest right in the lambda, why not?
     bool posted = mThreadPool->getQueue().post(
-        [req = ImageRequest(image, discard, needs_aux, responder, decode_id, cache_id)]
+        [req = ImageRequest(image, discard, needs_aux, responder, decode_id, cache_id, allow_compressed)]
         () mutable
         {
             auto done = req.processRequest();
@@ -141,7 +145,8 @@ ImageRequest::ImageRequest(const LLPointer<LLImageFormatted>& image,
                            bool needs_aux,
                            const LLPointer<LLImageDecodeThread::Responder>& responder,
                            U32 request_id,
-                           const LLUUID& cache_id)
+                           const LLUUID& cache_id,
+                           bool allow_compressed)
     : mFormattedImage(image),
       mDiscardLevel(discard),
       mNeedsAux(needs_aux),
@@ -149,7 +154,8 @@ ImageRequest::ImageRequest(const LLPointer<LLImageFormatted>& image,
       mDecodedAux(false),
       mResponder(responder),
       mRequestId(request_id),
-      mCacheID(cache_id)
+      mCacheID(cache_id),
+      mAllowCompressed(allow_compressed)
 {
 }
 
@@ -162,6 +168,28 @@ ImageRequest::~ImageRequest()
 
 //----------------------------------------------------------------------------
 
+
+// <FS> BC7 at decode (RenderCompressTextures, llimagebc7.h): the texels of 'raw' become a BC7 mip chain when the policy allows it and the per-block check passes; a small image, one with
+// 1 or 2 components, or one the check rejects stays as it is. Runs on the decode pool.
+static void compress_if_wanted(LLPointer<LLImageRaw>& raw)
+{
+    if (raw.isNull() || raw->isCompressed() || !raw->getData() || !LLImageBC7::enabled()
+        || !LLImageBC7::eligible(raw->getWidth(), raw->getHeight(), raw->getComponents()))
+    {
+        return;
+    }
+    const U32 w = raw->getWidth(), h = raw->getHeight(), c = raw->getComponents();
+    std::vector<std::vector<U8>> chain;
+    LLImageBC7::buildChain(raw->getData(), w, h, c, chain);
+    const S8 alpha_is_mask = LLImageBC7::classifyAlpha(raw->getData(), w, h, c);
+    F32 harmed = 0.f;
+    LLPointer<LLImageRaw> compressed = LLImageBC7::compress(chain, w, h, c, LLImageBC7::MAX_HARMED_PERCENT, harmed, alpha_is_mask);
+    if (compressed.notNull())
+    {
+        compressed->mComment = raw->mComment;
+        raw = compressed;
+    }
+}
 
 // Returns true when done, whether or not decode was successful.
 bool ImageRequest::processRequest()
@@ -200,12 +228,21 @@ bool ImageRequest::processRequest()
             LLDecodedImageCache* cache = sDecodedCache;
             if (cache && mCacheID.notNull() && !mNeedsAux)
             {
-                LLPointer<LLImageRaw> cached = cache->read(mCacheID, mFormattedImage->getDiscardLevel());
+                LLPointer<LLImageRaw> cached = cache->read(mCacheID, mFormattedImage->getDiscardLevel(), mAllowCompressed);
                 if (cached.notNull() && cached->getData() && cached->getComponents() == mFormattedImage->getComponents()
                     && cached->getWidth() == mFormattedImage->getWidth() && cached->getHeight() == mFormattedImage->getHeight())
                 {
                     mDecodedImageRaw = cached;
                     mDecodedRaw = true;
+                    // a raw chain served while compression is on is encoded like a decode would be (the cache then keeps the BC7 chain; a raw hit used to bypass the encoder, 2026-10-29)
+                    if (mAllowCompressed && !cached->isCompressed())
+                    {
+                        compress_if_wanted(mDecodedImageRaw);
+                        if (mDecodedImageRaw->isCompressed())
+                        {
+                            cache->write(mCacheID, mFormattedImage->getDiscardLevel(), mDecodedImageRaw);
+                        }
+                    }
                     return true;
                 }
             }
@@ -228,6 +265,11 @@ bool ImageRequest::processRequest()
 
         // some decoders are removing data when task is complete and there were errors
         mDecodedRaw = done && mDecodedImageRaw->getData();
+        // <FS> BC7 at decode (RenderCompressTextures): the texels become a BC7 mip chain when the check passes
+        if (mDecodedRaw && mAllowCompressed && mCacheID.notNull() && !mNeedsAux)
+        {
+            compress_if_wanted(mDecodedImageRaw);
+        }
         // <FS> what the decode produced goes to the decoded cache (it copies)
         if (mDecodedRaw && mCacheID.notNull() && !mNeedsAux)
         {

@@ -375,7 +375,7 @@
     control_name="RenderCompressTextures"
     height="16"
     initial_value="true"
-    label="Enable Texture Compression (requires restart)"
+    label="Compress textures where it does not show (BC7)"
     layout="topleft"
     left="30"
     top_delta="16"

@@ -39,7 +39,8 @@ class LLDecodedImageCache
 {
 public:
     virtual ~LLDecodedImageCache() {}
-    virtual LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard) = 0;
+    // allow_compressed: a compressed (BC7 chain) image may be returned; false: only texels (the texture needs raw pixels)
+    virtual LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard, bool allow_compressed) = 0;
     virtual void write(const LLUUID& id, S32 discard, const LLImageRaw* raw) = 0;
 };
 
@@ -64,7 +65,8 @@ public:
     handle_t decodeImage(const LLPointer<LLImageFormatted>& image,
                          S32 discard, bool needs_aux,
                          const LLPointer<Responder>& responder,
-                         const LLUUID& cache_id = LLUUID::null);
+                         const LLUUID& cache_id = LLUUID::null,
+                         bool allow_compressed = false);     // <FS> BC7 at decode may replace the texels (RenderCompressTextures, llimagebc7.h) and the cache may answer with a chain
     // <FS> the decoded cache the pool asks (null: none); set before any decode runs and cleared after the pool has shut down
     static void setDecodedCache(LLDecodedImageCache* cache);
     static LLDecodedImageCache* getDecodedCache();

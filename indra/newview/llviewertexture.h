@@ -373,6 +373,8 @@ public:
     virtual void processTextureStats() ;
 
     bool needsAux() const { return mNeedsAux; }
+    // <FS> BC7 at decode: this texture must keep texels on the CPU (sculpt, aux, previews, exports, callbacks that read pixels, icons, local files), so the fetch asks for raw
+    bool needsRawPixels();
 
     // Host we think might have this image, used for baked av textures.
     void setTargetHost(LLHost host)         { mTargetHost = host; }

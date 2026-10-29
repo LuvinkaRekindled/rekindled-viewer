@@ -351,7 +351,8 @@ static S64 level_bytes(S32 bits, S32 width, S32 height, bool block4)
 
 static bool is_s3tc(TexelFormat f)
 {
-    return f == TexelFormat::BC1_RGBA || f == TexelFormat::BC1_SRGBA || f == TexelFormat::BC2 || f == TexelFormat::BC2_SRGBA || f == TexelFormat::BC3 || f == TexelFormat::BC3_SRGBA;
+    // <FS> BC7 too (BC7 at decode, llimagebc7.h): 4x4 blocks of 16 bytes, uploaded with compressedImage2D
+    return f == TexelFormat::BC1_RGBA || f == TexelFormat::BC1_SRGBA || f == TexelFormat::BC2 || f == TexelFormat::BC2_SRGBA || f == TexelFormat::BC3 || f == TexelFormat::BC3_SRGBA || f == TexelFormat::BC7;
 }
 
 //static
@@ -1446,11 +1447,9 @@ void LLImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel,
     // F3.6e: texture compression (RenderCompressTextures). The GL way named a generic compressed internal format per component layout; of those the old decode knew only
     // COMPRESSED_RGBA and COMPRESSED_RGB (stored as RGBA8), the other seven were "no Vulkan format" (the upload was dropped). Now: RGBA and RGB are the generic compressed
     // storage, every other format stays as it is.
-    const bool compress = LLImageTex::sCompressTextures && allow_compression;
-    if (compress && (intformat == TexelFormat::RGBA8 || intformat == TexelFormat::RGB8))
-    {
-        intformat = TexelFormat::GenericCompressed;
-    }
+    // <FS> RenderCompressTextures now means BC7 at decode (llimagebc7.h): the upload-time generic compression of the GL path is gone
+    const bool compress = false;
+    (void)allow_compression;
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("glTexImage2D");
@@ -1613,8 +1612,9 @@ bool LLImageTex::createImageTexture(S32 discard_level, const LLImageRaw* imagera
     }
 
     setCategory(category);
-    const U8* rawdata = imageraw->getData();
-    return createImageTexture(discard_level, rawdata, false, usename, defer_copy, tex_name);
+    // <FS> a compressed image (BC7 at decode): the chain is uploaded level by level (data_hasmips), the finest at the end of the buffer
+    const U8* rawdata = imageraw->isCompressed() ? imageraw->getFinestLevelData() : imageraw->getData();
+    return createImageTexture(discard_level, rawdata, imageraw->isCompressed(), usename, defer_copy, tex_name);
 }
 
 bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool data_hasmips, S32 usename, bool defer_copy, U32* tex_name)
@@ -2037,6 +2037,25 @@ void LLImageTex::setTarget(const TextureTarget target, const LLTexUnit::eTexture
 }
 
 const S8 INVALID_OFFSET = -99 ;
+// <FS> BC7 at decode: the classification analyzeAlpha would have made, computed from the texels before the encoding (the blocks cannot be read here); no later analysis overrides it
+void LLImageTex::setIsMask(bool is_mask)
+{
+    mIsMask = is_mask;
+    mAnalyzedPixels = ~0u;
+    ++mAnalysisCount;
+}
+
+bool LLImageTex::isCompressedFormat() const
+{
+    return is_s3tc(mFormatInternal);
+}
+
+void LLImageTex::clearExplicitFormat()
+{
+    mHasExplicitFormat = false;
+    mAnalyzedPixels = 0;        // the next upload of texels classifies the alpha again
+}
+
 void LLImageTex::setNeedsAlphaAndPickMask(bool need_mask)
 {
     if(mNeedsAlphaAndPickMask != need_mask)

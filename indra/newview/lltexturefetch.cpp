@@ -593,6 +593,7 @@ private:
     bool mDecoded;
     bool mWritten;
     bool mNeedsAux;
+    bool mNeedsRaw;         // <FS> the decode may not answer with a BC7 chain
     bool mHaveAllData;
     bool mInLocalCache;
     bool mInCache;
@@ -939,6 +940,7 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
       mDecoded(false),
       mWritten(false),
       mNeedsAux(false),
+      mNeedsRaw(false),
       mHaveAllData(false),
       mInLocalCache(false),
       mInCache(false),
@@ -2010,7 +2012,8 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                                                        discard,
                                                                        mNeedsAux,
                                                                        new DecodeResponder(mFetcher, mID, this),
-                                                                       mUrl.empty() ? mID : LLUUID::null);
+                                                                       (mUrl.empty() || mFTType == FTT_SERVER_BAKE) ? mID : LLUUID::null,
+                                                                       (mUrl.empty() || mFTType == FTT_SERVER_BAKE) && !mNeedsRaw);
         if (mDecodeHandle == 0)
         {
             // Abort, failed to put into queue.
@@ -2783,7 +2786,7 @@ LLTextureFetch::~LLTextureFetch()
 }
 
 S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
-    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http)
+    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http, bool needs_raw)
 {
     LL_PROFILE_ZONE_SCOPED;
     if (mDebugPause)
@@ -2867,6 +2870,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         }
         worker->mActiveCount++;
         worker->mNeedsAux = needs_aux;
+        worker->mNeedsRaw = needs_raw;      // <FS>
         worker->setImagePriority(priority);
         worker->setDesiredDiscard(desired_discard, desired_size);
         worker->setCanUseHTTP(can_use_http);
@@ -2895,6 +2899,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         worker->lockWorkMutex();                                        // +Mw
         worker->mActiveCount++;
         worker->mNeedsAux = needs_aux;
+        worker->mNeedsRaw = needs_raw;      // <FS>
         worker->setCanUseHTTP(can_use_http);
         worker->unlockWorkMutex();                                      // -Mw
     }

@@ -11878,7 +11878,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderCompressTextures</key>
   <map>
     <key>Comment</key>
-    <string>Enable texture compression on OpenGL 3.0 and later implementations (EXPERIMENTAL, requires restart)</string>
+    <string>Compress textures to BC7 as they are decoded, where it does not show (each texture is checked block by block and kept uncompressed when the encoding would be visible; about a quarter of the video memory for the textures that pass). Applies to textures loaded from then on.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
