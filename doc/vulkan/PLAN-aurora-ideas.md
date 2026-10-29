@@ -266,7 +266,19 @@ So five sixths of the fetch stage is the viewer's own queue in front of its conn
 
 **Of the 3.2 s lag at 16/200, about a whole fetch cycle is the discovery round trip** (6.3): the first request is 600 bytes at discard 5, and the real level is a second request, a second slot wait, a second decode and a second visit by the texture list. That is the next lever on the texture side, and it is the viewer's own.
 
-**Decision open:** the default. Measured: 16 connections and a window of 200 (the setting's clamp is 64 so the experiment could run; the shipped Linden default is 8, the old clamp 12). The CDN's tolerance of 16 per viewer is the risk; the texture CDN is a Cloudfront-style edge and 16 is what a browser opens per host.
+**The bandwidth slider (Adam: "there's a network setting too that caps at 3000"):** `ThrottleBandwidthKBPS` does not touch the HTTP texture fetch (the fetcher reads it into a number that only appears in a log line); it is the UDP throttle the sim applies to what it sends, split by category, and the object updates get about a third of it: at 3000 kbps about 930 kbps for objects, which is the 25 s object stream of a cold Citadel. The slider stops at 3000, the code clamps at 10000. One more cold login at 16/200 with the throttle at 10000:
+
+| cold Citadel, 16/200 | throttle 3000 | throttle 10000 |
+|---|---|---|
+| textures wanted (the objects arrived), 50 / 90 / 95 % by | 8.3 / 22.2 / 25.4 s | 7.0 / 17.3 / 20.3 s |
+| textures created, 50 / 90 % by | 9.0 / 18.1 s | 9.6 / 16.0 s |
+| wanted -> the real level (the texture lag) | 3.19 s median, 4.5 p90 | 4.92 s median, 6.2 p90 |
+| wait for a slot, per request | 0.54 s median | 2.37 s median |
+| fps while loading | 100-110 | 95-98 |
+
+The sim honours more than 3000: the objects arrive a fifth sooner (not three times: the sim has its own cap, or the stream is bounded elsewhere) and the scene's 90 % mark moves from 18 to 16 s. With the objects faster the texture fetch becomes the bound again (the lag grows from 3.2 to 4.9 s, the slot wait to 2.4 s), so the two levers go together: the throttle feeds objects faster, and the connection count plus the discovery skip have to keep up. The 3000 cap in the slider is a 2008 figure (the code's own limit is 10000); whether the default should move is a question about the user's network and the grid's manners, not about the viewer.
+
+**Decision open:** the defaults. Measured: 16 connections and a window of 200 (the setting's clamp is 64 so the experiment could run; the shipped Linden default is 8, the old clamp 12). The CDN's tolerance of 16 per viewer is the risk; the texture CDN is a Cloudfront-style edge and 16 is what a browser opens per host.
 
 **What the fix could be, by what the measurement says** (the hub's answers are in 6.1 and 6.2, the network's in 6.3 and 6.4):
 
