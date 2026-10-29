@@ -3834,8 +3834,18 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         bool mOn; U64 mT0;
         ~VisCullEnd() { if (mOn) { LLVisCensus::sCullTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sCullFrames; } }
     } vis_cull_end = { vis_cull, vis_cull ? LLVisCensus::now() : 0 };
-    // <FS> S7 C2 (LL_VK_CULL_USE=2): the covered partitions are not walked, useVerdict makes their lists
-    const bool cull_use = LLCullShadow::sUse == 2 && !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot;
+    // <FS> S7 C2 (LL_VK_CULL_USE=2): the covered partitions are not walked, useVerdict makes their lists. rt-debug.txt culluse=N changes it live while the table runs (a same-lap A/B)
+    if (LLCullShadow::sOn && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !hud_attachments)
+    {
+        const S32 live_use = LLVkBridge::rtCullUse();
+        const unsigned want_use = live_use >= 0 ? (unsigned)live_use : LLCullShadow::sUseEnv;       // (the key taken out of the file: back to what the environment says)
+        if (want_use != LLCullShadow::sUse.load())
+        {
+            LLCullShadow::sUse = want_use;
+        }
+    }
+    const bool cull_use = LLCullShadow::sUse == 2 && !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot
+        && LLCullShadow::useMatches(camera);        // (a frame whose frustum has another shape than the verdict's is walked: the exit snapshot has no UI, so another aspect)
     struct CullShadowEnd
     {
         bool mOn; LLCamera* mCamera;
@@ -9718,6 +9728,7 @@ struct CullRec
     U32 mBuildSerial = 0;           // the build the rows come from (a group with a later first serial did not exist)
     U32 mFrame = 0;                 // gFrameCount when sent
     U32 mCount = 0;                 // rows of the whole table at the record
+    F32 mShape[4] = {};             // aspect, field of view, far clip, frustum corner distance of the camera when sent (C2 uses the verdict only for a camera of the same shape)
     std::vector<U32> mGen;          // slot -> generation when sent (a reused slot is not the same group)
     std::vector<LLVkBridge::CullRow> mRows;
 };
@@ -9732,7 +9743,7 @@ struct CullStats
     U64 mLag[10] = {};
     U64 mDeltaRows = 0, mResets = 0;
     // C2: the flat version of the cull
-    U64 mUseFrames = 0, mUseKept = 0, mUseTop = 0, mUseBoth = 0, mUseMissed = 0, mUseMissedFar = 0, mUseExtra = 0, mUseUnknown = 0, mUseNoVerdict = 0;
+    U64 mUseFrames = 0, mUseKept = 0, mUseTop = 0, mUseBoth = 0, mUseMissed = 0, mUseMissedFar = 0, mUseExtra = 0, mUseUnknown = 0, mUseNoVerdict = 0, mUseMismatch = 0;
     double mUseMs = 0;
     double mBuildMs = 0, mProcessMs = 0, mApplyMs = 0, mSendMs = 0, mBytes = 0, mTBound = 0, mABound = 0, mVerifyWalkMs = 0;
     U64 mBuilds = 0, mSends = 0, mRefreshed = 0, mTouches = 0, mAdded = 0, mFreed = 0, mRequeued = 0;
@@ -9935,6 +9946,7 @@ struct CullVerdict
 {
     bool mValid = false;
     U32 mCount = 0, mSerial = 0, mFrame = 0;
+    F32 mShape[4] = {};
     std::vector<U32> mBits;
     std::vector<U32> mGen;
 };
@@ -9954,6 +9966,7 @@ void cull_store_verdict(const CullRec& rec, const std::vector<U32>& words)
     sVerdict.mCount = rec.mCount;
     sVerdict.mSerial = rec.mSerial;
     sVerdict.mFrame = rec.mFrame;
+    memcpy(sVerdict.mShape, rec.mShape, sizeof(sVerdict.mShape));
     sVerdict.mValid = true;
 }
 
@@ -9979,11 +9992,11 @@ void cull_report()
             v, s.mVerifyWalkMs / v, (double)s.mVWalked / v, (double)s.mVMissing / v, (double)s.mVBounds / v, (double)s.mVExtents / v, (double)s.mVParent / v, (double)s.mVFlag[1] / v, (double)s.mVFlag[2] / v, (double)s.mVFlag[3] / v, (double)s.mVFlag[4] / v, (double)s.mVFlag[0] / v, (double)s.mVOrphans / v);
         LL_INFOS("CullShadow") << buf << LL_ENDL;
     }
-    if (s.mUseFrames)
+    if (s.mUseFrames || s.mUseMismatch)
     {
-        const double u = (double)s.mUseFrames;
-        snprintf(buf, sizeof(buf), "C2 (the flat cull, variant %u, %.0f frames): kept %.1f groups and %.1f topmost occluded a frame in %.3f ms (%.1f rows without a verdict bit); against the walk (derive mode): both %.1f, MISSED %.2f (of which beyond the far limit %.2f), EXTRA %.1f a frame; %.0f frames without a verdict yet",
-            LLCullShadow::sUseVariant, u, (double)s.mUseKept / u, (double)s.mUseTop / u, s.mUseMs / u, (double)s.mUseUnknown / u, (double)s.mUseBoth / u, (double)s.mUseMissed / u, (double)s.mUseMissedFar / u, (double)s.mUseExtra / u, (double)s.mUseNoVerdict);
+        const double u = (double)std::max<U64>(s.mUseFrames, 1);
+        snprintf(buf, sizeof(buf), "C2 (the flat cull, variant %u, %.0f frames): kept %.1f groups and %.1f topmost occluded a frame in %.3f ms (%.1f rows without a verdict bit); against the walk (derive mode): both %.1f, MISSED %.2f (of which beyond the far limit %.2f), EXTRA %.1f a frame; %.0f frames without a verdict yet; %.0f frames walked because the verdict's frustum had another shape (snapshot, zoom, resize)",
+            LLCullShadow::sUseVariant, (double)s.mUseFrames, (double)s.mUseKept / u, (double)s.mUseTop / u, s.mUseMs / u, (double)s.mUseUnknown / u, (double)s.mUseBoth / u, (double)s.mUseMissed / u, (double)s.mUseMissedFar / u, (double)s.mUseExtra / u, (double)s.mUseNoVerdict, (double)s.mUseMismatch);
         LL_INFOS("CullShadow") << buf << LL_ENDL;
     }
     static const char* const names[] = { "exact (margin 0)", "factor 1", "factor 2", "factor 3" };
@@ -10358,6 +10371,33 @@ static void cull_flat(LLCamera& camera, bool use)
     s.mUseMs += cull_ms(t0);
 }
 
+static void cull_shape(LLCamera& camera, F32 (&shape)[4])
+{
+    shape[0] = camera.getAspect();
+    shape[1] = camera.getView();
+    shape[2] = camera.getFar();
+    shape[3] = camera.mFrustumCornerDist;
+}
+
+bool LLCullShadow::useMatches(LLCamera& camera)
+{
+    if (!sVerdict.mValid)
+    {
+        return true;                // useSkip walks everything while there is no verdict
+    }
+    F32 now[4];
+    cull_shape(camera, now);
+    for (int k = 0; k < 4; ++k)
+    {
+        if (fabsf(now[k] - sVerdict.mShape[k]) > 1.0e-4f * llmax(1.f, fabsf(now[k])))
+        {
+            ++sCullStats.mUseMismatch;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool LLCullShadow::useSkip(LLSpatialPartition* part)
 {
     if (sUse != 2 || !sVerdict.mValid || !part->mOctree || !gPipeline.hasRenderType(part->mDrawableType))
@@ -10604,6 +10644,7 @@ void LLCullShadow::send(LLCamera& camera)
     if (serial)
     {
         rec.mSerial = serial;
+        cull_shape(camera, rec.mShape);
         rec.mBuildSerial = sCullBuildSerial;
         rec.mFrame = (U32)gFrameCount;
         rec.mCount = table_size;
