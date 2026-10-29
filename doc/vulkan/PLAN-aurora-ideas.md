@@ -218,7 +218,7 @@ Five sixths of a texture's way was spent after its decode had finished: a finish
 | worst frame's loop | 8.6 ms | 5.2 ms | 4.5 ms |
 | half the scene created by | 2.7 s | 3.4 s | 1.5 s |
 
-The remaining 0.11 ms per MB is not named yet (the texture object's own bookkeeping, or a path the hold does not cover); it is a tenth of a 2048 texture's old cost and no longer a frame on its own. **Decision open:** make one-copy the default (the env knob stays to turn it off).
+The remaining 0.11 ms per MB is not named yet (the texture object's own bookkeeping, or a path the hold does not cover); it is a tenth of a 2048 texture's old cost and no longer a frame on its own. **Decided (Adam, 2026-10-29): one-copy is the default** (`LL_VK_TEXONECOPY=0` turns it off); the confirming login with no knob set: the loop 81 ms over the first 10 s for 7502 textures and 789 MB, 0.011 ms per texture, 0.10 ms per MB, worst frame 3.0 ms, no empty mip levels in the memory line, 120 fps.
 
 **What the fix could be, by what the measurement says** (the hub's answers are above; the network side waits for the Citadel trace):
 

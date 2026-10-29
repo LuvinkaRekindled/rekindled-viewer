@@ -63,7 +63,7 @@ namespace LLVkAsync
 void uiCacheBufferTouched(U32 name);       // (UI record cache, below)
 
 bool gEnabled = false;
-bool gTexOneCopy = false;   // C4: opt-in (LL_VK_TEXONECOPY=1), the measured gain was nil
+bool gTexOneCopy = true;    // C4: on by default since 2026-10-29 (PLAN-aurora-ideas.md 6.2: with the alpha passes off the main thread the copy was what was left, 0.19 -> 0.11 ms per MB); LL_VK_TEXONECOPY=0 turns it off
 static int gMode = 1;
 
 namespace
@@ -2987,7 +2987,7 @@ bool start()
         return true;
     }
     gMainTid = __readgsdword(0x48);
-    { const char* t1 = getenv("LL_VK_TEXONECOPY"); gTexOneCopy = t1 && t1[0] == '1'; }
+    { const char* t1 = getenv("LL_VK_TEXONECOPY"); gTexOneCopy = !(t1 && t1[0] == '0'); }
     if (!gRing)
     {
         gRing = (U8*)VirtualAlloc(nullptr, RING_BYTES, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
