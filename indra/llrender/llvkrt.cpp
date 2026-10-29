@@ -241,6 +241,7 @@ struct Stats
 struct DebugSwitches
 {
     bool mSingle = false;           // only the first scene call of a frame builds; later calls keep that scene
+    bool mSkinCollapse = true;      // skincollapse=0: a skinned vertex that is dropped (garbage, out of reach) becomes NaN again (the triangle is inactive) instead of collapsing onto the avatar
     bool mSnapRebuild = true;       // snaprebuild=0: a snapshot's renders refit the avatars' structures again (a same-session A/B of the fix: setSnapshotScene)
     S32 mNoRefit = 0;               // norefit=1: a structure whose vertices changed is rebuilt, not refitted; 2: only the avatars' skinned structures; 3: only the others (to see which refits a picture problem comes from)
     U64 mKeep = 8;                  // frames the casters of a cached pass are kept
@@ -349,6 +350,7 @@ void read_debug_switches()
                 if (k == "single") d.mSingle = v != 0;
                 else if (k == "norefit") d.mNoRefit = (S32)v;
                 else if (k == "snaprebuild") d.mSnapRebuild = v != 0;
+                else if (k == "skincollapse") d.mSkinCollapse = v != 0;
                 else if (k == "keep") d.mKeep = (U64)v;
                 else if (k == "common_only") d.mCommonOnly = v != 0;
                 else if (k == "alpha") d.mAlpha = v != 0;
@@ -980,7 +982,8 @@ void main()
     vec3 pos = source.xyz;
     const bool with_normals = (job.nsrc.x | job.nsrc.y) != 0u;
     vec3 nrm = with_normals ? InVec4(job.nsrc).v[v].xyz : vec3(0.0, 1.0, 0.0);
-    if (job.mode == 0u)
+    const uint skin_mode = job.mode & 0xFFu;           // (bit 8: a vertex that is dropped collapses onto the avatar instead of becoming NaN)
+    if (skin_mode == 0u)
     {
         // as getObjectSkinnedTransform() in objectSkinV.glsl; the joint numbers stay inside the palette that was sent
         vec4 weight4 = InVec4(job.weights).v[v];
@@ -1004,7 +1007,7 @@ void main()
         pos = m * pos + trans;
         nrm = m * nrm;                  // the same linear part (the viewer's own skinning shaders do the same: no inverse transpose)
     }
-    else if (job.mode == 1u)
+    else if (skin_mode == 1u)
     {
         // an avatar's own mesh (avatarSkinV.glsl): one weight per vertex, the joints i and i + 1 of the palette mixed
         float weight = InFloat(job.weights).w[v];
@@ -1033,7 +1036,17 @@ void main()
     }
     if (bad)
     {
-        world = vec3(uintBitsToFloat(0x7fc00000u));
+        // A NaN vertex makes its triangle inactive: it is left out of a structure that is built, but a structure that is refitted was built with the triangle in it, and an update over
+        // triangles that turn inactive is the case drivers handle worst (the boxes of the tree stay as they were or grow: every ray walks through them). So the vertex stays a number: it goes to the
+        // avatar's position (the guard's centre, else the model's origin), within a few metres of the rest of its triangle, and the box of the structure stays that of the avatar.
+        if ((job.mode & 0x100u) != 0u)
+        {
+            world = job.guard.w > 0.0 ? job.guard.xyz : vec3(job.m0.w, job.m1.w, job.m2.w);
+        }
+        else
+        {
+            world = vec3(uintBitsToFloat(0x7fc00000u));
+        }
     }
     OutVec4(job.dst).v[v] = vec4(world, source.w);       // w: the texture index of masked draws
     if (with_normals)
@@ -3193,7 +3206,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 }
                 sj.mFirst = d->mVertexFirst;
                 sj.mCount = d->mVertexCount;
-                sj.mMode = d->mMode;
+                sj.mMode = d->mMode | (sDbg.mSkinCollapse ? 0x100u : 0u);
                 sj.mJoints = d->mJoints;
                 const F32* m = d->mHasModel ? d->mModel : kIdentity;
                 for (int row = 0; row < 3; ++row)
