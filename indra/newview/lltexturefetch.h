@@ -28,6 +28,7 @@
 #define LL_LLTEXTUREFETCH_H
 
 #include <vector>
+#include <mutex>
 #include <map>
 
 #include "lldir.h"
@@ -67,6 +68,11 @@ public:
 
     // Threads:  Tmain
     /*virtual*/ size_t update(F32 max_time_ms);
+
+    // <FS> a worker reached DONE (any thread): its texture is visited by the list's next pass, so the result is collected at once (FSTextureFetchWake)
+    void noteCompleted(const LLUUID& id);
+    std::mutex mCompletedMutex;
+    std::vector<LLUUID> mCompleted;
 
     // called in the main thread after the TextureCacheThread shuts down.
     // Threads:  Tmain

@@ -102,6 +102,7 @@ public:
     static S32 sIdxMode;
     static bool sInListUpdate;                      // the list's own pass is running: its addTextureStats calls wake nothing
     void wakeTexture(LLViewerTexture* tex);         // a dormant texture goes back to the active list at the next pass
+    void visitNext(LLViewerTexture* tex);           // a listed texture, active or dormant, is visited at the next pass (its fetch finished: collect the result now, not when the slice reaches it)
     void idxRemove(LLViewerFetchedTexture* tex);
     static void wakeGroupTextures(class LLSpatialGroup* group);     // a group came into view: the textures of its faces are looked at again
     static bool createUploadFile(LLPointer<LLImageRaw> raw_image,

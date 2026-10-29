@@ -30,6 +30,7 @@
 #include <sys/stat.h>
 
 #include "llviewertexturelist.h"
+#include "fstexturearrivaltrace.h"     // <FS> the arrival trace
 #include "lldrawpool.h"
 
 #include "llagent.h"
@@ -949,6 +950,21 @@ void LLViewerTextureList::wakeTexture(LLViewerTexture* t)
     tex->mWakeQueued = true;
     tex->mLastWakeFrame = gFrameCount;
     tex->bumpFaceStamp();       // (a kept face loop result is out of date: whatever woke the texture is something the loop reads, or the loop is the way to find out)
+    mWake.push_back(tex);
+    ++sIdx.mWakes;
+}
+
+// the texture's fetch finished (the texture plan section 6: at the hub the result waited a median 0.59 s for the slice to reach the texture, five sixths of its whole way):
+// it goes in front of the next pass, whatever list it is on. The face loop's kept result stays valid (nothing about the faces changed), only updateFetch needs to run.
+void LLViewerTextureList::visitNext(LLViewerTexture* t)
+{
+    LLViewerFetchedTexture* tex = static_cast<LLViewerFetchedTexture*>(t);
+    if (!tex || tex->mListState == 0 || tex->mWakeQueued)
+    {
+        return;
+    }
+    tex->mWakeQueued = true;
+    tex->mLastWakeFrame = gFrameCount;
     mWake.push_back(tex);
     ++sIdx.mWakes;
 }
@@ -2118,6 +2134,7 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
 
         if (create_timer.getElapsedTimeF32() > max_time)
         {
+            if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("createbreak", LLUUID::null, (S32)mCreateTextureList.size(), 0, 0, create_timer.getElapsedTimeF32() * 1000.f);
             break;
         }
     }

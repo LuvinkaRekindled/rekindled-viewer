@@ -189,6 +189,7 @@
 #include "llworkerthread.h"
 #include "lltexturecache.h"
 #include "fsdecodedtexturecache.h"
+#include "fstexturearrivaltrace.h"
 #include "lltexturefetch.h"
 #include "llimageworker.h"
 #include "llevents.h"
@@ -2546,6 +2547,7 @@ bool LLAppViewer::cleanup()
     sTextureCache->shutdown();
     sImageDecodeThread->shutdown();
     FSDecodedTextureCache::instance().shutdown();       // <FS> after the decode pool: no reader runs any more
+    FSTextureArrivalTrace::shutdown();                  // <FS> the arrival trace's file
     sPurgeDiskCacheThread->shutdown();
     if (mGeneralThreadPool)
     {

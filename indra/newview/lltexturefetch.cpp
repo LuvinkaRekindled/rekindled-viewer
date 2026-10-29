@@ -44,6 +44,7 @@
 #include "llagent.h"
 #include "lltexturecache.h"
 #include "fsdecodedtexturecache.h"
+#include "fstexturearrivaltrace.h"
 #include "llviewercontrol.h"
 #include "llviewertexturelist.h"
 #include "llviewertexture.h"
@@ -3294,10 +3295,37 @@ void LLTextureFetch::commonUpdate()
 
 // Threads:  Tmain
 
+void LLTextureFetch::noteCompleted(const LLUUID& id)
+{
+    std::lock_guard<std::mutex> lock(mCompletedMutex);
+    mCompleted.push_back(id);
+}
+
 //virtual
 size_t LLTextureFetch::update(F32 max_time_ms)
 {
     FSDecodedTextureCache::instance().update();      // <FS> settings and the once-a-minute report of the decoded cache
+    FSTextureArrivalTrace::update();                 // <FS> the arrival trace's file
+    {
+        // <FS> finished fetches: their textures are visited by the list's next pass instead of waiting for the slice to reach them (switch while it is measured; then one path)
+        static LLCachedControl<bool> wake(gSavedSettings, "FSTextureFetchWake", true);
+        std::vector<LLUUID> done;
+        {
+            std::lock_guard<std::mutex> lock(mCompletedMutex);
+            done.swap(mCompleted);
+        }
+        if (wake())
+        {
+            for (const LLUUID& id : done)
+            {
+                if (LLViewerFetchedTexture* tex = gTextureList.findImage(id, TEX_LIST_STANDARD))
+                {
+                    gTextureList.visitNext(tex);
+                    if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("wake", id);
+                }
+            }
+        }
+    }
     LL_PROFILE_ZONE_SCOPED;
 
     {
@@ -3659,6 +3687,18 @@ void LLTextureFetchWorker::setState(e_state new_state)
     }
 
     mStateTimer.reset();
+    if (new_state == DONE && mFetcher)
+    {
+        mFetcher->noteCompleted(mID);       // <FS> the list visits the texture next pass
+    }
+    // <FS> arrival trace: the step, with what the worker wants, has, asked for (bytes) and decoded to
+    if (FSTextureArrivalTrace::enabled())
+    {
+        const S64 bytes = new_state == WAIT_HTTP_REQ ? (S64)mRequestedSize
+                        : (new_state == DECODE_IMAGE && mFormattedImage.notNull()) ? (S64)mFormattedImage->getDataSize()
+                        : (new_state == CACHE_POST ? (S64)mCachedSize : 0);
+        FSTextureArrivalTrace::note(e_state_name[new_state], mID, mDesiredDiscard, mLoadedDiscard, bytes, (F32)mDecodedDiscard);
+    }
     mState = new_state;
 }
 
