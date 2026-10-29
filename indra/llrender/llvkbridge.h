@@ -326,6 +326,7 @@ namespace LLVkBridge
     S32 rtWaterReflections();      // rt-debug.txt waterrt=1 (needs LL_VK_RT_MATERIALS=1): the water traces its reflection into the ray scene
     S32 rtHitRays();               // rt-debug.txt hitrays=N (-1 = not set): shadow rays per local light at a traced hit
     S32 rtHitQuality();            // rt-debug.txt hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 the main pass lighting at the hit)
+    S32 rtSunSamples();            // rt-debug.txt sunsamples=N (0 = not set: RenderRTShadowSamples decides), a same-lap cost A/B of the sun rays per pixel
     S32 rtTexAnim();               // rt-debug.txt texanim=0/1/2 (-1 = not set: the setting FSTexAnimOnGPU decides), a same-lap A/B of the texture animation by the CPU against the vertex shader
     S32 rtSunSelfShadow();         // rt-debug.txt sunself=0/1 (default 1): the translucent, soft avatar self shadows of the sun; 0 = off (an avatar blocks fully, no start disc), a same-lap cost A/B
     S32 rtDebugView();      // rt-debug.txt view=N: the ray scene material debug view mode to show, 0 = the setting RenderRTMaterialDebug decides

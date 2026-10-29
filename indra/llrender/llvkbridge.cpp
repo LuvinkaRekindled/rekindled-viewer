@@ -839,6 +839,11 @@ S32 LLVkBridge::rtHitQuality()
     return rtShadowMode() != 0 ? LLVk::Rt::hitQuality() : -1;
 }
 
+S32 LLVkBridge::rtSunSamples()
+{
+    return rtShadowMode() != 0 ? LLVk::Rt::sunSamples() : 0;
+}
+
 S32 LLVkBridge::rtTexAnim()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::texAnim() : -1;

@@ -20544,7 +20544,8 @@ void LLPipeline::renderDeferredLighting()
                     static LLCachedControl<S32> rt_samples(gSavedSettings, "RenderRTShadowSamples", 2);
                     static LLStaticHashedString radius_s("rt_sun_radius"), samples_s("rt_sun_samples"), frame_s("rt_noise_frame");
                     sun_shader.uniform1f(radius_s, tanf(llclamp(rt_softness(), 0.f, 5.f) * DEG_TO_RAD));
-                    sun_shader.uniform1i(samples_s, llclamp(rt_samples(), 1, 16));
+                    const S32 live_samples = LLVkBridge::rtSunSamples();         // rt-debug.txt sunsamples=N overrides the setting while it is set (a same-lap A/B)
+                    sun_shader.uniform1i(samples_s, llclamp(live_samples > 0 ? live_samples : rt_samples(), 1, 16));
                     // the noise changes every frame when the upscaler is there to accumulate it, else it stays put and the blur alone smooths it
                     sun_shader.uniform1f(frame_s, sDLSS ? (F32)(mJitterIndex % 64) : 0.f);
                     static LLStaticHashedString self_off_s("rt_sun_self_off");
