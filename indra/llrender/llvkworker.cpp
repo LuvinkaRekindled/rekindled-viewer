@@ -4480,6 +4480,86 @@ static void on_body_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
 }
 
 // the worker side of a record of alpha masked casters (shadowAlphaPullV.glsl / shadowAlphaPullF.glsl): the entries also name their textures
+// <FS> a key=value line of the live switch file (rt-debug.txt, LL_VK_RT_DEBUG_FILE) for the worker thread's own use: the ray scene reads its switches only while it runs, and the cascade shadows
+// (this record) are drawn only with ray shadows off. Read again every half second; worker thread only.
+struct WorkerDebugKey
+{
+    const char* mKey;
+    S32 mValue;
+    std::chrono::steady_clock::time_point mRead;
+};
+static S32 worker_debug_key(WorkerDebugKey& k)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - k.mRead < std::chrono::milliseconds(500))
+    {
+        return k.mValue;
+    }
+    k.mRead = now;
+    static const char* path = []() { const char* e = getenv("LL_VK_RT_DEBUG_FILE"); return e && e[0] ? e : "D:/claude/rt-debug.txt"; }();
+    S32 value = k.mValue;
+    bool found = false;
+    if (FILE* f = fopen(path, "r"))
+    {
+        char line[256];
+        const size_t len = strlen(k.mKey);
+        while (fgets(line, sizeof(line), f))
+        {
+            if (strncmp(line, k.mKey, len) == 0 && line[len] == '=')
+            {
+                value = (S32)atoi(line + len + 1);
+                found = true;
+            }
+        }
+        fclose(f);
+    }
+    k.mValue = found ? value : 1;       // (no line: the default, 1)
+    return k.mValue;
+}
+
+// <FS> the indexed draw of a packet record (2026-10-29): the hardware reads the indices, so the vertex shader runs once for a vertex, not once for each corner of a triangle (the post-transform cache).
+// One indirect draw for each run of entries that share an index buffer; the entry's number is the first instance (gl_InstanceIndex), its first index and count are the command's. Returns the entries drawn.
+static U32 draw_packet_runs(Renderer& r, U32 entries, const U32* counts, const U32* first_index, Buf* const* index_buffers)
+{
+    static thread_local std::vector<VkDrawIndexedIndirectCommand> icmds;
+    icmds.assign(entries, VkDrawIndexedIndirectCommand{ 0, 1, 0, 0, 0 });
+    for (U32 i = 0; i < entries; ++i)
+    {
+        icmds[i] = { counts[i], 1u, first_index[i], 0, i };
+    }
+    const auto& caps = Context::instance().getCaps();
+    Renderer::ScratchAlloc idraw;
+    if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
+    {
+        idraw = r.allocVertexScratch(sizeof(VkDrawIndexedIndirectCommand) * (size_t)entries);
+        if (idraw.mPtr)
+        {
+            memcpy(idraw.mPtr, icmds.data(), sizeof(VkDrawIndexedIndirectCommand) * (size_t)entries);
+        }
+    }
+    U32 drawn = 0;
+    for (U32 a = 0; a < entries; )
+    {
+        if (!index_buffers[a] || !counts[a])
+        {
+            ++a;
+            continue;
+        }
+        U32 b = a + 1;
+        while (b < entries && index_buffers[b] == index_buffers[a])
+        {
+            ++b;
+        }
+        r.setIndexBuffer(index_buffers[a]->mVk.mBuffer, index_buffers[a]->mArena.mOffset, VK_INDEX_TYPE_UINT16);
+        if (r.drawPacketsIndexed(icmds.data() + a, b - a, idraw.mPtr ? idraw.mBuffer : VK_NULL_HANDLE, idraw.mPtr ? idraw.mOffset + (VkDeviceSize)a * sizeof(VkDrawIndexedIndirectCommand) : 0))
+        {
+            drawn += b - a;
+        }
+        a = b;
+    }
+    return drawn;
+}
+
 static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     struct AlphaGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mFirst, mCount, mModel, mFlags; U32 mSlots[2]; F32 mCutoff; U32 mPad; U32 mWeights[2]; U32 mPalette[2]; };
@@ -4487,6 +4567,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
+    static thread_local std::vector<Buf*> alpha_index_buffers;
     VertexInput& vi = vi_cache;
     vi.mBindings.clear();
     vi.mAttributes.clear();
@@ -4510,6 +4591,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     }
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
+    alpha_index_buffers.assign(h.mEntries, nullptr);
     AlphaGpu* out = (AlphaGpu*)table.mPtr;
     Renderer::ScratchAlloc palettes;
     if (h.mPaletteFloats)
@@ -4595,6 +4677,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         g.mSlots[1] = slot[2] | (slot[3] << 16);
         g.mCutoff = e.mCutoff;
         counts[i] = e.mIndexCount;
+        alpha_index_buffers[i] = ib;
         vb->mLastUseFrame = frame_now;
         ib->mLastUseFrame = frame_now;
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
@@ -4612,6 +4695,14 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     program->setInts("ll_packet_models", models_words, 2);
     program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
     program->setFloats("ll_target_width", &h.mTargetWidth, 1);
+    // rt-debug.txt pktidx=1 (the default): the entries are drawn indexed (see draw_packet_runs)
+    static WorkerDebugKey packet_idx_key = { "pktidx", 1, {} };
+    const bool indexed_draw = worker_debug_key(packet_idx_key) != 0;
+    if (program->hasUniform("shadow_alpha_indexed"))
+    {
+        const S32 flag = indexed_draw ? 1 : 0;
+        program->setInts("shadow_alpha_indexed", &flag, 1);
+    }
 
     if (!prepare_draw(vi, used_cache))
     {
@@ -4625,6 +4716,30 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
 
     Renderer::ScratchAlloc commands;
     const auto& caps = Context::instance().getCaps();
+    if (indexed_draw)
+    {
+        static thread_local std::vector<U32> first_index;
+        first_index.resize(h.mEntries);
+        for (U32 i = 0; i < h.mEntries; ++i)
+        {
+            first_index[i] = entries[i].mFirstIndex;
+        }
+        const U32 drawn = draw_packet_runs(r, h.mEntries, counts.data(), first_index.data(), alpha_index_buffers.data());
+        if (drawn)
+        {
+            if (sStatsEnabled)
+            {
+                sStats.mDone += drawn;
+            }
+        }
+        else
+        {
+            ++sStats.mRendererRefused;
+        }
+        sDraws += h.mEntries;
+        sDrawsTotal += h.mEntries;
+        return;
+    }
     if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
     {
         commands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)h.mEntries);
@@ -5007,86 +5122,6 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
 }
 
 // the worker side of a record of rigged untextured casters (shadowSkinPullV.glsl)
-// <FS> a key=value line of the live switch file (rt-debug.txt, LL_VK_RT_DEBUG_FILE) for the worker thread's own use: the ray scene reads its switches only while it runs, and the cascade shadows
-// (this record) are drawn only with ray shadows off. Read again every half second; worker thread only.
-struct WorkerDebugKey
-{
-    const char* mKey;
-    S32 mValue;
-    std::chrono::steady_clock::time_point mRead;
-};
-static S32 worker_debug_key(WorkerDebugKey& k)
-{
-    const auto now = std::chrono::steady_clock::now();
-    if (now - k.mRead < std::chrono::milliseconds(500))
-    {
-        return k.mValue;
-    }
-    k.mRead = now;
-    static const char* path = []() { const char* e = getenv("LL_VK_RT_DEBUG_FILE"); return e && e[0] ? e : "D:/claude/rt-debug.txt"; }();
-    S32 value = k.mValue;
-    bool found = false;
-    if (FILE* f = fopen(path, "r"))
-    {
-        char line[256];
-        const size_t len = strlen(k.mKey);
-        while (fgets(line, sizeof(line), f))
-        {
-            if (strncmp(line, k.mKey, len) == 0 && line[len] == '=')
-            {
-                value = (S32)atoi(line + len + 1);
-                found = true;
-            }
-        }
-        fclose(f);
-    }
-    k.mValue = found ? value : 1;       // (no line: the default, 1)
-    return k.mValue;
-}
-
-// <FS> the indexed draw of a packet record (2026-10-29): the hardware reads the indices, so the vertex shader runs once for a vertex, not once for each corner of a triangle (the post-transform cache).
-// One indirect draw for each run of entries that share an index buffer; the entry's number is the first instance (gl_InstanceIndex), its first index and count are the command's. Returns the entries drawn.
-static U32 draw_packet_runs(Renderer& r, U32 entries, const U32* counts, const U32* first_index, Buf* const* index_buffers)
-{
-    static thread_local std::vector<VkDrawIndexedIndirectCommand> icmds;
-    icmds.assign(entries, VkDrawIndexedIndirectCommand{ 0, 1, 0, 0, 0 });
-    for (U32 i = 0; i < entries; ++i)
-    {
-        icmds[i] = { counts[i], 1u, first_index[i], 0, i };
-    }
-    const auto& caps = Context::instance().getCaps();
-    Renderer::ScratchAlloc idraw;
-    if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
-    {
-        idraw = r.allocVertexScratch(sizeof(VkDrawIndexedIndirectCommand) * (size_t)entries);
-        if (idraw.mPtr)
-        {
-            memcpy(idraw.mPtr, icmds.data(), sizeof(VkDrawIndexedIndirectCommand) * (size_t)entries);
-        }
-    }
-    U32 drawn = 0;
-    for (U32 a = 0; a < entries; )
-    {
-        if (!index_buffers[a] || !counts[a])
-        {
-            ++a;
-            continue;
-        }
-        U32 b = a + 1;
-        while (b < entries && index_buffers[b] == index_buffers[a])
-        {
-            ++b;
-        }
-        r.setIndexBuffer(index_buffers[a]->mVk.mBuffer, index_buffers[a]->mArena.mOffset, VK_INDEX_TYPE_UINT16);
-        if (r.drawPacketsIndexed(icmds.data() + a, b - a, idraw.mPtr ? idraw.mBuffer : VK_NULL_HANDLE, idraw.mPtr ? idraw.mOffset + (VkDeviceSize)a * sizeof(VkDrawIndexedIndirectCommand) : 0))
-        {
-            drawn += b - a;
-        }
-        a = b;
-    }
-    return drawn;
-}
-
 static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     struct SkinGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mWeights[2]; U32 mPalette[2]; U32 mFirst, mJoints, mModel, mPad; };
