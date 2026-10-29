@@ -47,6 +47,20 @@ public:
     /*virtual*/ void reset();
 
     S32 animateTextures(F32 &off_s, F32 &off_t, F32 &scale_s, F32 &scale_t, F32 &rotate);
+
+    // <FS> FSTexAnimOnGPU (llvktexanim.h): the origin of the frame counter, in frame time seconds. The counter is (clock - origin) * rate in the non smooth modes; a smooth mode adds
+    // the time it has already accumulated (mLastTime, in frames).
+    F64 getTimerOrigin() const { return mTimer.startTime() - ((mMode & SMOOTH) && mRate != 0.f ? mLastTime / (F64)mRate : 0.0); }
+    void forceRecalc() { mLastFrame = -1.f; }     // (the next animateTextures call returns a result and the faces get their matrices written again)
+    bool mGpuWritten = false;                      // this animation's faces were last written by the GPU path (parameters in their matrix slots)
+
+    struct Stats
+    {
+        U32 mFrames = 0, mInstances = 0, mHidden = 0, mCpuCalls = 0, mGpuChecked = 0, mGpuFaces = 0, mGpuWrites = 0, mSmallFaces = 0, mCompared = 0, mMismatched = 0;
+        F32 mMaxDiff = 0.f;
+        U64 mNs = 0;                    // time spent in updateClass (the whole loop), nanoseconds
+    };
+    static Stats sStats;
     enum
     {
         TRANSLATE = 0x01 // Result code JUST for animateTextures
@@ -60,7 +74,11 @@ public:
 
 protected:
     LLVOVolume* mVObj;
-    LLFrameTimer mTimer;
+    struct Timer : public LLFrameTimer
+    {
+        F64 startTime() const { return mStartTime; }
+    };
+    Timer mTimer;
     F64 mLastTime;
     F32 mLastFrame;
 };

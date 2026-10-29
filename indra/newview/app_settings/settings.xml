@@ -3129,6 +3129,17 @@
       <key>Value</key>
       <integer>18</integer>
     </map>
+    <key>FSTexAnimOnGPU</key>
+    <map>
+      <key>Comment</key>
+      <string>Animated textures: the vertex shader makes an animated face's texture matrix from the animation's parameters and the frame clock (the main thread writes the parameters when they change instead of a matrix every frame). Off: the main thread computes the matrices. Applies at once. rt-debug.txt texanim=0/1/2 overrides it (2 = the main thread's matrices, with the shader's formula compared against them).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSSkipHiddenTextureAnim</key>
     <map>
       <key>Comment</key>

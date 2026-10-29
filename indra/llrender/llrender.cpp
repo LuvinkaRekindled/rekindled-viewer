@@ -27,6 +27,7 @@
 #include "linden_common.h"
 
 #include "llrender.h"
+#include "llvktexanim.h"
 
 #include "llvertexbuffer.h"
 #include "llcubemap.h"
@@ -1209,7 +1210,18 @@ void LLRender::syncMatrices()
         {
             if (mMatHash[i] != shader->mMatHash[i])
             {
-                shader->uniformMatrix4fv(name[i], 1, false, glm::value_ptr(mMatrix[i][mMatIdx[i]]));
+                const F32* texture_matrix = glm::value_ptr(mMatrix[i][mMatIdx[i]]);
+                if (LLVkTexAnim::isParams(texture_matrix))
+                {
+                    // <FS> a texture animation's matrix slot holds its parameters (llvktexanim.h): a program that is not a pull program gets the matrix they give now
+                    F32 evaluated[16];
+                    LLVkTexAnim::evaluateNow(texture_matrix, evaluated);
+                    shader->uniformMatrix4fv(name[i], 1, false, evaluated);
+                }
+                else
+                {
+                    shader->uniformMatrix4fv(name[i], 1, false, texture_matrix);
+                }
                 shader->mMatHash[i] = mMatHash[i];
             }
         }

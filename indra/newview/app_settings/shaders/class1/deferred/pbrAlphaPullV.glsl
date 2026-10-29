@@ -173,6 +173,8 @@ void main()
     if (pk.pad.x != 0u)
     {
         texmat = GeoTexMatrices(ll_packet_texmats).t[pk.pad.x];
+        // <FS> a texture animation's slot holds its parameters (llvktexanim.h): the matrix is made against the clock in slot 0
+        if (texmat[3][3] == 0.0) texmat = ll_texanim_core(texmat, GeoTexMatrices(ll_packet_texmats).t[0][0].yz);
     }
 
 #ifdef HAS_SKIN
