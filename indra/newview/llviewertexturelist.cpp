@@ -2093,6 +2093,8 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
     //
 
     LLTimer create_timer;
+    S32 n_created = 0;              // <FS> arrival trace: this frame's create loop
+    S64 bytes_created = 0;
 
     while (!mCreateTextureList.empty())
     {
@@ -2117,6 +2119,8 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
         if (!redundant_load)
         {
            imagep->createTexture();
+           ++n_created;
+           if (imagep->getRawImage()) bytes_created += imagep->getRawImage()->getDataSize();
         }
 
         imagep->postCreateTexture();
@@ -2139,6 +2143,10 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
         }
     }
 
+    if (n_created && FSTextureArrivalTrace::enabled())
+    {
+        FSTextureArrivalTrace::note("createloop", LLUUID::null, n_created, (S32)mCreateTextureList.size(), bytes_created, create_timer.getElapsedTimeF32() * 1000.f);
+    }
     // <FS> native-vk: the downscale draws into a render target and copies the result into the texture's new storage. A minimized or hidden window has no frame to
     // record that into (the draw and the copy are dropped), which left the texture replaced by an empty one: hair and other textures were black after a minimize
     // until they were fetched again. So the queue waits (the entries stay: a restored window needs no downscale and each is then a no-op).

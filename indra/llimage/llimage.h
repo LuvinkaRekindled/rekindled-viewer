@@ -34,6 +34,7 @@
 #include "lluuid.h"
 
 #include <atomic>
+#include <vector>
 
 constexpr S32 MIN_IMAGE_MIP =  2; // 4x4, only used for expand/contract power of 2
 constexpr S32 MAX_IMAGE_MIP = 12; // 4096x4096
@@ -357,6 +358,13 @@ public:
     U8 getCompressedFormat() const { return mCompressedFormat; }        // LLImageBC7::FORMAT_BC7
     U8 getLevelCount() const { return mLevels; }
     S8 getAlphaIsMask() const { return mAlphaIsMask; }                  // -1 unknown or no alpha, 0 blend, 1 mask: the classification LLImageTex::analyzeAlpha would have made
+    // <FS> the upload analysis (PLAN-aurora-ideas.md section 6.2): what LLImageTex::analyzeAlpha and updatePickMask would compute from these texels on the main thread at upload,
+    // computed instead where the texels already are (the decode pool), and adopted by the texture at create time. Any pixel operation on this image drops it.
+    void analyzeForUpload();                                            // texels: the alpha class (4 or 2 components) and the pick mask (4 components); a compressed image: nothing to do
+    bool hasUploadAnalysis() const { return mUploadAnalysed; }
+    const std::vector<U8>& getPickMask() const { return mPickMask; }  // LLImageTex's layout: a bit per 2x2 block, rows of width/2 + 1, set where alpha > 32; empty when there is none
+    U16 getPickMaskWidth() const { return mPickMaskWidth; }            // LLImageTex::mPickMaskWidth (width/2)
+    U16 getPickMaskHeight() const { return mPickMaskHeight; }
     const U8* getFinestLevelData() const;                                 // the last level of the chain (LLImageTex::setImage(data_hasmips) walks down from it)
     // takes ownership of data (ll_aligned_malloc_16, size bytes)
     void setCompressedChain(U8* data, S32 size, U16 width, U16 height, S8 components, U8 format, U8 levels, S8 alpha_is_mask);
@@ -364,6 +372,9 @@ private:
     U8 mCompressedFormat = 0;
     U8 mLevels = 0;
     S8 mAlphaIsMask = -1;
+    bool mUploadAnalysed = false;
+    std::vector<U8> mPickMask;
+    U16 mPickMaskWidth = 0, mPickMaskHeight = 0;
 public:
     static S32 sRawImageCount;
     // <FS:Techwolf Lupindo> texture comment metadata reader

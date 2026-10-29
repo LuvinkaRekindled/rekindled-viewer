@@ -201,6 +201,25 @@ Five sixths of a texture's way was spent after its decode had finished: a finish
 
 **Next, in order:** the create budget while loading (raise it while the create queue is deep: measure the burst's 50/90/99 % times and the frame time while it drains), then the Citadel trace for the network side (the ladder, the connection wait, the retry backoff), then the order.
 
+### 6.2 The create loop measured, and the per-pixel work moved off the main thread (2026-10-29 night; Adam: "Create budget", then "move it and then we'll see if that's still the case")
+
+**Measured first** (a `createloop` row per frame: textures, bytes, queue left, ms). The hub login's first 10 s: 7149 textures, 667 MB of texels, 181 ms in the loop in all. 0.025 ms per texture; a frame of two hundred thumbnails costs half a millisecond. **The cost is bytes, not count:** 0.27-0.5 ms per MB, and a single 2048x2048 raw texture (16.8 MB with its mips) took 6-8.6 ms on its own, a whole frame, one per frame in a run at 1.5-2.3 s after the world appeared. That is where the budget breaks came from, and no budget can split one texture over frames, so the budget was not the lever. The per-MB work was the two passes left on the main thread from the GL days, when the texels were only in hand there at upload: `analyzeAlpha` (a quarter of the level-0 pixels, the opaque/blend/cutout decision) and `updatePickMask` (the alpha again, the bitmask picking reads). BC7 chains already skipped both (the decoded cache classifies alpha on the decode thread).
+
+**Moved** (`LLImageRaw::analyzeForUpload`, llimage.cpp): the decode pool computes the alpha class (`LLImageBC7::classifyAlpha`, the same histogram and rules) and the pick mask (the same layout as `createPickMask`) for every raw result, decode or disk hit, and carries them on the raw image; `LLImageTex::adoptUploadAnalysis` takes them at create time with the same level rule as before (a smaller level never overrides a bigger one's decision), and the two passes stand down for that upload; every pixel operation on the raw image drops the analysis, so a stale one is never adopted (22 mutators). Gate: Adam right-clicked his hair at the hub and the hair was selected (an empty mask would have picked what is behind the strands).
+
+**Then the trace showed what was left, and it was not analysis:** 0.19 ms per MB, a memcpy's speed. Every raw upload is still copied on the main thread into the worker's command stream, because the one-copy handover of the C4 work (`LL_VK_TEXONECOPY`, the worker reads the held pixels in place) is an opt-in that was left off when its gain measured nil, back when the mask passes hid it. One login with it on, no build:
+
+| create loop, hub login, first 10 s | before | analysis moved | + one-copy on |
+|---|---|---|---|
+| ms in the loop in all | 181 | 113 | 76 |
+| per texture | 0.025 ms | 0.016 ms | 0.014 ms |
+| per MB | 0.27 | 0.19 | 0.11 |
+| a large texture (> 256 KB) | 0.41 ms | 0.16 ms | 0.08 ms |
+| worst frame's loop | 8.6 ms | 5.2 ms | 4.5 ms |
+| half the scene created by | 2.7 s | 3.4 s | 1.5 s |
+
+The remaining 0.11 ms per MB is not named yet (the texture object's own bookkeeping, or a path the hold does not cover); it is a tenth of a 2048 texture's old cost and no longer a frame on its own. **Decision open:** make one-copy the default (the env knob stays to turn it off).
+
 **What the fix could be, by what the measurement says** (the hub's answers are above; the network side waits for the Citadel trace):
 
 - The dispatch is the limit (textures wait long before their first request): visit more a frame while the camera moves or after a teleport (the count is already scaled by the discard bias; scale it by the fetch queue's emptiness too), or let the worker's visibility verdicts (H6) order the visits.

@@ -116,6 +116,19 @@ print(f"  finest formatted bytes held {sum(final_bytes) / 1e6:.1f} MB (the HTTP 
 print(f"  cycles served by the texture cache {cache_loads}, by the network {net_loads}; decoded-cache hits {dechits}, decodes {decodes}")
 
 print("\n3. the create loop")
+loops = [(t, a, b, by, ex) for t, ev, id_, a, b, by, ex in rows if ev == "createloop"]
+if loops:
+    burst = [l for l in loops if 0 <= l[0] <= 10]
+    n_tex = sum(l[1] for l in burst); ms = sum(l[4] for l in burst); mb = sum(l[3] for l in burst) / 1e6
+    print(f"  frames with creates in the first 10 s: {len(burst)}; textures {n_tex}, {mb:.0f} MB of texels, {ms:.0f} ms in the loop: {ms / max(1, n_tex):.3f} ms per texture, {ms / max(0.001, mb):.2f} ms per MB")
+    show("  ms in the loop per frame (first 10 s)", [l[4] for l in burst], "ms")
+    show("  textures created per frame (first 10 s)", [l[1] for l in burst], "")
+    show("  queue left after the loop (first 10 s)", [l[2] for l in burst], "")
+    # cost by size: small (thumbnails, under 64 KB a texture on average in the frame) against large
+    big = [l for l in burst if l[1] and l[3] / l[1] > 256 * 1024]
+    small = [l for l in burst if l[1] and l[3] / l[1] <= 16 * 1024]
+    if big: print(f"  frames of large textures (> 256 KB each): {sum(l[4] for l in big) / max(1, sum(l[1] for l in big)):.3f} ms per texture")
+    if small: print(f"  frames of small textures (<= 16 KB each): {sum(l[4] for l in small) / max(1, sum(l[1] for l in small)):.3f} ms per texture")
 if breaks:
     print(f"  budget breaks {len(breaks)} ({sum(1 for b in breaks if b[0] <= 30)} in the first 30 s); queue depth at the break: median {statistics.median([a for t, a, ex in breaks]):.0f}, max {max(a for t, a, ex in breaks)}; ms spent at the break: median {statistics.median([ex for t, a, ex in breaks]):.1f}")
 else:

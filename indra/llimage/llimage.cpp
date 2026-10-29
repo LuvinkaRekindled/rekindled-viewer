@@ -932,6 +932,7 @@ void LLImageRaw::setDataAndSize(U8 *data, S32 width, S32 height, S8 components)
 bool LLImageRaw::resize(U16 width, U16 height, S8 components)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::resize on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageDataLock lock(this);
 
     if ((getWidth() == width) && (getHeight() == height) && (getComponents() == components) && !isBufferInvalid())
@@ -950,6 +951,7 @@ bool LLImageRaw::setSubImage(U32 x_pos, U32 y_pos, U32 width, U32 height,
                              const U8 *data, U32 stride, bool reverse_y)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::setSubImage on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageDataLock lock(this);
 
     if (!getData())
@@ -979,6 +981,7 @@ bool LLImageRaw::setSubImage(U32 x_pos, U32 y_pos, U32 width, U32 height,
 void LLImageRaw::clear(U8 r, U8 g, U8 b, U8 a)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::clear on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     llassert( getComponents() <= 4 );
 
     LLImageDataLock lock(this);
@@ -1024,6 +1027,7 @@ void LLImageRaw::clear(U8 r, U8 g, U8 b, U8 a)
 void LLImageRaw::verticalFlip()
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::verticalFlip on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageDataLock lock(this);
 
     S32 row_bytes = getWidth() * getComponents();
@@ -1067,6 +1071,7 @@ bool LLImageRaw::checkHasTransparentPixels()
 bool LLImageRaw::optimizeAwayAlpha()
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::optimizeAwayAlpha on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageDataLock lock(this);
 
     if (getComponents() == 4)
@@ -1107,6 +1112,7 @@ bool LLImageRaw::optimizeAwayAlpha()
 bool LLImageRaw::makeAlpha()
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::makeAlpha on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     if (getComponents() == 3)
     {
         U8* data = getData();
@@ -1136,6 +1142,7 @@ bool LLImageRaw::makeAlpha()
 void LLImageRaw::expandToPowerOfTwo(S32 max_dim, bool scale_image)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::expandToPowerOfTwo on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageDataLock lock(this);
 
     // Find new sizes
@@ -1148,6 +1155,7 @@ void LLImageRaw::expandToPowerOfTwo(S32 max_dim, bool scale_image)
 void LLImageRaw::contractToPowerOfTwo(S32 max_dim, bool scale_image)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::contractToPowerOfTwo on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageDataLock lock(this);
 
     // Find new sizes
@@ -1200,6 +1208,7 @@ S32 LLImageRaw::contractDimToPowerOfTwo(S32 curr_dim, S32 min_dim)
 void LLImageRaw::biasedScaleToPowerOfTwo(S32 max_dim)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::biasedScaleToPowerOfTwo on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageDataLock lock(this);
 
     // Find new sizes
@@ -1221,6 +1230,7 @@ inline U8 LLImageRaw::fastFractionalMult( U8 a, U8 b )
 void LLImageRaw::composite( const LLImageRaw* src )
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::composite on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataSharedLock lockIn(src);
@@ -1268,6 +1278,7 @@ void LLImageRaw::composite( const LLImageRaw* src )
 void LLImageRaw::compositeScaled4onto3(const LLImageRaw* src)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::compositeScaled4onto3 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LL_INFOS() << "compositeScaled4onto3" << LL_ENDL;
 
     LLImageRaw* dst = this;  // Just for clarity.
@@ -1298,6 +1309,7 @@ void LLImageRaw::compositeScaled4onto3(const LLImageRaw* src)
 void LLImageRaw::compositeUnscaled4onto3( const LLImageRaw* src )
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::compositeUnscaled4onto3 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataLock lock(this);
@@ -1360,6 +1372,7 @@ void LLImageRaw::compositeUnscaled4onto3( const LLImageRaw* src )
 void LLImageRaw::copyUnscaledAlphaMask( const LLImageRaw* src, const LLColor4U& fill)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyUnscaledAlphaMask on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataSharedLock lockIn(src);
@@ -1393,6 +1406,7 @@ void LLImageRaw::copyUnscaledAlphaMask( const LLImageRaw* src, const LLColor4U& 
 void LLImageRaw::fill( const LLColor4U& color )
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::fill on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageDataLock lock(this);
 
     if (isBufferInvalid())
@@ -1428,6 +1442,7 @@ void LLImageRaw::fill( const LLColor4U& color )
 void LLImageRaw::tint( const LLColor3& color )
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::tint on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     llassert( (3 == getComponents()) || (4 == getComponents()) );
     if (isBufferInvalid())
     {
@@ -1468,6 +1483,44 @@ void LLImageRaw::setCompressedChain(U8* data, S32 size, U16 width, U16 height, S
     mAlphaIsMask = alpha_is_mask;
 }
 
+// <FS> the upload analysis (PLAN-aurora-ideas.md section 6.2): the alpha class exactly as LLImageTex::analyzeAlpha decides it (LLImageBC7::classifyAlpha is that port),
+// and the pick mask exactly as LLImageTex::updatePickMask builds it (createPickMask's layout: pick_width = w/2 + 1 columns, pick_height = h/2 + 1 rows, one bit per 2x2 block
+// in row order, set where the block's top-left alpha is above 32). Computed on the decode pool, where the texels already are, instead of on the main thread at upload.
+void LLImageRaw::analyzeForUpload()
+{
+    mUploadAnalysed = false;
+    mPickMask.clear();
+    mPickMaskWidth = mPickMaskHeight = 0;
+    if (isCompressed() || !getData() || getWidth() == 0 || getHeight() == 0)
+    {
+        return;
+    }
+    const U32 w = getWidth(), h = getHeight(), c = getComponents();
+    mAlphaIsMask = LLImageBC7::classifyAlpha(getData(), w, h, c);
+    if (c == 4)
+    {
+        const U32 pick_width = w / 2 + 1, pick_height = h / 2 + 1;
+        const U32 size = (pick_width * pick_height + 7) / 8;
+        mPickMask.assign(size, 0);
+        mPickMaskWidth = (U16)(pick_width - 1);
+        mPickMaskHeight = (U16)(pick_height - 1);
+        const U8* data = getData();
+        U32 pick_bit = 0;
+        for (U32 y = 0; y < h; y += 2)
+        {
+            const U8* row = data + (size_t)y * w * 4 + 3;
+            for (U32 x = 0; x < w; x += 2, ++pick_bit)
+            {
+                if (row[x * 4] > 32)
+                {
+                    mPickMask[pick_bit >> 3] |= (U8)(1u << (pick_bit & 7));
+                }
+            }
+        }
+    }
+    mUploadAnalysed = true;
+}
+
 LLPointer<LLImageRaw> LLImageRaw::duplicate()
 {
     if (isCompressed())
@@ -1498,6 +1551,7 @@ LLPointer<LLImageRaw> LLImageRaw::duplicate()
 void LLImageRaw::copy(const LLImageRaw* src)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copy on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataSharedLock lockIn(src);
@@ -1551,6 +1605,7 @@ void LLImageRaw::copy(const LLImageRaw* src)
 void LLImageRaw::copyUnscaled(const LLImageRaw* src)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyUnscaled on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataLock lock(this);
@@ -1579,6 +1634,7 @@ void LLImageRaw::copyScaled3onto4(const LLImageRaw* src)
 void LLImageRaw::copyScaled4onto3(const LLImageRaw* src)
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyScaled4onto3 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     llassert( (4 == src->getComponents()) && (3 == getComponents()) );
 
     // Slow, but simple.  Optimize later if needed.
@@ -1592,6 +1648,7 @@ void LLImageRaw::copyScaled4onto3(const LLImageRaw* src)
 void LLImageRaw::copyUnscaled4onto3( const LLImageRaw* src )
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyUnscaled4onto3 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataLock lock(this);
@@ -1617,6 +1674,7 @@ void LLImageRaw::copyUnscaled4onto3( const LLImageRaw* src )
 void LLImageRaw::copyUnscaled3onto4( const LLImageRaw* src )
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyUnscaled3onto4 on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataLock lock(this);
@@ -1644,6 +1702,7 @@ void LLImageRaw::copyUnscaled3onto4( const LLImageRaw* src )
 void LLImageRaw::copyScaled( const LLImageRaw* src )
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::copyScaled on a compressed image (BC7 chain): refused" << LL_ENDL; return; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageRaw* dst = this;  // Just for clarity.
 
     LLImageDataSharedLock lockIn(src);
@@ -1691,6 +1750,7 @@ void LLImageRaw::copyScaled( const LLImageRaw* src )
 bool LLImageRaw::scale( S32 new_width, S32 new_height, bool scale_image_data )
 {
     if (isCompressed()) { LL_WARNS_ONCE("Image") << "LLImageRaw::scale on a compressed image (BC7 chain): refused" << LL_ENDL; return false; }      // <FS>
+    mUploadAnalysed = false;      // <FS> the texels change: the upload analysis (if any) is stale
     LLImageDataLock lock(this);
 
     S32 components = getComponents();
