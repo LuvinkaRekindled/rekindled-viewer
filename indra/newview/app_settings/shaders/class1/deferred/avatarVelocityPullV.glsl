@@ -49,6 +49,7 @@ uniform uvec2 ll_packet_table;
 uniform mat4 ll_view_proj;      // jittered projection * view
 uniform mat4 view_proj_cur;     // unjittered projection * view, this frame
 uniform mat4 view_proj_prev;    // the same, last frame
+uniform int vel_indexed;        // 1: an indexed draw (the hardware read the index buffer: gl_VertexIndex is the vertex), 0: a draw over the index list that reads the indices here
 
 out vec4 vary_clip;
 out vec4 vary_cur;
@@ -76,9 +77,13 @@ vec3 skinPosition(SkinPalette palette, vec3 position, vec4 joint, vec4 w)
 void main()
 {
     VelocityPacket pk = VelocityPackets(ll_packet_table).p[gl_InstanceIndex];
-    uint i = pk.first + uint(gl_VertexIndex);
-    uint word = SkinIndices(pk.indices).w[i >> 1];
-    uint index = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+    uint index = uint(gl_VertexIndex);
+    if (vel_indexed == 0)
+    {
+        uint i = pk.first + uint(gl_VertexIndex);
+        uint word = SkinIndices(pk.indices).w[i >> 1];
+        index = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+    }
     vec4 position = SkinPositions(pk.positions).v[index];
     vec4 weight4 = SkinWeights(pk.weights).w[index];
 

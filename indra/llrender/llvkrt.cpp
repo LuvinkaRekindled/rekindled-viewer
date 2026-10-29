@@ -287,6 +287,7 @@ struct DebugSwitches
     S32 mGlossyRt = 0;              // live (glossyrt=N, 0 = off by default until it has been seen working; needs LL_VK_RT_MATERIALS=1): 1 ray traced reflections on glossy surfaces of the lighting pass (gloss 0.9 and up), 2 PBR path pixels magenta, 3 / 4 where it traced: hits green, misses red (4: every gloss), 5 gloss as grey, 6 which lighting path a pixel takes
     S32 mHitRays = -1;              // live (hitrays=N, -1 = not set): shadow rays per local light at a traced hit (1, 2 or 4)
     S32 mHitQ = -1;                 // live (hitq=N, -1 = not set: the preference FSVkMirrorQuality decides): how a hit of the traced glossy mirror is lit, 0 flat diffuse, 1 the main pass lighting at the hit (normal map, roughness / metallic / specular map, probes at the hit)
+    S32 mVelIdx = 1;                // live (velidx=0/1, default 1): the avatar velocity record drawn indexed (the hardware reads the indices: one vertex shader run per vertex, not per triangle corner); 0 = the draw over the index list, the A/B and the fallback until a week of use, then gone
     S32 mSunSamples = 0;            // live (sunsamples=N, default 0: RenderRTShadowSamples decides): the rays per pixel of the sun lightmap pass, a same-lap cost A/B
     S32 mTexAnim = -1;              // live (texanim=0/1/2, default -1: the setting FSTexAnimOnGPU decides): 0 = texture animations by the CPU, 1 = by the vertex shader, 2 = CPU, with the shader's twin compared against it
     S32 mSunSelf = 1;               // live (sunself=0/1, default 1): the avatar self shadow work of 2026-10-28 (translucency floor, receiver probe, start disc); 0 = an avatar blocks fully and no disc, for a same-lap cost A/B
@@ -300,7 +301,7 @@ struct DebugSwitches
 DebugSwitches sDbg;
 inline bool pins_wanted() { return sPinsInit || (sMatsInit && sDbg.mMats); }       // the records hold pin indices
 std::atomic<S32> sViewLive{0};
-std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1}, sSunSelfLive{1}, sTexAnimLive{-1}, sSunSamplesLive{0};
+std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1}, sSunSelfLive{1}, sTexAnimLive{-1}, sSunSamplesLive{0}, sVelIdxLive{1};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkBridge)
 std::chrono::steady_clock::time_point sDbgRead;
 
@@ -372,6 +373,7 @@ void read_debug_switches()
                 else if (k == "sunself") d.mSunSelf = (S32)v;
                 else if (k == "texanim") d.mTexAnim = (S32)v;
                 else if (k == "sunsamples") d.mSunSamples = (S32)v;
+                else if (k == "velidx") d.mVelIdx = (S32)v;
                 else if (k == "hitrays") d.mHitRays = (S32)v;
                 else if (k == "gate") d.mGate = v != 0;
                 else if (k == "bodyname") d.mBodyName = v != 0;
@@ -429,6 +431,7 @@ void read_debug_switches()
     sSunSelfLive.store(d.mSunSelf, std::memory_order_relaxed);
     sTexAnimLive.store(d.mTexAnim, std::memory_order_relaxed);
     sSunSamplesLive.store(d.mSunSamples, std::memory_order_relaxed);
+    sVelIdxLive.store(d.mVelIdx, std::memory_order_relaxed);
     sGateLive.store(d.mGate, std::memory_order_relaxed);
     sBodyNameLive.store(d.mBodyName, std::memory_order_relaxed);
     sDbg = d;
@@ -1149,6 +1152,7 @@ S32 hitRays() { return sHitRaysLive.load(std::memory_order_relaxed); }
 S32 sunSelfShadow() { return sSunSelfLive.load(std::memory_order_relaxed); }
 S32 texAnim() { return sTexAnimLive.load(std::memory_order_relaxed); }
 S32 sunSamples() { return sSunSamplesLive.load(std::memory_order_relaxed); }
+S32 velIdx() { return sVelIdxLive.load(std::memory_order_relaxed); }
 S32 debugView() { return sViewLive.load(std::memory_order_relaxed); }
 bool loadingGates() { return sGateLive.load(std::memory_order_relaxed); }
 bool bodyRename() { return sBodyNameLive.load(std::memory_order_relaxed); }

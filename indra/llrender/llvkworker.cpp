@@ -5144,6 +5144,7 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache, packet_used;
     static thread_local std::vector<U32> counts;
+    static thread_local std::vector<Buf*> velocity_index_buffers;
     VertexInput& vi = vi_cache;
     vi.mBindings.clear();
     vi.mAttributes.clear();
@@ -5168,6 +5169,7 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     memcpy(palettes.mPtr, palette_data, 8 * (size_t)h.mPaletteFloats);
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
+    velocity_index_buffers.assign(h.mEntries, nullptr);
     VelocityGpu* out = (VelocityGpu*)table.mPtr;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
@@ -5197,6 +5199,7 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         g.mFirst = e.mFirstIndex;
         g.mJoints = e.mJoints;
         counts[i] = e.mIndexCount;
+        velocity_index_buffers[i] = ib;
         vb->mLastUseFrame = frame_now;
         ib->mLastUseFrame = frame_now;
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
@@ -5210,6 +5213,13 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     program->setInts("ll_packet_table", table_words, 2);
     program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+    // rt-debug.txt velidx=1: the entries are drawn indexed, a run for each index buffer (the hardware reads the indices: the vertex shader runs once for a vertex, not once for each corner of a triangle)
+    const bool indexed_draw = LLVk::Rt::velIdx() != 0;
+    if (program->hasUniform("vel_indexed"))
+    {
+        const S32 flag = indexed_draw ? 1 : 0;
+        program->setInts("vel_indexed", &flag, 1);
+    }
 
     if (!prepare_draw(vi, used_cache))
     {
@@ -5225,6 +5235,58 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
 
     Renderer::ScratchAlloc commands;
     const auto& caps = Context::instance().getCaps();
+    if (indexed_draw)
+    {
+        static thread_local std::vector<VkDrawIndexedIndirectCommand> icmds;
+        icmds.assign(h.mEntries, VkDrawIndexedIndirectCommand{ 0, 1, 0, 0, 0 });
+        for (U32 i = 0; i < h.mEntries; ++i)
+        {
+            icmds[i] = { counts[i], 1u, entries[i].mFirstIndex, 0, i };
+        }
+        Renderer::ScratchAlloc idraw;
+        if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
+        {
+            idraw = r.allocVertexScratch(sizeof(VkDrawIndexedIndirectCommand) * (size_t)h.mEntries);
+            if (idraw.mPtr)
+            {
+                memcpy(idraw.mPtr, icmds.data(), sizeof(VkDrawIndexedIndirectCommand) * (size_t)h.mEntries);
+            }
+        }
+        U32 drawn = 0;
+        for (U32 a = 0; a < h.mEntries; )
+        {
+            if (!velocity_index_buffers[a] || !counts[a])
+            {
+                ++a;
+                continue;
+            }
+            U32 b = a + 1;
+            while (b < h.mEntries && velocity_index_buffers[b] == velocity_index_buffers[a])
+            {
+                ++b;
+            }
+            r.setIndexBuffer(velocity_index_buffers[a]->mVk.mBuffer, velocity_index_buffers[a]->mArena.mOffset, VK_INDEX_TYPE_UINT16);
+            if (r.drawPacketsIndexed(icmds.data() + a, b - a, idraw.mPtr ? idraw.mBuffer : VK_NULL_HANDLE, idraw.mPtr ? idraw.mOffset + (VkDeviceSize)a * sizeof(VkDrawIndexedIndirectCommand) : 0))
+            {
+                drawn += b - a;
+            }
+            a = b;
+        }
+        if (drawn)
+        {
+            if (sStatsEnabled)
+            {
+                sStats.mDone += drawn;
+            }
+        }
+        else
+        {
+            ++sStats.mRendererRefused;
+        }
+        sDraws += h.mEntries;
+        sDrawsTotal += h.mEntries;
+        return;
+    }
     if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
     {
         commands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)h.mEntries);
