@@ -464,6 +464,46 @@
 		 width="40">
 			MB
 		</text>
+		<text
+		 type="string"
+		 length="1"
+		 follows="left|top"
+		 height="10"
+		 layout="topleft"
+		 left="15"
+		 mouse_opaque="false"
+		 name="decoded_cache_size_label_l"
+		 top_pad="15"
+		 width="500">
+		   Decoded Texture Cache Size (textures kept ready for the GPU):
+		</text>
+		<slider
+		 can_edit_text="true"
+		 control_name="FSDecodedTextureCacheSizeMB"
+		 decimal_digits="0"
+		 follows="left|top"
+		 height="15"
+		 increment="256"
+		 initial_value="8192"
+		 layout="topleft"
+		 max_val="20000"
+		 min_val="256"
+		 top_pad="10"
+		 name="decoded_cache_size"
+		 width="279" />
+		<text
+		 type="string"
+		 length="1"
+		 follows="left|top"
+		 height="10"
+		 layout="topleft"
+		 left_pad="6"
+		 top_delta="1"
+		 mouse_opaque="false"
+		 name="decoded_text_box5"
+		 width="40">
+			MB
+		</text>
 		<button
 		 enabled="false"
 		 follows="left|top"
