@@ -28,6 +28,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 
 class FSDecodedTextureCache : public LLDecodedImageCache
@@ -71,6 +72,8 @@ private:
     std::string subDir(const LLUUID& id) const;
     void scanIndex();                                   // writer thread, at init
     void writeFile(const LLUUID& id, S32 discard, LLPointer<LLImageRaw> raw, bool checked_raw);     // writer thread
+    void convertFile(const LLUUID& id);                 // writer thread: a stored raw file is judged at its finest level and becomes a BC7 chain, or is marked as kept raw
+    void markFile(const LLUUID& id);                    // writer thread: sets the checked-raw mark in a stored raw file's header, in place
     void touch(const LLUUID& id);                       // writer thread: the file's time and the index
     void evict();                                       // writer thread, index lock held by the caller
     bool post(std::function<void()> work);              // to the writer; false when closed
@@ -79,6 +82,7 @@ private:
     std::unique_ptr<LL::ThreadPool> mWriter;
     std::mutex mIndexMutex;
     std::unordered_map<LLUUID, Entry> mIndex;           // what is on disk (the writer keeps it; readers look up)
+    std::unordered_set<LLUUID> mConverting;             // ids with a conversion or mark queued (index lock; one job per file)
     U64 mTotalBytes = 0;                                // sum of mIndex sizes
     bool mScanned = false;
     bool mInitialised = false;
@@ -88,7 +92,7 @@ private:
     std::atomic<S64> mQueuedBytes { 0 };                // decoded bytes waiting on the writer
 
     // statistics since the last report
-    std::atomic<U32> mHits { 0 }, mHitsBC7 { 0 }, mMissAbsent { 0 }, mMissCoarser { 0 }, mMissFormat { 0 }, mMissBad { 0 }, mWrites { 0 }, mWritesBC7 { 0 }, mDrops { 0 }, mSkips { 0 }, mEvictions { 0 };
+    std::atomic<U32> mHits { 0 }, mHitsBC7 { 0 }, mMissAbsent { 0 }, mMissCoarser { 0 }, mMissFormat { 0 }, mMissBad { 0 }, mWrites { 0 }, mWritesBC7 { 0 }, mDrops { 0 }, mSkips { 0 }, mEvictions { 0 }, mConverted { 0 }, mMarked { 0 };
     std::atomic<U64> mHitBytes { 0 }, mWriteBytes { 0 };
     F64 mLastReport = 0.0;
 };

@@ -193,9 +193,10 @@ void FSDecodedTextureCache::update()
     mLastReport = now;
     const U32 hits = mHits.exchange(0), hits_bc7 = mHitsBC7.exchange(0), absent = mMissAbsent.exchange(0), coarser = mMissCoarser.exchange(0), format = mMissFormat.exchange(0), bad = mMissBad.exchange(0);
     const U32 writes = mWrites.exchange(0), writes_bc7 = mWritesBC7.exchange(0), drops = mDrops.exchange(0), skips = mSkips.exchange(0), evictions = mEvictions.exchange(0);
+    const U32 converted = mConverted.exchange(0), marked = mMarked.exchange(0);
     const U64 hit_bytes = mHitBytes.exchange(0), write_bytes = mWriteBytes.exchange(0);
     const LLImageBC7::Stats bc7 = LLImageBC7::takeStats();
-    if (hits + absent + coarser + format + bad + writes + drops + evictions + bc7.mCompressed + bc7.mKeptRaw == 0)
+    if (hits + absent + coarser + format + bad + writes + drops + evictions + converted + marked + bc7.mCompressed + bc7.mKeptRaw == 0)
     {
         return;
     }
@@ -208,7 +209,8 @@ void FSDecodedTextureCache::update()
     LL_INFOS("DecodedCache") << "decoded texture cache, last " << (S32)kReportSeconds << " s: hits " << hits << " (" << hits_bc7 << " BC7; " << (hit_bytes >> 20) << " MB read in place of a decode), misses "
                              << (absent + coarser + format + bad) << " (absent " << absent << ", stored coarser than asked " << coarser << ", stored in the other format " << format << ", unreadable " << bad
                              << "), writes " << writes << " (" << writes_bc7 << " BC7; " << (write_bytes >> 20) << " MB), skipped as already stored " << skips << ", dropped (queue full) " << drops
-                             << ", evicted " << evictions << "; BC7 at decode: " << bc7.mCompressed << " compressed, " << bc7.mKeptRaw << " kept raw by the check, " << (bc7.mEncodeMicroseconds / 1000)
+                             << ", evicted " << evictions << ", stored raw files converted to BC7 " << converted << ", marked kept raw " << marked
+                             << "; BC7 at decode: " << bc7.mCompressed << " compressed, " << bc7.mKeptRaw << " kept raw by the check, " << (bc7.mEncodeMicroseconds / 1000)
                              << " ms of encoding; on disk " << entries << " textures, " << (total >> 20) << " of " << (mCapBytes.load() >> 20) << " MB" << LL_ENDL;
 }
 
@@ -401,27 +403,50 @@ void FSDecodedTextureCache::write(const LLUUID& id, S32 discard, const LLImageRa
     }
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     const U8 format = raw->isCompressed() ? raw->getCompressedFormat() : kFormatRaw;
+    bool judged_stored = false, queue_job = false, mark_only = false;      // the job is posted after the lock: post() blocks on a full queue, and the writer needs the lock to drain it
     {
         std::lock_guard<std::mutex> lock(mIndexMutex);
         auto it = mIndex.find(id);
-        if (it != mIndex.end() && it->second.mDiscard < discard)
+        // a stored raw file that a hit has just judged (these texels compressed, or the check kept them) while compression is on: the file itself is converted once
+        // by the writer (judged at its own finest level, which may be finer than this hit's) or marked as kept raw, so that no later hit runs the check again
+        const bool judged = (format != kFormatRaw || checked_raw) && LLImageBC7::enabled();
+        if (it != mIndex.end() && it->second.mFormat == kFormatRaw && it->second.mDiscard <= discard && judged && !(it->second.mDiscard == discard && format != kFormatRaw))
+        {
+            judged_stored = true;
+            queue_job = mConverting.insert(id).second;          // one job per file
+            mark_only = checked_raw && it->second.mDiscard == discard;         // judged at this very level and kept: the mark is enough
+            ++mSkips;
+        }
+        else if (it != mIndex.end() && it->second.mDiscard < discard)
         {
             ++mSkips;
             return;         // a finer level is stored, whatever its format: a coarser one never replaces it
         }
-        if (it != mIndex.end() && it->second.mDiscard == discard)
+        else if (it != mIndex.end() && it->second.mDiscard == discard)
         {
             // the same level is stored. The format: a stored chain stays when compression is on (a raw decode for a texture that needs texels is not a
-            // reason to drop it); a stored raw stays when this is raw; a chain replaces a raw of the same or a coarser level, and a raw replaces a chain once compression is off
-            // ... except that raw texels the check has just judged replace a raw file written without that judgement (once per texture: the hit then carries the mark and the check is skipped)
+            // reason to drop it); a stored raw stays when this is raw; a chain replaces a raw of the same level, and a raw replaces a chain once compression is off
             const bool stored_bc7 = it->second.mFormat != kFormatRaw;
-            const bool keep = (stored_bc7 && (format != kFormatRaw || LLImageBC7::enabled())) || (!stored_bc7 && format == kFormatRaw && !checked_raw);     // (a strictly finer raw never reaches here: it always writes)
+            const bool keep = (stored_bc7 && (format != kFormatRaw || LLImageBC7::enabled())) || (!stored_bc7 && format == kFormatRaw);
             if (keep)
             {
                 ++mSkips;
                 return;
             }
         }
+    }
+    if (judged_stored)
+    {
+        if (queue_job)
+        {
+            const bool m = mark_only;
+            if (!post([this, id, m]() { if (m) markFile(id); else convertFile(id); }))
+            {
+                std::lock_guard<std::mutex> lock(mIndexMutex);
+                mConverting.erase(id);
+            }
+        }
+        return;
     }
     const S64 bytes = (S64)raw->getDataSize();
     if (mQueuedBytes.load(std::memory_order_relaxed) + bytes > kQueueCapBytes)
@@ -546,6 +571,94 @@ void FSDecodedTextureCache::writeFile(const LLUUID& id, S32 discard, LLPointer<L
     {
         evict();
     }
+}
+
+// writer thread. The stored raw file (whatever its finest level) is read whole, judged by the BC7 check at its finest level and, if it passes, replaced by the
+// chain (writeFile: tmp, rename, index); if it fails, its header gets the kept-raw mark. Either way no later hit on this texture runs the check again.
+void FSDecodedTextureCache::convertFile(const LLUUID& id)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    S32 discard = -1;
+    {
+        std::lock_guard<std::mutex> lock(mIndexMutex);
+        auto it = mIndex.find(id);
+        if (it == mIndex.end() || it->second.mFormat != kFormatRaw) { mConverting.erase(id); return; }
+        discard = it->second.mDiscard;
+    }
+    bool done = false;
+    if (LLImageBC7::enabled())
+    {
+        const std::string path = fileName(id, discard, kFormatRaw);
+        LLFILE* f = LLFile::fopen(path, "rb");
+        if (f)
+        {
+            Header h = {};
+            std::vector<std::vector<U8>> levels;
+            bool ok = fread(&h, sizeof(h), 1, f) == 1 && memcmp(h.mMagic, kMagic, 4) == 0 && h.mVersion == kVersion && h.mFormat == kFormatRaw && h.mComponents >= 1 && h.mComponents <= 4
+                      && h.mLevels >= 1 && h.mLevels <= kMaxLevels && h.mCommentLength < 65536;
+            std::string comment;
+            if (ok && h.mCommentLength)
+            {
+                comment.resize(h.mCommentLength);
+                ok = fread(&comment[0], 1, h.mCommentLength, f) == h.mCommentLength;
+            }
+            if (ok && LLImageBC7::eligible(h.mWidth, h.mHeight, h.mComponents))
+            {
+                levels.resize(h.mLevels);
+                for (U32 k = 0; ok && k < h.mLevels; ++k)
+                {
+                    const U64 n = level_bytes(h, k);
+                    levels[k].resize((size_t)n);
+                    ok = fread(levels[k].data(), 1, (size_t)n, f) == n;
+                }
+                if (ok)
+                {
+                    const S8 alpha = LLImageBC7::classifyAlpha(levels[0].data(), h.mWidth, h.mHeight, h.mComponents);
+                    F32 harmed = 0.f;
+                    LLPointer<LLImageRaw> compressed = LLImageBC7::compress(levels, h.mWidth, h.mHeight, h.mComponents, LLImageBC7::MAX_HARMED_PERCENT, harmed, alpha);
+                    if (compressed.notNull())
+                    {
+                        fclose(f); f = nullptr;
+                        compressed->mComment = comment;
+                        writeFile(id, discard, compressed, false);      // replaces the raw file, updates the index
+                        ++mConverted;
+                        done = true;
+                    }
+                }
+            }
+            if (f) fclose(f);
+        }
+    }
+    if (!done)
+    {
+        markFile(id);           // kept raw (or not eligible, or the file would not read): the mark stops the re-judging; markFile clears mConverting
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mIndexMutex);
+    mConverting.erase(id);
+}
+
+// writer thread: the kept-raw mark, set in the header in place (one byte)
+void FSDecodedTextureCache::markFile(const LLUUID& id)
+{
+    S32 discard = -1;
+    {
+        std::lock_guard<std::mutex> lock(mIndexMutex);
+        mConverting.erase(id);
+        auto it = mIndex.find(id);
+        if (it == mIndex.end() || it->second.mFormat != kFormatRaw) return;
+        discard = it->second.mDiscard;
+    }
+    LLFILE* f = LLFile::fopen(fileName(id, discard, kFormatRaw), "r+b");
+    if (!f) return;
+    U8 flags = 0;
+    const long at = (long)offsetof(Header, mFlags);
+    if (fseek(f, at, SEEK_SET) == 0 && fread(&flags, 1, 1, f) == 1 && fseek(f, at, SEEK_SET) == 0)
+    {
+        flags |= kFlagCheckedRaw;
+        if (fwrite(&flags, 1, 1, f) == 1) ++mMarked;
+    }
+    fclose(f);
 }
 
 void FSDecodedTextureCache::touch(const LLUUID& id)
