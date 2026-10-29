@@ -1704,6 +1704,24 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
 
     LLImageTex::PixelHandover handover(mRawImage);       // <FS> native-vk (C4): the decoded pixels go to the render thread without a copy
 
+    // <FS> BC7 at decode: a compressed chain goes up as BC7 with the alpha classification made from the texels; no pick mask (a texture without one picks as opaque).
+    // The same texture can arrive compressed at one level and as texels at another (the check judges each decode, a refetch may ask for raw): a change of format gets a
+    // fresh GPU image, and texels after a chain get the format their components choose again (uploading texels into a BC7 image was a fatal error, 2026-10-29)
+    if (mImageTexp->getHasImageTexture() && mImageTexp->isCompressedFormat() != mRawImage->isCompressed())
+    {
+        mImageTexp->destroyImageTexture();
+    }
+    if (!mRawImage->isCompressed() && mImageTexp->isCompressedFormat())
+    {
+        mImageTexp->clearExplicitFormat();
+        mImageTexp->setNeedsAlphaAndPickMask(true);
+    }
+    if (mRawImage->isCompressed())
+    {
+        mImageTexp->setExplicitFormat(TexelFormat::BC7, mRawImage->getComponents() == 4 ? PixelFormat::RGBA : PixelFormat::RGB);
+        mImageTexp->setNeedsAlphaAndPickMask(false);
+        mImageTexp->setIsMask(mRawImage->getAlphaIsMask() == 1);
+    }
     bool res = mImageTexp->createImageTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
 
     return res;
@@ -2312,7 +2330,7 @@ bool LLViewerFetchedTexture::updateFetch()
         S32 fetch_request_response = -1;
         S32 worker_discard = -1;
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
-            w, h, c, desired_discard, needsAux(), mCanUseHTTP);
+            w, h, c, desired_discard, needsAux(), mCanUseHTTP, needsRawPixels());
 
         if (fetch_request_response >= 0) // positive values and 0 are discard values
         {
@@ -2933,6 +2951,14 @@ bool LLViewerFetchedTexture::needsToSaveRawImage()
     return mForceToSaveRawImage || mSaveRawImage;
 }
 
+// <FS> BC7 at decode (llimagebc7.h): everything that reads texels on the CPU asks for raw; the rest may arrive as a BC7 chain the GPU takes as is
+bool LLViewerFetchedTexture::needsRawPixels()
+{
+    // (a server bake has a url but is drawn like any texture: it may compress; the own avatar's bakes ask for aux or raw through their callbacks and stay texels)
+    return needsToSaveRawImage() || mForSculpt || mNeedsAux || (!mUrl.empty() && mFTType != FTT_SERVER_BAKE)
+        || mBoostLevel == LLBaseTexture::BOOST_ICON || mBoostLevel == LLBaseTexture::BOOST_THUMBNAIL || mBoostLevel == LLBaseTexture::BOOST_PREVIEW || mBoostLevel == LLBaseTexture::BOOST_SCULPTED;
+}
+
 void LLViewerFetchedTexture::destroyRawImage()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -2966,6 +2992,13 @@ void LLViewerFetchedTexture::saveRawImage()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     if(mRawImage.isNull() || mRawImage == mSavedRawImage || (mSavedRawDiscardLevel >= 0 && mSavedRawDiscardLevel <= mRawDiscardLevel))
     {
+        return;
+    }
+    // <FS> BC7 at decode: a compressed chain cannot be kept for the CPU; the need arose after the request, so the texture is fetched again with raw pixels asked
+    if (mRawImage->isCompressed())
+    {
+        mForceToSaveRawImage = true;
+        if (mDesiredSavedRawDiscardLevel < 0) mDesiredSavedRawDiscardLevel = llmax(0, (S32)mRawDiscardLevel);
         return;
     }
 

@@ -24,6 +24,9 @@ set(llimage_SOURCE_FILES
     llimagetga.cpp
     llimageworker.cpp
     llpngwrapper.cpp
+    llimagebc7.cpp
+    llimagebc7enc.cpp
+    llimagebc7decomp.cpp
     )
 
 set(llimage_HEADER_FILES
@@ -41,6 +44,9 @@ set(llimage_HEADER_FILES
     llimageworker.h
     llmapimagetype.h
     llpngwrapper.h
+    llimagebc7.h
+    bc7enc/bc7enc.h
+    bc7enc/bc7decomp.h
     )
 
 list(APPEND llimage_SOURCE_FILES ${llimage_HEADER_FILES})

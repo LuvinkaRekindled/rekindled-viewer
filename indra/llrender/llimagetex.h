@@ -197,6 +197,9 @@ public:
     static void wantNameEvents();       // until a consumer asks, the events are not kept
 
     bool getIsAlphaMask() const;
+    void setIsMask(bool is_mask);       // <FS> BC7 at decode: the classification handed in with the compressed image
+    void clearExplicitFormat();         // <FS> BC7 at decode: back to the format the components choose (a texture that had a BC7 chain and now gets texels)
+    bool isCompressedFormat() const;    // <FS> the storage format is a block format (BC1-3, BC7)
 
     bool getIsResident(bool test_now = false); // not const
 

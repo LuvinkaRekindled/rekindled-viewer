@@ -2338,7 +2338,17 @@ void edit_compressed2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S
     {
         grow_levels(*t);
     }
-    if (!src || !t->mImage.valid() || level < 0 || (U32)level >= t->mLevels)
+    if (!t->mImage.valid() || level < 0 || (U32)level >= t->mLevels)
+    {
+        return;
+    }
+    // <FS> BC7 at decode: the same bookkeeping as upload_level, which this path skipped (a chain uploaded level by level counted as holding no data and drew white, 2026-10-29)
+    if ((U32)level == t->mValidLevels)
+    {
+        ++t->mValidLevels;
+        pin_touch(*t);
+    }
+    if (!src)
     {
         return;
     }
@@ -9713,8 +9723,8 @@ namespace
 std::string resource_summary()
 {
     std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
-    U64 tex_bytes = 0, rt_bytes = 0, buf_bytes = 0, unused_mip_bytes = 0;
-    U32 tex_count = 0, rt_count = 0, views = 0, buf_count = 0;
+    U64 tex_bytes = 0, rt_bytes = 0, buf_bytes = 0, unused_mip_bytes = 0, bc_bytes = 0;
+    U32 tex_count = 0, rt_count = 0, views = 0, buf_count = 0, bc_count = 0;      // <FS> bc_*: the block-compressed textures (BC7 at decode) within the mirrored ones
     for (auto& kv : sGL.mTextures)
     {
         const Tex& t = kv.second;
@@ -9728,7 +9738,7 @@ std::string resource_summary()
             bytes += ((w + fi.mBlockWidth - 1) / fi.mBlockWidth) * ((h + fi.mBlockHeight - 1) / fi.mBlockHeight) * fi.mBytesPerBlock * std::max<U32>(1, t.mImage.mLayers) * std::max<U32>(1, t.mImage.mExtent.depth);
         }
         const bool target = (t.mImage.mAspect != VK_IMAGE_ASPECT_COLOR_BIT) || !t.mViews.empty() || gFrameState.mTargets.count(kv.first);
-        if (target) { rt_bytes += bytes; ++rt_count; } else { tex_bytes += bytes; ++tex_count; }
+        if (target) { rt_bytes += bytes; ++rt_count; } else { tex_bytes += bytes; ++tex_count; if (fi.mCompressed) { bc_bytes += bytes; ++bc_count; } }
         // the mip levels above the ones that ever received data (a texture the viewer uses without mips still owns the whole chain)
         for (U32 m = std::max<U32>(1, t.mValidLevels); m < t.mImage.mMipLevels; ++m)
         {
@@ -9740,7 +9750,7 @@ std::string resource_summary()
     {
         if (kv.second.mVk.valid()) { buf_bytes += kv.second.mVk.mSize; ++buf_count; }
     }
-    return "mirrored textures " + std::to_string(tex_count) + " (" + std::to_string(tex_bytes / (1024 * 1024)) + " MB), render targets " + std::to_string(rt_count) + " ("
+    return "mirrored textures " + std::to_string(tex_count) + " (" + std::to_string(tex_bytes / (1024 * 1024)) + " MB, of which block compressed " + std::to_string(bc_count) + " (" + std::to_string(bc_bytes / (1024 * 1024)) + " MB)), render targets " + std::to_string(rt_count) + " ("
         + std::to_string(rt_bytes / (1024 * 1024)) + " MB, " + std::to_string(views) + " extra views), buffers " + std::to_string(buf_count) + " (" + std::to_string(buf_bytes / (1024 * 1024))
         + " MB), mip levels that hold no data " + std::to_string(unused_mip_bytes / (1024 * 1024)) + " MB, GL texture objects " + std::to_string(sGL.mTextures.size()) + ", pending destroys " + std::to_string(Context::instance().pendingDestroys());
 }

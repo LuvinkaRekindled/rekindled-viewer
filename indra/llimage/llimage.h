@@ -350,6 +350,21 @@ protected:
     void setDataAndSize(U8 *data, S32 width, S32 height, S8 components) ;
 
 public:
+    // <FS> BC7 at decode (llimagebc7.h, the texture plan section 2 stage b): a compressed image holds the whole mip chain, the smallest level first and the finest
+    // last; width, height and components are the finest level's, getDataSize() the chain's bytes. The pixel operations of this class refuse a compressed image with a warning:
+    // the needs-raw policy of the texture fetch keeps them from ever meeting one.
+    bool isCompressed() const { return mCompressedFormat != 0; }
+    U8 getCompressedFormat() const { return mCompressedFormat; }        // LLImageBC7::FORMAT_BC7
+    U8 getLevelCount() const { return mLevels; }
+    S8 getAlphaIsMask() const { return mAlphaIsMask; }                  // -1 unknown or no alpha, 0 blend, 1 mask: the classification LLImageTex::analyzeAlpha would have made
+    const U8* getFinestLevelData() const;                                 // the last level of the chain (LLImageTex::setImage(data_hasmips) walks down from it)
+    // takes ownership of data (ll_aligned_malloc_16, size bytes)
+    void setCompressedChain(U8* data, S32 size, U16 width, U16 height, S8 components, U8 format, U8 levels, S8 alpha_is_mask);
+private:
+    U8 mCompressedFormat = 0;
+    U8 mLevels = 0;
+    S8 mAlphaIsMask = -1;
+public:
     static S32 sRawImageCount;
     // <FS:Techwolf Lupindo> texture comment metadata reader
     std::string mComment;

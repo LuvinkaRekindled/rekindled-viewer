@@ -576,7 +576,11 @@ bool LLTextureCacheRemoteWorker::doWrite()
                 // mRawImage is not entirely safe here since it is a pointer to one owned by cache worker,
                 // it could have been retrieved via getRequestFinished() and then modified.
                 // If writeToFastCache crashes, something is wrong around fetch worker.
-                if(!mCache->writeToFastCache(mID, idx, mRawImage, mRawDiscardLevel))
+                if (mRawImage.notNull() && mRawImage->isCompressed())
+                {
+                    // <FS> BC7 at decode: no thumbnail from a chain (the texture keeps what the fast cache had, if anything)
+                }
+                else if(!mCache->writeToFastCache(mID, idx, mRawImage, mRawDiscardLevel))
                 {
                     LL_WARNS() << "writeToFastCache failed" << LL_ENDL;
                     mDataSize = -1; // failed
