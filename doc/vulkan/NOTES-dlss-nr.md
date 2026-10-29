@@ -93,3 +93,24 @@ Where it stands: NR is a 7.4 ms (render size) or 12.6 ms (window size) opt-in on
 ## Live three-way mode (2026-10-28, evening)
 `FSVkNeuralRenderMode` (S32, a combo on the Vulkan tab): 0 off, 1 on, 2 snapshots only. Applies at once: the pipeline reads it live (`LLPipeline::neuralRenderMode`), a change reallocates the screen buffers (the NR targets come and go, the same listener as ray reconstruction), the feature is created on the first frame that asks and retired when the mode goes off (`UpscaleArgs::mNeuralRender` 2 -> `LLVkDlssNr::release`, sent for a few frames so the retired feature is released once its frame has completed). Feature 18's device extensions are added whenever DLSS is on (they are DLSS's own plus push descriptors), so no restart is needed. The launcher's `LL_VK_DLSS_NR` flag overrides the preference (the test modes). Verified by Adam ("works great") and by the log: On created the 1713x898 feature, a snapshot in snapshots-only mode created and retired features at the snapshot's sizes (2744x1459 and the 1147x601 preview), Off retired the live one; no evaluate failures.
 - **RR + NR** (Adam, 2026-10-28, a mid-sized region, taking snapshots): 65 fps with NR and RT on, 44 with ray reconstruction stacked on top; it runs and the picture holds. With RR the pre-upscale picture is the noisy radiance, so NR takes the window-size position there (12.6 ms rather than 7.4): the stack costs RR's own time plus the dearer NR position, 15.4 -> 22.7 ms.
+
+## Denoise first (plan section 8), built and measured 2026-10-28/29 (the hub, Adam's account, environment fixed to morning, RT on, 2558x1341 window, render 1713x898)
+
+`rr-debug.txt` fifth number: 0 today's order (RR denoises and upscales to the window in one feature, NR at the window size), 1 denoise first (RR at a one-to-one ratio into `mRRDenoised`, the plain path from there: post chain at the render size, NR at its render-size position, DLSS super resolution to the window with the jitter as today), 2 the same with the super resolution told a jitter of zero, 3 automatic (2 when NR runs in the frame, 0 otherwise; the default from 2026-10-29, also with no fifth number).
+
+Log, order 1 and 2: `ray reconstruction feature created: 1713x898 -> 1713x898 quality 5` (the DLAA value) `preset 6`, `DLSS-NR feature created: 1713x898`, `DLSS feature created: 1713x898 -> 2558x1341 quality 2`; the two DLSS-family features park and swap every frame (PARKED_MAX 3), no warnings. The reset bookkeeping in `applyUpscale` is per kind (RR / SR), since both run in one frame.
+
+| features on | order | fps (10 s lines, still) |
+|---|---|---|
+| DLSS only (RR off, NR off) | - | 107-110 |
+| RR + NR | 0 today's | 37.5 |
+| RR + NR | 1 denoise first, SR jittered | 47.7 |
+| RR + NR | 2 denoise first, SR zero jitter | 48.8 |
+| RR alone | 2 | 67 |
+| RR alone | 0 today's | 76.5 |
+
+Gates: G1 (RR at 1:1 creates and evaluates, the picture clean) passed from the log and by eye. G2 (SR with zero jitter on RR's output: no shimmer, ghosting or softness): Adam, standing and turning, "everything looks great". G3 (NR at the render size in the new order): the same verdict; the look is the plain path's. G4 (cost): a third of the stack's cost gone (37.5 -> 48.8); the cost of order 1 and 2 is the same, as expected from one number. G5 (snapshots): a 2558x1360 snapshot created RR 1713x911 -> 1713x911, NR 1713x911 and SR 1713x911 -> 2558x1360, no warnings; the snapshot had the depth of field in it. Depth of field is back with RR in the new order (the post chain runs at the render size, as the plain path).
+
+RR alone: the second feature costs about 1.8 ms (76.5 -> 67 fps) and only buys the depth of field back, so the automatic default keeps today's order without NR. Someone who wants DoF with RR and no NR can force 2 in the file; a preference for that is not planned until asked for.
+
+Not measured: RR at 1:1 at a hi-res snapshot size (4100x2178); the GPU zones `dlss rr` / `dlss` / `dlss nr` split (the fps lines were enough for the decision).

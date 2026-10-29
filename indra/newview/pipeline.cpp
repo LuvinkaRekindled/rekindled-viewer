@@ -1119,7 +1119,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             // <FS> ray reconstruction (the albedos are 16 bit: linear 8 bit bands in the darks): the guides at the render size, its output and the post chain that follows at the window size. The chain is 16 bit
             // too: it used to run at the render size before the upscale, whose temporal averaging hid the 8 bit steps of dark gradients; after the upscale nothing hides them
             if (!mRRGuides.allocate(resX, resY, TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RG16F)
-                || !mRRHitDist.allocate(resX, resY, TexelFormat::R16F) || !mRRReflMotion.allocate(resX, resY, TexelFormat::RG16F) || !mRRHdr.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F))
+                || !mRRHitDist.allocate(resX, resY, TexelFormat::R16F) || !mRRReflMotion.allocate(resX, resY, TexelFormat::RG16F) || !mRRHdr.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F)
+                || !mRRDenoised.allocate(resX, resY, TexelFormat::RGBA16F))
             {
                 LL_WARNS("VkDlss") << "the ray reconstruction targets could not be made: ray reconstruction stays off" << LL_ENDL;
                 mRRGuides.release();
@@ -1128,6 +1129,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
                 mRRHdr.release();
                 mRRPing.release();
                 mRRPong.release();
+                mRRDenoised.release();
             }
         }
         else
@@ -1138,6 +1140,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mRRHdr.release();
             mRRPing.release();
             mRRPong.release();
+            mRRDenoised.release();
         }
 
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("mPostMapBuffer"); // <FS:Beq/> improve Tracy scoping 
@@ -1530,6 +1533,7 @@ void LLPipeline::releaseScreenBuffers()
     mRRHdr.release();
     mRRPing.release();
     mRRPong.release();
+    mRRDenoised.release();
 
     mAuxillaryRT.screen.release();
     mAuxillaryRT.deferredScreen.release();
@@ -17705,6 +17709,13 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 static S32 sRrHairMode = 0;         // the second number of the file: how the traced mirror takes hair (rt_hair_soft in shadowUtil.glsl)
 static S32 sRrAlphaSunOld = 0;      // the third number: 1 = the alpha pass (hair) traces its one hard sun ray as it did before, 0 = the soft sun like the lightmap
 static S32 sRrBlurForce = 0;        // the fourth number: 1 = the lightmap blur runs although the upscaler is on (test of RenderShadowBlurWithDLSS)
+// <FS> the fifth number (PLAN-dlss-nr.md section 8): the order of ray reconstruction and the rest of the frame. 0 today's: RR denoises and upscales to the window size in one feature, the post chain
+// runs at the window size (and DLSS-NR takes the window-size position). 1 "denoise first": RR at a one-to-one ratio into mRRDenoised (render size), then the plain path: post chain at the render size,
+// NR at its render-size position, plain DLSS super resolution to the window with the jitter as today. 2: the same with the super resolution told a jitter of zero (its input is resolved).
+// 3 (and no fifth number): automatic, the default since 2026-10-29: order 2 when the neural render runs in the frame, today's order otherwise (measured at the hub, RT on: with NR 37.5 -> 48.8 fps;
+// RR alone 76.5 today's against 67 in order 2, where the second feature only buys the depth of field back)
+static S32 sRrOrder = 3;
+S32 rrOrder() { rrDebugMode(); return sRrOrder; }
 S32 rrAlphaSunOld() { rrDebugMode(); return sRrAlphaSunOld; }
 S32 rrBlurForce() { rrDebugMode(); return sRrBlurForce; }
 S32 rrDebugMode()
@@ -17719,10 +17730,13 @@ S32 rrDebugMode()
         sRrHairMode = 0;
         sRrAlphaSunOld = 0;
         sRrBlurForce = 0;
+        sRrOrder = 3;
         std::ifstream in("<work>/rr-debug.txt");
         if (in)
         {
             in >> mode >> sRrHairMode >> sRrAlphaSunOld >> sRrBlurForce;
+            S32 order = 3;
+            if (in >> order) sRrOrder = llclamp(order, 0, 3);     // an older four-field file keeps the automatic choice
         }
     }
     return mode;
@@ -17836,14 +17850,18 @@ void LLPipeline::generateRRGuides(LLRenderTarget* dst)
     unbindDeferredShader(gRRGuidesProgram);
 }
 
-bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction)
+bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction, bool resolved_input)
 {
     if (!LLVkBridge::upscaleAvailable())
     {
         return false;
     }
-    static U32 last_frame = ~0u;
-    static U32 last_size[2] = {};
+    // <FS> the reset bookkeeping is per kind: in the "denoise first" order ray reconstruction and the super resolution both run in one frame, each with a history of its own
+    const int kind = ray_reconstruction ? 1 : 0;
+    static U32 last_frames[2] = { ~0u, ~0u };
+    static U32 last_sizes[2][2] = {};
+    U32& last_frame = last_frames[kind];
+    U32* last_size = last_sizes[kind];
     const U32 frame = LLFrameTimer::getFrameCount();
     LLVkBridge::UpscaleArgs a;
     a.mColor = src->getTexture(0);
@@ -17854,8 +17872,9 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
     a.mRenderHeight = src->getHeight();
     a.mOutputWidth = dst->getWidth();
     a.mOutputHeight = dst->getHeight();
-    a.mJitterX = LLViewerCamera::sJitterPixels.x;
-    a.mJitterY = LLViewerCamera::sJitterPixels.y;
+    // <FS> a resolved input (ray reconstruction's one-to-one output): the G-buffer was rendered jittered for RR's sake, but what the super resolution sees is already resolved, so it is told zero
+    a.mJitterX = resolved_input ? 0.f : LLViewerCamera::sJitterPixels.x;
+    a.mJitterY = resolved_input ? 0.f : LLViewerCamera::sJitterPixels.y;
     a.mCameraNear = LLViewerCamera::getInstance()->getNear();       // (the FSR backend wants the camera and the frame time; DLSS ignores them)
     a.mCameraFar = LLViewerCamera::getInstance()->getFar();
     a.mCameraFovY = LLViewerCamera::getInstance()->getView();
@@ -17892,14 +17911,22 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
     {
         return false;
     }
-    LL_PROFILE_GPU_ZONE("dlss");
     static U32 logged = 0;
-    if (logged++ < 3)
+    if (logged++ < 6)
     {
-        LL_INFOS("VkDlss") << "upscale call " << logged << (ray_reconstruction ? " (ray reconstruction)" : "") << ": render " << a.mRenderWidth << "x" << a.mRenderHeight << " -> " << a.mOutputWidth << "x" << a.mOutputHeight
+        LL_INFOS("VkDlss") << "upscale call " << logged << (ray_reconstruction ? " (ray reconstruction)" : (resolved_input ? " (resolved input, zero jitter)" : "")) << ": render " << a.mRenderWidth << "x" << a.mRenderHeight << " -> " << a.mOutputWidth << "x" << a.mOutputHeight
                            << ", jitter " << a.mJitterX << "," << a.mJitterY << ", reset " << a.mReset << LL_ENDL;
     }
-    LLVkBridge::upscale(a);
+    if (ray_reconstruction)
+    {
+        LL_PROFILE_GPU_ZONE("dlss rr");       // <FS> its own zone: in the "denoise first" order both features run in one frame
+        LLVkBridge::upscale(a);
+    }
+    else
+    {
+        LL_PROFILE_GPU_ZONE("dlss");
+        LLVkBridge::upscale(a);
+    }
     return true;
 }
 
@@ -18909,6 +18936,14 @@ void LLPipeline::renderFinalize()
     LLRenderTarget* post_ping = &mPostPingMap;
     LLRenderTarget* post_pong = &mPostPongMap;
     bool rr_done = false;
+    // <FS> "denoise first" (PLAN-dlss-nr.md section 8; rr-debug.txt fifth number): ray reconstruction ran at a one-to-one ratio into mRRDenoised and the frame takes the plain path from there
+    // (post chain at the render size, NR at its render-size position, plain super resolution to the window); rr_done stays false in that order. Order 3 is the automatic choice: 2 with NR, 0 without
+    bool rr_denoised = false;
+    S32 rr_order = rrOrder();
+    if (rr_order == 3)
+    {
+        rr_order = nr_now ? 2 : 0;
+    }
 
     if (hdr)
     {
@@ -18926,20 +18961,23 @@ void LLPipeline::renderFinalize()
             {
                 generateRRReflectionMotion(&mRRReflMotion);                    // the debug view of it (mode 8) reads the target of the old pass
             }
+            const bool denoise_first = rr_order >= 1 && mRRDenoised.isComplete();
+            LLRenderTarget* rr_out = denoise_first ? &mRRDenoised : &mRRHdr;
             if (rrDebugMode() == 1)
             {
-                copyRenderTarget(&mRT->screen, &mRRHdr);       // test: no ray reconstruction, the picture only stretched
+                copyRenderTarget(&mRT->screen, rr_out);       // test: no ray reconstruction, the picture only stretched (or copied, denoise first)
                 rr_done = true;
             }
             else
             {
-                rr_done = applyUpscale(&mRT->screen, &mRRHdr, true);
+                rr_done = applyUpscale(&mRT->screen, rr_out, true);
             }
             if (rr_done)
             {
                 // the alpha of the picture is the glow amount (read by the glow passes): ray reconstruction does not give it back, so the render size alpha is stretched over the output's
+                // (copied, denoise first: the same size)
                 LL_PROFILE_GPU_ZONE("rr alpha");
-                RenderPassScope pass_11736(mRRHdr);
+                RenderPassScope pass_11736(*rr_out);
                 gRender.setColorMask(false, true);
                 gDeferredPostNoDoFProgram.bind();
                 gDeferredPostNoDoFProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRT->screen);
@@ -18949,8 +18987,16 @@ void LLPipeline::renderFinalize()
                 gDeferredPostNoDoFProgram.unbind();
                 pass_11736.end();
                 gRender.setColorMask(true, true);
-                post_ping = &mRRPing;
-                post_pong = &mRRPong;
+                if (denoise_first)
+                {
+                    rr_denoised = true;
+                    rr_done = false;        // the plain path from here, with mRRDenoised for mRT->screen
+                }
+                else
+                {
+                    post_ping = &mRRPing;
+                    post_pong = &mRRPong;
+                }
             }
         }
 
@@ -18959,7 +19005,7 @@ void LLPipeline::renderFinalize()
 
         // the CAS pass needs a scratch target of the picture's size: the lighting's at the render size, mRRPong at the window size
         LLRenderTarget* cas_scratch = rr_done ? post_pong : &mRT->deferredLight;
-        tonemap(rr_done ? &mRRHdr : &mRT->screen, apply_cas ? cas_scratch : post_ping, !apply_cas);
+        tonemap(rr_done ? &mRRHdr : (rr_denoised ? &mRRDenoised : &mRT->screen), apply_cas ? cas_scratch : post_ping, !apply_cas);
 
         if (apply_cas)
         {
@@ -19040,7 +19086,7 @@ void LLPipeline::renderFinalize()
 
     sourceBuffer = auxActiveBuffer;
     // </FS:Beq>
-    const S32 rr_dbg = rr_done ? rrDebugMode() : 0;
+    const S32 rr_dbg = (rr_done || rr_denoised) ? rrDebugMode() : 0;
     const S32 visualization = (rr_dbg >= 2 && rr_dbg <= 4) ? 10 + rr_dbg - 2 : (rr_dbg == 8 ? 13 : RenderBufferVisualization);
     if (visualization > -1)
     {
@@ -19118,7 +19164,8 @@ void LLPipeline::renderFinalize()
         {
             sourceBuffer = applyNeuralRenderRimLift(&mNROutputRender, sourceBuffer, &mNRLiftRender) ? &mNRLiftRender : &mNROutputRender;
         }
-        if (applyUpscale(sourceBuffer, &mUpscaledMap))
+        // <FS> denoise first, order 2: the super resolution's input is RR's resolved picture, so it is told a jitter of zero (order 1 keeps the jitter, the A/B of that one change)
+        if (applyUpscale(sourceBuffer, &mUpscaledMap, false, rr_denoised && rr_order >= 2))
         {
             sourceBuffer = &mUpscaledMap;
         }

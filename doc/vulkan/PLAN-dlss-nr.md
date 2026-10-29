@@ -143,7 +143,7 @@ What: `nr-debug.txt` with `intensity style gtone ltone lstruct skin` read once a
 - **Preference (Adam's decision, same day):** the boundary "never a preference" is relaxed to a checkbox that is enabled only when the device reports the feature usable, which needs the DLL next to the viewer; the DLL is still never packaged, so nothing ships. Built and verified. Open: a "snapshots only" mode, the rim lift's reworked version to judge, the halo rims, RR + NR.
 - **Live mode (same day, evening):** the preference is a three-way choice applying at once (off / on / snapshots only); verified. The restart requirement is gone. What remains open is quality only (the edge rims, RR + NR); the feature is complete as a local, just-for-fun and group-snapshot option.
 
-## 8. Next: ray reconstruction and the neural render in a clean order ("denoise first"; planned 2026-10-28, not started)
+## 8. Ray reconstruction and the neural render in a clean order ("denoise first"; planned 2026-10-28, built and measured 2026-10-28/29: G1-G5 passed, the automatic default is order A with NR and today's order without; NOTES-dlss-nr.md "Denoise first")
 
 Adam's decision: the next piece of DLSS-NR work, after any bugs. Today the two features stack (65 fps with NR and RT, 44 with RR on top, a mid-sized region) and the picture holds, but the order is the rough one.
 
