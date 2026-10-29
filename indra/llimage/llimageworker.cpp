@@ -171,12 +171,13 @@ ImageRequest::~ImageRequest()
 
 // <FS> BC7 at decode (RenderCompressTextures, llimagebc7.h): the texels of 'raw' become a BC7 mip chain when the policy allows it and the per-block check passes; a small image, one with
 // 1 or 2 components, or one the check rejects stays as it is. Runs on the decode pool.
-static void compress_if_wanted(LLPointer<LLImageRaw>& raw)
+// returns true when the check ran and kept the texels (the caller may record that so the check is not run again on a cache hit)
+static bool compress_if_wanted(LLPointer<LLImageRaw>& raw)
 {
     if (raw.isNull() || raw->isCompressed() || !raw->getData() || !LLImageBC7::enabled()
         || !LLImageBC7::eligible(raw->getWidth(), raw->getHeight(), raw->getComponents()))
     {
-        return;
+        return false;
     }
     const U32 w = raw->getWidth(), h = raw->getHeight(), c = raw->getComponents();
     std::vector<std::vector<U8>> chain;
@@ -188,7 +189,9 @@ static void compress_if_wanted(LLPointer<LLImageRaw>& raw)
     {
         compressed->mComment = raw->mComment;
         raw = compressed;
+        return false;
     }
+    return true;
 }
 
 // Returns true when done, whether or not decode was successful.
@@ -228,19 +231,26 @@ bool ImageRequest::processRequest()
             LLDecodedImageCache* cache = sDecodedCache;
             if (cache && mCacheID.notNull() && !mNeedsAux)
             {
-                LLPointer<LLImageRaw> cached = cache->read(mCacheID, mFormattedImage->getDiscardLevel(), mAllowCompressed);
+                const S32 discard = llmax(0, (S32)mFormattedImage->getDiscardLevel());
+                bool checked_raw = false;
+                LLPointer<LLImageRaw> cached = cache->read(mCacheID, discard, mAllowCompressed, &checked_raw);
+                // the decoder produces the level's size (the formatted image reports the full size; comparing with that threw every hit above discard 0 away
+                // and decoded it again, found 2026-10-29 at Citadel: the encode count matched the BC7 hit count)
+                const U32 level_w = ((U32)mFormattedImage->getWidth() + (1u << discard) - 1) >> discard;
+                const U32 level_h = ((U32)mFormattedImage->getHeight() + (1u << discard) - 1) >> discard;
                 if (cached.notNull() && cached->getData() && cached->getComponents() == mFormattedImage->getComponents()
-                    && cached->getWidth() == mFormattedImage->getWidth() && cached->getHeight() == mFormattedImage->getHeight())
+                    && (U32)cached->getWidth() == level_w && (U32)cached->getHeight() == level_h)
                 {
                     mDecodedImageRaw = cached;
                     mDecodedRaw = true;
-                    // a raw chain served while compression is on is encoded like a decode would be (the cache then keeps the BC7 chain; a raw hit used to bypass the encoder, 2026-10-29)
-                    if (mAllowCompressed && !cached->isCompressed())
+                    // a raw chain served while compression is on is encoded like a decode would be (the cache then keeps the BC7 chain; a raw hit used to bypass the encoder, 2026-10-29),
+                    // unless the file says the check already kept these texels raw
+                    if (mAllowCompressed && !cached->isCompressed() && !checked_raw)
                     {
-                        compress_if_wanted(mDecodedImageRaw);
-                        if (mDecodedImageRaw->isCompressed())
+                        const bool kept_raw = compress_if_wanted(mDecodedImageRaw);
+                        if (mDecodedImageRaw->isCompressed() || kept_raw)
                         {
-                            cache->write(mCacheID, mFormattedImage->getDiscardLevel(), mDecodedImageRaw);
+                            cache->write(mCacheID, discard, mDecodedImageRaw, kept_raw);      // the chain, or the texels again with the checked mark
                         }
                     }
                     return true;
@@ -266,16 +276,17 @@ bool ImageRequest::processRequest()
         // some decoders are removing data when task is complete and there were errors
         mDecodedRaw = done && mDecodedImageRaw->getData();
         // <FS> BC7 at decode (RenderCompressTextures): the texels become a BC7 mip chain when the check passes
+        bool checked_raw = false;
         if (mDecodedRaw && mAllowCompressed && mCacheID.notNull() && !mNeedsAux)
         {
-            compress_if_wanted(mDecodedImageRaw);
+            checked_raw = compress_if_wanted(mDecodedImageRaw);
         }
         // <FS> what the decode produced goes to the decoded cache (it copies)
         if (mDecodedRaw && mCacheID.notNull() && !mNeedsAux)
         {
             if (LLDecodedImageCache* cache = sDecodedCache)
             {
-                cache->write(mCacheID, mFormattedImage->getDiscardLevel(), mDecodedImageRaw);
+                cache->write(mCacheID, llmax(0, (S32)mFormattedImage->getDiscardLevel()), mDecodedImageRaw, checked_raw);
             }
         }
 

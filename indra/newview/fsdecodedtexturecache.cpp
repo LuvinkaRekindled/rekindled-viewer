@@ -30,6 +30,7 @@ const U32 kMaxLevels = 16;                      // down to 1x1 from 32768
 const S64 kQueueCapBytes = 256ll << 20;         // decoded bytes waiting on the writer, at most
 const F64 kReportSeconds = 60.0;
 const U8 kFormatRaw = 0;
+const U8 kFlagCheckedRaw = 4;   // Header::mFlags: raw texels the BC7 check judged and kept raw (a hit skips the check)
 
 #pragma pack(push, 1)
 struct Header
@@ -42,7 +43,7 @@ struct Header
     U8 mFinestDiscard;          // the discard level of the finest level
     U8 mFormat;                 // 0: raw texels (components bytes each); LLImageBC7::FORMAT_BC7: BC7 blocks
     U32 mCommentLength;         // the texture comment follows the header, then the levels
-    U8 mFlags;                  // bits 0-1: the alpha classification + 1 (0 unknown, 1 no alpha, 2 blend, 3 mask)
+    U8 mFlags;                  // bits 0-1: the alpha classification + 1 (0 unknown, 1 no alpha, 2 blend, 3 mask); bit 2: raw texels the BC7 check judged and kept raw
     U8 mReserved[3];
 };
 #pragma pack(pop)
@@ -282,8 +283,9 @@ void FSDecodedTextureCache::scanIndex()
                              << (S32)((LLTimer::getElapsedSeconds() - start) * 1000.0) << " ms" << LL_ENDL;
 }
 
-LLPointer<LLImageRaw> FSDecodedTextureCache::read(const LLUUID& id, S32 discard, bool allow_compressed)
+LLPointer<LLImageRaw> FSDecodedTextureCache::read(const LLUUID& id, S32 discard, bool allow_compressed, bool* checked_raw)
 {
+    if (checked_raw) *checked_raw = false;
     if (!enabled() || discard < 0)
     {
         return nullptr;
@@ -343,6 +345,7 @@ LLPointer<LLImageRaw> FSDecodedTextureCache::read(const LLUUID& id, S32 discard,
             result = new LLImageRaw(data, (U16)LLImageBC7::levelWidth(h.mWidth, k), (U16)LLImageBC7::levelHeight(h.mHeight, k), (S8)h.mComponents, true /*take ownership*/);
             result->mComment = comment;
             mHitBytes += bytes;
+            if (checked_raw) *checked_raw = (h.mFlags & kFlagCheckedRaw) != 0;
         }
         else if (data)
         {
@@ -390,7 +393,7 @@ LLPointer<LLImageRaw> FSDecodedTextureCache::read(const LLUUID& id, S32 discard,
     return result;
 }
 
-void FSDecodedTextureCache::write(const LLUUID& id, S32 discard, const LLImageRaw* raw)
+void FSDecodedTextureCache::write(const LLUUID& id, S32 discard, const LLImageRaw* raw, bool checked_raw)
 {
     if (!enabled() || !raw || discard < 0 || discard > 255 || !raw->getData() || raw->getWidth() == 0 || raw->getHeight() == 0)
     {
@@ -410,8 +413,9 @@ void FSDecodedTextureCache::write(const LLUUID& id, S32 discard, const LLImageRa
         {
             // the same level is stored. The format: a stored chain stays when compression is on (a raw decode for a texture that needs texels is not a
             // reason to drop it); a stored raw stays when this is raw; a chain replaces a raw of the same or a coarser level, and a raw replaces a chain once compression is off
+            // ... except that raw texels the check has just judged replace a raw file written without that judgement (once per texture: the hit then carries the mark and the check is skipped)
             const bool stored_bc7 = it->second.mFormat != kFormatRaw;
-            const bool keep = (stored_bc7 && (format != kFormatRaw || LLImageBC7::enabled())) || (!stored_bc7 && format == kFormatRaw);     // (a strictly finer raw never reaches here: it always writes)
+            const bool keep = (stored_bc7 && (format != kFormatRaw || LLImageBC7::enabled())) || (!stored_bc7 && format == kFormatRaw && !checked_raw);     // (a strictly finer raw never reaches here: it always writes)
             if (keep)
             {
                 ++mSkips;
@@ -443,14 +447,14 @@ void FSDecodedTextureCache::write(const LLUUID& id, S32 discard, const LLImageRa
     }
     copy->mComment = raw->mComment;
     mQueuedBytes += bytes;
-    if (!post([this, id, discard, copy]() { writeFile(id, discard, copy); mQueuedBytes -= copy->getDataSize(); }))
+    if (!post([this, id, discard, copy, checked_raw]() { writeFile(id, discard, copy, checked_raw); mQueuedBytes -= copy->getDataSize(); }))
     {
         mQueuedBytes -= bytes;
         ++mDrops;
     }
 }
 
-void FSDecodedTextureCache::writeFile(const LLUUID& id, S32 discard, LLPointer<LLImageRaw> raw)
+void FSDecodedTextureCache::writeFile(const LLUUID& id, S32 discard, LLPointer<LLImageRaw> raw, bool checked_raw)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     const U32 w = raw->getWidth(), h = raw->getHeight(), c = raw->getComponents();
@@ -477,7 +481,7 @@ void FSDecodedTextureCache::writeFile(const LLUUID& id, S32 discard, LLPointer<L
     hd.mFinestDiscard = (U8)discard;
     hd.mFormat = format;
     const S8 alpha = raw->getAlphaIsMask();
-    hd.mFlags = (U8)(alpha < 0 ? (raw->isCompressed() ? 1 : 0) : (alpha == 0 ? 2 : 3));
+    hd.mFlags = (U8)(alpha < 0 ? (raw->isCompressed() ? 1 : 0) : (alpha == 0 ? 2 : 3)) | (U8)(checked_raw && !raw->isCompressed() ? kFlagCheckedRaw : 0);
     const std::string& comment = raw->mComment;
     hd.mCommentLength = (U32)llmin((size_t)65535, comment.size());
 

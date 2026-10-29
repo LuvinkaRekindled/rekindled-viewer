@@ -39,9 +39,11 @@ class LLDecodedImageCache
 {
 public:
     virtual ~LLDecodedImageCache() {}
-    // allow_compressed: a compressed (BC7 chain) image may be returned; false: only texels (the texture needs raw pixels)
-    virtual LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard, bool allow_compressed) = 0;
-    virtual void write(const LLUUID& id, S32 discard, const LLImageRaw* raw) = 0;
+    // allow_compressed: a compressed (BC7 chain) image may be returned; false: only texels (the texture needs raw pixels).
+    // checked_raw (out, may be null): the stored texels were already judged by the BC7 check and kept raw, so the check need not run again on this hit
+    virtual LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard, bool allow_compressed, bool* checked_raw) = 0;
+    // checked_raw: these texels were judged by the BC7 check and kept raw (stored with the file, so a later hit skips the check)
+    virtual void write(const LLUUID& id, S32 discard, const LLImageRaw* raw, bool checked_raw) = 0;
 };
 
 class LLImageDecodeThread
