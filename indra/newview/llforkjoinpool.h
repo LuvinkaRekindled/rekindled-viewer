@@ -57,9 +57,23 @@ public:
     }
 
     size_t workerCount() const { return mThreads.size(); }
+    static inline std::atomic<unsigned> sNestedRuns{ 0 };     // runs that found the pool busy and ran inline (a diagnostic: the report line prints it)
 
     void run(size_t count, const std::function<void(size_t)>& fn)
     {
+        // A run inside a run (a job that reaches a path which runs the pool again, or a second thread) would reset the count, the claim word and the
+        // remaining count under the outer run, whose caller then returns with jobs still writing into results it is about to free (2026-10-29: a crash
+        // on closing a floater, a shadow prep mark job still running while generateSunShadow had moved on). Such a run executes on the calling thread.
+        if (mBusy.exchange(true, std::memory_order_acq_rel))
+        {
+            ++sNestedRuns;
+            for (size_t i = 0; i < count; ++i)
+            {
+                fn(i);
+            }
+            return;
+        }
+        struct BusyScope { std::atomic<bool>& b; ~BusyScope() { b.store(false, std::memory_order_release); } } busy_scope { mBusy };
         unsigned long long generation;
         {
             std::lock_guard<std::mutex> lock(mMutex);
@@ -184,6 +198,7 @@ private:
     std::atomic<size_t> mRemaining{ 0 };
     std::atomic<unsigned long long> mGeneration{ 0 };
     std::atomic<bool> mStop{ false };
+    std::atomic<bool> mBusy{ false };
 };
 
 #endif // LL_LLFORKJOINPOOL_H

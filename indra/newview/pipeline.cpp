@@ -3448,6 +3448,7 @@ void cull_split_report()
     LL_INFOS("CullSplit") << "main cull, partition stage (ms per frame): serial loop " << s.mMs[0] / ser_n << " over " << s.mCalls[0] << " frames | pool " << s.mMs[1] / pool_n << " over " << s.mCalls[1]
         << " frames (of it the apply pass " << s.mApplyMs / pool_n << "; " << (double)s.mChunks / pool_n << " jobs a frame, sum of the jobs " << s.mSumUs / pool_n << " us, the longest " << s.mLongestUs / pool_n << " us, the top levels of the split partitions " << s.mTopUs / pool_n << " us in " << (double)s.mSegments / pool_n << " segments"
         << " us; " << s.mInline << " frames run inline) | check: " << s.mCheckRuns << " runs, " << s.mCheckBad << " differ (pool run: " << (double)s.mCkJobs / std::max<U64>(s.mCheckRuns, 1) << " jobs, sum " << s.mCkSumUs / std::max<U64>(s.mCheckRuns, 1) << " us, longest " << s.mCkLongestUs / std::max<U64>(s.mCheckRuns, 1) << " us, top levels " << s.mCkTopUs / std::max<U64>(s.mCheckRuns, 1) << " us in " << (double)s.mCkSegments / std::max<U64>(s.mCheckRuns, 1) << " segments) | " << list << LL_ENDL;
+    LL_INFOS("CullSplit") << "fork-join pool: " << LLForkJoinPool::sNestedRuns.load() << " runs found the pool busy and ran inline (a run inside a run; 0 is the expectation)" << LL_ENDL;
     s = CullSplitStats();
 }
 
