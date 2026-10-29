@@ -65,6 +65,7 @@
 #include "llviewerwindow.h"
 #include "llwindow.h"
 #include "llvkbridge.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
+#include "fstexturearrivaltrace.h"
 ///////////////////////////////////////////////////////////////////////////////
 
 // statics
@@ -966,6 +967,11 @@ void LLViewerTexture::addTextureStats(F32 virtual_size, bool needs_gltexture) co
     {
         mMaxVirtualSize = virtual_size;
     }
+    if (!mTraceWanted && virtual_size > 0.f && FSTextureArrivalTrace::enabled())
+    {
+        mTraceWanted = true;
+        FSTextureArrivalTrace::note("wanted", mID, getDiscardLevel(), (S32)mBoostLevel, 0, virtual_size);
+    }
 }
 
 void LLViewerTexture::resetTextureStats()
@@ -1723,6 +1729,7 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
         mImageTexp->setIsMask(mRawImage->getAlphaIsMask() == 1);
     }
     bool res = mImageTexp->createImageTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
+    if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);
 
     return res;
 }
@@ -2336,6 +2343,7 @@ bool LLViewerFetchedTexture::updateFetch()
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - request created");
             mHasFetcher = true;
+            if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("request", mID, desired_discard, getDiscardLevel(), 0, decode_priority);
             mIsFetching = true;
             mLastWorkerDiscardLevel = worker_discard;
             // in some cases createRequest can modify discard, as an example

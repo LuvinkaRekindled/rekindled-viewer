@@ -8,6 +8,7 @@
 
 #include "llimage.h"
 #include "llimagebc7.h"
+#include "fstexturearrivaltrace.h"
 #include "llfile.h"
 #include "llstring.h"
 #include "lltimer.h"
@@ -391,6 +392,7 @@ LLPointer<LLImageRaw> FSDecodedTextureCache::read(const LLUUID& id, S32 discard,
         return nullptr;
     }
     ++mHits;
+    if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("dechit", id, discard, (S32)format, (S64)result->getDataSize());
     post([this, id]() { touch(id); });
     return result;
 }

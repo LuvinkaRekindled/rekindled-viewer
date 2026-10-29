@@ -1,6 +1,6 @@
 # Plan: five speed ideas read from the Aurora Viewer (2026-10-28), and a sixth of our own — Adam: "have a plan ready, we'll work them in as it seems appropriate"
 
-Status: **idea 2 built (both stages, 2026-10-29, sections 2.1-2.3; the cache's hit path fixed the same night, see 6); idea 6 (texture arrival pacing) is next (Adam 2026-10-29: "that should be good to have next"), the hub pair redone (section 6: the decode is not the pace), the arrival trace is its first build; the rest are plans.** They are kept ready so that when one side of the frame wants more speed, the right one can be picked without reading Aurora again.
+Status: **idea 2 built (both stages, 2026-10-29, sections 2.1-2.3; the cache's hit path fixed the same night, see 6); idea 6 (texture arrival pacing) under way: the arrival trace is built and read at the hub, the completion wake built from it (6.1: a texture's way from wanted to the GPU 0.72 -> 0.17 s median), next the create budget while loading and the Citadel trace; the rest are plans.** They are kept ready so that when one side of the frame wants more speed, the right one can be picked without reading Aurora again.
 
 ## 0. Where the ideas come from, and how far to trust the numbers
 
@@ -179,7 +179,29 @@ Adam's own feeling (a world that fills in while walking) says the limit is not o
 4. The order: arrival time against the texture's screen size when wanted. Big near things should arrive first; the trace says whether they do.
 5. The main-thread cost while loading: the `textures: ...` zones (fetch dispatch, decode priority, create from decoded) in the first 30 s against the steady state, from the existing zone dump.
 
-**What the fix could be, by what the measurement says** (not chosen yet; each is its own small plan):
+### 6.1 The trace built and read at the hub (2026-10-29 night; Adam: "let's add the wake and do a hub run to compare")
+
+**Built:** `FSTextureArrivalTrace` (debug, not saved) writes `<logs>/texture-arrival.csv`, one row per step: wanted (a face first asked), request, every fetch worker state by name with the desired and loaded discard and the bytes of the step, dechit (the decoded cache served it), created, createbreak (the create loop stopped on its budget, with the queue depth), world. `fstexturearrivaltrace.{h,cpp}`, hooks in `llviewertexture.cpp`, `lltexturefetch.cpp` (setState), `llviewertexturelist.cpp`, `fsdecodedtexturecache.cpp`. Cost on: none measurable (121-131 fps at the hub with 47,000 rows written). Reader: `doc/vulkan/aurora-data/arrival-read.py <csv>` (pairs each fetch cycle INIT..DONE with the created row that follows it; the fast cache's thumbnail is a created row with no cycle). Launcher `<work>\run-viewer-trace.bat [wake 0|1]`.
+
+**The hub, a warm revisit (both caches hold the place; 43-74 textures touch the network), per fetch cycle, before the wake:**
+
+| stage | median | p90 | p99 |
+|---|---|---|---|
+| wanted -> first request (the dispatch) | 0.00 s | 0.40 s | 1.6 s |
+| request -> bytes in hand (texture cache or network) | 0.03 s | 0.05 s | 0.11 s |
+| bytes -> decoded or decoded-cache hit | 0.02 s | 0.11 s | 0.21 s |
+| **decoded -> created** | **0.59 s** | **0.68 s** | 1.9 s |
+| wanted -> first created, the whole way | 0.72 s | 1.11 s | 2.5 s |
+
+Five sixths of a texture's way was spent after its decode had finished: a finished fetch was only noticed when the texture list's pass reached that texture, and the pass visits a slice of the list a frame (`TextureFetchUpdateMinCount` and the H6 active/dormant split), so the result waited about half a period. **The wake (built the same night, `FSTextureFetchWake`, default on):** a worker that reaches DONE notes its id (`LLTextureFetch::noteCompleted`), the fetcher's main-thread update hands the ids to `LLViewerTextureList::visitNext`, which puts the texture in front of the next pass whatever list it is on (the face loop's kept result stays valid; only `updateFetch` has to run). With it, the same login: decoded -> created **0.06 s** median (p90 0.27), the whole way **0.17 s** median (p90 1.01). A texture that comes into view while walking is on the GPU in a sixth of a second instead of three quarters.
+
+**What did not change: the arrival curve of the login burst.** Half the scene's textures were created by 2.5-2.6 s after the world appeared, 90 % by 3.7-4.1 s, 99 % by 25-27 s, with or without the wake. Two reasons, both read from the trace. (1) In the burst the create loop is the bound: it broke on its 2-5 ms budget 42-54 times in the first 30 s, and with the wake the queue behind it reached 1616 (median 78 at a break) where it had reached 161 before, because the results now arrive as fast as the caches serve them. The budget (`llviewerdisplay.cpp` 640: 50 ms a second, clamped to 2-5 ms a frame) is a GL-era number from when the upload ran on the main thread; here the upload is a worker message and a BC7 chain needs no mask pass. (2) The tail is the sim, not the pipeline: every texture created after 10 s was *wanted* late (an object or avatar the sim sent a minute in) and created within half a second of that; the "textures settled" stamp at the hub (27-36 s) measures the object stream.
+
+**The other questions at the hub:** no ladder on a warm cache (one fetch cycle per texture, p99 two; the texture cache serves the final level at once); the order is flat (the largest quarter of textures by screen size was created at a median 2.6 s, the smallest at 2.7-2.9 s: nothing favours what is in front of the camera, which is the next thing after the budget if Adam feels it); 9-16 textures never created in 90 s, all at DONE after one HTTP request (a fetch that completed with nothing to show: a failed asset, logged as such).
+
+**Next, in order:** the create budget while loading (raise it while the create queue is deep: measure the burst's 50/90/99 % times and the frame time while it drains), then the Citadel trace for the network side (the ladder, the connection wait, the retry backoff), then the order.
+
+**What the fix could be, by what the measurement says** (the hub's answers are above; the network side waits for the Citadel trace):
 
 - The dispatch is the limit (textures wait long before their first request): visit more a frame while the camera moves or after a teleport (the count is already scaled by the discard bias; scale it by the fetch queue's emptiness too), or let the worker's visibility verdicts (H6) order the visits.
 - The network is the limit: more connections while loading (the high water is a constant; make it a setting with a loading-time value), pipelining on by default where the grid allows, or fewer round trips (ask for the final discard at once for textures whose screen size is already known, skipping the ladder).

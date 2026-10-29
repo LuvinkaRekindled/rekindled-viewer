@@ -2942,6 +2942,28 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSTextureFetchWake</key>
+    <map>
+      <key>Comment</key>
+      <string>A texture whose fetch has finished is visited by the texture list's next pass, so its image is created at once instead of when the list's slice reaches it. Off: the slice. Measured 2026-10-29; the switch goes once one path is kept.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
+    <key>FSTextureArrivalTrace</key>
+    <map>
+      <key>Comment</key>
+      <string>Write every step of every texture's arrival (wanted, requested, fetched, decoded, created) to texture-arrival.csv in the logs directory, for reading offline. Debug only; costs a little while on. Not saved.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSDecodedTextureCacheSizeMB</key>
     <map>
       <key>Comment</key>

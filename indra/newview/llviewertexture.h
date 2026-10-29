@@ -204,6 +204,7 @@ protected:
     S32 mTextureListType; // along with mID identifies where to search for this texture in TextureList
 
     mutable F32 mMaxVirtualSize = 0.f;  // The largest virtual size of the image, in pixels - how much data to we need?
+    mutable bool mTraceWanted = false;  // <FS> arrival trace: the 'wanted' row was written
     mutable S32  mMaxVirtualSizeResetCounter;
     mutable S32  mMaxVirtualSizeResetInterval;
     LLFrameTimer mLastReferencedTimer;
