@@ -96,11 +96,11 @@
 		 decimal_digits="0"
 		 follows="left|top"
 		 height="15"
-		 increment="50"
-		 initial_value="500"
+		 increment="100"
+		 initial_value="3000"
 		 layout="topleft"
-		 max_val="3000"
-		 min_val="50"
+		 max_val="10000"
+		 min_val="100"
 		 top="35"
 		 name="max_bandwidth"
 		 width="450" />
@@ -127,7 +127,7 @@
 		 left="20"
 		 name="NetworkPrefText1"
 		 top_delta="17"
-		 width="67">
+		 width="45">
 			Wi-Fi
 		</text>
 		<text
@@ -140,7 +140,7 @@
 		 left_pad="0"
 		 name="NetworkPrefText2"
 		 top_delta="0"
-		 width="63">
+		 width="45">
 			DSL
 		</text>
 		<text
@@ -153,7 +153,7 @@
 		 left_pad="0"
 		 name="NetworkPrefText3"
 		 top_delta="0"
-		 width="63">
+		 width="45">
 			Cable
 		</text>
 		<text
@@ -166,8 +166,8 @@
 		 left_pad="0"
 		 name="NetworkPrefText4"
 		 top_delta="0"
-		 width="205">
-			May cause issues
+		 width="315">
+			Fibre (the sim sends objects faster above 3000)
 		</text>
 
 		<check_box

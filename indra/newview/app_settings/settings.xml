@@ -2945,13 +2945,13 @@
     <key>FSTextureFetchHighWater</key>
     <map>
       <key>Comment</key>
-      <string>Texture fetch requests allowed in flight at once (the low water is half). 0: the built-in 100 when HTTP pipelining is on, 40 when off. Measured 2026-10-29; see TextureFetchConcurrency for the connection count.</string>
+      <string>Texture fetch requests allowed in flight at once (the low water is half). 0: the built-in 100 when HTTP pipelining is on, 40 when off. 200 measured best with 16 connections on 2026-10-29 (PLAN-aurora-ideas.md 6.4); 400 was worse.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>0</integer>
+      <integer>200</integer>
     </map>
     <key>FSTextureFetchWake</key>
     <map>
@@ -16704,13 +16704,13 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>TextureFetchConcurrency</key>
     <map>
       <key>Comment</key>
-      <string>Maximum number of HTTP connections used for texture fetches</string>
+      <string>Maximum number of HTTP connections used for texture fetches (per host; 0 asks for the built-in 8). 16 measured best at a cold texture-heavy place on 2026-10-29 (PLAN-aurora-ideas.md 6.4): 32 was worse.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>0</integer>
+      <integer>16</integer>
     </map>
     <key>TextureFetchMinTimeToLog</key>
     <map>
@@ -16844,7 +16844,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ThrottleBandwidthKBPS</key>
     <map>
       <key>Comment</key>
-      <string>Maximum allowable downstream bandwidth (kilo bits per second)</string>
+      <string>Maximum allowable downstream bandwidth (kilo bits per second): the UDP throttle the sim applies to what it sends (object updates get about a third of it); it does not limit HTTP texture or mesh fetches. The code accepts up to 10000; the sim gave a fifth more objects a second at 10000 than at 3000 (2026-10-29).</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
