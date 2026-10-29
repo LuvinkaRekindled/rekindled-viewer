@@ -2727,7 +2727,29 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
     gCurrentCtx = ctx;
     LLVkWorker::set_worker_context(ctx);
     const unsigned long long t0 = (gOpStats || LLVkPassCensus::sOn) ? __rdtsc() : 0;
+    // <FS> a command the worker needed more than LL_VK_SLOW_CMD_MS (default 100) for is named in the log (the first 200): where a frame that stalls while the GPU sits idle waits
+    static const double slow_ticks = []()
+    {
+        const auto c0 = std::chrono::steady_clock::now();
+        const unsigned long long a = __rdtsc();
+        while (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c0).count() < 5.0) {}
+        const unsigned long long b = __rdtsc();
+        const char* v = getenv("LL_VK_SLOW_CMD_MS");
+        return (double)(b - a) / 5.0 * (v ? atof(v) : 100.0);
+    }();
+    const unsigned long long slow_t0 = t0 ? t0 : __rdtsc();
     dispatch_cmd(op, flags, payload);
+    {
+        const unsigned long long took = __rdtsc() - slow_t0;
+        static unsigned slow_logged = 0;
+        if ((double)took > slow_ticks && slow_logged < 200)
+        {
+            ++slow_logged;
+            const unsigned kind = op == CMD_SHADOW_PACKETS ? ((const LLVkBridge::ShadowPacketsHeader*)payload)->mKind : 0;
+            LL_WARNS("VkAsync") << "worker command " << op << (op == CMD_SHADOW_PACKETS ? " (shadow packets kind " : " (") << kind << ") took " << (double)took / slow_ticks * (getenv("LL_VK_SLOW_CMD_MS") ? atof(getenv("LL_VK_SLOW_CMD_MS")) : 100.0) << " ms" << LL_ENDL;
+        }
+    }
+    // </FS>
     if (LLVkPassCensus::sOn)
     {
         LLVkPassCensus::opDone(op, op == CMD_SHADOW_PACKETS ? ((const LLVkBridge::ShadowPacketsHeader*)payload)->mKind : 0, __rdtsc() - t0);

@@ -1901,6 +1901,16 @@ bool LLAppViewer::doFrame()
                     LLFloaterSimpleSnapshot::update();
                     LLFloaterFlickr::update(); // <FS:Beq/> FIRE-35002 - Flickr preview not updating whne opened directly from tool tray icon
                     FSFloaterPrimfeed::update(); // <FS:Beq/> Primfeed support
+                    // <FS> rt-debug.txt snaptest=N: a snapshot as the exit takes it, again for every change of N above 0 (the VkSnap timing lines say what it cost; for same-session A/Bs of the exit snapshot)
+                    static S32 snap_test_done = 0;
+                    const S32 snap_test = LLVkBridge::rtSnapTest();
+                    if (snap_test > 0 && snap_test != snap_test_done && gViewerWindow)
+                    {
+                        snap_test_done = snap_test;
+                        gViewerWindow->saveSnapshot("<work>\\run-logs\\snaptest.png", gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw(), false, gSavedSettings.getBOOL("RenderHUDInSnapshot"), true, false,
+                                                    LLSnapshotModel::SNAPSHOT_TYPE_COLOR, LLSnapshotModel::SNAPSHOT_FORMAT_PNG);
+                    }
+                    // </FS>
                     gRenderActive = false;
                 }
                 LLVkBridge::holdFrame(false); // <FS>

@@ -241,7 +241,8 @@ struct Stats
 struct DebugSwitches
 {
     bool mSingle = false;           // only the first scene call of a frame builds; later calls keep that scene
-    bool mNoRefit = false;          // a structure whose vertices changed is rebuilt, not refitted
+    bool mSnapRebuild = true;       // snaprebuild=0: a snapshot's renders refit the avatars' structures again (a same-session A/B of the fix: setSnapshotScene)
+    S32 mNoRefit = 0;               // norefit=1: a structure whose vertices changed is rebuilt, not refitted; 2: only the avatars' skinned structures; 3: only the others (to see which refits a picture problem comes from)
     U64 mKeep = 8;                  // frames the casters of a cached pass are kept
     bool mCommonOnly = false;       // only casters that use the most common matrix (the region's): no moving objects
     bool mAlpha = true;             // alpha masked casters in the scene
@@ -287,6 +288,7 @@ struct DebugSwitches
     S32 mGlossyRt = 0;              // live (glossyrt=N, 0 = off by default until it has been seen working; needs LL_VK_RT_MATERIALS=1): 1 ray traced reflections on glossy surfaces of the lighting pass (gloss 0.9 and up), 2 PBR path pixels magenta, 3 / 4 where it traced: hits green, misses red (4: every gloss), 5 gloss as grey, 6 which lighting path a pixel takes
     S32 mHitRays = -1;              // live (hitrays=N, -1 = not set): shadow rays per local light at a traced hit (1, 2 or 4)
     S32 mHitQ = -1;                 // live (hitq=N, -1 = not set: the preference FSVkMirrorQuality decides): how a hit of the traced glossy mirror is lit, 0 flat diffuse, 1 the main pass lighting at the hit (normal map, roughness / metallic / specular map, probes at the hit)
+    S32 mSnapTest = 0;              // live (snaptest=N): every change of N to a value above 0 takes a snapshot as the exit does (LLAppViewer::doFrame), a repeatable look at what the snapshot costs
     S32 mCullUse = -1;              // live (culluse=0/1/2, default -1: LL_VK_CULL_USE decides): the main view's cull by the walk (0), the walk with the flat version beside it (1), the flat version alone (2); needs LL_VK_CULL_SHADOW=1
     S32 mVelIdx = 1;                // live (velidx=0/1, default 1): the avatar velocity record drawn indexed (the hardware reads the indices: one vertex shader run per vertex, not per triangle corner); 0 = the draw over the index list, the A/B and the fallback until a week of use, then gone
     S32 mSunSamples = 0;            // live (sunsamples=N, default 0: RenderRTShadowSamples decides): the rays per pixel of the sun lightmap pass, a same-lap cost A/B
@@ -302,7 +304,7 @@ struct DebugSwitches
 DebugSwitches sDbg;
 inline bool pins_wanted() { return sPinsInit || (sMatsInit && sDbg.mMats); }       // the records hold pin indices
 std::atomic<S32> sViewLive{0};
-std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1}, sSunSelfLive{1}, sTexAnimLive{-1}, sSunSamplesLive{0}, sVelIdxLive{1}, sCullUseLive{-1};
+std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1}, sSunSelfLive{1}, sTexAnimLive{-1}, sSunSamplesLive{0}, sVelIdxLive{1}, sCullUseLive{-1}, sSnapTestLive{0};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkBridge)
 std::chrono::steady_clock::time_point sDbgRead;
 
@@ -345,7 +347,8 @@ void read_debug_switches()
             {
                 const std::string k = key;
                 if (k == "single") d.mSingle = v != 0;
-                else if (k == "norefit") d.mNoRefit = v != 0;
+                else if (k == "norefit") d.mNoRefit = (S32)v;
+                else if (k == "snaprebuild") d.mSnapRebuild = v != 0;
                 else if (k == "keep") d.mKeep = (U64)v;
                 else if (k == "common_only") d.mCommonOnly = v != 0;
                 else if (k == "alpha") d.mAlpha = v != 0;
@@ -376,6 +379,7 @@ void read_debug_switches()
                 else if (k == "sunsamples") d.mSunSamples = (S32)v;
                 else if (k == "velidx") d.mVelIdx = (S32)v;
                 else if (k == "culluse") d.mCullUse = (S32)v;
+                else if (k == "snaptest") d.mSnapTest = (S32)v;
                 else if (k == "hitrays") d.mHitRays = (S32)v;
                 else if (k == "gate") d.mGate = v != 0;
                 else if (k == "bodyname") d.mBodyName = v != 0;
@@ -435,6 +439,7 @@ void read_debug_switches()
     sSunSamplesLive.store(d.mSunSamples, std::memory_order_relaxed);
     sVelIdxLive.store(d.mVelIdx, std::memory_order_relaxed);
     sCullUseLive.store(d.mCullUse, std::memory_order_relaxed);
+    sSnapTestLive.store(d.mSnapTest, std::memory_order_relaxed);
     sGateLive.store(d.mGate, std::memory_order_relaxed);
     sBodyNameLive.store(d.mBodyName, std::memory_order_relaxed);
     sDbg = d;
@@ -1157,6 +1162,7 @@ S32 texAnim() { return sTexAnimLive.load(std::memory_order_relaxed); }
 S32 sunSamples() { return sSunSamplesLive.load(std::memory_order_relaxed); }
 S32 velIdx() { return sVelIdxLive.load(std::memory_order_relaxed); }
 S32 cullUse() { return sCullUseLive.load(std::memory_order_relaxed); }
+S32 snapTest() { return sSnapTestLive.load(std::memory_order_relaxed); }
 S32 debugView() { return sViewLive.load(std::memory_order_relaxed); }
 bool loadingGates() { return sGateLive.load(std::memory_order_relaxed); }
 bool bodyRename() { return sBodyNameLive.load(std::memory_order_relaxed); }
@@ -2009,6 +2015,11 @@ U32 tableOffset(U32 frame_slot)
 }
 
 static float sDistanceScale = 1.f;
+static bool sSnapshotScene = false;
+void setSnapshotScene(bool snapshot)
+{
+    sSnapshotScene = snapshot;
+}
 void setDistanceScale(float scale)
 {
     sDistanceScale = scale > 0.f ? scale : 1.f;
@@ -2538,7 +2549,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             sj.mMode = 2;
             sj.mModel[0] = sj.mModel[5] = sj.mModel[10] = 1.f;
         }
-        job.mUpdate = !grew && !ib_changed && !force_build && b.mRefits < rebuild_after_refits && b.mAs != VK_NULL_HANDLE && !sDbg.mNoRefit && !b.mCompacted;
+        job.mUpdate = !grew && !ib_changed && !force_build && b.mRefits < rebuild_after_refits && b.mAs != VK_NULL_HANDLE && sDbg.mNoRefit != 1 && sDbg.mNoRefit != 3 && !b.mCompacted;
         job.mVbVersion = vi.mVersion;
         job.mIbVersion = ii.mVersion;
         std::sort(want.begin(), want.end());
@@ -3103,7 +3114,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             }
             sig.push_back(h);
         }
-        bool need_build = b.mAs == VK_NULL_HANDLE || sig != a.mSig || b.mRefits >= skin_refit_limit || sDbg.mNoRefit || b.mFastBuild != sDbg.mSkinFast;
+        bool need_build = b.mAs == VK_NULL_HANDLE || sig != a.mSig || b.mRefits >= skin_refit_limit || sDbg.mNoRefit == 1 || sDbg.mNoRefit == 2 || (sSnapshotScene && sDbg.mSnapRebuild) || b.mFastBuild != sDbg.mSkinFast;
         bool alloc_failed = false;
         for (SkinDraw* d : cur)
         {
@@ -3209,6 +3220,16 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             prims += range.primitiveCount;
         }
         job.mPrims = (U32)prims;
+        if (sSnapshotScene)
+        {
+            // (a snapshot's renders: what each avatar's structure does in each of them, for the slow sun pass of the refitted ones; the first 4000 lines)
+            static U32 snap_logged = 0;
+            if (snap_logged++ < 4000)
+            {
+                LL_INFOS("VkRtSnap") << "snapshot skin job: frame " << (unsigned long long)ctx.getFrameNumber() << " avatar " << (const void*)&a << (a.mSelf ? " (own)" : "") << " dist " << a.mDist << " " << (job.mUpdate ? "REFIT" : "build")
+                                    << " refits so far " << b.mRefits << " draws " << cur.size() << " prims " << prims << " sig " << (sig == a.mSig ? "same" : "changed") << LL_ENDL;
+            }
+        }
         job.mInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
         job.mInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
         job.mFastBuild = sDbg.mSkinFast;

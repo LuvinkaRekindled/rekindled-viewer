@@ -20551,6 +20551,7 @@ void LLPipeline::renderDeferredLighting()
             LLVkBridge::RtSceneArgs scene;
             memcpy(scene.mView, glm::value_ptr(mat), sizeof(scene.mView));
             scene.mDistanceScale = farDistanceScale();
+            scene.mSnapshot = gSnapshot ? 1u : 0u;
             { LL_CPU_ZONE("lighting: rtScene call"); LLVkBridge::rtScene(scene); }
         }
 

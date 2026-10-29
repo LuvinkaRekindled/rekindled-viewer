@@ -326,6 +326,7 @@ namespace LLVkBridge
     S32 rtWaterReflections();      // rt-debug.txt waterrt=1 (needs LL_VK_RT_MATERIALS=1): the water traces its reflection into the ray scene
     S32 rtHitRays();               // rt-debug.txt hitrays=N (-1 = not set): shadow rays per local light at a traced hit
     S32 rtHitQuality();            // rt-debug.txt hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 the main pass lighting at the hit)
+    S32 rtSnapTest();              // rt-debug.txt snaptest=N (0 = not set): every change of N above 0 takes a snapshot as the exit does
     S32 rtCullUse();               // rt-debug.txt culluse=N (-1 = not set): LL_VK_CULL_USE live, a same-lap A/B of the main view's cull walk against the GPU verdict
     S32 rtSunSamples();            // rt-debug.txt sunsamples=N (0 = not set: RenderRTShadowSamples decides), a same-lap cost A/B of the sun rays per pixel
     S32 rtTexAnim();               // rt-debug.txt texanim=0/1/2 (-1 = not set: the setting FSTexAnimOnGPU decides), a same-lap A/B of the texture animation by the CPU against the vertex shader
@@ -335,7 +336,7 @@ namespace LLVkBridge
     U32 rtSkinPeriod(float distance);      // viewer frames between two poses the ray scene takes of an avatar this far from the eye (1 when ray tracing is off)
     // Builds the scene the shadow passes of this frame named (their casters) for the camera view: bottom-level structures as the budget allows, then the top-level structure in
     // eye space. Call before the lighting that samples the sun shadow. view: the camera's view matrix, column-major.
-    struct RtSceneArgs { F32 mView[16] = {}; F32 mDistanceScale = 1.f; };       // (mDistanceScale: what the far avatar rules multiply a distance by, less than 1 when the camera zooms in)
+    struct RtSceneArgs { F32 mView[16] = {}; F32 mDistanceScale = 1.f; U32 mSnapshot = 0; };       // (mDistanceScale: what the far avatar rules multiply a distance by, less than 1 when the camera zooms in; mSnapshot: a render of a snapshot, where the avatars' structures are built again and not refitted, see llvkrt.cpp)
     void rtScene(const RtSceneArgs& args);
     // the device can read buffers by address and the mirror is running
     bool shadowPacketsAvailable();

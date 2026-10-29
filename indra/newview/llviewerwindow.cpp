@@ -6155,6 +6155,11 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     LL_INFOS("VkSnap") << "rawSnapshot " << image_width << "x" << image_height << " keep_aspect " << keep_window_aspect << " texture " << is_texture
                        << " ui " << show_ui << " hud " << show_hud << " no_post " << no_post << " type " << (S32)type << " variant " << (S32)fs_vk_snap_variant << LL_ENDL;
     // </FS>
+    // <FS> where the snapshot's time goes (VkSnap lines: the main thread's wall time, which includes its waits for the worker and the GPU)
+    const auto snap_t0 = std::chrono::steady_clock::now();
+    auto snap_ms = [&snap_t0]() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - snap_t0).count(); };
+    double read_start_ms = 0;
+    // </FS>
     gSnapshotNoPost = no_post;
     gDisplaySwapBuffers = false;
 
@@ -6366,14 +6371,23 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                 {
                     warmup = llmax(warmup, 1);
                 }
+                const double setup_ms = snap_ms();
+                std::string warmup_ms;
                 for (S32 w = 0; w < warmup; ++w)
                 {
+                    const double w0 = snap_ms();
                     LLVkBridge::snapshotBoundary(fs_vk_snap_variant);
                     display(do_rebuild, scale_factor, subfield, true);
+                    warmup_ms += llformat(" %.0f", snap_ms() - w0);
                 }
+                const double f0 = snap_ms();
                 LLVkBridge::snapshotBoundary(fs_vk_snap_variant);
                 // </FS>
                 display(do_rebuild, scale_factor, subfield, true);
+                // <FS>
+                LL_INFOS("VkSnap") << "rawSnapshot timing: setup " << setup_ms << " ms, " << warmup << " warm-up renders (ms each):" << warmup_ms << ", final render " << snap_ms() - f0 << " ms" << LL_ENDL;
+                read_start_ms = snap_ms();
+                // </FS>
 
                 if (!LLPipeline::sRenderDeferred)
                 {
@@ -6477,6 +6491,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     }
 
     // <FS> LL_VK_SNAPDUMP=<folder>: write what every snapshot render read back as a PNG, to compare the renders with each other
+    LL_INFOS("VkSnap") << "rawSnapshot timing: render and readback loops finished at " << snap_ms() << " ms (the readback loop took " << snap_ms() - read_start_ms << " ms)" << LL_ENDL;
     if (const char* dump_dir = getenv("LL_VK_SNAPDUMP"))
     {
         static S32 dump_count = 0;

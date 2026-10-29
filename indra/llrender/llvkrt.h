@@ -27,6 +27,7 @@ S32 glossyReflections();   // glossyrt: ray traced reflections on glossy surface
 S32 waterReflections();    // waterrt=1: ray traced water reflections
 S32 hitRays();             // hitrays=N: shadow rays per local light at a traced hit (-1 not set)
 S32 hitQuality();          // hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 main pass lighting at the hit)
+S32 snapTest();             // snaptest=N (default 0): a changed N above 0 takes a snapshot like the exit's
 S32 cullUse();             // culluse=0/1/2 (default -1: LL_VK_CULL_USE decides), a same-lap A/B of the main view's cull walk against the GPU verdict
 S32 velIdx();              // velidx=0/1 (default 1): the avatar velocity record drawn indexed; 0 = the draw over the index list (A/B and fallback, to be removed)
 S32 sunSamples();          // sunsamples=N (default 0: RenderRTShadowSamples decides): rays per pixel of the sun lightmap pass, a same-lap A/B
@@ -133,6 +134,7 @@ void holdRange(const CasterRef& ref, U32 first, U32 count, int delta);
 // Builds what the casters noted since the last call need (a budget per call), then the top-level structure for this view: the instances are transformed into eye space
 // (view * model), the space the lighting shaders work in. Recorded into the current frame outside any render pass. view: 16 floats column-major.
 void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefetch = nullptr);
+void setSnapshotScene(bool snapshot);       // the next scene call is a snapshot's render: the avatars' structures are built again, not refitted (a snapshot renders many times in a row, and refitted ones made some of them 0.5-2 s slow: the sun pass)
 void setDistanceScale(float scale);        // the factor of the far avatar rules for the next scene call (1 at the normal field of view)
 
 // the set to bind as set 3 for the frame slot (always valid once active())
