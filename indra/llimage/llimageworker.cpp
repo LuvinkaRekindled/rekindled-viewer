@@ -253,6 +253,7 @@ bool ImageRequest::processRequest()
                             cache->write(mCacheID, discard, mDecodedImageRaw, kept_raw);      // the chain, or the texels again with the checked mark
                         }
                     }
+                    if (!mDecodedImageRaw->isCompressed()) mDecodedImageRaw->analyzeForUpload();        // <FS> the alpha class and pick mask, here rather than at upload
                     return true;
                 }
             }
@@ -280,6 +281,10 @@ bool ImageRequest::processRequest()
         if (mDecodedRaw && mAllowCompressed && mCacheID.notNull() && !mNeedsAux)
         {
             checked_raw = compress_if_wanted(mDecodedImageRaw);
+        }
+        if (mDecodedRaw && !mDecodedImageRaw->isCompressed())
+        {
+            mDecodedImageRaw->analyzeForUpload();       // <FS> the alpha class and pick mask, here rather than at upload (the texture plan 6.2)
         }
         // <FS> what the decode produced goes to the decoded cache (it copies)
         if (mDecodedRaw && mCacheID.notNull() && !mNeedsAux)

@@ -1559,6 +1559,9 @@ bool LLImageTex::createImageTexture(S32 discard_level, const LLImageRaw* imagera
         mImageTextureCreated = false;
         return false;
     }
+    // <FS> the decode pool's analysis of these texels, if it came with them: the passes at upload stand down until this create is done
+    struct AdoptScope { LLImageTex* t; ~AdoptScope() { t->mAnalysisAdopted = false; } } adopt_scope { this };
+    if (!imageraw->isCompressed()) adoptUploadAnalysis(imageraw, (U32)raw_w, (U32)raw_h);
 
     if (mHasExplicitFormat &&
         ((mFormatPrimary == PixelFormat::RGBA && mComponents < 4) ||
@@ -2045,6 +2048,36 @@ void LLImageTex::setIsMask(bool is_mask)
     ++mAnalysisCount;
 }
 
+// <FS> the texture plan section 6.2: the decode pool computed what analyzeAlpha and updatePickMask would (LLImageRaw::analyzeForUpload); the texture takes it, with the same
+// rule as analyzeAlpha for which level's decision stands (a smaller level never overrides a bigger one's, LL_VK_ALPHA_KEEP), and the passes over the texels stand down for this upload.
+void LLImageTex::adoptUploadAnalysis(const LLImageRaw* raw, U32 w, U32 h)
+{
+    if (!raw || !raw->hasUploadAnalysis() || !mNeedsAlphaAndPickMask || sSkipAnalyzeAlpha)
+    {
+        return;
+    }
+    static const bool alpha_keep = []{ const char* e = getenv("LL_VK_ALPHA_KEEP"); return !e || atoi(e) != 0; }();
+    if (raw->getComponents() == 4 || raw->getComponents() == 2)
+    {
+        if (!(alpha_keep && w * h < mAnalyzedPixels))
+        {
+            mIsMask = raw->getAlphaIsMask() == 1;
+            mAnalyzedPixels = w * h;
+            ++mAnalysisCount;
+        }
+    }
+    if (raw->getComponents() == 4 && !raw->getPickMask().empty() && mFormatType == ComponentType::U8 && mFormatPrimary == PixelFormat::RGBA)
+    {
+        const U32 size = createPickMask((S32)w, (S32)h);
+        memcpy(mPickMask, raw->getPickMask().data(), llmin((size_t)size, raw->getPickMask().size()));
+    }
+    else
+    {
+        freePickMask();
+    }
+    mAnalysisAdopted = true;
+}
+
 bool LLImageTex::isCompressedFormat() const
 {
     return is_s3tc(mFormatInternal);
@@ -2125,7 +2158,7 @@ void LLImageTex::calcAlphaChannelOffsetAndStride()
 
 void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
 {
-    if(!data_in || sSkipAnalyzeAlpha || !mNeedsAlphaAndPickMask)
+    if(!data_in || sSkipAnalyzeAlpha || !mNeedsAlphaAndPickMask || mAnalysisAdopted)
     {
         return ;
     }
@@ -2315,7 +2348,7 @@ S64 LLImageTex::formatBytes(S32 w, S32 h) const
 //----------------------------------------------------------------------------
 void LLImageTex::updatePickMask(S32 width, S32 height, const U8* data_in)
 {
-    if(!mNeedsAlphaAndPickMask)
+    if(!mNeedsAlphaAndPickMask || mAnalysisAdopted)
     {
         return ;
     }
