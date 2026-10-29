@@ -170,7 +170,8 @@ public:
     void updateJitter();                                // call right before the main scene's setup3DRender
     void noteSceneMatrices();                           // call at the end of the main scene render
     void generateMotionVectors(LLRenderTarget* dst);    // camera motion from depth and the last two view-projection matrices, in render pixels
-    bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction = false);
+    // <FS> resolved_input: the source is ray reconstruction's one-to-one output (PLAN-dlss-nr.md section 8, "denoise first"): the super resolution call gets a jitter of zero
+    bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction = false, bool resolved_input = false);
     bool applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst);    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): src (window size, finished) -> dst; false: nothing was done
     bool applyNeuralRenderRimLift(LLRenderTarget* nr, LLRenderTarget* src, LLRenderTarget* dst);
     // <FS> DLSS-NR: what the frame should do now: 0 nothing, 1 evaluate and show, 2 only while a snapshot renders, 3 evaluate but show the normal picture (the launcher's test flag)
@@ -193,6 +194,7 @@ public:
     bool                    mRRHitDistValid = false;        // mRRHitDist holds this frame's distances
     LLRenderTarget          mRRGuides;      // render size: 0 diffuse albedo, 1 specular albedo, 2 world normal + roughness (all RGBA16F), 3 the reflection motion (RG16F)
     LLRenderTarget          mRRHdr;         // window size RGBA16F: what ray reconstruction outputs
+    LLRenderTarget          mRRDenoised;    // <FS> render size RGBA16F: what ray reconstruction outputs at a one-to-one ratio ("denoise first", PLAN-dlss-nr.md section 8); the frame then takes the plain path
     LLRenderTarget          mRRPing;        // window size RGBA16F: the post chain after the upscale
     LLRenderTarget          mRRPong;
     static F32 getDLSSScale();          // the render resolution as a fraction of the window: FSVkDLSSScale if set, else from FSVkDLSSQuality
