@@ -157,6 +157,16 @@ void LLHeroProbeManager::update()
                 if (distance > LLViewerCamera::instance().getFar())
                     continue;
 
+                // <FS> FSHeroProbeMaxDistance: a mirror that is not very large is not visible far away, and its probe renders the scene around it (objects created there that stay after the probe moves on)
+                static LLCachedControl<F32> max_distance(gSavedSettings, "FSHeroProbeMaxDistance", 30.f);
+                if (max_distance > 0.f)
+                {
+                    const LLVector3& mirror_scale = vo->getScale();
+                    const F32 allowed = llmax((F32)max_distance, 6.f * llmax(mirror_scale.mV[VX], llmax(mirror_scale.mV[VY], mirror_scale.mV[VZ])));
+                    if (distance > allowed)
+                        continue;
+                }
+
                 LLVector4a center;
                 center.load3(vo->getPositionAgent().mV);
                 LLVector4a size;
