@@ -2589,6 +2589,12 @@ void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
 // The cost that stays after a turn (section 17.16) grows with what has been built; this shows how much of it is in view.
 static void shadow_census_report(U32 frames);       // (below, with the shadow pass)
 
+// <FS> LL_VK_SCENECENSUS: what calcNearbyLights goes through each call (the nearby set holds every light within the far clip, not only the ones drawn)
+static struct LightLoopCensus
+{
+    U64 mCalls = 0, mUpdated = 0, mScans = 0, mScanned = 0, mDropped = 0, mInserted = 0;
+} sLightLoopCensus;
+
 void LLPipeline::sceneStateCensus()
 {
     static const bool on = getenv("LL_VK_SCENECENSUS") != nullptr;
@@ -2622,6 +2628,7 @@ void LLPipeline::sceneStateCensus()
     LLCamera& camera = *LLViewerCamera::getInstance();
     U64 objects = 0, drawables = 0, active = 0, avatars = 0, attachments = 0, rigged = 0, with_text = 0;
     U64 act_kind[7][2] = {}, list_kind[7][2] = {};      // [kind][in view]: avatar, HUD attachment, attachment, child prim, root with a cache entry, other root volume, other pcode
+    U64 act_reason[12][2] = {};                         // [why it can be on the active lists][in view]; an object can have several, the last row is the ones with none of them
     std::unordered_set<LLSpatialGroup*> groups;
     const S32 count = gObjectList.getNumObjects();
     for (S32 i = 0; i < count; ++i)
@@ -2649,6 +2656,22 @@ void LLPipeline::sceneStateCensus()
                 : (drawable->getEntry() && drawable->getEntry()->hasVOCacheEntry()) ? 4 : object->getPCode() == LL_PCODE_VOLUME ? 5 : 6;
             if (drawable->isState(LLDrawable::ACTIVE)) { ++act_kind[kind][view]; }
             if (object->onActiveList()) { ++list_kind[kind][view]; }
+            {
+                LLVOVolume* vol = object->getPCode() == LL_PCODE_VOLUME ? (LLVOVolume*)object : nullptr;
+                bool any = false;
+                auto note = [&](int reason, bool yes) { if (yes) { ++act_reason[reason][view]; any = true; } };
+                note(0, drawable->isState(LLDrawable::ON_MOVE_LIST));
+                note(1, vol && vol->mTextureAnimp);
+                note(2, object->isParticleSource());
+                note(3, vol && vol->isFlexible());
+                note(4, object->mText.notNull());
+                note(5, object->isAudioSource());
+                note(6, object->isAnimatedObject());
+                note(7, vol && vol->getIsLight());
+                note(8, vol && vol->hasMedia());
+                note(9, object->isSelected());
+                if (!any) { ++act_reason[11][view]; }
+            }
         }
         rigged += drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD);
         with_text += object->mText.notNull();
@@ -2756,6 +2779,58 @@ void LLPipeline::sceneStateCensus()
             l += llformat(" %s %llu (%llu in view)", kinds[k], (unsigned long long)(list_kind[k][0] + list_kind[k][1]), (unsigned long long)list_kind[k][1]);
         }
         LL_INFOS("SceneCensus") << "active drawables by kind:" << a << " | on the active object list:" << l << LL_ENDL;
+        static const char* const reasons[12] = { "on the moved list", "texture animation", "particle source", "flexible", "hover text", "audio source", "animated object", "light", "media", "selected", "(unused)", "none of these" };
+        std::string r;
+        for (int k = 0; k < 12; ++k)
+        {
+            if (k == 10) { continue; }
+            r += llformat(" %s %llu (%llu in view)", reasons[k], (unsigned long long)(act_reason[k][0] + act_reason[k][1]), (unsigned long long)act_reason[k][1]);
+        }
+        LL_INFOS("SceneCensus") << "why the active and listed objects are active (an object can have several):" << r << LL_ENDL;
+    }
+    {
+        const LightLoopCensus& c = sLightLoopCensus;
+        const F64 n = (F64)std::max<U64>(1, c.mCalls);
+        LL_INFOS("SceneCensus") << "calcNearbyLights over " << c.mCalls << " calls: nearby lights updated " << (F64)c.mUpdated / n << " a call (dropped " << (F64)c.mDropped / n << ", inserted " << (F64)c.mInserted / n
+            << "), scans " << (F64)c.mScans / n << " a call each over " << (c.mScans ? (F64)c.mScanned / (F64)c.mScans : 0.0) << " lights; RenderLocalLightCount "
+            << gSavedSettings.getS32("RenderLocalLightCount") << " is how many of the nearby set are drawn" << LL_ENDL;
+        sLightLoopCensus = LightLoopCensus();
+        U64 hud_total, hud_visible, hud_unreferenced, hud_types[24];
+        LLHUDObject::census(hud_total, hud_visible, hud_unreferenced, hud_types);
+        std::string types;
+        for (U32 i = 0; i < 24; ++i)
+        {
+            if (hud_types[i])
+            {
+                types += llformat(" type %u: %llu,", i, (unsigned long long)hud_types[i]);
+            }
+        }
+        LL_INFOS("SceneCensus") << "HUD objects (sorted by distance every frame): " << hud_total << " (visible " << hud_visible << ", with no owner left " << hud_unreferenced << "), by type:" << types << LL_ENDL;
+    }
+    {
+        // a read-only walk over every object and its drawable (what the per-frame loops over the object list do, without the work): ns an object, best of 3. If it grows after a turn, the same
+        // walk is slower for the same instructions: the objects are further apart in memory (cache and TLB misses), not more work.
+        const S32 n = gObjectList.getNumObjects();
+        F64 best = 1e30;
+        U64 sink = 0;
+        for (int pass = 0; pass < 3; ++pass)
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            for (S32 i = 0; i < n; ++i)
+            {
+                LLViewerObject* object = gObjectList.getObject(i);
+                if (object)
+                {
+                    LLDrawable* drawable = object->mDrawable;
+                    sink += (U64)object->getPCode() + (drawable ? (U64)drawable->getState() : 0u);
+                }
+            }
+            const F64 ns = std::chrono::duration<F64, std::nano>(std::chrono::steady_clock::now() - t0).count();
+            best = std::min(best, ns);
+        }
+        static volatile U64 sink_out;
+        sink_out = sink;
+        LL_INFOS("SceneCensus") << "object walk: " << n << " objects, " << (n ? best / n : 0.0) << " ns an object (" << best / 1.0e6 << " ms the whole list, best of 3, touching the object and its drawable)" << LL_ENDL;
     }
     U64 lights_visible = 0;
     for (LLDrawable* light : mLights)
@@ -7245,6 +7320,182 @@ std::vector<const void*> sorted_pointers(It begin, It end)
 }
 
 // worker: cull the cascade, mark the visible groups and drawables
+// <FS> LL_VK_SHADOW_HULL (=1 apply, =2 only count what it would take out; LL_VK_SHADOW_HULL_VERIFY=1 checks every group it takes out with rays from inside the slice; LL_VK_SHADOW_HULL_MARGIN meters, default 6).
+// A cascade's map is only sampled for the camera's view slice [dist[j], dist[j+1]]. A static group can only put a shadow there if a ray from some point of the slice toward the sun meets it: the slice
+// pushed toward the sun is a convex solid (ShadowSliceHull), and a group outside it is left out of the cascade's visible groups (the light-space box the cull uses is loose: its corners, and the far
+// side of the slice, hold groups that never shadow the slice; after a turn there are about a thousand more of them). Rigged avatars and drawable groups are not touched.
+static int shadow_hull_mode()
+{
+    static const int mode = getenv("LL_VK_SHADOW_HULL") ? atoi(getenv("LL_VK_SHADOW_HULL")) : 0;
+    return mode;
+}
+static std::atomic<U64> sHullTested[4], sHullDropped[4], sHullVerifyHits[4], sHullVerified[4];
+
+static void shadow_hull_build(LLPipeline::ShadowSliceHull& hull, const LLCamera& cam, F32 z0, F32 z1, const LLVector3& to_sun, F32 widen)
+{
+    hull = LLPipeline::ShadowSliceHull();
+    LLVector3 d = to_sun;
+    if (d.magVecSquared() < 1e-8f)
+    {
+        return;
+    }
+    d.normVec();
+    const LLVector3 origin = cam.getOrigin(), at = cam.getAtAxis(), left = cam.getLeftAxis(), up = cam.getUpAxis();
+    const F32 tan_half = tanf(cam.getView() * 0.5f) * widen;
+    const F32 aspect = cam.getAspect();
+    LLVector3 centroid;
+    for (int k = 0; k < 2; ++k)
+    {
+        const F32 z = k ? z1 : z0;
+        const F32 hh = z * tan_half, hw = hh * aspect;
+        const LLVector3 c = origin + at * z;
+        hull.mCorners[k * 4 + 0] = c + left * hw + up * hh;
+        hull.mCorners[k * 4 + 1] = c - left * hw + up * hh;
+        hull.mCorners[k * 4 + 2] = c - left * hw - up * hh;
+        hull.mCorners[k * 4 + 3] = c + left * hw - up * hh;
+    }
+    for (int i = 0; i < 8; ++i)
+    {
+        centroid += hull.mCorners[i] * 0.125f;
+    }
+    static const int faces[6][4] = { { 0, 1, 2, 3 }, { 4, 5, 6, 7 }, { 0, 1, 5, 4 }, { 3, 2, 6, 7 }, { 0, 3, 7, 4 }, { 1, 2, 6, 5 } };
+    LLVector3 normal[6];
+    bool back[6];       // faces that look away from the sun (they stay on the boundary when the slice is pushed toward it)
+    for (int f = 0; f < 6; ++f)
+    {
+        const LLVector3& p0 = hull.mCorners[faces[f][0]];
+        LLVector3 n = (hull.mCorners[faces[f][1]] - p0) % (hull.mCorners[faces[f][3]] - p0);
+        if (n.magVecSquared() < 1e-12f)
+        {
+            return;
+        }
+        n.normVec();
+        LLVector3 face_center = (p0 + hull.mCorners[faces[f][1]] + hull.mCorners[faces[f][2]] + hull.mCorners[faces[f][3]]) * 0.25f;
+        if (n * (face_center - centroid) < 0.f)
+        {
+            n = -n;
+        }
+        normal[f] = n;
+        back[f] = (n * d) <= 1e-4f;
+        if (back[f])
+        {
+            hull.mPlane[hull.mCount][0] = n.mV[0];
+            hull.mPlane[hull.mCount][1] = n.mV[1];
+            hull.mPlane[hull.mCount][2] = n.mV[2];
+            hull.mPlane[hull.mCount][3] = n * p0;
+            ++hull.mCount;
+        }
+    }
+    for (int f = 0; f < 6; ++f)
+    {
+        for (int g = f + 1; g < 6; ++g)
+        {
+            if (back[f] == back[g])
+            {
+                continue;
+            }
+            int shared[4], count = 0;
+            for (int a = 0; a < 4; ++a)
+            {
+                for (int b = 0; b < 4; ++b)
+                {
+                    if (faces[f][a] == faces[g][b] && count < 4)
+                    {
+                        shared[count++] = faces[f][a];
+                    }
+                }
+            }
+            if (count != 2)
+            {
+                continue;
+            }
+            const LLVector3& u = hull.mCorners[shared[0]];
+            LLVector3 m = (hull.mCorners[shared[1]] - u) % d;
+            if (m.magVecSquared() < 1e-10f)
+            {
+                continue;
+            }
+            m.normVec();
+            if (m * (centroid - u) > 0.f)
+            {
+                m = -m;
+            }
+            if (hull.mCount < 24)
+            {
+                hull.mPlane[hull.mCount][0] = m.mV[0];
+                hull.mPlane[hull.mCount][1] = m.mV[1];
+                hull.mPlane[hull.mCount][2] = m.mV[2];
+                hull.mPlane[hull.mCount][3] = m * u;
+                ++hull.mCount;
+            }
+        }
+    }
+    hull.mToSun = d;
+    hull.mValid = hull.mCount >= 3;
+}
+
+// true when the box (centre, half size) is outside the solid by more than the margin
+static bool shadow_hull_outside(const LLPipeline::ShadowSliceHull& hull, const LLVector4a& center, const LLVector4a& half, F32 margin)
+{
+    const F32* c = center.getF32ptr();
+    const F32* h = half.getF32ptr();
+    for (S32 i = 0; i < hull.mCount; ++i)
+    {
+        const F32* p = hull.mPlane[i];
+        const F32 distance = p[0] * c[0] + p[1] * c[1] + p[2] * c[2] - p[3];
+        const F32 radius = fabsf(p[0]) * h[0] + fabsf(p[1]) * h[1] + fabsf(p[2]) * h[2];
+        if (distance > radius + margin)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// verify: does a ray from a sampled point of the slice toward the sun meet the box? (an exact test, independent of the planes)
+static bool shadow_hull_ray_meets(const LLPipeline::ShadowSliceHull& hull, const LLVector4a& center, const LLVector4a& half)
+{
+    const F32* c = center.getF32ptr();
+    const F32* h = half.getF32ptr();
+    static const F32 us[3] = { 0.2f, 0.5f, 0.8f }, ws[3] = { 0.1f, 0.5f, 0.9f };
+    for (F32 u : us)
+    {
+        for (F32 v : us)
+        {
+            const LLVector3 near_p = hull.mCorners[0] + (hull.mCorners[1] - hull.mCorners[0]) * u + (hull.mCorners[3] - hull.mCorners[0]) * v;
+            const LLVector3 far_p = hull.mCorners[4] + (hull.mCorners[5] - hull.mCorners[4]) * u + (hull.mCorners[7] - hull.mCorners[4]) * v;
+            for (F32 w : ws)
+            {
+                const LLVector3 p = near_p + (far_p - near_p) * w;
+                F32 t0 = 0.f, t1 = 8192.f;
+                bool hit = true;
+                for (int a = 0; a < 3 && hit; ++a)
+                {
+                    const F32 lo = c[a] - h[a], hi = c[a] + h[a];
+                    const F32 dir = hull.mToSun.mV[a];
+                    if (fabsf(dir) < 1e-7f)
+                    {
+                        hit = p.mV[a] >= lo && p.mV[a] <= hi;
+                    }
+                    else
+                    {
+                        F32 ta = (lo - p.mV[a]) / dir, tb = (hi - p.mV[a]) / dir;
+                        if (ta > tb) { std::swap(ta, tb); }
+                        t0 = std::max(t0, ta);
+                        t1 = std::min(t1, tb);
+                        hit = t0 <= t1;
+                    }
+                }
+                if (hit)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -7272,6 +7523,43 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
             { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
         }
         ++part_index;
+    }
+
+    if (prep.mHull.mValid)
+    {
+        // <FS> LL_VK_SHADOW_HULL: the groups the slice cannot see a shadow from (see shadow_hull_build)
+        static const F32 margin = getenv("LL_VK_SHADOW_HULL_MARGIN") ? (F32)atof(getenv("LL_VK_SHADOW_HULL_MARGIN")) : 6.f;
+        static const bool verify = getenv("LL_VK_SHADOW_HULL_VERIFY") != nullptr;
+        const bool apply = shadow_hull_mode() == 1;
+        const U32 index = (U32)(prep.mIndex & 3);
+        const ShadowSliceHull& hull = prep.mHull;
+        U64 tested = 0, dropped = 0, verified = 0, hits = 0;
+        auto keep = [&](LLSpatialGroup* group)
+        {
+            ++tested;
+            const LLVector4a* bounds = group->getObjectBounds();
+            const F32* size = bounds[1].getF32ptr();
+            if (size[0] <= 0.f && size[1] <= 0.f && size[2] <= 0.f)
+            {
+                return true;        // no bounds worked out: keep it
+            }
+            if (!shadow_hull_outside(hull, bounds[0], bounds[1], margin))
+            {
+                return true;
+            }
+            ++dropped;
+            if (verify)
+            {
+                ++verified;
+                hits += shadow_hull_ray_meets(hull, bounds[0], bounds[1]);
+            }
+            return !apply;
+        };
+        result.filterVisibleGroups(keep);
+        sHullTested[index].fetch_add(tested, std::memory_order_relaxed);
+        sHullDropped[index].fetch_add(dropped, std::memory_order_relaxed);
+        sHullVerified[index].fetch_add(verified, std::memory_order_relaxed);
+        sHullVerifyHits[index].fetch_add(hits, std::memory_order_relaxed);
     }
 
     // (the marking of the groups the walks found is shadowPrepMark, in chunks)
@@ -14865,6 +15153,8 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
         // UPDATE THE EXISTING NEARBY LIGHTS (in place: the kept lights are moved down over the dropped ones, then the order is fixed if it changed)
         std::vector<Light>& nearby = mNearbyLights.vec();
         size_t kept = 0;
+        ++sLightLoopCensus.mCalls;
+        sLightLoopCensus.mUpdated += nearby.size();
         for (size_t read = 0; read < nearby.size(); read++)
         {
             Light* light = &nearby[read];
@@ -14928,6 +15218,14 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
             }
             light->dist = dist;
             light->fade = fade;
+            {
+                // (see Light::mSize: the sphere the lighting pass draws, 1 m wider, for its early frustum test)
+                const LLVector3& position = drawable->getPositionAgent();
+                light->mCenter[0] = position.mV[0];
+                light->mCenter[1] = position.mV[1];
+                light->mCenter[2] = position.mV[2];
+                light->mSize = volight->getLightRadius() * 1.5f + 1.f;
+            }
             ((LLViewerOctreeEntryData*) drawable)->setVisible();     // nearby lights are not removable
             if (kept != read)
             {
@@ -14935,6 +15233,7 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
             }
             ++kept;
         }
+        sLightLoopCensus.mDropped += nearby.size() - kept;
         nearby.erase(nearby.begin() + kept, nearby.end());
         mNearbyLights.sortIfNeeded();
 
@@ -14950,6 +15249,8 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
             mLightScanFrame = scan_frame;
             mLightScanVersion = mLightsVersion;
             mLightScanPos = cam_pos;
+            ++sLightLoopCensus.mScans;
+            sLightLoopCensus.mScanned += mLights.size();
         }
         for (LLDrawable::ordered_drawable_set_t::iterator iter = scan ? mLights.begin() : mLights.end();
              iter != mLights.end(); ++iter)
@@ -14989,6 +15290,7 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
         }
 
         // INSERT ANY NEW LIGHTS
+        sLightLoopCensus.mInserted += new_nearby_lights.size();
         for (light_set_t::iterator iter = new_nearby_lights.begin();
              iter != new_nearby_lights.end(); iter++)
         {
@@ -21047,6 +21349,22 @@ void LLPipeline::renderDeferredLighting()
                         break;
                     }
 
+                    // <FS> LL_VK_LIGHT_PREFILTER=0 turns it off: the nearby set holds every light within the far clip (RenderLocalLightCount can be thousands), and the ones outside the frustum were
+                    // each costing a drawable, a volume and a parameter read before the frustum test below said no. The sphere cached in the entry (1 m wider than the one tested below) is tested first; only a
+                    // light it puts outside is skipped, and those would have been skipped below, so the same lights are drawn.
+                    static const bool light_prefilter = !getenv("LL_VK_LIGHT_PREFILTER") || getenv("LL_VK_LIGHT_PREFILTER")[0] != '0';
+                    if (light_prefilter && iter->mSize > 0.f)
+                    {
+                        LLVector4a pre_center;
+                        pre_center.set(iter->mCenter[0], iter->mCenter[1], iter->mCenter[2], 0.f);
+                        LLVector4a pre_size;
+                        pre_size.splat(iter->mSize);
+                        if (camera->AABBInFrustumNoFarClip(pre_center, pre_size) == 0)
+                        {
+                            continue;
+                        }
+                    }
+
                     LLDrawable * drawablep = iter->drawable;
                     LLVOVolume * volume = drawablep->getVOVolume();
                     if (!volume)
@@ -22236,6 +22554,7 @@ struct PrepJobCensus
     U64 mCascadeJobs[2][4] = {};
     double mMarkWallMs = 0.0;               // the marking chunks' fork-join
     U64 mMarkChunks = 0;
+    U64 mFoundDrawGroups[4] = {}, mFoundVisGroups[4] = {}, mFoundDrawables[4] = {};     // what the cull found for each cascade (summed over the jobs; the cascades rotate, so divide by that cascade's jobs)
 };
 static PrepJobCensus sPrepJobCensus;
 
@@ -22261,6 +22580,27 @@ static void shadow_census_report(U32 frames)
         snprintf(buf, sizeof(buf), "shadow prep jobs over %llu runs: jobs per run %.2f; cull: wall %.3f ms, sum of jobs %.3f, longest %.3f; render map: wall %.3f ms, sum %.3f, longest %.3f; ",
                  (unsigned long long)c.mRuns, c.mJobs[0] / n, c.mWallMs[0] / n, c.mSumMs[0] / n, c.mLongestMs[0] / n, c.mWallMs[1] / n, c.mSumMs[1] / n, c.mLongestMs[1] / n);
         LL_INFOS("SceneCensus") << buf << by << "mark chunks: wall " << c.mMarkWallMs / n << " ms, " << c.mMarkChunks / n << " chunks a run" << LL_ENDL;
+        {
+            std::string found;
+            for (int i = 0; i < 4; ++i)
+            {
+                const double jobs = (double)std::max<U64>(1, c.mCascadeJobs[0][i]);
+                found += llformat(" cascade %d: %.0f drawable groups, %.0f visible groups, %.0f drawables a job (%llu jobs);", i, c.mFoundDrawGroups[i] / jobs, c.mFoundVisGroups[i] / jobs, c.mFoundDrawables[i] / jobs, (unsigned long long)c.mCascadeJobs[0][i]);
+            }
+            LL_INFOS("SceneCensus") << "shadow cull found, per job:" << found << LL_ENDL;
+        }
+        if (shadow_hull_mode())
+        {
+            std::string hull;
+            for (int i = 0; i < 4; ++i)
+            {
+                const U64 tested = sHullTested[i].exchange(0), dropped = sHullDropped[i].exchange(0), verified = sHullVerified[i].exchange(0), hits = sHullVerifyHits[i].exchange(0);
+                const double jobs = (double)std::max<U64>(1, c.mCascadeJobs[0][i]);
+                hull += llformat(" cascade %d: %.0f of %.0f visible groups a job %s (%.0f %%)%s;", i, dropped / jobs, tested / jobs, shadow_hull_mode() == 1 ? "taken out" : "would be taken out",
+                                 tested ? 100.0 * dropped / tested : 0.0, verified ? llformat(", verified %llu with rays, %llu WRONG", (unsigned long long)verified, (unsigned long long)hits).c_str() : "");
+            }
+            LL_INFOS("SceneCensus") << "shadow slice hull (LL_VK_SHADOW_HULL=" << shadow_hull_mode() << "):" << hull << LL_ENDL;
+        }
         sPrepJobCensus = PrepJobCensus();
         // the partitions: per cull job, the time of each, largest first
         std::vector<std::pair<double, std::string>> parts;
@@ -24402,6 +24742,11 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     prep.mCullSliceStart = dist[j];
                     prep.mCullMargin = cascade_margin;
                 }
+                if (shadow_hull_mode() && defer_cascades && !gCubeSnapshot)
+                {
+                    // the slice a cascade is sampled for, a little wider than the split distances (the padding the cascade itself is built with, the blend into the next one, the sides of the screen)
+                    shadow_hull_build(prep.mHull, camera, j == 0 ? 0.01f : dist[j] * 0.7f, dist[j + 1] * 1.25f, caster_dir, 1.15f);
+                }
 
                 if (!defer_cascades)
                 {
@@ -24549,6 +24894,10 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     ++c.mJobs[0];
                     c.mCascadeMs[0][pending[i].mIndex & 3] += job_ms[i];
                     ++c.mCascadeJobs[0][pending[i].mIndex & 3];
+                    LLCullResult& found = *pending[i].mResult;
+                    c.mFoundDrawGroups[pending[i].mIndex & 3] += found.getDrawableGroupsSize();
+                    c.mFoundVisGroups[pending[i].mIndex & 3] += found.getVisibleGroupsSize();
+                    c.mFoundDrawables[pending[i].mIndex & 3] += (U64)(found.endVisibleList() - found.beginVisibleList());
                 }
                 c.mLongestMs[0] += longest;
             }

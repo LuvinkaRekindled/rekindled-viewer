@@ -601,6 +601,23 @@ public:
     drawinfo_iterator endRenderMap(U32 type);
 
     void pushVisibleGroup(LLSpatialGroup* group);
+    // <FS> LL_VK_SHADOW_HULL: keeps, in order, the visible groups the predicate answers true for; returns how many it took out
+    template <class Keep> U32 filterVisibleGroups(Keep keep)
+    {
+        U32 kept = 0;
+        for (U32 i = 0; i < mVisibleGroupsSize; ++i)
+        {
+            LLSpatialGroup* group = mVisibleGroups[i];
+            if (keep(group))
+            {
+                mVisibleGroups[kept++] = group;
+            }
+        }
+        const U32 removed = mVisibleGroupsSize - kept;
+        mVisibleGroupsSize = kept;
+        mVisibleGroupsEnd = &mVisibleGroups[0] + kept;
+        return removed;
+    }
     void pushAlphaGroup(LLSpatialGroup* group);
     void pushRiggedAlphaGroup(LLSpatialGroup* group);
     void pushOcclusionGroup(LLSpatialGroup* group);

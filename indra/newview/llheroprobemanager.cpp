@@ -62,6 +62,27 @@ static void touch_default_probe(LLReflectionMap* probe)
     }
 }
 
+// <FS> the hero probe census (LL_VK_CPUPROBE=1, in the CpuZones line): is a mirror picked, how far, is it worn, does the probe render or does something skip it
+namespace
+{
+    struct HeroCensus
+    {
+        U64 mUpdateCalls = 0, mPicked = 0, mPickedAttached = 0, mSwitches = 0;
+        U64 mRenderCalls = 0, mSkipMirrorsOff = 0, mSkipProbesOff = 0, mSkipState = 0, mNoMirror = 0, mSkipOccluded = 0, mRendered = 0;
+        F64 mPickedDistance = 0.0;
+    } sHero;
+}
+
+std::string fs_hero_probe_report(double frames)
+{
+    const HeroCensus& h = sHero;
+    std::string text = llformat(", hero probe over %.0f frames: update ran %llu, a mirror picked in %llu (%llu worn by another or self; %.0f m away on average), mirror changes %llu; renderProbes called %llu, skipped: Mirrors setting off %llu, probes off %llu, teleport or startup %llu, no mirror %llu, occluded %llu; rendered faces in %llu",
+        frames, (unsigned long long)h.mUpdateCalls, (unsigned long long)h.mPicked, (unsigned long long)h.mPickedAttached, h.mPicked ? h.mPickedDistance / (F64)h.mPicked : 0.0, (unsigned long long)h.mSwitches,
+        (unsigned long long)h.mRenderCalls, (unsigned long long)h.mSkipMirrorsOff, (unsigned long long)h.mSkipProbesOff, (unsigned long long)h.mSkipState, (unsigned long long)h.mNoMirror, (unsigned long long)h.mSkipOccluded, (unsigned long long)h.mRendered);
+    sHero = HeroCensus();
+    return text;
+}
+
 LLHeroProbeManager::LLHeroProbeManager()
 {
 }
@@ -127,6 +148,8 @@ void LLHeroProbeManager::update()
     }
 
     llassert(mProbes[0] == mDefaultProbe);
+
+    sHero.mUpdateCalls++;
 
     LLVector4a probe_pos;
     LLVector3 camera_pos = LLViewerCamera::instance().mOrigin;
@@ -246,8 +269,15 @@ void LLHeroProbeManager::update()
         {
             static const LLViewerObject* last_hero = nullptr;
             const LLViewerObject* now_hero = probe_present ? mNearestHero : nullptr;
+            if (probe_present)
+            {
+                ++sHero.mPicked;
+                sHero.mPickedAttached += now_hero->isAttachment();
+                sHero.mPickedDistance += (camera_pos - now_hero->getPositionAgent()).magVec();
+            }
             if (now_hero != last_hero)
             {
+                ++sHero.mSwitches;
                 last_hero = now_hero;
                 if (now_hero)
                 {
@@ -318,9 +348,14 @@ void LLHeroProbeManager::update()
 
 void LLHeroProbeManager::renderProbes()
 {
+    ++sHero.mRenderCalls;
     if (!LLPipeline::RenderMirrors || !LLPipeline::sReflectionProbesEnabled || gTeleportDisplay ||
         LLStartUp::getStartupState() < STATE_STARTED)
     {
+        // <FS> which of the four said no (LL_VK_CPUPROBE=1, the hero probe census in the CpuZones line)
+        if (!LLPipeline::RenderMirrors) { ++sHero.mSkipMirrorsOff; }
+        else if (!LLPipeline::sReflectionProbesEnabled) { ++sHero.mSkipProbesOff; }
+        else { ++sHero.mSkipState; }
         return;
     }
 
@@ -353,6 +388,14 @@ void LLHeroProbeManager::renderProbes()
 
         S32 face = gFrameCount % 6;
 
+        if (mProbes.empty() || mProbes[0].isNull() || mProbes[0]->mOccluded)
+        {
+            ++sHero.mSkipOccluded;
+        }
+        else
+        {
+            ++sHero.mRendered;
+        }
         if (!mProbes.empty() && !mProbes[0].isNull() && !mProbes[0]->mOccluded)
         {
             LL_PROFILE_ZONE_NUM(gFrameCount % rate);
@@ -376,6 +419,10 @@ void LLHeroProbeManager::renderProbes()
 
         mProbes[0]->mViewerObject = mNearestHero;
         mProbes[0]->autoAdjustOrigin();
+    }
+    else
+    {
+        ++sHero.mNoMirror;
     }
 }
 

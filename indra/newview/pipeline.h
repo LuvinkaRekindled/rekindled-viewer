@@ -386,9 +386,20 @@ public:
     struct ShadowStaticBuild;
     struct ShadowSkinBuild;
     struct ShadowAlphaBuild;
+    // <FS> LL_VK_SHADOW_HULL: the part of the world that can put a shadow on the camera's view slice of one cascade: the slice (a truncated pyramid) pushed toward the sun without end.
+    // A convex solid: the slice's faces that face away from the sun, and one plane through each silhouette edge along the sun direction. A group outside any plane cannot shadow the slice.
+    struct ShadowSliceHull
+    {
+        bool mValid = false;
+        S32 mCount = 0;
+        F32 mPlane[24][4] = {};                 // outward normal and offset: a point p is inside a plane when n.p <= offset
+        LLVector3 mCorners[8] = {};             // the slice's corners (near: left-up, right-up, right-down, left-down, then the far four): the verify rays start inside it
+        LLVector3 mToSun;
+    };
     struct ShadowCascadePrep
     {
         S32 mIndex = 0;                         // cascade number
+        ShadowSliceHull mHull;                  // LL_VK_SHADOW_HULL
         LLCamera mCamera;                       // the cascade's shadow camera, frustum planes set
         LLCullResult* mResult = nullptr;
         glm::mat4 mView;                        // the cascade's matrices, and the ones it had the frame before
@@ -1036,6 +1047,10 @@ protected:
         LLPointer<LLDrawable> drawable;
         F32 dist;
         F32 fade;
+        // <FS> the light's sphere (centre, and the radius the lighting pass draws plus a margin) as of the last calcNearbyLights: the lighting pass tests it against the camera's frustum before it
+        // touches the drawable, the volume and its parameters. mSize < 0: not worked out yet (a light that is new this frame), the pass does the full test.
+        F32 mCenter[3] = { 0.f, 0.f, 0.f };
+        F32 mSize = -1.f;
         struct compare
         {
             bool operator()(const Light& a, const Light& b) const

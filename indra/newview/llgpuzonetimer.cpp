@@ -583,7 +583,7 @@ void LLCpuZoneScope::frame()
     size_t listed = 0;
     for (const CpuZone& z : zones)
     {
-        if (++listed > 90) break;
+        if (++listed > 250) break;      // (90 before: a zone just under the cut showed as absent, and its growth after a turn looked like a jump from nothing)
         if (sCpuCyclesOn && sCyclesPerNs > 0.0 && z.mCycleCalls == z.mCalls && z.mCalls > 0)
         {
             const double wall_ms = (double)z.mNanos / 1.0e6 / frames;
@@ -620,6 +620,8 @@ void LLCpuZoneScope::frame()
     if (sCoreProbeOn)
     {
         blocked_text += core_probe_text(frames);
+        extern std::string fs_hero_probe_report(double frames);     // (llheroprobemanager.cpp)
+        blocked_text += fs_hero_probe_report(frames);
     }
     LL_INFOS("CpuZones") << "main thread per frame over " << sCpuFrames << " frames: loop interval " << interval_ms << " ms" << blocked_text << " (inclusive zones, nested ones count in their parents)" << text << LL_ENDL;
     uni_census_report(frames);
