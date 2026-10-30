@@ -2523,7 +2523,8 @@ void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
         if (coldMode() > 0 && !drawablep->isDead() && drawablep->isRoot() && !drawablep->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD | LLDrawable::EARLY_MOVE))
         {
             // Cold (see coldGroup): a plain root object whose group nobody has looked at for a while, and which is still inside that group, is left on the list unmoved; it is marked undamped so that it
-            // jumps to where it is when the group is looked at again instead of sliding there
+            // jumps to where it is when the group is looked at again instead of sliding there. (Children of a Cold root were tried in lap cold2: 42 of the 89 children after a turn have a Cold root, skipping
+            // them saved 0.03 ms in updateMovedList; the entries left are in view or are avatars' attachments. Not kept.)
             LLViewerObject* vobj = drawablep->getVObj();
             LLSpatialGroup* group = drawablep->getSpatialGroup();
             if (vobj && group && !vobj->isAvatar() && !vobj->isAttachment() && !vobj->isHUDAttachment())
@@ -2787,6 +2788,80 @@ void LLPipeline::sceneStateCensus()
             r += llformat(" %s %llu (%llu in view)", reasons[k], (unsigned long long)(act_reason[k][0] + act_reason[k][1]), (unsigned long long)act_reason[k][1]);
         }
         LL_INFOS("SceneCensus") << "why the active and listed objects are active (an object can have several):" << r << LL_ENDL;
+    }
+    {
+        // why the entries of the moved list are not skipped by the Cold stage (coldGroup / updateMovedList): not a plain root, or which cameras still had their group within LL_VK_COLD_FRAMES (600)
+        static const S32 cold_frames = getenv("LL_VK_COLD_FRAMES") ? atoi(getenv("LL_VK_COLD_FRAMES")) : 600;
+        const S32 now_frame = LLViewerOctreeEntryData::getCurrentFrame();
+        U64 total = 0, dead = 0, avatars = 0, rigged = 0, children = 0, no_group = 0, eligible = 0, never = 0, cold = 0, outside_group = 0, children_cold = 0, children_world = 0, children_other = 0;
+        U64 fresh_by[LLViewerCamera::NUM_CAMERAS] = {}, only_by[LLViewerCamera::NUM_CAMERAS] = {}, world_fresh = 0, shadow_only = 0, water_only = 0, shadow_or_water_only = 0;
+        for (const auto& moved : mMovedList)
+        {
+            LLDrawable* d = moved;
+            ++total;
+            if (!d || d->isDead()) { ++dead; continue; }
+            LLViewerObject* vobj = d->getVObj();
+            if (!vobj || vobj->isAvatar() || vobj->isAttachment() || vobj->isHUDAttachment()) { ++avatars; continue; }
+            if (d->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD)) { ++rigged; continue; }
+            if (!d->isRoot())
+            {
+                // a child follows its linkset's root: how many have a root nobody has looked at (the Cold test below for roots), and how many a root the world camera has
+                ++children;
+                LLDrawable* top = d;
+                while (top->getParent()) { top = top->getParent(); }
+                LLSpatialGroup* top_group = top->getSpatialGroup();
+                LLViewerObject* top_vobj = top->getVObj();
+                if (!top_group || !top_vobj || top_vobj->isAvatar()) { ++children_other; continue; }
+                S32 latest = 0;
+                for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c) { latest = std::max(latest, top_group->getVisible((LLViewerCamera::eCameraID)c)); }
+                const S32 world_stamp = top_group->getVisible(LLViewerCamera::CAMERA_WORLD);
+                if (latest > 0 && now_frame - latest > cold_frames) { ++children_cold; }
+                else if (world_stamp > 0 && now_frame - world_stamp <= cold_frames) { ++children_world; }
+                else { ++children_other; }
+                continue;
+            }
+            LLSpatialGroup* group = d->getSpatialGroup();
+            if (!group) { ++no_group; continue; }
+            ++eligible;
+            S32 fresh_count = 0, last_fresh = -1;
+            bool any_seen = false;
+            for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
+            {
+                const S32 stamp = group->getVisible((LLViewerCamera::eCameraID)c);
+                any_seen |= stamp > 0;
+                if (stamp > 0 && now_frame - stamp <= cold_frames)
+                {
+                    ++fresh_by[c];
+                    ++fresh_count;
+                    last_fresh = c;
+                }
+            }
+            if (!any_seen) { ++never; continue; }
+            if (fresh_count == 0) { ++cold; continue; }
+            if (fresh_count == 1) { ++only_by[last_fresh]; }
+            const bool world = now_frame - group->getVisible(LLViewerCamera::CAMERA_WORLD) <= cold_frames && group->getVisible(LLViewerCamera::CAMERA_WORLD) > 0;
+            if (world) { ++world_fresh; }
+            else
+            {
+                bool shadow = false, water = false;
+                for (S32 c = LLViewerCamera::CAMERA_SUN_SHADOW0; c < LLViewerCamera::NUM_CAMERAS; ++c)
+                {
+                    const S32 stamp = group->getVisible((LLViewerCamera::eCameraID)c);
+                    if (stamp > 0 && now_frame - stamp <= cold_frames)
+                    {
+                        (c <= LLViewerCamera::CAMERA_SPOT_SHADOW1 ? shadow : water) = true;
+                    }
+                }
+                if (shadow && !water) { ++shadow_only; } else if (water && !shadow) { ++water_only; } else { ++shadow_or_water_only; }
+            }
+            if (!world) { /* (counted above) */ }
+        }
+        (void)outside_group;
+        LL_INFOS("SceneCensus") << "moved list " << total << ": dead " << dead << ", avatars/attachments " << avatars << ", rigged " << rigged << ", children " << children << " (root cold " << children_cold << ", root fresh for the world camera " << children_world << ", other " << children_other << "), no group " << no_group
+            << "; plain roots " << eligible << " of which never accepted by a camera " << never << ", cold (no camera within " << cold_frames << " frames) " << cold << ", fresh for the world camera " << world_fresh
+            << ", fresh only for the shadow cameras " << shadow_only << ", only for the water cameras " << water_only << ", for both and not the world " << shadow_or_water_only
+            << " | groups fresh by camera: world " << fresh_by[0] << ", sun0-3 " << fresh_by[1] << "/" << fresh_by[2] << "/" << fresh_by[3] << "/" << fresh_by[4] << ", spot " << fresh_by[5] << "/" << fresh_by[6]
+            << ", water " << fresh_by[7] << "/" << fresh_by[8] << LL_ENDL;
     }
     {
         const LightLoopCensus& c = sLightLoopCensus;
@@ -4391,12 +4466,63 @@ void LLPipeline::rebuildPriorityGroups()
     // census (LL_VK_ITEMCENSUS=1): the groups rebuilt here, by partition type: how many a frame and the time of their rebuildGeom
     static const bool q1_census = ItemCensus::on();
     static U64 q1_groups[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_cycles[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_frames = 0, q1_calls = 0;
+    static U64 q1_av_groups = 0, q1_av_drawables = 0, q1_av_faces = 0, q1_av_rigged = 0, q1_av_texanim = 0, q1_av_avatars = 0, q1_av_flag[5] = {}, q1_av_dirty[4] = {}, q1_av_kind[2][7] = {};
     // Iterate through all drawables on the priority build queue,
     for (LLSpatialGroup::sg_vector_t::iterator iter = mGroupQ1.begin();
          iter != mGroupQ1.end(); ++iter)
     {
         LLSpatialGroup* group = *iter;
         const unsigned long long q1_t0 = q1_census ? __rdtsc() : 0;
+        if (q1_census && !group->isDead() && group->getOctreeNode() && group->getSpatialPartition() && group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_AVATAR)
+        {
+            // what is in an avatar bridge group that is rebuilt (they cost ~0.5 ms a frame, steady): its drawables, faces, how many are rigged or animate a texture, and which rebuild flags they carry
+            ++q1_av_groups;
+            for (LLSpatialGroup::element_iter e = group->getDataBegin(); e != group->getDataEnd(); ++e)
+            {
+                const LLDrawable* d = (const LLDrawable*)(*e)->getDrawable();
+                if (!d) { continue; }
+                ++q1_av_drawables;
+                q1_av_faces += d->getNumFaces();
+                const U32 st = d->getState();
+                q1_av_rigged += (st & LLDrawable::RIGGED) != 0;
+                q1_av_flag[0] += (st & LLDrawable::REBUILD_VOLUME) != 0;
+                q1_av_flag[1] += (st & LLDrawable::REBUILD_TCOORD) != 0;
+                q1_av_flag[2] += (st & LLDrawable::REBUILD_COLOR) != 0;
+                q1_av_flag[3] += (st & LLDrawable::REBUILD_POSITION) != 0;
+                q1_av_flag[4] += (st & LLDrawable::REBUILD_RIGGED) != 0;
+                const LLViewerObject* vo = d->getVObj();
+                if (vo && vo->getPCode() == LL_PCODE_VOLUME && ((const LLVOVolume*)vo)->mTextureAnimp) { ++q1_av_texanim; }
+                if (vo && vo->isAvatar()) { ++q1_av_avatars; }
+            }
+            {
+                // why a GEOM_DIRTY group (the full rebuild) is dirty: what its drawables carry
+                bool volume = false, material = false, animated = false, flexi = false, positioned = false;
+                for (LLSpatialGroup::element_iter e = group->getDataBegin(); e != group->getDataEnd(); ++e)
+                {
+                    const LLDrawable* d = (const LLDrawable*)(*e)->getDrawable();
+                    if (!d) { continue; }
+                    const U32 st = d->getState();
+                    volume |= (st & LLDrawable::REBUILD_VOLUME) != 0;
+                    material |= (st & (LLDrawable::REBUILD_TCOORD | LLDrawable::REBUILD_COLOR)) != 0;
+                    positioned |= (st & LLDrawable::REBUILD_POSITION) != 0;
+                    animated |= (st & LLDrawable::ANIMATED_CHILD) != 0;
+                    const LLViewerObject* vo = d->getVObj();
+                    flexi |= vo && vo->getPCode() == LL_PCODE_VOLUME && ((const LLVOVolume*)vo)->isFlexibleFast();
+                }
+                const bool geom = group->hasState(LLSpatialGroup::GEOM_DIRTY);
+                ++q1_av_kind[geom ? 1 : 0][0];
+                q1_av_kind[geom ? 1 : 0][1] += volume;
+                q1_av_kind[geom ? 1 : 0][2] += material;
+                q1_av_kind[geom ? 1 : 0][3] += animated;
+                q1_av_kind[geom ? 1 : 0][4] += flexi;
+                q1_av_kind[geom ? 1 : 0][5] += positioned;
+                q1_av_kind[geom ? 1 : 0][6] += !(volume || material || animated);
+            }
+            q1_av_dirty[0] += group->hasState(LLSpatialGroup::GEOM_DIRTY);
+            q1_av_dirty[1] += group->hasState(LLSpatialGroup::MESH_DIRTY);
+            q1_av_dirty[2] += group->hasState(LLSpatialGroup::NEW_DRAWINFO);
+            q1_av_dirty[3] += group->hasState(LLSpatialGroup::ALPHA_DIRTY);
+        }
         group->rebuildGeom();
         if (q1_census)
         {
@@ -4419,6 +4545,25 @@ void LLPipeline::rebuildPriorityGroups()
             }
         }
         LL_INFOS("Q1Census") << "rebuildPriorityGroups per call over 2400 calls:" << line << LL_ENDL;
+        if (q1_av_groups)
+        {
+            const double g = (double)q1_av_groups;
+            LL_INFOS("Q1Census") << "avatar bridge groups rebuilt (" << q1_av_groups << " in the window): drawables per group " << q1_av_drawables / g << " (avatars " << q1_av_avatars << "), faces " << q1_av_faces / g
+                << ", rigged drawables " << q1_av_rigged / g << ", with a texture animation " << q1_av_texanim / g << " | drawable rebuild flags per group: volume " << q1_av_flag[0] / g << ", tcoord " << q1_av_flag[1] / g
+                << ", color " << q1_av_flag[2] / g << ", position " << q1_av_flag[3] / g << ", rigged " << q1_av_flag[4] / g << " | group state: geom dirty " << q1_av_dirty[0] / g << ", mesh dirty " << q1_av_dirty[1] / g
+                << ", new draw info " << q1_av_dirty[2] / g << ", alpha dirty " << q1_av_dirty[3] / g << LL_ENDL;
+            for (int k = 1; k >= 0; --k)
+            {
+                const double n = (double)std::max<U64>(1, q1_av_kind[k][0]);
+                LL_INFOS("Q1Census") << (k ? "GEOM_DIRTY (full rebuild)" : "mesh only (not geom dirty)") << " avatar groups: " << q1_av_kind[k][0] << " | share whose drawables carry: REBUILD_VOLUME " << q1_av_kind[k][1] / n
+                    << ", tcoord/color " << q1_av_kind[k][2] / n << ", animated child " << q1_av_kind[k][3] / n << ", a flexible prim " << q1_av_kind[k][4] / n << ", REBUILD_POSITION " << q1_av_kind[k][5] / n
+                    << ", none of volume/material/animated " << q1_av_kind[k][6] / n << LL_ENDL;
+            }
+            memset(q1_av_kind, 0, sizeof(q1_av_kind));
+            q1_av_groups = q1_av_drawables = q1_av_faces = q1_av_rigged = q1_av_texanim = q1_av_avatars = 0;
+            memset(q1_av_flag, 0, sizeof(q1_av_flag));
+            memset(q1_av_dirty, 0, sizeof(q1_av_dirty));
+        }
         memset(q1_groups, 0, sizeof(q1_groups));
         memset(q1_cycles, 0, sizeof(q1_cycles));
         (void)hz; (void)q1_frames;
@@ -4724,6 +4869,35 @@ void LLPipeline::markRebuild(LLSpatialGroup* group)
 
 void LLPipeline::markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags flag)
 {
+    // <FS> LL_VK_REBUILDCENSUS=1: who asks for REBUILD_POSITION of a drawable that belongs to an avatar (attachments and their children), by call site (counted before the sort split sinks the call, so
+    // the caller is still the original one); every 3000 asks the top sites are logged (tag RebuildCensus). The avatar bridge groups go through the volume geometry rebuild every frame (lap rqb).
+    static const bool rebuild_census = getenv("LL_VK_REBUILDCENSUS") != nullptr;
+    if (rebuild_census && drawablep && (flag & LLDrawable::REBUILD_POSITION))
+    {
+        LLViewerObject* vo = drawablep->getVObj().get();
+        if (vo && vo->getAvatar())
+        {
+            extern std::string fs_describe_address(const void* pc);
+            static std::mutex lock;
+            static std::unordered_map<const void*, U64> sites;
+            static U64 total = 0;
+            std::lock_guard<std::mutex> guard(lock);
+            ++sites[_ReturnAddress()];
+            if (++total % 3000 == 0)
+            {
+                std::vector<std::pair<U64, const void*>> rows;
+                for (const auto& kv : sites) { rows.push_back({ kv.second, kv.first }); }
+                std::sort(rows.rbegin(), rows.rend());
+                std::string text;
+                for (size_t i = 0; i < rows.size() && i < 8; ++i)
+                {
+                    text += llformat(" [%llu: %s]", (unsigned long long)rows[i].first, fs_describe_address(rows[i].second).c_str());
+                }
+                LL_INFOS("RebuildCensus") << "REBUILD_POSITION asked for avatar-worn drawables, last " << 3000 << " asks, by caller:" << text << LL_ENDL;
+                sites.clear();
+            }
+        }
+    }
     if (sSortSink || sSortTee)
     {
         const SortDelta delta = { SortDelta::REBUILD_DRAWABLE, (U32)flag, drawablep, nullptr, 0.f };
