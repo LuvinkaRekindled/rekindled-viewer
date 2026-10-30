@@ -10,7 +10,10 @@
 #include <algorithm>
 #include <deque>
 #include <thread>
+#include <windows.h>
+#include <psapi.h>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "llfasttimer.h"
 #include "llrenderheaders.h"
@@ -193,7 +196,7 @@ namespace
         unsigned long long mCycles = 0;     // FS_CPU_ZONES_CPU=1: the thread's own cycles inside the zone (what ran; wall time minus this is time spent blocked or descheduled)
         unsigned mCycleCalls = 0;           // ... over this many calls (only zones nested at most three deep are read: one reading costs about 170 ns)
     };
-    CpuZone sCpuZones[512];
+    CpuZone sCpuZones[1024];
     unsigned sCpuZoneCount = 0;
     std::thread::id sCpuMainThread;
     bool sCpuMainThreadKnown = false;
@@ -299,7 +302,9 @@ namespace
     {
         if (begin)
         {
-            sViewScopes.push_back(new LLCpuZoneScope(view->getName().c_str()));
+            // (zones are matched by name pointer: one pointer per distinct name, or every widget with the same name takes a slot of the table and the table is full before the render zones register)
+            static std::unordered_set<std::string> names;
+            sViewScopes.push_back(new LLCpuZoneScope(names.insert(view->getName()).first->c_str()));
         }
         else if (!sViewScopes.empty())
         {
@@ -493,6 +498,16 @@ void LLCpuZoneScope::frame()
         }
         const double run_ms = (double)(thread_cycles() - sCpuThreadCyclesFirst) / sCyclesPerNs / 1.0e6 / frames;
         blocked_text = llformat(", the thread ran %.2f ms of the loop (%.0f %%), blocked or descheduled %.2f ms; the cycle readings cost about %.3f ms a frame (%.0f zone calls read a frame)", run_ms, 100.0 * run_ms / interval_ms, std::max(0.0, interval_ms - run_ms), zone_calls * 2.0 * sCycleReadNs / 1.0e6 / frames, zone_calls / frames);
+    }
+    {
+        // the process's page faults a frame (soft faults count: memory handed back and taken again shows here), working set and private bytes
+        PROCESS_MEMORY_COUNTERS_EX pmc = {};
+        static DWORD last_faults = 0;
+        if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)))
+        {
+            blocked_text += llformat(", process page faults %.1f a frame, working set %.0f MB, private %.0f MB", (double)(pmc.PageFaultCount - last_faults) / frames, pmc.WorkingSetSize / 1048576.0, pmc.PrivateUsage / 1048576.0);
+            last_faults = pmc.PageFaultCount;
+        }
     }
     LL_INFOS("CpuZones") << "main thread per frame over " << sCpuFrames << " frames: loop interval " << interval_ms << " ms" << blocked_text << " (inclusive zones, nested ones count in their parents)" << text << LL_ENDL;
     uni_census_report(frames);
@@ -735,6 +750,126 @@ namespace
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------
+// LL_VK_SAMPLE=<ms>: a sampling profile of the main thread, without administrator rights. Every <ms> (2 is a good value) the thread is suspended for the few microseconds it takes to read where it
+// is (the same capture as the hitch watcher), and every 10 s the functions that held it are logged with their share of the samples ("Sampler" tag). Two windows of a lap (before a turn, after it) show
+// whether the same functions got slower all over (memory or cache: the shares stay, the loop gets longer) or particular ones grew. Needs the pdb next to the executable for names.
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+namespace
+{
+    void sample_thread(double interval_ms)
+    {
+        HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        SymFromAddrFn sym_from_addr = nullptr;
+        if (HMODULE dbghelp = LoadLibraryA("dbghelp.dll"))
+        {
+            SymSetOptionsFn set_options = (SymSetOptionsFn)GetProcAddress(dbghelp, "SymSetOptions");
+            SymInitializeFn init = (SymInitializeFn)GetProcAddress(dbghelp, "SymInitialize");
+            char exe[MAX_PATH] = {};
+            GetModuleFileNameA(nullptr, exe, MAX_PATH);
+            if (char* slash = strrchr(exe, '\\'))
+            {
+                *slash = 0;
+            }
+            if (set_options && init)
+            {
+                set_options(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
+                init(GetCurrentProcess(), exe, TRUE);
+            }
+            sym_from_addr = (SymFromAddrFn)GetProcAddress(dbghelp, "SymFromAddr");
+        }
+        std::unordered_map<DWORD64, unsigned> counts;       // by the start of the function (or the address itself when it has no unwind data)
+        std::unordered_map<DWORD64, unsigned> modules;      // by module base
+        unsigned total = 0, windows = 0;
+        LARGE_INTEGER f, window_start;
+        QueryPerformanceFrequency(&f);
+        QueryPerformanceCounter(&window_start);
+        HwCap cap;
+        for (;;)
+        {
+            if (timer)
+            {
+                LARGE_INTEGER due;
+                due.QuadPart = -(LONGLONG)(interval_ms * 10000.0);
+                SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+                WaitForSingleObject(timer, 100);
+            }
+            else
+            {
+                Sleep((DWORD)interval_ms);
+            }
+            const DWORD main_tid = sHwMainTid.load();
+            if (!main_tid)
+            {
+                continue;
+            }
+            hw_capture(main_tid, cap);
+            if (cap.mCount)
+            {
+                DWORD64 base = 0;
+                PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(cap.mPc[0], &base, nullptr);
+                ++counts[fn ? base + fn->BeginAddress : cap.mPc[0]];
+                ++modules[base];
+                ++total;
+            }
+            LARGE_INTEGER now;
+            QueryPerformanceCounter(&now);
+            if ((double)(now.QuadPart - window_start.QuadPart) / (double)f.QuadPart < 10.0)
+            {
+                continue;
+            }
+            window_start = now;
+            std::vector<std::pair<unsigned, DWORD64>> top;
+            for (const auto& kv : counts)
+            {
+                top.emplace_back(kv.second, kv.first);
+            }
+            std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            std::string text;
+            for (size_t i = 0; i < top.size() && i < 40; ++i)
+            {
+                std::string name = llformat("0x%llx", (unsigned long long)top[i].second);
+                if (sym_from_addr)
+                {
+                    alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 256] = {};
+                    SYMBOL_INFO* info = (SYMBOL_INFO*)buffer;
+                    info->SizeOfStruct = sizeof(SYMBOL_INFO);
+                    info->MaxNameLen = 255;
+                    DWORD64 displacement = 0;
+                    if (sym_from_addr(GetCurrentProcess(), top[i].second, &displacement, info))
+                    {
+                        name = info->Name;
+                    }
+                }
+                text += llformat(" | %s %.1f%%", name.c_str(), 100.0 * top[i].first / total);
+            }
+            std::string mods;
+            std::vector<std::pair<unsigned, DWORD64>> mtop;
+            for (const auto& kv : modules)
+            {
+                mtop.emplace_back(kv.second, kv.first);
+            }
+            std::sort(mtop.begin(), mtop.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            for (size_t i = 0; i < mtop.size() && i < 8; ++i)
+            {
+                char mod[MAX_PATH] = {};
+                if (mtop[i].second)
+                {
+                    GetModuleFileNameA((HMODULE)mtop[i].second, mod, MAX_PATH);
+                }
+                const char* slash = strrchr(mod, '\\');
+                mods += llformat(" | %s %.1f%%", mtop[i].second ? (slash ? slash + 1 : mod) : "(unknown)", 100.0 * mtop[i].first / total);
+            }
+            LL_INFOS("Sampler") << "main thread, window " << ++windows << ": " << total << " samples, by module:" << mods << " ; by function:" << text << LL_ENDL;
+            counts.clear();
+            modules.clear();
+            total = 0;
+        }
+    }
+}
+
 void HitchWatch::frame()
 {
     static const double threshold = []()
@@ -742,12 +877,27 @@ void HitchWatch::frame()
         const char* e = getenv("LL_VK_HITCHWATCH");
         return e ? atof(e) : 0.0;
     }();
-    if (threshold <= 0.0)
+    static const double sample_ms = []()
+    {
+        const char* e = getenv("LL_VK_SAMPLE");
+        return e ? atof(e) : 0.0;
+    }();
+    if (threshold <= 0.0 && sample_ms <= 0.0)
     {
         return;
     }
     static std::once_flag started;
-    std::call_once(started, []() { std::thread(hw_thread, threshold).detach(); });
+    std::call_once(started, []()
+    {
+        if (threshold > 0.0)
+        {
+            std::thread(hw_thread, threshold).detach();
+        }
+        if (sample_ms > 0.0)
+        {
+            std::thread(sample_thread, sample_ms).detach();
+        }
+    });
     sHwMainTid.store(GetCurrentThreadId());
     sHwFrameNo.fetch_add(1);
     sHwLastFrame.store(hw_now());

@@ -2621,6 +2621,7 @@ void LLPipeline::sceneStateCensus()
     }
     LLCamera& camera = *LLViewerCamera::getInstance();
     U64 objects = 0, drawables = 0, active = 0, avatars = 0, attachments = 0, rigged = 0, with_text = 0;
+    U64 act_kind[7][2] = {}, list_kind[7][2] = {};      // [kind][in view]: avatar, HUD attachment, attachment, child prim, root with a cache entry, other root volume, other pcode
     std::unordered_set<LLSpatialGroup*> groups;
     const S32 count = gObjectList.getNumObjects();
     for (S32 i = 0; i < count; ++i)
@@ -2640,6 +2641,15 @@ void LLPipeline::sceneStateCensus()
         }
         ++drawables;
         active += drawable->isState(LLDrawable::ACTIVE);
+        if (drawable->isState(LLDrawable::ACTIVE) || object->onActiveList())
+        {
+            // who the active ones are (they cost a little every frame, and they roughly double after a turn): kind x (in view or not); "list" = on the object list that gets an idleUpdate every frame
+            const bool view = camera.sphereInFrustum(drawable->getPositionAgent(), drawable->getRadius()) != 0;
+            int kind = object->isAvatar() ? 0 : object->isHUDAttachment() ? 1 : object->isAttachment() ? 2 : drawable->getParent() ? 3
+                : (drawable->getEntry() && drawable->getEntry()->hasVOCacheEntry()) ? 4 : object->getPCode() == LL_PCODE_VOLUME ? 5 : 6;
+            if (drawable->isState(LLDrawable::ACTIVE)) { ++act_kind[kind][view]; }
+            if (object->onActiveList()) { ++list_kind[kind][view]; }
+        }
         rigged += drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD);
         with_text += object->mText.notNull();
         if (LLSpatialGroup* group = drawable->getSpatialGroup())
@@ -2737,6 +2747,16 @@ void LLPipeline::sceneStateCensus()
             LL_INFOS("SceneCensus") << "age of relevance (" << (set ? "VOLUME partition" : "all groups of the objects") << ", " << seconds_per_frame * 1000.0 << " ms a frame):" << text << LL_ENDL;
         }
     }
+    {
+        static const char* const kinds[7] = { "avatars", "HUD", "attachments", "child prims", "roots cached", "roots uncached", "other" };
+        std::string a, l;
+        for (int k = 0; k < 7; ++k)
+        {
+            a += llformat(" %s %llu (%llu in view)", kinds[k], (unsigned long long)(act_kind[k][0] + act_kind[k][1]), (unsigned long long)act_kind[k][1]);
+            l += llformat(" %s %llu (%llu in view)", kinds[k], (unsigned long long)(list_kind[k][0] + list_kind[k][1]), (unsigned long long)list_kind[k][1]);
+        }
+        LL_INFOS("SceneCensus") << "active drawables by kind:" << a << " | on the active object list:" << l << LL_ENDL;
+    }
     U64 lights_visible = 0;
     for (LLDrawable* light : mLights)
     {
@@ -2831,7 +2851,7 @@ void LLPipeline::cpuProbe()
         return;
     }
     core_census();
-    static std::vector<U32> small_chain, big_chain;
+    static std::vector<U32> small_chain, big_chain, l2_chain, l3_chain, l3big_chain;
     if (small_chain.empty())
     {
         auto make = [](std::vector<U32>& chain, size_t count)
@@ -2849,6 +2869,9 @@ void LLPipeline::cpuProbe()
         };
         make(small_chain, 32768);           // 128 KB
         make(big_chain, 32u << 20);         // 128 MB
+        make(l2_chain, 512u << 10);         // 2 MB (about L2)
+        make(l3_chain, 2u << 20);           // 8 MB (inside L3)
+        make(l3big_chain, 8u << 20);        // 32 MB (the edge of L3)
     }
     static volatile U64 sink = 0;
     {
@@ -2862,6 +2885,25 @@ void LLPipeline::cpuProbe()
         U32 p = 0;
         for (int i = 0; i < 20000; ++i) p = small_chain[p];
         sink = p;
+    }
+    {
+        // the middle sizes (a chase that fits L1 or reaches DRAM does not feel another thread's data in the shared cache; these do)
+        LL_CPU_ZONE("probe: pointer chase 2 MB (20k)");
+        static U32 q2 = 0;
+        for (int i = 0; i < 20000; ++i) q2 = l2_chain[q2];
+        sink = q2;
+    }
+    {
+        LL_CPU_ZONE("probe: pointer chase 8 MB (20k)");
+        static U32 q3 = 0;
+        for (int i = 0; i < 20000; ++i) q3 = l3_chain[q3];
+        sink = q3;
+    }
+    {
+        LL_CPU_ZONE("probe: pointer chase 32 MB (10k)");
+        static U32 q4 = 0;
+        for (int i = 0; i < 10000; ++i) q4 = l3big_chain[q4];
+        sink = q4;
     }
     {
         LL_CPU_ZONE("probe: pointer chase 128 MB (1k)");
@@ -17329,6 +17371,10 @@ void LLPipeline::renderAvatarVelocity()
     gRenderLastMatrix = NULL;
 
     U32 rigged_draws = 0, rigged_skipped = 0, body_draws = 0, packet_draws = 0, still_draws = 0, object_draws = 0, object_matrices = 0, object_unfit = 0;
+    // census (LL_VK_SCENECENSUS), per 600 frames: how far the palettes moved since the frame before (the "did not move" test of the pass), by the number of palettes in each class, and what the avatars
+    // asked for are doing (speed, motions playing)
+    static const bool vel_census = getenv("LL_VK_SCENECENSUS") != nullptr;
+    static U64 vc_frames = 0, vc_avatars = 0, vc_moving = 0, vc_motions = 0, vc_palettes = 0, vc_hist[7] = {};
     {
         // the rigged draws are collected first: the ones a render packet record can carry go into one record (cheap), the rest are drawn one by one (the first version of the pass, which
         // is also the whole pass when RenderAvatarMotionVectorsPackets is off or the packet program is not available)
@@ -17359,6 +17405,12 @@ void LLPipeline::renderAvatarVelocity()
                     const F32 distance = (avatar->getRenderPosition() - camera_origin).length();
                     const bool ok = !avatar->isDead() && !avatar->isImpostor() && avatar->getOverallAppearance() == LLVOAvatar::AOA_NORMAL && distance <= range;
                     found = avatar_ok.emplace(avatar, AvatarState{ ok, distance }).first;
+                    if (vel_census && ok)
+                    {
+                        ++vc_avatars;
+                        vc_moving += avatar->getVelocity().magVecSquared() > 0.01f;
+                        vc_motions += avatar->getMotionController().getActiveMotions().size();
+                    }
                 }
                 if (!found->second.mOk)
                 {
@@ -17376,7 +17428,13 @@ void LLPipeline::renderAvatarVelocity()
                     auto still = palette_still.find(mpc.mGLMp.data());
                     if (still == palette_still.end())
                     {
-                        still = palette_still.emplace(mpc.mGLMp.data(), motion_pixels(mpc.mGLMp.data(), mpc.mPrevGLMp.data(), (size_t)joints * 12, found->second.mDistance) < min_motion_px).first;
+                        const F32 px = motion_pixels(mpc.mGLMp.data(), mpc.mPrevGLMp.data(), (size_t)joints * 12, found->second.mDistance);
+                        if (vel_census)
+                        {
+                            ++vc_palettes;
+                            ++vc_hist[px < 0.f + 0.01f ? 0 : px < 0.05f ? 1 : px < 0.15f ? 2 : px < 0.3f ? 3 : px < 1.f ? 4 : px < 3.f ? 5 : 6];
+                        }
+                        still = palette_still.emplace(mpc.mGLMp.data(), px < min_motion_px).first;
                     }
                     if (still->second)
                     {
@@ -17620,6 +17678,15 @@ void LLPipeline::renderAvatarVelocity()
     total_rigged += rigged_draws;
     total_body += body_draws;
     total_skipped += rigged_skipped;
+    if (vel_census && ++vc_frames == 600)
+    {
+        const double n = 600.0;
+        LL_INFOS("VkMotion") << "avatar velocity census per frame (600 frames): avatars asked " << vc_avatars / n << " (moving " << vc_moving / n << ", motions playing " << vc_motions / n << "), unique palettes " << vc_palettes / n
+                             << " by pixels moved since the frame before: <0.01 " << vc_hist[0] / n << ", <0.05 " << vc_hist[1] / n << ", <0.15 " << vc_hist[2] / n << ", <0.3 " << vc_hist[3] / n << ", <1 " << vc_hist[4] / n << ", <3 " << vc_hist[5] / n
+                             << ", more " << vc_hist[6] / n << LL_ENDL;
+        vc_frames = vc_avatars = vc_moving = vc_motions = vc_palettes = 0;
+        memset(vc_hist, 0, sizeof(vc_hist));
+    }
     if (++frames % 600 == 0)
     {
         LL_INFOS("VkMotion") << "avatar velocity pass: per frame over the last " << frames << " frames: " << (F32)total_rigged / frames << " rigged draws, " << (F32)total_packets / frames << " rigged draws in the packet record, " << (F32)total_body / frames
