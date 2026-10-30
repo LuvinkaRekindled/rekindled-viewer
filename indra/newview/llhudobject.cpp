@@ -361,6 +361,22 @@ void LLHUDObject::reshapeAll()
 }
 
 // static
+void LLHUDObject::census(U64& total, U64& visible, U64& unreferenced, U64 by_type[24])
+{
+    total = visible = unreferenced = 0;
+    for (U32 i = 0; i < 24; ++i)
+    {
+        by_type[i] = 0;
+    }
+    for (const LLPointer<LLHUDObject>& object : sHUDObjects)
+    {
+        ++total;
+        visible += object->isVisible();
+        unreferenced += object->getNumRefs() == 1;
+        ++by_type[object->getType() < 24 ? object->getType() : 23];
+    }
+}
+
 void LLHUDObject::sortObjects()
 {
     sHUDObjects.sort(hud_object_further_away());

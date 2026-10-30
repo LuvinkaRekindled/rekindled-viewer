@@ -81,6 +81,9 @@ public:
 
     static void cleanupHUDObjects();
 
+    // <FS> LL_VK_SCENECENSUS: what the per-frame sort and update loops go through (the list is sorted every frame by distance)
+    static void census(U64& total, U64& visible, U64& unreferenced, U64 by_type[24]);
+
     enum
     {
         LL_HUD_TEXT,
