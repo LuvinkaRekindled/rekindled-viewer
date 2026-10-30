@@ -3162,6 +3162,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSFlexibleStayInGroup</key>
+    <map>
+      <key>Comment</key>
+      <string>A flexible prim stays in its octree group while its centre is inside the group's node, instead of being taken out and put in another whenever its changing extents cross the "fits in this node" test. Each move between groups dirtied two groups for a full geometry rebuild: with avatars wearing flexi hair and skirts that was about 0.5 ms of rebuilds a frame. Group extents are recomputed from their contents, so culling does not depend on the node. Debug switch, applies at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSSSRWaterTrace</key>
     <map>
       <key>Comment</key>
