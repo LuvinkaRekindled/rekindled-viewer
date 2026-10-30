@@ -635,6 +635,49 @@ void LLCpuZoneScope::frame()
     sCpuFrames = 0;
 }
 
+#include <mutex>
+#include <dbghelp.h>
+// <FS> the name of the function an address is in (DbgHelp, loaded here the way the hitch watcher does it), for censuses that count by call site (LL_VK_REBUILDCENSUS in LLPipeline::markRebuild)
+std::string fs_describe_address(const void* pc)
+{
+    typedef BOOL(WINAPI * SymInitializeFn)(HANDLE, PCSTR, BOOL);
+    typedef DWORD(WINAPI * SymSetOptionsFn)(DWORD);
+    typedef BOOL(WINAPI * SymFromAddrFn)(HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO);
+    static std::mutex lock;
+    std::lock_guard<std::mutex> guard(lock);
+    static bool tried = false;
+    static SymFromAddrFn sym_from_addr = nullptr;
+    if (!tried)
+    {
+        tried = true;
+        if (HMODULE dbghelp = LoadLibraryA("dbghelp.dll"))
+        {
+            SymSetOptionsFn set_options = (SymSetOptionsFn)GetProcAddress(dbghelp, "SymSetOptions");
+            SymInitializeFn init = (SymInitializeFn)GetProcAddress(dbghelp, "SymInitialize");
+            sym_from_addr = (SymFromAddrFn)GetProcAddress(dbghelp, "SymFromAddr");
+            if (set_options && init && sym_from_addr)
+            {
+                set_options(0x00000002 /* SYMOPT_UNDNAME */ | 0x00000004 /* SYMOPT_DEFERRED_LOADS */);
+                init(GetCurrentProcess(), nullptr, TRUE);
+            }
+            else
+            {
+                sym_from_addr = nullptr;
+            }
+        }
+    }
+    char buffer[sizeof(SYMBOL_INFO) + 256] = {};
+    SYMBOL_INFO* symbol = (SYMBOL_INFO*)buffer;
+    symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+    symbol->MaxNameLen = 255;
+    DWORD64 displacement = 0;
+    if (sym_from_addr && sym_from_addr(GetCurrentProcess(), (DWORD64)(uintptr_t)pc, &displacement, symbol))
+    {
+        return llformat("%s+0x%llx", symbol->Name, (unsigned long long)displacement);
+    }
+    return llformat("0x%llx", (unsigned long long)(uintptr_t)pc);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 // LL_VK_HITCHWATCH=<ms>: where is the main thread when a frame takes seconds?
 //
