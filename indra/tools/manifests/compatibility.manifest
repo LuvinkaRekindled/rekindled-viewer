@@ -26,6 +26,8 @@
     <asmv3:application  xmlns:asmv3="urn:schemas-microsoft-com:asm.v3" >
         <asmv3:windowsSettings xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">
             <dpiAware>true/PM</dpiAware>
+            <!-- <FS> segment heap (Windows 10 2004 and later) instead of the classic NT heap: a test for the lasting loss after a turn (doc/vulkan/EXPIRY-design.md) -->
+            <heapType xmlns="http://schemas.microsoft.com/SMI/2020/WindowsSettings">SegmentHeap</heapType>
         </asmv3:windowsSettings>
     </asmv3:application>
 </assembly>

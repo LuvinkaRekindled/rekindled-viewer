@@ -2254,17 +2254,36 @@ LLUZipHelper::EZipRresult LLUZipHelper::unzip_llsd(LLSD& data, const U8* in, S32
 
     constexpr U32 CHUNK = 1024 * 512;
 
+    // <FS> zlib-ng's vectorised copies (chunkmemset_avx512 in inflate_fast) read a few bytes past the end of a buffer. With the segment heap a block of this size ends exactly on a page and the next
+    // page is not mapped: an access violation at login in the mesh repository thread (lodReceived -> unpackVolumeFaces -> here, three crashes in six launches). The classic heap pads large blocks and
+    // hid it. So the output buffer has slack behind the CHUNK it is told about, and the input is a padded copy (a copy of a mesh LOD is far cheaper than inflating it).
+    constexpr U32 SLACK = 4096;
     static thread_local std::unique_ptr<U8[]> out;
     if (!out)
     {
-        out = std::unique_ptr<U8[]>(new(std::nothrow) U8[CHUNK]);
+        out = std::unique_ptr<U8[]>(new(std::nothrow) U8[CHUNK + SLACK]);
+        if (out)
+        {
+            memset(out.get() + CHUNK, 0, SLACK);
+        }
     }
+    if (!out)
+    {
+        return ZR_MEM_ERROR;
+    }
+    std::unique_ptr<U8[]> padded_in(new(std::nothrow) U8[(size_t)size + SLACK]);
+    if (!padded_in)
+    {
+        return ZR_MEM_ERROR;
+    }
+    memcpy(padded_in.get(), in, size);
+    memset(padded_in.get() + size, 0, SLACK);
 
     strm.zalloc = Z_NULL;
     strm.zfree = Z_NULL;
     strm.opaque = Z_NULL;
     strm.avail_in = size;
-    strm.next_in = const_cast<U8*>(in);
+    strm.next_in = padded_in.get();
 
     S32 ret = inflateInit(&strm);
 
