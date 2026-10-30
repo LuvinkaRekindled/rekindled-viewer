@@ -12157,6 +12157,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>1</integer>
   </map>
+  <key>FSHeroProbeMaxDistance</key>
+  <map>
+    <key>Comment</key>
+    <string>Mirrors (hero probes) farther than this many meters from the camera are not picked for the realtime probe. A mirror may be picked out to 6 times its longest side when that is more, so a very large mirror still works at a distance. 0 = no limit. A far mirror's probe renders the scene around it and makes the viewer create objects there that stay after the probe moves on.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>30</real>
+  </map>
   <key>RenderMirrors</key>
   <map>
     <key>Comment</key>
