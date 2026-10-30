@@ -12,6 +12,7 @@
 #include <thread>
 #include <windows.h>
 #include <psapi.h>
+#include <nmmintrin.h>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -208,6 +209,99 @@ namespace
     long long sCpuFirstFrame = 0;
     unsigned long long sCpuThreadCyclesFirst = 0;
     int sCpuDepth = 0;
+
+    // LL_VK_CPUPROBE=1 with FS_CPU_ZONES=1: which logical processor the main thread runs on at each frame end (histogram over the window, moves between frames), and the
+    // clock of every logical processor at the report (CallNtPowerInformation, loaded at run time). A 9950X has two core complexes and SMT pairs on neighbouring numbers.
+    const bool sCoreProbeOn = sCpuZonesOn && getenv("LL_VK_CPUPROBE") != nullptr;
+    unsigned sCoreHist[64] = {};
+    unsigned sCoreMoves = 0;
+    DWORD sCoreLast = 0xFFFFFFFFu;
+    std::vector<double> sChainNs;               // ns per dependent step, one sample every 30 frames
+    long long cpu_now();
+
+    // The real core clock as the main thread sees it: 20000 crc32 steps, each waiting for the one before (3 cycles on Zen), timed with the same clock as the zones.
+    // CallNtPowerInformation reports the nominal 4300 MHz and QueryThreadCycleTime counts at the fixed timestamp rate, so neither shows boost or a drop.
+    double chain_ns_per_step()
+    {
+        const int steps = 20000;
+        unsigned long long x = 0x9E3779B97F4A7C15ull;
+        const long long t0 = cpu_now();
+        for (int i = 0; i < steps; ++i)
+        {
+            x = _mm_crc32_u64(x, 0x1234567ull);
+        }
+        const long long t1 = cpu_now();
+        static volatile unsigned long long sink;
+        sink = x;
+        return (double)(t1 - t0) / steps;
+    }
+
+    std::string core_probe_text(double frames)
+    {
+        std::string out;
+        if (!sChainNs.empty())
+        {
+            std::sort(sChainNs.begin(), sChainNs.end());
+            const double med = sChainNs[sChainNs.size() / 2];
+            out += llformat(", dependent crc32 chain (3 cycles a step): %.3f ns a step median (%.3f lowest, %.3f highest of %zu), which is %.2f GHz if 3 cycles", med, sChainNs.front(), sChainNs.back(), sChainNs.size(), 3.0 / med);
+            sChainNs.clear();
+        }
+        unsigned top[3] = { 0, 0, 0 };
+        unsigned taken[64] = {};
+        for (int k = 0; k < 3; ++k)
+        {
+            unsigned best = 0;
+            unsigned best_count = 0;
+            for (unsigned c = 0; c < 64; ++c)
+            {
+                if (!taken[c] && sCoreHist[c] > best_count)
+                {
+                    best = c;
+                    best_count = sCoreHist[c];
+                }
+            }
+            taken[best] = 1;
+            top[k] = best;
+        }
+        unsigned half[2] = { 0, 0 };
+        for (unsigned c = 0; c < 64; ++c)
+        {
+            half[(c / 16) & 1] += sCoreHist[c];
+        }
+        out += llformat(", main thread on logical cpu %u %.0f %%, %u %.0f %%, %u %.0f %% of the frames (cpus 0-15 %.0f %%, 16-31 %.0f %%), moved %.2f times a frame",
+            top[0], 100.0 * sCoreHist[top[0]] / frames, top[1], 100.0 * sCoreHist[top[1]] / frames, top[2], 100.0 * sCoreHist[top[2]] / frames,
+            100.0 * half[0] / frames, 100.0 * half[1] / frames, sCoreMoves / frames);
+        struct PowerInfo { ULONG Number, MaxMhz, CurrentMhz, MhzLimit, MaxIdleState, CurrentIdleState; };
+        typedef LONG(WINAPI * CallNtPowerInformationFn)(int, PVOID, ULONG, PVOID, ULONG);
+        static CallNtPowerInformationFn fn = nullptr;
+        static bool tried = false;
+        if (!tried)
+        {
+            tried = true;
+            if (HMODULE pw = LoadLibraryA("powrprof.dll"))
+            {
+                fn = (CallNtPowerInformationFn)GetProcAddress(pw, "CallNtPowerInformation");
+            }
+        }
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+        const unsigned n = std::min<unsigned>(si.dwNumberOfProcessors, 64);
+        PowerInfo info[64] = {};
+        if (fn && n && fn(11 /* ProcessorInformation */, nullptr, 0, info, n * sizeof(PowerInfo)) == 0)
+        {
+            double sum = 0.0, lo = 1e9, hi = 0.0;
+            for (unsigned i = 0; i < n; ++i)
+            {
+                sum += info[i].CurrentMhz;
+                lo = std::min<double>(lo, info[i].CurrentMhz);
+                hi = std::max<double>(hi, info[i].CurrentMhz);
+            }
+            out += llformat("; clocks at the report: mean %.0f MHz, lowest %.0f, highest %.0f (max %lu); on cpu %u %lu MHz", sum / n, lo, hi, info[0].MaxMhz, top[0], info[top[0] < n ? top[0] : 0].CurrentMhz);
+        }
+        for (unsigned c = 0; c < 64; ++c) sCoreHist[c] = 0;
+        sCoreMoves = 0;
+        return out;
+    }
 
     long long cpu_now()
     {
@@ -463,6 +557,20 @@ void LLCpuZoneScope::frame()
         sCpuFirstFrame = cpu_now();
         sCpuThreadCyclesFirst = sCpuCyclesOn ? thread_cycles() : 0;
     }
+    if (sCoreProbeOn)
+    {
+        const DWORD core = GetCurrentProcessorNumber();
+        sCoreHist[core & 63]++;
+        if (sCoreLast != 0xFFFFFFFFu && core != sCoreLast)
+        {
+            ++sCoreMoves;
+        }
+        sCoreLast = core;
+        if (sCpuFrames % 30 == 5)
+        {
+            sChainNs.push_back(chain_ns_per_step());
+        }
+    }
     if (++sCpuFrames < 600)
     {
         return;
@@ -508,6 +616,10 @@ void LLCpuZoneScope::frame()
             blocked_text += llformat(", process page faults %.1f a frame, working set %.0f MB, private %.0f MB", (double)(pmc.PageFaultCount - last_faults) / frames, pmc.WorkingSetSize / 1048576.0, pmc.PrivateUsage / 1048576.0);
             last_faults = pmc.PageFaultCount;
         }
+    }
+    if (sCoreProbeOn)
+    {
+        blocked_text += core_probe_text(frames);
     }
     LL_INFOS("CpuZones") << "main thread per frame over " << sCpuFrames << " frames: loop interval " << interval_ms << " ms" << blocked_text << " (inclusive zones, nested ones count in their parents)" << text << LL_ENDL;
     uni_census_report(frames);

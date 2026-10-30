@@ -598,7 +598,8 @@ private:
     const char* mBarrierCause = "other";
     struct BarrierStat { U32 mCount = 0; U32 mEndedPass = 0; };
     std::unordered_map<std::string, BarrierStat> mBarrierStats;
-    std::unordered_map<const Image*, U32> mBarrierPerImage;
+    struct BarrierImageStat { U32 mCount = 0; std::string mKind; };   // the kind is copied at the transition: the image can be freed before the report
+    std::unordered_map<const Image*, BarrierImageStat> mBarrierPerImage;
     std::unordered_map<std::string, U32> mBarrierWho;       // F3.5c': transitions by the pass that needed them: image | layouts | cause | program | GPU zone | the pass's target
     // F3.5c: the depth use of each producer pass segment (between two target changes) that has a depth attachment: draws that write it, draws in read-only depth, the rest, how many worker passes it took (LL_VK_PHASES)
     struct PassUse { U32 mSegments = 0; U64 mWorkerPasses = 0, mWrites = 0, mRO = 0, mPlain = 0; U32 mMixed = 0; };
@@ -607,7 +608,7 @@ private:
     U64 mPassBeginsTotal = 0, mPUStartBegins = 0, mPUWrites = 0, mPURO = 0, mPUPlain = 0;
     void finishPassUse();
     // F3.5c: the declared read-only depth against what the worker infers (LL_VK_DEPTHRO_VERIFY=1 or LL_VK_PHASES), by program: agree, declared but the draw writes depth, samples the depth with nothing declared
-    struct DeclStat { U64 mAgree = 0, mDeclaredOnly = 0, mViolation = 0, mMissing = 0; };
+    struct DeclStat { U64 mAgree = 0, mDeclaredOnly = 0, mViolation = 0, mMissing = 0; std::string mName; };   // the name is copied: the program can be gone before the report
     std::unordered_map<const Program*, DeclStat> mDeclStats;
     bool mBarrierEndedPass = false;                 // the transition being made had to end a render pass first
     // F3.5a: render pass counters (plain increments on the worker, read by takePassReport)
@@ -621,7 +622,7 @@ private:
     void noteBarrier(const Image& image, VkImageLayout from, VkImageLayout to);
     // C9: the depth-target use of each draw (write on / depth buffer sampled by the program) and what each change of use cost
     U32 mDepthUseCounts[4] = {};
-    struct UniformCopyStat { U64 mCopies = 0, mBytes = 0, mDirty = 0, mSame = 0; };
+    struct UniformCopyStat { U64 mCopies = 0, mBytes = 0, mDirty = 0, mSame = 0; std::string mName; };   // the name is copied: the program can be gone before the report
     std::unordered_set<U64> mUniformSeen;       // LL_VK_PHASES: (program, content) hashes of the blocks copied in the frame being counted
     U64 mUniformSeenFrame = ~0ull;
     std::unordered_map<const Program*, UniformCopyStat> mUniformCopies;    // LL_VK_PHASES: loose uniform blocks copied into the ring, per program

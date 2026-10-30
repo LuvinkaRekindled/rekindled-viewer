@@ -2386,13 +2386,16 @@ U8* unzip_llsdNavMesh( bool& valid, size_t& outsize, std::istream& is, S32 size 
 
     const U32 CHUNK = 0x4000;
 
-    U8 *in = new(std::nothrow) U8[size];
+    // zero tail after the input: the vectorised inflate can read a few bytes past the end of a block that ends on a page (segment heap), see unzip_llsd
+    const U32 SLACK = 4096;
+    U8 *in = new(std::nothrow) U8[(size_t)size + SLACK];
     if (in == NULL)
     {
         LL_WARNS() << "Memory allocation failure." << LL_ENDL;
         return NULL;
     }
     is.read((char*) in, size);
+    memset(in + size, 0, SLACK);
 
     U8 out[CHUNK];
 
