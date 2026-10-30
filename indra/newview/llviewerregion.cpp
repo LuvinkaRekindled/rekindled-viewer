@@ -1923,16 +1923,21 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
         static const F32 age_s = getenv("LL_VK_KILL_AGE_S") ? (F32)atof(getenv("LL_VK_KILL_AGE_S")) : 60.f;
         static const size_t look = getenv("LL_VK_KILL_LOOK") ? (size_t)atoi(getenv("LL_VK_KILL_LOOK")) : 64;
         static const size_t cap = getenv("LL_VK_KILL_MAX") ? (size_t)atoi(getenv("LL_VK_KILL_MAX")) : 8;
-        static S32 seen_camera = -1;
+        static LLVector3 anchor_pos, anchor_at;
         static F64 moved_at = 0.0, fps_at = 0.0;
         static U64 fps_frame = 0;
         static F32 fps = 60.f;
         const F64 now = LLTimer::getTotalSeconds();
         const U32 frame = LLViewerOctreeEntryData::getCurrentFrame();
-        if (seen_camera != sLastCameraUpdated)
+        // Still = the camera stays within 5 cm and half a degree of where it was when the still time began. (LLCamera::isChanged, behind sLastCameraUpdated, compares the frustum planes exactly and was
+        // true on every frame of a 120 s still in lap kill1: the sway of the camera or the upscaler's jitter is enough.)
+        const LLVector3 cam_pos = LLViewerCamera::getInstance()->getOrigin();
+        const LLVector3 cam_at = LLViewerCamera::getInstance()->getAtAxis();
+        if (moved_at == 0.0 || (cam_pos - anchor_pos).length() > 0.05f || cam_at * anchor_at < 0.99996f)
         {
-            seen_camera = sLastCameraUpdated;
-            moved_at = now;                     // (the camera changed this frame, or this is the first call)
+            anchor_pos = cam_pos;
+            anchor_at = cam_at;
+            moved_at = now;                     // (the camera moved, or this is the first call)
         }
         if (now - fps_at >= 1.0)
         {
@@ -1950,7 +1955,7 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
             return;
         }
         const S64 min_age = (S64)(age_s * llmax(fps, 10.f));        // the age is in seconds, the stamps are in frames
-        const LLVector3 camera = LLViewerCamera::getInstance()->getOrigin();
+        const LLVector3 camera = cam_pos;
         LLTimer kill_timer;
         std::vector<LLDrawable*> kill_list;
         std::vector<LLVOCacheEntry*> kill_entries;
