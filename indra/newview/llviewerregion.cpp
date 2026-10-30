@@ -1847,7 +1847,8 @@ static bool fs_kill_wanted(LLVOCacheEntry* entry, const LLVector3& camera, S64 f
         return false;
     }
     LLDrawable* drawable = (LLDrawable*)octree_entry->getDrawable();
-    if (!drawable || drawable->isDead() || drawable->getParent() || drawable->isState(LLDrawable::ACTIVE | LLDrawable::ON_MOVE_LIST | LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
+    // (active and moving roots are not left out: lap kill4 showed that the ~70 cached roots and ~250 child prims that stay active and out of view after a turn are what the stage has to reach; the stock rule did not spare them either)
+    if (!drawable || drawable->isDead() || drawable->getParent() || drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
     {
         return false;
     }
