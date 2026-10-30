@@ -149,8 +149,49 @@ namespace
 
     static const U32 STATUS_MSC_EXCEPTION = 0xE06D7363; // compiler specific
 
+    // <FS> what a work item died of: the code, the address, the parameters and a stack (module + offset), before the exception is converted and the original is lost
+    // (a stack buffer only, no allocation: the heap may be what is wrong)
+    void log_seh(U32 code, struct _EXCEPTION_POINTERS* exception_infop)
+    {
+        if (code == STATUS_MSC_EXCEPTION || !exception_infop || !exception_infop->ExceptionRecord || !exception_infop->ContextRecord)
+        {
+            return;
+        }
+        char text[4096];
+        int used = snprintf(text, sizeof(text), "SEH exception in a work queue item: code 0x%08lx at %p, parameters %llx %llx %llx; stack:", (unsigned long)code, exception_infop->ExceptionRecord->ExceptionAddress,
+            (unsigned long long)(exception_infop->ExceptionRecord->NumberParameters > 0 ? exception_infop->ExceptionRecord->ExceptionInformation[0] : 0),
+            (unsigned long long)(exception_infop->ExceptionRecord->NumberParameters > 1 ? exception_infop->ExceptionRecord->ExceptionInformation[1] : 0),
+            (unsigned long long)(exception_infop->ExceptionRecord->NumberParameters > 2 ? exception_infop->ExceptionRecord->ExceptionInformation[2] : 0));
+        CONTEXT ctx = *exception_infop->ContextRecord;
+        for (int i = 0; i < 24 && ctx.Rip && used > 0 && used < (int)sizeof(text) - 96; ++i)
+        {
+            HMODULE module = nullptr;
+            char name[MAX_PATH] = {};
+            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)ctx.Rip, &module) && GetModuleFileNameA(module, name, MAX_PATH))
+            {
+                const char* slash = strrchr(name, '\\');
+                used += snprintf(text + used, sizeof(text) - used, " %s+0x%llx", slash ? slash + 1 : name, (unsigned long long)(ctx.Rip - (DWORD64)module));
+            }
+            else
+            {
+                used += snprintf(text + used, sizeof(text) - used, " %p", (void*)ctx.Rip);
+            }
+            DWORD64 base = 0;
+            PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
+            if (!fn)
+            {
+                break;
+            }
+            PVOID handler = nullptr;
+            DWORD64 frame = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, fn, &ctx, &handler, &frame, nullptr);
+        }
+        LL_WARNS("WorkQueue") << text << LL_ENDL;
+    }
+
     U32 exception_filter(U32 code, struct _EXCEPTION_POINTERS* exception_infop)
     {
+        log_seh(code, exception_infop);
         if (LLApp::instance()->reportCrashToBugsplat((void*)exception_infop))
         {
             // Handled

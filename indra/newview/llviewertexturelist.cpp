@@ -1197,8 +1197,11 @@ void LLViewerTextureList::logSummary()
                                     (S32)image->getDesiredDiscardLevel(), image->getFetchPriority());
                 const LLViewerTexture::ll_face_list_t* list = image->getFaceList(LLRender::DIFFUSE_MAP);
                 U32 shown = 0;
-                for (LLFace* face : *list)
+                // (only the first getNumFaces entries are faces: the vector has slack behind them, and removeFace leaves the old last pointer in its slot, a pointer to a face that may be freed)
+                const S32 face_count = image->getNumFaces(LLRender::DIFFUSE_MAP);
+                for (S32 face_index = 0; face_index < face_count && face_index < (S32)list->size(); ++face_index)
                 {
+                    LLFace* face = (*list)[face_index];
                     if (!face || ++shown > 3)
                     {
                         continue;
