@@ -70,6 +70,10 @@
 #include "llvocache.h"
 #include "llworld.h"
 #include "llspatialpartition.h"
+#include "lldrawable.h"
+#include "llvovolume.h"
+#include "llviewercamera.h"
+#include "pipeline.h"
 #include "stringize.h"
 #include "llviewercontrol.h"
 #include "llsdserialize.h"
@@ -83,6 +87,7 @@
 #include "llcorehttputil.h"
 #include "llsettingsdaycycle.h"
 
+#include <unordered_set>
 #include <boost/regex.hpp>
 
 // Firestorm includes
@@ -110,6 +115,16 @@ bool LLViewerRegion::sVOCacheCullingEnabled = false;
 S32  LLViewerRegion::sLastCameraUpdated = 0;
 S32  LLViewerRegion::sNewObjectCreationThrottle = -1;
 LLViewerRegion::vocache_entry_map_t LLViewerRegion::sRegionCacheCleanup;
+
+// <FS> LL_VK_EXPIRY=4, the object kill stage (doc/vulkan/RESEARCH-after-turn-dgc-mesh.md section 1). Counters, and the entries it killed (only the pointers, to count how many were instantiated again).
+namespace
+{
+    struct FsKillStats
+    {
+        U64 mCalls = 0, mMovingCalls = 0, mLooked = 0, mWanted = 0, mKilled = 0, mRecreated = 0;
+    } sFsKill;
+    std::unordered_set<const LLVOCacheEntry*> sFsKilled;
+}
 
 typedef std::unordered_map<std::string, std::string, ll::string_hash, std::equal_to<>> CapabilityMap;
 
@@ -1228,6 +1243,7 @@ void LLViewerRegion::killCacheEntry(LLVOCacheEntry* entry, bool for_rendering)
 
     //remove from the forced visible list
     mImpl->mVisibleEntries.erase(entry);
+    sFsKilled.erase(entry);         // <FS> the cache entry is gone, not instantiated again
 
     //disconnect from parent if it is a child
     if(entry->getParentID() > 0)
@@ -1818,6 +1834,68 @@ bool LLViewerRegion::isViewerCameraStatic()
     return sLastCameraUpdated < LLViewerOctreeEntryData::getCurrentFrame();
 }
 
+// <FS> LL_VK_EXPIRY=4: the stock rule that forgets what is behind you is off in this tree (LLVOCacheEntry::isAnyVisible answers true), so a turn leaves every object it instantiated (24k -> 48k objects at
+// the plaza, and the cost of walking them stays after the turn). This brings a kill back with the viewer's own relevance model instead of the old radius rule: an object that no camera (world, shadow, probes)
+// has had in view for LL_VK_KILL_AGE_S seconds (default 60, as Released), that is farther than SceneLoadMinRadius, and that nothing needs (not selected, no sound, particles, light, media, no avatar on it) is
+// killed through the existing killObject; it comes back from its cache entry by the paced path the stock code uses (NewObjectCreationThrottle). Nothing is killed until the camera has been still for
+// LL_VK_KILL_STILL_S seconds (default 3), so a view that is changing is never thinned out under it. Paced: LL_VK_KILL_LOOK entries looked at (64) and LL_VK_KILL_MAX killed (8) a call.
+static bool fs_kill_wanted(LLVOCacheEntry* entry, const LLVector3& camera, S64 frame, S64 min_age)
+{
+    LLViewerOctreeEntry* octree_entry = entry->getEntry();
+    if (!octree_entry)
+    {
+        return false;
+    }
+    LLDrawable* drawable = (LLDrawable*)octree_entry->getDrawable();
+    if (!drawable || drawable->isDead() || drawable->getParent() || drawable->isState(LLDrawable::ACTIVE | LLDrawable::ON_MOVE_LIST | LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
+    {
+        return false;
+    }
+    LLViewerObject* object = drawable->getVObj();
+    if (!object || object->isDead() || object->isAvatar() || object->isAttachment() || object->isHUDAttachment() || object->isSelected()
+        || object->isAudioSource() || object->isParticleSource() || object->isAnimatedObject())
+    {
+        return false;
+    }
+    if (object->getPCode() == LL_PCODE_VOLUME)
+    {
+        LLVOVolume* volume = (LLVOVolume*)object;
+        if (volume->getIsLight() || volume->hasMedia())
+        {
+            return false;
+        }
+    }
+    // when a camera last had it: its own stamp (set when it is made and when it is seen) and its group's, for every camera
+    S64 latest = (S64)entry->getVisible();
+    if (LLSpatialGroup* group = drawable->getSpatialGroup())
+    {
+        for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
+        {
+            latest = std::max(latest, (S64)group->getVisible((LLViewerCamera::eCameraID)c));
+        }
+    }
+    if (latest <= 0 || frame - latest <= min_age)
+    {
+        return false;
+    }
+    return (object->getPositionAgent() - camera).length() - drawable->getRadius() > LLVOCacheEntry::sNearRadius;
+}
+
+void fs_kill_report()
+{
+    if (LLPipeline::coldMode() < 4)
+    {
+        return;
+    }
+    U64 active = 0;
+    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    {
+        active += region->getNumOfActiveCachedObjects();
+    }
+    LL_INFOS("SceneCensus") << "Kill (LL_VK_EXPIRY=4): " << sFsKill.mCalls << " calls (" << sFsKill.mMovingCalls << " held back while the camera moved), entries looked at " << sFsKill.mLooked << ", stale and free " << sFsKill.mWanted
+        << ", killed " << sFsKill.mKilled << ", made again " << sFsKill.mRecreated << ", killed and not back " << sFsKilled.size() << ", active cached objects now " << active << LL_ENDL;
+}
+
 void LLViewerRegion::killInvisibleObjects(F32 max_time)
 {
 #if 1 // TODO: kill this.  This is ill-conceived, objects that aren't in the camera frustum should not be deleted from memory.
@@ -1835,6 +1913,88 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
     }
     if(sNewObjectCreationThrottle < 0)
     {
+        return;
+    }
+
+    if (LLPipeline::coldMode() >= 4)
+    {
+        // <FS> the object kill stage (see fs_kill_wanted)
+        static const F32 still_s = getenv("LL_VK_KILL_STILL_S") ? (F32)atof(getenv("LL_VK_KILL_STILL_S")) : 3.f;
+        static const F32 age_s = getenv("LL_VK_KILL_AGE_S") ? (F32)atof(getenv("LL_VK_KILL_AGE_S")) : 60.f;
+        static const size_t look = getenv("LL_VK_KILL_LOOK") ? (size_t)atoi(getenv("LL_VK_KILL_LOOK")) : 64;
+        static const size_t cap = getenv("LL_VK_KILL_MAX") ? (size_t)atoi(getenv("LL_VK_KILL_MAX")) : 8;
+        static S32 seen_camera = -1;
+        static F64 moved_at = 0.0, fps_at = 0.0;
+        static U64 fps_frame = 0;
+        static F32 fps = 60.f;
+        const F64 now = LLTimer::getTotalSeconds();
+        const U32 frame = LLViewerOctreeEntryData::getCurrentFrame();
+        if (seen_camera != sLastCameraUpdated)
+        {
+            seen_camera = sLastCameraUpdated;
+            moved_at = now;                     // (the camera changed this frame, or this is the first call)
+        }
+        if (now - fps_at >= 1.0)
+        {
+            if (fps_at > 0.0 && frame > fps_frame)
+            {
+                fps = (F32)((frame - fps_frame) / (now - fps_at));
+            }
+            fps_at = now;
+            fps_frame = frame;
+        }
+        ++sFsKill.mCalls;
+        if (now - moved_at < still_s)
+        {
+            ++sFsKill.mMovingCalls;
+            return;
+        }
+        const S64 min_age = (S64)(age_s * llmax(fps, 10.f));        // the age is in seconds, the stamps are in frames
+        const LLVector3 camera = LLViewerCamera::getInstance()->getOrigin();
+        LLTimer kill_timer;
+        std::vector<LLDrawable*> kill_list;
+        std::vector<LLVOCacheEntry*> kill_entries;
+        LLVOCacheEntry::vocache_entry_set_t::iterator it = mImpl->mActiveSet.upper_bound(mLastVisitedEntry);
+        LLVOCacheEntry* last = mLastVisitedEntry;
+        for (size_t n = llmin(look, mImpl->mActiveSet.size()); n > 0; --n, ++it)
+        {
+            if (it == mImpl->mActiveSet.end())
+            {
+                it = mImpl->mActiveSet.begin();
+                if (it == mImpl->mActiveSet.end())
+                {
+                    break;
+                }
+            }
+            LLVOCacheEntry* vo_entry = *it;
+            last = vo_entry;
+            ++sFsKill.mLooked;
+            if (vo_entry->getParentID() > 0)
+            {
+                continue;                       // children go with their parent
+            }
+            if (fs_kill_wanted(vo_entry, camera, frame, min_age))
+            {
+                ++sFsKill.mWanted;
+                const size_t before = kill_list.size();
+                killObject(vo_entry, kill_list);
+                if (kill_list.size() > before)
+                {
+                    kill_entries.push_back(vo_entry);
+                }
+            }
+            if (kill_list.size() >= cap || max_time < kill_timer.getElapsedTimeF32())
+            {
+                break;
+            }
+        }
+        mLastVisitedEntry = last;
+        for (size_t i = 0; i < kill_list.size(); ++i)
+        {
+            gObjectList.killObject(kill_list[i]->getVObj());
+            sFsKilled.insert(kill_entries[i]);
+            ++sFsKill.mKilled;
+        }
         return;
     }
 
@@ -1971,6 +2131,10 @@ LLViewerObject* LLViewerRegion::addNewObject(LLVOCacheEntry* entry)
     LLViewerObject* obj = NULL;
     if(!entry->getEntry()->hasDrawable()) //not added to the rendering pipeline yet
     {
+        if(!sFsKilled.empty() && sFsKilled.erase(entry))
+        {
+            ++sFsKill.mRecreated;       // <FS> an object the kill stage dropped, made again from its cache entry
+        }
         //add the object
         obj = gObjectList.processObjectUpdateFromCache(entry, this);
         if(obj)

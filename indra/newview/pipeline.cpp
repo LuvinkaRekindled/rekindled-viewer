@@ -2613,6 +2613,11 @@ void LLPipeline::sceneStateCensus()
         {
             LL_INFOS("SceneCensus") << "Released: " << sRelReleased << " groups released so far (" << sRelReleasedInfos << " draw infos), woken " << sRelWoken << ", waiting in the wake queue " << mWakeQ.size() << ", scans " << sRelScans << LL_ENDL;
         }
+        if (coldMode() >= 4)
+        {
+            extern void fs_kill_report();       // (llviewerregion.cpp: the object kill stage)
+            fs_kill_report();
+        }
     }
     LLCamera& camera = *LLViewerCamera::getInstance();
     U64 objects = 0, drawables = 0, active = 0, avatars = 0, attachments = 0, rigged = 0, with_text = 0;
