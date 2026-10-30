@@ -2285,7 +2285,11 @@ void Renderer::noteBarrier(const Image& image, VkImageLayout from, VkImageLayout
     {
         ++st.mEndedPass;
     }
-    ++mBarrierPerImage[&image];
+    {
+        BarrierImageStat& pi = mBarrierPerImage[&image];
+        ++pi.mCount;
+        pi.mKind = image_kind(image);
+    }
     {
         // F3.5c': who needed this transition: the draw's program, the viewer's GPU zone (when FSGpuZoneTimers is on) and the target of the pass that is being set up
         std::string who = image_kind(image) + " | " + layout_name(from) + ">" + layout_name(to) + " | " + mBarrierCause + " | " + (mProgram ? mProgram->mName : std::string("(no program)"));
@@ -2324,12 +2328,12 @@ std::string Renderer::takeBarrierReport(size_t frames)
         snprintf(buf, sizeof(buf), " [%s: %.1f, %.1f]", rows[i].first.c_str(), (double)rows[i].second.mCount / f, (double)rows[i].second.mEndedPass / f);
         out += buf;
     }
-    std::vector<std::pair<const Image*, U32>> imgs(mBarrierPerImage.begin(), mBarrierPerImage.end());
-    std::sort(imgs.begin(), imgs.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::vector<std::pair<const Image*, BarrierImageStat>> imgs(mBarrierPerImage.begin(), mBarrierPerImage.end());
+    std::sort(imgs.begin(), imgs.end(), [](const auto& a, const auto& b) { return a.second.mCount > b.second.mCount; });
     out += " | images with the most transitions per frame (of " + std::to_string(imgs.size()) + " distinct):";
     for (size_t i = 0; i < imgs.size() && i < 8; ++i)
     {
-        snprintf(buf, sizeof(buf), " [#%04x %s: %.1f]", (unsigned)(((size_t)imgs[i].first >> 4) & 0xFFFF), image_kind(*imgs[i].first).c_str(), (double)imgs[i].second / f);
+        snprintf(buf, sizeof(buf), " [#%04x %s: %.1f]", (unsigned)(((size_t)imgs[i].first >> 4) & 0xFFFF), imgs[i].second.mKind.c_str(), (double)imgs[i].second.mCount / f);
         out += buf;
     }
     {
@@ -2364,7 +2368,7 @@ std::string Renderer::takeBarrierReport(size_t frames)
         for (size_t i = 0; i < by_bytes.size() && i < 8; ++i)
         {
             const UniformCopyStat& us = mUniformCopies[by_bytes[i].second];
-            snprintf(buf, sizeof(buf), " [%s: %.0f copies of %.1f KB]", by_bytes[i].second->mName.c_str(), (double)us.mCopies / f, us.mCopies ? (double)us.mBytes / 1024.0 / (double)us.mCopies : 0.0);
+            snprintf(buf, sizeof(buf), " [%s: %.0f copies of %.1f KB]", us.mName.c_str(), (double)us.mCopies / f, us.mCopies ? (double)us.mBytes / 1024.0 / (double)us.mCopies : 0.0);
             out += buf;
         }
         mUniformCopies.clear();
@@ -2514,7 +2518,7 @@ std::string Renderer::takePassReport(size_t frames)
         for (size_t i = 0; i < rows.size() && i < 24; ++i)
         {
             const DeclStat& d = mDeclStats[rows[i].second];
-            snprintf(buf, sizeof(buf), " [%s: %.1f/%.1f/%.1f/%.1f]", rows[i].second->mName.c_str(), (double)d.mAgree / f, (double)d.mDeclaredOnly / f, (double)d.mViolation / f, (double)d.mMissing / f);
+            snprintf(buf, sizeof(buf), " [%s: %.1f/%.1f/%.1f/%.1f]", d.mName.c_str(), (double)d.mAgree / f, (double)d.mDeclaredOnly / f, (double)d.mViolation / f, (double)d.mMissing / f);
             out += buf;
         }
         out += " | ";
@@ -3274,6 +3278,10 @@ void Renderer::applyState()
         if (decl_verify && depth_root && mProgram)
         {
             DeclStat& ds = mDeclStats[mProgram];
+            if (ds.mName.empty())
+            {
+                ds.mName = mProgram->mName;
+            }
             if (mDepthStencil.mDeclaredRO)
             {
                 if (mDepthStencil.mDepthWrite) { ++ds.mViolation; } else if (depth_ro) { ++ds.mAgree; } else { ++ds.mDeclaredOnly; }
@@ -3645,6 +3653,10 @@ void Renderer::applyState()
         if (LLVkBridge::gPhaseTiming)
         {
             UniformCopyStat& us = mUniformCopies[mProgram];
+            if (us.mName.empty())
+            {
+                us.mName = mProgram->mName;
+            }
             ++us.mCopies;
             us.mBytes += shadow.size();
             if (mProgram->mDirty[k]) ++us.mDirty;
