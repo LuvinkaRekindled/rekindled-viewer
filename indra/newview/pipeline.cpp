@@ -24510,6 +24510,25 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     {
                         into.pushBridge(*b);
                     }
+                    // <FS> markVisible of an attachment's bridge walks the bridge's own octree (LLSpatialBridge::setVisible), and that walk pushes the bridge's groups into the result the thread is
+                    // working with, which here is the chunk's own: they have to be appended too, or an avatar's attachments (the rigged body of a mesh avatar) are in no cascade's render map and cast
+                    // no shadow (the check mode, FSParallelShadowPrepCheck, reported them missing for nearly every cascade: visible, drawable, alpha and rigged alpha groups, and the render maps).
+                    for (LLCullResult::sg_iterator g = c.mLocal->beginVisibleGroups(); g != c.mLocal->endVisibleGroups(); ++g)
+                    {
+                        into.pushVisibleGroup(*g);
+                    }
+                    for (LLCullResult::sg_iterator g = c.mLocal->beginDrawableGroups(); g != c.mLocal->endDrawableGroups(); ++g)
+                    {
+                        into.pushDrawableGroup(*g);
+                    }
+                    for (LLCullResult::sg_iterator g = c.mLocal->beginAlphaGroups(); g != c.mLocal->endAlphaGroups(); ++g)
+                    {
+                        into.pushAlphaGroup(*g);
+                    }
+                    for (LLCullResult::sg_iterator g = c.mLocal->beginRiggedAlphaGroups(); g != c.mLocal->endRiggedAlphaGroups(); ++g)
+                    {
+                        into.pushRiggedAlphaGroup(*g);
+                    }
                 }
                 if (job_census)
                 {
