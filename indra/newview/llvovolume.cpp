@@ -7063,8 +7063,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
         LLFace* facep = *face_iter;
         LLViewerTexture* tex = facep->getTexture();
         const LLTextureEntry* te = facep->getTextureEntry();
-        LLMaterialPtr mat = te->getMaterialParams();
-        LLMaterialID matId = te->getMaterialID();
+        LLMaterialID matId = te->getMaterialID();       // (the material pointer that was copied here was not used: another copy of a shared, counted pointer a face)
 
         // if (distance_sort)
         // {

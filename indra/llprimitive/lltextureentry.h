@@ -161,7 +161,9 @@ public:
     U8   getMediaTexGen() const { return mMediaFlags; }
     F32  getGlow() const { return mGlow; }
     const LLMaterialID& getMaterialID() const { return mMaterialID; };
-    const LLMaterialPtr getMaterialParams() const { return mMaterial; };
+    // <FS> group rebuild R3 (level 1): by reference. It returned the smart pointer by value, so every call was an increment and a decrement of the count of a material that the faces of other groups share
+    // (registerFace made several a face); a caller that wants to keep the material copies it into a variable of its own, as the ones that did already do.
+    const LLMaterialPtr& getMaterialParams() const { return mMaterial; };
 
     // *NOTE: it is possible for hasMedia() to return true, but getMediaData() to return NULL.
     // CONVERSELY, it is also possible for hasMedia() to return false, but getMediaData()
