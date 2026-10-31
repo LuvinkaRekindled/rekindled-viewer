@@ -383,6 +383,7 @@ bool    LLPipeline::sReflectionProbesEnabled = false;
 S32     LLPipeline::sReflectionProbeLevel = (S32)LLReflectionMap::ProbeLevel::NONE; // <FS:Beq/> [FIRE-35070] Address progressive FPS loss.
 S32     LLPipeline::sVisibleLightCount = 0;
 bool    LLPipeline::sRenderingHUDs;
+thread_local const LLPipeline::View* LLPipeline::sJobView = nullptr;       // <FS> view rework W3
 F32     LLPipeline::sDistortionWaterClipPlaneMargin = 1.0125f;
 LLVector3 LLPipeline::sLastFocusPoint={};// <FS:Beq/> FIRE-16728 focus point lock & free focus DoF 
 bool    LLPipeline::sDoFEnabled = false;
@@ -3592,24 +3593,41 @@ struct CullChunk
     double mUs = 0.0;
 };
 
+// <FS> view rework W3: the jobs of a stage work for a view. The scope installs it for the thread (the flags and the render type mask the job reads come from it, see LLPipeline::sJobView) and its camera id, and puts both back
+// afterwards (the calling thread runs jobs too). The view must outlive the jobs.
+struct ViewScope
+{
+    const LLPipeline::View* mPrev = LLPipeline::sJobView;
+    LLViewerCamera::eCameraID mCameraID = LLViewerCamera::sCurCameraID;
+
+    ViewScope(const LLPipeline::View& view)
+    {
+        LLPipeline::sJobView = &view;
+        LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)view.mCameraID;
+    }
+    ~ViewScope()
+    {
+        LLPipeline::sJobView = mPrev;
+        LLViewerCamera::sCurCameraID = mCameraID;
+    }
+};
+
 // the thread-local state of a cull job, put back afterwards (the calling thread runs jobs too)
 struct CullTaskScope
 {
     LLCullResult* mCull = sCull;
     std::vector<LLPipeline::SortDelta>* mSink = LLPipeline::sSortSink;
     bool mParallel = LLPipeline::sParallelPrep;
-    LLViewerCamera::eCameraID mCameraID = LLViewerCamera::sCurCameraID;
+    ViewScope mView;        // (the camera id the walks read and the flags: a pool thread's own camera id is CAMERA_WORLD whatever the view is)
 
-    CullTaskScope(CullChunk& chunk, const LLPipeline::View& view)
+    CullTaskScope(CullChunk& chunk, const LLPipeline::View& view) : mView(view)
     {
         LLPipeline::sParallelPrep = true;       // (no shared statistics: mNumVisibleNodes is added by the caller)
-        LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)view.mCameraID;       // (the walks read it; a pool thread's own is CAMERA_WORLD whatever the view is)
         sCull = chunk.mLocal;
         LLPipeline::sSortSink = &chunk.mLedger;
     }
     ~CullTaskScope()
     {
-        LLViewerCamera::sCurCameraID = mCameraID;
         sCull = mCull;
         LLPipeline::sSortSink = mSink;
         LLPipeline::sParallelPrep = mParallel;
@@ -3976,7 +3994,7 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
             if (vo_part)
             {
                 LL_CPU_ZONE("updateCull: VO cache cull");
-                vo_part->cull(camera, LLPipeline::sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive());
+                vo_part->cull(camera, LLPipeline::useOcclusion() > 0 && !gAgent.getFSAreaSearchActive());
             }
         }
     }
@@ -4012,11 +4030,11 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
     View view;
     view.mCamera = &camera;
     view.mCameraID = (S32)LLViewerCamera::sCurCameraID;
-    view.mUseOcclusion = sUseOcclusion;
+    view.mUseOcclusion = useOcclusion();
     view.mWorldCameraID = LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
     view.mHud = hud;
-    view.mShadowRender = sShadowRender;
-    view.mReflectionRender = sReflectionRender;
+    view.mShadowRender = shadowRender();
+    view.mReflectionRender = reflectionRender();
     view.mCubeSnapshot = gCubeSnapshot;
     view.mViewerCamera = &camera == LLViewerCamera::getInstance();
     view.mRenderingHUDs = sRenderingHUDs;
@@ -4143,7 +4161,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         {
             // <FS:Beq> Fix area search again
             //vo_part->cull(camera, sUseOcclusion > 0);
-            { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive()); }
+            { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, LLPipeline::useOcclusion() > 0 && !gAgent.getFSAreaSearchActive()); }
         }
     }
     if (main_cull)
@@ -4249,7 +4267,7 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 
 void LLPipeline::markOccluder(LLSpatialGroup* group)
 {
-    if (sUseOcclusion > 1 && group && !group->isOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION))
+    if (LLPipeline::useOcclusion() > 1 && group && !group->isOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION))
     {
         LLSpatialGroup* parent = group->getParent();
 
@@ -4280,7 +4298,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     llassert(!gCubeSnapshot);
 
     // the shadow cascades, reflections and cube snapshots have no occlusion data of their own (it is the world camera's); without the Vulkan worker nothing is tested and nothing is occluded
-    if (sUseOcclusion <= 1 || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || LLPipeline::sShadowRender || gCubeSnapshot || !LLVkBridge::hizAvailable())
+    if (LLPipeline::useOcclusion() <= 1 || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || LLPipeline::shadowRender() || gCubeSnapshot || !LLVkBridge::hizAvailable())
     {
         return;
     }
@@ -5210,12 +5228,11 @@ struct SortTaskScope
     std::vector<LLDrawable*>* mPool = LLPipeline::sSortPoolSink;
     SortJournal* mJournal = sSortJournal;
     bool mParallel = LLPipeline::sParallelPrep;
-    LLViewerCamera::eCameraID mCameraID = LLViewerCamera::sCurCameraID;
+    ViewScope mView;
 
-    SortTaskScope(SortChunk& chunk, bool journaling, const LLPipeline::View& view)
+    SortTaskScope(SortChunk& chunk, bool journaling, const LLPipeline::View& view) : mView(view)
     {
         LLPipeline::sParallelPrep = true;       // (the bridges' octrees are locked while they are culled, and the statistics are not shared)
-        LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)view.mCameraID;       // (the walks read it; a pool thread's own is CAMERA_WORLD whatever the view is)
         if (chunk.mLocal)
         {
             sCull = chunk.mLocal;
@@ -5226,7 +5243,6 @@ struct SortTaskScope
     }
     ~SortTaskScope()
     {
-        LLViewerCamera::sCurCameraID = mCameraID;
         sCull = mCull;
         LLPipeline::sSortSink = mSink;
         LLPipeline::sSortPoolSink = mPool;
@@ -5753,7 +5769,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
         {
             LLOccCensus::sortNote(LLViewerCamera::sCurCameraID, group->isOcclusionState(LLSpatialGroup::OCCLUDED), group->getElementCount());
         }
-        if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        if (LLPipeline::useOcclusion() > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
             if (sVisSortOn) { ++LLVisCensus::sSortOccluded; }
@@ -5841,7 +5857,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
         {
             LLOccCensus::sortNote(LLViewerCamera::sCurCameraID, group->isOcclusionState(LLSpatialGroup::OCCLUDED), group->getElementCount());
         }
-        if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        if (LLPipeline::useOcclusion() > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
             if (sVisSortOn) { ++LLVisCensus::sSortOccluded; }
@@ -6693,7 +6709,7 @@ void LLPipeline::postSort(LLCamera &camera)
         bool mOn; U64 mT0;
         ~VisPostEnd() { if (mOn) { LLVisCensus::sPostTicks += LLVisCensus::now() - mT0; if (++LLVisCensus::sPostCalls % 600 == 0) { LLVisCensus::report(); } } }
     } vis_post_end = { vis_post, vis_post ? LLVisCensus::now() : 0 };
-    const bool scene_stats = scene_stats_on() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot;
+    const bool scene_stats = scene_stats_on() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot;
 
     assertInitialized();
     sVolumeSAFrame = 0.f; //ZK LBG
@@ -6713,7 +6729,7 @@ void LLPipeline::postSort(LLCamera &camera)
             {
                 continue;
             }
-            if (!sUseOcclusion || !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            if (!LLPipeline::useOcclusion() || !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
             {
                 group->rebuildGeom();
             }
@@ -6746,7 +6762,7 @@ void LLPipeline::postSort(LLCamera &camera)
     // <FS> the thread-local state is looked up once here, not once per draw info (a thread_local with a constructor costs a guard check per access)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
-    const bool geo_collect = ll_scene_geo_on() && !sShadowRender;
+    const bool geo_collect = ll_scene_geo_on() && !LLPipeline::shadowRender();
     const bool geo_owner = geo_collect && ll_scene_geo_verify_on();
     const bool geo_list = geo_collect && view.mViewerCamera && ll_scene_geo_main_view() && ll_scene_geo_serving() && !view.mRenderingHUDs;       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
     const bool geo_elide = geo_list && !ll_scene_geo_verify_on();       // S3 G4: the draws the table serves are not listed in the render map
@@ -6805,6 +6821,7 @@ void LLPipeline::postSort(LLCamera &camera)
                 const bool no_far_skip = far_skip.empty();
                 const std::function<void(size_t)> map_job = [&](size_t c)
                 {
+                    ViewScope view_scope(view);
                     MapChunk& chunk = chunks[c];
                     LLCullResult& local = *chunk.mLocal;
                     for (U32 gi = chunk.mBegin; gi < chunk.mEnd; ++gi)
@@ -6934,7 +6951,7 @@ void LLPipeline::postSort(LLCamera &camera)
             continue;
         }
 
-        if ((sUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) ||
+        if ((LLPipeline::useOcclusion() && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) ||
             (RenderAutoHideSurfaceAreaLimit > 0.f &&
              group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
         {
@@ -7073,11 +7090,11 @@ void LLPipeline::postSort(LLCamera &camera)
                 {
                     sCull->mGeoOwner[info] = { group, group->mDrawMapSerial, 1 };
                 }
-                if (!sShadowRender && !sReflectionRender && !gCubeSnapshot)
+                if (!LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot)
                 {
                     addTrianglesDrawn(info->mCount);
                 }
-                else if (sShadowRender && LLGpuZoneTimer::isActive())
+                else if (LLPipeline::shadowRender() && LLGpuZoneTimer::isActive())
                 {
                     count_shadow_batch(info); // <FS>
                 }
@@ -7165,14 +7182,14 @@ void LLPipeline::postSort(LLCamera &camera)
 
     mMeshDirtyGroup.clear();
 
-    if (!sShadowRender)
+    if (!LLPipeline::shadowRender())
     {
         ll_scene_geo_palette_kick(sCull);       // <FS> S4 B: the rigged items' palettes on the pool while the main thread goes on
     }
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("sort alpha groups");
-    if (!sShadowRender)
+    if (!LLPipeline::shadowRender())
     {
         LL_CPU_ZONE("postSort: sort alpha groups");
         const U64 vis_a0 = vis_post ? LLVisCensus::now() : 0;
@@ -7190,7 +7207,7 @@ void LLPipeline::postSort(LLCamera &camera)
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("beacon rendering flags");
     // only render if the flag is set. The flag is only set if we are in edit mode or the toggle is set in the menus
     // <FS:Ansariel> Make beacons also show when beacons floater is closed.
-    if (/*LLFloaterReg::instanceVisible("beacons") &&*/ !sShadowRender && !gCubeSnapshot)
+    if (/*LLFloaterReg::instanceVisible("beacons") &&*/ !LLPipeline::shadowRender() && !gCubeSnapshot)
     {
         if (sRenderScriptedTouchBeacons)
         {
@@ -7275,12 +7292,12 @@ void LLPipeline::postSort(LLCamera &camera)
     }
     LL_PUSH_CALLSTACKS();
     // If managing your telehub, draw beacons at telehub and currently selected spawnpoint.
-    if (LLFloaterTelehub::renderBeacons() && !sShadowRender && !gCubeSnapshot)
+    if (LLFloaterTelehub::renderBeacons() && !LLPipeline::shadowRender() && !gCubeSnapshot)
     {
         LLFloaterTelehub::addBeacons();
     }
 
-    if (!sShadowRender && !gCubeSnapshot)
+    if (!LLPipeline::shadowRender() && !gCubeSnapshot)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("Render face highlights");
         mSelectedFaces.clear();
@@ -7366,9 +7383,11 @@ struct ShadowPrepScope
     LLCullResult* mCull = sCull;
     ShadowCascadeCull mCascadeCull = sShadowCascadeCull;
     bool mParallel = LLPipeline::sParallelPrep;
+    const LLPipeline::View* mJobView = LLPipeline::sJobView;
 
     ShadowPrepScope(const LLPipeline::ShadowCascadePrep& prep)
     {
+        LLPipeline::sJobView = prep.mJobView;       // (null: the thread works with the pipeline's own state, as before)
         LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
         LLPipeline::sParallelPrep = true;
         sCull = prep.mResult;
@@ -7387,6 +7406,7 @@ struct ShadowPrepScope
 
     ~ShadowPrepScope()
     {
+        LLPipeline::sJobView = mJobView;
         LLViewerCamera::sCurCameraID = mCameraID;
         sCull = mCull;
         sShadowCascadeCull = mCascadeCull;
@@ -10045,7 +10065,7 @@ void ll_vis_census_items(LLCamera& camera)
         {
             continue;
         }
-        if ((LLPipeline::sUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) ||
+        if ((LLPipeline::useOcclusion() && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) ||
             (LLPipeline::RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > LLPipeline::RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
         {
             continue;
@@ -10823,7 +10843,7 @@ static void cull_flat(LLCamera& camera, bool use)
     {
         std::lock_guard<std::mutex> lock(sCullMutex);
         memo.assign(sMirror.size(), CS_UNSET);
-        CullClassifier c{ sMirror, sVerdict, memo, LLPipeline::sUseOcclusion != 0 };
+        CullClassifier c{ sMirror, sVerdict, memo, LLPipeline::useOcclusion() != 0 };
         for (U32 slot = 0; slot < sMirror.size(); ++slot)
         {
             const U8 st = c.state(slot);
@@ -10897,7 +10917,7 @@ static void cull_flat(LLCamera& camera, bool use)
                 continue;
             }
             g->checkOcclusion();
-            if (LLPipeline::sUseOcclusion && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            if (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
             {
                 gPipeline.markOccluder(g);      // the topmost occluded group asks Hi-Z again
             }
@@ -10914,7 +10934,7 @@ static void cull_flat(LLCamera& camera, bool use)
                 continue;
             }
             g->checkOcclusion();
-            if (LLPipeline::sUseOcclusion && g->isOcclusionState(LLSpatialGroup::OCCLUDED) && g->getOctreeNode() && g->getOctreeNode()->getParent())
+            if (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED) && g->getOctreeNode() && g->getOctreeNode()->getParent())
             {
                 gPipeline.markOccluder(g);
                 continue;
@@ -11798,7 +11818,7 @@ int ll_scene_geo_type_number(U32 type)
 
 bool ll_scene_geo_main_view()
 {
-    return !gCubeSnapshot && !LLPipeline::sImpostorRender && !LLPipeline::sShadowRender && !LLPipeline::sReflectionRender && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
+    return !gCubeSnapshot && !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
 }
 
 void ll_scene_geo_count(U32 what, U64 n)
@@ -12964,7 +12984,7 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
         LLVOCachePartition* vo_part = region->getVOCachePartition();
         if (vo_part)
         {
-            { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, sUseOcclusion > 0 && !gAgent.getFSAreaSearchActive()); }
+            { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, LLPipeline::useOcclusion() > 0 && !gAgent.getFSAreaSearchActive()); }
         }
     }
     lap.mark(PH_FIN_VOCACHE);
@@ -13081,7 +13101,7 @@ void render_hud_elements()
     gRender.color4f(1, 1, 1, 1);
     LLRenderState::DepthScope depth(true, false);
 
-    if (!LLPipeline::sReflectionRender && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    if (!LLPipeline::reflectionRender() && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
     {
         gViewerWindow->renderSelections(false, false, false); // For HUD version in render_ui_3d()
 
@@ -13305,7 +13325,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         gRenderInverseDeltaModelView = n;
     }
 
-    bool occlude = LLPipeline::sUseOcclusion > 1 && do_occlusion && !LLShaderProgram::sProfileEnabled;
+    bool occlude = LLPipeline::useOcclusion() > 1 && do_occlusion && !LLShaderProgram::sProfileEnabled;
 
     setupHWLights();
 
@@ -15344,7 +15364,7 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     assertInitialized();
 
-    if (LLPipeline::sReflectionRender || gCubeSnapshot || LLPipeline::sRenderingHUDs || LLApp::isExiting())
+    if (LLPipeline::reflectionRender() || gCubeSnapshot || LLPipeline::sRenderingHUDs || LLApp::isExiting())
     {
         return;
     }
@@ -20357,7 +20377,7 @@ void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* lig
                                     (F32) gRenderViewport[3]);
     }
 
-    if (sReflectionRender && !shader.getUniformLocation(LLShaderMgr::MODELVIEW_MATRIX))
+    if (LLPipeline::reflectionRender() && !shader.getUniformLocation(LLShaderMgr::MODELVIEW_MATRIX))
     {
         shader.uniformMatrix4fv(LLShaderMgr::MODELVIEW_MATRIX, 1, false, glm::value_ptr(mReflectionModelView));
     }
@@ -22891,7 +22911,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // </FS>
 
     // disable occlusion culling during shadow render
-    U32 saved_occlusion = sUseOcclusion;
+    U32 saved_occlusion = LLPipeline::useOcclusion();
     sUseOcclusion = 0;
 
     const U32* types = kShadowStaticTypes;
@@ -24123,7 +24143,7 @@ public:
 
     LLDisableOcclusionCulling()
     {
-        mUseOcclusion = LLPipeline::sUseOcclusion;
+        mUseOcclusion = LLPipeline::useOcclusion();
         LLPipeline::sUseOcclusion = 0;
     }
 
@@ -25105,10 +25125,21 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
 
             // what renderShadow sets for the whole of a shadow pass
-            const S32 saved_occlusion = sUseOcclusion;
-            const bool saved_shadow_render = LLPipeline::sShadowRender;
+            const S32 saved_occlusion = LLPipeline::useOcclusion();
+            const bool saved_shadow_render = LLPipeline::shadowRender();
             sUseOcclusion = 0;
             LLPipeline::sShadowRender = true;
+
+            // <FS> view rework W3: each cascade's jobs work for a view of their own (made now: the flags are what the preparation needs, the mask is the shadow pass's)
+            std::vector<View> cascade_views;
+            cascade_views.reserve(pending.size());
+            for (ShadowCascadePrep& prep : pending)
+            {
+                cascade_views.push_back(currentView(prep.mCamera, false));
+                cascade_views.back().mCameraID = (S32)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
+                cascade_views.back().mWorldCameraID = false;
+                prep.mJobView = &cascade_views.back();
+            }
 
             static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
             if (check_prep)
@@ -25535,7 +25566,7 @@ void LLPipeline::renderGroups(LLRenderPass* pass, U32 type, bool texture)
     {
         LLSpatialGroup* group = *i;
         if (!group->isDead() &&
-            (!sUseOcclusion || !group->isOcclusionState(LLSpatialGroup::OCCLUDED)) &&
+            (!LLPipeline::useOcclusion() || !group->isOcclusionState(LLSpatialGroup::OCCLUDED)) &&
             gPipeline.hasRenderType(group->getSpatialPartition()->mDrawableType) &&
             group->mDrawMap.find(type) != group->mDrawMap.end())
         {
@@ -25550,7 +25581,7 @@ void LLPipeline::renderRiggedGroups(LLRenderPass* pass, U32 type, bool texture)
     {
         LLSpatialGroup* group = *i;
         if (!group->isDead() &&
-            (!sUseOcclusion || !group->isOcclusionState(LLSpatialGroup::OCCLUDED)) &&
+            (!LLPipeline::useOcclusion() || !group->isOcclusionState(LLSpatialGroup::OCCLUDED)) &&
             gPipeline.hasRenderType(group->getSpatialPartition()->mDrawableType) &&
             group->mDrawMap.find(type) != group->mDrawMap.end())
         {
@@ -25696,7 +25727,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
         setRenderTypeMask(RENDER_TYPE_HUD, END_RENDER_TYPES);
     }
 
-    S32 occlusion = sUseOcclusion;
+    S32 occlusion = LLPipeline::useOcclusion();
     sUseOcclusion = 0;
 
     sReflectionRender = ! sRenderDeferred;
@@ -26083,7 +26114,7 @@ bool LLPipeline::hasRenderType(const U32 type) const
     // STORM-365 : LLViewerJointAttachment::setAttachmentVisibility() is setting type to 0 to actually mean "do not render"
     // We then need to test that value here and return false to prevent attachment to render (in mouselook for instance)
     // TODO: reintroduce RENDER_TYPE_NONE in LLRenderTypeMask and initialize its mRenderTypeEnabled[RENDER_TYPE_NONE] to false explicitely
-    return (type == 0 ? false : mRenderTypeEnabled[type]);
+    return (type == 0 ? false : (sJobView ? sJobView->mRenderTypes : mRenderTypeEnabled)[type]);
 }
 
 void LLPipeline::setRenderTypeMask(U32 type, ...)

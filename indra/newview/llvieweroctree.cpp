@@ -1360,7 +1360,7 @@ bool LLOcclusionCullingGroup::earlyFail(LLCamera* camera, const LLVector4a* boun
 
 void LLOcclusionCullingGroup::checkOcclusion()
 {
-    if (LLPipeline::sUseOcclusion < 2) return;  // 0 - NoOcclusion, 1 = ReadOnly, 2 = ModifyOcclusionState  TODO: DJH 11-2021 ENUM this
+    if (LLPipeline::useOcclusion() < 2) return;  // 0 - NoOcclusion, 1 = ReadOnly, 2 = ModifyOcclusionState  TODO: DJH 11-2021 ENUM this
 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_OCTREE;
     if (LLOccCensus::sOn)
@@ -1389,7 +1389,7 @@ void LLOcclusionCullingGroup::checkOcclusion()
 void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shift)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_OCTREE;
-    if (!(mSpatialPartition->isOcclusionEnabled() && LLPipeline::sUseOcclusion > 1))
+    if (!(mSpatialPartition->isOcclusionEnabled() && LLPipeline::useOcclusion() > 1))
     {
         return;
     }
@@ -1537,7 +1537,7 @@ void LLViewerOctreePartition::cleanup()
 
 bool LLViewerOctreePartition::isOcclusionEnabled()
 {
-    return mOcclusionEnabled || LLPipeline::sUseOcclusion > 2;
+    return mOcclusionEnabled || LLPipeline::useOcclusion() > 2;
 }
 
 

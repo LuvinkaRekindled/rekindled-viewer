@@ -1175,13 +1175,13 @@ public:
 
     virtual bool earlyFail(LLViewerOctreeGroup* base_group)
     {
-        if (LLPipeline::sReflectionRender)
+        if (LLPipeline::reflectionRender())
         {
             return false;
         }
 
         LLSpatialGroup* group = (LLSpatialGroup*)base_group;
-        if (LLPipeline::sUseOcclusion >= 2)         // <FS> checkOcclusion() does nothing below 2: no call
+        if (LLPipeline::useOcclusion() >= 2)         // <FS> checkOcclusion() does nothing below 2: no call
         {
             group->checkOcclusion();
         }
@@ -1192,7 +1192,7 @@ public:
         }
 
         // <FS> the cheap tests first: the group's own occlusion state before the walk to the octree node and its parent (cache misses)
-        if (LLPipeline::sUseOcclusion &&            //ignore occlusion if disabled
+        if (LLPipeline::useOcclusion() &&            //ignore occlusion if disabled
             group->isOcclusionState(LLSpatialGroup::OCCLUDED) &&
             group->getOctreeNode() &&
             group->getOctreeNode()->getParent())    //never occlusion cull the root node
@@ -1283,7 +1283,7 @@ public:
     {
         LLSpatialGroup* group = (LLSpatialGroup*)base_group;
 
-        if (LLPipeline::sUseOcclusion &&            //ignore occlusion if disabled
+        if (LLPipeline::useOcclusion() &&            //ignore occlusion if disabled
             group->isOcclusionState(LLSpatialGroup::OCCLUDED) &&
             group->getOctreeNode()->getParent())    //never occlusion cull the root node
         {
@@ -1362,7 +1362,7 @@ public:
 
         if (mResult || //already found a node, don't check any more
             (group->getOctreeNode()->getParent() && //never occlusion cull the root node
-             LLPipeline::sUseOcclusion &&           //ignore occlusion if disabled
+             LLPipeline::useOcclusion() &&           //ignore occlusion if disabled
              group->isOcclusionState(LLSpatialGroup::OCCLUDED)))
         {
             return true;
@@ -1587,7 +1587,7 @@ S32 LLSpatialPartition::cull(LLCamera &camera, bool do_occlusion)
     ((LLSpatialGroup*)mOctree->getListener(0))->validate();
 #endif
 
-    if (LLPipeline::sShadowRender)
+    if (LLPipeline::shadowRender())
     {
         LLOctreeCullShadow culler(&camera);
         culler.traverse(mOctree);
@@ -1963,7 +1963,7 @@ std::set<LLSpatialGroup*> visible_selected_groups;
 
 void renderXRay(LLSpatialGroup* group, LLCamera* camera)
 {
-    bool render_objects = (!LLPipeline::sUseOcclusion || !group->isOcclusionState(LLSpatialGroup::OCCLUDED)) && group->isVisible() &&
+    bool render_objects = (!LLPipeline::useOcclusion() || !group->isOcclusionState(LLSpatialGroup::OCCLUDED)) && group->isVisible() &&
                             !group->isEmpty();
 
     if (render_objects)

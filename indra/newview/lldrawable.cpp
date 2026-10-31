@@ -1605,13 +1605,13 @@ void LLSpatialBridge::setVisible(LLCamera& camera_in, std::vector<LLDrawable*>* 
     size.setSub(exts[1], exts[0]);
     size.mul(0.5f);
 
-    if ((LLPipeline::sShadowRender && camera_in.AABBInFrustum(center, size)) ||
+    if ((LLPipeline::shadowRender() && camera_in.AABBInFrustum(center, size)) ||
         LLPipeline::sImpostorRender ||
         (camera_in.AABBInFrustumNoFarClip(center, size) &&
         AABBSphereIntersect(exts[0], exts[1], camera_in.getOrigin(), camera_in.mFrustumCornerDist)))
     {
         if (!LLPipeline::sImpostorRender &&
-            !LLPipeline::sShadowRender &&
+            !LLPipeline::shadowRender() &&
             LLPipeline::calcPixelArea(center, size, camera_in) < FORCE_INVISIBLE_AREA)
         {
             return;
