@@ -2312,7 +2312,7 @@ void LLPipeline::resetFrameStats()
 void LLPipeline::applyAvOps(std::vector<AvOp>& ops)
 {
     sAvSink = nullptr;
-    static U64 calls = 0, total_ops = 0, by_kind[5] = {}, stale_group = 0, orders = 0;
+    static U64 calls = 0, total_ops = 0, by_kind[8] = {}, stale_group = 0, orders = 0;
     for (const AvOp& op : ops)
     {
         ++by_kind[op.mKind];
@@ -2334,6 +2334,18 @@ void LLPipeline::applyAvOps(std::vector<AvOp>& ops)
             if (!op.mDrawable->isDead())
             {
                 ((LLSpatialBridge*)op.mDrawable)->moveInPartition();
+            }
+            break;
+        case AvOp::MAKE_ACTIVE_SHARED:
+            if (!op.mDrawable->isDead())
+            {
+                op.mDrawable->makeActiveShared();
+            }
+            break;
+        case AvOp::UPDATE_TEXT:
+            if (op.mObject && !op.mObject->isDead())
+            {
+                op.mObject->updateText();
             }
             break;
         case AvOp::RENDER_ORDER:

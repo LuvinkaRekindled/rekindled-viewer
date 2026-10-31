@@ -6390,6 +6390,14 @@ bool LLViewerObject::isOnMap()
 
 void LLViewerObject::updateText()
 {
+    if (LLPipeline::sAvSink && mText.notNull())
+    {
+        // <FS> view rework A2: the HUD text of an attachment is updated when the avatar's writes are replayed
+        LLPipeline::AvOp op = { LLPipeline::AvOp::UPDATE_TEXT, nullptr, nullptr, nullptr, 0 };
+        op.mObject = this;
+        LLPipeline::sAvSink->push_back(op);
+        return;
+    }
     if (!isDead())
     {
         if (mText.notNull())
