@@ -3162,6 +3162,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSParallelShadowPointCloud</key>
+    <map>
+      <key>Comment</key>
+      <string>With FSParallelShadowPrep: the octree walks that find the visible extents of each sun shadow cascade (getVisiblePointCloud) run as one pool job a cascade instead of one after another on the main thread. Applies at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSObjectExpiry</key>
     <map>
       <key>Comment</key>

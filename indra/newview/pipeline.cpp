@@ -24486,8 +24486,68 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
         };
 
+        // <FS> the camera of a cascade's split (made the same way for the point cloud jobs and the loop below)
+        auto make_cascade_camera = [&](S32 j) -> LLCamera
+        {
+            const LLVector3 cam_eye = camera.getOrigin();
+            LLCamera cascade_cam;
+            cascade_cam = camera;
+            cascade_cam.setFar(16.f);
+            LLViewerCamera::updateFrustumPlanes(cascade_cam, false, false, true);
+            LLVector3* corners = cascade_cam.mAgentFrustum;
+            const LLVector3 axis = cascade_cam.getAtAxis();
+            for (U32 i = 0; i < 4; i++)
+            {
+                LLVector3 delta = corners[i+4] - cam_eye;
+                delta += (corners[i+4] - corners[(i+2)%4+4]) * 0.05f;
+                delta.normVec();
+                const F32 dp = delta * axis;
+                corners[i] = cam_eye + (delta * dist[j] * 0.75f) / dp;
+                corners[i+4] = cam_eye + (delta * dist[j+1] * 1.25f) / dp;
+            }
+            cascade_cam.calcAgentFrustumPlanes(corners);
+            cascade_cam.mFrustumCornerDist = 0.f;
+            return cascade_cam;
+        };
+
+        // <FS> getVisiblePointCloud is an octree walk of every partition for each cascade (0.39 ms a frame on the main thread, the biggest piece of the cascade setup) and only reads (the roots are brought up
+        // to date here, rebound() writes): one pool job a cascade. LL_VK_PC_CHECK=1 compares each result with the serial walk and logs the differences. FSParallelShadowPointCloud turns it off live.
+        struct PointCloudJob { LLCamera mCam; LLVector3 mMin, mMax; std::vector<LLVector3> mFp; bool mHave = false; };
+        std::vector<PointCloudJob> clouds;
+        static LLCachedControl<bool> parallel_clouds(gSavedSettings, "FSParallelShadowPointCloud", true);
+        if (prep_pool && parallel_clouds && !gCubeSnapshot && RenderShadowSplits >= 0)
+        {
+            PhaseLap cloud_lap;
+            set_current_modelview(saved_view);
+            set_current_projection(saved_proj);
+            const S32 cloud_count = llmin<S32>(4, RenderShadowSplits + 1);
+            clouds.resize(4);
+            for (S32 j = 0; j < cloud_count; ++j)
+            {
+                clouds[j].mCam = make_cascade_camera(j);
+            }
+            for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+            {
+                for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
+                {
+                    LLSpatialPartition* part = region->getSpatialPartition(i);
+                    if (part && hasRenderType(part->mDrawableType))
+                    {
+                        ((LLSpatialGroup*)part->mOctree->getListener(0))->rebound();
+                    }
+                }
+            }
+            const std::function<void(size_t)> cloud_job = [&](size_t j)
+            {
+                clouds[j].mHave = getVisiblePointCloud(clouds[j].mCam, clouds[j].mMin, clouds[j].mMax, clouds[j].mFp, lightDir);
+            };
+            { LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)"); prep_pool->run((size_t)cloud_count, cloud_job); }
+            cloud_lap.mark(PH_POINT_CLOUD);
+        }
+
         for (S32 j = 0; j < (gCubeSnapshot ? 2 : 4); j++)
         {
+            LL_CPU_ZONE("generateSunShadow: cascade setup (a cascade, no render)");
             if (!hasRenderDebugMask(RENDER_DEBUG_SHADOW_FRUSTA) && !gCubeSnapshot)
             {
                 mShadowFrustPoints[j].clear();
@@ -24540,7 +24600,45 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             std::vector<LLVector3> fp;
 
             PhaseLap point_cloud_lap;
-            const bool have_point_cloud = gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir);
+            bool have_point_cloud;
+            if (!clouds.empty())
+            {
+                // the jobs' result (a cascade above RenderShadowSplits is skipped below whatever its cloud is)
+                have_point_cloud = j <= RenderShadowSplits && clouds[j].mHave;
+                if (j <= RenderShadowSplits)
+                {
+                    min = clouds[j].mMin;
+                    max = clouds[j].mMax;
+                    fp = clouds[j].mFp;
+                    static const bool cloud_check = getenv("LL_VK_PC_CHECK") != nullptr;
+                    if (cloud_check)
+                    {
+                        static U32 checks = 0, wrong = 0;
+                        LLVector3 smin, smax;
+                        std::vector<LLVector3> sfp;
+                        const bool shave = gPipeline.getVisiblePointCloud(shadow_cam, smin, smax, sfp, lightDir);
+                        bool same = shave == clouds[j].mHave;
+                        if (same && shave)
+                        {
+                            same = (smin - min).length() == 0.f && (smax - max).length() == 0.f && sfp.size() == fp.size();
+                            for (size_t k = 0; same && k < fp.size(); ++k)
+                            {
+                                same = (sfp[k] - fp[k]).length() == 0.f;
+                            }
+                        }
+                        ++checks;
+                        wrong += same ? 0 : 1;
+                        if (!same || checks % 1800 == 0)
+                        {
+                            LL_INFOS("ShadowPrep") << "point cloud check: " << wrong << " of " << checks << " cascades differ from the serial walk" << (same ? "" : " (this one: cascade " + std::to_string(j) + ")") << LL_ENDL;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                have_point_cloud = gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir);
+            }
             point_cloud_lap.mark(PH_POINT_CLOUD);
             if (!have_point_cloud
                 || j > RenderShadowSplits)
@@ -25020,7 +25118,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             {
                 // the marking of the found groups, in chunks over the pool (LL_VK_PREP_CHUNK = groups a chunk, default 128, 0: one chunk a list as before)
                 static const U32 chunk_size = getenv("LL_VK_PREP_CHUNK") ? (U32)atoi(getenv("LL_VK_PREP_CHUNK")) : 128;
-                struct MarkChunk { size_t mPrep; int mKind; U32 mBegin, mEnd; std::vector<LLDrawable*> mDeferred; std::unique_ptr<LLCullResult> mLocal; };
+                // <FS> the chunks' results are kept between frames and cleared (the seven vectors of a new LLCullResult were allocated, grown from empty and freed again for every chunk of every cascade, every frame)
+                static std::vector<std::unique_ptr<LLCullResult>> sMarkLocals;
+                struct MarkChunk { size_t mPrep; int mKind; U32 mBegin, mEnd; std::vector<LLDrawable*> mDeferred; LLCullResult* mLocal; };
                 std::vector<MarkChunk> chunks;
                 for (size_t p = 0; p < pending.size(); ++p)
                 {
@@ -25031,13 +25131,19 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                         const U32 step = chunk_size ? chunk_size : std::max<U32>(n, 1u);
                         for (U32 b = 0; b < n; b += step)
                         {
-                            chunks.push_back({ p, kind, b, std::min(n, b + step), {}, std::make_unique<LLCullResult>() });
+                            if (chunks.size() >= sMarkLocals.size())
+                            {
+                                sMarkLocals.push_back(std::make_unique<LLCullResult>());
+                            }
+                            sMarkLocals[chunks.size()]->clear();
+                            chunks.push_back({ p, kind, b, std::min(n, b + step), {}, sMarkLocals[chunks.size()].get() });
                         }
                     }
                 }
                 const std::function<void(size_t)> mark_job = [&](size_t c) { shadowPrepMark(pending[chunks[c].mPrep], chunks[c].mKind, chunks[c].mBegin, chunks[c].mEnd, chunks[c].mDeferred, *chunks[c].mLocal); };
                 const auto mark_wall0 = std::chrono::steady_clock::now();
                 if (!chunks.empty()) { LL_CPU_ZONE("shadow prep: mark job (wait for the pool)"); prep_pool->run(chunks.size(), mark_job); }
+                LL_CPU_ZONE("shadow prep: merge mark chunks");
                 for (MarkChunk& c : chunks)
                 {
                     pending[c.mPrep].mDeferred.insert(pending[c.mPrep].mDeferred.end(), c.mDeferred.begin(), c.mDeferred.end());      // (chunk order is list order)
@@ -25114,7 +25220,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
             // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
             static const U32 map_chunk_size = getenv("LL_VK_MAP_CHUNK") ? (U32)atoi(getenv("LL_VK_MAP_CHUNK")) : 192;
-            struct MapChunk { size_t mPrep; U32 mBegin, mEnd; std::unique_ptr<LLCullResult> mLocal; double mMs; };
+            static std::vector<std::unique_ptr<LLCullResult>> sMapLocals;       // <FS> kept between frames, as sMarkLocals
+            struct MapChunk { size_t mPrep; U32 mBegin, mEnd; LLCullResult* mLocal; double mMs; };
             std::vector<MapChunk> map_chunks;
             for (size_t p = 0; p < pending.size(); ++p)
             {
@@ -25122,7 +25229,12 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 const U32 step = map_chunk_size ? map_chunk_size : std::max<U32>(n, 1u);
                 for (U32 b = 0; b < n || (b == 0 && n == 0); b += step)
                 {
-                    map_chunks.push_back({ p, b, std::min(n, b + step), std::make_unique<LLCullResult>(), 0.0 });
+                    if (map_chunks.size() >= sMapLocals.size())
+                    {
+                        sMapLocals.push_back(std::make_unique<LLCullResult>());
+                    }
+                    sMapLocals[map_chunks.size()]->clear();
+                    map_chunks.push_back({ p, b, std::min(n, b + step), sMapLocals[map_chunks.size()].get(), 0.0 });
                     if (n == 0) { break; }
                 }
             }
@@ -25134,6 +25246,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             };
             const auto map_wall0 = std::chrono::steady_clock::now();
             { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(map_chunks.size(), map_job); }
+            { LL_CPU_ZONE("shadow prep: merge render map chunks");
             for (MapChunk& c : map_chunks)
             {
                 LLCullResult& into = *pending[c.mPrep].mResult;
@@ -25158,6 +25271,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 {
                     into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());
                 }
+            }
             }
             if (job_census)
             {
