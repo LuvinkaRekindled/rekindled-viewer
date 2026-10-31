@@ -6371,6 +6371,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_VOLUME("rebuildGeom - face list");
+        LL_CPU_ZONE("rebuild: prepare (face list, sorted into the static scratch)");        // <FS> group rebuild audit (plan 8.6): where the time of a rebuild goes
 
         //get all the faces into a list
         for (LLSpatialGroup::element_iter drawable_iter = group->getDataBegin();
@@ -6821,6 +6822,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
     U32 extra_mask = LLVertexBuffer::MAP_TEXTURE_INDEX;
     bool alpha_sort = true;
     bool rigged = false;
+    { LL_CPU_ZONE("rebuild: genDrawInfo (all masks, static and rigged)");
     for (int i = 0; i < 2; ++i) //two sets, static and rigged)
     {
         geometryBytes += genDrawInfo(group, simple_mask | extra_mask, sSimpleFaces[i], simple_count[i], false, batch_textures, rigged);
@@ -6835,6 +6837,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
         // for rigged set, add weights and disable alpha sorting (rigged items use depth buffer)
         extra_mask |= LLVertexBuffer::MAP_WEIGHT4;
         rigged = true;
+    }
     }
 
     group->mGeometryBytes = geometryBytes;
@@ -7259,8 +7262,11 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
 
                     U32 te_idx = facep->getTEOffset();
 
-                    if (!facep->getGeometryVolume(*volume, te_idx,
-                        vobj->getRelativeXform(), vobj->getRelativeXformInvTrans(), index_offset,true))
+                    bool geometry_ok;
+                    { LL_CPU_ZONE("rebuild: face geometry (getGeometryVolume)");
+                    geometry_ok = facep->getGeometryVolume(*volume, te_idx,
+                        vobj->getRelativeXform(), vobj->getRelativeXformInvTrans(), index_offset,true); }
+                    if (!geometry_ok)
                     {
                         LL_WARNS() << "Failed to get geometry for face!" << LL_ENDL;
                     }
