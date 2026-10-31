@@ -3751,7 +3751,7 @@ struct AvJobLedger
 void LLVOAvatar::idleUpdateAttachments(bool visible)
 {
         LL_CPU_ZONE("att: attachment loop (per avatar)");
-        static const bool av_ledger = getenv("LL_VK_AV_LEDGER") != nullptr;
+        static const bool av_ledger = !getenv("LL_VK_AV_LEDGER") || getenv("LL_VK_AV_LEDGER")[0] != '0';       // (on unless LL_VK_AV_LEDGER=0)
         AvLedgerScope ledger_scope(av_ledger && !isSelf() && !LLPipeline::sAvSink);
         const auto att_loop_t0 = att_now();
         ++gAttStats.avatars;
@@ -4062,7 +4062,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
 // its root then, and the loop reads the skeleton)
 bool LLVOAvatar::canRunAttachmentJob()
 {
-    return mMotionUpdateDeferred && mDeferredDetailedUpdate && !mDeferredMatricesOnly && !isSelf() && !isDead() && mDrawable.notNull()
+    return mMotionUpdateDeferred && mDeferredDetailedUpdate && !mDeferredMatricesOnly && !isSelf() && !isControlAvatar() && !isDead() && mDrawable.notNull()
         && !(!getParent() && (isSitting() || mDeferredSitGroundConstrained));
 }
 
