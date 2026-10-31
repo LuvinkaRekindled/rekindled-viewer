@@ -3709,6 +3709,34 @@ bool LLVOAvatar::isLiveInstance(const LLVOAvatar* avatar)
     return avatar && live.count(avatar) != 0;
 }
 
+// <FS> view rework A1: the writes of an avatar's attachment loop to shared state are recorded and replayed in order when the loop is over (LL_VK_AV_LEDGER=1; the viewer's own avatar keeps the direct path)
+namespace
+{
+struct AvLedgerScope
+{
+    std::vector<LLPipeline::AvOp>* mOps = nullptr;
+    explicit AvLedgerScope(bool on)
+    {
+        if (on)
+        {
+            static thread_local std::vector<LLPipeline::AvOp> ops;
+            ops.clear();
+            mOps = &ops;
+            LLPipeline::sAvSink = mOps;
+        }
+    }
+    void finish()
+    {
+        if (mOps)
+        {
+            gPipeline.applyAvOps(*mOps);
+            mOps = nullptr;
+        }
+    }
+    ~AvLedgerScope() { finish(); }
+};
+}
+
 void LLVOAvatar::idleUpdateMisc(bool detailed_update)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
@@ -3726,6 +3754,8 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
     if (detailed_update)
     {
         LL_CPU_ZONE("att: attachment loop (per avatar)");
+        static const bool av_ledger = getenv("LL_VK_AV_LEDGER") != nullptr;
+        AvLedgerScope ledger_scope(av_ledger && !isSelf() && !LLPipeline::sAvSink);
         const auto att_loop_t0 = att_now();
         ++gAttStats.avatars;
         LLAttCensus::sAvatarsLooped += LLAttCensus::sOn;
@@ -3963,8 +3993,15 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                             LLSpatialGroup* group = attached_object->mDrawable->getSpatialGroup();
                             if (group)
                             { //set draw order of group
-                                group->mAvatarp = this;
-                                group->mRenderOrder = draw_order++;
+                                if (LLPipeline::sAvSink)
+                                {
+                                    LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::RENDER_ORDER, attached_object->mDrawable, this, group, draw_order++ });
+                                }
+                                else
+                                {
+                                    group->mAvatarp = this;
+                                    group->mRenderOrder = draw_order++;
+                                }
                             }
                         }
                     }
