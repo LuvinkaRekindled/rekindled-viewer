@@ -3162,6 +3162,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSObjectExpiry</key>
+    <map>
+      <key>Comment</key>
+      <string>Forget what the camera has not seen for a long time. Groups no camera accepted for 10 s skip their per-frame updates, groups unseen for 90 s drop their draw data, and objects unseen for 60 s (camera still for 3 s, farther than the scene load radius, not selected, no sound, particles, light or media) are removed and come back from the cache when you turn to them. Keeps the frame time from growing after a turn. Read at start: a change needs a restart. LL_VK_EXPIRY=0 in the environment turns it off.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>FSFlexibleStayInGroup</key>
     <map>
       <key>Comment</key>

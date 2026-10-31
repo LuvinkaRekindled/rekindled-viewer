@@ -2001,6 +2001,14 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
             sFsKilled.insert(kill_entries[i]);
             ++sFsKill.mKilled;
         }
+        // one line every 10 s (a lap without the census still shows what the kill did)
+        static F64 report_at = 0.0;
+        if (now - report_at >= 10.0)
+        {
+            report_at = now;
+            LL_INFOS("KillStage") << "Kill: " << sFsKill.mCalls << " calls (" << sFsKill.mMovingCalls << " while the camera moved), looked at " << sFsKill.mLooked << ", stale and free " << sFsKill.mWanted
+                << ", killed " << sFsKill.mKilled << ", objects now " << gObjectList.getNumObjects() << ", active cached here " << mImpl->mActiveSet.size() << LL_ENDL;
+        }
         return;
     }
 
