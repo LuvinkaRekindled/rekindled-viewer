@@ -3598,15 +3598,18 @@ struct CullTaskScope
     LLCullResult* mCull = sCull;
     std::vector<LLPipeline::SortDelta>* mSink = LLPipeline::sSortSink;
     bool mParallel = LLPipeline::sParallelPrep;
+    LLViewerCamera::eCameraID mCameraID = LLViewerCamera::sCurCameraID;
 
-    CullTaskScope(CullChunk& chunk)
+    CullTaskScope(CullChunk& chunk, const LLPipeline::View& view)
     {
         LLPipeline::sParallelPrep = true;       // (no shared statistics: mNumVisibleNodes is added by the caller)
+        LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)view.mCameraID;       // (the walks read it; a pool thread's own is CAMERA_WORLD whatever the view is)
         sCull = chunk.mLocal;
         LLPipeline::sSortSink = &chunk.mLedger;
     }
     ~CullTaskScope()
     {
+        LLViewerCamera::sCurCameraID = mCameraID;
         sCull = mCull;
         LLPipeline::sSortSink = mSink;
         LLPipeline::sParallelPrep = mParallel;
@@ -3720,8 +3723,9 @@ bool cull_lists_equal(LLCullResult& a, LLCullResult& b)
 
 // the walks of the partitions of every region, as jobs. into == nullptr: the result is the real one (sCull) and the object cache is culled too, 1 is returned.
 // into != nullptr (the check): the results go there, the queue writes are made, the occlusion flags the walks set are cleared again so that the serial loop that follows sees what the first run saw; 2 is returned.
-int cull_partitions_parallel(LLCamera& camera, LLCullResult* into)
+int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
 {
+    LLCamera& camera = *view.mCamera;
     LLForkJoinPool* pool = LLForkJoinPool::shared();
     if (!pool)
     {
@@ -3815,7 +3819,7 @@ int cull_partitions_parallel(LLCamera& camera, LLCullResult* into)
                 const auto w0 = std::chrono::steady_clock::now();
                 CullChunk& first_segment = new_chunk(true);
                 ++segments;
-                CullTaskScope scope(first_segment);
+                CullTaskScope scope(first_segment, view);
                 const OctreeNode* root = part->mOctree;
                 part->cullSplit(camera, 8, [&](const OctreeNode* n)
                 {
@@ -3868,7 +3872,7 @@ int cull_partitions_parallel(LLCamera& camera, LLCullResult* into)
     const std::function<void(size_t)> job = [&](size_t w)
     {
         CullChunk& chunk = chunks[work[w]];
-        CullTaskScope scope(chunk);
+        CullTaskScope scope(chunk, view);
         const auto t0 = std::chrono::steady_clock::now();
         for (size_t k = chunk.mBegin; k < chunk.mEnd; ++k)
         {
@@ -4002,11 +4006,29 @@ int cull_partitions_parallel(LLCamera& camera, LLCullResult* into)
 }
 }
 
+// <FS> view rework W1: the state a stage reads, taken once (see LLPipeline::View)
+LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
+{
+    View view;
+    view.mCamera = &camera;
+    view.mCameraID = (S32)LLViewerCamera::sCurCameraID;
+    view.mUseOcclusion = sUseOcclusion;
+    view.mWorldCameraID = LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
+    view.mHud = hud;
+    view.mShadowRender = sShadowRender;
+    view.mReflectionRender = sReflectionRender;
+    view.mCubeSnapshot = gCubeSnapshot;
+    view.mViewerCamera = &camera == LLViewerCamera::getInstance();
+    return view;
+}
+
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
 {
     vk_avatar_log();
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_CULL);
     LL_PROFILE_GPU_ZONE("updateCull"); // should always be zero GPU time, but drop a timer to flush stuff out
+
+    const View view = currentView(camera, hud_attachments);
 
     bool water_clip = isWaterClip();
 
@@ -4041,14 +4063,14 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     // <FS> S7 C0 (LL_VK_VISCENSUS=1): the main view's cull
-    const bool vis_cull = LLVisCensus::sOn && !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot;
+    const bool vis_cull = LLVisCensus::sOn && view.isWorld();
     struct VisCullEnd
     {
         bool mOn; U64 mT0;
         ~VisCullEnd() { if (mOn) { LLVisCensus::sCullTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sCullFrames; } }
     } vis_cull_end = { vis_cull, vis_cull ? LLVisCensus::now() : 0 };
     // <FS> S7 C2 (LL_VK_CULL_USE=2): the covered partitions are not walked, useVerdict makes their lists. rt-debug.txt culluse=N changes it live while the table runs (a same-lap A/B)
-    if (LLCullShadow::sOn && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !hud_attachments)
+    if (LLCullShadow::sOn && view.mWorldCameraID && !view.mShadowRender && !view.mHud)
     {
         const S32 live_use = LLVkBridge::rtCullUse();
         const unsigned want_use = live_use >= 0 ? (unsigned)live_use : LLCullShadow::sUseEnv;       // (the key taken out of the file: back to what the environment says)
@@ -4057,15 +4079,15 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
             LLCullShadow::sUse = want_use;
         }
     }
-    const bool cull_use = LLCullShadow::sUse == 2 && !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot
+    const bool cull_use = LLCullShadow::sUse == 2 && view.isWorld()
         && LLCullShadow::useMatches(camera);        // (a frame whose frustum has another shape than the verdict's is walked: the exit snapshot has no UI, so another aspect)
     struct CullShadowEnd
     {
         bool mOn; LLCamera* mCamera;
         ~CullShadowEnd() { if (mOn) { if (LLCullShadow::sOn) { LLCullShadow::build(*mCamera); } else { LLCullShadow::poseLog(*mCamera); } } }       // <FS> S7 C1: after everything the cull did
-    } cull_shadow_end = { (LLCullShadow::sOn || LLCullShadow::sPoseLog) && !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot, &camera };
+    } cull_shadow_end = { (LLCullShadow::sOn || LLCullShadow::sPoseLog) && view.isWorld(), &camera };
 
-    if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !hud_attachments && !gCubeSnapshot)
+    if (view.mWorldCameraID && !view.mHud && !view.mCubeSnapshot)
     {
         LL_CPU_ZONE("occlusion: Hi-Z results");
         LLHiz::apply();        // <FS> S7 H3: the verdicts of the boxes sent a few frames ago
@@ -4074,7 +4096,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     sCull->clear();
 
     // <FS> stage 3a: the main view's partition walks on the pool (see cull_partitions_parallel)
-    const bool main_cull = !hud_attachments && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && &camera == LLViewerCamera::getInstance() && !sShadowRender && !sReflectionRender && !gCubeSnapshot
+    const bool main_cull = view.isMainWorld()
         && !cull_use && !vis_cull && !LLOccCensus::sOn && !LLCullShadow::sOn && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
     const int cull_mode = main_cull ? cull_split_setting() : 0;
     int cull_done = 0;
@@ -4084,7 +4106,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         {
             sCullCheckResult = new LLCullResult();
         }
-        cull_done = cull_partitions_parallel(camera, cull_mode == 4 ? sCullCheckResult : nullptr);
+        cull_done = cull_partitions_parallel(view, cull_mode == 4 ? sCullCheckResult : nullptr);
     }
     const auto serial_t0 = main_cull && cull_done != 1 ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
 

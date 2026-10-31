@@ -349,6 +349,26 @@ public:
     // the drawables that would be queued in a pool are remembered, and refillPools() queues them after the shadows, in the same order
     void stateSort(LLCamera& camera, LLCullResult& result, bool defer_pools = false);
 
+    // <FS> view rework (doc/vulkan/PLAN-view-prep-rework.md, W1): what a view is, as data. Made once at the top of a stage from the state the pipeline has at that call (currentView); the stage and its
+    // jobs read the view, not the globals and thread-locals it was made from. The jobs still install the camera id they work for (the walks below read it), from the view.
+    struct View
+    {
+        LLCamera* mCamera = nullptr;
+        S32 mCameraID = 0;                  // LLViewerCamera::eCameraID
+        S32 mUseOcclusion = 0;
+        bool mWorldCameraID = false;        // the camera id is CAMERA_WORLD
+        bool mHud = false;
+        bool mShadowRender = false;
+        bool mReflectionRender = false;
+        bool mCubeSnapshot = false;
+        bool mViewerCamera = false;         // the camera is the viewer's own
+        // the world camera's view: not a HUD, a shadow cascade, a probe or a snapshot
+        bool isWorld() const { return mWorldCameraID && !mHud && !mShadowRender && !mReflectionRender && !mCubeSnapshot; }
+        // ... and made with the viewer's camera
+        bool isMainWorld() const { return isWorld() && mViewerCamera; }
+    };
+    static View currentView(LLCamera& camera, bool hud);
+
     // <FS> the stateSort split (doc/vulkan/PLAN-statesort-offmain.md, stage 1): the loops of stateSort make their writes to shared state (the rebuild and partition move queues, the LOD update of
     // avatars and other objects, the mesh rebuilds) through one list of deltas that is applied in the order it was recorded. LL_VK_SORT_SPLIT=1 sorts that way (compute everything, then apply);
     // =2 is the check: the loops run twice, deferred (nothing applied, the fields they write put back) and then as before with the same list recorded, and the two lists are compared.
